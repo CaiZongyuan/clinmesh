@@ -10,7 +10,7 @@ ClinMesh 是面向 Agent 的中国公立医院仿真 HIS。修改业务或接口
 4. **Refine and review**：变绿后使用 `code-simplifier` 只整理当前 diff，再运行被影响的最小检查并创建引用 issue 的 checkpoint commit。随后使用 `code-review` 做 Standards/Spec 双轴审查，修复 findings，最后使用 `dsh-pre-push-checks` 覆盖 outgoing diff。
 5. **Demonstrate**：用户可见的 Web/Desktop PR 使用 `agent-browser` 验证真实入口，并用 `record-browser-gif` 发布绑定精确 commit 的 GIF；React Web 性能改动同时使用 `vercel-react-best-practices`。文档改动按 [docs/AGENTS.md](docs/AGENTS.md) 路由对应 skills。
 
-`implement <issue>` 授权创建 feature branch、本地 commit、正常 push、draft PR 和 PR 验收证据；merge、force-push、release、删除分支和将 draft 标记为 ready 仍需单独授权。Skill 定义工作流，仓库代码和当前文档拥有事实；发生冲突时遵循仓库规则，并把通用 ADR 产物映射为 Agent Note。
+`implement` 的外部写入授权和禁止操作由 [Agent 工程开发](docs/agent-development.md#实施与交付) 统一规定。Skill 定义工作流，仓库代码和当前文档拥有事实；发生冲突时遵循仓库规则，并把通用 ADR 产物映射为 Agent Note。
 
 ## Commands
 

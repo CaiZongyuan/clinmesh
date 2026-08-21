@@ -55,7 +55,7 @@ Use one duration for every frame or one positive duration per frame, holding the
 
 ## Publish to the PR
 
-The authorized `implement <issue>` workflow permits publication to its draft PR. For a standalone recording request, obtain explicit publication approval first.
+Follow the external-write authorization in [Agent engineering development](../../../docs/agent-development.md#实施与交付). An approved `implement <issue>` workflow may publish to its draft PR; a standalone recording request requires explicit publication approval.
 
 Use an append-only orphan assets branch named `<series>-assets`. Create a scratch clone with `mktemp -d`, check out or create the assets branch, copy only verified media, commit with the PR number, and push normally. Never add GIFs to a branch that merges into `main`; never rewrite or delete an assets branch.
 

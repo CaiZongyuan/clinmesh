@@ -17,7 +17,7 @@ Agent 开始工作前读取目标文件路径上所有适用的 `AGENTS.md`，�
 
 新功能、可观察行为变化、跨包工作和非平凡 bug 必须有已批准的 GitHub issue。纯机械小修可以把当前对话作为任务合同。需要 issue 的任务在 GitHub 不可用时停在已批准草稿，不建立第二套本地 spec。
 
-仓库公开。发布 issue、评论、PR 或 GIF 前必须展示完整待发布内容，检查患者信息、医保或支付凭证、密钥和未公开方案，并取得用户明确批准。
+仓库公开。任何 issue、评论、PR 或 GIF 在发布前都必须检查患者信息、医保或支付凭证、密钥和未公开方案；没有 owning workflow 已经授予该外部写入时，先展示完整待发布内容并取得用户明确批准。
 
 ## Design gate
 
@@ -46,7 +46,7 @@ GitHub 原生状态拥有执行队列：
 
 ## 实施与交付
 
-`implement <issue URL>` 授权 Agent 创建 `issue-<number>-<slug>` branch、本地 commits、正常 push、draft PR，并向该 PR 发布验收证据。它不授权 merge、force-push、release、删除分支或将 draft 标记为 ready。
+`implement <已批准 issue URL>` 授权 Agent 创建 `issue-<number>-<slug>` branch、本地 commits、正常 push、draft PR，并向该 PR 发布验收证据，不要求逐个 artifact 再次批准。发布前仍须检查完整内容和敏感信息。它不授权 merge、force-push、release、删除分支或将 draft 标记为 ready。
 
 每个 ticket 使用独立上下文，先读取 issue、相关 Agent Note、owner 文档和代码。复杂状态变化仍通过共享 Command owner 实现，不在 transport、UI 或 Agent tool 中复制状态机。
 
@@ -109,14 +109,14 @@ Review 同时追踪 changed interface 的两侧、授权路径、状态 owner、
 | 文档结构、文句和投影 | `dsh-doc-standards`、`dsh-prose-standard`、`dsh-doc-site-sync` |
 | 周期性架构简化审计 | `dsh-find-simplifications` |
 
-保留 skill 的条件：
+ClinMesh 自有或改造 skill 的保留条件：
 
 - 至少会在多个任务中复用。
 - 输入、适用范围和停止条件明确。
 - 不执行外部项目的包规则、CI 作业或不存在的脚本。
 - 指向仓库当前 source of truth，而不是复制完整规则。
 
-Matt skills 由 `skills-lock.json` 记录并保持上游原样；ClinMesh 规则在更高优先级的 `AGENTS.md` 和 owner 文档中适配其输入、审批和产物。`dsh-` 前缀保留 DeepSeek Harness 来源谱系，但这些 skills 由 ClinMesh 维护，description 必须写明 ClinMesh 触发条件，正文不得保留 DSH 包、命令、双语、stack 或 CI 假设。同一职责只保留一个活动入口。
+Matt skills 由 `skills-lock.json` 记录并保持上游原样；上述项目 skill 条件不授权修改其内容。只有被根或子树规则路由的 Matt workflow 才成为 ClinMesh 开发流程的一部分，ClinMesh 规则在更高优先级的 `AGENTS.md` 和 owner 文档中适配其输入、审批和产物。`dsh-` 前缀保留 DeepSeek Harness 来源谱系，但这些 skills 由 ClinMesh 维护，description 必须写明 ClinMesh 触发条件，正文不得保留 DSH 包、命令、双语、stack 或 CI 假设。同一职责只保留一个活动入口。
 
 ## 文档发布
 

@@ -26,9 +26,8 @@ Every behavior change needs the narrowest test or purpose-built check that can f
 - **Package behavior:** run the owning test file or focused package test and the owning typecheck when types changed.
 - **Shared contract or cross-package interface:** add affected consumer tests and run `pnpm check` when the root policy requires the complete cross-package evidence.
 - **Mobile:** run the owning mobile test plus `pnpm check:mobile`; Web or DOM tests do not substitute.
-- **Documentation, Agent Notes, or project skills:** run `pnpm verify:docs`, `pnpm verify:agent-notes` when applicable, and `pnpm docs:check` for published docs.
-- **Documentation projection or release path:** run `pnpm doc-sync` and the owning projection test.
-- **Build, exports, workspace configuration, or runtime entry:** run the relevant build or smoke path and expand to `pnpm check` when the change is repository-wide.
+- **Documentation, Agent Notes, project skills, or projection:** apply the complete verification matrix in [docs/AGENTS.md](../../../docs/AGENTS.md); use `pnpm doc-sync` as the umbrella command when that owner requires it.
+- **Build, exports, workspace configuration, release workflow, or runtime entry:** apply the check matrix in [docs/testing.md](../../../docs/testing.md#检查命令), including `pnpm check` and the separate `pnpm check:mobile` when the affected scope requires them, plus the relevant build or smoke path.
 - **User-visible Web/Desktop behavior:** require real-entry browser evidence and the PR GIF contract in addition to automated regression tests.
 
 Do not lower thresholds, use an empty-test success option, shrink source coverage to hide an affected file, or treat agent narration as evidence. Record every actual result and duration, and list checks not run with their reason.
