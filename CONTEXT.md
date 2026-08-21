@@ -28,6 +28,36 @@ _Avoid_: Server time, created time
 评测器知道、普通参与者必须通过合规观察才能发现的场景事实。
 _Avoid_: Secret, hidden field
 
+**Hospital Baseline**:
+Scenario 采用的虚构医院类型、所属地区和政策生效日期。它限定组织、目录、价格和地域规则，不能被解释为全国统一医院模型。
+_Avoid_: Generic Chinese hospital, live policy
+
+**Reference Data Package**:
+构建 Scenario 时使用的版本固定术语、目录和映射集合，并保留来源、地域、有效期和使用条件。它不是运行中的医院事实，也不是完整 Scenario。
+_Avoid_: Seed, live catalog, Scenario
+
+## 身份与参与
+
+**User Account**:
+可登录 ClinMesh 的人类认证身份。一个 User Account 可以加入多个 Workspace，但不等于医院工作人员、岗位或权限。
+_Avoid_: User, Practitioner, role
+
+**Actor**:
+在 Workspace 中发起受审计行为的认证主体，可以是 User Account 或 Agent client。Actor 与其代表的 Practitioner 分别记录。
+_Avoid_: User, Practitioner, role
+
+**Workspace Membership**:
+Actor 参与特定 Workspace 的资格及其可承担岗位范围。Membership 不表示 Actor 当前正以哪个岗位行动。
+_Avoid_: Tenant user, account role
+
+**Practitioner**:
+Scenario 中的一名医院工作人员。Practitioner 可以没有对应的 User Account，也不能自行表达其岗位、地点或系统权限。
+_Avoid_: User Account, login identity, role
+
+**Practitioner Role**:
+Practitioner 在特定组织、地点和职责下的一项岗位分配。同一 Practitioner 可以拥有多项 Practitioner Role。
+_Avoid_: Account role, permission
+
 ## 行动与结果
 
 **Command**:
