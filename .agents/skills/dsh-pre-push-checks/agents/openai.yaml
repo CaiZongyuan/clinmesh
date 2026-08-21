@@ -1,0 +1,4 @@
+interface:
+  display_name: "DSH ClinMesh Pre-Push Checks"
+  short_description: "Run relevant ClinMesh checks before push"
+  default_prompt: "Use $dsh-pre-push-checks before pushing this ClinMesh branch."

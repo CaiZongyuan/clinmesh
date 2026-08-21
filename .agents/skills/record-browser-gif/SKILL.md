@@ -1,61 +1,40 @@
 ---
 name: record-browser-gif
-description: Record browser or Web UI interaction demos as optimized GIFs using the available browser, state-based frame capture, and deterministic encoding; optionally publish the artifact to a pull request assets branch.
+description: Record a commit-pinned ClinMesh Web or Desktop workflow as an optimized GIF and publish it to a pull request assets branch. Use for every PR that changes product-user-visible Web/Desktop behavior; do not use browser evidence to claim native Mobile behavior.
 ---
 
-# Record Browser GIF
+# Record ClinMesh Browser GIF
 
-Produce a short, truthful UI demonstration as a local GIF, and — only when the task includes attaching it to a pull request — publish it through the assets-branch workflow at the end of this skill. Use the browser-control skill for interaction and the bundled encoder for repeatable timing, dimensions, and size.
+Produce a short, truthful demonstration from the exact pull-request commit. `agent-browser` owns interaction and state observation; this skill owns the evidence run, frames, deterministic encoding, artifact inspection, and authorized PR publication.
 
-One storyboard comes from one isolated run. Publication revalidates both the artifact and the demonstrated pull-request commit.
+Every user-visible Web/Desktop PR includes a GIF. The GIF supplements automated regression tests and does not prove resource semantics, Command invariants, or native Mobile behavior.
 
-## GUI evidence
+## Establish evidence
 
-Use a demonstration GIF when the user requests one or when a pull request needs compact visual evidence of a multi-state workflow.
+1. Require a clean worktree and record `git rev-parse HEAD`. The demonstrated commit must be the live PR head before and after publication.
+2. Start the real ClinMesh entry needed by the scenario from that tree. Use the repository commands for the affected surface, such as `pnpm dev:server`, `pnpm dev:web`, or `pnpm dev:desktop`; use a focused production build when the claim depends on built output.
+3. Use fresh ports, an isolated synthetic workspace and epoch, a known Scenario, and a fresh browser or Electron profile. Clear origin storage when a new profile is unavailable and report that exception.
+4. Exercise the normal server, adapter, and UI path. A synthetic hospital Scenario is valid product data; mock transports, test-only hooks, and injected DOM state are not valid unless the issue explicitly asks for fixture evidence.
+5. Record the commit SHA, app entry, origin, build or development mode, Scenario, and any runtime override next to the GIF.
 
-The recording itself is part of the evidence: use a real server booted from that pull request's branch tree, a real API key, and real model rounds. Never substitute fixture queries, mock transports, synthetic event injection, or test-only hooks unless the user explicitly asked for a fixture recording. Next to the embed, state the exact demonstrated commit SHA, the tree and origin that served it, any mode flags or browser-state exceptions, and whether a real model round ran, so reviewers know exactly what the recording proves.
+Never expose real patient information, insurance or payment credentials, platform credentials, unrelated tabs, or notifications. Do not read or print secret values.
 
-## Keep recording separate from publication
+## Capture one story
 
-- Recording produces frame images and one local `.gif` artifact only; it never mutates remote state.
-- Publication — pushing the GIF to an assets branch and embedding it in a pull request body — is the separate final step, performed only when the task includes attaching the GIF to a pull request. It never touches the pull request's own branch.
-- Preserve the requested recording conditions. A real-server or real-API demo must not use fixture queries, mock transports, synthetic event injection, or test-only hooks. If credentials or the server are unavailable, report that limitation instead of substituting a fixture.
-- Never read or expose credential values. Use the application's normal configuration path and a benign demonstration prompt.
+1. Use `agent-browser` to perform the accepted user journey and check console errors.
+2. Choose three to six states that prove one outcome: initial, entered, running when useful, settled, and detail or result.
+3. Use one viewport and crop. Wait for a semantic condition such as a unique label, enabled control, changed title, resource state, or audit result before each frame. A fixed delay is not proof of state.
+4. Require locators to resolve one intended element and use exact text where equality matters. User input echoed elsewhere must not satisfy completion.
+5. When the claim involves rejection, recovery, audit, or a Command, include the stable error or status and the downstream observable result.
+6. Capture every frame from the same server, workspace, epoch, client profile, and Scenario. If the run fails, discard all frames and restart from fresh state; never splice evidence runs.
+7. Write frames under `.playwright-mcp/gif-frames-<label>/` with lexical names such as `00-initial.png` and `01-settled.png`.
 
-## Stage the application
+## Encode
 
-A GIF for a specific pull request demonstrates that pull request's tree, so stage per pull request:
-
-1. Require a clean worktree, record its exact commit with `git rev-parse HEAD`, then build that recorded tree with `pnpm build`. A GIF recorded against another commit's build misattributes the evidence.
-2. Boot one server per port from that tree with a fresh synthetic workspace/epoch and isolated browser context. If the browser workflow cannot create one, clear that origin's cookies and site storage before navigation so persisted client state cannot affect the evidence. Source configuration through the application's normal path; never echo a key.
-3. Treat one storyboard as one evidence run: every published frame comes from that server and those state roots, workspace, session, and model-backed scenario run. If capture automation fails, discard its frames and rerun from fresh roots; never splice frames from separate runs.
-4. When switching between pull requests, stop the old server by PID or an exact match on its command line. A broad `pkill -f` pattern can match and kill the shell that launched it — including your own.
-
-## Record the flow
-
-1. Invoke the available browser-control skill and follow its setup, interaction, and cleanup instructions. Use the user's existing Chrome state only when requested or required; state that exception in the provenance and do not claim fresh client state. If browser control is unavailable, use the repository-declared Playwright dependency in an isolated headless browser; do not install another driver or launch the user's browser. State that fallback in the provenance.
-2. Before recording, identify the exact origin, whether the app is built or in development, the transport, and any fixture or mock mode. Record only claims that the observed setup supports.
-3. When a production default opens a native operating-system surface that headless automation cannot drive, select an official browser-operable production backend through the application's normal configuration. State the override in the provenance; a fixture, mock transport, or test-only hook is not an acceptable substitute.
-4. Choose three to six states that tell one story, such as typed, running, settled, and detail. Prefer semantic state changes over continuous capture; omit loading churn that does not help the viewer.
-5. Keep one viewport and crop for every frame, and name frames lexically: `00-initial.png`, `01-typed.png`, and so on.
-6. Store frames under the repository's gitignored `.playwright-mcp/` directory — browser-tool screenshots can only be written under the tool's allowed roots, and relative filenames resolve against the repository root. Create the frame subdirectory first (`mkdir -p .playwright-mcp/gif-frames-<label>`); writing into a missing directory fails with ENOENT at capture time.
-7. Before each screenshot, wait for a concrete UI condition such as a unique label, enabled control, changed document title, or completed response. Require the locator to resolve exactly one element; for Playwright accessible-name locators, use `exact: true` when equality is intended because descendant text or a prompt echo can otherwise create a false match. Do not use a fixed delay as proof that the application reached the state.
-8. Make completion predicates match an exact-text element — for example, an element whose trimmed text equals the expected reply — never a substring check such as `body.textContent.includes(...)`, which the echo of the user's own prompt also satisfies.
-9. When the claim involves a tool call, rejection, or recovery, include a detail or trajectory frame that shows the tool identity, status or stable error code, and the downstream result. A chat-only outcome does not prove why the tool path behaved that way.
-10. Capture a transient state (spinner, running row) by driving a slow foreground operation — for example, a `sleep 15` bash command — and polling a concrete DOM marker (a `data-*` attribute) inside one browser-script call that also takes the screenshot. State polled across separate tool calls is lost, because the turn settles between calls.
-11. Engineer the prompt so the state you need actually occurs: instruct the model to wait in the foreground when it would otherwise background a slow command, and give it a settle sentinel such as "reply with the single word done" to anchor the completion predicate.
-12. Capture no secrets, personal data, unrelated tabs, or transient notifications. Stop any unnecessarily long real-API run after the demonstrated state is visible.
-
-Use the browser's own screenshot API. When it returns image bytes, save those bytes directly; the encoder detects image content independently of the filename extension.
-
-## Encode the GIF
-
-Require `python3`, `ffmpeg`, and `ffprobe`. If either media binary is missing, report the dependency instead of installing software without authorization.
-
-Export `GIF_SKILL_DIR` as this skill's absolute directory on its own line before the python command — an inline `GIF_SKILL_DIR=... python3 "$GIF_SKILL_DIR/..."` assignment fails, because the argument expands before the assignment takes effect:
+Require `python3`, `ffmpeg`, and `ffprobe`. Report a missing dependency instead of installing it without authorization.
 
 ```sh
-export GIF_SKILL_DIR=/absolute/path/to/this/skill
+export GIF_SKILL_DIR=/absolute/path/to/.agents/skills/record-browser-gif
 python3 "$GIF_SKILL_DIR/scripts/encode_gif.py" \
   /absolute/path/to/frames \
   /absolute/path/to/demo.gif \
@@ -65,46 +44,23 @@ python3 "$GIF_SKILL_DIR/scripts/encode_gif.py" \
   --colors 128
 ```
 
-One duration applies to every frame; otherwise provide one comma-separated positive duration per frame, holding the final settled state longest. The encoder rejects fewer than two frames, mismatched dimensions or durations, invalid limits, accidental overwrite, unexpected duration, and output above `--max-bytes`.
-
-For a large artifact, reduce `--max-width` first, then `--colors` or `--fps`; retain readable text and the final state long enough to inspect. Use `--force` only after resolving the exact output path.
+Use one duration for every frame or one positive duration per frame, holding the final state longest. Reduce width before colors or frame rate when size is high, while keeping clinical text readable.
 
 ## Verify the artifact
 
-1. Read the encoder's JSON summary and confirm the output path, source and encoded frame counts, dimensions, duration, and byte size.
-2. Visually read the encoded GIF itself, not only the source frames. Confirm that the transition is legible, the last state is held long enough, and no sensitive content appears. If the viewer renders only the first frame, decode representative frames from the encoded GIF with `ffmpeg` and inspect those; the pre-encode screenshots do not prove the encoded order, palette, or final hold.
-3. Run `git status --short` and confirm frames and the artifact landed only under ignored paths.
-4. Return the absolute GIF path, render it when the client supports local media, and state whether the recording used a real API, fixture, or another transport. When the task does not include attaching the GIF to a pull request, stop here.
+1. Check the encoder JSON for source and encoded frame counts, dimensions, duration, and byte size.
+2. Inspect the encoded GIF itself. Confirm order, readable text, final hold, intended state, and absence of sensitive content. Decode representative frames with `ffmpeg` when the viewer shows only the first frame.
+3. Confirm frames and GIF remain under ignored `.playwright-mcp/` paths and do not enter the PR branch.
+4. Report the absolute artifact path and its evidence metadata before publication.
 
-## Publish to an assets branch
+## Publish to the PR
 
-Perform this step only when the task includes attaching the GIF to a pull request.
+Follow the external-write authorization in [Agent engineering development](../../../docs/agent-development.md#实施与交付). An approved `implement <issue>` workflow may publish to its draft PR; a standalone recording request requires explicit publication approval.
 
-Never commit a GIF to the pull request's own branch or any branch that merges into a long-lived branch: binary media committed there bloats the repository history for every future clone. GIFs live on a dedicated orphan assets branch — a branch with no parent commit and nothing but media — and one assets branch serves a whole pull request series (named `<series>-assets`; list existing ones with `git ls-remote --heads origin '*assets*'`).
+Use an append-only orphan assets branch named `<series>-assets`. Create a scratch clone with `mktemp -d`, check out or create the assets branch, copy only verified media, commit with the PR number, and push normally. Never add GIFs to a branch that merges into `main`; never rewrite or delete an assets branch.
 
-Before either workflow below pushes, verify that the assets branch contains media only and that the staged GIF's checksum matches the verified local artifact.
-
-For an existing assets branch, work in a shallow single-branch scratch clone so the publication cannot touch your working tree:
-
-```sh
-git clone --branch <assets-branch> --single-branch --depth 1 <repo-url> /tmp/assets-checkout
-cp /absolute/path/to/demo.gif /tmp/assets-checkout/<name>.gif
-cd /tmp/assets-checkout
-git add <name>.gif
-git commit -m "assets: <what it shows> gif (#<pr>)"
-git push origin <assets-branch>
-```
-
-For a new series, make a fresh shallow scratch clone (`git clone --depth 1 <repo-url> /tmp/assets-checkout`), create the orphan branch with `git switch --orphan <assets-branch>`, then add the GIF, commit, and push the same way.
-
-After pushing, use authenticated GitHub API or raw requests to confirm the remote path, byte size, checksum, `200` response, and `image/gif` content type. An anonymous `404` does not disprove a private-repository asset; authenticate the verification instead. This proves the repository-member review path, not public availability.
-
-Immediately before editing the pull-request body, re-read its live head and compare it with the commit recorded next to the GIF. Stop and re-record when it moved. After the edit, re-read the live head and require it to remain at that recorded commit. Separately, render the body through GitHub's Markdown API and confirm that the expected `<img>` is present.
-
-Embed the GIF in the pull request body with the raw blob URL; the `?raw=true` suffix is required, because the plain blob URL renders GitHub's file page instead of the image:
+Verify the remote object through authenticated GitHub access: path, byte size, checksum, `200` response, and `image/gif` content type. Immediately before editing the PR body, re-read its live head and require it to equal the demonstrated commit. Add the raw blob URL with useful alt text, the commit SHA, entry path, Scenario, and runtime mode. Re-read the head after editing and stop if it moved.
 
 ```markdown
-![<alt text>](https://github.com/<owner>/<repo>/blob/<assets-branch>/<name>.gif?raw=true)
+![<observable workflow>](https://github.com/<owner>/<repo>/blob/<assets-branch>/<name>.gif?raw=true)
 ```
-
-Never delete or rewrite an assets branch, and never force-push it: merged pull request bodies reference its URLs forever. Append new commits only.

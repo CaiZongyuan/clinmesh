@@ -13,16 +13,94 @@
 
 Agent 开始工作前读取目标文件路径上所有适用的 `AGENTS.md`，并从仓库代码和当前文档验证假设。`references/` 仅用于只读研究，不是实现来源。
 
-## 工作流程
+## 开发入口
 
-1. 确认直接目标、受影响模块和现有未提交修改。
-2. 阅读 owning interface、调用者、测试和文档，不从目录名推断行为。
-3. 对跨模块或长期任务建立 todo；并行的独立研究可以交给 background agent。
-4. 在编辑前说明将修改哪些事实和文件。
-5. 通过最小 interface 实现，保持业务状态机只有一个 owner。
-6. 先运行覆盖改动的最小检查，再根据影响范围扩大。
-7. 检查文档、Agent Note、生成投影和公开能力声明是否同步。
-8. 最终报告实际修改、实际运行的检查和未完成风险。
+新功能、可观察行为变化、跨包工作和非平凡 bug 必须有已批准的 GitHub issue。纯机械小修可以把当前对话作为任务合同。需要 issue 的任务在 GitHub 不可用时停在已批准草稿，不建立第二套本地 spec。
+
+仓库公开。任何 issue、评论、PR 或 GIF 在发布前都必须检查患者信息、医保或支付凭证、密钥和未公开方案；没有 owning workflow 已经授予该外部写入时，先展示完整待发布内容并取得用户明确批准。
+
+## Design gate
+
+Agent 编辑前确认直接目标、受影响模块、现有未提交修改和所有未决设计分支。事实从 owning interface、调用者、测试和当前文档验证，不要求用户提供可从仓库或工具查到的信息。
+
+- 新功能或行为变化存在未决分支时使用 `grilling`。
+- 公共 interface、跨包状态流、持久化、外部协议、多 ticket 或测试策略存在真实权衡时使用 `grill-with-docs`。
+- 已批准 issue 已经回答全部 frontier 问题时，design gate 直接通过。
+- 共享理解确认前不编辑正式文件。确认后再更新 `CONTEXT.md`、Agent Note、spec 或实现。
+
+`CONTEXT.md` 只接收医院仿真领域词汇。通用 skill 提出的 ADR 在 ClinMesh 中映射为 Agent Note；不创建平行的 `docs/adr/` 决策体系。
+
+## Spec 与 tickets
+
+使用 `to-spec` 把已确认对话形成 GitHub issue。发布前向用户展示完整 title、body、labels 和测试 seam；用户批准后才能执行 `gh` 写操作。Issue body 是任务活动期间的 canonical implementation contract，包含目的、范围、验收条件和测试决策。Agent Brief 或后续讨论只能提供上下文，不能成为第二份 spec owner。
+
+一个可评审纵向切片直接使用 spec issue 实施。只有存在多个独立纵向切片或需要跨 session 时才使用 `to-tickets`；拆分结构和依赖必须先由用户批准。拆票后父 issue 保留 `spec`，移除 `ready-for-agent`，只有依赖已经满足的叶子 ticket 才能进入实施队列。不得按 types、backend、frontend 等技术层制造不能独立验收的水平 tickets。
+
+GitHub 原生状态拥有执行队列：
+
+- `needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human` 和 `wontfix` 表示 Matt skills 使用的 triage 角色。
+- `spec` 标记 canonical spec；assignee 表示已领取，native issue dependency 表示阻塞，draft PR 表示评审中。
+- 需求变化必须再次取得用户批准，并用 revision comment 记录差异；不得静默改写实施合同。
+
+仓库映射见 [issue tracker](agents/issue-tracker.md)、[triage labels](agents/triage-labels.md) 和 [工程上下文](agents/domain.md)。
+
+## 实施与交付
+
+`implement <已批准 issue URL>` 授权 Agent 创建 `issue-<number>-<slug>` branch、本地 commits、正常 push、draft PR，并向该 PR 发布验收证据，不要求逐个 artifact 再次批准。发布前仍须检查完整内容和敏感信息。它不授权 merge、force-push、release、删除分支或将 draft 标记为 ready。
+
+每个 ticket 使用独立上下文，先读取 issue、相关 Agent Note、owner 文档和代码。复杂状态变化仍通过共享 Command owner 实现，不在 transport、UI 或 Agent tool 中复制状态机。
+
+### TDD 与测试证据
+
+使用 `tdd` 按批准 seam 完成 red-green-refactor。写测试前向用户说明目标行为、测试文件和层级、关键断言，以及为什么这是能够捕获目标回归的最窄测试。运行命令时报告开始和长任务进度；完成后报告实际命令、结果、耗时、修改的测试和未运行项。详细规则由[测试策略](testing.md)拥有。
+
+### Simplify、review 与 push
+
+1. 目标行为变绿后使用 `code-simplifier`，只整理当前 diff 并保持所有外部行为不变。
+2. 重跑被 simplification 影响的最小测试和检查；不要仅因即将 commit 或 push 重复仍有效的成功证据。
+3. 创建含 `Refs #<issue>` 的 checkpoint commit，再使用 `code-review` 对固定 base 到 `HEAD` 做 Standards/Spec 双轴审查。
+4. 修复 findings、追加 commit，并重新检查被修复影响的证据，直到没有未解决 blocker。
+5. 使用 `dsh-pre-push-checks` 覆盖完整 outgoing diff，正常 push 后核对 remote head，创建或更新 draft PR，再检查 CI。
+6. 用户可见 Web/Desktop 变化使用 `agent-browser` 走真实入口，并用 `record-browser-gif` 发布绑定精确 commit 的 GIF。Mobile 使用独立检查并报告真实设备或模拟器证据；浏览器 GIF 不能证明原生行为。
+
+Review 同时追踪 changed interface 的两侧、授权路径、状态 owner、真实产品入口、测试对目标回归的敏感性，以及文档和 Agent Note 是否匹配实现。Finding 必须包含位置、影响和证据。
+
+## 消息与提交规范
+
+Commit 的主题与正文，以及 GitHub issue、PR、评论和 review reply 等公开工程消息使用简体中文。命令、路径、代码标识、协议名、label 和 Conventional Commit 的 `type`、`scope` 保留原始技术写法。
+
+Commit 主题使用 `<type>(<scope>): <简体中文交付摘要>`；没有有效 scope 时省略括号。摘要陈述已经交付的结果，不写“更新内容”“修复问题”等无法独立判断范围的笼统文字。
+
+非平凡 commit 的正文按实际内容组织：
+
+```text
+背景：
+- 为什么需要这次变更
+
+变更：
+- 交付了哪些可观察行为或工程约束
+
+验证：
+- 实际命令、结果与耗时
+
+关联：
+- Refs #<issue>
+```
+
+非平凡 commit 的四个章节均不得省略，每节填写可核对的具体事实。没有运行检查时，验证节明确列出未运行项及原因。纯机械 commit 可以只写符合格式的主题；issue 和 PR 使用仓库模板表达目的、范围、验收、交付、验证和未运行项。
+
+## 追溯
+
+| Artifact | 约定 |
+| --- | --- |
+| Branch | `issue-<number>-<slug>` |
+| Commit | `Refs #<number>` |
+| Leaf PR | `Closes #<number>`；拆票时同时写 `Part of #<parent>` |
+| Agent Note | 使用完整 issue URL 引用任务背景 |
+| Test evidence | PR 表格记录命令、证明的行为、结果和耗时 |
+| GUI evidence | PR body 记录 commit SHA、运行入口和 GIF |
+
+合并叶子 PR 时由 `Closes` 关闭 ticket。父 spec 只有在所有叶子 tickets 关闭且整体验收完成后才关闭；merge 和关闭父 issue 都由人类授权。
 
 ## Agent Notes
 
@@ -38,14 +116,31 @@ Agent 开始工作前读取目标文件路径上所有适用的 `AGENTS.md`，�
 
 ## Skills
 
-保留 skill 的条件：
+根 `AGENTS.md` 在不可漏的开发节点直接路由 skills；普通意图匹配由各 skill 的 description 负责。常用路由如下：
+
+| 触发 | Skill |
+| --- | --- |
+| 未决设计分支 | `grilling` |
+| 大型设计及决策落盘 | `grill-with-docs` |
+| 已确认对话形成 spec | `to-spec` |
+| 多个纵向切片 | `to-tickets` |
+| Ticket 实施与 TDD | `implement`、`tdd` |
+| 当前 diff 行为保持型整理 | `code-simplifier` |
+| Standards/Spec 双轴审查 | `code-review` |
+| Outgoing diff 检查 | `dsh-pre-push-checks` |
+| React Web 性能 | `vercel-react-best-practices` |
+| Web/Desktop 真实入口与 GIF | `agent-browser`、`record-browser-gif` |
+| 文档结构、文句和投影 | `dsh-doc-standards`、`dsh-prose-standard`、`dsh-doc-site-sync` |
+| 周期性架构简化审计 | `dsh-find-simplifications` |
+
+ClinMesh 自有或改造 skill 的保留条件：
 
 - 至少会在多个任务中复用。
 - 输入、适用范围和停止条件明确。
-- 不硬编码外部项目名、包名、CI 作业或不存在的脚本。
+- 不执行外部项目的包规则、CI 作业或不存在的脚本。
 - 指向仓库当前 source of truth，而不是复制完整规则。
 
-项目自有 skills 使用通用名称，例如 `doc-site-sync`、`doc-standards`、`prose-standard` 和 `pre-push-checks`。第三方 skill 由 `skills-lock.json` 记录来源；本地项目 skill 不伪装成上游内容。
+Matt skills 由 `skills-lock.json` 记录并保持上游原样；上述项目 skill 条件不授权修改其内容。只有被根或子树规则路由的 Matt workflow 才成为 ClinMesh 开发流程的一部分，ClinMesh 规则在更高优先级的 `AGENTS.md` 和 owner 文档中适配其输入、审批和产物。`dsh-` 前缀保留 DeepSeek Harness 来源谱系，但这些 skills 由 ClinMesh 维护，description 必须写明 ClinMesh 触发条件，正文不得保留 DSH 包、命令、双语、stack 或 CI 假设。同一职责只保留一个活动入口。
 
 ## 文档发布
 
@@ -72,7 +167,7 @@ pnpm doc-sync
 - Server route/FHIR response：adapter test 与 schema parse。
 - Web/Desktop 共享视图：`packages/views` 测试；平台 wiring 留在 app。
 - Mobile：独立 typecheck 和移动端测试，不用 DOM 测试代替。
-- 用户可见 Web/Desktop 改动：真实应用入口的浏览器测试与截图/GIF。
+- 用户可见 Web/Desktop 改动：真实应用入口的浏览器测试与绑定 commit 的 GIF。
 - 文档和 manifest：`pnpm doc-sync`。
 
 Agent 不得声称未运行的检查通过，也不得用自身输出文本作为业务操作成功的唯一证据。

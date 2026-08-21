@@ -1,6 +1,6 @@
 # AGENTS.md — Documentation
 
-本文规定 `docs/` 的内容归属、写作方式和发布检查。Agent Note 使用独立规则，见 [`.agents/notes/README.md`](../.agents/notes/README.md)。
+本文规定 `docs/` 的内容归属、写作方式和发布检查。写作、移动或审计文档时使用 `dsh-doc-standards` 和 `dsh-prose-standard`；改变公开投影时同时使用 `dsh-doc-site-sync`；清理 authoring-session 视角时使用 `dsh-trim-cot-leakage`。Agent Note 使用独立规则，见 [`.agents/notes/README.md`](../.agents/notes/README.md)。
 
 ## Content tiers
 
@@ -12,6 +12,7 @@
 | `docs/demo-architecture.md` | Cloudflare Demo 部署决策 |
 | `docs/agent-development.md` | Agent 参与工程开发的操作规范 |
 | `docs/testing.md` | 测试层级、场景和检查要求 |
+| `docs/agents/` | 通用工程 skills 使用的仓库配置；不作为产品行为权威 |
 | `docs/research/` | 基于参考源码或外部标准的研究记录；不作为当前行为权威 |
 | `docs/postmortem/` | 已发生故障的时间线、根因和防复发措施 |
 

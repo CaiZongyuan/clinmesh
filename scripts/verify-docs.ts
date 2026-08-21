@@ -12,7 +12,8 @@ const files = globSync([
   'apps/**/AGENTS.md',
   'packages/**/AGENTS.md',
   '.agents/notes/**/*.md',
-  '.agents/skills/{doc-site-sync,doc-standards,pre-push-checks,prose-standard,record-browser-gif,trim-cot-leakage}/**/*.md',
+  '.agents/skills/{code-simplifier,record-browser-gif}/**/*.md',
+  '.agents/skills/dsh-*/**/*.md',
 ], {
   cwd: root,
   exclude: ['references/**', 'node_modules/**', '.agents/notes/archived/**'],

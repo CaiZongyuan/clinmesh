@@ -14,7 +14,7 @@ Web and Desktop share DOM UI and business views. Mobile shares wire schemas, typ
 
 Repository Markdown remains canonical. `apps/docs/docs.ts` explicitly selects public pages, `scripts/project-doc-site.ts` projects them into a disposable VitePress source tree, and GitHub Pages publishes the build from the default branch.
 
-Agent engineering keeps layered `AGENTS.md`, reusable skills, and lifecycle/class Agent Notes. Skills and instructions contain only ClinMesh or generic mechanisms; external product names, commands, package rules, and CI assumptions are removed.
+Agent engineering keeps layered `AGENTS.md`, reusable skills, and lifecycle/class Agent Notes. Skills and instructions contain only ClinMesh or generic mechanisms. DSH-derived adaptations retain their prefix as lineage under the [traceable development workflow](../process/2026-08-21-traceable-agent-development-workflow.md), while external project commands, package rules, and CI assumptions are removed.
 
 ## Alternatives considered
 
