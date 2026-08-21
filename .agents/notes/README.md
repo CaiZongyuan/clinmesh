@@ -25,7 +25,9 @@ Agent Note 记录影响代码库的提案或决策，保存代码和当前文档
 - Agent 工作流、文档发布或测试策略。
 - 有真实替代方案且未来维护者可能重新讨论的取舍。
 
-局部重命名、格式化、依赖锁更新或不改变行为的机械修改不需要 Note。一个决策只有一份 owner；新 Note 创建前搜索现有 active tree，完整取代时在新旧记录中交叉链接。
+局部重命名、格式化、依赖锁更新或不改变行为的机械修改不需要 Note。一个决策只有一份 owner；新 Note 创建前搜索相同决策、机制或 rejected alternative，完整取代时在新旧记录中交叉链接，部分取代时保留仍然有效的 owner 和双向说明。
+
+ClinMesh 没有 archived lifecycle。Implemented Note 在其独有 rationale、negative guarantee、durable semantics 或 reintroduction condition 仍能指导未来决策时保留；Rejected Note 只在仍能阻止合理且有诱惑力的误判时保留，否则修复入站链接后删除。
 
 ## 文件格式
 

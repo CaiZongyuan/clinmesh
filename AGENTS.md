@@ -1,6 +1,16 @@
 # AGENTS.md
 
-ClinMesh 是面向 Agent 的中国公立医院仿真 HIS。修改业务或接口前阅读 [系统架构](docs/architecture.md) 和 [领域词汇](CONTEXT.md)；文档规则见 [docs/AGENTS.md](docs/AGENTS.md)，包规则见 [packages/AGENTS.md](packages/AGENTS.md)。
+ClinMesh 是面向 Agent 的中国公立医院仿真 HIS。修改业务或接口前阅读 [系统架构](docs/architecture.md) 和 [领域词汇](CONTEXT.md)；开发流程见 [Agent 工程开发](docs/agent-development.md)，文档规则见 [docs/AGENTS.md](docs/AGENTS.md)，包规则见 [packages/AGENTS.md](packages/AGENTS.md)。
+
+## Development workflow
+
+1. **Clarify**：新功能、可观察行为变化、跨包工作和非平凡 bug 在编辑前检查 design frontier；存在未决设计问题时使用 `grilling`，涉及公共接口、跨包状态流、持久化、外部协议、多 ticket 或测试策略权衡时使用 `grill-with-docs`。已有批准 spec 且没有未决分支时可直接实施。
+2. **Record**：共享理解确认前不编辑正式文件。确认后使用 `to-spec` 形成 canonical GitHub issue；公开全文和拆票结构必须先经用户批准并完成敏感信息检查。只有多个独立纵向切片或需要跨 session 时才使用 `to-tickets`。
+3. **Implement**：对批准的 issue 使用 `implement` 和 `tdd`。写测试前说明目标行为、测试层级、关键断言和最窄测试范围；运行后报告实际命令、结果、耗时和未运行项。
+4. **Refine and review**：变绿后使用 `code-simplifier` 只整理当前 diff，再运行被影响的最小检查并创建引用 issue 的 checkpoint commit。随后使用 `code-review` 做 Standards/Spec 双轴审查，修复 findings，最后使用 `dsh-pre-push-checks` 覆盖 outgoing diff。
+5. **Demonstrate**：用户可见的 Web/Desktop PR 使用 `agent-browser` 验证真实入口，并用 `record-browser-gif` 发布绑定精确 commit 的 GIF；React Web 性能改动同时使用 `vercel-react-best-practices`。文档改动按 [docs/AGENTS.md](docs/AGENTS.md) 路由对应 skills。
+
+`implement <issue>` 授权创建 feature branch、本地 commit、正常 push、draft PR 和 PR 验收证据；merge、force-push、release、删除分支和将 draft 标记为 ready 仍需单独授权。Skill 定义工作流，仓库代码和当前文档拥有事实；发生冲突时遵循仓库规则，并把通用 ADR 产物映射为 Agent Note。
 
 ## Commands
 

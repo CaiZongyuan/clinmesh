@@ -1,0 +1,4 @@
+interface:
+  display_name: "DSH ClinMesh Doc Site Sync"
+  short_description: "Publish ClinMesh docs through the site manifest"
+  default_prompt: "Use $dsh-doc-site-sync to publish or update a ClinMesh documentation page."

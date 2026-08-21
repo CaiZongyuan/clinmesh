@@ -1,0 +1,4 @@
+interface:
+  display_name: "DSH ClinMesh Prose Standard"
+  short_description: "Preserve complete ClinMesh prose contracts"
+  default_prompt: "Use $dsh-prose-standard to review this ClinMesh prose scope for complete and concise contracts."

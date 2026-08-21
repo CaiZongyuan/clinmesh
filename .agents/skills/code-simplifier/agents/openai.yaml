@@ -1,0 +1,4 @@
+interface:
+  display_name: "ClinMesh Code Simplifier"
+  short_description: "Simplify the current diff without behavior changes"
+  default_prompt: "Use $code-simplifier to refine the current ClinMesh diff while preserving all behavior."
