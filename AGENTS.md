@@ -43,6 +43,7 @@ pnpm check
 - Agent tools 使用窄 schema、受信 context binding、幂等键、预期版本和完整审计；不提供任意 URL、SQL、Bundle 或任意 method/path/body 写工具。
 - 所有演示数据必须是合成数据。禁止提交真实患者信息、医保凭证、支付凭证或平台密钥。
 - 非平凡架构、流程、协议或测试策略变更必须新增或更新一份 [Agent Note](.agents/notes/README.md)。
+- Commit、issue 和 PR 的标题与正文使用简体中文，结构见 [消息与提交规范](docs/agent-development.md#消息与提交规范)。
 - 文档是当前状态，不记录评审过程或实现流水账；一个事实只有一个详细归属位置，其他位置链接它。
 - 不修改 `references/`；它是本地只读研究输入且不进入版本库或文档构建。
 - 文件以一个换行结束。禁止提交生成目录、构建产物或密钥。

@@ -14,6 +14,8 @@ An approved GitHub issue body owns the active implementation contract. Work that
 
 Implementation uses pre-agreed TDD seams, observable test evidence, behavior-preserving simplification, a checkpoint commit, Standards/Spec review, diff-driven pre-push checks, and a draft PR. User-visible Web/Desktop changes add real-entry browser validation and a commit-pinned GIF. An implementation request authorizes ordinary branch, commit, push, draft-PR, and evidence operations, but not merge, force-push, release, branch deletion, or ready-for-review transitions.
 
+Commit subjects and bodies, issue and pull-request content, comments, and review replies use Simplified Chinese while preserving technical identifiers. Non-trivial commits record the context, delivered change, actual verification evidence, and issue relationship in a structured body.
+
 Matt skills remain byte-for-byte upstream files and are routed by repository instructions. ClinMesh-maintained adaptations retain the `dsh-` prefix to identify their DeepSeek Harness lineage, but their descriptions and workflows target ClinMesh and contain no DeepSeek Harness package, CI, bilingual, archive, or stacked-PR assumptions. Repository instructions and owner documents override generic skill defaults, including mapping ADR output to Agent Notes.
 
 ## Alternatives considered
@@ -31,5 +33,7 @@ Matt skills remain byte-for-byte upstream files and are routed by repository ins
 Feature work has more explicit gates and external artifacts, but each gate has an observable completion criterion. Small mechanical edits remain lightweight. GitHub availability is required for work that needs a canonical issue.
 
 Tests and checks become reviewable evidence rather than an undifferentiated pass/fail claim. Agents report test design, actual commands, durations, failures, and omissions without exposing internal reasoning or streaming unbounded logs.
+
+Chinese, structured engineering messages make the purpose and evidence visible without opening the diff. Technical identifiers remain stable for tooling and search.
 
 The `dsh-` prefix denotes lineage rather than runtime compatibility. Adapted skills require maintenance when ClinMesh commands or document owners change; skills that cannot execute against the repository are removed instead of retained as speculative guidance.

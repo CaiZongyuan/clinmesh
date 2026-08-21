@@ -1,27 +1,27 @@
 ---
-name: Feature spec
-about: Define an approved, testable implementation contract
+name: 功能规格
+about: 定义经过批准且可验证的实施合同
 title: ""
 labels: "spec, needs-triage"
 assignees: ""
 ---
 
-## Purpose
+## 目的
 
-<!-- State the user or system outcome. -->
+<!-- 说明用户或系统要得到的结果。 -->
 
-## Scope
+## 范围
 
-<!-- Name included and excluded behavior. -->
+<!-- 明确包含和排除的行为。 -->
 
-## Acceptance criteria
+## 验收标准
 
 - [ ]
 
-## Testing decisions
+## 测试决策
 
-<!-- Name the behavior, test layer, and key assertion. -->
+<!-- 说明目标行为、测试层级和关键断言。 -->
 
-## Design decisions
+## 设计决策
 
-<!-- Link an Agent Note when the work contains a durable trade-off. -->
+<!-- 存在长期权衡时链接对应的 Agent Note。 -->

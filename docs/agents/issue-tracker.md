@@ -10,7 +10,7 @@ Issue body 在任务活动期间拥有目的、范围、验收条件和测试决
 
 ## Publication
 
-仓库公开。创建或修改 issue 前展示完整 title、body、labels 和拆票结构，检查患者信息、医保或支付凭证、平台密钥和未公开方案，并取得用户明确批准。显式调用 skill 不自动授权外部写入。
+Issue 的 title、body 和 comments 遵循[消息与提交规范](../agent-development.md#消息与提交规范)。仓库公开；创建或修改 issue 前展示完整 title、body、labels 和拆票结构，检查患者信息、医保或支付凭证、平台密钥和未公开方案，并取得用户明确批准。显式调用 skill 不自动授权外部写入。
 
 批准后使用 `gh issue create`、`gh issue view`、`gh issue edit`、`gh issue comment` 和 `gh issue close`。需求变化再次取得批准，并用 revision comment 记录差异。
 

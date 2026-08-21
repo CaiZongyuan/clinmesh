@@ -1,25 +1,25 @@
 Closes #
 
-<!-- For a child ticket, add: Part of #<parent>. -->
+<!-- 子 ticket 同时添加：Part of #<parent>。 -->
 
-## Summary
+## 交付摘要
 
-<!-- State the delivered behavior, not the editing process. -->
+<!-- 说明已经交付的行为，不记录编辑过程。 -->
 
-## Verification
+## 验证
 
-| Command | Behavior proved | Result | Duration |
+| 命令 | 证明的行为 | 结果 | 耗时 |
 | --- | --- | --- | --- |
 |  |  |  |  |
 
-## UI evidence
+## UI 证据
 
-<!-- For user-visible Web/Desktop changes, include the exact commit SHA, real entry path, and GIF. For other changes, write Not applicable. -->
+<!-- 用户可见的 Web/Desktop 变更填写精确 commit SHA、真实入口和 GIF；其他变更填写“不适用”。 -->
 
-## Documentation
+## 文档
 
-<!-- Link updated current-state docs and Agent Notes, or explain why none changed. -->
+<!-- 链接更新后的当前状态文档和 Agent Notes，或说明无需修改的原因。 -->
 
-## Not run
+## 未运行
 
-<!-- List omitted checks and why they were outside the diff. -->
+<!-- 列出未运行的检查及其不属于本次影响范围的原因。 -->
