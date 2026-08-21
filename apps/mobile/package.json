@@ -1,0 +1,28 @@
+{
+  "name": "@clinmesh/mobile",
+  "version": "0.0.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "dev": "expo start",
+    "ios": "expo run:ios",
+    "android": "expo run:android",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf .expo ios android coverage"
+  },
+  "dependencies": {
+    "@clinmesh/contracts": "workspace:*",
+    "@clinmesh/core": "workspace:*",
+    "expo": "57.0.15",
+    "expo-router": "57.0.15",
+    "expo-status-bar": "57.0.1",
+    "react": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "typescript": "~6.0.3"
+  }
+}

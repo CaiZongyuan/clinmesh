@@ -1,0 +1,12 @@
+{
+  "name": "@clinmesh/ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./styles.css": "./src/styles.css"
+  },
+  "scripts": {
+    "clean": "rm -rf dist"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "name": "clinmesh",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.17.0",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "dev:web": "turbo run dev --filter=@clinmesh/web",
+    "dev:server": "turbo run dev --filter=@clinmesh/server",
+    "dev:desktop": "turbo run dev --filter=@clinmesh/desktop",
+    "dev:mobile": "pnpm --filter @clinmesh/mobile dev",
+    "docs:dev": "pnpm --filter @clinmesh/docs dev",
+    "docs:build": "pnpm --filter @clinmesh/docs build",
+    "docs:preview": "pnpm --filter @clinmesh/docs preview",
+    "docs:check": "vitest run scripts/project-doc-site.spec.ts && pnpm docs:build",
+    "build": "turbo run build --filter=!@clinmesh/mobile",
+    "typecheck": "turbo run typecheck --filter=!@clinmesh/mobile",
+    "typecheck:mobile": "pnpm --filter @clinmesh/mobile typecheck",
+    "check:mobile": "pnpm typecheck:mobile && tsx scripts/verify-expo-versions.ts",
+    "lint": "oxlint apps packages scripts --deny-warnings",
+    "test": "turbo run test --filter=!@clinmesh/mobile",
+    "verify:docs": "tsx scripts/verify-docs.ts",
+    "verify:agent-notes": "tsx scripts/verify-agent-note-format.ts",
+    "verify:boundaries": "tsx scripts/verify-package-boundaries.ts",
+    "doc-sync": "pnpm verify:docs && pnpm verify:agent-notes && pnpm docs:check",
+    "check": "pnpm verify:boundaries && pnpm typecheck && pnpm lint && pnpm test && pnpm doc-sync && pnpm build",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "@types/mdast": "^4.0.4",
+    "@types/node": "^26.2.0",
+    "mdast-util-from-markdown": "^2.0.3",
+    "mdast-util-gfm": "^3.1.0",
+    "micromark-extension-gfm": "^3.0.0",
+    "oxlint": "1.79.0",
+    "tsx": "^4.22.4",
+    "turbo": "2.10.11",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}

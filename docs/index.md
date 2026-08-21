@@ -1,0 +1,32 @@
+---
+layout: home
+
+hero:
+  name: ClinMesh
+  text: Agent + 中国公立医院仿真 HIS
+  tagline: 以 FHIR R5、显式业务命令和可重复场景构建 Agent 医疗环境。
+  actions:
+    - theme: brand
+      text: 系统架构
+      link: /architecture/system
+    - theme: alt
+      text: Agent 工程开发
+      link: /engineering/agent-development
+
+features:
+  - title: 标准接口
+    details: FHIR R5 负责标准资源与互操作，复杂医院流程由受控 Command 执行。
+  - title: 可重复仿真
+    details: Workspace、epoch、虚拟时钟和合成数据让人类与 Agent 面对一致场景。
+  - title: 跨端工程
+    details: Web 与 Desktop 共享业务视图，Mobile 共享协议和纯领域语义并使用原生交互。
+---
+
+# 文档入口
+
+- [系统架构](architecture.md)：FHIR、HIS 领域、Agent tools、D1 与仿真设计。
+- [跨端前端架构](frontend-architecture.md)：Web、Desktop、Mobile 和共享包职责。
+- [Demo 部署](demo-architecture.md)：Cloudflare Workers、D1 与 R2 决策。
+- [Agent 工程开发](agent-development.md)：Agent 约束、决策记录和检查流程。
+- [测试策略](testing.md)：测试层级和验收入口。
+- [领域词汇](../CONTEXT.md)：项目统一语言。

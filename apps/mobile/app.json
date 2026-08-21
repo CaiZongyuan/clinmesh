@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "ClinMesh",
+    "slug": "clinmesh",
+    "scheme": "clinmesh",
+    "version": "0.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "org.clinmesh.mobile"
+    },
+    "android": {
+      "package": "org.clinmesh.mobile"
+    }
+  }
+}

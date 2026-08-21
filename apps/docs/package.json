@@ -1,0 +1,19 @@
+{
+  "name": "@clinmesh/docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev . --host 127.0.0.1 --port 5174",
+    "build": "vitepress build .",
+    "preview": "vitepress preview . --host 127.0.0.1 --port 4174",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf .generated .cache .dist"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite": "5.4.21",
+    "vitepress": "1.6.4"
+  }
+}
