@@ -1,229 +1,133 @@
-# 在线演示 Demo 架构选择
+# Web Demo 运行与部署架构
 
 - 状态：已接受
-- 日期：2026-08-19
-- 适用范围：技术验证、产品演示、小规模在线试用
+- 日期：2026-08-23
+- 适用范围：本地开发、局域网演示、单实例产品验证
+- 系统设计：[中国公立医院仿真 HIS 详细架构](architecture.md)
 
 ## 1. 目标
 
-本项目用于快速验证产品交互、业务流程和技术集成，并以尽可能低的运维成本提供在线演示环境。
+首期用最少运行组件验证真实、多岗位、可重置的门诊业务闭环。运行环境只承载合成数据，不提供生产医疗服务、公开在线可用性承诺或多实例扩缩容。
 
-架构必须满足以下目标：
+当前已交付 Node.js Web 运行时基线：同一个 Hono 服务提供 Web 静态资源、SPA fallback、健康检查和 FHIR R5 metadata。SQLite 持久化、迁移、备份、Scenario reset 和业务 Command 属于后续阶段，不能作为当前能力声明。
 
-- 前后端均可在 Cloudflare Workers Free 上运行。
-- 使用单一 TypeScript 技术栈，降低开发和联调成本。
-- 前后端共享数据契约，并在运行时校验外部输入。
-- 支持关系型数据、数据库迁移和可重复的演示数据初始化。
-- 保持迁移路径，未来可替换数据库或拆分后端，而不重写前端业务层。
+架构必须满足：
 
-本阶段不追求大规模并发、复杂后台任务、强监管生产环境或真实敏感数据存储。
+- React Web 与 Hono API 使用单一 TypeScript 技术栈和共享 wire contracts。
+- 服务端在单个 Node.js 进程中运行，并使用持久化 SQLite 文件。
+- 支持显式数据库迁移、确定性 Scenario 安装、Workspace/Epoch reset、备份和恢复。
+- 业务模块通过 Repository 和领域端口访问持久化能力，不把数据库表类型暴露给 HTTP、FHIR 或 Web。
+- 保留未来新增 D1 或 PostgreSQL adapter 的边界，但首期只实现和验证 SQLite。
 
-## 2. 架构决策
-
-采用 React SPA 与 Hono API 组成的全栈 TypeScript 应用，通过一个 Cloudflare Worker 统一部署。
+## 2. 运行拓扑
 
 ```text
 Browser
   |
-  +-- Static Assets -- React + TanStack Router + shadcn/ui
+  +-- static assets -- React + TanStack Router + shadcn/ui
   |
-  +-- /api/* -------- Hono Worker
-                         |
-                         +-- Zod validation
-                         +-- Application services
-                         +-- Drizzle ORM
-                               |
-                               +-- Cloudflare D1
-                         |
-                         +-- Cloudflare R2 (optional files)
+  +-- /api/* --------+
+  +-- /fhir/R5/* ----+--> Hono on Node.js
+                                |
+                                +-- Application services
+                                +-- Domain commands
+                                +-- Repository adapters
+                                           |
+                                           v
+                                  file-backed SQLite
 ```
 
-静态资源由 Workers Static Assets 直接缓存和分发。只有 `/api/*` 请求进入 Hono Worker。前端路由使用 SPA fallback，不使用服务端渲染。
+开发时 Vite 可以独立提供 SPA 并代理 API。可部署构建由同一个 Node.js 服务提供静态资源、SPA fallback 和 API，从而保持同源 cookie、CSRF 和授权边界。
 
-## 3. 技术选型
+## 3. 技术选择
 
-| 领域 | 选择 | 职责 |
+| 领域 | 选择 | 首期职责 |
 | --- | --- | --- |
-| 语言 | TypeScript | 前端、API 和共享契约统一语言 |
-| 前端构建 | React + Vite | SPA 构建和本地开发 |
-| 路由 | TanStack Router | 类型安全路由、搜索参数校验、懒加载 |
-| UI | shadcn/ui + Tailwind CSS | 可维护的本地组件和样式系统 |
-| 服务端状态 | TanStack Query | 请求、缓存、失效、重试和加载状态 |
-| 客户端状态 | Zustand | 会话内 UI 状态和跨组件工作台状态 |
-| 数据校验 | Zod | 表单、路由参数、环境变量和 API 契约校验 |
-| API | Hono | Cloudflare Workers HTTP API |
-| ORM | Drizzle ORM | 类型安全 SQL 和 D1 数据访问 |
-| 数据库 | Cloudflare D1 | Demo 的关系型持久化存储 |
-| 文件存储 | Cloudflare R2 | 可选的图片、附件和导出文件存储 |
-| 部署 | Wrangler + Workers Static Assets | 构建、迁移、绑定和发布 |
+| 前端 | React + Vite | Web 工作台与静态构建 |
+| 路由 | TanStack Router | 类型安全的 Web 路由和搜索参数 |
+| 服务端状态 | TanStack Query | 查询、缓存、失效、轮询和 mutation 协调 |
+| 客户端视图状态 | Zustand | 面板、筛选器、焦点和确认框 |
+| API | Hono on Node.js | HTTP、FHIR 和静态资源 adapter |
+| 数据校验 | Zod | 网络、配置、Scenario 和持久化边界验证 |
+| SQL | Drizzle ORM | SQLite schema、迁移和参数化查询 |
+| 数据库 | SQLite | FHIR store、领域事实、身份、仿真、审计和 outbox |
+| 部署 | 单 Node.js 进程 | 本地、局域网或带持久卷的单实例容器 |
 
-依赖版本由 lockfile 固定。升级依赖应单独提交，并通过类型检查、测试和预览环境验证。
+具体 SQLite driver 属于实现选择，不进入跨层 contract。Domain、Command 和应用服务不能依赖 driver API。
 
-## 4. 状态管理边界
+## 4. 单实例约束
 
-TanStack Query 是所有服务端数据的唯一客户端缓存，包括列表、详情、字典和当前用户信息。
+首期只支持一个服务端进程写入一个本地文件系统上的 SQLite 数据库。数据库文件不能放在缺少 SQLite 锁语义保证的共享网络文件系统上，也不能由多个容器副本同时打开。
 
-Zustand 仅保存不属于服务端事实的状态，例如：
+SQLite 连接必须启用外键、WAL 和有界 `busy_timeout`。写入使用短 `BEGIN IMMEDIATE` 事务；外部调用、长计算和浏览器等待不能占用数据库事务。
 
-- 当前工作台布局和临时筛选条件。
-- 尚未提交的多步骤操作上下文。
-- 弹窗、侧栏和本地交互模式。
+达到以下任一条件时必须重新选择部署或持久化方案：
 
-不得把同一份接口数据同时写入 TanStack Query 和 Zustand。组件内状态优先使用 React 本地状态，只有确实跨页面或跨组件共享时才进入 Zustand。
+- 需要公开在线服务或明确可用性承诺。
+- 需要多个服务实例、滚动发布期间并行写入或跨节点故障转移。
+- 持续写竞争使有界重试仍无法满足交互延迟。
+- 需要数据库托管、在线扩容、复杂分析或独立运维团队。
 
-## 5. API 与数据契约
+## 5. SQLite 数据规则
 
-所有业务 API 使用 `/api` 前缀，按资源和用例组织路由。API 输入必须先经过 Zod 校验，禁止直接信任请求体、查询参数和路径参数。
+- 所有 schema 变化通过有序迁移文件完成；可部署服务启动时不根据 TypeScript schema 隐式修改数据库。
+- 开发和测试可以从空库应用全部迁移，正式实例必须先执行显式迁移和备份步骤。
+- 金额和定点数量使用整数，时间使用可排序的 UTC 表示，JSON 只保存需要保留原结构的受验证对象。
+- 每个业务表、唯一键、外键和索引显式包含适用的 `workspace_id + epoch`；审计保留域不随 reset 删除。
+- 所有列表查询分页，常用授权、关联、过滤和排序路径建立组合索引。
+- 签署临床文书保存为受验证的结构化 FHIR JSON；首期不保存图片、PDF 或其他附件。
 
-建议的响应结构：
+## 6. 原子写入与恢复
 
-```ts
-type ApiSuccess<T> = {
-  data: T;
-  requestId: string;
-};
+CommandExecutor 在一个 SQLite 事务中提交幂等 receipt、FHIR current/history/search、领域事实、Audit Event、Action Trace 和适用的 outbox 记录。任何前置条件、expected version、授权或约束失败都必须使整个事务回滚。
 
-type ApiError = {
-  error: {
-    code: string;
-    message: string;
-    details?: unknown;
-  };
-  requestId: string;
-};
-```
+最小 outbox 由同一 Node.js 进程中的 dispatcher 消费。claim、完成和失败状态持久化，进程重启后可以继续处理；重复投递由事件 ID、correlation ID 和消费者幂等约束吸收。LIS 与支付模拟器不得把请求内存状态当成恢复依据。
 
-共享 Schema 放在 `src/shared`。前端通过 Schema 推导输入输出类型，服务端使用同一 Schema 做运行时校验。数据库表类型不得直接作为公开 API 类型，API DTO 与持久化模型保持隔离。
+## 7. 迁移、备份与重置
 
-## 6. 数据库策略
+运维入口分别处理三类动作：
 
-D1 作为 SQLite 数据库使用，Drizzle 负责表定义和查询。数据库变更必须通过迁移文件发布，禁止在 Worker 启动时自动修改表结构。
+- **Migration**：备份当前文件，应用待执行迁移，验证 schema version 和完整性。
+- **Backup/restore**：创建一致性备份，恢复到新路径后执行完整性检查，再由操作者切换实例。
+- **Scenario reset**：通过受控 Command 构建并激活新 Epoch，不删除数据库文件，也不删除审计保留域。
 
-基本规则：
+容器部署必须把数据库路径挂载到显式持久卷。临时容器文件系统只允许用于测试数据库，不得承载需要保留的演示状态。
 
-- 主键使用稳定的字符串 ID 或整数 ID，创建策略全项目统一。
-- 所有列表查询必须分页。
-- 常用筛选、关联和排序字段必须建立索引。
-- 写操作尽量短小，并使用 D1 batch 或事务能力保持一致性。
-- 大对象和文件不写入 D1，改存 R2，D1 只保存元数据和对象键。
-- 提供可重复执行的演示数据 seed，并支持一键重置 Demo 数据。
+## 8. 数据库迁移边界
 
-Demo 与预览环境使用不同的 D1 数据库。生产演示数据库不得被本地开发命令直接访问。
+首期只有 SQLite Repository adapter。公开 contracts、Command、领域状态机、FHIR capability registry 和 Web Query 层不能依赖 SQLite 表类型、SQL 方言或 driver 错误。
 
-## 7. 推荐目录结构
+未来选择 D1、PostgreSQL 或 Supabase 时，需要新增真实 adapter、迁移工具和双端 Repository contract tests。该边界不承诺迁移零成本，也不要求首期维护未使用的 SQL 方言。
 
-```text
-.
-├── public/                 # 原样发布的静态资源
-├── src/
-│   ├── app/                # React SPA
-│   │   ├── components/
-│   │   ├── features/       # 按业务能力组织页面、查询和组件
-│   │   ├── routes/         # TanStack Router 文件路由
-│   │   ├── stores/         # 少量 Zustand store
-│   │   └── main.tsx
-│   ├── worker/             # Hono API
-│   │   ├── routes/
-│   │   ├── services/       # 用例编排，不依赖 Hono Request
-│   │   ├── repositories/   # Drizzle 数据访问
-│   │   ├── middleware/
-│   │   └── index.ts
-│   └── shared/             # Zod Schema、DTO 和纯函数
-├── drizzle/                # SQL 迁移文件
-├── scripts/                # seed、重置和发布辅助脚本
-├── vite.config.ts
-├── drizzle.config.ts
-└── wrangler.jsonc
-```
+## 9. 安全与数据
 
-前端按业务能力组织，而不是建立全局 `api`、`components`、`utils` 大目录。Worker 的 service 层不得依赖具体 HTTP 对象，以便后续测试和迁移运行时。
+- 只允许虚构、合成和明确标记的医院数据。
+- 浏览器与 API 同源；cookie session 写操作执行 CSRF 防护。
+- 数据库路径、session secret 和其他凭据来自服务端配置，不进入前端 bundle 或日志。
+- 日志不记录密码、token、完整临床草稿或未过滤的请求体。
+- 备份与容器卷仍按敏感演示数据处理，不因数据是合成的而公开下载。
 
-## 8. 部署模型
+## 10. 首期不包含
 
-一个 Worker 同时承载静态资源和 API：
+- Cloudflare Worker、D1、R2、Queues、Cron Trigger 或 Durable Objects。
+- PostgreSQL、Supabase、远程 SQLite 服务或多数据库 adapter。
+- 多实例、高可用、公开注册、公开在线 SLA 和自动水平扩容。
+- Desktop、React Native Mobile、附件对象存储和离线写入。
+- AG-UI、Agent runtime、Evaluation Spec 和评分基础设施。
 
-- `/api/*`：优先进入 Hono。
-- 真实静态文件：由 Workers Static Assets 直接返回。
-- 其他浏览器路径：返回 `index.html`，交给 TanStack Router。
+## 11. 验收标准
 
-至少维护两个 Cloudflare 环境：
+- Node.js 服务能够提供 Web SPA、API 和 FHIR 路径，并在重启后读取同一持久卷中的状态。
+- 空数据库可以按顺序应用全部迁移并安装确定性 Scenario。
+- SQLite 事务测试覆盖约束失败回滚、幂等竞争、expected-version 冲突、outbox 恢复和 Epoch reset。
+- 至少两个 Workspace/Epoch 的授权查询、FHIR history/search、total 和业务写入互不泄漏。
+- 备份恢复后的 schema version、canonical state hash、资源历史和审计记录一致。
+- 容器删除并重建后，挂载同一持久卷可恢复服务；没有持久卷时启动必须明确创建新的演示实例。
 
-| 环境 | 用途 | 数据资源 |
-| --- | --- | --- |
-| preview | Pull Request 和验收 | 独立 D1，可随时重置 |
-| demo | 稳定在线演示 | 独立 D1，受控执行迁移 |
+## 12. Alternatives considered
 
-发布顺序固定为：构建检查、生成并审查迁移、应用远端迁移、部署 Worker、执行冒烟测试。密钥只通过 Wrangler Secret 或 Cloudflare Dashboard 管理，不写入仓库和前端构建变量。
+**Cloudflare Worker + D1。** 该方案适合低运维公开 Demo，但 D1 的 batch 模型会提前引入与首期本地单实例目标无关的事务限制。需要公开托管时再以真实 adapter 和迁移验证重新评估。
 
-## 9. 免费版容量边界
+**立即使用 PostgreSQL 或 Supabase。** 它们更适合多实例与托管运维，但会在业务闭环尚未成立时增加远程服务、连接和环境管理。SQLite 足以验证首期负载与状态机。
 
-设计按以下 Workers Free 关键限制约束：
-
-- Worker 请求 100,000 次/天。
-- 每次请求 CPU 时间 10 ms。
-- 每个 isolate 内存 128 MB。
-- Worker 压缩后代码 3 MB。
-- 每次 Worker 调用最多 50 个 D1 查询。
-- D1 单库 500 MB，读取 5,000,000 行/天，写入 100,000 行/天。
-
-静态资源请求不应进入 Worker。接口不得在内存中处理大型文件、生成复杂报表或扫描无索引的大表。达到任一额度时，免费版可能直接拒绝后续请求，因此 Demo 必须展示友好的不可用状态，而不能假设服务始终可用。
-
-## 10. 安全与数据规则
-
-- 只允许使用虚构、合成或不可逆脱敏的演示数据。
-- 不保存真实身份、诊疗、支付凭证或其他敏感个人信息。
-- 前后端同源部署，默认不开放跨域访问。
-- 所有写接口进行鉴权、输入校验和基础限流。
-- 日志不得记录密码、令牌、完整请求体或敏感字段。
-- 对外错误只返回稳定错误码和安全信息，详细异常保留在服务端日志。
-
-## 11. 明确不选择的方案
-
-### Rust Worker
-
-当前不选择 Rust。Rust 可以通过 `workers-rs` 部署到 Workers，但会拆断 Hono、Zod、Drizzle 与前端之间的 TypeScript 类型链，并增加 Wasm 构建、D1 访问和调试成本。只有出现明确的计算密集任务或团队形成稳定 Rust 能力后，才评估将独立模块改为 Rust/Wasm。
-
-### 服务端渲染
-
-当前不使用 SSR。在线 Demo 不依赖搜索引擎收录，SPA 能让绝大多数页面请求直接命中静态资源，并减少 Worker CPU 和请求额度消耗。
-
-### 微服务
-
-当前不拆分多个服务。单 Worker 足以覆盖 Demo，分布式调用、独立部署和跨服务一致性只会增加验证成本。未来只有在出现独立扩缩容、权限隔离或不同运行时需求时才拆分。
-
-### D1 之外的远程数据库
-
-当前不引入远程 PostgreSQL/MySQL。外部数据库会增加连接、网络延迟和运维成本。数据规模、并发或 SQL 能力超出 D1 后，再通过 repository 边界迁移数据库。
-
-## 12. 验收标准
-
-架构验证完成需满足：
-
-- 本地开发运行在 Cloudflare Workers 兼容运行时中。
-- SPA 刷新任意前端路由不会返回 404。
-- API 输入错误能返回统一的结构化错误。
-- D1 迁移可在空数据库上完整执行。
-- seed 可重复创建一致的演示数据。
-- preview 和 demo 使用不同数据库绑定。
-- 静态资源请求不触发 Worker API 逻辑。
-- 类型检查、单元测试、构建和部署 dry-run 全部通过。
-- 部署后完成登录、核心列表、核心写入和数据重载冒烟测试。
-
-## 13. 重新评估触发条件
-
-出现以下任一情况时重新评估本决策：
-
-- 接近 Workers 或 D1 免费额度的 70%。
-- D1 单库接近 350 MB。
-- API 经常超过 10 ms CPU 时间。
-- 需要长任务、复杂报表、实时协作或大量文件处理。
-- 需要存储真实敏感数据或满足正式合规要求。
-- Demo 转为具备可用性承诺的生产服务。
-
-## 14. 参考资料
-
-- [Cloudflare Workers Limits](https://developers.cloudflare.com/workers/platform/limits/)
-- [Cloudflare D1 Limits](https://developers.cloudflare.com/d1/platform/limits/)
-- [Cloudflare D1 Pricing](https://developers.cloudflare.com/d1/platform/pricing/)
-- [Cloudflare Static Assets](https://developers.cloudflare.com/workers/static-assets/)
-- [Cloudflare Hono Guide](https://developers.cloudflare.com/workers/framework-guides/web-apps/more-web-frameworks/hono/)
+**浏览器内 SQLite。** 它减少服务端组件，却无法建立多账户共享状态、受信 Actor context、服务端 Hidden Fact 隔离和权威审计，因此不符合仿真 HIS 边界。

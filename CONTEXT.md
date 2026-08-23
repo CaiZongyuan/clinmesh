@@ -13,20 +13,28 @@ Workspace 内一次不可复用的数据世代。重置产生新 Epoch，旧 Epo
 _Avoid_: Reset version, generation number
 
 **Scenario**:
-版本固定的初始事实、时间、外部行为规则、允许动作和评测规则集合。
+版本固定的初始事实、Hidden Fact、时间、外部行为规则和允许动作集合。修订产生新版本，已经开始的 Scenario Run 继续绑定原版本。
 _Avoid_: Seed, fixture, demo data
 
 **Scenario Run**:
-某个参与者或 Agent 在一个 Scenario Epoch 中产生的有序行动和结果。
+一个 Scenario 在某个 Workspace/Epoch 中的一次执行，由一个或多个 Actor 产生有序行动和结果。
 _Avoid_: Session, chat, test
+
+**Action Trace**:
+Scenario Run 中按顺序保存的观察动作、Command 尝试、结果和 Effect 引用。它用于回放和过程分析，不等同于 Audit Event、Provenance 或应用日志。
+_Avoid_: Audit Event, Provenance, application log, chain-of-thought
 
 **Virtual Time**:
 Scenario 中业务事件发生所依据的医院时间。它与系统接收请求和执行安全控制所用的真实时间不同。
 _Avoid_: Server time, created time
 
 **Hidden Fact**:
-评测器知道、普通参与者必须通过合规观察才能发现的场景事实。
+Scenario 预先定义、普通参与者必须通过合规观察才能发现的事实。
 _Avoid_: Secret, hidden field
+
+**Reveal Policy**:
+Scenario 中规定哪些合规观察会把 Hidden Fact 转化为参与者可见业务证据的规则。
+_Avoid_: Scoring rule, direct hidden access
 
 **Hospital Baseline**:
 Scenario 采用的虚构医院类型、所属地区和政策生效日期。它限定组织、目录、价格和地域规则，不能被解释为全国统一医院模型。
@@ -43,7 +51,7 @@ _Avoid_: Seed, live catalog, Scenario
 _Avoid_: User, Practitioner, role
 
 **Actor**:
-在 Workspace 中发起受审计行为的认证主体，可以是 User Account 或 Agent client。Actor 与其代表的 Practitioner 分别记录。
+在 Workspace 中发起受审计行为的认证主体，可以是 User Account、系统客户端或 Agent client。Actor 与其代表的 Practitioner 分别记录。
 _Avoid_: User, Practitioner, role
 
 **Workspace Membership**:

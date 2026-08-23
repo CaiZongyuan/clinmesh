@@ -5,6 +5,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="ClinMesh 中国公立医院仿真 HIS" />
     <title>ClinMesh</title>
+    <script>
+      (() => {
+        const preferenceKey = 'clinmesh.preferences:v1'
+        const root = document.documentElement
+        root.dataset.clinmeshApp = 'web'
+        let locale = 'zh-CN'
+        let theme = 'system'
+
+        try {
+          const stored = localStorage.getItem(preferenceKey)
+          const preferences = stored === null ? null : JSON.parse(stored)
+
+          if (preferences?.locale === 'zh-CN' || preferences?.locale === 'en-US') {
+            locale = preferences.locale
+          }
+          if (preferences?.theme === 'system' || preferences?.theme === 'light' || preferences?.theme === 'dark') {
+            theme = preferences.theme
+          }
+        } catch {
+          // Browser storage is optional; defaults remain deterministic.
+        }
+
+        const resolvedTheme = theme === 'system'
+          ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+          : theme
+        root.lang = locale
+        root.classList.toggle('dark', resolvedTheme === 'dark')
+        root.dataset.theme = resolvedTheme
+        root.style.colorScheme = resolvedTheme
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

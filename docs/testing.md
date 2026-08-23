@@ -17,13 +17,13 @@
 
 ### Adapter
 
-HTTP、FHIR、D1、R2、Electron IPC、浏览器存储和移动安全存储属于 adapter。测试通过公开 interface 驱动真实 adapter，mock 只停在网络、时钟或平台进程等昂贵/非确定输入。
+HTTP、FHIR、SQLite、文件持久卷、Electron IPC、浏览器存储和移动安全存储属于 adapter。测试通过公开 interface 驱动真实 adapter，mock 只停在网络、时钟或平台进程等昂贵/非确定输入。
 
-Server route 测试必须解析响应 schema。D1 正确性 Spike 在真实 preview 数据库验证 batch rollback、条件写、复合 FK、幂等竞争、approval 单次消费、outbox lease 和 epoch reset。
+Server route 测试必须解析响应 schema。SQLite 正确性 Spike 使用真实临时数据库文件验证事务回滚、外键、WAL 写竞争、幂等竞争、expected-version 条件写、outbox 重启恢复、备份还原和 Epoch reset。
 
 ### Application composition
 
-共享业务视图在 `packages/views` 测试；Web/Desktop 路由和平台 wiring 在对应 app 测试。一个产品行为只有一个完整矩阵归属，其他层保留 wiring、可访问性和真实入口验证，不重复纯函数矩阵。
+共享业务视图在 `packages/views` 测试；Web 路由和平台 wiring 在 `apps/web` 测试。Desktop 或 Mobile 进入实际开发后在对应 app 增加平台证据。一个产品行为只有一个完整矩阵归属，其他层保留 wiring、可访问性和真实入口验证，不重复纯函数矩阵。
 
 Mobile 只共享产品语义，不共享 DOM 测试。移动测试覆盖 Expo Router wiring、AppState/NetInfo、SecureStore、QueryClient 和原生交互。
 
@@ -31,7 +31,7 @@ Mobile 只共享产品语义，不共享 DOM 测试。移动测试覆盖 Expo Ro
 
 E2E 从真实入口执行，并从外部观察结果：重新读取资源、数据库投影、页面或审计事件，不以 Agent 自己声称成功作为断言。
 
-核心 golden scenarios 见[系统架构](architecture.md#144-场景测试)。每个场景固定 app build、schema、IG、scenario、policy 和 tool schema 版本。
+核心 golden scenario 见[系统架构](architecture.md#144-场景测试)。每次运行固定 app build、schema、IG、Scenario 和 policy 版本；未来 Agent tool schema 进入范围后再固定其版本。
 
 ## 测试设计
 
@@ -75,7 +75,7 @@ pnpm --filter @clinmesh/server typecheck
 pnpm docs:check
 ```
 
-跨包 interface、workspace 配置、构建、文档投影或发布 workflow 变化运行 `pnpm check`，并单独运行 `pnpm check:mobile`。
+跨包 interface、workspace 配置、构建、文档投影或发布 workflow 变化运行 `pnpm check`。只有 Mobile 文件、共享给 Mobile 的 contract/core 入口或 Expo 配置变化时才运行 `pnpm check:mobile`。
 
 ## 测试数据
 
@@ -87,7 +87,7 @@ pnpm docs:check
 
 ## 用户界面验证
 
-共享视图修改同时在 Web 和 Desktop 真实 renderer 验证。布局需要覆盖长中文文本、窄宽度、缩放和空/错误/加载状态。用户可见的 Web/Desktop PR 使用 `agent-browser` 走真实应用入口，并由 `record-browser-gif` 生成绑定精确 commit 的验收 GIF；GIF 不替代自动回归测试。
+首期用户界面修改在 Web 真实入口验证。布局需要覆盖长中文文本、窄宽度、缩放和空/错误/加载状态。用户可见的 Web PR 使用 `agent-browser` 走真实应用入口，并由 `record-browser-gif` 生成绑定精确 commit 的验收 GIF；GIF 不替代自动回归测试。Desktop 进入实际开发后再增加真实 renderer 证据。
 
 录制只使用合成医院场景和隔离的 workspace、epoch 与客户端状态。画面不得包含真实患者信息、医保或支付凭证、平台密钥、无关浏览器标签或通知。
 

@@ -9,24 +9,24 @@ ClinMesh 是面向 Agent 评测、产品验证和医疗信息系统研究的中�
 ClinMesh 使用 pnpm workspace 和 Turborepo 组织 TypeScript monorepo：
 
 ```text
-Browser / Desktop / Mobile / Agent
-                 |
-                 v
-         apps/server (Hono)
-      HTTP / FHIR R5 / MCP / Tools
-                 |
-         Cloudflare Workers
-          D1 / R2 / Outbox
+Browser
+   |
+   +-- Web static assets
+   +-- /api/*
+   +-- /fhir/R5/*
+            |
+            v
+    apps/server (Hono on Node.js)
 ```
 
-后端应用命名为 `server`，表示它承担 ClinMesh 的服务端职责；Cloudflare Worker 是当前部署运行时，不是业务模块名称。Web 静态资源和 API 最终由同一个 Cloudflare Worker 部署。
+当前工程具备 Node.js Web 运行时基线。同一个 Hono 服务提供 Web 静态资源、SPA fallback、健康检查和只声明 metadata 能力的 FHIR R5 CapabilityStatement。file-backed SQLite、认证和门诊业务闭环按[系统架构阶段](docs/architecture.md#15-分期实施)继续交付，不属于当前能力。
 
 ## 仓库结构
 
 ```text
 apps/
   web/          Vite + React Web 工作台
-  server/       Hono 后端，当前部署到 Cloudflare Workers
+  server/       Node.js Hono 后端、FHIR/HTTP adapter 和 Web 静态资源入口
   desktop/      Electron main、preload 和共享 React renderer
   mobile/       Expo / React Native 移动端
   docs/         VitePress 文档站配置和公开页面清单
@@ -34,19 +34,18 @@ packages/
   contracts/    Zod schema、DTO 和 FHIR 辅助类型
   core/         无平台依赖的领域纯函数和客户端规则
   ui/           Web/Desktop 视觉 primitives 和设计 token
-  views/        Web/Desktop 共享业务视图
+  views/        当前 Desktop 工程壳与未来共享业务视图边界
 docs/           架构、测试、Agent 工程规范和研究记录
 scripts/        文档投影、依赖边界和质量检查
 .agents/        Agent skills 与 Agent Notes
 ```
 
-Web 与 Desktop 共享 `contracts + core + ui + views`。Mobile 只复用 `contracts` 和 `core` 中的协议、类型、schema 与纯函数，独立管理 React Native UI、导航、安全存储、QueryClient 和发布周期。
+`packages/ui` 是 Web 与 Desktop 当前共同依赖的视觉层；`packages/views` 当前只承载 Desktop 工程壳。Web 工作台保留在 `apps/web`，只有出现第二个实际消费者后才提取共享业务视图。Mobile 只可复用 `contracts` 和 `core` 中的协议、类型、schema 与纯函数，独立管理 React Native UI、导航、安全存储、QueryClient 和发布周期。
 
 ## 环境要求
 
 - Node.js `^22.19.0` 或 `>=24.0.0`
 - pnpm `11.17.0`
-- Cloudflare 账号仅在远端部署时需要
 - Xcode/Android Studio 仅在运行对应移动原生目标时需要
 
 ## 安装
@@ -55,7 +54,7 @@ Web 与 Desktop 共享 `contracts + core + ui + views`。Mobile 只复用 `contr
 pnpm install
 ```
 
-依赖版本由 `pnpm-lock.yaml` 固定。pnpm build scripts 采用 allowlist，只允许当前需要的 Electron、esbuild 和 workerd 安装步骤。
+依赖版本由 `pnpm-lock.yaml` 固定。pnpm build scripts 采用 allowlist，只允许仓库明确登记的安装步骤。
 
 ## 本地开发
 
@@ -118,13 +117,13 @@ pnpm verify:boundaries
 pnpm --filter @clinmesh/server test
 ```
 
-`pnpm check` 包含 Worker dry-run，验证 Server 构建能够读取 Web 静态资源并生成单 Worker 部署产物。
+`pnpm check` 同时构建 Web 与 Server，验证 Node.js Server 生产 bundle 可以读取 Web 静态资源。
 
 ## 文档与决策
 
 - [系统架构](docs/architecture.md)
 - [跨端前端架构](docs/frontend-architecture.md)
-- [在线 Demo 部署决策](docs/demo-architecture.md)
+- [Web Demo 运行与部署架构](docs/demo-architecture.md)
 - [Agent 工程开发](docs/agent-development.md)
 - [测试策略](docs/testing.md)
 - [领域词汇](CONTEXT.md)
@@ -138,15 +137,16 @@ pnpm --filter @clinmesh/server test
 
 ## 部署
 
-Server 的 Cloudflare 配置位于 `apps/server/wrangler.jsonc`。生产构建：
+生产构建与启动：
 
 ```sh
 pnpm build
+pnpm --filter @clinmesh/server start
 ```
 
-构建顺序由 workspace 依赖和 Turborepo 决定：先生成 Web assets，再执行 Server 的 Wrangler dry-run，同时构建 Desktop 和文档站。
+构建顺序由 workspace 依赖和 Turborepo 决定：先生成 Web assets，再生成 Server 的 Node.js bundle，同时构建 Desktop 和文档站。Server 默认监听 `127.0.0.1:8787`，并从 `apps/web/dist` 提供 Web；`CLINMESH_HOST`、`CLINMESH_PORT` 和 `CLINMESH_WEB_ROOT` 可覆盖这些运行配置。
 
-远端部署前需要补充 D1、R2 和环境级 Wrangler bindings。迁移、seed 和场景导入不得在 Worker 启动时隐式执行。
+当前只支持本地、局域网或单实例产品验证，不承诺多实例、高可用或持久化业务状态。SQLite migration、Scenario 安装和持久卷入口在后续阶段交付，且不得在服务启动时隐式执行。
 
 ## 数据与安全约束
 

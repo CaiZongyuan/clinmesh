@@ -2,6 +2,8 @@
 
 本文是 Web、Desktop 和 Mobile 的代码归属与共享规则参考。系统业务和接口设计见[系统架构](architecture.md)。
 
+首个可验收发布只开发 Web。Desktop 和 Mobile 保留现有包边界与工程壳，不承担门诊闭环、语义 parity 或发布验收；后续进入实际开发时再按本页共享规则接入。
+
 ## 目标拓扑
 
 ```text
@@ -21,11 +23,11 @@ Web 和 Desktop 都运行 DOM/React UI，因此共享视觉 primitives、业务�
 
 ### Web
 
-`apps/web` 是 Vite React SPA。它负责浏览器启动、Web 路由、cookie/CSRF、浏览器文件选择和 Web analytics。开发时将 `/api`、`/fhir` 和 `/mcp` 代理到 Worker。
+`apps/web` 是 Vite React SPA。它负责浏览器启动、Web 路由、cookie/CSRF 和 Web analytics。开发时将 `/api` 和 `/fhir` 代理到 Node.js 服务。
 
 ### Server
 
-`apps/server` 是 Hono 后端应用，当前部署到 Cloudflare Workers。它负责 HTTP/FHIR/MCP adapter、鉴权、Command 调用、D1/R2 bindings 和 Web 静态资源 fallback。`server` 描述产品职责，Cloudflare Worker 只是当前运行时；部署产物仍是一个 Worker，不是前后端微服务拆分。
+`apps/server` 的首期目标是运行于 Node.js 的 Hono 后端应用。它负责 HTTP/FHIR adapter、鉴权、Command 调用、SQLite adapter 和可部署构建中的 Web 静态资源 fallback。浏览器与服务端保持同源；具体运行和持久化约束由[Web Demo 运行与部署架构](demo-architecture.md)拥有。
 
 ### Desktop
 
@@ -85,17 +87,17 @@ interface NavigationAdapter {
 
 - TanStack Query 是服务端状态唯一客户端缓存。
 - Zustand 只保存筛选、工作台布局、未提交草稿、弹窗和临时选择。
-- 当前 Patient/Encounter context 由路由或服务端 task context binding 驱动，store 只能镜像平台 plumbing 所需的稳定标识。
-- WebSocket/Subscription 更新 Query cache，不把服务端 payload 镜像进 Zustand。
+- 当前 Patient/Encounter context 由路由或服务端 Actor context binding 驱动，store 只能镜像平台 plumbing 所需的稳定标识。
+- 首期在 Command 成功后精确失效 Query，并通过聚焦刷新和短间隔轮询同步岗位状态；未来的推送仍只更新 Query cache，不把服务端 payload 镜像进 Zustand。
 - 会导航、支付、发药、退费或确认的流程等待服务端成功后再清理本地状态。
 
 ## 构建和发布
 
 | 目标 | 构建入口 | 发布节奏 |
 | --- | --- | --- |
-| Web + Server | `pnpm build` | Cloudflare Worker 部署 |
-| Desktop | `pnpm dev:desktop` / package build | 独立安装包版本 |
-| Mobile | `pnpm dev:mobile` / Expo build | 独立移动版本与 OTA 策略 |
+| Web + Server | `pnpm build` | 单实例 Node.js 构建与持久卷部署 |
+| Desktop | `pnpm dev:desktop` / package build | 首期不交付；启用后使用独立安装包版本 |
+| Mobile | `pnpm dev:mobile` / Expo build | 首期不开发；启用后使用独立移动版本与 OTA 策略 |
 | Docs | `pnpm docs:build` | GitHub Pages workflow |
 
 Root `build/typecheck/test` 默认排除 Mobile；CI 使用单独的 `typecheck:mobile`，避免 Expo/React Native 版本约束污染 Web/Desktop 构建图。

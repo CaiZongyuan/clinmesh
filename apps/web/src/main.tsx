@@ -1,30 +1,13 @@
 import '@clinmesh/ui/styles.css'
-import { AppShell } from '@clinmesh/views/app-shell'
-import { lazy, StrictMode, Suspense } from 'react'
+import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-
-const HisFlowPrototype = lazy(() => import('./prototype/his-flow/his-flow-prototype'))
-const HisAssistantPrototype = lazy(() => import('./prototype/his-assistant/his-assistant-prototype'))
+import { WebApp } from './app/web-app.tsx'
 
 const root = document.getElementById('root')
 if (root === null) throw new Error('ClinMesh web root element is missing.')
 
-const content = window.location.pathname === '/prototype/his-flow'
-  ? (
-      <Suspense fallback={<div className="flex min-h-svh items-center justify-center text-sm text-muted-foreground">正在加载门诊原型…</div>}>
-        <HisFlowPrototype />
-      </Suspense>
-    )
-  : window.location.pathname === '/prototype/his-assistant'
-    ? (
-        <Suspense fallback={<div className="flex min-h-svh items-center justify-center text-sm text-muted-foreground">正在加载助手融合原型…</div>}>
-          <HisAssistantPrototype />
-        </Suspense>
-      )
-    : <AppShell platform="web" />
-
 createRoot(root).render(
   <StrictMode>
-    {content}
+    <WebApp />
   </StrictMode>,
 )
