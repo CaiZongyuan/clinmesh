@@ -19,7 +19,7 @@ Browser
     apps/server (Hono on Node.js)
 ```
 
-当前工程已经完成首期 Phase 0 的 Node.js Web 运行时基线。同一个 Hono 服务提供 Web 静态资源、SPA fallback、健康检查和只声明 metadata 能力的 FHIR R5 CapabilityStatement。file-backed SQLite、认证和门诊业务闭环按[系统架构阶段](docs/architecture.md#15-分期实施)继续交付，不属于当前能力。
+当前工程具备 Node.js Web 运行时基线。同一个 Hono 服务提供 Web 静态资源、SPA fallback、健康检查和只声明 metadata 能力的 FHIR R5 CapabilityStatement。file-backed SQLite、认证和门诊业务闭环按[系统架构阶段](docs/architecture.md#15-分期实施)继续交付，不属于当前能力。
 
 ## 仓库结构
 
@@ -34,13 +34,13 @@ packages/
   contracts/    Zod schema、DTO 和 FHIR 辅助类型
   core/         无平台依赖的领域纯函数和客户端规则
   ui/           Web/Desktop 视觉 primitives 和设计 token
-  views/        Web/Desktop 共享业务视图
+  views/        当前 Desktop 工程壳与未来共享业务视图边界
 docs/           架构、测试、Agent 工程规范和研究记录
 scripts/        文档投影、依赖边界和质量检查
 .agents/        Agent skills 与 Agent Notes
 ```
 
-Web 与 Desktop 共享 `contracts + core + ui + views`。Mobile 只复用 `contracts` 和 `core` 中的协议、类型、schema 与纯函数，独立管理 React Native UI、导航、安全存储、QueryClient 和发布周期。
+`packages/ui` 是 Web 与 Desktop 当前共同依赖的视觉层；`packages/views` 当前只承载 Desktop 工程壳。Web 工作台保留在 `apps/web`，只有出现第二个实际消费者后才提取共享业务视图。Mobile 只可复用 `contracts` 和 `core` 中的协议、类型、schema 与纯函数，独立管理 React Native UI、导航、安全存储、QueryClient 和发布周期。
 
 ## 环境要求
 

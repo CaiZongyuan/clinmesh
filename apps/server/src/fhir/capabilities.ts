@@ -2,7 +2,6 @@ import type { CapabilityStatement } from '@clinmesh/contracts/fhir'
 
 const capabilityRegistry = {
   fhirVersion: '5.0.0',
-  resources: [],
 } as const
 
 export function createCapabilityStatement(): CapabilityStatement {
@@ -28,7 +27,6 @@ export function createCapabilityStatement(): CapabilityStatement {
     format: ['application/fhir+json'],
     rest: [{
       mode: 'server',
-      resource: [...capabilityRegistry.resources],
     }],
   }
 }

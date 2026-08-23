@@ -1,6 +1,6 @@
 # 中国公立医院仿真 HIS 详细架构设计
 
-- 状态：首期方案已确认，Phase 0 已交付
+- 状态：首期方案已确认，Phase 0 进行中
 - 日期：2026-08-23
 - 适用范围：Web 产品演示、技术验证、后续 Agent 环境
 - 首期运行决策：[Web Demo 运行与部署架构](./demo-architecture.md)
@@ -1547,7 +1547,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 │   ├── contracts/           # Zod schema、DTO、FHIR 辅助类型
 │   ├── core/                # 无平台领域函数和客户端规则
 │   ├── ui/                  # DOM primitives 与 token
-│   └── views/               # 首期 Web 业务视图；保留未来 Desktop 复用边界
+│   └── views/               # 当前 Desktop 工程壳；保留未来共享业务视图边界
 ├── docs/                    # canonical Markdown
 ├── fhir/                    # IG、FSH 与生成包
 ├── scenarios/               # 版本化仿真场景
@@ -1626,17 +1626,22 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 
 ### Phase 0：架构基线
 
-状态：已交付。
+状态：进行中。当前已具备的 Node.js Web 运行时能力以[Web Demo 运行与部署架构](demo-architecture.md)为准。
 
-交付：
+已交付：
 
 - 将 `apps/server` 的目标运行时从 Cloudflare Worker 改为 Node.js Hono，建立开发代理与可部署静态资源 fallback。
-- 固定 Web-only 首期构建图；Desktop 与 Mobile 保留工程壳但不进入业务实现、发布和验收。
-- 建立 `contracts -> core -> ui/views`、Server application/domain/infrastructure 的依赖边界，以及 Query/Command/Repository interfaces。
-- 建立配置 schema、统一错误 envelope、request/trace ID、日志脱敏、健康检查和 `/fhir/R5/metadata` 的 capability registry 骨架。
-- 建立 SQLite migration、Scenario install/reset、备份/恢复和容器持久卷的命令入口，但不宣称尚未验证的能力。
+- 建立 Web 岗位导航、双语 locale catalog 与 `system/light/dark` 主题偏好；Desktop 与 Mobile 工程壳保持不变。
+- 建立运行配置 schema、健康检查和只声明 metadata 能力的 `/fhir/R5/metadata`。
+- 扩展 `contracts` 与 `core` 的依赖边界检查，拒绝 Hono、React、SQLite driver 和环境变量。
 
-退出条件：Web 与 Node.js Server 可在本地同时启动；生产构建由 Node.js 服务提供 SPA fallback、健康检查和只声明已实现能力的 FHIR metadata；依赖边界检查拒绝 Domain/Command 导入 Hono、React、SQLite driver 或环境变量。
+尚未交付：
+
+- Server application/domain/infrastructure 分层及 Query、Command 和 Repository interfaces。
+- 统一错误 envelope、request/trace ID 和日志脱敏。
+- SQLite migration、Scenario install/reset、备份/恢复和容器持久卷入口。
+
+退出条件：除已交付能力外，Server 分层、统一错误与追踪边界以及 SQLite 运维入口均具备公开可观察的自动化验证。
 
 ### Phase 1：SQLite 正确性 Spike
 

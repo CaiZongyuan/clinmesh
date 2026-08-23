@@ -8,13 +8,15 @@ describe('FHIR metadata endpoint', () => {
 
     expect(response.status).toBe(200)
     expect(response.headers.get('content-type')).toContain('application/fhir+json')
-    expect(capabilityStatementSchema.parse(await response.json())).toMatchObject({
+    const statement = capabilityStatementSchema.parse(await response.json())
+
+    expect(statement).toMatchObject({
       resourceType: 'CapabilityStatement',
       status: 'active',
       kind: 'instance',
       fhirVersion: '5.0.0',
       format: ['application/fhir+json'],
-      rest: [{ mode: 'server', resource: [] }],
     })
+    expect(statement.rest).toEqual([{ mode: 'server' }])
   })
 })

@@ -1,4 +1,4 @@
-import type { WorkspaceLocale } from '@clinmesh/views/workspace-i18n'
+import type { WorkspaceLocale } from './workspace-i18n.ts'
 
 export type ThemePreference = 'system' | 'light' | 'dark'
 

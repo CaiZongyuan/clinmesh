@@ -31,7 +31,7 @@ export const capabilityStatementSchema = z.object({
     mode: z.literal('server'),
     resource: z.array(z.object({
       type: z.string().regex(/^[A-Z][A-Za-z]+$/),
-    })),
+    })).min(1).optional(),
   })).min(1),
 })
 

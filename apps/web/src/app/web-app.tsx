@@ -1,45 +1,19 @@
 import {
   WorkspaceShell,
-  type WorkspaceNavigationLinkProps,
   type WorkspaceSection,
-} from '@clinmesh/views/workspace-shell'
+  workspaceRoutes,
+} from './workspace-shell.tsx'
 import {
   createRootRoute,
   createRoute,
   createRouter,
-  Link,
   Outlet,
   RouterProvider,
 } from '@tanstack/react-router'
-import { forwardRef, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { readWebPreferences, writeWebPreferences } from './preferences.ts'
 
 const DARK_MODE_QUERY = '(prefers-color-scheme: dark)'
-
-const workspaceRouteDefinitions = [
-  { section: 'overview', path: '/' },
-  { section: 'registration', path: '/registration' },
-  { section: 'triage', path: '/triage' },
-  { section: 'consultation', path: '/consultation' },
-  { section: 'billing', path: '/billing' },
-  { section: 'pharmacy', path: '/pharmacy' },
-] as const satisfies ReadonlyArray<{ section: WorkspaceSection; path: string }>
-
-const workspacePaths = new Map<WorkspaceSection, string>(
-  workspaceRouteDefinitions.map(({ path, section }) => [section, path]),
-)
-
-function getWorkspacePath(section: WorkspaceSection): string {
-  const path = workspacePaths.get(section)
-  if (path === undefined) throw new Error(`No Web route is registered for workspace section: ${section}`)
-  return path
-}
-
-const WorkspaceRouterLink = forwardRef<HTMLAnchorElement, WorkspaceNavigationLinkProps>(
-  function WorkspaceRouterLink({ section, ...props }, ref) {
-    return <Link {...props} ref={ref} to={getWorkspacePath(section)} />
-  },
-)
 
 function WorkspacePage({ activeSection }: { activeSection: WorkspaceSection }): React.JSX.Element {
   const [preferences, setPreferences] = useState(readWebPreferences)
@@ -74,7 +48,6 @@ function WorkspacePage({ activeSection }: { activeSection: WorkspaceSection }): 
 
   return (
     <WorkspaceShell
-      NavigationLink={WorkspaceRouterLink}
       activeSection={activeSection}
       locale={preferences.locale}
       onLocaleChange={locale => setPreferences(current => ({ ...current, locale }))}
@@ -89,13 +62,13 @@ const rootRoute = createRootRoute({
   notFoundComponent: () => <WorkspacePage activeSection="overview" />,
 })
 
-const workspaceRoutes = workspaceRouteDefinitions.map(({ path, section }) => createRoute({
-  component: () => <WorkspacePage activeSection={section} />,
+const routes = workspaceRoutes.map(({ key, path }) => createRoute({
+  component: () => <WorkspacePage activeSection={key} />,
   getParentRoute: () => rootRoute,
   path,
 }))
 
-const routeTree = rootRoute.addChildren(workspaceRoutes)
+const routeTree = rootRoute.addChildren(routes)
 
 export function createWebRouter(): ReturnType<typeof createRouter<typeof routeTree>> {
   return createRouter({ routeTree })

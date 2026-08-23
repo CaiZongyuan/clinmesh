@@ -15,9 +15,9 @@ interface Rule {
 
 const rules: Rule[] = [
   {
-    scope: 'packages/{domain,contracts,core}/**/*.{ts,tsx}',
+    scope: '{apps/server/src/domain,packages/contracts,packages/core}/**/*.{ts,tsx}',
     forbidden: new RegExp(`(?:${platformRuntimeImport.source}|${environmentAccess.source})`),
-    message: 'domain, contracts, and core must not depend on Hono, React, SQLite drivers, or environment variables',
+    message: 'server domain, contracts, and core must not depend on Hono, React, SQLite drivers, or environment variables',
   },
   {
     scope: 'packages/contracts/**/*.{ts,tsx}',

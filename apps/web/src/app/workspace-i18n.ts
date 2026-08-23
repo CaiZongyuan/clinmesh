@@ -72,11 +72,11 @@ const enUS = {
   themeDark: 'Dark',
 } satisfies WorkspaceMessages
 
-const catalogs: Record<WorkspaceLocale, WorkspaceMessages> = {
+const workspaceCatalogs: Record<WorkspaceLocale, WorkspaceMessages> = {
   'zh-CN': zhCN,
   'en-US': enUS,
 }
 
 export function getWorkspaceMessages(locale: WorkspaceLocale): WorkspaceMessages {
-  return catalogs[locale]
+  return workspaceCatalogs[locale]
 }

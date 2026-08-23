@@ -40,6 +40,7 @@ import {
 } from '@clinmesh/ui/components/sidebar'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { TooltipProvider } from '@clinmesh/ui/components/tooltip'
+import { Link } from '@tanstack/react-router'
 import {
   BellIcon,
   ClipboardPlusIcon,
@@ -57,40 +58,31 @@ import {
 import { useState } from 'react'
 import { getWorkspaceMessages, type WorkspaceLocale, type WorkspaceMessageKey } from './workspace-i18n.ts'
 
-export interface WorkspaceShellProps {
+export type WorkspaceTheme = 'system' | 'light' | 'dark'
+
+export const workspaceRoutes = [
+  { key: 'overview', path: '/', icon: LayoutDashboardIcon },
+  { key: 'registration', path: '/registration', icon: ClipboardPlusIcon },
+  { key: 'triage', path: '/triage', icon: HeartPulseIcon },
+  { key: 'consultation', path: '/consultation', icon: StethoscopeIcon },
+  { key: 'billing', path: '/billing', icon: ReceiptTextIcon },
+  { key: 'pharmacy', path: '/pharmacy', icon: PillIcon },
+] as const
+
+export type WorkspaceSection = (typeof workspaceRoutes)[number]['key']
+
+interface WorkspaceShellProps {
   activeSection: WorkspaceSection
   locale: WorkspaceLocale
-  NavigationLink: React.ComponentType<WorkspaceNavigationLinkProps>
   onLocaleChange: (locale: WorkspaceLocale) => void
   onThemeChange: (theme: WorkspaceTheme) => void
   theme: WorkspaceTheme
-}
-
-export type WorkspaceTheme = 'system' | 'light' | 'dark'
-export type WorkspaceSection = 'overview' | 'registration' | 'triage' | 'consultation' | 'billing' | 'pharmacy'
-
-export interface WorkspaceNavigationLinkProps {
-  children?: React.ReactNode
-  className?: string
-  section: WorkspaceSection
 }
 
 type PreferenceControlProps = Pick<
   WorkspaceShellProps,
   'locale' | 'onLocaleChange' | 'onThemeChange' | 'theme'
 > & { messages: ReturnType<typeof getWorkspaceMessages> }
-
-const roleNavigation = [
-  { key: 'overview', icon: LayoutDashboardIcon },
-  { key: 'registration', icon: ClipboardPlusIcon },
-  { key: 'triage', icon: HeartPulseIcon },
-  { key: 'consultation', icon: StethoscopeIcon },
-  { key: 'billing', icon: ReceiptTextIcon },
-  { key: 'pharmacy', icon: PillIcon },
-] satisfies Array<{
-  key: WorkspaceSection
-  icon: typeof LayoutDashboardIcon
-}>
 
 const themeOptions = [
   { value: 'system', label: 'themeSystem', icon: MonitorIcon },
@@ -263,16 +255,14 @@ function NotificationsMenu({ messages }: { messages: ReturnType<typeof getWorksp
 }
 
 function WorkspaceEntries({
-  NavigationLink,
   messages,
   query,
 }: {
-  NavigationLink: React.ComponentType<WorkspaceNavigationLinkProps>
   messages: ReturnType<typeof getWorkspaceMessages>
   query: string
 }): React.JSX.Element {
   const normalizedQuery = query.trim().toLocaleLowerCase()
-  const entries = roleNavigation.filter(item => (
+  const entries = workspaceRoutes.filter(item => (
     messages[item.key].toLocaleLowerCase().includes(normalizedQuery)
   ))
 
@@ -290,15 +280,15 @@ function WorkspaceEntries({
   return (
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
       {entries.map(item => (
-        <NavigationLink
+        <Link
           className={buttonVariants({ className: 'h-12 justify-start', variant: 'outline' })}
           key={item.key}
-          section={item.key}
+          to={item.path}
         >
           <item.icon data-icon="inline-start" />
           <span className="min-w-0 flex-1 truncate text-left">{messages[item.key]}</span>
           <span className="text-xs text-muted-foreground">{messages.openWorkspace}</span>
-        </NavigationLink>
+        </Link>
       ))}
     </div>
   )
@@ -307,7 +297,6 @@ function WorkspaceEntries({
 export function WorkspaceShell({
   activeSection,
   locale,
-  NavigationLink,
   onLocaleChange,
   onThemeChange,
   theme,
@@ -338,12 +327,12 @@ export function WorkspaceShell({
               <SidebarGroupContent>
                 <nav aria-label={messages.navigationLabel}>
                   <SidebarMenu>
-                    {roleNavigation.map(item => (
+                    {workspaceRoutes.map(item => (
                       <SidebarMenuItem key={item.key}>
                         <SidebarMenuButton
                           aria-current={item.key === activeSection ? 'page' : undefined}
                           isActive={item.key === activeSection}
-                          render={<NavigationLink section={item.key} />}
+                          render={<Link to={item.path} />}
                           tooltip={messages[item.key]}
                         >
                           <item.icon aria-hidden="true" />
@@ -401,7 +390,7 @@ export function WorkspaceShell({
               <h2 className="text-sm font-semibold" id="workspace-entries-heading">
                 {messages.workspaceEntries}
               </h2>
-              <WorkspaceEntries NavigationLink={NavigationLink} messages={messages} query={query} />
+              <WorkspaceEntries messages={messages} query={query} />
             </section>
           </div>
         </SidebarInset>

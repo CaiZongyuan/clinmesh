@@ -4,9 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./app-shell": "./src/app-shell.tsx",
-    "./workspace-i18n": "./src/workspace-i18n.ts",
-    "./workspace-shell": "./src/workspace-shell.tsx"
+    "./app-shell": "./src/app-shell.tsx"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -14,9 +12,7 @@
     "clean": "rm -rf dist coverage"
   },
   "dependencies": {
-    "@clinmesh/core": "workspace:*",
-    "@clinmesh/ui": "workspace:*",
-    "lucide-react": "catalog:"
+    "@clinmesh/core": "workspace:*"
   },
   "peerDependencies": {
     "react": "catalog:"

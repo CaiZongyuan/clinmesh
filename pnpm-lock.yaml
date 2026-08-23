@@ -266,9 +266,6 @@ importers:
       '@clinmesh/ui':
         specifier: workspace:*
         version: link:../../packages/ui
-      '@clinmesh/views':
-        specifier: workspace:*
-        version: link:../../packages/views
       '@tanstack/react-router':
         specifier: 'catalog:'
         version: 1.170.32(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -390,12 +387,6 @@ importers:
       '@clinmesh/core':
         specifier: workspace:*
         version: link:../core
-      '@clinmesh/ui':
-        specifier: workspace:*
-        version: link:../ui
-      lucide-react:
-        specifier: 'catalog:'
-        version: 1.33.0(react@19.2.3)
     devDependencies:
       '@types/react':
         specifier: 'catalog:'
