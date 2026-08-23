@@ -1,4 +1,5 @@
 import type { AddressInfo } from 'node:net'
+import { healthResponseSchema } from '@clinmesh/contracts/health'
 import { describe, expect, it } from 'vitest'
 import { startServer } from '../src/server.ts'
 
@@ -12,7 +13,8 @@ describe('Node.js runtime', () => {
       const response = await fetch(`http://127.0.0.1:${address.port}/api/health`)
 
       expect(response.status).toBe(200)
-      expect(await response.json()).toMatchObject({
+      expect(healthResponseSchema.parse(await response.json())).toEqual({
+        fhirVersion: '5.0.0',
         service: 'clinmesh-server',
         status: 'ok',
       })

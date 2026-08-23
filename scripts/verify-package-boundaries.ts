@@ -4,6 +4,9 @@ import { resolve, sep } from 'node:path'
 const root = resolve(import.meta.dirname, '..')
 const errors: string[] = []
 
+const platformRuntimeImport = /(?:\bfrom\s+|\bimport\s*(?:\(\s*)?)['"](?:@hono\/[^'"]+|hono(?:\/[^'"]+)?|react(?:-dom|-native)?(?:\/[^'"]+)?|@libsql\/client|better-sqlite3|bun:sqlite|drizzle-orm\/(?:better-sqlite3|bun-sqlite|libsql|sqlite-core)|node:sqlite|sqlite3?|node:process|process)['"]/
+const environmentAccess = /\b(?:(?:Bun|Deno|process)\.env|import\.meta\.env)\b/
+
 interface Rule {
   scope: string
   forbidden: RegExp
@@ -11,6 +14,11 @@ interface Rule {
 }
 
 const rules: Rule[] = [
+  {
+    scope: 'packages/{domain,contracts,core}/**/*.{ts,tsx}',
+    forbidden: new RegExp(`(?:${platformRuntimeImport.source}|${environmentAccess.source})`),
+    message: 'domain, contracts, and core must not depend on Hono, React, SQLite drivers, or environment variables',
+  },
   {
     scope: 'packages/contracts/**/*.{ts,tsx}',
     forbidden: /(?:from\s+['"](?:react|react-dom|react-native|electron)|\b(?:window|document|localStorage|process\.env)\b)/,

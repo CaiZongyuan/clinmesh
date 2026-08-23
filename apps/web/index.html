@@ -8,6 +8,8 @@
     <script>
       (() => {
         const preferenceKey = 'clinmesh.preferences:v1'
+        const root = document.documentElement
+        root.dataset.clinmeshApp = 'web'
         let locale = 'zh-CN'
         let theme = 'system'
 
@@ -28,8 +30,6 @@
         const resolvedTheme = theme === 'system'
           ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
           : theme
-        const root = document.documentElement
-
         root.lang = locale
         root.classList.toggle('dark', resolvedTheme === 'dark')
         root.dataset.theme = resolvedTheme

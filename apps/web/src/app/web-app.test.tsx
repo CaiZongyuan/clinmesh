@@ -51,13 +51,21 @@ function installMatchMedia(prefersDark: boolean): { setPrefersDark: (matches: bo
   }
 }
 
+async function renderWebApp() {
+  const rendered = render(<WebApp />)
+  await screen.findByRole('main')
+  return rendered
+}
+
 describe('Web application shell', () => {
   beforeEach(() => {
     localStorage.clear()
+    document.body.removeAttribute('style')
     document.documentElement.className = ''
     document.documentElement.removeAttribute('data-theme')
     window.history.replaceState(null, '', '/')
     vi.stubGlobal('matchMedia', vi.fn((query: string) => createMediaQueryList(query)))
+    vi.stubGlobal('scrollTo', vi.fn())
   })
 
   afterEach(() => {
@@ -65,8 +73,8 @@ describe('Web application shell', () => {
     vi.unstubAllGlobals()
   })
 
-  it('opens in Chinese with role navigation and no Agent surface', () => {
-    render(<WebApp />)
+  it('opens in Chinese with role navigation and no Agent surface', async () => {
+    await renderWebApp()
 
     expect(screen.getByRole('heading', { name: '工作台总览' })).toBeTruthy()
     expect(screen.getByRole('navigation', { name: '岗位导航' })).toBeTruthy()
@@ -76,9 +84,32 @@ describe('Web application shell', () => {
     expect(screen.queryByText(/Agent|AI|助手/i)).toBeNull()
   })
 
+  it('navigates between role workspaces without reloading the application shell', async () => {
+    const user = userEvent.setup()
+    await renderWebApp()
+
+    await user.click(screen.getByRole('link', { name: '门诊挂号' }))
+
+    expect(window.location.pathname).toBe('/registration')
+    expect(screen.getByRole('heading', { name: '门诊挂号' })).toBeTruthy()
+  })
+
+  it('localizes the mobile navigation dialog', async () => {
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => (
+      createMediaQueryList(query, query === '(max-width: 767px)')
+    )))
+    const user = userEvent.setup()
+    await renderWebApp()
+
+    await user.click(screen.getByRole('button', { name: '切换导航栏' }))
+
+    expect(await screen.findByRole('dialog', { name: '岗位导航' })).toBeTruthy()
+    expect(screen.getByText('显示移动端岗位导航。')).toBeTruthy()
+  })
+
   it('switches the complete shell to English and restores that preference', async () => {
     const user = userEvent.setup()
-    const rendered = render(<WebApp />)
+    const rendered = await renderWebApp()
 
     await user.click(screen.getByRole('button', { name: 'English' }))
 
@@ -97,14 +128,14 @@ describe('Web application shell', () => {
     })
 
     rendered.unmount()
-    render(<WebApp />)
+    await renderWebApp()
     expect(screen.getByRole('heading', { name: 'Workspace overview' })).toBeTruthy()
   })
 
   it('follows the system theme and supports explicit light and dark modes', async () => {
     const media = installMatchMedia(true)
     const user = userEvent.setup()
-    render(<WebApp />)
+    await renderWebApp()
 
     expect(document.documentElement.dataset.theme).toBe('dark')
     expect(document.documentElement.classList.contains('dark')).toBe(true)
@@ -129,10 +160,10 @@ describe('Web application shell', () => {
     })
   })
 
-  it('restores the active role workspace from a refreshed SPA path', () => {
+  it('restores the active role workspace from a refreshed SPA path', async () => {
     window.history.replaceState(null, '', '/pharmacy')
 
-    render(<WebApp />)
+    await renderWebApp()
 
     expect(screen.getByRole('heading', { name: '门诊药房' })).toBeTruthy()
     expect(screen.getByRole('link', { name: '门诊药房' }).getAttribute('aria-current')).toBe('page')
@@ -140,7 +171,7 @@ describe('Web application shell', () => {
 
   it('opens the notification and user preference menus', async () => {
     const user = userEvent.setup()
-    render(<WebApp />)
+    await renderWebApp()
 
     await user.click(screen.getByRole('button', { name: '通知' }))
     expect(await screen.findByText('当前无待处理通知')).toBeTruthy()

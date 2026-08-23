@@ -1,24 +1,47 @@
-import { WorkspaceShell, type WorkspaceSection } from '@clinmesh/views/workspace-shell'
-import { useEffect, useState } from 'react'
+import {
+  WorkspaceShell,
+  type WorkspaceNavigationLinkProps,
+  type WorkspaceSection,
+} from '@clinmesh/views/workspace-shell'
+import {
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Link,
+  Outlet,
+  RouterProvider,
+} from '@tanstack/react-router'
+import { forwardRef, useEffect, useState } from 'react'
 import { readWebPreferences, writeWebPreferences } from './preferences.ts'
 
 const DARK_MODE_QUERY = '(prefers-color-scheme: dark)'
 
-const workspaceSections: Record<string, WorkspaceSection> = {
-  '/': 'overview',
-  '/registration': 'registration',
-  '/triage': 'triage',
-  '/consultation': 'consultation',
-  '/billing': 'billing',
-  '/pharmacy': 'pharmacy',
+const workspaceRouteDefinitions = [
+  { section: 'overview', path: '/' },
+  { section: 'registration', path: '/registration' },
+  { section: 'triage', path: '/triage' },
+  { section: 'consultation', path: '/consultation' },
+  { section: 'billing', path: '/billing' },
+  { section: 'pharmacy', path: '/pharmacy' },
+] as const satisfies ReadonlyArray<{ section: WorkspaceSection; path: string }>
+
+const workspacePaths = new Map<WorkspaceSection, string>(
+  workspaceRouteDefinitions.map(({ path, section }) => [section, path]),
+)
+
+function getWorkspacePath(section: WorkspaceSection): string {
+  const path = workspacePaths.get(section)
+  if (path === undefined) throw new Error(`No Web route is registered for workspace section: ${section}`)
+  return path
 }
 
-function getActiveSection(pathname: string): WorkspaceSection {
-  const normalizedPath = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname
-  return workspaceSections[normalizedPath] ?? 'overview'
-}
+const WorkspaceRouterLink = forwardRef<HTMLAnchorElement, WorkspaceNavigationLinkProps>(
+  function WorkspaceRouterLink({ section, ...props }, ref) {
+    return <Link {...props} ref={ref} to={getWorkspacePath(section)} />
+  },
+)
 
-export function WebApp(): React.JSX.Element {
+function WorkspacePage({ activeSection }: { activeSection: WorkspaceSection }): React.JSX.Element {
   const [preferences, setPreferences] = useState(readWebPreferences)
 
   useEffect(() => {
@@ -51,11 +74,42 @@ export function WebApp(): React.JSX.Element {
 
   return (
     <WorkspaceShell
-      activeSection={getActiveSection(window.location.pathname)}
+      NavigationLink={WorkspaceRouterLink}
+      activeSection={activeSection}
       locale={preferences.locale}
       onLocaleChange={locale => setPreferences(current => ({ ...current, locale }))}
       onThemeChange={theme => setPreferences(current => ({ ...current, theme }))}
       theme={preferences.theme}
     />
   )
+}
+
+const rootRoute = createRootRoute({
+  component: Outlet,
+  notFoundComponent: () => <WorkspacePage activeSection="overview" />,
+})
+
+const workspaceRoutes = workspaceRouteDefinitions.map(({ path, section }) => createRoute({
+  component: () => <WorkspacePage activeSection={section} />,
+  getParentRoute: () => rootRoute,
+  path,
+}))
+
+const routeTree = rootRoute.addChildren(workspaceRoutes)
+
+export function createWebRouter(): ReturnType<typeof createRouter<typeof routeTree>> {
+  return createRouter({ routeTree })
+}
+
+type WebRouter = ReturnType<typeof createWebRouter>
+
+declare module '@tanstack/react-router' {
+  interface Register {
+    router: WebRouter
+  }
+}
+
+export function WebApp(): React.JSX.Element {
+  const [router] = useState(createWebRouter)
+  return <RouterProvider router={router} />
 }

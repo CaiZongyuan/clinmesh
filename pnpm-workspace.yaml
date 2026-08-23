@@ -13,6 +13,7 @@ catalog:
   '@shadcn/react': 0.3.0
   '@tailwindcss/vite': 4.3.3
   '@tanstack/react-query': 5.101.4
+  '@tanstack/react-router': 1.170.32
   '@testing-library/react': 16.3.2
   '@testing-library/user-event': 14.6.6
   '@types/node': 26.2.0
@@ -55,3 +56,5 @@ minimumReleaseAgeExclude:
   - expo-router@57.0.15
   - expo@57.0.15
   - vite@8.2.2
+  - '@tanstack/react-router@1.170.32'
+  - '@tanstack/router-core@1.171.27'
