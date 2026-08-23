@@ -4,21 +4,25 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm --filter @clinmesh/web build && wrangler dev --port 8787",
-    "build": "wrangler deploy --dry-run --outdir dist",
+    "dev": "pnpm --filter @clinmesh/web build && tsx watch src/index.ts",
+    "build": "vite build",
+    "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "clean": "rm -rf dist coverage .wrangler"
+    "clean": "rm -rf dist coverage"
   },
   "dependencies": {
     "@clinmesh/contracts": "workspace:*",
-    "hono": "catalog:"
+    "@hono/node-server": "catalog:",
+    "hono": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@clinmesh/web": "workspace:*",
-    "@cloudflare/workers-types": "catalog:",
+    "@types/node": "catalog:",
+    "tsx": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:",
-    "wrangler": "4.124.0"
+    "vite": "catalog:",
+    "vitest": "catalog:"
   }
 }

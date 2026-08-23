@@ -8,7 +8,6 @@ export default defineConfig({
     proxy: {
       '/api': 'http://127.0.0.1:8787',
       '/fhir': 'http://127.0.0.1:8787',
-      '/mcp': 'http://127.0.0.1:8787',
     },
   },
 })
