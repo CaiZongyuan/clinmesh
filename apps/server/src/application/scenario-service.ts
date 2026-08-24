@@ -263,6 +263,7 @@ export class ScenarioService {
       UPDATE scenario_run
       SET status = 'closed', completed_at = ?
       WHERE workspace_id = ? AND epoch = ? AND scenario_run_id = ?
+        AND status = 'active'
     `).run(now, context.workspaceId, context.epoch, context.scenarioRunId)
     this.#database.driver.prepare(`
       UPDATE workspace_epoch

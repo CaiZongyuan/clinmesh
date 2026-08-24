@@ -2584,6 +2584,19 @@ describe('outpatient workflow HTTP contract', () => {
       scenarioStatus: 'completed',
       status: 'completed',
     })
+    const readInitialRun = () => runtime.database.driver.prepare(`
+      SELECT status, completed_at
+      FROM scenario_run
+      WHERE workspace_id = ? AND epoch = ? AND scenario_run_id = ?
+    `).get('workspace-demo', 'epoch-1', 'scenario-run-1') as {
+      completed_at: string | null
+      status: string
+    } | undefined
+    const completedRun = readInitialRun()
+    expect(completedRun).toEqual({
+      completed_at: expect.any(String),
+      status: 'completed',
+    })
 
     const adminCookie = await signIn(runtime, 'admin@demo.clinmesh.local', password)
     const installResponse = await runtime.app.request(path, {
@@ -2597,6 +2610,7 @@ describe('outpatient workflow HTTP contract', () => {
       kind: 'candidate',
       scenarioRunId: 'scenario-run-2',
     })
+    expect(readInitialRun()).toEqual(completedRun)
   })
 
   it('creates one accurately referenced MedicationDispense for each dispensed prescription line', async () => {

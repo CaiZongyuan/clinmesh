@@ -7,6 +7,11 @@ export interface InstallWorkspaceInput extends RepositoryContext {
   workspaceName: string
 }
 
+interface CurrentContextStatus {
+  epoch_state: string
+  run_status: string
+}
+
 export class WorkspaceContextError extends Error {
   readonly code = 'CONTEXT_INACTIVE'
 }
@@ -51,30 +56,25 @@ export class WorkspaceRepository {
   }
 
   assertActive(context: RepositoryContext, scenarioRunId: string): void {
-    const row = this.#database.driver.prepare(`
-      SELECT run.status AS run_status, epoch.state AS epoch_state
-      FROM workspace
-      JOIN workspace_epoch AS epoch
-        ON epoch.workspace_id = workspace.workspace_id
-       AND epoch.epoch = workspace.active_epoch
-      JOIN scenario_run AS run
-        ON run.workspace_id = epoch.workspace_id
-       AND run.epoch = epoch.epoch
-      WHERE workspace.workspace_id = ?
-        AND workspace.active_epoch = ?
-        AND run.scenario_run_id = ?
-    `).get(context.workspaceId, context.epoch, scenarioRunId) as {
-      epoch_state: string
-      run_status: string
-    } | undefined
+    const row = this.#findCurrentContextStatus(context, scenarioRunId)
     if (row === undefined || row.epoch_state !== 'active' || row.run_status !== 'active') {
       throw new WorkspaceContextError('The Workspace, Epoch, or Scenario Run is not active')
     }
   }
 
   assertCurrent(context: RepositoryContext, scenarioRunId: string): void {
-    const row = this.#database.driver.prepare(`
-      SELECT epoch.state AS epoch_state
+    const row = this.#findCurrentContextStatus(context, scenarioRunId)
+    if (row === undefined || row.epoch_state !== 'active') {
+      throw new WorkspaceContextError('The Workspace, Epoch, or Scenario Run is not current')
+    }
+  }
+
+  #findCurrentContextStatus(
+    context: RepositoryContext,
+    scenarioRunId: string,
+  ): CurrentContextStatus | undefined {
+    return this.#database.driver.prepare(`
+      SELECT epoch.state AS epoch_state, run.status AS run_status
       FROM workspace
       JOIN workspace_epoch AS epoch
         ON epoch.workspace_id = workspace.workspace_id
@@ -85,12 +85,7 @@ export class WorkspaceRepository {
       WHERE workspace.workspace_id = ?
         AND workspace.active_epoch = ?
         AND run.scenario_run_id = ?
-    `).get(context.workspaceId, context.epoch, scenarioRunId) as {
-      epoch_state: string
-    } | undefined
-    if (row === undefined || row.epoch_state !== 'active') {
-      throw new WorkspaceContextError('The Workspace, Epoch, or Scenario Run is not current')
-    }
+    `).get(context.workspaceId, context.epoch, scenarioRunId) as CurrentContextStatus | undefined
   }
 
   assertKnown(context: RepositoryContext, scenarioRunId: string): void {
