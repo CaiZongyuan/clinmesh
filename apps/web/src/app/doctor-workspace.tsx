@@ -1,4 +1,4 @@
-import type { ClinicalCatalog, DoctorCaseDetail, DoctorQueueItem, SessionContext } from '@clinmesh/contracts/his'
+import type { ClinicalCatalog, ClinicalPresentation, DoctorCaseDetail, DoctorQueueItem, SessionContext, VirtualPatientList } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
@@ -9,12 +9,13 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, PlusIcon, RefreshCwIcon, ShieldAlertIcon, StethoscopeIcon, Trash2Icon } from 'lucide-react'
+import { CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, PlayIcon, PlusIcon, RefreshCwIcon, ShieldAlertIcon, StethoscopeIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
 import { useState } from 'react'
 import {
   getClinicalCatalog,
   getDoctorCase,
   getDoctorQueue,
+  getVirtualPatients,
   issueLaboratoryOrder,
   newIdempotencyKey,
   previewClinicalSign,
@@ -23,6 +24,7 @@ import {
   signClinicalDocument,
   startFirstVisit,
   startRevisit,
+  startVirtualPatient,
 } from './api-client.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
@@ -41,6 +43,11 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
   const scope = [session.actor.workspaceId, session.actor.epoch] as const
   const [page, setPage] = useState(1)
   const queueKey = ['doctor-queue', ...scope, page] as const
+  const virtualPatientKey = ['doctor-virtual-patients', ...scope] as const
+  const virtualPatients = useQuery({
+    queryFn: ({ signal }) => getVirtualPatients(signal),
+    queryKey: virtualPatientKey,
+  })
   const queue = useQuery({
     queryFn: ({ signal }) => getDoctorQueue(signal, page),
     queryKey: queueKey,
@@ -49,25 +56,49 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
       : false,
   })
   const [selectedCaseId, setSelectedCaseId] = useState<string>()
+  const [selectedVirtualPatientId, setSelectedVirtualPatientId] = useState<string>()
   const [laboratoryItemId, setLaboratoryItemId] = useState('')
   const [indicationCode, setIndicationCode] = useState('')
-  const selectedCase = queue.data?.items.find(item => item.caseId === selectedCaseId)
-    ?? queue.data?.items[0]
+  const activeCaseId = selectedCaseId ?? queue.data?.items[0]?.caseId
+  const selectedCase = queue.data?.items.find(item => item.caseId === activeCaseId)
+  const selectedVirtualPatient = virtualPatients.data?.items.find(
+    item => item.id === selectedVirtualPatientId,
+  )
   const detailKey = [
     'doctor-case',
     ...scope,
-    selectedCase?.caseId,
+    activeCaseId,
     selectedCase?.diagnosticReportId,
   ] as const
   const detail = useQuery({
-    enabled: selectedCase !== undefined,
-    queryFn: ({ signal }) => getDoctorCase(selectedCase?.caseId ?? '', signal),
+    enabled: activeCaseId !== undefined,
+    queryFn: ({ signal }) => getDoctorCase(activeCaseId ?? '', signal),
     queryKey: detailKey,
     refetchInterval: selectedCase?.status === 'awaiting-report' ? 1_500 : false,
   })
   const catalog = useQuery({
     queryFn: ({ signal }) => getClinicalCatalog(signal),
     queryKey: ['clinical-catalog', ...scope],
+  })
+  const startCandidate = useMutation({
+    mutationFn: () => {
+      if (selectedVirtualPatient === undefined) {
+        throw new Error(messages.virtualPatientsUnavailable)
+      }
+      return startVirtualPatient(
+        selectedVirtualPatient.id,
+        selectedVirtualPatient.version,
+        newIdempotencyKey(),
+      )
+    },
+    onSuccess: async response => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: virtualPatientKey }),
+        queryClient.invalidateQueries({ queryKey: ['doctor-queue', ...scope] }),
+      ])
+      setSelectedVirtualPatientId(undefined)
+      setSelectedCaseId(response.data.caseId)
+    },
   })
   const refreshCase = async () => {
     await Promise.all([
@@ -225,45 +256,108 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
 
   return (
     <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(18rem,0.72fr)_minmax(30rem,1.28fr)]">
-      <section aria-labelledby="consultation-queue-heading" className="flex min-w-0 flex-col gap-4 border-b pb-6 xl:border-r xl:border-b-0 xl:pr-6">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-base font-semibold" id="consultation-queue-heading">{messages.consultationQueue}</h2>
-          <Badge variant="secondary">{queue.data?.total ?? 0}</Badge>
-        </div>
-        {queue.isPending ? <Skeleton className="h-44 w-full" /> : queue.isError ? (
-          <ErrorAlert message={getWorkspaceErrorMessage(queue.error, messages)} title={getWorkspaceErrorTitle(queue.error, messages, messages.consultationUnavailable)} />
-        ) : queue.data.items.length === 0 ? (
-          <Empty className="min-h-44 border">
-            <EmptyHeader>
-              <EmptyMedia variant="icon"><StethoscopeIcon aria-hidden="true" /></EmptyMedia>
-              <EmptyTitle>{messages.noConsultationCases}</EmptyTitle>
-              <EmptyDescription>{messages.noConsultationCasesDescription}</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        ) : (
-          <div className="flex flex-col gap-2" role="list">
-            {queue.data.items.map(item => (
-              <DoctorCaseRow
-                item={item}
-                key={item.caseId}
-                messages={messages}
-                onSelect={() => setSelectedCaseId(item.caseId)}
-                selected={item.caseId === selectedCase?.caseId}
-              />
-            ))}
-            <PaginationControls
-              messages={messages}
-              onPageChange={(nextPage) => {
-                setPage(nextPage)
-                setSelectedCaseId(undefined)
-              }}
-              page={queue.data.page}
-              pageSize={queue.data.pageSize}
-              total={queue.data.total}
-            />
+      <div className="flex min-w-0 flex-col gap-5 border-b pb-6 xl:border-r xl:border-b-0 xl:pr-6">
+        <section aria-labelledby="virtual-patient-heading" className="flex min-w-0 flex-col gap-3 border-b pb-5">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-base font-semibold" id="virtual-patient-heading">{messages.virtualPatientCandidates}</h2>
+            <Badge variant="secondary">{virtualPatients.data?.items.length ?? 0}</Badge>
           </div>
-        )}
-      </section>
+          {virtualPatients.isPending ? <Skeleton className="h-32 w-full" /> : virtualPatients.isError ? (
+            <ErrorAlert message={getWorkspaceErrorMessage(virtualPatients.error, messages)} title={getWorkspaceErrorTitle(virtualPatients.error, messages, messages.virtualPatientsUnavailable)} />
+          ) : virtualPatients.data.items.length === 0 ? (
+            <Empty className="min-h-32 border">
+              <EmptyHeader>
+                <EmptyMedia variant="icon"><UserRoundPlusIcon aria-hidden="true" /></EmptyMedia>
+                <EmptyTitle>{messages.noVirtualPatients}</EmptyTitle>
+                <EmptyDescription>{messages.noVirtualPatientsDescription}</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {virtualPatients.data.items.map(item => (
+                <VirtualPatientRow
+                  item={item}
+                  key={item.id}
+                  messages={messages}
+                  onSelect={() => {
+                    startCandidate.reset()
+                    setSelectedVirtualPatientId(item.id)
+                  }}
+                  selected={item.id === selectedVirtualPatient?.id}
+                />
+              ))}
+              {selectedVirtualPatient === undefined ? null : (
+                <div className="flex flex-col gap-3 border-l-2 border-primary/40 pl-3 pt-1">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <Badge variant="outline">{messages[`gender_${selectedVirtualPatient.gender}` as 'gender_male']}</Badge>
+                    <span>{messages.birthDate} {selectedVirtualPatient.birthDate}</span>
+                  </div>
+                  <div className="space-y-1 text-sm">
+                    <div className="text-xs text-muted-foreground">{messages.presentationSummary}</div>
+                    <p>{selectedVirtualPatient.presentation.summary}</p>
+                  </div>
+                  <dl className="grid grid-cols-3 gap-x-3 gap-y-2 text-xs sm:grid-cols-5">
+                    <VitalSummary label="T" value={selectedVirtualPatient.presentation.vitalSigns.temperatureC} />
+                    <VitalSummary label="P" value={selectedVirtualPatient.presentation.vitalSigns.pulseBpm} />
+                    <VitalSummary label="R" value={selectedVirtualPatient.presentation.vitalSigns.respirationBpm} />
+                    <VitalSummary label="BP" value={`${selectedVirtualPatient.presentation.vitalSigns.bloodPressure.systolicMmHg}/${selectedVirtualPatient.presentation.vitalSigns.bloodPressure.diastolicMmHg}`} />
+                    <VitalSummary label="SpO2" value={selectedVirtualPatient.presentation.vitalSigns.oxygenSaturationPct} />
+                  </dl>
+                  {startCandidate.isError ? (
+                    <ErrorAlert message={getWorkspaceErrorMessage(startCandidate.error, messages)} title={getWorkspaceErrorTitle(startCandidate.error, messages, messages.operationFailed)} />
+                  ) : null}
+                  <Button disabled={startCandidate.isPending} onClick={() => startCandidate.mutate()} type="button">
+                    {startCandidate.isPending
+                      ? <RefreshCwIcon aria-hidden="true" className="animate-spin" />
+                      : <PlayIcon aria-hidden="true" />}
+                    {startCandidate.isPending ? messages.startingConsultation : messages.startConsultation}
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+
+        <section aria-labelledby="consultation-queue-heading" className="flex min-w-0 flex-col gap-4">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-base font-semibold" id="consultation-queue-heading">{messages.consultationQueue}</h2>
+            <Badge variant="secondary">{queue.data?.total ?? 0}</Badge>
+          </div>
+          {queue.isPending ? <Skeleton className="h-44 w-full" /> : queue.isError ? (
+            <ErrorAlert message={getWorkspaceErrorMessage(queue.error, messages)} title={getWorkspaceErrorTitle(queue.error, messages, messages.consultationUnavailable)} />
+          ) : queue.data.items.length === 0 ? (
+            <Empty className="min-h-44 border">
+              <EmptyHeader>
+                <EmptyMedia variant="icon"><StethoscopeIcon aria-hidden="true" /></EmptyMedia>
+                <EmptyTitle>{messages.noConsultationCases}</EmptyTitle>
+                <EmptyDescription>{messages.noConsultationCasesDescription}</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            <div className="flex flex-col gap-2" role="list">
+              {queue.data.items.map(item => (
+                <DoctorCaseRow
+                  item={item}
+                  key={item.caseId}
+                  messages={messages}
+                  onSelect={() => setSelectedCaseId(item.caseId)}
+                  selected={item.caseId === activeCaseId}
+                />
+              ))}
+              <PaginationControls
+                messages={messages}
+                onPageChange={(nextPage) => {
+                  setPage(nextPage)
+                  setSelectedCaseId(undefined)
+                }}
+                page={queue.data.page}
+                pageSize={queue.data.pageSize}
+                total={queue.data.total}
+              />
+            </div>
+          )}
+        </section>
+      </div>
 
       <section aria-labelledby="case-detail-heading" className="flex min-w-0 flex-col gap-5">
         <h2 className="text-base font-semibold" id="case-detail-heading">{messages.caseDetail}</h2>
@@ -283,7 +377,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
             <AlertDescription>{messages.awaitingMedicationPayment}</AlertDescription>
           </Alert>
         ) : null}
-        {detail.isPending && selectedCase !== undefined ? <Skeleton className="h-64 w-full" /> : detail.isError ? (
+        {detail.isPending && activeCaseId !== undefined ? <Skeleton className="h-64 w-full" /> : detail.isError ? (
           <ErrorAlert message={getWorkspaceErrorMessage(detail.error, messages)} title={getWorkspaceErrorTitle(detail.error, messages, messages.consultationUnavailable)} />
         ) : detail.data === undefined ? (
           <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
@@ -411,6 +505,7 @@ function CaseDetail({
   startRevisitPending: boolean
 }): React.JSX.Element {
   const firstVisitDraft = detail.drafts?.firstVisit
+  const presentation = doctorCasePresentation(detail)
   const laboratoryItems = catalog.data?.laboratory.map(item => ({
     label: `${locale === 'zh-CN' ? item.nameZh : item.nameEn} · ${formatFen(item.priceFen ?? 0, locale)}`,
     value: item.id,
@@ -430,18 +525,27 @@ function CaseDetail({
         </div>
         <Badge variant="outline">{statusLabel(detail.status, messages)}</Badge>
       </div>
-      <section aria-labelledby="triage-summary-heading" className="flex flex-col gap-2">
-        <h3 className="text-sm font-semibold" id="triage-summary-heading">{messages.triageSummary}</h3>
-        <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-          <div className="sm:col-span-2"><dt className="text-muted-foreground">{messages.chiefComplaint}</dt><dd className="font-medium">{detail.triage.chiefComplaint}</dd></div>
-          <div><dt className="text-muted-foreground">{messages.temperatureC}</dt><dd className="font-medium">{detail.triage.temperatureC}</dd></div>
-          <div><dt className="text-muted-foreground">{messages.pulseBpm}</dt><dd className="font-medium">{detail.triage.pulseBpm}</dd></div>
-          <div><dt className="text-muted-foreground">{messages.respirationBpm}</dt><dd className="font-medium">{detail.triage.respirationBpm}</dd></div>
-          <div><dt className="text-muted-foreground">{messages.bloodPressure}</dt><dd className="font-medium">{detail.triage.bloodPressure.systolicMmHg}/{detail.triage.bloodPressure.diastolicMmHg}</dd></div>
-          <div><dt className="text-muted-foreground">{messages.oxygenSaturationPct}</dt><dd className="font-medium">{detail.triage.oxygenSaturationPct}</dd></div>
-          <div><dt className="text-muted-foreground">{messages.acuity}</dt><dd className="font-medium">{messages[`acuity_${detail.triage.acuityCode.replace('-', '')}` as 'acuity_level1']}</dd></div>
-        </dl>
-      </section>
+      {presentation === undefined ? null : (
+        <section aria-labelledby="clinical-presentation-heading" className="flex flex-col gap-2">
+          <h3 className="text-sm font-semibold" id="clinical-presentation-heading">
+            {detail.triage === undefined ? messages.clinicalPresentation : messages.triageSummary}
+          </h3>
+          <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <div className="sm:col-span-2"><dt className="text-muted-foreground">{messages.chiefComplaint}</dt><dd className="font-medium">{presentation.chiefComplaint}</dd></div>
+            {presentation.summary === presentation.chiefComplaint ? null : (
+              <div className="sm:col-span-2"><dt className="text-muted-foreground">{messages.presentationSummary}</dt><dd className="font-medium">{presentation.summary}</dd></div>
+            )}
+            <div><dt className="text-muted-foreground">{messages.temperatureC}</dt><dd className="font-medium">{presentation.vitalSigns.temperatureC}</dd></div>
+            <div><dt className="text-muted-foreground">{messages.pulseBpm}</dt><dd className="font-medium">{presentation.vitalSigns.pulseBpm}</dd></div>
+            <div><dt className="text-muted-foreground">{messages.respirationBpm}</dt><dd className="font-medium">{presentation.vitalSigns.respirationBpm}</dd></div>
+            <div><dt className="text-muted-foreground">{messages.bloodPressure}</dt><dd className="font-medium">{presentation.vitalSigns.bloodPressure.systolicMmHg}/{presentation.vitalSigns.bloodPressure.diastolicMmHg}</dd></div>
+            <div><dt className="text-muted-foreground">{messages.oxygenSaturationPct}</dt><dd className="font-medium">{presentation.vitalSigns.oxygenSaturationPct}</dd></div>
+            {detail.triage === undefined ? null : (
+              <div><dt className="text-muted-foreground">{messages.acuity}</dt><dd className="font-medium">{messages[`acuity_${detail.triage.acuityCode.replace('-', '')}` as 'acuity_level1']}</dd></div>
+            )}
+          </dl>
+        </section>
+      )}
       <section aria-labelledby="prior-facts-heading" className="flex flex-col gap-2 border-b pb-4">
         <h3 className="text-sm font-semibold" id="prior-facts-heading">{messages.priorFacts}</h3>
         {detail.priorFacts.length === 0 ? (
@@ -821,6 +925,54 @@ function interpretationLabel(code: string, messages: ReturnType<typeof getWorksp
   return messages.abnormal
 }
 
+function doctorCasePresentation(detail: DoctorCaseDetail): ClinicalPresentation | undefined {
+  if (detail.presentation !== undefined) return detail.presentation
+  if (detail.triage === undefined) return undefined
+  return {
+    chiefComplaint: detail.triage.chiefComplaint,
+    summary: detail.triage.chiefComplaint,
+    vitalSigns: {
+      bloodPressure: detail.triage.bloodPressure,
+      oxygenSaturationPct: detail.triage.oxygenSaturationPct,
+      pulseBpm: detail.triage.pulseBpm,
+      respirationBpm: detail.triage.respirationBpm,
+      temperatureC: detail.triage.temperatureC,
+    },
+  }
+}
+
+function VirtualPatientRow({ item, messages, onSelect, selected }: {
+  item: VirtualPatientList['items'][number]
+  messages: ReturnType<typeof getWorkspaceMessages>
+  onSelect: () => void
+  selected: boolean
+}): React.JSX.Element {
+  return (
+    <Button
+      aria-label={`${messages.selectVirtualPatient} ${item.name}`}
+      aria-pressed={selected}
+      className="h-auto min-h-16 w-full justify-start gap-3 px-3 py-2 text-left"
+      onClick={onSelect}
+      type="button"
+      variant={selected ? 'secondary' : 'outline'}
+    >
+      <span className="min-w-0">
+        <span className="block truncate font-medium">{item.name}</span>
+        <span className="block truncate text-xs text-muted-foreground">{item.presentation.chiefComplaint}</span>
+      </span>
+    </Button>
+  )
+}
+
+function VitalSummary({ label, value }: { label: string; value: number | string }): React.JSX.Element {
+  return (
+    <div>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="font-medium">{value}</dd>
+    </div>
+  )
+}
+
 function DoctorCaseRow({ item, messages, onSelect, selected }: {
   item: DoctorQueueItem
   messages: ReturnType<typeof getWorkspaceMessages>
@@ -829,7 +981,7 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
 }): React.JSX.Element {
   return (
     <Button aria-label={`${messages.selectCase} ${item.patient.name}`} className="h-auto min-h-16 w-full justify-between gap-3 px-3 py-2 text-left" onClick={onSelect} role="listitem" type="button" variant={selected ? 'secondary' : 'outline'}>
-      <span className="min-w-0"><span className="block truncate font-medium">{item.patient.name}</span><span className="block truncate text-xs text-muted-foreground">{item.triage.chiefComplaint}</span></span>
+      <span className="min-w-0"><span className="block truncate font-medium">{item.patient.name}</span><span className="block truncate text-xs text-muted-foreground">{item.presentation?.chiefComplaint ?? item.triage?.chiefComplaint ?? messages.clinicalPresentation}</span></span>
       <Badge className="shrink-0" variant="outline">{statusLabel(item.status, messages)}</Badge>
     </Button>
   )

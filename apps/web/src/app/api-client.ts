@@ -22,9 +22,11 @@ import {
   scenarioCommandResponseSchema,
   scenarioStateSchema,
   sessionContextSchema,
+  startVirtualPatientResponseSchema,
   startVisitResponseSchema,
   triageQueueSchema,
   triageResponseSchema,
+  virtualPatientListSchema,
   type ScenarioState,
   type SessionContext,
 } from '@clinmesh/contracts/his'
@@ -252,6 +254,26 @@ export function getClinicalCatalog(signal?: AbortSignal) {
 export function getDoctorQueue(signal?: AbortSignal, page = 1) {
   const search = new URLSearchParams({ page: String(page), pageSize: '20' })
   return apiGet(`/api/his/v1/doctor/queue?${search.toString()}`, doctorQueueSchema, signal)
+}
+
+export function getVirtualPatients(signal?: AbortSignal) {
+  return apiGet('/api/his/v1/doctor/virtual-patients', virtualPatientListSchema, signal)
+}
+
+export function startVirtualPatient(
+  virtualPatientId: string,
+  expectedVersion: number,
+  idempotencyKey: string,
+) {
+  return apiMutation(
+    `/api/his/v1/doctor/virtual-patients/${encodeURIComponent(virtualPatientId)}/actions/start`,
+    startVirtualPatientResponseSchema,
+    {
+      expectedVersions: {},
+      input: { expectedVersion },
+    },
+    { idempotencyKey },
+  )
 }
 
 export function getDoctorCase(caseId: string, signal?: AbortSignal) {

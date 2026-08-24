@@ -30,6 +30,25 @@ const scenarioBlueprints = {
       { code: 'ambiguous', outcome: 'ambiguous', simulator: 'payment' },
       { code: 'deterministic-report', outcome: 'success', simulator: 'lis' },
     ],
+    virtualPatients: [{
+      birthDate: '1988-03-16',
+      gender: 'female',
+      id: 'virtual-patient-fever-001',
+      name: '合成候选患者林晓',
+      patientId: 'candidate-patient-001',
+      presentation: {
+        chiefComplaint: '发热、咽痛 1 天。',
+        summary: '昨日傍晚开始发热，最高 38.7 °C，伴咽痛。',
+        vitalSigns: {
+          bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
+          oxygenSaturationPct: 98,
+          pulseBpm: 96,
+          respirationBpm: 20,
+          temperatureC: 38.6,
+        },
+      },
+      version: 1,
+    }],
     scenarioId: 'candidate-fever-outpatient-v1',
     version: '1.0.0',
     virtualTime: '2026-08-24T09:00:00+08:00',
@@ -52,6 +71,7 @@ const scenarioBlueprints = {
       { code: 'success', outcome: 'success', simulator: 'payment' },
       { code: 'deterministic-report', outcome: 'success', simulator: 'lis' },
     ],
+    virtualPatients: [],
     scenarioId: 'density-fever-outpatient-v1',
     version: '1.0.0',
     virtualTime: '2026-08-24T09:00:00+08:00',
@@ -420,6 +440,25 @@ export class ScenarioService {
       'SYN-ACE-202608',
     )
     this.#seedFhirResources(input)
+    const insertVirtualPatient = this.#database.driver.prepare(`
+      INSERT INTO virtual_patient (
+        workspace_id, epoch, virtual_patient_id, version, patient_id,
+        name, gender, birth_date, clinical_summary_json, available
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    `)
+    for (const patient of blueprint.virtualPatients) {
+      insertVirtualPatient.run(
+        input.workspaceId,
+        input.epoch,
+        patient.id,
+        patient.version,
+        patient.patientId,
+        patient.name,
+        patient.gender,
+        patient.birthDate,
+        JSON.stringify(patient.presentation),
+      )
+    }
   }
 
   #seedFhirResources(input: {

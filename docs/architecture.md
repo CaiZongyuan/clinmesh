@@ -215,7 +215,7 @@ Web 页面调用共享 command handler。当前不发布 FHIR Operation；未来
 | --- | --- | --- |
 | `fhir-native` | Patient、AllergyIntolerance、Organization、Location、Practitioner、PractitionerRole、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、Condition、Medication、MedicationRequest、MedicationDispense | 只由 Scenario 安装或业务 Command 创建和更新；FHIR API 只读 |
 | `fhir-native-immutable` | 已签署的 Composition、document Bundle、Provenance | 业务 Command 只创建新资源；更正创建显式修订关系，不覆盖已签实例 |
-| `domain-native` | Registration、Prescription、PaymentTransaction、库存账、临床草稿、Scenario Run、Action Trace、audit_log | 只通过 `/api/his/v1`、`/api/sim/v1` 或内部 Command 写入 |
+| `domain-native` | Virtual Patient 候选状态与接诊映射、Registration、Prescription、PaymentTransaction、库存账、临床草稿、Scenario Run、Action Trace、audit_log | 只通过 `/api/his/v1`、`/api/sim/v1` 或内部 Command 写入 |
 | `domain-projection` | AuditEvent、InventoryItem | 从领域事实同事务生成；FHIR API 只读 |
 | `simulation-private` | Hidden Fact、Reveal Policy 和故障规则 | 仅 Scenario Runtime 与受控场景维护入口可访问 |
 
@@ -252,6 +252,7 @@ D1、PostgreSQL 或 Supabase 只在出现公开托管、多实例、持续写竞
 | --- | --- | --- | --- |
 | Identity & Access | Web 用户、岗位、Workspace Membership、会话和策略 | 关系表 + Better Auth | 必须 |
 | Workspace & Simulation | Scenario Run、隔离、时钟、事件、Hidden Fact、Action Trace 和管理员重置 | 领域表 | 必须 |
+| Virtual Patient | 版本固定的合成病例表现、可接诊状态与医生接诊映射 | 可见状态 domain native；隐藏事实 simulation private | 必须 |
 | Organization & Workforce | 医院、科室、病区、诊室、床位、人员、岗位 | FHIR native | 必须 |
 | Terminology | CodeSystem、ValueSet、ConceptMap、目录版本 | FHIR native / package | 必须 |
 | Patient Identity | 患者、标识、联系人、合并 | FHIR native + 唯一性辅助表 | 必须 |
@@ -559,6 +560,7 @@ FHIR 没有稳定等价物的聚合使用显式 API。当前写路由为：
 ```text
 POST /api/his/v1/patients
 POST /api/his/v1/registrations/actions/register
+POST /api/his/v1/doctor/virtual-patients/{id}/actions/start
 POST /api/his/v1/encounters/{id}/actions/record-triage
 POST /api/his/v1/encounters/{id}/actions/start-first-visit
 POST /api/his/v1/encounters/{id}/actions/start-revisit
@@ -574,6 +576,8 @@ POST /api/his/v1/prescriptions/{prescriptionId}/actions/dispense
 POST /api/sim/v1/scenarios/actions/install
 POST /api/sim/v1/scenario-runs/{id}/actions/reset
 ```
+
+`GET /api/his/v1/doctor/virtual-patients` 只返回当前 Workspace/Epoch 中仍可接诊的 Virtual Patient 名称、性别、出生日期、临床可见摘要与协议 ID/version。它不返回所绑定的 Patient logical ID、Scenario、Hidden Fact、病原体、运行时状态或确定性回答规则。
 
 Command 写请求使用同源 session 与 CSRF 校验，并通过以下 header 提供幂等键：
 
@@ -839,6 +843,8 @@ Registration + Encounter + Account + 挂号 Charge Item
 
 首期只实现现场普通门诊。Registration 是持久领域事实；挂号 Command 在同一事务中创建或关联 Registration、Encounter、Queue Task、Account 和挂号 Charge Item。Appointment 表达未来预约承诺，Slot 表达可预约时段，不承担挂号事实、排队序号或挂号费语义，二者不属于首期闭环。
 
+门诊医生也可从版本固定的 Virtual Patient 直接建立接诊上下文。`virtual-patient.start-consultation` Command 以 Virtual Patient 的 expected version 与可用状态作为前置条件，复用其绑定的合成 Patient，并在同一事务中创建 Registration、进行中 Encounter、Account、医生 Queue Task 和 `first-visit` outpatient case，然后把该 Virtual Patient 标记为不可再次接诊。这条入口不伪造分诊 Observation、分诊级别或费用事实；相同幂等键重放第一次回执，旧版本或已消费候选患者返回稳定冲突。
+
 关键约束：
 
 - 一个 Encounter 贯穿挂号、分诊、首诊、检验和复诊，不为复诊新建 Encounter。
@@ -1053,7 +1059,7 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 当前领域表只覆盖首期闭环：
 
 - 身份与岗位：Better Auth 的 user/session/account，加 Workspace Membership、Practitioner Role binding 和当前 session context。
-- 门诊：目录、outpatient case、Registration、分诊记录、临床草稿、Prescription 与处方项目。
+- 门诊：Virtual Patient 候选状态与接诊映射、目录、outpatient case、Registration、分诊记录、临床草稿、Prescription 与处方项目。
 - 账务：Charge Record、Payment Preview 和 Payment Transaction。金额以整数分保存；当前没有退款、医保或收费员交账表。
 - 库存与发药：Inventory Lot、append-only Inventory Movement 和 Dispense。当前不实现预占、追溯码、盘点或调拨。
 - 文书：Clinical Sign Preview 与 Signed Clinical Document；签署的 Composition、document Bundle 和 Provenance 正文仍由 FHIR store 权威保存。
@@ -1193,7 +1199,7 @@ clock_revision
 
 ### 10.3 场景定义
 
-首期 Scenario blueprint 由 `ScenarioService` 中的受版本控制 TypeScript 数据定义，包含 scenario ID/version、schema version、seed、固定虚拟时间、合成目录、Hidden Fact、Reveal Policy 和模拟器规则。安装过程在一个 Command 事务中把定义和当前 Epoch 数据写入 SQLite；普通岗位 API 不暴露 Hidden Fact 或 Reveal Policy。
+首期 Scenario blueprint 由 `ScenarioService` 中的受版本控制 TypeScript 数据定义，包含 scenario ID/version、schema version、seed、固定虚拟时间、Virtual Patient 可见表现与 Patient 绑定、合成目录、Hidden Fact、Reveal Policy 和模拟器规则。安装过程在一个 Command 事务中把定义和当前 Epoch 数据写入 SQLite；普通岗位 API 不暴露 Hidden Fact 或 Reveal Policy。
 
 当前提供 `candidate-fever-outpatient-v1` 与 `density-fever-outpatient-v1`。两者 `clinicalReview` 都是 `null`，因此没有任何场景标记为 `golden`；安装 API 只接受 `candidate` 或 `density`。数据库约束要求未来 `golden` 定义必须同时具有临床审核元数据。`density` 使用同一业务 schema，并增加合成患者和队列数据以验证分页与界面密度。
 
@@ -1445,7 +1451,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 ### 15.1 运行与持久化
 
 - Node.js Hono 同时提供 Web SPA、认证、HIS/Scenario API、FHIR R5 只读 API 和健康检查。
-- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；八个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、门诊事实与处方审核状态。
+- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；九个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、Virtual Patient 接诊、门诊事实与处方审核状态。
 - 数据库 CLI 提供 migrate、verify、reindex、backup 和 restore；已有旧版数据库执行 migrate 时先在同目录创建并验证升级前备份，Server 进程只验证 migration。
 - CommandExecutor 统一 `BEGIN IMMEDIATE`、expected versions、幂等 receipt、FHIR current/history/search、领域事实、AuditEvent、Action Trace 和 outbox 原子提交。
 - 同进程 dispatcher 持久化 claim/lease/attempt/correlation，支持失败重试、ambiguous、重复消费和旧 Epoch abandon。
@@ -1511,6 +1517,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 - 真实 file-backed SQLite 测试覆盖 transaction rollback、零行条件写、幂等竞争、outbox lease/recovery、audit head、backup/restore 和 reset/callback 隔离。
 - 一个 Encounter 贯穿首期门诊；Encounter 在药品支付与发药前完成，发药只完成 Scenario Run。
 - 挂号原子创建 Registration、Encounter、Queue Task、Account 和挂号 Charge Item；Prescription 稳定关联 MedicationRequest、费用、支付和发药。
+- Virtual Patient 直接接诊原子复用其合成 Patient 并建立 Registration、Encounter、Account 和医生 Queue Task，不伪造分诊或费用事实。
 - 五个人类岗位可以通过 Web/API 完成候选 Scenario；density 数据使用同一 schema 并满足分页与交互基线。
 - Node.js 服务重启后从同一 SQLite 文件恢复；备份/恢复验证 schema、integrity 与 canonical state hash。
 - 首期没有 Desktop、Mobile、Agent、AG-UI、评分或附件入口，也不声明对应能力。

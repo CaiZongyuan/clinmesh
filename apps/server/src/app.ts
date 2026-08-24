@@ -358,6 +358,32 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.get('/api/his/v1/doctor/virtual-patients', async (context) => {
+      try {
+        return context.json(workflow.virtualPatients(await actor(context)))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/doctor/virtual-patients/:virtualPatientId/actions/start', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.object({}).strict(),
+          input: z.object({
+            expectedVersion: z.number().int().positive(),
+          }),
+        }).parse(await context.req.json())
+        return context.json(workflow.startVirtualPatient({
+          context: await actor(context),
+          expectedVersion: body.input.expectedVersion,
+          idempotencyKey: idempotencyKey(context),
+          virtualPatientId: context.req.param('virtualPatientId'),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
     app.get('/api/his/v1/doctor/cases/:caseId', async (context) => {
       try {
         return context.json(workflow.doctorCaseDetail(

@@ -27,9 +27,11 @@ import {
   revisitDraftResponseSchema,
   scenarioCommandResponseSchema,
   scenarioStateSchema,
+  startVirtualPatientResponseSchema,
   startVisitResponseSchema,
   triageQueueSchema,
   triageResponseSchema,
+  virtualPatientListSchema,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AuditQuery } from '../src/application/audit-query.ts'
@@ -398,6 +400,215 @@ describe('outpatient workflow HTTP contract', () => {
   afterEach(async () => {
     await Promise.all(runtimes.splice(0).map(runtime => runtime.close()))
     await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true })))
+  })
+
+  it('lists only the clinically visible Virtual Patient summary for the doctor', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-virtual-patient-list-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
+
+    const response = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
+      headers: { cookie: doctorCookie },
+    })
+
+    expect(response.status).toBe(200)
+    const body: unknown = await response.json()
+    expect(virtualPatientListSchema.parse(body)).toEqual({
+      items: [{
+        birthDate: '1988-03-16',
+        gender: 'female',
+        id: 'virtual-patient-fever-001',
+        name: '合成候选患者林晓',
+        presentation: {
+          chiefComplaint: '发热、咽痛 1 天。',
+          summary: '昨日傍晚开始发热，最高 38.7 °C，伴咽痛。',
+          vitalSigns: {
+            bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
+            oxygenSaturationPct: 98,
+            pulseBpm: 96,
+            respirationBpm: 20,
+            temperatureC: 38.6,
+          },
+        },
+        version: 1,
+      }],
+    })
+    expect(JSON.stringify(body)).not.toMatch(/scenario|hidden|influenza|candidate-patient-001/i)
+  })
+
+  it('atomically starts one persistent doctor case and replays the same command receipt', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-virtual-patient-start-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const administratorCookie = await signIn(runtime, 'admin@demo.clinmesh.local', password)
+    const selectRole = (practitionerRoleId: string) => runtime.app.request('/api/auth/role', {
+      body: JSON.stringify({ practitionerRoleId }),
+      headers: {
+        'content-type': 'application/json',
+        cookie: administratorCookie,
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect((await selectRole('practitioner-role-outpatient-doctor')).status).toBe(200)
+    const candidatesResponse = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
+      headers: { cookie: administratorCookie },
+    })
+    const candidate = virtualPatientListSchema.parse(await candidatesResponse.json()).items[0]
+    if (candidate === undefined) throw new Error('Candidate Virtual Patient was not seeded')
+    const idempotencyKey = randomUUID()
+    const start = () => runtime.app.request(
+      `/api/his/v1/doctor/virtual-patients/${candidate.id}/actions/start`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {},
+          input: { expectedVersion: candidate.version },
+        }),
+        headers: commandHeaders(administratorCookie, idempotencyKey),
+        method: 'POST',
+      },
+    )
+
+    const firstResponse = await start()
+    expect(firstResponse.status).toBe(200)
+    const first = startVirtualPatientResponseSchema.parse(await firstResponse.json())
+    expect(first.data).toMatchObject({
+      patientId: 'candidate-patient-001',
+      status: 'first-visit',
+      virtualPatientId: candidate.id,
+    })
+    expect(startVirtualPatientResponseSchema.parse(await (await start()).json())).toEqual(first)
+
+    for (const [resourceType, resourceId] of [
+      ['Patient', first.data.patientId],
+      ['Encounter', first.data.encounterId],
+      ['Task', first.data.queueTaskId],
+    ] as const) {
+      const resourceResponse = await runtime.app.request(`/fhir/R5/${resourceType}/${resourceId}`, {
+        headers: { cookie: administratorCookie },
+      })
+      expect(resourceResponse.status).toBe(200)
+      expect(fhirResourceSchema.parse(await resourceResponse.json())).toMatchObject({
+        id: resourceId,
+        resourceType,
+      })
+    }
+    const encounterSearchResponse = await runtime.app.request(
+      `/fhir/R5/Encounter?patient=Patient/${first.data.patientId}&_total=accurate`,
+      { headers: { cookie: administratorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await encounterSearchResponse.json())).toMatchObject({ total: 1 })
+
+    const auditResponse = await runtime.app.request(`/fhir/R5/AuditEvent/${first.auditId}`, {
+      headers: { cookie: administratorCookie },
+    })
+    expect(fhirResourceSchema.parse(await auditResponse.json())).toMatchObject({
+      agent: expect.arrayContaining([
+        expect.objectContaining({
+          requestor: true,
+          who: { identifier: expect.objectContaining({ value: 'actor-administrator' }) },
+        }),
+        expect.objectContaining({
+          requestor: false,
+          who: { identifier: expect.objectContaining({ value: 'practitioner-outpatient-doctor' }) },
+        }),
+      ]),
+      code: { text: 'virtual-patient.start-consultation' },
+    })
+
+    expect((await selectRole('practitioner-role-registrar')).status).toBe(200)
+    const registrationsResponse = await runtime.app.request('/api/his/v1/registrations?pageSize=20', {
+      headers: { cookie: administratorCookie },
+    })
+    expect(registrationQueueSchema.parse(await registrationsResponse.json())).toMatchObject({
+      items: [expect.objectContaining({
+        caseId: first.data.caseId,
+        encounterId: first.data.encounterId,
+        registrationId: first.data.registrationId,
+        registrationStatus: 'in-progress',
+        status: 'first-visit',
+      })],
+      total: 1,
+    })
+
+    const restoredDoctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
+    const queueResponse = await runtime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
+      headers: { cookie: restoredDoctorCookie },
+    })
+    expect(doctorQueueSchema.parse(await queueResponse.json())).toMatchObject({
+      items: [expect.objectContaining({
+        caseId: first.data.caseId,
+        encounterId: first.data.encounterId,
+        status: 'first-visit',
+        taskId: first.data.queueTaskId,
+      })],
+      total: 1,
+    })
+  })
+
+  it('rejects a stale Virtual Patient version without creating a doctor case', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-virtual-patient-conflict-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
+
+    const conflictResponse = await runtime.app.request(
+      '/api/his/v1/doctor/virtual-patients/virtual-patient-fever-001/actions/start',
+      {
+        body: JSON.stringify({
+          expectedVersions: {},
+          input: { expectedVersion: 2 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    expect(conflictResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await conflictResponse.json())).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
+    const candidatesResponse = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
+      headers: { cookie: doctorCookie },
+    })
+    expect(virtualPatientListSchema.parse(await candidatesResponse.json())).toMatchObject({
+      items: [{ id: 'virtual-patient-fever-001', version: 1 }],
+    })
+    const queueResponse = await runtime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
+      headers: { cookie: doctorCookie },
+    })
+    expect(doctorQueueSchema.parse(await queueResponse.json())).toMatchObject({ items: [], total: 0 })
   })
 
   it('creates a synthetic patient and atomically hands one registration to the triage queue', async () => {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebApp } from './web-app.tsx'
@@ -13,6 +13,27 @@ const doctorTriage = {
   pulseBpm: 102,
   respirationBpm: 20,
   temperatureC: 38.2,
+}
+
+const virtualPatientPresentation = {
+  chiefComplaint: '发热、咽痛 1 天。',
+  summary: '昨日傍晚开始发热，最高 38.7 °C，伴咽痛。',
+  vitalSigns: {
+    bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
+    oxygenSaturationPct: 98,
+    pulseBpm: 96,
+    respirationBpm: 20,
+    temperatureC: 38.6,
+  },
+}
+
+const virtualPatient = {
+  birthDate: '1988-03-16',
+  gender: 'female',
+  id: 'virtual-patient-fever-001',
+  name: '合成候选患者林晓',
+  presentation: virtualPatientPresentation,
+  version: 7,
 }
 
 const administratorSession = {
@@ -665,6 +686,226 @@ describe('role workspaces', () => {
     expect(await screen.findByRole('listitem', { name: '选择病例 合成患者周明' })).toBeTruthy()
   })
 
+  it('selects a clinically visible Virtual Patient and submits its expected version', async () => {
+    let startRequests = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({ laboratory: [], medications: [] })
+      }
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients' && init?.method === undefined) {
+        return Response.json({ items: [virtualPatient] })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients/virtual-patient-fever-001/actions/start') {
+        startRequests += 1
+        if (init === undefined) throw new Error('Expected a mutation request')
+        expect(init.method).toBe('POST')
+        expect(new Headers(init.headers).get('idempotency-key')).toBeTruthy()
+        expect(JSON.parse(String(init.body))).toEqual({
+          expectedVersions: {},
+          input: { expectedVersion: 7 },
+        })
+        return Response.json(commandResponse({
+          caseId: 'case-direct',
+          encounterId: 'encounter-direct',
+          patientId: 'candidate-patient-001',
+          queueTaskId: 'task-doctor-direct',
+          registrationId: 'registration-direct',
+          status: 'first-visit',
+          virtualPatientId: virtualPatient.id,
+        }))
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    const candidate = await screen.findByRole('button', {
+      name: '选择候选患者 合成候选患者林晓',
+    })
+    expect(screen.getByText('发热、咽痛 1 天。')).toBeTruthy()
+    await user.click(candidate)
+    expect(screen.getByText('昨日傍晚开始发热，最高 38.7 °C，伴咽痛。')).toBeTruthy()
+    expect(screen.getByText('38.6')).toBeTruthy()
+    expect(screen.getByText('118/76')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '开始接诊' }))
+
+    await waitFor(() => expect(startRequests).toBe(1))
+  })
+
+  it('refreshes Virtual Patients and the queue before opening the started case', async () => {
+    let started = false
+    let queueRequests = 0
+    let virtualPatientRequests = 0
+    const existingPatient = {
+      birthDate: '1990-05-10',
+      gender: 'male',
+      id: 'patient-existing',
+      identifier: 'CM-SYN-EXISTING',
+      name: '合成患者周明',
+      synthetic: true,
+      versionId: '1',
+    }
+    const directPatient = {
+      birthDate: virtualPatient.birthDate,
+      gender: virtualPatient.gender,
+      id: 'candidate-patient-001',
+      identifier: 'CM-SYN-CANDIDATE-001',
+      name: virtualPatient.name,
+      synthetic: true,
+      versionId: '1',
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({ laboratory: [], medications: [] })
+      }
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        virtualPatientRequests += 1
+        return Response.json({ items: started ? [] : [virtualPatient] })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        queueRequests += 1
+        return Response.json({
+          items: [{
+            caseId: 'case-existing',
+            encounterId: 'encounter-existing',
+            encounterVersion: '2',
+            patient: existingPatient,
+            status: 'awaiting-doctor',
+            taskId: 'task-doctor-existing',
+            taskVersion: '1',
+            triage: doctorTriage,
+          }, ...(started ? [{
+            caseId: 'case-direct',
+            encounterId: 'encounter-direct',
+            encounterVersion: '1',
+            patient: directPatient,
+            presentation: virtualPatientPresentation,
+            status: 'first-visit',
+            taskId: 'task-doctor-direct',
+            taskVersion: '1',
+          }] : [])],
+          ...pagination(started ? 2 : 1),
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-existing') {
+        return Response.json({
+          allergies: [],
+          caseId: 'case-existing',
+          encounter: { id: 'encounter-existing', status: 'in-progress', versionId: '2' },
+          patient: existingPatient,
+          priorFacts: [],
+          status: 'awaiting-doctor',
+          taskId: 'task-doctor-existing',
+          taskVersion: '1',
+          triage: doctorTriage,
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-direct') {
+        return Response.json({
+          allergies: [],
+          caseId: 'case-direct',
+          encounter: { id: 'encounter-direct', status: 'in-progress', versionId: '1' },
+          patient: directPatient,
+          presentation: virtualPatientPresentation,
+          priorFacts: [],
+          status: 'first-visit',
+          taskId: 'task-doctor-direct',
+          taskVersion: '1',
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients/virtual-patient-fever-001/actions/start') {
+        started = true
+        return Response.json(commandResponse({
+          caseId: 'case-direct',
+          encounterId: 'encounter-direct',
+          patientId: directPatient.id,
+          queueTaskId: 'task-doctor-direct',
+          registrationId: 'registration-direct',
+          status: 'first-visit',
+          virtualPatientId: virtualPatient.id,
+        }))
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('button', {
+      name: '选择候选患者 合成候选患者林晓',
+    }))
+    await user.click(screen.getByRole('button', { name: '开始接诊' }))
+
+    expect(await screen.findByLabelText('现病史')).toBeTruthy()
+    expect(screen.getByText('CM-SYN-CANDIDATE-001')).toBeTruthy()
+    expect(screen.getByText('昨日傍晚开始发热，最高 38.7 °C，伴咽痛。')).toBeTruthy()
+    expect(virtualPatientRequests).toBeGreaterThanOrEqual(2)
+    expect(queueRequests).toBeGreaterThanOrEqual(2)
+  })
+
+  it('renders a specific empty state when no Virtual Patient is available', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({ laboratory: [], medications: [] })
+      }
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [] })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+
+    render(<WebApp />)
+
+    expect(await screen.findByText('暂无可接诊候选患者')).toBeTruthy()
+    expect(screen.getByText('当前场景没有待建立接诊上下文的候选患者。')).toBeTruthy()
+  })
+
+  it('shows the operation-conflict alert when a Virtual Patient version is stale', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({ laboratory: [], medications: [] })
+      }
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [virtualPatient] })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients/virtual-patient-fever-001/actions/start') {
+        return Response.json({
+          error: {
+            code: 'WORKFLOW_CONFLICT',
+            message: 'The Virtual Patient version has changed',
+          },
+        }, { status: 409 })
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('button', {
+      name: '选择候选患者 合成候选患者林晓',
+    }))
+    await user.click(screen.getByRole('button', { name: '开始接诊' }))
+
+    expect(await screen.findByText('操作冲突')).toBeTruthy()
+    expect(screen.getByText('数据已发生变化，请刷新后重新确认。')).toBeTruthy()
+  })
+
   it('starts the first visit, saves a CAS draft, and issues the laboratory order', async () => {
     let status: 'awaiting-doctor' | 'awaiting-lab-payment' | 'first-visit' = 'awaiting-doctor'
     let draftVersion = 0
@@ -683,6 +924,9 @@ describe('role workspaces', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [] })
+      }
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
         return Response.json({
           laboratory: [{
@@ -1039,6 +1283,9 @@ describe('role workspaces', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [] })
+      }
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
         return Response.json({
           laboratory: [],
@@ -1225,6 +1472,9 @@ describe('role workspaces', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [] })
+      }
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
         return Response.json({
           laboratory: [],

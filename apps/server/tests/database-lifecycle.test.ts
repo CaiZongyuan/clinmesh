@@ -37,7 +37,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 8,
+      schemaVersion: 9,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -49,15 +49,184 @@ describe('SQLite lifecycle', () => {
         '0005_partial-dispensing.sql',
         '0006_queue-pagination.sql',
         '0007_prescription-review.sql',
+        '0008_virtual-patient-intake.sql',
       ],
-      schemaVersion: 8,
+      schemaVersion: 9,
     })
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 8 })
-    expect(reopened.diagnostics().schemaVersion).toBe(8)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 9 })
+    expect(reopened.diagnostics().schemaVersion).toBe(9)
     reopened.close()
+  })
+
+  it('preserves existing outpatient cases while upgrading the initial task column', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-virtual-patient-migration-'))
+    temporaryDirectories.push(directory)
+    const legacyMigrationDirectory = join(directory, 'legacy-migrations')
+    await mkdir(legacyMigrationDirectory)
+    for (const migration of [
+      '0000_foundation.sql',
+      '0001_identity.sql',
+      '0002_scenario.sql',
+      '0003_outpatient-workflow.sql',
+      '0004_clinical-signing.sql',
+      '0005_partial-dispensing.sql',
+      '0006_queue-pagination.sql',
+      '0007_prescription-review.sql',
+    ]) {
+      await copyFile(join(process.cwd(), 'drizzle', migration), join(legacyMigrationDirectory, migration))
+    }
+    const database = openClinMeshDatabase({
+      busyTimeoutMs: 5_000,
+      databasePath: join(directory, 'clinmesh.sqlite'),
+    })
+    expect(applyMigrations(database, legacyMigrationDirectory).schemaVersion).toBe(8)
+    const context = { epoch: 'epoch-legacy', workspaceId: 'workspace-legacy' }
+    database.driver.prepare(`
+      INSERT INTO scenario_definition (
+        scenario_id, version, kind, schema_version, clinical_review_json
+      ) VALUES (?, ?, ?, ?, ?)
+    `).run('legacy-scenario', '1.0.0', 'candidate', '1', null)
+    new WorkspaceRepository(database).install({
+      ...context,
+      scenarioId: 'legacy-scenario',
+      scenarioRunId: 'run-legacy',
+      workspaceName: '合成升级工作区',
+    })
+    database.driver.prepare(`
+      INSERT INTO scenario_epoch_state (
+        workspace_id, epoch, scenario_run_id, scenario_id,
+        deterministic_seed, virtual_time, initial_state_hash
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'run-legacy',
+      'legacy-scenario',
+      20260824,
+      '2026-08-24T09:00:00+08:00',
+      'legacy-state',
+    )
+    database.driver.prepare(`
+      INSERT INTO outpatient_catalog (
+        workspace_id, epoch, item_id, kind, code, name_zh, name_en,
+        price_fen, version, active, config_json
+      ) VALUES (?, ?, ?, 'department', ?, ?, ?, 0, 1, 1, '{}')
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'department-legacy',
+      'LEGACY',
+      '合成升级科室',
+      'Synthetic upgrade department',
+    )
+    database.driver.prepare(`
+      INSERT INTO outpatient_case (
+        workspace_id, epoch, case_id, scenario_run_id, patient_id,
+        registration_id, encounter_id, account_id, department_id, location_id,
+        triage_task_id, status, arrived_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting-triage', ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'case-legacy',
+      'run-legacy',
+      'patient-legacy',
+      'registration-legacy',
+      'encounter-legacy',
+      'account-legacy',
+      'department-legacy',
+      'location-legacy',
+      'task-triage-legacy',
+      '2026-08-24T09:00:00+08:00',
+      '2026-08-24T09:00:00+08:00',
+    )
+
+    expect(applyMigrations(database)).toEqual({
+      applied: ['0008_virtual-patient-intake.sql'],
+      schemaVersion: 9,
+    })
+    const caseColumns = database.driver.prepare('PRAGMA table_info(outpatient_case)').all() as Array<{
+      name: string
+    }>
+    expect(caseColumns.map(column => column.name)).toContain('initial_task_id')
+    expect(caseColumns.map(column => column.name)).not.toContain('triage_task_id')
+    expect(database.driver.prepare(`
+      SELECT case_id, initial_task_id, status FROM outpatient_case
+      WHERE workspace_id = ? AND epoch = ?
+    `).get(context.workspaceId, context.epoch)).toEqual({
+      case_id: 'case-legacy',
+      initial_task_id: 'task-triage-legacy',
+      status: 'awaiting-triage',
+    })
+    database.driver.prepare(`
+      INSERT INTO virtual_patient (
+        workspace_id, epoch, virtual_patient_id, version, patient_id,
+        name, gender, birth_date, clinical_summary_json, available
+      ) VALUES (?, ?, ?, 1, ?, ?, 'female', '1988-03-16', ?, 1)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'virtual-patient-legacy',
+      'patient-legacy',
+      '合成候选患者',
+      JSON.stringify({
+        chiefComplaint: '发热 1 天。',
+        summary: '合成升级摘要。',
+        vitalSigns: {
+          bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
+          oxygenSaturationPct: 98,
+          pulseBpm: 96,
+          respirationBpm: 20,
+          temperatureC: 38.6,
+        },
+      }),
+    )
+    database.driver.prepare(`
+      INSERT INTO virtual_patient_case (
+        workspace_id, epoch, virtual_patient_id, case_id
+      ) VALUES (?, ?, ?, ?)
+    `).run(context.workspaceId, context.epoch, 'virtual-patient-legacy', 'case-legacy')
+    database.driver.prepare(`
+      INSERT INTO virtual_patient (
+        workspace_id, epoch, virtual_patient_id, version, patient_id,
+        name, gender, birth_date, clinical_summary_json, available
+      ) SELECT workspace_id, epoch, ?, version, ?, name, gender,
+        birth_date, clinical_summary_json, available
+      FROM virtual_patient
+      WHERE workspace_id = ? AND epoch = ? AND virtual_patient_id = ?
+    `).run(
+      'virtual-patient-second',
+      'patient-second',
+      context.workspaceId,
+      context.epoch,
+      'virtual-patient-legacy',
+    )
+    expect(() => database.driver.prepare(`
+      INSERT INTO virtual_patient_case (
+        workspace_id, epoch, virtual_patient_id, case_id
+      ) VALUES (?, ?, ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'virtual-patient-second',
+      'case-legacy',
+    )).toThrow(/UNIQUE constraint failed/)
+    expect(() => database.driver.prepare(`
+      INSERT INTO virtual_patient_case (
+        workspace_id, epoch, virtual_patient_id, case_id
+      ) VALUES (?, ?, ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'virtual-patient-second',
+      'case-missing',
+    )).toThrow(/FOREIGN KEY constraint failed/)
+    expect(database.driver.pragma('foreign_key_check')).toEqual([])
+    expect(database.driver.pragma('integrity_check', { simple: true })).toBe('ok')
+    database.close()
   })
 
   it('requires migrations to be applied explicitly before verified runtime startup', async () => {
@@ -81,7 +250,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(8)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(9)
     await runtime.close()
   })
 
@@ -151,7 +320,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 8,
+      schemaVersion: 9,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -163,11 +332,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 8,
+      expectedSchemaVersion: 9,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 8,
+      schemaVersion: 9,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -210,7 +379,7 @@ describe('SQLite lifecycle', () => {
       backupPath: corruptPath,
       busyTimeoutMs: 5_000,
       destinationPath,
-      expectedSchemaVersion: 8,
+      expectedSchemaVersion: 9,
     })).rejects.toThrow()
     expect(existsSync(destinationPath)).toBe(false)
     expect(repository.read(context, 'Patient', 'patient-active')).toMatchObject({
@@ -351,32 +520,35 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(8),
+      schemaVersion: z.literal(9),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
       databasePath,
     ], {}))
-    expect(migrationResult.applied).toEqual(['0007_prescription-review.sql'])
+    expect(migrationResult.applied).toEqual([
+      '0007_prescription-review.sql',
+      '0008_virtual-patient-intake.sql',
+    ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 8 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 9 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 8 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 9 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 8 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 9 })
   })
 })

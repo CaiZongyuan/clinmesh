@@ -14,6 +14,8 @@ Status: proposed
 
 医生可以直接从 Virtual Patient 列表开始接诊。底层仍建立 Registration 和 Queue Task 以保持 HIS 业务事实完整，但首期医生体验不要求手工扮演挂号、分诊、收费、检验和药房岗位。Virtual Patient 使用版本固定的病例事实和确定性回答规则，不依赖 LLM；Consultation Record 与正式 Clinical Document 分别保存，医生必须手工整理结构化病历。
 
+Virtual Patient 是独立于 Patient Identity 和 Encounter 的候选病例事实。候选列表只暴露版本和临床可见摘要；医生开始接诊时复用其绑定的合成 Patient，但不伪造分诊或费用事实。当前原子创建、版本冲突、幂等回执和可见字段合同由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。
+
 临床文书支持草稿、版本、签署和签署后 Clinical Document Revision。检查请求支持草稿、开具、受理、执行中、已报告和医生已阅；首批交付血常规和 C 反应蛋白。Observation 保存结构化结果，DiagnosticReport 保存可读报告并引用结果；已签发报告不可删除，更正创建新版本和替代关系。诊断与 Prescription 分别支持草稿和正式状态，不把页面切换当作签发。
 
 Encounter Completion Policy 只汇总各 owner 已确认的事实，不复制其状态机。医生只有在主诊断已确认、病历已签署、必要检查已报告且完成 Report Acknowledgement、处方已开具或明确无需用药、没有未处理草稿、处置和随访完整时才能完成 Encounter。完诊后病例进入只读查询入口，展示 Consultation Record、病历版本、检查、报告、诊断、处方和业务时间线；更正通过原模块的受控命令产生新事实，不解锁并覆盖历史内容。
@@ -33,6 +35,8 @@ Web 使用高信息密度的临床工作台：204px 任务侧栏、54px 顶栏�
 **让超级管理员直接覆盖登录用户。** 这种实现简单，但会丢失真实 Actor 与所代表工作人员的审计关系。Acting Practitioner Context 保留两者，同时把产品交互收敛为一个直观选择器。
 
 **把问诊对话直接作为病历。** 这减少一次录入，却混淆原始问答和医生负责的正式文书，也无法支持结构化签署与修订。两类事实必须独立存在并可关联查看。
+
+**把 Virtual Patient 等同于 Patient Identity，或为直接接诊伪造分诊。** 前者会把病例协议、可用状态和稳定患者身份混为同一事实，后者会记录实际从未发生的护理观察。候选病例保持独立，直接入口只建立真实发生的医生接诊事实。
 
 **用一个 Encounter 或页面状态推进全部临床步骤。** 这会让报告更正、病历修订、处方撤回和检查取消失去各自前置条件。各模块拥有独立生命周期，Completion Policy 只读取其正式状态。
 

@@ -27,6 +27,32 @@ export const patientSummarySchema = z.object({
   versionId: z.string().regex(/^\d+$/),
 })
 
+export const clinicalPresentationSchema = z.object({
+  chiefComplaint: z.string().min(1),
+  summary: z.string().min(1),
+  vitalSigns: z.object({
+    bloodPressure: z.object({
+      diastolicMmHg: z.number().positive(),
+      systolicMmHg: z.number().positive(),
+    }).strict(),
+    oxygenSaturationPct: z.number().min(0).max(100),
+    pulseBpm: z.number().positive(),
+    respirationBpm: z.number().positive(),
+    temperatureC: z.number(),
+  }).strict(),
+}).strict()
+
+export const virtualPatientListSchema = z.object({
+  items: z.array(z.object({
+    birthDate: z.iso.date(),
+    gender: z.enum(['female', 'male', 'other', 'unknown']),
+    id: z.string().min(1),
+    name: z.string().min(1),
+    presentation: clinicalPresentationSchema,
+    version: z.number().int().positive(),
+  }).strict()),
+}).strict()
+
 export const sessionContextSchema = z.object({
   actor: z.object({
     actorId: z.string().min(1),
@@ -84,6 +110,16 @@ export function commandResponseSchema<Schema extends z.ZodType>(data: Schema) {
 }
 
 export const scenarioCommandResponseSchema = commandResponseSchema(scenarioStateSchema)
+
+export const startVirtualPatientResponseSchema = commandResponseSchema(z.object({
+  caseId: z.string().min(1),
+  encounterId: z.string().min(1),
+  patientId: z.string().min(1),
+  queueTaskId: z.string().min(1),
+  registrationId: z.string().min(1),
+  status: z.literal('first-visit'),
+  virtualPatientId: z.string().min(1),
+}))
 
 const catalogItemSchema = z.object({
   id: z.string().min(1),
@@ -149,6 +185,7 @@ export const registrationQueueSchema = z.object({
     patient: patientSummarySchema,
     registrationId: z.string().min(1),
     registrationNumber: z.string().min(1),
+    registrationStatus: z.string().min(1).optional(),
     status: z.string().min(1),
     taskId: z.string().min(1),
     taskVersion: z.string().regex(/^\d+$/),
@@ -220,6 +257,7 @@ export const doctorQueueItemSchema = z.object({
   encounterId: z.string().min(1),
   encounterVersion: z.string().regex(/^\d+$/),
   patient: patientSummarySchema,
+  presentation: clinicalPresentationSchema.optional(),
   status: z.enum([
     'awaiting-doctor',
     'awaiting-report',
@@ -229,7 +267,7 @@ export const doctorQueueItemSchema = z.object({
   ]),
   taskId: z.string().min(1),
   taskVersion: z.string().regex(/^\d+$/),
-  triage: triageSummarySchema,
+  triage: triageSummarySchema.optional(),
 }).loose()
 
 export const doctorQueueSchema = z.object({
@@ -293,6 +331,7 @@ export const doctorCaseDetailSchema = z.object({
     versionId: z.string().regex(/^\d+$/),
   }),
   patient: patientSummarySchema,
+  presentation: clinicalPresentationSchema.optional(),
   priorFacts: z.array(priorFactSchema),
   report: z.object({
     id: z.string().min(1),
@@ -308,7 +347,7 @@ export const doctorCaseDetailSchema = z.object({
   status: z.string().min(1),
   taskId: z.string().min(1),
   taskVersion: z.string().regex(/^\d+$/),
-  triage: triageVitalSummarySchema,
+  triage: triageVitalSummarySchema.optional(),
 }).loose()
 
 export const startVisitResponseSchema = commandResponseSchema(z.object({
@@ -496,6 +535,8 @@ export type RoleCode = z.infer<typeof roleCodeSchema>
 export type SessionContext = z.infer<typeof sessionContextSchema>
 export type ScenarioState = z.infer<typeof scenarioStateSchema>
 export type PatientSummary = z.infer<typeof patientSummarySchema>
+export type ClinicalPresentation = z.infer<typeof clinicalPresentationSchema>
+export type VirtualPatientList = z.infer<typeof virtualPatientListSchema>
 export type ClinicalCatalog = z.infer<typeof clinicalCatalogSchema>
 export type TriageQueueItem = z.infer<typeof triageQueueSchema>['items'][number]
 export type DoctorQueueItem = z.infer<typeof doctorQueueItemSchema>

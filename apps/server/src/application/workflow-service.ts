@@ -2,6 +2,7 @@ import { createHmac } from 'node:crypto'
 import { v7 as uuidv7 } from 'uuid'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
 import {
+  clinicalPresentationSchema,
   clinicalDocumentRevisionResponseSchema,
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
@@ -15,8 +16,10 @@ import {
   prescriptionReviewResponseSchema,
   registrationResponseSchema,
   revisitDraftResponseSchema,
+  startVirtualPatientResponseSchema,
   startVisitResponseSchema,
   triageResponseSchema,
+  virtualPatientListSchema,
 } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
@@ -80,6 +83,17 @@ const triageRecordContentSchema = z.object({
   pulseBpm: z.number(),
   respirationBpm: z.number(),
   temperatureC: z.number(),
+})
+
+const virtualPatientRowSchema = z.object({
+  available: z.union([z.literal(0), z.literal(1)]),
+  birth_date: z.iso.date(),
+  clinical_summary_json: z.string(),
+  gender: z.enum(['female', 'male', 'other', 'unknown']),
+  name: z.string().min(1),
+  patient_id: z.string().min(1),
+  version: z.number().int().positive(),
+  virtual_patient_id: z.string().min(1),
 })
 
 const diagnosisDraftSchema = z.object({
@@ -178,6 +192,33 @@ function patientSummary(resource: FhirResource): PatientSummary {
     synthetic: true,
     versionId: resource.meta?.versionId ?? '1',
   }
+}
+
+function presentationFromTriage(value: z.infer<typeof triageRecordContentSchema>) {
+  return clinicalPresentationSchema.parse({
+    chiefComplaint: value.chiefComplaint,
+    summary: value.chiefComplaint,
+    vitalSigns: {
+      bloodPressure: value.bloodPressure,
+      oxygenSaturationPct: value.oxygenSaturationPct,
+      pulseBpm: value.pulseBpm,
+      respirationBpm: value.respirationBpm,
+      temperatureC: value.temperatureC,
+    },
+  })
+}
+
+function casePresentation(
+  triage: z.infer<typeof triageRecordContentSchema> | undefined,
+  virtualPatientJson: string | null,
+) {
+  if (triage !== undefined) {
+    return presentationFromTriage(triage)
+  }
+  if (virtualPatientJson !== null) {
+    return clinicalPresentationSchema.parse(JSON.parse(virtualPatientJson))
+  }
+  throw new WorkflowError('WORKFLOW_CONFLICT', 'The outpatient case has no clinical presentation')
 }
 
 function xhtmlText(value: string): string {
@@ -293,9 +334,10 @@ export class WorkflowService {
     `).get(context.workspaceId, context.epoch) as { count: number }
     const rows = this.#database.driver.prepare(`
       SELECT outpatient_case.case_id, outpatient_case.encounter_id,
-        outpatient_case.status, outpatient_case.triage_task_id,
+        outpatient_case.status, outpatient_case.initial_task_id,
         outpatient_case.arrived_at, registration.registration_id,
-        registration.registration_number, patient.content_json AS patient_json,
+        registration.registration_number, registration.status AS registration_status,
+        patient.content_json AS patient_json,
         encounter.version_id AS encounter_version, task.version_id AS task_version
       FROM outpatient_case
       JOIN registration
@@ -316,7 +358,7 @@ export class WorkflowService {
         ON task.workspace_id = outpatient_case.workspace_id
        AND task.epoch = outpatient_case.epoch
        AND task.resource_type = 'Task'
-       AND task.resource_id = outpatient_case.triage_task_id
+       AND task.resource_id = outpatient_case.initial_task_id
       WHERE outpatient_case.workspace_id = ? AND outpatient_case.epoch = ?
       ORDER BY outpatient_case.arrived_at DESC, outpatient_case.case_id
       LIMIT ? OFFSET ?
@@ -328,9 +370,10 @@ export class WorkflowService {
       patient_json: string
       registration_id: string
       registration_number: string
+      registration_status: string
       status: string
       task_version: number
-      triage_task_id: string
+      initial_task_id: string
     }>
     return {
       items: rows.map(row => ({
@@ -341,8 +384,9 @@ export class WorkflowService {
         patient: patientSummary(parseStoredFhirResource(row.patient_json)),
         registrationId: row.registration_id,
         registrationNumber: row.registration_number,
+        registrationStatus: row.registration_status,
         status: row.status,
-        taskId: row.triage_task_id,
+        taskId: row.initial_task_id,
         taskVersion: String(row.task_version),
       })),
       page,
@@ -589,7 +633,7 @@ export class WorkflowService {
         INSERT INTO outpatient_case (
           workspace_id, epoch, case_id, scenario_run_id, patient_id,
           registration_id, encounter_id, account_id, department_id, location_id,
-          triage_task_id, status, arrived_at, updated_at
+          initial_task_id, status, arrived_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting-triage', ?, ?)
       `).run(
         input.context.workspaceId,
@@ -728,7 +772,7 @@ export class WorkflowService {
         ON task.workspace_id = outpatient_case.workspace_id
        AND task.epoch = outpatient_case.epoch
        AND task.resource_type = 'Task'
-       AND task.resource_id = outpatient_case.triage_task_id
+       AND task.resource_id = outpatient_case.initial_task_id
       WHERE outpatient_case.workspace_id = ? AND outpatient_case.epoch = ?
         AND ${queueCondition}
       ORDER BY outpatient_case.arrived_at, outpatient_case.case_id
@@ -747,7 +791,7 @@ export class WorkflowService {
       location_id: string
       status: string
       task_version: number
-      triage_task_id: string
+      initial_task_id: string
       visit_type_id: string
       visit_type_name_en: string
       visit_type_name_zh: string
@@ -779,7 +823,7 @@ export class WorkflowService {
           registrationNumber: row.registration_number,
           riskFlags: this.#patientAllergyWarnings(context, patient.id),
           status: row.status,
-          taskId: row.triage_task_id,
+          taskId: row.initial_task_id,
           taskVersion: String(row.task_version),
           visitType: {
             id: row.visit_type_id,
@@ -825,7 +869,7 @@ export class WorkflowService {
     }, transaction => {
       this.#assertRole(input.context, ['triage-nurse'])
       const outpatientCase = this.#database.driver.prepare(`
-        SELECT case_id, patient_id, encounter_id, triage_task_id, status
+        SELECT case_id, patient_id, encounter_id, initial_task_id, status
         FROM outpatient_case
         WHERE workspace_id = ? AND epoch = ? AND encounter_id = ?
       `).get(input.context.workspaceId, input.context.epoch, input.encounterId) as {
@@ -833,17 +877,17 @@ export class WorkflowService {
         encounter_id: string
         patient_id: string
         status: string
-        triage_task_id: string
+        initial_task_id: string
       } | undefined
       if (outpatientCase === undefined || outpatientCase.status !== 'awaiting-triage') {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not awaiting triage')
       }
       this.#assertExpectedVersions(input.expectedVersions, [
         `Encounter/${outpatientCase.encounter_id}`,
-        `Task/${outpatientCase.triage_task_id}`,
+        `Task/${outpatientCase.initial_task_id}`,
       ])
       const encounter = transaction.fhir.read(input.context, 'Encounter', outpatientCase.encounter_id)
-      const triageTask = transaction.fhir.read(input.context, 'Task', outpatientCase.triage_task_id)
+      const triageTask = transaction.fhir.read(input.context, 'Task', outpatientCase.initial_task_id)
       const observationId = uuidv7()
       const doctorTaskId = uuidv7()
       const triageId = uuidv7()
@@ -959,12 +1003,21 @@ export class WorkflowService {
     const rows = this.#database.driver.prepare(`
       SELECT outpatient_case.*, patient.content_json AS patient_json,
         triage.acuity_code, triage.chief_complaint, triage.vital_json,
+        virtual_patient.clinical_summary_json AS virtual_patient_summary_json,
         encounter.version_id AS encounter_version, task.version_id AS task_version
       FROM outpatient_case
-      JOIN triage_record AS triage
+      LEFT JOIN triage_record AS triage
         ON triage.workspace_id = outpatient_case.workspace_id
        AND triage.epoch = outpatient_case.epoch
        AND triage.case_id = outpatient_case.case_id
+      LEFT JOIN virtual_patient_case
+        ON virtual_patient_case.workspace_id = outpatient_case.workspace_id
+       AND virtual_patient_case.epoch = outpatient_case.epoch
+       AND virtual_patient_case.case_id = outpatient_case.case_id
+      LEFT JOIN virtual_patient
+        ON virtual_patient.workspace_id = virtual_patient_case.workspace_id
+       AND virtual_patient.epoch = virtual_patient_case.epoch
+       AND virtual_patient.virtual_patient_id = virtual_patient_case.virtual_patient_id
       JOIN fhir_resource AS patient
         ON patient.workspace_id = outpatient_case.workspace_id
        AND patient.epoch = outpatient_case.epoch
@@ -985,9 +1038,9 @@ export class WorkflowService {
       ORDER BY outpatient_case.arrived_at, outpatient_case.case_id
       LIMIT ? OFFSET ?
     `).all(...bindings, pageSize, (page - 1) * pageSize) as Array<{
-      acuity_code: string
+      acuity_code: string | null
       case_id: string
-      chief_complaint: string
+      chief_complaint: string | null
       diagnostic_report_id: string | null
       doctor_task_id: string
       encounter_id: string
@@ -995,31 +1048,248 @@ export class WorkflowService {
       patient_json: string
       status: string
       task_version: number
-      vital_json: string
+      virtual_patient_summary_json: string | null
+      vital_json: string | null
     }>
     return {
       items: rows.map(row => {
-        const vitals = triageRecordContentSchema.parse(JSON.parse(row.vital_json))
+        const triage = row.vital_json === null
+          ? undefined
+          : triageRecordContentSchema.parse(JSON.parse(row.vital_json))
         return {
           caseId: row.case_id,
           ...(row.diagnostic_report_id === null ? {} : { diagnosticReportId: row.diagnostic_report_id }),
           encounterId: row.encounter_id,
           encounterVersion: String(row.encounter_version),
           patient: patientSummary(parseStoredFhirResource(row.patient_json)),
+          presentation: casePresentation(triage, row.virtual_patient_summary_json),
           status: row.status,
           taskId: row.doctor_task_id,
           taskVersion: String(row.task_version),
-          triage: {
-            acuityCode: row.acuity_code,
-            chiefComplaint: row.chief_complaint,
-            temperatureC: vitals.temperatureC,
-          },
+          ...(triage === undefined || row.acuity_code === null || row.chief_complaint === null
+            ? {}
+            : {
+                triage: {
+                  acuityCode: row.acuity_code,
+                  chiefComplaint: row.chief_complaint,
+                  temperatureC: triage.temperatureC,
+                },
+              }),
         }
       }),
       page,
       pageSize,
       total: total.count,
     }
+  }
+
+  virtualPatients(context: ActorContext) {
+    this.#assertRole(context, ['outpatient-doctor'])
+    const rows = z.array(virtualPatientRowSchema).parse(this.#database.driver.prepare(`
+      SELECT virtual_patient_id, version, patient_id, name, gender, birth_date,
+        clinical_summary_json, available
+      FROM virtual_patient
+      WHERE workspace_id = ? AND epoch = ? AND available = 1
+      ORDER BY virtual_patient_id
+    `).all(context.workspaceId, context.epoch))
+    return virtualPatientListSchema.parse({
+      items: rows.map(row => ({
+        birthDate: row.birth_date,
+        gender: row.gender,
+        id: row.virtual_patient_id,
+        name: row.name,
+        presentation: JSON.parse(row.clinical_summary_json) as unknown,
+        version: row.version,
+      })),
+    })
+  }
+
+  startVirtualPatient(input: {
+    context: ActorContext
+    expectedVersion: number
+    idempotencyKey: string
+    virtualPatientId: string
+  }): CommandResponse<{
+    caseId: string
+    encounterId: string
+    patientId: string
+    queueTaskId: string
+    registrationId: string
+    status: 'first-visit'
+    virtualPatientId: string
+  }> {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: startVirtualPatientResponseSchema.shape.data,
+      expectedVersions: {},
+      idempotencyKey: input.idempotencyKey,
+      input: {
+        expectedVersion: input.expectedVersion,
+        virtualPatientId: input.virtualPatientId,
+      },
+      operation: 'virtual-patient.start-consultation',
+    }, transaction => {
+      this.#assertRole(input.context, ['outpatient-doctor'])
+      const virtualPatient = virtualPatientRowSchema.optional().parse(
+        this.#database.driver.prepare(`
+          SELECT virtual_patient_id, version, patient_id, name, gender, birth_date,
+            clinical_summary_json, available
+          FROM virtual_patient
+          WHERE workspace_id = ? AND epoch = ? AND virtual_patient_id = ?
+        `).get(input.context.workspaceId, input.context.epoch, input.virtualPatientId),
+      )
+      if (virtualPatient === undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Virtual Patient is unavailable')
+      }
+      if (virtualPatient.version !== input.expectedVersion) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Virtual Patient version has changed')
+      }
+      if (virtualPatient.available !== 1) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Virtual Patient consultation has already started')
+      }
+
+      const patient = transaction.fhir.read(input.context, 'Patient', virtualPatient.patient_id)
+      const department = this.#catalogItem(input.context, 'department-general-medicine', 'department')
+      const visitType = this.#catalogItem(input.context, 'visit-general', 'visit-type')
+      const location = transaction.fhir.read(input.context, 'Location', 'location-outpatient')
+      if (!this.#isRegistrationLocation(location)) {
+        throw new WorkflowError('CATALOG_CONFLICT', 'The outpatient location is unavailable')
+      }
+      const now = this.#virtualTime(input.context)
+      const visitDate = now.slice(0, 10)
+      const count = (this.#database.driver.prepare(`
+        SELECT COUNT(*) AS count FROM registration
+        WHERE workspace_id = ? AND epoch = ?
+      `).get(input.context.workspaceId, input.context.epoch) as { count: number }).count + 1
+      const registrationNumber = `CM-OP-${visitDate.replaceAll('-', '')}-${String(count).padStart(4, '0')}`
+      const caseId = uuidv7()
+      const registrationId = uuidv7()
+      const encounterId = uuidv7()
+      const queueTaskId = uuidv7()
+      const accountId = uuidv7()
+      const encounter = transaction.fhir.create(input.context, {
+        resourceType: 'Encounter',
+        id: encounterId,
+        identifier: [{
+          system: 'https://caizongyuan.github.io/clinmesh/fhir/outpatient-encounter',
+          value: registrationNumber,
+        }],
+        status: 'in-progress',
+        class: [{
+          coding: [{ code: 'AMB', display: 'ambulatory', system: 'http://terminology.hl7.org/CodeSystem/v3-ActCode' }],
+        }],
+        subject: { reference: `Patient/${patient.id}` },
+        serviceProvider: { reference: 'Organization/organization-clinmesh' },
+        location: [{ location: { reference: `Location/${location.id}` }, status: 'active' }],
+        actualPeriod: { start: now },
+      })
+      const task = transaction.fhir.create(input.context, {
+        resourceType: 'Task',
+        id: queueTaskId,
+        status: 'in-progress',
+        intent: 'order',
+        code: { text: 'Outpatient consultation' },
+        for: { reference: `Patient/${patient.id}` },
+        focus: { reference: `Encounter/${encounterId}` },
+        owner: { reference: 'PractitionerRole/practitioner-role-outpatient-doctor' },
+        authoredOn: now,
+        executionPeriod: { start: now },
+      })
+      const account = transaction.fhir.create(input.context, {
+        resourceType: 'Account',
+        id: accountId,
+        status: 'active',
+        subject: [{ reference: `Patient/${patient.id}` }],
+        servicePeriod: { start: now },
+      })
+      this.#database.driver.prepare(`
+        INSERT INTO outpatient_case (
+          workspace_id, epoch, case_id, scenario_run_id, patient_id,
+          registration_id, encounter_id, account_id, department_id, location_id,
+          initial_task_id, doctor_task_id, status, arrived_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'first-visit', ?, ?)
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        caseId,
+        input.context.scenarioRunId,
+        patient.id,
+        registrationId,
+        encounterId,
+        accountId,
+        department.item_id,
+        location.id,
+        queueTaskId,
+        queueTaskId,
+        now,
+        now,
+      )
+      this.#database.driver.prepare(`
+        INSERT INTO registration (
+          workspace_id, epoch, registration_id, case_id, registration_number,
+          patient_id, encounter_id, visit_type_id, visit_date, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'in-progress', ?)
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        registrationId,
+        caseId,
+        registrationNumber,
+        patient.id,
+        encounterId,
+        visitType.item_id,
+        visitDate,
+        now,
+      )
+      this.#database.driver.prepare(`
+        INSERT INTO virtual_patient_case (
+          workspace_id, epoch, virtual_patient_id, case_id
+        ) VALUES (?, ?, ?, ?)
+      `).run(input.context.workspaceId, input.context.epoch, virtualPatient.virtual_patient_id, caseId)
+      const update = this.#database.driver.prepare(`
+        UPDATE virtual_patient
+        SET available = 0, version = version + 1
+        WHERE workspace_id = ? AND epoch = ? AND virtual_patient_id = ?
+          AND version = ? AND available = 1
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        virtualPatient.virtual_patient_id,
+        input.expectedVersion,
+      )
+      if (update.changes !== 1) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Virtual Patient version has changed')
+      }
+
+      return {
+        data: {
+          caseId,
+          encounterId,
+          patientId: patient.id,
+          queueTaskId,
+          registrationId,
+          status: 'first-visit' as const,
+          virtualPatientId: virtualPatient.virtual_patient_id,
+        },
+        effects: [
+          {
+            kind: 'updated' as const,
+            reference: `VirtualPatient/${virtualPatient.virtual_patient_id}`,
+            versionId: String(virtualPatient.version + 1),
+          },
+          {
+            kind: 'created' as const,
+            reference: `Registration/${registrationId}`,
+            versionId: '1',
+          },
+          ...[encounter, task, account].map(resource => ({
+            kind: 'created' as const,
+            reference: `${resource.resourceType}/${resource.id}`,
+            versionId: resource.meta?.versionId ?? '1',
+          })),
+        ],
+      }
+    })
   }
 
   doctorCaseDetail(context: ActorContext, caseId: string) {
@@ -1030,12 +1300,21 @@ export class WorkflowService {
         patient.content_json AS patient_json,
         encounter.content_json AS encounter_json,
         task.version_id AS task_version,
-        triage.acuity_code, triage.chief_complaint, triage.vital_json
+        triage.acuity_code, triage.chief_complaint, triage.vital_json,
+        virtual_patient.clinical_summary_json AS virtual_patient_summary_json
       FROM outpatient_case
-      JOIN triage_record AS triage
+      LEFT JOIN triage_record AS triage
         ON triage.workspace_id = outpatient_case.workspace_id
        AND triage.epoch = outpatient_case.epoch
        AND triage.case_id = outpatient_case.case_id
+      LEFT JOIN virtual_patient_case
+        ON virtual_patient_case.workspace_id = outpatient_case.workspace_id
+       AND virtual_patient_case.epoch = outpatient_case.epoch
+       AND virtual_patient_case.case_id = outpatient_case.case_id
+      LEFT JOIN virtual_patient
+        ON virtual_patient.workspace_id = virtual_patient_case.workspace_id
+       AND virtual_patient.epoch = virtual_patient_case.epoch
+       AND virtual_patient.virtual_patient_id = virtual_patient_case.virtual_patient_id
       JOIN fhir_resource AS patient
         ON patient.workspace_id = outpatient_case.workspace_id
        AND patient.epoch = outpatient_case.epoch
@@ -1054,19 +1333,23 @@ export class WorkflowService {
       WHERE outpatient_case.workspace_id = ? AND outpatient_case.epoch = ?
         AND outpatient_case.case_id = ?
     `).get(context.workspaceId, context.epoch, caseId) as {
-      acuity_code: string
+      acuity_code: string | null
       case_id: string
-      chief_complaint: string
+      chief_complaint: string | null
       diagnostic_report_id: string | null
       doctor_task_id: string
       encounter_json: string
       patient_json: string
       status: string
       task_version: number
-      vital_json: string
+      virtual_patient_summary_json: string | null
+      vital_json: string | null
     } | undefined
     if (row === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The outpatient case was not found')
     const encounter = parseStoredFhirResource(row.encounter_json)
+    const triage = row.vital_json === null
+      ? undefined
+      : triageRecordContentSchema.parse(JSON.parse(row.vital_json))
     let report: undefined | {
       id: string
       results: Array<{
@@ -1211,13 +1494,14 @@ export class WorkflowService {
         versionId: encounter.meta?.versionId,
       },
       patient,
+      presentation: casePresentation(triage, row.virtual_patient_summary_json),
       priorFacts,
       ...(report === undefined ? {} : { report }),
       ...(Object.keys(drafts).length === 0 ? {} : { drafts }),
       status: row.status,
       taskId: row.doctor_task_id,
       taskVersion: String(row.task_version),
-      triage: triageRecordContentSchema.parse(JSON.parse(row.vital_json)),
+      ...(triage === undefined ? {} : { triage }),
     }
   }
 
