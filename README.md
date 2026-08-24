@@ -82,6 +82,19 @@ pnpm dev:server
 - 健康检查：http://127.0.0.1:8787/api/health
 - FHIR metadata：http://127.0.0.1:8787/fhir/R5/metadata
 
+合成演示账号：
+
+| 岗位 | 账户邮箱 |
+| --- | --- |
+| 挂号员 | `registrar@demo.clinmesh.local` |
+| 分诊护士 | `triage@demo.clinmesh.local` |
+| 门诊医生 | `doctor@demo.clinmesh.local` |
+| 收费员 | `cashier@demo.clinmesh.local` |
+| 药师 | `pharmacist@demo.clinmesh.local` |
+| 管理员 | `admin@demo.clinmesh.local` |
+
+所有演示账号共用 `.env` 中的 `CLINMESH_DEMO_PASSWORD`；从 `.env.example` 复制时，默认密码为 `ClinMesh-demo-password-2026!`。账号和密码仅用于本地合成演示。
+
 桌面端与移动端：
 
 ```sh
