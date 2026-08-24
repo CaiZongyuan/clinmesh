@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto'
 import { v7 as uuidv7 } from 'uuid'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
 import {
@@ -99,6 +99,18 @@ const virtualPatientRowSchema = z.object({
 const virtualPatientListRowSchema = virtualPatientRowSchema.extend({
   patient_json: z.string(),
 })
+
+const virtualPatientVersionPayloadSchema = z.object({
+  epoch: z.string().min(1),
+  expectedVersions: z.record(z.string(), z.string()),
+  virtualPatientId: z.string().min(1),
+  virtualPatientVersion: z.number().int().positive(),
+  workspaceId: z.string().min(1),
+}).strict()
+
+const virtualPatientVersionTokenPrefix = 'v1'
+const virtualPatientVersionPayloadBytes = 1_024
+const virtualPatientVersionTokenAad = Buffer.from('clinmesh.virtual-patient-version.v1')
 
 const activeOutpatientCaseRowSchema = z.object({
   case_id: z.string().min(1),
@@ -269,6 +281,7 @@ export class WorkflowService {
   readonly #database: ClinMeshDatabase
   readonly #fhir: FhirRepository
   readonly #tokenSecret: string
+  readonly #virtualPatientVersionTokenKey: Buffer
 
   constructor(
     database: ClinMeshDatabase,
@@ -280,6 +293,10 @@ export class WorkflowService {
     this.#database = database
     this.#fhir = fhir
     this.#tokenSecret = options.tokenSecret
+    this.#virtualPatientVersionTokenKey = createHash('sha256')
+      .update('clinmesh.virtual-patient-version.v1\0')
+      .update(options.tokenSecret)
+      .digest()
   }
 
   registrationCatalog(context: ActorContext) {
@@ -1153,7 +1170,13 @@ export class WorkflowService {
           id: row.virtual_patient_id,
           name: patient.name,
           presentation: JSON.parse(row.clinical_summary_json) as unknown,
-          version: row.version,
+          version: this.#createVirtualPatientVersionToken({
+            epoch: context.epoch,
+            expectedVersions: this.#virtualPatientExpectedVersions(context, row.patient_id),
+            virtualPatientId: row.virtual_patient_id,
+            virtualPatientVersion: row.version,
+            workspaceId: context.workspaceId,
+          }),
         }
       }),
       page,
@@ -1164,8 +1187,7 @@ export class WorkflowService {
 
   startVirtualPatient(input: {
     context: ActorContext
-    expectedVersion: number
-    expectedVersions: Record<string, string>
+    expectedVersion: string
     idempotencyKey: string
     virtualPatientId: string
   }): CommandResponse<{
@@ -1177,10 +1199,16 @@ export class WorkflowService {
     status: 'first-visit'
     virtualPatientId: string
   }> {
+    this.#assertRole(input.context, ['outpatient-doctor'])
+    const candidateVersion = this.#parseVirtualPatientVersionToken(
+      input.context,
+      input.virtualPatientId,
+      input.expectedVersion,
+    )
     return this.#commands.execute({
       context: input.context,
       dataSchema: startVirtualPatientResponseSchema.shape.data,
-      expectedVersions: input.expectedVersions,
+      expectedVersions: candidateVersion.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: {
         expectedVersion: input.expectedVersion,
@@ -1199,7 +1227,7 @@ export class WorkflowService {
       if (virtualPatient === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Virtual Patient is unavailable')
       }
-      if (virtualPatient.version !== input.expectedVersion) {
+      if (virtualPatient.version !== candidateVersion.virtualPatientVersion) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Virtual Patient version has changed')
       }
       if (virtualPatient.available !== 1) {
@@ -1325,7 +1353,7 @@ export class WorkflowService {
           input.context,
           transaction,
           activeCase,
-          input.expectedVersions,
+          candidateVersion.expectedVersions,
         )
       }
       this.#database.driver.prepare(`
@@ -1342,7 +1370,7 @@ export class WorkflowService {
         input.context.workspaceId,
         input.context.epoch,
         virtualPatient.virtual_patient_id,
-        input.expectedVersion,
+        candidateVersion.virtualPatientVersion,
       )
       if (update.changes !== 1) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Virtual Patient version has changed')
@@ -4398,6 +4426,10 @@ export class WorkflowService {
       if (activeCase.doctor_task_id === null) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The patient has an incompatible active outpatient case')
       }
+      this.#assertExpectedVersions(expectedVersions, [
+        `Encounter/${activeCase.encounter_id}`,
+        `Task/${activeCase.doctor_task_id}`,
+      ])
       return {
         caseId: activeCase.case_id,
         effects: [],
@@ -4437,6 +4469,20 @@ export class WorkflowService {
       FROM outpatient_case
       WHERE workspace_id = ? AND epoch = ? AND patient_id = ? AND status != 'completed'
     `).get(context.workspaceId, context.epoch, patientId))
+  }
+
+  #virtualPatientExpectedVersions(context: ActorContext, patientId: string): Record<string, string> {
+    const activeCase = this.#activeCaseByPatient(context, patientId)
+    if (activeCase === undefined) return {}
+    const taskId = activeCase.status === 'awaiting-triage'
+      ? activeCase.initial_task_id
+      : (activeCase.doctor_task_id ?? activeCase.initial_task_id)
+    const encounter = this.#fhir.read(context, 'Encounter', activeCase.encounter_id)
+    const task = this.#fhir.read(context, 'Task', taskId)
+    return {
+      [`Encounter/${encounter.id}`]: encounter.meta?.versionId ?? '1',
+      [`Task/${task.id}`]: task.meta?.versionId ?? '1',
+    }
   }
 
   #caseByEncounter(context: ActorContext, encounterId: string) {
@@ -4560,6 +4606,72 @@ export class WorkflowService {
     `).get(context.workspaceId, context.epoch, context.scenarioRunId) as { virtual_time: string } | undefined
     if (row === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The active virtual clock is unavailable')
     return row.virtual_time
+  }
+
+  #createVirtualPatientVersionToken(
+    value: z.infer<typeof virtualPatientVersionPayloadSchema>,
+  ): string {
+    const payload = Buffer.from(JSON.stringify(virtualPatientVersionPayloadSchema.parse(value)))
+    if (payload.byteLength > virtualPatientVersionPayloadBytes) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The Virtual Patient version is unavailable')
+    }
+    // Fixed-size ciphertext does not reveal whether the candidate already has an active case.
+    const plaintext = Buffer.alloc(virtualPatientVersionPayloadBytes, 0x20)
+    payload.copy(plaintext)
+    const initializationVector = randomBytes(12)
+    const cipher = createCipheriv('aes-256-gcm', this.#virtualPatientVersionTokenKey, initializationVector)
+    cipher.setAAD(virtualPatientVersionTokenAad)
+    const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()])
+    return [
+      virtualPatientVersionTokenPrefix,
+      initializationVector.toString('base64url'),
+      ciphertext.toString('base64url'),
+      cipher.getAuthTag().toString('base64url'),
+    ].join('.')
+  }
+
+  #parseVirtualPatientVersionToken(
+    context: ActorContext,
+    virtualPatientId: string,
+    token: string,
+  ): z.infer<typeof virtualPatientVersionPayloadSchema> {
+    try {
+      const [prefix, encodedInitializationVector, encodedCiphertext, encodedAuthenticationTag, extra] = token.split('.')
+      if (
+        prefix !== virtualPatientVersionTokenPrefix
+        || encodedInitializationVector === undefined
+        || encodedCiphertext === undefined
+        || encodedAuthenticationTag === undefined
+        || extra !== undefined
+      ) {
+        throw new Error('Invalid token structure')
+      }
+      const initializationVector = Buffer.from(encodedInitializationVector, 'base64url')
+      const ciphertext = Buffer.from(encodedCiphertext, 'base64url')
+      const authenticationTag = Buffer.from(encodedAuthenticationTag, 'base64url')
+      if (
+        initializationVector.byteLength !== 12
+        || ciphertext.byteLength !== virtualPatientVersionPayloadBytes
+        || authenticationTag.byteLength !== 16
+      ) {
+        throw new Error('Invalid token length')
+      }
+      const decipher = createDecipheriv('aes-256-gcm', this.#virtualPatientVersionTokenKey, initializationVector)
+      decipher.setAAD(virtualPatientVersionTokenAad)
+      decipher.setAuthTag(authenticationTag)
+      const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()])
+      const payload = virtualPatientVersionPayloadSchema.parse(JSON.parse(plaintext.toString().trimEnd()) as unknown)
+      if (
+        payload.workspaceId !== context.workspaceId
+        || payload.epoch !== context.epoch
+        || payload.virtualPatientId !== virtualPatientId
+      ) {
+        throw new Error('Token context does not match')
+      }
+      return payload
+    } catch {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The Virtual Patient version has changed')
+    }
   }
 
   #hashToken(value: string): string {

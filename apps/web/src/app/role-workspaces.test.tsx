@@ -45,7 +45,7 @@ const virtualPatient = {
   id: 'virtual-patient-fever-001',
   name: '合成候选患者林晓',
   presentation: virtualPatientPresentation,
-  version: 7,
+  version: 'opaque-virtual-patient-version-token',
 }
 
 const administratorSession = {
@@ -721,7 +721,7 @@ describe('role workspaces', () => {
         expect(new Headers(init.headers).get('idempotency-key')).toBeTruthy()
         expect(JSON.parse(String(init.body))).toEqual({
           expectedVersions: {},
-          input: { expectedVersion: 7 },
+          input: { expectedVersion: 'opaque-virtual-patient-version-token' },
         })
         return Response.json(commandResponse({
           caseId: 'case-direct',

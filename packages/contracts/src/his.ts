@@ -55,7 +55,7 @@ export const virtualPatientListSchema = z.object({
     id: z.string().min(1),
     name: z.string().min(1),
     presentation: clinicalPresentationSchema,
-    version: z.number().int().positive(),
+    version: z.string().min(32).max(2_048),
   }).strict()),
   ...paginationShape,
 }).strict()

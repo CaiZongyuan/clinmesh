@@ -377,15 +377,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
         const body = z.object({
-          expectedVersions: z.record(z.string(), z.string()),
+          expectedVersions: z.object({}).strict(),
           input: z.object({
-            expectedVersion: z.number().int().positive(),
+            expectedVersion: z.string().min(32).max(2_048),
           }),
         }).parse(await context.req.json())
         return context.json(workflow.startVirtualPatient({
           context: await actor(context),
           expectedVersion: body.input.expectedVersion,
-          expectedVersions: body.expectedVersions,
           idempotencyKey: idempotencyKey(context),
           virtualPatientId: context.req.param('virtualPatientId'),
         }))

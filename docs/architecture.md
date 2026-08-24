@@ -577,7 +577,7 @@ POST /api/sim/v1/scenarios/actions/install
 POST /api/sim/v1/scenario-runs/{id}/actions/reset
 ```
 
-`GET /api/his/v1/doctor/virtual-patients` 按 `page/pageSize` 分页，只返回当前 Workspace/Epoch 中仍可接诊的 Virtual Patient 名称、性别、出生日期、临床可见摘要与协议 ID/version。姓名、性别和出生日期读取自绑定的 `fhir-native` Patient，Virtual Patient 领域表不重复保存 Patient Identity；响应不返回 Patient logical ID、Scenario、Hidden Fact、病原体、运行时状态或确定性回答规则。
+`GET /api/his/v1/doctor/virtual-patients` 按 `page/pageSize` 分页，只返回当前 Workspace/Epoch 中仍可接诊的 Virtual Patient 名称、性别、出生日期、临床可见摘要、协议 ID 和固定长度的 opaque `version`。姓名、性别和出生日期读取自绑定的 `fhir-native` Patient，Virtual Patient 领域表不重复保存 Patient Identity；响应不返回 Patient logical ID、Scenario、Hidden Fact、病原体、运行时状态、底层资源引用或确定性回答规则。`version` 的绑定和冲突语义由[门诊闭环](#81-门诊闭环)定义。
 
 Command 写请求使用同源 session 与 CSRF 校验，并通过以下 header 提供幂等键：
 
@@ -598,6 +598,8 @@ Workspace、Epoch、Scenario Run、Actor 和 Acting Practitioner Context 只从�
   "input": {}
 }
 ```
+
+`virtual-patient.start-consultation` 的公开 `expectedVersions` 固定为空对象，`input.expectedVersion` 提交列表返回的 opaque `version`。服务端从该引用恢复依赖版本后再进入 `CommandExecutor`；客户端不能读取或覆盖底层 dependency set。
 
 成功响应包含：
 
@@ -843,7 +845,9 @@ Registration + Encounter + Account + 挂号 Charge Item
 
 首期只实现现场普通门诊。Registration 是持久领域事实；挂号 Command 在同一事务中创建或关联 Registration、Encounter、Queue Task、Account 和挂号 Charge Item。Appointment 表达未来预约承诺，Slot 表达可预约时段，不承担挂号事实、排队序号或挂号费语义，二者不属于首期闭环。
 
-门诊医生也可从版本固定的 Virtual Patient 直接建立接诊上下文。`virtual-patient.start-consultation` Command 以 Virtual Patient 的 expected version 与可用状态作为前置条件并复用其绑定的合成 Patient。Patient 没有活动门诊病例时，Command 在同一事务中创建 Registration、进行中 Encounter、Account、医生 Queue Task 和 `first-visit` outpatient case；Patient 已有 `awaiting-triage`、`awaiting-doctor` 或 `first-visit` 病例时，Command 复用该病例的 Registration、Encounter、Account 和可用 Queue Task，并把尚未开始的 Task 转入医生首诊。推进既有 Encounter 和 Task 时，请求必须同时提交两者的 expected versions；其他活动状态返回稳定冲突。成功后 Virtual Patient 不可再次接诊；这条入口不伪造分诊 Observation、分诊级别或费用事实，相同幂等键重放第一次回执，旧版本或已消费候选患者返回稳定冲突。
+门诊医生也可从版本固定的 Virtual Patient 直接建立接诊上下文。候选列表返回的 opaque `version` 由服务端认证加密并固定长度，绑定 Workspace、Epoch、Virtual Patient ID、内部版本，以及列表读取时已有活动病例的 Encounter 和可用 Queue Task 引用与版本。`virtual-patient.start-consultation` 在进入 `CommandExecutor` 前解密并校验该引用，以 Virtual Patient 版本、依赖版本与可用状态作为前置条件；篡改、跨上下文、旧候选或依赖已变化都返回稳定冲突，客户端不能解码技术状态或自行提交底层 expected versions。
+
+Patient 没有活动门诊病例时，Command 在同一事务中创建 Registration、进行中 Encounter、Account、医生 Queue Task 和 `first-visit` outpatient case；Patient 已有 `awaiting-triage`、`awaiting-doctor` 或 `first-visit` 病例时，Command 复用该病例的 Registration、Encounter、Account 和可用 Queue Task，并把尚未开始的 Task 转入医生首诊。成功后 Virtual Patient 不可再次接诊；这条入口不伪造分诊 Observation、分诊级别或费用事实，相同幂等键重放第一次回执，其他活动状态或已消费候选患者返回稳定冲突。
 
 关键约束：
 

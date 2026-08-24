@@ -263,7 +263,7 @@ export function getVirtualPatients(signal?: AbortSignal, page = 1) {
 
 export function startVirtualPatient(
   virtualPatientId: string,
-  expectedVersion: number,
+  expectedVersion: string,
   idempotencyKey: string,
 ) {
   return apiMutation(
