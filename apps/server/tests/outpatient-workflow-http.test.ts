@@ -1,0 +1,2388 @@
+import { randomUUID } from 'node:crypto'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { AuditQuery } from '../src/application/audit-query.ts'
+import { WorkspaceContextError } from '../src/infrastructure/sqlite/workspace-repository.ts'
+import { createClinMeshRuntime } from '../src/runtime.ts'
+
+type TestRuntime = Awaited<ReturnType<typeof createClinMeshRuntime>>
+
+async function signIn(runtime: TestRuntime, email: string, password: string): Promise<string> {
+  const response = await runtime.app.request('/api/auth/sign-in/email', {
+    body: JSON.stringify({ email, password }),
+    headers: {
+      'content-type': 'application/json',
+      origin: 'http://localhost',
+    },
+    method: 'POST',
+  })
+  if (!response.ok) throw new Error(`Test sign-in failed for ${email}`)
+  return response.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
+}
+
+function commandHeaders(cookie: string, idempotencyKey = randomUUID()) {
+  return {
+    'content-type': 'application/json',
+    cookie,
+    'idempotency-key': idempotencyKey,
+    origin: 'http://localhost',
+  }
+}
+
+async function createRegisteredCase(runtime: TestRuntime, password: string) {
+  const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local', password)
+  const patientResponse = await runtime.app.request('/api/his/v1/patients', {
+    body: JSON.stringify({
+      expectedVersions: {},
+      input: {
+        birthDate: '1990-05-10',
+        gender: 'male',
+        identifier: `CM-SYN-${randomUUID()}`,
+        name: '合成患者周明',
+      },
+    }),
+    headers: commandHeaders(registrarCookie),
+    method: 'POST',
+  })
+  const patient = (await patientResponse.json() as {
+    data: { patient: { id: string; versionId: string } }
+  }).data.patient
+  const registrationResponse = await runtime.app.request('/api/his/v1/registrations/actions/register', {
+    body: JSON.stringify({
+      expectedVersions: { [`Patient/${patient.id}`]: patient.versionId },
+      input: {
+        departmentId: 'department-general-medicine',
+        patientId: patient.id,
+        visitDate: '2026-08-24',
+        visitTypeId: 'visit-general',
+      },
+    }),
+    headers: commandHeaders(registrarCookie),
+    method: 'POST',
+  })
+  const registration = (await registrationResponse.json() as {
+    data: {
+      encounterId: string
+      queueTaskId: string
+      registrationId: string
+    }
+  }).data
+  return { patient, registrarCookie, registration }
+}
+
+async function createTriagedCase(runtime: TestRuntime, password: string) {
+  const registered = await createRegisteredCase(runtime, password)
+  const triageCookie = await signIn(runtime, 'triage@demo.clinmesh.local', password)
+  const triageResponse = await runtime.app.request(
+    `/api/his/v1/encounters/${registered.registration.encounterId}/actions/record-triage`,
+    {
+      body: JSON.stringify({
+        expectedVersions: {
+          [`Encounter/${registered.registration.encounterId}`]: '1',
+          [`Task/${registered.registration.queueTaskId}`]: '1',
+        },
+        input: {
+          acuityCode: 'level-3',
+          bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
+          chiefComplaint: '发热伴咽痛两天',
+          oxygenSaturationPct: 98,
+          pulseBpm: 102,
+          respirationBpm: 20,
+          temperatureC: 38.6,
+        },
+      }),
+      headers: commandHeaders(triageCookie),
+      method: 'POST',
+    },
+  )
+  const triage = (await triageResponse.json() as {
+    data: { doctorTaskId: string; encounterVersion: string }
+  }).data
+  const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
+  const queue = await runtime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
+    headers: { cookie: doctorCookie },
+  })
+  const queueItem = (await queue.json() as {
+    items: Array<{ caseId: string }>
+  }).items[0]
+  if (queueItem === undefined) throw new Error('Triaged test case did not reach the doctor queue')
+  return { ...registered, caseId: queueItem.caseId, doctorCookie, triage }
+}
+
+async function createLabOrderedCase(runtime: TestRuntime, password: string) {
+  const testCase = await createTriagedCase(runtime, password)
+  await runtime.app.request(
+    `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/start-first-visit`,
+    {
+      body: JSON.stringify({
+        expectedVersions: {
+          [`Encounter/${testCase.registration.encounterId}`]: '2',
+          [`Task/${testCase.triage.doctorTaskId}`]: '1',
+        },
+        input: {},
+      }),
+      headers: commandHeaders(testCase.doctorCookie),
+      method: 'POST',
+    },
+  )
+  await runtime.app.request(
+    `/api/his/v1/encounters/${testCase.registration.encounterId}/drafts/first-visit`,
+    {
+      body: JSON.stringify({
+        expectedVersions: { [`Encounter/${testCase.registration.encounterId}`]: '3' },
+        input: {
+          assessment: '急性发热，待检验明确病原',
+          expectedDraftVersion: 0,
+          historyOfPresentIllness: '两天前出现发热，最高体温 38.8°C，伴咽痛。',
+        },
+      }),
+      headers: commandHeaders(testCase.doctorCookie),
+      method: 'PUT',
+    },
+  )
+  const orderResponse = await runtime.app.request(
+    `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/issue-laboratory-order`,
+    {
+      body: JSON.stringify({
+        expectedVersions: {
+          [`Encounter/${testCase.registration.encounterId}`]: '3',
+          [`Task/${testCase.triage.doctorTaskId}`]: '2',
+        },
+        input: {
+          catalogItemId: 'lab-fever-panel',
+          expectedDraftVersion: 1,
+        },
+      }),
+      headers: commandHeaders(testCase.doctorCookie),
+      method: 'POST',
+    },
+  )
+  const order = (await orderResponse.json() as {
+    data: { chargeItemId: string; serviceRequestId: string }
+  }).data
+  return { ...testCase, order }
+}
+
+async function createPaidLabCase(runtime: TestRuntime, password: string) {
+  const testCase = await createLabOrderedCase(runtime, password)
+  const cashierCookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+  const previewResponse = await runtime.app.request('/api/his/v1/payments/actions/preview', {
+    body: JSON.stringify({
+      expectedVersions: { [`ChargeItem/${testCase.order.chargeItemId}`]: '1' },
+      input: {
+        caseId: testCase.caseId,
+        category: 'laboratory',
+        simulatorRule: 'success',
+      },
+    }),
+    headers: commandHeaders(cashierCookie),
+    method: 'POST',
+  })
+  const preview = (await previewResponse.json() as {
+    data: { commitToken: string; previewId: string }
+  }).data
+  const paymentResponse = await runtime.app.request(
+    `/api/his/v1/payments/${preview.previewId}/actions/confirm`,
+    {
+      body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${testCase.order.chargeItemId}`]: '1' },
+        input: { commitToken: preview.commitToken },
+      }),
+      headers: commandHeaders(cashierCookie),
+      method: 'POST',
+    },
+  )
+  const payment = (await paymentResponse.json() as {
+    data: { paymentId: string }
+  }).data
+  return { ...testCase, cashierCookie, payment }
+}
+
+async function createReportedCase(runtime: TestRuntime, password: string) {
+  const testCase = await createPaidLabCase(runtime, password)
+  const dispatch = await runtime.dispatcher.dispatchOnce()
+  if (dispatch?.status !== 'completed') throw new Error('Test LIS dispatch did not complete')
+  const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
+  const queueResponse = await runtime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
+    headers: { cookie: doctorCookie },
+  })
+  const queueItem = (await queueResponse.json() as {
+    items: Array<{
+      diagnosticReportId: string
+      taskId: string
+    }>
+  }).items[0]
+  if (queueItem === undefined) throw new Error('Reported test case did not reach revisit')
+  return { ...testCase, doctorCookie, report: queueItem }
+}
+
+async function createRevisitDraftCase(runtime: TestRuntime, password: string) {
+  const testCase = await createReportedCase(runtime, password)
+  await runtime.app.request(
+    `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/start-revisit`,
+    {
+      body: JSON.stringify({
+        expectedVersions: {
+          [`Encounter/${testCase.registration.encounterId}`]: '5',
+          [`Task/${testCase.report.taskId}`]: '1',
+        },
+        input: {},
+      }),
+      headers: commandHeaders(testCase.doctorCookie),
+      method: 'POST',
+    },
+  )
+  const draftResponse = await runtime.app.request(
+    `/api/his/v1/encounters/${testCase.registration.encounterId}/drafts/revisit`,
+    {
+      body: JSON.stringify({
+        expectedVersions: { [`Encounter/${testCase.registration.encounterId}`]: '6' },
+        input: {
+          diagnosis: {
+            code: 'J10.1',
+            display: '流感伴其他呼吸道表现，季节性流感病毒已标明',
+          },
+          document: {
+            assessment: '甲型流感，生命体征稳定。',
+            plan: '口服抗病毒药物，对症处理，必要时复诊。',
+          },
+          expectedVersions: {
+            documentDraft: 0,
+            prescription: 0,
+            revisitDraft: 0,
+          },
+          medications: [{
+            catalogItemId: 'medication-oseltamivir',
+            doseText: '75 mg',
+            frequencyCode: 'BID',
+            quantity: 10,
+          }],
+        },
+      }),
+      headers: commandHeaders(testCase.doctorCookie),
+      method: 'PUT',
+    },
+  )
+  const draft = (await draftResponse.json() as {
+    data: {
+      conditionId: string
+      medicationRequestIds: string[]
+      prescriptionId: string
+    }
+  }).data
+  return { ...testCase, draft }
+}
+
+async function createSignedCase(runtime: TestRuntime, password: string) {
+  const testCase = await createRevisitDraftCase(runtime, password)
+  const expectedVersions = {
+    [`Condition/${testCase.draft.conditionId}`]: '1',
+    [`Encounter/${testCase.registration.encounterId}`]: '6',
+    [`MedicationRequest/${testCase.draft.medicationRequestIds[0]}`]: '1',
+    [`Task/${testCase.report.taskId}`]: '2',
+  }
+  const previewResponse = await runtime.app.request(
+    `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/preview-sign`,
+    {
+      body: JSON.stringify({
+        expectedVersions,
+        input: {
+          expectedDraftVersions: {
+            documentDraft: 1,
+            prescription: 1,
+            revisitDraft: 1,
+          },
+        },
+      }),
+      headers: commandHeaders(testCase.doctorCookie),
+      method: 'POST',
+    },
+  )
+  const preview = (await previewResponse.json() as {
+    data: { commitToken: string; previewId: string }
+  }).data
+  const signResponse = await runtime.app.request(
+    `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/sign-and-complete`,
+    {
+      body: JSON.stringify({
+        expectedVersions,
+        input: preview,
+      }),
+      headers: commandHeaders(testCase.doctorCookie),
+      method: 'POST',
+    },
+  )
+  const signed = (await signResponse.json() as {
+    data: {
+      chargeItemId: string
+      encounterVersion: string
+    }
+  }).data
+  return { ...testCase, signed }
+}
+
+async function createPaidMedicationCase(runtime: TestRuntime, password: string) {
+  const testCase = await createSignedCase(runtime, password)
+  const cashierCookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+  const previewResponse = await runtime.app.request('/api/his/v1/payments/actions/preview', {
+    body: JSON.stringify({
+      expectedVersions: { [`ChargeItem/${testCase.signed.chargeItemId}`]: '1' },
+      input: {
+        caseId: testCase.caseId,
+        category: 'medication',
+        simulatorRule: 'success',
+      },
+    }),
+    headers: commandHeaders(cashierCookie),
+    method: 'POST',
+  })
+  const preview = (await previewResponse.json() as {
+    data: { commitToken: string; previewId: string }
+  }).data
+  const paymentResponse = await runtime.app.request(
+    `/api/his/v1/payments/${preview.previewId}/actions/confirm`,
+    {
+      body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${testCase.signed.chargeItemId}`]: '1' },
+        input: { commitToken: preview.commitToken },
+      }),
+      headers: commandHeaders(cashierCookie),
+      method: 'POST',
+    },
+  )
+  const payment = (await paymentResponse.json() as {
+    data: { paymentId: string }
+  }).data
+  return { ...testCase, cashierCookie, payment }
+}
+
+describe('outpatient workflow HTTP contract', () => {
+  const runtimes: Array<Awaited<ReturnType<typeof createClinMeshRuntime>>> = []
+  const temporaryDirectories: string[] = []
+
+  afterEach(async () => {
+    await Promise.all(runtimes.splice(0).map(runtime => runtime.close()))
+    await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true })))
+  })
+
+  it('creates a synthetic patient and atomically hands one registration to the triage queue', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-registration-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply' as const,
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+
+    const signIn = async (email: string): Promise<string> => {
+      const response = await runtime.app.request('/api/auth/sign-in/email', {
+        body: JSON.stringify({ email, password }),
+        headers: {
+          'content-type': 'application/json',
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      })
+      expect(response.status).toBe(200)
+      return response.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
+    }
+    const commandHeaders = (cookie: string, idempotencyKey = randomUUID()) => ({
+      'content-type': 'application/json',
+      cookie,
+      'idempotency-key': idempotencyKey,
+      origin: 'http://localhost',
+    })
+
+    const registrarCookie = await signIn('registrar@demo.clinmesh.local')
+    const catalogResponse = await runtime.app.request('/api/his/v1/catalogs/registration', {
+      headers: { cookie: registrarCookie },
+    })
+    expect(catalogResponse.status).toBe(200)
+    expect(await catalogResponse.json()).toMatchObject({
+      departments: [{ id: 'department-general-medicine' }],
+      visitTypes: [{ id: 'visit-general', priceFen: 2000 }],
+      virtualDate: '2026-08-24',
+    })
+
+    const patientIdempotencyKey = randomUUID()
+    const createPatient = () => runtime.app.request('/api/his/v1/patients', {
+      body: JSON.stringify({
+        expectedVersions: {},
+        input: {
+          birthDate: '1990-05-10',
+          gender: 'male',
+          identifier: 'CM-SYN-1001',
+          name: '合成患者周明',
+        },
+      }),
+      headers: commandHeaders(registrarCookie, patientIdempotencyKey),
+      method: 'POST',
+    })
+    const patientResponse = await createPatient()
+    expect(patientResponse.status).toBe(200)
+    const patientResult = await patientResponse.json() as {
+      data: {
+        patient: {
+          id: string
+          identifier: string
+          name: string
+          synthetic: boolean
+          versionId: string
+        }
+      }
+    }
+    expect(patientResult.data.patient).toMatchObject({
+      identifier: 'CM-SYN-1001',
+      name: '合成患者周明',
+      synthetic: true,
+      versionId: '1',
+    })
+    expect(await (await createPatient()).json()).toEqual(patientResult)
+
+    const searchResponse = await runtime.app.request(
+      '/api/his/v1/patients?query=CM-SYN-1001&pageSize=20',
+      { headers: { cookie: registrarCookie } },
+    )
+    expect(searchResponse.status).toBe(200)
+    expect(await searchResponse.json()).toMatchObject({
+      items: [{ id: patientResult.data.patient.id, name: '合成患者周明' }],
+      total: 1,
+    })
+
+    const registrationIdempotencyKey = randomUUID()
+    const register = () => runtime.app.request('/api/his/v1/registrations/actions/register', {
+      body: JSON.stringify({
+        expectedVersions: {
+          [`Patient/${patientResult.data.patient.id}`]: '1',
+        },
+        input: {
+          departmentId: 'department-general-medicine',
+          patientId: patientResult.data.patient.id,
+          visitDate: '2026-08-24',
+          visitTypeId: 'visit-general',
+        },
+      }),
+      headers: commandHeaders(registrarCookie, registrationIdempotencyKey),
+      method: 'POST',
+    })
+    const registrationResponse = await register()
+    expect(registrationResponse.status).toBe(200)
+    const registrationResult = await registrationResponse.json() as {
+      data: {
+        accountId: string
+        chargeItemId: string
+        encounterId: string
+        patientId: string
+        queueTaskId: string
+        registrationId: string
+        status: string
+        totalFen: number
+      }
+    }
+    expect(registrationResult.data).toMatchObject({
+      patientId: patientResult.data.patient.id,
+      status: 'awaiting-triage',
+      totalFen: 2000,
+    })
+    expect(await (await register()).json()).toEqual(registrationResult)
+
+    const registrationsResponse = await runtime.app.request(
+      '/api/his/v1/registrations?pageSize=20',
+      { headers: { cookie: registrarCookie } },
+    )
+    expect(registrationsResponse.status).toBe(200)
+    expect(await registrationsResponse.json()).toMatchObject({
+      items: [{
+        caseId: expect.any(String),
+        encounterId: registrationResult.data.encounterId,
+        encounterVersion: '1',
+        patient: { id: patientResult.data.patient.id },
+        registrationId: registrationResult.data.registrationId,
+        status: 'awaiting-triage',
+        taskId: registrationResult.data.queueTaskId,
+        taskVersion: '1',
+      }],
+      total: 1,
+    })
+
+    const triageCookie = await signIn('triage@demo.clinmesh.local')
+    const queueResponse = await runtime.app.request('/api/his/v1/triage/queue?pageSize=20', {
+      headers: { cookie: triageCookie },
+    })
+    expect(queueResponse.status).toBe(200)
+    expect(await queueResponse.json()).toMatchObject({
+      items: [{
+        encounterId: registrationResult.data.encounterId,
+        patient: {
+          id: patientResult.data.patient.id,
+          name: '合成患者周明',
+        },
+        status: 'awaiting-triage',
+      }],
+      total: 1,
+    })
+
+    for (const [resourceType, resourceId] of [
+      ['Encounter', registrationResult.data.encounterId],
+      ['Task', registrationResult.data.queueTaskId],
+      ['Account', registrationResult.data.accountId],
+      ['ChargeItem', registrationResult.data.chargeItemId],
+    ]) {
+      const response = await runtime.app.request(`/fhir/R5/${resourceType}/${resourceId}`, {
+        headers: { cookie: triageCookie },
+      })
+      expect(response.status).toBe(200)
+      expect(fhirResourceSchema.parse(await response.json())).toMatchObject({
+        id: resourceId,
+        resourceType,
+      })
+    }
+  })
+
+  it('records structured triage on the same Encounter and hands it to the doctor queue once', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-triage-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { patient, registration } = await createRegisteredCase(runtime, password)
+    const triageCookie = await signIn(runtime, 'triage@demo.clinmesh.local', password)
+    const idempotencyKey = randomUUID()
+    const triage = (expectedEncounterVersion = '1', key = idempotencyKey) => runtime.app.request(
+      `/api/his/v1/encounters/${registration.encounterId}/actions/record-triage`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${registration.encounterId}`]: expectedEncounterVersion,
+            [`Task/${registration.queueTaskId}`]: '1',
+          },
+          input: {
+            acuityCode: 'level-3',
+            bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
+            chiefComplaint: '发热伴咽痛两天',
+            oxygenSaturationPct: 98,
+            pulseBpm: 102,
+            respirationBpm: 20,
+            temperatureC: 38.6,
+          },
+        }),
+        headers: commandHeaders(triageCookie, key),
+        method: 'POST',
+      },
+    )
+
+    const triageResponse = await triage()
+    expect(triageResponse.status).toBe(200)
+    const triageResult = await triageResponse.json() as {
+      data: {
+        doctorTaskId: string
+        encounterId: string
+        encounterVersion: string
+        observationId: string
+        status: string
+      }
+    }
+    expect(triageResult.data).toMatchObject({
+      encounterId: registration.encounterId,
+      encounterVersion: '2',
+      status: 'awaiting-doctor',
+    })
+    expect(await (await triage()).json()).toEqual(triageResult)
+
+    const completedQueue = await runtime.app.request(
+      '/api/his/v1/triage/queue?status=completed&pageSize=20',
+      { headers: { cookie: triageCookie } },
+    )
+    expect(await completedQueue.json()).toMatchObject({
+      items: [{
+        encounterId: registration.encounterId,
+        encounterVersion: '2',
+        patient: { id: patient.id },
+        status: 'awaiting-doctor',
+        taskVersion: '2',
+      }],
+      total: 1,
+    })
+    const exceptionQueue = await runtime.app.request(
+      '/api/his/v1/triage/queue?status=exception&pageSize=20',
+      { headers: { cookie: triageCookie } },
+    )
+    expect(await exceptionQueue.json()).toMatchObject({ items: [], total: 0 })
+
+    const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
+    const doctorQueue = await runtime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
+      headers: { cookie: doctorCookie },
+    })
+    expect(doctorQueue.status).toBe(200)
+    expect(await doctorQueue.json()).toMatchObject({
+      items: [{
+        encounterId: registration.encounterId,
+        encounterVersion: '2',
+        patient: { id: patient.id },
+        status: 'awaiting-doctor',
+        taskVersion: '1',
+        triage: {
+          acuityCode: 'level-3',
+          chiefComplaint: '发热伴咽痛两天',
+          temperatureC: 38.6,
+        },
+      }],
+      total: 1,
+    })
+
+    const staleResponse = await triage('1', randomUUID())
+    expect(staleResponse.status).toBe(409)
+    expect(await staleResponse.json()).toMatchObject({ error: { code: 'IDEMPOTENCY_KEY_REUSED' } })
+    const observationSearch = await runtime.app.request('/fhir/R5/Observation?_total=accurate', {
+      headers: { cookie: doctorCookie },
+    })
+    expect(await observationSearch.json()).toMatchObject({ total: 1 })
+  })
+
+  it('starts the first visit, saves a CAS draft, and issues one laboratory request with one charge', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-first-visit-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createTriagedCase(runtime, password)
+
+    const catalogResponse = await runtime.app.request('/api/his/v1/catalogs/clinical', {
+      headers: { cookie: testCase.doctorCookie },
+    })
+    expect(catalogResponse.status).toBe(200)
+    expect(await catalogResponse.json()).toMatchObject({
+      laboratory: [{
+        id: 'lab-fever-panel',
+        nameEn: 'Fever laboratory panel',
+        nameZh: '发热检验组合',
+        priceFen: 6800,
+        version: 1,
+      }],
+      medications: [
+        expect.objectContaining({
+          defaultDoseText: '0.5 g',
+          defaultFrequencyCode: 'PRN',
+          id: 'medication-acetaminophen',
+        }),
+        expect.objectContaining({
+          defaultDoseText: '75 mg',
+          defaultFrequencyCode: 'BID',
+          id: 'medication-oseltamivir',
+        }),
+      ],
+    })
+
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${testCase.caseId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(detailResponse.status).toBe(200)
+    expect(await detailResponse.json()).toMatchObject({
+      caseId: testCase.caseId,
+      encounter: { id: testCase.registration.encounterId, status: 'in-progress', versionId: '2' },
+      patient: { id: testCase.patient.id },
+      taskId: testCase.triage.doctorTaskId,
+      taskVersion: '1',
+      triage: { chiefComplaint: '发热伴咽痛两天' },
+    })
+
+    const startResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/start-first-visit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${testCase.registration.encounterId}`]: '2',
+            [`Task/${testCase.triage.doctorTaskId}`]: '1',
+          },
+          input: {},
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(startResponse.status).toBe(200)
+    expect(await startResponse.json()).toMatchObject({
+      data: { encounterVersion: '3', status: 'first-visit', taskVersion: '2' },
+    })
+
+    const draftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/drafts/first-visit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${testCase.registration.encounterId}`]: '3' },
+          input: {
+            assessment: '急性发热，待检验明确病原',
+            expectedDraftVersion: 0,
+            historyOfPresentIllness: '两天前出现发热，最高体温 38.8°C，伴咽痛。',
+          },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(draftResponse.status).toBe(200)
+    expect(await draftResponse.json()).toMatchObject({ data: { draftVersion: 1 } })
+
+    const orderIdempotencyKey = randomUUID()
+    const issueOrder = () => runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/issue-laboratory-order`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${testCase.registration.encounterId}`]: '3',
+            [`Task/${testCase.triage.doctorTaskId}`]: '2',
+          },
+          input: {
+            catalogItemId: 'lab-fever-panel',
+            expectedDraftVersion: 1,
+          },
+        }),
+        headers: commandHeaders(testCase.doctorCookie, orderIdempotencyKey),
+        method: 'POST',
+      },
+    )
+    const orderResponse = await issueOrder()
+    expect(orderResponse.status).toBe(200)
+    const order = await orderResponse.json() as {
+      data: {
+        chargeItemId: string
+        encounterId: string
+        encounterVersion: string
+        serviceRequestId: string
+        status: string
+        totalFen: number
+      }
+    }
+    expect(order.data).toMatchObject({
+      encounterId: testCase.registration.encounterId,
+      encounterVersion: '4',
+      status: 'awaiting-lab-payment',
+      totalFen: 6800,
+    })
+    expect(await (await issueOrder()).json()).toEqual(order)
+
+    const encounterResponse = await runtime.app.request(
+      `/fhir/R5/Encounter/${testCase.registration.encounterId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(await encounterResponse.json()).toMatchObject({
+      id: testCase.registration.encounterId,
+      status: 'in-progress',
+    })
+    for (const resourceType of ['ServiceRequest', 'ChargeItem']) {
+      const search = await runtime.app.request(`/fhir/R5/${resourceType}?_total=accurate`, {
+        headers: { cookie: testCase.doctorCookie },
+      })
+      expect(await search.json()).toMatchObject({ total: resourceType === 'ChargeItem' ? 2 : 1 })
+    }
+  })
+
+  it('previews the authoritative laboratory amount and confirms one successful payment for LIS', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-lab-payment-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createLabOrderedCase(runtime, password)
+    const cashierCookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+
+    const queueResponse = await runtime.app.request(
+      '/api/his/v1/billing/queue?category=laboratory&status=pending&pageSize=20',
+      { headers: { cookie: cashierCookie } },
+    )
+    expect(queueResponse.status).toBe(200)
+    expect(await queueResponse.json()).toMatchObject({
+      items: [{
+        accountId: expect.any(String),
+        amountFen: 6800,
+        caseId: testCase.caseId,
+        category: 'laboratory',
+        chargeItemId: testCase.order.chargeItemId,
+        patient: { id: testCase.patient.id },
+        status: 'billable',
+      }],
+      total: 1,
+    })
+
+    const previewResponse = await runtime.app.request('/api/his/v1/payments/actions/preview', {
+      body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${testCase.order.chargeItemId}`]: '1' },
+        input: {
+          caseId: testCase.caseId,
+          category: 'laboratory',
+          simulatorRule: 'success',
+        },
+      }),
+      headers: commandHeaders(cashierCookie),
+      method: 'POST',
+    })
+    expect(previewResponse.status).toBe(200)
+    const preview = (await previewResponse.json() as {
+      data: {
+        amountFen: number
+        chargeItemId: string
+        chargeVersion: number
+        commitToken: string
+        expectedOutcome: string
+        previewId: string
+      }
+    }).data
+    expect(preview).toMatchObject({
+      amountFen: 6800,
+      chargeItemId: testCase.order.chargeItemId,
+      chargeVersion: 1,
+      expectedOutcome: 'success',
+    })
+
+    const paymentIdempotencyKey = randomUUID()
+    const confirm = () => runtime.app.request(
+      `/api/his/v1/payments/${preview.previewId}/actions/confirm`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`ChargeItem/${testCase.order.chargeItemId}`]: '1' },
+          input: { commitToken: preview.commitToken },
+        }),
+        headers: commandHeaders(cashierCookie, paymentIdempotencyKey),
+        method: 'POST',
+      },
+    )
+    const paymentResponse = await confirm()
+    expect(paymentResponse.status).toBe(200)
+    const payment = await paymentResponse.json() as {
+      data: {
+        amountFen: number
+        outcome: string
+        paymentId: string
+        status: string
+      }
+    }
+    expect(payment.data).toMatchObject({
+      amountFen: 6800,
+      outcome: 'success',
+      status: 'awaiting-lis',
+    })
+    expect(await (await confirm()).json()).toEqual(payment)
+
+    const chargeResponse = await runtime.app.request(
+      `/fhir/R5/ChargeItem/${testCase.order.chargeItemId}`,
+      { headers: { cookie: cashierCookie } },
+    )
+    expect(await chargeResponse.json()).toMatchObject({
+      id: testCase.order.chargeItemId,
+      meta: { versionId: '2' },
+      status: 'billed',
+    })
+    const encounterResponse = await runtime.app.request(
+      `/fhir/R5/Encounter/${testCase.registration.encounterId}`,
+      { headers: { cookie: cashierCookie } },
+    )
+    expect(await encounterResponse.json()).toMatchObject({ status: 'in-progress' })
+
+  })
+
+  it('keeps declined and ambiguous laboratory payments in distinct queues without releasing LIS', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-payment-outcomes-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const declinedCase = await createLabOrderedCase(runtime, password)
+    const ambiguousCase = await createLabOrderedCase(runtime, password)
+    const cashierCookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+
+    const confirmOutcome = async (
+      testCase: Awaited<ReturnType<typeof createLabOrderedCase>>,
+      simulatorRule: 'ambiguous' | 'decline',
+    ) => {
+      const previewResponse = await runtime.app.request('/api/his/v1/payments/actions/preview', {
+        body: JSON.stringify({
+          expectedVersions: { [`ChargeItem/${testCase.order.chargeItemId}`]: '1' },
+          input: { caseId: testCase.caseId, category: 'laboratory', simulatorRule },
+        }),
+        headers: commandHeaders(cashierCookie),
+        method: 'POST',
+      })
+      const preview = (await previewResponse.json() as {
+        data: { commitToken: string; previewId: string }
+      }).data
+      const response = await runtime.app.request(
+        `/api/his/v1/payments/${preview.previewId}/actions/confirm`,
+        {
+          body: JSON.stringify({
+            expectedVersions: { [`ChargeItem/${testCase.order.chargeItemId}`]: '1' },
+            input: { commitToken: preview.commitToken },
+          }),
+          headers: commandHeaders(cashierCookie),
+          method: 'POST',
+        },
+      )
+      expect(response.status).toBe(200)
+    }
+
+    await confirmOutcome(declinedCase, 'decline')
+    await confirmOutcome(ambiguousCase, 'ambiguous')
+
+    const queue = async (status: 'ambiguous' | 'declined' | 'paid' | 'pending') => {
+      const response = await runtime.app.request(
+        `/api/his/v1/billing/queue?category=laboratory&status=${status}&pageSize=20`,
+        { headers: { cookie: cashierCookie } },
+      )
+      expect(response.status).toBe(200)
+      return response.json() as Promise<{
+        items: Array<{ caseId: string; chargeVersion: number; status: string }>
+        total: number
+      }>
+    }
+    expect(await queue('pending')).toMatchObject({ items: [], total: 0 })
+    expect(await queue('paid')).toMatchObject({ items: [], total: 0 })
+    expect(await queue('declined')).toMatchObject({
+      items: [{ caseId: declinedCase.caseId, chargeVersion: 2, status: 'declined' }],
+      total: 1,
+    })
+    expect(await queue('ambiguous')).toMatchObject({
+      items: [{ caseId: ambiguousCase.caseId, chargeVersion: 2, status: 'ambiguous' }],
+      total: 1,
+    })
+
+    const retryPreview = await runtime.app.request('/api/his/v1/payments/actions/preview', {
+      body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${declinedCase.order.chargeItemId}`]: '2' },
+        input: {
+          caseId: declinedCase.caseId,
+          category: 'laboratory',
+          simulatorRule: 'success',
+        },
+      }),
+      headers: commandHeaders(cashierCookie),
+      method: 'POST',
+    })
+    expect(retryPreview.status).toBe(200)
+    expect(await runtime.dispatcher.dispatchOnce()).toBeUndefined()
+  })
+
+  it('recovers a paid LIS task after restart and creates one final structured report for revisit', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-lis-restart-http-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'clinmesh.sqlite')
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtimeOptions = {
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath,
+      demoPassword: password,
+      migrationMode: 'apply' as const,
+      trustedOrigins: ['http://localhost'],
+    }
+    const initialRuntime = await createClinMeshRuntime(runtimeOptions)
+    const paidCase = await createPaidLabCase(initialRuntime, password)
+    await initialRuntime.close()
+
+    const restartedRuntime = await createClinMeshRuntime(runtimeOptions)
+    runtimes.push(restartedRuntime)
+    const dispatchResult = await restartedRuntime.dispatcher.dispatchOnce()
+    expect(dispatchResult).toMatchObject({ kind: 'lis.process-order', status: 'completed' })
+    expect(await restartedRuntime.dispatcher.dispatchOnce()).toBeUndefined()
+
+    const doctorCookie = await signIn(restartedRuntime, 'doctor@demo.clinmesh.local', password)
+    const queueResponse = await restartedRuntime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
+      headers: { cookie: doctorCookie },
+    })
+    expect(queueResponse.status).toBe(200)
+    const queue = await queueResponse.json() as {
+      items: Array<{
+        caseId: string
+        diagnosticReportId: string
+        encounterId: string
+        status: string
+      }>
+    }
+    expect(queue.items).toEqual([expect.objectContaining({
+      caseId: paidCase.caseId,
+      encounterId: paidCase.registration.encounterId,
+      status: 'awaiting-revisit',
+    })])
+
+    const reportResponse = await restartedRuntime.app.request(
+      `/fhir/R5/DiagnosticReport/${queue.items[0]?.diagnosticReportId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(reportResponse.status).toBe(200)
+    expect(await reportResponse.json()).toMatchObject({
+      encounter: { reference: `Encounter/${paidCase.registration.encounterId}` },
+      result: [expect.any(Object), expect.any(Object)],
+      status: 'final',
+      subject: { reference: `Patient/${paidCase.patient.id}` },
+    })
+
+    for (const [resourceType, total] of [
+      ['Specimen', 1],
+      ['Observation', 3],
+      ['DiagnosticReport', 1],
+    ] as const) {
+      const response = await restartedRuntime.app.request(
+        `/fhir/R5/${resourceType}?_total=accurate`,
+        { headers: { cookie: doctorCookie } },
+      )
+      expect(await response.json()).toMatchObject({ total })
+    }
+
+    const duplicate = restartedRuntime.workflow.processLisOrder({
+      context: {
+        actorId: 'actor-lis-system',
+        epoch: 'epoch-1',
+        organizationId: 'organization-clinmesh',
+        roleCode: 'lis-system',
+        scenarioRunId: 'scenario-run-1',
+        workspaceId: 'workspace-demo',
+      },
+      eventId: randomUUID(),
+      payload: {
+        caseId: paidCase.caseId,
+        encounterId: paidCase.registration.encounterId,
+        patientId: paidCase.patient.id,
+        serviceRequestId: paidCase.order.serviceRequestId,
+      },
+    })
+    expect(duplicate.data).toMatchObject({
+      diagnosticReportId: queue.items[0]?.diagnosticReportId,
+      status: 'awaiting-revisit',
+    })
+    expect(duplicate.effects).toEqual([])
+    for (const [resourceType, total] of [
+      ['Specimen', 1],
+      ['Observation', 3],
+      ['DiagnosticReport', 1],
+    ] as const) {
+      const response = await restartedRuntime.app.request(
+        `/fhir/R5/${resourceType}?_total=accurate`,
+        { headers: { cookie: doctorCookie } },
+      )
+      expect(await response.json()).toMatchObject({ total })
+    }
+  })
+
+  it('rejects an unpaid LIS result without leaving partial report facts', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-unpaid-lis-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createLabOrderedCase(runtime, password)
+
+    expect(() => runtime.workflow.processLisOrder({
+      context: {
+        actorId: 'actor-lis-system',
+        epoch: 'epoch-1',
+        organizationId: 'organization-clinmesh',
+        roleCode: 'lis-system',
+        scenarioRunId: 'scenario-run-1',
+        workspaceId: 'workspace-demo',
+      },
+      eventId: randomUUID(),
+      payload: {
+        caseId: testCase.caseId,
+        encounterId: testCase.registration.encounterId,
+        patientId: testCase.patient.id,
+        serviceRequestId: testCase.order.serviceRequestId,
+      },
+    })).toThrow('paid laboratory request is not available')
+    const reports = await runtime.app.request('/fhir/R5/DiagnosticReport?_total=accurate', {
+      headers: { cookie: testCase.doctorCookie },
+    })
+    const specimens = await runtime.app.request('/fhir/R5/Specimen?_total=accurate', {
+      headers: { cookie: testCase.doctorCookie },
+    })
+    expect(await reports.json()).toMatchObject({ total: 0 })
+    expect(await specimens.json()).toMatchObject({ total: 0 })
+  })
+
+  it('retries the real LIS handler after a persisted transient failure', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-lis-retry-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createPaidLabCase(runtime, password)
+    const processLisOrder = runtime.workflow.processLisOrder.bind(runtime.workflow)
+    const handler = vi.spyOn(runtime.workflow, 'processLisOrder')
+      .mockImplementationOnce(() => { throw new Error('injected transient LIS failure') })
+      .mockImplementation(processLisOrder)
+
+    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({
+      attempt: 1,
+      kind: 'lis.process-order',
+      status: 'failed',
+    })
+    runtime.database.driver.prepare(`
+      UPDATE outbox_event SET next_attempt_at = '1970-01-01T00:00:00.000Z'
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND kind = 'lis.process-order' AND status = 'failed'
+    `).run()
+    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({
+      attempt: 2,
+      kind: 'lis.process-order',
+      status: 'completed',
+    })
+    handler.mockRestore()
+    const reportResponse = await runtime.app.request('/fhir/R5/DiagnosticReport?_total=accurate', {
+      headers: { cookie: testCase.doctorCookie },
+    })
+    expect(await reportResponse.json()).toMatchObject({ total: 1 })
+  })
+
+  it('isolates a claimed LIS result that arrives after an Epoch reset', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-lis-old-epoch-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    await createPaidLabCase(runtime, password)
+    const claim = runtime.dispatcher.claimNext()
+    if (claim === undefined) throw new Error('Paid laboratory order did not create an LIS event')
+
+    const adminCookie = await signIn(runtime, 'admin@demo.clinmesh.local', password)
+    const resetResponse = await runtime.app.request(
+      '/api/sim/v1/scenario-runs/scenario-run-1/actions/reset',
+      {
+        body: '{}',
+        headers: commandHeaders(adminCookie),
+        method: 'POST',
+      },
+    )
+    expect(resetResponse.status).toBe(200)
+    expect(await resetResponse.json()).toMatchObject({
+      data: { epoch: 'epoch-2', scenarioRunId: 'scenario-run-2' },
+    })
+
+    const payload = claim.payload as {
+      caseId: string
+      encounterId: string
+      patientId: string
+      serviceRequestId: string
+    }
+    expect(() => runtime.workflow.processLisOrder({
+      context: {
+        actorId: 'actor-lis-system',
+        epoch: claim.epoch,
+        organizationId: 'organization-clinmesh',
+        roleCode: 'lis-system',
+        scenarioRunId: claim.scenarioRunId,
+        workspaceId: claim.workspaceId,
+      },
+      eventId: claim.eventId,
+      payload,
+    })).toThrowError(WorkspaceContextError)
+
+    const oldContext = { epoch: claim.epoch, workspaceId: claim.workspaceId }
+    expect(runtime.fhir.search(
+      oldContext,
+      'DiagnosticReport',
+      new URLSearchParams('_total=accurate'),
+    )).toMatchObject({ total: 0 })
+    expect(new AuditQuery(runtime.database).list(oldContext)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ operation: 'lis.process-order', outcome: 'failed' }),
+    ]))
+    expect(runtime.database.driver.prepare(`
+      SELECT status FROM outbox_event
+      WHERE workspace_id = ? AND epoch = ? AND event_id = ?
+    `).get(claim.workspaceId, claim.epoch, claim.eventId)).toEqual({ status: 'abandoned' })
+    expect(await (await runtime.app.request('/fhir/R5/DiagnosticReport?_total=accurate', {
+      headers: { cookie: adminCookie },
+    })).json()).toMatchObject({ total: 0 })
+    expect(await (await runtime.app.request('/fhir/R5/AuditEvent?_total=accurate', {
+      headers: { cookie: adminCookie },
+    })).json()).toMatchObject({ total: 0 })
+  })
+
+  it('runs the persistent LIS dispatcher from the live runtime without a manual test hook', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-live-dispatch-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      autoDispatchIntervalMs: 10,
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createPaidLabCase(runtime, password)
+    const deadline = Date.now() + 2_000
+    let queueItem: { caseId: string; status: string } | undefined
+    while (queueItem === undefined && Date.now() < deadline) {
+      const response = await runtime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
+        headers: { cookie: testCase.doctorCookie },
+      })
+      queueItem = (await response.json() as {
+        items: Array<{ caseId: string; status: string }>
+      }).items.find(item => item.caseId === testCase.caseId && item.status === 'awaiting-revisit')
+      if (queueItem === undefined) await new Promise(resolve => setTimeout(resolve, 20))
+    }
+    expect(queueItem).toMatchObject({ caseId: testCase.caseId, status: 'awaiting-revisit' })
+  })
+
+  it('starts revisit and saves versioned diagnosis, prescription, and document drafts without charging', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-revisit-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createReportedCase(runtime, password)
+
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${testCase.caseId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(detailResponse.status).toBe(200)
+    expect(await detailResponse.json()).toMatchObject({
+      report: {
+        id: testCase.report.diagnosticReportId,
+        results: [
+          expect.objectContaining({ code: '80382-5', value: true }),
+          expect.objectContaining({ code: '6690-2', value: 6.8 }),
+        ],
+        status: 'final',
+      },
+    })
+
+    const startResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/start-revisit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${testCase.registration.encounterId}`]: '5',
+            [`Task/${testCase.report.taskId}`]: '1',
+          },
+          input: {},
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(startResponse.status).toBe(200)
+    expect(await startResponse.json()).toMatchObject({
+      data: { encounterVersion: '6', status: 'revisit-draft', taskVersion: '2' },
+    })
+
+    const draftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/drafts/revisit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${testCase.registration.encounterId}`]: '6' },
+          input: {
+            diagnosis: {
+              code: 'J10.1',
+              display: '流感伴其他呼吸道表现，季节性流感病毒已标明',
+            },
+            document: {
+              assessment: '甲型流感，生命体征稳定。',
+              plan: '口服抗病毒药物，对症处理，必要时复诊。',
+            },
+            expectedVersions: {
+              documentDraft: 0,
+              prescription: 0,
+              revisitDraft: 0,
+            },
+            medications: [{
+              catalogItemId: 'medication-oseltamivir',
+              doseText: '75 mg',
+              frequencyCode: 'BID',
+              quantity: 10,
+            }],
+          },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(draftResponse.status).toBe(200)
+    const draft = (await draftResponse.json() as {
+      data: {
+        conditionId: string
+        documentDraftVersion: number
+        medicationRequestIds: string[]
+        prescriptionId: string
+        prescriptionNumber: string
+        prescriptionVersion: number
+        revisitDraftVersion: number
+      }
+    }).data
+    expect(draft).toMatchObject({
+      documentDraftVersion: 1,
+      prescriptionVersion: 1,
+      revisitDraftVersion: 1,
+    })
+    expect(draft.medicationRequestIds).toHaveLength(1)
+
+    const medicationRequest = await runtime.app.request(
+      `/fhir/R5/MedicationRequest/${draft.medicationRequestIds[0]}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(await medicationRequest.json()).toMatchObject({
+      status: 'draft',
+      subject: { reference: `Patient/${testCase.patient.id}` },
+    })
+    const cashierCookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const billingResponse = await runtime.app.request(
+      '/api/his/v1/billing/queue?category=medication&status=pending&pageSize=20',
+      { headers: { cookie: cashierCookie } },
+    )
+    expect(await billingResponse.json()).toMatchObject({ items: [], total: 0 })
+    const encounterResponse = await runtime.app.request(
+      `/fhir/R5/Encounter/${testCase.registration.encounterId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(await encounterResponse.json()).toMatchObject({ status: 'in-progress' })
+    const savedDetailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${testCase.caseId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(await savedDetailResponse.json()).toMatchObject({
+      drafts: {
+        document: { version: 1 },
+        prescription: {
+          id: draft.prescriptionId,
+          items: [{ medicationRequestId: draft.medicationRequestIds[0], versionId: '1' }],
+          version: 1,
+        },
+        revisit: { conditionId: draft.conditionId, conditionVersion: '1', version: 1 },
+      },
+    })
+
+    const revisedDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/drafts/revisit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Condition/${draft.conditionId}`]: '1',
+            [`Encounter/${testCase.registration.encounterId}`]: '6',
+            [`MedicationRequest/${draft.medicationRequestIds[0]}`]: '1',
+          },
+          input: {
+            diagnosis: {
+              code: 'J10.1',
+              display: '流感伴其他呼吸道表现，季节性流感病毒已标明',
+            },
+            document: {
+              assessment: '甲型流感，生命体征稳定，无重症危险征象。',
+              plan: '口服抗病毒药物五日，对症处理，必要时复诊。',
+            },
+            expectedVersions: {
+              documentDraft: 1,
+              prescription: 1,
+              revisitDraft: 1,
+            },
+            medications: [{
+              catalogItemId: 'medication-oseltamivir',
+              doseText: '75 mg',
+              frequencyCode: 'BID',
+              quantity: 20,
+            }],
+          },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(revisedDraftResponse.status).toBe(200)
+    const revisedDraft = (await revisedDraftResponse.json() as { data: typeof draft }).data
+    expect(revisedDraft).toMatchObject({
+      conditionId: draft.conditionId,
+      documentDraftVersion: 2,
+      medicationRequestIds: draft.medicationRequestIds,
+      prescriptionId: draft.prescriptionId,
+      prescriptionNumber: draft.prescriptionNumber,
+      prescriptionVersion: 2,
+      revisitDraftVersion: 2,
+    })
+    const revisedDetailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${testCase.caseId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(await revisedDetailResponse.json()).toMatchObject({
+      drafts: {
+        document: { plan: '口服抗病毒药物五日，对症处理，必要时复诊。', version: 2 },
+        prescription: {
+          id: draft.prescriptionId,
+          items: [{ medicationRequestId: draft.medicationRequestIds[0], quantity: 20, versionId: '2' }],
+          version: 2,
+        },
+        revisit: { conditionId: draft.conditionId, conditionVersion: '2', version: 2 },
+      },
+    })
+  })
+
+  it('shows active medication allergies and rejects a contraindicated revisit draft atomically', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-allergy-rule-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createReportedCase(runtime, password)
+    runtime.fhir.create({ epoch: 'epoch-1', workspaceId: 'workspace-demo' }, {
+      resourceType: 'AllergyIntolerance',
+      id: `allergy-${randomUUID()}`,
+      clinicalStatus: {
+        coding: [{
+          code: 'active',
+          system: 'http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical',
+        }],
+      },
+      verificationStatus: {
+        coding: [{
+          code: 'confirmed',
+          system: 'http://terminology.hl7.org/CodeSystem/allergyintolerance-verification',
+        }],
+      },
+      category: ['medication'],
+      criticality: 'high',
+      code: {
+        coding: [{
+          code: 'OSELTAMIVIR',
+          display: '磷酸奥司他韦',
+          system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/synthetic-medication',
+        }],
+        text: '磷酸奥司他韦过敏',
+      },
+      patient: { reference: `Patient/${testCase.patient.id}` },
+      recordedDate: '2026-08-24T08:30:00+08:00',
+    })
+
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${testCase.caseId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(await detailResponse.json()).toMatchObject({
+      allergies: [{
+        code: { text: '磷酸奥司他韦过敏' },
+        criticality: 'high',
+        patient: { reference: `Patient/${testCase.patient.id}` },
+      }],
+    })
+
+    await runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/start-revisit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${testCase.registration.encounterId}`]: '5',
+            [`Task/${testCase.report.taskId}`]: '1',
+          },
+          input: {},
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'POST',
+      },
+    )
+    const draftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/drafts/revisit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${testCase.registration.encounterId}`]: '6' },
+          input: {
+            diagnosis: { code: 'J10.1', display: '甲型流感' },
+            document: {
+              assessment: '甲型流感，生命体征稳定。',
+              plan: '选择无过敏风险的替代药物。',
+            },
+            expectedVersions: { documentDraft: 0, prescription: 0, revisitDraft: 0 },
+            medications: [{
+              catalogItemId: 'medication-oseltamivir',
+              doseText: '75 mg',
+              frequencyCode: 'BID',
+              quantity: 10,
+            }],
+          },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(draftResponse.status).toBe(409)
+    expect(await draftResponse.json()).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
+    for (const resourceType of ['Condition', 'MedicationRequest']) {
+      const response = await runtime.app.request(`/fhir/R5/${resourceType}?_total=accurate`, {
+        headers: { cookie: testCase.doctorCookie },
+      })
+      expect(await response.json()).toMatchObject({ total: 0 })
+    }
+  })
+
+  it('signs immutable clinical facts, completes the Encounter, and opens only medication billing', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-sign-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createRevisitDraftCase(runtime, password)
+    const clinicalExpectedVersions = {
+      [`Condition/${testCase.draft.conditionId}`]: '1',
+      [`Encounter/${testCase.registration.encounterId}`]: '6',
+      [`MedicationRequest/${testCase.draft.medicationRequestIds[0]}`]: '1',
+      [`Task/${testCase.report.taskId}`]: '2',
+    }
+
+    const previewResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/preview-sign`,
+      {
+        body: JSON.stringify({
+          expectedVersions: clinicalExpectedVersions,
+          input: {
+            expectedDraftVersions: {
+              documentDraft: 1,
+              prescription: 1,
+              revisitDraft: 1,
+            },
+          },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(previewResponse.status).toBe(200)
+    const preview = (await previewResponse.json() as {
+      data: {
+        commitToken: string
+        expiresAt: string
+        medicationTotalFen: number
+        previewId: string
+        summary: { diagnosisCode: string; medicationCount: number }
+      }
+    }).data
+    expect(preview).toMatchObject({
+      medicationTotalFen: 7600,
+      summary: { diagnosisCode: 'J10.1', medicationCount: 1 },
+    })
+
+    const beforeSign = await runtime.app.request(
+      `/fhir/R5/Encounter/${testCase.registration.encounterId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(await beforeSign.json()).toMatchObject({ status: 'in-progress' })
+
+    const signIdempotencyKey = randomUUID()
+    const sign = () => runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/sign-and-complete`,
+      {
+        body: JSON.stringify({
+          expectedVersions: clinicalExpectedVersions,
+          input: {
+            commitToken: preview.commitToken,
+            previewId: preview.previewId,
+          },
+        }),
+        headers: commandHeaders(testCase.doctorCookie, signIdempotencyKey),
+        method: 'POST',
+      },
+    )
+    const signResponse = await sign()
+    expect(signResponse.status).toBe(200)
+    const signed = await signResponse.json() as {
+      data: {
+        bundleId: string
+        chargeItemId: string
+        compositionId: string
+        encounterId: string
+        encounterVersion: string
+        provenanceId: string
+        status: string
+      }
+    }
+    expect(signed.data).toMatchObject({
+      encounterId: testCase.registration.encounterId,
+      encounterVersion: '7',
+      status: 'awaiting-medication-payment',
+    })
+    expect(await (await sign()).json()).toEqual(signed)
+
+    const encounterResponse = await runtime.app.request(
+      `/fhir/R5/Encounter/${testCase.registration.encounterId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(await encounterResponse.json()).toMatchObject({
+      id: testCase.registration.encounterId,
+      status: 'completed',
+    })
+    for (const [resourceType, resourceId] of [
+      ['Composition', signed.data.compositionId],
+      ['Bundle', signed.data.bundleId],
+      ['Provenance', signed.data.provenanceId],
+    ]) {
+      const response = await runtime.app.request(`/fhir/R5/${resourceType}/${resourceId}`, {
+        headers: { cookie: testCase.doctorCookie },
+      })
+      expect(response.status).toBe(200)
+    }
+    const overwriteResponse = await runtime.app.request(
+      `/fhir/R5/Composition/${signed.data.compositionId}`,
+      {
+        body: JSON.stringify({ resourceType: 'Composition', id: signed.data.compositionId }),
+        headers: {
+          'content-type': 'application/fhir+json',
+          cookie: testCase.doctorCookie,
+          'if-match': 'W/"1"',
+        },
+        method: 'PUT',
+      },
+    )
+    expect(overwriteResponse.status).toBe(405)
+
+    const revisionIdempotencyKey = randomUUID()
+    const revise = () => runtime.app.request(
+      `/api/his/v1/clinical-documents/${signed.data.compositionId}/actions/revise`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Composition/${signed.data.compositionId}`]: '1',
+            [`Encounter/${testCase.registration.encounterId}`]: '7',
+          },
+          input: {
+            assessment: '甲型流感，复核后补充居家监测说明。',
+            plan: '继续抗病毒治疗；持续高热或呼吸困难时复诊。',
+            reason: '补充复诊警示信息',
+          },
+        }),
+        headers: commandHeaders(testCase.doctorCookie, revisionIdempotencyKey),
+        method: 'POST',
+      },
+    )
+    const revisionResponse = await revise()
+    expect(revisionResponse.status).toBe(200)
+    const revision = await revisionResponse.json() as {
+      data: { bundleId: string; compositionId: string; provenanceId: string }
+    }
+    expect(await (await revise()).json()).toEqual(revision)
+    const originalComposition = await runtime.app.request(
+      `/fhir/R5/Composition/${signed.data.compositionId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(await originalComposition.json()).toMatchObject({
+      id: signed.data.compositionId,
+      meta: { versionId: '1' },
+      status: 'final',
+    })
+    const revisedComposition = await runtime.app.request(
+      `/fhir/R5/Composition/${revision.data.compositionId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(await revisedComposition.json()).toMatchObject({
+      encounter: { reference: `Encounter/${testCase.registration.encounterId}` },
+      relatesTo: [{
+        resourceReference: { reference: `Composition/${signed.data.compositionId}` },
+        type: 'replaces',
+      }],
+      status: 'amended',
+      title: '门诊病历更正',
+    })
+    for (const [resourceType, total] of [
+      ['Composition', 2],
+      ['Bundle', 2],
+      ['Provenance', 2],
+    ] as const) {
+      const response = await runtime.app.request(
+        `/fhir/R5/${resourceType}?_total=accurate`,
+        { headers: { cookie: testCase.doctorCookie } },
+      )
+      expect(await response.json()).toMatchObject({ total })
+    }
+    const unchangedEncounter = await runtime.app.request(
+      `/fhir/R5/Encounter/${testCase.registration.encounterId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(await unchangedEncounter.json()).toMatchObject({
+      meta: { versionId: '7' },
+      status: 'completed',
+    })
+
+    const cashierCookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const billingResponse = await runtime.app.request(
+      '/api/his/v1/billing/queue?category=medication&status=pending&pageSize=20',
+      { headers: { cookie: cashierCookie } },
+    )
+    expect(await billingResponse.json()).toMatchObject({
+      items: [{ amountFen: 7600, chargeItemId: signed.data.chargeItemId }],
+      total: 1,
+    })
+    const scenarioResponse = await runtime.app.request('/api/sim/v1/scenario-runs/current', {
+      headers: { cookie: testCase.doctorCookie },
+    })
+    expect(await scenarioResponse.json()).toMatchObject({ status: 'active' })
+  })
+
+  it('pays the signed medication charge once and hands the prescription to pharmacy', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-medication-payment-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createSignedCase(runtime, password)
+    const cashierCookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+
+    const queueResponse = await runtime.app.request(
+      '/api/his/v1/billing/queue?category=medication&status=pending&pageSize=20',
+      { headers: { cookie: cashierCookie } },
+    )
+    expect(queueResponse.status).toBe(200)
+    expect(await queueResponse.json()).toMatchObject({
+      items: [{
+        amountFen: 7600,
+        category: 'medication',
+        chargeItemId: testCase.signed.chargeItemId,
+        chargeVersion: 1,
+      }],
+      total: 1,
+    })
+
+    const previewResponse = await runtime.app.request('/api/his/v1/payments/actions/preview', {
+      body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${testCase.signed.chargeItemId}`]: '1' },
+        input: {
+          caseId: testCase.caseId,
+          category: 'medication',
+          simulatorRule: 'success',
+        },
+      }),
+      headers: commandHeaders(cashierCookie),
+      method: 'POST',
+    })
+    expect(previewResponse.status).toBe(200)
+    const preview = (await previewResponse.json() as {
+      data: { amountFen: number; commitToken: string; previewId: string }
+    }).data
+    expect(preview.amountFen).toBe(7600)
+
+    const paymentIdempotencyKey = randomUUID()
+    const confirm = () => runtime.app.request(
+      `/api/his/v1/payments/${preview.previewId}/actions/confirm`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`ChargeItem/${testCase.signed.chargeItemId}`]: '1' },
+          input: { commitToken: preview.commitToken },
+        }),
+        headers: commandHeaders(cashierCookie, paymentIdempotencyKey),
+        method: 'POST',
+      },
+    )
+    const paymentResponse = await confirm()
+    expect(paymentResponse.status).toBe(200)
+    const payment = await paymentResponse.json() as {
+      data: { amountFen: number; outcome: string; paymentId: string; status: string }
+    }
+    expect(payment.data).toMatchObject({
+      amountFen: 7600,
+      outcome: 'success',
+      status: 'awaiting-dispense',
+    })
+    expect(await (await confirm()).json()).toEqual(payment)
+
+    const pharmacistCookie = await signIn(runtime, 'pharmacist@demo.clinmesh.local', password)
+    const pharmacyQueue = await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
+      headers: { cookie: pharmacistCookie },
+    })
+    expect(pharmacyQueue.status).toBe(200)
+    expect(await pharmacyQueue.json()).toMatchObject({
+      items: [{
+        caseId: testCase.caseId,
+        encounterId: testCase.registration.encounterId,
+        prescriptionId: testCase.draft.prescriptionId,
+        status: 'awaiting-dispense',
+      }],
+      total: 1,
+    })
+
+    const encounterResponse = await runtime.app.request(
+      `/fhir/R5/Encounter/${testCase.registration.encounterId}`,
+      { headers: { cookie: cashierCookie } },
+    )
+    expect(await encounterResponse.json()).toMatchObject({ status: 'completed' })
+    const scenarioResponse = await runtime.app.request('/api/sim/v1/scenario-runs/current', {
+      headers: { cookie: cashierCookie },
+    })
+    expect(await scenarioResponse.json()).toMatchObject({ status: 'active' })
+  })
+
+  it('rejects the dispensing fault matrix without any partial inventory effect', async () => {
+    const password = `Test-${randomUUID()}-Aa1!`
+    const createRuntime = async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'clinmesh-dispense-faults-http-'))
+      temporaryDirectories.push(directory)
+      const runtime = await createClinMeshRuntime({
+        authBaseUrl: 'http://localhost',
+        authSecret: 'test-auth-secret-with-at-least-32-characters',
+        cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+        databasePath: join(directory, 'clinmesh.sqlite'),
+        demoPassword: password,
+        migrationMode: 'apply',
+        trustedOrigins: ['http://localhost'],
+      })
+      runtimes.push(runtime)
+      return runtime
+    }
+    const runtime = await createRuntime()
+    const pharmacistCookie = await signIn(runtime, 'pharmacist@demo.clinmesh.local', password)
+    const lotId = 'lot-oseltamivir-202608'
+    const submit = (input: {
+      cookie?: string
+      encounterId: string
+      encounterVersion: string
+      expectedLotVersion?: number
+      expectedPrescriptionVersion: number
+      medicationRequestId: string
+      medicationRequestVersion: string
+      prescriptionId: string
+      quantity?: number
+    }, targetRuntime = runtime, defaultCookie = pharmacistCookie) => targetRuntime.app.request(
+      `/api/his/v1/prescriptions/${input.prescriptionId}/actions/dispense`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${input.encounterId}`]: input.encounterVersion,
+            [`MedicationRequest/${input.medicationRequestId}`]: input.medicationRequestVersion,
+          },
+          input: {
+            expectedPrescriptionVersion: input.expectedPrescriptionVersion,
+            lotSelections: [{
+              expectedVersion: input.expectedLotVersion ?? 1,
+              lotId,
+              quantity: input.quantity ?? 10,
+            }],
+          },
+        }),
+        headers: commandHeaders(input.cookie ?? defaultCookie),
+        method: 'POST',
+      },
+    )
+
+    const paid = await createPaidMedicationCase(runtime, password)
+    const unpaidRuntime = await createRuntime()
+    const unpaid = await createSignedCase(unpaidRuntime, password)
+    const unpaidPharmacistCookie = await signIn(
+      unpaidRuntime,
+      'pharmacist@demo.clinmesh.local',
+      password,
+    )
+    const unsignedRuntime = await createRuntime()
+    const unsigned = await createRevisitDraftCase(unsignedRuntime, password)
+    const unsignedPharmacistCookie = await signIn(
+      unsignedRuntime,
+      'pharmacist@demo.clinmesh.local',
+      password,
+    )
+
+    expect((await submit({
+      encounterId: unsigned.registration.encounterId,
+      encounterVersion: '6',
+      expectedPrescriptionVersion: 1,
+      medicationRequestId: unsigned.draft.medicationRequestIds[0] ?? '',
+      medicationRequestVersion: '1',
+      prescriptionId: unsigned.draft.prescriptionId,
+    }, unsignedRuntime, unsignedPharmacistCookie)).status).toBe(409)
+    expect((await submit({
+      encounterId: unpaid.registration.encounterId,
+      encounterVersion: '7',
+      expectedPrescriptionVersion: 2,
+      medicationRequestId: unpaid.draft.medicationRequestIds[0] ?? '',
+      medicationRequestVersion: '2',
+      prescriptionId: unpaid.draft.prescriptionId,
+    }, unpaidRuntime, unpaidPharmacistCookie)).status).toBe(409)
+
+    const queueResponse = await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
+      headers: { cookie: pharmacistCookie },
+    })
+    const queueItem = (await queueResponse.json() as {
+      items: Array<{
+        encounterId: string
+        encounterVersion: string
+        medications: Array<{
+          medicationRequestId: string
+          medicationRequestVersion: string
+        }>
+        prescriptionId: string
+        prescriptionVersion: number
+      }>
+    }).items.find(item => item.prescriptionId === paid.draft.prescriptionId)
+    const medication = queueItem?.medications[0]
+    if (queueItem === undefined || medication === undefined) {
+      throw new Error('Paid prescription was missing from the dispensing fault matrix')
+    }
+    const valid = {
+      encounterId: queueItem.encounterId,
+      encounterVersion: queueItem.encounterVersion,
+      expectedPrescriptionVersion: queueItem.prescriptionVersion,
+      medicationRequestId: medication.medicationRequestId,
+      medicationRequestVersion: medication.medicationRequestVersion,
+      prescriptionId: queueItem.prescriptionId,
+    }
+    for (const attempt of [
+      { ...valid, encounterVersion: '6' },
+      { ...valid, medicationRequestVersion: '1' },
+      { ...valid, expectedPrescriptionVersion: valid.expectedPrescriptionVersion - 1 },
+      { ...valid, expectedLotVersion: 2 },
+      { ...valid, quantity: 1001 },
+      { ...valid, cookie: paid.cashierCookie },
+    ]) {
+      const response = await submit(attempt)
+      expect([403, 409]).toContain(response.status)
+    }
+
+    runtime.database.driver.prepare(`
+      UPDATE inventory_lot SET expires_on = '2026-08-23'
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND lot_id = ?
+    `).run(lotId)
+    expect((await submit(valid)).status).toBe(409)
+    runtime.database.driver.prepare(`
+      UPDATE inventory_lot SET expires_on = '2027-12-31', location_id = 'location-outpatient'
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND lot_id = ?
+    `).run(lotId)
+    expect((await submit(valid)).status).toBe(409)
+    runtime.database.driver.prepare(`
+      UPDATE inventory_lot SET location_id = 'location-pharmacist'
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND lot_id = ?
+    `).run(lotId)
+
+    const inventoryBefore = await runtime.app.request(`/fhir/R5/InventoryItem/${lotId}`, {
+      headers: { cookie: pharmacistCookie },
+    })
+    expect(await inventoryBefore.json()).toMatchObject({
+      meta: { versionId: '1' },
+      netContent: { value: 1000 },
+    })
+    expect(runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM inventory_movement
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+    `).get()).toEqual({ count: 0 })
+    expect(await (await runtime.app.request('/fhir/R5/MedicationDispense?_total=accurate', {
+      headers: { cookie: pharmacistCookie },
+    })).json()).toMatchObject({ total: 0 })
+
+    const competing = await Promise.all([submit(valid), submit(valid)])
+    expect(competing.map(response => response.status).toSorted()).toEqual([200, 409])
+    const afterCompetition = await runtime.app.request(`/fhir/R5/InventoryItem/${lotId}`, {
+      headers: { cookie: pharmacistCookie },
+    })
+    expect(await afterCompetition.json()).toMatchObject({
+      meta: { versionId: '2' },
+      netContent: { value: 990 },
+    })
+    expect(runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM inventory_movement
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+    `).get()).toEqual({ count: 1 })
+    expect((await submit({
+      ...valid,
+      expectedLotVersion: 2,
+      expectedPrescriptionVersion: valid.expectedPrescriptionVersion + 1,
+    })).status).toBe(409)
+    expect(await (await runtime.app.request('/fhir/R5/MedicationDispense?_total=accurate', {
+      headers: { cookie: pharmacistCookie },
+    })).json()).toMatchObject({ total: 1 })
+  })
+
+  it('keeps the Scenario Run active across a partial dispense and completes it after the remainder', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-partial-dispense-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createPaidMedicationCase(runtime, password)
+    const pharmacistCookie = await signIn(runtime, 'pharmacist@demo.clinmesh.local', password)
+    const initialQueue = await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
+      headers: { cookie: pharmacistCookie },
+    })
+    const initial = (await initialQueue.json() as {
+      items: Array<{
+        encounterId: string
+        encounterVersion: string
+        medications: Array<{
+          lots: Array<{ id: string; version: number }>
+          medicationRequestId: string
+          medicationRequestVersion: string
+          quantity: number
+        }>
+        prescriptionId: string
+        prescriptionVersion: number
+      }>
+    }).items[0]
+    const medication = initial?.medications[0]
+    const lot = medication?.lots[0]
+    if (initial === undefined || medication === undefined || lot === undefined) {
+      throw new Error('Paid prescription did not expose its initial dispensing state')
+    }
+
+    const submitDispense = (input: {
+      expectedLotVersion: number
+      expectedPrescriptionVersion: number
+      idempotencyKey: ReturnType<typeof randomUUID>
+      quantity: number
+    }) => runtime.app.request(
+      `/api/his/v1/prescriptions/${initial.prescriptionId}/actions/dispense`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${initial.encounterId}`]: initial.encounterVersion,
+            [`MedicationRequest/${medication.medicationRequestId}`]: medication.medicationRequestVersion,
+          },
+          input: {
+            expectedPrescriptionVersion: input.expectedPrescriptionVersion,
+            lotSelections: [{
+              expectedVersion: input.expectedLotVersion,
+              lotId: lot.id,
+              quantity: input.quantity,
+            }],
+          },
+        }),
+        headers: commandHeaders(pharmacistCookie, input.idempotencyKey),
+        method: 'POST',
+      },
+    )
+
+    const firstResponse = await submitDispense({
+      expectedLotVersion: lot.version,
+      expectedPrescriptionVersion: initial.prescriptionVersion,
+      idempotencyKey: randomUUID(),
+      quantity: 4,
+    })
+    expect(firstResponse.status).toBe(200)
+    const first = await firstResponse.json() as {
+      data: { medicationDispenseId: string; prescriptionVersion: number }
+    }
+    expect(first.data).toMatchObject({
+      prescriptionVersion: 4,
+      scenarioStatus: 'active',
+      status: 'partial',
+    })
+    const firstDispense = await runtime.app.request(
+      `/fhir/R5/MedicationDispense/${first.data.medicationDispenseId}`,
+      { headers: { cookie: pharmacistCookie } },
+    )
+    expect(await firstDispense.json()).toMatchObject({
+      quantity: { value: 4 },
+      status: 'completed',
+    })
+    const partialQueue = await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
+      headers: { cookie: pharmacistCookie },
+    })
+    expect(await partialQueue.json()).toMatchObject({
+      items: [{
+        medications: [{
+          dispensedQuantity: 4,
+          lots: [{ id: lot.id, quantityOnHand: 996, version: 2 }],
+          remainingQuantity: 6,
+        }],
+        prescriptionVersion: 4,
+        status: 'partially-dispensed',
+      }],
+      total: 1,
+    })
+    const activeScenario = await runtime.app.request('/api/sim/v1/scenario-runs/current', {
+      headers: { cookie: pharmacistCookie },
+    })
+    expect(await activeScenario.json()).toMatchObject({ status: 'active' })
+
+    const secondResponse = await submitDispense({
+      expectedLotVersion: 2,
+      expectedPrescriptionVersion: 4,
+      idempotencyKey: randomUUID(),
+      quantity: 6,
+    })
+    expect(secondResponse.status).toBe(200)
+    expect(await secondResponse.json()).toMatchObject({
+      data: {
+        prescriptionVersion: 5,
+        scenarioStatus: 'completed',
+        status: 'completed',
+      },
+    })
+    const dispenseSearch = await runtime.app.request(
+      '/fhir/R5/MedicationDispense?_total=accurate',
+      { headers: { cookie: pharmacistCookie } },
+    )
+    expect(await dispenseSearch.json()).toMatchObject({ total: 2 })
+    const finalInventory = await runtime.app.request(`/fhir/R5/InventoryItem/${lot.id}`, {
+      headers: { cookie: pharmacistCookie },
+    })
+    expect(await finalInventory.json()).toMatchObject({
+      meta: { versionId: '3' },
+      netContent: { value: 990 },
+    })
+  })
+
+  it('dispenses a paid prescription once, decrements the selected lot, and completes only the Scenario Run', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-dispense-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createPaidMedicationCase(runtime, password)
+    const pharmacistCookie = await signIn(runtime, 'pharmacist@demo.clinmesh.local', password)
+    const queueResponse = await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
+      headers: { cookie: pharmacistCookie },
+    })
+    expect(queueResponse.status).toBe(200)
+    const queue = await queueResponse.json() as {
+      items: Array<{
+        medications: Array<{
+          lots: Array<{ id: string; quantityOnHand: number; version: number }>
+          medicationRequestId: string
+          quantity: number
+        }>
+        prescriptionId: string
+        prescriptionVersion: number
+      }>
+    }
+    const prescription = queue.items[0]
+    const medication = prescription?.medications[0]
+    const lot = medication?.lots[0]
+    expect({ prescription, medication, lot }).toMatchObject({
+      lot: { quantityOnHand: 1000, version: 1 },
+      medication: { quantity: 10 },
+      prescription: {
+        prescriptionId: testCase.draft.prescriptionId,
+        prescriptionVersion: 3,
+      },
+    })
+    if (prescription === undefined || medication === undefined || lot === undefined) {
+      throw new Error('Paid prescription did not expose a dispensable synthetic lot')
+    }
+
+    const inventoryBefore = await runtime.app.request(
+      `/fhir/R5/InventoryItem/${lot.id}`,
+      { headers: { cookie: pharmacistCookie } },
+    )
+    expect(inventoryBefore.status).toBe(200)
+    expect(inventoryBefore.headers.get('etag')).toBe('W/"1"')
+    expect(await inventoryBefore.json()).toMatchObject({
+      id: lot.id,
+      instance: {
+        expiry: '2027-12-31',
+        location: { reference: 'Location/location-pharmacist' },
+        lotNumber: 'SYN-OSE-202608',
+      },
+      meta: { versionId: '1' },
+      netContent: { value: 1000 },
+      productReference: { reference: 'Medication/medication-oseltamivir' },
+      resourceType: 'InventoryItem',
+      status: 'active',
+    })
+
+    const dispenseIdempotencyKey = randomUUID()
+    const dispense = () => runtime.app.request(
+      `/api/his/v1/prescriptions/${prescription.prescriptionId}/actions/dispense`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${testCase.registration.encounterId}`]: '7',
+            [`MedicationRequest/${medication.medicationRequestId}`]: '2',
+          },
+          input: {
+            expectedPrescriptionVersion: prescription.prescriptionVersion,
+            lotSelections: [{
+              expectedVersion: lot.version,
+              lotId: lot.id,
+              quantity: medication.quantity,
+            }],
+          },
+        }),
+        headers: commandHeaders(pharmacistCookie, dispenseIdempotencyKey),
+        method: 'POST',
+      },
+    )
+    const dispenseResponse = await dispense()
+    expect(dispenseResponse.status).toBe(200)
+    const result = await dispenseResponse.json() as {
+      data: {
+        medicationDispenseId: string
+        prescriptionId: string
+        prescriptionVersion: number
+        scenarioStatus: string
+        status: string
+      }
+    }
+    expect(result.data).toMatchObject({
+      prescriptionId: prescription.prescriptionId,
+      prescriptionVersion: 4,
+      scenarioStatus: 'completed',
+      status: 'completed',
+    })
+    expect(await (await dispense()).json()).toEqual(result)
+
+    const medicationDispense = await runtime.app.request(
+      `/fhir/R5/MedicationDispense/${result.data.medicationDispenseId}`,
+      { headers: { cookie: pharmacistCookie } },
+    )
+    expect(medicationDispense.status).toBe(200)
+    expect(await medicationDispense.json()).toMatchObject({
+      authorizingPrescription: [{ reference: `MedicationRequest/${medication.medicationRequestId}` }],
+      encounter: { reference: `Encounter/${testCase.registration.encounterId}` },
+      status: 'completed',
+    })
+    const completedQueue = await runtime.app.request(
+      '/api/his/v1/pharmacy/queue?status=completed&pageSize=20',
+      { headers: { cookie: pharmacistCookie } },
+    )
+    expect(await completedQueue.json()).toMatchObject({
+      items: [{
+        medications: [{ lots: [{ id: lot.id, quantityOnHand: 990, version: 2 }] }],
+        prescriptionId: prescription.prescriptionId,
+        prescriptionVersion: 4,
+        status: 'completed',
+      }],
+      total: 1,
+    })
+    const inventoryAfter = await runtime.app.request(
+      `/fhir/R5/InventoryItem/${lot.id}`,
+      { headers: { cookie: pharmacistCookie } },
+    )
+    expect(inventoryAfter.status).toBe(200)
+    expect(inventoryAfter.headers.get('etag')).toBe('W/"2"')
+    expect(await inventoryAfter.json()).toMatchObject({
+      meta: { versionId: '2' },
+      netContent: { value: 990 },
+    })
+    const inventoryHistory = await runtime.app.request(
+      `/fhir/R5/InventoryItem/${lot.id}/_history`,
+      { headers: { cookie: pharmacistCookie } },
+    )
+    expect(inventoryHistory.status).toBe(200)
+    expect(await inventoryHistory.json()).toMatchObject({
+      entry: [
+        { resource: { meta: { versionId: '2' }, netContent: { value: 990 } } },
+        { resource: { meta: { versionId: '1' }, netContent: { value: 1000 } } },
+      ],
+      total: 2,
+      type: 'history',
+    })
+    const encounterResponse = await runtime.app.request(
+      `/fhir/R5/Encounter/${testCase.registration.encounterId}`,
+      { headers: { cookie: pharmacistCookie } },
+    )
+    expect(await encounterResponse.json()).toMatchObject({
+      meta: { versionId: '7' },
+      status: 'completed',
+    })
+    const scenarioResponse = await runtime.app.request('/api/sim/v1/scenario-runs/current', {
+      headers: { cookie: pharmacistCookie },
+    })
+    expect(await scenarioResponse.json()).toMatchObject({ status: 'completed' })
+  })
+})

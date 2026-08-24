@@ -9,14 +9,88 @@ import {
   createRouter,
   Outlet,
   RouterProvider,
+  useNavigate,
 } from '@tanstack/react-router'
+import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
+import { Button } from '@clinmesh/ui/components/button'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@clinmesh/ui/components/card'
+import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
+import { Input } from '@clinmesh/ui/components/input'
+import { Skeleton } from '@clinmesh/ui/components/skeleton'
+import { Toaster } from '@clinmesh/ui/components/toast'
+import {
+  QueryClient,
+  QueryClientProvider,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
+import { CircleAlertIcon, LogInIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { readWebPreferences, writeWebPreferences } from './preferences.ts'
+import {
+  ApiClientError,
+  getSession,
+  selectRole,
+  sessionQueryKey,
+  signIn,
+  signOut,
+} from './api-client.ts'
+import { getWorkspaceMessages } from './workspace-i18n.ts'
+import { RoleWorkspace } from './role-workspaces.tsx'
+import { roleSections } from './workspace-shell.tsx'
+import { getWorkspaceErrorTitle } from './workspace-error.ts'
 
 const DARK_MODE_QUERY = '(prefers-color-scheme: dark)'
 
 function WorkspacePage({ activeSection }: { activeSection: WorkspaceSection }): React.JSX.Element {
   const [preferences, setPreferences] = useState(readWebPreferences)
+  const messages = getWorkspaceMessages(preferences.locale)
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const session = useQuery({
+    queryFn: ({ signal }) => getSession(signal),
+    queryKey: sessionQueryKey,
+    retry: false,
+  })
+  const roleChange = useMutation({
+    mutationFn: selectRole,
+    onSuccess: async nextSession => {
+      queryClient.removeQueries({
+        predicate: query => query.queryKey[0] !== sessionQueryKey[0],
+      })
+      queryClient.setQueryData(sessionQueryKey, nextSession)
+      const nextSection = roleSections[nextSession.actor.roleCode]
+      const nextRoute = workspaceRoutes.find(route => route.key === nextSection)
+      await navigate({ replace: true, to: nextRoute?.path ?? '/' })
+    },
+  })
+  const signOutRequest = useMutation({
+    mutationFn: signOut,
+    onSuccess: async () => {
+      queryClient.removeQueries({
+        predicate: query => query.queryKey[0] !== sessionQueryKey[0],
+      })
+      await navigate({ replace: true, to: '/' })
+      await session.refetch()
+    },
+  })
+  const roleCode = session.data?.actor.roleCode
+
+  useEffect(() => {
+    if (roleCode === undefined) return
+    const roleSection = roleSections[roleCode]
+    if (activeSection === 'overview' || activeSection === roleSection) return
+    const roleRoute = workspaceRoutes.find(route => route.key === roleSection)
+    void navigate({ replace: true, to: roleRoute?.path ?? '/' })
+  }, [activeSection, navigate, roleCode])
 
   useEffect(() => {
     document.documentElement.lang = preferences.locale
@@ -46,14 +120,143 @@ function WorkspacePage({ activeSection }: { activeSection: WorkspaceSection }): 
     return () => mediaQuery.removeEventListener('change', applySystemTheme)
   }, [preferences.theme])
 
+  if (session.isPending) {
+    return (
+      <main aria-label={messages.loading} className="mx-auto flex min-h-svh w-full max-w-lg flex-col justify-center gap-3 p-6">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-24 w-full" />
+      </main>
+    )
+  }
+
+  if (session.error instanceof ApiClientError && session.error.status === 401) {
+    return <SignInScreen locale={preferences.locale} />
+  }
+
+  if (session.isError) {
+    return (
+      <main className="mx-auto flex min-h-svh w-full max-w-lg items-center p-6">
+        <Alert variant="destructive">
+          <CircleAlertIcon aria-hidden="true" />
+          <AlertTitle>{getWorkspaceErrorTitle(session.error, messages, messages.serviceError)}</AlertTitle>
+          <AlertDescription>{session.error.message}</AlertDescription>
+        </Alert>
+      </main>
+    )
+  }
+
+  const roleSection = roleSections[session.data.actor.roleCode]
+  const effectiveSection = activeSection === 'overview' || activeSection === roleSection
+    ? activeSection
+    : roleSection
+
   return (
     <WorkspaceShell
-      activeSection={activeSection}
+      activeSection={effectiveSection}
       locale={preferences.locale}
       onLocaleChange={locale => setPreferences(current => ({ ...current, locale }))}
+      onRoleChange={practitionerRoleId => roleChange.mutate(practitionerRoleId)}
+      onSignOut={() => signOutRequest.mutate()}
       onThemeChange={theme => setPreferences(current => ({ ...current, theme }))}
+      roleChangePending={roleChange.isPending}
+      session={session.data}
+      signOutPending={signOutRequest.isPending}
       theme={preferences.theme}
-    />
+    >
+      {roleChange.isError ? (
+        <Alert variant="destructive">
+          <CircleAlertIcon aria-hidden="true" />
+          <AlertTitle>{getWorkspaceErrorTitle(roleChange.error, messages, messages.operationFailed)}</AlertTitle>
+          <AlertDescription>{roleChange.error.message}</AlertDescription>
+        </Alert>
+      ) : null}
+      {signOutRequest.isError ? (
+        <Alert variant="destructive">
+          <CircleAlertIcon aria-hidden="true" />
+          <AlertTitle>{getWorkspaceErrorTitle(signOutRequest.error, messages, messages.operationFailed)}</AlertTitle>
+          <AlertDescription>{signOutRequest.error.message}</AlertDescription>
+        </Alert>
+      ) : null}
+      <RoleWorkspace
+        activeSection={effectiveSection}
+        locale={preferences.locale}
+        session={session.data}
+      />
+    </WorkspaceShell>
+  )
+}
+
+function SignInScreen({ locale }: { locale: 'en-US' | 'zh-CN' }): React.JSX.Element {
+  const messages = getWorkspaceMessages(locale)
+  const queryClient = useQueryClient()
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const mutation = useMutation({
+    mutationFn: () => signIn(email, password),
+    onSuccess: async () => {
+      queryClient.removeQueries({
+        predicate: query => query.queryKey[0] !== sessionQueryKey[0],
+      })
+      await queryClient.invalidateQueries({ queryKey: sessionQueryKey })
+    },
+  })
+
+  return (
+    <main className="flex min-h-svh items-center justify-center bg-muted/40 p-4">
+      <Card className="w-full max-w-sm">
+        <CardHeader>
+          <CardTitle aria-level={1} role="heading">{messages.loginTitle}</CardTitle>
+          <CardDescription>{messages.loginDescription}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form
+            id="clinmesh-sign-in"
+            onSubmit={event => {
+              event.preventDefault()
+              mutation.mutate()
+            }}
+          >
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="clinmesh-email">{messages.emailLabel}</FieldLabel>
+                <Input
+                  autoComplete="username"
+                  id="clinmesh-email"
+                  onChange={event => setEmail(event.currentTarget.value)}
+                  required
+                  type="email"
+                  value={email}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="clinmesh-password">{messages.passwordLabel}</FieldLabel>
+                <Input
+                  autoComplete="current-password"
+                  id="clinmesh-password"
+                  onChange={event => setPassword(event.currentTarget.value)}
+                  required
+                  type="password"
+                  value={password}
+                />
+              </Field>
+              {mutation.isError ? (
+                <Alert variant="destructive">
+                  <CircleAlertIcon aria-hidden="true" />
+                  <AlertTitle>{messages.authenticationError}</AlertTitle>
+                  <AlertDescription>{mutation.error.message}</AlertDescription>
+                </Alert>
+              ) : null}
+            </FieldGroup>
+          </form>
+        </CardContent>
+        <CardFooter>
+          <Button className="ml-auto" disabled={mutation.isPending} form="clinmesh-sign-in" type="submit">
+            <LogInIcon data-icon="inline-start" />
+            {mutation.isPending ? messages.signingIn : messages.signIn}
+          </Button>
+        </CardFooter>
+      </Card>
+    </main>
   )
 }
 
@@ -84,5 +287,17 @@ declare module '@tanstack/react-router' {
 
 export function WebApp(): React.JSX.Element {
   const [router] = useState(createWebRouter)
-  return <RouterProvider router={router} />
+  const [queryClient] = useState(() => new QueryClient({
+    defaultOptions: {
+      queries: { refetchOnWindowFocus: false, retry: false },
+      mutations: { retry: false },
+    },
+  }))
+  return (
+    <QueryClientProvider client={queryClient}>
+      <Toaster>
+        <RouterProvider router={router} />
+      </Toaster>
+    </QueryClientProvider>
+  )
 }

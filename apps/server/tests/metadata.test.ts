@@ -1,6 +1,7 @@
 import { capabilityStatementSchema } from '@clinmesh/contracts/fhir'
 import { describe, expect, it } from 'vitest'
 import { createApp } from '../src/app.ts'
+import { createCapabilityStatement } from '../src/fhir/capabilities.ts'
 
 describe('FHIR metadata endpoint', () => {
   it('declares only the implemented R5 server capabilities', async () => {
@@ -18,5 +19,27 @@ describe('FHIR metadata endpoint', () => {
       format: ['application/fhir+json'],
     })
     expect(statement.rest).toEqual([{ mode: 'server' }])
+  })
+
+  it('publishes ownership-aware read capabilities from the same registry', () => {
+    const statement = capabilityStatementSchema.parse(
+      createCapabilityStatement({ includeResources: true }),
+    )
+    const resources = statement.rest[0]?.resource ?? []
+    expect(resources.find(resource => resource.type === 'InventoryItem')).toMatchObject({
+      documentation: expect.stringContaining('Read-only projection'),
+      interaction: [
+        { code: 'read' },
+        { code: 'vread' },
+        { code: 'history-instance' },
+        { code: 'search-type' },
+      ],
+    })
+    expect(resources.find(resource => resource.type === 'Composition')).toMatchObject({
+      documentation: expect.stringContaining('Immutable FHIR-native resource'),
+    })
+    expect(resources.find(resource => resource.type === 'AuditEvent')).toMatchObject({
+      documentation: expect.stringContaining('Read-only projection'),
+    })
   })
 })

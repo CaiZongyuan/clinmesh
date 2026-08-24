@@ -1,11 +1,55 @@
 import { extname } from 'node:path'
 import type { HealthResponse } from '@clinmesh/contracts/health'
 import { serveStatic } from '@hono/node-server/serve-static'
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
+import { z } from 'zod'
+import type { IdentityService } from './application/identity-service.ts'
+import { IdentityError } from './application/identity-service.ts'
+import { CommandConflictError } from './application/command-executor.ts'
+import type { ScenarioService } from './application/scenario-service.ts'
+import { ScenarioError } from './application/scenario-service.ts'
+import type { WorkflowService } from './application/workflow-service.ts'
+import { WorkflowError } from './application/workflow-service.ts'
 import { createCapabilityStatement } from './fhir/capabilities.ts'
+import { isSupportedResourceType } from './fhir/capabilities.ts'
+import {
+  FhirRepositoryError,
+  type FhirRepository,
+  type RepositoryContext,
+} from './infrastructure/sqlite/fhir-repository.ts'
+import { WorkspaceContextError } from './infrastructure/sqlite/workspace-repository.ts'
+
+interface FhirRuntime {
+  repository: FhirRepository
+  resolveContext: (request: Request) => Promise<RepositoryContext> | RepositoryContext
+}
 
 export interface CreateAppOptions {
+  fhir?: FhirRuntime
+  identity?: IdentityService
+  scenario?: ScenarioService
+  workflow?: WorkflowService
   webRoot?: string
+}
+
+function operationOutcome(code: string, diagnostics: string) {
+  return {
+    resourceType: 'OperationOutcome' as const,
+    issue: [{ severity: 'error' as const, code, diagnostics }],
+  }
+}
+
+function fhirErrorStatus(error: FhirRepositoryError): 400 | 404 | 412 {
+  if (error.code === 'NOT_FOUND') return 404
+  if (error.code === 'CONFLICT') return 412
+  return 400
+}
+
+function fhirIssueCode(error: FhirRepositoryError): string {
+  if (error.code === 'NOT_SUPPORTED') return 'not-supported'
+  if (error.code === 'NOT_FOUND') return 'not-found'
+  if (error.code === 'CONFLICT') return 'conflict'
+  return 'invalid'
 }
 
 function isServicePath(path: string): boolean {
@@ -28,11 +72,721 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return context.json(response)
   })
 
+  if (options.identity !== undefined) {
+    const identity = options.identity
+    const identityErrorResponse = (context: Context, error: IdentityError) => context.json({
+      error: {
+        code: error.code,
+        message: error.message,
+      },
+    }, error.status)
+    app.post('/api/auth/sign-up/email', context => context.json({
+      error: {
+        code: 'PUBLIC_SIGN_UP_DISABLED',
+        message: 'Public account registration is disabled',
+      },
+    }, 403))
+    app.get('/api/auth/context', async (context) => {
+      try {
+        return context.json(await identity.resolveSessionContext(context.req.raw.headers))
+      } catch (error) {
+        if (!(error instanceof IdentityError)) throw error
+        return identityErrorResponse(context, error)
+      }
+    })
+    app.post('/api/auth/role', async (context) => {
+      try {
+        const input = z.object({
+          practitionerRoleId: z.string().min(1),
+        }).parse(await context.req.json())
+        return context.json(await identity.selectRole(
+          context.req.raw.headers,
+          input.practitionerRoleId,
+        ))
+      } catch (error) {
+        if (!(error instanceof IdentityError)) throw error
+        return identityErrorResponse(context, error)
+      }
+    })
+    app.all('/api/auth/*', context => identity.handle(context.req.raw))
+  }
+
+  if (options.identity !== undefined && options.scenario !== undefined) {
+    const identity = options.identity
+    const scenario = options.scenario
+    app.get('/api/sim/v1/scenario-runs/current', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(scenario.current(session.actor))
+      } catch (error) {
+        if (error instanceof IdentityError || error instanceof ScenarioError) {
+          return context.json({ error: { code: error.code, message: error.message } }, error.status)
+        }
+        throw error
+      }
+    })
+    app.post('/api/sim/v1/scenario-runs/:scenarioRunId/actions/reset', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        z.object({}).parse(await context.req.json())
+        const idempotencyKey = z.string().min(8).max(128).parse(
+          context.req.header('idempotency-key'),
+        )
+        return context.json(scenario.reset({
+          context: session.actor,
+          idempotencyKey,
+          scenarioRunId: context.req.param('scenarioRunId'),
+        }))
+      } catch (error) {
+        if (error instanceof IdentityError || error instanceof ScenarioError) {
+          return context.json({ error: { code: error.code, message: error.message } }, error.status)
+        }
+        if (error instanceof CommandConflictError) {
+          return context.json({ error: { code: error.code, message: error.message } }, 409)
+        }
+        throw error
+      }
+    })
+    app.post('/api/sim/v1/scenarios/actions/install', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const input = z.object({
+          kind: z.enum(['candidate', 'density']),
+        }).parse(await context.req.json())
+        const idempotencyKey = z.string().min(8).max(128).parse(
+          context.req.header('idempotency-key'),
+        )
+        return context.json(scenario.install({
+          context: session.actor,
+          idempotencyKey,
+          kind: input.kind,
+        }))
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return context.json({
+            error: {
+              code: 'INVALID_INPUT',
+              message: 'The Scenario installation request is invalid',
+            },
+          }, 400)
+        }
+        if (error instanceof IdentityError || error instanceof ScenarioError) {
+          return context.json({ error: { code: error.code, message: error.message } }, error.status)
+        }
+        if (error instanceof CommandConflictError) {
+          return context.json({ error: { code: error.code, message: error.message } }, 409)
+        }
+        throw error
+      }
+    })
+  }
+
+  if (options.identity !== undefined && options.workflow !== undefined) {
+    const identity = options.identity
+    const workflow = options.workflow
+    const workflowErrorResponse = (context: Context, error: unknown) => {
+      if (error instanceof z.ZodError) {
+        return context.json({ error: { code: 'INVALID_INPUT', message: 'The request is invalid' } }, 400)
+      }
+      if (error instanceof IdentityError || error instanceof WorkflowError) {
+        return context.json({ error: { code: error.code, message: error.message } }, error.status)
+      }
+      if (
+        error instanceof CommandConflictError
+        || error instanceof FhirRepositoryError
+        || error instanceof WorkspaceContextError
+      ) {
+        return context.json({ error: { code: error.code, message: error.message } }, 409)
+      }
+      throw error
+    }
+    const actor = async (context: Context) => (
+      await identity.resolveSessionContext(context.req.raw.headers)
+    ).actor
+    const idempotencyKey = (context: Context) => z.string().min(8).max(128).parse(
+      context.req.header('idempotency-key'),
+    )
+
+    app.get('/api/his/v1/catalogs/registration', async (context) => {
+      try {
+        return context.json(workflow.registrationCatalog(await actor(context)))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/catalogs/clinical', async (context) => {
+      try {
+        return context.json(workflow.clinicalCatalog(await actor(context)))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/patients', async (context) => {
+      try {
+        const query = z.object({
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(20),
+          query: z.string().trim().min(1),
+        }).parse(context.req.query())
+        return context.json(workflow.searchPatients({
+          context: await actor(context),
+          page: query.page,
+          pageSize: query.pageSize,
+          query: query.query,
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/registrations', async (context) => {
+      try {
+        const query = z.object({
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(20),
+        }).parse(context.req.query())
+        return context.json(workflow.registrationQueue(
+          await actor(context),
+          query.pageSize,
+          query.page,
+        ))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/patients', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({
+            birthDate: z.iso.date(),
+            gender: z.enum(['female', 'male', 'other', 'unknown']),
+            identifier: z.string().trim().min(3).max(64),
+            name: z.string().trim().min(2).max(80),
+          }),
+        }).parse(await context.req.json())
+        return context.json(workflow.createPatient({
+          context: await actor(context),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          patient: body.input,
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/registrations/actions/register', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({
+            departmentId: z.string().min(1),
+            patientId: z.string().min(1),
+            visitDate: z.iso.date(),
+            visitTypeId: z.string().min(1),
+          }),
+        }).parse(await context.req.json())
+        return context.json(workflow.register({
+          context: await actor(context),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          registration: body.input,
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/triage/queue', async (context) => {
+      try {
+        const query = z.object({
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(20),
+          status: z.enum(['completed', 'exception', 'pending']).default('pending'),
+        }).parse(context.req.query())
+        return context.json(workflow.triageQueue(
+          await actor(context),
+          query.pageSize,
+          query.status,
+          query.page,
+        ))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/actions/record-triage', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({
+            acuityCode: z.enum(['level-1', 'level-2', 'level-3', 'level-4']),
+            bloodPressure: z.object({
+              diastolicMmHg: z.number().int().min(30).max(180),
+              systolicMmHg: z.number().int().min(50).max(260),
+            }),
+            chiefComplaint: z.string().trim().min(2).max(500),
+            oxygenSaturationPct: z.number().min(50).max(100),
+            pulseBpm: z.number().int().min(20).max(250),
+            respirationBpm: z.number().int().min(5).max(80),
+            temperatureC: z.number().min(30).max(45),
+          }),
+        }).parse(await context.req.json())
+        return context.json(workflow.recordTriage({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          triage: body.input,
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/doctor/queue', async (context) => {
+      try {
+        const query = z.object({
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(20),
+        }).parse(context.req.query())
+        return context.json(workflow.doctorQueue(
+          await actor(context),
+          query.pageSize,
+          query.page,
+        ))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/doctor/cases/:caseId', async (context) => {
+      try {
+        return context.json(workflow.doctorCaseDetail(
+          await actor(context),
+          context.req.param('caseId'),
+        ))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/actions/start-first-visit', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({}),
+        }).parse(await context.req.json())
+        return context.json(workflow.startFirstVisit({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/actions/start-revisit', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({}),
+        }).parse(await context.req.json())
+        return context.json(workflow.startRevisit({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.put('/api/his/v1/encounters/:encounterId/drafts/first-visit', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({
+            assessment: z.string().trim().min(2).max(2_000),
+            expectedDraftVersion: z.number().int().min(0),
+            historyOfPresentIllness: z.string().trim().min(2).max(5_000),
+          }),
+        }).parse(await context.req.json())
+        return context.json(workflow.saveFirstVisitDraft({
+          context: await actor(context),
+          draft: body.input,
+          encounterId: context.req.param('encounterId'),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.put('/api/his/v1/encounters/:encounterId/drafts/revisit', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({
+            diagnosis: z.object({
+              code: z.string().trim().min(2).max(24),
+              display: z.string().trim().min(2).max(240),
+            }),
+            document: z.object({
+              assessment: z.string().trim().min(2).max(4_000),
+              plan: z.string().trim().min(2).max(4_000),
+            }),
+            expectedVersions: z.object({
+              documentDraft: z.number().int().min(0),
+              prescription: z.number().int().min(0),
+              revisitDraft: z.number().int().min(0),
+            }),
+            medications: z.array(z.object({
+              catalogItemId: z.string().min(1),
+              doseText: z.string().trim().min(1).max(120),
+              frequencyCode: z.string().trim().min(1).max(32),
+              quantity: z.number().int().min(1).max(1_000),
+            })).min(1).max(8),
+          }),
+        }).parse(await context.req.json())
+        return context.json(workflow.saveRevisitDraft({
+          context: await actor(context),
+          draft: body.input,
+          encounterId: context.req.param('encounterId'),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/actions/preview-sign', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({
+            expectedDraftVersions: z.object({
+              documentDraft: z.number().int().min(1),
+              prescription: z.number().int().min(1),
+              revisitDraft: z.number().int().min(1),
+            }),
+          }),
+        }).parse(await context.req.json())
+        return context.json(workflow.previewClinicalSign({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersions: body.input.expectedDraftVersions,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/actions/sign-and-complete', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({
+            commitToken: z.string().min(16).max(256),
+            previewId: z.string().min(1).max(128),
+          }),
+        }).parse(await context.req.json())
+        return context.json(workflow.signAndComplete({
+          commitToken: body.input.commitToken,
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          previewId: body.input.previewId,
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/clinical-documents/:compositionId/actions/revise', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({
+            assessment: z.string().trim().min(2).max(4_000),
+            plan: z.string().trim().min(2).max(4_000),
+            reason: z.string().trim().min(2).max(500),
+          }),
+        }).parse(await context.req.json())
+        return context.json(workflow.reviseClinicalDocument({
+          ...body.input,
+          compositionId: context.req.param('compositionId'),
+          context: await actor(context),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/actions/issue-laboratory-order', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({
+            catalogItemId: z.string().min(1),
+            expectedDraftVersion: z.number().int().min(1),
+          }),
+        }).parse(await context.req.json())
+        return context.json(workflow.issueLaboratoryOrder({
+          catalogItemId: body.input.catalogItemId,
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/billing/queue', async (context) => {
+      try {
+        const query = z.object({
+          category: z.enum(['laboratory', 'medication']),
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(20),
+          status: z.enum(['ambiguous', 'declined', 'paid', 'pending']).default('pending'),
+        }).parse(context.req.query())
+        return context.json(workflow.billingQueue({
+          ...query,
+          context: await actor(context),
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/pharmacy/queue', async (context) => {
+      try {
+        const query = z.object({
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(20),
+          status: z.enum(['completed', 'exception', 'pending']).default('pending'),
+        }).parse(context.req.query())
+        return context.json(workflow.pharmacyQueue({
+          ...query,
+          context: await actor(context),
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/prescriptions/:prescriptionId/actions/dispense', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({
+            expectedPrescriptionVersion: z.number().int().min(1),
+            lotSelections: z.array(z.object({
+              expectedVersion: z.number().int().min(1),
+              lotId: z.string().min(1).max(128),
+              quantity: z.number().int().min(1).max(100_000),
+            })).min(1).max(32),
+          }),
+        }).parse(await context.req.json())
+        return context.json(workflow.dispensePrescription({
+          context: await actor(context),
+          expectedPrescriptionVersion: body.input.expectedPrescriptionVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          lotSelections: body.input.lotSelections,
+          prescriptionId: context.req.param('prescriptionId'),
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/payments/actions/preview', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({
+            caseId: z.string().min(1),
+            category: z.enum(['laboratory', 'medication']),
+            simulatorRule: z.enum(['ambiguous', 'decline', 'success']),
+          }),
+        }).parse(await context.req.json())
+        return context.json(workflow.previewPayment({
+          ...body.input,
+          context: await actor(context),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/payments/:previewId/actions/confirm', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({ commitToken: z.string().min(16).max(256) }),
+        }).parse(await context.req.json())
+        return context.json(workflow.confirmPayment({
+          commitToken: body.input.commitToken,
+          context: await actor(context),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          previewId: context.req.param('previewId'),
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+  }
+
   app.get('/fhir/R5/metadata', (context) => context.json(
-    createCapabilityStatement(),
+    createCapabilityStatement({ includeResources: options.fhir !== undefined }),
     200,
     { 'Content-Type': 'application/fhir+json' },
   ))
+
+  if (options.fhir !== undefined) {
+    const fhirRuntime = options.fhir
+
+    app.put('/fhir/R5/:resourceType/:resourceId', (context) => {
+      const resourceType = context.req.param('resourceType')
+      const diagnostic = isSupportedResourceType(resourceType)
+        ? `Direct update of ${resourceType} is not supported; use the owning business command`
+        : `Resource type ${resourceType} is not supported`
+      return context.json(operationOutcome('not-supported', diagnostic), 405, {
+        Allow: 'GET',
+        'Content-Type': 'application/fhir+json',
+      })
+    })
+
+    app.get('/fhir/R5/:resourceType/:resourceId/_history/:versionId', async (context) => {
+      try {
+        const resourceType = context.req.param('resourceType')
+        if (!isSupportedResourceType(resourceType)) {
+          throw new FhirRepositoryError('NOT_SUPPORTED', `Resource type ${resourceType} is not supported`)
+        }
+        const repositoryContext = await fhirRuntime.resolveContext(context.req.raw)
+        const resource = fhirRuntime.repository.vread(
+          repositoryContext,
+          resourceType,
+          context.req.param('resourceId'),
+          context.req.param('versionId'),
+        )
+        return context.json(resource, 200, {
+          'Content-Type': 'application/fhir+json',
+          ETag: `W/"${resource.meta?.versionId}"`,
+        })
+      } catch (error) {
+        if (!(error instanceof FhirRepositoryError)) throw error
+        return context.json(operationOutcome(fhirIssueCode(error), error.message), fhirErrorStatus(error), {
+          'Content-Type': 'application/fhir+json',
+        })
+      }
+    })
+
+    app.get('/fhir/R5/:resourceType/:resourceId/_history', async (context) => {
+      try {
+        const resourceType = context.req.param('resourceType')
+        if (!isSupportedResourceType(resourceType)) {
+          throw new FhirRepositoryError('NOT_SUPPORTED', `Resource type ${resourceType} is not supported`)
+        }
+        const repositoryContext = await fhirRuntime.resolveContext(context.req.raw)
+        const resources = fhirRuntime.repository.history(
+          repositoryContext,
+          resourceType,
+          context.req.param('resourceId'),
+        )
+        const baseUrl = new URL(context.req.url)
+        const body = {
+          resourceType: 'Bundle' as const,
+          type: 'history' as const,
+          total: resources.length,
+          link: [{ relation: 'self', url: baseUrl.toString() }],
+          entry: resources.map(resource => ({
+            fullUrl: new URL(`/fhir/R5/${resource.resourceType}/${resource.id}`, baseUrl).toString(),
+            resource,
+          })),
+        }
+        return context.json(body, 200, { 'Content-Type': 'application/fhir+json' })
+      } catch (error) {
+        if (!(error instanceof FhirRepositoryError)) throw error
+        return context.json(operationOutcome(fhirIssueCode(error), error.message), fhirErrorStatus(error), {
+          'Content-Type': 'application/fhir+json',
+        })
+      }
+    })
+
+    app.get('/fhir/R5/:resourceType/:resourceId', async (context) => {
+      try {
+        const resourceType = context.req.param('resourceType')
+        if (!isSupportedResourceType(resourceType)) {
+          throw new FhirRepositoryError('NOT_SUPPORTED', `Resource type ${resourceType} is not supported`)
+        }
+        const repositoryContext = await fhirRuntime.resolveContext(context.req.raw)
+        const resource = fhirRuntime.repository.read(
+          repositoryContext,
+          resourceType,
+          context.req.param('resourceId'),
+        )
+        return context.json(resource, 200, {
+          'Content-Type': 'application/fhir+json',
+          ETag: `W/"${resource.meta?.versionId}"`,
+        })
+      } catch (error) {
+        if (!(error instanceof FhirRepositoryError)) throw error
+        return context.json(operationOutcome(fhirIssueCode(error), error.message), fhirErrorStatus(error), {
+          'Content-Type': 'application/fhir+json',
+        })
+      }
+    })
+
+    app.get('/fhir/R5/:resourceType', async (context) => {
+      try {
+        const resourceType = context.req.param('resourceType')
+        if (!isSupportedResourceType(resourceType)) {
+          throw new FhirRepositoryError('NOT_SUPPORTED', `Resource type ${resourceType} is not supported`)
+        }
+        const repositoryContext = await fhirRuntime.resolveContext(context.req.raw)
+        const url = new URL(context.req.url)
+        const page = fhirRuntime.repository.search(repositoryContext, resourceType, url.searchParams)
+        const links = [{ relation: 'self', url: url.toString() }]
+        if (page.nextCursor !== undefined) {
+          const nextUrl = new URL(url)
+          nextUrl.searchParams.set('_cursor', page.nextCursor)
+          links.push({ relation: 'next', url: nextUrl.toString() })
+        }
+        const body = {
+          resourceType: 'Bundle' as const,
+          type: 'searchset' as const,
+          ...(page.total === undefined ? {} : { total: page.total }),
+          link: links,
+          entry: page.resources.map(resource => ({
+            fullUrl: new URL(`/fhir/R5/${resource.resourceType}/${resource.id}`, url).toString(),
+            resource,
+          })),
+        }
+        return context.json(body, 200, { 'Content-Type': 'application/fhir+json' })
+      } catch (error) {
+        if (!(error instanceof FhirRepositoryError)) throw error
+        return context.json(operationOutcome(fhirIssueCode(error), error.message), fhirErrorStatus(error), {
+          'Content-Type': 'application/fhir+json',
+        })
+      }
+    })
+  }
 
   if (options.webRoot !== undefined) {
     app.use('*', serveStatic({ root: options.webRoot, precompressed: true }))

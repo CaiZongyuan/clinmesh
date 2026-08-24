@@ -1,0 +1,399 @@
+import { randomUUID } from 'node:crypto'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { createClinMeshRuntime } from '../src/runtime.ts'
+
+describe('trusted session and Scenario HTTP contract', () => {
+  const runtimes: Array<Awaited<ReturnType<typeof createClinMeshRuntime>>> = []
+  const temporaryDirectories: string[] = []
+
+  afterEach(async () => {
+    await Promise.all(runtimes.splice(0).map(runtime => runtime.close()))
+    await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true })))
+  })
+
+  it('allows a seeded account to obtain only its server-bound role context and rejects public sign-up', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-auth-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+
+    const signUpResponse = await runtime.app.request('/api/auth/sign-up/email', {
+      body: JSON.stringify({
+        email: 'unapproved@demo.clinmesh.local',
+        name: '未授权账户',
+        password,
+      }),
+      headers: {
+        'content-type': 'application/json',
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect(signUpResponse.status).toBe(403)
+
+    const signInResponse = await runtime.app.request('/api/auth/sign-in/email', {
+      body: JSON.stringify({
+        email: 'registrar@demo.clinmesh.local',
+        password,
+      }),
+      headers: {
+        'content-type': 'application/json',
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect(signInResponse.status).toBe(200)
+    const cookie = signInResponse.headers.get('set-cookie')?.split(';', 1)[0]
+    expect(cookie).toBeDefined()
+
+    const contextResponse = await runtime.app.request(
+      '/api/auth/context?workspaceId=workspace-forged&epoch=epoch-forged',
+      { headers: { cookie: cookie ?? '' } },
+    )
+    expect(contextResponse.status).toBe(200)
+    expect(await contextResponse.json()).toMatchObject({
+      actor: {
+        actorId: 'actor-registrar',
+        epoch: 'epoch-1',
+        practitionerId: 'practitioner-registrar',
+        practitionerRoleId: 'practitioner-role-registrar',
+        roleCode: 'registrar',
+        scenarioRunId: 'scenario-run-1',
+        workspaceId: 'workspace-demo',
+      },
+      availableRoles: [{
+        code: 'registrar',
+        id: 'practitioner-role-registrar',
+      }],
+    })
+  })
+
+  it('allows role selection only for a granted role from a same-origin request', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-role-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const signInResponse = await runtime.app.request('/api/auth/sign-in/email', {
+      body: JSON.stringify({
+        email: 'admin@demo.clinmesh.local',
+        password,
+      }),
+      headers: {
+        'content-type': 'application/json',
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    const cookie = signInResponse.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
+
+    const csrfResponse = await runtime.app.request('/api/auth/role', {
+      body: JSON.stringify({ practitionerRoleId: 'practitioner-role-registrar' }),
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+      },
+      method: 'POST',
+    })
+    expect(csrfResponse.status).toBe(403)
+    expect(await csrfResponse.json()).toMatchObject({ error: { code: 'CSRF_REJECTED' } })
+
+    const forbiddenResponse = await runtime.app.request('/api/auth/role', {
+      body: JSON.stringify({ practitionerRoleId: 'practitioner-role-pharmacist' }),
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect(forbiddenResponse.status).toBe(403)
+    expect(await forbiddenResponse.json()).toMatchObject({ error: { code: 'ROLE_NOT_ALLOWED' } })
+
+    const selectedResponse = await runtime.app.request('/api/auth/role', {
+      body: JSON.stringify({
+        actorId: 'actor-forged',
+        practitionerRoleId: 'practitioner-role-registrar',
+        workspaceId: 'workspace-forged',
+      }),
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect(selectedResponse.status).toBe(200)
+    expect(await selectedResponse.json()).toMatchObject({
+      actor: {
+        actorId: 'actor-administrator',
+        practitionerRoleId: 'practitioner-role-registrar',
+        roleCode: 'registrar',
+        workspaceId: 'workspace-demo',
+      },
+    })
+  })
+
+  it('lets only an administrator reset to one deterministic new Epoch per idempotency key', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-reset-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+
+    const signIn = async (email: string): Promise<string> => {
+      const response = await runtime.app.request('/api/auth/sign-in/email', {
+        body: JSON.stringify({ email, password }),
+        headers: {
+          'content-type': 'application/json',
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      })
+      expect(response.status).toBe(200)
+      return response.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
+    }
+
+    const registrarCookie = await signIn('registrar@demo.clinmesh.local')
+    const forbiddenResponse = await runtime.app.request(
+      '/api/sim/v1/scenario-runs/scenario-run-1/actions/reset',
+      {
+        body: '{}',
+        headers: {
+          'content-type': 'application/json',
+          cookie: registrarCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(forbiddenResponse.status).toBe(403)
+    expect(await forbiddenResponse.json()).toMatchObject({ error: { code: 'ROLE_NOT_ALLOWED' } })
+
+    const adminCookie = await signIn('admin@demo.clinmesh.local')
+    const initialResponse = await runtime.app.request('/api/sim/v1/scenario-runs/current', {
+      headers: { cookie: adminCookie },
+    })
+    expect(initialResponse.status).toBe(200)
+    const initial = await initialResponse.json() as {
+      epoch: string
+      initialStateHash: string
+      scenarioRunId: string
+    }
+    expect(initial).toMatchObject({
+      epoch: 'epoch-1',
+      scenarioRunId: 'scenario-run-1',
+    })
+
+    const idempotencyKey = randomUUID()
+    const reset = () => runtime.app.request(
+      `/api/sim/v1/scenario-runs/${initial.scenarioRunId}/actions/reset`,
+      {
+        body: JSON.stringify({
+          epoch: 'epoch-forged',
+          workspaceId: 'workspace-forged',
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: adminCookie,
+          'idempotency-key': idempotencyKey,
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    const resetResponse = await reset()
+    expect(resetResponse.status).toBe(200)
+    const resetResult = await resetResponse.json() as {
+      data: {
+        epoch: string
+        initialStateHash: string
+        scenarioRunId: string
+        workspaceId: string
+      }
+    }
+    expect(resetResult.data).toMatchObject({
+      epoch: 'epoch-2',
+      initialStateHash: initial.initialStateHash,
+      scenarioRunId: 'scenario-run-2',
+      workspaceId: 'workspace-demo',
+    })
+
+    const replayResponse = await reset()
+    expect(replayResponse.status).toBe(200)
+    expect(await replayResponse.json()).toEqual(resetResult)
+
+    const currentResponse = await runtime.app.request('/api/sim/v1/scenario-runs/current', {
+      headers: { cookie: adminCookie },
+    })
+    expect(await currentResponse.json()).toMatchObject({
+      epoch: 'epoch-2',
+      initialStateHash: initial.initialStateHash,
+      scenarioRunId: 'scenario-run-2',
+    })
+  })
+
+  it('installs the density Scenario through the administrator seam without accepting an unreviewed golden label', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-install-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const signInResponse = await runtime.app.request('/api/auth/sign-in/email', {
+      body: JSON.stringify({
+        email: 'admin@demo.clinmesh.local',
+        password,
+      }),
+      headers: {
+        'content-type': 'application/json',
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    const cookie = signInResponse.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
+    const install = (kind: string, idempotencyKey = randomUUID()) => runtime.app.request(
+      '/api/sim/v1/scenarios/actions/install',
+      {
+        body: JSON.stringify({ kind }),
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          'idempotency-key': idempotencyKey,
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+
+    const goldenResponse = await install('golden')
+    expect(goldenResponse.status).toBe(400)
+    expect(await goldenResponse.json()).toMatchObject({ error: { code: 'INVALID_INPUT' } })
+
+    const idempotencyKey = randomUUID()
+    const densityResponse = await install('density', idempotencyKey)
+    expect(densityResponse.status).toBe(200)
+    const density = await densityResponse.json() as {
+      data: {
+        epoch: string
+        kind: string
+        scenarioId: string
+        scenarioRunId: string
+      }
+    }
+    expect(density.data).toMatchObject({
+      epoch: 'epoch-2',
+      kind: 'density',
+      scenarioId: 'density-fever-outpatient-v1',
+      scenarioRunId: 'scenario-run-2',
+    })
+    expect(await (await install('density', idempotencyKey)).json()).toEqual(density)
+
+    const selectRegistrarResponse = await runtime.app.request('/api/auth/role', {
+      body: JSON.stringify({ practitionerRoleId: 'practitioner-role-registrar' }),
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect(selectRegistrarResponse.status).toBe(200)
+    const patientPage = async (page: number) => {
+      const response = await runtime.app.request(
+        `/api/his/v1/patients?query=${encodeURIComponent('合成密度')}&pageSize=25&page=${page}`,
+        { headers: { cookie } },
+      )
+      return {
+        body: await response.json() as {
+          items: Array<{ id: string }>
+          page: number
+          pageSize: number
+          total: number
+        },
+        status: response.status,
+      }
+    }
+    const firstPatientPage = await patientPage(1)
+    const secondPatientPage = await patientPage(2)
+    expect(firstPatientPage).toMatchObject({
+      body: { page: 1, pageSize: 25, total: 120 },
+      status: 200,
+    })
+    expect(secondPatientPage).toMatchObject({
+      body: { page: 2, pageSize: 25, total: 120 },
+      status: 200,
+    })
+    expect(firstPatientPage.body.items).toHaveLength(25)
+    expect(secondPatientPage.body.items).toHaveLength(25)
+    expect(new Set([
+      ...firstPatientPage.body.items.map(item => item.id),
+      ...secondPatientPage.body.items.map(item => item.id),
+    ])).toHaveProperty('size', 50)
+    expect((await patientPage(0)).status).toBe(400)
+
+    for (const [resourceType, total] of [
+      ['Organization', 1],
+      ['Location', 8],
+      ['Practitioner', 6],
+      ['PractitionerRole', 6],
+      ['Medication', 2],
+    ] as const) {
+      const response = await runtime.app.request(
+        `/fhir/R5/${resourceType}?_count=20&_total=accurate`,
+        { headers: { cookie } },
+      )
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({ total })
+    }
+    const patientsResponse = await runtime.app.request(
+      '/fhir/R5/Patient?_count=25&_total=accurate',
+      { headers: { cookie } },
+    )
+    expect(patientsResponse.status).toBe(200)
+    expect(await patientsResponse.json()).toMatchObject({
+      entry: expect.any(Array),
+      link: [
+        expect.objectContaining({ relation: 'self' }),
+        expect.objectContaining({ relation: 'next' }),
+      ],
+      total: 120,
+    })
+  })
+})
