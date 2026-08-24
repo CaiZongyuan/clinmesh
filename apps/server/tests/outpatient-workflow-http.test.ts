@@ -2250,8 +2250,44 @@ describe('outpatient workflow HTTP contract', () => {
       runtimes.push(runtime)
       return runtime
     }
-    const runtime = await createRuntime()
-    const pharmacistCookie = await signIn(runtime, 'pharmacist@demo.clinmesh.local', password)
+    const [paidSetup, unpaidSetup, unsignedSetup] = await Promise.all([
+      (async () => {
+        const runtime = await createRuntime()
+        return { runtime, testCase: await createPaidMedicationCase(runtime, password) }
+      })(),
+      (async () => {
+        const runtime = await createRuntime()
+        const testCase = await createSignedCase(runtime, password)
+        const pharmacistCookie = await signIn(
+          runtime,
+          'pharmacist@demo.clinmesh.local',
+          password,
+        )
+        return { pharmacistCookie, runtime, testCase }
+      })(),
+      (async () => {
+        const runtime = await createRuntime()
+        const testCase = await createRevisitDraftCase(runtime, password)
+        const pharmacistCookie = await signIn(
+          runtime,
+          'pharmacist@demo.clinmesh.local',
+          password,
+        )
+        return { pharmacistCookie, runtime, testCase }
+      })(),
+    ])
+    const { runtime, testCase: paid } = paidSetup
+    const {
+      pharmacistCookie: unpaidPharmacistCookie,
+      runtime: unpaidRuntime,
+      testCase: unpaid,
+    } = unpaidSetup
+    const {
+      pharmacistCookie: unsignedPharmacistCookie,
+      runtime: unsignedRuntime,
+      testCase: unsigned,
+    } = unsignedSetup
+    const pharmacistCookie = paid.pharmacistCookie
     const lotId = 'lot-oseltamivir-202608'
     const submit = (input: {
       cookie?: string
@@ -2285,22 +2321,6 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
 
-    const paid = await createPaidMedicationCase(runtime, password)
-    const unpaidRuntime = await createRuntime()
-    const unpaid = await createSignedCase(unpaidRuntime, password)
-    const unpaidPharmacistCookie = await signIn(
-      unpaidRuntime,
-      'pharmacist@demo.clinmesh.local',
-      password,
-    )
-    const unsignedRuntime = await createRuntime()
-    const unsigned = await createRevisitDraftCase(unsignedRuntime, password)
-    const unsignedPharmacistCookie = await signIn(
-      unsignedRuntime,
-      'pharmacist@demo.clinmesh.local',
-      password,
-    )
-
     expect((await submit({
       encounterId: unsigned.registration.encounterId,
       encounterVersion: '6',
@@ -2317,7 +2337,6 @@ describe('outpatient workflow HTTP contract', () => {
       medicationRequestVersion: '2',
       prescriptionId: unpaid.draft.prescriptionId,
     }, unpaidRuntime, unpaidPharmacistCookie)).status).toBe(409)
-
     const queueResponse = await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
       headers: { cookie: pharmacistCookie },
     })
@@ -2346,7 +2365,6 @@ describe('outpatient workflow HTTP contract', () => {
       const response = await submit(attempt)
       expect([403, 409]).toContain(response.status)
     }
-
     runtime.database.driver.prepare(`
       UPDATE inventory_lot SET expires_on = '2026-08-23'
       WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND lot_id = ?

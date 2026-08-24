@@ -1217,7 +1217,7 @@ Action Trace 按 Scenario Run 记录 Command 尝试、结果、Effect 引用和�
 `workspace_epoch` 当前使用 `building`、`active`、`closing` 和 `closed` 状态；没有 purge 入口。安装或 reset 协议：
 
 1. 只有管理员可以安装或 reset；Command 以新 Epoch 的 `building` 状态写入全部合成事实。
-2. 同一事务关闭旧 Scenario Run 与 Epoch、把旧 queued/claimed outbox 标记为 `abandoned`、激活新 Epoch，并切换 `workspace.active_epoch`。
+2. 同一事务把仍为 `active` 的旧 Scenario Run 转为 `closed`，保留已 `completed` Run 的状态与 `completed_at`；随后关闭旧 Epoch、把旧 queued/claimed outbox 标记为 `abandoned`、激活新 Epoch，并切换 `workspace.active_epoch`。
 3. 既有浏览器 session 在每个请求重新解析 `workspace.active_epoch` 和当前 Scenario Run，因此下一次读取自动进入新 Epoch；已选岗位仍由 membership 校验。旧预览、receipt、cursor 和业务引用因绑定旧 Epoch 不能在新运行复用。
 4. dispatcher 的结果提交重新验证 active Epoch；reset 后返回的旧 claim 变为 `abandoned`，不产生新 Epoch 业务 Effect。
 
