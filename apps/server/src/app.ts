@@ -43,6 +43,31 @@ function invalidInputResponse(context: Context, message = 'The request is invali
   return context.json({ error: { code: 'INVALID_INPUT', message } }, 400)
 }
 
+function apiErrorResponse(
+  context: Context,
+  error: unknown,
+  invalidInputMessage?: string,
+) {
+  if (error instanceof SyntaxError || error instanceof z.ZodError) {
+    return invalidInputResponse(context, invalidInputMessage)
+  }
+  if (
+    error instanceof IdentityError
+    || error instanceof ScenarioError
+    || error instanceof WorkflowError
+  ) {
+    return context.json({ error: { code: error.code, message: error.message } }, error.status)
+  }
+  if (
+    error instanceof CommandConflictError
+    || error instanceof FhirRepositoryError
+    || error instanceof WorkspaceContextError
+  ) {
+    return context.json({ error: { code: error.code, message: error.message } }, 409)
+  }
+  throw error
+}
+
 function fhirErrorStatus(error: FhirRepositoryError): 400 | 404 | 412 {
   if (error.code === 'NOT_FOUND') return 404
   if (error.code === 'CONFLICT') return 412
@@ -93,12 +118,6 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   if (options.identity !== undefined) {
     const identity = options.identity
-    const identityErrorResponse = (context: Context, error: IdentityError) => context.json({
-      error: {
-        code: error.code,
-        message: error.message,
-      },
-    }, error.status)
     app.post('/api/auth/sign-up/email', context => context.json({
       error: {
         code: 'PUBLIC_SIGN_UP_DISABLED',
@@ -109,9 +128,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try {
         return context.json(await identity.resolveSessionContext(context.req.raw.headers))
       } catch (error) {
-        if (error instanceof z.ZodError) return invalidInputResponse(context)
-        if (!(error instanceof IdentityError)) throw error
-        return identityErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.post('/api/auth/role', async (context) => {
@@ -124,9 +141,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           input.practitionerRoleId,
         ))
       } catch (error) {
-        if (error instanceof z.ZodError) return invalidInputResponse(context)
-        if (!(error instanceof IdentityError)) throw error
-        return identityErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.all('/api/auth/*', context => identity.handle(context.req.raw))
@@ -140,11 +155,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
         return context.json(scenario.current(session.actor))
       } catch (error) {
-        if (error instanceof z.ZodError) return invalidInputResponse(context)
-        if (error instanceof IdentityError || error instanceof ScenarioError) {
-          return context.json({ error: { code: error.code, message: error.message } }, error.status)
-        }
-        throw error
+        return apiErrorResponse(context, error)
       }
     })
     app.post('/api/sim/v1/scenario-runs/:scenarioRunId/actions/reset', async (context) => {
@@ -161,14 +172,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           scenarioRunId: context.req.param('scenarioRunId'),
         }))
       } catch (error) {
-        if (error instanceof z.ZodError) return invalidInputResponse(context)
-        if (error instanceof IdentityError || error instanceof ScenarioError) {
-          return context.json({ error: { code: error.code, message: error.message } }, error.status)
-        }
-        if (error instanceof CommandConflictError) {
-          return context.json({ error: { code: error.code, message: error.message } }, 409)
-        }
-        throw error
+        return apiErrorResponse(context, error)
       }
     })
     app.post('/api/sim/v1/scenarios/actions/install', async (context) => {
@@ -187,16 +191,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           kind: input.kind,
         }))
       } catch (error) {
-        if (error instanceof z.ZodError) {
-          return invalidInputResponse(context, 'The Scenario installation request is invalid')
-        }
-        if (error instanceof IdentityError || error instanceof ScenarioError) {
-          return context.json({ error: { code: error.code, message: error.message } }, error.status)
-        }
-        if (error instanceof CommandConflictError) {
-          return context.json({ error: { code: error.code, message: error.message } }, 409)
-        }
-        throw error
+        return apiErrorResponse(context, error, 'The Scenario installation request is invalid')
       }
     })
   }
@@ -204,22 +199,6 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   if (options.identity !== undefined && options.workflow !== undefined) {
     const identity = options.identity
     const workflow = options.workflow
-    const workflowErrorResponse = (context: Context, error: unknown) => {
-      if (error instanceof z.ZodError) {
-        return invalidInputResponse(context)
-      }
-      if (error instanceof IdentityError || error instanceof WorkflowError) {
-        return context.json({ error: { code: error.code, message: error.message } }, error.status)
-      }
-      if (
-        error instanceof CommandConflictError
-        || error instanceof FhirRepositoryError
-        || error instanceof WorkspaceContextError
-      ) {
-        return context.json({ error: { code: error.code, message: error.message } }, 409)
-      }
-      throw error
-    }
     const actor = async (context: Context) => (
       await identity.resolveSessionContext(context.req.raw.headers)
     ).actor
@@ -231,14 +210,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try {
         return context.json(workflow.registrationCatalog(await actor(context)))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.get('/api/his/v1/catalogs/clinical', async (context) => {
       try {
         return context.json(workflow.clinicalCatalog(await actor(context)))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.get('/api/his/v1/patients', async (context) => {
@@ -255,7 +234,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           query: query.query,
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.get('/api/his/v1/registrations', async (context) => {
@@ -270,7 +249,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           query.page,
         ))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.post('/api/his/v1/patients', async (context) => {
@@ -292,7 +271,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           patient: body.input,
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.post('/api/his/v1/registrations/actions/register', async (context) => {
@@ -315,7 +294,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           registration: body.input,
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.get('/api/his/v1/triage/queue', async (context) => {
@@ -332,7 +311,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           query.page,
         ))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.post('/api/his/v1/encounters/:encounterId/actions/record-triage', async (context) => {
@@ -361,7 +340,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           triage: body.input,
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.get('/api/his/v1/doctor/queue', async (context) => {
@@ -376,7 +355,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           query.page,
         ))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.get('/api/his/v1/doctor/cases/:caseId', async (context) => {
@@ -386,7 +365,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           context.req.param('caseId'),
         ))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.post('/api/his/v1/encounters/:encounterId/actions/start-first-visit', async (context) => {
@@ -403,7 +382,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           idempotencyKey: idempotencyKey(context),
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.post('/api/his/v1/encounters/:encounterId/actions/start-revisit', async (context) => {
@@ -420,7 +399,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           idempotencyKey: idempotencyKey(context),
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.put('/api/his/v1/encounters/:encounterId/drafts/first-visit', async (context) => {
@@ -442,7 +421,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           idempotencyKey: idempotencyKey(context),
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.put('/api/his/v1/encounters/:encounterId/drafts/revisit', async (context) => {
@@ -480,7 +459,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           idempotencyKey: idempotencyKey(context),
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.post('/api/his/v1/encounters/:encounterId/actions/preview-sign', async (context) => {
@@ -504,7 +483,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           idempotencyKey: idempotencyKey(context),
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.post('/api/his/v1/encounters/:encounterId/actions/sign-and-complete', async (context) => {
@@ -526,7 +505,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           previewId: body.input.previewId,
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.post('/api/his/v1/clinical-documents/:compositionId/actions/revise', async (context) => {
@@ -548,7 +527,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           idempotencyKey: idempotencyKey(context),
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.post('/api/his/v1/encounters/:encounterId/actions/issue-laboratory-order', async (context) => {
@@ -572,7 +551,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           indicationCode: body.input.indicationCode,
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.get('/api/his/v1/billing/queue', async (context) => {
@@ -588,7 +567,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           context: await actor(context),
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.get('/api/his/v1/pharmacy/queue', async (context) => {
@@ -603,7 +582,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           context: await actor(context),
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.post('/api/his/v1/prescriptions/:prescriptionId/actions/dispense', async (context) => {
@@ -629,7 +608,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           prescriptionId: context.req.param('prescriptionId'),
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.post('/api/his/v1/prescriptions/:prescriptionId/actions/review', async (context) => {
@@ -651,7 +630,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           prescriptionId: context.req.param('prescriptionId'),
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.post('/api/his/v1/payments/actions/preview', async (context) => {
@@ -672,7 +651,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           idempotencyKey: idempotencyKey(context),
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
     app.post('/api/his/v1/payments/:previewId/actions/confirm', async (context) => {
@@ -690,7 +669,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           previewId: context.req.param('previewId'),
         }))
       } catch (error) {
-        return workflowErrorResponse(context, error)
+        return apiErrorResponse(context, error)
       }
     })
   }

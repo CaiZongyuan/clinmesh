@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { scenarioStateSchema } from '@clinmesh/contracts/his'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import { z } from 'zod'
@@ -182,6 +183,7 @@ export class ScenarioService {
   }): CommandResponse<ScenarioState> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: scenarioStateSchema,
       expectedVersions: {},
       idempotencyKey: input.idempotencyKey,
       idempotencyScope: 'workspace',
@@ -209,6 +211,7 @@ export class ScenarioService {
   }): CommandResponse<ScenarioState> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: scenarioStateSchema,
       expectedVersions: {},
       idempotencyKey: input.idempotencyKey,
       idempotencyScope: 'workspace',

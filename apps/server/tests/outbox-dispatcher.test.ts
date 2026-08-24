@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { CommandExecutor } from '../src/application/command-executor.ts'
 import { OutboxDispatcher } from '../src/application/outbox-dispatcher.ts'
 import {
@@ -42,6 +43,7 @@ describe('persistent outbox dispatcher', () => {
         roleCode: 'cashier',
         scenarioRunId: 'run-001',
       },
+      dataSchema: z.object({ accepted: z.boolean() }),
       expectedVersions: {},
       idempotencyKey: 'payment-001',
       input: { paymentId: 'payment-001' },
@@ -109,6 +111,7 @@ describe('persistent outbox dispatcher', () => {
     for (const [key, kind] of [['retry-001', 'retry'], ['ambiguous-001', 'ambiguous']] as const) {
       executor.execute({
         context: { ...context, actorId: 'actor-system', roleCode: 'system', scenarioRunId: 'run-001' },
+        dataSchema: z.object({ accepted: z.boolean() }),
         expectedVersions: {},
         idempotencyKey: key,
         input: { key },
@@ -165,6 +168,7 @@ describe('persistent outbox dispatcher', () => {
     })
     executor.execute({
       context: { ...context, actorId: 'actor-cashier', roleCode: 'cashier', scenarioRunId: 'run-001' },
+      dataSchema: z.object({ accepted: z.boolean() }),
       expectedVersions: {},
       idempotencyKey: 'late-result-001',
       input: { serviceRequestId: 'service-request-001' },

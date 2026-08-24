@@ -182,10 +182,21 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
                 </div>
                 <Badge variant="outline">{selectedCase.patient.identifier}</Badge>
               </div>
-              <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-                <div><dt className="text-muted-foreground">{messages.location}</dt><dd className="font-medium">{selectedCase.locationId}</dd></div>
-                <div><dt className="text-muted-foreground">{messages.visitType}</dt><dd className="font-medium">{selectedCase.visitTypeId}</dd></div>
+              <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                <div><dt className="text-muted-foreground">{messages.department}</dt><dd className="font-medium">{locale === 'zh-CN' ? selectedCase.department.nameZh : selectedCase.department.nameEn}</dd></div>
+                <div><dt className="text-muted-foreground">{messages.location}</dt><dd className="font-medium">{locale === 'zh-CN' ? selectedCase.location.nameZh : selectedCase.location.nameEn}</dd></div>
+                <div><dt className="text-muted-foreground">{messages.visitType}</dt><dd className="font-medium">{locale === 'zh-CN' ? selectedCase.visitType.nameZh : selectedCase.visitType.nameEn}</dd></div>
+                <div><dt className="text-muted-foreground">{messages.arrivalTime}</dt><dd className="font-medium">{new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(selectedCase.arrivedAt))}</dd></div>
               </dl>
+              <Alert variant={selectedCase.riskFlags.length === 0 ? 'default' : 'destructive'}>
+                {selectedCase.riskFlags.length === 0
+                  ? <UserRoundCheckIcon aria-hidden="true" />
+                  : <CircleAlertIcon aria-hidden="true" />}
+                <AlertTitle>{messages.riskInformation}</AlertTitle>
+                <AlertDescription>{selectedCase.riskFlags.length === 0
+                  ? messages.noKnownRisks
+                  : selectedCase.riskFlags.map(risk => risk.display).join('; ')}</AlertDescription>
+              </Alert>
               <Field>
                 <FieldLabel htmlFor="triage-chief-complaint">{messages.chiefComplaint}</FieldLabel>
                 <Textarea id="triage-chief-complaint" onChange={event => setChiefComplaint(event.currentTarget.value)} required value={chiefComplaint} />

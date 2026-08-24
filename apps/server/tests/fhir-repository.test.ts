@@ -169,7 +169,7 @@ describe('FHIR Resource Store', () => {
       status: 'final',
       type: { text: 'Synthetic note' },
       date: '2026-08-24T09:00:00+08:00',
-      author: [{ reference: 'Practitioner/practitioner-001' }],
+      author: [{ identifier: { value: 'synthetic-practitioner-001' } }],
       title: '合成病历',
     })
     expect(() => repository.update(context, {
@@ -245,7 +245,7 @@ describe('FHIR Resource Store', () => {
     database.close()
   })
 
-  it('rejects indexed references whose target is outside the active Workspace and Epoch', async () => {
+  it('rejects every local reference whose target is outside the active Workspace and Epoch', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-fhir-reference-'))
     temporaryDirectories.push(directory)
     const database = openClinMeshDatabase({
@@ -292,6 +292,19 @@ describe('FHIR Resource Store', () => {
       'Condition',
       new URLSearchParams('patient=Patient%2Fpatient-other-workspace&_total=accurate'),
     )).toMatchObject({ resources: [], total: 0 })
+
+    expect(() => repository.create(workspaceA, {
+      resourceType: 'Encounter',
+      id: 'encounter-cross-workspace',
+      serviceProvider: { reference: 'Organization/organization-missing' },
+      status: 'planned',
+    })).toThrow('reference target was not found in the active context')
+    expect(() => repository.read(
+      workspaceA,
+      'Encounter',
+      'encounter-cross-workspace',
+    )).toThrow('was not found')
+    expect(repository.history(workspaceA, 'Encounter', 'encounter-cross-workspace')).toEqual([])
     database.close()
   })
 })

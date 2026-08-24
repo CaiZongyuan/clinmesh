@@ -79,6 +79,22 @@ function valuesAtPath(value: unknown, path: string[]): unknown[] {
   return valuesAtPath((value as Record<string, unknown>)[head], tail)
 }
 
+const localReferencePattern = /^([A-Z][A-Za-z]+)\/([A-Za-z0-9.-]{1,64})$/
+
+function localReferences(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(localReferences)
+  if (typeof value !== 'object' || value === null) return []
+  const record = value as Record<string, unknown>
+  return [
+    ...(typeof record.reference === 'string' && localReferencePattern.test(record.reference)
+      ? [record.reference]
+      : []),
+    ...Object.entries(record)
+      .filter(([key]) => key !== 'reference')
+      .flatMap(([, entry]) => localReferences(entry)),
+  ]
+}
+
 export class FhirRepository {
   readonly #cursorSecret: string | undefined
   readonly #database: ClinMeshDatabase
@@ -380,6 +396,7 @@ export class FhirRepository {
           content_json = excluded.content_json,
           content_hash = excluded.content_hash
       `).run(...parameters)
+      this.#assertLocalReferences(context, committed)
       this.#replaceSearchIndexes(context, committed)
       if (ownsTransaction) this.#database.driver.exec('COMMIT')
       return committed
@@ -388,6 +405,24 @@ export class FhirRepository {
         this.#database.driver.exec('ROLLBACK')
       }
       throw error
+    }
+  }
+
+  #assertLocalReferences(context: RepositoryContext, resource: FhirResource): void {
+    for (const reference of new Set(localReferences(resource))) {
+      const match = localReferencePattern.exec(reference)
+      if (match === null) continue
+      const [, targetType, targetId] = match
+      if (
+        targetType !== undefined
+        && targetId !== undefined
+        && this.#currentRow(context, targetType, targetId) === undefined
+      ) {
+        throw new FhirRepositoryError(
+          'INVALID',
+          `The FHIR reference target was not found in the active context: ${reference}`,
+        )
+      }
     }
   }
 
@@ -409,7 +444,7 @@ export class FhirRepository {
             ? (value as Record<string, unknown>).reference
             : undefined
           if (typeof reference !== 'string') continue
-          const match = /^([A-Z][A-Za-z]+)\/([A-Za-z0-9.-]{1,64})$/.exec(reference)
+          const match = localReferencePattern.exec(reference)
           if (match === null) {
             throw new FhirRepositoryError('INVALID', 'An indexed FHIR reference must be a local relative reference')
           }
@@ -420,12 +455,6 @@ export class FhirRepository {
             || (capability.target !== undefined && !capability.target.includes(targetType))
           ) {
             throw new FhirRepositoryError('INVALID', 'An indexed FHIR reference has an unsupported target type')
-          }
-          if (this.#currentRow(context, targetType, targetId) === undefined) {
-            throw new FhirRepositoryError(
-              'INVALID',
-              'The indexed FHIR reference target was not found in the active context',
-            )
           }
           insert.run(
             context.workspaceId,

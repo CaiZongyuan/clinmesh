@@ -2,10 +2,13 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
 import {
+  apiErrorSchema,
   patientSearchSchema,
   scenarioCommandResponseSchema,
   scenarioStateSchema,
+  sessionContextSchema,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createClinMeshRuntime } from '../src/runtime.ts'
@@ -68,7 +71,7 @@ describe('trusted session and Scenario HTTP contract', () => {
       { headers: { cookie: cookie ?? '' } },
     )
     expect(contextResponse.status).toBe(200)
-    expect(await contextResponse.json()).toMatchObject({
+    expect(sessionContextSchema.parse(await contextResponse.json())).toMatchObject({
       actor: {
         actorId: 'actor-registrar',
         epoch: 'epoch-1',
@@ -121,7 +124,7 @@ describe('trusted session and Scenario HTTP contract', () => {
       method: 'POST',
     })
     expect(csrfResponse.status).toBe(403)
-    expect(await csrfResponse.json()).toMatchObject({ error: { code: 'CSRF_REJECTED' } })
+    expect(apiErrorSchema.parse(await csrfResponse.json())).toMatchObject({ error: { code: 'CSRF_REJECTED' } })
 
     const forbiddenResponse = await runtime.app.request('/api/auth/role', {
       body: JSON.stringify({ practitionerRoleId: 'practitioner-role-pharmacist' }),
@@ -133,7 +136,7 @@ describe('trusted session and Scenario HTTP contract', () => {
       method: 'POST',
     })
     expect(forbiddenResponse.status).toBe(403)
-    expect(await forbiddenResponse.json()).toMatchObject({ error: { code: 'ROLE_NOT_ALLOWED' } })
+    expect(apiErrorSchema.parse(await forbiddenResponse.json())).toMatchObject({ error: { code: 'ROLE_NOT_ALLOWED' } })
 
     const invalidResponse = await runtime.app.request('/api/auth/role', {
       body: JSON.stringify({ practitionerRoleId: '' }),
@@ -145,7 +148,7 @@ describe('trusted session and Scenario HTTP contract', () => {
       method: 'POST',
     })
     expect(invalidResponse.status).toBe(400)
-    expect(await invalidResponse.json()).toMatchObject({ error: { code: 'INVALID_INPUT' } })
+    expect(apiErrorSchema.parse(await invalidResponse.json())).toMatchObject({ error: { code: 'INVALID_INPUT' } })
 
     const selectedResponse = await runtime.app.request('/api/auth/role', {
       body: JSON.stringify({
@@ -161,7 +164,7 @@ describe('trusted session and Scenario HTTP contract', () => {
       method: 'POST',
     })
     expect(selectedResponse.status).toBe(200)
-    expect(await selectedResponse.json()).toMatchObject({
+    expect(sessionContextSchema.parse(await selectedResponse.json())).toMatchObject({
       actor: {
         actorId: 'actor-administrator',
         practitionerRoleId: 'practitioner-role-registrar',
@@ -214,7 +217,7 @@ describe('trusted session and Scenario HTTP contract', () => {
       },
     )
     expect(forbiddenResponse.status).toBe(403)
-    expect(await forbiddenResponse.json()).toMatchObject({ error: { code: 'ROLE_NOT_ALLOWED' } })
+    expect(apiErrorSchema.parse(await forbiddenResponse.json())).toMatchObject({ error: { code: 'ROLE_NOT_ALLOWED' } })
 
     const adminCookie = await signIn('admin@demo.clinmesh.local')
     const missingIdempotencyResponse = await runtime.app.request(
@@ -230,7 +233,7 @@ describe('trusted session and Scenario HTTP contract', () => {
       },
     )
     expect(missingIdempotencyResponse.status).toBe(400)
-    expect(await missingIdempotencyResponse.json()).toMatchObject({
+    expect(apiErrorSchema.parse(await missingIdempotencyResponse.json())).toMatchObject({
       error: { code: 'INVALID_INPUT' },
     })
 
@@ -273,12 +276,12 @@ describe('trusted session and Scenario HTTP contract', () => {
 
     const replayResponse = await reset()
     expect(replayResponse.status).toBe(200)
-    expect(await replayResponse.json()).toEqual(resetResult)
+    expect(scenarioCommandResponseSchema.parse(await replayResponse.json())).toEqual(resetResult)
 
     const currentResponse = await runtime.app.request('/api/sim/v1/scenario-runs/current', {
       headers: { cookie: adminCookie },
     })
-    expect(await currentResponse.json()).toMatchObject({
+    expect(scenarioStateSchema.parse(await currentResponse.json())).toMatchObject({
       epoch: 'epoch-2',
       initialStateHash: initial.initialStateHash,
       scenarioRunId: 'scenario-run-2',
@@ -327,7 +330,7 @@ describe('trusted session and Scenario HTTP contract', () => {
 
     const goldenResponse = await install('golden')
     expect(goldenResponse.status).toBe(400)
-    expect(await goldenResponse.json()).toMatchObject({ error: { code: 'INVALID_INPUT' } })
+    expect(apiErrorSchema.parse(await goldenResponse.json())).toMatchObject({ error: { code: 'INVALID_INPUT' } })
 
     const idempotencyKey = randomUUID()
     const densityResponse = await install('density', idempotencyKey)
@@ -339,7 +342,9 @@ describe('trusted session and Scenario HTTP contract', () => {
       scenarioId: 'density-fever-outpatient-v1',
       scenarioRunId: 'scenario-run-2',
     })
-    expect(await (await install('density', idempotencyKey)).json()).toEqual(density)
+    expect(scenarioCommandResponseSchema.parse(
+      await (await install('density', idempotencyKey)).json(),
+    )).toEqual(density)
 
     const selectRegistrarResponse = await runtime.app.request('/api/auth/role', {
       body: JSON.stringify({ practitionerRoleId: 'practitioner-role-registrar' }),
@@ -395,14 +400,14 @@ describe('trusted session and Scenario HTTP contract', () => {
         { headers: { cookie } },
       )
       expect(response.status).toBe(200)
-      expect(await response.json()).toMatchObject({ total })
+      expect(fhirBundleSchema.parse(await response.json())).toMatchObject({ total })
     }
     const patientsResponse = await runtime.app.request(
       '/fhir/R5/Patient?_count=25&_total=accurate',
       { headers: { cookie } },
     )
     expect(patientsResponse.status).toBe(200)
-    expect(await patientsResponse.json()).toMatchObject({
+    expect(fhirBundleSchema.parse(await patientsResponse.json())).toMatchObject({
       entry: expect.any(Array),
       link: [
         expect.objectContaining({ relation: 'self' }),

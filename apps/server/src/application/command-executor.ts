@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
+import { isSupportedResourceType } from '../fhir/capabilities.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import {
   type FhirRepository,
@@ -37,8 +38,9 @@ export interface CommandResponse<Data> extends CommandHandlerResult<Data> {
   warnings: string[]
 }
 
-export interface CommandInvocation<Input> {
+export interface CommandInvocation<Input, Data> {
   context: ActorContext
+  dataSchema: z.ZodType<Data>
   expectedVersions: Record<string, string>
   idempotencyScope?: 'epoch' | 'workspace'
   idempotencyKey: string
@@ -152,7 +154,7 @@ export class CommandExecutor {
   }
 
   execute<Input, Data>(
-    invocation: CommandInvocation<Input>,
+    invocation: CommandInvocation<Input, Data>,
     handler: (transaction: CommandTransaction) => CommandHandlerResult<Data>,
   ): CommandResponse<Data> {
     const { context } = invocation
@@ -199,11 +201,9 @@ export class CommandExecutor {
         if (existing.status !== 'completed' || existing.response_json === null) {
           throw new CommandConflictError('The idempotent command has not reached a replayable result')
         }
-        const storedResponse = storedCommandResponseSchema.parse(JSON.parse(existing.response_json))
-        const response: CommandResponse<Data> = {
-          ...storedResponse,
-          data: storedResponse.data as Data,
-        }
+        const response = storedCommandResponseSchema.extend({
+          data: invocation.dataSchema,
+        }).parse(JSON.parse(existing.response_json))
         this.#database.driver.exec('COMMIT')
         return response
       }
@@ -331,7 +331,6 @@ export class CommandExecutor {
       WHERE workspace_id = ? AND epoch = ? AND sequence = ? AND hash = ?
     `).run(sequence, currentHash, context.workspaceId, context.epoch, head.sequence, head.hash)
     if (update.changes !== 1) throw new CommandConflictError('The audit chain advanced concurrently')
-    const organizationReference = `Organization/${context.organizationId ?? 'organization-clinmesh'}`
     this.#fhir.createProjection(context, {
       resourceType: 'AuditEvent',
       id: auditId,
@@ -354,15 +353,34 @@ export class CommandExecutor {
       },
       agent: [{
         type: { text: context.roleCode },
-        who: context.practitionerId === undefined
-          ? { reference: organizationReference }
-          : { reference: `Practitioner/${context.practitionerId}` },
+        who: {
+          identifier: {
+            system: context.practitionerId === undefined
+              ? 'https://caizongyuan.github.io/clinmesh/identifier/actor'
+              : 'https://caizongyuan.github.io/clinmesh/identifier/practitioner',
+            value: context.practitionerId ?? context.actorId,
+          },
+        },
         requestor: true,
       }],
-      source: { observer: { reference: organizationReference } },
+      source: {
+        observer: {
+          identifier: {
+            system: 'https://caizongyuan.github.io/clinmesh/identifier/organization',
+            value: context.organizationId ?? 'organization-clinmesh',
+          },
+        },
+      },
       entity: effects.map(effect => ({
         role: { text: effect.kind },
-        what: { reference: effect.reference },
+        what: isSupportedResourceType(effect.reference.split('/', 1)[0] ?? '')
+          ? { reference: effect.reference }
+          : {
+              identifier: {
+                system: 'https://caizongyuan.github.io/clinmesh/identifier/command-effect-reference',
+                value: effect.reference,
+              },
+            },
       })),
     })
   }

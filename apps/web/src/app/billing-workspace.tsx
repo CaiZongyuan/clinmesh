@@ -1,5 +1,16 @@
 import type { BillingQueueItem, SessionContext } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@clinmesh/ui/components/alert-dialog'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
@@ -40,6 +51,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const [category, setCategory] = useState<BillingCategory>('laboratory')
   const [status, setStatus] = useState<BillingStatus>('pending')
   const [page, setPage] = useState(1)
+  const [paymentConfirmationOpen, setPaymentConfirmationOpen] = useState(false)
   const [simulatorRule, setSimulatorRule] = useState<SimulatorRule>('success')
   const [selectedChargeId, setSelectedChargeId] = useState<string>()
   const queueKey = ['billing-queue', ...scope, category, status, page] as const
@@ -49,6 +61,9 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   })
   const selectedCharge = queue.data?.items.find(item => item.chargeItemId === selectedChargeId)
     ?? queue.data?.items[0]
+  const selectedChargeDescription = selectedCharge === undefined
+    ? ''
+    : locale === 'zh-CN' ? selectedCharge.descriptionZh : selectedCharge.descriptionEn
   const preview = useMutation({
     mutationFn: () => {
       if (selectedCharge === undefined) throw new Error(messages.paymentUnavailable)
@@ -72,11 +87,13 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       }, newIdempotencyKey())
     },
     onSuccess: async () => {
+      setPaymentConfirmationOpen(false)
       setSelectedChargeId(undefined)
       await queryClient.invalidateQueries({ queryKey: ['billing-queue', ...scope] })
     },
   })
   const clearPayment = () => {
+    setPaymentConfirmationOpen(false)
     preview.reset()
     confirm.reset()
   }
@@ -158,13 +175,12 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       <section aria-labelledby="payment-details-heading" className="flex min-w-0 flex-col gap-5">
         <h2 className="text-base font-semibold" id="payment-details-heading">{messages.paymentDetails}</h2>
         {confirm.isSuccess ? <PaymentOutcome outcome={confirm.data.data.outcome} messages={messages} /> : null}
-        {confirm.isError ? <PaymentError message={getWorkspaceErrorMessage(confirm.error, messages)} title={getWorkspaceErrorTitle(confirm.error, messages, messages.operationFailed)} /> : null}
         {selectedCharge === undefined ? (
           <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><CreditCardIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noBillingItems}</EmptyTitle></EmptyHeader></Empty>
         ) : (
           <div className="flex flex-col gap-5">
             <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-4">
-              <div><div className="text-lg font-semibold">{selectedCharge.patient.name}</div><div className="text-sm text-muted-foreground">{locale === 'zh-CN' ? selectedCharge.descriptionZh : selectedCharge.descriptionEn}</div></div>
+              <div><div className="text-lg font-semibold">{selectedCharge.patient.name}</div><div className="text-sm text-muted-foreground">{selectedChargeDescription}</div></div>
               <div className="text-right"><div className="text-xs text-muted-foreground">{messages.amount}</div><div className="text-lg font-semibold">{formatFen(selectedCharge.amountFen, locale)}</div></div>
             </div>
             <Table>
@@ -207,8 +223,52 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
                 <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
                   <div><dt className="text-muted-foreground">{messages.amount}</dt><dd className="font-medium">{formatFen(preview.data.data.amountFen, locale)}</dd></div>
                   <div><dt className="text-muted-foreground">{messages.expectedOutcome}</dt><dd className="font-medium">{expectedOutcomeLabel(preview.data.data.expectedOutcome, messages)}</dd></div>
+                  <div><dt className="text-muted-foreground">{messages.paymentChannel}</dt><dd className="font-medium">{messages.syntheticPaymentChannel}</dd></div>
                 </dl>
-                <div className="flex justify-end"><Button disabled={confirm.isPending} onClick={() => confirm.mutate()} type="button"><CheckCircleIcon data-icon="inline-start" />{messages.confirmPayment}</Button></div>
+                <div className="flex flex-col gap-2">
+                  <h4 className="text-sm font-semibold">{messages.paymentAllocations}</h4>
+                  <Table>
+                    <TableHeader><TableRow><TableHead>{messages.chargeItem}</TableHead><TableHead>{messages.amount}</TableHead></TableRow></TableHeader>
+                    <TableBody>{preview.data.data.allocations.map(allocation => (
+                      <TableRow key={allocation.chargeItemId}>
+                        <TableCell className="font-medium">{allocation.chargeItemId === selectedCharge.chargeItemId
+                          ? selectedChargeDescription
+                          : allocation.chargeItemId}</TableCell>
+                        <TableCell>{formatFen(allocation.amountFen, locale)}</TableCell>
+                      </TableRow>
+                    ))}</TableBody>
+                  </Table>
+                </div>
+                <div className="flex justify-end">
+                  <AlertDialog
+                    onOpenChange={(open) => {
+                      setPaymentConfirmationOpen(open)
+                      if (open) confirm.reset()
+                    }}
+                    open={paymentConfirmationOpen}
+                  >
+                    <AlertDialogTrigger render={<Button disabled={confirm.isPending} type="button" />}>
+                      <CheckCircleIcon data-icon="inline-start" />{messages.confirmPayment}
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>{messages.confirmPaymentTitle}</AlertDialogTitle>
+                        <AlertDialogDescription>{messages.confirmPaymentDescription}</AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                        <div><dt className="text-muted-foreground">{messages.amount}</dt><dd className="font-medium">{formatFen(preview.data.data.amountFen, locale)}</dd></div>
+                        <div><dt className="text-muted-foreground">{messages.paymentChannel}</dt><dd className="font-medium">{messages.syntheticPaymentChannel}</dd></div>
+                      </dl>
+                      {confirm.isError ? <PaymentError message={getWorkspaceErrorMessage(confirm.error, messages)} title={getWorkspaceErrorTitle(confirm.error, messages, messages.operationFailed)} /> : null}
+                      <AlertDialogFooter>
+                        <AlertDialogCancel disabled={confirm.isPending}>{messages.cancel}</AlertDialogCancel>
+                        <AlertDialogAction disabled={confirm.isPending} onClick={() => confirm.mutate()}>
+                          <CheckCircleIcon data-icon="inline-start" />{messages.submitPayment}
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
               </section>
             )}
           </div>

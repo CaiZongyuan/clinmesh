@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
   CommandConflictError,
   CommandExecutor,
@@ -56,6 +57,7 @@ describe('CommandExecutor', () => {
     }
     const execute = (patientName: string) => executor.execute({
       context,
+      dataSchema: z.object({ patientId: z.string().min(1) }),
       expectedVersions: {},
       idempotencyKey: 'register-001',
       input: { patientName },
@@ -102,6 +104,50 @@ describe('CommandExecutor', () => {
     database.close()
   })
 
+  it('validates a persisted idempotent response with the command data schema before replay', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-command-response-schema-'))
+    temporaryDirectories.push(directory)
+    const database = openClinMeshDatabase({
+      busyTimeoutMs: 5_000,
+      databasePath: join(directory, 'clinmesh.sqlite'),
+    })
+    applyMigrations(database)
+    const repositoryContext = { epoch: 'epoch-001', workspaceId: 'workspace-001' }
+    new WorkspaceRepository(database).install({
+      ...repositoryContext,
+      scenarioId: 'command-response-schema',
+      scenarioRunId: 'run-001',
+      workspaceName: '合成响应校验工作区',
+    })
+    const executor = new CommandExecutor(database, new FhirRepository(database))
+    const invocation = {
+      context: {
+        ...repositoryContext,
+        actorId: 'actor-registrar',
+        roleCode: 'registrar',
+        scenarioRunId: 'run-001',
+      },
+      dataSchema: z.object({ patientId: z.string().min(1) }),
+      expectedVersions: {},
+      idempotencyKey: 'response-schema-001',
+      input: { patientId: 'patient-001' },
+      operation: 'patient.create-synthetic',
+    }
+    const execute = () => executor.execute(invocation, () => ({
+      data: { patientId: 'patient-001' },
+      effects: [],
+    }))
+
+    execute()
+    database.driver.prepare(`
+      UPDATE command_receipt SET response_json = json_set(response_json, '$.data', json('{"wrong":true}'))
+      WHERE workspace_id = ? AND epoch = ? AND operation = ? AND idempotency_key = ?
+    `).run('workspace-001', 'epoch-001', 'patient.create-synthetic', 'response-schema-001')
+
+    expect(() => execute()).toThrow(z.ZodError)
+    database.close()
+  })
+
   it('rolls back every business effect while retaining a failed audit attempt', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-command-rollback-'))
     temporaryDirectories.push(directory)
@@ -128,6 +174,7 @@ describe('CommandExecutor', () => {
 
     expect(() => executor.execute({
       context,
+      dataSchema: z.object({ patientId: z.string().min(1) }),
       expectedVersions: {},
       idempotencyKey: 'rollback-001',
       input: { patientName: '合成患者回滚' },
@@ -195,6 +242,7 @@ describe('CommandExecutor', () => {
           roleCode: 'registrar',
           scenarioRunId,
         },
+        dataSchema: z.object({ label: z.string().min(1) }),
         expectedVersions: {},
         idempotencyKey: 'shared-idempotency-key',
         input: { label },
@@ -268,6 +316,7 @@ describe('CommandExecutor', () => {
         roleCode: 'lis-system',
         scenarioRunId: 'run-001',
       },
+      dataSchema: z.object({ accepted: z.boolean() }),
       expectedVersions: {},
       idempotencyKey: 'late-lis-result-001',
       input: { serviceRequestId: 'service-request-001' },

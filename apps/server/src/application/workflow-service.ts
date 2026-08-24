@@ -1,6 +1,23 @@
 import { createHmac } from 'node:crypto'
 import { v7 as uuidv7 } from 'uuid'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
+import {
+  clinicalDocumentRevisionResponseSchema,
+  clinicalSignPreviewResponseSchema,
+  clinicalSignResponseSchema,
+  createPatientResponseSchema,
+  dispenseResponseSchema,
+  firstVisitDraftResponseSchema,
+  laboratoryOrderResponseSchema,
+  paymentPreviewResponseSchema,
+  paymentResponseSchema,
+  type PatientSummary,
+  prescriptionReviewResponseSchema,
+  registrationResponseSchema,
+  revisitDraftResponseSchema,
+  startVisitResponseSchema,
+  triageResponseSchema,
+} from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
@@ -22,16 +39,6 @@ export class WorkflowError extends Error {
   }
 }
 
-interface PatientSummary {
-  birthDate?: string
-  gender?: string
-  id: string
-  identifier: string
-  name: string
-  synthetic: true
-  versionId: string
-}
-
 interface CatalogRow {
   code: string
   config_json?: string
@@ -40,6 +47,13 @@ interface CatalogRow {
   name_zh: string
   price_fen: number
   version: number
+}
+
+interface MedicationRuleSelection {
+  catalogItemId: string
+  configJson: string | undefined
+  doseText: string
+  frequencyCode: string
 }
 
 const medicationCatalogConfigSchema = z.object({
@@ -137,6 +151,12 @@ const observationResultContentSchema = z.object({
   }).loose().optional(),
   valueString: z.string().optional(),
 }).loose()
+
+const lisOrderDataSchema = z.object({
+  diagnosticReportId: z.string().min(1),
+  encounterVersion: z.string().min(1),
+  status: z.literal('awaiting-revisit'),
+})
 
 function parseStoredFhirResource(content: string): FhirResource {
   return fhirResourceSchema.parse(JSON.parse(content))
@@ -344,6 +364,7 @@ export class WorkflowService {
   }): CommandResponse<{ patient: PatientSummary }> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: createPatientResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: input.patient,
@@ -479,6 +500,7 @@ export class WorkflowService {
   }> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: registrationResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: input.registration,
@@ -665,6 +687,11 @@ export class WorkflowService {
     const rows = this.#database.driver.prepare(`
       SELECT outpatient_case.*, patient.content_json AS patient_json,
         registration.registration_number, registration.visit_type_id,
+        department.name_zh AS department_name_zh,
+        department.name_en AS department_name_en,
+        visit_type.name_zh AS visit_type_name_zh,
+        visit_type.name_en AS visit_type_name_en,
+        location.content_json AS location_json,
         encounter.version_id AS encounter_version,
         task.version_id AS task_version
       FROM outpatient_case
@@ -677,6 +704,21 @@ export class WorkflowService {
        AND patient.epoch = outpatient_case.epoch
        AND patient.resource_type = 'Patient'
        AND patient.resource_id = outpatient_case.patient_id
+      JOIN outpatient_catalog AS department
+        ON department.workspace_id = outpatient_case.workspace_id
+       AND department.epoch = outpatient_case.epoch
+       AND department.item_id = outpatient_case.department_id
+       AND department.kind = 'department'
+      JOIN outpatient_catalog AS visit_type
+        ON visit_type.workspace_id = registration.workspace_id
+       AND visit_type.epoch = registration.epoch
+       AND visit_type.item_id = registration.visit_type_id
+       AND visit_type.kind = 'visit-type'
+      JOIN fhir_resource AS location
+        ON location.workspace_id = outpatient_case.workspace_id
+       AND location.epoch = outpatient_case.epoch
+       AND location.resource_type = 'Location'
+       AND location.resource_id = outpatient_case.location_id
       JOIN fhir_resource AS encounter
         ON encounter.workspace_id = outpatient_case.workspace_id
        AND encounter.epoch = outpatient_case.epoch
@@ -695,8 +737,11 @@ export class WorkflowService {
       arrived_at: string
       case_id: string
       department_id: string
+      department_name_en: string
+      department_name_zh: string
       encounter_id: string
       encounter_version: number
+      location_json: string
       patient_json: string
       registration_number: string
       location_id: string
@@ -704,22 +749,45 @@ export class WorkflowService {
       task_version: number
       triage_task_id: string
       visit_type_id: string
+      visit_type_name_en: string
+      visit_type_name_zh: string
     }>
     return {
-      items: rows.map(row => ({
-        arrivedAt: row.arrived_at,
-        caseId: row.case_id,
-        departmentId: row.department_id,
-        encounterId: row.encounter_id,
-        encounterVersion: String(row.encounter_version),
-        locationId: row.location_id,
-        patient: patientSummary(parseStoredFhirResource(row.patient_json)),
-        registrationNumber: row.registration_number,
-        status: row.status,
-        taskId: row.triage_task_id,
-        taskVersion: String(row.task_version),
-        visitTypeId: row.visit_type_id,
-      })),
+      items: rows.map(row => {
+        const location = parseStoredFhirResource(row.location_json)
+        const patient = patientSummary(parseStoredFhirResource(row.patient_json))
+        const locationNameZh = typeof location.name === 'string' ? location.name : row.location_id
+        const locationAliases = Array.isArray(location.alias) ? location.alias : []
+        const locationNameEn = locationAliases.find((alias): alias is string => typeof alias === 'string')
+          ?? locationNameZh
+        return {
+          arrivedAt: row.arrived_at,
+          caseId: row.case_id,
+          department: {
+            id: row.department_id,
+            nameEn: row.department_name_en,
+            nameZh: row.department_name_zh,
+          },
+          encounterId: row.encounter_id,
+          encounterVersion: String(row.encounter_version),
+          location: {
+            id: row.location_id,
+            nameEn: locationNameEn,
+            nameZh: locationNameZh,
+          },
+          patient,
+          registrationNumber: row.registration_number,
+          riskFlags: this.#patientRiskFlags(context, patient.id),
+          status: row.status,
+          taskId: row.triage_task_id,
+          taskVersion: String(row.task_version),
+          visitType: {
+            id: row.visit_type_id,
+            nameEn: row.visit_type_name_en,
+            nameZh: row.visit_type_name_zh,
+          },
+        }
+      }),
       page,
       pageSize,
       total: total.count,
@@ -749,6 +817,7 @@ export class WorkflowService {
   }> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: triageResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: { encounterId: input.encounterId, ...input.triage },
@@ -1164,6 +1233,7 @@ export class WorkflowService {
   }> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: startVisitResponseSchema.shape.data.extend({ status: z.literal('first-visit') }),
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: { encounterId: input.encounterId },
@@ -1234,6 +1304,7 @@ export class WorkflowService {
   }> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: startVisitResponseSchema.shape.data.extend({ status: z.literal('revisit-draft') }),
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: { encounterId: input.encounterId },
@@ -1319,6 +1390,7 @@ export class WorkflowService {
   }> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: revisitDraftResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: { encounterId: input.encounterId, ...input.draft },
@@ -1363,33 +1435,12 @@ export class WorkflowService {
         ...medication,
         catalog: this.#catalogItem(input.context, medication.catalogItemId, 'medication'),
       }))
-      if (new Set(input.draft.medications.map(medication => medication.catalogItemId)).size
-        !== input.draft.medications.length) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'A medication can appear only once in a prescription')
-      }
-      for (const medication of medicationCatalog) {
-        const config = medicationCatalogConfigSchema.parse(
-          JSON.parse(medication.catalog.config_json ?? '{}') as unknown,
-        )
-        if (
-          !config.allowedDoseTexts.includes(medication.doseText)
-          || !config.allowedFrequencyCodes.includes(medication.frequencyCode)
-        ) {
-          throw new WorkflowError(
-            'CATALOG_CONFLICT',
-            `The dose or frequency is not allowed for ${medication.catalogItemId}`,
-          )
-        }
-        const otherMedicationIds = medicationCatalog
-          .map(candidate => candidate.catalogItemId)
-          .filter(candidateId => candidateId !== medication.catalogItemId)
-        if (otherMedicationIds.some(candidateId => !config.allowedCombinationIds.includes(candidateId))) {
-          throw new WorkflowError(
-            'CATALOG_CONFLICT',
-            `The medication combination is not allowed for ${medication.catalogItemId}`,
-          )
-        }
-      }
+      this.#assertMedicationCatalogRules(medicationCatalog.map(medication => ({
+        catalogItemId: medication.catalogItemId,
+        configJson: medication.catalog.config_json,
+        doseText: medication.doseText,
+        frequencyCode: medication.frequencyCode,
+      })))
       this.#assertMedicationAllergies(
         input.context,
         outpatientCase.patient_id,
@@ -1702,6 +1753,7 @@ export class WorkflowService {
   }> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: clinicalSignPreviewResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: {
@@ -1750,7 +1802,8 @@ export class WorkflowService {
       }
       const medications = this.#database.driver.prepare(`
         SELECT item.medication_request_id, item.medication_id, item.quantity,
-          catalog.code, catalog.name_zh, catalog.name_en, catalog.price_fen
+          item.dose_text, item.frequency_code, catalog.code, catalog.config_json,
+          catalog.name_zh, catalog.name_en, catalog.price_fen
         FROM prescription_item AS item
         JOIN outpatient_catalog AS catalog
           ON catalog.workspace_id = item.workspace_id
@@ -1761,6 +1814,9 @@ export class WorkflowService {
         WHERE item.workspace_id = ? AND item.epoch = ? AND item.prescription_id = ?
       `).all(input.context.workspaceId, input.context.epoch, prescription?.prescription_id) as Array<{
         code: string
+        config_json: string
+        dose_text: string
+        frequency_code: string
         medication_id: string
         medication_request_id: string
         name_en: string
@@ -1769,6 +1825,12 @@ export class WorkflowService {
         quantity: number
       }>
       if (medications.length === 0) throw new WorkflowError('CATALOG_CONFLICT', 'The prescription has no active medication')
+      this.#assertMedicationCatalogRules(medications.map(medication => ({
+        catalogItemId: medication.medication_id,
+        configJson: medication.config_json,
+        doseText: medication.dose_text,
+        frequencyCode: medication.frequency_code,
+      })))
       this.#assertMedicationAllergies(input.context, outpatientCase.patient_id, medications)
       const revisit = revisitDraftContentSchema.parse(draftMap.get('revisit')?.content_json === undefined
         ? undefined
@@ -1853,6 +1915,7 @@ export class WorkflowService {
   }> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: clinicalSignResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: {
@@ -1948,7 +2011,7 @@ export class WorkflowService {
       const medicationRows = this.#database.driver.prepare(`
         SELECT item.medication_request_id, item.medication_id, item.quantity,
           item.dose_text, item.frequency_code, catalog.name_zh, catalog.name_en,
-          catalog.code, catalog.price_fen
+          catalog.code, catalog.config_json, catalog.price_fen
         FROM prescription_item AS item
         JOIN outpatient_catalog AS catalog
           ON catalog.workspace_id = item.workspace_id
@@ -1961,6 +2024,7 @@ export class WorkflowService {
       `).all(input.context.workspaceId, input.context.epoch, preview.prescription_id) as Array<{
         dose_text: string
         code: string
+        config_json: string
         frequency_code: string
         medication_id: string
         medication_request_id: string
@@ -1969,6 +2033,12 @@ export class WorkflowService {
         price_fen: number
         quantity: number
       }>
+      this.#assertMedicationCatalogRules(medicationRows.map(medication => ({
+        catalogItemId: medication.medication_id,
+        configJson: medication.config_json,
+        doseText: medication.dose_text,
+        frequencyCode: medication.frequency_code,
+      })))
       const medicationTotalFen = medicationRows.reduce(
         (total, medication) => total + medication.price_fen * medication.quantity,
         0,
@@ -2180,6 +2250,7 @@ export class WorkflowService {
   }> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: clinicalDocumentRevisionResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: {
@@ -2355,6 +2426,7 @@ export class WorkflowService {
   }): CommandResponse<{ draftVersion: number }> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: firstVisitDraftResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: { encounterId: input.encounterId, ...input.draft },
@@ -2429,6 +2501,7 @@ export class WorkflowService {
   }> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: laboratoryOrderResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: {
@@ -2868,6 +2941,7 @@ export class WorkflowService {
   }> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: prescriptionReviewResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: {
@@ -2976,7 +3050,7 @@ export class WorkflowService {
     }>
     prescriptionId: string
   }): CommandResponse<{
-    medicationDispenseId: string
+    medicationDispenseIds: string[]
     prescriptionId: string
     prescriptionVersion: number
     scenarioStatus: 'completed' | 'active'
@@ -2984,6 +3058,7 @@ export class WorkflowService {
   }> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: dispenseResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: {
@@ -3201,38 +3276,41 @@ export class WorkflowService {
       ) as { count: number }
       const dispenseStatus = incomplete.count === 0 ? 'completed' as const : 'partial' as const
 
-      const medicationDispenseId = uuidv7()
-      const medicationDispense = transaction.fhir.create(input.context, {
-        resourceType: 'MedicationDispense',
-        id: medicationDispenseId,
-        status: 'completed',
-        medication: { concept: { text: `Prescription ${prescription.prescription_number}` } },
-        subject: { reference: `Patient/${prescription.patient_id}` },
-        encounter: { reference: `Encounter/${prescription.encounter_id}` },
-        authorizingPrescription: selectedItems.map(item => ({
-          reference: `MedicationRequest/${item.medication_request_id}`,
-        })),
-        performer: [{ actor: { reference: `PractitionerRole/${input.context.practitionerRoleId}` } }],
-        location: { reference: `Location/${input.context.locationId}` },
-        quantity: { value: selectedItems.reduce((total, item) => total + item.selectedQuantity, 0) },
-        whenPrepared: now,
-        whenHandedOver: now,
-      })
-      const dispenseId = uuidv7()
-      this.#database.driver.prepare(`
+      const insertDispense = this.#database.driver.prepare(`
         INSERT INTO dispense (
           workspace_id, epoch, dispense_id, prescription_id,
           medication_dispense_id, status, dispensed_by, dispensed_at
         ) VALUES (?, ?, ?, ?, ?, 'completed', ?, ?)
-      `).run(
-        input.context.workspaceId,
-        input.context.epoch,
-        dispenseId,
-        input.prescriptionId,
-        medicationDispenseId,
-        input.context.actorId,
-        now,
-      )
+      `)
+      const medicationDispenses = selectedItems.map(item => {
+        const medicationDispenseId = uuidv7()
+        const medicationDispense = transaction.fhir.create(input.context, {
+          resourceType: 'MedicationDispense',
+          id: medicationDispenseId,
+          status: 'completed',
+          medication: { reference: { reference: `Medication/${item.medication_id}` } },
+          subject: { reference: `Patient/${prescription.patient_id}` },
+          encounter: { reference: `Encounter/${prescription.encounter_id}` },
+          authorizingPrescription: [{
+            reference: `MedicationRequest/${item.medication_request_id}`,
+          }],
+          performer: [{ actor: { reference: `PractitionerRole/${input.context.practitionerRoleId}` } }],
+          location: { reference: `Location/${input.context.locationId}` },
+          quantity: { value: item.selectedQuantity },
+          whenPrepared: now,
+          whenHandedOver: now,
+        })
+        insertDispense.run(
+          input.context.workspaceId,
+          input.context.epoch,
+          uuidv7(),
+          input.prescriptionId,
+          medicationDispenseId,
+          input.context.actorId,
+          now,
+        )
+        return medicationDispense
+      })
       const prescriptionUpdate = this.#database.driver.prepare(`
         UPDATE prescription SET status = ?, version = version + 1
         WHERE workspace_id = ? AND epoch = ? AND prescription_id = ?
@@ -3275,18 +3353,18 @@ export class WorkflowService {
       }
       return {
         data: {
-          medicationDispenseId,
+          medicationDispenseIds: medicationDispenses.map(dispense => dispense.id),
           prescriptionId: input.prescriptionId,
           prescriptionVersion: input.expectedPrescriptionVersion + 1,
           scenarioStatus,
           status: dispenseStatus,
         },
         effects: [
-          {
+          ...medicationDispenses.map(medicationDispense => ({
             kind: 'created' as const,
-            reference: `MedicationDispense/${medicationDispenseId}`,
+            reference: `MedicationDispense/${medicationDispense.id}`,
             versionId: medicationDispense.meta?.versionId ?? '1',
-          },
+          })),
           ...movementIds.map(movementId => ({
             kind: 'created' as const,
             reference: `InventoryMovement/${movementId}`,
@@ -3320,7 +3398,12 @@ export class WorkflowService {
     idempotencyKey: string
     simulatorRule: 'ambiguous' | 'decline' | 'success'
   }): CommandResponse<{
+    allocations: Array<{
+      amountFen: number
+      chargeItemId: string
+    }>
     amountFen: number
+    channel: 'synthetic-payment'
     chargeItemId: string
     chargeVersion: number
     commitToken: string
@@ -3330,6 +3413,7 @@ export class WorkflowService {
   }> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: paymentPreviewResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: {
@@ -3404,7 +3488,12 @@ export class WorkflowService {
       )
       return {
         data: {
+          allocations: [{
+            amountFen: charge.total_fen,
+            chargeItemId: charge.charge_item_id,
+          }],
           amountFen: charge.total_fen,
+          channel: 'synthetic-payment',
           chargeItemId: charge.charge_item_id,
           chargeVersion: charge.version,
           commitToken,
@@ -3435,6 +3524,7 @@ export class WorkflowService {
   }> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: paymentResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: { commitToken: input.commitToken, previewId: input.previewId },
@@ -3625,6 +3715,7 @@ export class WorkflowService {
   }> {
     return this.#commands.execute({
       context: input.context,
+      dataSchema: lisOrderDataSchema,
       expectedVersions: {},
       idempotencyKey: input.eventId,
       input: input.payload,
@@ -3977,6 +4068,49 @@ export class WorkflowService {
         `Medication ${contraindicated.name_en ?? contraindicated.name_zh ?? contraindicated.code} conflicts with an active allergy`,
       )
     }
+  }
+
+  #assertMedicationCatalogRules(medications: MedicationRuleSelection[]): void {
+    if (new Set(medications.map(medication => medication.catalogItemId)).size !== medications.length) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'A medication can appear only once in a prescription')
+    }
+    for (const medication of medications) {
+      const config = medicationCatalogConfigSchema.parse(
+        JSON.parse(medication.configJson ?? '{}') as unknown,
+      )
+      if (
+        !config.allowedDoseTexts.includes(medication.doseText)
+        || !config.allowedFrequencyCodes.includes(medication.frequencyCode)
+      ) {
+        throw new WorkflowError(
+          'CATALOG_CONFLICT',
+          `The dose or frequency is not allowed for ${medication.catalogItemId}`,
+        )
+      }
+      const otherMedicationIds = medications
+        .map(candidate => candidate.catalogItemId)
+        .filter(candidateId => candidateId !== medication.catalogItemId)
+      if (otherMedicationIds.some(candidateId => !config.allowedCombinationIds.includes(candidateId))) {
+        throw new WorkflowError(
+          'CATALOG_CONFLICT',
+          `The medication combination is not allowed for ${medication.catalogItemId}`,
+        )
+      }
+    }
+  }
+
+  #patientRiskFlags(context: ActorContext, patientId: string): Array<{ code: string; display: string }> {
+    return this.#patientAllergies(context, patientId).flatMap(allergy => {
+      const concept = typeof allergy.code === 'object' && allergy.code !== null
+        ? allergy.code as Record<string, unknown>
+        : {}
+      const coding = Array.isArray(concept.coding) ? concept.coding : []
+      const firstCoding = coding.find(candidate => typeof candidate === 'object' && candidate !== null)
+      const codingRecord = firstCoding as Record<string, unknown> | undefined
+      const code = codingRecord?.code
+      const display = concept.text ?? codingRecord?.display ?? code
+      return typeof code === 'string' && typeof display === 'string' ? [{ code, display }] : []
+    })
   }
 
   #virtualTime(context: ActorContext): string {

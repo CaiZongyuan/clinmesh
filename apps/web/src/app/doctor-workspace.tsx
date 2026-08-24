@@ -430,10 +430,14 @@ function CaseDetail({
       </div>
       <section aria-labelledby="triage-summary-heading" className="flex flex-col gap-2">
         <h3 className="text-sm font-semibold" id="triage-summary-heading">{messages.triageSummary}</h3>
-        <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
-          <div><dt className="text-muted-foreground">{messages.chiefComplaint}</dt><dd className="font-medium">{detail.triage.chiefComplaint}</dd></div>
+        <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          <div className="sm:col-span-2"><dt className="text-muted-foreground">{messages.chiefComplaint}</dt><dd className="font-medium">{detail.triage.chiefComplaint}</dd></div>
           <div><dt className="text-muted-foreground">{messages.temperatureC}</dt><dd className="font-medium">{detail.triage.temperatureC}</dd></div>
-          <div><dt className="text-muted-foreground">{messages.acuity}</dt><dd className="font-medium">{detail.triage.acuityCode}</dd></div>
+          <div><dt className="text-muted-foreground">{messages.pulseBpm}</dt><dd className="font-medium">{detail.triage.pulseBpm}</dd></div>
+          <div><dt className="text-muted-foreground">{messages.respirationBpm}</dt><dd className="font-medium">{detail.triage.respirationBpm}</dd></div>
+          <div><dt className="text-muted-foreground">{messages.bloodPressure}</dt><dd className="font-medium">{detail.triage.bloodPressure.systolicMmHg}/{detail.triage.bloodPressure.diastolicMmHg}</dd></div>
+          <div><dt className="text-muted-foreground">{messages.oxygenSaturationPct}</dt><dd className="font-medium">{detail.triage.oxygenSaturationPct}</dd></div>
+          <div><dt className="text-muted-foreground">{messages.acuity}</dt><dd className="font-medium">{messages[`acuity_${detail.triage.acuityCode.replace('-', '')}` as 'acuity_level1']}</dd></div>
         </dl>
       </section>
       <section aria-labelledby="prior-facts-heading" className="flex flex-col gap-2 border-b pb-4">

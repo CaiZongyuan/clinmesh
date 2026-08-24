@@ -158,16 +158,32 @@ export const triageQueueSchema = z.object({
   items: z.array(z.object({
     arrivedAt: z.string().min(1),
     caseId: z.string().min(1),
-    departmentId: z.string().min(1),
+    department: z.object({
+      id: z.string().min(1),
+      nameEn: z.string().min(1),
+      nameZh: z.string().min(1),
+    }),
     encounterId: z.string().min(1),
     encounterVersion: z.string().regex(/^\d+$/),
-    locationId: z.string().min(1),
+    location: z.object({
+      id: z.string().min(1),
+      nameEn: z.string().min(1),
+      nameZh: z.string().min(1),
+    }),
     patient: patientSummarySchema,
     registrationNumber: z.string().min(1),
+    riskFlags: z.array(z.object({
+      code: z.string().min(1),
+      display: z.string().min(1),
+    })),
     status: z.string().min(1),
     taskId: z.string().min(1),
     taskVersion: z.string().regex(/^\d+$/),
-    visitTypeId: z.string().min(1),
+    visitType: z.object({
+      id: z.string().min(1),
+      nameEn: z.string().min(1),
+      nameZh: z.string().min(1),
+    }),
   }).loose()),
   ...paginationShape,
 })
@@ -179,6 +195,22 @@ export const triageResponseSchema = commandResponseSchema(z.object({
   observationId: z.string().min(1),
   status: z.literal('awaiting-doctor'),
 }))
+
+const triageSummarySchema = z.object({
+  acuityCode: z.string().min(1),
+  chiefComplaint: z.string().min(1),
+  temperatureC: z.number(),
+})
+
+const triageVitalSummarySchema = triageSummarySchema.extend({
+  bloodPressure: z.object({
+    diastolicMmHg: z.number(),
+    systolicMmHg: z.number(),
+  }),
+  oxygenSaturationPct: z.number(),
+  pulseBpm: z.number(),
+  respirationBpm: z.number(),
+})
 
 export const doctorQueueItemSchema = z.object({
   caseId: z.string().min(1),
@@ -195,11 +227,7 @@ export const doctorQueueItemSchema = z.object({
   ]),
   taskId: z.string().min(1),
   taskVersion: z.string().regex(/^\d+$/),
-  triage: z.object({
-    acuityCode: z.string().min(1),
-    chiefComplaint: z.string().min(1),
-    temperatureC: z.number(),
-  }),
+  triage: triageSummarySchema,
 }).loose()
 
 export const doctorQueueSchema = z.object({
@@ -273,11 +301,7 @@ export const doctorCaseDetailSchema = z.object({
   status: z.string().min(1),
   taskId: z.string().min(1),
   taskVersion: z.string().regex(/^\d+$/),
-  triage: z.object({
-    acuityCode: z.string().min(1),
-    chiefComplaint: z.string().min(1),
-    temperatureC: z.number(),
-  }).loose(),
+  triage: triageVitalSummarySchema,
 }).loose()
 
 export const startVisitResponseSchema = commandResponseSchema(z.object({
@@ -378,7 +402,12 @@ export const billingQueueSchema = z.object({
 })
 
 export const paymentPreviewResponseSchema = commandResponseSchema(z.object({
+  allocations: z.array(z.object({
+    amountFen: z.number().int().nonnegative(),
+    chargeItemId: z.string().min(1),
+  })).min(1),
   amountFen: z.number().int().nonnegative(),
+  channel: z.literal('synthetic-payment'),
   chargeItemId: z.string().min(1),
   chargeVersion: z.number().int().positive(),
   commitToken: z.string().min(1),
@@ -449,7 +478,7 @@ export const prescriptionReviewResponseSchema = commandResponseSchema(z.object({
 }))
 
 export const dispenseResponseSchema = commandResponseSchema(z.object({
-  medicationDispenseId: z.string().min(1),
+  medicationDispenseIds: z.array(z.string().min(1)).min(1),
   prescriptionId: z.string().min(1),
   prescriptionVersion: z.number().int().positive(),
   scenarioStatus: z.enum(['active', 'completed']),

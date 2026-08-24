@@ -5,6 +5,16 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebApp } from './web-app.tsx'
 
+const doctorTriage = {
+  acuityCode: 'level-3',
+  bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
+  chiefComplaint: '发热伴咽痛两天',
+  oxygenSaturationPct: 98,
+  pulseBpm: 102,
+  respirationBpm: 20,
+  temperatureC: 38.2,
+}
+
 const administratorSession = {
   actor: {
     actorId: 'actor-administrator',
@@ -546,16 +556,29 @@ describe('role workspaces', () => {
     const queueItem = {
       arrivedAt: '2026-08-24T09:00:00+08:00',
       caseId: 'case-1',
-      departmentId: 'department-general-medicine',
+      department: {
+        id: 'department-general-medicine',
+        nameEn: 'General Medicine',
+        nameZh: '全科医学科',
+      },
       encounterId: 'encounter-1',
       encounterVersion: triaged ? '2' : '1',
-      locationId: 'location-fever-clinic',
+      location: {
+        id: 'location-fever-clinic',
+        nameEn: 'Fever clinic',
+        nameZh: '门诊诊疗区',
+      },
       patient,
       registrationNumber: 'CM-OP-20260824-0001',
+      riskFlags: [{ code: 'PENICILLIN', display: '青霉素过敏' }],
       status: triaged ? 'awaiting-doctor' : 'awaiting-triage',
       taskId: 'task-triage-1',
       taskVersion: triaged ? '2' : '1',
-      visitTypeId: 'visit-general',
+      visitType: {
+        id: 'visit-general',
+        nameEn: 'General outpatient registration',
+        nameZh: '普通门诊挂号费',
+      },
     }
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
@@ -604,6 +627,14 @@ describe('role workspaces', () => {
     expect(screen.getByRole('tab', { name: '已分诊' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '异常' })).toBeTruthy()
     expect(await screen.findByRole('listitem', { name: '选择病例 合成患者周明' })).toBeTruthy()
+    expect(screen.getByText('全科医学科')).toBeTruthy()
+    expect(screen.getByText('门诊诊疗区')).toBeTruthy()
+    expect(screen.getByText('普通门诊挂号费')).toBeTruthy()
+    expect(screen.getByText('青霉素过敏')).toBeTruthy()
+    expect(screen.getByText('到达时间')).toBeTruthy()
+    expect(screen.queryByText('department-general-medicine')).toBeNull()
+    expect(screen.queryByText('location-fever-clinic')).toBeNull()
+    expect(screen.queryByText('visit-general')).toBeNull()
 
     await user.type(screen.getByLabelText('主诉'), '发热伴咽痛两天')
     await user.clear(screen.getByLabelText('体温（°C）'))
@@ -659,11 +690,7 @@ describe('role workspaces', () => {
             patient,
             status,
             taskId: 'task-doctor-1',
-            triage: {
-              acuityCode: 'level-3',
-              chiefComplaint: '发热伴咽痛两天',
-              temperatureC: 38.2,
-            },
+            triage: doctorTriage,
           }],
           ...pagination(1),
         })
@@ -691,11 +718,7 @@ describe('role workspaces', () => {
           status,
           taskId: 'task-doctor-1',
           taskVersion: visitVersions().taskVersion,
-          triage: {
-            acuityCode: 'level-3',
-            chiefComplaint: '发热伴咽痛两天',
-            temperatureC: 38.2,
-          },
+          triage: doctorTriage,
         })
       }
       if (url.pathname === '/api/his/v1/encounters/encounter-1/actions/start-first-visit') {
@@ -752,6 +775,10 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     expect(await screen.findByRole('listitem', { name: '选择病例 合成患者周明' })).toBeTruthy()
+    expect((await screen.findByText('脉搏（次/分）')).nextElementSibling?.textContent).toBe('102')
+    expect(screen.getByText('呼吸（次/分）').nextElementSibling?.textContent).toBe('20')
+    expect(screen.getByText('血压（mmHg）').nextElementSibling?.textContent).toBe('118/76')
+    expect(screen.getByText('血氧饱和度（%）').nextElementSibling?.textContent).toBe('98')
     await user.click(await screen.findByRole('button', { name: '开始首诊' }))
 
     await user.type(await screen.findByLabelText('现病史'), '两天前出现发热，伴咽痛。')
@@ -766,6 +793,7 @@ describe('role workspaces', () => {
 
   it('previews and confirms laboratory payment before moving the case to paid', async () => {
     let paid = false
+    let paymentConfirmations = 0
     const patient = {
       birthDate: '1990-05-10',
       gender: 'male',
@@ -820,7 +848,9 @@ describe('role workspaces', () => {
           simulatorRule: 'success',
         })
         return Response.json(commandResponse({
+          allocations: [{ amountFen: 6800, chargeItemId: 'charge-laboratory-1' }],
           amountFen: 6800,
+          channel: 'synthetic-payment',
           chargeItemId: 'charge-laboratory-1',
           chargeVersion: 1,
           commitToken: 'payment-preview-token-123456',
@@ -830,12 +860,21 @@ describe('role workspaces', () => {
         }))
       }
       if (url.pathname === '/api/his/v1/payments/payment-preview-1/actions/confirm') {
+        paymentConfirmations += 1
         const body = JSON.parse(String(init?.body)) as {
           expectedVersions: Record<string, string>
           input: Record<string, unknown>
         }
         expect(body.expectedVersions).toEqual({ 'ChargeItem/charge-laboratory-1': '1' })
         expect(body.input).toEqual({ commitToken: 'payment-preview-token-123456' })
+        if (paymentConfirmations === 1) {
+          return Response.json({
+            error: {
+              code: 'WORKFLOW_CONFLICT',
+              message: 'Synthetic payment confirmation failed',
+            },
+          }, { status: 409 })
+        }
         paid = true
         return Response.json(commandResponse({
           amountFen: 6800,
@@ -859,9 +898,20 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: '预览支付' }))
     expect(await screen.findByRole('heading', { name: '支付预览' })).toBeTruthy()
     expect(screen.getByText('预计成功')).toBeTruthy()
+    expect(screen.getByText('合成支付')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '金额分配' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '确认支付' }))
+    expect(paymentConfirmations).toBe(0)
+    expect(await screen.findByRole('alertdialog')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '确认支付' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '提交支付' }))
 
+    expect(await screen.findByText('数据已发生变化，请刷新后重新确认。')).toBeTruthy()
+    expect(screen.getByRole('alertdialog')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '提交支付' }))
     expect(await screen.findByText('支付成功')).toBeTruthy()
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(paymentConfirmations).toBe(2)
     await user.click(screen.getByRole('tab', { name: '已缴' }))
     expect(await screen.findByRole('listitem', { name: '选择费用 合成患者周明' })).toBeTruthy()
   })
@@ -913,7 +963,9 @@ describe('role workspaces', () => {
         const body = JSON.parse(String(init?.body)) as { input: { simulatorRule: string } }
         expect(body.input.simulatorRule).toBe('decline')
         return Response.json(commandResponse({
+          allocations: [{ amountFen: 6800, chargeItemId: 'charge-laboratory-1' }],
           amountFen: 6800,
+          channel: 'synthetic-payment',
           chargeItemId: 'charge-laboratory-1',
           chargeVersion: 1,
           commitToken: 'payment-preview-token-123456',
@@ -941,6 +993,7 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: '预览支付' }))
     expect(await screen.findByText('预计拒绝')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '确认支付' }))
+    await user.click(await screen.findByRole('button', { name: '提交支付' }))
 
     expect(await screen.findByText('支付被拒绝')).toBeTruthy()
     await user.click(screen.getByRole('tab', { name: '已拒绝' }))
@@ -991,11 +1044,7 @@ describe('role workspaces', () => {
             status,
             taskId: 'task-doctor-1',
             taskVersion: status === 'awaiting-revisit' ? '1' : '2',
-            triage: {
-              acuityCode: 'level-3',
-              chiefComplaint: '发热伴咽痛两天',
-              temperatureC: 38.2,
-            },
+            triage: doctorTriage,
           }],
           ...pagination(1),
         })
@@ -1066,11 +1115,7 @@ describe('role workspaces', () => {
           status,
           taskId: 'task-doctor-1',
           taskVersion: status === 'awaiting-revisit' ? '1' : '2',
-          triage: {
-            acuityCode: 'level-3',
-            chiefComplaint: '发热伴咽痛两天',
-            temperatureC: 38.2,
-          },
+          triage: doctorTriage,
         })
       }
       if (url.pathname === '/api/his/v1/encounters/encounter-1/actions/start-revisit') {
@@ -1185,11 +1230,7 @@ describe('role workspaces', () => {
             status: 'revisit-draft',
             taskId: 'task-doctor-1',
             taskVersion: '2',
-            triage: {
-              acuityCode: 'level-3',
-              chiefComplaint: '发热伴咽痛两天',
-              temperatureC: 38.2,
-            },
+            triage: doctorTriage,
           }],
           ...pagination(signed ? 0 : 1),
         })
@@ -1242,11 +1283,7 @@ describe('role workspaces', () => {
           status: signed ? 'awaiting-medication-payment' : 'revisit-draft',
           taskId: 'task-doctor-1',
           taskVersion: signed ? '3' : '2',
-          triage: {
-            acuityCode: 'level-3',
-            chiefComplaint: '发热伴咽痛两天',
-            temperatureC: 38.2,
-          },
+          triage: doctorTriage,
         })
       }
       if (url.pathname === '/api/his/v1/encounters/encounter-1/actions/preview-sign') {
@@ -1461,7 +1498,7 @@ describe('role workspaces', () => {
         dispenseCount += 1
         const completed = dispensedQuantity === 10
         return Response.json(commandResponse({
-          medicationDispenseId: `medication-dispense-${dispenseCount}`,
+          medicationDispenseIds: [`medication-dispense-${dispenseCount}`],
           prescriptionId: 'prescription-1',
           prescriptionVersion: 4 + dispenseCount,
           scenarioStatus: completed ? 'completed' : 'active',
