@@ -13,6 +13,7 @@
 | `docs/agent-development.md` | Agent 参与工程开发的操作规范 |
 | `docs/testing.md` | 测试层级、场景和检查要求 |
 | `docs/agents/` | 通用工程 skills 使用的仓库配置；不作为产品行为权威 |
+| `docs/memory/` | 用户的稳定协作偏好和低频操作坑；不作为产品行为或架构权威 |
 | `docs/research/` | 基于参考源码或外部标准的研究记录；不作为当前行为权威 |
 | `docs/postmortem/` | 已发生故障的时间线、根因和防复发措施 |
 

@@ -1,14 +1,14 @@
 # AGENTS.md
 
-ClinMesh 是面向 Agent 的中国公立医院仿真 HIS。修改业务或接口前阅读 [系统架构](docs/architecture.md) 和 [领域词汇](CONTEXT.md)；开发流程见 [Agent 工程开发](docs/agent-development.md)，文档规则见 [docs/AGENTS.md](docs/AGENTS.md)，包规则见 [packages/AGENTS.md](packages/AGENTS.md)。
+ClinMesh 是面向 Agent 的中国公立医院仿真 HIS。修改业务或接口前阅读 [系统架构](docs/architecture.md) 和 [领域词汇](CONTEXT.md)；开发、交付、录屏或 GitHub 写入前阅读 [工程记忆](docs/memory/memory.md)；开发流程见 [Agent 工程开发](docs/agent-development.md)，文档规则见 [docs/AGENTS.md](docs/AGENTS.md)，包规则见 [packages/AGENTS.md](packages/AGENTS.md)。
 
 ## Development workflow
 
 1. **Clarify**：新功能、可观察行为变化、跨包工作和非平凡 bug 在编辑前检查 design frontier；存在未决设计问题时使用 `grilling`，涉及公共接口、跨包状态流、持久化、外部协议、多 ticket 或测试策略权衡时使用 `grill-with-docs`。已有批准 spec 且没有未决分支时可直接实施。
 2. **Record**：共享理解确认前不编辑正式文件。确认后使用 `to-spec` 形成 canonical GitHub issue；公开全文和拆票结构必须先经用户批准并完成敏感信息检查。只有多个独立纵向切片或需要跨 session 时才使用 `to-tickets`。
-3. **Implement**：对批准的 issue 使用 `implement` 和 `tdd`。写测试前说明目标行为、测试层级、关键断言和最窄测试范围；运行后报告实际命令、结果、耗时和未运行项。
+3. **Implement**：对批准的 issue 使用 `implement`；存在可执行行为变化时使用 `tdd`。用户要求交付完整 issue 时，在同一集成分支连续完成全部 tickets，最终只提交一个 PR，不为单票中断开发、提 PR 或请求阶段批准。写测试前说明目标行为、测试层级、关键断言和最窄测试范围；运行后报告实际命令、结果、耗时和未运行项。
 4. **Refine and review**：变绿后使用 `code-simplifier` 只整理当前 diff，再运行被影响的最小检查并创建引用 issue 的 checkpoint commit。随后使用 `code-review` 做 Standards/Spec 双轴审查，修复 findings，最后使用 `dsh-pre-push-checks` 覆盖 outgoing diff。
-5. **Demonstrate**：用户可见的 Web/Desktop PR 使用 `agent-browser` 验证真实入口，并用 `record-browser-gif` 发布绑定精确 commit 的 GIF；React Web 性能改动同时使用 `vercel-react-best-practices`。文档改动按 [docs/AGENTS.md](docs/AGENTS.md) 路由对应 skills。
+5. **Demonstrate**：用户可见的 Web/Desktop PR 使用 `agent-browser` 验证真实入口并发布绑定精确 commit 的原生 WebM。成片默认 3–4 倍速，标明当前步骤并显示真实点击位置，压缩到文字仍可读的最小体积；除非用户明确要求，不生成 GIF。React Web 性能改动同时使用 `vercel-react-best-practices`。文档改动按 [docs/AGENTS.md](docs/AGENTS.md) 路由对应 skills。
 
 `implement` 的外部写入授权和禁止操作由 [Agent 工程开发](docs/agent-development.md#实施与交付) 统一规定。Skill 定义工作流，仓库代码和当前文档拥有事实；发生冲突时遵循仓库规则，并把通用 ADR 产物映射为 Agent Note。
 
@@ -29,10 +29,11 @@ pnpm doc-sync
 pnpm check
 ```
 
-只报告实际运行的检查。迭代时先运行覆盖变更的最小检查；跨包接口、构建配置、文档投影或发布路径变化再运行 `pnpm check`。
+只报告实际运行的检查。迭代时先运行覆盖变更的最小检查；跨包接口、构建配置、文档投影或发布路径变化再运行 `pnpm check`。纯文档、设计资产或 PR 媒体变更只运行对应文档或媒体检查，不运行与 diff 无关的代码测试，也不重复仍然有效的成功证据。
 
 ## Standing orders
 
+- 用户要求记住的约束，以及开发中发现的可复用坑和解决方法，必须在当前任务结束前落盘。高频、跨任务且漏读会反复出错的规则写入适用范围内的 `AGENTS.md`；其他稳定偏好和低频操作经验写入 `docs/memory/memory.md`。不记录密钥、真实凭证、患者信息、临时端口、一次性进程或已失效的 PR 状态。
 - TypeScript 使用 ESM 和 strict mode。运行时边界、网络响应、工具 JSON、持久化数据必须验证；同进程已类型化的私有调用不重复验证。
 - FHIR 版本固定为 R5 `5.0.0`。资源、SearchParameter 和 Operation 只能声明实际实现的能力。
 - 复杂状态变化通过共享 Command 模块执行；HTTP、FHIR Operation、Web/Desktop 和 Agent tools 不复制状态机。

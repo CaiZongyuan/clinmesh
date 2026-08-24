@@ -8,6 +8,7 @@
 - 子目录 `AGENTS.md` 只增加该目录特有规则，不重复根规则。
 - `CONTEXT.md` 只定义领域语言，不保存实现方案。
 - `docs/` 保存当前架构、流程和测试参考。
+- `docs/memory/` 保存稳定协作偏好和低频操作坑，不保存产品事实或临时任务状态。
 - `.agents/notes/` 保存有真实权衡且未来可能被重新讨论的提案和决策。
 - `.agents/skills/` 保存可复用工作流；skill 不能成为产品行为或架构事实的唯一来源。
 
@@ -17,7 +18,7 @@ Agent 开始工作前读取目标文件路径上所有适用的 `AGENTS.md`，�
 
 新功能、可观察行为变化、跨包工作和非平凡 bug 必须有已批准的 GitHub issue。纯机械小修可以把当前对话作为任务合同。需要 issue 的任务在 GitHub 不可用时停在已批准草稿，不建立第二套本地 spec。
 
-仓库公开。任何 issue、评论、PR 或 GIF 在发布前都必须检查患者信息、医保或支付凭证、密钥和未公开方案；没有 owning workflow 已经授予该外部写入时，先展示完整待发布内容并取得用户明确批准。
+仓库公开。任何 issue、评论、PR 或演示媒体在发布前都必须检查患者信息、医保或支付凭证、密钥和未公开方案；没有 owning workflow 已经授予该外部写入时，先展示完整待发布内容并取得用户明确批准。
 
 ## Design gate
 
@@ -36,6 +37,8 @@ Agent 编辑前确认直接目标、受影响模块、现有未提交修改和�
 
 一个可评审纵向切片直接使用 spec issue 实施。只有存在多个独立纵向切片或需要跨 session 时才使用 `to-tickets`；拆分结构和依赖必须先由用户批准。拆票后父 issue 保留 `spec`，移除 `ready-for-agent`，只有依赖已经满足的叶子 ticket 才能进入实施队列。不得按 types、backend、frontend 等技术层制造不能独立验收的水平 tickets。
 
+Tickets 默认表达执行顺序和可追踪验收，不强制形成多个 PR。用户要求完整 issue 一次性交付时，所有 tickets 在同一集成分支连续实施，使用 checkpoint commits 保留边界，最终由一个 PR 引用父 issue 并关闭全部 leaf tickets；中途不为单票提 PR 或请求内容批准。
+
 GitHub 原生状态拥有执行队列：
 
 - `needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human` 和 `wontfix` 表示 Matt skills 使用的 triage 角色。
@@ -48,7 +51,7 @@ GitHub 原生状态拥有执行队列：
 
 `implement <已批准 issue URL>` 授权 Agent 创建 `issue-<number>-<slug>` branch、本地 commits、正常 push、draft PR，并向该 PR 发布验收证据，不要求逐个 artifact 再次批准。发布前仍须检查完整内容和敏感信息。它不授权 merge、force-push、release、删除分支或将 draft 标记为 ready。
 
-每个 ticket 使用独立上下文，先读取 issue、相关 Agent Note、owner 文档和代码。复杂状态变化仍通过共享 Command owner 实现，不在 transport、UI 或 Agent tool 中复制状态机。
+每个 ticket 开始前读取 issue、相关 Agent Note、owner 文档和代码。完整 issue 集成交付保持同一分支和 PR，并在 tickets 之间保留可恢复的 checkpoint；复杂状态变化仍通过共享 Command owner 实现，不在 transport、UI 或 Agent tool 中复制状态机。
 
 ### TDD 与测试证据
 
@@ -61,7 +64,7 @@ GitHub 原生状态拥有执行队列：
 3. 创建含 `Refs #<issue>` 的 checkpoint commit，再使用 `code-review` 对固定 base 到 `HEAD` 做 Standards/Spec 双轴审查。
 4. 修复 findings、追加 commit，并重新检查被修复影响的证据，直到没有未解决 blocker。
 5. 使用 `dsh-pre-push-checks` 覆盖完整 outgoing diff，正常 push 后核对 remote head，创建或更新 draft PR，再检查 CI。
-6. 用户可见 Web/Desktop 变化使用 `agent-browser` 走真实入口，并用 `record-browser-gif` 发布绑定精确 commit 的 GIF。Mobile 使用独立检查并报告真实设备或模拟器证据；浏览器 GIF 不能证明原生行为。
+6. 用户可见 Web/Desktop 变化使用 `agent-browser` 走真实入口并发布绑定精确 commit 的原生 WebM。成片使用 3–4 倍速、步骤字幕、真实点击高亮和可读压缩；Mobile 使用独立检查并报告真实设备或模拟器证据，浏览器视频不能证明原生行为。
 
 Review 同时追踪 changed interface 的两侧、授权路径、状态 owner、真实产品入口、测试对目标回归的敏感性，以及文档和 Agent Note 是否匹配实现。Finding 必须包含位置、影响和证据。
 
@@ -98,7 +101,7 @@ Commit 主题使用 `<type>(<scope>): <简体中文交付摘要>`；没有有效
 | Leaf PR | `Closes #<number>`；拆票时同时写 `Part of #<parent>` |
 | Agent Note | 使用完整 issue URL 引用任务背景 |
 | Test evidence | PR 表格记录命令、证明的行为、结果和耗时 |
-| GUI evidence | PR body 记录 commit SHA、运行入口和 GIF |
+| GUI evidence | PR body 记录 commit SHA、运行入口和 WebM |
 
 合并叶子 PR 时由 `Closes` 关闭 ticket。父 spec 只有在所有叶子 tickets 关闭且整体验收完成后才关闭；merge 和关闭父 issue 都由人类授权。
 
@@ -129,7 +132,7 @@ Commit 主题使用 `<type>(<scope>): <简体中文交付摘要>`；没有有效
 | Standards/Spec 双轴审查 | `code-review` |
 | Outgoing diff 检查 | `dsh-pre-push-checks` |
 | React Web 性能 | `vercel-react-best-practices` |
-| Web/Desktop 真实入口与 GIF | `agent-browser`、`record-browser-gif` |
+| Web/Desktop 真实入口与 WebM | `agent-browser` |
 | 文档结构、文句和投影 | `dsh-doc-standards`、`dsh-prose-standard`、`dsh-doc-site-sync` |
 | 周期性架构简化审计 | `dsh-find-simplifications` |
 
@@ -167,7 +170,7 @@ pnpm doc-sync
 - Server route/FHIR response：adapter test 与 schema parse。
 - Web/Desktop 共享视图：`packages/views` 测试；平台 wiring 留在 app。
 - Mobile：独立 typecheck 和移动端测试，不用 DOM 测试代替。
-- 用户可见 Web/Desktop 改动：真实应用入口的浏览器测试与绑定 commit 的 GIF。
+- 用户可见 Web/Desktop 改动：真实应用入口的浏览器测试与绑定 commit 的 WebM。
 - 文档和 manifest：`pnpm doc-sync`。
 
 Agent 不得声称未运行的检查通过，也不得用自身输出文本作为业务操作成功的唯一证据。
