@@ -183,6 +183,7 @@ export class ScenarioService {
   }): CommandResponse<ScenarioState> {
     return this.#commands.execute({
       context: input.context,
+      contextRequirement: 'current',
       dataSchema: scenarioStateSchema,
       expectedVersions: {},
       idempotencyKey: input.idempotencyKey,
@@ -211,6 +212,7 @@ export class ScenarioService {
   }): CommandResponse<ScenarioState> {
     return this.#commands.execute({
       context: input.context,
+      contextRequirement: 'current',
       dataSchema: scenarioStateSchema,
       expectedVersions: {},
       idempotencyKey: input.idempotencyKey,

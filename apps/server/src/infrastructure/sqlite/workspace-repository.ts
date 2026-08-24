@@ -72,6 +72,27 @@ export class WorkspaceRepository {
     }
   }
 
+  assertCurrent(context: RepositoryContext, scenarioRunId: string): void {
+    const row = this.#database.driver.prepare(`
+      SELECT epoch.state AS epoch_state
+      FROM workspace
+      JOIN workspace_epoch AS epoch
+        ON epoch.workspace_id = workspace.workspace_id
+       AND epoch.epoch = workspace.active_epoch
+      JOIN scenario_run AS run
+        ON run.workspace_id = epoch.workspace_id
+       AND run.epoch = epoch.epoch
+      WHERE workspace.workspace_id = ?
+        AND workspace.active_epoch = ?
+        AND run.scenario_run_id = ?
+    `).get(context.workspaceId, context.epoch, scenarioRunId) as {
+      epoch_state: string
+    } | undefined
+    if (row === undefined || row.epoch_state !== 'active') {
+      throw new WorkspaceContextError('The Workspace, Epoch, or Scenario Run is not current')
+    }
+  }
+
   assertKnown(context: RepositoryContext, scenarioRunId: string): void {
     const row = this.#database.driver.prepare(`
       SELECT 1

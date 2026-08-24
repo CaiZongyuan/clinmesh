@@ -40,6 +40,7 @@ export interface CommandResponse<Data> extends CommandHandlerResult<Data> {
 
 export interface CommandInvocation<Input, Data> {
   context: ActorContext
+  contextRequirement?: 'active' | 'current'
   dataSchema: z.ZodType<Data>
   expectedVersions: Record<string, string>
   idempotencyScope?: 'epoch' | 'workspace'
@@ -208,7 +209,11 @@ export class CommandExecutor {
         return response
       }
 
-      this.#workspaces.assertActive(context, context.scenarioRunId)
+      if (invocation.contextRequirement === 'current') {
+        this.#workspaces.assertCurrent(context, context.scenarioRunId)
+      } else {
+        this.#workspaces.assertActive(context, context.scenarioRunId)
+      }
 
       this.#checkExpectedVersions(context, invocation.expectedVersions)
       this.#database.driver.prepare(`

@@ -2522,6 +2522,83 @@ describe('outpatient workflow HTTP contract', () => {
     })
   })
 
+  it.each([
+    {
+      action: 'install',
+      body: { kind: 'candidate' },
+      path: '/api/sim/v1/scenarios/actions/install',
+    },
+    {
+      action: 'reset',
+      body: {},
+      path: '/api/sim/v1/scenario-runs/scenario-run-1/actions/reset',
+    },
+  ] as const)('starts a new Scenario with $action after dispensing completes the current Scenario Run', async ({ body, path }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-completed-reinstall-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createPaidMedicationCase(runtime, password)
+    const queueResponse = await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
+      headers: { cookie: testCase.pharmacistCookie },
+    })
+    const prescription = pharmacyQueueSchema.parse(await queueResponse.json()).items[0]
+    const medication = prescription?.medications[0]
+    const lot = medication?.lots[0]
+    if (prescription === undefined || medication === undefined || lot === undefined) {
+      throw new Error('Paid prescription did not expose a dispensable synthetic lot')
+    }
+
+    const dispenseResponse = await runtime.app.request(
+      `/api/his/v1/prescriptions/${prescription.prescriptionId}/actions/dispense`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${prescription.encounterId}`]: prescription.encounterVersion,
+            [`MedicationRequest/${medication.medicationRequestId}`]: medication.medicationRequestVersion,
+          },
+          input: {
+            expectedPrescriptionVersion: prescription.prescriptionVersion,
+            lotSelections: [{
+              expectedVersion: lot.version,
+              lotId: lot.id,
+              quantity: medication.quantity,
+            }],
+          },
+        }),
+        headers: commandHeaders(testCase.pharmacistCookie),
+        method: 'POST',
+      },
+    )
+    expect(dispenseResponse.status).toBe(200)
+    expect(dispenseResponseSchema.parse(await dispenseResponse.json()).data).toMatchObject({
+      scenarioStatus: 'completed',
+      status: 'completed',
+    })
+
+    const adminCookie = await signIn(runtime, 'admin@demo.clinmesh.local', password)
+    const installResponse = await runtime.app.request(path, {
+      body: JSON.stringify(body),
+      headers: commandHeaders(adminCookie),
+      method: 'POST',
+    })
+    expect(installResponse.status).toBe(200)
+    expect(scenarioCommandResponseSchema.parse(await installResponse.json()).data).toMatchObject({
+      epoch: 'epoch-2',
+      kind: 'candidate',
+      scenarioRunId: 'scenario-run-2',
+    })
+  })
+
   it('creates one accurately referenced MedicationDispense for each dispensed prescription line', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-multi-medication-dispense-http-'))
     temporaryDirectories.push(directory)
