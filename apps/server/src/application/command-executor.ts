@@ -204,6 +204,13 @@ export class CommandExecutor {
   ): CommandResponse<Data> {
     const { context } = invocation
     const requestHash = hashJson({
+      actingContext: {
+        locationId: context.locationId,
+        organizationId: context.organizationId,
+        practitionerId: context.practitionerId,
+        practitionerRoleId: context.practitionerRoleId,
+        roleCode: context.roleCode,
+      },
       expectedVersions: invocation.expectedVersions,
       input: invocation.input,
       operation: invocation.operation,

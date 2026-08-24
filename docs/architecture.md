@@ -581,7 +581,7 @@ Command 写请求使用同源 session 与 CSRF 校验，并通过以下 header �
 Idempotency-Key: 018f...
 ```
 
-Workspace、Epoch、Scenario Run 和 Actor 只从服务端 session/context binding 解析。幂等 receipt、预览 commit token、audit、cursor 和 outbox 只使用服务端解析值；请求体不接受客户端自报的 Actor、Workspace 或 Epoch。未来 Agent token 也必须解析到同一上下文，不增加客户端自报入口。
+Workspace、Epoch、Scenario Run、Actor 和 Acting Practitioner Context 只从服务端 session/context binding 解析。幂等 receipt、预览 commit token、audit、cursor 和 outbox 只使用服务端解析值；请求体不接受客户端自报的 Actor、Practitioner、Practitioner Role、Workspace 或 Epoch。未来 Agent token 也必须解析到同一上下文，不增加客户端自报入口。
 
 命令请求包含：
 
@@ -614,7 +614,7 @@ Workspace、Epoch、Scenario Run 和 Actor 只从服务端 session/context bindi
 
 ### 6.5 Idempotency
 
-Web mutation、outbox dispatcher 和模拟器处理都可能重试。CommandExecutor 以 `(workspace_id, epoch, actor_id, operation, idempotency_key)` 唯一识别业务请求，并保存规范化请求 hash、完整响应与 Effect 引用。
+Web mutation、outbox dispatcher 和模拟器处理都可能重试。CommandExecutor 以 `(workspace_id, epoch, actor_id, operation, idempotency_key)` 唯一识别业务请求，并保存规范化请求 hash、完整响应与 Effect 引用。请求 hash 同时绑定 expected versions、业务输入以及服务端解析的 Practitioner、Practitioner Role、role code、Organization 和 Location；相同 Actor 切换 Acting Practitioner Context 后重用 key 会得到稳定冲突，不能读取上一身份的回执。
 
 Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIATE` 事务，成功时在提交前变为 `completed`。相同 key 和相同 hash 读取并返回第一次完整响应；相同 key 和不同 hash 返回稳定冲突。事务失败时业务事实、FHIR、receipt、审计、Action Trace 和 outbox 一起回滚，失败尝试另写不包含请求正文的审计记录。
 

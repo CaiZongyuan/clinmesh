@@ -18,6 +18,40 @@ describe('trusted session and Scenario HTTP contract', () => {
   const runtimes: Array<Awaited<ReturnType<typeof createClinMeshRuntime>>> = []
   const temporaryDirectories: string[] = []
 
+  const createTestRuntime = async (prefix: string) => {
+    const directory = await mkdtemp(join(tmpdir(), prefix))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    return { password, runtime }
+  }
+
+  const signInSyntheticAccount = async (
+    runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>,
+    password: string,
+    email: string,
+  ): Promise<string> => {
+    const response = await runtime.app.request('/api/auth/sign-in/email', {
+      body: JSON.stringify({ email, password }),
+      headers: {
+        'content-type': 'application/json',
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect(response.status).toBe(200)
+    return response.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
+  }
+
   afterEach(async () => {
     await Promise.all(runtimes.splice(0).map(runtime => runtime.close()))
     await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true })))
@@ -90,119 +124,97 @@ describe('trusted session and Scenario HTTP contract', () => {
   })
 
   it('lets the Super Administrator select and restore every synthetic Acting Practitioner Context', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-role-http-'))
-    temporaryDirectories.push(directory)
-    const password = `Test-${randomUUID()}-Aa1!`
-    const runtime = await createClinMeshRuntime({
-      authBaseUrl: 'http://localhost',
-      authSecret: 'test-auth-secret-with-at-least-32-characters',
-      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
-      databasePath: join(directory, 'clinmesh.sqlite'),
-      demoPassword: password,
-      migrationMode: 'apply',
-      trustedOrigins: ['http://localhost'],
-    })
-    runtimes.push(runtime)
-    const signInResponse = await runtime.app.request('/api/auth/sign-in/email', {
-      body: JSON.stringify({
-        email: 'admin@demo.clinmesh.local',
-        password,
-      }),
-      headers: {
-        'content-type': 'application/json',
-        origin: 'http://localhost',
-      },
-      method: 'POST',
-    })
-    const cookie = signInResponse.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
+    const { password, runtime } = await createTestRuntime('clinmesh-role-http-')
+    const cookie = await signInSyntheticAccount(runtime, password, 'admin@demo.clinmesh.local')
+    const expectedRoles = [{
+      code: 'administrator',
+      id: 'practitioner-role-administrator',
+      locationId: 'location-administrator',
+      organizationId: 'organization-clinmesh',
+      practitionerId: 'practitioner-administrator',
+      practitionerName: '合成管理员',
+    }, {
+      code: 'cashier',
+      id: 'practitioner-role-cashier',
+      locationId: 'location-cashier',
+      organizationId: 'organization-clinmesh',
+      practitionerId: 'practitioner-cashier',
+      practitionerName: '合成收费员',
+    }, {
+      code: 'outpatient-doctor',
+      id: 'practitioner-role-outpatient-doctor',
+      locationId: 'location-outpatient-doctor',
+      organizationId: 'organization-clinmesh',
+      practitionerId: 'practitioner-outpatient-doctor',
+      practitionerName: '合成门诊医生',
+    }, {
+      code: 'pharmacist',
+      id: 'practitioner-role-pharmacist',
+      locationId: 'location-pharmacist',
+      organizationId: 'organization-clinmesh',
+      practitionerId: 'practitioner-pharmacist',
+      practitionerName: '合成药师',
+    }, {
+      code: 'registrar',
+      id: 'practitioner-role-registrar',
+      locationId: 'location-registrar',
+      organizationId: 'organization-clinmesh',
+      practitionerId: 'practitioner-registrar',
+      practitionerName: '合成挂号员',
+    }, {
+      code: 'triage-nurse',
+      id: 'practitioner-role-triage-nurse',
+      locationId: 'location-triage-nurse',
+      organizationId: 'organization-clinmesh',
+      practitionerId: 'practitioner-triage-nurse',
+      practitionerName: '合成分诊护士',
+    }] as const
 
     const initialContextResponse = await runtime.app.request('/api/auth/context', {
       headers: { cookie },
     })
     expect(initialContextResponse.status).toBe(200)
     const initialContext = sessionContextSchema.parse(await initialContextResponse.json())
-    expect(initialContext.availableRoles).toHaveLength(6)
-    expect(initialContext.availableRoles).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        code: 'outpatient-doctor',
-        id: 'practitioner-role-outpatient-doctor',
-        practitionerId: 'practitioner-outpatient-doctor',
-        practitionerName: '合成门诊医生',
-      }),
-      expect.objectContaining({
-        code: 'pharmacist',
-        id: 'practitioner-role-pharmacist',
-        practitionerId: 'practitioner-pharmacist',
-        practitionerName: '合成药师',
-      }),
-    ]))
+    expect(initialContext.availableRoles).toEqual(expectedRoles)
 
-    const selectedResponse = await runtime.app.request('/api/auth/role', {
-      body: JSON.stringify({
-        actorId: 'actor-forged',
-        practitionerId: 'practitioner-forged',
-        practitionerRoleId: 'practitioner-role-outpatient-doctor',
-        workspaceId: 'workspace-forged',
-      }),
-      headers: {
-        'content-type': 'application/json',
-        cookie,
-        origin: 'http://localhost',
-      },
-      method: 'POST',
-    })
-    expect(selectedResponse.status).toBe(200)
-    expect(sessionContextSchema.parse(await selectedResponse.json())).toMatchObject({
-      actor: {
+    for (const role of expectedRoles) {
+      const selectedResponse = await runtime.app.request('/api/auth/role', {
+        body: JSON.stringify({
+          actorId: 'actor-forged',
+          practitionerId: 'practitioner-forged',
+          practitionerRoleId: role.id,
+          workspaceId: 'workspace-forged',
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      })
+      expect(selectedResponse.status).toBe(200)
+      const expectedActor = {
         actorId: 'actor-administrator',
-        practitionerId: 'practitioner-outpatient-doctor',
-        practitionerRoleId: 'practitioner-role-outpatient-doctor',
-        roleCode: 'outpatient-doctor',
+        locationId: role.locationId,
+        organizationId: role.organizationId,
+        practitionerId: role.practitionerId,
+        practitionerRoleId: role.id,
+        roleCode: role.code,
         workspaceId: 'workspace-demo',
-      },
-    })
+      }
+      expect(sessionContextSchema.parse(await selectedResponse.json())).toMatchObject({ actor: expectedActor })
 
-    const restoredResponse = await runtime.app.request('/api/auth/context', {
-      headers: { cookie },
-    })
-    expect(restoredResponse.status).toBe(200)
-    expect(sessionContextSchema.parse(await restoredResponse.json())).toMatchObject({
-      actor: {
-        actorId: 'actor-administrator',
-        practitionerId: 'practitioner-outpatient-doctor',
-        practitionerRoleId: 'practitioner-role-outpatient-doctor',
-        roleCode: 'outpatient-doctor',
-      },
-    })
+      const restoredResponse = await runtime.app.request('/api/auth/context', {
+        headers: { cookie },
+      })
+      expect(restoredResponse.status).toBe(200)
+      expect(sessionContextSchema.parse(await restoredResponse.json())).toMatchObject({ actor: expectedActor })
+    }
   })
 
-  it('rejects untrusted, invalid, and unauthorized Acting Practitioner selection', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-role-rejection-http-'))
-    temporaryDirectories.push(directory)
-    const password = `Test-${randomUUID()}-Aa1!`
-    const runtime = await createClinMeshRuntime({
-      authBaseUrl: 'http://localhost',
-      authSecret: 'test-auth-secret-with-at-least-32-characters',
-      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
-      databasePath: join(directory, 'clinmesh.sqlite'),
-      demoPassword: password,
-      migrationMode: 'apply',
-      trustedOrigins: ['http://localhost'],
-    })
-    runtimes.push(runtime)
-    const signInResponse = await runtime.app.request('/api/auth/sign-in/email', {
-      body: JSON.stringify({
-        email: 'registrar@demo.clinmesh.local',
-        password,
-      }),
-      headers: {
-        'content-type': 'application/json',
-        origin: 'http://localhost',
-      },
-      method: 'POST',
-    })
-    const cookie = signInResponse.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
-
+  it('rejects Acting Practitioner selection without a trusted origin', async () => {
+    const { password, runtime } = await createTestRuntime('clinmesh-role-csrf-http-')
+    const cookie = await signInSyntheticAccount(runtime, password, 'registrar@demo.clinmesh.local')
     const csrfResponse = await runtime.app.request('/api/auth/role', {
       body: JSON.stringify({ practitionerRoleId: 'practitioner-role-registrar' }),
       headers: {
@@ -213,7 +225,11 @@ describe('trusted session and Scenario HTTP contract', () => {
     })
     expect(csrfResponse.status).toBe(403)
     expect(apiErrorSchema.parse(await csrfResponse.json())).toMatchObject({ error: { code: 'CSRF_REJECTED' } })
+  })
 
+  it('rejects an Acting Practitioner Context not granted to the account', async () => {
+    const { password, runtime } = await createTestRuntime('clinmesh-role-forbidden-http-')
+    const cookie = await signInSyntheticAccount(runtime, password, 'registrar@demo.clinmesh.local')
     const forbiddenResponse = await runtime.app.request('/api/auth/role', {
       body: JSON.stringify({
         actorId: 'actor-forged',
@@ -229,7 +245,11 @@ describe('trusted session and Scenario HTTP contract', () => {
     })
     expect(forbiddenResponse.status).toBe(403)
     expect(apiErrorSchema.parse(await forbiddenResponse.json())).toMatchObject({ error: { code: 'ROLE_NOT_ALLOWED' } })
+  })
 
+  it('rejects invalid Acting Practitioner selection input', async () => {
+    const { password, runtime } = await createTestRuntime('clinmesh-role-invalid-http-')
+    const cookie = await signInSyntheticAccount(runtime, password, 'registrar@demo.clinmesh.local')
     const invalidResponse = await runtime.app.request('/api/auth/role', {
       body: JSON.stringify({ practitionerRoleId: '' }),
       headers: {
@@ -244,28 +264,8 @@ describe('trusted session and Scenario HTTP contract', () => {
   })
 
   it('records the authenticated administrator and Acting Practitioner in a business AuditEvent', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-acting-audit-http-'))
-    temporaryDirectories.push(directory)
-    const password = `Test-${randomUUID()}-Aa1!`
-    const runtime = await createClinMeshRuntime({
-      authBaseUrl: 'http://localhost',
-      authSecret: 'test-auth-secret-with-at-least-32-characters',
-      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
-      databasePath: join(directory, 'clinmesh.sqlite'),
-      demoPassword: password,
-      migrationMode: 'apply',
-      trustedOrigins: ['http://localhost'],
-    })
-    runtimes.push(runtime)
-    const signInResponse = await runtime.app.request('/api/auth/sign-in/email', {
-      body: JSON.stringify({ email: 'admin@demo.clinmesh.local', password }),
-      headers: {
-        'content-type': 'application/json',
-        origin: 'http://localhost',
-      },
-      method: 'POST',
-    })
-    const cookie = signInResponse.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
+    const { password, runtime } = await createTestRuntime('clinmesh-acting-audit-http-')
+    const cookie = await signInSyntheticAccount(runtime, password, 'admin@demo.clinmesh.local')
     const selectionResponse = await runtime.app.request('/api/auth/role', {
       body: JSON.stringify({ practitionerRoleId: 'practitioner-role-registrar' }),
       headers: {
@@ -330,6 +330,51 @@ describe('trusted session and Scenario HTTP contract', () => {
           },
         }),
       ]),
+    })
+  })
+
+  it('rejects an idempotency replay after the administrator changes Acting Practitioner Context', async () => {
+    const { password, runtime } = await createTestRuntime('clinmesh-acting-replay-http-')
+    const cookie = await signInSyntheticAccount(runtime, password, 'admin@demo.clinmesh.local')
+    const selectRole = (practitionerRoleId: string) => runtime.app.request('/api/auth/role', {
+      body: JSON.stringify({ practitionerRoleId }),
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect((await selectRole('practitioner-role-registrar')).status).toBe(200)
+
+    const idempotencyKey = randomUUID()
+    const body = JSON.stringify({
+      expectedVersions: {},
+      input: {
+        birthDate: '1990-06-15',
+        gender: 'female',
+        identifier: `CM-REPLAY-${randomUUID()}`,
+        name: '合成重放患者',
+      },
+    })
+    const createPatient = () => runtime.app.request('/api/his/v1/patients', {
+      body,
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        'idempotency-key': idempotencyKey,
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect((await createPatient()).status).toBe(200)
+
+    expect((await selectRole('practitioner-role-outpatient-doctor')).status).toBe(200)
+    const replayResponse = await createPatient()
+
+    expect(replayResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await replayResponse.json())).toMatchObject({
+      error: { code: 'IDEMPOTENCY_KEY_REUSED' },
     })
   })
 

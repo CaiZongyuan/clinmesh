@@ -20,7 +20,7 @@ Encounter Completion Policy 只汇总各 owner 已确认的事实，不复制其
 
 首期提供最小纠错能力：删除未开具草稿、取消尚未执行的检查、撤回尚未调剂的处方、签署后更正病历和签发后更正报告。退费、退药、医保和库存等跨部门逆向流程另立范围。
 
-一个 Super Administrator 账户可以从全局顶栏选择 Acting Practitioner Context，项目显示“岗位 · 人员”，并直接进入对应工作台。页面持续显示当前操作身份；Command、Audit Event 和 Provenance 同时记录超级管理员 Actor 与被选择的 Practitioner/Practitioner Role。该能力不增加独立代理页面、原因输入或限时授权，也不允许普通账户任意指定行动身份。
+一个 Super Administrator 账户可以从全局顶栏选择 Acting Practitioner Context，项目显示“岗位 · 人员”，并直接进入对应工作台。页面持续显示当前操作身份；Command、Audit Event 和 Provenance 同时记录超级管理员 Actor 与被选择的 Practitioner/Practitioner Role，跨身份重放服从[幂等合同](../../../../docs/architecture.md#65-idempotency)。该能力不增加独立代理页面、原因输入或限时授权，也不允许普通账户任意指定行动身份。
 
 Web 使用高信息密度的临床工作台：204px 任务侧栏、54px 顶栏、患者上下文条、临床 tabs、紧凑表格和固定提交区。`packages/ui` 拥有 token 与实际组件，`docs/ui/design.md` 保存设计合同，真实 `/components` 页面直接渲染组件的尺寸、variant、交互状态、明暗主题和长中文。静态 UI 原型只作为冻结参考，不拥有产品行为。
 
