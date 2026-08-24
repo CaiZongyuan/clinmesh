@@ -37,7 +37,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 10,
+      schemaVersion: 11,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -51,14 +51,15 @@ describe('SQLite lifecycle', () => {
         '0007_prescription-review.sql',
         '0008_virtual-patient-intake.sql',
         '0009_consultation-record.sql',
+        '0010_consultation-question-backfill.sql',
       ],
-      schemaVersion: 10,
+      schemaVersion: 11,
     })
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 10 })
-    expect(reopened.diagnostics().schemaVersion).toBe(10)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 11 })
+    expect(reopened.diagnostics().schemaVersion).toBe(11)
     reopened.close()
   })
 
@@ -89,10 +90,10 @@ describe('SQLite lifecycle', () => {
       INSERT INTO scenario_definition (
         scenario_id, version, kind, schema_version, clinical_review_json
       ) VALUES (?, ?, ?, ?, ?)
-    `).run('legacy-scenario', '1.0.0', 'candidate', '1', null)
+    `).run('candidate-fever-outpatient-v1', '1.0.0', 'candidate', '1', null)
     new WorkspaceRepository(database).install({
       ...context,
-      scenarioId: 'legacy-scenario',
+      scenarioId: 'candidate-fever-outpatient-v1',
       scenarioRunId: 'run-legacy',
       workspaceName: '合成升级工作区',
     })
@@ -105,10 +106,20 @@ describe('SQLite lifecycle', () => {
       context.workspaceId,
       context.epoch,
       'run-legacy',
-      'legacy-scenario',
+      'candidate-fever-outpatient-v1',
       20260824,
       '2026-08-24T09:00:00+08:00',
       'legacy-state',
+    )
+    database.driver.prepare(`
+      INSERT INTO scenario_hidden_fact (
+        workspace_id, epoch, fact_code, value_json
+      ) VALUES (?, ?, ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'respiratory-pathogen',
+      JSON.stringify({ code: 'influenza-a', detected: true }),
     )
     database.driver.prepare(`
       INSERT INTO outpatient_catalog (
@@ -186,7 +197,7 @@ describe('SQLite lifecycle', () => {
     `).run(
       context.workspaceId,
       context.epoch,
-      'virtual-patient-legacy',
+      'virtual-patient-fever-001',
       'patient-legacy',
       JSON.stringify({
         chiefComplaint: '发热 1 天。',
@@ -204,7 +215,7 @@ describe('SQLite lifecycle', () => {
       INSERT INTO virtual_patient_case (
         workspace_id, epoch, virtual_patient_id, case_id
       ) VALUES (?, ?, ?, ?)
-    `).run(context.workspaceId, context.epoch, 'virtual-patient-legacy', 'case-legacy')
+    `).run(context.workspaceId, context.epoch, 'virtual-patient-fever-001', 'case-legacy')
     database.driver.prepare(`
       INSERT INTO virtual_patient (
         workspace_id, epoch, virtual_patient_id, version, patient_id,
@@ -217,7 +228,7 @@ describe('SQLite lifecycle', () => {
       'patient-second',
       context.workspaceId,
       context.epoch,
-      'virtual-patient-legacy',
+      'virtual-patient-fever-001',
     )
     expect(() => database.driver.prepare(`
       INSERT INTO virtual_patient_case (
@@ -240,7 +251,11 @@ describe('SQLite lifecycle', () => {
       'case-missing',
     )).toThrow(/FOREIGN KEY constraint failed/)
 
-    expect(applyMigrations(database)).toEqual({
+    await copyFile(
+      join(process.cwd(), 'drizzle', '0009_consultation-record.sql'),
+      join(legacyMigrationDirectory, '0009_consultation-record.sql'),
+    )
+    expect(applyMigrations(database, legacyMigrationDirectory)).toEqual({
       applied: ['0009_consultation-record.sql'],
       schemaVersion: 10,
     })
@@ -251,6 +266,118 @@ describe('SQLite lifecycle', () => {
       case_id: 'case-legacy',
       version: 1,
     }])
+    const expectedQuestionRules = [{
+      answer_text: '昨天傍晚开始发热，最高量到 38.7 °C。',
+      fact_code: null,
+      ordinal: 1,
+      question_code: 'symptom-onset',
+      question_text: '什么时候开始发热？',
+      revealed_answer_text: null,
+      rule_version: 1,
+    }, {
+      answer_text: '咽痛，吞咽时更明显，没有气促。',
+      fact_code: null,
+      ordinal: 2,
+      question_code: 'associated-symptoms',
+      question_text: '除了发热，还有哪里不舒服？',
+      revealed_answer_text: null,
+      rule_version: 1,
+    }, {
+      answer_text: '目前还不知道，需要等检查结果。',
+      fact_code: 'respiratory-pathogen',
+      ordinal: 3,
+      question_code: 'infection-cause',
+      question_text: '知道是什么感染引起的吗？',
+      revealed_answer_text: '检验结果显示是甲型流感病毒感染。',
+      rule_version: 1,
+    }]
+    const readQuestionRules = (ruleContext: typeof context) => database.driver.prepare(`
+      SELECT question_code, ordinal, question_text, answer_text,
+        fact_code, revealed_answer_text, rule_version
+      FROM virtual_patient_question_rule
+      WHERE workspace_id = ? AND epoch = ? AND virtual_patient_id = ?
+      ORDER BY ordinal
+    `).all(
+      ruleContext.workspaceId,
+      ruleContext.epoch,
+      'virtual-patient-fever-001',
+    )
+    expect(readQuestionRules(context)).toEqual([])
+
+    const seededContext = { epoch: 'epoch-checkpoint', workspaceId: 'workspace-checkpoint' }
+    new WorkspaceRepository(database).install({
+      ...seededContext,
+      scenarioId: 'candidate-fever-outpatient-v1',
+      scenarioRunId: 'run-checkpoint',
+      workspaceName: '合成 Checkpoint 工作区',
+    })
+    database.driver.prepare(`
+      INSERT INTO scenario_epoch_state (
+        workspace_id, epoch, scenario_run_id, scenario_id,
+        deterministic_seed, virtual_time, initial_state_hash
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      seededContext.workspaceId,
+      seededContext.epoch,
+      'run-checkpoint',
+      'candidate-fever-outpatient-v1',
+      20260824,
+      '2026-08-24T09:00:00+08:00',
+      'checkpoint-state',
+    )
+    database.driver.prepare(`
+      INSERT INTO scenario_hidden_fact (
+        workspace_id, epoch, fact_code, value_json
+      ) VALUES (?, ?, ?, ?)
+    `).run(
+      seededContext.workspaceId,
+      seededContext.epoch,
+      'respiratory-pathogen',
+      JSON.stringify({ code: 'influenza-a', detected: true }),
+    )
+    database.driver.prepare(`
+      INSERT INTO virtual_patient (
+        workspace_id, epoch, virtual_patient_id, version, patient_id,
+        clinical_summary_json, available
+      ) SELECT ?, ?, virtual_patient_id, version, ?, clinical_summary_json, available
+      FROM virtual_patient
+      WHERE workspace_id = ? AND epoch = ? AND virtual_patient_id = ?
+    `).run(
+      seededContext.workspaceId,
+      seededContext.epoch,
+      'patient-checkpoint',
+      context.workspaceId,
+      context.epoch,
+      'virtual-patient-fever-001',
+    )
+    const insertQuestionRule = database.driver.prepare(`
+      INSERT INTO virtual_patient_question_rule (
+        workspace_id, epoch, virtual_patient_id, question_code,
+        rule_version, ordinal, question_text, answer_text,
+        fact_code, revealed_answer_text
+      ) VALUES (?, ?, 'virtual-patient-fever-001', ?, ?, ?, ?, ?, ?, ?)
+    `)
+    for (const question of expectedQuestionRules) {
+      insertQuestionRule.run(
+        seededContext.workspaceId,
+        seededContext.epoch,
+        question.question_code,
+        question.rule_version,
+        question.ordinal,
+        question.question_text,
+        question.answer_text,
+        question.fact_code,
+        question.revealed_answer_text,
+      )
+    }
+    expect(readQuestionRules(seededContext)).toEqual(expectedQuestionRules)
+
+    expect(applyMigrations(database)).toEqual({
+      applied: ['0010_consultation-question-backfill.sql'],
+      schemaVersion: 11,
+    })
+    expect(readQuestionRules(context)).toEqual(expectedQuestionRules)
+    expect(readQuestionRules(seededContext)).toEqual(expectedQuestionRules)
     const consultationRecordColumns = database.driver.prepare(
       'PRAGMA table_info(consultation_record)',
     ).all() as Array<{ name: string }>
@@ -294,7 +421,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(10)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(11)
     await runtime.close()
   })
 
@@ -364,7 +491,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 10,
+      schemaVersion: 11,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -376,11 +503,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 10,
+      expectedSchemaVersion: 11,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 10,
+      schemaVersion: 11,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -564,7 +691,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(10),
+      schemaVersion: z.literal(11),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -574,26 +701,27 @@ describe('SQLite lifecycle', () => {
       '0007_prescription-review.sql',
       '0008_virtual-patient-intake.sql',
       '0009_consultation-record.sql',
+      '0010_consultation-question-backfill.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 10 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 11 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 10 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 11 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 10 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 11 })
   })
 })

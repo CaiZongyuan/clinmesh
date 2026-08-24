@@ -876,6 +876,72 @@ describe('outpatient workflow HTTP contract', () => {
     })
   })
 
+  it('rejects a Consultation Record after the Encounter is completed', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-consultation-completed-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const repositoryContext = { epoch: 'epoch-1', workspaceId: 'workspace-demo' }
+
+    // The signing workflow's state transition is covered separately; this isolates the ask guard.
+    const encounter = runtime.fhir.read(repositoryContext, 'Encounter', started.encounterId)
+    const completedEncounter = runtime.fhir.update(repositoryContext, {
+      ...encounter,
+      status: 'completed',
+    }, encounter.meta?.versionId ?? '1')
+    const task = runtime.fhir.read(repositoryContext, 'Task', started.queueTaskId)
+    const completedTask = runtime.fhir.update(repositoryContext, {
+      ...task,
+      status: 'completed',
+    }, task.meta?.versionId ?? '1')
+    runtime.database.driver.prepare(`
+      UPDATE outpatient_case SET status = 'awaiting-medication-payment'
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).run(repositoryContext.workspaceId, repositoryContext.epoch, started.caseId)
+
+    const response = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${started.encounterId}`]: completedEncounter.meta?.versionId,
+            [`Task/${started.queueTaskId}`]: completedTask.meta?.versionId,
+          },
+          input: {
+            expectedVersion: 1,
+            questionCode: 'symptom-onset',
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toEqual({
+      error: {
+        code: 'WORKFLOW_CONFLICT',
+        message: 'The Encounter is not available for consultation',
+      },
+    })
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
+      consultation: { records: [], version: 1 },
+    })
+  })
+
   it('reuses an existing registration when the doctor starts its Virtual Patient', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-virtual-patient-registered-http-'))
     temporaryDirectories.push(directory)

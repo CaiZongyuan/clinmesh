@@ -1691,6 +1691,10 @@ export class WorkflowService {
       if (outpatientCase.doctor_task_id === null || outpatientCase.status === 'completed') {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for consultation')
       }
+      const encounter = this.#fhir.read(input.context, 'Encounter', input.encounterId)
+      if (encounter.status !== 'in-progress') {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for consultation')
+      }
       this.#assertExpectedVersions(input.expectedVersions, [
         `Encounter/${input.encounterId}`,
         `Task/${outpatientCase.doctor_task_id}`,
