@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { parseEnv } from 'node:util'
 import { z } from 'zod'
 
 const serverEnvironmentSchema = z.object({
@@ -26,6 +29,38 @@ export interface ServerConfig {
   port: number
   trustedOrigins: string[]
   webRoot?: string
+}
+
+function findEnvironmentFile(startDirectory: string): string | undefined {
+  let directory = resolve(startDirectory)
+  while (true) {
+    const environmentFile = join(directory, '.env')
+    if (existsSync(environmentFile)) return environmentFile
+    if (existsSync(join(directory, 'pnpm-workspace.yaml'))) return undefined
+
+    const parent = dirname(directory)
+    if (parent === directory) return undefined
+    directory = parent
+  }
+}
+
+export function readServerEnvironment(
+  environment: NodeJS.ProcessEnv,
+  startDirectory = process.cwd(),
+): NodeJS.ProcessEnv {
+  const environmentFile = findEnvironmentFile(startDirectory)
+  if (environmentFile === undefined) return environment
+
+  const fromFile: NodeJS.ProcessEnv = parseEnv(readFileSync(environmentFile, 'utf8'))
+  const environmentDirectory = dirname(environmentFile)
+  for (const name of ['CLINMESH_DATABASE_PATH', 'CLINMESH_WEB_ROOT'] as const) {
+    const value = fromFile[name]
+    if (value !== undefined && !isAbsolute(value)) fromFile[name] = resolve(environmentDirectory, value)
+  }
+  for (const [name, value] of Object.entries(environment)) {
+    if (value !== undefined) fromFile[name] = value
+  }
+  return fromFile
 }
 
 export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {

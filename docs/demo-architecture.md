@@ -95,7 +95,7 @@ Server 进程以 `migrationMode=verify` 打开数据库，发现未应用 migrat
 - `backup`：先验证源数据库完整性，再通过 SQLite backup API 创建候选文件；候选的 schema version、integrity 和 canonical state hash 必须与源一致，否则删除候选并失败。
 - `restore`：先验证备份源的 schema、migration、integrity 和 canonical state hash，再复制到临时候选路径并逐项比较；全部一致后才原子创建指定的新目标文件，目标已存在或候选验证失败时不覆盖。
 
-以 `CLINMESH_DATABASE_PATH` 指定当前数据库后，可执行：
+本地开发从仓库根 `.env` 读取 Server 和数据库 CLI 配置，显式 shell 环境变量优先于文件值；`.env` 中的相对数据库路径相对该文件解析。首次复制 `.env.example` 后，`pnpm dev:server` 会先迁移数据库再启动 Server。以 `CLINMESH_DATABASE_PATH` 指定当前数据库后，也可单独执行：
 
 ```sh
 pnpm --filter @clinmesh/server db:migrate

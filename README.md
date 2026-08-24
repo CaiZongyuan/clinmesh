@@ -69,13 +69,11 @@ pnpm dev:web
 Server 开发服务器：
 
 ```sh
-export CLINMESH_AUTH_SECRET='replace-with-an-auth-secret-of-at-least-32-characters'
-export CLINMESH_CURSOR_SECRET='replace-with-a-cursor-secret-of-at-least-32-characters'
-export CLINMESH_DATABASE_PATH='.data/clinmesh.sqlite'
-export CLINMESH_DEMO_PASSWORD='replace-with-a-demo-password'
-pnpm --filter @clinmesh/server db:migrate
+cp .env.example .env
 pnpm dev:server
 ```
+
+首次开发复制一次 `.env.example`；此后 Server 和数据库 CLI 自动读取仓库根 `.env`，显式 shell 环境变量拥有更高优先级。`pnpm dev:server` 会先构建 Web、迁移本地数据库，再启动监听进程。
 
 默认地址：
 

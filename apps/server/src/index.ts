@@ -1,12 +1,12 @@
 import { mkdir } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { readServerConfig } from './config.ts'
+import { readServerConfig, readServerEnvironment } from './config.ts'
 import { createClinMeshRuntime } from './runtime.ts'
 import { startServer } from './server.ts'
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url))
-const config = readServerConfig(process.env)
+const config = readServerConfig(readServerEnvironment(process.env))
 const defaultWebRoot = resolve(moduleDirectory, '../../web/dist')
 const webRoot = resolve(config.webRoot ?? defaultWebRoot)
 const databasePath = resolve(config.databasePath)

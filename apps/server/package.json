@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm --filter @clinmesh/web build && tsx watch src/index.ts",
+    "dev": "pnpm --filter @clinmesh/web build && pnpm db:migrate && tsx watch src/index.ts",
     "build": "vite build",
     "db": "tsx src/database-cli.ts",
     "db:backup": "tsx src/database-cli.ts backup",

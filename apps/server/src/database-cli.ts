@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
+import { readServerEnvironment } from './config.ts'
 import {
   applyMigrations,
   backupDatabase,
@@ -94,7 +95,7 @@ export async function runDatabaseCli(
 
 const entrypoint = process.argv[1]
 if (entrypoint !== undefined && resolve(entrypoint) === fileURLToPath(import.meta.url)) {
-  runDatabaseCli(process.argv.slice(2), process.env)
+  runDatabaseCli(process.argv.slice(2), readServerEnvironment(process.env))
     .then(result => console.info(JSON.stringify(result)))
     .catch((error: unknown) => {
       console.error(error instanceof Error ? error.message : 'Database operation failed')
