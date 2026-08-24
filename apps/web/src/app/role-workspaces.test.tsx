@@ -253,6 +253,12 @@ describe('role workspaces', () => {
             nameZh: '全科医学科',
             version: 1,
           }],
+          locations: [{
+            id: 'location-fever-clinic',
+            nameEn: 'Fever clinic',
+            nameZh: '发热门诊',
+            version: 1,
+          }],
           virtualDate: '2026-08-24',
           visitTypes: [{
             id: 'visit-general',
@@ -287,8 +293,16 @@ describe('role workspaces', () => {
         registered = true
         const body = JSON.parse(String(init?.body)) as {
           expectedVersions: Record<string, string>
+          input: Record<string, unknown>
         }
         expect(body.expectedVersions).toEqual({ 'Patient/patient-1': '1' })
+        expect(body.input).toEqual({
+          departmentId: 'department-general-medicine',
+          locationId: 'location-fever-clinic',
+          patientId: 'patient-1',
+          visitDate: '2026-08-24',
+          visitTypeId: 'visit-general',
+        })
         return Response.json(commandResponse({
           accountId: 'account-1',
           chargeItemId: 'charge-registration-1',
@@ -326,7 +340,7 @@ describe('role workspaces', () => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
       if (url.pathname === '/api/his/v1/catalogs/registration') {
-        return Response.json({ departments: [], virtualDate: '2026-08-24', visitTypes: [] })
+        return Response.json({ departments: [], locations: [], virtualDate: '2026-08-24', visitTypes: [] })
       }
       if (url.pathname === '/api/his/v1/registrations') {
         return Response.json({ items: [], ...pagination(0) })
@@ -348,7 +362,7 @@ describe('role workspaces', () => {
       }, { status: 503 }))
     })
     expect(await screen.findByText('患者检索不可用')).toBeTruthy()
-    expect(screen.getByText('患者目录暂时不可用')).toBeTruthy()
+    expect(screen.getByText('服务暂时无法完成请求，请稍后重试。')).toBeTruthy()
   })
 
   it('distinguishes a registration conflict from a generic operation failure', async () => {
@@ -370,6 +384,12 @@ describe('role workspaces', () => {
             id: 'department-general-medicine',
             nameEn: 'General Medicine',
             nameZh: '全科医学科',
+            version: 1,
+          }],
+          locations: [{
+            id: 'location-fever-clinic',
+            nameEn: 'Fever clinic',
+            nameZh: '发热门诊',
             version: 1,
           }],
           virtualDate: '2026-08-24',
@@ -407,7 +427,7 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: '确认挂号' }))
 
     expect(await screen.findByText('操作冲突')).toBeTruthy()
-    expect(screen.getByText('The patient already has an active outpatient case')).toBeTruthy()
+    expect(screen.getByText('数据已发生变化，请刷新后重新确认。')).toBeTruthy()
   })
 
   it('keeps a long Chinese patient name available through search and selection', async () => {
@@ -416,7 +436,7 @@ describe('role workspaces', () => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
       if (url.pathname === '/api/his/v1/catalogs/registration') {
-        return Response.json({ departments: [], virtualDate: '2026-08-24', visitTypes: [] })
+        return Response.json({ departments: [], locations: [], virtualDate: '2026-08-24', visitTypes: [] })
       }
       if (url.pathname === '/api/his/v1/registrations') {
         return Response.json({ items: [], ...pagination(0) })
@@ -456,6 +476,12 @@ describe('role workspaces', () => {
             id: 'department-general-medicine',
             nameEn: 'General Medicine',
             nameZh: '全科医学科',
+            version: 1,
+          }],
+          locations: [{
+            id: 'location-fever-clinic',
+            nameEn: 'Fever clinic',
+            nameZh: '发热门诊',
             version: 1,
           }],
           virtualDate: '2026-08-24',
@@ -523,11 +549,13 @@ describe('role workspaces', () => {
       departmentId: 'department-general-medicine',
       encounterId: 'encounter-1',
       encounterVersion: triaged ? '2' : '1',
+      locationId: 'location-fever-clinic',
       patient,
       registrationNumber: 'CM-OP-20260824-0001',
       status: triaged ? 'awaiting-doctor' : 'awaiting-triage',
       taskId: 'task-triage-1',
       taskVersion: triaged ? '2' : '1',
+      visitTypeId: 'visit-general',
     }
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
@@ -608,6 +636,8 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
         return Response.json({
           laboratory: [{
+            allowedIndicationCodes: ['fever'],
+            contraindicatedAllergyCodes: [],
             id: 'lab-fever-panel',
             nameEn: 'Fever laboratory panel',
             nameZh: '发热检验组合',
@@ -701,7 +731,11 @@ describe('role workspaces', () => {
           'Encounter/encounter-1': '3',
           'Task/task-doctor-1': '2',
         })
-        expect(body.input).toEqual({ catalogItemId: 'lab-fever-panel', expectedDraftVersion: 1 })
+        expect(body.input).toEqual({
+          catalogItemId: 'lab-fever-panel',
+          expectedDraftVersion: 1,
+          indicationCode: 'fever',
+        })
         status = 'awaiting-lab-payment'
         return Response.json(commandResponse({
           chargeItemId: 'charge-laboratory-1',
@@ -751,6 +785,14 @@ describe('role workspaces', () => {
       descriptionEn: 'Fever laboratory panel',
       descriptionZh: '发热检验组合',
       encounterId: 'encounter-1',
+      lines: [{
+        descriptionEn: 'Fever laboratory panel',
+        descriptionZh: '发热检验组合',
+        quantity: 1,
+        sourceReference: 'ServiceRequest/service-request-1',
+        subtotalFen: 6800,
+        unitPriceFen: 6800,
+      }],
       patient,
       status: paid ? 'paid' : 'billable',
     }
@@ -853,6 +895,14 @@ describe('role workspaces', () => {
             descriptionEn: 'Fever laboratory panel',
             descriptionZh: '发热检验组合',
             encounterId: 'encounter-1',
+            lines: [{
+              descriptionEn: 'Fever laboratory panel',
+              descriptionZh: '发热检验组合',
+              quantity: 1,
+              sourceReference: 'ServiceRequest/service-request-1',
+              subtotalFen: 6800,
+              unitPriceFen: 6800,
+            }],
             patient,
             status: declined ? 'declined' : 'billable',
           }] : [],
@@ -917,6 +967,9 @@ describe('role workspaces', () => {
         return Response.json({
           laboratory: [],
           medications: [{
+            allowedCombinationIds: [],
+            allowedDoseTexts: ['75 mg'],
+            allowedFrequencyCodes: ['BID'],
             defaultDoseText: '75 mg',
             defaultFrequencyCode: 'BID',
             id: 'medication-oseltamivir',
@@ -961,6 +1014,7 @@ describe('role workspaces', () => {
             drafts: {
               document: {
                 assessment: '甲型流感，生命体征稳定。',
+                composition: { id: 'composition-draft-1', resourceType: 'Composition' },
                 medicationRequestIds: ['medication-request-1'],
                 plan: '口服抗病毒药物，对症处理，必要时复诊。',
                 version: 1,
@@ -1107,6 +1161,9 @@ describe('role workspaces', () => {
         return Response.json({
           laboratory: [],
           medications: [{
+            allowedCombinationIds: [],
+            allowedDoseTexts: ['75 mg'],
+            allowedFrequencyCodes: ['BID'],
             defaultDoseText: '75 mg',
             defaultFrequencyCode: 'BID',
             id: 'medication-oseltamivir',
@@ -1144,6 +1201,7 @@ describe('role workspaces', () => {
           drafts: {
             document: {
               assessment: '甲型流感，生命体征稳定。',
+              composition: { id: 'composition-draft-1', resourceType: 'Composition' },
               medicationRequestIds: ['medication-request-1'],
               plan: '口服抗病毒药物，对症处理，必要时复诊。',
               version: 1,
@@ -1211,7 +1269,22 @@ describe('role workspaces', () => {
           expiresAt: '2026-08-24T08:05:00.000Z',
           medicationTotalFen: 7600,
           previewId: 'clinical-sign-preview-1',
-          summary: { diagnosisCode: 'J10.1', medicationCount: 1 },
+          summary: {
+            diagnosis: { code: 'J10.1', display: '甲型流感' },
+            document: {
+              assessment: '甲型流感，生命体征稳定。',
+              plan: '口服抗病毒药物，对症处理，必要时复诊。',
+            },
+            medications: [{
+              medicationId: 'medication-oseltamivir',
+              medicationRequestId: 'medication-request-1',
+              nameEn: 'Oseltamivir capsules',
+              nameZh: '磷酸奥司他韦胶囊',
+              quantity: 10,
+              subtotalFen: 7600,
+              unitPriceFen: 760,
+            }],
+          },
         }))
       }
       if (url.pathname === '/api/his/v1/encounters/encounter-1/actions/sign-and-complete') {
@@ -1244,8 +1317,8 @@ describe('role workspaces', () => {
 
     await user.click(await screen.findByRole('button', { name: '预览签署' }))
     expect(await screen.findByRole('heading', { name: '签署预览' })).toBeTruthy()
-    expect(screen.getByText('J10.1')).toBeTruthy()
-    expect(screen.getByText('¥76.00')).toBeTruthy()
+    expect(screen.getByText('J10.1 · 甲型流感')).toBeTruthy()
+    expect(screen.getAllByText('¥76.00').length).toBeGreaterThan(0)
     await user.click(screen.getByRole('button', { name: '确认签署并完诊' }))
 
     expect(await screen.findByText('Encounter 已完成')).toBeTruthy()
@@ -1255,6 +1328,7 @@ describe('role workspaces', () => {
   it('partially dispenses from a versioned lot before completing the Scenario Run', async () => {
     let dispensedQuantity = 0
     let dispenseCount = 0
+    let reviewed = false
     const patient = {
       birthDate: '1990-05-10',
       gender: 'male',
@@ -1297,7 +1371,7 @@ describe('role workspaces', () => {
       prescriptionNumber: 'CM-RX-20260824-0001',
       prescriptionStatus: 'paid',
       prescriptionVersion: 3,
-      status: 'awaiting-dispense',
+      status: 'awaiting-review',
     }
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
@@ -1320,15 +1394,46 @@ describe('role workspaces', () => {
               remainingQuantity: 10 - dispensedQuantity,
             })),
             prescriptionStatus: completed ? 'dispensed' : 'paid',
-            prescriptionVersion: 3 + dispenseCount,
+            prescriptionVersion: 3 + Number(reviewed) + dispenseCount,
+            ...(reviewed ? {
+              review: {
+                note: '已核对诊断、剂量与用药禁忌。',
+                reviewId: 'prescription-review-1',
+                reviewedAt: '2026-08-24T10:00:00+08:00',
+                reviewedBy: 'actor-pharmacist',
+              },
+            } : {}),
             status: completed
               ? 'completed'
               : dispensedQuantity > 0
                 ? 'partially-dispensed'
-                : 'awaiting-dispense',
+                : reviewed ? 'awaiting-dispense' : 'awaiting-review',
           }] : [],
           ...pagination(hasItem ? 1 : 0),
         })
+      }
+      if (url.pathname === '/api/his/v1/prescriptions/prescription-1/actions/review') {
+        const body = JSON.parse(String(init?.body)) as {
+          expectedVersions: Record<string, string>
+          input: Record<string, unknown>
+        }
+        expect(body).toEqual({
+          expectedVersions: {
+            'Encounter/encounter-1': '7',
+            'MedicationRequest/medication-request-1': '2',
+          },
+          input: {
+            expectedPrescriptionVersion: 3,
+            note: '已核对诊断、剂量与用药禁忌。',
+          },
+        })
+        reviewed = true
+        return Response.json(commandResponse({
+          prescriptionId: 'prescription-1',
+          prescriptionVersion: 4,
+          reviewId: 'prescription-review-1',
+          status: 'awaiting-dispense',
+        }))
       }
       if (url.pathname === '/api/his/v1/prescriptions/prescription-1/actions/dispense') {
         const body = JSON.parse(String(init?.body)) as {
@@ -1344,7 +1449,7 @@ describe('role workspaces', () => {
             'MedicationRequest/medication-request-1': '2',
           },
           input: {
-            expectedPrescriptionVersion: 3 + dispenseCount,
+            expectedPrescriptionVersion: 4 + dispenseCount,
             lotSelections: [{
               expectedVersion: 1 + dispenseCount,
               lotId: 'lot-oseltamivir-001',
@@ -1358,7 +1463,7 @@ describe('role workspaces', () => {
         return Response.json(commandResponse({
           medicationDispenseId: `medication-dispense-${dispenseCount}`,
           prescriptionId: 'prescription-1',
-          prescriptionVersion: 3 + dispenseCount,
+          prescriptionVersion: 4 + dispenseCount,
           scenarioStatus: completed ? 'completed' : 'active',
           status: completed ? 'completed' : 'partial',
         }))
@@ -1372,6 +1477,14 @@ describe('role workspaces', () => {
     expect(screen.getByText('磷酸奥司他韦胶囊')).toBeTruthy()
     expect(screen.getByText('SYN-OS-001')).toBeTruthy()
     expect(screen.getByText('Encounter 已完成')).toBeTruthy()
+    expect(screen.getByText('待审核')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '确认发药' })).toBeNull()
+    await user.type(screen.getByLabelText('审核意见'), '已核对诊断、剂量与用药禁忌。')
+    await user.click(screen.getByRole('button', { name: '审核通过' }))
+
+    expect(await screen.findByText('处方审核通过')).toBeTruthy()
+    expect(await screen.findByText('待发')).toBeTruthy()
+    expect(screen.getByText('已核对诊断、剂量与用药禁忌。')).toBeTruthy()
     const firstQuantity = screen.getByRole('spinbutton', {
       name: '本次发放数量 · 磷酸奥司他韦胶囊',
     })

@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { runDatabaseCli } from '../src/database-cli.ts'
 import {
   applyMigrations,
@@ -36,7 +37,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 7,
+      schemaVersion: 8,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -47,14 +48,15 @@ describe('SQLite lifecycle', () => {
         '0004_clinical-signing.sql',
         '0005_partial-dispensing.sql',
         '0006_queue-pagination.sql',
+        '0007_prescription-review.sql',
       ],
-      schemaVersion: 7,
+      schemaVersion: 8,
     })
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 7 })
-    expect(reopened.diagnostics().schemaVersion).toBe(7)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 8 })
+    expect(reopened.diagnostics().schemaVersion).toBe(8)
     reopened.close()
   })
 
@@ -79,7 +81,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(7)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(8)
     await runtime.close()
   })
 
@@ -98,6 +100,45 @@ describe('SQLite lifecycle', () => {
       scenarioRunId: 'run-001',
       workspaceName: '合成备份工作区',
     })
+    const hashBeforeDomainFacts = canonicalStateHash(database)
+    database.driver.prepare(`
+      INSERT INTO scenario_definition (
+        scenario_id, version, kind, schema_version, clinical_review_json
+      ) VALUES (?, ?, ?, ?, ?)
+    `).run('backup-contract', '1.0.0', 'candidate', '1', null)
+    database.driver.prepare(`
+      INSERT INTO scenario_epoch_state (
+        workspace_id, epoch, scenario_run_id, scenario_id,
+        deterministic_seed, virtual_time, initial_state_hash
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'run-001',
+      'backup-contract',
+      20260824,
+      '2026-08-24T09:00:00+08:00',
+      'synthetic-initial-state',
+    )
+    database.driver.prepare(`
+      INSERT INTO outpatient_catalog (
+        workspace_id, epoch, item_id, kind, code, name_zh, name_en,
+        price_fen, version, active, config_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'synthetic-service',
+      'laboratory',
+      'SYN-LAB',
+      '合成检验服务',
+      'Synthetic laboratory service',
+      2500,
+      1,
+      1,
+      '{}',
+    )
+    expect(canonicalStateHash(database)).not.toBe(hashBeforeDomainFacts)
     const repository = new FhirRepository(database, {
       now: () => new Date('2026-08-24T01:00:00.000Z'),
     })
@@ -110,7 +151,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 7,
+      schemaVersion: 8,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -122,11 +163,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 7,
+      expectedSchemaVersion: 8,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 7,
+      schemaVersion: 8,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -169,7 +210,7 @@ describe('SQLite lifecycle', () => {
       backupPath: corruptPath,
       busyTimeoutMs: 5_000,
       destinationPath,
-      expectedSchemaVersion: 7,
+      expectedSchemaVersion: 8,
     })).rejects.toThrow()
     expect(existsSync(destinationPath)).toBe(false)
     expect(repository.read(context, 'Patient', 'patient-active')).toMatchObject({
@@ -286,30 +327,56 @@ describe('SQLite lifecycle', () => {
     const databasePath = join(directory, 'active.sqlite')
     const backupPath = join(directory, 'backup.sqlite')
     const restoredPath = join(directory, 'restored.sqlite')
+    const legacyMigrationDirectory = join(directory, 'legacy-migrations')
+    await mkdir(legacyMigrationDirectory)
+    for (const migration of [
+      '0000_foundation.sql',
+      '0001_identity.sql',
+      '0002_scenario.sql',
+      '0003_outpatient-workflow.sql',
+      '0004_clinical-signing.sql',
+      '0005_partial-dispensing.sql',
+      '0006_queue-pagination.sql',
+    ]) {
+      await copyFile(join(process.cwd(), 'drizzle', migration), join(legacyMigrationDirectory, migration))
+    }
+    const legacyDatabase = openClinMeshDatabase({ busyTimeoutMs: 5_000, databasePath })
+    applyMigrations(legacyDatabase, legacyMigrationDirectory)
+    legacyDatabase.close()
 
-    await expect(runDatabaseCli([
+    const migrationResult = z.object({
+      applied: z.array(z.string()),
+      preMigrationBackup: z.object({
+        canonicalStateHash: z.string().regex(/^[a-f0-9]{64}$/),
+        path: z.string().min(1),
+        schemaVersion: z.literal(7),
+      }),
+      schemaVersion: z.literal(8),
+    }).parse(await runDatabaseCli([
       'migrate',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ schemaVersion: 7 })
+    ], {}))
+    expect(migrationResult.applied).toEqual(['0007_prescription-review.sql'])
+    expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 7 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 8 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 7 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 8 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 7 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 8 })
   })
 })

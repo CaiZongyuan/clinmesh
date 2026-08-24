@@ -46,7 +46,7 @@ import {
 import { getWorkspaceMessages } from './workspace-i18n.ts'
 import { RoleWorkspace } from './role-workspaces.tsx'
 import { roleSections } from './workspace-shell.tsx'
-import { getWorkspaceErrorTitle } from './workspace-error.ts'
+import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 
 const DARK_MODE_QUERY = '(prefers-color-scheme: dark)'
 
@@ -139,7 +139,7 @@ function WorkspacePage({ activeSection }: { activeSection: WorkspaceSection }): 
         <Alert variant="destructive">
           <CircleAlertIcon aria-hidden="true" />
           <AlertTitle>{getWorkspaceErrorTitle(session.error, messages, messages.serviceError)}</AlertTitle>
-          <AlertDescription>{session.error.message}</AlertDescription>
+          <AlertDescription>{getWorkspaceErrorMessage(session.error, messages)}</AlertDescription>
         </Alert>
       </main>
     )
@@ -167,14 +167,14 @@ function WorkspacePage({ activeSection }: { activeSection: WorkspaceSection }): 
         <Alert variant="destructive">
           <CircleAlertIcon aria-hidden="true" />
           <AlertTitle>{getWorkspaceErrorTitle(roleChange.error, messages, messages.operationFailed)}</AlertTitle>
-          <AlertDescription>{roleChange.error.message}</AlertDescription>
+          <AlertDescription>{getWorkspaceErrorMessage(roleChange.error, messages)}</AlertDescription>
         </Alert>
       ) : null}
       {signOutRequest.isError ? (
         <Alert variant="destructive">
           <CircleAlertIcon aria-hidden="true" />
           <AlertTitle>{getWorkspaceErrorTitle(signOutRequest.error, messages, messages.operationFailed)}</AlertTitle>
-          <AlertDescription>{signOutRequest.error.message}</AlertDescription>
+          <AlertDescription>{getWorkspaceErrorMessage(signOutRequest.error, messages)}</AlertDescription>
         </Alert>
       ) : null}
       <RoleWorkspace
@@ -243,7 +243,7 @@ function SignInScreen({ locale }: { locale: 'en-US' | 'zh-CN' }): React.JSX.Elem
                 <Alert variant="destructive">
                   <CircleAlertIcon aria-hidden="true" />
                   <AlertTitle>{messages.authenticationError}</AlertTitle>
-                  <AlertDescription>{mutation.error.message}</AlertDescription>
+                  <AlertDescription>{getWorkspaceErrorMessage(mutation.error, messages)}</AlertDescription>
                 </Alert>
               ) : null}
             </FieldGroup>

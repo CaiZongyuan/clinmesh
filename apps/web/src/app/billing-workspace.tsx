@@ -13,13 +13,14 @@ import {
   SelectValue,
 } from '@clinmesh/ui/components/select'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircleIcon, CircleAlertIcon, CreditCardIcon, ReceiptTextIcon } from 'lucide-react'
 import { useState } from 'react'
 import { confirmPayment, getBillingQueue, newIdempotencyKey, previewPayment } from './api-client.ts'
 import { PaginationControls } from './pagination-controls.tsx'
-import { getWorkspaceErrorTitle } from './workspace-error.ts'
+import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { formatFen } from './workspace-format.ts'
 
@@ -118,7 +119,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
           </TabsList>
         </Tabs>
         {queue.isPending ? <Skeleton className="h-44 w-full" /> : queue.isError ? (
-          <PaymentError message={queue.error.message} title={getWorkspaceErrorTitle(queue.error, messages, messages.paymentUnavailable)} />
+          <PaymentError message={getWorkspaceErrorMessage(queue.error, messages)} title={getWorkspaceErrorTitle(queue.error, messages, messages.paymentUnavailable)} />
         ) : queue.data.items.length === 0 ? (
           <Empty className="min-h-44 border">
             <EmptyHeader>
@@ -157,7 +158,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       <section aria-labelledby="payment-details-heading" className="flex min-w-0 flex-col gap-5">
         <h2 className="text-base font-semibold" id="payment-details-heading">{messages.paymentDetails}</h2>
         {confirm.isSuccess ? <PaymentOutcome outcome={confirm.data.data.outcome} messages={messages} /> : null}
-        {confirm.isError ? <PaymentError message={confirm.error.message} title={getWorkspaceErrorTitle(confirm.error, messages, messages.operationFailed)} /> : null}
+        {confirm.isError ? <PaymentError message={getWorkspaceErrorMessage(confirm.error, messages)} title={getWorkspaceErrorTitle(confirm.error, messages, messages.operationFailed)} /> : null}
         {selectedCharge === undefined ? (
           <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><CreditCardIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noBillingItems}</EmptyTitle></EmptyHeader></Empty>
         ) : (
@@ -166,6 +167,17 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
               <div><div className="text-lg font-semibold">{selectedCharge.patient.name}</div><div className="text-sm text-muted-foreground">{locale === 'zh-CN' ? selectedCharge.descriptionZh : selectedCharge.descriptionEn}</div></div>
               <div className="text-right"><div className="text-xs text-muted-foreground">{messages.amount}</div><div className="text-lg font-semibold">{formatFen(selectedCharge.amountFen, locale)}</div></div>
             </div>
+            <Table>
+              <TableHeader><TableRow><TableHead>{messages.chargeItem}</TableHead><TableHead>{messages.quantity}</TableHead><TableHead>{messages.unitPrice}</TableHead><TableHead>{messages.subtotal}</TableHead></TableRow></TableHeader>
+              <TableBody>{selectedCharge.lines.map(line => (
+                <TableRow key={line.sourceReference}>
+                  <TableCell className="font-medium">{locale === 'zh-CN' ? line.descriptionZh : line.descriptionEn}</TableCell>
+                  <TableCell>{line.quantity}</TableCell>
+                  <TableCell>{formatFen(line.unitPriceFen, locale)}</TableCell>
+                  <TableCell>{formatFen(line.subtotalFen, locale)}</TableCell>
+                </TableRow>
+              ))}</TableBody>
+            </Table>
             {status === 'pending' || status === 'declined' ? (
               <FieldGroup>
                 <Field>
@@ -186,7 +198,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
                   </Select>
                 </Field>
                 <div className="flex justify-end"><Button disabled={preview.isPending} onClick={() => preview.mutate()} type="button"><CreditCardIcon data-icon="inline-start" />{messages.previewPayment}</Button></div>
-                {preview.isError ? <PaymentError message={preview.error.message} title={getWorkspaceErrorTitle(preview.error, messages, messages.operationFailed)} /> : null}
+                {preview.isError ? <PaymentError message={getWorkspaceErrorMessage(preview.error, messages)} title={getWorkspaceErrorTitle(preview.error, messages, messages.operationFailed)} /> : null}
               </FieldGroup>
             ) : null}
             {preview.data === undefined ? null : (

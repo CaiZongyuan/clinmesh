@@ -35,7 +35,7 @@ import {
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { allergyWarningLabel } from './allergy-warning.ts'
 import { PaginationControls } from './pagination-controls.tsx'
-import { getWorkspaceErrorTitle } from './workspace-error.ts'
+import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
 
 interface DoctorWorkspaceProps {
@@ -58,6 +58,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
   })
   const [selectedCaseId, setSelectedCaseId] = useState<string>()
   const [laboratoryItemId, setLaboratoryItemId] = useState('')
+  const [indicationCode, setIndicationCode] = useState('')
   const selectedCase = queue.data?.items.find(item => item.caseId === selectedCaseId)
     ?? queue.data?.items[0]
   const detailKey = [
@@ -150,8 +151,14 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
         throw new Error(messages.consultationUnavailable)
       }
       const catalogItemId = laboratoryItemId || catalog.data.laboratory[0]?.id
+      const catalogItem = catalog.data.laboratory.find(item => item.id === catalogItemId)
       const expectedDraftVersion = detail.data.drafts?.firstVisit?.version
-      if (catalogItemId === undefined || expectedDraftVersion === undefined) {
+      const resolvedIndicationCode = indicationCode || catalogItem?.allowedIndicationCodes[0]
+      if (
+        catalogItemId === undefined
+        || expectedDraftVersion === undefined
+        || resolvedIndicationCode === undefined
+      ) {
         throw new Error(messages.consultationUnavailable)
       }
       return issueLaboratoryOrder({
@@ -159,6 +166,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
         encounterId: detail.data.encounter.id,
         encounterVersion: detail.data.encounter.versionId,
         expectedDraftVersion,
+        indicationCode: resolvedIndicationCode,
         taskId: detail.data.taskId,
         taskVersion: detail.data.taskVersion,
       }, newIdempotencyKey())
@@ -218,6 +226,10 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
     onSuccess: refreshCase,
   })
   const resolvedLaboratoryItemId = laboratoryItemId || catalog.data?.laboratory[0]?.id || ''
+  const resolvedLaboratoryItem = catalog.data?.laboratory.find(
+    item => item.id === resolvedLaboratoryItemId,
+  )
+  const resolvedIndicationCode = indicationCode || resolvedLaboratoryItem?.allowedIndicationCodes[0] || ''
 
   return (
     <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(18rem,0.72fr)_minmax(30rem,1.28fr)]">
@@ -227,7 +239,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
           <Badge variant="secondary">{queue.data?.total ?? 0}</Badge>
         </div>
         {queue.isPending ? <Skeleton className="h-44 w-full" /> : queue.isError ? (
-          <ErrorAlert message={queue.error.message} title={getWorkspaceErrorTitle(queue.error, messages, messages.consultationUnavailable)} />
+          <ErrorAlert message={getWorkspaceErrorMessage(queue.error, messages)} title={getWorkspaceErrorTitle(queue.error, messages, messages.consultationUnavailable)} />
         ) : queue.data.items.length === 0 ? (
           <Empty className="min-h-44 border">
             <EmptyHeader>
@@ -280,17 +292,22 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
           </Alert>
         ) : null}
         {detail.isPending && selectedCase !== undefined ? <Skeleton className="h-64 w-full" /> : detail.isError ? (
-          <ErrorAlert message={detail.error.message} title={getWorkspaceErrorTitle(detail.error, messages, messages.consultationUnavailable)} />
+          <ErrorAlert message={getWorkspaceErrorMessage(detail.error, messages)} title={getWorkspaceErrorTitle(detail.error, messages, messages.consultationUnavailable)} />
         ) : detail.data === undefined ? (
           <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
         ) : (
           <CaseDetail
             catalog={catalog}
             detail={detail.data}
+            indicationCode={resolvedIndicationCode}
             laboratoryItemId={resolvedLaboratoryItemId}
             locale={locale}
             messages={messages}
-            onLaboratoryItemChange={setLaboratoryItemId}
+            onIndicationChange={setIndicationCode}
+            onLaboratoryItemChange={(value) => {
+              setLaboratoryItemId(value)
+              setIndicationCode('')
+            }}
             onIssueOrder={() => issueOrder.mutate()}
             onPreviewSign={() => previewSign.mutate()}
             onSaveDraft={input => saveDraft.mutate(input)}
@@ -326,12 +343,14 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
 function CaseDetail({
   catalog,
   detail,
+  indicationCode,
   issueOrderError,
   issueOrderPending,
   laboratoryItemId,
   locale,
   messages,
   onIssueOrder,
+  onIndicationChange,
   onPreviewSign,
   onLaboratoryItemChange,
   onSaveDraft,
@@ -358,12 +377,14 @@ function CaseDetail({
 }: {
   catalog: ReturnType<typeof useQuery<Awaited<ReturnType<typeof getClinicalCatalog>>>>
   detail: DoctorCaseDetail
+  indicationCode: string
   issueOrderError: Error | null
   issueOrderPending: boolean
   laboratoryItemId: string
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   onIssueOrder: () => void
+  onIndicationChange: (value: string) => void
   onPreviewSign: () => void
   onLaboratoryItemChange: (value: string) => void
   onSaveDraft: (input: { assessment: string; historyOfPresentIllness: string }) => void
@@ -389,10 +410,7 @@ function CaseDetail({
   signCompleted: boolean
   signError: Error | null
   signPending: boolean
-  signPreview: {
-    medicationTotalFen: number
-    summary: { diagnosisCode: string; medicationCount: number }
-  } | undefined
+  signPreview: Awaited<ReturnType<typeof previewClinicalSign>>['data'] | undefined
   signPreviewError: Error | null
   signPreviewPending: boolean
   startError: Error | null
@@ -418,6 +436,18 @@ function CaseDetail({
           <div><dt className="text-muted-foreground">{messages.acuity}</dt><dd className="font-medium">{detail.triage.acuityCode}</dd></div>
         </dl>
       </section>
+      <section aria-labelledby="prior-facts-heading" className="flex flex-col gap-2 border-b pb-4">
+        <h3 className="text-sm font-semibold" id="prior-facts-heading">{messages.priorFacts}</h3>
+        {detail.priorFacts.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{messages.noPriorFacts}</p>
+        ) : (
+          <ul className="flex list-disc flex-col gap-1 pl-5 text-sm">
+            {detail.priorFacts.map(fact => (
+              <li key={fact.id}>{fact.display || fact.code}{fact.recordedDate === undefined ? '' : ` · ${fact.recordedDate}`}</li>
+            ))}
+          </ul>
+        )}
+      </section>
       <section aria-labelledby="allergy-summary-heading" className="flex flex-col gap-2 border-b pb-4">
         <h3 className="text-sm font-semibold" id="allergy-summary-heading">{messages.allergySummary}</h3>
         {detail.allergies.length === 0 ? (
@@ -442,7 +472,7 @@ function CaseDetail({
       {detail.status === 'awaiting-doctor' ? (
         <div className="flex flex-col items-start gap-3">
           <Button disabled={startPending} onClick={onStart} type="button"><StethoscopeIcon data-icon="inline-start" />{messages.startFirstVisit}</Button>
-          {startError === null ? null : <ErrorAlert message={startError.message} title={getWorkspaceErrorTitle(startError, messages, messages.operationFailed)} />}
+          {startError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(startError, messages)} title={getWorkspaceErrorTitle(startError, messages, messages.operationFailed)} />}
         </div>
       ) : detail.status === 'first-visit' ? (
         <div className="flex flex-col gap-6">
@@ -464,13 +494,13 @@ function CaseDetail({
                 <Field><FieldLabel htmlFor="first-visit-assessment">{messages.firstVisitAssessment}</FieldLabel><Textarea defaultValue={firstVisitDraft?.assessment} id="first-visit-assessment" name="assessment" required /></Field>
                 <div className="flex justify-end"><Button disabled={saveDraftPending} type="submit"><ClipboardPenIcon data-icon="inline-start" />{messages.saveFirstVisitDraft}</Button></div>
                 {saveDraftSuccess ? <Alert><CheckIcon aria-hidden="true" /><AlertTitle>{messages.draftSaved}</AlertTitle></Alert> : null}
-                {saveDraftError === null ? null : <ErrorAlert message={saveDraftError.message} title={getWorkspaceErrorTitle(saveDraftError, messages, messages.operationFailed)} />}
+                {saveDraftError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(saveDraftError, messages)} title={getWorkspaceErrorTitle(saveDraftError, messages, messages.operationFailed)} />}
               </FieldGroup>
             </form>
           </section>
           <section aria-labelledby="laboratory-order-heading" className="flex flex-col gap-3 border-t pt-5">
             <h3 className="text-sm font-semibold" id="laboratory-order-heading">{messages.laboratoryOrder}</h3>
-            {catalog.isPending ? <Skeleton className="h-20 w-full" /> : catalog.isError ? <ErrorAlert message={catalog.error.message} title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)} /> : (
+            {catalog.isPending ? <Skeleton className="h-20 w-full" /> : catalog.isError ? <ErrorAlert message={getWorkspaceErrorMessage(catalog.error, messages)} title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)} /> : (
               <FieldGroup>
                 <Field>
                   <FieldLabel htmlFor="laboratory-item">{messages.laboratoryItem}</FieldLabel>
@@ -481,8 +511,17 @@ function CaseDetail({
                     ))}</SelectGroup></SelectContent>
                   </Select>
                 </Field>
+                <Field>
+                  <FieldLabel htmlFor="laboratory-indication">{messages.laboratoryIndication}</FieldLabel>
+                  <Select onValueChange={value => onIndicationChange(value ?? '')} value={indicationCode}>
+                    <SelectTrigger className="w-full" id="laboratory-indication"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectGroup>{catalog.data.laboratory.find(item => item.id === laboratoryItemId)?.allowedIndicationCodes.map(code => (
+                      <SelectItem key={code} value={code}>{indicationLabel(code, messages)}</SelectItem>
+                    ))}</SelectGroup></SelectContent>
+                  </Select>
+                </Field>
                 <div className="flex justify-end"><Button disabled={firstVisitDraft === undefined || issueOrderPending} onClick={onIssueOrder} type="button"><FlaskConicalIcon data-icon="inline-start" />{messages.issueLaboratoryOrder}</Button></div>
-                {issueOrderError === null ? null : <ErrorAlert message={issueOrderError.message} title={getWorkspaceErrorTitle(issueOrderError, messages, messages.operationFailed)} />}
+                {issueOrderError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(issueOrderError, messages)} title={getWorkspaceErrorTitle(issueOrderError, messages, messages.operationFailed)} />}
               </FieldGroup>
             )}
           </section>
@@ -498,11 +537,11 @@ function CaseDetail({
           <Button disabled={startRevisitPending} onClick={onStartRevisit} type="button">
             <StethoscopeIcon data-icon="inline-start" />{messages.startRevisit}
           </Button>
-          {startRevisitError === null ? null : <ErrorAlert message={startRevisitError.message} title={getWorkspaceErrorTitle(startRevisitError, messages, messages.operationFailed)} />}
+          {startRevisitError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(startRevisitError, messages)} title={getWorkspaceErrorTitle(startRevisitError, messages, messages.operationFailed)} />}
         </div>
       ) : detail.status === 'revisit-draft' ? (
         catalog.isPending ? <Skeleton className="h-72 w-full" /> : catalog.isError ? (
-          <ErrorAlert message={catalog.error.message} title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)} />
+          <ErrorAlert message={getWorkspaceErrorMessage(catalog.error, messages)} title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)} />
         ) : (
           <div className="flex flex-col gap-3">
             {saveRevisitSuccess ? (
@@ -526,7 +565,7 @@ function CaseDetail({
               onSave={onSaveRevisit}
               pending={saveRevisitPending}
             />
-            {saveRevisitError === null ? null : <ErrorAlert message={saveRevisitError.message} title={getWorkspaceErrorTitle(saveRevisitError, messages, messages.operationFailed)} />}
+            {saveRevisitError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(saveRevisitError, messages)} title={getWorkspaceErrorTitle(saveRevisitError, messages, messages.operationFailed)} />}
             {signCompleted ? null : (
               <section aria-labelledby="clinical-sign-heading" className="flex flex-col gap-3 border-t pt-5">
                 <div className="flex justify-end">
@@ -534,15 +573,26 @@ function CaseDetail({
                     <FileSignatureIcon data-icon="inline-start" />{messages.previewClinicalSign}
                   </Button>
                 </div>
-                {signPreviewError === null ? null : <ErrorAlert message={signPreviewError.message} title={getWorkspaceErrorTitle(signPreviewError, messages, messages.operationFailed)} />}
+                {signPreviewError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(signPreviewError, messages)} title={getWorkspaceErrorTitle(signPreviewError, messages, messages.operationFailed)} />}
                 {signPreview === undefined ? null : (
                   <div className="flex flex-col gap-3">
                     <h3 className="text-sm font-semibold" id="clinical-sign-heading">{messages.clinicalSignPreview}</h3>
-                    <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
-                      <div><dt className="text-muted-foreground">{messages.diagnosis}</dt><dd className="font-medium">{signPreview.summary.diagnosisCode}</dd></div>
-                      <div><dt className="text-muted-foreground">{messages.medicationCount}</dt><dd className="font-medium">{signPreview.summary.medicationCount}</dd></div>
+                    <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                      <div><dt className="text-muted-foreground">{messages.diagnosis}</dt><dd className="font-medium">{signPreview.summary.diagnosis.code} · {signPreview.summary.diagnosis.display}</dd></div>
+                      <div><dt className="text-muted-foreground">{messages.documentSummary}</dt><dd className="font-medium">{signPreview.summary.document.assessment}</dd><dd className="text-muted-foreground">{signPreview.summary.document.plan}</dd></div>
                       <div><dt className="text-muted-foreground">{messages.amount}</dt><dd className="font-medium">{formatFen(signPreview.medicationTotalFen, locale)}</dd></div>
                     </dl>
+                    <Table>
+                      <TableHeader><TableRow><TableHead>{messages.medication}</TableHead><TableHead>{messages.quantity}</TableHead><TableHead>{messages.unitPrice}</TableHead><TableHead>{messages.subtotal}</TableHead></TableRow></TableHeader>
+                      <TableBody>{signPreview.summary.medications.map(medication => (
+                        <TableRow key={medication.medicationRequestId}>
+                          <TableCell className="font-medium">{locale === 'zh-CN' ? medication.nameZh : medication.nameEn}</TableCell>
+                          <TableCell>{medication.quantity}</TableCell>
+                          <TableCell>{formatFen(medication.unitPriceFen, locale)}</TableCell>
+                          <TableCell>{formatFen(medication.subtotalFen, locale)}</TableCell>
+                        </TableRow>
+                      ))}</TableBody>
+                    </Table>
                     <div className="flex justify-end">
                       <Button disabled={signPending} onClick={onSign} type="button">
                         <CheckCircleIcon data-icon="inline-start" />{messages.confirmClinicalSign}
@@ -550,7 +600,7 @@ function CaseDetail({
                     </div>
                   </div>
                 )}
-                {signError === null ? null : <ErrorAlert message={signError.message} title={getWorkspaceErrorTitle(signError, messages, messages.operationFailed)} />}
+                {signError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(signError, messages)} title={getWorkspaceErrorTitle(signError, messages, messages.operationFailed)} />}
               </section>
             )}
           </div>
@@ -698,6 +748,7 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
         </div>
         {medications.map((line, index) => {
           const suffix = index === 0 ? '' : ` ${index + 1}`
+          const selectedMedication = catalog.medications.find(item => item.id === line.catalogItemId)
           return (
             <div className="grid grid-cols-1 gap-3 border-b pb-4 lg:grid-cols-[minmax(12rem,1.5fr)_minmax(7rem,0.8fr)_minmax(7rem,0.8fr)_6rem_auto]" key={line.key}>
               <Field>
@@ -720,8 +771,20 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
                   ))}</SelectGroup></SelectContent>
                 </Select>
               </Field>
-              <Field><FieldLabel htmlFor={`dose-${index}`}>{messages.dose}{suffix}</FieldLabel><Input id={`dose-${index}`} onChange={event => updateMedication(index, { doseText: event.currentTarget.value })} required value={line.doseText} /></Field>
-              <Field><FieldLabel htmlFor={`frequency-${index}`}>{messages.frequency}{suffix}</FieldLabel><Input id={`frequency-${index}`} onChange={event => updateMedication(index, { frequencyCode: event.currentTarget.value })} required value={line.frequencyCode} /></Field>
+              <Field>
+                <FieldLabel htmlFor={`dose-${index}`}>{messages.dose}{suffix}</FieldLabel>
+                <Select onValueChange={value => updateMedication(index, { doseText: value ?? '' })} value={line.doseText}>
+                  <SelectTrigger className="w-full" id={`dose-${index}`}><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectGroup>{selectedMedication?.allowedDoseTexts.map(value => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectGroup></SelectContent>
+                </Select>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor={`frequency-${index}`}>{messages.frequency}{suffix}</FieldLabel>
+                <Select onValueChange={value => updateMedication(index, { frequencyCode: value ?? '' })} value={line.frequencyCode}>
+                  <SelectTrigger className="w-full" id={`frequency-${index}`}><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectGroup>{selectedMedication?.allowedFrequencyCodes.map(value => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectGroup></SelectContent>
+                </Select>
+              </Field>
               <Field><FieldLabel htmlFor={`quantity-${index}`}>{messages.quantity}{suffix}</FieldLabel><Input id={`quantity-${index}`} min="1" onChange={event => updateMedication(index, { quantity: event.currentTarget.value })} required type="number" value={line.quantity} /></Field>
               <div className="flex items-end">
                 <Button aria-label={`${messages.removeMedication}${suffix}`} disabled={medications.length === 1} onClick={() => setMedications(current => current.filter((_, itemIndex) => itemIndex !== index))} size="icon" title={`${messages.removeMedication}${suffix}`} type="button" variant="ghost"><Trash2Icon /></Button>
@@ -741,6 +804,10 @@ function laboratoryResultName(code: string, messages: ReturnType<typeof getWorks
   if (code === '80382-5') return messages.resultCode_803825
   if (code === '6690-2') return messages.resultCode_66902
   return code
+}
+
+function indicationLabel(code: string, messages: ReturnType<typeof getWorkspaceMessages>): string {
+  return code === 'fever' ? messages.indication_fever : code
 }
 
 function laboratoryResultValue(

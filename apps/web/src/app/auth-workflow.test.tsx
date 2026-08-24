@@ -205,7 +205,7 @@ describe('trusted Web session workflow', () => {
     await user.click(await screen.findByRole('menuitemradio', { name: '挂号员' }))
 
     expect(await screen.findByText('当前岗位无权执行此操作')).toBeTruthy()
-    expect(screen.getByText('The selected Practitioner Role is no longer available')).toBeTruthy()
+    expect(screen.getByText('请切换到有权限的岗位后重试。')).toBeTruthy()
     expect(screen.getByRole('heading', { name: '工作台总览' })).toBeTruthy()
   })
 

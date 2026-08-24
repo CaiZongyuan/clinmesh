@@ -7,6 +7,7 @@ import {
 } from '@clinmesh/contracts/fhir'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createApp } from '../src/app.ts'
+import { IdentityError } from '../src/application/identity-service.ts'
 import {
   applyMigrations,
   openClinMeshDatabase,
@@ -62,6 +63,12 @@ describe('FHIR R5 HTTP contract', () => {
       identifier: [{ system: 'https://example.test/mrn', value: 'A-002' }],
       name: [{ text: '合成患者乙' }],
     })
+    repository.create(workspaceA, {
+      resourceType: 'Condition',
+      id: 'condition-a1',
+      code: { text: '合成既往事实' },
+      subject: { reference: 'Patient/patient-a1' },
+    })
     repository.create(workspaceB, {
       resourceType: 'Patient',
       id: 'patient-b1',
@@ -92,12 +99,63 @@ describe('FHIR R5 HTTP contract', () => {
     expect(unknownResponse.status).toBe(400)
     expect(operationOutcomeSchema.parse(await unknownResponse.json()).issue[0]?.code).toBe('not-supported')
 
+    const conditionResponse = await appA.request(
+      '/fhir/R5/Condition?patient=Patient%2Fpatient-a1&_total=accurate',
+    )
+    expect(conditionResponse.status).toBe(200)
+    const conditionBundle = fhirBundleSchema.parse(await conditionResponse.json())
+    expect(conditionBundle.total).toBe(1)
+    expect(conditionBundle.entry?.[0]?.resource.id).toBe('condition-a1')
+
     const appB = createApp({
       fhir: { repository, resolveContext: () => workspaceB },
     })
     const replayResponse = await appB.request(nextLink ?? '')
     expect(replayResponse.status).toBe(400)
     expect(operationOutcomeSchema.parse(await replayResponse.json()).issue[0]?.code).toBe('invalid')
+    database.close()
+  })
+
+  it('returns FHIR OperationOutcome for authentication and unsupported method failures', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-fhir-errors-'))
+    temporaryDirectories.push(directory)
+    const database = openClinMeshDatabase({
+      busyTimeoutMs: 5_000,
+      databasePath: join(directory, 'clinmesh.sqlite'),
+    })
+    applyMigrations(database)
+    const repository = new FhirRepository(database, {
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+    })
+    const authenticatedApp = createApp({
+      fhir: {
+        repository,
+        resolveContext: () => ({ epoch: 'epoch-1', workspaceId: 'workspace-demo' }),
+      },
+    })
+    const unauthenticatedApp = createApp({
+      fhir: {
+        repository,
+        resolveContext: () => {
+          throw new IdentityError('AUTHENTICATION_REQUIRED', 'A valid session is required')
+        },
+      },
+    })
+
+    const authenticationResponse = await unauthenticatedApp.request('/fhir/R5/Patient')
+    expect(authenticationResponse.status).toBe(401)
+    expect(authenticationResponse.headers.get('content-type')).toContain('application/fhir+json')
+    expect(operationOutcomeSchema.parse(await authenticationResponse.json()).issue[0]).toMatchObject({
+      code: 'login',
+      diagnostics: 'A valid session is required',
+    })
+
+    for (const method of ['DELETE', 'PATCH', 'POST'] as const) {
+      const response = await authenticatedApp.request('/fhir/R5/Patient/patient-1', { method })
+      expect(response.status).toBe(405)
+      expect(response.headers.get('content-type')).toContain('application/fhir+json')
+      expect(operationOutcomeSchema.parse(await response.json()).issue[0]?.code).toBe('not-supported')
+    }
     database.close()
   })
 })

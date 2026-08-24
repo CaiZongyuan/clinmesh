@@ -81,7 +81,9 @@ describe('CommandExecutor', () => {
       }
     })
 
+    const startedAt = performance.now()
     const first = execute('合成患者甲')
+    expect(performance.now() - startedAt).toBeLessThan(1_000)
     const replay = execute('合成患者甲')
 
     expect(replay).toEqual(first)

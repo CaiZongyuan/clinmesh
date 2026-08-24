@@ -7,9 +7,11 @@ export type FhirResourceOwnerKind =
   | 'fhir-native'
   | 'fhir-native-immutable'
 
-interface SearchCapability {
+export interface SearchCapability {
   definition: string
   name: string
+  paths?: string[]
+  target?: string[]
   type: 'reference' | 'string' | 'token'
 }
 
@@ -28,6 +30,28 @@ function resource(
   return { interactions: readSearchInteractions, ownerKind, searchParameters, type }
 }
 
+function referenceSearch(
+  name: string,
+  definition: string,
+  paths: string[],
+  target: string[],
+): SearchCapability {
+  return { definition, name, paths, target, type: 'reference' }
+}
+
+function patientSearch(path: string): SearchCapability {
+  return referenceSearch(
+    'patient',
+    'http://hl7.org/fhir/SearchParameter/clinical-patient',
+    [path],
+    ['Patient'],
+  )
+}
+
+function encounterSearch(definition = 'http://hl7.org/fhir/SearchParameter/clinical-encounter'): SearchCapability {
+  return referenceSearch('encounter', definition, ['encounter'], ['Encounter'])
+}
+
 const capabilityRegistry = {
   fhirVersion: '5.0.0',
   resources: [
@@ -40,32 +64,53 @@ const capabilityRegistry = {
       definition: 'http://hl7.org/fhir/SearchParameter/Patient-identifier',
       type: 'token',
     }]),
-    resource('AllergyIntolerance', 'fhir-native', [{
-      name: 'patient',
-      definition: 'http://hl7.org/fhir/SearchParameter/clinical-patient',
-      type: 'reference',
-    }]),
+    resource('AllergyIntolerance', 'fhir-native', [patientSearch('patient')]),
+    resource('Condition', 'fhir-native', [patientSearch('subject')]),
+    resource('Encounter', 'fhir-native', [patientSearch('subject')]),
+    resource('Task', 'fhir-native', [
+      patientSearch('for'),
+      referenceSearch(
+        'focus',
+        'http://hl7.org/fhir/SearchParameter/Task-focus',
+        ['focus'],
+        ['Encounter'],
+      ),
+    ]),
+    resource('Account', 'fhir-native', [patientSearch('subject')]),
+    resource('ChargeItem', 'fhir-native', [patientSearch('subject'), encounterSearch()]),
+    resource('Observation', 'fhir-native', [patientSearch('subject'), encounterSearch()]),
+    resource('ServiceRequest', 'fhir-native', [patientSearch('subject'), encounterSearch()]),
+    resource('Specimen', 'fhir-native', [patientSearch('subject')]),
+    resource('DiagnosticReport', 'fhir-native', [patientSearch('subject'), encounterSearch()]),
+    resource('MedicationRequest', 'fhir-native', [
+      patientSearch('subject'),
+      encounterSearch('http://hl7.org/fhir/SearchParameter/medications-encounter'),
+    ]),
+    resource('MedicationDispense', 'fhir-native', [
+      patientSearch('subject'),
+      encounterSearch(),
+      referenceSearch(
+        'prescription',
+        'http://hl7.org/fhir/SearchParameter/medications-prescription',
+        ['authorizingPrescription'],
+        ['MedicationRequest'],
+      ),
+    ]),
     ...[
       'Organization',
       'Location',
       'Practitioner',
       'PractitionerRole',
-      'Encounter',
-      'Task',
-      'Account',
-      'ChargeItem',
-      'Observation',
-      'ServiceRequest',
-      'Specimen',
-      'DiagnosticReport',
-      'Condition',
       'Medication',
-      'MedicationRequest',
-      'MedicationDispense',
     ].map(type => resource(type)),
-    resource('Composition', 'fhir-native-immutable'),
+    resource('Composition', 'fhir-native-immutable', [patientSearch('subject'), encounterSearch()]),
     resource('Bundle', 'fhir-native-immutable'),
-    resource('Provenance', 'fhir-native-immutable'),
+    resource('Provenance', 'fhir-native-immutable', [referenceSearch(
+      'target',
+      'http://hl7.org/fhir/SearchParameter/Provenance-target',
+      ['target'],
+      ['Bundle', 'Composition'],
+    )]),
     resource('InventoryItem', 'domain-projection'),
     resource('AuditEvent', 'domain-projection'),
   ],
@@ -87,6 +132,10 @@ export function isSupportedSearchParameter(resourceType: string, parameter: stri
   return getResourceCapability(resourceType)?.searchParameters.some(
     searchParameter => searchParameter.name === parameter,
   ) ?? false
+}
+
+export function getResourceSearchParameters(resourceType: string): SearchCapability[] {
+  return [...(getResourceCapability(resourceType)?.searchParameters ?? [])]
 }
 
 function ownershipDocumentation(ownerKind: FhirResourceOwnerKind): string {
@@ -131,6 +180,7 @@ export function createCapabilityStatement(options: { includeResources?: boolean 
               searchParam: resourceCapability.searchParameters.map(parameter => ({
                 name: parameter.name,
                 definition: parameter.definition,
+                ...(parameter.target === undefined ? {} : { target: parameter.target }),
                 type: parameter.type,
               })),
             })),

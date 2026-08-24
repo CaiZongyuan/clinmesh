@@ -36,7 +36,7 @@ import {
 } from './api-client.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
-import { getWorkspaceErrorTitle } from './workspace-error.ts'
+import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
 
 interface RegistrarWorkspaceProps {
@@ -58,6 +58,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
   const [birthDate, setBirthDate] = useState('1990-01-01')
   const [gender, setGender] = useState<'female' | 'male' | 'other' | 'unknown'>('male')
   const [departmentId, setDepartmentId] = useState('')
+  const [locationId, setLocationId] = useState('')
   const [visitTypeId, setVisitTypeId] = useState('')
 
   const catalog = useQuery({
@@ -88,12 +89,18 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
         throw new Error(messages.registrationUnavailable)
       }
       const resolvedDepartmentId = departmentId || catalog.data.departments[0]?.id
+      const resolvedLocationId = locationId || catalog.data.locations[0]?.id
       const resolvedVisitTypeId = visitTypeId || catalog.data.visitTypes[0]?.id
-      if (resolvedDepartmentId === undefined || resolvedVisitTypeId === undefined) {
+      if (
+        resolvedDepartmentId === undefined
+        || resolvedLocationId === undefined
+        || resolvedVisitTypeId === undefined
+      ) {
         throw new Error(messages.registrationUnavailable)
       }
       return registerOutpatient({
         departmentId: resolvedDepartmentId,
+        locationId: resolvedLocationId,
         patientId: selectedPatient.id,
         patientVersion: selectedPatient.versionId,
         visitDate: catalog.data.virtualDate,
@@ -106,6 +113,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
   })
 
   const resolvedDepartmentId = departmentId || catalog.data?.departments[0]?.id || ''
+  const resolvedLocationId = locationId || catalog.data?.locations[0]?.id || ''
   const resolvedVisitTypeId = visitTypeId || catalog.data?.visitTypes[0]?.id || ''
 
   return (
@@ -149,7 +157,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
                 <Alert className="mt-3" variant="destructive">
                   <CircleAlertIcon aria-hidden="true" />
                   <AlertTitle>{getWorkspaceErrorTitle(patients.error, messages, messages.patientSearchUnavailable)}</AlertTitle>
-                  <AlertDescription>{patients.error.message}</AlertDescription>
+                  <AlertDescription>{getWorkspaceErrorMessage(patients.error, messages)}</AlertDescription>
                 </Alert>
               ) : patients.data !== undefined ? (
                 patients.data.items.length === 0 ? (
@@ -215,7 +223,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
                     </Field>
                   </div>
                   <Button disabled={createPatient.isPending} type="submit"><UserPlusIcon data-icon="inline-start" />{messages.createPatient}</Button>
-                  {createPatient.isError ? <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{getWorkspaceErrorTitle(createPatient.error, messages, messages.operationFailed)}</AlertTitle><AlertDescription>{createPatient.error.message}</AlertDescription></Alert> : null}
+                  {createPatient.isError ? <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{getWorkspaceErrorTitle(createPatient.error, messages, messages.operationFailed)}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(createPatient.error, messages)}</AlertDescription></Alert> : null}
                 </FieldGroup>
               </form>
             </TabsContent>
@@ -232,7 +240,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
         <section aria-labelledby="registration-form-heading" className="flex min-w-0 flex-col gap-4">
           <h2 className="text-base font-semibold" id="registration-form-heading">{messages.registrationDetails}</h2>
           {catalog.isPending ? <Skeleton className="h-36 w-full" /> : catalog.isError ? (
-            <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{getWorkspaceErrorTitle(catalog.error, messages, messages.registrationUnavailable)}</AlertTitle><AlertDescription>{catalog.error.message}</AlertDescription></Alert>
+            <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{getWorkspaceErrorTitle(catalog.error, messages, messages.registrationUnavailable)}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(catalog.error, messages)}</AlertDescription></Alert>
           ) : (
             <FieldGroup>
               <Field>
@@ -249,13 +257,20 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
                   <SelectContent><SelectGroup>{catalog.data.visitTypes.map(item => <SelectItem key={item.id} value={item.id}>{locale === 'zh-CN' ? item.nameZh : item.nameEn} · {formatFen(item.priceFen ?? 0, locale)}</SelectItem>)}</SelectGroup></SelectContent>
                 </Select>
               </Field>
+              <Field>
+                <FieldLabel htmlFor="registration-location">{messages.location}</FieldLabel>
+                <Select onValueChange={value => setLocationId(value ?? '')} value={resolvedLocationId}>
+                  <SelectTrigger className="w-full" id="registration-location"><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectGroup>{catalog.data.locations.map(item => <SelectItem key={item.id} value={item.id}>{locale === 'zh-CN' ? item.nameZh : item.nameEn}</SelectItem>)}</SelectGroup></SelectContent>
+                </Select>
+              </Field>
               <Field><FieldLabel>{messages.visitDate}</FieldLabel><Input disabled value={catalog.data.virtualDate} /></Field>
               <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 border-t bg-background py-3">
                 <span className="text-sm text-muted-foreground">{selectedPatient?.name ?? messages.selectPatientFirst}</span>
                 <Button disabled={selectedPatient === undefined || register.isPending} onClick={() => register.mutate()} type="button"><ClipboardPlusIcon data-icon="inline-start" />{messages.confirmRegistration}</Button>
               </div>
               {register.isSuccess ? <Alert><CheckIcon aria-hidden="true" /><AlertTitle>{messages.registrationCompleted}</AlertTitle><AlertDescription>{messages.awaitingTriage}</AlertDescription></Alert> : null}
-              {register.isError ? <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{getWorkspaceErrorTitle(register.error, messages, messages.operationFailed)}</AlertTitle><AlertDescription>{register.error.message}</AlertDescription></Alert> : null}
+              {register.isError ? <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{getWorkspaceErrorTitle(register.error, messages, messages.operationFailed)}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(register.error, messages)}</AlertDescription></Alert> : null}
             </FieldGroup>
           )}
         </section>
@@ -263,7 +278,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
 
       <section aria-labelledby="registration-records-heading" className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-2"><h2 className="text-sm font-semibold" id="registration-records-heading">{messages.registrationRecords}</h2><Badge variant="secondary">{registrations.data?.total ?? 0}</Badge></div>
-        {registrations.isPending ? <Skeleton className="h-24 w-full" /> : registrations.isError ? <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{getWorkspaceErrorTitle(registrations.error, messages, messages.registrationUnavailable)}</AlertTitle><AlertDescription>{registrations.error.message}</AlertDescription></Alert> : registrations.data.items.length === 0 ? (
+        {registrations.isPending ? <Skeleton className="h-24 w-full" /> : registrations.isError ? <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{getWorkspaceErrorTitle(registrations.error, messages, messages.registrationUnavailable)}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(registrations.error, messages)}</AlertDescription></Alert> : registrations.data.items.length === 0 ? (
           <Empty className="min-h-36 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPlusIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noRegistrations}</EmptyTitle><EmptyDescription>{messages.noRegistrationsDescription}</EmptyDescription></EmptyHeader></Empty>
         ) : (
           <div className="flex flex-col gap-2">

@@ -12,6 +12,7 @@ import {
   paymentPreviewResponseSchema,
   paymentResponseSchema,
   pharmacyQueueSchema,
+  prescriptionReviewResponseSchema,
   dispenseResponseSchema,
   patientSearchSchema,
   registrationCatalogSchema,
@@ -177,6 +178,7 @@ export function createSyntheticPatient(input: {
 
 export function registerOutpatient(input: {
   departmentId: string
+  locationId: string
   patientId: string
   patientVersion: string
   visitDate: string
@@ -189,6 +191,7 @@ export function registerOutpatient(input: {
       expectedVersions: { [`Patient/${input.patientId}`]: input.patientVersion },
       input: {
         departmentId: input.departmentId,
+        locationId: input.locationId,
         patientId: input.patientId,
         visitDate: input.visitDate,
         visitTypeId: input.visitTypeId,
@@ -306,6 +309,7 @@ export function issueLaboratoryOrder(input: {
   encounterId: string
   encounterVersion: string
   expectedDraftVersion: number
+  indicationCode: string
   taskId: string
   taskVersion: string
 }, idempotencyKey: string) {
@@ -320,6 +324,7 @@ export function issueLaboratoryOrder(input: {
       input: {
         catalogItemId: input.catalogItemId,
         expectedDraftVersion: input.expectedDraftVersion,
+        indicationCode: input.indicationCode,
       },
     },
     { idempotencyKey },
@@ -467,6 +472,37 @@ export function getPharmacyQueue(
 ) {
   const search = new URLSearchParams({ page: String(page), pageSize: '20', status })
   return apiGet(`/api/his/v1/pharmacy/queue?${search.toString()}`, pharmacyQueueSchema, signal)
+}
+
+export function reviewPrescription(input: {
+  encounterId: string
+  encounterVersion: string
+  medications: Array<{
+    medicationRequestId: string
+    medicationRequestVersion: string
+  }>
+  note: string
+  prescriptionId: string
+  prescriptionVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/prescriptions/${encodeURIComponent(input.prescriptionId)}/actions/review`,
+    prescriptionReviewResponseSchema,
+    {
+      expectedVersions: Object.fromEntries([
+        [`Encounter/${input.encounterId}`, input.encounterVersion],
+        ...input.medications.map(medication => [
+          `MedicationRequest/${medication.medicationRequestId}`,
+          medication.medicationRequestVersion,
+        ]),
+      ]),
+      input: {
+        expectedPrescriptionVersion: input.prescriptionVersion,
+        note: input.note,
+      },
+    },
+    { idempotencyKey },
+  )
 }
 
 export function dispensePrescription(input: {

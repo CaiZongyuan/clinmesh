@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
+import { z } from 'zod'
 import type { ActorContext, CommandResponse } from './command-executor.ts'
 import { CommandExecutor } from './command-executor.ts'
 import { syntheticAccounts } from './identity-service.ts'
+
+const clinicalReviewSchema = z.record(z.string(), z.unknown())
 
 const scenarioBlueprints = {
   candidate: {
@@ -310,7 +313,7 @@ export class ScenarioService {
     return {
       clinicalReview: row.clinical_review_json === null
         ? null
-        : JSON.parse(row.clinical_review_json) as Record<string, unknown>,
+        : clinicalReviewSchema.parse(JSON.parse(row.clinical_review_json)),
       epoch: row.epoch,
       initialStateHash: row.initial_state_hash,
       kind: row.kind,
@@ -383,9 +386,9 @@ export class ScenarioService {
     const catalog = [
       ['department-general-medicine', 'department', 'GM', '全科医学科', 'General Medicine', 0, '{}'],
       ['visit-general', 'visit-type', 'GENERAL', '普通门诊挂号费', 'General outpatient registration', 2000, '{}'],
-      ['lab-fever-panel', 'laboratory', 'FEVER-PANEL', '发热检验组合', 'Fever laboratory panel', 6800, '{}'],
-      ['medication-oseltamivir', 'medication', 'OSELTAMIVIR', '磷酸奥司他韦胶囊', 'Oseltamivir phosphate capsules', 7600, '{"dose":"75 mg","frequency":"BID"}'],
-      ['medication-acetaminophen', 'medication', 'ACETAMINOPHEN', '对乙酰氨基酚片', 'Acetaminophen tablets', 1200, '{"dose":"0.5 g","frequency":"PRN"}'],
+      ['lab-fever-panel', 'laboratory', 'FEVER-PANEL', '发热检验组合', 'Fever laboratory panel', 6800, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[]}'],
+      ['medication-oseltamivir', 'medication', 'OSELTAMIVIR', '磷酸奥司他韦胶囊', 'Oseltamivir phosphate capsules', 760, '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"]}'],
+      ['medication-acetaminophen', 'medication', 'ACETAMINOPHEN', '对乙酰氨基酚片', 'Acetaminophen tablets', 120, '{"dose":"0.5 g","frequency":"PRN","allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"]}'],
     ] as const
     for (const item of catalog) {
       insertCatalog.run(input.workspaceId, input.epoch, ...item)
@@ -447,6 +450,16 @@ export class ScenarioService {
         name: nameZh,
         alias: [nameEn],
         managingOrganization: { reference: 'Organization/organization-clinmesh' },
+        ...(id === 'location-outpatient'
+          ? {
+              type: [{
+                coding: [{
+                  code: 'outpatient-registration',
+                  system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/location-purpose',
+                }],
+              }],
+            }
+          : {}),
       })
     }
     for (const account of syntheticAccounts) {
@@ -491,6 +504,37 @@ export class ScenarioService {
           }],
           text: medication.name,
         },
+      })
+    }
+    if (input.blueprint.kind === 'candidate') {
+      this.#fhir.create(context, {
+        resourceType: 'Patient',
+        id: 'candidate-patient-001',
+        active: true,
+        identifier: [{
+          system: 'https://caizongyuan.github.io/clinmesh/fhir/sid/synthetic-patient',
+          value: 'CM-CANDIDATE-001',
+        }],
+        name: [{ text: '合成候选患者林晓' }],
+        gender: 'female',
+        birthDate: '1988-03-16',
+        extension: [{
+          url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/synthetic-data',
+          valueBoolean: true,
+        }],
+      })
+      this.#fhir.create(context, {
+        resourceType: 'Condition',
+        id: 'candidate-prior-condition-001',
+        clinicalStatus: {
+          coding: [{
+            code: 'resolved',
+            system: 'http://terminology.hl7.org/CodeSystem/condition-clinical',
+          }],
+        },
+        code: { text: '既往上呼吸道感染（合成）' },
+        subject: { reference: 'Patient/candidate-patient-001' },
+        recordedDate: '2025-11-08',
       })
     }
     const inventoryLots = this.#database.driver.prepare(`

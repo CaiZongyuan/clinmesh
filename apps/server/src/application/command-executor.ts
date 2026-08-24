@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { v7 as uuidv7 } from 'uuid'
+import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import {
   type FhirRepository,
@@ -60,6 +61,18 @@ interface ReceiptRow {
   response_json: string | null
   status: string
 }
+
+const storedCommandResponseSchema = z.object({
+  auditId: z.string().min(1),
+  data: z.unknown(),
+  effects: z.array(z.object({
+    kind: z.enum(['created', 'updated']),
+    reference: z.string().min(1),
+    versionId: z.string().min(1),
+  })),
+  requestId: z.string().min(1),
+  warnings: z.array(z.string()),
+})
 
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize)
@@ -186,7 +199,11 @@ export class CommandExecutor {
         if (existing.status !== 'completed' || existing.response_json === null) {
           throw new CommandConflictError('The idempotent command has not reached a replayable result')
         }
-        const response = JSON.parse(existing.response_json) as CommandResponse<Data>
+        const storedResponse = storedCommandResponseSchema.parse(JSON.parse(existing.response_json))
+        const response: CommandResponse<Data> = {
+          ...storedResponse,
+          data: storedResponse.data as Data,
+        }
         this.#database.driver.exec('COMMIT')
         return response
       }

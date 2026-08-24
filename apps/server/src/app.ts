@@ -39,6 +39,10 @@ function operationOutcome(code: string, diagnostics: string) {
   }
 }
 
+function invalidInputResponse(context: Context, message = 'The request is invalid') {
+  return context.json({ error: { code: 'INVALID_INPUT', message } }, 400)
+}
+
 function fhirErrorStatus(error: FhirRepositoryError): 400 | 404 | 412 {
   if (error.code === 'NOT_FOUND') return 404
   if (error.code === 'CONFLICT') return 412
@@ -50,6 +54,21 @@ function fhirIssueCode(error: FhirRepositoryError): string {
   if (error.code === 'NOT_FOUND') return 'not-found'
   if (error.code === 'CONFLICT') return 'conflict'
   return 'invalid'
+}
+
+function fhirErrorResponse(context: Context, error: unknown) {
+  if (error instanceof IdentityError) {
+    const code = error.code === 'AUTHENTICATION_REQUIRED' ? 'login' : 'forbidden'
+    return context.json(operationOutcome(code, error.message), error.status, {
+      'Content-Type': 'application/fhir+json',
+    })
+  }
+  if (error instanceof FhirRepositoryError) {
+    return context.json(operationOutcome(fhirIssueCode(error), error.message), fhirErrorStatus(error), {
+      'Content-Type': 'application/fhir+json',
+    })
+  }
+  throw error
 }
 
 function isServicePath(path: string): boolean {
@@ -90,6 +109,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try {
         return context.json(await identity.resolveSessionContext(context.req.raw.headers))
       } catch (error) {
+        if (error instanceof z.ZodError) return invalidInputResponse(context)
         if (!(error instanceof IdentityError)) throw error
         return identityErrorResponse(context, error)
       }
@@ -104,6 +124,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           input.practitionerRoleId,
         ))
       } catch (error) {
+        if (error instanceof z.ZodError) return invalidInputResponse(context)
         if (!(error instanceof IdentityError)) throw error
         return identityErrorResponse(context, error)
       }
@@ -119,6 +140,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
         return context.json(scenario.current(session.actor))
       } catch (error) {
+        if (error instanceof z.ZodError) return invalidInputResponse(context)
         if (error instanceof IdentityError || error instanceof ScenarioError) {
           return context.json({ error: { code: error.code, message: error.message } }, error.status)
         }
@@ -139,6 +161,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           scenarioRunId: context.req.param('scenarioRunId'),
         }))
       } catch (error) {
+        if (error instanceof z.ZodError) return invalidInputResponse(context)
         if (error instanceof IdentityError || error instanceof ScenarioError) {
           return context.json({ error: { code: error.code, message: error.message } }, error.status)
         }
@@ -165,12 +188,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         }))
       } catch (error) {
         if (error instanceof z.ZodError) {
-          return context.json({
-            error: {
-              code: 'INVALID_INPUT',
-              message: 'The Scenario installation request is invalid',
-            },
-          }, 400)
+          return invalidInputResponse(context, 'The Scenario installation request is invalid')
         }
         if (error instanceof IdentityError || error instanceof ScenarioError) {
           return context.json({ error: { code: error.code, message: error.message } }, error.status)
@@ -188,7 +206,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const workflow = options.workflow
     const workflowErrorResponse = (context: Context, error: unknown) => {
       if (error instanceof z.ZodError) {
-        return context.json({ error: { code: 'INVALID_INPUT', message: 'The request is invalid' } }, 400)
+        return invalidInputResponse(context)
       }
       if (error instanceof IdentityError || error instanceof WorkflowError) {
         return context.json({ error: { code: error.code, message: error.message } }, error.status)
@@ -284,6 +302,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           expectedVersions: z.record(z.string(), z.string()),
           input: z.object({
             departmentId: z.string().min(1),
+            locationId: z.string().min(1),
             patientId: z.string().min(1),
             visitDate: z.iso.date(),
             visitTypeId: z.string().min(1),
@@ -540,6 +559,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           input: z.object({
             catalogItemId: z.string().min(1),
             expectedDraftVersion: z.number().int().min(1),
+            indicationCode: z.string().min(1).max(64),
           }),
         }).parse(await context.req.json())
         return context.json(workflow.issueLaboratoryOrder({
@@ -549,6 +569,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           expectedDraftVersion: body.input.expectedDraftVersion,
           expectedVersions: body.expectedVersions,
           idempotencyKey: idempotencyKey(context),
+          indicationCode: body.input.indicationCode,
         }))
       } catch (error) {
         return workflowErrorResponse(context, error)
@@ -605,6 +626,28 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           expectedVersions: body.expectedVersions,
           idempotencyKey: idempotencyKey(context),
           lotSelections: body.input.lotSelections,
+          prescriptionId: context.req.param('prescriptionId'),
+        }))
+      } catch (error) {
+        return workflowErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/prescriptions/:prescriptionId/actions/review', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({
+            expectedPrescriptionVersion: z.number().int().min(1),
+            note: z.string().trim().min(2).max(500),
+          }),
+        }).parse(await context.req.json())
+        return context.json(workflow.reviewPrescription({
+          context: await actor(context),
+          expectedPrescriptionVersion: body.input.expectedPrescriptionVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          note: body.input.note,
           prescriptionId: context.req.param('prescriptionId'),
         }))
       } catch (error) {
@@ -690,10 +733,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           ETag: `W/"${resource.meta?.versionId}"`,
         })
       } catch (error) {
-        if (!(error instanceof FhirRepositoryError)) throw error
-        return context.json(operationOutcome(fhirIssueCode(error), error.message), fhirErrorStatus(error), {
-          'Content-Type': 'application/fhir+json',
-        })
+        return fhirErrorResponse(context, error)
       }
     })
 
@@ -722,10 +762,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         }
         return context.json(body, 200, { 'Content-Type': 'application/fhir+json' })
       } catch (error) {
-        if (!(error instanceof FhirRepositoryError)) throw error
-        return context.json(operationOutcome(fhirIssueCode(error), error.message), fhirErrorStatus(error), {
-          'Content-Type': 'application/fhir+json',
-        })
+        return fhirErrorResponse(context, error)
       }
     })
 
@@ -746,10 +783,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           ETag: `W/"${resource.meta?.versionId}"`,
         })
       } catch (error) {
-        if (!(error instanceof FhirRepositoryError)) throw error
-        return context.json(operationOutcome(fhirIssueCode(error), error.message), fhirErrorStatus(error), {
-          'Content-Type': 'application/fhir+json',
-        })
+        return fhirErrorResponse(context, error)
       }
     })
 
@@ -780,11 +814,23 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         }
         return context.json(body, 200, { 'Content-Type': 'application/fhir+json' })
       } catch (error) {
-        if (!(error instanceof FhirRepositoryError)) throw error
-        return context.json(operationOutcome(fhirIssueCode(error), error.message), fhirErrorStatus(error), {
+        return fhirErrorResponse(context, error)
+      }
+    })
+
+    app.all('/fhir/R5/*', (context) => {
+      if (context.req.method === 'GET') {
+        return context.json(operationOutcome('not-found', 'The requested FHIR endpoint was not found'), 404, {
           'Content-Type': 'application/fhir+json',
         })
       }
+      return context.json(operationOutcome(
+        'not-supported',
+        `FHIR ${context.req.method} is not supported; use the owning business command`,
+      ), 405, {
+        Allow: 'GET',
+        'Content-Type': 'application/fhir+json',
+      })
     })
   }
 

@@ -3,6 +3,27 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
+import {
+  billingQueueSchema,
+  clinicalDocumentRevisionResponseSchema,
+  clinicalSignPreviewResponseSchema,
+  clinicalSignResponseSchema,
+  createPatientResponseSchema,
+  dispenseResponseSchema,
+  doctorCaseDetailSchema,
+  doctorQueueSchema,
+  laboratoryOrderResponseSchema,
+  patientSearchSchema,
+  paymentPreviewResponseSchema,
+  paymentResponseSchema,
+  pharmacyQueueSchema,
+  prescriptionReviewResponseSchema,
+  registrationQueueSchema,
+  registrationResponseSchema,
+  revisitDraftResponseSchema,
+  triageQueueSchema,
+  triageResponseSchema,
+} from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AuditQuery } from '../src/application/audit-query.ts'
 import { WorkspaceContextError } from '../src/infrastructure/sqlite/workspace-repository.ts'
@@ -47,14 +68,13 @@ async function createRegisteredCase(runtime: TestRuntime, password: string) {
     headers: commandHeaders(registrarCookie),
     method: 'POST',
   })
-  const patient = (await patientResponse.json() as {
-    data: { patient: { id: string; versionId: string } }
-  }).data.patient
+  const patient = createPatientResponseSchema.parse(await patientResponse.json()).data.patient
   const registrationResponse = await runtime.app.request('/api/his/v1/registrations/actions/register', {
     body: JSON.stringify({
       expectedVersions: { [`Patient/${patient.id}`]: patient.versionId },
       input: {
         departmentId: 'department-general-medicine',
+        locationId: 'location-outpatient',
         patientId: patient.id,
         visitDate: '2026-08-24',
         visitTypeId: 'visit-general',
@@ -63,13 +83,7 @@ async function createRegisteredCase(runtime: TestRuntime, password: string) {
     headers: commandHeaders(registrarCookie),
     method: 'POST',
   })
-  const registration = (await registrationResponse.json() as {
-    data: {
-      encounterId: string
-      queueTaskId: string
-      registrationId: string
-    }
-  }).data
+  const registration = registrationResponseSchema.parse(await registrationResponse.json()).data
   return { patient, registrarCookie, registration }
 }
 
@@ -98,16 +112,12 @@ async function createTriagedCase(runtime: TestRuntime, password: string) {
       method: 'POST',
     },
   )
-  const triage = (await triageResponse.json() as {
-    data: { doctorTaskId: string; encounterVersion: string }
-  }).data
+  const triage = triageResponseSchema.parse(await triageResponse.json()).data
   const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
   const queue = await runtime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
     headers: { cookie: doctorCookie },
   })
-  const queueItem = (await queue.json() as {
-    items: Array<{ caseId: string }>
-  }).items[0]
+  const queueItem = doctorQueueSchema.parse(await queue.json()).items[0]
   if (queueItem === undefined) throw new Error('Triaged test case did not reach the doctor queue')
   return { ...registered, caseId: queueItem.caseId, doctorCookie, triage }
 }
@@ -154,15 +164,14 @@ async function createLabOrderedCase(runtime: TestRuntime, password: string) {
         input: {
           catalogItemId: 'lab-fever-panel',
           expectedDraftVersion: 1,
+          indicationCode: 'fever',
         },
       }),
       headers: commandHeaders(testCase.doctorCookie),
       method: 'POST',
     },
   )
-  const order = (await orderResponse.json() as {
-    data: { chargeItemId: string; serviceRequestId: string }
-  }).data
+  const order = laboratoryOrderResponseSchema.parse(await orderResponse.json()).data
   return { ...testCase, order }
 }
 
@@ -181,9 +190,7 @@ async function createPaidLabCase(runtime: TestRuntime, password: string) {
     headers: commandHeaders(cashierCookie),
     method: 'POST',
   })
-  const preview = (await previewResponse.json() as {
-    data: { commitToken: string; previewId: string }
-  }).data
+  const preview = paymentPreviewResponseSchema.parse(await previewResponse.json()).data
   const paymentResponse = await runtime.app.request(
     `/api/his/v1/payments/${preview.previewId}/actions/confirm`,
     {
@@ -195,9 +202,7 @@ async function createPaidLabCase(runtime: TestRuntime, password: string) {
       method: 'POST',
     },
   )
-  const payment = (await paymentResponse.json() as {
-    data: { paymentId: string }
-  }).data
+  const payment = paymentResponseSchema.parse(await paymentResponse.json()).data
   return { ...testCase, cashierCookie, payment }
 }
 
@@ -209,12 +214,7 @@ async function createReportedCase(runtime: TestRuntime, password: string) {
   const queueResponse = await runtime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
     headers: { cookie: doctorCookie },
   })
-  const queueItem = (await queueResponse.json() as {
-    items: Array<{
-      diagnosticReportId: string
-      taskId: string
-    }>
-  }).items[0]
+  const queueItem = doctorQueueSchema.parse(await queueResponse.json()).items[0]
   if (queueItem === undefined) throw new Error('Reported test case did not reach revisit')
   return { ...testCase, doctorCookie, report: queueItem }
 }
@@ -266,13 +266,7 @@ async function createRevisitDraftCase(runtime: TestRuntime, password: string) {
       method: 'PUT',
     },
   )
-  const draft = (await draftResponse.json() as {
-    data: {
-      conditionId: string
-      medicationRequestIds: string[]
-      prescriptionId: string
-    }
-  }).data
+  const draft = revisitDraftResponseSchema.parse(await draftResponse.json()).data
   return { ...testCase, draft }
 }
 
@@ -301,9 +295,7 @@ async function createSignedCase(runtime: TestRuntime, password: string) {
       method: 'POST',
     },
   )
-  const preview = (await previewResponse.json() as {
-    data: { commitToken: string; previewId: string }
-  }).data
+  const preview = clinicalSignPreviewResponseSchema.parse(await previewResponse.json()).data
   const signResponse = await runtime.app.request(
     `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/sign-and-complete`,
     {
@@ -315,12 +307,7 @@ async function createSignedCase(runtime: TestRuntime, password: string) {
       method: 'POST',
     },
   )
-  const signed = (await signResponse.json() as {
-    data: {
-      chargeItemId: string
-      encounterVersion: string
-    }
-  }).data
+  const signed = clinicalSignResponseSchema.parse(await signResponse.json()).data
   return { ...testCase, signed }
 }
 
@@ -339,9 +326,7 @@ async function createPaidMedicationCase(runtime: TestRuntime, password: string) 
     headers: commandHeaders(cashierCookie),
     method: 'POST',
   })
-  const preview = (await previewResponse.json() as {
-    data: { commitToken: string; previewId: string }
-  }).data
+  const preview = paymentPreviewResponseSchema.parse(await previewResponse.json()).data
   const paymentResponse = await runtime.app.request(
     `/api/his/v1/payments/${preview.previewId}/actions/confirm`,
     {
@@ -353,10 +338,28 @@ async function createPaidMedicationCase(runtime: TestRuntime, password: string) 
       method: 'POST',
     },
   )
-  const payment = (await paymentResponse.json() as {
-    data: { paymentId: string }
-  }).data
-  return { ...testCase, cashierCookie, payment }
+  const payment = paymentResponseSchema.parse(await paymentResponse.json()).data
+  const pharmacistCookie = await signIn(runtime, 'pharmacist@demo.clinmesh.local', password)
+  const reviewResponse = await runtime.app.request(
+    `/api/his/v1/prescriptions/${testCase.draft.prescriptionId}/actions/review`,
+    {
+      body: JSON.stringify({
+        expectedVersions: {
+          [`Encounter/${testCase.registration.encounterId}`]: '7',
+          [`MedicationRequest/${testCase.draft.medicationRequestIds[0]}`]: '2',
+        },
+        input: {
+          expectedPrescriptionVersion: 3,
+          note: '合成处方审核通过。',
+        },
+      }),
+      headers: commandHeaders(pharmacistCookie),
+      method: 'POST',
+    },
+  )
+  if (!reviewResponse.ok) throw new Error('Test prescription review did not complete')
+  prescriptionReviewResponseSchema.parse(await reviewResponse.json())
+  return { ...testCase, cashierCookie, payment, pharmacistCookie }
 }
 
 describe('outpatient workflow HTTP contract', () => {
@@ -409,8 +412,18 @@ describe('outpatient workflow HTTP contract', () => {
     expect(catalogResponse.status).toBe(200)
     expect(await catalogResponse.json()).toMatchObject({
       departments: [{ id: 'department-general-medicine' }],
+      locations: [{ id: 'location-outpatient' }],
       visitTypes: [{ id: 'visit-general', priceFen: 2000 }],
       virtualDate: '2026-08-24',
+    })
+
+    const candidatePatientResponse = await runtime.app.request(
+      '/api/his/v1/patients?query=CM-CANDIDATE-001&pageSize=20',
+      { headers: { cookie: registrarCookie } },
+    )
+    expect(await candidatePatientResponse.json()).toMatchObject({
+      items: [{ identifier: 'CM-CANDIDATE-001', synthetic: true }],
+      total: 1,
     })
 
     const patientIdempotencyKey = randomUUID()
@@ -429,17 +442,7 @@ describe('outpatient workflow HTTP contract', () => {
     })
     const patientResponse = await createPatient()
     expect(patientResponse.status).toBe(200)
-    const patientResult = await patientResponse.json() as {
-      data: {
-        patient: {
-          id: string
-          identifier: string
-          name: string
-          synthetic: boolean
-          versionId: string
-        }
-      }
-    }
+    const patientResult = createPatientResponseSchema.parse(await patientResponse.json())
     expect(patientResult.data.patient).toMatchObject({
       identifier: 'CM-SYN-1001',
       name: '合成患者周明',
@@ -453,9 +456,31 @@ describe('outpatient workflow HTTP contract', () => {
       { headers: { cookie: registrarCookie } },
     )
     expect(searchResponse.status).toBe(200)
-    expect(await searchResponse.json()).toMatchObject({
+    expect(patientSearchSchema.parse(await searchResponse.json())).toMatchObject({
       items: [{ id: patientResult.data.patient.id, name: '合成患者周明' }],
       total: 1,
+    })
+
+    const missingExpectedVersionResponse = await runtime.app.request(
+      '/api/his/v1/registrations/actions/register',
+      {
+        body: JSON.stringify({
+          expectedVersions: {},
+          input: {
+            departmentId: 'department-general-medicine',
+            locationId: 'location-outpatient',
+            patientId: patientResult.data.patient.id,
+            visitDate: '2026-08-24',
+            visitTypeId: 'visit-general',
+          },
+        }),
+        headers: commandHeaders(registrarCookie),
+        method: 'POST',
+      },
+    )
+    expect(missingExpectedVersionResponse.status).toBe(409)
+    expect(await missingExpectedVersionResponse.json()).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
     })
 
     const registrationIdempotencyKey = randomUUID()
@@ -466,6 +491,7 @@ describe('outpatient workflow HTTP contract', () => {
         },
         input: {
           departmentId: 'department-general-medicine',
+          locationId: 'location-outpatient',
           patientId: patientResult.data.patient.id,
           visitDate: '2026-08-24',
           visitTypeId: 'visit-general',
@@ -476,18 +502,7 @@ describe('outpatient workflow HTTP contract', () => {
     })
     const registrationResponse = await register()
     expect(registrationResponse.status).toBe(200)
-    const registrationResult = await registrationResponse.json() as {
-      data: {
-        accountId: string
-        chargeItemId: string
-        encounterId: string
-        patientId: string
-        queueTaskId: string
-        registrationId: string
-        status: string
-        totalFen: number
-      }
-    }
+    const registrationResult = registrationResponseSchema.parse(await registrationResponse.json())
     expect(registrationResult.data).toMatchObject({
       patientId: patientResult.data.patient.id,
       status: 'awaiting-triage',
@@ -500,7 +515,8 @@ describe('outpatient workflow HTTP contract', () => {
       { headers: { cookie: registrarCookie } },
     )
     expect(registrationsResponse.status).toBe(200)
-    expect(await registrationsResponse.json()).toMatchObject({
+    const registrations = registrationQueueSchema.parse(await registrationsResponse.json())
+    expect(registrations).toMatchObject({
       items: [{
         caseId: expect.any(String),
         encounterId: registrationResult.data.encounterId,
@@ -513,6 +529,16 @@ describe('outpatient workflow HTTP contract', () => {
       }],
       total: 1,
     })
+    const registrationNumber = registrations.items[0]?.registrationNumber
+    if (registrationNumber === undefined) throw new Error('Registration number was not returned')
+    const visitNumberSearch = await runtime.app.request(
+      `/api/his/v1/patients?query=${encodeURIComponent(registrationNumber)}&pageSize=20`,
+      { headers: { cookie: registrarCookie } },
+    )
+    expect(await visitNumberSearch.json()).toMatchObject({
+      items: [{ id: patientResult.data.patient.id }],
+      total: 1,
+    })
 
     const triageCookie = await signIn('triage@demo.clinmesh.local')
     const queueResponse = await runtime.app.request('/api/his/v1/triage/queue?pageSize=20', {
@@ -522,11 +548,14 @@ describe('outpatient workflow HTTP contract', () => {
     expect(await queueResponse.json()).toMatchObject({
       items: [{
         encounterId: registrationResult.data.encounterId,
+        departmentId: 'department-general-medicine',
+        locationId: 'location-outpatient',
         patient: {
           id: patientResult.data.patient.id,
           name: '合成患者周明',
         },
         status: 'awaiting-triage',
+        visitTypeId: 'visit-general',
       }],
       total: 1,
     })
@@ -588,17 +617,30 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
 
+    const missingVersionsResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${registration.encounterId}/actions/record-triage`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {},
+          input: {
+            acuityCode: 'level-3',
+            bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
+            chiefComplaint: '发热伴咽痛两天',
+            oxygenSaturationPct: 98,
+            pulseBpm: 102,
+            respirationBpm: 20,
+            temperatureC: 38.6,
+          },
+        }),
+        headers: commandHeaders(triageCookie),
+        method: 'POST',
+      },
+    )
+    expect(missingVersionsResponse.status).toBe(409)
+
     const triageResponse = await triage()
     expect(triageResponse.status).toBe(200)
-    const triageResult = await triageResponse.json() as {
-      data: {
-        doctorTaskId: string
-        encounterId: string
-        encounterVersion: string
-        observationId: string
-        status: string
-      }
-    }
+    const triageResult = triageResponseSchema.parse(await triageResponse.json())
     expect(triageResult.data).toMatchObject({
       encounterId: registration.encounterId,
       encounterVersion: '2',
@@ -610,7 +652,7 @@ describe('outpatient workflow HTTP contract', () => {
       '/api/his/v1/triage/queue?status=completed&pageSize=20',
       { headers: { cookie: triageCookie } },
     )
-    expect(await completedQueue.json()).toMatchObject({
+    expect(triageQueueSchema.parse(await completedQueue.json())).toMatchObject({
       items: [{
         encounterId: registration.encounterId,
         encounterVersion: '2',
@@ -624,7 +666,7 @@ describe('outpatient workflow HTTP contract', () => {
       '/api/his/v1/triage/queue?status=exception&pageSize=20',
       { headers: { cookie: triageCookie } },
     )
-    expect(await exceptionQueue.json()).toMatchObject({ items: [], total: 0 })
+    expect(triageQueueSchema.parse(await exceptionQueue.json())).toMatchObject({ items: [], total: 0 })
 
     const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
     const doctorQueue = await runtime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
@@ -678,6 +720,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(catalogResponse.status).toBe(200)
     expect(await catalogResponse.json()).toMatchObject({
       laboratory: [{
+        allowedIndicationCodes: ['fever'],
         id: 'lab-fever-panel',
         nameEn: 'Fever laboratory panel',
         nameZh: '发热检验组合',
@@ -686,11 +729,15 @@ describe('outpatient workflow HTTP contract', () => {
       }],
       medications: [
         expect.objectContaining({
+          allowedDoseTexts: ['0.5 g'],
+          allowedFrequencyCodes: ['PRN'],
           defaultDoseText: '0.5 g',
           defaultFrequencyCode: 'PRN',
           id: 'medication-acetaminophen',
         }),
         expect.objectContaining({
+          allowedDoseTexts: ['75 mg'],
+          allowedFrequencyCodes: ['BID'],
           defaultDoseText: '75 mg',
           defaultFrequencyCode: 'BID',
           id: 'medication-oseltamivir',
@@ -703,7 +750,7 @@ describe('outpatient workflow HTTP contract', () => {
       { headers: { cookie: testCase.doctorCookie } },
     )
     expect(detailResponse.status).toBe(200)
-    expect(await detailResponse.json()).toMatchObject({
+    expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
       caseId: testCase.caseId,
       encounter: { id: testCase.registration.encounterId, status: 'in-progress', versionId: '2' },
       patient: { id: testCase.patient.id },
@@ -750,6 +797,25 @@ describe('outpatient workflow HTTP contract', () => {
     expect(await draftResponse.json()).toMatchObject({ data: { draftVersion: 1 } })
 
     const orderIdempotencyKey = randomUUID()
+    const invalidIndicationResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/issue-laboratory-order`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${testCase.registration.encounterId}`]: '3',
+            [`Task/${testCase.triage.doctorTaskId}`]: '2',
+          },
+          input: {
+            catalogItemId: 'lab-fever-panel',
+            expectedDraftVersion: 1,
+            indicationCode: 'screening',
+          },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(invalidIndicationResponse.status).toBe(409)
     const issueOrder = () => runtime.app.request(
       `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/issue-laboratory-order`,
       {
@@ -761,6 +827,7 @@ describe('outpatient workflow HTTP contract', () => {
           input: {
             catalogItemId: 'lab-fever-panel',
             expectedDraftVersion: 1,
+            indicationCode: 'fever',
           },
         }),
         headers: commandHeaders(testCase.doctorCookie, orderIdempotencyKey),
@@ -769,16 +836,7 @@ describe('outpatient workflow HTTP contract', () => {
     )
     const orderResponse = await issueOrder()
     expect(orderResponse.status).toBe(200)
-    const order = await orderResponse.json() as {
-      data: {
-        chargeItemId: string
-        encounterId: string
-        encounterVersion: string
-        serviceRequestId: string
-        status: string
-        totalFen: number
-      }
-    }
+    const order = laboratoryOrderResponseSchema.parse(await orderResponse.json())
     expect(order.data).toMatchObject({
       encounterId: testCase.registration.encounterId,
       encounterVersion: '4',
@@ -851,16 +909,7 @@ describe('outpatient workflow HTTP contract', () => {
       method: 'POST',
     })
     expect(previewResponse.status).toBe(200)
-    const preview = (await previewResponse.json() as {
-      data: {
-        amountFen: number
-        chargeItemId: string
-        chargeVersion: number
-        commitToken: string
-        expectedOutcome: string
-        previewId: string
-      }
-    }).data
+    const preview = paymentPreviewResponseSchema.parse(await previewResponse.json()).data
     expect(preview).toMatchObject({
       amountFen: 6800,
       chargeItemId: testCase.order.chargeItemId,
@@ -882,14 +931,7 @@ describe('outpatient workflow HTTP contract', () => {
     )
     const paymentResponse = await confirm()
     expect(paymentResponse.status).toBe(200)
-    const payment = await paymentResponse.json() as {
-      data: {
-        amountFen: number
-        outcome: string
-        paymentId: string
-        status: string
-      }
-    }
+    const payment = paymentResponseSchema.parse(await paymentResponse.json())
     expect(payment.data).toMatchObject({
       amountFen: 6800,
       outcome: 'success',
@@ -944,9 +986,7 @@ describe('outpatient workflow HTTP contract', () => {
         headers: commandHeaders(cashierCookie),
         method: 'POST',
       })
-      const preview = (await previewResponse.json() as {
-        data: { commitToken: string; previewId: string }
-      }).data
+      const preview = paymentPreviewResponseSchema.parse(await previewResponse.json()).data
       const response = await runtime.app.request(
         `/api/his/v1/payments/${preview.previewId}/actions/confirm`,
         {
@@ -970,10 +1010,7 @@ describe('outpatient workflow HTTP contract', () => {
         { headers: { cookie: cashierCookie } },
       )
       expect(response.status).toBe(200)
-      return response.json() as Promise<{
-        items: Array<{ caseId: string; chargeVersion: number; status: string }>
-        total: number
-      }>
+      return billingQueueSchema.parse(await response.json())
     }
     expect(await queue('pending')).toMatchObject({ items: [], total: 0 })
     expect(await queue('paid')).toMatchObject({ items: [], total: 0 })
@@ -1031,14 +1068,7 @@ describe('outpatient workflow HTTP contract', () => {
       headers: { cookie: doctorCookie },
     })
     expect(queueResponse.status).toBe(200)
-    const queue = await queueResponse.json() as {
-      items: Array<{
-        caseId: string
-        diagnosticReportId: string
-        encounterId: string
-        status: string
-      }>
-    }
+    const queue = doctorQueueSchema.parse(await queueResponse.json())
     expect(queue.items).toEqual([expect.objectContaining({
       caseId: paidCase.caseId,
       encounterId: paidCase.registration.encounterId,
@@ -1283,9 +1313,8 @@ describe('outpatient workflow HTTP contract', () => {
       const response = await runtime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
         headers: { cookie: testCase.doctorCookie },
       })
-      queueItem = (await response.json() as {
-        items: Array<{ caseId: string; status: string }>
-      }).items.find(item => item.caseId === testCase.caseId && item.status === 'awaiting-revisit')
+      queueItem = doctorQueueSchema.parse(await response.json()).items
+        .find(item => item.caseId === testCase.caseId && item.status === 'awaiting-revisit')
       if (queueItem === undefined) await new Promise(resolve => setTimeout(resolve, 20))
     }
     expect(queueItem).toMatchObject({ caseId: testCase.caseId, status: 'awaiting-revisit' })
@@ -1342,6 +1371,29 @@ describe('outpatient workflow HTTP contract', () => {
       data: { encounterVersion: '6', status: 'revisit-draft', taskVersion: '2' },
     })
 
+    const invalidDoseResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/drafts/revisit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${testCase.registration.encounterId}`]: '6' },
+          input: {
+            diagnosis: { code: 'J10.1', display: '甲型流感' },
+            document: { assessment: '甲型流感。', plan: '抗病毒治疗。' },
+            expectedVersions: { documentDraft: 0, prescription: 0, revisitDraft: 0 },
+            medications: [{
+              catalogItemId: 'medication-oseltamivir',
+              doseText: '150 mg',
+              frequencyCode: 'BID',
+              quantity: 10,
+            }],
+          },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(invalidDoseResponse.status).toBe(409)
+
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${testCase.registration.encounterId}/drafts/revisit`,
       {
@@ -1374,17 +1426,7 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
     expect(draftResponse.status).toBe(200)
-    const draft = (await draftResponse.json() as {
-      data: {
-        conditionId: string
-        documentDraftVersion: number
-        medicationRequestIds: string[]
-        prescriptionId: string
-        prescriptionNumber: string
-        prescriptionVersion: number
-        revisitDraftVersion: number
-      }
-    }).data
+    const draft = revisitDraftResponseSchema.parse(await draftResponse.json()).data
     expect(draft).toMatchObject({
       documentDraftVersion: 1,
       prescriptionVersion: 1,
@@ -1417,7 +1459,15 @@ describe('outpatient workflow HTTP contract', () => {
     )
     expect(await savedDetailResponse.json()).toMatchObject({
       drafts: {
-        document: { version: 1 },
+        document: {
+          composition: {
+            encounter: { reference: `Encounter/${testCase.registration.encounterId}` },
+            resourceType: 'Composition',
+            status: 'preliminary',
+            subject: [{ reference: `Patient/${testCase.patient.id}` }],
+          },
+          version: 1,
+        },
         prescription: {
           id: draft.prescriptionId,
           items: [{ medicationRequestId: draft.medicationRequestIds[0], versionId: '1' }],
@@ -1463,7 +1513,7 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
     expect(revisedDraftResponse.status).toBe(200)
-    const revisedDraft = (await revisedDraftResponse.json() as { data: typeof draft }).data
+    const revisedDraft = revisitDraftResponseSchema.parse(await revisedDraftResponse.json()).data
     expect(revisedDraft).toMatchObject({
       conditionId: draft.conditionId,
       documentDraftVersion: 2,
@@ -1533,6 +1583,19 @@ describe('outpatient workflow HTTP contract', () => {
       patient: { reference: `Patient/${testCase.patient.id}` },
       recordedDate: '2026-08-24T08:30:00+08:00',
     })
+    runtime.fhir.create({ epoch: 'epoch-1', workspaceId: 'workspace-demo' }, {
+      resourceType: 'Condition',
+      id: 'synthetic-prior-condition',
+      clinicalStatus: {
+        coding: [{
+          code: 'resolved',
+          system: 'http://terminology.hl7.org/CodeSystem/condition-clinical',
+        }],
+      },
+      code: { text: '既往上呼吸道感染（合成）' },
+      subject: { reference: `Patient/${testCase.patient.id}` },
+      recordedDate: '2025-11-08',
+    })
 
     const detailResponse = await runtime.app.request(
       `/api/his/v1/doctor/cases/${testCase.caseId}`,
@@ -1543,6 +1606,13 @@ describe('outpatient workflow HTTP contract', () => {
         code: { text: '磷酸奥司他韦过敏' },
         criticality: 'high',
         patient: { reference: `Patient/${testCase.patient.id}` },
+      }],
+      priorFacts: [{
+        clinicalStatus: 'resolved',
+        code: '',
+        display: '既往上呼吸道感染（合成）',
+        id: 'synthetic-prior-condition',
+        recordedDate: '2025-11-08',
       }],
     })
 
@@ -1588,11 +1658,14 @@ describe('outpatient workflow HTTP contract', () => {
     expect(await draftResponse.json()).toMatchObject({
       error: { code: 'WORKFLOW_CONFLICT' },
     })
-    for (const resourceType of ['Condition', 'MedicationRequest']) {
+    for (const [resourceType, expectedTotal] of [
+      ['Condition', 2],
+      ['MedicationRequest', 0],
+    ] as const) {
       const response = await runtime.app.request(`/fhir/R5/${resourceType}?_total=accurate`, {
         headers: { cookie: testCase.doctorCookie },
       })
-      expect(await response.json()).toMatchObject({ total: 0 })
+      expect(await response.json()).toMatchObject({ total: expectedTotal })
     }
   })
 
@@ -1636,18 +1709,22 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
     expect(previewResponse.status).toBe(200)
-    const preview = (await previewResponse.json() as {
-      data: {
-        commitToken: string
-        expiresAt: string
-        medicationTotalFen: number
-        previewId: string
-        summary: { diagnosisCode: string; medicationCount: number }
-      }
-    }).data
+    const preview = clinicalSignPreviewResponseSchema.parse(await previewResponse.json()).data
     expect(preview).toMatchObject({
       medicationTotalFen: 7600,
-      summary: { diagnosisCode: 'J10.1', medicationCount: 1 },
+      summary: {
+        diagnosis: { code: 'J10.1', display: expect.stringContaining('流感') },
+        document: {
+          assessment: '甲型流感，生命体征稳定。',
+          plan: '口服抗病毒药物，对症处理，必要时复诊。',
+        },
+        medications: [{
+          medicationId: 'medication-oseltamivir',
+          quantity: 10,
+          subtotalFen: 7600,
+          unitPriceFen: 760,
+        }],
+      },
     })
 
     const beforeSign = await runtime.app.request(
@@ -1673,23 +1750,22 @@ describe('outpatient workflow HTTP contract', () => {
     )
     const signResponse = await sign()
     expect(signResponse.status).toBe(200)
-    const signed = await signResponse.json() as {
-      data: {
-        bundleId: string
-        chargeItemId: string
-        compositionId: string
-        encounterId: string
-        encounterVersion: string
-        provenanceId: string
-        status: string
-      }
-    }
+    const signed = clinicalSignResponseSchema.parse(await signResponse.json())
     expect(signed.data).toMatchObject({
       encounterId: testCase.registration.encounterId,
       encounterVersion: '7',
       status: 'awaiting-medication-payment',
     })
     expect(await (await sign()).json()).toEqual(signed)
+
+    const medicationCharge = await runtime.app.request(
+      `/fhir/R5/ChargeItem/${signed.data.chargeItemId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(await medicationCharge.json()).toMatchObject({
+      quantity: { value: 10 },
+      unitPriceComponent: { amount: { currency: 'CNY', value: 7.6 } },
+    })
 
     const encounterResponse = await runtime.app.request(
       `/fhir/R5/Encounter/${testCase.registration.encounterId}`,
@@ -1744,9 +1820,7 @@ describe('outpatient workflow HTTP contract', () => {
     )
     const revisionResponse = await revise()
     expect(revisionResponse.status).toBe(200)
-    const revision = await revisionResponse.json() as {
-      data: { bundleId: string; compositionId: string; provenanceId: string }
-    }
+    const revision = clinicalDocumentRevisionResponseSchema.parse(await revisionResponse.json())
     expect(await (await revise()).json()).toEqual(revision)
     const originalComposition = await runtime.app.request(
       `/fhir/R5/Composition/${signed.data.compositionId}`,
@@ -1796,7 +1870,16 @@ describe('outpatient workflow HTTP contract', () => {
       { headers: { cookie: cashierCookie } },
     )
     expect(await billingResponse.json()).toMatchObject({
-      items: [{ amountFen: 7600, chargeItemId: signed.data.chargeItemId }],
+      items: [{
+        amountFen: 7600,
+        chargeItemId: signed.data.chargeItemId,
+        lines: [{
+          descriptionZh: '磷酸奥司他韦胶囊',
+          quantity: 10,
+          subtotalFen: 7600,
+          unitPriceFen: 760,
+        }],
+      }],
       total: 1,
     })
     const scenarioResponse = await runtime.app.request('/api/sim/v1/scenario-runs/current', {
@@ -1850,9 +1933,7 @@ describe('outpatient workflow HTTP contract', () => {
       method: 'POST',
     })
     expect(previewResponse.status).toBe(200)
-    const preview = (await previewResponse.json() as {
-      data: { amountFen: number; commitToken: string; previewId: string }
-    }).data
+    const preview = paymentPreviewResponseSchema.parse(await previewResponse.json()).data
     expect(preview.amountFen).toBe(7600)
 
     const paymentIdempotencyKey = randomUUID()
@@ -1869,9 +1950,7 @@ describe('outpatient workflow HTTP contract', () => {
     )
     const paymentResponse = await confirm()
     expect(paymentResponse.status).toBe(200)
-    const payment = await paymentResponse.json() as {
-      data: { amountFen: number; outcome: string; paymentId: string; status: string }
-    }
+    const payment = paymentResponseSchema.parse(await paymentResponse.json())
     expect(payment.data).toMatchObject({
       amountFen: 7600,
       outcome: 'success',
@@ -1884,14 +1963,84 @@ describe('outpatient workflow HTTP contract', () => {
       headers: { cookie: pharmacistCookie },
     })
     expect(pharmacyQueue.status).toBe(200)
-    expect(await pharmacyQueue.json()).toMatchObject({
+    const pharmacyBody = pharmacyQueueSchema.parse(await pharmacyQueue.json())
+    expect(pharmacyBody).toMatchObject({
       items: [{
         caseId: testCase.caseId,
         encounterId: testCase.registration.encounterId,
         prescriptionId: testCase.draft.prescriptionId,
-        status: 'awaiting-dispense',
+        status: 'awaiting-review',
       }],
       total: 1,
+    })
+    const pendingPrescription = pharmacyBody.items[0]
+    const pendingMedication = pendingPrescription?.medications[0]
+    const pendingLot = pendingMedication?.lots[0]
+    if (
+      pendingPrescription === undefined
+      || pendingMedication === undefined
+      || pendingLot === undefined
+    ) {
+      throw new Error('Paid prescription did not expose the pending review details')
+    }
+    const beforeReview = await runtime.app.request(
+      `/api/his/v1/prescriptions/${testCase.draft.prescriptionId}/actions/dispense`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${testCase.registration.encounterId}`]: pendingPrescription.encounterVersion,
+            [`MedicationRequest/${pendingMedication.medicationRequestId}`]: pendingMedication.medicationRequestVersion,
+          },
+          input: {
+            expectedPrescriptionVersion: pendingPrescription.prescriptionVersion,
+            lotSelections: [{
+              expectedVersion: pendingLot.version,
+              lotId: pendingLot.id,
+              quantity: 10,
+            }],
+          },
+        }),
+        headers: commandHeaders(pharmacistCookie),
+        method: 'POST',
+      },
+    )
+    expect(beforeReview.status).toBe(409)
+
+    const reviewResponse = await runtime.app.request(
+      `/api/his/v1/prescriptions/${testCase.draft.prescriptionId}/actions/review`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${testCase.registration.encounterId}`]: '7',
+            [`MedicationRequest/${testCase.draft.medicationRequestIds[0]}`]: '2',
+          },
+          input: {
+            expectedPrescriptionVersion: 3,
+            note: '处方适应证、剂量、频次和过敏信息审核通过。',
+          },
+        }),
+        headers: commandHeaders(pharmacistCookie),
+        method: 'POST',
+      },
+    )
+    expect(reviewResponse.status).toBe(200)
+    expect(prescriptionReviewResponseSchema.parse(await reviewResponse.json())).toMatchObject({
+      data: {
+        prescriptionId: testCase.draft.prescriptionId,
+        prescriptionVersion: 4,
+        status: 'awaiting-dispense',
+      },
+    })
+    const reviewedQueue = await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
+      headers: { cookie: pharmacistCookie },
+    })
+    expect(await reviewedQueue.json()).toMatchObject({
+      items: [{
+        prescriptionId: testCase.draft.prescriptionId,
+        prescriptionVersion: 4,
+        review: { note: expect.stringContaining('审核通过') },
+        status: 'awaiting-dispense',
+      }],
     })
 
     const encounterResponse = await runtime.app.request(
@@ -1993,18 +2142,8 @@ describe('outpatient workflow HTTP contract', () => {
     const queueResponse = await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
       headers: { cookie: pharmacistCookie },
     })
-    const queueItem = (await queueResponse.json() as {
-      items: Array<{
-        encounterId: string
-        encounterVersion: string
-        medications: Array<{
-          medicationRequestId: string
-          medicationRequestVersion: string
-        }>
-        prescriptionId: string
-        prescriptionVersion: number
-      }>
-    }).items.find(item => item.prescriptionId === paid.draft.prescriptionId)
+    const queueItem = pharmacyQueueSchema.parse(await queueResponse.json()).items
+      .find(item => item.prescriptionId === paid.draft.prescriptionId)
     const medication = queueItem?.medications[0]
     if (queueItem === undefined || medication === undefined) {
       throw new Error('Paid prescription was missing from the dispensing fault matrix')
@@ -2096,25 +2235,12 @@ describe('outpatient workflow HTTP contract', () => {
       trustedOrigins: ['http://localhost'],
     })
     runtimes.push(runtime)
-    const testCase = await createPaidMedicationCase(runtime, password)
+    await createPaidMedicationCase(runtime, password)
     const pharmacistCookie = await signIn(runtime, 'pharmacist@demo.clinmesh.local', password)
     const initialQueue = await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
       headers: { cookie: pharmacistCookie },
     })
-    const initial = (await initialQueue.json() as {
-      items: Array<{
-        encounterId: string
-        encounterVersion: string
-        medications: Array<{
-          lots: Array<{ id: string; version: number }>
-          medicationRequestId: string
-          medicationRequestVersion: string
-          quantity: number
-        }>
-        prescriptionId: string
-        prescriptionVersion: number
-      }>
-    }).items[0]
+    const initial = pharmacyQueueSchema.parse(await initialQueue.json()).items[0]
     const medication = initial?.medications[0]
     const lot = medication?.lots[0]
     if (initial === undefined || medication === undefined || lot === undefined) {
@@ -2155,11 +2281,9 @@ describe('outpatient workflow HTTP contract', () => {
       quantity: 4,
     })
     expect(firstResponse.status).toBe(200)
-    const first = await firstResponse.json() as {
-      data: { medicationDispenseId: string; prescriptionVersion: number }
-    }
+    const first = dispenseResponseSchema.parse(await firstResponse.json())
     expect(first.data).toMatchObject({
-      prescriptionVersion: 4,
+      prescriptionVersion: 5,
       scenarioStatus: 'active',
       status: 'partial',
     })
@@ -2181,7 +2305,7 @@ describe('outpatient workflow HTTP contract', () => {
           lots: [{ id: lot.id, quantityOnHand: 996, version: 2 }],
           remainingQuantity: 6,
         }],
-        prescriptionVersion: 4,
+        prescriptionVersion: 5,
         status: 'partially-dispensed',
       }],
       total: 1,
@@ -2193,14 +2317,14 @@ describe('outpatient workflow HTTP contract', () => {
 
     const secondResponse = await submitDispense({
       expectedLotVersion: 2,
-      expectedPrescriptionVersion: 4,
+      expectedPrescriptionVersion: 5,
       idempotencyKey: randomUUID(),
       quantity: 6,
     })
     expect(secondResponse.status).toBe(200)
     expect(await secondResponse.json()).toMatchObject({
       data: {
-        prescriptionVersion: 5,
+        prescriptionVersion: 6,
         scenarioStatus: 'completed',
         status: 'completed',
       },
@@ -2239,17 +2363,7 @@ describe('outpatient workflow HTTP contract', () => {
       headers: { cookie: pharmacistCookie },
     })
     expect(queueResponse.status).toBe(200)
-    const queue = await queueResponse.json() as {
-      items: Array<{
-        medications: Array<{
-          lots: Array<{ id: string; quantityOnHand: number; version: number }>
-          medicationRequestId: string
-          quantity: number
-        }>
-        prescriptionId: string
-        prescriptionVersion: number
-      }>
-    }
+    const queue = pharmacyQueueSchema.parse(await queueResponse.json())
     const prescription = queue.items[0]
     const medication = prescription?.medications[0]
     const lot = medication?.lots[0]
@@ -2258,7 +2372,7 @@ describe('outpatient workflow HTTP contract', () => {
       medication: { quantity: 10 },
       prescription: {
         prescriptionId: testCase.draft.prescriptionId,
-        prescriptionVersion: 3,
+        prescriptionVersion: 4,
       },
     })
     if (prescription === undefined || medication === undefined || lot === undefined) {
@@ -2309,18 +2423,10 @@ describe('outpatient workflow HTTP contract', () => {
     )
     const dispenseResponse = await dispense()
     expect(dispenseResponse.status).toBe(200)
-    const result = await dispenseResponse.json() as {
-      data: {
-        medicationDispenseId: string
-        prescriptionId: string
-        prescriptionVersion: number
-        scenarioStatus: string
-        status: string
-      }
-    }
+    const result = dispenseResponseSchema.parse(await dispenseResponse.json())
     expect(result.data).toMatchObject({
       prescriptionId: prescription.prescriptionId,
-      prescriptionVersion: 4,
+      prescriptionVersion: 5,
       scenarioStatus: 'completed',
       status: 'completed',
     })
@@ -2344,7 +2450,7 @@ describe('outpatient workflow HTTP contract', () => {
       items: [{
         medications: [{ lots: [{ id: lot.id, quantityOnHand: 990, version: 2 }] }],
         prescriptionId: prescription.prescriptionId,
-        prescriptionVersion: 4,
+        prescriptionVersion: 5,
         status: 'completed',
       }],
       total: 1,

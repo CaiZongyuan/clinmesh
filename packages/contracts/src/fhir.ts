@@ -70,6 +70,7 @@ export const capabilityStatementSchema = z.object({
       searchParam: z.array(z.object({
         name: z.string().min(1),
         definition: z.url(),
+        target: z.array(z.string().regex(/^[A-Z][A-Za-z]+$/)).min(1).optional(),
         type: z.enum(['number', 'date', 'string', 'token', 'reference', 'composite', 'quantity', 'uri', 'special']),
       })).optional(),
     })).min(1).optional(),

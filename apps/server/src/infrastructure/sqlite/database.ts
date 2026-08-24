@@ -12,6 +12,7 @@ import {
   rm,
 } from 'node:fs/promises'
 import Database from 'better-sqlite3'
+import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 
 const MIGRATION_FILE_PATTERN = /^\d{4}_[a-z0-9-]+\.sql$/
 
@@ -130,12 +131,63 @@ function canonicalFhirRows(database: ClinMeshDatabase, table: 'fhir_history' | '
     deleted: row.deleted,
     epoch: row.epoch,
     ownerKind: row.owner_kind,
-    resource: canonicalize(JSON.parse(row.content_json)),
+    resource: canonicalize(fhirResourceSchema.parse(JSON.parse(row.content_json))),
     resourceId: row.resource_id,
     resourceType: row.resource_type,
     versionId: row.version_id,
     workspaceId: row.workspace_id,
   }))
+}
+
+const NON_AUTHORITATIVE_STATE_TABLES = new Set([
+  'fhir_history',
+  'fhir_resource',
+  'fhir_sp_string',
+  'runtime_metadata',
+  'schema_migration',
+])
+
+function quotedIdentifier(value: string): string {
+  return `"${value.replaceAll('"', '""')}"`
+}
+
+function canonicalDomainRow(row: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(row).flatMap(([column, value]) => {
+    if (column === 'canonical_state_hash') return []
+    if (typeof value !== 'string' || !column.endsWith('_json')) return [[column, value]]
+    return [[column, JSON.parse(value) as unknown]]
+  }))
+}
+
+function canonicalDomainTables(database: ClinMeshDatabase): Record<string, unknown[]> {
+  const tables = (database.driver.prepare(`
+    SELECT name FROM sqlite_schema
+    WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+    ORDER BY name
+  `).all() as Array<{ name: string }>).map(row => row.name)
+    .filter(table => !NON_AUTHORITATIVE_STATE_TABLES.has(table))
+
+  return Object.fromEntries(tables.map((table) => {
+    const columns = database.driver.prepare(
+      `PRAGMA table_info(${quotedIdentifier(table)})`,
+    ).all() as Array<{ name: string; pk: number }>
+    const primaryKey = columns.filter(column => column.pk > 0).toSorted((left, right) => left.pk - right.pk)
+    const orderBy = (primaryKey.length > 0 ? primaryKey : columns)
+      .map(column => quotedIdentifier(column.name))
+      .join(', ')
+    const rows = database.driver.prepare(
+      `SELECT * FROM ${quotedIdentifier(table)} ORDER BY ${orderBy}`,
+    ).all() as Array<Record<string, unknown>>
+    return [table, rows.map(canonicalDomainRow)]
+  }))
+}
+
+async function removeDatabaseArtifacts(databasePath: string): Promise<void> {
+  await Promise.all([
+    rm(databasePath, { force: true }),
+    rm(`${databasePath}-shm`, { force: true }),
+    rm(`${databasePath}-wal`, { force: true }),
+  ])
 }
 
 export function openClinMeshDatabase(options: OpenDatabaseOptions): ClinMeshDatabase {
@@ -259,27 +311,10 @@ export function rebuildDatabaseIndexes(database: ClinMeshDatabase): IndexRebuild
 }
 
 export function canonicalStateHash(database: ClinMeshDatabase): string {
-  const workspaces = database.driver.prepare(`
-    SELECT workspace_id, name, active_epoch, policy_version
-    FROM workspace
-    ORDER BY workspace_id
-  `).all()
-  const epochs = database.driver.prepare(`
-    SELECT workspace_id, epoch, state, scenario_id, canonical_state_hash
-    FROM workspace_epoch
-    ORDER BY workspace_id, epoch
-  `).all()
-  const scenarioRuns = database.driver.prepare(`
-    SELECT workspace_id, epoch, scenario_run_id, scenario_id, status
-    FROM scenario_run
-    ORDER BY workspace_id, epoch, scenario_run_id
-  `).all()
   const canonical = canonicalize({
-    epochs,
+    domainTables: canonicalDomainTables(database),
     fhirCurrent: canonicalFhirRows(database, 'fhir_resource'),
     fhirHistory: canonicalFhirRows(database, 'fhir_history'),
-    scenarioRuns,
-    workspaces,
   })
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex')
 }
@@ -299,15 +334,35 @@ export async function backupDatabase(
 ): Promise<DatabaseSnapshotVerification> {
   if (existsSync(backupPath)) throw new Error(`Backup destination already exists: ${backupPath}`)
   mkdirSync(dirname(resolve(backupPath)), { recursive: true })
-  await database.driver.backup(backupPath)
-  const verificationDatabase = openClinMeshDatabase({
-    busyTimeoutMs: database.diagnostics().busyTimeoutMs,
-    databasePath: backupPath,
-  })
+  const sourceVerification = verifySnapshot(database)
+  if (sourceVerification.integrity !== 'ok') {
+    throw new Error(`Backup source failed integrity check: ${sourceVerification.integrity}`)
+  }
+  let verificationDatabase: ClinMeshDatabase | undefined
   try {
-    return verifySnapshot(verificationDatabase)
+    await database.driver.backup(backupPath)
+    verificationDatabase = openClinMeshDatabase({
+      busyTimeoutMs: database.diagnostics().busyTimeoutMs,
+      databasePath: backupPath,
+    })
+    const candidateVerification = verifySnapshot(verificationDatabase)
+    if (candidateVerification.integrity !== 'ok') {
+      throw new Error(`Backup candidate failed integrity check: ${candidateVerification.integrity}`)
+    }
+    if (
+      candidateVerification.schemaVersion !== sourceVerification.schemaVersion
+      || candidateVerification.canonicalStateHash !== sourceVerification.canonicalStateHash
+    ) {
+      throw new Error('Backup candidate does not match the source database')
+    }
+    return candidateVerification
+  } catch (error) {
+    verificationDatabase?.close()
+    verificationDatabase = undefined
+    await removeDatabaseArtifacts(backupPath)
+    throw error
   } finally {
-    verificationDatabase.close()
+    verificationDatabase?.close()
   }
 }
 
@@ -321,7 +376,24 @@ export async function restoreDatabase(
   mkdirSync(dirname(resolve(options.destinationPath)), { recursive: true })
   const candidatePath = `${options.destinationPath}.restore-${randomUUID()}`
   let candidate: ClinMeshDatabase | undefined
+  let source: ClinMeshDatabase | undefined
   try {
+    source = openClinMeshDatabase({
+      busyTimeoutMs: options.busyTimeoutMs,
+      databasePath: options.backupPath,
+    })
+    const sourceVerification = verifySnapshot(source)
+    if (sourceVerification.integrity !== 'ok') {
+      throw new Error(`Restore source failed integrity check: ${sourceVerification.integrity}`)
+    }
+    if (sourceVerification.schemaVersion !== options.expectedSchemaVersion) {
+      throw new Error(
+        `Restore source schema version ${sourceVerification.schemaVersion} does not match ${options.expectedSchemaVersion}`,
+      )
+    }
+    verifyMigrations(source)
+    source.close()
+    source = undefined
     await copyFile(options.backupPath, candidatePath)
     candidate = openClinMeshDatabase({
       busyTimeoutMs: options.busyTimeoutMs,
@@ -337,17 +409,17 @@ export async function restoreDatabase(
       )
     }
     verifyMigrations(candidate)
+    if (verification.canonicalStateHash !== sourceVerification.canonicalStateHash) {
+      throw new Error('Restore candidate does not match the backup source')
+    }
     candidate.close()
     candidate = undefined
     await rename(candidatePath, options.destinationPath)
     return verification
   } catch (error) {
     candidate?.close()
-    await Promise.all([
-      rm(candidatePath, { force: true }),
-      rm(`${candidatePath}-shm`, { force: true }),
-      rm(`${candidatePath}-wal`, { force: true }),
-    ])
+    source?.close()
+    await removeDatabaseArtifacts(candidatePath)
     throw error
   }
 }

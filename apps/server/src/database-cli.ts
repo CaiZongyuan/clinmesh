@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
@@ -63,9 +64,20 @@ export async function runDatabaseCli(
     options.get('--database') ?? environment.CLINMESH_DATABASE_PATH,
     'Database path',
   )
+  const databaseExisted = existsSync(databasePath)
   const database = openClinMeshDatabase({ busyTimeoutMs, databasePath })
   try {
-    if (command === 'migrate') return applyMigrations(database)
+    if (command === 'migrate') {
+      const currentSchemaVersion = database.diagnostics().schemaVersion
+      const targetSchemaVersion = expectedSchemaVersion()
+      if (!databaseExisted || currentSchemaVersion === 0 || currentSchemaVersion >= targetSchemaVersion) {
+        return applyMigrations(database)
+      }
+      const timestamp = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-')
+      const path = `${databasePath}.pre-migration-v${currentSchemaVersion}-${timestamp}.sqlite`
+      const preMigrationBackup = { ...await backupDatabase(database, path), path }
+      return { ...applyMigrations(database), preMigrationBackup }
+    }
     verifyMigrations(database)
     if (command === 'backup') {
       return await backupDatabase(

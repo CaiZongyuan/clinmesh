@@ -2,6 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import {
+  patientSearchSchema,
+  scenarioCommandResponseSchema,
+  scenarioStateSchema,
+} from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 
@@ -130,6 +135,18 @@ describe('trusted session and Scenario HTTP contract', () => {
     expect(forbiddenResponse.status).toBe(403)
     expect(await forbiddenResponse.json()).toMatchObject({ error: { code: 'ROLE_NOT_ALLOWED' } })
 
+    const invalidResponse = await runtime.app.request('/api/auth/role', {
+      body: JSON.stringify({ practitionerRoleId: '' }),
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect(invalidResponse.status).toBe(400)
+    expect(await invalidResponse.json()).toMatchObject({ error: { code: 'INVALID_INPUT' } })
+
     const selectedResponse = await runtime.app.request('/api/auth/role', {
       body: JSON.stringify({
         actorId: 'actor-forged',
@@ -200,15 +217,28 @@ describe('trusted session and Scenario HTTP contract', () => {
     expect(await forbiddenResponse.json()).toMatchObject({ error: { code: 'ROLE_NOT_ALLOWED' } })
 
     const adminCookie = await signIn('admin@demo.clinmesh.local')
+    const missingIdempotencyResponse = await runtime.app.request(
+      '/api/sim/v1/scenario-runs/scenario-run-1/actions/reset',
+      {
+        body: '{}',
+        headers: {
+          'content-type': 'application/json',
+          cookie: adminCookie,
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(missingIdempotencyResponse.status).toBe(400)
+    expect(await missingIdempotencyResponse.json()).toMatchObject({
+      error: { code: 'INVALID_INPUT' },
+    })
+
     const initialResponse = await runtime.app.request('/api/sim/v1/scenario-runs/current', {
       headers: { cookie: adminCookie },
     })
     expect(initialResponse.status).toBe(200)
-    const initial = await initialResponse.json() as {
-      epoch: string
-      initialStateHash: string
-      scenarioRunId: string
-    }
+    const initial = scenarioStateSchema.parse(await initialResponse.json())
     expect(initial).toMatchObject({
       epoch: 'epoch-1',
       scenarioRunId: 'scenario-run-1',
@@ -233,14 +263,7 @@ describe('trusted session and Scenario HTTP contract', () => {
     )
     const resetResponse = await reset()
     expect(resetResponse.status).toBe(200)
-    const resetResult = await resetResponse.json() as {
-      data: {
-        epoch: string
-        initialStateHash: string
-        scenarioRunId: string
-        workspaceId: string
-      }
-    }
+    const resetResult = scenarioCommandResponseSchema.parse(await resetResponse.json())
     expect(resetResult.data).toMatchObject({
       epoch: 'epoch-2',
       initialStateHash: initial.initialStateHash,
@@ -309,14 +332,7 @@ describe('trusted session and Scenario HTTP contract', () => {
     const idempotencyKey = randomUUID()
     const densityResponse = await install('density', idempotencyKey)
     expect(densityResponse.status).toBe(200)
-    const density = await densityResponse.json() as {
-      data: {
-        epoch: string
-        kind: string
-        scenarioId: string
-        scenarioRunId: string
-      }
-    }
+    const density = scenarioCommandResponseSchema.parse(await densityResponse.json())
     expect(density.data).toMatchObject({
       epoch: 'epoch-2',
       kind: 'density',
@@ -341,12 +357,7 @@ describe('trusted session and Scenario HTTP contract', () => {
         { headers: { cookie } },
       )
       return {
-        body: await response.json() as {
-          items: Array<{ id: string }>
-          page: number
-          pageSize: number
-          total: number
-        },
+        body: patientSearchSchema.parse(await response.json()),
         status: response.status,
       }
     }
@@ -366,7 +377,11 @@ describe('trusted session and Scenario HTTP contract', () => {
       ...firstPatientPage.body.items.map(item => item.id),
       ...secondPatientPage.body.items.map(item => item.id),
     ])).toHaveProperty('size', 50)
-    expect((await patientPage(0)).status).toBe(400)
+    const invalidPatientPage = await runtime.app.request(
+      `/api/his/v1/patients?query=${encodeURIComponent('合成密度')}&pageSize=25&page=0`,
+      { headers: { cookie } },
+    )
+    expect(invalidPatientPage.status).toBe(400)
 
     for (const [resourceType, total] of [
       ['Organization', 1],

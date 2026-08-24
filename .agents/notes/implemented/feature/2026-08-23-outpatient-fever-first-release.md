@@ -31,7 +31,9 @@ Registration 是独立持久业务事实。挂号 Command 同一事务创建或�
 
 首诊签发检验 Clinical Request，并按目录规则产生 Charge Item。只有检验支付成功，LIS 才能接收任务并通过持久 outbox 推进 Specimen、Observation 和 DiagnosticReport。医生复诊读取已签发结果，记录诊断，创建 Prescription 及其 MedicationRequest，签署结构化 FHIR 临床文书，并完成 Encounter。签署件不可原地覆盖；后续更正必须形成 Clinical Document Revision。
 
-Prescription 是处方号和业务规则下的持久聚合，不等同单个 MedicationRequest 或 RequestOrchestration。药品 Charge Item 在处方签发时生成，Encounter 完成后仍可由收费员支付并由药师调剂。药房只处理已签处方且药品支付成功的项目；发药创建 MedicationDispense 和最小库存移动。发药完成 Scenario Run，但不回写已完成 Encounter 作为终止开关。
+Prescription 是处方号和业务规则下的持久聚合，不等同单个 MedicationRequest 或 RequestOrchestration。药品 Charge Item 在处方签发时生成，Encounter 完成后仍可由收费员支付。药房只接收已签且药品支付成功的处方，先由药师以 Prescription expected version 完成审核，再允许选择合成库存批次发药；发药创建 MedicationDispense 和最小库存移动。药房队列区分待审核、待发、部分已发和已发。全部药品发放完成 Scenario Run，但不回写已完成 Encounter 作为终止开关。
+
+医生开具检验时必须从版本化目录选择服务及受控适应证；开药时剂量和频次只能来自目录允许值。医生详情将当前 Encounter 与既往 Condition 分开，签署预览完整列出诊断、文书、药品数量和权威费用，不让 Web 重新推导业务事实。
 
 当前提供使用同一 schema 和不变量的 `candidate` 与 `density` 场景。两者 `clinicalReview` 都是 `null`，因此都不能标记为 `golden`；数据库约束要求未来 `golden` 定义必须具有临床审核元数据。Scenario 拥有初始事实、Hidden Fact、Reveal Policy 和模拟器行为，不拥有评分规则；Action Trace、Audit Event 与 Provenance 分别记录命令过程、安全写入和事实来源。
 
@@ -55,7 +57,7 @@ Prescription 是处方号和业务规则下的持久聚合，不等同单个 Med
 
 五个人类岗位在同一 Workspace/Epoch 中依次推进同一名合成患者，所有交接由服务端队列、Command 和持久事实决定。挂号原子建立 Registration、Encounter、Task、Account 和 Charge Item；LIS 只处理成功支付的检验；Prescription 稳定关联 MedicationRequest、药品费用、Payment Transaction、MedicationDispense 和库存移动。
 
-医生签署结构化 Composition/document Bundle 和 Provenance 时完成 Encounter。药品尚未支付或发药并不阻止临床完诊；药房只在已签、已支付且库存条件成立时发药，全部处方行完成后独立把 Scenario Run 设为 `completed`。维护者必须保留这两个完成状态，不能把它们压成一个页面步骤或 status。
+医生签署结构化 Composition/document Bundle 和 Provenance 时完成 Encounter。药品尚未支付、审核或发药并不阻止临床完诊；药房只在已签、已支付、已审核且库存条件成立时发药，全部处方行完成后独立把 Scenario Run 设为 `completed`。维护者必须保留这两个完成状态，不能把它们压成一个页面步骤或 status。
 
 已签文书不接受普通覆盖，修订创建新的业务资源和 Clinical Document Revision。当前不保存图片、PDF 或其他附件，也不接入真实 LIS、支付或医保网络。
 

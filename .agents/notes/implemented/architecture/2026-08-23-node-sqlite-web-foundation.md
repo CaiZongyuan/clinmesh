@@ -12,11 +12,13 @@ ClinMesh 当前工程壳以 Cloudflare Worker 为运行时，但首个可验收�
 
 `apps/server` 是单个 Node.js 进程中的 Hono 服务，以一个本地文件系统上的 SQLite 数据库保存身份、FHIR 资源、领域事实、仿真状态、审计、Action Trace 和 outbox。开发时 Vite 代理 API；可部署构建由同一个 Node.js 服务提供 Web 静态资源、SPA fallback、HTTP API 和 FHIR R5 API。Desktop、React Native Mobile 和 Agent runtime 不属于当前产品能力。
 
-SQLite 连接启用 foreign keys、WAL 和有界 `busy_timeout`。一个服务端进程是唯一 writer，Command 使用短 `BEGIN IMMEDIATE` 事务；网络调用、模拟器等待和长计算不进入事务。每次业务提交原子写入幂等 receipt、expected-version 保护的当前事实、FHIR history/search、Audit Event、Action Trace 和适用的 outbox 事件。
+SQLite 连接启用 foreign keys、WAL 和五秒 `busy_timeout`。一个服务端进程是唯一 writer，Command 使用短 `BEGIN IMMEDIATE` 事务，单次同步 Command 的真实 SQLite 合约要求事务持续时间小于一秒；网络调用、模拟器等待和长计算不进入事务。每次业务提交原子写入幂等 receipt、expected-version 保护的当前事实、FHIR history/search、Audit Event、Action Trace 和适用的 outbox 事件。
 
 所有适用的业务表、唯一键、外键和岗位查询索引包含 `workspace_id + epoch`。Scenario reset 构建并激活新 Epoch，不删除数据库文件；审计保留域跨 Epoch 保存。LIS 与药房就绪事件由同进程 outbox dispatcher 处理，claim、结果、失败和 correlation 状态持久化，使进程重启后可以恢复且重复投递不重复产生业务结果。支付 success/declined/ambiguous 由支付 Command 确定性提交，只有成功结果产生后续 outbox。
 
-数据库 schema 只通过 `apps/server/drizzle/` 中的有序 migration 变更。Server 进程只验证 schema；数据库 CLI 显式执行 migration、verify、reindex、backup 和 restore。恢复先验证临时候选，再创建新目标路径。Compose 使用单副本与命名持久卷，数据库文件不得位于缺少 SQLite 锁语义保证的共享网络文件系统。
+数据库 schema 只通过 `apps/server/drizzle/` 中的八个有序 migration 变更。Server 进程只验证 schema；数据库 CLI 显式执行 migration、verify、reindex、backup 和 restore。已有旧版数据库执行 migration 前先在同目录创建并验证升级前备份。backup 与 restore 都验证源和候选的 schema、integrity 与 canonical state hash，候选必须与源等价后才能保留或成为新目标。Compose 使用单副本与命名持久卷，数据库文件不得位于缺少 SQLite 锁语义保证的共享网络文件系统。
+
+canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引和 migration/runtime metadata 外的全部持久领域表；JSON 列按解析后的值规范化。该 hash 用于同一 schema 下的备份恢复等价验证，不是跨版本 replay contract。
 
 公开 contracts、FHIR capability registry 和 Web Query 层不依赖 SQLite 表类型、SQL 方言或 driver 错误。当前只实现 SQLite Repository；迁移到 D1、PostgreSQL 或 Supabase 时需要新增真实 adapter、数据迁移工具和双端 contract tests。仓库不预先维护未使用的兼容实现，也不承诺零成本切换。
 
@@ -32,7 +34,7 @@ SQLite 连接启用 foreign keys、WAL 和有界 `busy_timeout`。一个服务�
 
 ## Consequences
 
-Node.js、HTTP/FHIR/Web 组合和业务持久化共享一个可备份文件与事务边界，空库 migration、进程重启、备份恢复、索引重建、Workspace/Epoch 隔离、幂等冲突和 outbox 恢复都使用真实临时 SQLite 文件验证。应用成功启动意味着 schema 已经由独立入口迁移并通过 verify；运行进程不会自行改变 schema。
+Node.js、HTTP/FHIR/Web 组合和业务持久化共享一个可备份文件与事务边界，空库 migration、旧库升级前备份、进程重启、备份恢复、索引重建、Workspace/Epoch 隔离、幂等冲突和 outbox 恢复都使用真实临时 SQLite 文件验证。应用成功启动意味着 schema 已经由独立入口迁移并通过 verify；运行进程不会自行改变 schema。
 
 SQLite 的单 writer 使岗位轮询、会话校验和业务写入竞争同一数据库。查询保持分页并使用组合索引，写事务保持短小；持续 busy 或无法满足交互延迟时必须重新选择持久化与部署方案。
 

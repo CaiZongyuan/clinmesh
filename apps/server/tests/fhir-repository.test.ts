@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -125,6 +126,22 @@ describe('FHIR Resource Store', () => {
       'Patient',
       new URLSearchParams(`_count=2&_total=accurate&_cursor=${firstPage.nextCursor}`),
     )).toThrow('Search cursor does not match the active context')
+
+    const [encodedPayload] = firstPage.nextCursor?.split('.') ?? []
+    const payload = JSON.parse(Buffer.from(encodedPayload ?? '', 'base64url').toString('utf8')) as Record<string, unknown>
+    expect(payload.expiresAt).toBe(Date.parse('2026-08-24T01:06:00.000Z'))
+    payload.expiresAt = Date.now() + 300_000
+    payload.lastUpdated = { invalid: true }
+    const malformedPayload = Buffer.from(JSON.stringify(payload)).toString('base64url')
+    const malformedSignature = createHmac(
+      'sha256',
+      'test-cursor-secret-with-at-least-32-characters',
+    ).update(malformedPayload).digest('base64url')
+    expect(() => repository.search(
+      workspaceA,
+      'Patient',
+      new URLSearchParams(`_count=2&_total=accurate&_cursor=${malformedPayload}.${malformedSignature}`),
+    )).toThrow('Search cursor payload is invalid')
     reopenedDatabase.close()
   })
 
@@ -225,6 +242,56 @@ describe('FHIR Resource Store', () => {
 
     database.driver.exec('DROP TRIGGER reject_patient_search')
     expect(repository.create(context, patient)).toMatchObject({ meta: { versionId: '1' } })
+    database.close()
+  })
+
+  it('rejects indexed references whose target is outside the active Workspace and Epoch', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-fhir-reference-'))
+    temporaryDirectories.push(directory)
+    const database = openClinMeshDatabase({
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      busyTimeoutMs: 5_000,
+    })
+    applyMigrations(database)
+    const workspaceA = { epoch: 'epoch-a1', workspaceId: 'workspace-a' }
+    const workspaceB = { epoch: 'epoch-b1', workspaceId: 'workspace-b' }
+    const workspaces = new WorkspaceRepository(database)
+    workspaces.install({
+      ...workspaceA,
+      scenarioId: 'reference-contract',
+      scenarioRunId: 'run-a1',
+      workspaceName: '合成引用工作区 A',
+    })
+    workspaces.install({
+      ...workspaceB,
+      scenarioId: 'reference-contract',
+      scenarioRunId: 'run-b1',
+      workspaceName: '合成引用工作区 B',
+    })
+    const repository = new FhirRepository(database)
+    repository.create(workspaceB, {
+      resourceType: 'Patient',
+      id: 'patient-other-workspace',
+      name: [{ text: '另一工作区合成患者' }],
+    })
+
+    expect(() => repository.create(workspaceA, {
+      resourceType: 'Condition',
+      id: 'condition-cross-workspace',
+      code: { text: '不应写入的合成事实' },
+      subject: { reference: 'Patient/patient-other-workspace' },
+    })).toThrow('reference target was not found in the active context')
+    expect(() => repository.read(
+      workspaceA,
+      'Condition',
+      'condition-cross-workspace',
+    )).toThrow('was not found')
+    expect(repository.history(workspaceA, 'Condition', 'condition-cross-workspace')).toEqual([])
+    expect(repository.search(
+      workspaceA,
+      'Condition',
+      new URLSearchParams('patient=Patient%2Fpatient-other-workspace&_total=accurate'),
+    )).toMatchObject({ resources: [], total: 0 })
     database.close()
   })
 })

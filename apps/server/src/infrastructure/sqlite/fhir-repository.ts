@@ -7,10 +7,12 @@ import {
   fhirResourceSchema,
   type FhirResource,
 } from '@clinmesh/contracts/fhir'
+import { z } from 'zod'
 import type { ClinMeshDatabase } from './database.ts'
 import {
   type FhirResourceOwnerKind,
   getResourceOwnership,
+  getResourceSearchParameters,
   isSupportedSearchParameter,
 } from '../../fhir/capabilities.ts'
 
@@ -38,15 +40,17 @@ export interface FhirSearchPage {
   total?: number
 }
 
-interface SearchCursor {
-  epoch: string
-  expiresAt: number
-  lastUpdated: string
-  queryHash: string
-  resourceId: string
-  resourceType: string
-  workspaceId: string
-}
+const searchCursorSchema = z.object({
+  epoch: z.string().min(1),
+  expiresAt: z.number().int().positive(),
+  lastUpdated: z.string().min(1),
+  queryHash: z.string().regex(/^[a-f0-9]{64}$/),
+  resourceId: z.string().min(1),
+  resourceType: z.string().min(1),
+  workspaceId: z.string().min(1),
+}).strict()
+
+type SearchCursor = z.infer<typeof searchCursorSchema>
 
 export class FhirRepositoryError extends Error {
   readonly code: 'CONFLICT' | 'INVALID' | 'NOT_FOUND' | 'NOT_SUPPORTED'
@@ -64,6 +68,15 @@ function contentHash(content: string): string {
 
 function parseStoredResource(content: string): FhirResource {
   return fhirResourceSchema.parse(JSON.parse(content))
+}
+
+function valuesAtPath(value: unknown, path: string[]): unknown[] {
+  if (path.length === 0) return Array.isArray(value) ? value : [value]
+  if (Array.isArray(value)) return value.flatMap(entry => valuesAtPath(entry, path))
+  if (typeof value !== 'object' || value === null) return []
+  const [head, ...tail] = path
+  if (head === undefined) return []
+  return valuesAtPath((value as Record<string, unknown>)[head], tail)
 }
 
 export class FhirRepository {
@@ -290,7 +303,7 @@ export class FhirRepository {
     if (hasNextPage && lastRow !== undefined) {
       result.nextCursor = this.#createCursor({
         epoch: context.epoch,
-        expiresAt: Date.now() + 5 * 60_000,
+        expiresAt: this.#now().getTime() + 5 * 60_000,
         lastUpdated: lastRow.last_updated,
         queryHash,
         resourceId: lastRow.resource_id,
@@ -388,22 +401,43 @@ export class FhirRepository {
         workspace_id, epoch, resource_type, resource_id, param, normalized, exact_value
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `)
-    if (resource.resourceType === 'AllergyIntolerance') {
-      const patient = typeof resource.patient === 'object' && resource.patient !== null
-        ? (resource.patient as Record<string, unknown>).reference
-        : undefined
-      if (typeof patient === 'string') {
-        insert.run(
-          context.workspaceId,
-          context.epoch,
-          resource.resourceType,
-          resource.id,
-          'patient',
-          patient.normalize('NFKC').toLocaleLowerCase(),
-          patient,
-        )
+    for (const capability of getResourceSearchParameters(resource.resourceType)) {
+      if (capability.type !== 'reference') continue
+      for (const path of capability.paths ?? []) {
+        for (const value of valuesAtPath(resource, path.split('.'))) {
+          const reference = typeof value === 'object' && value !== null
+            ? (value as Record<string, unknown>).reference
+            : undefined
+          if (typeof reference !== 'string') continue
+          const match = /^([A-Z][A-Za-z]+)\/([A-Za-z0-9.-]{1,64})$/.exec(reference)
+          if (match === null) {
+            throw new FhirRepositoryError('INVALID', 'An indexed FHIR reference must be a local relative reference')
+          }
+          const [, targetType, targetId] = match
+          if (
+            targetType === undefined
+            || targetId === undefined
+            || (capability.target !== undefined && !capability.target.includes(targetType))
+          ) {
+            throw new FhirRepositoryError('INVALID', 'An indexed FHIR reference has an unsupported target type')
+          }
+          if (this.#currentRow(context, targetType, targetId) === undefined) {
+            throw new FhirRepositoryError(
+              'INVALID',
+              'The indexed FHIR reference target was not found in the active context',
+            )
+          }
+          insert.run(
+            context.workspaceId,
+            context.epoch,
+            resource.resourceType,
+            resource.id,
+            capability.name,
+            reference.normalize('NFKC').toLocaleLowerCase(),
+            reference,
+          )
+        }
       }
-      return
     }
     if (resource.resourceType !== 'Patient') return
 
@@ -477,7 +511,7 @@ export class FhirRepository {
 
     let cursor: SearchCursor
     try {
-      cursor = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as SearchCursor
+      cursor = searchCursorSchema.parse(JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')))
     } catch {
       throw new FhirRepositoryError('INVALID', 'Search cursor payload is invalid')
     }
@@ -486,7 +520,7 @@ export class FhirRepository {
       || cursor.epoch !== context.epoch
       || cursor.resourceType !== resourceType
       || cursor.queryHash !== queryHash
-      || cursor.expiresAt < Date.now()
+      || cursor.expiresAt < this.#now().getTime()
     ) {
       throw new FhirRepositoryError('INVALID', 'Search cursor does not match the active context')
     }

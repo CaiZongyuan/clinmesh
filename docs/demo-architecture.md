@@ -59,7 +59,7 @@ Browser
 
 首期只支持一个服务端进程写入一个本地文件系统上的 SQLite 数据库。数据库文件不能放在缺少 SQLite 锁语义保证的共享网络文件系统上，也不能由多个容器副本同时打开。
 
-SQLite 连接必须启用外键、WAL 和有界 `busy_timeout`。写入使用短 `BEGIN IMMEDIATE` 事务；外部调用、长计算和浏览器等待不能占用数据库事务。
+SQLite 连接必须启用外键、WAL 和五秒 `busy_timeout`。写入使用短 `BEGIN IMMEDIATE` 事务，单次同步 Command 的真实 SQLite 合约要求事务持续时间小于一秒；外部调用、长计算和浏览器等待不能占用数据库事务。
 
 达到以下任一条件时必须重新选择部署或持久化方案：
 
@@ -89,11 +89,11 @@ Server 进程以 `migrationMode=verify` 打开数据库，发现未应用 migrat
 
 数据库 CLI 处理以下动作：
 
-- `migrate`：按文件名顺序应用 `apps/server/drizzle/` 中尚未执行的 migration，并验证 schema version 和完整性。
+- `migrate`：已有数据库落后于目标 schema 时，先在数据库同目录创建并验证带原版本和时间戳的升级前备份，再按文件名顺序应用 `apps/server/drizzle/` 中尚未执行的 migration，并验证 schema version 和完整性；空库不创建无意义备份。
 - `verify`：只验证 migration、foreign keys、journal mode 与 integrity，不修改数据库。
 - `reindex`：重建当前岗位队列索引并再次执行完整性检查。
-- `backup`：通过 SQLite backup API 创建新的备份文件，同时返回 schema version、integrity 和 canonical state hash。
-- `restore`：先把备份复制到临时候选路径，验证 schema version、integrity 和 canonical state hash，再原子创建指定的新目标文件；目标已存在或候选验证失败时不覆盖。
+- `backup`：先验证源数据库完整性，再通过 SQLite backup API 创建候选文件；候选的 schema version、integrity 和 canonical state hash 必须与源一致，否则删除候选并失败。
+- `restore`：先验证备份源的 schema、migration、integrity 和 canonical state hash，再复制到临时候选路径并逐项比较；全部一致后才原子创建指定的新目标文件，目标已存在或候选验证失败时不覆盖。
 
 以 `CLINMESH_DATABASE_PATH` 指定当前数据库后，可执行：
 
@@ -107,11 +107,13 @@ pnpm --filter @clinmesh/server db:restore \
   --destination .data/clinmesh-restored.sqlite
 ```
 
-`backup` 和 `restore` 拒绝覆盖已有目标。升级可保留实例前，操作者先创建备份，再迁移当前数据库；恢复始终写入新路径，完成验证后由操作者切换 `CLINMESH_DATABASE_PATH`。
+`backup` 和 `restore` 拒绝覆盖已有目标。`migrate` 自动保留并验证升级前备份，操作者仍可在发布窗口前另做命名备份；恢复始终写入新路径，完成验证后由操作者切换 `CLINMESH_DATABASE_PATH`。
+
+canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引、schema migration 和 runtime metadata 外的全部持久领域表。JSON 列按解析后的值规范化，FHIR `lastUpdated` 和存放 hash 自身的列不参与计算；该 hash 只证明同一 schema 下的快照内容等价，不是跨版本 replay 协议。
 
 Scenario reset 是受控业务 Command：管理员构建并激活新 Epoch，不删除数据库文件或审计保留域。旧 Epoch 的 queued/claimed outbox 被标记为 abandoned，晚到结果不能写入新 Epoch。
 
-容器部署通过 `compose.yaml` 把 `/var/lib/clinmesh` 挂载到命名卷 `clinmesh-data`，并限制为一个副本。容器 entrypoint 先对卷内数据库执行幂等 migration，再启动仅验证 schema 的 Server；升级镜像前仍由操作者负责备份。临时容器文件系统只允许用于测试数据库，不得承载需要保留的演示状态。
+容器部署通过 `compose.yaml` 把 `/var/lib/clinmesh` 挂载到命名卷 `clinmesh-data`，并限制为一个副本。容器 entrypoint 先对卷内数据库执行幂等 migration；旧 schema 会触发同卷内的升级前备份，随后启动仅验证 schema 的 Server。临时容器文件系统只允许用于测试数据库，不得承载需要保留的演示状态。
 
 ## 8. 数据库迁移边界
 
@@ -141,7 +143,7 @@ Scenario reset 是受控业务 Command：管理员构建并激活新 Epoch，不
 - 空数据库可按顺序应用全部 migration，运行时在 schema 落后时拒绝启动。
 - SQLite 自动化测试覆盖约束回滚、幂等与 expected-version 冲突、outbox 恢复、Epoch reset、索引重建以及备份恢复。
 - Workspace/Epoch 进入授权查询、FHIR history/search/total/cursor、Command、审计和 outbox，跨上下文请求不共享事实。
-- 备份与恢复结果包含 schema version、integrity 和 canonical state hash；恢复只创建经过验证的新目标文件。
+- 备份与恢复分别验证源和候选的 schema version、integrity 与 canonical state hash；恢复只创建与备份源等价的新目标文件。
 - `compose.yaml` 固定单副本和命名持久卷。当前开发环境没有 Docker，因此容器 build、healthcheck 和挂载同一卷的删除重建仍需在具备 Docker 的发布环境执行。
 
 ## 12. Alternatives considered

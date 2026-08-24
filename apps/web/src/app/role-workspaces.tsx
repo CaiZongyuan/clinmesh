@@ -14,7 +14,7 @@ import {
 } from './api-client.ts'
 import type { WorkspaceSection } from './workspace-shell.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
-import { getWorkspaceErrorTitle } from './workspace-error.ts'
+import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { RegistrarWorkspace } from './registrar-workspace.tsx'
 import { TriageWorkspace } from './triage-workspace.tsx'
 import { DoctorWorkspace } from './doctor-workspace.tsx'
@@ -67,7 +67,7 @@ function AdminWorkspace({ locale, session }: Omit<RoleWorkspaceProps, 'activeSec
       <Alert variant="destructive">
         <CircleAlertIcon aria-hidden="true" />
         <AlertTitle>{getWorkspaceErrorTitle(scenario.error, messages, messages.scenarioUnavailable)}</AlertTitle>
-        <AlertDescription>{scenario.error.message}</AlertDescription>
+        <AlertDescription>{getWorkspaceErrorMessage(scenario.error, messages)}</AlertDescription>
       </Alert>
     )
   }
@@ -125,7 +125,7 @@ function AdminWorkspace({ locale, session }: Omit<RoleWorkspaceProps, 'activeSec
           <Alert variant="destructive">
             <CircleAlertIcon aria-hidden="true" />
             <AlertTitle>{getWorkspaceErrorTitle(mutation.error, messages, messages.operationFailed)}</AlertTitle>
-            <AlertDescription>{mutation.error.message}</AlertDescription>
+            <AlertDescription>{getWorkspaceErrorMessage(mutation.error, messages)}</AlertDescription>
           </Alert>
         ) : null}
       </section>

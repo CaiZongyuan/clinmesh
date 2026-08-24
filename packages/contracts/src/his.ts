@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { fhirResourceSchema } from './fhir.ts'
 
 export const roleCodeSchema = z.enum([
   'administrator',
@@ -91,8 +92,14 @@ const catalogItemSchema = z.object({
 })
 
 export const clinicalCatalogSchema = z.object({
-  laboratory: z.array(catalogItemSchema),
+  laboratory: z.array(catalogItemSchema.extend({
+    allowedIndicationCodes: z.array(z.string().min(1)).min(1),
+    contraindicatedAllergyCodes: z.array(z.string().min(1)),
+  })),
   medications: z.array(catalogItemSchema.extend({
+    allowedCombinationIds: z.array(z.string().min(1)),
+    allowedDoseTexts: z.array(z.string().min(1)).min(1),
+    allowedFrequencyCodes: z.array(z.string().min(1)).min(1),
     defaultDoseText: z.string().min(1),
     defaultFrequencyCode: z.string().min(1),
   })),
@@ -100,6 +107,7 @@ export const clinicalCatalogSchema = z.object({
 
 export const registrationCatalogSchema = z.object({
   departments: z.array(catalogItemSchema),
+  locations: z.array(catalogItemSchema),
   virtualDate: z.iso.date(),
   visitTypes: z.array(catalogItemSchema),
 })
@@ -153,11 +161,13 @@ export const triageQueueSchema = z.object({
     departmentId: z.string().min(1),
     encounterId: z.string().min(1),
     encounterVersion: z.string().regex(/^\d+$/),
+    locationId: z.string().min(1),
     patient: patientSummarySchema,
     registrationNumber: z.string().min(1),
     status: z.string().min(1),
     taskId: z.string().min(1),
     taskVersion: z.string().regex(/^\d+$/),
+    visitTypeId: z.string().min(1),
   }).loose()),
   ...paginationShape,
 })
@@ -197,12 +207,21 @@ export const doctorQueueSchema = z.object({
   ...paginationShape,
 })
 
+export const priorFactSchema = z.object({
+  clinicalStatus: z.string(),
+  code: z.string(),
+  display: z.string(),
+  id: z.string().min(1),
+  recordedDate: z.string().optional(),
+})
+
 export const doctorCaseDetailSchema = z.object({
   allergies: z.array(z.unknown()),
   caseId: z.string().min(1),
   drafts: z.object({
     document: z.object({
       assessment: z.string(),
+      composition: fhirResourceSchema,
       medicationRequestIds: z.array(z.string()).optional(),
       plan: z.string(),
       version: z.number().int().positive(),
@@ -239,7 +258,7 @@ export const doctorCaseDetailSchema = z.object({
     versionId: z.string().regex(/^\d+$/),
   }),
   patient: patientSummarySchema,
-  priorFacts: z.array(z.unknown()),
+  priorFacts: z.array(priorFactSchema),
   report: z.object({
     id: z.string().min(1),
     results: z.array(z.object({
@@ -296,8 +315,23 @@ export const clinicalSignPreviewResponseSchema = commandResponseSchema(z.object(
   medicationTotalFen: z.number().int().nonnegative(),
   previewId: z.string().min(1),
   summary: z.object({
-    diagnosisCode: z.string(),
-    medicationCount: z.number().int().nonnegative(),
+    diagnosis: z.object({
+      code: z.string(),
+      display: z.string(),
+    }),
+    document: z.object({
+      assessment: z.string(),
+      plan: z.string(),
+    }),
+    medications: z.array(z.object({
+      medicationId: z.string().min(1),
+      medicationRequestId: z.string().min(1),
+      nameEn: z.string().min(1),
+      nameZh: z.string().min(1),
+      quantity: z.number().int().positive(),
+      subtotalFen: z.number().int().nonnegative(),
+      unitPriceFen: z.number().int().nonnegative(),
+    })).min(1),
   }),
 }))
 
@@ -329,6 +363,14 @@ export const billingQueueSchema = z.object({
     descriptionEn: z.string().min(1),
     descriptionZh: z.string().min(1),
     encounterId: z.string().min(1),
+    lines: z.array(z.object({
+      descriptionEn: z.string().min(1),
+      descriptionZh: z.string().min(1),
+      quantity: z.number().int().positive(),
+      sourceReference: z.string().min(1),
+      subtotalFen: z.number().int().nonnegative(),
+      unitPriceFen: z.number().int().nonnegative(),
+    })).min(1),
     patient: patientSummarySchema,
     status: z.string().min(1),
   }).loose()),
@@ -388,10 +430,23 @@ export const pharmacyQueueSchema = z.object({
     prescriptionNumber: z.string().min(1),
     prescriptionStatus: z.string().min(1),
     prescriptionVersion: z.number().int().positive(),
-    status: z.enum(['awaiting-dispense', 'completed', 'partially-dispensed']),
+    review: z.object({
+      note: z.string().min(1),
+      reviewId: z.string().min(1),
+      reviewedAt: z.string().min(1),
+      reviewedBy: z.string().min(1),
+    }).optional(),
+    status: z.enum(['awaiting-review', 'awaiting-dispense', 'completed', 'partially-dispensed']),
   })),
   ...paginationShape,
 })
+
+export const prescriptionReviewResponseSchema = commandResponseSchema(z.object({
+  prescriptionId: z.string().min(1),
+  prescriptionVersion: z.number().int().positive(),
+  reviewId: z.string().min(1),
+  status: z.literal('awaiting-dispense'),
+}))
 
 export const dispenseResponseSchema = commandResponseSchema(z.object({
   medicationDispenseId: z.string().min(1),

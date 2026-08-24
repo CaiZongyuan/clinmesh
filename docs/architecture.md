@@ -311,7 +311,7 @@ Canonical URL 是定义身份，不要求该地址承担运行中 API。`Capabil
 
 资源能力注册表中的每种资源只声明 `read`、`vread`、`history-instance` 和 `search-type`。当前注册 Patient、AllergyIntolerance、Organization、Location、Practitioner、PractitionerRole、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、Condition、Medication、MedicationRequest、MedicationDispense、Composition、Bundle、Provenance、InventoryItem 和 AuditEvent。
 
-Patient 声明 `name` 与 `identifier`；AllergyIntolerance 声明 `patient`；其他资源没有类型级业务 SearchParameter。所有资源共享 `_count`、`_cursor` 和 `_total=none|accurate` 三个结果控制参数。
+逐资源 SearchParameter 白名单见 5.5 节。所有资源共享 `_count`、`_cursor` 和 `_total=none|accurate` 三个结果控制参数。
 
 首期不声明：
 
@@ -458,7 +458,13 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 
 - Patient `name`：NFKC 归一化、小写化后的前缀匹配。
 - Patient `identifier`：归一化后的精确匹配。
-- AllergyIntolerance `patient`：归一化后的精确引用匹配。
+- `patient` 精确引用匹配：AllergyIntolerance、Condition、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、MedicationRequest、MedicationDispense 和 Composition。
+- `encounter` 精确引用匹配：ChargeItem、Observation、ServiceRequest、DiagnosticReport、MedicationRequest、MedicationDispense 和 Composition。
+- Task `focus`：只接受 Encounter 引用。
+- MedicationDispense `prescription`：只接受 MedicationRequest 引用。
+- Provenance `target`：只接受 Bundle 或 Composition 引用。
+
+reference 参数只索引本地相对引用。资源写入时 Repository 按 registry 中的路径和 target 校验引用格式、目标资源类型以及当前 Workspace/Epoch 中的目标存在性；任一引用失败会使包含它的 Command 整体回滚。
 
 约束：
 
@@ -490,6 +496,8 @@ HTTP 行为：
 ### 5.7 校验与 Implementation Guide
 
 当前仓库没有 SUSHI 工程、生成的 IG package 或官方 FHIR Validator 流程。`packages/contracts` 的 Zod schema 只验证 Resource 基础 envelope、CapabilityStatement、Bundle 和 OperationOutcome 的当前 wire shape；临床、支付、库存和引用不变量由拥有它们的 Command 验证。
+
+Server 合约测试保存了一组覆盖首期资源类型的合成 R5 示例实例，并通过当前运行时 schema 验证。这些 fixture 是可执行的接口示例，不是 StructureDefinition、正式 Profile、IG package 或官方 Validator 的验证证据。
 
 Scenario 创建的 Patient 使用固定 `synthetic-data` extension 标记合成数据。这是稳定的本地 canonical URL，但当前服务器没有发布对应 StructureDefinition，也不宣称该资源通过项目 Profile 校验。
 
@@ -1036,7 +1044,7 @@ fhir_history
 fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalized, exact)
 ```
 
-它只承载当前注册的 Patient `name`、Patient `identifier` 和 AllergyIntolerance `patient`。每次资源变更在同一事务删除该资源旧索引并插入完整新索引；数据库 CLI 的 `reindex` 重建索引并验证完整性。运行时不执行任意 FHIRPath，也没有尚未使用的 token/date/quantity/reference 或 compartment 索引表。
+它承载当前注册的 Patient `name`、Patient `identifier` 和 5.5 节列出的 reference SearchParameter；reference 与 string/token 参数复用同一张表，不另建 reference index。每次资源变更在同一事务删除该资源旧索引并插入完整新索引；数据库 CLI 的 `reindex` 重建索引并验证完整性。运行时不执行任意 FHIRPath，也没有尚未使用的 date/quantity 或 compartment 索引表。
 
 当前 FHIR 授权上下文由已认证 session 解析出的 Workspace/Epoch 隔离。标准 Patient compartment、Encounter care-team 和字段级策略尚未发布为 FHIR 能力；增加这些能力时必须在 SQL 查询中应用，不能查询后过滤。
 
@@ -1072,7 +1080,6 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 - 业务号放对应主体的 `Identifier`，不把患者号、就诊号或处方号当数据库主键。
 - 每个 identifier 有稳定 `system` URI、用途、分配机构和有效期。
 - 患者合并保留源 Patient，并通过 link/状态表达；禁止改写所有历史 ID。
-- 需要唯一的院内 identifier 通过 `identity_claim` 辅助表和唯一索引保证。
 - 场景 fixture 使用稳定逻辑 key，运行时 ID 可由 scenario seed + logical key 确定性生成。
 
 ### 9.5 SQLite 类型规则
@@ -1087,7 +1094,7 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 - JSON：`TEXT CHECK(json_valid(...))`，只用于 FHIR 正文、外部快照和不可检索文档内容。
 - 关系集合：关联表，不使用逗号串。
 - 所有 workspace-scoped 表的主键/唯一键以 `(workspace_id, epoch, ...)` 开头；所有租户内关系使用 `(workspace_id, epoch, target_id)` 复合外键，禁止只引用裸 ID，删除默认 `RESTRICT`。
-- FHIR Reference 写入时解析目标、验证 workspace/epoch，并写入受三列隔离键约束的 reference index。
+- registry 声明的 reference Search 路径在写入时解析目标、验证 Workspace/Epoch，并写入包含隔离键的 `fhir_sp_string`。
 - migrations 固定并记录最低 SQLite 版本；依赖 JSON 函数、`RETURNING` 或其他版本相关能力前，以真实 file-backed 数据库测试证明目标运行时支持。
 
 ### 9.6 SQLite 事务
@@ -1108,6 +1115,8 @@ SQLite 连接启用 foreign keys、WAL 和有界 `busy_timeout`。首期只允�
 数据库约束是并发正确性的最终保护：幂等 receipt key 唯一，库存以带 version 和 `quantity_on_hand >= delta` 的条件更新扣减，Workspace 内关系使用含 Epoch 的复合 foreign key。任何条件更新零行、约束错误或审计写入失败都使事务回滚，并被转换为稳定的 conflict、invariant 或 transient 错误。
 
 SQLite 连接以五秒 `busy_timeout` 提供有界锁等待；CommandExecutor 当前不在应用层叠加事务重试。已经发出外部副作用或得到 ambiguous outcome 的操作不能通过重跑整个 Command 解决。持续竞争无法满足交互延迟时需要重新评估数据库和部署方案。
+
+同步业务 Command 的真实 SQLite 合约要求单次事务持续时间小于一秒。五秒 `busy_timeout` 是锁等待上界，不是允许业务事务占用 writer 五秒；网络调用、dispatcher 处理和预览后的人工等待都必须留在事务外。
 
 ### 9.7 Outbox
 
@@ -1194,7 +1203,7 @@ clock_revision
 
 - Scenario 定义固定 seed，但当前业务路径不执行随机抽样。
 - 支付规则可确定地产生 success、declined 或 ambiguous；LIS 规则确定地产生结构化报告。outbox 通过测试 handler 验证 retryable failure、lease 恢复、重复消费和结果未知。
-- 数据库备份的 canonical state hash 覆盖 Workspace、Epoch、Scenario Run 与 FHIR current/history，并递归排除 `lastUpdated`；它不宣称是跨版本 replay hash。
+- 数据库备份的 canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引、schema migration 和 runtime metadata 外的全部持久领域表；`*_json` 按 JSON 值规范化，递归排除 FHIR `lastUpdated` 和存放 hash 自身的列。它用于同一 schema 下的备份/恢复等价校验，不宣称是跨版本 replay hash。
 - 同一 blueprint 安装得到相同初始定义 hash。当前没有 command-log replay、逐步 state hash 或通用故障编排 API。
 
 ### 10.5 Hidden Fact、Reveal Policy 与 Action Trace
@@ -1436,8 +1445,8 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 ### 15.1 运行与持久化
 
 - Node.js Hono 同时提供 Web SPA、认证、HIS/Scenario API、FHIR R5 只读 API 和健康检查。
-- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；七个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox 与门诊事实。
-- 数据库 CLI 提供 migrate、verify、reindex、backup 和 restore；Server 进程只验证 migration。
+- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；八个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、门诊事实与处方审核状态。
+- 数据库 CLI 提供 migrate、verify、reindex、backup 和 restore；已有旧版数据库执行 migrate 时先在同目录创建并验证升级前备份，Server 进程只验证 migration。
 - CommandExecutor 统一 `BEGIN IMMEDIATE`、expected versions、幂等 receipt、FHIR current/history/search、领域事实、AuditEvent、Action Trace 和 outbox 原子提交。
 - 同进程 dispatcher 持久化 claim/lease/attempt/correlation，支持失败重试、ambiguous、重复消费和旧 Epoch abandon。
 - Dockerfile 与 Compose 固定单实例和命名持久卷；当前开发环境没有 Docker，容器 build/healthcheck/卷重建仍是发布环境验证项。
@@ -1466,7 +1475,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 | FHIR 与领域表双向写 | 数据漂移 | 每类数据唯一 owner，domain projection 只读 |
 | 强行 FHIR 化医保/库存/交账 | 语义错误、事务被客户端拆散 | 本地 command API + 标准只读投影 |
 | R5 生态不如 R4 成熟 | 类型、validator、CN profile 复用困难 | 自有精简 R5 IG；保留独立 R4 adapter 边界 |
-| SQLite 单 writer 出现持续竞争 | 岗位轮询或写入超时 | 短 `BEGIN IMMEDIATE`、组合索引、有界重试和迁移触发指标 |
+| SQLite 单 writer 出现持续竞争 | 岗位轮询或写入超时 | 短 `BEGIN IMMEDIATE`、组合索引、有界锁等待和迁移触发指标 |
 | 单进程或容器丢失 | 模拟任务中断或数据回到初始状态 | 持久 outbox、显式持久卷、备份恢复和重建演练 |
 | 客户端或 dispatcher 重试副作用 | 重复开嘱、扣费或发药 | idempotency、expected version、ambiguous 状态和对账 |
 | Encounter 完成与 Scenario Run 完成混淆 | 药房错误修改临床状态 | 医生完成 Encounter，发药只终止 Scenario Run，分别测试 |

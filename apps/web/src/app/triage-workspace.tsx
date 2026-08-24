@@ -21,7 +21,7 @@ import { CheckIcon, CircleAlertIcon, HeartPulseIcon, UserRoundCheckIcon } from '
 import { useState } from 'react'
 import { getTriageQueue, newIdempotencyKey, recordTriage } from './api-client.ts'
 import { PaginationControls } from './pagination-controls.tsx'
-import { getWorkspaceErrorTitle } from './workspace-error.ts'
+import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 
 interface TriageWorkspaceProps {
@@ -108,7 +108,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
           <Alert variant="destructive">
             <CircleAlertIcon aria-hidden="true" />
             <AlertTitle>{getWorkspaceErrorTitle(queue.error, messages, messages.triageUnavailable)}</AlertTitle>
-            <AlertDescription>{queue.error.message}</AlertDescription>
+            <AlertDescription>{getWorkspaceErrorMessage(queue.error, messages)}</AlertDescription>
           </Alert>
         ) : queue.data.items.length === 0 ? (
           <Empty className="min-h-44 border">
@@ -157,7 +157,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
           <Alert variant="destructive">
             <CircleAlertIcon aria-hidden="true" />
             <AlertTitle>{getWorkspaceErrorTitle(mutation.error, messages, messages.operationFailed)}</AlertTitle>
-            <AlertDescription>{mutation.error.message}</AlertDescription>
+            <AlertDescription>{getWorkspaceErrorMessage(mutation.error, messages)}</AlertDescription>
           </Alert>
         ) : null}
         {status !== 'pending' || selectedCase === undefined ? (
@@ -182,6 +182,10 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
                 </div>
                 <Badge variant="outline">{selectedCase.patient.identifier}</Badge>
               </div>
+              <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                <div><dt className="text-muted-foreground">{messages.location}</dt><dd className="font-medium">{selectedCase.locationId}</dd></div>
+                <div><dt className="text-muted-foreground">{messages.visitType}</dt><dd className="font-medium">{selectedCase.visitTypeId}</dd></div>
+              </dl>
               <Field>
                 <FieldLabel htmlFor="triage-chief-complaint">{messages.chiefComplaint}</FieldLabel>
                 <Textarea id="triage-chief-complaint" onChange={event => setChiefComplaint(event.currentTarget.value)} required value={chiefComplaint} />
