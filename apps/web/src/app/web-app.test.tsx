@@ -22,6 +22,8 @@ const registrarSession = {
     id: 'practitioner-role-registrar',
     locationId: 'location-registrar',
     organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-registrar',
+    practitionerName: '合成挂号员',
   }],
   user: {
     email: 'registrar@demo.clinmesh.local',

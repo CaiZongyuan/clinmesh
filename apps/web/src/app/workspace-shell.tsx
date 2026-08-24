@@ -44,6 +44,7 @@ import {
   StethoscopeIcon,
   SunIcon,
   UserRoundIcon,
+  ChevronDownIcon,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { getWorkspaceMessages, type WorkspaceLocale, type WorkspaceMessageKey } from './workspace-i18n.ts'
@@ -114,6 +115,13 @@ const roleMessageKeys: Record<SessionContext['actor']['roleCode'], WorkspaceMess
   pharmacist: 'role_pharmacist',
   registrar: 'role_registrar',
   'triage-nurse': 'role_triageNurse',
+}
+
+function actingPractitionerLabel(
+  role: SessionContext['availableRoles'][number],
+  messages: ReturnType<typeof getWorkspaceMessages>,
+): string {
+  return `${messages[roleMessageKeys[role.code]]} · ${role.practitionerName}`
 }
 
 function firstValue<Value extends string>(values: Value[]): Value | undefined {
@@ -207,19 +215,33 @@ function UserMenu({
   session: SessionContext
   signOutPending: boolean
 }): React.JSX.Element {
+  const activeRole = session.availableRoles.find(role => role.id === session.actor.practitionerRoleId)
+  const activeRoleLabel = activeRole === undefined
+    ? messages[roleMessageKeys[session.actor.roleCode]]
+    : actingPractitionerLabel(activeRole, messages)
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label={messages.userMenu}
-        render={<Button size="icon" variant="ghost" />}
+        render={(
+          <Button
+            className="max-w-40 min-w-0 justify-start px-2 sm:max-w-64"
+            size="sm"
+            title={activeRoleLabel}
+            variant="ghost"
+          />
+        )}
       >
-        <Avatar className="size-7 rounded-md">
+        <Avatar className="size-6 shrink-0 rounded-md">
           <AvatarFallback className="rounded-md">
             <UserRoundIcon aria-hidden="true" />
           </AvatarFallback>
         </Avatar>
+        <span className="truncate text-xs font-medium">{activeRoleLabel}</span>
+        <ChevronDownIcon aria-hidden="true" data-icon="inline-end" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-52">
+      <DropdownMenuContent align="end" className="min-w-64">
         <DropdownMenuGroup>
           <DropdownMenuLabel>
             <span className="block text-foreground">{session.user.name}</span>
@@ -239,7 +261,7 @@ function UserMenu({
                 key={role.id}
                 value={role.id}
               >
-                {messages[roleMessageKeys[role.code]]}
+                {actingPractitionerLabel(role, messages)}
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>

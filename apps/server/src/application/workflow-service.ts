@@ -22,7 +22,7 @@ import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import type { ActorContext, CommandEffect, CommandResponse } from './command-executor.ts'
-import { CommandExecutor } from './command-executor.ts'
+import { CommandExecutor, provenanceAgents } from './command-executor.ts'
 
 export class WorkflowError extends Error {
   readonly code: 'CATALOG_CONFLICT' | 'DUPLICATE_PATIENT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
@@ -2128,11 +2128,7 @@ export class WorkflowService {
         ],
         recorded: now,
         activity: { text: 'Clinical document signing and Encounter completion' },
-        agent: [{
-          type: { text: 'Author and signer' },
-          who: { reference: `Practitioner/${input.context.practitionerId}` },
-          onBehalfOf: { reference: `Organization/${input.context.organizationId}` },
-        }],
+        agent: provenanceAgents(input.context, 'Author and signer'),
       })
       const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
       const completedEncounter = transaction.fhir.update(input.context, {
@@ -2367,11 +2363,7 @@ export class WorkflowService {
         recorded: now,
         activity: { text: 'Clinical document revision' },
         reason: [{ concept: { text: input.reason } }],
-        agent: [{
-          type: { text: 'Clinical document reviser' },
-          who: { reference: `Practitioner/${input.context.practitionerId}` },
-          onBehalfOf: { reference: `Organization/${input.context.organizationId}` },
-        }],
+        agent: provenanceAgents(input.context, 'Clinical document reviser'),
         entity: [{
           role: 'revision',
           what: { reference: `Composition/${input.compositionId}` },

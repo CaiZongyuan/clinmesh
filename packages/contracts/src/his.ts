@@ -44,6 +44,8 @@ export const sessionContextSchema = z.object({
     id: z.string().min(1),
     locationId: z.string().min(1),
     organizationId: z.string().min(1),
+    practitionerId: z.string().min(1),
+    practitionerName: z.string().min(1),
   })),
   user: z.object({
     email: z.email(),

@@ -22,6 +22,8 @@ const registrarSession = {
     id: 'practitioner-role-registrar',
     locationId: 'location-registrar',
     organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-registrar',
+    practitionerName: '合成挂号员',
   }],
   user: {
     email: 'registrar@demo.clinmesh.local',
@@ -47,11 +49,43 @@ const administratorSession = {
     id: 'practitioner-role-administrator',
     locationId: 'location-administrator',
     organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-administrator',
+    practitionerName: '合成管理员',
+  }, {
+    code: 'cashier',
+    id: 'practitioner-role-cashier',
+    locationId: 'location-cashier',
+    organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-cashier',
+    practitionerName: '合成收费员',
+  }, {
+    code: 'outpatient-doctor',
+    id: 'practitioner-role-outpatient-doctor',
+    locationId: 'location-outpatient-doctor',
+    organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-outpatient-doctor',
+    practitionerName: '合成门诊医生',
+  }, {
+    code: 'pharmacist',
+    id: 'practitioner-role-pharmacist',
+    locationId: 'location-pharmacist',
+    organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-pharmacist',
+    practitionerName: '合成药师',
   }, {
     code: 'registrar',
     id: 'practitioner-role-registrar',
     locationId: 'location-registrar',
     organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-registrar',
+    practitionerName: '合成挂号员',
+  }, {
+    code: 'triage-nurse',
+    id: 'practitioner-role-triage-nurse',
+    locationId: 'location-triage-nurse',
+    organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-triage-nurse',
+    practitionerName: '合成分诊护士',
   }],
   user: {
     email: 'admin@demo.clinmesh.local',
@@ -128,17 +162,19 @@ describe('trusted Web session workflow', () => {
 
   it('switches to a granted Practitioner Role and clears the previous role workspace', async () => {
     let session = administratorSession
+    let scenarioRequests = 0
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://localhost').pathname
       if (path === '/api/auth/context') return Response.json(session)
       if (path === '/api/auth/role') {
-        expect(JSON.parse(String(init?.body))).toEqual({
-          practitionerRoleId: 'practitioner-role-registrar',
-        })
-        session = administratorAsRegistrarSession
+        const request = JSON.parse(String(init?.body)) as { practitionerRoleId: string }
+        session = request.practitionerRoleId === 'practitioner-role-registrar'
+          ? administratorAsRegistrarSession
+          : administratorSession
         return Response.json(session)
       }
       if (path === '/api/sim/v1/scenario-runs/current') {
+        scenarioRequests += 1
         return Response.json({
           epoch: 'epoch-1',
           initialStateHash: 'a'.repeat(64),
@@ -162,13 +198,32 @@ describe('trusted Web session workflow', () => {
     render(<WebApp />)
 
     expect(await screen.findByRole('heading', { name: '工作台总览' })).toBeTruthy()
+    expect(screen.getByText('管理员 · 合成管理员')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
-    await user.click(await screen.findByRole('menuitemradio', { name: '挂号员' }))
+    for (const label of [
+      '管理员 · 合成管理员',
+      '收费员 · 合成收费员',
+      '门诊医生 · 合成门诊医生',
+      '药师 · 合成药师',
+      '挂号员 · 合成挂号员',
+      '分诊护士 · 合成分诊护士',
+    ]) {
+      expect(await screen.findByRole('menuitemradio', { name: label })).toBeTruthy()
+    }
+    await user.click(await screen.findByRole('menuitemradio', { name: '挂号员 · 合成挂号员' }))
 
     expect(await screen.findByRole('heading', { name: '门诊挂号' })).toBeTruthy()
     expect(window.location.pathname).toBe('/registration')
+    expect(screen.getByText('挂号员 · 合成挂号员')).toBeTruthy()
     expect(screen.getByRole('link', { name: '门诊挂号' })).toBeTruthy()
     expect(screen.queryByRole('link', { name: '门诊收费' })).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: '管理员 · 合成管理员' }))
+
+    expect(await screen.findByRole('heading', { name: '工作台总览' })).toBeTruthy()
+    expect(window.location.pathname).toBe('/')
+    expect(scenarioRequests).toBe(2)
   })
 
   it('shows a permission state when a stale role grant is rejected', async () => {
@@ -202,7 +257,7 @@ describe('trusted Web session workflow', () => {
 
     expect(await screen.findByRole('heading', { name: '工作台总览' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
-    await user.click(await screen.findByRole('menuitemradio', { name: '挂号员' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: '挂号员 · 合成挂号员' }))
 
     expect(await screen.findByText('当前岗位无权执行此操作')).toBeTruthy()
     expect(screen.getByText('请切换到有权限的岗位后重试。')).toBeTruthy()

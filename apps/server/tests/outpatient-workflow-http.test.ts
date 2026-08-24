@@ -1856,6 +1856,17 @@ describe('outpatient workflow HTTP contract', () => {
     })
     runtimes.push(runtime)
     const testCase = await createRevisitDraftCase(runtime, password)
+    const administratorCookie = await signIn(runtime, 'admin@demo.clinmesh.local', password)
+    const actingDoctorResponse = await runtime.app.request('/api/auth/role', {
+      body: JSON.stringify({ practitionerRoleId: 'practitioner-role-outpatient-doctor' }),
+      headers: {
+        'content-type': 'application/json',
+        cookie: administratorCookie,
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect(actingDoctorResponse.status).toBe(200)
     const clinicalExpectedVersions = {
       [`Condition/${testCase.draft.conditionId}`]: '1',
       [`Encounter/${testCase.registration.encounterId}`]: '6',
@@ -1876,7 +1887,7 @@ describe('outpatient workflow HTTP contract', () => {
             },
           },
         }),
-        headers: commandHeaders(testCase.doctorCookie),
+        headers: commandHeaders(administratorCookie),
         method: 'POST',
       },
     )
@@ -1901,7 +1912,7 @@ describe('outpatient workflow HTTP contract', () => {
 
     const beforeSign = await runtime.app.request(
       `/fhir/R5/Encounter/${testCase.registration.encounterId}`,
-      { headers: { cookie: testCase.doctorCookie } },
+      { headers: { cookie: administratorCookie } },
     )
     expect(fhirResourceSchema.parse(await beforeSign.json())).toMatchObject({ status: 'in-progress' })
 
@@ -1916,7 +1927,7 @@ describe('outpatient workflow HTTP contract', () => {
             previewId: preview.previewId,
           },
         }),
-        headers: commandHeaders(testCase.doctorCookie, signIdempotencyKey),
+        headers: commandHeaders(administratorCookie, signIdempotencyKey),
         method: 'POST',
       },
     )
@@ -1929,6 +1940,39 @@ describe('outpatient workflow HTTP contract', () => {
       status: 'awaiting-medication-payment',
     })
     expect(clinicalSignResponseSchema.parse(await (await sign()).json())).toEqual(signed)
+
+    const provenanceResponse = await runtime.app.request(
+      `/fhir/R5/Provenance/${signed.data.provenanceId}`,
+      { headers: { cookie: administratorCookie } },
+    )
+    expect(provenanceResponse.status).toBe(200)
+    expect(fhirResourceSchema.parse(await provenanceResponse.json())).toMatchObject({
+      agent: expect.arrayContaining([
+        expect.objectContaining({
+          type: { text: 'Authenticated actor' },
+          who: {
+            identifier: {
+              system: 'https://caizongyuan.github.io/clinmesh/identifier/actor',
+              value: 'actor-administrator',
+            },
+          },
+        }),
+        expect.objectContaining({
+          role: expect.arrayContaining([
+            expect.objectContaining({
+              coding: [{
+                code: 'practitioner-role-outpatient-doctor',
+                display: 'outpatient-doctor',
+                system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/practitioner-role',
+              }],
+            }),
+            { text: 'Author and signer' },
+          ]),
+          type: { text: 'Acting practitioner' },
+          who: { reference: 'Practitioner/practitioner-outpatient-doctor' },
+        }),
+      ]),
+    })
 
     const medicationCharge = await runtime.app.request(
       `/fhir/R5/ChargeItem/${signed.data.chargeItemId}`,

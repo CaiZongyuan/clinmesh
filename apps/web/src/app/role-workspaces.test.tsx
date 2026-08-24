@@ -32,11 +32,15 @@ const administratorSession = {
     id: 'practitioner-role-administrator',
     locationId: 'location-administrator',
     organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-administrator',
+    practitionerName: '合成管理员',
   }, {
     code: 'registrar',
     id: 'practitioner-role-registrar',
     locationId: 'location-registrar',
     organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-registrar',
+    practitionerName: '合成挂号员',
   }],
   user: {
     email: 'admin@demo.clinmesh.local',
@@ -62,6 +66,8 @@ const registrarSession = {
     id: 'practitioner-role-registrar',
     locationId: 'location-registrar',
     organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-registrar',
+    practitionerName: '合成挂号员',
   }],
   user: {
     email: 'registrar@demo.clinmesh.local',
@@ -87,6 +93,8 @@ const triageNurseSession = {
     id: 'practitioner-role-triage-nurse',
     locationId: 'location-triage',
     organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-triage-nurse',
+    practitionerName: '合成分诊护士',
   }],
   user: {
     email: 'triage@demo.clinmesh.local',
@@ -112,6 +120,8 @@ const doctorSession = {
     id: 'practitioner-role-outpatient-doctor',
     locationId: 'location-clinic',
     organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-outpatient-doctor',
+    practitionerName: '合成门诊医生',
   }],
   user: {
     email: 'doctor@demo.clinmesh.local',
@@ -137,6 +147,8 @@ const cashierSession = {
     id: 'practitioner-role-cashier',
     locationId: 'location-cashier',
     organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-cashier',
+    practitionerName: '合成收费员',
   }],
   user: {
     email: 'cashier@demo.clinmesh.local',
@@ -162,6 +174,8 @@ const pharmacistSession = {
     id: 'practitioner-role-pharmacist',
     locationId: 'location-pharmacist',
     organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-pharmacist',
+    practitionerName: '合成药师',
   }],
   user: {
     email: 'pharmacist@demo.clinmesh.local',
@@ -779,6 +793,7 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
+    expect(await screen.findByText('门诊医生 · 合成门诊医生')).toBeTruthy()
     expect(await screen.findByRole('listitem', { name: '选择病例 合成患者周明' })).toBeTruthy()
     expect((await screen.findByText('脉搏（次/分）')).nextElementSibling?.textContent).toBe('102')
     expect(screen.getByText('呼吸（次/分）').nextElementSibling?.textContent).toBe('20')

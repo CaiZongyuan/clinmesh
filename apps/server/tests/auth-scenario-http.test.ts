@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
+import { fhirBundleSchema, fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import {
   apiErrorSchema,
+  createPatientResponseSchema,
   patientSearchSchema,
   scenarioCommandResponseSchema,
   scenarioStateSchema,
@@ -88,7 +89,7 @@ describe('trusted session and Scenario HTTP contract', () => {
     })
   })
 
-  it('allows role selection only for a granted role from a same-origin request', async () => {
+  it('lets the Super Administrator select and restore every synthetic Acting Practitioner Context', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-role-http-'))
     temporaryDirectories.push(directory)
     const password = `Test-${randomUUID()}-Aa1!`
@@ -115,6 +116,93 @@ describe('trusted session and Scenario HTTP contract', () => {
     })
     const cookie = signInResponse.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
 
+    const initialContextResponse = await runtime.app.request('/api/auth/context', {
+      headers: { cookie },
+    })
+    expect(initialContextResponse.status).toBe(200)
+    const initialContext = sessionContextSchema.parse(await initialContextResponse.json())
+    expect(initialContext.availableRoles).toHaveLength(6)
+    expect(initialContext.availableRoles).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'outpatient-doctor',
+        id: 'practitioner-role-outpatient-doctor',
+        practitionerId: 'practitioner-outpatient-doctor',
+        practitionerName: '合成门诊医生',
+      }),
+      expect.objectContaining({
+        code: 'pharmacist',
+        id: 'practitioner-role-pharmacist',
+        practitionerId: 'practitioner-pharmacist',
+        practitionerName: '合成药师',
+      }),
+    ]))
+
+    const selectedResponse = await runtime.app.request('/api/auth/role', {
+      body: JSON.stringify({
+        actorId: 'actor-forged',
+        practitionerId: 'practitioner-forged',
+        practitionerRoleId: 'practitioner-role-outpatient-doctor',
+        workspaceId: 'workspace-forged',
+      }),
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect(selectedResponse.status).toBe(200)
+    expect(sessionContextSchema.parse(await selectedResponse.json())).toMatchObject({
+      actor: {
+        actorId: 'actor-administrator',
+        practitionerId: 'practitioner-outpatient-doctor',
+        practitionerRoleId: 'practitioner-role-outpatient-doctor',
+        roleCode: 'outpatient-doctor',
+        workspaceId: 'workspace-demo',
+      },
+    })
+
+    const restoredResponse = await runtime.app.request('/api/auth/context', {
+      headers: { cookie },
+    })
+    expect(restoredResponse.status).toBe(200)
+    expect(sessionContextSchema.parse(await restoredResponse.json())).toMatchObject({
+      actor: {
+        actorId: 'actor-administrator',
+        practitionerId: 'practitioner-outpatient-doctor',
+        practitionerRoleId: 'practitioner-role-outpatient-doctor',
+        roleCode: 'outpatient-doctor',
+      },
+    })
+  })
+
+  it('rejects untrusted, invalid, and unauthorized Acting Practitioner selection', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-role-rejection-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const signInResponse = await runtime.app.request('/api/auth/sign-in/email', {
+      body: JSON.stringify({
+        email: 'registrar@demo.clinmesh.local',
+        password,
+      }),
+      headers: {
+        'content-type': 'application/json',
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    const cookie = signInResponse.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
+
     const csrfResponse = await runtime.app.request('/api/auth/role', {
       body: JSON.stringify({ practitionerRoleId: 'practitioner-role-registrar' }),
       headers: {
@@ -127,7 +215,11 @@ describe('trusted session and Scenario HTTP contract', () => {
     expect(apiErrorSchema.parse(await csrfResponse.json())).toMatchObject({ error: { code: 'CSRF_REJECTED' } })
 
     const forbiddenResponse = await runtime.app.request('/api/auth/role', {
-      body: JSON.stringify({ practitionerRoleId: 'practitioner-role-pharmacist' }),
+      body: JSON.stringify({
+        actorId: 'actor-forged',
+        practitionerId: 'practitioner-outpatient-doctor',
+        practitionerRoleId: 'practitioner-role-outpatient-doctor',
+      }),
       headers: {
         'content-type': 'application/json',
         cookie,
@@ -149,13 +241,33 @@ describe('trusted session and Scenario HTTP contract', () => {
     })
     expect(invalidResponse.status).toBe(400)
     expect(apiErrorSchema.parse(await invalidResponse.json())).toMatchObject({ error: { code: 'INVALID_INPUT' } })
+  })
 
-    const selectedResponse = await runtime.app.request('/api/auth/role', {
-      body: JSON.stringify({
-        actorId: 'actor-forged',
-        practitionerRoleId: 'practitioner-role-registrar',
-        workspaceId: 'workspace-forged',
-      }),
+  it('records the authenticated administrator and Acting Practitioner in a business AuditEvent', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-acting-audit-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const signInResponse = await runtime.app.request('/api/auth/sign-in/email', {
+      body: JSON.stringify({ email: 'admin@demo.clinmesh.local', password }),
+      headers: {
+        'content-type': 'application/json',
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    const cookie = signInResponse.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
+    const selectionResponse = await runtime.app.request('/api/auth/role', {
+      body: JSON.stringify({ practitionerRoleId: 'practitioner-role-registrar' }),
       headers: {
         'content-type': 'application/json',
         cookie,
@@ -163,14 +275,61 @@ describe('trusted session and Scenario HTTP contract', () => {
       },
       method: 'POST',
     })
-    expect(selectedResponse.status).toBe(200)
-    expect(sessionContextSchema.parse(await selectedResponse.json())).toMatchObject({
-      actor: {
-        actorId: 'actor-administrator',
-        practitionerRoleId: 'practitioner-role-registrar',
-        roleCode: 'registrar',
-        workspaceId: 'workspace-demo',
+    expect(selectionResponse.status).toBe(200)
+
+    const createResponse = await runtime.app.request('/api/his/v1/patients', {
+      body: JSON.stringify({
+        expectedVersions: {},
+        input: {
+          birthDate: '1990-06-15',
+          gender: 'female',
+          identifier: `CM-AUDIT-${randomUUID()}`,
+          name: '合成审计患者',
+        },
+      }),
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        'idempotency-key': randomUUID(),
+        origin: 'http://localhost',
       },
+      method: 'POST',
+    })
+    expect(createResponse.status).toBe(200)
+    const created = createPatientResponseSchema.parse(await createResponse.json())
+    const auditResponse = await runtime.app.request(`/fhir/R5/AuditEvent/${created.auditId}`, {
+      headers: { cookie },
+    })
+    expect(auditResponse.status).toBe(200)
+    expect(fhirResourceSchema.parse(await auditResponse.json())).toMatchObject({
+      agent: expect.arrayContaining([
+        expect.objectContaining({
+          requestor: true,
+          type: { text: 'Authenticated actor' },
+          who: {
+            identifier: {
+              system: 'https://caizongyuan.github.io/clinmesh/identifier/actor',
+              value: 'actor-administrator',
+            },
+          },
+        }),
+        expect.objectContaining({
+          requestor: false,
+          role: expect.arrayContaining([expect.objectContaining({
+            coding: [expect.objectContaining({
+              code: 'practitioner-role-registrar',
+            })],
+            text: 'registrar',
+          })]),
+          type: { text: 'Acting practitioner' },
+          who: {
+            identifier: {
+              system: 'https://caizongyuan.github.io/clinmesh/identifier/practitioner',
+              value: 'practitioner-registrar',
+            },
+          },
+        }),
+      ]),
     })
   })
 

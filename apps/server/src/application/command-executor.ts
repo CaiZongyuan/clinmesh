@@ -20,6 +20,50 @@ export interface ActorContext extends RepositoryContext {
   scenarioRunId: string
 }
 
+const actorIdentifierSystem = 'https://caizongyuan.github.io/clinmesh/identifier/actor'
+const practitionerIdentifierSystem = 'https://caizongyuan.github.io/clinmesh/identifier/practitioner'
+const practitionerRoleSystem = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/practitioner-role'
+
+function authenticatedActorAgent(context: ActorContext) {
+  return {
+    type: { text: 'Authenticated actor' },
+    who: {
+      identifier: {
+        system: actorIdentifierSystem,
+        value: context.actorId,
+      },
+    },
+  }
+}
+
+function actingPractitionerRole(context: ActorContext) {
+  return {
+    ...(context.practitionerRoleId === undefined
+      ? {}
+      : {
+          coding: [{
+            code: context.practitionerRoleId,
+            display: context.roleCode,
+            system: practitionerRoleSystem,
+          }],
+        }),
+    text: context.roleCode,
+  }
+}
+
+export function provenanceAgents(context: ActorContext, responsibility: string) {
+  return [authenticatedActorAgent(context), ...(context.practitionerId === undefined
+    ? []
+    : [{
+        type: { text: 'Acting practitioner' },
+        role: [actingPractitionerRole(context), { text: responsibility }],
+        who: { reference: `Practitioner/${context.practitionerId}` },
+        ...(context.organizationId === undefined
+          ? {}
+          : { onBehalfOf: { reference: `Organization/${context.organizationId}` } }),
+      }])]
+}
+
 export interface CommandEffect {
   kind: 'created' | 'updated'
   reference: string
@@ -303,8 +347,11 @@ export class CommandExecutor {
       actorId: context.actorId,
       auditId,
       operation,
+      practitionerId: context.practitionerId,
+      practitionerRoleId: context.practitionerRoleId,
       previousHash: head.hash,
       requestHash,
+      roleCode: context.roleCode,
       sequence,
       timestamp,
     })
@@ -357,17 +404,21 @@ export class CommandExecutor {
         },
       },
       agent: [{
-        type: { text: context.roleCode },
-        who: {
-          identifier: {
-            system: context.practitionerId === undefined
-              ? 'https://caizongyuan.github.io/clinmesh/identifier/actor'
-              : 'https://caizongyuan.github.io/clinmesh/identifier/practitioner',
-            value: context.practitionerId ?? context.actorId,
-          },
-        },
+        ...authenticatedActorAgent(context),
         requestor: true,
-      }],
+      }, ...(context.practitionerId === undefined
+        ? []
+        : [{
+            type: { text: 'Acting practitioner' },
+            role: [actingPractitionerRole(context)],
+            who: {
+              identifier: {
+                system: practitionerIdentifierSystem,
+                value: context.practitionerId,
+              },
+            },
+            requestor: false,
+          }])],
       source: {
         observer: {
           identifier: {

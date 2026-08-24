@@ -1,6 +1,8 @@
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from '@better-auth/drizzle-adapter'
+import { roleCodeSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
+import { z } from 'zod'
 import type { ActorContext } from './command-executor.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import * as authSchema from '../infrastructure/auth/schema.ts'
@@ -50,8 +52,6 @@ export const syntheticAccounts = [
   },
 ] as const
 
-export type RoleCode = (typeof syntheticAccounts)[number]['roleCode']
-
 interface IdentityServiceOptions {
   authBaseUrl: string
   authSecret: string
@@ -63,35 +63,30 @@ interface SeedSyntheticAccountsInput {
   workspaceId: string
 }
 
-interface RoleRow {
-  actor_id: string
-  epoch: string
-  location_id: string
-  membership_id: string
-  organization_id: string
-  practitioner_id: string
-  practitioner_role_id: string
-  role_code: RoleCode
-  scenario_run_id: string
-  workspace_id: string
-}
+const roleRowSchema = z.object({
+  actor_id: z.string().min(1),
+  epoch: z.string().min(1),
+  location_id: z.string().min(1),
+  membership_id: z.string().min(1),
+  organization_id: z.string().min(1),
+  practitioner_id: z.string().min(1),
+  practitioner_name: z.string().min(1),
+  practitioner_role_id: z.string().min(1),
+  role_code: roleCodeSchema,
+  scenario_run_id: z.string().min(1),
+  workspace_id: z.string().min(1),
+})
 
-export interface AvailableRole {
-  code: RoleCode
-  id: string
-  locationId: string
-  organizationId: string
-}
+type RoleRow = z.infer<typeof roleRowSchema>
 
-export interface SessionContext {
-  actor: ActorContext
-  availableRoles: AvailableRole[]
-  user: {
-    email: string
-    id: string
-    name: string
-  }
-}
+const selectedRoleRowSchema = z.object({
+  membership_id: z.string().min(1),
+  practitioner_role_id: z.string().min(1),
+})
+
+const membershipGrantRowSchema = selectedRoleRowSchema.pick({ membership_id: true })
+
+type ResolvedSessionContext = Omit<SessionContext, 'actor'> & { actor: ActorContext }
 
 export class IdentityError extends Error {
   readonly code: 'AUTHENTICATION_REQUIRED' | 'CSRF_REJECTED' | 'ROLE_NOT_ALLOWED'
@@ -199,32 +194,37 @@ export class IdentityService {
     this.#database.driver.prepare(`
       INSERT OR IGNORE INTO membership_practitioner_role (
         membership_id, workspace_id, practitioner_role_id
-      ) VALUES ('membership-administrator', ?, 'practitioner-role-registrar')
+      )
+      SELECT 'membership-administrator', workspace_id, practitioner_role_id
+      FROM practitioner_role_binding
+      WHERE workspace_id = ? AND active = 1
     `).run(input.workspaceId)
   }
 
-  async selectRole(headers: Headers, practitionerRoleId: string): Promise<SessionContext> {
+  async selectRole(headers: Headers, practitionerRoleId: string): Promise<ResolvedSessionContext> {
     this.assertTrustedMutation(headers)
     const authSession = await this.auth.api.getSession({ headers })
     if (authSession === null) {
       throw new IdentityError('AUTHENTICATION_REQUIRED', 'A valid session is required')
     }
-    const grant = this.#database.driver.prepare(`
-      SELECT membership.membership_id
-      FROM workspace_membership AS membership
-      JOIN membership_practitioner_role AS granted
-        ON granted.membership_id = membership.membership_id
-       AND granted.workspace_id = membership.workspace_id
-      JOIN practitioner_role_binding AS role
-        ON role.workspace_id = granted.workspace_id
-       AND role.practitioner_role_id = granted.practitioner_role_id
-      WHERE membership.user_id = ?
-        AND membership.status = 'active'
-        AND granted.practitioner_role_id = ?
-        AND role.active = 1
-      ORDER BY membership.workspace_id
-      LIMIT 1
-    `).get(authSession.user.id, practitionerRoleId) as { membership_id: string } | undefined
+    const grant = membershipGrantRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT membership.membership_id
+        FROM workspace_membership AS membership
+        JOIN membership_practitioner_role AS granted
+          ON granted.membership_id = membership.membership_id
+         AND granted.workspace_id = membership.workspace_id
+        JOIN practitioner_role_binding AS role
+          ON role.workspace_id = granted.workspace_id
+         AND role.practitioner_role_id = granted.practitioner_role_id
+        WHERE membership.user_id = ?
+          AND membership.status = 'active'
+          AND granted.practitioner_role_id = ?
+          AND role.active = 1
+        ORDER BY membership.workspace_id
+        LIMIT 1
+      `).get(authSession.user.id, practitionerRoleId),
+    )
     if (grant === undefined) {
       throw new IdentityError('ROLE_NOT_ALLOWED', 'The Practitioner Role is not granted to this account')
     }
@@ -240,12 +240,12 @@ export class IdentityService {
     return this.resolveSessionContext(headers)
   }
 
-  async resolveSessionContext(headers: Headers): Promise<SessionContext> {
+  async resolveSessionContext(headers: Headers): Promise<ResolvedSessionContext> {
     const authSession = await this.auth.api.getSession({ headers })
     if (authSession === null) {
       throw new IdentityError('AUTHENTICATION_REQUIRED', 'A valid session is required')
     }
-    const roles = this.#database.driver.prepare(`
+    const roles = z.array(roleRowSchema).parse(this.#database.driver.prepare(`
       SELECT
         membership.actor_id,
         membership.membership_id,
@@ -253,6 +253,7 @@ export class IdentityService {
         workspace.active_epoch AS epoch,
         role.practitioner_role_id,
         role.practitioner_id,
+        json_extract(practitioner.content_json, '$.name[0].text') AS practitioner_name,
         role.role_code,
         role.organization_id,
         role.location_id,
@@ -265,6 +266,12 @@ export class IdentityService {
       JOIN practitioner_role_binding AS role
         ON role.workspace_id = granted.workspace_id
        AND role.practitioner_role_id = granted.practitioner_role_id
+      JOIN fhir_resource AS practitioner
+        ON practitioner.workspace_id = role.workspace_id
+       AND practitioner.epoch = workspace.active_epoch
+       AND practitioner.resource_type = 'Practitioner'
+       AND practitioner.resource_id = role.practitioner_id
+       AND practitioner.deleted = 0
       JOIN scenario_run AS run
         ON run.workspace_id = workspace.workspace_id
        AND run.epoch = workspace.active_epoch
@@ -272,7 +279,7 @@ export class IdentityService {
         AND membership.status = 'active'
         AND role.active = 1
       ORDER BY membership.workspace_id, role.practitioner_role_id
-    `).all(authSession.user.id) as RoleRow[]
+    `).all(authSession.user.id))
     const selectedRole = this.#selectedRole(authSession.session.id, roles) ?? roles[0]
     if (selectedRole === undefined) {
       throw new IdentityError('ROLE_NOT_ALLOWED', 'The account has no active Workspace role')
@@ -297,6 +304,8 @@ export class IdentityService {
           id: role.practitioner_role_id,
           locationId: role.location_id,
           organizationId: role.organization_id,
+          practitionerId: role.practitioner_id,
+          practitionerName: role.practitioner_name,
         })),
       user: {
         email: authSession.user.email,
@@ -307,14 +316,11 @@ export class IdentityService {
   }
 
   #selectedRole(sessionId: string, roles: RoleRow[]): RoleRow | undefined {
-    const selected = this.#database.driver.prepare(`
+    const selected = selectedRoleRowSchema.optional().parse(this.#database.driver.prepare(`
       SELECT membership_id, practitioner_role_id
       FROM auth_session_context
       WHERE session_id = ?
-    `).get(sessionId) as {
-      membership_id: string
-      practitioner_role_id: string
-    } | undefined
+    `).get(sessionId))
     if (selected === undefined) return undefined
     return roles.find(role => (
       role.membership_id === selected.membership_id
