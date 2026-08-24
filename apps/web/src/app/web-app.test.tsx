@@ -5,6 +5,31 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebApp } from './web-app.tsx'
 
+const registrarSession = {
+  actor: {
+    actorId: 'actor-registrar',
+    epoch: 'epoch-1',
+    locationId: 'location-registrar',
+    organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-registrar',
+    practitionerRoleId: 'practitioner-role-registrar',
+    roleCode: 'registrar',
+    scenarioRunId: 'scenario-run-1',
+    workspaceId: 'workspace-demo',
+  },
+  availableRoles: [{
+    code: 'registrar',
+    id: 'practitioner-role-registrar',
+    locationId: 'location-registrar',
+    organizationId: 'organization-clinmesh',
+  }],
+  user: {
+    email: 'registrar@demo.clinmesh.local',
+    id: 'user-registrar',
+    name: '合成挂号员',
+  },
+}
+
 function createMediaQueryList(media: string, matches = false): MediaQueryList {
   return {
     matches,
@@ -53,7 +78,7 @@ function installMatchMedia(prefersDark: boolean): { setPrefersDark: (matches: bo
 
 async function renderWebApp() {
   const rendered = render(<WebApp />)
-  await screen.findByRole('main')
+  await screen.findByRole('heading', { level: 1 })
   return rendered
 }
 
@@ -66,6 +91,17 @@ describe('Web application shell', () => {
     window.history.replaceState(null, '', '/')
     vi.stubGlobal('matchMedia', vi.fn((query: string) => createMediaQueryList(query)))
     vi.stubGlobal('scrollTo', vi.fn())
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/auth/context') return Response.json(registrarSession)
+      if (path === '/api/his/v1/catalogs/registration') {
+        return Response.json({ departments: [], virtualDate: '2026-08-24', visitTypes: [] })
+      }
+      if (path === '/api/his/v1/registrations') {
+        return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
+      }
+      throw new Error(`Unexpected request: ${path}`)
+    }))
   })
 
   afterEach(() => {
@@ -78,9 +114,11 @@ describe('Web application shell', () => {
 
     expect(screen.getByRole('heading', { name: '工作台总览' })).toBeTruthy()
     expect(screen.getByRole('navigation', { name: '岗位导航' })).toBeTruthy()
-    expect(screen.getByRole('searchbox', { name: '搜索工作台' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '门诊挂号' })).toBeTruthy()
+    expect(screen.queryByRole('link', { name: '门诊收费' })).toBeNull()
     expect(screen.getByRole('button', { name: '通知' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '用户菜单' })).toBeTruthy()
+    expect(await screen.findByText('暂无挂号记录')).toBeTruthy()
     expect(screen.queryByText(/Agent|AI|助手/i)).toBeNull()
   })
 
@@ -115,12 +153,10 @@ describe('Web application shell', () => {
 
     expect(screen.getByRole('heading', { name: 'Workspace overview' })).toBeTruthy()
     expect(screen.getByRole('navigation', { name: 'Role navigation' })).toBeTruthy()
-    expect(screen.getByRole('searchbox', { name: 'Search workspaces' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Notifications' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'User menu' })).toBeTruthy()
-    for (const workspace of ['Registration', 'Triage', 'Consultation', 'Billing', 'Pharmacy']) {
-      expect(screen.getByRole('link', { name: workspace })).toBeTruthy()
-    }
+    expect(screen.getByRole('link', { name: 'Registration' })).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'Triage' })).toBeNull()
     expect(screen.queryByRole('link', { name: '门诊挂号' })).toBeNull()
     expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1') ?? '')).toEqual({
       locale: 'en-US',
@@ -160,13 +196,14 @@ describe('Web application shell', () => {
     })
   })
 
-  it('restores the active role workspace from a refreshed SPA path', async () => {
+  it('redirects an unauthorized refreshed SPA path to the active role workspace', async () => {
     window.history.replaceState(null, '', '/pharmacy')
 
     await renderWebApp()
 
-    expect(screen.getByRole('heading', { name: '门诊药房' })).toBeTruthy()
-    expect(screen.getByRole('link', { name: '门诊药房' }).getAttribute('aria-current')).toBe('page')
+    expect(await screen.findByRole('heading', { name: '门诊挂号' })).toBeTruthy()
+    expect(window.location.pathname).toBe('/registration')
+    expect(screen.getByRole('link', { name: '门诊挂号' }).getAttribute('aria-current')).toBe('page')
   })
 
   it('opens the notification and user preference menus', async () => {

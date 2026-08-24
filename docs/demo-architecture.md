@@ -9,7 +9,7 @@
 
 首期用最少运行组件验证真实、多岗位、可重置的门诊业务闭环。运行环境只承载合成数据，不提供生产医疗服务、公开在线可用性承诺或多实例扩缩容。
 
-当前已交付 Node.js Web 运行时基线：同一个 Hono 服务提供 Web 静态资源、SPA fallback、健康检查和 FHIR R5 metadata。SQLite 持久化、迁移、备份、Scenario reset 和业务 Command 属于后续阶段，不能作为当前能力声明。
+当前运行时由一个 Hono 进程和一个 file-backed SQLite 文件组成。同一服务提供 Web 静态资源、SPA fallback、健康检查、认证、岗位业务 API 和 FHIR R5 只读接口；SQLite migration、备份、恢复、索引重建、Scenario 安装/reset、共享 Command 与持久 outbox 均有显式入口。
 
 架构必须满足：
 
@@ -59,7 +59,7 @@ Browser
 
 首期只支持一个服务端进程写入一个本地文件系统上的 SQLite 数据库。数据库文件不能放在缺少 SQLite 锁语义保证的共享网络文件系统上，也不能由多个容器副本同时打开。
 
-SQLite 连接必须启用外键、WAL 和有界 `busy_timeout`。写入使用短 `BEGIN IMMEDIATE` 事务；外部调用、长计算和浏览器等待不能占用数据库事务。
+SQLite 连接必须启用外键、WAL 和五秒 `busy_timeout`。写入使用短 `BEGIN IMMEDIATE` 事务，单次同步 Command 的真实 SQLite 合约要求事务持续时间小于一秒；外部调用、长计算和浏览器等待不能占用数据库事务。
 
 达到以下任一条件时必须重新选择部署或持久化方案：
 
@@ -85,13 +85,35 @@ CommandExecutor 在一个 SQLite 事务中提交幂等 receipt、FHIR current/hi
 
 ## 7. 迁移、备份与重置
 
-运维入口分别处理三类动作：
+Server 进程以 `migrationMode=verify` 打开数据库，发现未应用 migration 时拒绝启动。开发、裸机发布和容器入口在启动应用进程前单独执行 migration；应用运行期间不修改 schema。
 
-- **Migration**：备份当前文件，应用待执行迁移，验证 schema version 和完整性。
-- **Backup/restore**：创建一致性备份，恢复到新路径后执行完整性检查，再由操作者切换实例。
-- **Scenario reset**：通过受控 Command 构建并激活新 Epoch，不删除数据库文件，也不删除审计保留域。
+数据库 CLI 处理以下动作：
 
-容器部署必须把数据库路径挂载到显式持久卷。临时容器文件系统只允许用于测试数据库，不得承载需要保留的演示状态。
+- `migrate`：已有数据库落后于目标 schema 时，先在数据库同目录创建并验证带原版本和时间戳的升级前备份，再按文件名顺序应用 `apps/server/drizzle/` 中尚未执行的 migration，并验证 schema version 和完整性；空库不创建无意义备份。
+- `verify`：只验证 migration、foreign keys、journal mode 与 integrity，不修改数据库。
+- `reindex`：重建当前岗位队列索引并再次执行完整性检查。
+- `backup`：先验证源数据库完整性，再通过 SQLite backup API 创建候选文件；候选的 schema version、integrity 和 canonical state hash 必须与源一致，否则删除候选并失败。
+- `restore`：先验证备份源的 schema、migration、integrity 和 canonical state hash，再复制到临时候选路径并逐项比较；全部一致后才原子创建指定的新目标文件，目标已存在或候选验证失败时不覆盖。
+
+以 `CLINMESH_DATABASE_PATH` 指定当前数据库后，可执行：
+
+```sh
+pnpm --filter @clinmesh/server db:migrate
+pnpm --filter @clinmesh/server db:verify
+pnpm --filter @clinmesh/server db:reindex
+pnpm --filter @clinmesh/server db:backup --output .data/clinmesh-backup.sqlite
+pnpm --filter @clinmesh/server db:restore \
+  --backup .data/clinmesh-backup.sqlite \
+  --destination .data/clinmesh-restored.sqlite
+```
+
+`backup` 和 `restore` 拒绝覆盖已有目标。`migrate` 自动保留并验证升级前备份，操作者仍可在发布窗口前另做命名备份；恢复始终写入新路径，完成验证后由操作者切换 `CLINMESH_DATABASE_PATH`。
+
+canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引、schema migration 和 runtime metadata 外的全部持久领域表。JSON 列按解析后的值规范化，FHIR `lastUpdated` 和存放 hash 自身的列不参与计算；该 hash 只证明同一 schema 下的快照内容等价，不是跨版本 replay 协议。
+
+Scenario reset 是受控业务 Command：管理员构建并激活新 Epoch，不删除数据库文件或审计保留域。旧 Epoch 的 queued/claimed outbox 被标记为 abandoned，晚到结果不能写入新 Epoch。
+
+容器部署通过 `compose.yaml` 把 `/var/lib/clinmesh` 挂载到命名卷 `clinmesh-data`，并限制为一个副本。容器 entrypoint 先对卷内数据库执行幂等 migration；旧 schema 会触发同卷内的升级前备份，随后启动仅验证 schema 的 Server。临时容器文件系统只允许用于测试数据库，不得承载需要保留的演示状态。
 
 ## 8. 数据库迁移边界
 
@@ -115,14 +137,14 @@ CommandExecutor 在一个 SQLite 事务中提交幂等 receipt、FHIR current/hi
 - Desktop、React Native Mobile、附件对象存储和离线写入。
 - AG-UI、Agent runtime、Evaluation Spec 和评分基础设施。
 
-## 11. 验收标准
+## 11. 可观察运行边界
 
-- Node.js 服务能够提供 Web SPA、API 和 FHIR 路径，并在重启后读取同一持久卷中的状态。
-- 空数据库可以按顺序应用全部迁移并安装确定性 Scenario。
-- SQLite 事务测试覆盖约束失败回滚、幂等竞争、expected-version 冲突、outbox 恢复和 Epoch reset。
-- 至少两个 Workspace/Epoch 的授权查询、FHIR history/search、total 和业务写入互不泄漏。
-- 备份恢复后的 schema version、canonical state hash、资源历史和审计记录一致。
-- 容器删除并重建后，挂载同一持久卷可恢复服务；没有持久卷时启动必须明确创建新的演示实例。
+- Node.js 服务从配置指定的 SQLite 文件读取状态；刷新浏览器或重启进程不丢失已提交事实。
+- 空数据库可按顺序应用全部 migration，运行时在 schema 落后时拒绝启动。
+- SQLite 自动化测试覆盖约束回滚、幂等与 expected-version 冲突、outbox 恢复、Epoch reset、索引重建以及备份恢复。
+- Workspace/Epoch 进入授权查询、FHIR history/search/total/cursor、Command、审计和 outbox，跨上下文请求不共享事实。
+- 备份与恢复分别验证源和候选的 schema version、integrity 与 canonical state hash；恢复只创建与备份源等价的新目标文件。
+- `compose.yaml` 固定单副本和命名持久卷。当前开发环境没有 Docker，因此容器 build、healthcheck 和挂载同一卷的删除重建仍需在具备 Docker 的发布环境执行。
 
 ## 12. Alternatives considered
 

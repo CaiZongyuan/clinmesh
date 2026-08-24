@@ -1,6 +1,6 @@
 import { Avatar, AvatarFallback } from '@clinmesh/ui/components/avatar'
 import { Badge } from '@clinmesh/ui/components/badge'
-import { Button, buttonVariants } from '@clinmesh/ui/components/button'
+import { Button } from '@clinmesh/ui/components/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,17 +12,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@clinmesh/ui/components/dropdown-menu'
-import {
-  Empty,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@clinmesh/ui/components/empty'
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupInput,
-} from '@clinmesh/ui/components/input-group'
 import {
   Sidebar,
   SidebarContent,
@@ -41,6 +30,7 @@ import {
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { TooltipProvider } from '@clinmesh/ui/components/tooltip'
 import { Link } from '@tanstack/react-router'
+import type { SessionContext } from '@clinmesh/contracts/his'
 import {
   BellIcon,
   ClipboardPlusIcon,
@@ -50,12 +40,12 @@ import {
   MoonIcon,
   PillIcon,
   ReceiptTextIcon,
-  SearchIcon,
+  LogOutIcon,
   StethoscopeIcon,
   SunIcon,
   UserRoundIcon,
 } from 'lucide-react'
-import { useState } from 'react'
+import type { ReactNode } from 'react'
 import { getWorkspaceMessages, type WorkspaceLocale, type WorkspaceMessageKey } from './workspace-i18n.ts'
 
 export type WorkspaceTheme = 'system' | 'light' | 'dark'
@@ -73,9 +63,15 @@ export type WorkspaceSection = (typeof workspaceRoutes)[number]['key']
 
 interface WorkspaceShellProps {
   activeSection: WorkspaceSection
+  children: ReactNode
+  session: SessionContext
   locale: WorkspaceLocale
   onLocaleChange: (locale: WorkspaceLocale) => void
+  onRoleChange: (practitionerRoleId: string) => void
+  onSignOut: () => void
   onThemeChange: (theme: WorkspaceTheme) => void
+  roleChangePending: boolean
+  signOutPending: boolean
   theme: WorkspaceTheme
 }
 
@@ -83,6 +79,15 @@ type PreferenceControlProps = Pick<
   WorkspaceShellProps,
   'locale' | 'onLocaleChange' | 'onThemeChange' | 'theme'
 > & { messages: ReturnType<typeof getWorkspaceMessages> }
+
+export const roleSections: Record<SessionContext['actor']['roleCode'], WorkspaceSection> = {
+  administrator: 'overview',
+  cashier: 'billing',
+  'outpatient-doctor': 'consultation',
+  pharmacist: 'pharmacy',
+  registrar: 'registration',
+  'triage-nurse': 'triage',
+}
 
 const themeOptions = [
   { value: 'system', label: 'themeSystem', icon: MonitorIcon },
@@ -101,6 +106,15 @@ const localeOptions = [
   value: WorkspaceLocale
   label: WorkspaceMessageKey
 }>
+
+const roleMessageKeys: Record<SessionContext['actor']['roleCode'], WorkspaceMessageKey> = {
+  administrator: 'role_administrator',
+  cashier: 'role_cashier',
+  'outpatient-doctor': 'role_outpatientDoctor',
+  pharmacist: 'role_pharmacist',
+  registrar: 'role_registrar',
+  'triage-nurse': 'role_triageNurse',
+}
 
 function firstValue<Value extends string>(values: Value[]): Value | undefined {
   return values[0]
@@ -179,9 +193,20 @@ function UserMenu({
   locale,
   messages,
   onLocaleChange,
+  onRoleChange,
+  onSignOut,
   onThemeChange,
+  roleChangePending,
+  signOutPending,
   theme,
-}: PreferenceControlProps): React.JSX.Element {
+  session,
+}: PreferenceControlProps & {
+  onRoleChange: (practitionerRoleId: string) => void
+  onSignOut: () => void
+  roleChangePending: boolean
+  session: SessionContext
+  signOutPending: boolean
+}): React.JSX.Element {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -197,9 +222,27 @@ function UserMenu({
       <DropdownMenuContent align="end" className="min-w-52">
         <DropdownMenuGroup>
           <DropdownMenuLabel>
-            <span className="block text-foreground">{messages.demoUser}</span>
-            <span className="block font-normal">{messages.localWorkspace}</span>
+            <span className="block text-foreground">{session.user.name}</span>
+            <span className="block font-normal">{session.user.email}</span>
           </DropdownMenuLabel>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>{messages.practitionerRole}</DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            onValueChange={onRoleChange}
+            value={session.actor.practitionerRoleId}
+          >
+            {session.availableRoles.map(role => (
+              <DropdownMenuRadioItem
+                disabled={roleChangePending}
+                key={role.id}
+                value={role.id}
+              >
+                {messages[roleMessageKeys[role.code]]}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
@@ -230,6 +273,11 @@ function UserMenu({
             ))}
           </DropdownMenuRadioGroup>
         </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem disabled={signOutPending} onClick={onSignOut}>
+          <LogOutIcon aria-hidden="true" />
+          {signOutPending ? messages.signingOut : messages.signOut}
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -254,55 +302,24 @@ function NotificationsMenu({ messages }: { messages: ReturnType<typeof getWorksp
   )
 }
 
-function WorkspaceEntries({
-  messages,
-  query,
-}: {
-  messages: ReturnType<typeof getWorkspaceMessages>
-  query: string
-}): React.JSX.Element {
-  const normalizedQuery = query.trim().toLocaleLowerCase()
-  const entries = workspaceRoutes.filter(item => (
-    messages[item.key].toLocaleLowerCase().includes(normalizedQuery)
-  ))
-
-  if (entries.length === 0) {
-    return (
-      <Empty className="min-h-48 border">
-        <EmptyHeader>
-          <EmptyMedia variant="icon"><SearchIcon aria-hidden="true" /></EmptyMedia>
-          <EmptyTitle>{messages.noSearchResults}</EmptyTitle>
-        </EmptyHeader>
-      </Empty>
-    )
-  }
-
-  return (
-    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-      {entries.map(item => (
-        <Link
-          className={buttonVariants({ className: 'h-12 justify-start', variant: 'outline' })}
-          key={item.key}
-          to={item.path}
-        >
-          <item.icon data-icon="inline-start" />
-          <span className="min-w-0 flex-1 truncate text-left">{messages[item.key]}</span>
-          <span className="text-xs text-muted-foreground">{messages.openWorkspace}</span>
-        </Link>
-      ))}
-    </div>
-  )
-}
-
 export function WorkspaceShell({
   activeSection,
+  children,
   locale,
   onLocaleChange,
+  onRoleChange,
+  onSignOut,
   onThemeChange,
+  roleChangePending,
+  session,
+  signOutPending,
   theme,
 }: WorkspaceShellProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
-  const [query, setQuery] = useState('')
+  const activeRoleSection = roleSections[session.actor.roleCode]
+  const visibleRoutes = workspaceRoutes.filter(route => (
+    route.key === 'overview' || route.key === activeRoleSection
+  ))
 
   return (
     <TooltipProvider>
@@ -327,7 +344,7 @@ export function WorkspaceShell({
               <SidebarGroupContent>
                 <nav aria-label={messages.navigationLabel}>
                   <SidebarMenu>
-                    {workspaceRoutes.map(item => (
+                    {visibleRoutes.map(item => (
                       <SidebarMenuItem key={item.key}>
                         <SidebarMenuButton
                           aria-current={item.key === activeSection ? 'page' : undefined}
@@ -358,25 +375,19 @@ export function WorkspaceShell({
         <SidebarInset className="min-w-0 overflow-hidden">
           <header className="sticky top-0 flex h-14 shrink-0 items-center gap-2 border-b bg-background px-3 sm:px-4">
             <SidebarTrigger aria-label={messages.sidebarToggle} title={messages.sidebarToggle} />
-            <InputGroup className="max-w-md flex-1">
-              <InputGroupAddon>
-                <SearchIcon aria-hidden="true" />
-              </InputGroupAddon>
-              <InputGroupInput
-                aria-label={messages.searchLabel}
-                onChange={event => setQuery(event.currentTarget.value)}
-                placeholder={messages.searchPlaceholder}
-                type="search"
-                value={query}
-              />
-            </InputGroup>
+            <div className="min-w-0 flex-1 truncate text-sm font-medium">{messages[activeSection]}</div>
             <div className="ml-auto flex shrink-0 items-center gap-1">
               <NotificationsMenu messages={messages} />
               <UserMenu
                 locale={locale}
                 messages={messages}
                 onLocaleChange={onLocaleChange}
+                onRoleChange={onRoleChange}
+                onSignOut={onSignOut}
                 onThemeChange={onThemeChange}
+                roleChangePending={roleChangePending}
+                session={session}
+                signOutPending={signOutPending}
                 theme={theme}
               />
             </div>
@@ -386,12 +397,7 @@ export function WorkspaceShell({
               <h1 className="text-xl font-semibold">{messages[activeSection]}</h1>
               <Badge variant="secondary">{messages.simulationBadge}</Badge>
             </div>
-            <section aria-labelledby="workspace-entries-heading" className="flex flex-col gap-3">
-              <h2 className="text-sm font-semibold" id="workspace-entries-heading">
-                {messages.workspaceEntries}
-              </h2>
-              <WorkspaceEntries messages={messages} query={query} />
-            </section>
+            {children}
           </div>
         </SidebarInset>
       </SidebarProvider>

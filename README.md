@@ -19,7 +19,9 @@ Browser
     apps/server (Hono on Node.js)
 ```
 
-当前工程具备 Node.js Web 运行时基线。同一个 Hono 服务提供 Web 静态资源、SPA fallback、健康检查和只声明 metadata 能力的 FHIR R5 CapabilityStatement。file-backed SQLite、认证和门诊业务闭环按[系统架构阶段](docs/architecture.md#15-分期实施)继续交付，不属于当前能力。
+当前工程具备可持久运行的单实例 Web 发布：同一个 Hono 服务提供 Web 静态资源、SPA fallback、健康检查、会话认证、岗位业务 API 和 FHIR R5 只读接口。挂号员、分诊护士、门诊医生、收费员和药师通过共享 Command 推进同一个普通门诊发热 Encounter；SQLite 保存 FHIR current/history、业务事实、审计、Action Trace 和 outbox，管理员通过新 Epoch 安装或重置合成 Scenario。
+
+FHIR 公开面固定为 R5 `5.0.0`，当前只声明并实现资源 read、vread、instance history 和白名单 Search。业务写入只走 `/api/his/v1` 与 `/api/sim/v1` 的受控 Command；服务器不宣告通用 FHIR create/update/delete、自定义 FHIR Operation、项目 Profile 或 Implementation Guide 一致性。
 
 ## 仓库结构
 
@@ -67,6 +69,11 @@ pnpm dev:web
 Server 开发服务器：
 
 ```sh
+export CLINMESH_AUTH_SECRET='replace-with-an-auth-secret-of-at-least-32-characters'
+export CLINMESH_CURSOR_SECRET='replace-with-a-cursor-secret-of-at-least-32-characters'
+export CLINMESH_DATABASE_PATH='.data/clinmesh.sqlite'
+export CLINMESH_DEMO_PASSWORD='replace-with-a-demo-password'
+pnpm --filter @clinmesh/server db:migrate
 pnpm dev:server
 ```
 
@@ -137,16 +144,17 @@ pnpm --filter @clinmesh/server test
 
 ## 部署
 
-生产构建与启动：
+生产构建、显式迁移与启动：
 
 ```sh
 pnpm build
+pnpm --filter @clinmesh/server db:migrate
 pnpm --filter @clinmesh/server start
 ```
 
-构建顺序由 workspace 依赖和 Turborepo 决定：先生成 Web assets，再生成 Server 的 Node.js bundle，同时构建 Desktop 和文档站。Server 默认监听 `127.0.0.1:8787`，并从 `apps/web/dist` 提供 Web；`CLINMESH_HOST`、`CLINMESH_PORT` 和 `CLINMESH_WEB_ROOT` 可覆盖这些运行配置。
+Server 启动时只验证 migration 状态，不隐式修改 schema。数据库生命周期命令与单实例容器步骤见 [Web Demo 运行与部署架构](docs/demo-architecture.md#7-迁移备份与重置)。构建顺序由 workspace 依赖和 Turborepo 决定：先生成 Web assets，再生成 Server 的 Node.js bundle，同时构建 Desktop 和文档站。Server 默认监听 `127.0.0.1:8787`，并从 `apps/web/dist` 提供 Web；`CLINMESH_HOST`、`CLINMESH_PORT` 和 `CLINMESH_WEB_ROOT` 可覆盖这些运行配置。
 
-当前只支持本地、局域网或单实例产品验证，不承诺多实例、高可用或持久化业务状态。SQLite migration、Scenario 安装和持久卷入口在后续阶段交付，且不得在服务启动时隐式执行。
+容器入口使用 `compose.yaml` 和命名卷 `clinmesh-data`，在启动应用进程前执行幂等 migration。当前只支持本地、局域网或单实例产品验证；不承诺多实例、高可用、公开在线 SLA 或共享网络文件系统上的 SQLite 正确性。
 
 ## 数据与安全约束
 

@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     "./fhir": "./src/fhir.ts",
-    "./health": "./src/health.ts"
+    "./health": "./src/health.ts",
+    "./his": "./src/his.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

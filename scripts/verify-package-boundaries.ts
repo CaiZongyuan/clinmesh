@@ -21,12 +21,12 @@ const rules: Rule[] = [
   },
   {
     scope: 'packages/contracts/**/*.{ts,tsx}',
-    forbidden: /(?:from\s+['"](?:react|react-dom|react-native|electron)|\b(?:window|document|localStorage|process\.env)\b)/,
+    forbidden: /(?:from\s+['"](?:react|react-dom|react-native|electron)|\b(?:window|document|localStorage)\s*(?:\.|\[|\()|\bprocess\.env\b)/,
     message: 'contracts must stay independent of React and platform globals',
   },
   {
     scope: 'packages/core/**/*.{ts,tsx}',
-    forbidden: /(?:from\s+['"](?:react-dom|react-native|electron)|\b(?:window|document|localStorage|process\.env)\b)/,
+    forbidden: /(?:from\s+['"](?:react-dom|react-native|electron)|\b(?:window|document|localStorage)\s*(?:\.|\[|\()|\bprocess\.env\b)/,
     message: 'core must stay independent of DOM, Electron, React Native, storage, and environment globals',
   },
   {

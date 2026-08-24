@@ -1,0 +1,196 @@
+{
+  "resources": [
+    {
+      "resourceType": "Organization",
+      "id": "organization-example",
+      "active": true,
+      "name": "合成示例医院"
+    },
+    {
+      "resourceType": "Location",
+      "id": "location-example",
+      "status": "active",
+      "name": "合成发热门诊"
+    },
+    {
+      "resourceType": "Practitioner",
+      "id": "practitioner-example",
+      "active": true,
+      "name": [{ "text": "合成示例医生" }]
+    },
+    {
+      "resourceType": "PractitionerRole",
+      "id": "practitioner-role-example",
+      "active": true,
+      "practitioner": { "reference": "Practitioner/practitioner-example" },
+      "organization": { "reference": "Organization/organization-example" },
+      "location": [{ "reference": "Location/location-example" }]
+    },
+    {
+      "resourceType": "Patient",
+      "id": "patient-example",
+      "active": true,
+      "identifier": [
+        {
+          "system": "https://caizongyuan.github.io/clinmesh/fhir/sid/synthetic-patient",
+          "value": "CM-EXAMPLE-001"
+        }
+      ],
+      "name": [{ "text": "合成示例患者" }],
+      "extension": [
+        {
+          "url": "https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/synthetic-data",
+          "valueBoolean": true
+        }
+      ]
+    },
+    {
+      "resourceType": "Encounter",
+      "id": "encounter-example",
+      "status": "in-progress",
+      "subject": { "reference": "Patient/patient-example" },
+      "location": [
+        {
+          "location": { "reference": "Location/location-example" },
+          "status": "active"
+        }
+      ]
+    },
+    {
+      "resourceType": "Task",
+      "id": "task-example",
+      "status": "in-progress",
+      "intent": "order",
+      "for": { "reference": "Patient/patient-example" },
+      "focus": { "reference": "Encounter/encounter-example" }
+    },
+    {
+      "resourceType": "Account",
+      "id": "account-example",
+      "status": "active",
+      "subject": [{ "reference": "Patient/patient-example" }]
+    },
+    {
+      "resourceType": "ChargeItem",
+      "id": "charge-item-example",
+      "status": "billable",
+      "code": { "text": "合成发热检验组合" },
+      "subject": { "reference": "Patient/patient-example" },
+      "encounter": { "reference": "Encounter/encounter-example" }
+    },
+    {
+      "resourceType": "ServiceRequest",
+      "id": "service-request-example",
+      "status": "active",
+      "intent": "order",
+      "code": { "text": "合成发热检验组合" },
+      "subject": { "reference": "Patient/patient-example" },
+      "encounter": { "reference": "Encounter/encounter-example" }
+    },
+    {
+      "resourceType": "Specimen",
+      "id": "specimen-example",
+      "status": "available",
+      "subject": { "reference": "Patient/patient-example" },
+      "request": [{ "reference": "ServiceRequest/service-request-example" }]
+    },
+    {
+      "resourceType": "Observation",
+      "id": "observation-example",
+      "status": "final",
+      "code": { "text": "甲型流感抗原（合成）" },
+      "subject": { "reference": "Patient/patient-example" },
+      "encounter": { "reference": "Encounter/encounter-example" },
+      "specimen": { "reference": "Specimen/specimen-example" },
+      "valueBoolean": true
+    },
+    {
+      "resourceType": "DiagnosticReport",
+      "id": "diagnostic-report-example",
+      "status": "final",
+      "code": { "text": "合成发热检验报告" },
+      "subject": { "reference": "Patient/patient-example" },
+      "encounter": { "reference": "Encounter/encounter-example" },
+      "basedOn": [{ "reference": "ServiceRequest/service-request-example" }],
+      "result": [{ "reference": "Observation/observation-example" }]
+    },
+    {
+      "resourceType": "Condition",
+      "id": "condition-example",
+      "clinicalStatus": {
+        "coding": [
+          {
+            "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+            "code": "active"
+          }
+        ]
+      },
+      "code": { "text": "甲型流感（合成）" },
+      "subject": { "reference": "Patient/patient-example" },
+      "encounter": { "reference": "Encounter/encounter-example" }
+    },
+    {
+      "resourceType": "Medication",
+      "id": "medication-example",
+      "code": { "text": "磷酸奥司他韦胶囊（合成）" }
+    },
+    {
+      "resourceType": "MedicationRequest",
+      "id": "medication-request-example",
+      "status": "active",
+      "intent": "order",
+      "medication": { "reference": "Medication/medication-example" },
+      "subject": { "reference": "Patient/patient-example" },
+      "encounter": { "reference": "Encounter/encounter-example" }
+    },
+    {
+      "resourceType": "MedicationDispense",
+      "id": "medication-dispense-example",
+      "status": "completed",
+      "medication": { "reference": "Medication/medication-example" },
+      "subject": { "reference": "Patient/patient-example" },
+      "encounter": { "reference": "Encounter/encounter-example" },
+      "authorizingPrescription": [
+        { "reference": "MedicationRequest/medication-request-example" }
+      ]
+    },
+    {
+      "resourceType": "Composition",
+      "id": "composition-example",
+      "status": "final",
+      "type": { "text": "合成门诊病历" },
+      "subject": [{ "reference": "Patient/patient-example" }],
+      "encounter": { "reference": "Encounter/encounter-example" },
+      "date": "2026-08-24T10:00:00+08:00",
+      "author": [{ "reference": "Practitioner/practitioner-example" }],
+      "title": "合成门诊病历"
+    },
+    {
+      "resourceType": "Bundle",
+      "id": "document-bundle-example",
+      "type": "document",
+      "entry": [
+        {
+          "fullUrl": "https://caizongyuan.github.io/clinmesh/fhir/Composition/composition-example",
+          "resource": {
+            "resourceType": "Composition",
+            "id": "composition-example"
+          }
+        }
+      ]
+    },
+    {
+      "resourceType": "Provenance",
+      "id": "provenance-example",
+      "target": [
+        { "reference": "Composition/composition-example" },
+        { "reference": "Bundle/document-bundle-example" }
+      ],
+      "recorded": "2026-08-24T10:00:00+08:00",
+      "agent": [
+        { "who": { "reference": "Practitioner/practitioner-example" } }
+      ]
+    }
+  ],
+  "title": "ClinMesh 首期合成门诊 FHIR R5 示例实例"
+}

@@ -6,20 +6,33 @@
   "scripts": {
     "dev": "pnpm --filter @clinmesh/web build && tsx watch src/index.ts",
     "build": "vite build",
+    "db": "tsx src/database-cli.ts",
+    "db:backup": "tsx src/database-cli.ts backup",
+    "db:migrate": "tsx src/database-cli.ts migrate",
+    "db:reindex": "tsx src/database-cli.ts reindex",
+    "db:restore": "tsx src/database-cli.ts restore",
+    "db:verify": "tsx src/database-cli.ts verify",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "clean": "rm -rf dist coverage"
   },
   "dependencies": {
+    "@better-auth/drizzle-adapter": "1.7.1",
     "@clinmesh/contracts": "workspace:*",
     "@hono/node-server": "catalog:",
+    "better-auth": "1.7.1",
+    "better-sqlite3": "13.0.3",
+    "drizzle-orm": "0.45.2",
     "hono": "catalog:",
+    "uuid": "13.0.0",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@clinmesh/web": "workspace:*",
+    "@types/better-sqlite3": "7.6.13",
     "@types/node": "catalog:",
+    "drizzle-kit": "0.31.8",
     "tsx": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",

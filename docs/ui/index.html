@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>安康门诊 · 今日总览（design-2 入口）</title>
+<!--
+  design-2 · 今日总览（门户入口页）· 2026-08-23
+  皮肤: ui/design-1 原样移植（规格见 ui/design-1/design.md）
+  导航已接线: 问诊工作台 → consult.html · 患者病历 → patient.html
+  design-2 页面族: index(门户) / consult(问诊工作台) / patient(患者档案)
+-->
+<style>
+  :root{
+    --bg:#F6F8FA;
+    --surface:#FFFFFF;
+    --line:#EAEDF2;
+    --ink:#212529;
+    --ink-2:#6C757D;
+    --ink-3:#98A2AB;
+    --purple:#6F42C1;
+    --purple-soft:#F3EDFB;
+    --blue:#3B82F6;
+    --blue-deep:#1D4ED8;
+    --green:#28A745;
+    --green-soft:#E9F7EE;
+    --amber:#F06100;
+    --amber-soft:#FDF3D7;
+    --red:#E0564A;
+    --red-soft:#FDECEA;
+    --gray-card:#EFF1F4;
+    --shadow:0 2px 10px rgba(33,37,41,.05);
+    --radius:16px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  a{text-decoration:none;color:inherit}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei","Helvetica Neue",Arial,sans-serif;
+    background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5;
+  }
+  .app{display:flex;min-height:100vh;min-width:1180px}
+
+  /* ============ 侧边导航 ============ */
+  .sidebar{
+    width:236px;flex:none;background:var(--surface);
+    border-right:1px solid var(--line);
+    display:flex;flex-direction:column;padding:20px 14px;
+  }
+  .brand{display:flex;align-items:center;gap:10px;padding:4px 10px 20px}
+  .brand__logo{
+    width:38px;height:38px;border-radius:11px;background:var(--purple);
+    display:flex;align-items:center;justify-content:center;color:#fff;flex:none;
+  }
+  .brand__name{font-size:16px;font-weight:700;letter-spacing:.02em}
+  .brand__sub{font-size:10.5px;color:var(--ink-3);letter-spacing:.08em}
+  .nav{display:flex;flex-direction:column;gap:4px;flex:1}
+  .nav__label{font-size:10.5px;font-weight:600;color:var(--ink-3);letter-spacing:.1em;padding:14px 12px 6px;text-transform:uppercase}
+  .nav__item{
+    display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:10px;
+    color:var(--ink-2);cursor:pointer;transition:all .15s ease;font-weight:500;
+  }
+  .nav__item svg{flex:none;opacity:.85}
+  .nav__item:hover{background:#F5F6F9;color:var(--ink)}
+  .nav__item.active{background:var(--purple-soft);color:var(--purple);font-weight:600}
+  .nav__badge{margin-left:auto;background:var(--red);color:#fff;font-size:10.5px;font-weight:600;
+    border-radius:99px;padding:1px 7px}
+  .sidebar__foot{border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:4px}
+  .switch-row{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:10px;color:var(--ink-2);cursor:pointer}
+  .switch{margin-left:auto;width:34px;height:19px;border-radius:99px;background:#DFE3E8;position:relative;transition:.2s}
+  .switch::after{content:"";position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;background:#fff;
+    box-shadow:0 1px 3px rgba(0,0,0,.2);transition:.2s}
+
+  /* ============ 顶栏 ============ */
+  .main{flex:1;display:flex;flex-direction:column;min-width:0}
+  .topbar{
+    height:64px;background:var(--surface);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:16px;padding:0 24px;flex:none;
+  }
+  .search{
+    flex:0 1 340px;height:38px;background:#F1F3F6;border-radius:10px;border:1px solid transparent;
+    display:flex;align-items:center;gap:9px;padding:0 13px;color:var(--ink-3);
+  }
+  .search input{border:none;outline:none;background:transparent;flex:1;font-size:13.5px;color:var(--ink);font-family:inherit}
+  .search input::placeholder{color:var(--ink-3)}
+  .btn-add{
+    height:38px;padding:0 16px;border-radius:10px;border:none;background:#212529;color:#fff;
+    font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:7px;cursor:pointer;font-family:inherit;
+  }
+  .btn-add:hover{background:#000}
+  .topbar__right{margin-left:auto;display:flex;align-items:center;gap:14px}
+  .icon-btn{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    color:var(--ink-2);cursor:pointer;position:relative;transition:.15s}
+  .icon-btn:hover{background:#F1F3F6;color:var(--ink)}
+  .icon-btn .dot{position:absolute;top:9px;right:10px;width:7px;height:7px;border-radius:50%;background:var(--red);border:1.5px solid #fff}
+  .user{display:flex;align-items:center;gap:10px;padding-left:14px;border-left:1px solid var(--line)}
+  .user__avatar{
+    width:40px;height:40px;border-radius:10px;background:var(--purple-soft);
+    color:var(--purple);font-weight:600;font-size:15px;display:flex;align-items:center;justify-content:center;
+    border:0;
+  }
+  .user__name{font-size:13.5px;font-weight:600;line-height:1.25}
+  .user__role{font-size:11.5px;color:var(--ink-2)}
+
+  /* ============ 内容区 ============ */
+  .content{padding:22px 24px 30px;display:flex;flex-direction:column;gap:20px}
+  .page-head{display:flex;align-items:baseline;gap:12px}
+  .page-head h1{font-size:19px;font-weight:700}
+  .page-head span{font-size:12.5px;color:var(--ink-3)}
+
+  /* --- 统计卡 --- */
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+  .stat{
+    border-radius:var(--radius);padding:18px 20px;display:flex;flex-direction:column;gap:10px;
+    min-height:118px;justify-content:center;
+  }
+  .stat__top{display:flex;align-items:center;gap:11px}
+  .stat__icon{width:42px;height:42px;border-radius:12px;background:rgba(255,255,255,.75);
+    display:flex;align-items:center;justify-content:center;flex:none;box-shadow:0 1px 4px rgba(33,37,41,.08)}
+  .stat__label{font-size:13px;color:var(--ink-2);font-weight:500}
+  .stat__row{display:flex;align-items:baseline;gap:10px}
+  .stat__value{font-size:27px;font-weight:700;letter-spacing:-.01em}
+  .stat__trend{font-size:12px;font-weight:700;display:inline-flex;align-items:center;gap:3px}
+  .stat__trend.up{color:var(--green)} .stat__trend.down{color:var(--red)}
+  .stat__sub{font-size:11.5px;color:var(--ink-2);opacity:.85}
+  .stat--purple{background:#EFE6FA} .stat--purple .stat__icon{color:var(--purple)}
+  .stat--gray{background:#EFF1F4}   .stat--gray .stat__icon{color:var(--ink-2)}
+  .stat--amber{background:#FDF3D3} .stat--amber .stat__icon{color:var(--amber)}
+  .stat--green{background:#E5F5EB} .stat--green .stat__icon{color:var(--green)}
+  .stat__bar{height:6px;border-radius:99px;background:rgba(255,255,255,.8);overflow:hidden}
+  .stat__bar i{display:block;height:100%;width:31%;border-radius:99px;background:var(--amber)}
+
+  /* --- 网格 --- */
+  .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:20px}
+  .card{
+    background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);
+    padding:20px;border:1px solid rgba(234,237,242,.7);
+  }
+  .card__head{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+  .card__title{font-size:15.5px;font-weight:700}
+  .card__link{margin-left:auto;font-size:12.5px;color:var(--blue);font-weight:500;cursor:pointer;text-decoration:none}
+  .select-pill{
+    margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);
+    border:1px solid var(--line);border-radius:8px;padding:5px 10px;cursor:pointer;font-weight:500;
+  }
+
+  /* --- 患者健康 --- */
+  .patient{grid-column:span 8}
+  .patient__body{display:grid;grid-template-columns:1.45fr 1fr;gap:20px}
+  .patient__hero{
+    border-radius:14px;background:linear-gradient(135deg,#E6F7FF,#F0F8FF);
+    padding:20px;display:flex;flex-direction:column;gap:16px;position:relative;overflow:hidden;
+  }
+  .patient__hero::after{
+    content:"";position:absolute;right:-40px;top:-40px;width:170px;height:170px;border-radius:50%;
+    background:rgba(59,130,246,.07);
+  }
+  .patient__hero::before{
+    content:"";position:absolute;right:20px;bottom:-56px;width:130px;height:130px;border-radius:50%;
+    background:rgba(59,130,246,.06);
+  }
+  .ph__id{display:flex;align-items:center;gap:13px}
+  .ph__avatar{width:52px;height:52px;border-radius:50%;background:#CFE6FA;color:#1D6FB8;
+    font-size:19px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none}
+  .ph__name{font-size:17px;font-weight:700}
+  .ph__meta{font-size:12px;color:#4A7FA8}
+  .ph__tags{display:flex;gap:7px;flex-wrap:wrap}
+  .tag{font-size:11px;padding:3px 10px;border-radius:99px;font-weight:500}
+  .tag--blue{background:rgba(59,130,246,.12);color:#1D6FB8}
+  .tag--red{background:rgba(224,86,74,.1);color:var(--red)}
+  .ph__vitals{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .vital{background:rgba(255,255,255,.75);border-radius:12px;padding:11px 13px;backdrop-filter:blur(2px)}
+  .vital__label{font-size:11px;color:#4A7FA8;display:flex;align-items:center;gap:5px}
+  .vital__value{font-size:19px;font-weight:700;margin-top:2px}
+  .vital__value small{font-size:10.5px;font-weight:500;color:#4A7FA8;margin-left:2px}
+  .vital--warn .vital__value{color:var(--amber)}
+  .patient__side{display:flex;flex-direction:column;gap:14px}
+  .ps__block{background:#F8FAFC;border-radius:12px;padding:14px 16px}
+  .ps__label{font-size:11px;color:var(--ink-3);margin-bottom:7px;letter-spacing:.04em}
+  .ps__doc{display:flex;align-items:center;gap:11px}
+  .ps__doc-avatar{width:40px;height:40px;border-radius:50%;background:#E8E3F7;color:var(--purple);
+    font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;flex:none}
+  .ps__doc b{font-size:13.5px;display:block}
+  .ps__doc span{font-size:11.5px;color:var(--ink-2)}
+  .ps__time{font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .ps__time svg{color:var(--blue)}
+  .btn-primary{
+    margin-top:auto;height:42px;border-radius:11px;border:none;background:var(--blue);color:#fff;
+    font-size:13.5px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;
+    font-family:inherit;box-shadow:0 4px 12px rgba(59,130,246,.3);
+  }
+  .btn-primary:hover{background:var(--blue-deep)}
+
+  /* --- 环形图 --- */
+  .donut{grid-column:span 4;display:flex;flex-direction:column}
+  .donut__wrap{display:flex;align-items:center;gap:20px;flex:1}
+  .donut__svg{flex:none;position:relative;width:158px;height:158px}
+  .donut__center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .donut__center b{font-size:26px;font-weight:700}
+  .donut__center span{font-size:11px;color:var(--ink-2)}
+  .legend{display:flex;flex-direction:column;gap:13px;flex:1}
+  .legend__item{display:flex;align-items:center;gap:9px;font-size:12.5px}
+  .legend__dot{width:9px;height:9px;border-radius:3px;flex:none}
+  .legend__item b{margin-left:auto;font-size:13px}
+  .legend__item span{color:var(--ink-3);font-size:11.5px;width:36px;text-align:right}
+
+  /* --- 收入折线图 --- */
+  .revenue{grid-column:span 8}
+  .revenue__nums{display:flex;gap:36px;margin-bottom:14px}
+  .rn b{font-size:22px;font-weight:700;display:block;letter-spacing:-.01em}
+  .rn span{font-size:12px;color:var(--ink-2)}
+  .rn .up{color:var(--green);font-weight:700}
+  .chart-legend{display:flex;gap:16px;margin-left:auto;align-items:center}
+  .chart-legend i{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px}
+  .revenue__nums-row{display:flex;align-items:flex-start}
+  .chart{width:100%;height:auto;display:block}
+
+  /* --- 右列：排班 + 报告 --- */
+  .right-stack{grid-column:span 4;display:flex;flex-direction:column;gap:20px}
+  .right-stack .card{flex:1}
+  .doc-row{display:flex;align-items:center;gap:12px;padding:11px 4px}
+  .doc-row + .doc-row{border-top:1px solid var(--line)}
+  .doc-row__avatar{width:42px;height:42px;border-radius:50%;font-weight:700;font-size:14px;
+    display:flex;align-items:center;justify-content:center;flex:none}
+  .doc-row b{font-size:13.5px;display:block}
+  .doc-row span{font-size:11.5px;color:var(--ink-2)}
+  .pill{margin-left:auto;font-size:11.5px;font-weight:600;padding:4px 11px;border-radius:99px}
+  .pill--green{background:var(--green-soft);color:var(--green)}
+  .pill--amber{background:var(--amber-soft);color:var(--amber)}
+  .pill--gray{background:#F1F3F6;color:var(--ink-2)}
+  .pill--blue{background:#E8F1FE;color:var(--blue-deep)}
+  .pill--red{background:var(--red-soft);color:var(--red)}
+  .report-row{display:flex;align-items:center;gap:12px;padding:11px 4px}
+  .report-row + .report-row{border-top:1px solid var(--line)}
+  .report-row__icon{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;flex:none}
+  .report-row b{font-size:13px;display:block;line-height:1.35}
+  .report-row span{font-size:11.5px;color:var(--ink-3)}
+  .report-row time{margin-left:auto;font-size:11px;color:var(--ink-3);flex:none}
+
+  /* --- 候诊表格 --- */
+  .table-card{grid-column:span 12}
+  .filters{display:flex;gap:8px}
+  .filter{font-size:12.5px;font-weight:500;color:var(--ink-2);padding:6px 13px;border-radius:99px;cursor:pointer;
+    border:1px solid var(--line)}
+  .filter.on{background:#212529;color:#fff;border-color:#212529}
+  .btn-export{
+    height:34px;padding:0 13px;border-radius:9px;border:1px solid var(--line);background:#fff;
+    font-size:12.5px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:6px;cursor:pointer;font-family:inherit;
+  }
+  .btn-export:hover{background:#F5F6F9}
+  table{width:100%;border-collapse:collapse}
+  thead th{
+    text-align:left;font-size:11.5px;font-weight:600;color:var(--ink-3);letter-spacing:.05em;
+    padding:10px 12px;border-bottom:1px solid var(--line);background:#FAFBFC;
+  }
+  thead th:first-child{border-radius:10px 0 0 10px}
+  thead th:last-child{border-radius:0 10px 10px 0}
+  tbody td{padding:13px 12px;border-bottom:1px solid var(--line);font-size:13px}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:#F8FAFC}
+  .pt-cell{display:flex;align-items:center;gap:11px}
+  .pt-cell__avatar{width:36px;height:36px;border-radius:50%;color:#fff;font-size:13px;font-weight:600;
+    display:flex;align-items:center;justify-content:center;flex:none}
+  .pt-cell b{display:block;font-size:13px}
+  .pt-cell span{font-size:11px;color:var(--ink-3)}
+  .td-time b{font-weight:600}
+  .td-time span{display:block;font-size:11px;color:var(--ink-3)}
+  .td-doc span{display:block;font-size:11px;color:var(--ink-3)}
+  .dots{color:var(--ink-3);cursor:pointer;letter-spacing:2px;font-weight:700}
+</style>
+<link rel="stylesheet" href="refine.css">
+</head>
+<body class="page-dashboard">
+<div class="app">
+
+  <!-- ================= 侧边导航 ================= -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand__logo">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 12h4l2-5 4 10 2-5h6"/>
+        </svg>
+      </div>
+      <div>
+        <div class="brand__name">安康门诊</div>
+        <div class="brand__sub">OUTPATIENT OS</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <div class="nav__label">工作台</div>
+      <div class="nav__item active">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        今日总览
+      </div>
+      <a class="nav__item" href="consult.html">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+        问诊工作台
+        <span class="nav__badge">16</span>
+      </a>
+      <div class="nav__item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        候诊队列
+        <span class="nav__badge">16</span>
+      </div>
+      <a class="nav__item" href="patient.html">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></svg>
+        患者病历
+      </a>
+      <div class="nav__item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M9 5V3h6v2"/><path d="M8 12h8M8 16h5"/></svg>
+        处方管理
+      </div>
+      <div class="nav__item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v6L4.5 17.5A2 2 0 0 0 6.2 21h11.6a2 2 0 0 0 1.7-3.5L14 8V2"/><path d="M8.5 2h7"/><path d="M7 15h10"/></svg>
+        检查检验
+      </div>
+      <div class="nav__label">管理</div>
+      <div class="nav__item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+        排班日历
+      </div>
+      <div class="nav__item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+        报告中心
+      </div>
+      <div class="nav__item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+        费用结算
+      </div>
+    </nav>
+    <div class="sidebar__foot">
+      <div class="nav__item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        系统设置
+      </div>
+      <div class="switch-row">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        夜间模式
+        <span class="switch"></span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ================= 主区 ================= -->
+  <div class="main">
+
+    <!-- 顶栏 -->
+    <header class="topbar">
+      <div class="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" placeholder="搜索患者姓名 / 门诊号 / 药品…">
+      </div>
+      <button class="btn-add">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        新建
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div class="topbar__right">
+        <div class="icon-btn">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+          <span class="dot"></span>
+        </div>
+        <div class="icon-btn">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </div>
+        <div class="user">
+          <div class="user__avatar">陈</div>
+          <div>
+            <div class="user__name">陈明远</div>
+            <div class="user__role">主治医师 · 管理员</div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- 内容 -->
+    <main class="content">
+
+      <div class="page-head">
+        <h1>今日总览</h1>
+        <span>2026年8月23日 星期日 · 内科一诊室</span>
+      </div>
+
+      <!-- 统计卡 ×4 -->
+      <div class="stats">
+        <div class="stat stat--purple">
+          <div class="stat__top">
+            <div class="stat__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+            <div class="stat__label">今日候诊</div>
+          </div>
+          <div class="stat__row">
+            <span class="stat__value">48</span>
+            <span class="stat__trend up">▲ 2.7%</span>
+          </div>
+          <div class="stat__sub">比昨日增加 6 位</div>
+        </div>
+
+        <div class="stat stat--gray">
+          <div class="stat__top">
+            <div class="stat__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg></div>
+            <div class="stat__label">已接诊</div>
+          </div>
+          <div class="stat__row">
+            <span class="stat__value">32</span>
+            <span class="stat__trend down">▼ 1.5%</span>
+          </div>
+          <div class="stat__sub">较昨日减少 2 位</div>
+        </div>
+
+        <div class="stat stat--amber">
+          <div class="stat__top">
+            <div class="stat__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>
+            <div class="stat__label">待接诊</div>
+          </div>
+          <div class="stat__row">
+            <span class="stat__value">16</span>
+            <span class="stat__trend up">▲ 21%</span>
+          </div>
+          <div class="stat__bar"><i></i></div>
+          <div class="stat__sub">5 位等候超 30 分钟</div>
+        </div>
+
+        <div class="stat stat--green">
+          <div class="stat__top">
+            <div class="stat__icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v6L4.5 17.5A2 2 0 0 0 6.2 21h11.6a2 2 0 0 0 1.7-3.5L14 8V2"/><path d="M8.5 2h7"/><path d="M7 15h10"/></svg></div>
+            <div class="stat__label">检查申请</div>
+          </div>
+          <div class="stat__row">
+            <span class="stat__value">12</span>
+            <span class="stat__trend up">▲ 2.1%</span>
+          </div>
+          <div class="stat__sub">危急值 1 项待处理</div>
+        </div>
+      </div>
+
+      <div class="grid">
+
+        <!-- 患者健康 -->
+        <section class="card patient">
+          <div class="card__head">
+            <span class="card__title">当前接诊患者</span>
+            <a class="card__link" href="patient.html">查看完整病历 →</a>
+          </div>
+          <div class="patient__body">
+            <div class="patient__hero">
+              <div class="ph__id">
+                <div class="ph__avatar">周</div>
+                <div>
+                  <div class="ph__name">周建国 <span style="font-size:12px;color:#4A7FA8;font-weight:500">男 · 58 岁</span></div>
+                  <div class="ph__meta">门诊号 M20260823-0128 · 医保 · 复诊</div>
+                </div>
+              </div>
+              <div class="ph__tags">
+                <span class="tag tag--red">青霉素过敏</span>
+                <span class="tag tag--blue">高血压 3 级</span>
+                <span class="tag tag--blue">2 型糖尿病</span>
+              </div>
+              <div class="ph__vitals">
+                <div class="vital">
+                  <div class="vital__label">体温</div>
+                  <div class="vital__value">36.8<small>°C</small></div>
+                </div>
+                <div class="vital vital--warn">
+                  <div class="vital__label">血压</div>
+                  <div class="vital__value">152/94<small>mmHg</small></div>
+                </div>
+                <div class="vital">
+                  <div class="vital__label">心率</div>
+                  <div class="vital__value">78<small>bpm</small></div>
+                </div>
+                <div class="vital">
+                  <div class="vital__label">血氧</div>
+                  <div class="vital__value">98<small>%</small></div>
+                </div>
+              </div>
+              <div class="ph__trend">
+                <div class="ph__trend-head">
+                  <span>近 7 日血压</span>
+                  <b>晨间均值 148/92 <small>mmHg</small></b>
+                </div>
+                <svg viewBox="0 0 520 64" preserveAspectRatio="none" aria-label="近 7 日收缩压与舒张压趋势">
+                  <g stroke="#E1E4DE" stroke-width="1">
+                    <line x1="0" y1="14" x2="520" y2="14"/><line x1="0" y1="46" x2="520" y2="46"/>
+                  </g>
+                  <path d="M0 24 L86 18 L173 25 L260 16 L347 20 L434 10 L520 14" fill="none" stroke="#2F72F4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M0 49 L86 44 L173 48 L260 42 L347 45 L434 38 L520 40" fill="none" stroke="#F06100" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+                  <g fill="#FFFFFF" stroke="#2F72F4" stroke-width="1.7">
+                    <circle cx="0" cy="24" r="2.5"/><circle cx="86" cy="18" r="2.5"/><circle cx="173" cy="25" r="2.5"/><circle cx="260" cy="16" r="2.5"/><circle cx="347" cy="20" r="2.5"/><circle cx="434" cy="10" r="2.5"/><circle cx="520" cy="14" r="2.5"/>
+                  </g>
+                </svg>
+                <div class="ph__trend-axis"><span>08-17</span><span>08-19</span><span>08-21</span><span>今天</span></div>
+              </div>
+            </div>
+            <div class="patient__side">
+              <div class="ps__block">
+                <div class="ps__label">接诊医生</div>
+                <div class="ps__doc">
+                  <div class="ps__doc-avatar">陈</div>
+                  <div>
+                    <b>陈明远</b>
+                    <span>主治医师 · 内科</span>
+                  </div>
+                  <span class="pill pill--green" style="margin-left:auto">在诊</span>
+                </div>
+              </div>
+              <div class="ps__block">
+                <div class="ps__label">就诊时段</div>
+                <div class="ps__time">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+                  今天 14:15 – 14:45
+                </div>
+              </div>
+              <div class="ps__block">
+                <div class="ps__label">主诉</div>
+                <div style="font-size:12.5px;color:var(--ink-2);line-height:1.6">头晕乏力 3 天，夜尿增多，既往高血压病史 8 年，规律服用氨氯地平。</div>
+              </div>
+              <a class="btn-primary" href="consult.html" style="text-decoration:none">
+                继续接诊
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+              </a>
+            </div>
+          </div>
+        </section>
+
+        <!-- 候诊分布环形图 -->
+        <section class="card donut">
+          <div class="card__head">
+            <span class="card__title">候诊分布</span>
+            <a class="card__link">明细 →</a>
+          </div>
+          <div class="donut__wrap">
+            <div class="donut__svg">
+              <svg width="158" height="158" viewBox="0 0 158 158">
+                <g transform="rotate(-90 79 79)">
+                  <circle cx="79" cy="79" r="52" fill="none" stroke="#EDEFF3" stroke-width="24"/>
+                  <circle cx="79" cy="79" r="52" fill="none" stroke="#5B8DEF" stroke-width="24"
+                          stroke-dasharray="212.4 326.7" stroke-dashoffset="0" stroke-linecap="butt"/>
+                  <circle cx="79" cy="79" r="52" fill="none" stroke="#F06100" stroke-width="24"
+                          stroke-dasharray="81.7 326.7" stroke-dashoffset="-212.4"/>
+                  <circle cx="79" cy="79" r="52" fill="none" stroke="#E70478" stroke-width="24"
+                          stroke-dasharray="32.7 326.7" stroke-dashoffset="-294.1"/>
+                </g>
+              </svg>
+              <div class="donut__center">
+                <b>48</b>
+                <span>今日候诊</span>
+              </div>
+            </div>
+            <div class="legend">
+              <div class="legend__item">
+                <i class="legend__dot" style="background:#5B8DEF"></i>普通门诊
+                <b>31</b><span>65%</span>
+              </div>
+              <div class="legend__item">
+                <i class="legend__dot" style="background:#F06100"></i>复诊随访
+                <b>12</b><span>25%</span>
+              </div>
+              <div class="legend__item">
+                <i class="legend__dot" style="background:#E70478"></i>急诊转入
+                <b>5</b><span>10%</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 今日收入折线图 -->
+        <section class="card revenue">
+          <div class="card__head">
+            <span class="card__title">今日收入</span>
+            <span class="select-pill">
+              全天
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </span>
+          </div>
+          <div class="revenue__nums-row">
+            <div class="revenue__nums">
+              <div class="rn">
+                <b>¥ 48,362</b>
+                <span>总收入 <em class="up" style="font-style:normal">▲ 12.4%</em></span>
+              </div>
+              <div class="rn">
+                <b>¥ 12,847</b>
+                <span>药品支出</span>
+              </div>
+            </div>
+            <div class="chart-legend">
+              <span style="font-size:12px;color:var(--ink-2)"><i style="background:#5B8DEF"></i>挂号+诊查</span>
+              <span style="font-size:12px;color:var(--ink-2)"><i style="background:#F06100"></i>药品成本</span>
+            </div>
+          </div>
+          <svg class="chart" viewBox="0 0 560 200" preserveAspectRatio="none" style="height:190px">
+            <defs>
+              <linearGradient id="areaBlue" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#5B8DEF" stop-opacity=".22"/>
+                <stop offset="100%" stop-color="#5B8DEF" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <!-- 网格 -->
+            <g stroke="#EEF1F5" stroke-width="1">
+              <line x1="8" y1="40" x2="552" y2="40"/>
+              <line x1="8" y1="80" x2="552" y2="80"/>
+              <line x1="8" y1="120" x2="552" y2="120"/>
+              <line x1="8" y1="160" x2="552" y2="160"/>
+            </g>
+            <!-- 面积 -->
+            <path d="M8,150 C60,135 80,125 120,120 C160,115 195,133 232,128 C270,123 305,88 344,80 C383,72 420,68 456,60 C492,52 528,38 552,30 L552,196 L8,196 Z" fill="url(#areaBlue)"/>
+            <!-- 收入线 -->
+            <path d="M8,150 C60,135 80,125 120,120 C160,115 195,133 232,128 C270,123 305,88 344,80 C383,72 420,68 456,60 C492,52 528,38 552,30"
+                  fill="none" stroke="#5B8DEF" stroke-width="2.6" stroke-linecap="round"/>
+            <!-- 支出线 -->
+            <path d="M8,168 C60,164 80,162 120,160 C160,158 195,153 232,150 C270,147 305,143 344,140 C383,137 420,134 456,132 C492,130 528,120 552,118"
+                  fill="none" stroke="#F06100" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="1 0"/>
+            <!-- 数据点 -->
+            <g fill="#fff" stroke="#5B8DEF" stroke-width="2.2">
+              <circle cx="120" cy="120" r="3.6"/><circle cx="232" cy="128" r="3.6"/>
+              <circle cx="344" cy="80" r="3.6"/><circle cx="456" cy="60" r="3.6"/><circle cx="552" cy="30" r="3.6"/>
+            </g>
+            <!-- x 轴标签 -->
+            <g fill="#98A2AB" font-size="10.5" font-family="inherit">
+              <text x="8" y="198">08:00</text><text x="112" y="198">10:00</text><text x="224" y="198">12:00</text>
+              <text x="336" y="198">14:00</text><text x="448" y="198">16:00</text><text x="520" y="198">18:00</text>
+            </g>
+          </svg>
+        </section>
+
+        <!-- 右列：排班 + 报告 -->
+        <div class="right-stack">
+
+          <section class="card">
+            <div class="card__head">
+              <span class="card__title">今日排班</span>
+              <a class="card__link">全部 →</a>
+            </div>
+            <div class="doc-row">
+              <div class="doc-row__avatar" style="background:#E8E3F7;color:#6F42C1">陈</div>
+              <div><b>陈明远</b><span>内科 · 一诊室</span></div>
+              <span class="pill pill--green">在诊</span>
+            </div>
+            <div class="doc-row">
+              <div class="doc-row__avatar" style="background:#DBEAFE;color:#1D4ED8">李</div>
+              <div><b>李慧</b><span>呼吸内科 · 二诊室</span></div>
+              <span class="pill pill--green">在诊</span>
+            </div>
+            <div class="doc-row">
+              <div class="doc-row__avatar" style="background:#FDECEA;color:#E0564A">王</div>
+              <div><b>王建国</b><span>心理门诊 · 三诊室</span></div>
+              <span class="pill pill--gray">停诊</span>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card__head">
+              <span class="card__title">待办提醒</span>
+              <a class="card__link">全部 →</a>
+            </div>
+            <div class="report-row">
+              <div class="report-row__icon" style="background:var(--red-soft);color:var(--red)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+              </div>
+              <div><b>危急值随访：周建国 血钾 6.2 → 5.8</b><span>已回落仍偏高 · 今日门诊复测中</span></div>
+              <time>2 分钟前</time>
+            </div>
+            <div class="report-row">
+              <div class="report-row__icon" style="background:var(--amber-soft);color:var(--amber)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+              </div>
+              <div><b>设备维护：心电图机 #3 例行保养</b><span>今日 17:00 停机 1 小时</span></div>
+              <time>1 小时前</time>
+            </div>
+            <div class="report-row">
+              <div class="report-row__icon" style="background:#E8F1FE;color:#1D4ED8">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+              </div>
+              <div><b>医保目录更新 v3.2 已发布</b><span>涉及 34 种药品报销比例调整</span></div>
+              <time>昨天</time>
+            </div>
+          </section>
+        </div>
+
+        <!-- 候诊列表 -->
+        <section class="card table-card">
+          <div class="card__head">
+            <span class="card__title">候诊列表</span>
+            <div class="filters" style="margin-left:18px">
+              <span class="filter on">全部 48</span>
+              <span class="filter">候诊中 16</span>
+              <span class="filter">已接诊 32</span>
+              <span class="filter">已退号 3</span>
+            </div>
+            <button class="btn-export" style="margin-left:auto">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+              导出
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width:24%">患者</th>
+                <th style="width:15%">就诊时间</th>
+                <th style="width:19%">医生 · 科室</th>
+                <th style="width:26%">诊疗项目</th>
+                <th style="width:11%">状态</th>
+                <th style="width:5%"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><div class="pt-cell"><div class="pt-cell__avatar" style="background:var(--tag-indigo-bg);color:var(--tag-indigo)">赵</div><div><b>赵桂芳</b><span>女 · 68 岁 · M-0132</span></div></div></td>
+                <td class="td-time"><b>08-23 14:30</b><span>预约号 #12</span></td>
+                <td class="td-doc"><b>陈明远</b><span>内科 · 一诊室</span></td>
+                <td>高血压复诊 · 血压监测</td>
+                <td><span class="pill pill--green">已确认</span></td>
+                <td><span class="dots">···</span></td>
+              </tr>
+              <tr>
+                <td><div class="pt-cell"><div class="pt-cell__avatar" style="background:var(--tag-teal-bg);color:var(--tag-teal)">钱</div><div><b>钱国强</b><span>男 · 45 岁 · M-0133</span></div></div></td>
+                <td class="td-time"><b>08-23 14:45</b><span>预约号 #13</span></td>
+                <td class="td-doc"><b>陈明远</b><span>内科 · 一诊室</span></td>
+                <td>急性上呼吸道感染</td>
+                <td><span class="pill pill--amber">候诊中</span></td>
+                <td><span class="dots">···</span></td>
+              </tr>
+              <tr>
+                <td><div class="pt-cell"><div class="pt-cell__avatar" style="background:var(--tag-orange-bg);color:var(--tag-orange)">孙</div><div><b>孙丽</b><span>女 · 32 岁 · M-0134</span></div></div></td>
+                <td class="td-time"><b>08-23 15:00</b><span>预约号 #14</span></td>
+                <td class="td-doc"><b>陈明远</b><span>内科 · 一诊室</span></td>
+                <td>2 型糖尿病随访 · 糖化复查</td>
+                <td><span class="pill pill--amber">候诊中</span></td>
+                <td><span class="dots">···</span></td>
+              </tr>
+              <tr>
+                <td><div class="pt-cell"><div class="pt-cell__avatar" style="background:var(--tag-blue-bg);color:var(--tag-blue)">周</div><div><b>周建国</b><span>男 · 58 岁 · M-0128</span></div></div></td>
+                <td class="td-time"><b>08-23 14:15</b><span>预约号 #11</span></td>
+                <td class="td-doc"><b>陈明远</b><span>内科 · 一诊室</span></td>
+                <td>头晕乏力查因 · 电解质</td>
+                <td><span class="pill pill--blue">接诊中</span></td>
+                <td><span class="dots">···</span></td>
+              </tr>
+              <tr>
+                <td><div class="pt-cell"><div class="pt-cell__avatar" style="background:var(--tag-pink-bg);color:var(--tag-pink)">吴</div><div><b>吴子昂</b><span>男 · 51 岁 · M-0119</span></div></div></td>
+                <td class="td-time"><b>08-23 15:45</b><span>预约号 #16</span></td>
+                <td class="td-doc"><b>陈明远</b><span>内科 · 一诊室</span></td>
+                <td>体检报告咨询</td>
+                <td><span class="pill pill--red">已退号</span></td>
+                <td><span class="dots">···</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+      </div>
+    </main>
+  </div>
+</div>
+<script src="refine.js"></script>
+</body>
+</html>

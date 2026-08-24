@@ -31,7 +31,7 @@ Mobile 只共享产品语义，不共享 DOM 测试。移动测试覆盖 Expo Ro
 
 E2E 从真实入口执行，并从外部观察结果：重新读取资源、数据库投影、页面或审计事件，不以 Agent 自己声称成功作为断言。
 
-核心 golden scenario 见[系统架构](architecture.md#144-场景测试)。每次运行固定 app build、schema、IG、Scenario 和 policy 版本；未来 Agent tool schema 进入范围后再固定其版本。
+核心候选 Scenario 见[系统架构](architecture.md#144-场景测试)。当前 `candidate` 与 `density` 都没有临床审核元数据，不得称为 `golden`。每次运行固定 app build、schema 与 Scenario 版本；未来实际发布 IG、policy package 或 Agent tool schema 后再把对应版本加入固定输入。
 
 ## 测试设计
 

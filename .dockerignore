@@ -1,0 +1,6 @@
+.git
+.turbo
+**/coverage
+**/dist
+**/node_modules
+references

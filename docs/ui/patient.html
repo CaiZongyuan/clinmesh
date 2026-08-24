@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>安康门诊 · 患者病历 · 周建国（design-2）</title>
+<!--
+  design-2 · 患者详情 / 病历档案 · 2026-08-23
+  皮肤: ui/design-1（tokens 全量继承，见 tokens.css）
+  内容: 就诊时间线 / 检验报告（含趋势 sparkline）/ 用药记录 / 智能摘要
+-->
+<link rel="stylesheet" href="tokens.css">
+<style>
+  /* ============ 患者头卡 ============ */
+  .pt-hero{display:flex;align-items:center;gap:18px}
+  .pt-hero__avatar{width:64px;height:64px;border-radius:50%;background:#CFE6FA;color:#1D6FB8;
+    font-size:24px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none}
+  .pt-hero__name{font-size:19px;font-weight:700;display:flex;align-items:center;gap:10px}
+  .pt-hero__name small{font-size:12.5px;color:var(--ink-2);font-weight:500}
+  .pt-hero__meta{font-size:12px;color:var(--ink-3);margin-top:3px}
+  .pt-hero__tags{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
+  .pt-hero__actions{margin-left:auto;display:flex;gap:9px;flex:none}
+  .btn-ghost{
+    height:38px;padding:0 15px;border-radius:10px;border:1px solid var(--line);background:#fff;color:var(--ink);
+    font-size:12.5px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:7px;transition:.15s;font-family:inherit;
+  }
+  .btn-ghost:hover{background:#F5F6F9}
+
+  /* ============ 就诊时间线 ============ */
+  .timeline{grid-column:span 8}
+  .tl__item{display:flex;gap:14px;position:relative;padding-bottom:18px}
+  .tl__item:last-child{padding-bottom:4px}
+  .tl__date{width:56px;flex:none;text-align:right;font-size:11px;color:var(--ink-3);line-height:1.5;padding-top:3px;
+    font-variant-numeric:tabular-nums}
+  .tl__date b{display:block;color:var(--ink-2);font-size:11.5px;font-weight:700}
+  .tl__rail{width:20px;flex:none;display:flex;justify-content:center;position:relative}
+  .tl__item:not(:last-child) .tl__rail::after{
+    content:"";position:absolute;top:17px;bottom:-3px;width:1.5px;background:var(--line);
+    left:50%;transform:translateX(-50%);border-radius:99px;
+  }
+  .tl__dot{width:11px;height:11px;border-radius:50%;background:#fff;border:2.5px solid #C6CCD4;margin-top:4px;z-index:1;flex:none}
+  .tl__item--now .tl__dot{border-color:var(--purple);background:var(--purple);box-shadow:0 0 0 4px var(--purple-soft)}
+  .tl__body{flex:1;min-width:0}
+  .tl__title{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .tl__title b{font-size:13.5px;font-weight:700}
+  .tl__desc{font-size:12.5px;color:var(--ink-2);line-height:1.65;margin-top:4px}
+  .tl__rx{display:flex;align-items:center;gap:7px;margin-top:7px;font-size:11.5px;color:var(--ink-3);
+    background:#FAFBFC;border:1px solid var(--line);border-radius:9px;padding:6px 10px;width:fit-content}
+  .tl__rx svg{color:var(--blue);flex:none}
+  .tl__now-note{display:flex;align-items:center;gap:8px;margin-top:7px;font-size:12px;font-weight:600;
+    color:var(--purple);background:var(--purple-soft);border-radius:9px;padding:8px 12px;width:fit-content;
+    text-decoration:none;cursor:pointer;transition:.15s}
+  .tl__now-note:hover{background:#EBE0F8}
+
+  /* ============ 检验报告 ============ */
+  .labs{grid-column:span 8}
+  .lab-val{font-weight:700;font-size:13px}
+  .lab-val small{font-size:10.5px;color:var(--ink-3);font-weight:500;margin-left:2px}
+  .lab-val.hi-red{color:var(--red)}
+  .lab-val.hi-amber{color:var(--amber)}
+  .lab-val.ok{color:var(--ink)}
+  .arrow{font-size:10px;margin-left:3px}
+  .lab-ref{font-size:11.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+  .spark{display:flex;align-items:center;gap:16px;border-top:1px dashed var(--line);margin-top:14px;padding-top:13px}
+  .spark__label{font-size:11.5px;color:var(--ink-2);line-height:1.5;flex:none;width:118px}
+  .spark__label b{display:block;font-size:12px;color:var(--ink);font-weight:700}
+  .spark__svg{flex:1;min-width:0}
+  .spark__last{margin-left:auto;font-size:11.5px;color:var(--amber);font-weight:700;text-align:right;flex:none}
+  .spark__last span{display:block;font-size:10.5px;color:var(--ink-3);font-weight:500}
+
+  /* ============ 用药记录 ============ */
+  .meds{grid-column:span 8}
+  .meds__sub{font-size:11.5px;font-weight:700;color:var(--ink-2);letter-spacing:.04em;margin:14px 0 4px}
+  .meds__sub:first-of-type{margin-top:0}
+  .med-name b{display:block;font-size:12.5px}
+  .med-name span{font-size:10.5px;color:var(--ink-3)}
+  .med-dim .med-name b{color:var(--ink-2)}
+
+  /* ============ 右列 ============ */
+  .side-col{grid-column:span 4;display:flex;flex-direction:column;gap:20px}
+  .kv-list{display:flex;flex-direction:column;gap:0}
+  .kv-row{display:flex;align-items:baseline;gap:12px;padding:9px 2px;font-size:12.5px}
+  .kv-row + .kv-row{border-top:1px solid var(--line)}
+  .kv-row i{font-style:normal;color:var(--ink-3);width:76px;flex:none}
+  .kv-row b{font-weight:600;text-align:right;margin-left:auto}
+  .alert-block{display:flex;align-items:center;gap:10px;background:var(--red-soft);border-radius:11px;
+    padding:10px 13px;margin-bottom:13px}
+  .alert-block b{font-size:12.5px;color:var(--red);display:block}
+  .alert-block span{font-size:11px;color:var(--red);opacity:.75}
+  .dx-row{display:flex;align-items:center;gap:10px;padding:9px 2px}
+  .dx-row + .dx-row{border-top:1px solid var(--line)}
+  .dx-row b{font-size:12.5px;font-weight:600}
+  .dx-row span{font-size:11px;color:var(--ink-3)}
+  .dx-row em{font-style:normal;margin-left:auto;font-size:11px;font-weight:700;color:var(--ink-3);
+    background:#F1F3F6;border-radius:6px;padding:2px 8px;font-family:ui-monospace,Menlo,monospace}
+
+  /* ============ 智能摘要 ============ */
+  .ai-sum__head{display:flex;align-items:center;gap:10px}
+  .ai-badge{width:30px;height:30px;border-radius:9px;background:var(--purple-soft);
+    color:var(--purple);display:flex;align-items:center;justify-content:center;flex:none;
+    box-shadow:none}
+  .ai-sum__title{font-size:13.5px;font-weight:700}
+  .ai-sum__sub{font-size:10.5px;color:var(--ink-3)}
+  .ai-sum__body{font-size:12.5px;line-height:1.7;color:var(--ink);margin-top:13px;
+    border-top:1px dashed var(--line);padding-top:13px}
+  .ai-sum__body p + p{margin-top:8px}
+  .ai-sum__body b{font-weight:700}
+  .ai-sum__risk{display:flex;align-items:center;gap:8px;margin-top:12px;background:var(--amber-soft);
+    color:var(--amber);font-size:11.5px;font-weight:600;border-radius:9px;padding:8px 11px}
+  .ai-sum__foot{display:flex;align-items:center;gap:8px;margin-top:13px;font-size:10.5px;color:var(--ink-3)}
+  .ai-sum__foot a{color:var(--blue);font-weight:600;cursor:pointer;margin-left:auto}
+</style>
+<link rel="stylesheet" href="refine.css">
+</head>
+<body class="page-patient">
+<div class="app">
+
+  <!-- ================= 侧边导航 ================= -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand__logo">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 12h4l2-5 4 10 2-5h6"/>
+        </svg>
+      </div>
+      <div>
+        <div class="brand__name">安康门诊</div>
+        <div class="brand__sub">OUTPATIENT OS</div>
+      </div>
+    </div>
+    <nav class="nav" style="flex:1">
+      <div class="nav__label">工作台</div>
+      <a class="nav__item" href="index.html">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        今日总览
+      </a>
+      <a class="nav__item" href="consult.html">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+        问诊工作台
+        <span class="nav__badge">16</span>
+      </a>
+      <a class="nav__item" href="#">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        候诊队列
+        <span class="nav__badge">16</span>
+      </a>
+      <a class="nav__item active" href="patient.html">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></svg>
+        患者病历
+      </a>
+      <div class="nav__item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M9 5V3h6v2"/><path d="M8 12h8M8 16h5"/></svg>
+        处方管理
+      </div>
+      <div class="nav__item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v6L4.5 17.5A2 2 0 0 0 6.2 21h11.6a2 2 0 0 0 1.7-3.5L14 8V2"/><path d="M8.5 2h7"/><path d="M7 15h10"/></svg>
+        检查检验
+      </div>
+      <div class="nav__label">管理</div>
+      <div class="nav__item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+        排班日历
+      </div>
+      <div class="nav__item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+        报告中心
+      </div>
+      <div class="nav__item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+        费用结算
+      </div>
+    </nav>
+    <div class="sidebar__foot">
+      <div class="nav__item">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        系统设置
+      </div>
+      <div class="switch-row">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        夜间模式
+        <span class="switch"></span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ================= 主区 ================= -->
+  <div class="main">
+
+    <!-- 顶栏 -->
+    <header class="topbar">
+      <div class="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" placeholder="搜索患者姓名 / 门诊号 / 药品…">
+      </div>
+      <button class="btn-add">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        新建
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div class="topbar__right">
+        <div class="icon-btn">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+          <span class="dot"></span>
+        </div>
+        <div class="user">
+          <div class="user__avatar">陈</div>
+          <div>
+            <div class="user__name">陈明远</div>
+            <div class="user__role">主治医师 · 管理员</div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- 内容 -->
+    <main class="content">
+
+      <div class="page-head">
+        <h1>患者病历</h1>
+        <span>档案 M-0128 · 最后更新 今天 14:32</span>
+      </div>
+
+      <div class="grid">
+
+        <!-- 患者头卡 -->
+        <section class="card" style="grid-column:span 12">
+          <div class="pt-hero">
+            <div class="pt-hero__avatar">周</div>
+            <div class="pt-hero__body">
+              <div class="pt-hero__name">周建国 <small>男 · 58 岁</small></div>
+              <div class="pt-hero__meta">门诊号 M20260823-0128 · 档案 M-0128 · 城镇职工医保 · 建档 2018-03-12</div>
+              <div class="pt-hero__tags">
+                <span class="tag tag--red">青霉素过敏</span>
+                <span class="tag tag--blue">高血压 3 级</span>
+                <span class="tag tag--blue">2 型糖尿病</span>
+                <span class="tag tag--blue">吸烟 30 年</span>
+              </div>
+            </div>
+            <div class="pt-hero__actions">
+              <a class="btn-primary" style="height:38px;width:auto;padding:0 16px;text-decoration:none" href="consult.html">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                前往问诊工作台
+              </a>
+              <button class="btn-ghost">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+                发消息
+              </button>
+              <button class="btn-ghost">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+                导出病历
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- 就诊时间线 -->
+        <section class="card timeline">
+          <div class="card__head">
+            <span class="card__title">就诊时间线</span>
+            <span class="select-pill">全部年份
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </span>
+          </div>
+
+          <div class="tl__item tl__item--now">
+            <div class="tl__date"><b>08-23</b>今天</div>
+            <div class="tl__rail"><div class="tl__dot"></div></div>
+            <div class="tl__body">
+              <div class="tl__title"><b>头晕乏力查因 · 复诊</b><span class="pill pill--blue">进行中</span></div>
+              <div class="tl__desc">主诉头晕乏力 3 天，午后加重，夜尿 2-3 次/晚。今晨血压 152/94。智能协诊已生成病历草稿、处方与检查建议，等待医生确认签名。</div>
+              <a class="tl__now-note" href="consult.html">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 5.7 5.8 1.9-5.8 1.9L12 18.2l-1.9-5.7-5.8-1.9 5.8-1.9L12 3z"/></svg>
+                前往问诊工作台处理 3 份待签名交付 →
+              </a>
+            </div>
+          </div>
+
+          <div class="tl__item">
+            <div class="tl__date"><b>08-22</b>昨天</div>
+            <div class="tl__rail"><div class="tl__dot"></div></div>
+            <div class="tl__body">
+              <div class="tl__title"><b>电解质危急值回报</b><span class="pill pill--red">危急值</span></div>
+              <div class="tl__desc">外院社区复查血钾 6.2 mmol/L（危急值），电话随访无症状，嘱今晨门诊复测——已回落至 5.8，继续观察。</div>
+              <div class="tl__rx">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                处置：电话随访 + 今日复测电解质五项（急）
+              </div>
+            </div>
+          </div>
+
+          <div class="tl__item">
+            <div class="tl__date"><b>08-09</b>两周前</div>
+            <div class="tl__rail"><div class="tl__dot"></div></div>
+            <div class="tl__body">
+              <div class="tl__title"><b>高血压随访 · 复诊</b><span class="pill pill--green">已完成</span></div>
+              <div class="tl__desc">自述服药规律，偶有晨起头胀。血压 152/94 mmHg，心率 76。维持现方案，嘱家庭血压监测并记录。</div>
+              <div class="tl__rx">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 20.5 3.5 13.5a5 5 0 0 1 7-7l7 7a5 5 0 0 1-7 7Z"/><path d="m8.5 8.5 7 7"/></svg>
+                处方：氨氯地平 5mg qd 续方 · 二甲双胍 0.5g bid 续方 —— 陈明远
+              </div>
+            </div>
+          </div>
+
+          <div class="tl__item">
+            <div class="tl__date"><b>07-25</b></div>
+            <div class="tl__rail"><div class="tl__dot"></div></div>
+            <div class="tl__body">
+              <div class="tl__title"><b>糖尿病季度随访</b><span class="pill pill--green">已完成</span></div>
+              <div class="tl__desc">HbA1c 7.8%（↑，目标 &lt;7.0%），空腹血糖 7.6-8.2 波动。无低血糖事件，无视网膜病变征象。</div>
+              <div class="tl__rx">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v6L4.5 17.5A2 2 0 0 0 6.2 21h11.6a2 2 0 0 0 1.7-3.5L14 8V2"/><path d="M8.5 2h7"/><path d="M7 15h10"/></svg>
+                检查：糖化血红蛋白 + 尿微量白蛋白 —— 李慧（代诊）
+              </div>
+            </div>
+          </div>
+
+          <div class="tl__item">
+            <div class="tl__date"><b>03-03</b></div>
+            <div class="tl__rail"><div class="tl__dot"></div></div>
+            <div class="tl__body">
+              <div class="tl__title"><b>年度体检结果复询</b><span class="pill pill--green">已完成</span></div>
+              <div class="tl__desc">LDL-C 3.4 mmol/L 处于临界，未达用药标准，予生活方式干预建议（戒烟、低盐饮食）；体检余项无异常。</div>
+              <div class="tl__rx">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+                咨询：无需用药 · 已预约 6 个月复查血脂 —— 陈明远
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 检验报告 -->
+        <section class="card labs">
+          <div class="card__head">
+            <span class="card__title">近期检验</span>
+            <span style="font-size:11.5px;color:var(--ink-3)">采样 08-23 09:40 · 报告 11:15</span>
+            <a class="card__link">全部报告 →</a>
+          </div>
+          <table class="table--dense">
+            <thead>
+              <tr><th style="width:30%">项目</th><th style="width:24%">结果</th><th style="width:26%">参考区间</th><th style="width:20%">提示</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><b>血钾 K⁺</b><span class="sub" style="display:block;font-size:10.5px;color:var(--ink-3)">复测 · 昨日 6.2 危急值</span></td>
+                <td><span class="lab-val hi-amber">5.8 <small>mmol/L</small><span class="arrow">↑</span></span></td>
+                <td class="lab-ref">3.5 – 5.3</td>
+                <td><span class="pill pill--amber pill--plain">偏高 · 继续观察</span></td>
+              </tr>
+              <tr>
+                <td><b>空腹血糖 GLU</b></td>
+                <td><span class="lab-val hi-amber">7.9 <small>mmol/L</small><span class="arrow">↑</span></span></td>
+                <td class="lab-ref">3.9 – 6.1</td>
+                <td><span class="pill pill--amber pill--plain">偏高</span></td>
+              </tr>
+              <tr>
+                <td><b>糖化血红蛋白 HbA1c</b></td>
+                <td><span class="lab-val hi-amber">7.8 <small>%</small><span class="arrow">↑</span></span></td>
+                <td class="lab-ref">4.0 – 6.0</td>
+                <td><span class="pill pill--amber pill--plain">未达标</span></td>
+              </tr>
+              <tr>
+                <td><b>低密度脂蛋白 LDL-C</b></td>
+                <td><span class="lab-val hi-amber">3.6 <small>mmol/L</small><span class="arrow">↑</span></span></td>
+                <td class="lab-ref">≤ 3.4</td>
+                <td><span class="pill pill--amber pill--plain">临界</span></td>
+              </tr>
+              <tr>
+                <td><b>肌酐 Cr</b></td>
+                <td><span class="lab-val ok">96 <small>μmol/L</small></span></td>
+                <td class="lab-ref">57 – 97</td>
+                <td><span class="pill pill--green pill--plain">正常</span></td>
+              </tr>
+              <tr>
+                <td><b>白细胞 WBC</b></td>
+                <td><span class="lab-val ok">6.4 <small>×10⁹/L</small></span></td>
+                <td class="lab-ref">3.5 – 9.5</td>
+                <td><span class="pill pill--green pill--plain">正常</span></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="spark">
+            <div class="spark__label">
+              <b>LDL-C 趋势</b>
+              近 6 次 · 目标 ≤ 3.4
+            </div>
+            <svg class="spark__svg" viewBox="0 0 260 48" preserveAspectRatio="none" style="height:48px;display:block">
+              <line x1="8" y1="14" x2="252" y2="14" stroke="#F0655A" stroke-width="1" stroke-dasharray="4 4" opacity=".5"/>
+              <text x="8" y="10" font-size="8.5" fill="#E0564A" opacity=".7">目标线 3.4</text>
+              <path d="M8,34 L60,28 L112,31 L164,22 L216,19 L252,16"
+                    fill="none" stroke="#5B8DEF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+              <g fill="#fff" stroke="#5B8DEF" stroke-width="2">
+                <circle cx="8" cy="34" r="2.6"/><circle cx="60" cy="28" r="2.6"/><circle cx="112" cy="31" r="2.6"/>
+                <circle cx="164" cy="22" r="2.6"/><circle cx="216" cy="19" r="2.6"/>
+              </g>
+              <circle cx="252" cy="16" r="3.4" fill="#fff" stroke="#F06100" stroke-width="2.2"/>
+              <g fill="#98A2AB" font-size="8.5">
+                <text x="6" y="47">03月</text><text x="58" y="47">04月</text><text x="110" y="47">05月</text>
+                <text x="162" y="47">06月</text><text x="214" y="47">07月</text><text x="242" y="47">08月</text>
+              </g>
+            </svg>
+            <div class="spark__last">
+              3.6 ↑
+              <span>06-12 起 3 次连升</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- 用药记录 -->
+        <section class="card meds">
+          <div class="card__head">
+            <span class="card__title">用药记录</span>
+            <a class="card__link">全部医嘱 →</a>
+          </div>
+          <div class="meds__sub">在服 · 2 种</div>
+          <table class="table--dense">
+            <tbody>
+              <tr>
+                <td class="med-name" style="width:34%"><b>苯磺酸氨氯地平片</b><span>络活喜 5mg × 28</span></td>
+                <td style="width:26%">每日 1 次 · 晨服</td>
+                <td style="width:20%"><span class="td-time"><b>2018-06 起</b><span>长期</span></span></td>
+                <td><span class="pill pill--green pill--plain">在服</span></td>
+              </tr>
+              <tr>
+                <td class="med-name"><b>盐酸二甲双胍片</b><span>格华止 0.5g × 20</span></td>
+                <td>每日 2 次 · 餐中</td>
+                <td><span class="td-time"><b>2021-11 起</b><span>长期</span></span></td>
+                <td><span class="pill pill--green pill--plain">在服</span></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="meds__sub">历史 · 2 种</div>
+          <table class="table--dense">
+            <tbody>
+              <tr class="med-dim" style="opacity:.62">
+                <td class="med-name" style="width:34%"><b>硝苯地平缓释片</b><span>30mg × 30</span></td>
+                <td>每日 1 次</td>
+                <td><span class="td-time"><b>2016 – 2018</b></span></td>
+                <td><span class="pill pill--gray pill--plain">已停用</span></td>
+              </tr>
+              <tr class="med-dim" style="opacity:.62">
+                <td class="med-name"><b>阿卡波糖片</b><span>50mg × 30</span></td>
+                <td>每日 3 次 · 随餐</td>
+                <td><span class="td-time"><b>2021-09 – 2021-11</b></span></td>
+                <td><span class="pill pill--gray pill--plain">已停用</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- 右列 -->
+        <div class="side-col">
+
+          <section class="card">
+            <div class="card__head"><span class="card__title" style="font-size:14px">基本信息</span></div>
+            <div class="kv-list">
+              <div class="kv-row"><i>手机</i><b>138****2819</b></div>
+              <div class="kv-row"><i>医保类型</i><b>城镇职工</b></div>
+              <div class="kv-row"><i>血型</i><b>A 型 · RhD⁺</b></div>
+              <div class="kv-row"><i>身高体重</i><b>172cm · 74kg（BMI 25.0）</b></div>
+              <div class="kv-row"><i>紧急联系人</i><b>周晓（子）139****7742</b></div>
+              <div class="kv-row"><i>建档</i><b>2018-03-12 · 陈明远</b></div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card__head"><span class="card__title" style="font-size:14px">过敏与诊断</span></div>
+            <div class="alert-block">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+              <div>
+                <b>青霉素 · 皮疹</b>
+                <span>2019-06 皮试阳性记录 · 处方自动拦截</span>
+              </div>
+            </div>
+            <div class="dx-row"><b>高血压 3 级</b><span>2018 确诊</span><em>I10</em></div>
+            <div class="dx-row"><b>2 型糖尿病</b><span>2021 确诊</span><em>E11</em></div>
+            <div class="dx-row"><b>头晕待查</b><span>今日新增 · 待签名</span><em>R42</em></div>
+          </section>
+
+          <section class="card" style="background:linear-gradient(180deg,#FBF9FE,#fff)">
+            <div class="ai-sum__head">
+              <div class="ai-badge">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 5.7 5.8 1.9-5.8 1.9L12 18.2l-1.9-5.7-5.8-1.9 5.8-1.9L12 3z"/><circle cx="18.6" cy="5.4" r="1.5"/><circle cx="5.4" cy="18.6" r="1.5"/></svg>
+              </div>
+              <div>
+                <div class="ai-sum__title">智能患者摘要</div>
+                <div class="ai-sum__sub">协诊助手生成 · 今天 14:20</div>
+              </div>
+            </div>
+            <div class="ai-sum__body">
+              <p>高血压 + 糖尿病双慢病 8 年，依从性良好（续方按时、家庭监测配合）。近 2 次血压 ≥150/90 未达标，今次头晕乏力伴夜尿增多，<b>需警惕电解质紊乱与肾功能变化</b>。</p>
+              <p>血钾昨日危急值 6.2 已回落至 5.8，仍偏高；HbA1c 7.8% 连续两次未达标。LDL-C 近 3 个月连续上升至临界。</p>
+              <div class="ai-sum__risk">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+                建议：完善心电图 + 电解质复测；血压方案可考虑调整；严格 β-内酰胺禁忌
+              </div>
+            </div>
+            <div class="ai-sum__foot">
+              引用 6 份档案（时间线 / 检验 / 用药）
+              <a>查看引用</a>
+            </div>
+          </section>
+
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+<script src="refine.js"></script>
+</body>
+</html>
