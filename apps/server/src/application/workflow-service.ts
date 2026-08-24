@@ -1165,6 +1165,7 @@ export class WorkflowService {
   startVirtualPatient(input: {
     context: ActorContext
     expectedVersion: number
+    expectedVersions: Record<string, string>
     idempotencyKey: string
     virtualPatientId: string
   }): CommandResponse<{
@@ -1179,7 +1180,7 @@ export class WorkflowService {
     return this.#commands.execute({
       context: input.context,
       dataSchema: startVirtualPatientResponseSchema.shape.data,
-      expectedVersions: {},
+      expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: {
         expectedVersion: input.expectedVersion,
@@ -1320,7 +1321,12 @@ export class WorkflowService {
           registrationId,
         }
       } else {
-        intake = this.#reuseVirtualPatientIntake(input.context, transaction, activeCase, now)
+        intake = this.#reuseVirtualPatientIntake(
+          input.context,
+          transaction,
+          activeCase,
+          input.expectedVersions,
+        )
       }
       this.#database.driver.prepare(`
         INSERT INTO virtual_patient_case (
@@ -1600,50 +1606,20 @@ export class WorkflowService {
       if (outpatientCase.status !== 'awaiting-doctor' || outpatientCase.doctor_task_id === null) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not awaiting a first visit')
       }
-      this.#assertExpectedVersions(input.expectedVersions, [
-        `Encounter/${input.encounterId}`,
-        `Task/${outpatientCase.doctor_task_id}`,
-      ])
-      const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
-      const task = transaction.fhir.read(input.context, 'Task', outpatientCase.doctor_task_id)
-      const now = this.#virtualTime(input.context)
-      const updatedEncounter = transaction.fhir.update(input.context, {
-        ...encounter,
-        status: 'in-progress',
-        extension: [
-          ...(Array.isArray(encounter.extension) ? encounter.extension : []),
-          {
-            url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/workflow-phase',
-            valueCode: 'first-visit',
-          },
-        ],
-      }, encounter.meta?.versionId ?? '1')
-      const updatedTask = transaction.fhir.update(input.context, {
-        ...task,
-        status: 'in-progress',
-        executionPeriod: { start: now },
-        owner: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
-      }, task.meta?.versionId ?? '1')
-      this.#database.driver.prepare(`
-        UPDATE outpatient_case
-        SET status = 'first-visit', version = version + 1, updated_at = ?
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND status = 'awaiting-doctor'
-      `).run(now, input.context.workspaceId, input.context.epoch, outpatientCase.case_id)
-      this.#database.driver.prepare(`
-        UPDATE registration SET status = 'in-progress'
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-      `).run(input.context.workspaceId, input.context.epoch, outpatientCase.case_id)
+      const transition = this.#transitionToFirstVisit(input.context, transaction, {
+        caseId: outpatientCase.case_id,
+        encounterId: input.encounterId,
+        expectedVersions: input.expectedVersions,
+        previousStatus: 'awaiting-doctor',
+        queueTaskId: outpatientCase.doctor_task_id,
+      })
       return {
         data: {
-          encounterVersion: updatedEncounter.meta?.versionId ?? '3',
+          encounterVersion: transition.encounterVersion,
           status: 'first-visit' as const,
-          taskVersion: updatedTask.meta?.versionId ?? '2',
+          taskVersion: transition.taskVersion,
         },
-        effects: [updatedEncounter, updatedTask].map(resource => ({
-          kind: 'updated' as const,
-          reference: `${resource.resourceType}/${resource.id}`,
-          versionId: resource.meta?.versionId ?? '1',
-        })),
+        effects: transition.effects,
       }
     })
   }
@@ -4347,64 +4323,108 @@ export class WorkflowService {
     ]
   }
 
+  #transitionToFirstVisit(
+    context: ActorContext,
+    transaction: CommandTransaction,
+    input: {
+      caseId: string
+      encounterId: string
+      expectedVersions: Record<string, string>
+      previousStatus: 'awaiting-doctor' | 'awaiting-triage'
+      queueTaskId: string
+    },
+  ) {
+    const encounterReference = `Encounter/${input.encounterId}`
+    const taskReference = `Task/${input.queueTaskId}`
+    this.#assertExpectedVersions(input.expectedVersions, [encounterReference, taskReference])
+    const encounter = transaction.fhir.read(context, 'Encounter', input.encounterId)
+    const task = transaction.fhir.read(context, 'Task', input.queueTaskId)
+    const now = this.#virtualTime(context)
+    const updatedEncounter = transaction.fhir.update(context, {
+      ...encounter,
+      status: 'in-progress',
+      extension: [
+        ...(Array.isArray(encounter.extension) ? encounter.extension : []),
+        {
+          url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/workflow-phase',
+          valueCode: 'first-visit',
+        },
+      ],
+    }, encounter.meta?.versionId ?? '1')
+    const updatedTask = transaction.fhir.update(context, {
+      ...task,
+      code: { text: 'Outpatient consultation' },
+      status: 'in-progress',
+      executionPeriod: { start: now },
+      owner: { reference: `PractitionerRole/${context.practitionerRoleId}` },
+    }, task.meta?.versionId ?? '1')
+    const updateCase = this.#database.driver.prepare(`
+      UPDATE outpatient_case
+      SET doctor_task_id = ?, status = 'first-visit', version = version + 1, updated_at = ?
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND status = ?
+    `).run(
+      input.queueTaskId,
+      now,
+      context.workspaceId,
+      context.epoch,
+      input.caseId,
+      input.previousStatus,
+    )
+    if (updateCase.changes !== 1) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The outpatient case state has changed')
+    }
+    this.#database.driver.prepare(`
+      UPDATE registration SET status = 'in-progress'
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).run(context.workspaceId, context.epoch, input.caseId)
+    return {
+      effects: [updatedEncounter, updatedTask].map(resource => ({
+        kind: 'updated' as const,
+        reference: `${resource.resourceType}/${resource.id}`,
+        versionId: resource.meta?.versionId ?? '1',
+      })),
+      encounterVersion: updatedEncounter.meta?.versionId ?? '1',
+      taskVersion: updatedTask.meta?.versionId ?? '1',
+    }
+  }
+
   #reuseVirtualPatientIntake(
     context: ActorContext,
     transaction: CommandTransaction,
     activeCase: ActiveOutpatientCaseRow,
-    now: string,
+    expectedVersions: Record<string, string>,
   ): VirtualPatientIntake {
+    if (activeCase.status === 'first-visit') {
+      if (activeCase.doctor_task_id === null) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The patient has an incompatible active outpatient case')
+      }
+      return {
+        caseId: activeCase.case_id,
+        effects: [],
+        encounterId: activeCase.encounter_id,
+        queueTaskId: activeCase.doctor_task_id,
+        registrationId: activeCase.registration_id,
+      }
+    }
+    if (activeCase.status !== 'awaiting-triage' && activeCase.status !== 'awaiting-doctor') {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The patient has an incompatible active outpatient case')
+    }
     const queueTaskId = activeCase.status === 'awaiting-triage'
       ? activeCase.initial_task_id
       : activeCase.doctor_task_id
-    if (
-      !['awaiting-triage', 'awaiting-doctor', 'first-visit'].includes(activeCase.status)
-      || queueTaskId === null
-    ) {
+    if (queueTaskId === null) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The patient has an incompatible active outpatient case')
     }
-    const effects: CommandEffect[] = []
-    if (activeCase.status !== 'first-visit') {
-      const encounter = transaction.fhir.read(context, 'Encounter', activeCase.encounter_id)
-      const task = transaction.fhir.read(context, 'Task', queueTaskId)
-      const updatedEncounter = transaction.fhir.update(context, {
-        ...encounter,
-        status: 'in-progress',
-      }, encounter.meta?.versionId ?? '1')
-      const updatedTask = transaction.fhir.update(context, {
-        ...task,
-        code: { text: 'Outpatient consultation' },
-        executionPeriod: { start: now },
-        owner: { reference: 'PractitionerRole/practitioner-role-outpatient-doctor' },
-        status: 'in-progress',
-      }, task.meta?.versionId ?? '1')
-      effects.push(...[updatedEncounter, updatedTask].map(resource => ({
-        kind: 'updated' as const,
-        reference: `${resource.resourceType}/${resource.id}`,
-        versionId: resource.meta?.versionId ?? '1',
-      })))
-      const updateCase = this.#database.driver.prepare(`
-        UPDATE outpatient_case
-        SET doctor_task_id = ?, status = 'first-visit', version = version + 1, updated_at = ?
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND status = ?
-      `).run(
-        queueTaskId,
-        now,
-        context.workspaceId,
-        context.epoch,
-        activeCase.case_id,
-        activeCase.status,
-      )
-      if (updateCase.changes !== 1) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The outpatient case state has changed')
-      }
-      this.#database.driver.prepare(`
-        UPDATE registration SET status = 'in-progress'
-        WHERE workspace_id = ? AND epoch = ? AND registration_id = ?
-      `).run(context.workspaceId, context.epoch, activeCase.registration_id)
-    }
+    const transition = this.#transitionToFirstVisit(context, transaction, {
+      caseId: activeCase.case_id,
+      encounterId: activeCase.encounter_id,
+      expectedVersions,
+      previousStatus: activeCase.status,
+      queueTaskId,
+    })
     return {
       caseId: activeCase.case_id,
-      effects,
+      effects: transition.effects,
       encounterId: activeCase.encounter_id,
       queueTaskId,
       registrationId: activeCase.registration_id,

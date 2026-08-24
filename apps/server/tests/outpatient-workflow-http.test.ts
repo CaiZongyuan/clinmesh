@@ -624,18 +624,44 @@ describe('outpatient workflow HTTP contract', () => {
       method: 'POST',
     })
     const registration = registrationResponseSchema.parse(await registrationResponse.json()).data
-
-    const startResponse = await runtime.app.request(
-      `/api/his/v1/doctor/virtual-patients/${candidate.id}/actions/start`,
-      {
+    const [initialEncounterResponse, initialTaskResponse] = await Promise.all([
+      runtime.app.request(`/fhir/R5/Encounter/${registration.encounterId}`, {
+        headers: { cookie: doctorCookie },
+      }),
+      runtime.app.request(`/fhir/R5/Task/${registration.queueTaskId}`, {
+        headers: { cookie: doctorCookie },
+      }),
+    ])
+    const initialEncounter = fhirResourceSchema.parse(await initialEncounterResponse.json())
+    const initialTask = fhirResourceSchema.parse(await initialTaskResponse.json())
+    if (initialEncounter.meta?.versionId === undefined || initialTask.meta?.versionId === undefined) {
+      throw new Error('Registered Encounter and Task versions were not available')
+    }
+    const start = (expectedVersions: Record<string, string>) => runtime.app.request(
+      `/api/his/v1/doctor/virtual-patients/${candidate.id}/actions/start`, {
         body: JSON.stringify({
-          expectedVersions: {},
+          expectedVersions,
           input: { expectedVersion: candidate.version },
         }),
         headers: commandHeaders(doctorCookie),
         method: 'POST',
       },
     )
+    const expectedVersions = {
+      [`Encounter/${registration.encounterId}`]: initialEncounter.meta.versionId,
+      [`Task/${registration.queueTaskId}`]: initialTask.meta.versionId,
+    }
+
+    const staleResponse = await start({
+      ...expectedVersions,
+      [`Encounter/${registration.encounterId}`]: '999',
+    })
+    expect(staleResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await staleResponse.json())).toMatchObject({
+      error: { code: 'IDEMPOTENCY_KEY_REUSED' },
+    })
+
+    const startResponse = await start(expectedVersions)
 
     expect(startResponse.status).toBe(200)
     const started = startVirtualPatientResponseSchema.parse(await startResponse.json()).data
@@ -652,8 +678,20 @@ describe('outpatient workflow HTTP contract', () => {
       { headers: { cookie: doctorCookie } },
     )
     expect(fhirBundleSchema.parse(await encounterSearchResponse.json())).toMatchObject({ total: 1 })
-    const taskResponse = await runtime.app.request(`/fhir/R5/Task/${registration.queueTaskId}`, {
-      headers: { cookie: doctorCookie },
+    const [encounterResponse, taskResponse] = await Promise.all([
+      runtime.app.request(`/fhir/R5/Encounter/${registration.encounterId}`, {
+        headers: { cookie: doctorCookie },
+      }),
+      runtime.app.request(`/fhir/R5/Task/${registration.queueTaskId}`, {
+        headers: { cookie: doctorCookie },
+      }),
+    ])
+    expect(fhirResourceSchema.parse(await encounterResponse.json())).toMatchObject({
+      extension: expect.arrayContaining([{
+        url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/workflow-phase',
+        valueCode: 'first-visit',
+      }]),
+      status: 'in-progress',
     })
     expect(fhirResourceSchema.parse(await taskResponse.json())).toMatchObject({
       code: { text: 'Outpatient consultation' },

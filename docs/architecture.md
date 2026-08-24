@@ -843,7 +843,7 @@ Registration + Encounter + Account + 挂号 Charge Item
 
 首期只实现现场普通门诊。Registration 是持久领域事实；挂号 Command 在同一事务中创建或关联 Registration、Encounter、Queue Task、Account 和挂号 Charge Item。Appointment 表达未来预约承诺，Slot 表达可预约时段，不承担挂号事实、排队序号或挂号费语义，二者不属于首期闭环。
 
-门诊医生也可从版本固定的 Virtual Patient 直接建立接诊上下文。`virtual-patient.start-consultation` Command 以 Virtual Patient 的 expected version 与可用状态作为前置条件并复用其绑定的合成 Patient。Patient 没有活动门诊病例时，Command 在同一事务中创建 Registration、进行中 Encounter、Account、医生 Queue Task 和 `first-visit` outpatient case；Patient 已有 `awaiting-triage`、`awaiting-doctor` 或 `first-visit` 病例时，Command 复用该病例的 Registration、Encounter、Account 和可用 Queue Task，并把尚未开始的 Task 转入医生首诊。其他活动状态返回稳定冲突。成功后 Virtual Patient 不可再次接诊；这条入口不伪造分诊 Observation、分诊级别或费用事实，相同幂等键重放第一次回执，旧版本或已消费候选患者返回稳定冲突。
+门诊医生也可从版本固定的 Virtual Patient 直接建立接诊上下文。`virtual-patient.start-consultation` Command 以 Virtual Patient 的 expected version 与可用状态作为前置条件并复用其绑定的合成 Patient。Patient 没有活动门诊病例时，Command 在同一事务中创建 Registration、进行中 Encounter、Account、医生 Queue Task 和 `first-visit` outpatient case；Patient 已有 `awaiting-triage`、`awaiting-doctor` 或 `first-visit` 病例时，Command 复用该病例的 Registration、Encounter、Account 和可用 Queue Task，并把尚未开始的 Task 转入医生首诊。推进既有 Encounter 和 Task 时，请求必须同时提交两者的 expected versions；其他活动状态返回稳定冲突。成功后 Virtual Patient 不可再次接诊；这条入口不伪造分诊 Observation、分诊级别或费用事实，相同幂等键重放第一次回执，旧版本或已消费候选患者返回稳定冲突。
 
 关键约束：
 
