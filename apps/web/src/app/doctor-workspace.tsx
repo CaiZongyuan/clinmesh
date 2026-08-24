@@ -1,4 +1,4 @@
-import type { ClinicalCatalog, ClinicalPresentation, DoctorCaseDetail, DoctorQueueItem, SessionContext, VirtualPatientList } from '@clinmesh/contracts/his'
+import type { ClinicalCatalog, DoctorCaseDetail, DoctorQueueItem, SessionContext, VirtualPatientList } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
@@ -42,10 +42,12 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
   const queryClient = useQueryClient()
   const scope = [session.actor.workspaceId, session.actor.epoch] as const
   const [page, setPage] = useState(1)
+  const [virtualPatientPage, setVirtualPatientPage] = useState(1)
   const queueKey = ['doctor-queue', ...scope, page] as const
-  const virtualPatientKey = ['doctor-virtual-patients', ...scope] as const
+  const virtualPatientScopeKey = ['doctor-virtual-patients', ...scope] as const
+  const virtualPatientKey = [...virtualPatientScopeKey, virtualPatientPage] as const
   const virtualPatients = useQuery({
-    queryFn: ({ signal }) => getVirtualPatients(signal),
+    queryFn: ({ signal }) => getVirtualPatients(signal, virtualPatientPage),
     queryKey: virtualPatientKey,
   })
   const queue = useQuery({
@@ -93,9 +95,10 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
     },
     onSuccess: async response => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: virtualPatientKey }),
+        queryClient.invalidateQueries({ queryKey: virtualPatientScopeKey }),
         queryClient.invalidateQueries({ queryKey: ['doctor-queue', ...scope] }),
       ])
+      setVirtualPatientPage(1)
       setSelectedVirtualPatientId(undefined)
       setSelectedCaseId(response.data.caseId)
     },
@@ -260,7 +263,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
         <section aria-labelledby="virtual-patient-heading" className="flex min-w-0 flex-col gap-3 border-b pb-5">
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-base font-semibold" id="virtual-patient-heading">{messages.virtualPatientCandidates}</h2>
-            <Badge variant="secondary">{virtualPatients.data?.items.length ?? 0}</Badge>
+            <Badge variant="secondary">{virtualPatients.data?.total ?? 0}</Badge>
           </div>
           {virtualPatients.isPending ? <Skeleton className="h-32 w-full" /> : virtualPatients.isError ? (
             <ErrorAlert message={getWorkspaceErrorMessage(virtualPatients.error, messages)} title={getWorkspaceErrorTitle(virtualPatients.error, messages, messages.virtualPatientsUnavailable)} />
@@ -315,6 +318,18 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
                 </div>
               )}
             </div>
+          )}
+          {virtualPatients.data === undefined ? null : (
+            <PaginationControls
+              messages={messages}
+              onPageChange={(nextPage) => {
+                setVirtualPatientPage(nextPage)
+                setSelectedVirtualPatientId(undefined)
+              }}
+              page={virtualPatients.data.page}
+              pageSize={virtualPatients.data.pageSize}
+              total={virtualPatients.data.total}
+            />
           )}
         </section>
 
@@ -505,7 +520,7 @@ function CaseDetail({
   startRevisitPending: boolean
 }): React.JSX.Element {
   const firstVisitDraft = detail.drafts?.firstVisit
-  const presentation = doctorCasePresentation(detail)
+  const presentation = detail.presentation
   const laboratoryItems = catalog.data?.laboratory.map(item => ({
     label: `${locale === 'zh-CN' ? item.nameZh : item.nameEn} · ${formatFen(item.priceFen ?? 0, locale)}`,
     value: item.id,
@@ -525,27 +540,25 @@ function CaseDetail({
         </div>
         <Badge variant="outline">{statusLabel(detail.status, messages)}</Badge>
       </div>
-      {presentation === undefined ? null : (
-        <section aria-labelledby="clinical-presentation-heading" className="flex flex-col gap-2">
-          <h3 className="text-sm font-semibold" id="clinical-presentation-heading">
-            {detail.triage === undefined ? messages.clinicalPresentation : messages.triageSummary}
-          </h3>
-          <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-            <div className="sm:col-span-2"><dt className="text-muted-foreground">{messages.chiefComplaint}</dt><dd className="font-medium">{presentation.chiefComplaint}</dd></div>
-            {presentation.summary === presentation.chiefComplaint ? null : (
-              <div className="sm:col-span-2"><dt className="text-muted-foreground">{messages.presentationSummary}</dt><dd className="font-medium">{presentation.summary}</dd></div>
-            )}
-            <div><dt className="text-muted-foreground">{messages.temperatureC}</dt><dd className="font-medium">{presentation.vitalSigns.temperatureC}</dd></div>
-            <div><dt className="text-muted-foreground">{messages.pulseBpm}</dt><dd className="font-medium">{presentation.vitalSigns.pulseBpm}</dd></div>
-            <div><dt className="text-muted-foreground">{messages.respirationBpm}</dt><dd className="font-medium">{presentation.vitalSigns.respirationBpm}</dd></div>
-            <div><dt className="text-muted-foreground">{messages.bloodPressure}</dt><dd className="font-medium">{presentation.vitalSigns.bloodPressure.systolicMmHg}/{presentation.vitalSigns.bloodPressure.diastolicMmHg}</dd></div>
-            <div><dt className="text-muted-foreground">{messages.oxygenSaturationPct}</dt><dd className="font-medium">{presentation.vitalSigns.oxygenSaturationPct}</dd></div>
-            {detail.triage === undefined ? null : (
-              <div><dt className="text-muted-foreground">{messages.acuity}</dt><dd className="font-medium">{messages[`acuity_${detail.triage.acuityCode.replace('-', '')}` as 'acuity_level1']}</dd></div>
-            )}
-          </dl>
-        </section>
-      )}
+      <section aria-labelledby="clinical-presentation-heading" className="flex flex-col gap-2">
+        <h3 className="text-sm font-semibold" id="clinical-presentation-heading">
+          {detail.triage === undefined ? messages.clinicalPresentation : messages.triageSummary}
+        </h3>
+        <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          <div className="sm:col-span-2"><dt className="text-muted-foreground">{messages.chiefComplaint}</dt><dd className="font-medium">{presentation.chiefComplaint}</dd></div>
+          {presentation.summary === presentation.chiefComplaint ? null : (
+            <div className="sm:col-span-2"><dt className="text-muted-foreground">{messages.presentationSummary}</dt><dd className="font-medium">{presentation.summary}</dd></div>
+          )}
+          <div><dt className="text-muted-foreground">{messages.temperatureC}</dt><dd className="font-medium">{presentation.vitalSigns.temperatureC}</dd></div>
+          <div><dt className="text-muted-foreground">{messages.pulseBpm}</dt><dd className="font-medium">{presentation.vitalSigns.pulseBpm}</dd></div>
+          <div><dt className="text-muted-foreground">{messages.respirationBpm}</dt><dd className="font-medium">{presentation.vitalSigns.respirationBpm}</dd></div>
+          <div><dt className="text-muted-foreground">{messages.bloodPressure}</dt><dd className="font-medium">{presentation.vitalSigns.bloodPressure.systolicMmHg}/{presentation.vitalSigns.bloodPressure.diastolicMmHg}</dd></div>
+          <div><dt className="text-muted-foreground">{messages.oxygenSaturationPct}</dt><dd className="font-medium">{presentation.vitalSigns.oxygenSaturationPct}</dd></div>
+          {detail.triage === undefined ? null : (
+            <div><dt className="text-muted-foreground">{messages.acuity}</dt><dd className="font-medium">{messages[`acuity_${detail.triage.acuityCode.replace('-', '')}` as 'acuity_level1']}</dd></div>
+          )}
+        </dl>
+      </section>
       <section aria-labelledby="prior-facts-heading" className="flex flex-col gap-2 border-b pb-4">
         <h3 className="text-sm font-semibold" id="prior-facts-heading">{messages.priorFacts}</h3>
         {detail.priorFacts.length === 0 ? (
@@ -925,22 +938,6 @@ function interpretationLabel(code: string, messages: ReturnType<typeof getWorksp
   return messages.abnormal
 }
 
-function doctorCasePresentation(detail: DoctorCaseDetail): ClinicalPresentation | undefined {
-  if (detail.presentation !== undefined) return detail.presentation
-  if (detail.triage === undefined) return undefined
-  return {
-    chiefComplaint: detail.triage.chiefComplaint,
-    summary: detail.triage.chiefComplaint,
-    vitalSigns: {
-      bloodPressure: detail.triage.bloodPressure,
-      oxygenSaturationPct: detail.triage.oxygenSaturationPct,
-      pulseBpm: detail.triage.pulseBpm,
-      respirationBpm: detail.triage.respirationBpm,
-      temperatureC: detail.triage.temperatureC,
-    },
-  }
-}
-
 function VirtualPatientRow({ item, messages, onSelect, selected }: {
   item: VirtualPatientList['items'][number]
   messages: ReturnType<typeof getWorkspaceMessages>
@@ -981,7 +978,7 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
 }): React.JSX.Element {
   return (
     <Button aria-label={`${messages.selectCase} ${item.patient.name}`} className="h-auto min-h-16 w-full justify-between gap-3 px-3 py-2 text-left" onClick={onSelect} role="listitem" type="button" variant={selected ? 'secondary' : 'outline'}>
-      <span className="min-w-0"><span className="block truncate font-medium">{item.patient.name}</span><span className="block truncate text-xs text-muted-foreground">{item.presentation?.chiefComplaint ?? item.triage?.chiefComplaint ?? messages.clinicalPresentation}</span></span>
+      <span className="min-w-0"><span className="block truncate font-medium">{item.patient.name}</span><span className="block truncate text-xs text-muted-foreground">{item.presentation.chiefComplaint}</span></span>
       <Badge className="shrink-0" variant="outline">{statusLabel(item.status, messages)}</Badge>
     </Button>
   )

@@ -577,7 +577,7 @@ POST /api/sim/v1/scenarios/actions/install
 POST /api/sim/v1/scenario-runs/{id}/actions/reset
 ```
 
-`GET /api/his/v1/doctor/virtual-patients` 只返回当前 Workspace/Epoch 中仍可接诊的 Virtual Patient 名称、性别、出生日期、临床可见摘要与协议 ID/version。它不返回所绑定的 Patient logical ID、Scenario、Hidden Fact、病原体、运行时状态或确定性回答规则。
+`GET /api/his/v1/doctor/virtual-patients` 按 `page/pageSize` 分页，只返回当前 Workspace/Epoch 中仍可接诊的 Virtual Patient 名称、性别、出生日期、临床可见摘要与协议 ID/version。姓名、性别和出生日期读取自绑定的 `fhir-native` Patient，Virtual Patient 领域表不重复保存 Patient Identity；响应不返回 Patient logical ID、Scenario、Hidden Fact、病原体、运行时状态或确定性回答规则。
 
 Command 写请求使用同源 session 与 CSRF 校验，并通过以下 header 提供幂等键：
 
@@ -843,7 +843,7 @@ Registration + Encounter + Account + 挂号 Charge Item
 
 首期只实现现场普通门诊。Registration 是持久领域事实；挂号 Command 在同一事务中创建或关联 Registration、Encounter、Queue Task、Account 和挂号 Charge Item。Appointment 表达未来预约承诺，Slot 表达可预约时段，不承担挂号事实、排队序号或挂号费语义，二者不属于首期闭环。
 
-门诊医生也可从版本固定的 Virtual Patient 直接建立接诊上下文。`virtual-patient.start-consultation` Command 以 Virtual Patient 的 expected version 与可用状态作为前置条件，复用其绑定的合成 Patient，并在同一事务中创建 Registration、进行中 Encounter、Account、医生 Queue Task 和 `first-visit` outpatient case，然后把该 Virtual Patient 标记为不可再次接诊。这条入口不伪造分诊 Observation、分诊级别或费用事实；相同幂等键重放第一次回执，旧版本或已消费候选患者返回稳定冲突。
+门诊医生也可从版本固定的 Virtual Patient 直接建立接诊上下文。`virtual-patient.start-consultation` Command 以 Virtual Patient 的 expected version 与可用状态作为前置条件并复用其绑定的合成 Patient。Patient 没有活动门诊病例时，Command 在同一事务中创建 Registration、进行中 Encounter、Account、医生 Queue Task 和 `first-visit` outpatient case；Patient 已有 `awaiting-triage`、`awaiting-doctor` 或 `first-visit` 病例时，Command 复用该病例的 Registration、Encounter、Account 和可用 Queue Task，并把尚未开始的 Task 转入医生首诊。其他活动状态返回稳定冲突。成功后 Virtual Patient 不可再次接诊；这条入口不伪造分诊 Observation、分诊级别或费用事实，相同幂等键重放第一次回执，旧版本或已消费候选患者返回稳定冲突。
 
 关键约束：
 
@@ -1517,7 +1517,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 - 真实 file-backed SQLite 测试覆盖 transaction rollback、零行条件写、幂等竞争、outbox lease/recovery、audit head、backup/restore 和 reset/callback 隔离。
 - 一个 Encounter 贯穿首期门诊；Encounter 在药品支付与发药前完成，发药只完成 Scenario Run。
 - 挂号原子创建 Registration、Encounter、Queue Task、Account 和挂号 Charge Item；Prescription 稳定关联 MedicationRequest、费用、支付和发药。
-- Virtual Patient 直接接诊原子复用其合成 Patient 并建立 Registration、Encounter、Account 和医生 Queue Task，不伪造分诊或费用事实。
+- Virtual Patient 直接接诊原子复用其合成 Patient；没有活动病例时建立 Registration、Encounter、Account 和医生 Queue Task，可进入首诊的活动病例则复用同一组事实，不伪造分诊或费用事实。
 - 五个人类岗位可以通过 Web/API 完成候选 Scenario；density 数据使用同一 schema 并满足分页与交互基线。
 - Node.js 服务重启后从同一 SQLite 文件恢复；备份/恢复验证 schema、integrity 与 canonical state hash。
 - 首期没有 Desktop、Mobile、Agent、AG-UI、评分或附件入口，也不声明对应能力。

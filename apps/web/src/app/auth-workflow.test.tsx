@@ -361,6 +361,7 @@ describe('trusted Web session workflow', () => {
             },
             registrationId: `registration-${sequence}`,
             registrationNumber: `CM-OP-${sequence}`,
+            registrationStatus: 'registered',
             status: 'awaiting-triage',
             taskId: `task-${sequence}`,
             taskVersion: '1',

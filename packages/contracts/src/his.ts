@@ -42,6 +42,12 @@ export const clinicalPresentationSchema = z.object({
   }).strict(),
 }).strict()
 
+const paginationShape = {
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive().max(100),
+  total: z.number().int().nonnegative(),
+}
+
 export const virtualPatientListSchema = z.object({
   items: z.array(z.object({
     birthDate: z.iso.date(),
@@ -51,6 +57,7 @@ export const virtualPatientListSchema = z.object({
     presentation: clinicalPresentationSchema,
     version: z.number().int().positive(),
   }).strict()),
+  ...paginationShape,
 }).strict()
 
 export const sessionContextSchema = z.object({
@@ -150,12 +157,6 @@ export const registrationCatalogSchema = z.object({
   visitTypes: z.array(catalogItemSchema),
 })
 
-const paginationShape = {
-  page: z.number().int().positive(),
-  pageSize: z.number().int().positive().max(100),
-  total: z.number().int().nonnegative(),
-}
-
 export const patientSearchSchema = z.object({
   items: z.array(patientSummarySchema),
   ...paginationShape,
@@ -176,6 +177,14 @@ export const registrationResponseSchema = commandResponseSchema(z.object({
   totalFen: z.number().int().nonnegative(),
 }))
 
+export const registrationStatusSchema = z.enum([
+  'registered',
+  'triaged',
+  'in-progress',
+  'completed',
+  'cancelled',
+])
+
 export const registrationQueueSchema = z.object({
   items: z.array(z.object({
     arrivedAt: z.string().min(1),
@@ -185,7 +194,7 @@ export const registrationQueueSchema = z.object({
     patient: patientSummarySchema,
     registrationId: z.string().min(1),
     registrationNumber: z.string().min(1),
-    registrationStatus: z.string().min(1).optional(),
+    registrationStatus: registrationStatusSchema,
     status: z.string().min(1),
     taskId: z.string().min(1),
     taskVersion: z.string().regex(/^\d+$/),
@@ -257,7 +266,7 @@ export const doctorQueueItemSchema = z.object({
   encounterId: z.string().min(1),
   encounterVersion: z.string().regex(/^\d+$/),
   patient: patientSummarySchema,
-  presentation: clinicalPresentationSchema.optional(),
+  presentation: clinicalPresentationSchema,
   status: z.enum([
     'awaiting-doctor',
     'awaiting-report',
@@ -331,7 +340,7 @@ export const doctorCaseDetailSchema = z.object({
     versionId: z.string().regex(/^\d+$/),
   }),
   patient: patientSummarySchema,
-  presentation: clinicalPresentationSchema.optional(),
+  presentation: clinicalPresentationSchema,
   priorFacts: z.array(priorFactSchema),
   report: z.object({
     id: z.string().min(1),

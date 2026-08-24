@@ -15,6 +15,18 @@ const doctorTriage = {
   temperatureC: 38.2,
 }
 
+const doctorPresentation = {
+  chiefComplaint: '发热伴咽痛两天',
+  summary: '发热伴咽痛两天',
+  vitalSigns: {
+    bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
+    oxygenSaturationPct: 98,
+    pulseBpm: 102,
+    respirationBpm: 20,
+    temperatureC: 38.2,
+  },
+}
+
 const virtualPatientPresentation = {
   chiefComplaint: '发热、咽痛 1 天。',
   summary: '昨日傍晚开始发热，最高 38.7 °C，伴咽痛。',
@@ -324,6 +336,7 @@ describe('role workspaces', () => {
             patient,
             registrationId: 'registration-1',
             registrationNumber: 'CM-OP-20260824-0001',
+            registrationStatus: 'registered',
             status: 'awaiting-triage',
             taskId: 'task-triage-1',
             taskVersion: '1',
@@ -562,6 +575,7 @@ describe('role workspaces', () => {
             },
             registrationId: `registration-${sequence}`,
             registrationNumber: `CM-OP-20260824-${sequence}`,
+            registrationStatus: 'registered',
             status: 'awaiting-triage',
             taskId: `task-${sequence}`,
             taskVersion: '1',
@@ -695,7 +709,7 @@ describe('role workspaces', () => {
         return Response.json({ laboratory: [], medications: [] })
       }
       if (url.pathname === '/api/his/v1/doctor/virtual-patients' && init?.method === undefined) {
-        return Response.json({ items: [virtualPatient] })
+        return Response.json({ items: [virtualPatient], ...pagination(1) })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({ items: [], ...pagination(0) })
@@ -767,7 +781,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
         virtualPatientRequests += 1
-        return Response.json({ items: started ? [] : [virtualPatient] })
+        return Response.json({ items: started ? [] : [virtualPatient], ...pagination(started ? 0 : 1) })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
         queueRequests += 1
@@ -777,6 +791,7 @@ describe('role workspaces', () => {
             encounterId: 'encounter-existing',
             encounterVersion: '2',
             patient: existingPatient,
+            presentation: doctorPresentation,
             status: 'awaiting-doctor',
             taskId: 'task-doctor-existing',
             taskVersion: '1',
@@ -800,6 +815,7 @@ describe('role workspaces', () => {
           caseId: 'case-existing',
           encounter: { id: 'encounter-existing', status: 'in-progress', versionId: '2' },
           patient: existingPatient,
+          presentation: doctorPresentation,
           priorFacts: [],
           status: 'awaiting-doctor',
           taskId: 'task-doctor-existing',
@@ -857,7 +873,7 @@ describe('role workspaces', () => {
         return Response.json({ laboratory: [], medications: [] })
       }
       if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
-        return Response.json({ items: [] })
+        return Response.json({ items: [], ...pagination(0) })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({ items: [], ...pagination(0) })
@@ -879,7 +895,7 @@ describe('role workspaces', () => {
         return Response.json({ laboratory: [], medications: [] })
       }
       if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
-        return Response.json({ items: [virtualPatient] })
+        return Response.json({ items: [virtualPatient], ...pagination(1) })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({ items: [], ...pagination(0) })
@@ -925,7 +941,7 @@ describe('role workspaces', () => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
-        return Response.json({ items: [] })
+        return Response.json({ items: [], ...pagination(0) })
       }
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
         return Response.json({
@@ -951,6 +967,7 @@ describe('role workspaces', () => {
             encounterId: 'encounter-1',
             ...visitVersions(),
             patient,
+            presentation: doctorPresentation,
             status,
             taskId: 'task-doctor-1',
             triage: doctorTriage,
@@ -977,6 +994,7 @@ describe('role workspaces', () => {
             versionId: visitVersions().encounterVersion,
           },
           patient,
+          presentation: doctorPresentation,
           priorFacts: [],
           status,
           taskId: 'task-doctor-1',
@@ -1284,7 +1302,7 @@ describe('role workspaces', () => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
-        return Response.json({ items: [] })
+        return Response.json({ items: [], ...pagination(0) })
       }
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
         return Response.json({
@@ -1311,6 +1329,7 @@ describe('role workspaces', () => {
             encounterId: 'encounter-1',
             encounterVersion: status === 'awaiting-revisit' ? '5' : '6',
             patient,
+            presentation: doctorPresentation,
             status,
             taskId: 'task-doctor-1',
             taskVersion: status === 'awaiting-revisit' ? '1' : '2',
@@ -1363,6 +1382,7 @@ describe('role workspaces', () => {
             versionId: status === 'awaiting-revisit' ? '5' : '6',
           },
           patient,
+          presentation: doctorPresentation,
           priorFacts: [],
           report: {
             id: 'diagnostic-report-1',
@@ -1473,7 +1493,7 @@ describe('role workspaces', () => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
-        return Response.json({ items: [] })
+        return Response.json({ items: [], ...pagination(0) })
       }
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
         return Response.json({
@@ -1500,6 +1520,7 @@ describe('role workspaces', () => {
             encounterId: 'encounter-1',
             encounterVersion: '6',
             patient,
+            presentation: doctorPresentation,
             status: 'revisit-draft',
             taskId: 'task-doctor-1',
             taskVersion: '2',
@@ -1547,6 +1568,7 @@ describe('role workspaces', () => {
             versionId: signed ? '7' : '6',
           },
           patient,
+          presentation: doctorPresentation,
           priorFacts: [],
           report: {
             id: 'diagnostic-report-1',

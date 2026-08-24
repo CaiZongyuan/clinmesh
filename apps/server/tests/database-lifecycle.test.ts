@@ -153,6 +153,18 @@ describe('SQLite lifecycle', () => {
     }>
     expect(caseColumns.map(column => column.name)).toContain('initial_task_id')
     expect(caseColumns.map(column => column.name)).not.toContain('triage_task_id')
+    const virtualPatientColumns = database.driver.prepare('PRAGMA table_info(virtual_patient)').all() as Array<{
+      name: string
+    }>
+    expect(virtualPatientColumns.map(column => column.name)).toEqual([
+      'workspace_id',
+      'epoch',
+      'virtual_patient_id',
+      'version',
+      'patient_id',
+      'clinical_summary_json',
+      'available',
+    ])
     expect(database.driver.prepare(`
       SELECT case_id, initial_task_id, status FROM outpatient_case
       WHERE workspace_id = ? AND epoch = ?
@@ -164,14 +176,13 @@ describe('SQLite lifecycle', () => {
     database.driver.prepare(`
       INSERT INTO virtual_patient (
         workspace_id, epoch, virtual_patient_id, version, patient_id,
-        name, gender, birth_date, clinical_summary_json, available
-      ) VALUES (?, ?, ?, 1, ?, ?, 'female', '1988-03-16', ?, 1)
+        clinical_summary_json, available
+      ) VALUES (?, ?, ?, 1, ?, ?, 1)
     `).run(
       context.workspaceId,
       context.epoch,
       'virtual-patient-legacy',
       'patient-legacy',
-      '合成候选患者',
       JSON.stringify({
         chiefComplaint: '发热 1 天。',
         summary: '合成升级摘要。',
@@ -192,9 +203,8 @@ describe('SQLite lifecycle', () => {
     database.driver.prepare(`
       INSERT INTO virtual_patient (
         workspace_id, epoch, virtual_patient_id, version, patient_id,
-        name, gender, birth_date, clinical_summary_json, available
-      ) SELECT workspace_id, epoch, ?, version, ?, name, gender,
-        birth_date, clinical_summary_json, available
+        clinical_summary_json, available
+      ) SELECT workspace_id, epoch, ?, version, ?, clinical_summary_json, available
       FROM virtual_patient
       WHERE workspace_id = ? AND epoch = ? AND virtual_patient_id = ?
     `).run(

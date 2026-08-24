@@ -443,8 +443,22 @@ describe('outpatient workflow HTTP contract', () => {
         },
         version: 1,
       }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
     })
     expect(JSON.stringify(body)).not.toMatch(/scenario|hidden|influenza|candidate-patient-001/i)
+
+    const secondPageResponse = await runtime.app.request(
+      '/api/his/v1/doctor/virtual-patients?page=2&pageSize=1',
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(await secondPageResponse.json()).toEqual({
+      items: [],
+      page: 2,
+      pageSize: 1,
+      total: 1,
+    })
   })
 
   it('atomically starts one persistent doctor case and replays the same command receipt', async () => {
@@ -565,6 +579,101 @@ describe('outpatient workflow HTTP contract', () => {
       })],
       total: 1,
     })
+  })
+
+  it('reuses an existing registration when the doctor starts its Virtual Patient', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-virtual-patient-registered-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
+    const candidatesResponse = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
+      headers: { cookie: doctorCookie },
+    })
+    const candidate = virtualPatientListSchema.parse(await candidatesResponse.json()).items[0]
+    if (candidate === undefined) throw new Error('Candidate Virtual Patient was not seeded')
+
+    const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local', password)
+    const patientResponse = await runtime.app.request(
+      '/api/his/v1/patients?query=CM-CANDIDATE-001&pageSize=20',
+      { headers: { cookie: registrarCookie } },
+    )
+    const patient = patientSearchSchema.parse(await patientResponse.json()).items[0]
+    if (patient === undefined) throw new Error('Candidate Patient was not seeded')
+    const registrationResponse = await runtime.app.request('/api/his/v1/registrations/actions/register', {
+      body: JSON.stringify({
+        expectedVersions: { [`Patient/${patient.id}`]: patient.versionId },
+        input: {
+          departmentId: 'department-general-medicine',
+          locationId: 'location-outpatient',
+          patientId: patient.id,
+          visitDate: '2026-08-24',
+          visitTypeId: 'visit-general',
+        },
+      }),
+      headers: commandHeaders(registrarCookie),
+      method: 'POST',
+    })
+    const registration = registrationResponseSchema.parse(await registrationResponse.json()).data
+
+    const startResponse = await runtime.app.request(
+      `/api/his/v1/doctor/virtual-patients/${candidate.id}/actions/start`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {},
+          input: { expectedVersion: candidate.version },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    expect(startResponse.status).toBe(200)
+    const started = startVirtualPatientResponseSchema.parse(await startResponse.json()).data
+    expect(started).toMatchObject({
+      encounterId: registration.encounterId,
+      patientId: patient.id,
+      queueTaskId: registration.queueTaskId,
+      registrationId: registration.registrationId,
+      status: 'first-visit',
+      virtualPatientId: candidate.id,
+    })
+    const encounterSearchResponse = await runtime.app.request(
+      `/fhir/R5/Encounter?patient=Patient/${patient.id}&_total=accurate`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await encounterSearchResponse.json())).toMatchObject({ total: 1 })
+    const taskResponse = await runtime.app.request(`/fhir/R5/Task/${registration.queueTaskId}`, {
+      headers: { cookie: doctorCookie },
+    })
+    expect(fhirResourceSchema.parse(await taskResponse.json())).toMatchObject({
+      code: { text: 'Outpatient consultation' },
+      owner: { reference: 'PractitionerRole/practitioner-role-outpatient-doctor' },
+      status: 'in-progress',
+    })
+    const queueResponse = await runtime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
+      headers: { cookie: doctorCookie },
+    })
+    const queue = doctorQueueSchema.parse(await queueResponse.json())
+    expect(queue).toMatchObject({
+      items: [expect.objectContaining({
+        caseId: started.caseId,
+        encounterId: registration.encounterId,
+        status: 'first-visit',
+        taskId: registration.queueTaskId,
+      })],
+      total: 1,
+    })
+    expect(queue.items[0]?.triage).toBeUndefined()
   })
 
   it('rejects a stale Virtual Patient version without creating a doctor case', async () => {

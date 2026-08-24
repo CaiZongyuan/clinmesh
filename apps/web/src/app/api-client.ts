@@ -256,8 +256,9 @@ export function getDoctorQueue(signal?: AbortSignal, page = 1) {
   return apiGet(`/api/his/v1/doctor/queue?${search.toString()}`, doctorQueueSchema, signal)
 }
 
-export function getVirtualPatients(signal?: AbortSignal) {
-  return apiGet('/api/his/v1/doctor/virtual-patients', virtualPatientListSchema, signal)
+export function getVirtualPatients(signal?: AbortSignal, page = 1) {
+  const search = new URLSearchParams({ page: String(page), pageSize: '20' })
+  return apiGet(`/api/his/v1/doctor/virtual-patients?${search.toString()}`, virtualPatientListSchema, signal)
 }
 
 export function startVirtualPatient(

@@ -14,6 +14,7 @@ import {
   paymentResponseSchema,
   type PatientSummary,
   prescriptionReviewResponseSchema,
+  registrationStatusSchema,
   registrationResponseSchema,
   revisitDraftResponseSchema,
   startVirtualPatientResponseSchema,
@@ -24,7 +25,7 @@ import {
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
-import type { ActorContext, CommandEffect, CommandResponse } from './command-executor.ts'
+import type { ActorContext, CommandEffect, CommandResponse, CommandTransaction } from './command-executor.ts'
 import { CommandExecutor, provenanceAgents } from './command-executor.ts'
 
 export class WorkflowError extends Error {
@@ -85,16 +86,49 @@ const triageRecordContentSchema = z.object({
   temperatureC: z.number(),
 })
 
+const countRowSchema = z.object({ count: z.number().int().nonnegative() })
+
 const virtualPatientRowSchema = z.object({
   available: z.union([z.literal(0), z.literal(1)]),
-  birth_date: z.iso.date(),
   clinical_summary_json: z.string(),
-  gender: z.enum(['female', 'male', 'other', 'unknown']),
-  name: z.string().min(1),
   patient_id: z.string().min(1),
   version: z.number().int().positive(),
   virtual_patient_id: z.string().min(1),
 })
+
+const virtualPatientListRowSchema = virtualPatientRowSchema.extend({
+  patient_json: z.string(),
+})
+
+const activeOutpatientCaseRowSchema = z.object({
+  case_id: z.string().min(1),
+  doctor_task_id: z.string().min(1).nullable(),
+  encounter_id: z.string().min(1),
+  initial_task_id: z.string().min(1),
+  registration_id: z.string().min(1),
+  status: z.enum([
+    'awaiting-triage',
+    'awaiting-doctor',
+    'first-visit',
+    'awaiting-lab-payment',
+    'awaiting-lis',
+    'awaiting-report',
+    'awaiting-revisit',
+    'revisit-draft',
+    'awaiting-medication-payment',
+    'awaiting-dispense',
+  ]),
+})
+
+type ActiveOutpatientCaseRow = z.infer<typeof activeOutpatientCaseRowSchema>
+
+interface VirtualPatientIntake {
+  caseId: string
+  effects: CommandEffect[]
+  encounterId: string
+  queueTaskId: string
+  registrationId: string
+}
 
 const diagnosisDraftSchema = z.object({
   code: z.string(),
@@ -384,7 +418,7 @@ export class WorkflowService {
         patient: patientSummary(parseStoredFhirResource(row.patient_json)),
         registrationId: row.registration_id,
         registrationNumber: row.registration_number,
-        registrationStatus: row.registration_status,
+        registrationStatus: registrationStatusSchema.parse(row.registration_status),
         status: row.status,
         taskId: row.initial_task_id,
         taskVersion: String(row.task_version),
@@ -562,12 +596,7 @@ export class WorkflowService {
       if (input.registration.visitDate !== this.#virtualTime(input.context).slice(0, 10)) {
         throw new WorkflowError('CATALOG_CONFLICT', 'The visit date is outside the active virtual date')
       }
-      const duplicate = this.#database.driver.prepare(`
-        SELECT 1 AS present FROM outpatient_case
-        WHERE workspace_id = ? AND epoch = ? AND patient_id = ?
-          AND status != 'completed'
-      `).get(input.context.workspaceId, input.context.epoch, patient.id)
-      if (duplicate !== undefined) {
+      if (this.#activeCaseByPatient(input.context, patient.id) !== undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The patient already has an active outpatient case')
       }
       const caseId = uuidv7()
@@ -1083,24 +1112,53 @@ export class WorkflowService {
     }
   }
 
-  virtualPatients(context: ActorContext) {
+  virtualPatients(context: ActorContext, pageSize: number, page = 1) {
     this.#assertRole(context, ['outpatient-doctor'])
-    const rows = z.array(virtualPatientRowSchema).parse(this.#database.driver.prepare(`
-      SELECT virtual_patient_id, version, patient_id, name, gender, birth_date,
-        clinical_summary_json, available
+    const total = countRowSchema.parse(
+      this.#database.driver.prepare(`
+        SELECT COUNT(*) AS count
+        FROM virtual_patient
+        JOIN fhir_resource AS patient
+          ON patient.workspace_id = virtual_patient.workspace_id
+         AND patient.epoch = virtual_patient.epoch
+         AND patient.resource_type = 'Patient'
+         AND patient.resource_id = virtual_patient.patient_id
+         AND patient.deleted = 0
+        WHERE virtual_patient.workspace_id = ? AND virtual_patient.epoch = ?
+          AND virtual_patient.available = 1
+      `).get(context.workspaceId, context.epoch),
+    )
+    const rows = z.array(virtualPatientListRowSchema).parse(this.#database.driver.prepare(`
+      SELECT virtual_patient.virtual_patient_id, virtual_patient.version,
+        virtual_patient.patient_id, virtual_patient.clinical_summary_json,
+        virtual_patient.available, patient.content_json AS patient_json
       FROM virtual_patient
-      WHERE workspace_id = ? AND epoch = ? AND available = 1
-      ORDER BY virtual_patient_id
-    `).all(context.workspaceId, context.epoch))
+      JOIN fhir_resource AS patient
+        ON patient.workspace_id = virtual_patient.workspace_id
+       AND patient.epoch = virtual_patient.epoch
+       AND patient.resource_type = 'Patient'
+       AND patient.resource_id = virtual_patient.patient_id
+       AND patient.deleted = 0
+      WHERE virtual_patient.workspace_id = ? AND virtual_patient.epoch = ?
+        AND virtual_patient.available = 1
+      ORDER BY virtual_patient.virtual_patient_id
+      LIMIT ? OFFSET ?
+    `).all(context.workspaceId, context.epoch, pageSize, (page - 1) * pageSize))
     return virtualPatientListSchema.parse({
-      items: rows.map(row => ({
-        birthDate: row.birth_date,
-        gender: row.gender,
-        id: row.virtual_patient_id,
-        name: row.name,
-        presentation: JSON.parse(row.clinical_summary_json) as unknown,
-        version: row.version,
-      })),
+      items: rows.map(row => {
+        const patient = patientSummary(parseStoredFhirResource(row.patient_json))
+        return {
+          birthDate: patient.birthDate,
+          gender: patient.gender,
+          id: row.virtual_patient_id,
+          name: patient.name,
+          presentation: JSON.parse(row.clinical_summary_json) as unknown,
+          version: row.version,
+        }
+      }),
+      page,
+      pageSize,
+      total: total.count,
     })
   }
 
@@ -1132,8 +1190,7 @@ export class WorkflowService {
       this.#assertRole(input.context, ['outpatient-doctor'])
       const virtualPatient = virtualPatientRowSchema.optional().parse(
         this.#database.driver.prepare(`
-          SELECT virtual_patient_id, version, patient_id, name, gender, birth_date,
-            clinical_summary_json, available
+          SELECT virtual_patient_id, version, patient_id, clinical_summary_json, available
           FROM virtual_patient
           WHERE workspace_id = ? AND epoch = ? AND virtual_patient_id = ?
         `).get(input.context.workspaceId, input.context.epoch, input.virtualPatientId),
@@ -1149,103 +1206,127 @@ export class WorkflowService {
       }
 
       const patient = transaction.fhir.read(input.context, 'Patient', virtualPatient.patient_id)
-      const department = this.#catalogItem(input.context, 'department-general-medicine', 'department')
-      const visitType = this.#catalogItem(input.context, 'visit-general', 'visit-type')
-      const location = transaction.fhir.read(input.context, 'Location', 'location-outpatient')
-      if (!this.#isRegistrationLocation(location)) {
-        throw new WorkflowError('CATALOG_CONFLICT', 'The outpatient location is unavailable')
-      }
       const now = this.#virtualTime(input.context)
-      const visitDate = now.slice(0, 10)
-      const count = (this.#database.driver.prepare(`
-        SELECT COUNT(*) AS count FROM registration
-        WHERE workspace_id = ? AND epoch = ?
-      `).get(input.context.workspaceId, input.context.epoch) as { count: number }).count + 1
-      const registrationNumber = `CM-OP-${visitDate.replaceAll('-', '')}-${String(count).padStart(4, '0')}`
-      const caseId = uuidv7()
-      const registrationId = uuidv7()
-      const encounterId = uuidv7()
-      const queueTaskId = uuidv7()
-      const accountId = uuidv7()
-      const encounter = transaction.fhir.create(input.context, {
-        resourceType: 'Encounter',
-        id: encounterId,
-        identifier: [{
-          system: 'https://caizongyuan.github.io/clinmesh/fhir/outpatient-encounter',
-          value: registrationNumber,
-        }],
-        status: 'in-progress',
-        class: [{
-          coding: [{ code: 'AMB', display: 'ambulatory', system: 'http://terminology.hl7.org/CodeSystem/v3-ActCode' }],
-        }],
-        subject: { reference: `Patient/${patient.id}` },
-        serviceProvider: { reference: 'Organization/organization-clinmesh' },
-        location: [{ location: { reference: `Location/${location.id}` }, status: 'active' }],
-        actualPeriod: { start: now },
-      })
-      const task = transaction.fhir.create(input.context, {
-        resourceType: 'Task',
-        id: queueTaskId,
-        status: 'in-progress',
-        intent: 'order',
-        code: { text: 'Outpatient consultation' },
-        for: { reference: `Patient/${patient.id}` },
-        focus: { reference: `Encounter/${encounterId}` },
-        owner: { reference: 'PractitionerRole/practitioner-role-outpatient-doctor' },
-        authoredOn: now,
-        executionPeriod: { start: now },
-      })
-      const account = transaction.fhir.create(input.context, {
-        resourceType: 'Account',
-        id: accountId,
-        status: 'active',
-        subject: [{ reference: `Patient/${patient.id}` }],
-        servicePeriod: { start: now },
-      })
-      this.#database.driver.prepare(`
-        INSERT INTO outpatient_case (
-          workspace_id, epoch, case_id, scenario_run_id, patient_id,
-          registration_id, encounter_id, account_id, department_id, location_id,
-          initial_task_id, doctor_task_id, status, arrived_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'first-visit', ?, ?)
-      `).run(
-        input.context.workspaceId,
-        input.context.epoch,
-        caseId,
-        input.context.scenarioRunId,
-        patient.id,
-        registrationId,
-        encounterId,
-        accountId,
-        department.item_id,
-        location.id,
-        queueTaskId,
-        queueTaskId,
-        now,
-        now,
-      )
-      this.#database.driver.prepare(`
-        INSERT INTO registration (
-          workspace_id, epoch, registration_id, case_id, registration_number,
-          patient_id, encounter_id, visit_type_id, visit_date, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'in-progress', ?)
-      `).run(
-        input.context.workspaceId,
-        input.context.epoch,
-        registrationId,
-        caseId,
-        registrationNumber,
-        patient.id,
-        encounterId,
-        visitType.item_id,
-        visitDate,
-        now,
-      )
+      const activeCase = this.#activeCaseByPatient(input.context, patient.id)
+      let intake: VirtualPatientIntake
+      if (activeCase === undefined) {
+        const department = this.#catalogItem(input.context, 'department-general-medicine', 'department')
+        const visitType = this.#catalogItem(input.context, 'visit-general', 'visit-type')
+        const location = transaction.fhir.read(input.context, 'Location', 'location-outpatient')
+        if (!this.#isRegistrationLocation(location)) {
+          throw new WorkflowError('CATALOG_CONFLICT', 'The outpatient location is unavailable')
+        }
+        const visitDate = now.slice(0, 10)
+        const count = countRowSchema.parse(this.#database.driver.prepare(`
+          SELECT COUNT(*) AS count FROM registration
+          WHERE workspace_id = ? AND epoch = ?
+        `).get(input.context.workspaceId, input.context.epoch)).count + 1
+        const registrationNumber = `CM-OP-${visitDate.replaceAll('-', '')}-${String(count).padStart(4, '0')}`
+        const caseId = uuidv7()
+        const registrationId = uuidv7()
+        const encounterId = uuidv7()
+        const queueTaskId = uuidv7()
+        const accountId = uuidv7()
+        const encounter = transaction.fhir.create(input.context, {
+          resourceType: 'Encounter',
+          id: encounterId,
+          identifier: [{
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/outpatient-encounter',
+            value: registrationNumber,
+          }],
+          status: 'in-progress',
+          class: [{
+            coding: [{ code: 'AMB', display: 'ambulatory', system: 'http://terminology.hl7.org/CodeSystem/v3-ActCode' }],
+          }],
+          subject: { reference: `Patient/${patient.id}` },
+          serviceProvider: { reference: 'Organization/organization-clinmesh' },
+          location: [{ location: { reference: `Location/${location.id}` }, status: 'active' }],
+          actualPeriod: { start: now },
+        })
+        const task = transaction.fhir.create(input.context, {
+          resourceType: 'Task',
+          id: queueTaskId,
+          status: 'in-progress',
+          intent: 'order',
+          code: { text: 'Outpatient consultation' },
+          for: { reference: `Patient/${patient.id}` },
+          focus: { reference: `Encounter/${encounterId}` },
+          owner: { reference: 'PractitionerRole/practitioner-role-outpatient-doctor' },
+          authoredOn: now,
+          executionPeriod: { start: now },
+        })
+        const account = transaction.fhir.create(input.context, {
+          resourceType: 'Account',
+          id: accountId,
+          status: 'active',
+          subject: [{ reference: `Patient/${patient.id}` }],
+          servicePeriod: { start: now },
+        })
+        this.#database.driver.prepare(`
+          INSERT INTO outpatient_case (
+            workspace_id, epoch, case_id, scenario_run_id, patient_id,
+            registration_id, encounter_id, account_id, department_id, location_id,
+            initial_task_id, doctor_task_id, status, arrived_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'first-visit', ?, ?)
+        `).run(
+          input.context.workspaceId,
+          input.context.epoch,
+          caseId,
+          input.context.scenarioRunId,
+          patient.id,
+          registrationId,
+          encounterId,
+          accountId,
+          department.item_id,
+          location.id,
+          queueTaskId,
+          queueTaskId,
+          now,
+          now,
+        )
+        this.#database.driver.prepare(`
+          INSERT INTO registration (
+            workspace_id, epoch, registration_id, case_id, registration_number,
+            patient_id, encounter_id, visit_type_id, visit_date, status, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'in-progress', ?)
+        `).run(
+          input.context.workspaceId,
+          input.context.epoch,
+          registrationId,
+          caseId,
+          registrationNumber,
+          patient.id,
+          encounterId,
+          visitType.item_id,
+          visitDate,
+          now,
+        )
+        intake = {
+          caseId,
+          effects: [
+            {
+              kind: 'created',
+              reference: `Registration/${registrationId}`,
+              versionId: '1',
+            },
+            ...[encounter, task, account].map(resource => ({
+              kind: 'created' as const,
+              reference: `${resource.resourceType}/${resource.id}`,
+              versionId: resource.meta?.versionId ?? '1',
+            })),
+          ],
+          encounterId,
+          queueTaskId,
+          registrationId,
+        }
+      } else {
+        intake = this.#reuseVirtualPatientIntake(input.context, transaction, activeCase, now)
+      }
       this.#database.driver.prepare(`
         INSERT INTO virtual_patient_case (
           workspace_id, epoch, virtual_patient_id, case_id
         ) VALUES (?, ?, ?, ?)
-      `).run(input.context.workspaceId, input.context.epoch, virtualPatient.virtual_patient_id, caseId)
+      `).run(input.context.workspaceId, input.context.epoch, virtualPatient.virtual_patient_id, intake.caseId)
       const update = this.#database.driver.prepare(`
         UPDATE virtual_patient
         SET available = 0, version = version + 1
@@ -1263,11 +1344,11 @@ export class WorkflowService {
 
       return {
         data: {
-          caseId,
-          encounterId,
+          caseId: intake.caseId,
+          encounterId: intake.encounterId,
           patientId: patient.id,
-          queueTaskId,
-          registrationId,
+          queueTaskId: intake.queueTaskId,
+          registrationId: intake.registrationId,
           status: 'first-visit' as const,
           virtualPatientId: virtualPatient.virtual_patient_id,
         },
@@ -1277,16 +1358,7 @@ export class WorkflowService {
             reference: `VirtualPatient/${virtualPatient.virtual_patient_id}`,
             versionId: String(virtualPatient.version + 1),
           },
-          {
-            kind: 'created' as const,
-            reference: `Registration/${registrationId}`,
-            versionId: '1',
-          },
-          ...[encounter, task, account].map(resource => ({
-            kind: 'created' as const,
-            reference: `${resource.resourceType}/${resource.id}`,
-            versionId: resource.meta?.versionId ?? '1',
-          })),
+          ...intake.effects,
         ],
       }
     })
@@ -4273,6 +4345,78 @@ export class WorkflowService {
       ...(typeof conditionId === 'string' ? [`Condition/${conditionId}`] : []),
       ...medicationRequestIds.map(id => `MedicationRequest/${id}`),
     ]
+  }
+
+  #reuseVirtualPatientIntake(
+    context: ActorContext,
+    transaction: CommandTransaction,
+    activeCase: ActiveOutpatientCaseRow,
+    now: string,
+  ): VirtualPatientIntake {
+    const queueTaskId = activeCase.status === 'awaiting-triage'
+      ? activeCase.initial_task_id
+      : activeCase.doctor_task_id
+    if (
+      !['awaiting-triage', 'awaiting-doctor', 'first-visit'].includes(activeCase.status)
+      || queueTaskId === null
+    ) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The patient has an incompatible active outpatient case')
+    }
+    const effects: CommandEffect[] = []
+    if (activeCase.status !== 'first-visit') {
+      const encounter = transaction.fhir.read(context, 'Encounter', activeCase.encounter_id)
+      const task = transaction.fhir.read(context, 'Task', queueTaskId)
+      const updatedEncounter = transaction.fhir.update(context, {
+        ...encounter,
+        status: 'in-progress',
+      }, encounter.meta?.versionId ?? '1')
+      const updatedTask = transaction.fhir.update(context, {
+        ...task,
+        code: { text: 'Outpatient consultation' },
+        executionPeriod: { start: now },
+        owner: { reference: 'PractitionerRole/practitioner-role-outpatient-doctor' },
+        status: 'in-progress',
+      }, task.meta?.versionId ?? '1')
+      effects.push(...[updatedEncounter, updatedTask].map(resource => ({
+        kind: 'updated' as const,
+        reference: `${resource.resourceType}/${resource.id}`,
+        versionId: resource.meta?.versionId ?? '1',
+      })))
+      const updateCase = this.#database.driver.prepare(`
+        UPDATE outpatient_case
+        SET doctor_task_id = ?, status = 'first-visit', version = version + 1, updated_at = ?
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND status = ?
+      `).run(
+        queueTaskId,
+        now,
+        context.workspaceId,
+        context.epoch,
+        activeCase.case_id,
+        activeCase.status,
+      )
+      if (updateCase.changes !== 1) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The outpatient case state has changed')
+      }
+      this.#database.driver.prepare(`
+        UPDATE registration SET status = 'in-progress'
+        WHERE workspace_id = ? AND epoch = ? AND registration_id = ?
+      `).run(context.workspaceId, context.epoch, activeCase.registration_id)
+    }
+    return {
+      caseId: activeCase.case_id,
+      effects,
+      encounterId: activeCase.encounter_id,
+      queueTaskId,
+      registrationId: activeCase.registration_id,
+    }
+  }
+
+  #activeCaseByPatient(context: ActorContext, patientId: string) {
+    return activeOutpatientCaseRowSchema.optional().parse(this.#database.driver.prepare(`
+      SELECT case_id, registration_id, encounter_id, initial_task_id, doctor_task_id, status
+      FROM outpatient_case
+      WHERE workspace_id = ? AND epoch = ? AND patient_id = ? AND status != 'completed'
+    `).get(context.workspaceId, context.epoch, patientId))
   }
 
   #caseByEncounter(context: ActorContext, encounterId: string) {

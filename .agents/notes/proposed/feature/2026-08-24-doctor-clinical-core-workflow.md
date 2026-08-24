@@ -14,7 +14,7 @@ Status: proposed
 
 医生可以直接从 Virtual Patient 列表开始接诊。底层仍建立 Registration 和 Queue Task 以保持 HIS 业务事实完整，但首期医生体验不要求手工扮演挂号、分诊、收费、检验和药房岗位。Virtual Patient 使用版本固定的病例事实和确定性回答规则，不依赖 LLM；Consultation Record 与正式 Clinical Document 分别保存，医生必须手工整理结构化病历。
 
-Virtual Patient 是独立于 Patient Identity 和 Encounter 的候选病例事实。候选列表只暴露版本和临床可见摘要；医生开始接诊时复用其绑定的合成 Patient，但不伪造分诊或费用事实。当前原子创建、版本冲突、幂等回执和可见字段合同由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。
+Virtual Patient 是独立于 Patient Identity 和 Encounter 的候选病例事实。候选列表只暴露版本和临床可见摘要；医生开始接诊时复用其绑定的合成 Patient，若该 Patient 已有可进入首诊的活动门诊病例则复用同一底层上下文，避免产生第二个活动 Encounter，同时不伪造分诊或费用事实。当前原子创建或复用、版本冲突、幂等回执和可见字段合同由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。
 
 临床文书支持草稿、版本、签署和签署后 Clinical Document Revision。检查请求支持草稿、开具、受理、执行中、已报告和医生已阅；首批交付血常规和 C 反应蛋白。Observation 保存结构化结果，DiagnosticReport 保存可读报告并引用结果；已签发报告不可删除，更正创建新版本和替代关系。诊断与 Prescription 分别支持草稿和正式状态，不把页面切换当作签发。
 

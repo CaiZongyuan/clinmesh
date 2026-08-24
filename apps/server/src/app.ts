@@ -360,7 +360,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
     app.get('/api/his/v1/doctor/virtual-patients', async (context) => {
       try {
-        return context.json(workflow.virtualPatients(await actor(context)))
+        const query = z.object({
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(20),
+        }).parse(context.req.query())
+        return context.json(workflow.virtualPatients(
+          await actor(context),
+          query.pageSize,
+          query.page,
+        ))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
