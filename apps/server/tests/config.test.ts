@@ -44,6 +44,13 @@ describe('Node.js server configuration', () => {
       'CLINMESH_PORT=8787',
       '',
     ].join('\n'), 'utf8')
+    await writeFile(join(serverDirectory, '.env'), [
+      'CLINMESH_AUTH_SECRET=package-auth-secret-with-at-least-32-characters',
+      'CLINMESH_CURSOR_SECRET=package-cursor-secret-with-at-least-32-characters',
+      'CLINMESH_DATABASE_PATH=.data/package.sqlite',
+      'CLINMESH_DEMO_PASSWORD=Package-demo-password-2026!',
+      '',
+    ].join('\n'), 'utf8')
 
     try {
       expect(readServerConfig(readServerEnvironment({ CLINMESH_PORT: '8790' }, serverDirectory)))

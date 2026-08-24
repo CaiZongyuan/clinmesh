@@ -31,12 +31,13 @@ export interface ServerConfig {
   webRoot?: string
 }
 
-function findEnvironmentFile(startDirectory: string): string | undefined {
+function findWorkspaceEnvironmentFile(startDirectory: string): string | undefined {
   let directory = resolve(startDirectory)
   while (true) {
-    const environmentFile = join(directory, '.env')
-    if (existsSync(environmentFile)) return environmentFile
-    if (existsSync(join(directory, 'pnpm-workspace.yaml'))) return undefined
+    if (existsSync(join(directory, 'pnpm-workspace.yaml'))) {
+      const environmentFile = join(directory, '.env')
+      return existsSync(environmentFile) ? environmentFile : undefined
+    }
 
     const parent = dirname(directory)
     if (parent === directory) return undefined
@@ -48,7 +49,7 @@ export function readServerEnvironment(
   environment: NodeJS.ProcessEnv,
   startDirectory = process.cwd(),
 ): NodeJS.ProcessEnv {
-  const environmentFile = findEnvironmentFile(startDirectory)
+  const environmentFile = findWorkspaceEnvironmentFile(startDirectory)
   if (environmentFile === undefined) return environment
 
   const fromFile: NodeJS.ProcessEnv = parseEnv(readFileSync(environmentFile, 'utf8'))

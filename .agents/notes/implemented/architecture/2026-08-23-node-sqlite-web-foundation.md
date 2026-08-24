@@ -18,6 +18,8 @@ SQLite 连接启用 foreign keys、WAL 和五秒 `busy_timeout`。一个服务�
 
 数据库 schema 只通过 `apps/server/drizzle/` 中的八个有序 migration 变更。Server 进程只验证 schema；数据库 CLI 显式执行 migration、verify、reindex、backup 和 restore。已有旧版数据库执行 migration 前先在同目录创建并验证升级前备份。backup 与 restore 都验证源和候选的 schema、integrity 与 canonical state hash，候选必须与源等价后才能保留或成为新目标。Compose 使用单副本与命名持久卷，数据库文件不得位于缺少 SQLite 锁语义保证的共享网络文件系统。
 
+Server 与数据库 CLI 在 workspace 中运行时读取仓库根 `.env`，显式 shell 环境变量拥有更高优先级；文件中的相对数据库和 Web 路径以 `.env` 所在目录为基准。本地 `.env` 不进入版本库，仓库只提供合成开发值模板。`pnpm dev:server` 依次构建 Web、通过数据库 CLI 应用 migration，再启动只验证 schema 的 Server 进程。
+
 canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引和 migration/runtime metadata 外的全部持久领域表；JSON 列按解析后的值规范化。该 hash 用于同一 schema 下的备份恢复等价验证，不是跨版本 replay contract。
 
 公开 contracts、FHIR capability registry 和 Web Query 层不依赖 SQLite 表类型、SQL 方言或 driver 错误。当前只实现 SQLite Repository；迁移到 D1、PostgreSQL 或 Supabase 时需要新增真实 adapter、数据迁移工具和双端 contract tests。仓库不预先维护未使用的兼容实现，也不承诺零成本切换。
@@ -32,9 +34,11 @@ canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引�
 
 **同时维护 SQLite 与 D1 adapter。** 它能提早证明可移植性，但会让首期每个 schema、事务和测试都承担双实现成本。只有确定迁移目标后，真实的第二 adapter contract test 才能提供有效证据。
 
+**要求每次启动前逐项导出环境变量并手动迁移。** 这保持每一步显式，却让本地开发依赖容易遗漏的 shell 状态。根 `.env` 固定本机配置，显式环境变量仍可覆盖共享或临时运行值；开发脚本只编排已有数据库 CLI，不把 schema 修改能力放入 Server 进程。
+
 ## Consequences
 
-Node.js、HTTP/FHIR/Web 组合和业务持久化共享一个可备份文件与事务边界，空库 migration、旧库升级前备份、进程重启、备份恢复、索引重建、Workspace/Epoch 隔离、幂等冲突和 outbox 恢复都使用真实临时 SQLite 文件验证。应用成功启动意味着 schema 已经由独立入口迁移并通过 verify；运行进程不会自行改变 schema。
+Node.js、HTTP/FHIR/Web 组合和业务持久化共享一个可备份文件与事务边界，空库 migration、旧库升级前备份、进程重启、备份恢复、索引重建、Workspace/Epoch 隔离、幂等冲突和 outbox 恢复都使用真实临时 SQLite 文件验证。开发入口不再依赖调用者预先导出整组变量或手动执行 migration。应用成功启动意味着 schema 已经由独立入口迁移并通过 verify；运行进程不会自行改变 schema。
 
 SQLite 的单 writer 使岗位轮询、会话校验和业务写入竞争同一数据库。查询保持分页并使用组合索引，写事务保持短小；持续 busy 或无法满足交互延迟时必须重新选择持久化与部署方案。
 
