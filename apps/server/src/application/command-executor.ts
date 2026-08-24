@@ -139,6 +139,8 @@ export class CommandConflictError extends Error {
   readonly code = 'IDEMPOTENCY_KEY_REUSED'
 }
 
+export class ExpectedVersionConflictError extends CommandConflictError {}
+
 export class CommandTransaction {
   readonly fhir: FhirRepository
   readonly #context: ActorContext
@@ -320,17 +322,19 @@ export class CommandExecutor {
   #checkExpectedVersions(context: RepositoryContext, expectedVersions: Record<string, string>): void {
     for (const [reference, expectedVersion] of Object.entries(expectedVersions)) {
       const match = /^([A-Z][A-Za-z]+)\/([A-Za-z0-9.-]{1,64})$/.exec(reference)
-      if (match === null) throw new CommandConflictError(`Expected version reference is invalid: ${reference}`)
+      if (match === null) {
+        throw new ExpectedVersionConflictError(`Expected version reference is invalid: ${reference}`)
+      }
       const [, resourceType = '', resourceId = ''] = match
       try {
         const resource = this.#fhir.read(context, resourceType, resourceId)
         if (resource.meta?.versionId !== expectedVersion) {
-          throw new CommandConflictError(`Expected ${reference} version ${expectedVersion}`)
+          throw new ExpectedVersionConflictError(`Expected ${reference} version ${expectedVersion}`)
         }
       } catch (error) {
-        if (error instanceof CommandConflictError) throw error
+        if (error instanceof ExpectedVersionConflictError) throw error
         if (error instanceof FhirRepositoryError) {
-          throw new CommandConflictError(`Expected resource is unavailable: ${reference}`)
+          throw new ExpectedVersionConflictError(`Expected resource is unavailable: ${reference}`)
         }
         throw error
       }

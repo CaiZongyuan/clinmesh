@@ -706,6 +706,98 @@ describe('outpatient workflow HTTP contract', () => {
     expect(queue.items[0]?.triage).toBeUndefined()
   })
 
+  it('redacts stale dependency details from an opaque Virtual Patient conflict', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-virtual-patient-dependency-conflict-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local', password)
+    const patientResponse = await runtime.app.request(
+      '/api/his/v1/patients?query=CM-CANDIDATE-001&pageSize=20',
+      { headers: { cookie: registrarCookie } },
+    )
+    const patient = patientSearchSchema.parse(await patientResponse.json()).items[0]
+    if (patient === undefined) throw new Error('Candidate Patient was not seeded')
+    const registrationResponse = await runtime.app.request('/api/his/v1/registrations/actions/register', {
+      body: JSON.stringify({
+        expectedVersions: { [`Patient/${patient.id}`]: patient.versionId },
+        input: {
+          departmentId: 'department-general-medicine',
+          locationId: 'location-outpatient',
+          patientId: patient.id,
+          visitDate: '2026-08-24',
+          visitTypeId: 'visit-general',
+        },
+      }),
+      headers: commandHeaders(registrarCookie),
+      method: 'POST',
+    })
+    const registration = registrationResponseSchema.parse(await registrationResponse.json()).data
+    const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
+    const candidatesResponse = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
+      headers: { cookie: doctorCookie },
+    })
+    const candidate = virtualPatientListSchema.parse(await candidatesResponse.json()).items[0]
+    if (candidate === undefined) throw new Error('Candidate Virtual Patient was not seeded')
+
+    const triageCookie = await signIn(runtime, 'triage@demo.clinmesh.local', password)
+    const triageResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${registration.encounterId}/actions/record-triage`, {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${registration.encounterId}`]: '1',
+            [`Task/${registration.queueTaskId}`]: '1',
+          },
+          input: {
+            acuityCode: 'level-3',
+            bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
+            chiefComplaint: '发热伴咽痛一天',
+            oxygenSaturationPct: 98,
+            pulseBpm: 96,
+            respirationBpm: 20,
+            temperatureC: 38.6,
+          },
+        }),
+        headers: commandHeaders(triageCookie),
+        method: 'POST',
+      },
+    )
+    expect(triageResponse.status).toBe(200)
+
+    const conflictResponse = await runtime.app.request(
+      `/api/his/v1/doctor/virtual-patients/${candidate.id}/actions/start`, {
+        body: JSON.stringify({
+          expectedVersions: {},
+          input: { expectedVersion: candidate.version },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    expect(conflictResponse.status).toBe(409)
+    expect(await conflictResponse.json()).toEqual({
+      error: {
+        code: 'WORKFLOW_CONFLICT',
+        message: 'The Virtual Patient version has changed',
+      },
+    })
+    const encounterSearchResponse = await runtime.app.request(
+      `/fhir/R5/Encounter?patient=Patient/${patient.id}&_total=accurate`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await encounterSearchResponse.json())).toMatchObject({ total: 1 })
+  })
+
   it('rejects a stale opaque Virtual Patient version without creating a second doctor case', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-virtual-patient-conflict-http-'))
     temporaryDirectories.push(directory)

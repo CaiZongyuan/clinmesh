@@ -26,7 +26,11 @@ import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import type { ActorContext, CommandEffect, CommandResponse, CommandTransaction } from './command-executor.ts'
-import { CommandExecutor, provenanceAgents } from './command-executor.ts'
+import {
+  CommandExecutor,
+  ExpectedVersionConflictError,
+  provenanceAgents,
+} from './command-executor.ts'
 
 export class WorkflowError extends Error {
   readonly code: 'CATALOG_CONFLICT' | 'DUPLICATE_PATIENT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
@@ -1205,7 +1209,7 @@ export class WorkflowService {
       input.virtualPatientId,
       input.expectedVersion,
     )
-    return this.#commands.execute({
+    const execute = () => this.#commands.execute({
       context: input.context,
       dataSchema: startVirtualPatientResponseSchema.shape.data,
       expectedVersions: candidateVersion.expectedVersions,
@@ -1396,6 +1400,15 @@ export class WorkflowService {
         ],
       }
     })
+
+    try {
+      return execute()
+    } catch (error) {
+      if (error instanceof ExpectedVersionConflictError) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Virtual Patient version has changed')
+      }
+      throw error
+    }
   }
 
   doctorCaseDetail(context: ActorContext, caseId: string) {
