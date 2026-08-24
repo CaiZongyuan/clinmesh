@@ -2,16 +2,28 @@ import type { ClinicalCatalog, DoctorCaseDetail, DoctorQueueItem, SessionContext
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
+import { Bubble, BubbleContent } from '@clinmesh/ui/components/bubble'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
-import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
+import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
+import { Message, MessageContent, MessageFooter, MessageHeader } from '@clinmesh/ui/components/message'
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from '@clinmesh/ui/components/message-scroller'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Textarea } from '@clinmesh/ui/components/textarea'
+import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, PlayIcon, PlusIcon, RefreshCwIcon, ShieldAlertIcon, StethoscopeIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
+import { CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, MessagesSquareIcon, PlayIcon, PlusIcon, RefreshCwIcon, SendIcon, ShieldAlertIcon, StethoscopeIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
 import { useState } from 'react'
 import {
+  askConsultationQuestion,
   getClinicalCatalog,
   getDoctorCase,
   getDoctorQueue,
@@ -35,6 +47,12 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 interface DoctorWorkspaceProps {
   locale: WorkspaceLocale
   session: SessionContext
+}
+
+interface ConsultationAction {
+  error: Error | null
+  onAsk: (questionCode: string) => void
+  pending: boolean
 }
 
 export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
@@ -109,6 +127,23 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
       queryClient.invalidateQueries({ queryKey: detailKey }),
     ])
   }
+  const askQuestion = useMutation({
+    mutationFn: (questionCode: string) => {
+      const current = detail.data
+      if (current?.consultation === undefined) {
+        throw new Error(messages.consultationUnavailable)
+      }
+      return askConsultationQuestion({
+        encounterId: current.encounter.id,
+        encounterVersion: current.encounter.versionId,
+        expectedVersion: current.consultation.version,
+        questionCode,
+        taskId: current.taskId,
+        taskVersion: current.taskVersion,
+      }, newIdempotencyKey())
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: detailKey }),
+  })
   const signingDependencies = () => {
     const current = detail.data
     const revisit = current?.drafts?.revisit
@@ -398,6 +433,11 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
           <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
         ) : (
           <CaseDetail
+            consultationAction={{
+              error: askQuestion.error,
+              onAsk: questionCode => askQuestion.mutate(questionCode),
+              pending: askQuestion.isPending,
+            }}
             catalog={catalog}
             detail={detail.data}
             indicationCode={resolvedIndicationCode}
@@ -443,6 +483,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
 
 function CaseDetail({
   catalog,
+  consultationAction,
   detail,
   indicationCode,
   issueOrderError,
@@ -477,6 +518,7 @@ function CaseDetail({
   startRevisitPending,
 }: {
   catalog: ReturnType<typeof useQuery<Awaited<ReturnType<typeof getClinicalCatalog>>>>
+  consultationAction: ConsultationAction
   detail: DoctorCaseDetail
   indicationCode: string
   issueOrderError: Error | null
@@ -559,6 +601,16 @@ function CaseDetail({
           )}
         </dl>
       </section>
+      {detail.consultation === undefined ? null : (
+        <ConsultationPanel
+          action={consultationAction}
+          consultation={detail.consultation}
+          key={detail.caseId}
+          locale={locale}
+          messages={messages}
+          patientName={detail.patient.name}
+        />
+      )}
       <section aria-labelledby="prior-facts-heading" className="flex flex-col gap-2 border-b pb-4">
         <h3 className="text-sm font-semibold" id="prior-facts-heading">{messages.priorFacts}</h3>
         {detail.priorFacts.length === 0 ? (
@@ -720,6 +772,111 @@ function CaseDetail({
         )
       ) : null}
     </div>
+  )
+}
+
+function ConsultationPanel({ action, consultation, locale, messages, patientName }: {
+  action: ConsultationAction
+  consultation: NonNullable<DoctorCaseDetail['consultation']>
+  locale: WorkspaceLocale
+  messages: ReturnType<typeof getWorkspaceMessages>
+  patientName: string
+}): React.JSX.Element {
+  const [questionCode, setQuestionCode] = useState('')
+  const timeFormatter = new Intl.DateTimeFormat(locale, {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+  return (
+    <section aria-labelledby="consultation-record-heading" className="flex flex-col gap-3 border-b pb-4">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold" id="consultation-record-heading">{messages.consultationRecord}</h3>
+        <Badge variant="secondary">{consultation.records.length}</Badge>
+      </div>
+      <MessageScrollerProvider autoScroll>
+        <MessageScroller className="h-64 rounded-md border">
+          <MessageScrollerViewport>
+            <MessageScrollerContent className="gap-4 p-3">
+              {consultation.records.length === 0 ? (
+                <MessageScrollerItem messageId="empty-consultation-records">
+                  <Empty className="min-h-52">
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon"><MessagesSquareIcon aria-hidden="true" /></EmptyMedia>
+                      <EmptyTitle>{messages.noConsultationHistory}</EmptyTitle>
+                    </EmptyHeader>
+                  </Empty>
+                </MessageScrollerItem>
+              ) : consultation.records.flatMap(record => [
+                <MessageScrollerItem key={`${record.id}-question`} messageId={`${record.id}-question`} scrollAnchor>
+                  <Message align="end">
+                    <MessageContent>
+                      <MessageHeader>{messages.doctorQuestion} · #{record.sequence}</MessageHeader>
+                      <Bubble align="end" variant="outline"><BubbleContent>{record.question.text}</BubbleContent></Bubble>
+                    </MessageContent>
+                  </Message>
+                </MessageScrollerItem>,
+                <MessageScrollerItem key={`${record.id}-answer`} messageId={`${record.id}-answer`}>
+                  <Message>
+                    <MessageContent>
+                      <MessageHeader>{patientName}</MessageHeader>
+                      <Bubble variant="muted"><BubbleContent>{record.answer}</BubbleContent></Bubble>
+                      <MessageFooter>{timeFormatter.format(new Date(record.recordedAt))}</MessageFooter>
+                    </MessageContent>
+                  </Message>
+                </MessageScrollerItem>,
+              ])}
+            </MessageScrollerContent>
+          </MessageScrollerViewport>
+          <MessageScrollerButton />
+        </MessageScroller>
+      </MessageScrollerProvider>
+      <form
+        onSubmit={event => {
+          event.preventDefault()
+          if (questionCode !== '') action.onAsk(questionCode)
+        }}
+      >
+        <FieldGroup className="gap-3">
+          <FieldSet>
+            <FieldLegend variant="label">{messages.consultationQuestions}</FieldLegend>
+            <ToggleGroup
+              aria-label={messages.consultationQuestions}
+              className="w-full"
+              disabled={action.pending}
+              onValueChange={value => setQuestionCode(value[0] ?? '')}
+              orientation="vertical"
+              value={questionCode === '' ? [] : [questionCode]}
+              variant="outline"
+            >
+              {consultation.questions.map(question => (
+                <ToggleGroupItem
+                  aria-label={question.text}
+                  className="h-auto w-full justify-start whitespace-normal px-3 py-2 text-left"
+                  key={question.code}
+                  value={question.code}
+                >
+                  {question.text}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </FieldSet>
+          <div className="flex justify-end">
+            <Button disabled={action.pending || questionCode === ''} type="submit">
+              {action.pending
+                ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
+                : <SendIcon aria-hidden="true" data-icon="inline-start" />}
+              {action.pending ? messages.waitingForPatientAnswer : messages.askPatient}
+            </Button>
+          </div>
+          {action.error === null ? null : (
+            <ErrorAlert
+              message={getWorkspaceErrorMessage(action.error, messages)}
+              title={getWorkspaceErrorTitle(action.error, messages, messages.operationFailed)}
+            />
+          )}
+        </FieldGroup>
+      </form>
+    </section>
   )
 }
 

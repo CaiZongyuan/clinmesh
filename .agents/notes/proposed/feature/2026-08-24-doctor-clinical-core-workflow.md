@@ -16,6 +16,8 @@ Status: proposed
 
 Virtual Patient 是独立于 Patient Identity 和 Encounter 的候选病例事实。候选列表只暴露临床可见摘要和服务端认证加密的 opaque version；该 version 绑定当前上下文和可复用病例的资源版本，使浏览器无需读取 Encounter 或 Queue Task 技术状态。医生开始接诊时复用其绑定的合成 Patient，避免产生第二个活动 Encounter，同时不伪造分诊或费用事实。当前原子创建或复用、版本冲突、幂等回执和可见字段合同由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。
 
+开始 Virtual Patient 接诊时同时建立病例级 Consultation。医生只能选择 Scenario 提供的受控问题，每次回答作为有序、不可变、带版本的 Consultation Record 追加；重试、并发冲突、规则保密与读取合同由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。问答记录与 `clinical_draft` 分别持久化，刷新后可恢复，但不会自动成为医生负责的正式病历。
+
 临床文书支持草稿、版本、签署和签署后 Clinical Document Revision。检查请求支持草稿、开具、受理、执行中、已报告和医生已阅；首批交付血常规和 C 反应蛋白。Observation 保存结构化结果，DiagnosticReport 保存可读报告并引用结果；已签发报告不可删除，更正创建新版本和替代关系。诊断与 Prescription 分别支持草稿和正式状态，不把页面切换当作签发。
 
 Encounter Completion Policy 只汇总各 owner 已确认的事实，不复制其状态机。医生只有在主诊断已确认、病历已签署、必要检查已报告且完成 Report Acknowledgement、处方已开具或明确无需用药、没有未处理草稿、处置和随访完整时才能完成 Encounter。完诊后病例进入只读查询入口，展示 Consultation Record、病历版本、检查、报告、诊断、处方和业务时间线；更正通过原模块的受控命令产生新事实，不解锁并覆盖历史内容。

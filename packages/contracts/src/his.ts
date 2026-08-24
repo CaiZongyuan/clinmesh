@@ -297,9 +297,33 @@ export const allergyWarningSchema = z.object({
   display: z.string().min(1),
 }).strict()
 
+export const consultationQuestionSchema = z.object({
+  code: z.string().min(1),
+  text: z.string().min(1),
+}).strict()
+
+export const consultationRecordSchema = z.object({
+  answer: z.string().min(1),
+  id: z.string().min(1),
+  question: consultationQuestionSchema,
+  recordedAt: z.string().min(1),
+  sequence: z.number().int().positive(),
+}).strict()
+
+export const askConsultationQuestionResponseSchema = commandResponseSchema(z.object({
+  caseId: z.string().min(1),
+  consultationVersion: z.number().int().positive(),
+  record: consultationRecordSchema,
+}).strict())
+
 export const doctorCaseDetailSchema = z.object({
   allergies: z.array(allergyWarningSchema),
   caseId: z.string().min(1),
+  consultation: z.object({
+    questions: z.array(consultationQuestionSchema),
+    records: z.array(consultationRecordSchema),
+    version: z.number().int().positive(),
+  }).strict().optional(),
   drafts: z.object({
     document: z.object({
       assessment: z.string(),

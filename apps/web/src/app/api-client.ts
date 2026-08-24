@@ -1,5 +1,6 @@
 import {
   apiErrorSchema,
+  askConsultationQuestionResponseSchema,
   billingQueueSchema,
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
@@ -272,6 +273,31 @@ export function startVirtualPatient(
     {
       expectedVersions: {},
       input: { expectedVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function askConsultationQuestion(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedVersion: number
+  questionCode: string
+  taskId: string
+  taskVersion: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/actions/ask-consultation-question`,
+    askConsultationQuestionResponseSchema,
+    {
+      expectedVersions: {
+        [`Encounter/${input.encounterId}`]: input.encounterVersion,
+        [`Task/${input.taskId}`]: input.taskVersion,
+      },
+      input: {
+        expectedVersion: input.expectedVersion,
+        questionCode: input.questionCode,
+      },
     },
     { idempotencyKey },
   )

@@ -402,6 +402,28 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.post('/api/his/v1/encounters/:encounterId/actions/ask-consultation-question', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({
+            expectedVersion: z.number().int().positive(),
+            questionCode: z.string().min(1).max(64),
+          }).strict(),
+        }).strict().parse(await context.req.json())
+        return context.json(workflow.askConsultationQuestion({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedVersions: body.expectedVersions,
+          expectedVersion: body.input.expectedVersion,
+          idempotencyKey: idempotencyKey(context),
+          questionCode: body.input.questionCode,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
     app.post('/api/his/v1/encounters/:encounterId/actions/start-first-visit', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)

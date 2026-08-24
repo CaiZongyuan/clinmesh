@@ -37,7 +37,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 9,
+      schemaVersion: 10,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -50,18 +50,19 @@ describe('SQLite lifecycle', () => {
         '0006_queue-pagination.sql',
         '0007_prescription-review.sql',
         '0008_virtual-patient-intake.sql',
+        '0009_consultation-record.sql',
       ],
-      schemaVersion: 9,
+      schemaVersion: 10,
     })
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 9 })
-    expect(reopened.diagnostics().schemaVersion).toBe(9)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 10 })
+    expect(reopened.diagnostics().schemaVersion).toBe(10)
     reopened.close()
   })
 
-  it('preserves existing outpatient cases while upgrading the initial task column', async () => {
+  it('preserves existing outpatient cases while adding Virtual Patient consultation state', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-virtual-patient-migration-'))
     temporaryDirectories.push(directory)
     const legacyMigrationDirectory = join(directory, 'legacy-migrations')
@@ -144,7 +145,11 @@ describe('SQLite lifecycle', () => {
       '2026-08-24T09:00:00+08:00',
     )
 
-    expect(applyMigrations(database)).toEqual({
+    await copyFile(
+      join(process.cwd(), 'drizzle', '0008_virtual-patient-intake.sql'),
+      join(legacyMigrationDirectory, '0008_virtual-patient-intake.sql'),
+    )
+    expect(applyMigrations(database, legacyMigrationDirectory)).toEqual({
       applied: ['0008_virtual-patient-intake.sql'],
       schemaVersion: 9,
     })
@@ -234,6 +239,35 @@ describe('SQLite lifecycle', () => {
       'virtual-patient-second',
       'case-missing',
     )).toThrow(/FOREIGN KEY constraint failed/)
+
+    expect(applyMigrations(database)).toEqual({
+      applied: ['0009_consultation-record.sql'],
+      schemaVersion: 10,
+    })
+    expect(database.driver.prepare(`
+      SELECT case_id, version FROM consultation
+      WHERE workspace_id = ? AND epoch = ?
+    `).all(context.workspaceId, context.epoch)).toEqual([{
+      case_id: 'case-legacy',
+      version: 1,
+    }])
+    const consultationRecordColumns = database.driver.prepare(
+      'PRAGMA table_info(consultation_record)',
+    ).all() as Array<{ name: string }>
+    expect(consultationRecordColumns.map(column => column.name)).toEqual([
+      'workspace_id',
+      'epoch',
+      'record_id',
+      'case_id',
+      'sequence',
+      'question_code',
+      'question_text',
+      'answer_text',
+      'rule_version',
+      'asked_by_actor_id',
+      'asked_by_practitioner_id',
+      'recorded_at',
+    ])
     expect(database.driver.pragma('foreign_key_check')).toEqual([])
     expect(database.driver.pragma('integrity_check', { simple: true })).toBe('ok')
     database.close()
@@ -260,7 +294,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(9)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(10)
     await runtime.close()
   })
 
@@ -330,7 +364,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 9,
+      schemaVersion: 10,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -342,11 +376,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 9,
+      expectedSchemaVersion: 10,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 9,
+      schemaVersion: 10,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -530,7 +564,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(9),
+      schemaVersion: z.literal(10),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -539,26 +573,27 @@ describe('SQLite lifecycle', () => {
     expect(migrationResult.applied).toEqual([
       '0007_prescription-review.sql',
       '0008_virtual-patient-intake.sql',
+      '0009_consultation-record.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 9 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 10 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 9 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 10 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 9 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 10 })
   })
 })

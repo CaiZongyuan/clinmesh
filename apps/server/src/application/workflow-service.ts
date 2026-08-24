@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes }
 import { v7 as uuidv7 } from 'uuid'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
 import {
+  askConsultationQuestionResponseSchema,
   clinicalPresentationSchema,
   clinicalDocumentRevisionResponseSchema,
   clinicalSignPreviewResponseSchema,
@@ -102,6 +103,35 @@ const virtualPatientRowSchema = z.object({
 
 const virtualPatientListRowSchema = virtualPatientRowSchema.extend({
   patient_json: z.string(),
+})
+
+const consultationStateRowSchema = z.object({
+  version: z.number().int().positive(),
+  virtual_patient_id: z.string().min(1),
+})
+
+const consultationQuestionRowSchema = z.object({
+  question_code: z.string().min(1),
+  question_text: z.string().min(1),
+})
+
+const consultationQuestionRuleRowSchema = consultationQuestionRowSchema.extend({
+  answer_text: z.string().min(1),
+  fact_code: z.string().min(1).nullable(),
+  revealed_answer_text: z.string().min(1).nullable(),
+  rule_version: z.number().int().positive(),
+}).refine(
+  row => (row.fact_code === null) === (row.revealed_answer_text === null),
+  { message: 'Consultation question reveal fields must be present together' },
+)
+
+const consultationRecordRowSchema = z.object({
+  answer_text: z.string().min(1),
+  question_code: z.string().min(1),
+  question_text: z.string().min(1),
+  record_id: z.string().min(1),
+  recorded_at: z.string().min(1),
+  sequence: z.number().int().positive(),
 })
 
 const virtualPatientVersionPayloadSchema = z.object({
@@ -1365,6 +1395,10 @@ export class WorkflowService {
           workspace_id, epoch, virtual_patient_id, case_id
         ) VALUES (?, ?, ?, ?)
       `).run(input.context.workspaceId, input.context.epoch, virtualPatient.virtual_patient_id, intake.caseId)
+      this.#database.driver.prepare(`
+        INSERT INTO consultation (workspace_id, epoch, case_id, version)
+        VALUES (?, ?, ?, 1)
+      `).run(input.context.workspaceId, input.context.epoch, intake.caseId)
       const update = this.#database.driver.prepare(`
         UPDATE virtual_patient
         SET available = 0, version = version + 1
@@ -1395,6 +1429,11 @@ export class WorkflowService {
             kind: 'updated' as const,
             reference: `VirtualPatient/${virtualPatient.virtual_patient_id}`,
             versionId: String(virtualPatient.version + 1),
+          },
+          {
+            kind: 'created' as const,
+            reference: `Consultation/${intake.caseId}`,
+            versionId: '1',
           },
           ...intake.effects,
         ],
@@ -1604,9 +1643,11 @@ export class WorkflowService {
         ...(condition.recordedDate === undefined ? {} : { recordedDate: condition.recordedDate }),
       }]
     })
+    const consultation = this.#consultationDetail(context, row.case_id)
     return {
       allergies: this.#patientAllergyWarnings(context, patient.id),
       caseId: row.case_id,
+      ...(consultation === undefined ? {} : { consultation }),
       encounter: {
         id: encounter.id,
         status: encounter.status,
@@ -1622,6 +1663,127 @@ export class WorkflowService {
       taskVersion: String(row.task_version),
       ...(triage === undefined ? {} : { triage }),
     }
+  }
+
+  askConsultationQuestion(input: {
+    context: ActorContext
+    encounterId: string
+    expectedVersions: Record<string, string>
+    expectedVersion: number
+    idempotencyKey: string
+    questionCode: string
+  }): CommandResponse<z.infer<typeof askConsultationQuestionResponseSchema.shape.data>> {
+    this.#assertRole(input.context, ['outpatient-doctor'])
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: askConsultationQuestionResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: {
+        encounterId: input.encounterId,
+        expectedVersion: input.expectedVersion,
+        questionCode: input.questionCode,
+      },
+      operation: 'consultation.ask-question',
+    }, () => {
+      this.#assertRole(input.context, ['outpatient-doctor'])
+      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+      if (outpatientCase.doctor_task_id === null || outpatientCase.status === 'completed') {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for consultation')
+      }
+      this.#assertExpectedVersions(input.expectedVersions, [
+        `Encounter/${input.encounterId}`,
+        `Task/${outpatientCase.doctor_task_id}`,
+      ])
+      const state = this.#consultationState(input.context, outpatientCase.case_id)
+      if (state === undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Consultation Record is unavailable')
+      }
+      if (state.version !== input.expectedVersion) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Consultation Record version has changed')
+      }
+      const question = consultationQuestionRuleRowSchema.optional().parse(
+        this.#database.driver.prepare(`
+          SELECT question_code, question_text, answer_text, rule_version,
+            fact_code, revealed_answer_text
+          FROM virtual_patient_question_rule
+          WHERE workspace_id = ? AND epoch = ? AND virtual_patient_id = ?
+            AND question_code = ?
+        `).get(
+          input.context.workspaceId,
+          input.context.epoch,
+          state.virtual_patient_id,
+          input.questionCode,
+        ),
+      )
+      if (question === undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The consultation question is unavailable')
+      }
+      const answer = this.#consultationAnswer(input.context, question)
+      const recordId = uuidv7()
+      const recordedAt = this.#virtualTime(input.context)
+      const sequence = state.version
+      const consultationVersion = state.version + 1
+      this.#database.driver.prepare(`
+        INSERT INTO consultation_record (
+          workspace_id, epoch, record_id, case_id, sequence,
+          question_code, question_text, answer_text, rule_version,
+          asked_by_actor_id, asked_by_practitioner_id, recorded_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        recordId,
+        outpatientCase.case_id,
+        sequence,
+        question.question_code,
+        question.question_text,
+        answer,
+        question.rule_version,
+        input.context.actorId,
+        input.context.practitionerId ?? null,
+        recordedAt,
+      )
+      const update = this.#database.driver.prepare(`
+        UPDATE consultation SET version = ?
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
+      `).run(
+        consultationVersion,
+        input.context.workspaceId,
+        input.context.epoch,
+        outpatientCase.case_id,
+        state.version,
+      )
+      if (update.changes !== 1) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Consultation Record version has changed')
+      }
+      const record = {
+        answer,
+        id: recordId,
+        question: {
+          code: question.question_code,
+          text: question.question_text,
+        },
+        recordedAt,
+        sequence,
+      }
+      return {
+        data: {
+          caseId: outpatientCase.case_id,
+          consultationVersion,
+          record,
+        },
+        effects: [{
+          kind: 'created' as const,
+          reference: `ConsultationRecord/${recordId}`,
+          versionId: '1',
+        }, {
+          kind: 'updated' as const,
+          reference: `Consultation/${outpatientCase.case_id}`,
+          versionId: String(consultationVersion),
+        }],
+      }
+    })
   }
 
   startFirstVisit(input: {
@@ -4513,6 +4675,83 @@ export class WorkflowService {
     } | undefined
     if (row === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter was not found')
     return row
+  }
+
+  #consultationDetail(context: ActorContext, caseId: string) {
+    const state = this.#consultationState(context, caseId)
+    if (state === undefined) return undefined
+    const questions = z.array(consultationQuestionRowSchema).parse(
+      this.#database.driver.prepare(`
+        SELECT question_code, question_text
+        FROM virtual_patient_question_rule
+        WHERE workspace_id = ? AND epoch = ? AND virtual_patient_id = ?
+        ORDER BY ordinal, question_code
+      `).all(context.workspaceId, context.epoch, state.virtual_patient_id),
+    )
+    const records = z.array(consultationRecordRowSchema).parse(
+      this.#database.driver.prepare(`
+        SELECT record_id, sequence, question_code, question_text, answer_text, recorded_at
+        FROM consultation_record
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        ORDER BY sequence
+      `).all(context.workspaceId, context.epoch, caseId),
+    )
+    return {
+      questions: questions.map(question => ({
+        code: question.question_code,
+        text: question.question_text,
+      })),
+      records: records.map(record => ({
+        answer: record.answer_text,
+        id: record.record_id,
+        question: {
+          code: record.question_code,
+          text: record.question_text,
+        },
+        recordedAt: record.recorded_at,
+        sequence: record.sequence,
+      })),
+      version: state.version,
+    }
+  }
+
+  #consultationState(context: ActorContext, caseId: string) {
+    return consultationStateRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT consultation.version, virtual_patient_case.virtual_patient_id
+        FROM consultation
+        JOIN virtual_patient_case
+          ON virtual_patient_case.workspace_id = consultation.workspace_id
+         AND virtual_patient_case.epoch = consultation.epoch
+         AND virtual_patient_case.case_id = consultation.case_id
+        WHERE consultation.workspace_id = ? AND consultation.epoch = ?
+          AND consultation.case_id = ?
+      `).get(context.workspaceId, context.epoch, caseId),
+    )
+  }
+
+  #consultationAnswer(
+    context: ActorContext,
+    question: z.infer<typeof consultationQuestionRuleRowSchema>,
+  ): string {
+    if (question.fact_code === null || question.revealed_answer_text === null) {
+      return question.answer_text
+    }
+    const triggerCode = `consultation-question:${question.question_code}`
+    const permitted = this.#database.driver.prepare(`
+      SELECT 1 AS permitted
+      FROM scenario_reveal_policy
+      JOIN scenario_hidden_fact
+        ON scenario_hidden_fact.workspace_id = scenario_reveal_policy.workspace_id
+       AND scenario_hidden_fact.epoch = scenario_reveal_policy.epoch
+       AND scenario_hidden_fact.fact_code = scenario_reveal_policy.fact_code
+      WHERE scenario_reveal_policy.workspace_id = ?
+        AND scenario_reveal_policy.epoch = ?
+        AND scenario_reveal_policy.fact_code = ?
+        AND scenario_reveal_policy.trigger_code = ?
+      LIMIT 1
+    `).get(context.workspaceId, context.epoch, question.fact_code, triggerCode)
+    return permitted === undefined ? question.answer_text : question.revealed_answer_text
   }
 
   #catalogItem(context: ActorContext, itemId: string, kind: string): CatalogRow {

@@ -44,6 +44,31 @@ const scenarioBlueprints = {
           temperatureC: 38.6,
         },
       },
+      questions: [{
+        answer: '昨天傍晚开始发热，最高量到 38.7 °C。',
+        code: 'symptom-onset',
+        factCode: null,
+        ordinal: 1,
+        revealedAnswer: null,
+        text: '什么时候开始发热？',
+        version: 1,
+      }, {
+        answer: '咽痛，吞咽时更明显，没有气促。',
+        code: 'associated-symptoms',
+        factCode: null,
+        ordinal: 2,
+        revealedAnswer: null,
+        text: '除了发热，还有哪里不舒服？',
+        version: 1,
+      }, {
+        answer: '目前还不知道，需要等检查结果。',
+        code: 'infection-cause',
+        factCode: 'respiratory-pathogen',
+        ordinal: 3,
+        revealedAnswer: '检验结果显示是甲型流感病毒感染。',
+        text: '知道是什么感染引起的吗？',
+        version: 1,
+      }],
       version: 1,
     }],
     scenarioId: 'candidate-fever-outpatient-v1',
@@ -443,6 +468,13 @@ export class ScenarioService {
         clinical_summary_json, available
       ) VALUES (?, ?, ?, ?, ?, ?, 1)
     `)
+    const insertQuestionRule = this.#database.driver.prepare(`
+      INSERT INTO virtual_patient_question_rule (
+        workspace_id, epoch, virtual_patient_id, question_code,
+        rule_version, ordinal, question_text, answer_text,
+        fact_code, revealed_answer_text
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
     for (const patient of blueprint.virtualPatients) {
       insertVirtualPatient.run(
         input.workspaceId,
@@ -452,6 +484,20 @@ export class ScenarioService {
         patient.patientId,
         JSON.stringify(patient.presentation),
       )
+      for (const question of patient.questions) {
+        insertQuestionRule.run(
+          input.workspaceId,
+          input.epoch,
+          patient.id,
+          question.code,
+          question.version,
+          question.ordinal,
+          question.text,
+          question.answer,
+          question.factCode,
+          question.revealedAnswer,
+        )
+      }
     }
   }
 

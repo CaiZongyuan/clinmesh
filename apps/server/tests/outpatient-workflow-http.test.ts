@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { fhirBundleSchema, fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import {
   apiErrorSchema,
+  askConsultationQuestionResponseSchema,
   billingQueueSchema,
   clinicalCatalogSchema,
   clinicalDocumentRevisionResponseSchema,
@@ -66,6 +67,27 @@ function commandHeaders(cookie: string, idempotencyKey = randomUUID()) {
     'idempotency-key': idempotencyKey,
     origin: 'http://localhost',
   }
+}
+
+async function startVirtualPatientConsultation(runtime: TestRuntime, password: string) {
+  const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
+  const candidatesResponse = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
+    headers: { cookie: doctorCookie },
+  })
+  const candidate = virtualPatientListSchema.parse(await candidatesResponse.json()).items[0]
+  if (candidate === undefined) throw new Error('Candidate Virtual Patient was not seeded')
+  const startResponse = await runtime.app.request(
+    `/api/his/v1/doctor/virtual-patients/${candidate.id}/actions/start`, {
+      body: JSON.stringify({
+        expectedVersions: {},
+        input: { expectedVersion: candidate.version },
+      }),
+      headers: commandHeaders(doctorCookie),
+      method: 'POST',
+    },
+  )
+  const started = startVirtualPatientResponseSchema.parse(await startResponse.json()).data
+  return { doctorCookie, started }
 }
 
 async function createRegisteredCase(runtime: TestRuntime, password: string) {
@@ -580,6 +602,277 @@ describe('outpatient workflow HTTP contract', () => {
         taskId: first.data.queueTaskId,
       })],
       total: 1,
+    })
+  })
+
+  it('appends one deterministic Consultation Record and restores it separately from clinical drafts', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-consultation-record-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const initialDetailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(doctorCaseDetailSchema.parse(await initialDetailResponse.json())).toMatchObject({
+      consultation: {
+        questions: expect.arrayContaining([expect.objectContaining({
+          code: 'symptom-onset',
+          text: '什么时候开始发热？',
+        })]),
+        records: [],
+        version: 1,
+      },
+    })
+
+    const askResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${started.encounterId}`]: '1',
+            [`Task/${started.queueTaskId}`]: '1',
+          },
+          input: {
+            expectedVersion: 1,
+            questionCode: 'symptom-onset',
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    expect(askResponse.status).toBe(200)
+    expect(await askResponse.json()).toMatchObject({
+      data: {
+        caseId: started.caseId,
+        consultationVersion: 2,
+        record: {
+          answer: '昨天傍晚开始发热，最高量到 38.7 °C。',
+          question: {
+            code: 'symptom-onset',
+            text: '什么时候开始发热？',
+          },
+          recordedAt: '2026-08-24T09:00:00+08:00',
+          sequence: 1,
+        },
+      },
+    })
+    const restoredDoctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
+    const restoredDetailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: restoredDoctorCookie } },
+    )
+    const restoredDetail = doctorCaseDetailSchema.parse(await restoredDetailResponse.json())
+    expect(restoredDetail).toMatchObject({
+      consultation: {
+        records: [{
+          answer: '昨天傍晚开始发热，最高量到 38.7 °C。',
+          question: {
+            code: 'symptom-onset',
+            text: '什么时候开始发热？',
+          },
+          recordedAt: '2026-08-24T09:00:00+08:00',
+          sequence: 1,
+        }],
+        version: 2,
+      },
+    })
+    expect(restoredDetail.drafts).toBeUndefined()
+  })
+
+  it('orders Consultation Records and rejects a stale aggregate version without duplication', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-consultation-order-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const ask = (questionCode: string, expectedVersion: number, idempotencyKey = randomUUID()) => (
+      runtime.app.request(
+        `/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
+          body: JSON.stringify({
+            expectedVersions: {
+              [`Encounter/${started.encounterId}`]: '1',
+              [`Task/${started.queueTaskId}`]: '1',
+            },
+            input: { expectedVersion, questionCode },
+          }),
+          headers: commandHeaders(doctorCookie, idempotencyKey),
+          method: 'POST',
+        },
+      )
+    )
+    const firstIdempotencyKey = randomUUID()
+    const firstResponse = await ask('symptom-onset', 1, firstIdempotencyKey)
+    const first = askConsultationQuestionResponseSchema.parse(await firstResponse.json())
+
+    const replayResponse = await ask('symptom-onset', 1, firstIdempotencyKey)
+    expect(askConsultationQuestionResponseSchema.parse(await replayResponse.json())).toEqual(first)
+    const secondResponse = await ask('associated-symptoms', 2)
+
+    expect(secondResponse.status).toBe(200)
+    expect(askConsultationQuestionResponseSchema.parse(await secondResponse.json())).toMatchObject({
+      data: {
+        consultationVersion: 3,
+        record: {
+          answer: '咽痛，吞咽时更明显，没有气促。',
+          question: { code: 'associated-symptoms' },
+          sequence: 2,
+        },
+      },
+    })
+    const staleResponse = await ask('symptom-onset', 2)
+    expect(staleResponse.status).toBe(409)
+    expect(await staleResponse.json()).toEqual({
+      error: {
+        code: 'WORKFLOW_CONFLICT',
+        message: 'The Consultation Record version has changed',
+      },
+    })
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
+      consultation: {
+        records: [
+          expect.objectContaining({
+            question: { code: 'symptom-onset', text: '什么时候开始发热？' },
+            sequence: 1,
+          }),
+          expect.objectContaining({
+            question: { code: 'associated-symptoms', text: '除了发热，还有哪里不舒服？' },
+            sequence: 2,
+          }),
+        ],
+        version: 3,
+      },
+    })
+  })
+
+  it('keeps a Hidden Fact-backed answer concealed without a matching consultation Reveal Policy', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-consultation-reveal-policy-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+
+    const askResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${started.encounterId}`]: '1',
+            [`Task/${started.queueTaskId}`]: '1',
+          },
+          input: {
+            expectedVersion: 1,
+            questionCode: 'infection-cause',
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    expect(askResponse.status).toBe(200)
+    const answer = askConsultationQuestionResponseSchema.parse(await askResponse.json())
+    expect(answer.data.record).toMatchObject({
+      answer: '目前还不知道，需要等检查结果。',
+      question: {
+        code: 'infection-cause',
+        text: '知道是什么感染引起的吗？',
+      },
+    })
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    const publicDetail = await detailResponse.json()
+    expect(doctorCaseDetailSchema.parse(publicDetail)).toMatchObject({
+      consultation: {
+        records: [expect.objectContaining({ answer: '目前还不知道，需要等检查结果。' })],
+      },
+    })
+    expect(JSON.stringify({ answer, publicDetail })).not.toMatch(
+      /influenza|respiratory-pathogen|paid-lis-report|hidden.?fact/i,
+    )
+  })
+
+  it('rejects a Consultation Record command from a non-doctor role', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-consultation-role-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local', password)
+
+    const forbiddenResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${started.encounterId}`]: '1',
+            [`Task/${started.queueTaskId}`]: '1',
+          },
+          input: {
+            expectedVersion: 1,
+            questionCode: 'symptom-onset',
+          },
+        }),
+        headers: commandHeaders(registrarCookie),
+        method: 'POST',
+      },
+    )
+
+    expect(forbiddenResponse.status).toBe(403)
+    expect(await forbiddenResponse.json()).toEqual({
+      error: {
+        code: 'ROLE_NOT_ALLOWED',
+        message: 'The active Practitioner Role cannot perform this action',
+      },
+    })
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
+      consultation: { records: [], version: 1 },
     })
   })
 

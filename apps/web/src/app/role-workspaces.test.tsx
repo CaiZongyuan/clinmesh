@@ -865,6 +865,189 @@ describe('role workspaces', () => {
     expect(queueRequests).toBeGreaterThanOrEqual(2)
   })
 
+  it('restores Consultation Records and shows a pending controlled-question response', async () => {
+    const patient = {
+      birthDate: '1988-03-16',
+      gender: 'female',
+      id: 'candidate-patient-001',
+      identifier: 'CM-SYN-CANDIDATE-001',
+      name: '合成候选患者林晓',
+      synthetic: true,
+      versionId: '1',
+    }
+    const questions = [{ code: 'symptom-onset', text: '什么时候开始发热？' }, {
+      code: 'associated-symptoms',
+      text: '除了发热，还有哪里不舒服？',
+    }, {
+      code: 'infection-cause',
+      text: '知道是什么感染引起的吗？',
+    }]
+    let consultationVersion = 2
+    let records = [{
+      answer: '昨天傍晚开始发热，最高量到 38.7 °C。',
+      id: 'consultation-record-1',
+      question: questions[0],
+      recordedAt: '2026-08-24T09:00:00+08:00',
+      sequence: 1,
+    }]
+    let releaseAnswer: (() => void) | undefined
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({ laboratory: [], medications: [] })
+      }
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        return Response.json({
+          items: [{
+            caseId: 'case-direct',
+            encounterId: 'encounter-direct',
+            encounterVersion: '1',
+            patient,
+            presentation: virtualPatientPresentation,
+            status: 'first-visit',
+            taskId: 'task-doctor-direct',
+            taskVersion: '1',
+          }],
+          ...pagination(1),
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-direct') {
+        return Response.json({
+          allergies: [],
+          caseId: 'case-direct',
+          consultation: { questions, records, version: consultationVersion },
+          encounter: { id: 'encounter-direct', status: 'in-progress', versionId: '1' },
+          patient,
+          presentation: virtualPatientPresentation,
+          priorFacts: [],
+          status: 'first-visit',
+          taskId: 'task-doctor-direct',
+          taskVersion: '1',
+        })
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-direct/actions/ask-consultation-question') {
+        expect(init?.method).toBe('POST')
+        expect(new Headers(init?.headers).get('idempotency-key')).toBeTruthy()
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedVersions: {
+            'Encounter/encounter-direct': '1',
+            'Task/task-doctor-direct': '1',
+          },
+          input: {
+            expectedVersion: 2,
+            questionCode: 'associated-symptoms',
+          },
+        })
+        return new Promise<Response>(resolve => {
+          releaseAnswer = () => {
+            const record = {
+              answer: '咽痛，吞咽时更明显，没有气促。',
+              id: 'consultation-record-2',
+              question: questions[1],
+              recordedAt: '2026-08-24T09:00:00+08:00',
+              sequence: 2,
+            }
+            consultationVersion = 3
+            records = [...records, record]
+            resolve(Response.json(commandResponse({
+              caseId: 'case-direct',
+              consultationVersion,
+              record,
+            })))
+          }
+        })
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    expect(await screen.findByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '除了发热，还有哪里不舒服？' }))
+    await user.click(screen.getByRole('button', { name: '向患者提问' }))
+
+    const pendingButton = await screen.findByRole('button', { name: '正在等待患者回答' })
+    expect((pendingButton as HTMLButtonElement).disabled).toBe(true)
+    await act(async () => releaseAnswer?.())
+    expect(await screen.findByText('咽痛，吞咽时更明显，没有气促。')).toBeTruthy()
+    expect(screen.getByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeTruthy()
+  })
+
+  it('keeps the Consultation Record visible when a question version conflicts', async () => {
+    const patient = {
+      birthDate: '1988-03-16',
+      gender: 'female',
+      id: 'candidate-patient-001',
+      identifier: 'CM-SYN-CANDIDATE-001',
+      name: '合成候选患者林晓',
+      synthetic: true,
+      versionId: '1',
+    }
+    const question = { code: 'symptom-onset', text: '什么时候开始发热？' }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({ laboratory: [], medications: [] })
+      }
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        return Response.json({
+          items: [{
+            caseId: 'case-direct',
+            encounterId: 'encounter-direct',
+            encounterVersion: '1',
+            patient,
+            presentation: virtualPatientPresentation,
+            status: 'first-visit',
+            taskId: 'task-doctor-direct',
+            taskVersion: '1',
+          }],
+          ...pagination(1),
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-direct') {
+        return Response.json({
+          allergies: [],
+          caseId: 'case-direct',
+          consultation: { questions: [question], records: [], version: 1 },
+          encounter: { id: 'encounter-direct', status: 'in-progress', versionId: '1' },
+          patient,
+          presentation: virtualPatientPresentation,
+          priorFacts: [],
+          status: 'first-visit',
+          taskId: 'task-doctor-direct',
+          taskVersion: '1',
+        })
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-direct/actions/ask-consultation-question') {
+        return Response.json({
+          error: {
+            code: 'WORKFLOW_CONFLICT',
+            message: 'The Consultation Record version has changed',
+          },
+        }, { status: 409 })
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('button', { name: question.text }))
+    await user.click(screen.getByRole('button', { name: '向患者提问' }))
+
+    expect(await screen.findByText('操作冲突')).toBeTruthy()
+    expect(screen.getByText('数据已发生变化，请刷新后重新确认。')).toBeTruthy()
+    expect(screen.getByText('暂无问诊记录')).toBeTruthy()
+    expect(screen.getByRole('button', { name: question.text })).toBeTruthy()
+  })
+
   it('renders a specific empty state when no Virtual Patient is available', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), 'http://localhost')

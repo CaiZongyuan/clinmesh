@@ -215,9 +215,9 @@ Web 页面调用共享 command handler。当前不发布 FHIR Operation；未来
 | --- | --- | --- |
 | `fhir-native` | Patient、AllergyIntolerance、Organization、Location、Practitioner、PractitionerRole、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、Condition、Medication、MedicationRequest、MedicationDispense | 只由 Scenario 安装或业务 Command 创建和更新；FHIR API 只读 |
 | `fhir-native-immutable` | 已签署的 Composition、document Bundle、Provenance | 业务 Command 只创建新资源；更正创建显式修订关系，不覆盖已签实例 |
-| `domain-native` | Virtual Patient 候选状态与接诊映射、Registration、Prescription、PaymentTransaction、库存账、临床草稿、Scenario Run、Action Trace、audit_log | 只通过 `/api/his/v1`、`/api/sim/v1` 或内部 Command 写入 |
+| `domain-native` | Virtual Patient 候选状态与接诊映射、Consultation 与 Consultation Record、Registration、Prescription、PaymentTransaction、库存账、临床草稿、Scenario Run、Action Trace、audit_log | 只通过 `/api/his/v1`、`/api/sim/v1` 或内部 Command 写入 |
 | `domain-projection` | AuditEvent、InventoryItem | 从领域事实同事务生成；FHIR API 只读 |
-| `simulation-private` | Hidden Fact、Reveal Policy 和故障规则 | 仅 Scenario Runtime 与受控场景维护入口可访问 |
+| `simulation-private` | Virtual Patient 问答规则、Hidden Fact、Reveal Policy 和故障规则 | 仅 Scenario Runtime 与受控场景维护入口可访问 |
 
 账务边界特别约定：Account、ChargeItem、Invoice 是标准交换事实并保存在 FHIR Resource Store；实际收款、退款、医保基金分配和收费员交账由领域账务表负责。两者通过明确引用关联，不把“账单”和“支付流水”混成一个资源。
 
@@ -561,6 +561,7 @@ FHIR 没有稳定等价物的聚合使用显式 API。当前写路由为：
 POST /api/his/v1/patients
 POST /api/his/v1/registrations/actions/register
 POST /api/his/v1/doctor/virtual-patients/{id}/actions/start
+POST /api/his/v1/encounters/{id}/actions/ask-consultation-question
 POST /api/his/v1/encounters/{id}/actions/record-triage
 POST /api/his/v1/encounters/{id}/actions/start-first-visit
 POST /api/his/v1/encounters/{id}/actions/start-revisit
@@ -600,6 +601,8 @@ Workspace、Epoch、Scenario Run、Actor 和 Acting Practitioner Context 只从�
 ```
 
 `virtual-patient.start-consultation` 的公开 `expectedVersions` 固定为空对象，`input.expectedVersion` 提交列表返回的 opaque `version`。服务端从该引用恢复依赖版本后再进入 `CommandExecutor`；客户端不能读取或覆盖底层 dependency set。
+
+`consultation.ask-question` 在 `expectedVersions` 中提交当前 Encounter 和医生 Task 版本，并在 `input` 中提交 Consultation expected version 与受控问题代码。成功追加一轮不可变记录并递增 Consultation 版本；相同幂等键重放原回执，旧版本返回稳定冲突。病例详情只返回可选问题的代码和文本、有序问答记录及当前 Consultation 版本，不返回确定性回答规则、Hidden Fact 或 Reveal Policy。
 
 成功响应包含：
 
@@ -832,7 +835,7 @@ Agent 不能在请求体中自行指定 `runAs`。代表用户执行必须由服
 ```text
 Registration + Encounter + Account + 挂号 Charge Item
   -> 分诊 Observation + Queue Task ready
-  -> 医生首诊 + 检验 ServiceRequest + 检验 Charge Item
+  -> 医生受控问诊 + 首诊 + 检验 ServiceRequest + 检验 Charge Item
   -> 检验支付
   -> LIS Specimen / Observation / DiagnosticReport
   -> 医生复诊 + Condition + Prescription + MedicationRequest
@@ -847,7 +850,9 @@ Registration + Encounter + Account + 挂号 Charge Item
 
 门诊医生也可从版本固定的 Virtual Patient 直接建立接诊上下文。候选列表返回的 opaque `version` 由服务端认证加密并固定长度，绑定 Workspace、Epoch、Virtual Patient ID、内部版本，以及列表读取时已有活动病例的 Encounter 和可用 Queue Task 引用与版本。`virtual-patient.start-consultation` 在进入 `CommandExecutor` 前解密并校验该引用，以 Virtual Patient 版本、依赖版本与可用状态作为前置条件；篡改、跨上下文、旧候选或依赖已变化都返回稳定冲突，客户端不能解码技术状态或自行提交底层 expected versions。
 
-Patient 没有活动门诊病例时，Command 在同一事务中创建 Registration、进行中 Encounter、Account、医生 Queue Task 和 `first-visit` outpatient case；Patient 已有 `awaiting-triage`、`awaiting-doctor` 或 `first-visit` 病例时，Command 复用该病例的 Registration、Encounter、Account 和可用 Queue Task，并把尚未开始的 Task 转入医生首诊。成功后 Virtual Patient 不可再次接诊；这条入口不伪造分诊 Observation、分诊级别或费用事实，相同幂等键重放第一次回执，其他活动状态或已消费候选患者返回稳定冲突。
+Patient 没有活动门诊病例时，Command 在同一事务中创建 Registration、进行中 Encounter、Account、医生 Queue Task、`first-visit` outpatient case 和版本为 `1` 的 Consultation；Patient 已有 `awaiting-triage`、`awaiting-doctor` 或 `first-visit` 病例时，Command 复用该病例的 Registration、Encounter、Account 和可用 Queue Task，并把尚未开始的 Task 转入医生首诊，同时为病例建立 Consultation。成功后 Virtual Patient 不可再次接诊；这条入口不伪造分诊 Observation、分诊级别或费用事实，相同幂等键重放第一次回执，其他活动状态或已消费候选患者返回稳定冲突。
+
+Consultation 是病例级领域聚合，Consultation Record 是按序号追加的不可变问答事实；每次追加以旧聚合版本作为记录序号，通过 SQL expected-version 条件更新递增版本，并保存当时的问题文本、回答、规则版本、提问 Actor、Acting Practitioner 和虚拟业务时间。它与 `clinical_draft` 分别持久化，重新进入病例只恢复记录，不自动生成或改写正式病历。确定性问题、默认回答和条件回答属于 Scenario-private 规则；引用 Hidden Fact 的回答只有匹配当前提问 trigger 的 Reveal Policy 才可显示，否则返回规则的保密回答，公开响应不暴露内部事实或策略代码。
 
 关键约束：
 
@@ -1063,7 +1068,7 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 当前领域表只覆盖首期闭环：
 
 - 身份与岗位：Better Auth 的 user/session/account，加 Workspace Membership、Practitioner Role binding 和当前 session context。
-- 门诊：Virtual Patient 候选状态与接诊映射、目录、outpatient case、Registration、分诊记录、临床草稿、Prescription 与处方项目。
+- 门诊：Virtual Patient 候选状态与接诊映射、Consultation、append-only Consultation Record、目录、outpatient case、Registration、分诊记录、临床草稿、Prescription 与处方项目。
 - 账务：Charge Record、Payment Preview 和 Payment Transaction。金额以整数分保存；当前没有退款、医保或收费员交账表。
 - 库存与发药：Inventory Lot、append-only Inventory Movement 和 Dispense。当前不实现预占、追溯码、盘点或调拨。
 - 文书：Clinical Sign Preview 与 Signed Clinical Document；签署的 Composition、document Bundle 和 Provenance 正文仍由 FHIR store 权威保存。
@@ -1440,9 +1445,9 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 
 ```text
 登录与受信岗位上下文
-  -> 患者检索/合成患者建档与挂号
-  -> 分诊生命体征与医生候诊
-  -> 医生首诊草稿与检验申请
+  -> 患者检索/合成患者建档与挂号，或 Virtual Patient 直达接诊
+  -> 分诊生命体征与医生候诊，或复用 Virtual Patient 的活动病例
+  -> 医生受控问诊、首诊草稿与检验申请
   -> 检验费用预览及 success/declined/ambiguous 支付
   -> 持久 outbox 驱动 LIS 结构化报告
   -> 医生复诊诊断、处方和文书草稿
@@ -1455,7 +1460,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 ### 15.1 运行与持久化
 
 - Node.js Hono 同时提供 Web SPA、认证、HIS/Scenario API、FHIR R5 只读 API 和健康检查。
-- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；九个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、Virtual Patient 接诊、门诊事实与处方审核状态。
+- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；十个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、Virtual Patient 接诊与问诊、门诊事实和处方审核状态。
 - 数据库 CLI 提供 migrate、verify、reindex、backup 和 restore；已有旧版数据库执行 migrate 时先在同目录创建并验证升级前备份，Server 进程只验证 migration。
 - CommandExecutor 统一 `BEGIN IMMEDIATE`、expected versions、幂等 receipt、FHIR current/history/search、领域事实、AuditEvent、Action Trace 和 outbox 原子提交。
 - 同进程 dispatcher 持久化 claim/lease/attempt/correlation，支持失败重试、ambiguous、重复消费和旧 Epoch abandon。
