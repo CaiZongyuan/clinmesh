@@ -5,14 +5,6 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@clinmesh/ui/components/select'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Textarea } from '@clinmesh/ui/components/textarea'
@@ -36,6 +28,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
+import { WorkspaceSelect } from './workspace-select.tsx'
 
 interface DoctorWorkspaceProps {
   locale: WorkspaceLocale
@@ -418,6 +411,16 @@ function CaseDetail({
   startRevisitPending: boolean
 }): React.JSX.Element {
   const firstVisitDraft = detail.drafts?.firstVisit
+  const laboratoryItems = catalog.data?.laboratory.map(item => ({
+    label: `${locale === 'zh-CN' ? item.nameZh : item.nameEn} · ${formatFen(item.priceFen ?? 0, locale)}`,
+    value: item.id,
+  })) ?? []
+  const indicationItems = catalog.data?.laboratory
+    .find(item => item.id === laboratoryItemId)
+    ?.allowedIndicationCodes.map(code => ({
+      label: indicationLabel(code, messages),
+      value: code,
+    })) ?? []
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-4">
@@ -507,21 +510,11 @@ function CaseDetail({
               <FieldGroup>
                 <Field>
                   <FieldLabel htmlFor="laboratory-item">{messages.laboratoryItem}</FieldLabel>
-                  <Select onValueChange={value => onLaboratoryItemChange(value ?? '')} value={laboratoryItemId}>
-                    <SelectTrigger className="w-full" id="laboratory-item"><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectGroup>{catalog.data.laboratory.map(item => (
-                      <SelectItem key={item.id} value={item.id}>{locale === 'zh-CN' ? item.nameZh : item.nameEn} · {formatFen(item.priceFen ?? 0, locale)}</SelectItem>
-                    ))}</SelectGroup></SelectContent>
-                  </Select>
+                  <WorkspaceSelect id="laboratory-item" items={laboratoryItems} onValueChange={value => onLaboratoryItemChange(value ?? '')} value={laboratoryItemId} />
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="laboratory-indication">{messages.laboratoryIndication}</FieldLabel>
-                  <Select onValueChange={value => onIndicationChange(value ?? '')} value={indicationCode}>
-                    <SelectTrigger className="w-full" id="laboratory-indication"><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectGroup>{catalog.data.laboratory.find(item => item.id === laboratoryItemId)?.allowedIndicationCodes.map(code => (
-                      <SelectItem key={code} value={code}>{indicationLabel(code, messages)}</SelectItem>
-                    ))}</SelectGroup></SelectContent>
-                  </Select>
+                  <WorkspaceSelect id="laboratory-indication" items={indicationItems} onValueChange={value => onIndicationChange(value ?? '')} value={indicationCode} />
                 </Field>
                 <div className="flex justify-end"><Button disabled={firstVisitDraft === undefined || issueOrderPending} onClick={onIssueOrder} type="button"><FlaskConicalIcon data-icon="inline-start" />{messages.issueLaboratoryOrder}</Button></div>
                 {issueOrderError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(issueOrderError, messages)} title={getWorkspaceErrorTitle(issueOrderError, messages, messages.operationFailed)} />}
@@ -702,6 +695,10 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
       quantity: '1',
     }]
   })
+  const medicationItems = catalog.medications.map(item => ({
+    label: locale === 'zh-CN' ? item.nameZh : item.nameEn,
+    value: item.id,
+  }))
   const updateMedication = (index: number, update: Partial<MedicationDraftLine>) => {
     setMedications(current => current.map((item, itemIndex) => (
       itemIndex === index ? { ...item, ...update } : item
@@ -752,11 +749,15 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
         {medications.map((line, index) => {
           const suffix = index === 0 ? '' : ` ${index + 1}`
           const selectedMedication = catalog.medications.find(item => item.id === line.catalogItemId)
+          const doseItems = selectedMedication?.allowedDoseTexts.map(value => ({ label: value, value })) ?? []
+          const frequencyItems = selectedMedication?.allowedFrequencyCodes.map(value => ({ label: value, value })) ?? []
           return (
             <div className="grid grid-cols-1 gap-3 border-b pb-4 lg:grid-cols-[minmax(12rem,1.5fr)_minmax(7rem,0.8fr)_minmax(7rem,0.8fr)_6rem_auto]" key={line.key}>
               <Field>
                 <FieldLabel htmlFor={`medication-${index}`}>{messages.medication}{suffix}</FieldLabel>
-                <Select
+                <WorkspaceSelect
+                  id={`medication-${index}`}
+                  items={medicationItems}
                   onValueChange={value => {
                     const selected = catalog.medications.find(item => item.id === value)
                     if (selected === undefined) return
@@ -767,26 +768,15 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
                     })
                   }}
                   value={line.catalogItemId}
-                >
-                  <SelectTrigger className="w-full" id={`medication-${index}`}><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectGroup>{catalog.medications.map(item => (
-                    <SelectItem key={item.id} value={item.id}>{locale === 'zh-CN' ? item.nameZh : item.nameEn}</SelectItem>
-                  ))}</SelectGroup></SelectContent>
-                </Select>
+                />
               </Field>
               <Field>
                 <FieldLabel htmlFor={`dose-${index}`}>{messages.dose}{suffix}</FieldLabel>
-                <Select onValueChange={value => updateMedication(index, { doseText: value ?? '' })} value={line.doseText}>
-                  <SelectTrigger className="w-full" id={`dose-${index}`}><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectGroup>{selectedMedication?.allowedDoseTexts.map(value => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectGroup></SelectContent>
-                </Select>
+                <WorkspaceSelect id={`dose-${index}`} items={doseItems} onValueChange={value => updateMedication(index, { doseText: value ?? '' })} value={line.doseText} />
               </Field>
               <Field>
                 <FieldLabel htmlFor={`frequency-${index}`}>{messages.frequency}{suffix}</FieldLabel>
-                <Select onValueChange={value => updateMedication(index, { frequencyCode: value ?? '' })} value={line.frequencyCode}>
-                  <SelectTrigger className="w-full" id={`frequency-${index}`}><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectGroup>{selectedMedication?.allowedFrequencyCodes.map(value => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectGroup></SelectContent>
-                </Select>
+                <WorkspaceSelect id={`frequency-${index}`} items={frequencyItems} onValueChange={value => updateMedication(index, { frequencyCode: value ?? '' })} value={line.frequencyCode} />
               </Field>
               <Field><FieldLabel htmlFor={`quantity-${index}`}>{messages.quantity}{suffix}</FieldLabel><Input id={`quantity-${index}`} min="1" onChange={event => updateMedication(index, { quantity: event.currentTarget.value })} required type="number" value={line.quantity} /></Field>
               <div className="flex items-end">

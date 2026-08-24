@@ -5,14 +5,6 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@clinmesh/ui/components/select'
 import { Separator } from '@clinmesh/ui/components/separator'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import {
@@ -38,6 +30,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
+import { WorkspaceSelect } from './workspace-select.tsx'
 
 interface PharmacyWorkspaceProps {
   locale: WorkspaceLocale
@@ -381,6 +374,10 @@ function PrescriptionDetails({
       <FieldGroup>
         {item.medications.map(medication => {
           const lot = selectedLot(medication, selectedLotIds[medication.medicationRequestId])
+          const lotItems = medication.lots.map(option => ({
+            label: option.lotNumber,
+            value: option.id,
+          }))
           return (
             <Field key={medication.medicationRequestId}>
               <FieldLabel htmlFor={`lot-${medication.medicationRequestId}`}>
@@ -388,19 +385,12 @@ function PrescriptionDetails({
               </FieldLabel>
               {lot === undefined ? <p className="text-sm text-destructive">{messages.inventoryUnavailable}</p> : (
                 <>
-                  <Select
+                  <WorkspaceSelect
+                    id={`lot-${medication.medicationRequestId}`}
+                    items={lotItems}
                     onValueChange={value => onLotChange(medication.medicationRequestId, value as string)}
                     value={lot.id}
-                  >
-                    <SelectTrigger className="w-full" id={`lot-${medication.medicationRequestId}`}><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {medication.lots.map(option => (
-                          <SelectItem key={option.id} value={option.id}>{option.lotNumber}</SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
+                  />
                   <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
                     <span>{lot.lotNumber}</span>
                     <span>{messages.inventoryOnHand} {lot.quantityOnHand}</span>

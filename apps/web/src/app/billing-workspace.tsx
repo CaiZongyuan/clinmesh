@@ -15,14 +15,6 @@ import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@clinmesh/ui/components/select'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
@@ -34,6 +26,7 @@ import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { formatFen } from './workspace-format.ts'
+import { WorkspaceSelect } from './workspace-select.tsx'
 
 interface BillingWorkspaceProps {
   locale: WorkspaceLocale
@@ -54,6 +47,11 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const [paymentConfirmationOpen, setPaymentConfirmationOpen] = useState(false)
   const [simulatorRule, setSimulatorRule] = useState<SimulatorRule>('success')
   const [selectedChargeId, setSelectedChargeId] = useState<string>()
+  const simulatorItems: Array<{ label: string; value: SimulatorRule }> = [
+    { label: messages.simulatorSuccess, value: 'success' },
+    { label: messages.simulatorDecline, value: 'decline' },
+    { label: messages.simulatorAmbiguous, value: 'ambiguous' },
+  ]
   const queueKey = ['billing-queue', ...scope, category, status, page] as const
   const queue = useQuery({
     queryFn: ({ signal }) => getBillingQueue(category, status, signal, page),
@@ -198,20 +196,15 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
               <FieldGroup>
                 <Field>
                   <FieldLabel htmlFor="payment-simulator-rule">{messages.paymentSimulatorRule}</FieldLabel>
-                  <Select
+                  <WorkspaceSelect
+                    id="payment-simulator-rule"
+                    items={simulatorItems}
                     onValueChange={value => {
                       setSimulatorRule(value as SimulatorRule)
                       clearPayment()
                     }}
                     value={simulatorRule}
-                  >
-                    <SelectTrigger className="w-full" id="payment-simulator-rule"><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectGroup>
-                      <SelectItem value="success">{messages.simulatorSuccess}</SelectItem>
-                      <SelectItem value="decline">{messages.simulatorDecline}</SelectItem>
-                      <SelectItem value="ambiguous">{messages.simulatorAmbiguous}</SelectItem>
-                    </SelectGroup></SelectContent>
-                  </Select>
+                  />
                 </Field>
                 <div className="flex justify-end"><Button disabled={preview.isPending} onClick={() => preview.mutate()} type="button"><CreditCardIcon data-icon="inline-start" />{messages.previewPayment}</Button></div>
                 {preview.isError ? <PaymentError message={getWorkspaceErrorMessage(preview.error, messages)} title={getWorkspaceErrorTitle(preview.error, messages, messages.operationFailed)} /> : null}

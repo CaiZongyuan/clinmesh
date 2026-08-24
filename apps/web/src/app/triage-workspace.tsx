@@ -5,14 +5,6 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@clinmesh/ui/components/select'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
@@ -23,6 +15,7 @@ import { getTriageQueue, newIdempotencyKey, recordTriage } from './api-client.ts
 import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
+import { WorkspaceSelect } from './workspace-select.tsx'
 
 interface TriageWorkspaceProps {
   locale: WorkspaceLocale
@@ -50,6 +43,10 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
   const [diastolicMmHg, setDiastolicMmHg] = useState('78')
   const [oxygenSaturationPct, setOxygenSaturationPct] = useState('98')
   const [acuityCode, setAcuityCode] = useState<TriageAcuity>('level-3')
+  const acuityItems = acuities.map(value => ({
+    label: messages[`acuity_${value.replace('-', '')}` as 'acuity_level1'],
+    value,
+  }))
   const queueKey = ['triage-queue', ...scope, status, page] as const
   const queue = useQuery({
     queryFn: ({ signal }) => getTriageQueue(status, signal, page),
@@ -211,12 +208,7 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
               </div>
               <Field>
                 <FieldLabel htmlFor="triage-acuity">{messages.acuity}</FieldLabel>
-                <Select onValueChange={value => setAcuityCode(value as TriageAcuity)} value={acuityCode}>
-                  <SelectTrigger className="w-full" id="triage-acuity"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectGroup>{acuities.map(value => (
-                    <SelectItem key={value} value={value}>{messages[`acuity_${value.replace('-', '')}` as 'acuity_level1']}</SelectItem>
-                  ))}</SelectGroup></SelectContent>
-                </Select>
+                <WorkspaceSelect id="triage-acuity" items={acuityItems} onValueChange={value => setAcuityCode(value as TriageAcuity)} value={acuityCode} />
               </Field>
               <div className="sticky bottom-0 flex justify-end border-t bg-background py-3">
                 <Button disabled={mutation.isPending} type="submit">

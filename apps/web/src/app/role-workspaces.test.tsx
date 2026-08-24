@@ -330,6 +330,10 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     await user.click(await screen.findByRole('tab', { name: '新建合成患者' }))
+    expect((await screen.findByRole('combobox', { name: '性别' })).textContent).toContain('男')
+    expect((await screen.findByRole('combobox', { name: '科室' })).textContent).toContain('全科医学科')
+    expect(screen.getByRole('combobox', { name: '号别' }).textContent).toContain('普通门诊挂号费 · ¥20.00')
+    expect(screen.getByRole('combobox', { name: '就诊地点' }).textContent).toContain('发热门诊')
     await user.type(screen.getByLabelText('姓名'), '合成患者周明')
     await user.type(screen.getByLabelText('合成标识'), 'CM-SYN-001')
     await user.click(screen.getByRole('button', { name: '创建患者' }))
@@ -635,6 +639,7 @@ describe('role workspaces', () => {
     expect(screen.queryByText('department-general-medicine')).toBeNull()
     expect(screen.queryByText('location-fever-clinic')).toBeNull()
     expect(screen.queryByText('visit-general')).toBeNull()
+    expect(screen.getByRole('combobox', { name: '分诊级别' }).textContent).toContain('三级 · 急症')
 
     await user.type(screen.getByLabelText('主诉'), '发热伴咽痛两天')
     await user.clear(screen.getByLabelText('体温（°C）'))
@@ -780,6 +785,8 @@ describe('role workspaces', () => {
     expect(screen.getByText('血压（mmHg）').nextElementSibling?.textContent).toBe('118/76')
     expect(screen.getByText('血氧饱和度（%）').nextElementSibling?.textContent).toBe('98')
     await user.click(await screen.findByRole('button', { name: '开始首诊' }))
+    expect((await screen.findByRole('combobox', { name: '检验项目' })).textContent).toContain('发热检验组合 · ¥68.00')
+    expect(screen.getByRole('combobox', { name: '检验适应证' }).textContent).toContain('发热')
 
     await user.type(await screen.findByLabelText('现病史'), '两天前出现发热，伴咽痛。')
     await user.type(screen.getByLabelText('首诊评估'), '急性发热，待检验明确病原')
@@ -894,6 +901,7 @@ describe('role workspaces', () => {
     expect(screen.getByRole('tab', { name: '已缴' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '结果未知' })).toBeTruthy()
     expect(await screen.findByRole('listitem', { name: '选择费用 合成患者周明' })).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: '模拟支付结果' }).textContent).toContain('成功')
 
     await user.click(screen.getByRole('button', { name: '预览支付' }))
     expect(await screen.findByRole('heading', { name: '支付预览' })).toBeTruthy()
@@ -1166,6 +1174,9 @@ describe('role workspaces', () => {
     expect(screen.getByText(/6\.8.*×10⁹\/L/)).toBeTruthy()
     expect(screen.getByText('磷酸奥司他韦过敏')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '开始复诊' }))
+    expect((await screen.findByRole('combobox', { name: '药品' })).textContent).toContain('磷酸奥司他韦胶囊')
+    expect(screen.getByRole('combobox', { name: '剂量' }).textContent).toContain('75 mg')
+    expect(screen.getByRole('combobox', { name: '频次' }).textContent).toContain('BID')
 
     await user.type(await screen.findByLabelText('诊断编码'), 'J10.1')
     await user.type(screen.getByLabelText('诊断名称'), '甲型流感')
@@ -1509,9 +1520,9 @@ describe('role workspaces', () => {
 
     expect((await screen.findAllByText('CM-RX-20260824-0001')).length).toBeGreaterThan(0)
     expect(screen.getByText('磷酸奥司他韦胶囊')).toBeTruthy()
-    expect(screen.getByText('SYN-OS-001')).toBeTruthy()
     expect(screen.getByText('Encounter 已完成')).toBeTruthy()
     expect(screen.getByText('待审核')).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: '库存批次 · 磷酸奥司他韦胶囊' }).textContent).toContain('SYN-OS-001')
     expect(screen.queryByRole('button', { name: '确认发药' })).toBeNull()
     await user.type(screen.getByLabelText('审核意见'), '已核对诊断、剂量与用药禁忌。')
     await user.click(screen.getByRole('button', { name: '审核通过' }))

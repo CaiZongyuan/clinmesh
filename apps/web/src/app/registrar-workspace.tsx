@@ -5,14 +5,6 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@clinmesh/ui/components/select'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import {
   Table,
@@ -38,11 +30,14 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
+import { WorkspaceSelect } from './workspace-select.tsx'
 
 interface RegistrarWorkspaceProps {
   locale: WorkspaceLocale
   session: SessionContext
 }
+
+const genderValues = ['male', 'female', 'other', 'unknown'] as const
 
 export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
@@ -115,6 +110,22 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
   const resolvedDepartmentId = departmentId || catalog.data?.departments[0]?.id || ''
   const resolvedLocationId = locationId || catalog.data?.locations[0]?.id || ''
   const resolvedVisitTypeId = visitTypeId || catalog.data?.visitTypes[0]?.id || ''
+  const genderItems = genderValues.map(value => ({
+    label: messages[`gender_${value}`],
+    value,
+  }))
+  const departmentItems = catalog.data?.departments.map(item => ({
+    label: locale === 'zh-CN' ? item.nameZh : item.nameEn,
+    value: item.id,
+  })) ?? []
+  const visitTypeItems = catalog.data?.visitTypes.map(item => ({
+    label: `${locale === 'zh-CN' ? item.nameZh : item.nameEn} · ${formatFen(item.priceFen ?? 0, locale)}`,
+    value: item.id,
+  })) ?? []
+  const locationItems = catalog.data?.locations.map(item => ({
+    label: locale === 'zh-CN' ? item.nameZh : item.nameEn,
+    value: item.id,
+  })) ?? []
 
   return (
     <div className="flex flex-col gap-6">
@@ -214,12 +225,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
                     <Field><FieldLabel htmlFor="patient-birth-date">{messages.birthDate}</FieldLabel><Input id="patient-birth-date" onChange={event => setBirthDate(event.currentTarget.value)} required type="date" value={birthDate} /></Field>
                     <Field>
                       <FieldLabel htmlFor="patient-gender">{messages.gender}</FieldLabel>
-                      <Select onValueChange={value => setGender(value as typeof gender)} value={gender}>
-                        <SelectTrigger className="w-full" id="patient-gender"><SelectValue /></SelectTrigger>
-                        <SelectContent><SelectGroup>
-                          {(['male', 'female', 'other', 'unknown'] as const).map(value => <SelectItem key={value} value={value}>{messages[`gender_${value}`]}</SelectItem>)}
-                        </SelectGroup></SelectContent>
-                      </Select>
+                      <WorkspaceSelect id="patient-gender" items={genderItems} onValueChange={value => setGender(value as typeof gender)} value={gender} />
                     </Field>
                   </div>
                   <Button disabled={createPatient.isPending} type="submit"><UserPlusIcon data-icon="inline-start" />{messages.createPatient}</Button>
@@ -245,24 +251,15 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
             <FieldGroup>
               <Field>
                 <FieldLabel htmlFor="registration-department">{messages.department}</FieldLabel>
-                <Select onValueChange={value => setDepartmentId(value ?? '')} value={resolvedDepartmentId}>
-                  <SelectTrigger className="w-full" id="registration-department"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectGroup>{catalog.data.departments.map(item => <SelectItem key={item.id} value={item.id}>{locale === 'zh-CN' ? item.nameZh : item.nameEn}</SelectItem>)}</SelectGroup></SelectContent>
-                </Select>
+                <WorkspaceSelect id="registration-department" items={departmentItems} onValueChange={value => setDepartmentId(value ?? '')} value={resolvedDepartmentId} />
               </Field>
               <Field>
                 <FieldLabel htmlFor="registration-visit-type">{messages.visitType}</FieldLabel>
-                <Select onValueChange={value => setVisitTypeId(value ?? '')} value={resolvedVisitTypeId}>
-                  <SelectTrigger className="w-full" id="registration-visit-type"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectGroup>{catalog.data.visitTypes.map(item => <SelectItem key={item.id} value={item.id}>{locale === 'zh-CN' ? item.nameZh : item.nameEn} · {formatFen(item.priceFen ?? 0, locale)}</SelectItem>)}</SelectGroup></SelectContent>
-                </Select>
+                <WorkspaceSelect id="registration-visit-type" items={visitTypeItems} onValueChange={value => setVisitTypeId(value ?? '')} value={resolvedVisitTypeId} />
               </Field>
               <Field>
                 <FieldLabel htmlFor="registration-location">{messages.location}</FieldLabel>
-                <Select onValueChange={value => setLocationId(value ?? '')} value={resolvedLocationId}>
-                  <SelectTrigger className="w-full" id="registration-location"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectGroup>{catalog.data.locations.map(item => <SelectItem key={item.id} value={item.id}>{locale === 'zh-CN' ? item.nameZh : item.nameEn}</SelectItem>)}</SelectGroup></SelectContent>
-                </Select>
+                <WorkspaceSelect id="registration-location" items={locationItems} onValueChange={value => setLocationId(value ?? '')} value={resolvedLocationId} />
               </Field>
               <Field><FieldLabel>{messages.visitDate}</FieldLabel><Input disabled value={catalog.data.virtualDate} /></Field>
               <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 border-t bg-background py-3">
