@@ -1,0 +1,193 @@
+/* ============================================================
+   design-2 共享 tokens · 2026-08-23
+   继承 ui/design-1 全量变量（规格见 ui/design-1/design.md）
+   扩展：工作区（气泡/时间线/密排表格/脉冲写入/toast）
+   ============================================================ */
+:root{
+  --bg:#F6F8FA;
+  --surface:#FFFFFF;
+  --line:#EAEDF2;
+  --ink:#212529;
+  --ink-2:#6C757D;
+  --ink-3:#98A2AB;
+  --purple:#6F42C1;
+  --purple-soft:#F3EDFB;
+  --blue:#3B82F6;
+  --blue-deep:#1D4ED8;
+  --green:#28A745;
+  --green-soft:#E9F7EE;
+  --amber:#F06100;
+  --amber-soft:#FFF6ED;
+  --red:#E0564A;
+  --red-soft:#FDECEA;
+  --gray-card:#EFF1F4;
+  --shadow:0 2px 10px rgba(33,37,41,.05);
+  --radius:16px;
+  --radius-md:12px;
+  --radius-sm:10px;
+  --radius-xs:9px;
+  --chart-1:#5B8DEF;--chart-2:#F06100;--chart-3:#E70478;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei","Helvetica Neue",Arial,sans-serif;
+  background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5;
+}
+a{text-decoration:none;color:inherit}
+button{font-family:inherit}
+
+/* ============ 侧边导航（design-1 原样） ============ */
+.app{display:flex;min-height:100vh;min-width:1180px}
+.sidebar{
+  width:236px;flex:none;background:var(--surface);
+  border-right:1px solid var(--line);
+  display:flex;flex-direction:column;padding:20px 14px;
+}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 10px 20px}
+.brand__logo{
+  width:38px;height:38px;border-radius:11px;background:var(--purple);
+  display:flex;align-items:center;justify-content:center;color:#fff;flex:none;
+}
+.brand__name{font-size:16px;font-weight:700;letter-spacing:.02em}
+.brand__sub{font-size:10.5px;color:var(--ink-3);letter-spacing:.08em}
+.nav{display:flex;flex-direction:column;gap:4px}
+.nav__label{font-size:10.5px;font-weight:600;color:var(--ink-3);letter-spacing:.1em;padding:14px 12px 6px;text-transform:uppercase}
+.nav__item{
+  display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:10px;
+  color:var(--ink-2);cursor:pointer;transition:all .15s ease;font-weight:500;
+}
+.nav__item svg{flex:none;opacity:.85}
+.nav__item:hover{background:#F5F6F9;color:var(--ink)}
+.nav__item.active{background:var(--purple-soft);color:var(--purple);font-weight:600}
+.nav__badge{margin-left:auto;background:var(--red);color:#fff;font-size:10.5px;font-weight:600;
+  border-radius:99px;padding:1px 7px}
+.sidebar__foot{border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:4px;margin-top:auto}
+.switch-row{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:10px;color:var(--ink-2);cursor:pointer}
+.switch{margin-left:auto;width:34px;height:19px;border-radius:99px;background:#DFE3E8;position:relative;transition:.2s}
+.switch::after{content:"";position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;background:#fff;
+  box-shadow:0 1px 3px rgba(0,0,0,.2);transition:.2s}
+
+/* ============ 顶栏（design-1 原样） ============ */
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.topbar{
+  height:64px;background:var(--surface);border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:16px;padding:0 24px;flex:none;
+}
+.search{
+  flex:0 1 340px;height:38px;background:#F1F3F6;border-radius:10px;border:1px solid transparent;
+  display:flex;align-items:center;gap:9px;padding:0 13px;color:var(--ink-3);
+}
+.search input{border:none;outline:none;background:transparent;flex:1;font-size:13.5px;color:var(--ink);font-family:inherit}
+.search input::placeholder{color:var(--ink-3)}
+.btn-add{
+  height:38px;padding:0 16px;border-radius:10px;border:none;background:#212529;color:#fff;
+  font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:7px;cursor:pointer;font-family:inherit;
+}
+.btn-add:hover{background:#000}
+.topbar__right{margin-left:auto;display:flex;align-items:center;gap:14px}
+.icon-btn{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+  color:var(--ink-2);cursor:pointer;position:relative;transition:.15s}
+.icon-btn:hover{background:#F1F3F6;color:var(--ink)}
+.icon-btn .dot{position:absolute;top:9px;right:10px;width:7px;height:7px;border-radius:50%;background:var(--red);border:1.5px solid #fff}
+.user{display:flex;align-items:center;gap:10px;padding-left:14px;border-left:1px solid var(--line)}
+.user__avatar{
+  width:40px;height:40px;border-radius:10px;background:var(--purple-soft);
+  color:var(--purple);font-weight:600;font-size:15px;display:flex;align-items:center;justify-content:center;
+  border:0;
+}
+.user__name{font-size:13.5px;font-weight:600;line-height:1.25}
+.user__role{font-size:11.5px;color:var(--ink-2)}
+
+/* ============ 内容区与卡片（design-1 原样） ============ */
+.content{padding:22px 24px 30px;display:flex;flex-direction:column;gap:20px}
+.page-head{display:flex;align-items:baseline;gap:12px}
+.page-head h1{font-size:19px;font-weight:700}
+.page-head span{font-size:12.5px;color:var(--ink-3)}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:20px}
+.card{
+  background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);
+  padding:20px;border:1px solid rgba(234,237,242,.7);
+}
+.card__head{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+.card__title{font-size:15.5px;font-weight:700}
+.card__link{margin-left:auto;font-size:12.5px;color:var(--blue);font-weight:500;cursor:pointer;text-decoration:none}
+.select-pill{
+  margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);
+  border:1px solid var(--line);border-radius:8px;padding:5px 10px;cursor:pointer;font-weight:500;
+}
+
+/* ============ 药丸 / 标签 ============ */
+.pill{margin-left:auto;font-size:11.5px;font-weight:600;padding:4px 11px;border-radius:99px;flex:none}
+.pill--green{background:var(--green-soft);color:var(--green)}
+.pill--amber{background:var(--amber-soft);color:var(--amber)}
+.pill--gray{background:#F1F3F6;color:var(--ink-2)}
+.pill--blue{background:#E8F1FE;color:var(--blue-deep)}
+.pill--red{background:var(--red-soft);color:var(--red)}
+.pill--purple{background:var(--purple-soft);color:var(--purple)}
+.pill--plain{margin-left:0}
+.tag{font-size:11px;padding:3px 10px;border-radius:99px;font-weight:500}
+.tag--blue{background:rgba(59,130,246,.12);color:#1D6FB8}
+.tag--red{background:rgba(224,86,74,.1);color:var(--red)}
+
+/* ============ 表格（design-1 基型 + 密排扩展） ============ */
+table{width:100%;border-collapse:collapse}
+thead th{
+  text-align:left;font-size:11.5px;font-weight:600;color:var(--ink-3);letter-spacing:.05em;
+  padding:10px 12px;border-bottom:1px solid var(--line);background:#FAFBFC;
+}
+thead th:first-child{border-radius:10px 0 0 10px}
+thead th:last-child{border-radius:0 10px 10px 0}
+tbody td{padding:13px 12px;border-bottom:1px solid var(--line);font-size:13px}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:#F8FAFC}
+.table--dense tbody td{padding:10px 12px;font-size:12.5px}
+.pt-cell{display:flex;align-items:center;gap:11px}
+.pt-cell__avatar{width:36px;height:36px;border-radius:50%;color:#fff;font-size:13px;font-weight:600;
+  display:flex;align-items:center;justify-content:center;flex:none}
+.pt-cell b{display:block;font-size:13px}
+.pt-cell span{font-size:11px;color:var(--ink-3)}
+.td-time b{font-weight:600}
+.td-time span{display:block;font-size:11px;color:var(--ink-3)}
+.dots{color:var(--ink-3);cursor:pointer;letter-spacing:2px;font-weight:700}
+
+/* ============ 按钮 / 筛选（design-1 原样） ============ */
+.btn-primary{
+  height:42px;border-radius:11px;border:none;background:var(--blue);color:#fff;
+  font-size:13.5px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;
+  font-family:inherit;box-shadow:0 4px 12px rgba(59,130,246,.3);
+}
+.btn-primary:hover{background:var(--blue-deep)}
+.btn-export{
+  height:34px;padding:0 13px;border-radius:9px;border:1px solid var(--line);background:#fff;
+  font-size:12.5px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:6px;cursor:pointer;font-family:inherit;
+}
+.btn-export:hover{background:#F5F6F9}
+.filters{display:flex;gap:8px}
+.filter{font-size:12.5px;font-weight:500;color:var(--ink-2);padding:6px 13px;border-radius:99px;cursor:pointer;
+  border:1px solid var(--line)}
+.filter.on{background:#212529;color:#fff;border-color:#212529}
+
+/* ============ design-2 扩展：工作区通用 ============ */
+/* 细滚动条（会话列 / 队列 / 工作区滚动容器） */
+.scroll-thin{overflow-y:auto;scrollbar-width:thin;scrollbar-color:#D6DBE1 transparent}
+.scroll-thin::-webkit-scrollbar{width:5px}
+.scroll-thin::-webkit-scrollbar-thumb{background:#D6DBE1;border-radius:99px}
+.scroll-thin::-webkit-scrollbar-track{background:transparent}
+
+/* 写入脉冲（采纳交付卡 → 目标分区闪两下） */
+@keyframes panePulse{
+  0%{box-shadow:0 0 0 0 rgba(111,66,193,.35)}
+  60%{box-shadow:0 0 0 8px rgba(111,66,193,0)}
+  100%{box-shadow:0 0 0 0 rgba(111,66,193,0)}
+}
+.pane-pulse{animation:panePulse .9s ease-out 2}
+
+/* toast */
+@keyframes toastIn{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
+.toast{
+  position:fixed;left:50%;bottom:34px;transform:translate(-50%,0);z-index:99;
+  background:#212529;color:#fff;font-size:13px;font-weight:500;
+  padding:11px 20px;border-radius:12px;box-shadow:0 10px 30px rgba(33,37,41,.28);
+  display:flex;align-items:center;gap:9px;animation:toastIn .25s ease-out;
+}
+.toast svg{color:#7CD992;flex:none}
