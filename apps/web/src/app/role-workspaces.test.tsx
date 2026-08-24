@@ -1052,11 +1052,8 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/cases/case-1') {
         return Response.json({
           allergies: [{
-            code: { text: '磷酸奥司他韦过敏' },
-            criticality: 'high',
-            id: 'allergy-1',
-            patient: { reference: 'Patient/patient-1' },
-            resourceType: 'AllergyIntolerance',
+            code: 'OSELTAMIVIR',
+            display: '磷酸奥司他韦过敏',
           }],
           caseId: 'case-1',
           ...(draftSaved ? {

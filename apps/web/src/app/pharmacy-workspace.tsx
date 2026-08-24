@@ -35,7 +35,6 @@ import {
   reviewPrescription,
 } from './api-client.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
-import { allergyWarningLabel } from './allergy-warning.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
@@ -352,7 +351,7 @@ function PrescriptionDetails({
         <Alert variant="destructive">
           <ShieldAlertIcon aria-hidden="true" />
           <AlertTitle>{messages.allergyWarnings}</AlertTitle>
-          <AlertDescription>{item.allergyWarnings.map(allergyWarningLabel).join('; ')}</AlertDescription>
+          <AlertDescription>{item.allergyWarnings.map(allergy => allergy.display).join('; ')}</AlertDescription>
         </Alert>
       )}
       <Table>

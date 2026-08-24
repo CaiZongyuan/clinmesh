@@ -33,7 +33,6 @@ import {
   startRevisit,
 } from './api-client.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
-import { allergyWarningLabel } from './allergy-warning.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
@@ -462,8 +461,8 @@ function CaseDetail({
             <AlertTitle>{messages.allergySummary}</AlertTitle>
             <AlertDescription>
               <ul className="flex list-disc flex-col gap-1 pl-4">
-                {detail.allergies.map((allergy, index) => (
-                  <li key={index}>{allergyWarningLabel(allergy)}</li>
+                {detail.allergies.map(allergy => (
+                  <li key={allergy.code}>{allergy.display}</li>
                 ))}
               </ul>
             </AlertDescription>

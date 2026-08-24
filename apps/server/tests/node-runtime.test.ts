@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { healthResponseSchema } from '@clinmesh/contracts/health'
+import { sessionContextSchema } from '@clinmesh/contracts/his'
 import { describe, expect, it } from 'vitest'
 import { vi } from 'vitest'
 import { createClinMeshRuntime } from '../src/runtime.ts'
@@ -50,7 +51,7 @@ describe('Node.js runtime', () => {
         headers: { cookie: cookie ?? '' },
       })
       expect(session.status).toBe(200)
-      expect(await session.json()).toMatchObject({ actor: { roleCode: 'registrar' } })
+      expect(sessionContextSchema.parse(await session.json())).toMatchObject({ actor: { roleCode: 'registrar' } })
       expect(await (await fetch(`http://127.0.0.1:${address.port}/registration`)).text())
         .toContain('ClinMesh runtime')
     } finally {

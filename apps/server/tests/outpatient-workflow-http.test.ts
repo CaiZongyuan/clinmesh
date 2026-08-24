@@ -1692,9 +1692,8 @@ describe('outpatient workflow HTTP contract', () => {
     )
     expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
       allergies: [{
-        code: { text: '磷酸奥司他韦过敏' },
-        criticality: 'high',
-        patient: { reference: `Patient/${testCase.patient.id}` },
+        code: 'OSELTAMIVIR',
+        display: '磷酸奥司他韦过敏',
       }],
       priorFacts: [{
         clinicalStatus: 'resolved',

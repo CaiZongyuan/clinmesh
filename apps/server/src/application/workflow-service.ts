@@ -777,7 +777,7 @@ export class WorkflowService {
           },
           patient,
           registrationNumber: row.registration_number,
-          riskFlags: this.#patientRiskFlags(context, patient.id),
+          riskFlags: this.#patientAllergyWarnings(context, patient.id),
           status: row.status,
           taskId: row.triage_task_id,
           taskVersion: String(row.task_version),
@@ -1203,7 +1203,7 @@ export class WorkflowService {
       }]
     })
     return {
-      allergies: this.#patientAllergies(context, patient.id),
+      allergies: this.#patientAllergyWarnings(context, patient.id),
       caseId: row.case_id,
       encounter: {
         id: encounter.id,
@@ -2889,7 +2889,7 @@ export class WorkflowService {
         }))
         const encounter = parseStoredFhirResource(row.encounter_json)
         return {
-          allergyWarnings: this.#patientAllergies(input.context, row.patient_id),
+          allergyWarnings: this.#patientAllergyWarnings(input.context, row.patient_id),
           authoredBy: row.authored_by,
           caseId: row.case_id,
           encounterId: row.encounter_id,
@@ -4099,7 +4099,7 @@ export class WorkflowService {
     }
   }
 
-  #patientRiskFlags(context: ActorContext, patientId: string): Array<{ code: string; display: string }> {
+  #patientAllergyWarnings(context: ActorContext, patientId: string): Array<{ code: string; display: string }> {
     return this.#patientAllergies(context, patientId).flatMap(allergy => {
       const concept = typeof allergy.code === 'object' && allergy.code !== null
         ? allergy.code as Record<string, unknown>

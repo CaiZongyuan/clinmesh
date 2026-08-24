@@ -243,8 +243,13 @@ export const priorFactSchema = z.object({
   recordedDate: z.string().optional(),
 })
 
+export const allergyWarningSchema = z.object({
+  code: z.string().min(1),
+  display: z.string().min(1),
+}).strict()
+
 export const doctorCaseDetailSchema = z.object({
-  allergies: z.array(z.unknown()),
+  allergies: z.array(allergyWarningSchema),
   caseId: z.string().min(1),
   drafts: z.object({
     document: z.object({
@@ -434,7 +439,7 @@ const inventoryLotSchema = z.object({
 
 export const pharmacyQueueSchema = z.object({
   items: z.array(z.object({
-    allergyWarnings: z.array(z.unknown()),
+    allergyWarnings: z.array(allergyWarningSchema),
     authoredBy: z.string().min(1),
     caseId: z.string().min(1),
     encounterId: z.string().min(1),
