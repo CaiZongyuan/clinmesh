@@ -35,6 +35,7 @@ import {
   virtualPatientListSchema,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { AuditQuery } from '../src/application/audit-query.ts'
 import { WorkspaceContextError } from '../src/infrastructure/sqlite/workspace-repository.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
@@ -45,6 +46,22 @@ type RevisitMedicationDraft = {
   doseText: string
   frequencyCode: string
   quantity: number
+}
+
+const structuredClinicalDocument = {
+  assessment: '考虑急性上呼吸道感染，需结合检验结果进一步判断。',
+  chiefComplaint: '发热伴咽痛一天。',
+  disposition: '门诊观察，完善血常规和 C 反应蛋白检查。',
+  followUp: '持续高热、气促或精神状态变差时立即复诊。',
+  historyOfPresentIllness: '昨晚开始发热，最高体温 38.7 摄氏度，伴吞咽时咽痛，无气促。',
+  physicalExamination: '神志清楚，咽部充血，双肺呼吸音清，未闻及干湿啰音。',
+}
+
+const revisedStructuredClinicalDocument = {
+  ...structuredClinicalDocument,
+  assessment: '复核检验结果后考虑甲型流感，当前生命体征稳定。',
+  disposition: '继续门诊治疗，按医嘱口服抗病毒药物并充分休息。',
+  followUp: '三天后复诊；持续高热或出现呼吸困难时立即就医。',
 }
 
 async function signIn(runtime: TestRuntime, email: string, password: string): Promise<string> {
@@ -88,6 +105,61 @@ async function startVirtualPatientConsultation(runtime: TestRuntime, password: s
   )
   const started = startVirtualPatientResponseSchema.parse(await startResponse.json()).data
   return { doctorCookie, started }
+}
+
+async function createSignedStructuredClinicalDocument(runtime: TestRuntime, password: string) {
+  const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+  const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+  await runtime.app.request(
+    `/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`,
+    {
+      body: JSON.stringify({
+        expectedVersions,
+        input: { document: structuredClinicalDocument, expectedDraftVersion: 0 },
+      }),
+      headers: commandHeaders(doctorCookie),
+      method: 'PUT',
+    },
+  )
+  const previewResponse = await runtime.app.request(
+    `/api/his/v1/encounters/${started.encounterId}/clinical-document/actions/preview-sign`,
+    {
+      body: JSON.stringify({
+        expectedVersions,
+        input: { expectedDraftVersion: 1 },
+      }),
+      headers: commandHeaders(doctorCookie),
+      method: 'POST',
+    },
+  )
+  const preview = z.object({
+    data: z.object({
+      commitToken: z.string(),
+      previewId: z.string(),
+    }),
+  }).parse(await previewResponse.json())
+  const signResponse = await runtime.app.request(
+    `/api/his/v1/encounters/${started.encounterId}/clinical-document/actions/sign`,
+    {
+      body: JSON.stringify({
+        expectedVersions,
+        input: preview.data,
+      }),
+      headers: commandHeaders(doctorCookie),
+      method: 'POST',
+    },
+  )
+  const signed = z.object({
+    data: z.object({
+      bundleId: z.string(),
+      compositionId: z.string(),
+      compositionVersion: z.string(),
+      documentId: z.string(),
+      provenanceId: z.string(),
+      revisionNumber: z.number(),
+    }),
+  }).parse(await signResponse.json())
+  return { doctorCookie, expectedVersions, signed: signed.data, started }
 }
 
 async function createRegisteredCase(runtime: TestRuntime, password: string) {
@@ -689,6 +761,542 @@ describe('outpatient workflow HTTP contract', () => {
       },
     })
     expect(restoredDetail.drafts).toBeUndefined()
+  })
+
+  it('restores the structured Clinical Document draft and rejects a stale version without overwriting it', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-clinical-document-draft-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const saveDraft = (document: typeof structuredClinicalDocument, expectedDraftVersion: number) => (
+      runtime.app.request(
+        `/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`,
+        {
+          body: JSON.stringify({
+            expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+            input: { document, expectedDraftVersion },
+          }),
+          headers: commandHeaders(doctorCookie),
+          method: 'PUT',
+        },
+      )
+    )
+
+    const incompleteResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          input: {
+            document: { ...structuredClinicalDocument, followUp: undefined },
+            expectedDraftVersion: 0,
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(incompleteResponse.status).toBe(400)
+    expect(await incompleteResponse.json()).toMatchObject({
+      error: { code: 'INVALID_INPUT' },
+    })
+
+    const savedResponse = await saveDraft(structuredClinicalDocument, 0)
+    expect(savedResponse.status).toBe(200)
+    expect(await savedResponse.json()).toMatchObject({
+      data: {
+        caseId: started.caseId,
+        draftVersion: 1,
+      },
+    })
+
+    const staleResponse = await saveDraft({
+      ...structuredClinicalDocument,
+      assessment: '这一份旧编辑不能覆盖已保存内容。',
+    }, 0)
+    expect(staleResponse.status).toBe(409)
+    expect(await staleResponse.json()).toEqual({
+      error: {
+        code: 'WORKFLOW_CONFLICT',
+        message: 'The Clinical Document draft version has changed',
+      },
+    })
+
+    const restoredDoctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: restoredDoctorCookie } },
+    )
+    expect(await detailResponse.json()).toMatchObject({
+      clinicalDocument: {
+        draft: {
+          ...structuredClinicalDocument,
+          updatedAt: '2026-08-24T09:00:00+08:00',
+          version: 1,
+        },
+        signed: [],
+      },
+    })
+  })
+
+  it('previews and signs an immutable structured Clinical Document without completing the Encounter', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-clinical-document-sign-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { document: structuredClinicalDocument, expectedDraftVersion: 0 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+
+    const previewResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/clinical-document/actions/preview-sign`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { expectedDraftVersion: 1 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(previewResponse.status).toBe(200)
+    const preview = z.object({
+      data: z.object({
+        commitToken: z.string().min(1),
+        document: z.object({
+          content: z.object({}).passthrough(),
+          version: z.literal(1),
+        }),
+        expiresAt: z.string().min(1),
+        previewId: z.string().min(1),
+      }),
+    }).passthrough().parse(await previewResponse.json())
+    expect(preview.data.document.content).toEqual(structuredClinicalDocument)
+
+    const updatedDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { document: revisedStructuredClinicalDocument, expectedDraftVersion: 1 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(updatedDraftResponse.status).toBe(200)
+    expect(await updatedDraftResponse.json()).toMatchObject({ data: { draftVersion: 2 } })
+
+    const staleSignResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/clinical-document/actions/sign`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: {
+            commitToken: preview.data.commitToken,
+            previewId: preview.data.previewId,
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(staleSignResponse.status).toBe(409)
+    expect(await staleSignResponse.json()).toMatchObject({
+      error: { message: 'The Clinical Document draft version has changed' },
+    })
+
+    const currentPreviewResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/clinical-document/actions/preview-sign`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { expectedDraftVersion: 2 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(currentPreviewResponse.status).toBe(200)
+    const currentPreview = z.object({
+      data: z.object({
+        commitToken: z.string().min(1),
+        document: z.object({
+          content: z.object({}).passthrough(),
+          version: z.literal(2),
+        }),
+        previewId: z.string().min(1),
+      }),
+    }).passthrough().parse(await currentPreviewResponse.json())
+    expect(currentPreview.data.document.content).toEqual(revisedStructuredClinicalDocument)
+
+    const signIdempotencyKey = randomUUID()
+    const sign = () => runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/clinical-document/actions/sign`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: {
+            commitToken: currentPreview.data.commitToken,
+            previewId: currentPreview.data.previewId,
+          },
+        }),
+        headers: commandHeaders(doctorCookie, signIdempotencyKey),
+        method: 'POST',
+      },
+    )
+    const signedResponse = await sign()
+    expect(signedResponse.status).toBe(200)
+    const signed = z.object({
+      data: z.object({
+        bundleId: z.string().min(1),
+        compositionId: z.string().min(1),
+        compositionVersion: z.literal('1'),
+        documentId: z.string().min(1),
+        provenanceId: z.string().min(1),
+        revisionNumber: z.literal(1),
+      }),
+    }).passthrough().parse(await signedResponse.json())
+    expect(await (await sign()).json()).toEqual(signed)
+
+    const compositionResponse = await runtime.app.request(
+      `/fhir/R5/Composition/${signed.data.compositionId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    const composition = fhirResourceSchema.parse(await compositionResponse.json())
+    expect(composition).toMatchObject({
+      encounter: { reference: `Encounter/${started.encounterId}` },
+      meta: { versionId: '1' },
+      status: 'final',
+      title: '门诊结构化病历',
+    })
+    expect(composition.section).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: expect.objectContaining({
+          coding: expect.arrayContaining([expect.objectContaining({ code: 'chief-complaint' })]),
+        }),
+        title: '主诉',
+      }),
+      expect.objectContaining({
+        code: expect.objectContaining({
+          coding: expect.arrayContaining([expect.objectContaining({ code: 'follow-up' })]),
+        }),
+        title: '随访',
+      }),
+    ]))
+    const bundleResponse = await runtime.app.request(
+      `/fhir/R5/Bundle/${signed.data.bundleId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await bundleResponse.json())).toMatchObject({
+      entry: [{ resource: { id: signed.data.compositionId, resourceType: 'Composition' } }],
+      type: 'document',
+    })
+    const provenanceResponse = await runtime.app.request(
+      `/fhir/R5/Provenance/${signed.data.provenanceId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await provenanceResponse.json())).toMatchObject({
+      target: [
+        { reference: `Composition/${signed.data.compositionId}` },
+        { reference: `Bundle/${signed.data.bundleId}` },
+      ],
+    })
+    const encounterResponse = await runtime.app.request(
+      `/fhir/R5/Encounter/${started.encounterId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await encounterResponse.json())).toMatchObject({
+      meta: { versionId: '1' },
+      status: 'in-progress',
+    })
+
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(await detailResponse.json()).toMatchObject({
+      clinicalDocument: {
+        signed: [{
+          bundleId: signed.data.bundleId,
+          compositionId: signed.data.compositionId,
+          compositionVersion: '1',
+          content: revisedStructuredClinicalDocument,
+          documentId: signed.data.documentId,
+          provenanceId: signed.data.provenanceId,
+          revisionNumber: 1,
+          signedAt: '2026-08-24T09:00:00+08:00',
+        }],
+      },
+    })
+
+    const overwriteResponse = await runtime.app.request(
+      `/fhir/R5/Composition/${signed.data.compositionId}`,
+      {
+        body: JSON.stringify({ resourceType: 'Composition', id: signed.data.compositionId }),
+        headers: {
+          'content-type': 'application/fhir+json',
+          cookie: doctorCookie,
+          'if-match': 'W/"1"',
+        },
+        method: 'PUT',
+      },
+    )
+    expect(overwriteResponse.status).toBe(405)
+  })
+
+  it('rejects the legacy combined signing flow after a structured Clinical Document is signed', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-mixed-clinical-sign-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createRevisitDraftCase(runtime, password)
+    const encounterId = testCase.registration.encounterId
+    const encounterVersions = { [`Encounter/${encounterId}`]: '6' }
+    await runtime.app.request(
+      `/api/his/v1/encounters/${encounterId}/clinical-document/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: encounterVersions,
+          input: { document: structuredClinicalDocument, expectedDraftVersion: 0 },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'PUT',
+      },
+    )
+    const structuredPreviewResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${encounterId}/clinical-document/actions/preview-sign`,
+      {
+        body: JSON.stringify({
+          expectedVersions: encounterVersions,
+          input: { expectedDraftVersion: 1 },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'POST',
+      },
+    )
+    const structuredPreview = z.object({
+      data: z.object({
+        commitToken: z.string().min(1),
+        previewId: z.string().min(1),
+      }),
+    }).passthrough().parse(await structuredPreviewResponse.json()).data
+    const structuredSignResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${encounterId}/clinical-document/actions/sign`,
+      {
+        body: JSON.stringify({
+          expectedVersions: encounterVersions,
+          input: structuredPreview,
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(structuredSignResponse.status).toBe(200)
+
+    const combinedPreviewResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${encounterId}/actions/preview-sign`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Condition/${testCase.draft.conditionId}`]: '1',
+            [`Encounter/${encounterId}`]: '6',
+            [`MedicationRequest/${testCase.draft.medicationRequestIds[0]}`]: '1',
+            [`Task/${testCase.report.taskId}`]: '2',
+          },
+          input: {
+            expectedDraftVersions: {
+              documentDraft: 1,
+              prescription: 1,
+              revisitDraft: 1,
+            },
+          },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(combinedPreviewResponse.status).toBe(409)
+    expect(await combinedPreviewResponse.json()).toEqual({
+      error: {
+        code: 'WORKFLOW_CONFLICT',
+        message: 'The Clinical Document is already signed',
+      },
+    })
+  })
+
+  it('revises only the latest signed Clinical Document and preserves the immutable version history', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-clinical-document-revision-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, expectedVersions, signed, started } = await createSignedStructuredClinicalDocument(
+      runtime,
+      password,
+    )
+
+    const ordinarySaveResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { document: revisedStructuredClinicalDocument, expectedDraftVersion: 1 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(ordinarySaveResponse.status).toBe(409)
+    expect(await ordinarySaveResponse.json()).toMatchObject({
+      error: { message: 'The signed Clinical Document requires a revision' },
+    })
+
+    const revisionIdempotencyKey = randomUUID()
+    const revise = () => runtime.app.request(
+      `/api/his/v1/clinical-documents/${signed.compositionId}/actions/revise`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Composition/${signed.compositionId}`]: signed.compositionVersion,
+            ...expectedVersions,
+          },
+          input: {
+            document: revisedStructuredClinicalDocument,
+            reason: '复核检验结果后更正评估、处置和随访。',
+          },
+        }),
+        headers: commandHeaders(doctorCookie, revisionIdempotencyKey),
+        method: 'POST',
+      },
+    )
+    const revisionResponse = await revise()
+    expect(revisionResponse.status).toBe(200)
+    const revision = z.object({
+      data: z.object({
+        bundleId: z.string().min(1),
+        compositionId: z.string().min(1),
+        compositionVersion: z.literal('1'),
+        documentId: z.string().min(1),
+        provenanceId: z.string().min(1),
+        revisionNumber: z.literal(2),
+        revisionOfCompositionId: z.literal(signed.compositionId),
+      }),
+    }).passthrough().parse(await revisionResponse.json())
+    expect(await (await revise()).json()).toEqual(revision)
+
+    const originalResponse = await runtime.app.request(
+      `/fhir/R5/Composition/${signed.compositionId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await originalResponse.json())).toMatchObject({
+      meta: { versionId: '1' },
+      status: 'final',
+    })
+    const revisedResponse = await runtime.app.request(
+      `/fhir/R5/Composition/${revision.data.compositionId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await revisedResponse.json())).toMatchObject({
+      meta: { versionId: '1' },
+      relatesTo: [{
+        resourceReference: { reference: `Composition/${signed.compositionId}` },
+        type: 'replaces',
+      }],
+      status: 'amended',
+      title: '门诊结构化病历修订',
+    })
+
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(await detailResponse.json()).toMatchObject({
+      clinicalDocument: {
+        signed: [
+          expect.objectContaining({
+            compositionId: signed.compositionId,
+            content: structuredClinicalDocument,
+            revisionNumber: 1,
+          }),
+          expect.objectContaining({
+            compositionId: revision.data.compositionId,
+            content: revisedStructuredClinicalDocument,
+            revisionNumber: 2,
+            revisionOfCompositionId: signed.compositionId,
+            revisionReason: '复核检验结果后更正评估、处置和随访。',
+          }),
+        ],
+      },
+    })
+
+    const forkResponse = await runtime.app.request(
+      `/api/his/v1/clinical-documents/${signed.compositionId}/actions/revise`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Composition/${signed.compositionId}`]: signed.compositionVersion,
+            ...expectedVersions,
+          },
+          input: {
+            document: revisedStructuredClinicalDocument,
+            reason: '这次旧根分叉应被拒绝。',
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(forkResponse.status).toBe(409)
+    expect(await forkResponse.json()).toMatchObject({
+      error: { message: 'Only the latest Clinical Document version can be revised' },
+    })
   })
 
   it('orders Consultation Records and rejects a stale aggregate version without duplication', async () => {

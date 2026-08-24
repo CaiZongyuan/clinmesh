@@ -1,4 +1,4 @@
-import type { ClinicalCatalog, DoctorCaseDetail, DoctorQueueItem, SessionContext, VirtualPatientList } from '@clinmesh/contracts/his'
+import type { ClinicalCatalog, ClinicalDocumentContent, DoctorCaseDetail, DoctorQueueItem, SessionContext, VirtualPatientList } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
@@ -31,9 +31,13 @@ import {
   issueLaboratoryOrder,
   newIdempotencyKey,
   previewClinicalSign,
+  previewStructuredClinicalDocumentSign,
+  reviseStructuredClinicalDocument,
+  saveClinicalDocumentDraft,
   saveFirstVisitDraft,
   saveRevisitDraft,
   signClinicalDocument,
+  signStructuredClinicalDocument,
   startFirstVisit,
   startRevisit,
   startVirtualPatient,
@@ -450,6 +454,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
               setIndicationCode('')
             }}
             onIssueOrder={() => issueOrder.mutate()}
+            onRefreshCase={refreshCase}
             onPreviewSign={() => previewSign.mutate()}
             onSaveDraft={input => saveDraft.mutate(input)}
             onSaveRevisit={input => saveRevisit.mutate(input)}
@@ -493,6 +498,7 @@ function CaseDetail({
   messages,
   onIssueOrder,
   onIndicationChange,
+  onRefreshCase,
   onPreviewSign,
   onLaboratoryItemChange,
   onSaveDraft,
@@ -528,6 +534,7 @@ function CaseDetail({
   messages: ReturnType<typeof getWorkspaceMessages>
   onIssueOrder: () => void
   onIndicationChange: (value: string) => void
+  onRefreshCase: () => Promise<void>
   onPreviewSign: () => void
   onLaboratoryItemChange: (value: string) => void
   onSaveDraft: (input: { assessment: string; historyOfPresentIllness: string }) => void
@@ -654,6 +661,7 @@ function CaseDetail({
           <section aria-labelledby="first-visit-heading" className="flex flex-col gap-3">
             <h3 className="text-sm font-semibold" id="first-visit-heading">{messages.firstVisitRecord}</h3>
             <form
+              aria-labelledby="first-visit-heading"
               key={`${detail.caseId}:${firstVisitDraft?.version ?? 0}`}
               onSubmit={event => {
                 event.preventDefault()
@@ -771,8 +779,416 @@ function CaseDetail({
           </div>
         )
       ) : null}
+      <StructuredClinicalDocumentPanel
+        detail={detail}
+        key={`structured-clinical-document:${detail.caseId}`}
+        locale={locale}
+        messages={messages}
+        onRefresh={onRefreshCase}
+      />
     </div>
   )
+}
+
+const emptyClinicalDocument: ClinicalDocumentContent = {
+  assessment: '',
+  chiefComplaint: '',
+  disposition: '',
+  followUp: '',
+  historyOfPresentIllness: '',
+  physicalExamination: '',
+}
+
+function StructuredClinicalDocumentPanel({ detail, locale, messages, onRefresh }: {
+  detail: DoctorCaseDetail
+  locale: WorkspaceLocale
+  messages: ReturnType<typeof getWorkspaceMessages>
+  onRefresh: () => Promise<void>
+}): React.JSX.Element | null {
+  const draft = detail.clinicalDocument?.draft
+  const signedDocuments = detail.clinicalDocument?.signed ?? []
+  const latestSignedDocument = signedDocuments.at(-1)
+  const previewSign = useMutation({
+    mutationFn: () => {
+      if (draft === undefined) throw new Error(messages.consultationUnavailable)
+      return previewStructuredClinicalDocumentSign({
+        encounterId: detail.encounter.id,
+        encounterVersion: detail.encounter.versionId,
+        expectedDraftVersion: draft.version,
+      }, newIdempotencyKey())
+    },
+  })
+  const saveDraft = useMutation({
+    mutationFn: (document: ClinicalDocumentContent) => saveClinicalDocumentDraft({
+      document,
+      encounterId: detail.encounter.id,
+      encounterVersion: detail.encounter.versionId,
+      expectedDraftVersion: draft?.version ?? 0,
+    }, newIdempotencyKey()),
+    onError: async () => {
+      await onRefresh()
+    },
+    onMutate: () => {
+      previewSign.reset()
+    },
+    onSuccess: async () => {
+      await onRefresh()
+    },
+  })
+  const sign = useMutation({
+    mutationFn: () => {
+      const preview = previewSign.data?.data
+      if (preview === undefined) throw new Error(messages.consultationUnavailable)
+      return signStructuredClinicalDocument({
+        commitToken: preview.commitToken,
+        encounterId: detail.encounter.id,
+        encounterVersion: detail.encounter.versionId,
+        previewId: preview.previewId,
+      }, newIdempotencyKey())
+    },
+    onError: async () => {
+      await onRefresh()
+    },
+    onSuccess: async () => {
+      await onRefresh()
+    },
+  })
+  const revise = useMutation({
+    mutationFn: (input: { document: ClinicalDocumentContent; reason: string }) => {
+      if (latestSignedDocument === undefined) throw new Error(messages.consultationUnavailable)
+      return reviseStructuredClinicalDocument({
+        compositionId: latestSignedDocument.compositionId,
+        compositionVersion: latestSignedDocument.compositionVersion,
+        document: input.document,
+        encounterId: detail.encounter.id,
+        encounterVersion: detail.encounter.versionId,
+        reason: input.reason,
+      }, newIdempotencyKey())
+    },
+    onError: async () => {
+      await onRefresh()
+    },
+    onSuccess: async () => {
+      await onRefresh()
+    },
+  })
+
+  if (
+    signedDocuments.length === 0
+    && detail.encounter.status !== 'in-progress'
+  ) {
+    return null
+  }
+
+  const preview = previewSign.data?.data
+  const currentPreview = preview?.document.version === draft?.version
+    ? preview
+    : undefined
+  return (
+    <section aria-labelledby="structured-clinical-document-heading" className="flex flex-col gap-4 border-t pt-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold" id="structured-clinical-document-heading">
+          {messages.structuredClinicalDocument}
+        </h3>
+        {draft === undefined || signedDocuments.length > 0 ? null : (
+          <Badge variant="outline">{messages.documentVersion} {draft.version}</Badge>
+        )}
+      </div>
+      {sign.isSuccess ? (
+        <Alert>
+          <CheckCircleIcon aria-hidden="true" />
+          <AlertTitle>{messages.clinicalDocumentSigned}</AlertTitle>
+          <AlertDescription>{messages.encounterStillInProgress}</AlertDescription>
+        </Alert>
+      ) : null}
+      {signedDocuments.length > 0 ? (
+        <>
+          {revise.isSuccess ? (
+            <Alert>
+              <CheckIcon aria-hidden="true" />
+              <AlertTitle>{messages.clinicalDocumentRevisionSaved}</AlertTitle>
+            </Alert>
+          ) : null}
+          <section aria-labelledby="signed-clinical-document-history-heading" className="flex flex-col gap-3">
+            <h4 className="text-sm font-semibold" id="signed-clinical-document-history-heading">
+              {messages.signedClinicalDocumentHistory}
+            </h4>
+            <ol className="flex flex-col gap-4">
+              {signedDocuments.map(document => (
+                <li className="flex flex-col gap-3 border-b pb-4 last:border-b-0 last:pb-0" key={document.documentId}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Badge variant="secondary">{messages.documentVersion} {document.revisionNumber}</Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {messages.signedAt} {formatClinicalDocumentTime(document.signedAt, locale)}
+                    </span>
+                  </div>
+                  {document.revisionReason === undefined ? null : (
+                    <p className="text-sm text-muted-foreground">
+                      {messages.revisionReason}：{document.revisionReason}
+                    </p>
+                  )}
+                  <ClinicalDocumentContentView content={document.content} messages={messages} />
+                </li>
+              ))}
+            </ol>
+          </section>
+          {latestSignedDocument === undefined ? null : (
+            <div className="flex flex-col gap-3 border-t pt-5">
+              <h4 className="text-sm font-semibold">
+                {messages.clinicalDocumentRevisionForm} {latestSignedDocument.revisionNumber}
+              </h4>
+              <ClinicalDocumentForm
+                content={latestSignedDocument.content}
+                formName={`${messages.clinicalDocumentRevisionForm} ${latestSignedDocument.revisionNumber}`}
+                idPrefix={`clinical-document-revision-${latestSignedDocument.revisionNumber}`}
+                includeRevisionReason
+                key={latestSignedDocument.compositionId}
+                messages={messages}
+                onSubmit={(document, reason) => revise.mutate({ document, reason })}
+                pending={revise.isPending}
+                pendingLabel={messages.revisingClinicalDocument}
+                submitLabel={messages.submitClinicalDocumentRevision}
+              />
+              {revise.error === null ? null : (
+                <ErrorAlert
+                  message={getWorkspaceErrorMessage(revise.error, messages)}
+                  title={getWorkspaceErrorTitle(revise.error, messages, messages.operationFailed)}
+                />
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <ClinicalDocumentForm
+            content={draft ?? emptyClinicalDocument}
+            formName={messages.structuredClinicalDocument}
+            idPrefix="clinical-document-draft"
+            key={`${detail.caseId}:${draft?.version ?? 0}`}
+            messages={messages}
+            onSubmit={document => saveDraft.mutate(document)}
+            pending={saveDraft.isPending}
+            pendingLabel={messages.savingClinicalDocument}
+            submitLabel={messages.saveClinicalDocumentDraft}
+          />
+          {saveDraft.isSuccess ? (
+            <Alert>
+              <CheckIcon aria-hidden="true" />
+              <AlertTitle>{messages.clinicalDocumentDraftSaved}</AlertTitle>
+            </Alert>
+          ) : null}
+          {saveDraft.error === null ? null : (
+            <ErrorAlert
+              message={getWorkspaceErrorMessage(saveDraft.error, messages)}
+              title={getWorkspaceErrorTitle(saveDraft.error, messages, messages.operationFailed)}
+            />
+          )}
+          <div className="flex justify-end">
+            <Button
+              disabled={draft === undefined || previewSign.isPending || saveDraft.isPending}
+              onClick={() => previewSign.mutate()}
+              type="button"
+              variant="outline"
+            >
+              {previewSign.isPending
+                ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
+                : <FileSignatureIcon aria-hidden="true" data-icon="inline-start" />}
+              {messages.previewClinicalDocumentSign}
+            </Button>
+          </div>
+          {previewSign.error === null ? null : (
+            <ErrorAlert
+              message={getWorkspaceErrorMessage(previewSign.error, messages)}
+              title={getWorkspaceErrorTitle(previewSign.error, messages, messages.operationFailed)}
+            />
+          )}
+          {currentPreview === undefined ? null : (
+            <section aria-labelledby="structured-clinical-document-sign-preview-heading" className="flex flex-col gap-3 border-t pt-5">
+              <h4 className="text-sm font-semibold" id="structured-clinical-document-sign-preview-heading">
+                {messages.structuredClinicalDocumentSignPreview}
+              </h4>
+              <ClinicalDocumentContentView content={currentPreview.document.content} messages={messages} />
+              <div className="flex justify-end">
+                <Button disabled={sign.isPending} onClick={() => sign.mutate()} type="button">
+                  {sign.isPending
+                    ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
+                    : <CheckCircleIcon aria-hidden="true" data-icon="inline-start" />}
+                  {messages.confirmStructuredClinicalSign}
+                </Button>
+              </div>
+            </section>
+          )}
+          {sign.error === null ? null : (
+            <ErrorAlert
+              message={getWorkspaceErrorMessage(sign.error, messages)}
+              title={getWorkspaceErrorTitle(sign.error, messages, messages.operationFailed)}
+            />
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
+function ClinicalDocumentForm({
+  content,
+  formName,
+  idPrefix,
+  includeRevisionReason = false,
+  messages,
+  onSubmit,
+  pending,
+  pendingLabel,
+  submitLabel,
+}: {
+  content: ClinicalDocumentContent
+  formName: string
+  idPrefix: string
+  includeRevisionReason?: boolean
+  messages: ReturnType<typeof getWorkspaceMessages>
+  onSubmit: (document: ClinicalDocumentContent, reason: string) => void
+  pending: boolean
+  pendingLabel: string
+  submitLabel: string
+}): React.JSX.Element {
+  return (
+    <form
+      aria-label={formName}
+      onSubmit={event => {
+        event.preventDefault()
+        const data = new FormData(event.currentTarget)
+        onSubmit({
+          assessment: String(data.get('assessment') ?? ''),
+          chiefComplaint: String(data.get('chiefComplaint') ?? ''),
+          disposition: String(data.get('disposition') ?? ''),
+          followUp: String(data.get('followUp') ?? ''),
+          historyOfPresentIllness: String(data.get('historyOfPresentIllness') ?? ''),
+          physicalExamination: String(data.get('physicalExamination') ?? ''),
+        }, String(data.get('revisionReason') ?? ''))
+      }}
+    >
+      <FieldGroup className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <Field className="md:col-span-2">
+          <FieldLabel htmlFor={`${idPrefix}-chief-complaint`}>{messages.chiefComplaint}</FieldLabel>
+          <Textarea
+            defaultValue={content.chiefComplaint}
+            id={`${idPrefix}-chief-complaint`}
+            maxLength={1_000}
+            minLength={2}
+            name="chiefComplaint"
+            required
+          />
+        </Field>
+        <Field className="md:col-span-2">
+          <FieldLabel htmlFor={`${idPrefix}-history`}>{messages.historyOfPresentIllness}</FieldLabel>
+          <Textarea
+            className="min-h-24"
+            defaultValue={content.historyOfPresentIllness}
+            id={`${idPrefix}-history`}
+            maxLength={5_000}
+            minLength={2}
+            name="historyOfPresentIllness"
+            required
+          />
+        </Field>
+        <Field className="md:col-span-2">
+          <FieldLabel htmlFor={`${idPrefix}-examination`}>{messages.physicalExamination}</FieldLabel>
+          <Textarea
+            defaultValue={content.physicalExamination}
+            id={`${idPrefix}-examination`}
+            maxLength={4_000}
+            minLength={2}
+            name="physicalExamination"
+            required
+          />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor={`${idPrefix}-assessment`}>{messages.assessment}</FieldLabel>
+          <Textarea
+            defaultValue={content.assessment}
+            id={`${idPrefix}-assessment`}
+            maxLength={4_000}
+            minLength={2}
+            name="assessment"
+            required
+          />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor={`${idPrefix}-disposition`}>{messages.disposition}</FieldLabel>
+          <Textarea
+            defaultValue={content.disposition}
+            id={`${idPrefix}-disposition`}
+            maxLength={4_000}
+            minLength={2}
+            name="disposition"
+            required
+          />
+        </Field>
+        <Field className="md:col-span-2">
+          <FieldLabel htmlFor={`${idPrefix}-follow-up`}>{messages.followUp}</FieldLabel>
+          <Textarea
+            defaultValue={content.followUp}
+            id={`${idPrefix}-follow-up`}
+            maxLength={4_000}
+            minLength={2}
+            name="followUp"
+            required
+          />
+        </Field>
+        {includeRevisionReason ? (
+          <Field className="md:col-span-2">
+            <FieldLabel htmlFor={`${idPrefix}-reason`}>{messages.revisionReason}</FieldLabel>
+            <Textarea
+              id={`${idPrefix}-reason`}
+              maxLength={500}
+              minLength={2}
+              name="revisionReason"
+              required
+            />
+          </Field>
+        ) : null}
+        <Field className="items-end md:col-span-2">
+          <Button disabled={pending} type="submit">
+            {pending
+              ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
+              : <ClipboardPenIcon aria-hidden="true" data-icon="inline-start" />}
+            {pending ? pendingLabel : submitLabel}
+          </Button>
+        </Field>
+      </FieldGroup>
+    </form>
+  )
+}
+
+function ClinicalDocumentContentView({ content, messages }: {
+  content: ClinicalDocumentContent
+  messages: ReturnType<typeof getWorkspaceMessages>
+}): React.JSX.Element {
+  const fields = [
+    [messages.chiefComplaint, content.chiefComplaint],
+    [messages.historyOfPresentIllness, content.historyOfPresentIllness],
+    [messages.physicalExamination, content.physicalExamination],
+    [messages.assessment, content.assessment],
+    [messages.disposition, content.disposition],
+    [messages.followUp, content.followUp],
+  ]
+  return (
+    <dl className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
+      {fields.map(([label, value]) => (
+        <div key={label}>
+          <dt className="text-muted-foreground">{label}</dt>
+          <dd className="whitespace-pre-wrap font-medium">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+function formatClinicalDocumentTime(value: string, locale: WorkspaceLocale): string {
+  return new Intl.DateTimeFormat(locale, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(value))
 }
 
 function ConsultationPanel({ action, consultation, locale, messages, patientName }: {

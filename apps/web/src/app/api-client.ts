@@ -2,6 +2,10 @@ import {
   apiErrorSchema,
   askConsultationQuestionResponseSchema,
   billingQueueSchema,
+  clinicalDocumentDraftResponseSchema,
+  clinicalDocumentRevisionResponseSchema,
+  clinicalDocumentSignPreviewResponseSchema,
+  clinicalDocumentSignResponseSchema,
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
   createPatientResponseSchema,
@@ -28,6 +32,7 @@ import {
   triageQueueSchema,
   triageResponseSchema,
   virtualPatientListSchema,
+  type ClinicalDocumentContent,
   type ScenarioState,
   type SessionContext,
 } from '@clinmesh/contracts/his'
@@ -350,6 +355,87 @@ export function saveFirstVisitDraft(input: {
       },
     },
     { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function saveClinicalDocumentDraft(input: {
+  document: ClinicalDocumentContent
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/clinical-document/draft`,
+    clinicalDocumentDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: {
+        document: input.document,
+        expectedDraftVersion: input.expectedDraftVersion,
+      },
+    },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function previewStructuredClinicalDocumentSign(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/clinical-document/actions/preview-sign`,
+    clinicalDocumentSignPreviewResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function signStructuredClinicalDocument(input: {
+  commitToken: string
+  encounterId: string
+  encounterVersion: string
+  previewId: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/clinical-document/actions/sign`,
+    clinicalDocumentSignResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: {
+        commitToken: input.commitToken,
+        previewId: input.previewId,
+      },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function reviseStructuredClinicalDocument(input: {
+  compositionId: string
+  compositionVersion: string
+  document: ClinicalDocumentContent
+  encounterId: string
+  encounterVersion: string
+  reason: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/clinical-documents/${encodeURIComponent(input.compositionId)}/actions/revise`,
+    clinicalDocumentRevisionResponseSchema,
+    {
+      expectedVersions: {
+        [`Composition/${input.compositionId}`]: input.compositionVersion,
+        [`Encounter/${input.encounterId}`]: input.encounterVersion,
+      },
+      input: {
+        document: input.document,
+        reason: input.reason,
+      },
+    },
+    { idempotencyKey },
   )
 }
 

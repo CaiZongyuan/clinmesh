@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebApp } from './web-app.tsx'
@@ -25,6 +25,24 @@ const doctorPresentation = {
     respirationBpm: 20,
     temperatureC: 38.2,
   },
+}
+
+const structuredClinicalDocument = {
+  assessment: '考虑急性上呼吸道感染，暂未见重症征象。',
+  chiefComplaint: '发热伴咽痛两天。',
+  disposition: '门诊随诊，完善检验后复评。',
+  followUp: '持续高热或呼吸困难时立即复诊。',
+  historyOfPresentIllness: '患者两天前出现发热和咽痛，最高体温 38.7 °C。',
+  physicalExamination: '咽部充血，双肺呼吸音清，未闻及干湿啰音。',
+}
+
+const revisedStructuredClinicalDocument = {
+  assessment: '检验支持甲型流感，当前生命体征稳定。',
+  chiefComplaint: '发热伴咽痛两天。',
+  disposition: '门诊抗病毒及对症治疗。',
+  followUp: '三日内门诊复查；呼吸困难时立即就诊。',
+  historyOfPresentIllness: '患者两天前出现发热和咽痛，甲型流感抗原阳性。',
+  physicalExamination: '咽部充血，双肺呼吸音清，血氧饱和度 98%。',
 }
 
 const virtualPatientPresentation = {
@@ -858,7 +876,8 @@ describe('role workspaces', () => {
     }))
     await user.click(screen.getByRole('button', { name: '开始接诊' }))
 
-    expect(await screen.findByLabelText('现病史')).toBeTruthy()
+    const firstVisitForm = await screen.findByRole('form', { name: '首诊记录' })
+    expect(within(firstVisitForm).getByLabelText('现病史')).toBeTruthy()
     expect(screen.getByText('CM-SYN-CANDIDATE-001')).toBeTruthy()
     expect(screen.getByText('昨日傍晚开始发热，最高 38.7 °C，伴咽痛。')).toBeTruthy()
     expect(virtualPatientRequests).toBeGreaterThanOrEqual(2)
@@ -1248,9 +1267,10 @@ describe('role workspaces', () => {
     expect((await screen.findByRole('combobox', { name: '检验项目' })).textContent).toContain('发热检验组合 · ¥68.00')
     expect(screen.getByRole('combobox', { name: '检验适应证' }).textContent).toContain('发热')
 
-    await user.type(await screen.findByLabelText('现病史'), '两天前出现发热，伴咽痛。')
-    await user.type(screen.getByLabelText('首诊评估'), '急性发热，待检验明确病原')
-    await user.click(screen.getByRole('button', { name: '保存首诊草稿' }))
+    const firstVisitForm = await screen.findByRole('form', { name: '首诊记录' })
+    await user.type(within(firstVisitForm).getByLabelText('现病史'), '两天前出现发热，伴咽痛。')
+    await user.type(within(firstVisitForm).getByLabelText('首诊评估'), '急性发热，待检验明确病原')
+    await user.click(within(firstVisitForm).getByRole('button', { name: '保存首诊草稿' }))
     expect(await screen.findByText('草稿已保存')).toBeTruthy()
 
     await user.click(screen.getByRole('button', { name: '签发检验申请' }))
@@ -1838,6 +1858,325 @@ describe('role workspaces', () => {
 
     expect(await screen.findByText('Encounter 已完成')).toBeTruthy()
     expect(screen.getByText('待药品缴费')).toBeTruthy()
+  })
+
+  it('recovers a versioned structured Clinical Document draft and signs it without completing the Encounter', async () => {
+    let document = structuredClinicalDocument
+    let documentVersion = 1
+    let saveAttempt = 0
+    let signed = false
+    let resolveConflictingSave: ((response: Response) => void) | undefined
+    const conflictingSave = new Promise<Response>(resolve => {
+      resolveConflictingSave = resolve
+    })
+    const patient = {
+      birthDate: '1990-05-10',
+      gender: 'male',
+      id: 'patient-1',
+      identifier: 'CM-SYN-001',
+      name: '合成患者周明',
+      synthetic: true,
+      versionId: '1',
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({ laboratory: [], medications: [] })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        return Response.json({
+          items: [{
+            caseId: 'case-1',
+            encounterId: 'encounter-1',
+            encounterVersion: '1',
+            patient,
+            presentation: doctorPresentation,
+            status: 'first-visit',
+            taskId: 'task-doctor-1',
+            taskVersion: '1',
+            triage: doctorTriage,
+          }],
+          ...pagination(1),
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-1') {
+        return Response.json({
+          allergies: [],
+          caseId: 'case-1',
+          clinicalDocument: {
+            draft: {
+              ...document,
+              updatedAt: '2026-08-24T09:00:00+08:00',
+              version: documentVersion,
+            },
+            signed: signed ? [{
+              bundleId: 'bundle-structured-1',
+              compositionId: 'composition-structured-1',
+              compositionVersion: '1',
+              content: document,
+              documentId: 'document-structured-1',
+              provenanceId: 'provenance-structured-1',
+              revisionNumber: 1,
+              signedAt: '2026-08-24T09:00:00+08:00',
+            }] : [],
+          },
+          encounter: { id: 'encounter-1', status: 'in-progress', versionId: '1' },
+          patient,
+          presentation: doctorPresentation,
+          priorFacts: [],
+          status: 'first-visit',
+          taskId: 'task-doctor-1',
+          taskVersion: '1',
+          triage: doctorTriage,
+        })
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-1/clinical-document/draft') {
+        const body = JSON.parse(String(init?.body)) as {
+          expectedVersions: Record<string, string>
+          input: { document: typeof structuredClinicalDocument; expectedDraftVersion: number }
+        }
+        expect(init?.method).toBe('PUT')
+        expect(body.expectedVersions).toEqual({ 'Encounter/encounter-1': '1' })
+        saveAttempt += 1
+        if (saveAttempt === 1) {
+          expect(body.input.expectedDraftVersion).toBe(1)
+          document = {
+            ...structuredClinicalDocument,
+            assessment: '另一工作站已经补充了最新评估。',
+          }
+          documentVersion = 2
+          return conflictingSave
+        }
+        expect(body.input.expectedDraftVersion).toBe(2)
+        document = body.input.document
+        documentVersion = 3
+        return Response.json(commandResponse({ caseId: 'case-1', draftVersion: 3 }))
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-1/clinical-document/actions/preview-sign') {
+        const body = JSON.parse(String(init?.body)) as {
+          expectedVersions: Record<string, string>
+          input: { expectedDraftVersion: number }
+        }
+        expect(body).toEqual({
+          expectedVersions: { 'Encounter/encounter-1': '1' },
+          input: { expectedDraftVersion: 3 },
+        })
+        return Response.json(commandResponse({
+          commitToken: 'structured-sign-token-123456',
+          document: { content: document, version: 3 },
+          expiresAt: '2026-08-24T09:05:00.000Z',
+          previewId: 'structured-sign-preview-1',
+        }))
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-1/clinical-document/actions/sign') {
+        const body = JSON.parse(String(init?.body)) as {
+          expectedVersions: Record<string, string>
+          input: { commitToken: string; previewId: string }
+        }
+        expect(body).toEqual({
+          expectedVersions: { 'Encounter/encounter-1': '1' },
+          input: {
+            commitToken: 'structured-sign-token-123456',
+            previewId: 'structured-sign-preview-1',
+          },
+        })
+        signed = true
+        return Response.json(commandResponse({
+          bundleId: 'bundle-structured-1',
+          compositionId: 'composition-structured-1',
+          compositionVersion: '1',
+          documentId: 'document-structured-1',
+          provenanceId: 'provenance-structured-1',
+          revisionNumber: 1,
+        }))
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    const recoveredForm = await screen.findByRole('form', { name: '结构化病历' })
+    expect((within(recoveredForm).getByLabelText('主诉') as HTMLTextAreaElement).value)
+      .toBe(structuredClinicalDocument.chiefComplaint)
+    expect((within(recoveredForm).getByLabelText('现病史') as HTMLTextAreaElement).value)
+      .toBe(structuredClinicalDocument.historyOfPresentIllness)
+    expect((within(recoveredForm).getByLabelText('查体') as HTMLTextAreaElement).value)
+      .toBe(structuredClinicalDocument.physicalExamination)
+    expect((within(recoveredForm).getByLabelText('评估') as HTMLTextAreaElement).value)
+      .toBe(structuredClinicalDocument.assessment)
+    expect((within(recoveredForm).getByLabelText('处置') as HTMLTextAreaElement).value)
+      .toBe(structuredClinicalDocument.disposition)
+    expect((within(recoveredForm).getByLabelText('随访') as HTMLTextAreaElement).value)
+      .toBe(structuredClinicalDocument.followUp)
+
+    await user.clear(within(recoveredForm).getByLabelText('评估'))
+    await user.type(within(recoveredForm).getByLabelText('评估'), '本工作站准备保存的评估。')
+    await user.click(within(recoveredForm).getByRole('button', { name: '保存病历草稿' }))
+    const pendingButton = await within(recoveredForm).findByRole('button', { name: '正在保存病历' })
+    expect((pendingButton as HTMLButtonElement).disabled).toBe(true)
+
+    await act(async () => {
+      resolveConflictingSave?.(Response.json({
+        error: {
+          code: 'WORKFLOW_CONFLICT',
+          message: 'The Clinical Document draft version has changed',
+        },
+      }, { status: 409 }))
+    })
+    expect(await screen.findByText('操作冲突')).toBeTruthy()
+    const refreshedForm = await screen.findByRole('form', { name: '结构化病历' })
+    expect((within(refreshedForm).getByLabelText('评估') as HTMLTextAreaElement).value)
+      .toBe('另一工作站已经补充了最新评估。')
+
+    await user.clear(within(refreshedForm).getByLabelText('评估'))
+    await user.type(within(refreshedForm).getByLabelText('评估'), '复核并合并并发编辑后的最终评估。')
+    await user.click(within(refreshedForm).getByRole('button', { name: '保存病历草稿' }))
+    expect(await screen.findByText('病历草稿已保存')).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: '预览病历签署' }))
+    const previewHeading = await screen.findByRole('heading', { name: '病历签署预览' })
+    expect(within(previewHeading.parentElement as HTMLElement)
+      .getByText('复核并合并并发编辑后的最终评估。')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '确认签署病历' }))
+
+    expect(await screen.findByText('病历已签署')).toBeTruthy()
+    expect(screen.getByText('Encounter 仍为诊疗中')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '签署历史' })).toBeTruthy()
+    expect(screen.getByText('版本 1')).toBeTruthy()
+  })
+
+  it('keeps signed Clinical Document history read-only and revises only the latest version', async () => {
+    const patient = {
+      birthDate: '1990-05-10',
+      gender: 'male',
+      id: 'patient-1',
+      identifier: 'CM-SYN-001',
+      name: '合成患者周明',
+      synthetic: true,
+      versionId: '1',
+    }
+    let signedDocuments = [{
+      bundleId: 'bundle-structured-1',
+      compositionId: 'composition-structured-1',
+      compositionVersion: '1',
+      content: structuredClinicalDocument,
+      documentId: 'document-structured-1',
+      provenanceId: 'provenance-structured-1',
+      revisionNumber: 1,
+      signedAt: '2026-08-24T09:00:00+08:00',
+    }, {
+      bundleId: 'bundle-structured-2',
+      compositionId: 'composition-structured-2',
+      compositionVersion: '1',
+      content: revisedStructuredClinicalDocument,
+      documentId: 'document-structured-2',
+      provenanceId: 'provenance-structured-2',
+      revisionNumber: 2,
+      revisionOfCompositionId: 'composition-structured-1',
+      revisionReason: '检验结果回报后修订诊断与处置。',
+      signedAt: '2026-08-24T09:10:00+08:00',
+    }]
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({ laboratory: [], medications: [] })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        return Response.json({
+          items: [{
+            caseId: 'case-1',
+            diagnosticReportId: 'diagnostic-report-1',
+            encounterId: 'encounter-1',
+            encounterVersion: '5',
+            patient,
+            presentation: doctorPresentation,
+            status: 'awaiting-revisit',
+            taskId: 'task-doctor-1',
+            taskVersion: '1',
+            triage: doctorTriage,
+          }],
+          ...pagination(1),
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-1') {
+        return Response.json({
+          allergies: [],
+          caseId: 'case-1',
+          clinicalDocument: { signed: signedDocuments },
+          encounter: { id: 'encounter-1', status: 'in-progress', versionId: '5' },
+          patient,
+          presentation: doctorPresentation,
+          priorFacts: [],
+          status: 'awaiting-revisit',
+          taskId: 'task-doctor-1',
+          taskVersion: '1',
+          triage: doctorTriage,
+        })
+      }
+      if (url.pathname === '/api/his/v1/clinical-documents/composition-structured-2/actions/revise') {
+        const body = JSON.parse(String(init?.body)) as {
+          expectedVersions: Record<string, string>
+          input: { document: typeof structuredClinicalDocument; reason: string }
+        }
+        expect(body.expectedVersions).toEqual({
+          'Composition/composition-structured-2': '1',
+          'Encounter/encounter-1': '5',
+        })
+        expect(body.input.reason).toBe('补充复诊时限和危险征象。')
+        expect(body.input.document.assessment).toBe('修订后明确为甲型流感轻症。')
+        signedDocuments = [...signedDocuments, {
+          bundleId: 'bundle-structured-3',
+          compositionId: 'composition-structured-3',
+          compositionVersion: '1',
+          content: body.input.document,
+          documentId: 'document-structured-3',
+          provenanceId: 'provenance-structured-3',
+          revisionNumber: 3,
+          revisionOfCompositionId: 'composition-structured-2',
+          revisionReason: body.input.reason,
+          signedAt: '2026-08-24T09:20:00+08:00',
+        }]
+        return Response.json(commandResponse({
+          bundleId: 'bundle-structured-3',
+          compositionId: 'composition-structured-3',
+          compositionVersion: '1',
+          documentId: 'document-structured-3',
+          provenanceId: 'provenance-structured-3',
+          revisionNumber: 3,
+          revisionOfCompositionId: 'composition-structured-2',
+        }))
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    expect(await screen.findByRole('heading', { name: '签署历史' })).toBeTruthy()
+    expect(screen.getByText('版本 1')).toBeTruthy()
+    expect(screen.getByText('版本 2')).toBeTruthy()
+    expect(screen.getByText(structuredClinicalDocument.assessment)).toBeTruthy()
+    expect(screen.getByText(/检验结果回报后修订诊断与处置。/)).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: '提交病历修订' })).toHaveLength(1)
+
+    const revisionForm = screen.getByRole('form', { name: '修订病历版本 2' })
+    await user.clear(within(revisionForm).getByLabelText('评估'))
+    await user.type(within(revisionForm).getByLabelText('评估'), '修订后明确为甲型流感轻症。')
+    await user.type(within(revisionForm).getByLabelText('修订原因'), '补充复诊时限和危险征象。')
+    await user.click(within(revisionForm).getByRole('button', { name: '提交病历修订' }))
+
+    expect(await screen.findByText('病历修订已保存')).toBeTruthy()
+    expect(screen.getByText('版本 3')).toBeTruthy()
+    expect(screen.getByText(/补充复诊时限和危险征象。/)).toBeTruthy()
+    expect(screen.getByText(structuredClinicalDocument.assessment)).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: '提交病历修订' })).toHaveLength(1)
   })
 
   it('partially dispenses from a versioned lot before completing the Scenario Run', async () => {

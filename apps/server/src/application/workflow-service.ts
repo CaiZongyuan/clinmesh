@@ -3,6 +3,11 @@ import { v7 as uuidv7 } from 'uuid'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
 import {
   askConsultationQuestionResponseSchema,
+  type ClinicalDocumentContent,
+  clinicalDocumentContentSchema,
+  clinicalDocumentDraftResponseSchema,
+  clinicalDocumentSignPreviewResponseSchema,
+  clinicalDocumentSignResponseSchema,
   clinicalPresentationSchema,
   clinicalDocumentRevisionResponseSchema,
   clinicalSignPreviewResponseSchema,
@@ -308,6 +313,81 @@ function xhtmlText(value: string): string {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;')
+}
+
+const clinicalDocumentSectionSystem = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/clinical-document-section'
+
+const clinicalDocumentSections = [
+  { code: 'chief-complaint', field: 'chiefComplaint', title: '主诉' },
+  { code: 'history-of-present-illness', field: 'historyOfPresentIllness', title: '现病史' },
+  { code: 'physical-examination', field: 'physicalExamination', title: '查体' },
+  { code: 'assessment', field: 'assessment', title: '评估' },
+  { code: 'disposition', field: 'disposition', title: '处置' },
+  { code: 'follow-up', field: 'followUp', title: '随访' },
+] as const
+
+function structuredClinicalDocumentSections(document: ClinicalDocumentContent) {
+  return clinicalDocumentSections.map(section => ({
+    code: {
+      coding: [{
+        code: section.code,
+        display: section.title,
+        system: clinicalDocumentSectionSystem,
+      }],
+      text: section.title,
+    },
+    text: {
+      div: `<div xmlns="http://www.w3.org/1999/xhtml">${xhtmlText(document[section.field])}</div>`,
+      status: 'generated',
+    },
+    title: section.title,
+  }))
+}
+
+function xhtmlTextValue(value: string): string | undefined {
+  const prefix = '<div xmlns="http://www.w3.org/1999/xhtml">'
+  const suffix = '</div>'
+  if (!value.startsWith(prefix) || !value.endsWith(suffix)) return undefined
+  return value.slice(prefix.length, -suffix.length)
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&gt;', '>')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&amp;', '&')
+}
+
+const structuredCompositionSchema = z.object({
+  section: z.array(z.object({
+    code: z.object({
+      coding: z.array(z.object({
+        code: z.string(),
+        system: z.string(),
+      }).loose()),
+    }).loose().optional(),
+    text: z.object({ div: z.string() }).loose(),
+  }).loose()),
+}).loose()
+
+const provenanceReasonSchema = z.object({
+  reason: z.array(z.object({
+    concept: z.object({ text: z.string().optional() }).loose(),
+  }).loose()).optional(),
+}).loose()
+
+function structuredClinicalDocumentFromComposition(resource: FhirResource): ClinicalDocumentContent | undefined {
+  const composition = structuredCompositionSchema.safeParse(resource)
+  if (!composition.success) return undefined
+  const sections = new Map(composition.data.section.flatMap(section => {
+    const coding = section.code?.coding.find(candidate => candidate.system === clinicalDocumentSectionSystem)
+    const value = xhtmlTextValue(section.text.div)
+    return coding === undefined || value === undefined ? [] : [[coding.code, value] as const]
+  }))
+  const content = Object.fromEntries(clinicalDocumentSections.map(section => [
+    section.field,
+    sections.get(section.code),
+  ]))
+  const parsed = clinicalDocumentContentSchema.safeParse(content)
+  return parsed.success ? parsed.data : undefined
 }
 
 export class WorkflowService {
@@ -1644,9 +1724,31 @@ export class WorkflowService {
       }]
     })
     const consultation = this.#consultationDetail(context, row.case_id)
+    const clinicalDocumentDraft = this.#database.driver.prepare(`
+      SELECT version, content_json, updated_at
+      FROM clinical_document_draft
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get(context.workspaceId, context.epoch, row.case_id) as {
+      content_json: string
+      updated_at: string
+      version: number
+    } | undefined
+    const signedClinicalDocuments = this.#structuredClinicalDocuments(context, row.case_id)
     return {
       allergies: this.#patientAllergyWarnings(context, patient.id),
       caseId: row.case_id,
+      ...(clinicalDocumentDraft === undefined && signedClinicalDocuments.length === 0 ? {} : {
+        clinicalDocument: {
+          ...(clinicalDocumentDraft === undefined ? {} : {
+            draft: {
+              ...clinicalDocumentContentSchema.parse(JSON.parse(clinicalDocumentDraft.content_json)),
+              updatedAt: clinicalDocumentDraft.updated_at,
+              version: clinicalDocumentDraft.version,
+            },
+          }),
+          signed: signedClinicalDocuments,
+        },
+      }),
       ...(consultation === undefined ? {} : { consultation }),
       encounter: {
         id: encounter.id,
@@ -2306,6 +2408,9 @@ export class WorkflowService {
       if (outpatientCase.status !== 'revisit-draft') {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not ready for signing')
       }
+      if (this.#signedClinicalDocumentRoot(input.context, outpatientCase.case_id) !== undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document is already signed')
+      }
       this.#assertExpectedVersions(
         input.expectedVersions,
         this.#clinicalExpectedReferences(
@@ -2498,6 +2603,9 @@ export class WorkflowService {
         || preview.doctor_task_id === null
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The clinical signing preview is unavailable')
+      }
+      if (this.#signedClinicalDocumentRoot(input.context, preview.case_id) !== undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document is already signed')
       }
       this.#assertExpectedVersions(
         input.expectedVersions,
@@ -2770,17 +2878,21 @@ export class WorkflowService {
   }
 
   reviseClinicalDocument(input: {
-    assessment: string
     compositionId: string
     context: ActorContext
     expectedVersions: Record<string, string>
     idempotencyKey: string
-    plan: string
     reason: string
+    revision:
+      | { assessment: string; plan: string }
+      | { document: ClinicalDocumentContent }
   }): CommandResponse<{
     bundleId: string
     compositionId: string
+    compositionVersion: string
+    documentId: string
     provenanceId: string
+    revisionNumber: number
     revisionOfCompositionId: string
   }> {
     return this.#commands.execute({
@@ -2788,12 +2900,18 @@ export class WorkflowService {
       dataSchema: clinicalDocumentRevisionResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
-      input: {
-        assessment: input.assessment,
-        compositionId: input.compositionId,
-        plan: input.plan,
-        reason: input.reason,
-      },
+      input: 'document' in input.revision
+        ? {
+            compositionId: input.compositionId,
+            document: input.revision.document,
+            reason: input.reason,
+          }
+        : {
+            assessment: input.revision.assessment,
+            compositionId: input.compositionId,
+            plan: input.revision.plan,
+            reason: input.reason,
+          },
       operation: 'clinical-document.revise',
     }, transaction => {
       this.#assertRole(input.context, ['outpatient-doctor'])
@@ -2820,6 +2938,20 @@ export class WorkflowService {
       if (source === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The signed clinical document was not found')
       }
+      const successor = this.#database.driver.prepare(`
+        SELECT document_id FROM signed_clinical_document
+        WHERE workspace_id = ? AND epoch = ? AND revision_of_document_id = ?
+      `).get(
+        input.context.workspaceId,
+        input.context.epoch,
+        source.document_id,
+      ) as { document_id: string } | undefined
+      if (successor !== undefined) {
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          'Only the latest Clinical Document version can be revised',
+        )
+      }
       this.#assertExpectedVersions(input.expectedVersions, [
         `Composition/${input.compositionId}`,
         `Encounter/${source.encounter_id}`,
@@ -2830,8 +2962,40 @@ export class WorkflowService {
         input.compositionId,
       )
       const originalBundle = transaction.fhir.read(input.context, 'Bundle', source.bundle_id)
+      if (
+        'document' in input.revision
+        && structuredClinicalDocumentFromComposition(originalComposition) === undefined
+      ) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The structured Clinical Document was not found')
+      }
       const now = this.#virtualTime(input.context)
       const compositionId = uuidv7()
+      const reasonSection = {
+        title: '更正原因',
+        text: {
+          status: 'generated',
+          div: `<div xmlns="http://www.w3.org/1999/xhtml">${xhtmlText(input.reason)}</div>`,
+        },
+      }
+      const sections = 'document' in input.revision
+        ? [reasonSection, ...structuredClinicalDocumentSections(input.revision.document)]
+        : [
+            reasonSection,
+            {
+              title: '评估',
+              text: {
+                status: 'generated',
+                div: `<div xmlns="http://www.w3.org/1999/xhtml">${xhtmlText(input.revision.assessment)}</div>`,
+              },
+            },
+            {
+              title: '计划',
+              text: {
+                status: 'generated',
+                div: `<div xmlns="http://www.w3.org/1999/xhtml">${xhtmlText(input.revision.plan)}</div>`,
+              },
+            },
+          ]
       const composition = transaction.fhir.createImmutable(input.context, {
         resourceType: 'Composition',
         id: compositionId,
@@ -2842,34 +3006,12 @@ export class WorkflowService {
           ?? { reference: `Encounter/${source.encounter_id}` },
         date: now,
         author: [{ reference: `PractitionerRole/${input.context.practitionerRoleId}` }],
-        title: '门诊病历更正',
+        title: 'document' in input.revision ? '门诊结构化病历修订' : '门诊病历更正',
         relatesTo: [{
           type: 'replaces',
           resourceReference: { reference: `Composition/${input.compositionId}` },
         }],
-        section: [
-          {
-            title: '更正原因',
-            text: {
-              status: 'generated',
-              div: `<div xmlns="http://www.w3.org/1999/xhtml">${xhtmlText(input.reason)}</div>`,
-            },
-          },
-          {
-            title: '评估',
-            text: {
-              status: 'generated',
-              div: `<div xmlns="http://www.w3.org/1999/xhtml">${xhtmlText(input.assessment)}</div>`,
-            },
-          },
-          {
-            title: '计划',
-            text: {
-              status: 'generated',
-              div: `<div xmlns="http://www.w3.org/1999/xhtml">${xhtmlText(input.plan)}</div>`,
-            },
-          },
-        ],
+        section: sections,
       })
       const originalEntries = Array.isArray(originalBundle.entry)
         ? originalBundle.entry.filter(candidate => {
@@ -2909,6 +3051,10 @@ export class WorkflowService {
         }],
       })
       const documentId = uuidv7()
+      const revisionNumber = this.#clinicalDocumentRevisionNumber(
+        input.context,
+        source.document_id,
+      ) + 1
       this.#database.driver.prepare(`
         INSERT INTO signed_clinical_document (
           workspace_id, epoch, document_id, case_id, composition_id, bundle_id,
@@ -2932,7 +3078,10 @@ export class WorkflowService {
         data: {
           bundleId,
           compositionId,
+          compositionVersion: composition.meta?.versionId ?? '1',
+          documentId,
           provenanceId,
+          revisionNumber,
           revisionOfCompositionId: input.compositionId,
         },
         effects: [composition, bundle, provenance].map(resource => ({
@@ -3010,6 +3159,307 @@ export class WorkflowService {
           reference: `ClinicalDraft/${outpatientCase.case_id}.first-visit`,
           versionId: String(version),
         }],
+      }
+    })
+  }
+
+  saveClinicalDocumentDraft(input: {
+    context: ActorContext
+    document: ClinicalDocumentContent
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+  }): CommandResponse<{ caseId: string; draftVersion: number }> {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: clinicalDocumentDraftResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: {
+        document: input.document,
+        encounterId: input.encounterId,
+        expectedDraftVersion: input.expectedDraftVersion,
+      },
+      operation: 'clinical-document.save-draft',
+    }, transaction => {
+      this.#assertRole(input.context, ['outpatient-doctor'])
+      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+      const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
+      if (outpatientCase.status === 'completed' || encounter.status !== 'in-progress') {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document is not editable')
+      }
+      if (this.#signedClinicalDocumentRoot(input.context, outpatientCase.case_id) !== undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The signed Clinical Document requires a revision')
+      }
+      const current = this.#database.driver.prepare(`
+        SELECT version FROM clinical_document_draft
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id) as {
+        version: number
+      } | undefined
+      const currentVersion = current?.version ?? 0
+      if (currentVersion !== input.expectedDraftVersion) {
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          'The Clinical Document draft version has changed',
+        )
+      }
+      const draftVersion = currentVersion + 1
+      const now = this.#virtualTime(input.context)
+      this.#database.driver.prepare(`
+        INSERT INTO clinical_document_draft (
+          workspace_id, epoch, case_id, version, content_json, updated_by, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (workspace_id, epoch, case_id) DO UPDATE SET
+          version = excluded.version,
+          content_json = excluded.content_json,
+          updated_by = excluded.updated_by,
+          updated_at = excluded.updated_at
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        outpatientCase.case_id,
+        draftVersion,
+        JSON.stringify(input.document),
+        input.context.actorId,
+        now,
+      )
+      return {
+        data: { caseId: outpatientCase.case_id, draftVersion },
+        effects: [{
+          kind: current === undefined ? 'created' : 'updated',
+          reference: `ClinicalDocumentDraft/${outpatientCase.case_id}`,
+          versionId: String(draftVersion),
+        }],
+      }
+    })
+  }
+
+  previewStructuredClinicalDocumentSign(input: {
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+  }): CommandResponse<{
+    commitToken: string
+    document: { content: ClinicalDocumentContent; version: number }
+    expiresAt: string
+    previewId: string
+  }> {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: clinicalDocumentSignPreviewResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: {
+        encounterId: input.encounterId,
+        expectedDraftVersion: input.expectedDraftVersion,
+      },
+      operation: 'clinical-document.preview-sign',
+    }, transaction => {
+      this.#assertRole(input.context, ['outpatient-doctor'])
+      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+      const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
+      if (outpatientCase.status === 'completed' || encounter.status !== 'in-progress') {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document is not available for signing')
+      }
+      if (this.#signedClinicalDocumentRoot(input.context, outpatientCase.case_id) !== undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document is already signed')
+      }
+      const draft = this.#database.driver.prepare(`
+        SELECT version, content_json FROM clinical_document_draft
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id) as {
+        content_json: string
+        version: number
+      } | undefined
+      if (draft?.version !== input.expectedDraftVersion) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document draft version has changed')
+      }
+      const document = clinicalDocumentContentSchema.parse(JSON.parse(draft.content_json))
+      const previewId = uuidv7()
+      const commitToken = `${previewId}.${this.#hashToken(`clinical-document-sign:${previewId}`)}`
+      const expiresAt = new Date(Date.parse(this.#virtualTime(input.context)) + 5 * 60_000).toISOString()
+      this.#database.driver.prepare(`
+        INSERT INTO clinical_document_sign_preview (
+          workspace_id, epoch, preview_id, case_id, draft_version,
+          summary_json, token_hash, expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        previewId,
+        outpatientCase.case_id,
+        draft.version,
+        JSON.stringify(document),
+        this.#hashToken(commitToken),
+        expiresAt,
+      )
+      return {
+        data: {
+          commitToken,
+          document: { content: document, version: draft.version },
+          expiresAt,
+          previewId,
+        },
+        effects: [{
+          kind: 'created',
+          reference: `ClinicalDocumentSignPreview/${previewId}`,
+          versionId: '1',
+        }],
+      }
+    })
+  }
+
+  signStructuredClinicalDocument(input: {
+    commitToken: string
+    context: ActorContext
+    encounterId: string
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+    previewId: string
+  }): CommandResponse<{
+    bundleId: string
+    compositionId: string
+    compositionVersion: string
+    documentId: string
+    provenanceId: string
+    revisionNumber: 1
+  }> {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: clinicalDocumentSignResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: {
+        commitToken: input.commitToken,
+        encounterId: input.encounterId,
+        previewId: input.previewId,
+      },
+      operation: 'clinical-document.sign',
+    }, transaction => {
+      this.#assertRole(input.context, ['outpatient-doctor'])
+      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+      const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
+      if (outpatientCase.status === 'completed' || encounter.status !== 'in-progress') {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document is not available for signing')
+      }
+      const preview = this.#database.driver.prepare(`
+        SELECT case_id, draft_version, summary_json, token_hash, expires_at, consumed_at
+        FROM clinical_document_sign_preview
+        WHERE workspace_id = ? AND epoch = ? AND preview_id = ?
+      `).get(input.context.workspaceId, input.context.epoch, input.previewId) as {
+        case_id: string
+        consumed_at: string | null
+        draft_version: number
+        expires_at: string
+        summary_json: string
+        token_hash: string
+      } | undefined
+      if (
+        preview === undefined
+        || preview.case_id !== outpatientCase.case_id
+        || preview.consumed_at !== null
+        || preview.token_hash !== this.#hashToken(input.commitToken)
+        || Date.parse(preview.expires_at) < Date.parse(this.#virtualTime(input.context))
+      ) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document signing preview is unavailable')
+      }
+      const draft = this.#database.driver.prepare(`
+        SELECT version, content_json FROM clinical_document_draft
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id) as {
+        content_json: string
+        version: number
+      } | undefined
+      if (draft?.version !== preview.draft_version) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document draft version has changed')
+      }
+      const document = clinicalDocumentContentSchema.parse(JSON.parse(draft.content_json))
+      const previewDocument = clinicalDocumentContentSchema.parse(JSON.parse(preview.summary_json))
+      if (JSON.stringify(previewDocument) !== JSON.stringify(document)) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document draft version has changed')
+      }
+      if (this.#signedClinicalDocumentRoot(input.context, outpatientCase.case_id) !== undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document is already signed')
+      }
+      const now = this.#virtualTime(input.context)
+      const compositionId = uuidv7()
+      const composition = transaction.fhir.createImmutable(input.context, {
+        resourceType: 'Composition',
+        id: compositionId,
+        status: 'final',
+        type: { text: 'Synthetic outpatient structured clinical document' },
+        subject: [{ reference: `Patient/${outpatientCase.patient_id}` }],
+        encounter: { reference: `Encounter/${input.encounterId}` },
+        date: now,
+        author: [{ reference: `PractitionerRole/${input.context.practitionerRoleId}` }],
+        title: '门诊结构化病历',
+        section: structuredClinicalDocumentSections(document),
+      })
+      const bundleId = uuidv7()
+      const bundle = transaction.fhir.createImmutable(input.context, {
+        resourceType: 'Bundle',
+        id: bundleId,
+        type: 'document',
+        timestamp: now,
+        entry: [{
+          fullUrl: `https://caizongyuan.github.io/clinmesh/fhir/Composition/${compositionId}`,
+          resource: composition,
+        }],
+      })
+      const provenanceId = uuidv7()
+      const provenance = transaction.fhir.createImmutable(input.context, {
+        resourceType: 'Provenance',
+        id: provenanceId,
+        target: [
+          { reference: `Composition/${compositionId}` },
+          { reference: `Bundle/${bundleId}` },
+        ],
+        recorded: now,
+        activity: { text: 'Structured Clinical Document signing' },
+        agent: provenanceAgents(input.context, 'Author and signer'),
+      })
+      const documentId = uuidv7()
+      this.#database.driver.prepare(`
+        INSERT INTO signed_clinical_document (
+          workspace_id, epoch, document_id, case_id, composition_id, bundle_id,
+          provenance_id, signed_by, signed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        documentId,
+        outpatientCase.case_id,
+        compositionId,
+        bundleId,
+        provenanceId,
+        input.context.actorId,
+        now,
+      )
+      this.#database.driver.prepare(`
+        UPDATE clinical_document_sign_preview SET consumed_at = ?
+        WHERE workspace_id = ? AND epoch = ? AND preview_id = ? AND consumed_at IS NULL
+      `).run(now, input.context.workspaceId, input.context.epoch, input.previewId)
+      return {
+        data: {
+          bundleId,
+          compositionId,
+          compositionVersion: composition.meta?.versionId ?? '1',
+          documentId,
+          provenanceId,
+          revisionNumber: 1,
+        },
+        effects: [composition, bundle, provenance].map(resource => ({
+          kind: 'created' as const,
+          reference: `${resource.resourceType}/${resource.id}`,
+          versionId: resource.meta?.versionId ?? '1',
+        })),
       }
     })
   }
@@ -4717,6 +5167,85 @@ export class WorkflowService {
       })),
       version: state.version,
     }
+  }
+
+  #signedClinicalDocumentRoot(context: ActorContext, caseId: string) {
+    return this.#database.driver.prepare(`
+      SELECT document_id FROM signed_clinical_document
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        AND revision_of_document_id IS NULL
+    `).get(context.workspaceId, context.epoch, caseId) as { document_id: string } | undefined
+  }
+
+  #clinicalDocumentRevisionNumber(context: ActorContext, documentId: string): number {
+    const row = this.#database.driver.prepare(`
+      WITH RECURSIVE document_chain (document_id, revision_of_document_id) AS (
+        SELECT document_id, revision_of_document_id
+        FROM signed_clinical_document
+        WHERE workspace_id = ? AND epoch = ? AND document_id = ?
+        UNION ALL
+        SELECT parent.document_id, parent.revision_of_document_id
+        FROM signed_clinical_document AS parent
+        JOIN document_chain AS child
+          ON child.revision_of_document_id = parent.document_id
+        WHERE parent.workspace_id = ? AND parent.epoch = ?
+      )
+      SELECT COUNT(*) AS count FROM document_chain
+    `).get(
+      context.workspaceId,
+      context.epoch,
+      documentId,
+      context.workspaceId,
+      context.epoch,
+    ) as { count: number }
+    return row.count
+  }
+
+  #structuredClinicalDocuments(context: ActorContext, caseId: string) {
+    const rows = this.#database.driver.prepare(`
+      SELECT document_id, composition_id, bundle_id, provenance_id,
+        revision_of_document_id, signed_at
+      FROM signed_clinical_document
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      ORDER BY signed_at, document_id
+    `).all(context.workspaceId, context.epoch, caseId) as Array<{
+      bundle_id: string
+      composition_id: string
+      document_id: string
+      provenance_id: string
+      revision_of_document_id: string | null
+      signed_at: string
+    }>
+    const documentsById = new Map<string, { compositionId: string; revisionNumber: number }>()
+    return rows.flatMap(row => {
+      const composition = this.#fhir.read(context, 'Composition', row.composition_id)
+      const content = structuredClinicalDocumentFromComposition(composition)
+      if (content === undefined) return []
+      const provenance = provenanceReasonSchema.parse(
+        this.#fhir.read(context, 'Provenance', row.provenance_id),
+      )
+      const revisionReason = provenance.reason?.[0]?.concept.text
+      const parent = row.revision_of_document_id === null
+        ? undefined
+        : documentsById.get(row.revision_of_document_id)
+      const revisionNumber = (parent?.revisionNumber ?? 0) + 1
+      documentsById.set(row.document_id, {
+        compositionId: row.composition_id,
+        revisionNumber,
+      })
+      return [{
+        bundleId: row.bundle_id,
+        compositionId: row.composition_id,
+        compositionVersion: composition.meta?.versionId ?? '1',
+        content,
+        documentId: row.document_id,
+        provenanceId: row.provenance_id,
+        revisionNumber,
+        ...(parent === undefined ? {} : { revisionOfCompositionId: parent.compositionId }),
+        ...(revisionReason === undefined ? {} : { revisionReason }),
+        signedAt: row.signed_at,
+      }]
+    })
   }
 
   #consultationState(context: ActorContext, caseId: string) {

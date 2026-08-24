@@ -316,9 +316,104 @@ export const askConsultationQuestionResponseSchema = commandResponseSchema(z.obj
   record: consultationRecordSchema,
 }).strict())
 
+export const clinicalDocumentContentSchema = z.object({
+  assessment: z.string().trim().min(2).max(4_000),
+  chiefComplaint: z.string().trim().min(2).max(1_000),
+  disposition: z.string().trim().min(2).max(4_000),
+  followUp: z.string().trim().min(2).max(4_000),
+  historyOfPresentIllness: z.string().trim().min(2).max(5_000),
+  physicalExamination: z.string().trim().min(2).max(4_000),
+}).strict()
+
+export const saveClinicalDocumentDraftRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: z.object({
+    document: clinicalDocumentContentSchema,
+    expectedDraftVersion: z.number().int().nonnegative(),
+  }).strict(),
+}).strict()
+
+export const clinicalDocumentDraftResponseSchema = commandResponseSchema(z.object({
+  caseId: z.string().min(1),
+  draftVersion: z.number().int().positive(),
+}).strict())
+
+export const previewClinicalDocumentSignRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: z.object({
+    expectedDraftVersion: z.number().int().positive(),
+  }).strict(),
+}).strict()
+
+export const clinicalDocumentSignPreviewResponseSchema = commandResponseSchema(z.object({
+  commitToken: z.string().min(1),
+  document: z.object({
+    content: clinicalDocumentContentSchema,
+    version: z.number().int().positive(),
+  }).strict(),
+  expiresAt: z.string().min(1),
+  previewId: z.string().min(1),
+}).strict())
+
+export const signClinicalDocumentRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: z.object({
+    commitToken: z.string().min(16).max(256),
+    previewId: z.string().min(1).max(128),
+  }).strict(),
+}).strict()
+
+const clinicalDocumentRevisionReasonSchema = z.string().trim().min(2).max(500)
+
+export const reviseClinicalDocumentRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: z.union([
+    z.object({
+      document: clinicalDocumentContentSchema,
+      reason: clinicalDocumentRevisionReasonSchema,
+    }).strict(),
+    z.object({
+      assessment: z.string().trim().min(2).max(4_000),
+      plan: z.string().trim().min(2).max(4_000),
+      reason: clinicalDocumentRevisionReasonSchema,
+    }).strict(),
+  ]),
+}).strict()
+
+export const clinicalDocumentSignResponseSchema = commandResponseSchema(z.object({
+  bundleId: z.string().min(1),
+  compositionId: z.string().min(1),
+  compositionVersion: z.string().regex(/^\d+$/),
+  documentId: z.string().min(1),
+  provenanceId: z.string().min(1),
+  revisionNumber: z.literal(1),
+}).strict())
+
+export const signedClinicalDocumentSchema = z.object({
+  bundleId: z.string().min(1),
+  compositionId: z.string().min(1),
+  compositionVersion: z.string().regex(/^\d+$/),
+  content: clinicalDocumentContentSchema,
+  documentId: z.string().min(1),
+  provenanceId: z.string().min(1),
+  revisionNumber: z.number().int().positive(),
+  revisionOfCompositionId: z.string().min(1).optional(),
+  revisionReason: z.string().min(1).optional(),
+  signedAt: z.string().min(1),
+}).strict()
+
+export const clinicalDocumentStateSchema = z.object({
+  draft: clinicalDocumentContentSchema.extend({
+    updatedAt: z.string().min(1),
+    version: z.number().int().positive(),
+  }).strict().optional(),
+  signed: z.array(signedClinicalDocumentSchema),
+}).strict()
+
 export const doctorCaseDetailSchema = z.object({
   allergies: z.array(allergyWarningSchema),
   caseId: z.string().min(1),
+  clinicalDocument: clinicalDocumentStateSchema.optional(),
   consultation: z.object({
     questions: z.array(consultationQuestionSchema),
     records: z.array(consultationRecordSchema),
@@ -451,7 +546,10 @@ export const clinicalSignResponseSchema = commandResponseSchema(z.object({
 export const clinicalDocumentRevisionResponseSchema = commandResponseSchema(z.object({
   bundleId: z.string().min(1),
   compositionId: z.string().min(1),
+  compositionVersion: z.string().regex(/^\d+$/),
+  documentId: z.string().min(1),
   provenanceId: z.string().min(1),
+  revisionNumber: z.number().int().min(2),
   revisionOfCompositionId: z.string().min(1),
 }))
 
@@ -569,6 +667,7 @@ export type SessionContext = z.infer<typeof sessionContextSchema>
 export type ScenarioState = z.infer<typeof scenarioStateSchema>
 export type PatientSummary = z.infer<typeof patientSummarySchema>
 export type ClinicalPresentation = z.infer<typeof clinicalPresentationSchema>
+export type ClinicalDocumentContent = z.infer<typeof clinicalDocumentContentSchema>
 export type VirtualPatientList = z.infer<typeof virtualPatientListSchema>
 export type ClinicalCatalog = z.infer<typeof clinicalCatalogSchema>
 export type TriageQueueItem = z.infer<typeof triageQueueSchema>['items'][number]

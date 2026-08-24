@@ -37,7 +37,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 11,
+      schemaVersion: 12,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -52,14 +52,15 @@ describe('SQLite lifecycle', () => {
         '0008_virtual-patient-intake.sql',
         '0009_consultation-record.sql',
         '0010_consultation-question-backfill.sql',
+        '0011_structured-clinical-document.sql',
       ],
-      schemaVersion: 11,
+      schemaVersion: 12,
     })
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 11 })
-    expect(reopened.diagnostics().schemaVersion).toBe(11)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 12 })
+    expect(reopened.diagnostics().schemaVersion).toBe(12)
     reopened.close()
   })
 
@@ -372,12 +373,75 @@ describe('SQLite lifecycle', () => {
     }
     expect(readQuestionRules(seededContext)).toEqual(expectedQuestionRules)
 
-    expect(applyMigrations(database)).toEqual({
+    await copyFile(
+      join(process.cwd(), 'drizzle', '0010_consultation-question-backfill.sql'),
+      join(legacyMigrationDirectory, '0010_consultation-question-backfill.sql'),
+    )
+    expect(applyMigrations(database, legacyMigrationDirectory)).toEqual({
       applied: ['0010_consultation-question-backfill.sql'],
       schemaVersion: 11,
     })
     expect(readQuestionRules(context)).toEqual(expectedQuestionRules)
     expect(readQuestionRules(seededContext)).toEqual(expectedQuestionRules)
+    database.driver.prepare(`
+      INSERT INTO signed_clinical_document (
+        workspace_id, epoch, document_id, case_id, composition_id, bundle_id,
+        provenance_id, signed_by, signed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'document-legacy-root',
+      'case-legacy',
+      'composition-legacy-root',
+      'bundle-legacy-root',
+      'provenance-legacy-root',
+      'actor-legacy-doctor',
+      '2026-08-24T09:00:00+08:00',
+    )
+    await copyFile(
+      join(process.cwd(), 'drizzle', '0011_structured-clinical-document.sql'),
+      join(legacyMigrationDirectory, '0011_structured-clinical-document.sql'),
+    )
+    expect(applyMigrations(database, legacyMigrationDirectory)).toEqual({
+      applied: ['0011_structured-clinical-document.sql'],
+      schemaVersion: 12,
+    })
+    expect(database.driver.prepare('PRAGMA table_info(clinical_document_draft)').all()).toHaveLength(7)
+    expect(database.driver.prepare('PRAGMA table_info(clinical_document_sign_preview)').all()).toHaveLength(9)
+    expect(() => database.driver.prepare(`
+      INSERT INTO signed_clinical_document (
+        workspace_id, epoch, document_id, case_id, composition_id, bundle_id,
+        provenance_id, signed_by, signed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'document-second-root',
+      'case-legacy',
+      'composition-second-root',
+      'bundle-second-root',
+      'provenance-second-root',
+      'actor-legacy-doctor',
+      '2026-08-24T09:01:00+08:00',
+    )).toThrow(/UNIQUE constraint failed/)
+    expect(database.driver.prepare(`
+      INSERT INTO signed_clinical_document (
+        workspace_id, epoch, document_id, case_id, composition_id, bundle_id,
+        provenance_id, revision_of_document_id, signed_by, signed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'document-legacy-revision',
+      'case-legacy',
+      'composition-legacy-revision',
+      'bundle-legacy-revision',
+      'provenance-legacy-revision',
+      'document-legacy-root',
+      'actor-legacy-doctor',
+      '2026-08-24T09:02:00+08:00',
+    ).changes).toBe(1)
     const consultationRecordColumns = database.driver.prepare(
       'PRAGMA table_info(consultation_record)',
     ).all() as Array<{ name: string }>
@@ -421,7 +485,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(11)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(12)
     await runtime.close()
   })
 
@@ -491,7 +555,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 11,
+      schemaVersion: 12,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -503,11 +567,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 11,
+      expectedSchemaVersion: 12,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 11,
+      schemaVersion: 12,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -691,7 +755,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(11),
+      schemaVersion: z.literal(12),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -702,26 +766,27 @@ describe('SQLite lifecycle', () => {
       '0008_virtual-patient-intake.sql',
       '0009_consultation-record.sql',
       '0010_consultation-question-backfill.sql',
+      '0011_structured-clinical-document.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 11 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 12 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 11 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 12 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 11 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 12 })
   })
 })

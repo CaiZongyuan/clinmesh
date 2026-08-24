@@ -1,5 +1,11 @@
 import { extname } from 'node:path'
 import type { HealthResponse } from '@clinmesh/contracts/health'
+import {
+  previewClinicalDocumentSignRequestSchema,
+  reviseClinicalDocumentRequestSchema,
+  saveClinicalDocumentDraftRequestSchema,
+  signClinicalDocumentRequestSchema,
+} from '@clinmesh/contracts/his'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
@@ -424,6 +430,53 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.put('/api/his/v1/encounters/:encounterId/clinical-document/draft', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = saveClinicalDocumentDraftRequestSchema.parse(await context.req.json())
+        return context.json(workflow.saveClinicalDocumentDraft({
+          context: await actor(context),
+          document: body.input.document,
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/clinical-document/actions/preview-sign', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = previewClinicalDocumentSignRequestSchema.parse(await context.req.json())
+        return context.json(workflow.previewStructuredClinicalDocumentSign({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/clinical-document/actions/sign', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = signClinicalDocumentRequestSchema.parse(await context.req.json())
+        return context.json(workflow.signStructuredClinicalDocument({
+          commitToken: body.input.commitToken,
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          previewId: body.input.previewId,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
     app.post('/api/his/v1/encounters/:encounterId/actions/start-first-visit', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
@@ -567,20 +620,16 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.post('/api/his/v1/clinical-documents/:compositionId/actions/revise', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
-        const body = z.object({
-          expectedVersions: z.record(z.string(), z.string()),
-          input: z.object({
-            assessment: z.string().trim().min(2).max(4_000),
-            plan: z.string().trim().min(2).max(4_000),
-            reason: z.string().trim().min(2).max(500),
-          }),
-        }).parse(await context.req.json())
+        const body = reviseClinicalDocumentRequestSchema.parse(await context.req.json())
         return context.json(workflow.reviseClinicalDocument({
-          ...body.input,
           compositionId: context.req.param('compositionId'),
           context: await actor(context),
           expectedVersions: body.expectedVersions,
           idempotencyKey: idempotencyKey(context),
+          reason: body.input.reason,
+          revision: 'document' in body.input
+            ? { document: body.input.document }
+            : { assessment: body.input.assessment, plan: body.input.plan },
         }))
       } catch (error) {
         return apiErrorResponse(context, error)
