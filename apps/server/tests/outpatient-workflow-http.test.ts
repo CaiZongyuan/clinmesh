@@ -8,6 +8,7 @@ import {
   fhirResourceSchema,
 } from '@clinmesh/contracts/fhir'
 import {
+  acknowledgeLaboratoryReportResponseSchema,
   apiErrorSchema,
   askConsultationQuestionResponseSchema,
   billingQueueSchema,
@@ -19,6 +20,7 @@ import {
   clinicalDocumentSignResponseSchema,
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
+  correctLaboratoryReportResponseSchema,
   createPatientResponseSchema,
   deleteLaboratoryRequestDraftRequestSchema,
   dispenseResponseSchema,
@@ -117,6 +119,58 @@ async function startVirtualPatientConsultation(runtime: TestRuntime, password: s
   )
   const started = startVirtualPatientResponseSchema.parse(await startResponse.json()).data
   return { doctorCookie, started }
+}
+
+async function createIndependentReportedLaboratoryRequest(
+  runtime: TestRuntime,
+  password: string,
+) {
+  const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+  const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+  const draftResponse = await runtime.app.request(
+    `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+    {
+      body: JSON.stringify({
+        expectedVersions,
+        input: {
+          catalogItemId: 'lab-cbc',
+          expectedDraftVersion: 0,
+          indicationCode: 'fever',
+        },
+      }),
+      headers: commandHeaders(doctorCookie),
+      method: 'PUT',
+    },
+  )
+  const draft = laboratoryRequestDraftResponseSchema.parse(await draftResponse.json()).data
+  const issueResponse = await runtime.app.request(
+    `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
+    {
+      body: JSON.stringify({
+        expectedVersions,
+        input: { expectedDraftVersion: draft.draftVersion },
+      }),
+      headers: commandHeaders(doctorCookie),
+      method: 'POST',
+    },
+  )
+  const issued = issueLaboratoryRequestResponseSchema.parse(await issueResponse.json()).data.request
+  for (const kind of [
+    'laboratory.accept-request',
+    'laboratory.start-request',
+    'laboratory.report-request',
+  ]) {
+    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({ kind, status: 'completed' })
+  }
+  const detailResponse = await runtime.app.request(
+    `/api/his/v1/doctor/cases/${started.caseId}`,
+    { headers: { cookie: doctorCookie } },
+  )
+  const request = doctorCaseDetailSchema.parse(
+    await detailResponse.json(),
+  ).laboratoryRequests?.requests.find(candidate => candidate.id === issued.id)
+  if (request?.report === undefined) throw new Error('Independent laboratory report was not created')
+  return { doctorCookie, request: { ...request, report: request.report }, started }
 }
 
 async function createSignedStructuredClinicalDocument(runtime: TestRuntime, password: string) {
@@ -2394,6 +2448,419 @@ describe('outpatient workflow HTTP contract', () => {
 
     expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
       laboratoryRequests: { reportingSupported: false },
+    })
+  })
+
+  it('persists an idempotent doctor acknowledgement without changing the signed report', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-acknowledgement-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, request, started } = await createIndependentReportedLaboratoryRequest(
+      runtime,
+      password,
+    )
+    const body = {
+      expectedVersions: {
+        [`DiagnosticReport/${request.report.diagnosticReportId}`]: '1',
+      },
+      input: { expectedRequestVersion: request.version },
+    }
+    const acknowledge = () => runtime.app.request(
+      `/api/his/v1/laboratory-requests/${request.id}/reports/${request.report?.diagnosticReportId}/actions/acknowledge`,
+      {
+        body: JSON.stringify(body),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    const response = await acknowledge()
+    expect(response.status).toBe(200)
+    const first = acknowledgeLaboratoryReportResponseSchema.parse(await response.json())
+    expect(first.data).toMatchObject({
+      diagnosticReportId: request.report.diagnosticReportId,
+      requestId: request.id,
+      requestVersion: request.version + 1,
+      status: 'acknowledged',
+    })
+    expect(first.effects).toEqual([{
+      kind: 'created',
+      reference: `ReportAcknowledgement/${first.data.acknowledgementId}`,
+      versionId: '1',
+    }])
+
+    const duplicate = await acknowledge()
+    expect(duplicate.status).toBe(200)
+    const replay = acknowledgeLaboratoryReportResponseSchema.parse(await duplicate.json())
+    expect(replay.data).toEqual(first.data)
+    expect(replay.effects).toEqual([])
+
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
+      laboratoryRequests: {
+        requests: [expect.objectContaining({
+          id: request.id,
+          report: expect.objectContaining({
+            acknowledgement: expect.objectContaining({
+              acknowledgedAt: first.data.acknowledgedAt,
+              id: first.data.acknowledgementId,
+            }),
+            diagnosticReportId: request.report.diagnosticReportId,
+            status: 'final',
+          }),
+          status: 'acknowledged',
+          version: request.version + 1,
+        })],
+      },
+    })
+    const reportResponse = await runtime.app.request(
+      `/fhir/R5/DiagnosticReport/${request.report.diagnosticReportId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await reportResponse.json())).toMatchObject({
+      meta: { versionId: '1' },
+      status: 'final',
+    })
+  })
+
+  it('rejects acknowledgement while the laboratory report is not signed', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-unsigned-laboratory-report-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, request } = await createIndependentReportedLaboratoryRequest(
+      runtime,
+      password,
+    )
+    const report = runtime.fhir.read(
+      { epoch: 'epoch-1', workspaceId: 'workspace-demo' },
+      'DiagnosticReport',
+      request.report.diagnosticReportId,
+    )
+    runtime.fhir.update(
+      { epoch: 'epoch-1', workspaceId: 'workspace-demo' },
+      { ...report, status: 'preliminary' },
+      '1',
+    )
+
+    const response = await runtime.app.request(
+      `/api/his/v1/laboratory-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/acknowledge`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`DiagnosticReport/${request.report.diagnosticReportId}`]: '2',
+          },
+          input: { expectedRequestVersion: request.version },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    expect(response.status).toBe(409)
+    expect(apiErrorSchema.parse(await response.json())).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
+  })
+
+  it('rejects acknowledgement by a doctor who did not author the laboratory request', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-report-owner-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, request } = await createIndependentReportedLaboratoryRequest(
+      runtime,
+      password,
+    )
+    runtime.fhir.create(
+      { epoch: 'epoch-1', workspaceId: 'workspace-demo' },
+      {
+        resourceType: 'Practitioner',
+        id: 'practitioner-other-outpatient-doctor',
+        active: true,
+        name: [{ text: '合成第二门诊医生' }],
+      },
+    )
+    runtime.database.driver.prepare(`
+      UPDATE practitioner_role_binding
+      SET practitioner_id = 'practitioner-other-outpatient-doctor'
+      WHERE workspace_id = 'workspace-demo'
+        AND practitioner_role_id = 'practitioner-role-outpatient-doctor'
+    `).run()
+
+    const response = await runtime.app.request(
+      `/api/his/v1/laboratory-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/acknowledge`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`DiagnosticReport/${request.report.diagnosticReportId}`]: '1',
+          },
+          input: { expectedRequestVersion: request.version },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    expect(response.status).toBe(403)
+    expect(apiErrorSchema.parse(await response.json())).toMatchObject({
+      error: { code: 'ROLE_NOT_ALLOWED' },
+    })
+  })
+
+  it('creates a new immutable report chain while preserving the acknowledged report', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-report-correction-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, request, started } = await createIndependentReportedLaboratoryRequest(
+      runtime,
+      password,
+    )
+    const acknowledgementResponse = await runtime.app.request(
+      `/api/his/v1/laboratory-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/acknowledge`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`DiagnosticReport/${request.report.diagnosticReportId}`]: '1',
+          },
+          input: { expectedRequestVersion: request.version },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(acknowledgementResponse.status).toBe(200)
+    const acknowledgement = acknowledgeLaboratoryReportResponseSchema.parse(
+      await acknowledgementResponse.json(),
+    )
+    const correctedWhiteCellValue = 9.4
+    const correctionBody = {
+      expectedVersions: {
+        [`DiagnosticReport/${request.report.diagnosticReportId}`]: '1',
+      },
+      input: {
+        conclusion: '复核后白细胞计数位于参考范围内。',
+        expectedRequestVersion: acknowledgement.data.requestVersion,
+        reason: '复核仪器原始数据后更正白细胞计数。',
+        results: request.report.results.map(result => ({
+          code: result.code,
+          value: result.code === '6690-2' ? correctedWhiteCellValue : result.value,
+        })),
+      },
+    }
+    const unauthorizedCorrectionResponse = await runtime.app.request(
+      `/api/his/v1/laboratory-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/correct`,
+      {
+        body: JSON.stringify(correctionBody),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(unauthorizedCorrectionResponse.status).toBe(403)
+    expect(apiErrorSchema.parse(await unauthorizedCorrectionResponse.json())).toMatchObject({
+      error: { code: 'ROLE_NOT_ALLOWED' },
+    })
+
+    const administratorCookie = await signIn(runtime, 'admin@demo.clinmesh.local', password)
+    const correctionResponse = await runtime.app.request(
+      `/api/his/v1/laboratory-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/correct`,
+      {
+        body: JSON.stringify(correctionBody),
+        headers: commandHeaders(administratorCookie),
+        method: 'POST',
+      },
+    )
+
+    expect(correctionResponse.status).toBe(200)
+    const correction = correctLaboratoryReportResponseSchema.parse(await correctionResponse.json())
+    expect(correction.data).toMatchObject({
+      previousDiagnosticReportId: request.report.diagnosticReportId,
+      requestVersion: acknowledgement.data.requestVersion + 1,
+      status: 'reported',
+    })
+    expect(correction.data.diagnosticReportId).not.toBe(request.report.diagnosticReportId)
+
+    const repeatedAcknowledgementResponse = await runtime.app.request(
+      `/api/his/v1/laboratory-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/acknowledge`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`DiagnosticReport/${request.report.diagnosticReportId}`]: '1',
+          },
+          input: { expectedRequestVersion: request.version },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(repeatedAcknowledgementResponse.status).toBe(200)
+    expect(acknowledgeLaboratoryReportResponseSchema.parse(
+      await repeatedAcknowledgementResponse.json(),
+    ).data).toMatchObject({
+      acknowledgementId: acknowledgement.data.acknowledgementId,
+      requestVersion: acknowledgement.data.requestVersion,
+    })
+
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    const detail = await detailResponse.json() as {
+      laboratoryRequests: { requests: Array<{
+        id: string
+        previousReports: Array<{
+          acknowledgement?: { id: string }
+          diagnosticReportId: string
+          results: Array<{ code: string; value: number }>
+          revisionNumber: number
+        }>
+        report: {
+          acknowledgement?: { id: string }
+          diagnosticReportId: string
+          results: Array<{ code: string; value: number }>
+          revisionNumber: number
+          revisionOfDiagnosticReportId?: string
+          revisionReason?: string
+        }
+        status: string
+      }> }
+    }
+    const correctedRequest = detail.laboratoryRequests.requests.find(item => item.id === request.id)
+    expect(correctedRequest).toMatchObject({
+      previousReports: [{
+        acknowledgement: { id: acknowledgement.data.acknowledgementId },
+        diagnosticReportId: request.report.diagnosticReportId,
+        revisionNumber: 1,
+      }],
+      report: {
+        diagnosticReportId: correction.data.diagnosticReportId,
+        revisionNumber: 2,
+        revisionOfDiagnosticReportId: request.report.diagnosticReportId,
+        revisionReason: '复核仪器原始数据后更正白细胞计数。',
+      },
+      status: 'reported',
+    })
+    expect(correctedRequest?.report.acknowledgement).toBeUndefined()
+    expect(correctedRequest?.report.results.find(result => result.code === '6690-2')).toMatchObject({
+      value: correctedWhiteCellValue,
+    })
+    expect(correctedRequest?.previousReports[0]?.results.find(
+      result => result.code === '6690-2',
+    )).toMatchObject({ value: 11.2 })
+
+    const oldReportResponse = await runtime.app.request(
+      `/fhir/R5/DiagnosticReport/${request.report.diagnosticReportId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await oldReportResponse.json())).toMatchObject({
+      meta: { versionId: '1' },
+      status: 'final',
+    })
+    const reportSearchResponse = await runtime.app.request(
+      `/fhir/R5/DiagnosticReport?encounter=Encounter/${started.encounterId}&_total=accurate`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await reportSearchResponse.json())).toMatchObject({ total: 2 })
+    const provenanceResponse = await runtime.app.request(
+      `/fhir/R5/Provenance/${correction.data.provenanceId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await provenanceResponse.json())).toMatchObject({
+      entity: expect.arrayContaining([{
+        role: 'revision',
+        what: { reference: `DiagnosticReport/${request.report.diagnosticReportId}` },
+      }]),
+      target: expect.arrayContaining([{
+        reference: `DiagnosticReport/${correction.data.diagnosticReportId}`,
+      }]),
+    })
+  })
+
+  it('allows only one concurrent correction of the latest laboratory report', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-report-correction-cas-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { request } = await createIndependentReportedLaboratoryRequest(runtime, password)
+    const administratorCookie = await signIn(runtime, 'admin@demo.clinmesh.local', password)
+    const correct = (value: number) => runtime.app.request(
+      `/api/his/v1/laboratory-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/correct`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`DiagnosticReport/${request.report.diagnosticReportId}`]: '1',
+          },
+          input: {
+            conclusion: `并发复核结果 ${value}。`,
+            expectedRequestVersion: request.version,
+            reason: `并发更正值 ${value}。`,
+            results: request.report.results.map(result => ({
+              code: result.code,
+              value: result.code === '6690-2' ? value : result.value,
+            })),
+          },
+        }),
+        headers: commandHeaders(administratorCookie),
+        method: 'POST',
+      },
+    )
+
+    const responses = await Promise.all([correct(9.3), correct(9.4)])
+    expect(responses.map(response => response.status).toSorted()).toEqual([200, 409])
+    const rejected = responses.find(response => response.status === 409)
+    if (rejected === undefined) throw new Error('A stale correction was not rejected')
+    expect(apiErrorSchema.parse(await rejected.json())).toMatchObject({
+      error: { code: 'LABORATORY_REQUEST_VERSION_CONFLICT' },
     })
   })
 

@@ -83,7 +83,9 @@ describe('HIS contracts', () => {
     const report = {
       conclusion: 'C 反应蛋白升高。',
       diagnosticReportId: 'diagnostic-report-crp-1',
+      diagnosticReportVersion: '1',
       issuedAt: '2026-08-24T09:00:00+08:00',
+      revisionNumber: 1,
       results: [result],
       specimenId: 'specimen-crp-1',
       status: 'final',
@@ -92,6 +94,7 @@ describe('HIS contracts', () => {
       catalogItemId: 'lab-crp',
       id: 'laboratory-request-crp-1',
       indicationCode: 'fever',
+      previousReports: [],
       serviceRequestId: 'service-request-crp-1',
       serviceRequestVersion: '2',
       taskId: 'task-crp-1',
@@ -107,7 +110,29 @@ describe('HIS contracts', () => {
     expect(laboratoryRequestSchema.safeParse({ ...request, report, status: 'reported' }).success).toBe(true)
     expect(laboratoryRequestSchema.safeParse({
       ...request,
+      report: { ...report, revisionOfDiagnosticReportId: 'diagnostic-report-crp-0' },
+      status: 'reported',
+    }).success).toBe(false)
+    expect(laboratoryRequestSchema.safeParse({
+      ...request,
+      report: { ...report, revisionReason: '复核仪器原始数据。' },
+      status: 'reported',
+    }).success).toBe(false)
+    expect(laboratoryRequestSchema.safeParse({
+      ...request,
       report,
+      status: 'acknowledged',
+    }).success).toBe(false)
+    expect(laboratoryRequestSchema.safeParse({
+      ...request,
+      report: {
+        ...report,
+        acknowledgement: {
+          acknowledgedAt: '2026-08-24T09:05:00+08:00',
+          acknowledgedBy: 'practitioner-outpatient-doctor',
+          id: 'acknowledgement-crp-1',
+        },
+      },
       status: 'acknowledged',
     }).success).toBe(true)
   })

@@ -486,19 +486,93 @@ export const laboratoryResultSchema = z.object({
   message: 'Laboratory result interpretation must match its value and reference range',
 })
 
+export const laboratoryReportAcknowledgementSchema = z.object({
+  acknowledgedAt: z.string().datetime({ offset: true }),
+  acknowledgedBy: z.string().min(1),
+  id: z.string().min(1),
+}).strict()
+
 export const laboratoryReportSchema = z.object({
+  acknowledgement: laboratoryReportAcknowledgementSchema.optional(),
   conclusion: z.string().min(1),
   diagnosticReportId: z.string().min(1),
+  diagnosticReportVersion: z.string().regex(/^\d+$/),
   issuedAt: z.string().datetime({ offset: true }),
+  revisionNumber: z.number().int().positive(),
+  revisionOfDiagnosticReportId: z.string().min(1).optional(),
+  revisionReason: z.string().min(1).optional(),
   results: z.array(laboratoryResultSchema).min(1),
   specimenId: z.string().min(1),
   status: z.literal('final'),
+}).strict().superRefine((report, context) => {
+  const isRevision = report.revisionNumber > 1
+  if (
+    isRevision === (report.revisionOfDiagnosticReportId !== undefined)
+    && isRevision === (report.revisionReason !== undefined)
+  ) return
+  context.addIssue({
+    code: 'custom',
+    message: isRevision
+      ? 'A revised laboratory report must identify its source and reason'
+      : 'The initial laboratory report cannot identify a revision source',
+    path: ['revisionNumber'],
+  })
+})
+
+export const acknowledgeLaboratoryReportRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: z.object({
+    expectedRequestVersion: z.number().int().positive(),
+  }).strict(),
 }).strict()
+
+export const acknowledgeLaboratoryReportResponseSchema = commandResponseSchema(z.object({
+  acknowledgementId: z.string().min(1),
+  acknowledgedAt: z.string().datetime({ offset: true }),
+  acknowledgedBy: z.string().min(1),
+  diagnosticReportId: z.string().min(1),
+  requestId: z.string().min(1),
+  requestVersion: z.number().int().positive(),
+  status: z.literal('acknowledged'),
+}).strict())
+
+const laboratoryReportCorrectionResultSchema = z.object({
+  code: z.string().min(1),
+  value: z.number().finite(),
+}).strict()
+
+export const correctLaboratoryReportRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: z.object({
+    conclusion: z.string().trim().min(2).max(2_000),
+    expectedRequestVersion: z.number().int().positive(),
+    reason: z.string().trim().min(2).max(500),
+    results: z.array(laboratoryReportCorrectionResultSchema).min(1).max(32),
+  }).strict().superRefine((input, context) => {
+    const codes = new Set(input.results.map(result => result.code))
+    if (codes.size === input.results.length) return
+    context.addIssue({
+      code: 'custom',
+      message: 'Laboratory report correction result codes must be unique',
+      path: ['results'],
+    })
+  }),
+}).strict()
+
+export const correctLaboratoryReportResponseSchema = commandResponseSchema(z.object({
+  diagnosticReportId: z.string().min(1),
+  previousDiagnosticReportId: z.string().min(1),
+  provenanceId: z.string().min(1),
+  requestId: z.string().min(1),
+  requestVersion: z.number().int().positive(),
+  status: z.literal('reported'),
+}).strict())
 
 export const laboratoryRequestSchema = z.object({
   catalogItemId: laboratoryRequestCatalogItemIdSchema,
   id: z.string().min(1),
   indicationCode: z.string().min(1),
+  previousReports: z.array(laboratoryReportSchema),
   report: laboratoryReportSchema.optional(),
   serviceRequestId: z.string().min(1),
   serviceRequestVersion: z.string().regex(/^\d+$/),
@@ -508,13 +582,25 @@ export const laboratoryRequestSchema = z.object({
   version: z.number().int().positive(),
 }).strict().superRefine((request, context) => {
   const requiresReport = request.status === 'reported' || request.status === 'acknowledged'
-  if (requiresReport === (request.report !== undefined)) return
+  if (requiresReport !== (request.report !== undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: requiresReport
+        ? 'A reported laboratory request must include its report'
+        : 'A laboratory request cannot include a report before it is reported',
+      path: ['report'],
+    })
+    return
+  }
+  if (request.report === undefined) return
+  const requiresAcknowledgement = request.status === 'acknowledged'
+  if (requiresAcknowledgement === (request.report.acknowledgement !== undefined)) return
   context.addIssue({
     code: 'custom',
-    message: requiresReport
-      ? 'A reported laboratory request must include its report'
-      : 'A laboratory request cannot include a report before it is reported',
-    path: ['report'],
+    message: requiresAcknowledgement
+      ? 'An acknowledged laboratory request must include its acknowledgement'
+      : 'A reported laboratory request cannot include a current acknowledgement',
+    path: ['report', 'acknowledgement'],
   })
 })
 

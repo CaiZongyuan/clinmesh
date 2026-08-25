@@ -1,7 +1,9 @@
 import { extname } from 'node:path'
 import type { HealthResponse } from '@clinmesh/contracts/health'
 import {
+  acknowledgeLaboratoryReportRequestSchema,
   cancelLaboratoryRequestRequestSchema,
+  correctLaboratoryReportRequestSchema,
   deleteLaboratoryRequestDraftRequestSchema,
   issueLaboratoryRequestRequestSchema,
   previewClinicalDocumentSignRequestSchema,
@@ -702,6 +704,63 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.post(
+      '/api/his/v1/laboratory-requests/:requestId/reports/:diagnosticReportId/actions/acknowledge',
+      async (context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const body = acknowledgeLaboratoryReportRequestSchema.parse(await context.req.json())
+          return context.json(workflow.acknowledgeLaboratoryReport({
+            context: await actor(context),
+            diagnosticReportId: context.req.param('diagnosticReportId'),
+            expectedRequestVersion: body.input.expectedRequestVersion,
+            expectedVersions: body.expectedVersions,
+            idempotencyKey: idempotencyKey(context),
+            requestId: context.req.param('requestId'),
+          }))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      },
+    )
+    app.post(
+      '/api/his/v1/laboratory-requests/:requestId/reports/:diagnosticReportId/actions/correct',
+      async (context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const body = correctLaboratoryReportRequestSchema.parse(await context.req.json())
+          const authenticatedContext = await actor(context)
+          if (authenticatedContext.roleCode !== 'administrator') {
+            throw new WorkflowError(
+              'ROLE_NOT_ALLOWED',
+              'Only an administrator can invoke the controlled laboratory report actor',
+            )
+          }
+          return context.json(workflow.correctLaboratoryReport({
+            conclusion: body.input.conclusion,
+            context: {
+              actorId: authenticatedContext.actorId,
+              epoch: authenticatedContext.epoch,
+              ...(authenticatedContext.organizationId === undefined ? {} : {
+                organizationId: authenticatedContext.organizationId,
+              }),
+              roleCode: 'lis-system',
+              scenarioRunId: authenticatedContext.scenarioRunId,
+              workspaceId: authenticatedContext.workspaceId,
+            },
+            diagnosticReportId: context.req.param('diagnosticReportId'),
+            expectedRequestVersion: body.input.expectedRequestVersion,
+            expectedVersions: body.expectedVersions,
+            idempotencyKey: idempotencyKey(context),
+            reason: body.input.reason,
+            requestId: context.req.param('requestId'),
+            results: body.input.results,
+          }))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      },
+    )
     app.post('/api/his/v1/encounters/:encounterId/actions/issue-laboratory-order', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)

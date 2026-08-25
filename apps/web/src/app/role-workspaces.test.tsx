@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import type { LaboratoryRequest } from '@clinmesh/contracts/his'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebApp } from './web-app.tsx'
@@ -277,7 +278,9 @@ function stubLaboratoryReportPolling(reportingSupported: boolean) {
   const report = {
     conclusion: 'C 反应蛋白升高。',
     diagnosticReportId: 'diagnostic-report-crp-1',
+    diagnosticReportVersion: '1',
     issuedAt: '2026-08-24T09:00:00+08:00',
+    revisionNumber: 1,
     results: [{
       code: '1988-5',
       display: 'C 反应蛋白',
@@ -343,6 +346,7 @@ function stubLaboratoryReportPolling(reportingSupported: boolean) {
             catalogItemId: 'lab-crp',
             id: 'laboratory-request-crp-1',
             indicationCode: 'fever',
+            previousReports: [],
             ...(reportReady ? { report } : {}),
             serviceRequestId: 'service-request-crp-1',
             serviceRequestVersion: reportReady ? '2' : '1',
@@ -1239,6 +1243,7 @@ describe('role workspaces', () => {
       catalogItemId: 'lab-crp'
       id: string
       indicationCode: string
+      previousReports: []
       serviceRequestId: string
       serviceRequestVersion: string
       status: 'issued'
@@ -1359,6 +1364,7 @@ describe('role workspaces', () => {
           catalogItemId: 'lab-crp',
           id: 'laboratory-request-crp-1',
           indicationCode: 'fever',
+          previousReports: [],
           serviceRequestId: 'service-request-crp-1',
           serviceRequestVersion: '1',
           status: 'issued',
@@ -1398,10 +1404,14 @@ describe('role workspaces', () => {
       indicationCode: 'fever',
     }
     let draftVersion = 1
-    const request = (status: 'accepted' | 'acknowledged' | 'cancelled' | 'in-progress' | 'issued' | 'reported', index: number) => ({
+    const request = (
+      status: 'accepted' | 'acknowledged' | 'cancelled' | 'in-progress' | 'issued' | 'reported',
+      index: number,
+    ): LaboratoryRequest => ({
       catalogItemId: index % 2 === 0 ? 'lab-cbc' : 'lab-crp',
       id: `laboratory-request-${index}`,
       indicationCode: 'fever',
+      previousReports: [],
       serviceRequestId: `service-request-${index}`,
       serviceRequestVersion: '1',
       status,
@@ -1409,12 +1419,14 @@ describe('role workspaces', () => {
       taskVersion: status === 'issued' ? '1' : '2',
       version: status === 'issued' ? 1 : 2,
     })
-    const reportedRequest = {
+    const reportedRequest: LaboratoryRequest = {
       ...request('reported', 4),
       report: {
         conclusion: '白细胞计数升高，其余血常规指标在参考范围内。',
         diagnosticReportId: 'diagnostic-report-cbc-1',
+        diagnosticReportVersion: '1',
         issuedAt: '2026-08-24T09:00:00+08:00',
+        revisionNumber: 1,
         results: [{
           code: '6690-2',
           display: '白细胞计数',
@@ -1443,17 +1455,48 @@ describe('role workspaces', () => {
         specimenId: 'specimen-cbc-1',
         status: 'final',
       },
-    } as const
-    const acknowledgedRequest = {
+    }
+    const acknowledgedRequest: LaboratoryRequest = {
       ...request('acknowledged', 5),
-      report: {
-        conclusion: 'C 反应蛋白降低。',
-        diagnosticReportId: 'diagnostic-report-crp-1',
-        issuedAt: '2026-08-24T09:00:00+08:00',
+      previousReports: [{
+        conclusion: 'C 反应蛋白升高。',
+        diagnosticReportId: 'diagnostic-report-crp-previous',
+        diagnosticReportVersion: '1',
+        issuedAt: '2026-08-24T08:55:00+08:00',
+        revisionNumber: 1,
         results: [{
           code: '1988-5',
           display: 'C 反应蛋白',
-          interpretation: 'low',
+          interpretation: 'high',
+          observationId: 'observation-crp-previous',
+          referenceRange: { high: 8, low: 3, text: '3-8 mg/L' },
+          unit: {
+            code: 'mg/L',
+            display: 'mg/L',
+            system: 'http://unitsofmeasure.org',
+          },
+          value: 12,
+        }],
+        specimenId: 'specimen-crp-1',
+        status: 'final',
+      }],
+      report: {
+        acknowledgement: {
+          acknowledgedAt: '2026-08-24T09:05:00+08:00',
+          acknowledgedBy: 'practitioner-outpatient-doctor',
+          id: 'acknowledgement-crp-1',
+        },
+        conclusion: '复核后 C 反应蛋白正常。',
+        diagnosticReportId: 'diagnostic-report-crp-1',
+        diagnosticReportVersion: '1',
+        issuedAt: '2026-08-24T09:00:00+08:00',
+        revisionNumber: 2,
+        revisionOfDiagnosticReportId: 'diagnostic-report-crp-previous',
+        revisionReason: '复核仪器原始数据。',
+        results: [{
+          code: '1988-5',
+          display: 'C 反应蛋白',
+          interpretation: 'normal',
           observationId: 'observation-crp-1',
           referenceRange: { high: 8, low: 3, text: '3-8 mg/L' },
           unit: {
@@ -1461,13 +1504,13 @@ describe('role workspaces', () => {
             display: 'mg/L',
             system: 'http://unitsofmeasure.org',
           },
-          value: 2,
+          value: 6,
         }],
         specimenId: 'specimen-crp-1',
         status: 'final',
       },
-    } as const
-    let requests = [
+    }
+    let requests: LaboratoryRequest[] = [
       request('issued', 1),
       request('accepted', 2),
       request('in-progress', 3),
@@ -1568,6 +1611,37 @@ describe('role workspaces', () => {
         requests = requests.map(request => request.id === cancelled.id ? cancelled : request)
         return Response.json(commandResponse({ request: cancelled }))
       }
+      if (url.pathname === '/api/his/v1/laboratory-requests/laboratory-request-4/reports/diagnostic-report-cbc-1/actions/acknowledge') {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedVersions: { 'DiagnosticReport/diagnostic-report-cbc-1': '1' },
+          input: { expectedRequestVersion: 2 },
+        })
+        const current = requests.find(request => request.id === 'laboratory-request-4')
+        if (current?.report === undefined) throw new Error('Reported laboratory request was not found')
+        const acknowledged = {
+          ...current,
+          report: {
+            ...current.report,
+            acknowledgement: {
+              acknowledgedAt: '2026-08-24T09:06:00+08:00',
+              acknowledgedBy: 'practitioner-outpatient-doctor',
+              id: 'acknowledgement-cbc-1',
+            },
+          },
+          status: 'acknowledged' as const,
+          version: 3,
+        }
+        requests = requests.map(request => request.id === acknowledged.id ? acknowledged : request)
+        return Response.json(commandResponse({
+          acknowledgementId: acknowledged.report.acknowledgement.id,
+          acknowledgedAt: acknowledged.report.acknowledgement.acknowledgedAt,
+          acknowledgedBy: acknowledged.report.acknowledgement.acknowledgedBy,
+          diagnosticReportId: acknowledged.report.diagnosticReportId,
+          requestId: acknowledged.id,
+          requestVersion: acknowledged.version,
+          status: acknowledged.status,
+        }))
+      }
       if (url.pathname === '/api/his/v1/encounters/encounter-virtual-1/laboratory-request/draft') {
         expect(init?.method).toBe('DELETE')
         expect(JSON.parse(String(init?.body))).toEqual({
@@ -1584,15 +1658,23 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     expect(await screen.findByText('已开具')).toBeTruthy()
-    for (const label of ['已受理', '执行中', '已报告', '医生已阅', '已取消']) {
+    for (const label of ['已受理', '执行中', '已报告', '已取消']) {
       expect(screen.getByText(label)).toBeTruthy()
     }
+    expect(screen.getAllByText('医生已阅')).toHaveLength(2)
     expect(screen.getByText('等待检验结果')).toBeTruthy()
     expect(screen.getByText('白细胞计数升高，其余血常规指标在参考范围内。')).toBeTruthy()
     expect(screen.getByRole('cell', { name: /11\.2 10\^9\/L/ })).toBeTruthy()
     expect(screen.getByRole('cell', { name: '3.5-9.5 x10^9/L' })).toBeTruthy()
-    expect(screen.getByText('偏高')).toBeTruthy()
-    expect(screen.getByText('正常')).toBeTruthy()
+    expect(screen.getAllByText('偏高')).toHaveLength(2)
+    expect(screen.getAllByText('正常')).toHaveLength(2)
+    expect(screen.getByText('第 2 版（当前）')).toBeTruthy()
+    expect(screen.getByText('第 1 版（已替代）')).toBeTruthy()
+    expect(screen.getByText('C 反应蛋白升高。')).toBeTruthy()
+    expect(screen.getByText('复核后 C 反应蛋白正常。')).toBeTruthy()
+    const acknowledgeButton = screen.getByRole('button', { name: '确认已阅 血常规' })
+    await user.click(acknowledgeButton)
+    await waitFor(() => expect(screen.queryByRole('button', { name: '确认已阅 血常规' })).toBeNull())
     const cancelButtons = screen.getAllByRole('button', { name: /取消检查申请/ })
     expect(cancelButtons).toHaveLength(1)
     expect(cancelButtons[0]?.getAttribute('aria-label')).toBe('取消检查申请 C 反应蛋白')

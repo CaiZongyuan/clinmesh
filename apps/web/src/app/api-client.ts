@@ -1,4 +1,5 @@
 import {
+  acknowledgeLaboratoryReportResponseSchema,
   apiErrorSchema,
   askConsultationQuestionResponseSchema,
   billingQueueSchema,
@@ -544,6 +545,25 @@ export function cancelLaboratoryRequest(input: {
         expectedRequestVersion: input.requestVersion,
         reasonCode: 'no-longer-needed',
       },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function acknowledgeLaboratoryReport(input: {
+  diagnosticReportId: string
+  diagnosticReportVersion: string
+  requestId: string
+  requestVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/laboratory-requests/${encodeURIComponent(input.requestId)}/reports/${encodeURIComponent(input.diagnosticReportId)}/actions/acknowledge`,
+    acknowledgeLaboratoryReportResponseSchema,
+    {
+      expectedVersions: {
+        [`DiagnosticReport/${input.diagnosticReportId}`]: input.diagnosticReportVersion,
+      },
+      input: { expectedRequestVersion: input.requestVersion },
     },
     { idempotencyKey },
   )

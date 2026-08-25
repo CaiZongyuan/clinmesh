@@ -34,6 +34,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, MessagesSquareIcon, PlayIcon, PlusIcon, RefreshCwIcon, SendIcon, ShieldAlertIcon, StethoscopeIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
 import { useState } from 'react'
 import {
+  acknowledgeLaboratoryReport,
   askConsultationQuestion,
   cancelLaboratoryRequest,
   deleteLaboratoryRequestDraft,
@@ -75,6 +76,12 @@ interface ConsultationAction {
 }
 
 interface LaboratoryRequestActions {
+  acknowledge: {
+    error: Error | null
+    onSubmit: (request: LaboratoryRequest) => void
+    pending: boolean
+    pendingRequestId?: string
+  }
   cancel: {
     error: Error | null
     onSubmit: (request: LaboratoryRequest) => void
@@ -376,6 +383,18 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
     }, newIdempotencyKey()),
     onSuccess: refreshCase,
   })
+  const acknowledgeReport = useMutation({
+    mutationFn: (request: LaboratoryRequest) => {
+      if (request.report === undefined) throw new Error(messages.consultationUnavailable)
+      return acknowledgeLaboratoryReport({
+        diagnosticReportId: request.report.diagnosticReportId,
+        diagnosticReportVersion: request.report.diagnosticReportVersion,
+        requestId: request.id,
+        requestVersion: request.version,
+      }, newIdempotencyKey())
+    },
+    onSuccess: refreshCase,
+  })
   const saveRevisit = useMutation({
     mutationFn: (input: {
       diagnosis: { code: string; display: string }
@@ -580,6 +599,14 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
             laboratoryCatalog={laboratoryCatalog}
             laboratoryItemId={resolvedLaboratoryItemId}
             laboratoryRequestActions={{
+              acknowledge: {
+                error: acknowledgeReport.error,
+                onSubmit: request => acknowledgeReport.mutate(request),
+                pending: acknowledgeReport.isPending,
+                ...(acknowledgeReport.isPending && acknowledgeReport.variables !== undefined
+                  ? { pendingRequestId: acknowledgeReport.variables.id }
+                  : {}),
+              },
               cancel: {
                 error: cancelRequest.error,
                 onSubmit: request => cancelRequest.mutate(request),
@@ -1097,33 +1124,111 @@ function LaboratoryRequestEditor({
           const item = catalogById.get(request.catalogItemId)
           return (
             <LaboratoryRequestReport
+              action={actions.acknowledge}
               itemName={(locale === 'zh-CN' ? item?.nameZh : item?.nameEn) ?? request.catalogItemId}
               key={`report:${request.id}`}
               locale={locale}
               messages={messages}
-              report={request.report}
-              requestId={request.id}
+              request={request}
             />
           )
         })}
+        {actions.acknowledge.error === null ? null : (
+          <ErrorAlert
+            message={getWorkspaceErrorMessage(actions.acknowledge.error, messages)}
+            title={getWorkspaceErrorTitle(
+              actions.acknowledge.error,
+              messages,
+              messages.operationFailed,
+            )}
+          />
+        )}
       </div>
     </div>
   )
 }
 
-function LaboratoryRequestReport({ itemName, locale, messages, report, requestId }: {
+function LaboratoryRequestReport({ action, itemName, locale, messages, request }: {
+  action: LaboratoryRequestActions['acknowledge']
   itemName: string
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
-  report: LaboratoryReport
-  requestId: string
+  request: LaboratoryRequest
 }): React.JSX.Element {
-  const headingId = `laboratory-request-report-${requestId}`
+  const report = request.report
+  if (report === undefined) throw new Error('The laboratory report is required')
+  const headingId = `laboratory-request-report-${request.id}`
+  const pendingThisReport = action.pendingRequestId === request.id
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3 border-t pt-4">
-      <h5 className="text-sm font-semibold" id={headingId}>
-        {itemName} · {messages.laboratoryReport}
-      </h5>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h5 className="text-sm font-semibold" id={headingId}>
+          {itemName} · {messages.laboratoryReport}
+        </h5>
+        {request.status !== 'reported' ? null : (
+          <Button
+            aria-label={`${messages.acknowledgeLaboratoryReport} ${itemName}`}
+            disabled={action.pending}
+            onClick={() => action.onSubmit(request)}
+            size="sm"
+            type="button"
+          >
+            {pendingThisReport
+              ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
+              : <CheckIcon data-icon="inline-start" />}
+            {messages.acknowledgeLaboratoryReport}
+          </Button>
+        )}
+      </div>
+      <LaboratoryReportVersion
+        current
+        locale={locale}
+        messages={messages}
+        report={report}
+      />
+      {request.previousReports.length === 0 ? null : (
+        <div className="flex flex-col gap-3">
+          <h6 className="text-xs font-semibold text-muted-foreground">
+            {messages.laboratoryReportHistory}
+          </h6>
+          {request.previousReports.toReversed().map(previousReport => (
+            <LaboratoryReportVersion
+              current={false}
+              key={previousReport.diagnosticReportId}
+              locale={locale}
+              messages={messages}
+              report={previousReport}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function LaboratoryReportVersion({ current, locale, messages, report }: {
+  current: boolean
+  locale: WorkspaceLocale
+  messages: ReturnType<typeof getWorkspaceMessages>
+  report: LaboratoryReport
+}): React.JSX.Element {
+  const versionLabel = locale === 'zh-CN'
+    ? `第 ${report.revisionNumber} 版（${current ? '当前' : '已替代'}）`
+    : `Version ${report.revisionNumber} (${current ? 'current' : 'replaced'})`
+  return (
+    <div className="flex flex-col gap-3 border-t pt-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={current ? 'secondary' : 'outline'}>{versionLabel}</Badge>
+        {report.acknowledgement === undefined ? null : (
+          <Badge variant="success">{messages.laboratoryReportAcknowledged}</Badge>
+        )}
+      </div>
+      {report.revisionReason === undefined ? null : (
+        <p className="text-xs text-muted-foreground">
+          <span className="font-medium">{messages.laboratoryReportRevisionReason}: </span>
+          {report.revisionReason}
+        </p>
+      )}
       <p className="text-sm">
         <span className="font-medium">{messages.laboratoryReportConclusion}: </span>
         {report.conclusion}
@@ -1156,7 +1261,7 @@ function LaboratoryRequestReport({ itemName, locale, messages, report, requestId
           ))}
         </TableBody>
       </Table>
-    </section>
+    </div>
   )
 }
 
