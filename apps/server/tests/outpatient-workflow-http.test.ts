@@ -24,6 +24,7 @@ import {
   correctLaboratoryReportResponseSchema,
   createPatientResponseSchema,
   deleteLaboratoryRequestDraftRequestSchema,
+  diagnosisDraftResponseSchema,
   dispenseResponseSchema,
   doctorCaseDetailSchema,
   doctorQueueSchema,
@@ -4597,7 +4598,7 @@ describe('outpatient workflow HTTP contract', () => {
       headers: { cookie: doctorCookie },
     })
     expect(catalogResponse.status).toBe(200)
-    expect(await catalogResponse.json()).toMatchObject({
+    expect(clinicalCatalogSchema.parse(await catalogResponse.json())).toMatchObject({
       diagnoses: expect.arrayContaining([
         expect.objectContaining({
           code: 'J10.1',
@@ -4642,7 +4643,7 @@ describe('outpatient workflow HTTP contract', () => {
     )
 
     expect(saveResponse.status).toBe(200)
-    expect(await saveResponse.json()).toMatchObject({
+    expect(diagnosisDraftResponseSchema.parse(await saveResponse.json())).toMatchObject({
       data: { draftVersion: 1 },
       effects: [{
         kind: 'created',
@@ -4655,7 +4656,7 @@ describe('outpatient workflow HTTP contract', () => {
       { headers: { cookie: doctorCookie } },
     )
     expect(restoredDetailResponse.status).toBe(200)
-    expect(await restoredDetailResponse.json()).toMatchObject({
+    expect(doctorCaseDetailSchema.parse(await restoredDetailResponse.json())).toMatchObject({
       diagnosis: {
         draft: {
           entries: [{
@@ -4707,18 +4708,24 @@ describe('outpatient workflow HTTP contract', () => {
       })
     )
 
-    expect((await saveDraft(
+    const initialResponse = await saveDraft(
       'diagnosis-influenza',
       '初始诊断草稿。',
       0,
-    )).status).toBe(200)
+    )
+    expect(initialResponse.status).toBe(200)
+    expect(diagnosisDraftResponseSchema.parse(await initialResponse.json())).toMatchObject({
+      data: { draftVersion: 1 },
+    })
     const currentResponse = await saveDraft(
       'diagnosis-acute-upper-respiratory-infection',
       '较新诊断草稿。',
       1,
     )
     expect(currentResponse.status).toBe(200)
-    expect(await currentResponse.json()).toMatchObject({ data: { draftVersion: 2 } })
+    expect(diagnosisDraftResponseSchema.parse(await currentResponse.json())).toMatchObject({
+      data: { draftVersion: 2 },
+    })
 
     const staleResponse = await saveDraft(
       'diagnosis-fever',
@@ -4726,7 +4733,7 @@ describe('outpatient workflow HTTP contract', () => {
       1,
     )
     expect(staleResponse.status).toBe(409)
-    expect(await staleResponse.json()).toMatchObject({
+    expect(apiErrorSchema.parse(await staleResponse.json())).toMatchObject({
       error: {
         code: 'WORKFLOW_CONFLICT',
         message: 'The diagnosis draft version has changed',
@@ -4787,6 +4794,9 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
     expect(saveResponse.status).toBe(200)
+    expect(diagnosisDraftResponseSchema.parse(await saveResponse.json())).toMatchObject({
+      data: { draftVersion: 1 },
+    })
     const conditionSearchPath
       = `/fhir/R5/Condition?patient=Patient/${started.patientId}&_total=accurate`
     const conditionCountBefore = fhirBundleSchema.parse(await (
@@ -4806,7 +4816,7 @@ describe('outpatient workflow HTTP contract', () => {
     )
 
     expect(confirmResponse.status).toBe(409)
-    expect(await confirmResponse.json()).toEqual({
+    expect(apiErrorSchema.parse(await confirmResponse.json())).toEqual({
       error: {
         code: 'DIAGNOSIS_PRIMARY_REQUIRED',
         message: 'Exactly one primary diagnosis is required',
@@ -4816,7 +4826,7 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/doctor/cases/${started.caseId}`,
       { headers: { cookie: doctorCookie } },
     )
-    expect(await detailResponse.json()).toMatchObject({
+    expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
       diagnosis: {
         draft: {
           entries: [
@@ -4877,6 +4887,9 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
     expect(saveResponse.status).toBe(200)
+    expect(diagnosisDraftResponseSchema.parse(await saveResponse.json())).toMatchObject({
+      data: { draftVersion: 1 },
+    })
     const confirm = (idempotencyKey: ReturnType<typeof randomUUID>) => runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/diagnosis/actions/confirm`,
       {
@@ -4996,6 +5009,135 @@ describe('outpatient workflow HTTP contract', () => {
     expect(restoredDetail.priorFacts.map(fact => fact.id)).not.toEqual(
       expect.arrayContaining(conditionIds),
     )
+  })
+
+  it('keeps independent and legacy diagnosis drafts mutually exclusive', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-diagnosis-owner-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createReportedCase(runtime, password)
+    const encounterId = testCase.registration.encounterId
+    const startResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${encounterId}/actions/start-revisit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${encounterId}`]: '5',
+            [`Task/${testCase.report.taskId}`]: '1',
+          },
+          input: {},
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(startVisitResponseSchema.parse(await startResponse.json())).toMatchObject({
+      data: { encounterVersion: '6', status: 'revisit-draft' },
+    })
+    const saveDiagnosisResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${encounterId}/diagnosis/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${encounterId}`]: '6' },
+          input: {
+            entries: [{ catalogItemId: 'diagnosis-influenza', role: 'primary' }],
+            expectedDraftVersion: 0,
+          },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(diagnosisDraftResponseSchema.parse(await saveDiagnosisResponse.json())).toMatchObject({
+      data: { draftVersion: 1 },
+    })
+
+    const legacyDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${encounterId}/drafts/revisit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${encounterId}`]: '6' },
+          input: {
+            diagnosis: {
+              code: 'J10.1',
+              display: '流感伴其他呼吸道表现，季节性流感病毒已标明',
+            },
+            document: {
+              assessment: '甲型流感，生命体征稳定。',
+              plan: '口服抗病毒药物，对症处理，必要时复诊。',
+            },
+            expectedVersions: {
+              documentDraft: 0,
+              prescription: 0,
+              revisitDraft: 0,
+            },
+            medications: [{
+              catalogItemId: 'medication-oseltamivir',
+              doseText: '75 mg',
+              frequencyCode: 'BID',
+              quantity: 10,
+            }],
+          },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(legacyDraftResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await legacyDraftResponse.json())).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
+    expect(runtime.database.driver.prepare(`
+      SELECT 1 FROM clinical_draft
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND draft_kind = 'revisit'
+    `).get('workspace-demo', 'epoch-1', testCase.caseId)).toBeUndefined()
+
+    runtime.database.driver.prepare(`
+      INSERT INTO clinical_draft (
+        workspace_id, epoch, case_id, draft_kind, version,
+        content_json, updated_by, updated_at
+      ) VALUES (?, ?, ?, 'revisit', 1, ?, ?, ?)
+    `).run(
+      'workspace-demo',
+      'epoch-1',
+      testCase.caseId,
+      JSON.stringify({
+        conditionId: 'legacy-condition-owner',
+        diagnosis: { code: 'J10.1', display: '甲型流感' },
+      }),
+      'actor-legacy-doctor',
+      '2026-08-24T09:00:00+08:00',
+    )
+    const confirmResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${encounterId}/diagnosis/actions/confirm`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${encounterId}`]: '6' },
+          input: { expectedDraftVersion: 1 },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(confirmResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await confirmResponse.json())).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
+    const conditionSearchResponse = await runtime.app.request(
+      `/fhir/R5/Condition?encounter=Encounter/${encounterId}&_total=accurate`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await conditionSearchResponse.json()).total).toBe(0)
   })
 
   it('starts revisit and saves versioned diagnosis, prescription, and document drafts without charging', async () => {

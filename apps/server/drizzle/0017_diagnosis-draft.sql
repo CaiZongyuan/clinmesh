@@ -66,6 +66,8 @@ CREATE TABLE diagnosis_confirmation (
   epoch TEXT NOT NULL,
   confirmation_id TEXT NOT NULL,
   case_id TEXT NOT NULL,
+  provenance_resource_type TEXT NOT NULL DEFAULT 'Provenance'
+    CHECK (provenance_resource_type = 'Provenance'),
   provenance_id TEXT NOT NULL,
   confirmed_by_actor_id TEXT NOT NULL,
   confirmed_by_practitioner_role_id TEXT NOT NULL,
@@ -74,7 +76,12 @@ CREATE TABLE diagnosis_confirmation (
   UNIQUE (workspace_id, epoch, case_id),
   UNIQUE (workspace_id, epoch, provenance_id),
   FOREIGN KEY (workspace_id, epoch, case_id)
-    REFERENCES outpatient_case (workspace_id, epoch, case_id) ON DELETE RESTRICT
+    REFERENCES outpatient_case (workspace_id, epoch, case_id) ON DELETE RESTRICT,
+  FOREIGN KEY (
+    workspace_id, epoch, provenance_resource_type, provenance_id
+  ) REFERENCES fhir_resource (
+    workspace_id, epoch, resource_type, resource_id
+  ) ON DELETE RESTRICT
 ) STRICT;
 
 CREATE TABLE diagnosis_entry (
@@ -82,6 +89,8 @@ CREATE TABLE diagnosis_entry (
   epoch TEXT NOT NULL,
   confirmation_id TEXT NOT NULL,
   ordinal INTEGER NOT NULL CHECK (ordinal > 0),
+  condition_resource_type TEXT NOT NULL DEFAULT 'Condition'
+    CHECK (condition_resource_type = 'Condition'),
   condition_id TEXT NOT NULL,
   catalog_item_id TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('primary', 'secondary')),
@@ -93,7 +102,12 @@ CREATE TABLE diagnosis_entry (
       workspace_id, epoch, confirmation_id
     ) ON DELETE RESTRICT,
   FOREIGN KEY (workspace_id, epoch, catalog_item_id)
-    REFERENCES diagnosis_catalog (workspace_id, epoch, item_id) ON DELETE RESTRICT
+    REFERENCES diagnosis_catalog (workspace_id, epoch, item_id) ON DELETE RESTRICT,
+  FOREIGN KEY (
+    workspace_id, epoch, condition_resource_type, condition_id
+  ) REFERENCES fhir_resource (
+    workspace_id, epoch, resource_type, resource_id
+  ) ON DELETE RESTRICT
 ) STRICT;
 
 CREATE UNIQUE INDEX diagnosis_entry_primary_unique

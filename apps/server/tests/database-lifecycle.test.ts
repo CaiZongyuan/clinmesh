@@ -611,12 +611,44 @@ describe('SQLite lifecycle', () => {
       'actor-legacy-doctor',
       '2026-08-24T09:03:00+08:00',
     )
-    database.driver.prepare(`
+    const insertDiagnosisConfirmation = database.driver.prepare(`
       INSERT INTO diagnosis_confirmation (
         workspace_id, epoch, confirmation_id, case_id, provenance_id,
         confirmed_by_actor_id, confirmed_by_practitioner_role_id, confirmed_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `)
+    expect(() => insertDiagnosisConfirmation.run(
+      context.workspaceId,
+      context.epoch,
+      'confirmation-missing-provenance',
+      'case-legacy',
+      'provenance-missing',
+      'actor-legacy-doctor',
+      'role-legacy-doctor',
+      '2026-08-24T09:03:00+08:00',
+    )).toThrow(/FOREIGN KEY constraint failed/)
+    const insertFhirResource = database.driver.prepare(`
+      INSERT INTO fhir_resource (
+        workspace_id, epoch, resource_type, resource_id, version_id,
+        last_updated, owner_kind, content_json, content_hash
+      ) VALUES (?, ?, ?, ?, 1, ?, 'his-command', ?, ?)
+    `)
+    for (const [resourceType, resourceId] of [
+      ['Provenance', 'provenance-diagnosis-legacy'],
+      ['Condition', 'condition-legacy-primary'],
+      ['Condition', 'condition-legacy-second-primary'],
+    ]) {
+      insertFhirResource.run(
+        context.workspaceId,
+        context.epoch,
+        resourceType,
+        resourceId,
+        '2026-08-24T09:03:00+08:00',
+        JSON.stringify({ id: resourceId, resourceType }),
+        `hash-${resourceId}`,
+      )
+    }
+    insertDiagnosisConfirmation.run(
       context.workspaceId,
       context.epoch,
       'confirmation-legacy',
@@ -632,6 +664,15 @@ describe('SQLite lifecycle', () => {
         condition_id, catalog_item_id, role
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `)
+    expect(() => insertDiagnosisEntry.run(
+      context.workspaceId,
+      context.epoch,
+      'confirmation-legacy',
+      1,
+      'condition-missing',
+      'diagnosis-influenza',
+      'primary',
+    )).toThrow(/FOREIGN KEY constraint failed/)
     insertDiagnosisEntry.run(
       context.workspaceId,
       context.epoch,

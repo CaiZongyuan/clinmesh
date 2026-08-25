@@ -2227,13 +2227,7 @@ export class WorkflowService {
       for (const entry of input.entries) {
         this.#diagnosisCatalogItem(input.context, entry.catalogItemId)
       }
-      const legacyDraft = this.#database.driver.prepare(`
-        SELECT 1 AS present FROM clinical_draft
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND draft_kind = 'revisit'
-      `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id)
-      if (legacyDraft !== undefined) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The legacy revisit draft already owns diagnosis editing')
-      }
+      this.#assertNoLegacyDiagnosisOwner(input.context, outpatientCase.case_id)
       const current = diagnosisStateRowSchema.optional().parse(
         this.#database.driver.prepare(`
           SELECT version, status, draft_json FROM diagnosis_state
@@ -2323,6 +2317,7 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for diagnosis confirmation')
       }
       this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+      this.#assertNoLegacyDiagnosisOwner(input.context, outpatientCase.case_id)
       const state = diagnosisStateRowSchema.optional().parse(
         this.#database.driver.prepare(`
           SELECT version, status, draft_json FROM diagnosis_state
@@ -2673,6 +2668,7 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not in revisit drafting')
       }
       this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+      this.#assertNoIndependentDiagnosisOwner(input.context, outpatientCase.case_id)
       const currentDrafts = this.#database.driver.prepare(`
         SELECT draft_kind, version, content_json FROM clinical_draft
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
@@ -7372,6 +7368,32 @@ export class WorkflowService {
       throw new WorkflowError('CATALOG_CONFLICT', 'The diagnosis catalog item is unavailable')
     }
     return row
+  }
+
+  #assertNoIndependentDiagnosisOwner(context: ActorContext, caseId: string): void {
+    const diagnosisState = this.#database.driver.prepare(`
+      SELECT 1 AS present FROM diagnosis_state
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get(context.workspaceId, context.epoch, caseId)
+    if (diagnosisState !== undefined) {
+      throw new WorkflowError(
+        'WORKFLOW_CONFLICT',
+        'The independent diagnosis state already owns diagnosis editing',
+      )
+    }
+  }
+
+  #assertNoLegacyDiagnosisOwner(context: ActorContext, caseId: string): void {
+    const legacyDraft = this.#database.driver.prepare(`
+      SELECT 1 AS present FROM clinical_draft
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND draft_kind = 'revisit'
+    `).get(context.workspaceId, context.epoch, caseId)
+    if (legacyDraft !== undefined) {
+      throw new WorkflowError(
+        'WORKFLOW_CONFLICT',
+        'The legacy revisit draft already owns diagnosis editing',
+      )
+    }
   }
 
   #diagnosisConfirmation(
