@@ -90,6 +90,17 @@ describe('HIS contracts', () => {
       expectedVersions: { 'Encounter/encounter-1': '4' },
       input: { completeScenario: true },
     }).success).toBe(false)
+    for (const expectedVersions of [
+      {},
+      { 'Encounter/encounter-1': '4', 'Task/task-1': '2' },
+      { 'Encounter/encounter-1': '4', 'Encounter/encounter-2': '1' },
+      { 'Encounter/encounter-1': 'latest' },
+    ]) {
+      expect(completeEncounterRequestSchema.safeParse({
+        expectedVersions,
+        input: {},
+      }).success).toBe(false)
+    }
     expect(encounterCompletionResponseSchema.safeParse({
       auditId: 'audit-1',
       data: {

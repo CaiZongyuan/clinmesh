@@ -525,7 +525,12 @@ export const encounterCompletionPreviewSchema = z.object({
 }).strict()
 
 export const completeEncounterRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: z.record(
+    z.string().regex(/^Encounter\/[A-Za-z0-9.-]{1,64}$/),
+    z.string().regex(/^\d+$/),
+  ).refine(versions => Object.keys(versions).length === 1, {
+    message: 'Exactly one Encounter expected version is required',
+  }),
   input: z.object({}).strict(),
 }).strict()
 

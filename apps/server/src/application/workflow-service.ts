@@ -410,6 +410,28 @@ const laboratoryRequestStateRowSchema = z.object({
   { message: 'Laboratory request draft fields must be present together' },
 )
 
+const encounterCompletionResourceSchema = fhirResourceSchema.extend({
+  actualPeriod: z.object({
+    end: z.iso.datetime({ offset: true }).optional(),
+    start: z.iso.datetime({ offset: true }),
+  }).loose(),
+  meta: z.object({
+    lastUpdated: z.iso.datetime({ offset: true }),
+    versionId: z.string().regex(/^\d+$/),
+  }).loose(),
+  resourceType: z.literal('Encounter'),
+  status: z.enum(['completed', 'in-progress']),
+}).loose()
+
+const signedClinicalDocumentRowSchema = z.object({
+  bundle_id: z.string().min(1),
+  composition_id: z.string().min(1),
+  document_id: z.string().min(1),
+  provenance_id: z.string().min(1),
+  revision_of_document_id: z.string().min(1).nullable(),
+  signed_at: z.iso.datetime({ offset: true }),
+}).strict()
+
 const virtualPatientVersionPayloadSchema = z.object({
   epoch: z.string().min(1),
   expectedVersions: z.record(z.string(), z.string()),
@@ -2308,6 +2330,17 @@ export class WorkflowService {
     expectedVersions: Record<string, string>
     idempotencyKey: string
   }): CommandResponse<z.infer<typeof encounterCompletionResponseSchema.shape.data>> {
+    this.#assertRole(input.context, ['outpatient-doctor'])
+    const expectedReference = `Encounter/${input.encounterId}`
+    if (
+      Object.keys(input.expectedVersions).length !== 1
+      || input.expectedVersions[expectedReference] === undefined
+    ) {
+      throw new WorkflowError(
+        'WORKFLOW_CONFLICT',
+        `Expected versions must contain only ${expectedReference}`,
+      )
+    }
     return this.#commands.execute({
       context: input.context,
       dataSchema: encounterCompletionResponseSchema.shape.data,
@@ -2316,8 +2349,7 @@ export class WorkflowService {
       input: { encounterId: input.encounterId },
       operation: 'encounter.complete',
     }, transaction => {
-      this.#assertRole(input.context, ['outpatient-doctor'])
-      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+      this.#assertExpectedVersions(input.expectedVersions, [expectedReference])
       const policy = encounterCompletionPreviewSchema.parse(
         this.#encounterCompletionPolicy(input.context, input.encounterId),
       )
@@ -2332,29 +2364,31 @@ export class WorkflowService {
             : `完诊条件未满足：${missing.join('；')}`,
         )
       }
-      const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
+      const encounter = encounterCompletionResourceSchema.parse(
+        transaction.fhir.read(input.context, 'Encounter', input.encounterId),
+      )
       const completedAt = this.#virtualTime(input.context)
-      const completedEncounter = transaction.fhir.update(input.context, {
-        ...encounter,
-        status: 'completed',
-        actualPeriod: {
-          ...((typeof encounter.actualPeriod === 'object' && encounter.actualPeriod !== null)
-            ? encounter.actualPeriod as Record<string, unknown>
-            : {}),
-          end: completedAt,
-        },
-      }, encounter.meta?.versionId ?? '1')
+      const completedEncounter = encounterCompletionResourceSchema.parse(
+        transaction.fhir.update(input.context, {
+          ...encounter,
+          status: 'completed',
+          actualPeriod: {
+            ...encounter.actualPeriod,
+            end: completedAt,
+          },
+        }, encounter.meta.versionId),
+      )
       return {
         data: {
           completedAt,
           encounterId: input.encounterId,
-          encounterVersion: completedEncounter.meta?.versionId ?? '1',
+          encounterVersion: completedEncounter.meta.versionId,
           status: 'completed' as const,
         },
         effects: [{
           kind: 'updated' as const,
           reference: `Encounter/${input.encounterId}`,
-          versionId: completedEncounter.meta?.versionId ?? '1',
+          versionId: completedEncounter.meta.versionId,
         }],
       }
     })
@@ -8126,20 +8160,15 @@ export class WorkflowService {
   }
 
   #structuredClinicalDocuments(context: ActorContext, caseId: string) {
-    const rows = this.#database.driver.prepare(`
-      SELECT document_id, composition_id, bundle_id, provenance_id,
-        revision_of_document_id, signed_at
-      FROM signed_clinical_document
-      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-      ORDER BY signed_at, document_id
-    `).all(context.workspaceId, context.epoch, caseId) as Array<{
-      bundle_id: string
-      composition_id: string
-      document_id: string
-      provenance_id: string
-      revision_of_document_id: string | null
-      signed_at: string
-    }>
+    const rows = z.array(signedClinicalDocumentRowSchema).parse(
+      this.#database.driver.prepare(`
+        SELECT document_id, composition_id, bundle_id, provenance_id,
+          revision_of_document_id, signed_at
+        FROM signed_clinical_document
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        ORDER BY signed_at, document_id
+      `).all(context.workspaceId, context.epoch, caseId),
+    )
     const documentsById = new Map<string, { compositionId: string; revisionNumber: number }>()
     return rows.flatMap(row => {
       const composition = this.#fhir.read(context, 'Composition', row.composition_id)
@@ -8195,17 +8224,19 @@ export class WorkflowService {
         'Encounter completion is available only for an independent Consultation',
       )
     }
-    const encounter = this.#fhir.read(context, 'Encounter', encounterId)
+    const encounter = encounterCompletionResourceSchema.parse(
+      this.#fhir.read(context, 'Encounter', encounterId),
+    )
     const diagnosis = this.#diagnosisConfirmation(context, outpatientCase.case_id)
     const primaryDiagnosisConfirmed = diagnosis?.entries.some(entry => entry.role === 'primary') === true
     const documents = this.#structuredClinicalDocuments(context, outpatientCase.case_id)
     const signedDocument = documents.at(-1)
-    const activeLaboratoryRequests = this.#database.driver.prepare(`
-      SELECT status FROM laboratory_request
-      WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND status <> 'cancelled'
-    `).all(context.workspaceId, context.epoch, outpatientCase.case_id) as Array<{
-      status: string
-    }>
+    const activeLaboratoryRequests = z.array(laboratoryRequestRowSchema.pick({ status: true })).parse(
+      this.#database.driver.prepare(`
+        SELECT status FROM laboratory_request
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND status <> 'cancelled'
+      `).all(context.workspaceId, context.epoch, outpatientCase.case_id),
+    )
     const requiredReportsAcknowledged = activeLaboratoryRequests.every(
       request => request.status === 'acknowledged',
     )
@@ -8213,23 +8244,25 @@ export class WorkflowService {
     const medicationConclusionRecorded = (
       prescription !== undefined && prescription.status !== 'withdrawn'
     ) || this.#noMedicationConclusion(context, outpatientCase.case_id) !== undefined
-    const clinicalDocumentDraft = this.#database.driver.prepare(`
-      SELECT 1 AS present FROM clinical_document_draft
-      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-    `).get(context.workspaceId, context.epoch, outpatientCase.case_id)
-    const diagnosisDraft = this.#database.driver.prepare(`
-      SELECT draft_json FROM diagnosis_state
-      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-    `).get(context.workspaceId, context.epoch, outpatientCase.case_id) as {
-      draft_json: string | null
-    } | undefined
+    const clinicalDocumentDraft = z.object({ present: z.literal(1) }).strict().optional().parse(
+      this.#database.driver.prepare(`
+        SELECT 1 AS present FROM clinical_document_draft
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      `).get(context.workspaceId, context.epoch, outpatientCase.case_id),
+    )
+    const diagnosisDraft = diagnosisStateRowSchema.pick({ draft_json: true }).optional().parse(
+      this.#database.driver.prepare(`
+        SELECT draft_json FROM diagnosis_state
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      `).get(context.workspaceId, context.epoch, outpatientCase.case_id),
+    )
     const laboratoryDraft = this.#laboratoryRequestState(context, outpatientCase.case_id)
-    const prescriptionDraft = this.#database.driver.prepare(`
-      SELECT draft_json FROM prescription_draft_state
-      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-    `).get(context.workspaceId, context.epoch, outpatientCase.case_id) as {
-      draft_json: string | null
-    } | undefined
+    const prescriptionDraft = prescriptionDraftStateRowSchema.pick({ draft_json: true }).optional().parse(
+      this.#database.driver.prepare(`
+        SELECT draft_json FROM prescription_draft_state
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      `).get(context.workspaceId, context.epoch, outpatientCase.case_id),
+    )
     let pendingDraftTarget: EncounterCompletionTarget | undefined
     if (signedDocument === undefined && clinicalDocumentDraft !== undefined) {
       pendingDraftTarget = 'clinical-document'
@@ -8293,7 +8326,7 @@ export class WorkflowService {
       canComplete: encounter.status === 'in-progress'
         && items.every(item => item.status === 'complete'),
       encounterId,
-      encounterVersion: encounter.meta?.versionId ?? '1',
+      encounterVersion: encounter.meta.versionId,
       items,
     }
   }
