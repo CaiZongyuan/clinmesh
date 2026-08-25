@@ -539,9 +539,7 @@ describe('SQLite lifecycle', () => {
     expect(database.driver.prepare(`
       SELECT value_json FROM scenario_hidden_fact
       WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
-    `).get(context.workspaceId, context.epoch)).toEqual({
-      value_json: expect.stringContaining('lab-cbc'),
-    })
+    `).get(context.workspaceId, context.epoch)).toBeUndefined()
     expect(database.driver.pragma('foreign_key_check')).toEqual([])
     expect(database.driver.pragma('integrity_check', { simple: true })).toBe('ok')
     database.close()

@@ -144,7 +144,9 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
     queryKey: detailKey,
     refetchInterval: query => selectedCase?.status === 'awaiting-report'
       || query.state.data?.laboratoryRequests?.requests.some(
-        request => request.status === 'issued' || request.status === 'accepted',
+        request => request.status === 'issued'
+          || request.status === 'accepted'
+          || request.status === 'in-progress',
       ) === true
       ? 1_500
       : false,

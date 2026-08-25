@@ -506,7 +506,17 @@ export const laboratoryRequestSchema = z.object({
   taskId: z.string().min(1),
   taskVersion: z.string().regex(/^\d+$/),
   version: z.number().int().positive(),
-}).strict()
+}).strict().superRefine((request, context) => {
+  const requiresReport = request.status === 'reported' || request.status === 'acknowledged'
+  if (requiresReport === (request.report !== undefined)) return
+  context.addIssue({
+    code: 'custom',
+    message: requiresReport
+      ? 'A reported laboratory request must include its report'
+      : 'A laboratory request cannot include a report before it is reported',
+    path: ['report'],
+  })
+})
 
 export const issueLaboratoryRequestRequestSchema = z.object({
   expectedVersions: z.record(z.string(), z.string()),

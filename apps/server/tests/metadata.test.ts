@@ -69,6 +69,7 @@ describe('FHIR metadata endpoint', () => {
           'DiagnosticReport',
           'Observation',
           'ServiceRequest',
+          'Specimen',
           'Task',
         ],
         type: 'reference',

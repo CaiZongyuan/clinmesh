@@ -2550,6 +2550,20 @@ describe('outpatient workflow HTTP contract', () => {
       entry: [{ resource: { id: reported.report.diagnosticReportId } }],
       total: 1,
     })
+    const provenanceSearch = await restartedRuntime.app.request(
+      `/fhir/R5/Provenance?target=Specimen/${reported.report.specimenId}&_total=accurate`,
+      { headers: { cookie: restartedDoctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await provenanceSearch.json())).toMatchObject({
+      entry: [{
+        resource: {
+          target: expect.arrayContaining([{
+            reference: `Specimen/${reported.report.specimenId}`,
+          }]),
+        },
+      }],
+      total: 1,
+    })
     const observationSearch = await restartedRuntime.app.request(
       `/fhir/R5/Observation?encounter=Encounter/${started.encounterId}&_count=100&_total=accurate`,
       { headers: { cookie: restartedDoctorCookie } },
@@ -2597,6 +2611,13 @@ describe('outpatient workflow HTTP contract', () => {
     )
     expect(fhirBundleSchema.parse(await reportsAfterDuplicate.json())).toMatchObject({ total: 1 })
     expect(reported).not.toHaveProperty('acknowledgement')
+    expect(restartedRuntime.database.driver.prepare(`
+      SELECT status, acknowledged_at FROM laboratory_request
+      WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+    `).get('workspace-demo', 'epoch-1', reported.id)).toEqual({
+      acknowledged_at: null,
+      status: 'reported',
+    })
   })
 
   it('reports only an in-progress formal request and deduplicates a different delivery event', async () => {

@@ -4233,11 +4233,17 @@ export class WorkflowService {
           'The laboratory request version has changed',
         )
       }
-      transaction.enqueue({
-        dedupKey: `laboratory-request:${request.request_id}:report`,
-        kind: 'laboratory.report-request',
-        payload: { requestId: request.request_id },
-      })
+      const supportsLaboratoryReports = this.#database.driver.prepare(`
+        SELECT 1 AS present FROM scenario_hidden_fact
+        WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
+      `).get(input.context.workspaceId, input.context.epoch) !== undefined
+      if (supportsLaboratoryReports) {
+        transaction.enqueue({
+          dedupKey: `laboratory-request:${request.request_id}:report`,
+          kind: 'laboratory.report-request',
+          payload: { requestId: request.request_id },
+        })
+      }
       return {
         data: { requestId: request.request_id, status: 'in-progress' as const },
         effects: [{
@@ -4424,6 +4430,7 @@ export class WorkflowService {
         resourceType: 'Provenance',
         id: provenanceId,
         target: [
+          { reference: `Specimen/${specimenId}` },
           { reference: `DiagnosticReport/${diagnosticReportId}` },
           ...observations.map(observation => ({ reference: `Observation/${observation.id}` })),
           { reference: `ServiceRequest/${request.service_request_id}` },

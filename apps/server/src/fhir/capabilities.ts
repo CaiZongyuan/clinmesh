@@ -109,7 +109,7 @@ const capabilityRegistry = {
       'target',
       'http://hl7.org/fhir/SearchParameter/Provenance-target',
       ['target'],
-      ['Bundle', 'Composition', 'DiagnosticReport', 'Observation', 'ServiceRequest', 'Task'],
+      ['Bundle', 'Composition', 'DiagnosticReport', 'Observation', 'ServiceRequest', 'Specimen', 'Task'],
     )]),
     resource('InventoryItem', 'domain-projection'),
     resource('AuditEvent', 'domain-projection'),

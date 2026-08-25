@@ -463,7 +463,7 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 - `encounter` 精确引用匹配：ChargeItem、Observation、ServiceRequest、DiagnosticReport、MedicationRequest、MedicationDispense 和 Composition。
 - Task `focus`：接受 Encounter 或 ServiceRequest 引用。
 - MedicationDispense `prescription`：只接受 MedicationRequest 引用。
-- Provenance `target`：只接受 Bundle 或 Composition 引用。
+- Provenance `target`：接受 Bundle、Composition、DiagnosticReport、Observation、ServiceRequest、Specimen 或 Task 引用。
 
 reference 参数只索引本地相对引用。资源写入时 Repository 按 registry 中的路径和 target 校验引用格式、目标资源类型以及当前 Workspace/Epoch 中的目标存在性；任一引用失败会使包含它的 Command 整体回滚。
 
@@ -1227,7 +1227,7 @@ clock_revision
 
 首期 Scenario blueprint 由 `ScenarioService` 中的受版本控制 TypeScript 数据定义，包含 scenario ID/version、schema version、seed、固定虚拟时间、Virtual Patient 可见表现与 Patient 绑定、合成目录、Hidden Fact、Reveal Policy 和模拟器规则。安装过程在一个 Command 事务中把定义和当前 Epoch 数据写入 SQLite；普通岗位 API 不暴露 Hidden Fact 或 Reveal Policy。
 
-当前提供 `candidate-fever-outpatient-v1` 与 `density-fever-outpatient-v1`。两者 `clinicalReview` 都是 `null`，因此没有任何场景标记为 `golden`；安装 API 只接受 `candidate` 或 `density`。数据库约束要求未来 `golden` 定义必须同时具有临床审核元数据。`density` 使用同一业务 schema，并增加合成患者和队列数据以验证分页与界面密度。
+当前安装 API 提供 `candidate-fever-outpatient-v2` 与 `density-fever-outpatient-v2`，并只接受 `candidate` 或 `density`。v2 增加确定性结构化检验结果；已存在的 v1 Scenario Run 和 reset 继续绑定原 v1 定义，不通过 migration 改写 Hidden Fact。两个当前定义的 `clinicalReview` 都是 `null`，因此没有任何场景标记为 `golden`；数据库约束要求未来 `golden` 定义必须同时具有临床审核元数据。`density` 使用同一业务 schema，并增加合成患者和队列数据以验证分页与界面密度。
 
 所有 seed、账户、患者、机构、目录、支付和检验内容都是合成数据。首期不从 Synthea 或 LLM 在线生成数据，也没有独立的外部 Scenario package 或 FHIR Profile 校验步骤。
 

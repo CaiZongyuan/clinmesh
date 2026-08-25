@@ -9,10 +9,7 @@ import { syntheticAccounts } from './identity-service.ts'
 
 const clinicalReviewSchema = z.record(z.string(), z.unknown())
 
-const commonHiddenFacts = [{
-  code: 'respiratory-pathogen',
-  value: { code: 'influenza-a', detected: true },
-}, {
+const laboratoryResultsHiddenFact = {
   code: 'laboratory-results',
   value: {
     'lab-cbc': {
@@ -52,12 +49,15 @@ const commonHiddenFacts = [{
       }],
     },
   },
-}] as const
+} as const
 
-const scenarioBlueprints = {
+const legacyScenarioBlueprints = {
   candidate: {
     clinicalReview: null,
-    hiddenFacts: commonHiddenFacts,
+    hiddenFacts: [{
+      code: 'respiratory-pathogen',
+      value: { code: 'influenza-a', detected: true },
+    }],
     kind: 'candidate',
     revealPolicies: [{
       code: 'paid-lis-report',
@@ -119,7 +119,10 @@ const scenarioBlueprints = {
   },
   density: {
     clinicalReview: null,
-    hiddenFacts: commonHiddenFacts,
+    hiddenFacts: [{
+      code: 'respiratory-pathogen',
+      value: { code: 'influenza-a', detected: true },
+    }],
     kind: 'density',
     revealPolicies: [{
       code: 'paid-lis-report',
@@ -139,7 +142,35 @@ const scenarioBlueprints = {
   },
 } as const
 
-type ScenarioBlueprint = (typeof scenarioBlueprints)[keyof typeof scenarioBlueprints]
+const installableScenarioBlueprints = {
+  candidate: {
+    ...legacyScenarioBlueprints.candidate,
+    hiddenFacts: [
+      ...legacyScenarioBlueprints.candidate.hiddenFacts,
+      laboratoryResultsHiddenFact,
+    ],
+    scenarioId: 'candidate-fever-outpatient-v2',
+    schemaVersion: '2',
+    version: '2.0.0',
+  },
+  density: {
+    ...legacyScenarioBlueprints.density,
+    hiddenFacts: [
+      ...legacyScenarioBlueprints.density.hiddenFacts,
+      laboratoryResultsHiddenFact,
+    ],
+    scenarioId: 'density-fever-outpatient-v2',
+    schemaVersion: '2',
+    version: '2.0.0',
+  },
+} as const
+
+const knownScenarioBlueprints = [
+  ...Object.values(legacyScenarioBlueprints),
+  ...Object.values(installableScenarioBlueprints),
+] as const
+
+type ScenarioBlueprint = (typeof knownScenarioBlueprints)[number]
 
 export interface ScenarioState {
   clinicalReview: null | Record<string, unknown>
@@ -212,7 +243,7 @@ export class ScenarioService {
     this.#database.driver.exec('BEGIN IMMEDIATE')
     try {
       this.#seedEpoch({
-        blueprint: scenarioBlueprints.candidate,
+        blueprint: installableScenarioBlueprints.candidate,
         epoch: input.epoch,
         scenarioRunId: input.scenarioRunId,
         workspaceId: input.workspaceId,
@@ -279,9 +310,9 @@ export class ScenarioService {
         throw new ScenarioError('SCENARIO_RUN_CONFLICT', 'The Scenario Run is no longer active')
       }
       const currentState = this.current(input.context)
-      const blueprint = Object.values(scenarioBlueprints).find(
+      const blueprint = knownScenarioBlueprints.find(
         candidate => candidate.scenarioId === currentState.scenarioId,
-      ) ?? scenarioBlueprints.candidate
+      ) ?? installableScenarioBlueprints.candidate
       return this.#transitionEpoch(input.context, blueprint)
     })
   }
@@ -289,7 +320,7 @@ export class ScenarioService {
   install(input: {
     context: ActorContext
     idempotencyKey: string
-    kind: keyof typeof scenarioBlueprints
+    kind: keyof typeof installableScenarioBlueprints
   }): CommandResponse<ScenarioState> {
     return this.#commands.execute({
       context: input.context,
@@ -304,7 +335,7 @@ export class ScenarioService {
       if (input.context.roleCode !== 'administrator') {
         throw new ScenarioError('ROLE_NOT_ALLOWED', 'Only an administrator can install a Scenario')
       }
-      return this.#transitionEpoch(input.context, scenarioBlueprints[input.kind])
+      return this.#transitionEpoch(input.context, installableScenarioBlueprints[input.kind])
     })
   }
 
@@ -385,7 +416,7 @@ export class ScenarioService {
         scenario_id, version, kind, schema_version, clinical_review_json
       ) VALUES (?, ?, ?, ?, ?)
     `)
-    for (const blueprint of Object.values(scenarioBlueprints)) {
+    for (const blueprint of knownScenarioBlueprints) {
       insert.run(
         blueprint.scenarioId,
         blueprint.version,
