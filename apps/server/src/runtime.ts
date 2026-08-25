@@ -1,6 +1,6 @@
 import { createApp } from './app.ts'
 import { IdentityService } from './application/identity-service.ts'
-import { CommandExecutor } from './application/command-executor.ts'
+import { CommandExecutor, type ActorContext } from './application/command-executor.ts'
 import { ScenarioService } from './application/scenario-service.ts'
 import { WorkflowService } from './application/workflow-service.ts'
 import { OutboxDispatcher } from './application/outbox-dispatcher.ts'
@@ -12,6 +12,21 @@ import {
 } from './infrastructure/sqlite/database.ts'
 import { FhirRepository } from './infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceRepository } from './infrastructure/sqlite/workspace-repository.ts'
+
+function lisActorContext(event: {
+  epoch: string
+  scenarioRunId: string
+  workspaceId: string
+}): ActorContext {
+  return {
+    actorId: 'actor-lis-system',
+    epoch: event.epoch,
+    organizationId: 'organization-clinmesh',
+    roleCode: 'lis-system',
+    scenarioRunId: event.scenarioRunId,
+    workspaceId: event.workspaceId,
+  }
+}
 
 export interface CreateClinMeshRuntimeOptions {
   authBaseUrl: string
@@ -77,22 +92,36 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       patientId: z.string().min(1),
       serviceRequestId: z.string().min(1),
     })
+    const laboratoryRequestPayloadSchema = z.object({
+      requestId: z.string().min(1),
+    })
     const pharmacyPayloadSchema = z.object({
       caseId: z.string().min(1),
       prescriptionId: z.string().min(1),
     })
     const dispatcher = new OutboxDispatcher(database, {
       handlers: {
+        'laboratory.accept-request': async event => {
+          const payload = laboratoryRequestPayloadSchema.parse(event.payload)
+          workflow.acceptLaboratoryRequest({
+            context: lisActorContext(event),
+            eventId: event.eventId,
+            requestId: payload.requestId,
+          })
+          return { status: 'completed' }
+        },
+        'laboratory.start-request': async event => {
+          const payload = laboratoryRequestPayloadSchema.parse(event.payload)
+          workflow.startLaboratoryRequest({
+            context: lisActorContext(event),
+            eventId: event.eventId,
+            requestId: payload.requestId,
+          })
+          return { status: 'completed' }
+        },
         'lis.process-order': async event => {
           workflow.processLisOrder({
-            context: {
-              actorId: 'actor-lis-system',
-              epoch: event.epoch,
-              organizationId: 'organization-clinmesh',
-              roleCode: 'lis-system',
-              scenarioRunId: event.scenarioRunId,
-              workspaceId: event.workspaceId,
-            },
+            context: lisActorContext(event),
             eventId: event.eventId,
             payload: lisPayloadSchema.parse(event.payload),
           })

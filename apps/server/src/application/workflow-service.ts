@@ -3,6 +3,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
 import {
   askConsultationQuestionResponseSchema,
+  laboratoryRequestActionResponseSchema,
   type ClinicalDocumentContent,
   clinicalDocumentContentSchema,
   clinicalDocumentDraftResponseSchema,
@@ -15,7 +16,10 @@ import {
   createPatientResponseSchema,
   dispenseResponseSchema,
   firstVisitDraftResponseSchema,
+  issueLaboratoryRequestResponseSchema,
   laboratoryOrderResponseSchema,
+  laboratoryRequestDraftResponseSchema,
+  laboratoryRequestSchema,
   paymentPreviewResponseSchema,
   paymentResponseSchema,
   type PatientSummary,
@@ -39,11 +43,11 @@ import {
 } from './command-executor.ts'
 
 export class WorkflowError extends Error {
-  readonly code: 'CATALOG_CONFLICT' | 'DUPLICATE_PATIENT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
+  readonly code: 'CATALOG_CONFLICT' | 'DUPLICATE_PATIENT' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
   readonly status: 403 | 409
 
   constructor(
-    code: 'CATALOG_CONFLICT' | 'DUPLICATE_PATIENT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT',
+    code: 'CATALOG_CONFLICT' | 'DUPLICATE_PATIENT' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT',
     message: string,
   ) {
     super(message)
@@ -138,6 +142,35 @@ const consultationRecordRowSchema = z.object({
   recorded_at: z.string().min(1),
   sequence: z.number().int().positive(),
 })
+
+const laboratoryRequestRowSchema = z.object({
+  catalog_item_id: laboratoryRequestSchema.shape.catalogItemId,
+  execution_task_id: z.string().min(1),
+  indication_code: z.string().min(1),
+  request_id: z.string().min(1),
+  service_request_id: z.string().min(1),
+  status: laboratoryRequestSchema.shape.status,
+  version: z.number().int().positive(),
+})
+
+const laboratoryRequestCommandRowSchema = laboratoryRequestRowSchema.extend({
+  authored_by: z.string().min(1),
+  case_id: z.string().min(1),
+})
+
+const laboratoryRequestSystemResponseSchema = z.object({
+  requestId: z.string().min(1),
+  status: z.enum(['accepted', 'cancelled', 'in-progress']),
+}).strict()
+
+const laboratoryRequestStateRowSchema = z.object({
+  draft_catalog_item_id: laboratoryRequestSchema.shape.catalogItemId.nullable(),
+  draft_indication_code: z.string().min(1).nullable(),
+  version: z.number().int().positive(),
+}).strict().refine(
+  row => (row.draft_catalog_item_id === null) === (row.draft_indication_code === null),
+  { message: 'Laboratory request draft fields must be present together' },
+)
 
 const virtualPatientVersionPayloadSchema = z.object({
   epoch: z.string().min(1),
@@ -1797,6 +1830,34 @@ export class WorkflowService {
       version: number
     } | undefined
     const signedClinicalDocuments = this.#structuredClinicalDocuments(context, row.case_id)
+    const laboratoryRequestState = this.#laboratoryRequestState(context, row.case_id)
+    const laboratoryRequests = z.array(laboratoryRequestRowSchema).parse(
+      this.#database.driver.prepare(`
+        SELECT request_id, catalog_item_id, indication_code, service_request_id,
+          execution_task_id, status, version
+        FROM laboratory_request
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        ORDER BY authored_at, request_id
+      `).all(context.workspaceId, context.epoch, row.case_id),
+    ).map((request) => {
+      const serviceRequest = this.#fhir.read(
+        context,
+        'ServiceRequest',
+        request.service_request_id,
+      )
+      const task = this.#fhir.read(context, 'Task', request.execution_task_id)
+      return {
+        catalogItemId: request.catalog_item_id,
+        id: request.request_id,
+        indicationCode: request.indication_code,
+        serviceRequestId: request.service_request_id,
+        serviceRequestVersion: serviceRequest.meta?.versionId ?? '1',
+        status: request.status,
+        taskId: request.execution_task_id,
+        taskVersion: task.meta?.versionId ?? '1',
+        version: request.version,
+      }
+    })
     return {
       allergies: this.#patientAllergyWarnings(context, patient.id),
       caseId: row.case_id,
@@ -1818,6 +1879,21 @@ export class WorkflowService {
         status: encounter.status,
         versionId: encounter.meta?.versionId,
       },
+      ...(laboratoryRequestState === undefined ? {} : {
+        laboratoryRequests: {
+          ...(laboratoryRequestState.draft_catalog_item_id === null
+            || laboratoryRequestState.draft_indication_code === null
+            ? {}
+            : {
+                draft: {
+                  catalogItemId: laboratoryRequestState.draft_catalog_item_id,
+                  indicationCode: laboratoryRequestState.draft_indication_code,
+                },
+              }),
+          draftVersion: laboratoryRequestState.version,
+          requests: laboratoryRequests,
+        },
+      }),
       patient,
       presentation: casePresentation(triage, row.virtual_patient_summary_json),
       priorFacts,
@@ -3510,6 +3586,599 @@ export class WorkflowService {
           reference: `${resource.resourceType}/${resource.id}`,
           versionId: resource.meta?.versionId ?? '1',
         })),
+      }
+    })
+  }
+
+  saveLaboratoryRequestDraft(input: {
+    catalogItemId: 'lab-cbc' | 'lab-crp'
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+    indicationCode: string
+  }): CommandResponse<{
+    caseId: string
+    draftVersion: number
+  }> {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: laboratoryRequestDraftResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: {
+        catalogItemId: input.catalogItemId,
+        encounterId: input.encounterId,
+        expectedDraftVersion: input.expectedDraftVersion,
+        indicationCode: input.indicationCode,
+      },
+      operation: 'laboratory-request.save-draft',
+    }, () => {
+      this.#assertRole(input.context, ['outpatient-doctor'])
+      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+      if (outpatientCase.status !== 'first-visit' || this.#consultationState(
+        input.context,
+        outpatientCase.case_id,
+      ) === undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter cannot edit a laboratory request draft')
+      }
+      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+      const catalog = this.#catalogItem(input.context, input.catalogItemId, 'laboratory')
+      const catalogConfig = laboratoryCatalogConfigSchema.parse(
+        JSON.parse(catalog.config_json ?? '{}') as unknown,
+      )
+      if (!catalogConfig.allowedIndicationCodes.includes(input.indicationCode)) {
+        throw new WorkflowError('CATALOG_CONFLICT', 'The indication is not allowed for this laboratory request')
+      }
+      const current = this.#laboratoryRequestState(input.context, outpatientCase.case_id)
+      const currentVersion = current?.version ?? 0
+      if (currentVersion !== input.expectedDraftVersion) {
+        throw new WorkflowError(
+          'LABORATORY_REQUEST_VERSION_CONFLICT',
+          'The laboratory request draft version has changed',
+        )
+      }
+      const nextVersion = currentVersion + 1
+      const now = this.#virtualTime(input.context)
+      if (current === undefined) {
+        this.#database.driver.prepare(`
+          INSERT INTO laboratory_request_state (
+            workspace_id, epoch, case_id, version, draft_catalog_item_id,
+            draft_indication_code, updated_by, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          input.context.workspaceId,
+          input.context.epoch,
+          outpatientCase.case_id,
+          nextVersion,
+          input.catalogItemId,
+          input.indicationCode,
+          input.context.actorId,
+          now,
+        )
+      } else {
+        const update = this.#database.driver.prepare(`
+          UPDATE laboratory_request_state
+          SET version = ?, draft_catalog_item_id = ?, draft_indication_code = ?,
+            updated_by = ?, updated_at = ?
+          WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
+        `).run(
+          nextVersion,
+          input.catalogItemId,
+          input.indicationCode,
+          input.context.actorId,
+          now,
+          input.context.workspaceId,
+          input.context.epoch,
+          outpatientCase.case_id,
+          currentVersion,
+        )
+        if (update.changes !== 1) {
+          throw new WorkflowError(
+            'LABORATORY_REQUEST_VERSION_CONFLICT',
+            'The laboratory request draft version has changed',
+          )
+        }
+      }
+      return {
+        data: { caseId: outpatientCase.case_id, draftVersion: nextVersion },
+        effects: [],
+      }
+    })
+  }
+
+  deleteLaboratoryRequestDraft(input: {
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+  }): CommandResponse<{
+    caseId: string
+    draftVersion: number
+  }> {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: laboratoryRequestDraftResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: {
+        encounterId: input.encounterId,
+        expectedDraftVersion: input.expectedDraftVersion,
+      },
+      operation: 'laboratory-request.delete-draft',
+    }, () => {
+      this.#assertRole(input.context, ['outpatient-doctor'])
+      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+      if (outpatientCase.status !== 'first-visit' || this.#consultationState(
+        input.context,
+        outpatientCase.case_id,
+      ) === undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter cannot edit a laboratory request draft')
+      }
+      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+      const current = this.#laboratoryRequestState(input.context, outpatientCase.case_id)
+      if (current === undefined
+        || current.version !== input.expectedDraftVersion
+        || current.draft_catalog_item_id === null) {
+        throw new WorkflowError(
+          'LABORATORY_REQUEST_VERSION_CONFLICT',
+          'The laboratory request draft version has changed',
+        )
+      }
+      const draftVersion = current.version + 1
+      const update = this.#database.driver.prepare(`
+        UPDATE laboratory_request_state
+        SET version = ?, draft_catalog_item_id = NULL, draft_indication_code = NULL,
+          updated_by = ?, updated_at = ?
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
+          AND draft_catalog_item_id IS NOT NULL
+      `).run(
+        draftVersion,
+        input.context.actorId,
+        this.#virtualTime(input.context),
+        input.context.workspaceId,
+        input.context.epoch,
+        outpatientCase.case_id,
+        current.version,
+      )
+      if (update.changes !== 1) {
+        throw new WorkflowError(
+          'LABORATORY_REQUEST_VERSION_CONFLICT',
+          'The laboratory request draft version has changed',
+        )
+      }
+      return {
+        data: { caseId: outpatientCase.case_id, draftVersion },
+        effects: [],
+      }
+    })
+  }
+
+  issueLaboratoryRequest(input: {
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+  }) {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: issueLaboratoryRequestResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: {
+        encounterId: input.encounterId,
+        expectedDraftVersion: input.expectedDraftVersion,
+      },
+      operation: 'laboratory-request.issue',
+    }, (transaction) => {
+      this.#assertRole(input.context, ['outpatient-doctor'])
+      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+      if (outpatientCase.status !== 'first-visit' || this.#consultationState(
+        input.context,
+        outpatientCase.case_id,
+      ) === undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter cannot issue a laboratory request')
+      }
+      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+      const state = this.#laboratoryRequestState(input.context, outpatientCase.case_id)
+      if (state === undefined
+        || state.version !== input.expectedDraftVersion
+        || state.draft_catalog_item_id === null
+        || state.draft_indication_code === null) {
+        throw new WorkflowError(
+          'LABORATORY_REQUEST_VERSION_CONFLICT',
+          'The laboratory request draft version has changed',
+        )
+      }
+      const duplicate = this.#database.driver.prepare(`
+        SELECT request_id FROM laboratory_request
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+          AND catalog_item_id = ? AND status <> 'cancelled'
+      `).get(
+        input.context.workspaceId,
+        input.context.epoch,
+        outpatientCase.case_id,
+        state.draft_catalog_item_id,
+      )
+      if (duplicate !== undefined) {
+        throw new WorkflowError(
+          'LABORATORY_REQUEST_DUPLICATE',
+          'An active laboratory request already exists for this catalog item',
+        )
+      }
+      const catalog = this.#catalogItem(input.context, state.draft_catalog_item_id, 'laboratory')
+      const catalogConfig = laboratoryCatalogConfigSchema.parse(
+        JSON.parse(catalog.config_json ?? '{}') as unknown,
+      )
+      if (!catalogConfig.allowedIndicationCodes.includes(state.draft_indication_code)) {
+        throw new WorkflowError('CATALOG_CONFLICT', 'The indication is not allowed for this laboratory request')
+      }
+      const allergyCodes = this.#patientAllergyCodes(input.context, outpatientCase.patient_id)
+      if (catalogConfig.contraindicatedAllergyCodes.some(code => allergyCodes.has(code))) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request is contraindicated')
+      }
+      const requestId = uuidv7()
+      const serviceRequestId = uuidv7()
+      const taskId = uuidv7()
+      const now = this.#virtualTime(input.context)
+      const serviceRequest = transaction.fhir.create(input.context, {
+        resourceType: 'ServiceRequest',
+        id: serviceRequestId,
+        status: 'active',
+        intent: 'order',
+        code: {
+          concept: {
+            coding: [{
+              code: catalog.code,
+              display: catalog.name_zh,
+              system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-service',
+            }],
+            text: catalog.name_zh,
+          },
+        },
+        subject: { reference: `Patient/${outpatientCase.patient_id}` },
+        encounter: { reference: `Encounter/${input.encounterId}` },
+        authoredOn: now,
+        requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
+        reason: [{
+          concept: {
+            coding: [{
+              code: state.draft_indication_code,
+              system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-indication',
+            }],
+          },
+        }],
+      })
+      const task = transaction.fhir.create(input.context, {
+        resourceType: 'Task',
+        id: taskId,
+        status: 'requested',
+        intent: 'order',
+        code: {
+          coding: [{
+            code: 'laboratory-request-execution',
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/task-kind',
+          }],
+          text: `${catalog.name_zh}执行`,
+        },
+        focus: { reference: `ServiceRequest/${serviceRequestId}` },
+        for: { reference: `Patient/${outpatientCase.patient_id}` },
+        encounter: { reference: `Encounter/${input.encounterId}` },
+        authoredOn: now,
+        requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
+        owner: { reference: 'Organization/organization-clinmesh' },
+      })
+      this.#database.driver.prepare(`
+        INSERT INTO laboratory_request (
+          workspace_id, epoch, request_id, case_id, catalog_item_id,
+          indication_code, service_request_id, execution_task_id, status,
+          version, authored_by, authored_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'issued', 1, ?, ?)
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        requestId,
+        outpatientCase.case_id,
+        state.draft_catalog_item_id,
+        state.draft_indication_code,
+        serviceRequestId,
+        taskId,
+        input.context.practitionerId ?? input.context.actorId,
+        now,
+      )
+      const draftVersion = state.version + 1
+      const update = this.#database.driver.prepare(`
+        UPDATE laboratory_request_state
+        SET version = ?, draft_catalog_item_id = NULL, draft_indication_code = NULL,
+          updated_by = ?, updated_at = ?
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
+      `).run(
+        draftVersion,
+        input.context.actorId,
+        now,
+        input.context.workspaceId,
+        input.context.epoch,
+        outpatientCase.case_id,
+        state.version,
+      )
+      if (update.changes !== 1) {
+        throw new WorkflowError(
+          'LABORATORY_REQUEST_VERSION_CONFLICT',
+          'The laboratory request draft version has changed',
+        )
+      }
+      transaction.enqueue({
+        dedupKey: `laboratory-request:${requestId}:accept`,
+        kind: 'laboratory.accept-request',
+        payload: { requestId },
+      })
+      return {
+        data: {
+          caseId: outpatientCase.case_id,
+          draftVersion,
+          request: {
+            catalogItemId: state.draft_catalog_item_id,
+            id: requestId,
+            indicationCode: state.draft_indication_code,
+            serviceRequestId,
+            serviceRequestVersion: serviceRequest.meta?.versionId ?? '1',
+            status: 'issued' as const,
+            taskId,
+            taskVersion: task.meta?.versionId ?? '1',
+            version: 1,
+          },
+        },
+        effects: [serviceRequest, task].map(resource => ({
+          kind: 'created' as const,
+          reference: `${resource.resourceType}/${resource.id}`,
+          versionId: resource.meta?.versionId ?? '1',
+        })),
+      }
+    })
+  }
+
+  cancelLaboratoryRequest(input: {
+    context: ActorContext
+    expectedRequestVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+    reasonCode: 'no-longer-needed'
+    requestId: string
+  }) {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: laboratoryRequestActionResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: {
+        expectedRequestVersion: input.expectedRequestVersion,
+        reasonCode: input.reasonCode,
+        requestId: input.requestId,
+      },
+      operation: 'laboratory-request.cancel',
+    }, (transaction) => {
+      this.#assertRole(input.context, ['outpatient-doctor'])
+      const request = this.#laboratoryRequest(input.context, input.requestId)
+      if (request === undefined
+        || request.authored_by !== (input.context.practitionerId ?? input.context.actorId)) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request was not found')
+      }
+      this.#assertExpectedVersions(input.expectedVersions, [
+        `ServiceRequest/${request.service_request_id}`,
+        `Task/${request.execution_task_id}`,
+      ])
+      if (request.version !== input.expectedRequestVersion) {
+        throw new WorkflowError(
+          'LABORATORY_REQUEST_VERSION_CONFLICT',
+          'The laboratory request version has changed',
+        )
+      }
+      if (request.status !== 'issued') {
+        throw new WorkflowError(
+          'LABORATORY_REQUEST_NOT_CANCELLABLE',
+          'Only an issued laboratory request can be cancelled',
+        )
+      }
+      const serviceRequest = transaction.fhir.read(
+        input.context,
+        'ServiceRequest',
+        request.service_request_id,
+      )
+      const task = transaction.fhir.read(input.context, 'Task', request.execution_task_id)
+      const now = this.#virtualTime(input.context)
+      const updatedServiceRequest = transaction.fhir.update(input.context, {
+        ...serviceRequest,
+        status: 'revoked',
+        statusReason: {
+          concept: {
+            coding: [{
+              code: input.reasonCode,
+              system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/request-status-reason',
+            }],
+          },
+        },
+      }, serviceRequest.meta?.versionId ?? '1')
+      const updatedTask = transaction.fhir.update(input.context, {
+        ...task,
+        status: 'cancelled',
+        lastModified: now,
+        statusReason: {
+          coding: [{
+            code: input.reasonCode,
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/request-status-reason',
+          }],
+        },
+      }, task.meta?.versionId ?? '1')
+      const version = request.version + 1
+      const update = this.#database.driver.prepare(`
+        UPDATE laboratory_request
+        SET status = 'cancelled', version = ?, cancelled_at = ?
+        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+          AND status = 'issued' AND version = ?
+      `).run(
+        version,
+        now,
+        input.context.workspaceId,
+        input.context.epoch,
+        request.request_id,
+        request.version,
+      )
+      if (update.changes !== 1) {
+        throw new WorkflowError(
+          'LABORATORY_REQUEST_VERSION_CONFLICT',
+          'The laboratory request version has changed',
+        )
+      }
+      return {
+        data: {
+          request: {
+            catalogItemId: request.catalog_item_id,
+            id: request.request_id,
+            indicationCode: request.indication_code,
+            serviceRequestId: request.service_request_id,
+            serviceRequestVersion: updatedServiceRequest.meta?.versionId ?? '2',
+            status: 'cancelled' as const,
+            taskId: request.execution_task_id,
+            taskVersion: updatedTask.meta?.versionId ?? '2',
+            version,
+          },
+        },
+        effects: [updatedServiceRequest, updatedTask].map(resource => ({
+          kind: 'updated' as const,
+          reference: `${resource.resourceType}/${resource.id}`,
+          versionId: resource.meta?.versionId ?? '2',
+        })),
+      }
+    })
+  }
+
+  acceptLaboratoryRequest(input: {
+    context: ActorContext
+    eventId: string
+    requestId: string
+  }) {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: laboratoryRequestSystemResponseSchema,
+      expectedVersions: {},
+      idempotencyKey: input.eventId,
+      input: { requestId: input.requestId },
+      operation: 'laboratory-request.accept',
+    }, (transaction) => {
+      this.#assertRole(input.context, ['lis-system'])
+      const request = this.#laboratoryRequest(input.context, input.requestId)
+      if (request === undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request was not found')
+      }
+      if (request.status === 'cancelled') {
+        return {
+          data: { requestId: request.request_id, status: 'cancelled' as const },
+          effects: [],
+        }
+      }
+      if (request.status !== 'issued') {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request cannot be accepted')
+      }
+      const task = transaction.fhir.read(input.context, 'Task', request.execution_task_id)
+      const now = this.#virtualTime(input.context)
+      const updatedTask = transaction.fhir.update(input.context, {
+        ...task,
+        status: 'accepted',
+        lastModified: now,
+      }, task.meta?.versionId ?? '1')
+      const update = this.#database.driver.prepare(`
+        UPDATE laboratory_request
+        SET status = 'accepted', version = version + 1, accepted_at = ?
+        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+          AND status = 'issued' AND version = ?
+      `).run(
+        now,
+        input.context.workspaceId,
+        input.context.epoch,
+        request.request_id,
+        request.version,
+      )
+      if (update.changes !== 1) {
+        throw new WorkflowError(
+          'LABORATORY_REQUEST_VERSION_CONFLICT',
+          'The laboratory request version has changed',
+        )
+      }
+      transaction.enqueue({
+        dedupKey: `laboratory-request:${request.request_id}:start`,
+        kind: 'laboratory.start-request',
+        payload: { requestId: request.request_id },
+      })
+      return {
+        data: { requestId: request.request_id, status: 'accepted' as const },
+        effects: [{
+          kind: 'updated' as const,
+          reference: `Task/${updatedTask.id}`,
+          versionId: updatedTask.meta?.versionId ?? '2',
+        }],
+      }
+    })
+  }
+
+  startLaboratoryRequest(input: {
+    context: ActorContext
+    eventId: string
+    requestId: string
+  }) {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: laboratoryRequestSystemResponseSchema,
+      expectedVersions: {},
+      idempotencyKey: input.eventId,
+      input: { requestId: input.requestId },
+      operation: 'laboratory-request.start',
+    }, (transaction) => {
+      this.#assertRole(input.context, ['lis-system'])
+      const request = this.#laboratoryRequest(input.context, input.requestId)
+      if (request === undefined || request.status !== 'accepted') {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request cannot start execution')
+      }
+      const task = transaction.fhir.read(input.context, 'Task', request.execution_task_id)
+      const now = this.#virtualTime(input.context)
+      const updatedTask = transaction.fhir.update(input.context, {
+        ...task,
+        status: 'in-progress',
+        lastModified: now,
+        executionPeriod: {
+          ...((typeof task.executionPeriod === 'object' && task.executionPeriod !== null)
+            ? task.executionPeriod as Record<string, unknown>
+            : {}),
+          start: now,
+        },
+      }, task.meta?.versionId ?? '2')
+      const update = this.#database.driver.prepare(`
+        UPDATE laboratory_request
+        SET status = 'in-progress', version = version + 1, started_at = ?
+        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+          AND status = 'accepted' AND version = ?
+      `).run(
+        now,
+        input.context.workspaceId,
+        input.context.epoch,
+        request.request_id,
+        request.version,
+      )
+      if (update.changes !== 1) {
+        throw new WorkflowError(
+          'LABORATORY_REQUEST_VERSION_CONFLICT',
+          'The laboratory request version has changed',
+        )
+      }
+      return {
+        data: { requestId: request.request_id, status: 'in-progress' as const },
+        effects: [{
+          kind: 'updated' as const,
+          reference: `Task/${updatedTask.id}`,
+          versionId: updatedTask.meta?.versionId ?? '3',
+        }],
       }
     })
   }
@@ -5341,6 +6010,27 @@ export class WorkflowService {
         WHERE consultation.workspace_id = ? AND consultation.epoch = ?
           AND consultation.case_id = ?
       `).get(context.workspaceId, context.epoch, caseId),
+    )
+  }
+
+  #laboratoryRequestState(context: ActorContext, caseId: string) {
+    return laboratoryRequestStateRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT version, draft_catalog_item_id, draft_indication_code
+        FROM laboratory_request_state
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      `).get(context.workspaceId, context.epoch, caseId),
+    )
+  }
+
+  #laboratoryRequest(context: ActorContext, requestId: string) {
+    return laboratoryRequestCommandRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT request_id, case_id, catalog_item_id, indication_code,
+          service_request_id, execution_task_id, status, version, authored_by
+        FROM laboratory_request
+        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+      `).get(context.workspaceId, context.epoch, requestId),
     )
   }
 

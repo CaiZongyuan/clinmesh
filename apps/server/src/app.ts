@@ -1,9 +1,13 @@
 import { extname } from 'node:path'
 import type { HealthResponse } from '@clinmesh/contracts/health'
 import {
+  cancelLaboratoryRequestRequestSchema,
+  deleteLaboratoryRequestDraftRequestSchema,
+  issueLaboratoryRequestRequestSchema,
   previewClinicalDocumentSignRequestSchema,
   reviseClinicalDocumentRequestSchema,
   saveClinicalDocumentDraftRequestSchema,
+  saveLaboratoryRequestDraftRequestSchema,
   signClinicalDocumentRequestSchema,
 } from '@clinmesh/contracts/his'
 import { serveStatic } from '@hono/node-server/serve-static'
@@ -630,6 +634,69 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           revision: 'document' in body.input
             ? { document: body.input.document }
             : { assessment: body.input.assessment, plan: body.input.plan },
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.put('/api/his/v1/encounters/:encounterId/laboratory-request/draft', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = saveLaboratoryRequestDraftRequestSchema.parse(await context.req.json())
+        return context.json(workflow.saveLaboratoryRequestDraft({
+          catalogItemId: body.input.catalogItemId,
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          indicationCode: body.input.indicationCode,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.delete('/api/his/v1/encounters/:encounterId/laboratory-request/draft', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = deleteLaboratoryRequestDraftRequestSchema.parse(await context.req.json())
+        return context.json(workflow.deleteLaboratoryRequestDraft({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/laboratory-request/actions/issue', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = issueLaboratoryRequestRequestSchema.parse(await context.req.json())
+        return context.json(workflow.issueLaboratoryRequest({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/laboratory-requests/:requestId/actions/cancel', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = cancelLaboratoryRequestRequestSchema.parse(await context.req.json())
+        return context.json(workflow.cancelLaboratoryRequest({
+          context: await actor(context),
+          expectedRequestVersion: body.input.expectedRequestVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          reasonCode: body.input.reasonCode,
+          requestId: context.req.param('requestId'),
         }))
       } catch (error) {
         return apiErrorResponse(context, error)

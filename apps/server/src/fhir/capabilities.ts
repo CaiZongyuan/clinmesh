@@ -73,7 +73,7 @@ const capabilityRegistry = {
         'focus',
         'http://hl7.org/fhir/SearchParameter/Task-focus',
         ['focus'],
-        ['Encounter'],
+        ['Encounter', 'ServiceRequest'],
       ),
     ]),
     resource('Account', 'fhir-native', [patientSearch('subject')]),

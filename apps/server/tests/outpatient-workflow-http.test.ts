@@ -11,6 +11,7 @@ import {
   apiErrorSchema,
   askConsultationQuestionResponseSchema,
   billingQueueSchema,
+  cancelLaboratoryRequestRequestSchema,
   clinicalCatalogSchema,
   clinicalDocumentDraftResponseSchema,
   clinicalDocumentRevisionResponseSchema,
@@ -19,11 +20,15 @@ import {
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
   createPatientResponseSchema,
+  deleteLaboratoryRequestDraftRequestSchema,
   dispenseResponseSchema,
   doctorCaseDetailSchema,
   doctorQueueSchema,
   firstVisitDraftResponseSchema,
+  issueLaboratoryRequestResponseSchema,
+  laboratoryRequestActionResponseSchema,
   laboratoryOrderResponseSchema,
+  laboratoryRequestDraftResponseSchema,
   patientSearchSchema,
   paymentPreviewResponseSchema,
   paymentResponseSchema,
@@ -1831,6 +1836,506 @@ describe('outpatient workflow HTTP contract', () => {
     })
   })
 
+  it('saves a versioned laboratory request draft without creating formal FHIR resources', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-request-draft-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const fhirTotal = async (resourceType: string) => {
+      const response = await runtime.app.request(`/fhir/R5/${resourceType}?_total=accurate`, {
+        headers: { cookie: doctorCookie },
+      })
+      return fhirBundleSchema.parse(await response.json()).total
+    }
+    const resourcesBeforeDraft = {
+      serviceRequests: await fhirTotal('ServiceRequest'),
+      tasks: await fhirTotal('Task'),
+    }
+
+    const response = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          input: {
+            catalogItemId: 'lab-cbc',
+            expectedDraftVersion: 0,
+            indicationCode: 'fever',
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+
+    expect(response.status).toBe(200)
+    expect(laboratoryRequestDraftResponseSchema.parse(await response.json())).toMatchObject({
+      data: { caseId: started.caseId, draftVersion: 1 },
+      effects: [],
+    })
+    expect({
+      serviceRequests: await fhirTotal('ServiceRequest'),
+      tasks: await fhirTotal('Task'),
+    }).toEqual(resourcesBeforeDraft)
+
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
+      laboratoryRequests: {
+        draft: { catalogItemId: 'lab-cbc', indicationCode: 'fever' },
+        draftVersion: 1,
+        requests: [],
+      },
+    })
+  })
+
+  it('rejects a stale laboratory request draft and deletes only its current version', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-request-draft-cas-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const save = (
+      catalogItemId: 'lab-cbc' | 'lab-crp',
+      indicationCode: string,
+      expectedDraftVersion: number,
+    ) => runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { catalogItemId, expectedDraftVersion, indicationCode },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    const initialResponse = await save('lab-cbc', 'fever', 0)
+    expect(initialResponse.status).toBe(200)
+
+    const staleResponse = await save('lab-crp', 'fever', 0)
+    expect(staleResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await staleResponse.json())).toMatchObject({
+      error: { code: 'LABORATORY_REQUEST_VERSION_CONFLICT' },
+    })
+    const invalidIndicationResponse = await save('lab-cbc', 'screening', 1)
+    expect(invalidIndicationResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await invalidIndicationResponse.json())).toMatchObject({
+      error: { code: 'CATALOG_CONFLICT' },
+    })
+
+    const idempotencyKey = randomUUID()
+    const remove = () => runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { expectedDraftVersion: 1 },
+        } satisfies typeof deleteLaboratoryRequestDraftRequestSchema._output),
+        headers: commandHeaders(doctorCookie, idempotencyKey),
+        method: 'DELETE',
+      },
+    )
+    const deleteResponse = await remove()
+    expect(deleteResponse.status).toBe(200)
+    const deleted = laboratoryRequestDraftResponseSchema.parse(await deleteResponse.json())
+    expect(deleted).toMatchObject({ data: { draftVersion: 2 }, effects: [] })
+    expect(laboratoryRequestDraftResponseSchema.parse(await (await remove()).json())).toEqual(deleted)
+
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    const detail = doctorCaseDetailSchema.parse(await detailResponse.json())
+    expect(detail).toMatchObject({
+      laboratoryRequests: { draftVersion: 2, requests: [] },
+    })
+    expect(detail.laboratoryRequests?.draft).toBeUndefined()
+  })
+
+  it('issues one formal laboratory request and execution Task exactly once', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-request-issue-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const draftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: {
+            catalogItemId: 'lab-cbc',
+            expectedDraftVersion: 0,
+            indicationCode: 'fever',
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    laboratoryRequestDraftResponseSchema.parse(await draftResponse.json())
+    const idempotencyKey = randomUUID()
+    const issue = () => runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { expectedDraftVersion: 1 },
+        }),
+        headers: commandHeaders(doctorCookie, idempotencyKey),
+        method: 'POST',
+      },
+    )
+
+    const response = await issue()
+
+    expect(response.status).toBe(200)
+    const issued = issueLaboratoryRequestResponseSchema.parse(await response.json())
+    expect(issued).toMatchObject({
+      data: {
+        caseId: started.caseId,
+        draftVersion: 2,
+        request: {
+          catalogItemId: 'lab-cbc',
+          indicationCode: 'fever',
+          serviceRequestVersion: '1',
+          status: 'issued',
+          taskVersion: '1',
+          version: 1,
+        },
+      },
+      effects: [
+        { kind: 'created', reference: `ServiceRequest/${issued.data.request.serviceRequestId}` },
+        { kind: 'created', reference: `Task/${issued.data.request.taskId}` },
+      ],
+    })
+    expect(issueLaboratoryRequestResponseSchema.parse(await (await issue()).json())).toEqual(issued)
+
+    const serviceRequestResponse = await runtime.app.request(
+      `/fhir/R5/ServiceRequest/${issued.data.request.serviceRequestId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await serviceRequestResponse.json())).toMatchObject({
+      code: { concept: { coding: [{ code: 'CBC' }], text: '血常规' } },
+      encounter: { reference: `Encounter/${started.encounterId}` },
+      id: issued.data.request.serviceRequestId,
+      intent: 'order',
+      resourceType: 'ServiceRequest',
+      status: 'active',
+      subject: { reference: `Patient/${started.patientId}` },
+    })
+    const taskResponse = await runtime.app.request(
+      `/fhir/R5/Task/${issued.data.request.taskId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await taskResponse.json())).toMatchObject({
+      encounter: { reference: `Encounter/${started.encounterId}` },
+      focus: { reference: `ServiceRequest/${issued.data.request.serviceRequestId}` },
+      for: { reference: `Patient/${started.patientId}` },
+      id: issued.data.request.taskId,
+      intent: 'order',
+      resourceType: 'Task',
+      status: 'requested',
+    })
+    const serviceRequestSearch = await runtime.app.request(
+      `/fhir/R5/ServiceRequest?encounter=Encounter/${started.encounterId}&_total=accurate`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await serviceRequestSearch.json())).toMatchObject({ total: 1 })
+    const taskSearch = await runtime.app.request(
+      `/fhir/R5/Task?focus=ServiceRequest/${issued.data.request.serviceRequestId}&_total=accurate`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await taskSearch.json())).toMatchObject({ total: 1 })
+
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
+      encounter: { versionId: '1' },
+      laboratoryRequests: {
+        draftVersion: 2,
+        requests: [issued.data.request],
+      },
+      status: 'first-visit',
+    })
+    const chargeSearch = await runtime.app.request('/fhir/R5/ChargeItem?_total=accurate', {
+      headers: { cookie: doctorCookie },
+    })
+    expect(fhirBundleSchema.parse(await chargeSearch.json())).toMatchObject({ total: 0 })
+  })
+
+  it('rejects stale, duplicate, and legacy-panel independent laboratory requests', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-request-guards-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const save = (
+      catalogItemId: string,
+      expectedDraftVersion: number,
+    ) => runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { catalogItemId, expectedDraftVersion, indicationCode: 'fever' },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    const issue = (expectedDraftVersion: number) => runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
+      {
+        body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion } }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    const legacyPanelResponse = await save('lab-fever-panel', 0)
+    expect(legacyPanelResponse.status).toBe(400)
+    expect(apiErrorSchema.parse(await legacyPanelResponse.json())).toMatchObject({
+      error: { code: 'INVALID_INPUT' },
+    })
+
+    const firstDraft = laboratoryRequestDraftResponseSchema.parse(
+      await (await save('lab-cbc', 0)).json(),
+    ).data
+    const currentDraft = laboratoryRequestDraftResponseSchema.parse(
+      await (await save('lab-cbc', firstDraft.draftVersion)).json(),
+    ).data
+    const staleIssueResponse = await issue(firstDraft.draftVersion)
+    expect(staleIssueResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await staleIssueResponse.json())).toMatchObject({
+      error: { code: 'LABORATORY_REQUEST_VERSION_CONFLICT' },
+    })
+
+    const issued = issueLaboratoryRequestResponseSchema.parse(
+      await (await issue(currentDraft.draftVersion)).json(),
+    ).data
+    const duplicateDraft = laboratoryRequestDraftResponseSchema.parse(
+      await (await save('lab-cbc', issued.draftVersion)).json(),
+    ).data
+    const duplicateResponse = await issue(duplicateDraft.draftVersion)
+    expect(duplicateResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await duplicateResponse.json())).toMatchObject({
+      error: { code: 'LABORATORY_REQUEST_DUPLICATE' },
+    })
+
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
+      laboratoryRequests: {
+        draft: { catalogItemId: 'lab-cbc', indicationCode: 'fever' },
+        draftVersion: duplicateDraft.draftVersion,
+        requests: [{ id: issued.request.id }],
+      },
+    })
+    const serviceRequestsResponse = await runtime.app.request(
+      '/fhir/R5/ServiceRequest?_total=accurate',
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await serviceRequestsResponse.json())).toMatchObject({ total: 1 })
+    const executionTasksResponse = await runtime.app.request(
+      `/fhir/R5/Task?focus=ServiceRequest/${issued.request.serviceRequestId}&_total=accurate`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await executionTasksResponse.json())).toMatchObject({ total: 1 })
+  })
+
+  it('cancels only an issued laboratory request and never revives it from a late event', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-request-cancel-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const expectedEncounter = { [`Encounter/${started.encounterId}`]: '1' }
+    const saveAndIssue = async (
+      catalogItemId: 'lab-cbc' | 'lab-crp',
+      expectedDraftVersion: number,
+    ) => {
+      const draftResponse = await runtime.app.request(
+        `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+        {
+          body: JSON.stringify({
+            expectedVersions: expectedEncounter,
+            input: { catalogItemId, expectedDraftVersion, indicationCode: 'fever' },
+          }),
+          headers: commandHeaders(doctorCookie),
+          method: 'PUT',
+        },
+      )
+      const draft = laboratoryRequestDraftResponseSchema.parse(await draftResponse.json()).data
+      const issueResponse = await runtime.app.request(
+        `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
+        {
+          body: JSON.stringify({
+            expectedVersions: expectedEncounter,
+            input: { expectedDraftVersion: draft.draftVersion },
+          }),
+          headers: commandHeaders(doctorCookie),
+          method: 'POST',
+        },
+      )
+      return issueLaboratoryRequestResponseSchema.parse(await issueResponse.json()).data
+    }
+    const cancel = (request: {
+      id: string
+      serviceRequestId: string
+      serviceRequestVersion: string
+      taskId: string
+      taskVersion: string
+      version: number
+    }, idempotencyKey = randomUUID()) => runtime.app.request(
+      `/api/his/v1/laboratory-requests/${request.id}/actions/cancel`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`ServiceRequest/${request.serviceRequestId}`]: request.serviceRequestVersion,
+            [`Task/${request.taskId}`]: request.taskVersion,
+          },
+          input: {
+            expectedRequestVersion: request.version,
+            reasonCode: 'no-longer-needed',
+          },
+        } satisfies typeof cancelLaboratoryRequestRequestSchema._output),
+        headers: commandHeaders(doctorCookie, idempotencyKey),
+        method: 'POST',
+      },
+    )
+    const cancellable = await saveAndIssue('lab-crp', 0)
+    const cancelIdempotencyKey = randomUUID()
+
+    const cancelResponse = await cancel(cancellable.request, cancelIdempotencyKey)
+
+    expect(cancelResponse.status).toBe(200)
+    const cancelled = laboratoryRequestActionResponseSchema.parse(await cancelResponse.json())
+    expect(cancelled.data.request).toMatchObject({
+      id: cancellable.request.id,
+      serviceRequestVersion: '2',
+      status: 'cancelled',
+      taskVersion: '2',
+      version: 2,
+    })
+    expect(laboratoryRequestActionResponseSchema.parse(
+      await (await cancel(cancellable.request, cancelIdempotencyKey)).json(),
+    )).toEqual(cancelled)
+    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({
+      kind: 'laboratory.accept-request',
+      status: 'completed',
+    })
+
+    const active = await saveAndIssue('lab-cbc', cancellable.draftVersion)
+    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({
+      kind: 'laboratory.accept-request',
+      status: 'completed',
+    })
+    const acceptedDetailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    const accepted = doctorCaseDetailSchema.parse(
+      await acceptedDetailResponse.json(),
+    ).laboratoryRequests?.requests.find(request => request.id === active.request.id)
+    expect(accepted).toMatchObject({ status: 'accepted', taskVersion: '2', version: 2 })
+    if (accepted === undefined) throw new Error('Accepted laboratory request was not projected')
+    const acceptedCancelResponse = await cancel(accepted)
+    expect(acceptedCancelResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await acceptedCancelResponse.json())).toMatchObject({
+      error: { code: 'LABORATORY_REQUEST_NOT_CANCELLABLE' },
+    })
+
+    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({
+      kind: 'laboratory.start-request',
+      status: 'completed',
+    })
+    const inProgressDetailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    const inProgress = doctorCaseDetailSchema.parse(
+      await inProgressDetailResponse.json(),
+    ).laboratoryRequests?.requests.find(request => request.id === active.request.id)
+    expect(inProgress).toMatchObject({ status: 'in-progress', taskVersion: '3', version: 3 })
+    if (inProgress === undefined) throw new Error('In-progress laboratory request was not projected')
+    const inProgressCancelResponse = await cancel(inProgress)
+    expect(inProgressCancelResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await inProgressCancelResponse.json())).toMatchObject({
+      error: { code: 'LABORATORY_REQUEST_NOT_CANCELLABLE' },
+    })
+
+    const cancelledServiceRequest = await runtime.app.request(
+      `/fhir/R5/ServiceRequest/${cancelled.data.request.serviceRequestId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await cancelledServiceRequest.json())).toMatchObject({
+      status: 'revoked',
+      statusReason: { concept: { coding: [{ code: 'no-longer-needed' }] } },
+    })
+    const cancelledTask = await runtime.app.request(
+      `/fhir/R5/Task/${cancelled.data.request.taskId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await cancelledTask.json())).toMatchObject({ status: 'cancelled' })
+  })
+
   it('reuses an existing registration when the doctor starts its Virtual Patient', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-virtual-patient-registered-http-'))
     temporaryDirectories.push(directory)
@@ -2514,6 +3019,23 @@ describe('outpatient workflow HTTP contract', () => {
     expect(clinicalCatalogSchema.parse(await catalogResponse.json())).toMatchObject({
       laboratory: [{
         allowedIndicationCodes: ['fever'],
+        contraindicatedAllergyCodes: [],
+        id: 'lab-cbc',
+        nameEn: 'Complete blood count',
+        nameZh: '血常规',
+        priceFen: 2500,
+        version: 1,
+      }, {
+        allowedIndicationCodes: ['fever'],
+        contraindicatedAllergyCodes: [],
+        id: 'lab-crp',
+        nameEn: 'C-reactive protein',
+        nameZh: 'C 反应蛋白',
+        priceFen: 4300,
+        version: 1,
+      }, {
+        allowedIndicationCodes: ['fever'],
+        contraindicatedAllergyCodes: [],
         id: 'lab-fever-panel',
         nameEn: 'Fever laboratory panel',
         nameZh: '发热检验组合',

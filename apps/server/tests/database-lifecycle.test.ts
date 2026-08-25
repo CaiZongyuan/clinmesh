@@ -37,7 +37,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 13,
+      schemaVersion: 14,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -54,14 +54,15 @@ describe('SQLite lifecycle', () => {
         '0010_consultation-question-backfill.sql',
         '0011_structured-clinical-document.sql',
         '0012_structured-clinical-document-preview-binding.sql',
+        '0013_laboratory-request-lifecycle.sql',
       ],
-      schemaVersion: 13,
+      schemaVersion: 14,
     })
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 13 })
-    expect(reopened.diagnostics().schemaVersion).toBe(13)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 14 })
+    expect(reopened.diagnostics().schemaVersion).toBe(14)
     reopened.close()
   })
 
@@ -441,6 +442,36 @@ describe('SQLite lifecycle', () => {
       context.epoch,
       'preview-before-context-binding',
     )).toEqual({ actor_context_hash: '', encounter_version: '' })
+    await copyFile(
+      join(process.cwd(), 'drizzle', '0013_laboratory-request-lifecycle.sql'),
+      join(legacyMigrationDirectory, '0013_laboratory-request-lifecycle.sql'),
+    )
+    expect(applyMigrations(database, legacyMigrationDirectory)).toEqual({
+      applied: ['0013_laboratory-request-lifecycle.sql'],
+      schemaVersion: 14,
+    })
+    expect(database.driver.prepare(`
+      SELECT item_id FROM outpatient_catalog
+      WHERE workspace_id = ? AND epoch = ? AND item_id IN ('lab-cbc', 'lab-crp')
+      ORDER BY item_id
+    `).all(context.workspaceId, context.epoch)).toEqual([
+      { item_id: 'lab-cbc' },
+      { item_id: 'lab-crp' },
+    ])
+    expect(database.driver.prepare('PRAGMA table_info(laboratory_request_state)').all()).toHaveLength(8)
+    expect(database.driver.prepare('PRAGMA table_info(laboratory_request)').all()).toHaveLength(17)
+    expect(() => database.driver.prepare(`
+      INSERT INTO laboratory_request_state (
+        workspace_id, epoch, case_id, version, draft_catalog_item_id,
+        updated_by, updated_at
+      ) VALUES (?, ?, ?, 1, 'lab-cbc', ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'case-legacy',
+      'actor-legacy-doctor',
+      '2026-08-24T09:00:00+08:00',
+    )).toThrow(/CHECK constraint failed/)
     expect(() => database.driver.prepare(`
       INSERT INTO signed_clinical_document (
         workspace_id, epoch, document_id, case_id, composition_id, bundle_id,
@@ -517,7 +548,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(13)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(14)
     await runtime.close()
   })
 
@@ -587,7 +618,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 13,
+      schemaVersion: 14,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -599,11 +630,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 13,
+      expectedSchemaVersion: 14,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 13,
+      schemaVersion: 14,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -787,7 +818,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(13),
+      schemaVersion: z.literal(14),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -800,26 +831,27 @@ describe('SQLite lifecycle', () => {
       '0010_consultation-question-backfill.sql',
       '0011_structured-clinical-document.sql',
       '0012_structured-clinical-document-preview-binding.sql',
+      '0013_laboratory-request-lifecycle.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 13 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 14 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 13 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 14 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 13 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 14 })
   })
 })

@@ -2,6 +2,7 @@ import {
   apiErrorSchema,
   askConsultationQuestionResponseSchema,
   billingQueueSchema,
+  laboratoryRequestActionResponseSchema,
   clinicalDocumentDraftResponseSchema,
   clinicalDocumentRevisionResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
@@ -13,7 +14,9 @@ import {
   doctorCaseDetailSchema,
   doctorQueueSchema,
   firstVisitDraftResponseSchema,
+  issueLaboratoryRequestResponseSchema,
   laboratoryOrderResponseSchema,
+  laboratoryRequestDraftResponseSchema,
   paymentPreviewResponseSchema,
   paymentResponseSchema,
   pharmacyQueueSchema,
@@ -85,7 +88,7 @@ export async function apiMutation<Schema extends z.ZodType>(
   path: string,
   schema: Schema,
   body?: unknown,
-  options: { idempotencyKey?: string; method?: 'POST' | 'PUT' } = {},
+  options: { idempotencyKey?: string; method?: 'DELETE' | 'POST' | 'PUT' } = {},
 ): Promise<z.infer<Schema>> {
   const headers: Record<string, string> = {
     accept: 'application/json',
@@ -460,6 +463,85 @@ export function issueLaboratoryOrder(input: {
         catalogItemId: input.catalogItemId,
         expectedDraftVersion: input.expectedDraftVersion,
         indicationCode: input.indicationCode,
+      },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function saveLaboratoryRequestDraft(input: {
+  catalogItemId: 'lab-cbc' | 'lab-crp'
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+  indicationCode: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/laboratory-request/draft`,
+    laboratoryRequestDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: {
+        catalogItemId: input.catalogItemId,
+        expectedDraftVersion: input.expectedDraftVersion,
+        indicationCode: input.indicationCode,
+      },
+    },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function deleteLaboratoryRequestDraft(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/laboratory-request/draft`,
+    laboratoryRequestDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey, method: 'DELETE' },
+  )
+}
+
+export function issueLaboratoryRequest(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/laboratory-request/actions/issue`,
+    issueLaboratoryRequestResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function cancelLaboratoryRequest(input: {
+  requestId: string
+  requestVersion: number
+  serviceRequestId: string
+  serviceRequestVersion: string
+  taskId: string
+  taskVersion: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/laboratory-requests/${encodeURIComponent(input.requestId)}/actions/cancel`,
+    laboratoryRequestActionResponseSchema,
+    {
+      expectedVersions: {
+        [`ServiceRequest/${input.serviceRequestId}`]: input.serviceRequestVersion,
+        [`Task/${input.taskId}`]: input.taskVersion,
+      },
+      input: {
+        expectedRequestVersion: input.requestVersion,
+        reasonCode: 'no-longer-needed',
       },
     },
     { idempotencyKey },

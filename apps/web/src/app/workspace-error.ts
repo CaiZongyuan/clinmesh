@@ -28,6 +28,15 @@ export function getWorkspaceErrorMessage(
   if (error.code === 'INVALID_INPUT') return messages.invalidInputDescription
   if (error.code === 'CATALOG_CONFLICT') return messages.catalogConflictDescription
   if (error.code === 'DUPLICATE_PATIENT') return messages.duplicatePatientDescription
+  if (error.code === 'LABORATORY_REQUEST_DUPLICATE') {
+    return messages.laboratoryRequestDuplicateDescription
+  }
+  if (error.code === 'LABORATORY_REQUEST_NOT_CANCELLABLE') {
+    return messages.laboratoryRequestNotCancellableDescription
+  }
+  if (error.code === 'LABORATORY_REQUEST_VERSION_CONFLICT') {
+    return messages.laboratoryRequestVersionConflictDescription
+  }
   if (error.status === 409 || error.code === 'WORKFLOW_CONFLICT') {
     return messages.operationConflictDescription
   }

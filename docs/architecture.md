@@ -347,7 +347,7 @@ Canonical URL 是定义身份，不要求该地址承担运行中 API。`Capabil
 | 排班 | `Schedule` | actor 指向 PractitionerRole、Location 或 HealthcareService |
 | 号源 | `Slot` | 容量扩展和并发计数由辅助表维护 |
 | 预约 | `Appointment` | 不再与候诊队列混为一表 |
-| 候诊/叫号任务 | `Task` | `focus` 指向 Encounter，`businessStatus` 表示待叫、已叫、过号等 |
+| 候诊/受控执行任务 | `Task` | 候诊 Task 的 `focus` 指向 Encounter；独立检验执行 Task 的 `focus` 指向 ServiceRequest |
 | 门诊/住院就诊 | `Encounter` | 门诊和住院主要由 class、type、serviceType、profile 和业务上下文区分 |
 | 疗程 | `EpisodeOfCare` | 跨多次就诊的照护周期 |
 | 诊断 | `Condition` | Encounter.diagnosis 引用 Condition |
@@ -461,7 +461,7 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 - Patient `identifier`：归一化后的精确匹配。
 - `patient` 精确引用匹配：AllergyIntolerance、Condition、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、MedicationRequest、MedicationDispense 和 Composition。
 - `encounter` 精确引用匹配：ChargeItem、Observation、ServiceRequest、DiagnosticReport、MedicationRequest、MedicationDispense 和 Composition。
-- Task `focus`：只接受 Encounter 引用。
+- Task `focus`：接受 Encounter 或 ServiceRequest 引用。
 - MedicationDispense `prescription`：只接受 MedicationRequest 引用。
 - Provenance `target`：只接受 Bundle 或 Composition 引用。
 
@@ -568,6 +568,10 @@ POST /api/his/v1/encounters/{id}/actions/start-revisit
 PUT  /api/his/v1/encounters/{id}/drafts/first-visit
 PUT  /api/his/v1/encounters/{id}/drafts/revisit
 PUT  /api/his/v1/encounters/{id}/clinical-document/draft
+PUT  /api/his/v1/encounters/{id}/laboratory-request/draft
+DELETE /api/his/v1/encounters/{id}/laboratory-request/draft
+POST /api/his/v1/encounters/{id}/laboratory-request/actions/issue
+POST /api/his/v1/laboratory-requests/{id}/actions/cancel
 POST /api/his/v1/encounters/{id}/actions/issue-laboratory-order
 POST /api/his/v1/encounters/{id}/actions/preview-sign
 POST /api/his/v1/encounters/{id}/actions/sign-and-complete
@@ -838,8 +842,8 @@ Agent 不能在请求体中自行指定 `runAs`。代表用户执行必须由服
 ```text
 Registration + Encounter + Account + 挂号 Charge Item
   -> 分诊 Observation + Queue Task ready
-  -> 医生受控问诊 + 首诊 + 检验 ServiceRequest + 检验 Charge Item
-  -> 检验支付
+  -> 医生受控问诊 + 首诊 + 独立检验 ServiceRequest/Task，或兼容 ServiceRequest/ChargeItem
+  -> 兼容检验支付；独立检查申请不计费
   -> LIS Specimen / Observation / DiagnosticReport
   -> 医生复诊 + Condition + Prescription + MedicationRequest
   -> 签署 document Bundle / Composition
@@ -859,11 +863,17 @@ Consultation 是病例级领域聚合，Consultation Record 是按序号追加�
 
 结构化 Clinical Document 草稿包含主诉、现病史、查体、评估、处置和随访六个共享必填字段，按病例保存在 `clinical_document_draft`，以 `expectedDraftVersion` 和 Encounter expected version 做 CAS 更新。签署预览固定 Actor context、Encounter 版本、草稿正文和草稿版本；提交重新校验这些依赖与 token 后创建不可变 FHIR R5 Composition、带稳定 identifier 且首 entry 为该 Composition 的自包含 document Bundle，以及同时引用二者的 Provenance，但不改变 Encounter 或病例状态。`signed_clinical_document` 只保存 FHIR 资源关联、签署者、时间和修订父链；每个病例只允许一个根文书，修订只接受最新 Composition 并创建线性替代版本。首期复诊 `sign-and-complete` 是兼容入口，只能用于尚无结构化签署根文书的病例；已有根文书时预览和提交都返回稳定业务冲突。
 
+带 Consultation 的 Virtual Patient 医生病例使用独立检查申请 owner。`laboratory_request_state` 保存一个病例级草稿及单调递增版本；保存和删除都以当前 Encounter 与草稿版本做 CAS，删除或开具只清空草稿而不复用旧版本。草稿只接受 `lab-cbc`、`lab-crp` 及目录允许的 `fever` 适应证，不创建 FHIR 资源。开具以当前草稿创建 `ServiceRequest.status=active` 和 `Task.status=requested`，Task `focus` 指向该 ServiceRequest，并拒绝同一病例中同项目的未取消申请；该独立流程不创建 ChargeItem，也不推进 Encounter 或医生 Queue Task。
+
+独立申请开具后由持久 outbox 绑定 `lis-system`，依次把领域状态和执行 Task 从 `issued/requested` 推进到 `accepted/accepted` 与 `in-progress/in-progress`。只有 `issued` 申请可由原开具医生普通取消；取消把 ServiceRequest 改为 `revoked`、执行 Task 改为 `cancelled`，并递增正式申请版本。取消与受理竞争时由版本和条件更新决定唯一结果，已取消申请收到晚到受理事件时以无副作用完成。医生病例详情读取草稿版本、可选草稿和全部正式申请，Web 只对当前草稿显示删除、只对 `issued` 行显示取消。
+
+没有 Consultation 的既有挂号病例继续由 Web 使用 `issue-laboratory-order` 兼容入口和 `lab-fever-panel`，该命令绑定首诊草稿、Encounter 与医生 Queue Task，创建 ServiceRequest、ChargeItem 和待缴状态。独立草稿入口的请求 schema 不接受 `lab-fever-panel`；两条路径不共享草稿版本、正式申请领域状态或执行 Task 状态机。
+
 关键约束：
 
 - 一个 Encounter 贯穿挂号、分诊、首诊、检验和复诊，不为复诊新建 Encounter。
 - 一个普通门诊 Encounter 同时只能有一个主接诊者。
-- LIS 是受控系统 Actor，只接收已支付的检验请求；结果通过持久 outbox 推进并可在服务重启后恢复。
+- LIS 是受控系统 Actor；独立检查申请在开具后进入受理/执行 outbox，兼容收费检验在支付成功后进入报告 outbox，二者都可在服务重启后恢复。
 - 诊断、过敏、生命体征和检验结果必须在签发相关处方时参与校验。
 - Prescription 是带处方号的持久领域聚合，归组 MedicationRequest 并拥有审核、收费和调剂边界；它不等同 RequestOrchestration。
 - 独立结构化病历签署不完成 Encounter；首期复诊兼容命令只在尚无结构化签署根文书时组合旧文书签署与 Encounter 完成。收费员只处理已进入待缴状态的药品费用，药师再调剂发药；Encounter 完成与 Scenario Run 完成是两个事实。
@@ -1073,7 +1083,7 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 当前领域表只覆盖首期闭环：
 
 - 身份与岗位：Better Auth 的 user/session/account，加 Workspace Membership、Practitioner Role binding 和当前 session context。
-- 门诊：Virtual Patient 候选状态与接诊映射、Consultation、append-only Consultation Record、目录、outpatient case、Registration、分诊记录、临床草稿、Prescription 与处方项目。
+- 门诊：Virtual Patient 候选状态与接诊映射、Consultation、append-only Consultation Record、目录、outpatient case、Registration、分诊记录、临床草稿、检查申请草稿状态、正式检查申请、Prescription 与处方项目。
 - 账务：Charge Record、Payment Preview 和 Payment Transaction。金额以整数分保存；当前没有退款、医保或收费员交账表。
 - 库存与发药：Inventory Lot、append-only Inventory Movement 和 Dispense。当前不实现预占、追溯码、盘点或调拨。
 - 文书：结构化 Clinical Document Draft、结构化与兼容 Clinical Sign Preview、Signed Clinical Document 关联和修订父链；签署的 Composition、document Bundle 和 Provenance 正文仍由 FHIR store 权威保存。
@@ -1153,7 +1163,7 @@ queued/claimed    -> abandoned
 
 - 服务启动时扫描可恢复事件；Command 提交后只负责唤醒同进程 dispatcher，内存通知丢失不会丢事件。
 - dispatcher 在外部调用前持久化 claim、lease 和 correlation ID，在提交结果前重新验证 Workspace/Epoch 仍 active。
-- LIS consumer 按 event ID 幂等；支付结局在支付 Command 中确定，只有支付成功产生 LIS 或药房 outbox。结果未知保持 `ambiguous`，不直接退回 queued。
+- LIS consumer 按 event ID 幂等；独立检查申请在开具 Command 中产生受理 outbox，支付 Command 只有成功时才产生兼容检验报告或药房 outbox。支付结果未知保持 `ambiguous`，不直接退回 queued。
 - dispatcher 崩溃后由过期 lease 恢复；当前没有公开人工重放入口。
 - 不承诺 exactly-once；使用 at-least-once delivery、幂等 consumer 和 ambiguous outcome 对账。
 
@@ -1465,7 +1475,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 ### 15.1 运行与持久化
 
 - Node.js Hono 同时提供 Web SPA、认证、HIS/Scenario API、FHIR R5 只读 API 和健康检查。
-- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；十三个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、Virtual Patient 接诊与问诊、门诊事实、结构化病历和处方审核状态。
+- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；十四个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、Virtual Patient 接诊与问诊、门诊事实、结构化病历、独立检查申请和处方审核状态。
 - 数据库 CLI 提供 migrate、verify、reindex、backup 和 restore；已有旧版数据库执行 migrate 时先在同目录创建并验证升级前备份，Server 进程只验证 migration。
 - CommandExecutor 统一 `BEGIN IMMEDIATE`、expected versions、幂等 receipt、FHIR current/history/search、领域事实、AuditEvent、Action Trace 和 outbox 原子提交。
 - 同进程 dispatcher 持久化 claim/lease/attempt/correlation，支持失败重试、ambiguous、重复消费和旧 Epoch abandon。
@@ -1476,13 +1486,13 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 - Better Auth 禁止公开注册，并幂等 seed 六个合成账户；每个请求重新解析 Membership、Practitioner Role 和 active Workspace/Epoch。
 - FHIR 固定 R5 `5.0.0`，当前资源只声明 read、vread、instance history 和 search-type；Search 白名单与负面保证见 5.2 节。
 - 五个岗位通过真实 API 推进同一个 Encounter。医生完成 Encounter 与药师完成 Scenario Run 是独立状态变化。
-- 支付支持 success、declined 和 ambiguous；LIS 只处理已成功支付检验；药房只处理已签且成功支付的处方。
+- 支付支持 success、declined 和 ambiguous；LIS 通过持久 outbox 推进独立检查申请的受理与执行，兼容收费检验仍只在支付成功后生成报告；药房只处理已签且成功支付的处方。
 - 结构化病历草稿使用 CAS 版本并可在 Web 恢复；独立签署不完成 Encounter。签署件不可普通覆盖，修订只能从最新版本创建新的 Composition、document Bundle、Provenance 和 Clinical Document Revision。
 - `candidate` 与 `density` 都未完成临床审核，不能称为 `golden`。安装 `golden` 会在输入 schema 与数据库约束处被拒绝。
 
 ### 15.3 Web 与明确边界
 
-- Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员 Scenario 控制入口；医生工作台提供六字段病历草稿、签署预览、独立签署、只读历史和最新版本修订。服务端状态只由 TanStack Query 缓存，退出/跨账户登录会清除非 session 查询。
+- Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员 Scenario 控制入口；医生工作台提供六字段病历草稿、签署预览、独立签署、只读历史和最新版本修订。带 Consultation 的病例显示 CBC/CRP 独立检查草稿、开具、状态和有效纠错操作，既有挂号病例保留发热检验组合兼容控件。服务端状态只由 TanStack Query 缓存，退出/跨账户登录会清除非 session 查询。
 - 可见字符串具有中文和英文 catalog；主题支持 system、light 与 dark。岗位页面具有分页、加载、空、错误、冲突、无权限和成功状态，并覆盖长中文文本与窄视口。
 - 首期不包含 Desktop/Mobile 产品行为、Agent/AG-UI/MCP、评分、附件、真实外部系统、完整医保/住院/库存、远程数据库、多实例或高可用。
 - 当前没有 FHIR generic write、自定义 FHIR Operation、正式 Profile/IG、官方 Validator、标准 compartment、metrics exporter 或公开在线 SLA。

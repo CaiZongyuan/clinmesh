@@ -410,6 +410,82 @@ export const clinicalDocumentStateSchema = z.object({
   signed: z.array(signedClinicalDocumentSchema),
 }).strict()
 
+export const laboratoryRequestDraftResponseSchema = commandResponseSchema(z.object({
+  caseId: z.string().min(1),
+  draftVersion: z.number().int().positive(),
+}).strict())
+
+export const saveLaboratoryRequestDraftRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: z.object({
+    catalogItemId: z.enum(['lab-cbc', 'lab-crp']),
+    expectedDraftVersion: z.number().int().nonnegative(),
+    indicationCode: z.string().min(1).max(64),
+  }).strict(),
+}).strict()
+
+export const deleteLaboratoryRequestDraftRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: z.object({
+    expectedDraftVersion: z.number().int().positive(),
+  }).strict(),
+}).strict()
+
+export const laboratoryRequestStatusSchema = z.enum([
+  'issued',
+  'accepted',
+  'in-progress',
+  'reported',
+  'acknowledged',
+  'cancelled',
+])
+
+export const laboratoryRequestSchema = z.object({
+  catalogItemId: z.enum(['lab-cbc', 'lab-crp']),
+  id: z.string().min(1),
+  indicationCode: z.string().min(1),
+  serviceRequestId: z.string().min(1),
+  serviceRequestVersion: z.string().regex(/^\d+$/),
+  status: laboratoryRequestStatusSchema,
+  taskId: z.string().min(1),
+  taskVersion: z.string().regex(/^\d+$/),
+  version: z.number().int().positive(),
+}).strict()
+
+export const issueLaboratoryRequestRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: z.object({
+    expectedDraftVersion: z.number().int().positive(),
+  }).strict(),
+}).strict()
+
+export const issueLaboratoryRequestResponseSchema = commandResponseSchema(z.object({
+  caseId: z.string().min(1),
+  draftVersion: z.number().int().positive(),
+  request: laboratoryRequestSchema,
+}).strict())
+
+export const cancelLaboratoryRequestRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: z.object({
+    expectedRequestVersion: z.number().int().positive(),
+    reasonCode: z.literal('no-longer-needed'),
+  }).strict(),
+}).strict()
+
+export const laboratoryRequestActionResponseSchema = commandResponseSchema(z.object({
+  request: laboratoryRequestSchema,
+}).strict())
+
+export const laboratoryRequestStateSchema = z.object({
+  draft: z.object({
+    catalogItemId: z.string().min(1),
+    indicationCode: z.string().min(1),
+  }).strict().optional(),
+  draftVersion: z.number().int().nonnegative(),
+  requests: z.array(laboratoryRequestSchema),
+}).strict()
+
 export const doctorCaseDetailSchema = z.object({
   allergies: z.array(allergyWarningSchema),
   caseId: z.string().min(1),
@@ -458,6 +534,7 @@ export const doctorCaseDetailSchema = z.object({
     status: z.string().optional(),
     versionId: z.string().regex(/^\d+$/),
   }),
+  laboratoryRequests: laboratoryRequestStateSchema.optional(),
   patient: patientSummarySchema,
   presentation: clinicalPresentationSchema,
   priorFacts: z.array(priorFactSchema),
@@ -673,5 +750,6 @@ export type ClinicalCatalog = z.infer<typeof clinicalCatalogSchema>
 export type TriageQueueItem = z.infer<typeof triageQueueSchema>['items'][number]
 export type DoctorQueueItem = z.infer<typeof doctorQueueItemSchema>
 export type DoctorCaseDetail = z.infer<typeof doctorCaseDetailSchema>
+export type LaboratoryRequest = z.infer<typeof laboratoryRequestSchema>
 export type BillingQueueItem = z.infer<typeof billingQueueSchema>['items'][number]
 export type PharmacyQueueItem = z.infer<typeof pharmacyQueueSchema>['items'][number]

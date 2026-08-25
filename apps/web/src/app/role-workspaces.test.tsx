@@ -1124,6 +1124,311 @@ describe('role workspaces', () => {
     expect(screen.getByText('数据已发生变化，请刷新后重新确认。')).toBeTruthy()
   })
 
+  it('saves and issues the selected controlled laboratory request', async () => {
+    let draft: { catalogItemId: string; indicationCode: string } | undefined
+    let draftVersion = 0
+    let request: {
+      catalogItemId: 'lab-crp'
+      id: string
+      indicationCode: string
+      serviceRequestId: string
+      serviceRequestVersion: string
+      status: 'issued'
+      taskId: string
+      taskVersion: string
+      version: number
+    } | undefined
+    const patient = {
+      birthDate: '1988-03-16',
+      gender: 'female',
+      id: 'patient-virtual-1',
+      identifier: 'CM-SYN-VP-001',
+      name: '合成候选患者林晓',
+      synthetic: true,
+      versionId: '1',
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({
+          laboratory: [{
+            allowedIndicationCodes: ['fever'],
+            contraindicatedAllergyCodes: [],
+            id: 'lab-fever-panel',
+            nameEn: 'Fever laboratory panel',
+            nameZh: '发热检验组合',
+            priceFen: 6800,
+            version: 1,
+          }, {
+            allowedIndicationCodes: ['fever'],
+            contraindicatedAllergyCodes: [],
+            id: 'lab-cbc',
+            nameEn: 'Complete blood count',
+            nameZh: '血常规',
+            priceFen: 2500,
+            version: 1,
+          }, {
+            allowedIndicationCodes: ['fever'],
+            contraindicatedAllergyCodes: [],
+            id: 'lab-crp',
+            nameEn: 'C-reactive protein',
+            nameZh: 'C 反应蛋白',
+            priceFen: 4300,
+            version: 1,
+          }],
+          medications: [],
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        return Response.json({
+          items: [{
+            caseId: 'case-virtual-1',
+            encounterId: 'encounter-virtual-1',
+            encounterVersion: '1',
+            patient,
+            presentation: virtualPatientPresentation,
+            status: 'first-visit',
+            taskId: 'task-doctor-virtual-1',
+            taskVersion: '1',
+          }],
+          ...pagination(1),
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-virtual-1') {
+        return Response.json({
+          allergies: [],
+          caseId: 'case-virtual-1',
+          consultation: { questions: [], records: [], version: 1 },
+          encounter: { id: 'encounter-virtual-1', status: 'in-progress', versionId: '1' },
+          laboratoryRequests: {
+            ...(draft === undefined ? {} : { draft }),
+            draftVersion,
+            requests: request === undefined ? [] : [request],
+          },
+          patient,
+          presentation: virtualPatientPresentation,
+          priorFacts: [],
+          status: 'first-visit',
+          taskId: 'task-doctor-virtual-1',
+          taskVersion: '1',
+        })
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-virtual-1/laboratory-request/draft') {
+        const body = JSON.parse(String(init?.body)) as {
+          expectedVersions: Record<string, string>
+          input: Record<string, unknown>
+        }
+        expect(init?.method).toBe('PUT')
+        expect(body).toEqual({
+          expectedVersions: { 'Encounter/encounter-virtual-1': '1' },
+          input: {
+            catalogItemId: 'lab-crp',
+            expectedDraftVersion: 0,
+            indicationCode: 'fever',
+          },
+        })
+        draft = { catalogItemId: 'lab-crp', indicationCode: 'fever' }
+        draftVersion = 1
+        return Response.json(commandResponse({ caseId: 'case-virtual-1', draftVersion }))
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-virtual-1/laboratory-request/actions/issue') {
+        const body = JSON.parse(String(init?.body)) as {
+          expectedVersions: Record<string, string>
+          input: Record<string, unknown>
+        }
+        expect(body).toEqual({
+          expectedVersions: { 'Encounter/encounter-virtual-1': '1' },
+          input: { expectedDraftVersion: 1 },
+        })
+        draft = undefined
+        draftVersion = 2
+        request = {
+          catalogItemId: 'lab-crp',
+          id: 'laboratory-request-crp-1',
+          indicationCode: 'fever',
+          serviceRequestId: 'service-request-crp-1',
+          serviceRequestVersion: '1',
+          status: 'issued',
+          taskId: 'task-laboratory-crp-1',
+          taskVersion: '1',
+          version: 1,
+        }
+        return Response.json(commandResponse({
+          caseId: 'case-virtual-1',
+          draftVersion,
+          request,
+        }))
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    const laboratoryItem = await screen.findByRole('combobox', { name: '检验项目' })
+    await user.click(laboratoryItem)
+    expect(await screen.findByRole('option', { name: '血常规 · ¥25.00' })).toBeTruthy()
+    expect(screen.getByRole('option', { name: 'C 反应蛋白 · ¥43.00' })).toBeTruthy()
+    expect(screen.queryByRole('option', { name: '发热检验组合 · ¥68.00' })).toBeNull()
+    await user.click(screen.getByRole('option', { name: 'C 反应蛋白 · ¥43.00' }))
+    await user.click(screen.getByRole('button', { name: '保存检查草稿' }))
+
+    expect(await screen.findByText('检查草稿已保存')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '开具检查申请' }))
+
+    expect(await screen.findByRole('cell', { name: 'C 反应蛋白' })).toBeTruthy()
+    expect(screen.getByText('已开具')).toBeTruthy()
+  })
+
+  it('shows laboratory request statuses and exposes only valid correction actions', async () => {
+    let draft: { catalogItemId: string; indicationCode: string } | undefined = {
+      catalogItemId: 'lab-cbc',
+      indicationCode: 'fever',
+    }
+    let draftVersion = 1
+    const request = (status: 'accepted' | 'acknowledged' | 'cancelled' | 'in-progress' | 'issued' | 'reported', index: number) => ({
+      catalogItemId: index % 2 === 0 ? 'lab-cbc' : 'lab-crp',
+      id: `laboratory-request-${index}`,
+      indicationCode: 'fever',
+      serviceRequestId: `service-request-${index}`,
+      serviceRequestVersion: '1',
+      status,
+      taskId: `task-laboratory-${index}`,
+      taskVersion: status === 'issued' ? '1' : '2',
+      version: status === 'issued' ? 1 : 2,
+    })
+    let requests = [
+      request('issued', 1),
+      request('accepted', 2),
+      request('in-progress', 3),
+      request('reported', 4),
+      request('acknowledged', 5),
+      request('cancelled', 6),
+    ]
+    const patient = {
+      birthDate: '1988-03-16',
+      gender: 'female',
+      id: 'patient-virtual-1',
+      identifier: 'CM-SYN-VP-001',
+      name: '合成候选患者林晓',
+      synthetic: true,
+      versionId: '1',
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({
+          laboratory: [{
+            allowedIndicationCodes: ['fever'],
+            contraindicatedAllergyCodes: [],
+            id: 'lab-cbc',
+            nameEn: 'Complete blood count',
+            nameZh: '血常规',
+            priceFen: 2500,
+            version: 1,
+          }, {
+            allowedIndicationCodes: ['fever'],
+            contraindicatedAllergyCodes: [],
+            id: 'lab-crp',
+            nameEn: 'C-reactive protein',
+            nameZh: 'C 反应蛋白',
+            priceFen: 4300,
+            version: 1,
+          }],
+          medications: [],
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        return Response.json({
+          items: [{
+            caseId: 'case-virtual-1',
+            encounterId: 'encounter-virtual-1',
+            encounterVersion: '1',
+            patient,
+            presentation: virtualPatientPresentation,
+            status: 'first-visit',
+            taskId: 'task-doctor-virtual-1',
+            taskVersion: '1',
+          }],
+          ...pagination(1),
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-virtual-1') {
+        return Response.json({
+          allergies: [],
+          caseId: 'case-virtual-1',
+          consultation: { questions: [], records: [], version: 1 },
+          encounter: { id: 'encounter-virtual-1', status: 'in-progress', versionId: '1' },
+          laboratoryRequests: {
+            ...(draft === undefined ? {} : { draft }),
+            draftVersion,
+            requests,
+          },
+          patient,
+          presentation: virtualPatientPresentation,
+          priorFacts: [],
+          status: 'first-visit',
+          taskId: 'task-doctor-virtual-1',
+          taskVersion: '1',
+        })
+      }
+      if (url.pathname === '/api/his/v1/laboratory-requests/laboratory-request-1/actions/cancel') {
+        const body = JSON.parse(String(init?.body)) as unknown
+        expect(body).toEqual({
+          expectedVersions: {
+            'ServiceRequest/service-request-1': '1',
+            'Task/task-laboratory-1': '1',
+          },
+          input: { expectedRequestVersion: 1, reasonCode: 'no-longer-needed' },
+        })
+        const issuedRequest = requests.find(request => request.id === 'laboratory-request-1')
+        if (issuedRequest === undefined) throw new Error('Issued laboratory request was not found')
+        const cancelled = {
+          ...issuedRequest,
+          serviceRequestVersion: '2',
+          status: 'cancelled' as const,
+          taskVersion: '2',
+          version: 2,
+        }
+        requests = requests.map(request => request.id === cancelled.id ? cancelled : request)
+        return Response.json(commandResponse({ request: cancelled }))
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-virtual-1/laboratory-request/draft') {
+        expect(init?.method).toBe('DELETE')
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedVersions: { 'Encounter/encounter-virtual-1': '1' },
+          input: { expectedDraftVersion: 1 },
+        })
+        draft = undefined
+        draftVersion = 2
+        return Response.json(commandResponse({ caseId: 'case-virtual-1', draftVersion }))
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    expect(await screen.findByText('已开具')).toBeTruthy()
+    for (const label of ['已受理', '执行中', '已报告', '医生已阅', '已取消']) {
+      expect(screen.getByText(label)).toBeTruthy()
+    }
+    const cancelButtons = screen.getAllByRole('button', { name: /取消检查申请/ })
+    expect(cancelButtons).toHaveLength(1)
+    expect(cancelButtons[0]?.getAttribute('aria-label')).toBe('取消检查申请 C 反应蛋白')
+
+    await user.click(cancelButtons[0] as HTMLElement)
+    await waitFor(() => expect(screen.queryByText('已开具')).toBeNull())
+    await user.click(screen.getByRole('button', { name: '删除检查草稿' }))
+    await waitFor(() => expect(screen.queryByText('检查草稿已保存')).toBeNull())
+  })
+
   it('starts the first visit, saves a CAS draft, and issues the laboratory order', async () => {
     let status: 'awaiting-doctor' | 'awaiting-lab-payment' | 'first-visit' = 'awaiting-doctor'
     let draftVersion = 0
