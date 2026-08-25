@@ -486,7 +486,9 @@ export const doctorCompletedCaseSummarySchema = z.object({
   encounterId: z.string().min(1),
   encounterVersion: z.string().regex(/^\d+$/),
   patient: patientSummarySchema,
-  primaryDiagnosis: diagnosisConfirmationEntrySchema.optional(),
+  primaryDiagnosis: diagnosisConfirmationEntrySchema.extend({
+    catalogItemId: diagnosisConfirmationEntrySchema.shape.catalogItemId.optional(),
+  }).strict().optional(),
 }).strict()
 
 export const doctorCompletedCaseListSchema = z.object({
@@ -671,6 +673,18 @@ export const signedClinicalDocumentSchema = z.object({
   revisionOfCompositionId: z.string().min(1).optional(),
   revisionReason: z.string().min(1).optional(),
   signedAt: z.string().min(1),
+}).strict()
+
+const legacyClinicalDocumentContentSchema = z.object({
+  assessment: z.string().trim().min(2).max(4_000),
+  plan: z.string().trim().min(2).max(4_000),
+}).strict()
+
+export const completedCaseClinicalDocumentSchema = signedClinicalDocumentSchema.extend({
+  content: z.union([
+    clinicalDocumentContentSchema,
+    legacyClinicalDocumentContentSchema,
+  ]),
 }).strict()
 
 export const clinicalDocumentStateSchema = z.object({
@@ -875,6 +889,93 @@ export const laboratoryRequestSchema = z.object({
   })
 })
 
+const completedCaseLaboratoryResultSchema = z.object({
+  code: z.string().min(1),
+  display: z.string().min(1),
+  interpretation: z.string().min(1).optional(),
+  observationId: z.string().min(1),
+  referenceRange: z.object({
+    text: z.string().min(1),
+  }).loose().optional(),
+  unit: z.object({
+    code: z.string().min(1).optional(),
+    display: z.string().min(1),
+    system: z.string().url().optional(),
+  }).strict().optional(),
+  value: z.union([z.boolean(), z.number().finite(), z.string()]),
+}).strict()
+
+const completedCaseLaboratoryReportSchema = z.object({
+  acknowledgement: laboratoryReportAcknowledgementSchema.optional(),
+  conclusion: z.string().min(1),
+  diagnosticReportId: z.string().min(1),
+  diagnosticReportVersion: z.string().regex(/^\d+$/),
+  issuedAt: z.string().datetime({ offset: true }),
+  revisionNumber: z.number().int().positive(),
+  revisionOfDiagnosticReportId: z.string().min(1).optional(),
+  revisionReason: z.string().min(1).optional(),
+  results: z.array(completedCaseLaboratoryResultSchema).min(1),
+  specimenId: z.string().min(1),
+  status: z.literal('final'),
+}).strict().superRefine((report, context) => {
+  const isRevision = report.revisionNumber > 1
+  if (
+    isRevision === (report.revisionOfDiagnosticReportId !== undefined)
+    && isRevision === (report.revisionReason !== undefined)
+  ) return
+  context.addIssue({
+    code: 'custom',
+    message: isRevision
+      ? 'A revised laboratory report must identify its source and reason'
+      : 'The initial laboratory report cannot identify a revision source',
+    path: ['revisionNumber'],
+  })
+})
+
+export const completedCaseLaboratoryRequestSchema = z.object({
+  catalogDisplay: z.string().min(1).optional(),
+  catalogItemId: z.string().regex(/^[A-Za-z0-9.-]{1,64}$/).optional(),
+  id: z.string().min(1),
+  indicationCode: z.string().min(1),
+  previousReports: z.array(completedCaseLaboratoryReportSchema).default([]),
+  report: completedCaseLaboratoryReportSchema.optional(),
+  serviceRequestId: z.string().min(1),
+  serviceRequestVersion: z.string().regex(/^\d+$/),
+  status: laboratoryRequestStatusSchema,
+  taskId: z.string().min(1).optional(),
+  taskVersion: z.string().regex(/^\d+$/).optional(),
+  version: z.number().int().positive(),
+}).strict().superRefine((request, context) => {
+  if ((request.taskId === undefined) !== (request.taskVersion === undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Laboratory task ID and version must be present together',
+      path: ['taskId'],
+    })
+  }
+  const requiresReport = request.status === 'reported' || request.status === 'acknowledged'
+  if (requiresReport !== (request.report !== undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: requiresReport
+        ? 'A reported laboratory request must include its report'
+        : 'A laboratory request cannot include a report before it is reported',
+      path: ['report'],
+    })
+    return
+  }
+  if (request.report === undefined) return
+  const requiresAcknowledgement = request.status === 'acknowledged'
+  if (requiresAcknowledgement === (request.report.acknowledgement !== undefined)) return
+  context.addIssue({
+    code: 'custom',
+    message: requiresAcknowledgement
+      ? 'An acknowledged laboratory request must include its acknowledgement'
+      : 'A reported laboratory request cannot include a current acknowledgement',
+    path: ['report', 'acknowledgement'],
+  })
+})
+
 export const issueLaboratoryRequestRequestSchema = z.object({
   expectedVersions: z.record(z.string(), z.string()),
   input: z.object({
@@ -938,19 +1039,23 @@ export const doctorCompletedCaseTimelineEventSchema = z.object({
 
 export const doctorCompletedCaseDetailSchema = z.object({
   caseId: z.string().min(1),
-  clinicalDocuments: z.array(signedClinicalDocumentSchema),
+  clinicalDocuments: z.array(completedCaseClinicalDocumentSchema),
   completedAt: z.iso.datetime({ offset: true }),
   consultation: z.object({
     records: z.array(consultationRecordSchema),
     version: z.number().int().positive(),
   }).strict().optional(),
-  diagnosis: diagnosisConfirmationSchema.optional(),
+  diagnosis: diagnosisConfirmationSchema.extend({
+    entries: z.array(diagnosisConfirmationEntrySchema.extend({
+      catalogItemId: diagnosisConfirmationEntrySchema.shape.catalogItemId.optional(),
+    }).strict()).min(1),
+  }).strict().optional(),
   encounter: z.object({
     id: z.string().min(1),
     status: z.literal('completed'),
     versionId: z.string().regex(/^\d+$/),
   }).strict(),
-  laboratoryRequests: z.array(laboratoryRequestSchema),
+  laboratoryRequests: z.array(completedCaseLaboratoryRequestSchema),
   medicationConclusion: z.object({
     noMedication: noMedicationConclusionSchema.optional(),
     prescription: issuedPrescriptionSchema.optional(),

@@ -28,6 +28,7 @@ import {
   deletePrescriptionDraftRequestSchema,
   diagnosisDraftResponseSchema,
   dispenseResponseSchema,
+  doctorCompletedCaseDetailSchema,
   doctorCompletedCaseListSchema,
   doctorCaseDetailSchema,
   doctorQueueSchema,
@@ -1001,6 +1002,121 @@ describe('outpatient workflow HTTP contract', () => {
     await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true })))
   })
 
+  it('returns formal facts from a completed sign-and-complete case', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-completed-case-legacy-facts-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createSignedCase(runtime, password)
+
+    const response = await runtime.app.request(
+      `/api/his/v1/doctor/completed-cases/${testCase.caseId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+
+    const responseBody: unknown = await response.json()
+    expect(response.status, JSON.stringify(responseBody)).toBe(200)
+    const detail = doctorCompletedCaseDetailSchema.parse(responseBody)
+    expect(detail.clinicalDocuments).toEqual([
+      expect.objectContaining({
+        compositionId: testCase.signed.compositionId,
+        content: {
+          assessment: '甲型流感，生命体征稳定。',
+          plan: '口服抗病毒药物，对症处理，必要时复诊。',
+        },
+      }),
+    ])
+    expect(detail.diagnosis?.entries).toEqual([
+      expect.objectContaining({
+        code: 'J10.1',
+        conditionId: testCase.draft.conditionId,
+        role: 'primary',
+      }),
+    ])
+    expect(detail.laboratoryRequests).toEqual([
+      expect.objectContaining({
+        report: expect.objectContaining({
+          diagnosticReportId: testCase.report.diagnosticReportId,
+          results: expect.arrayContaining([
+            expect.objectContaining({ code: '80382-5', value: true }),
+            expect.objectContaining({ code: '6690-2', value: 6.8 }),
+          ]),
+        }),
+        serviceRequestId: testCase.order.serviceRequestId,
+      }),
+    ])
+    expect(detail.medicationConclusion?.prescription).toEqual(expect.objectContaining({
+      id: testCase.draft.prescriptionId,
+      items: [expect.objectContaining({
+        medicationRequestId: testCase.draft.medicationRequestIds[0],
+      })],
+    }))
+    expect(detail.timeline.map(event => event.reference)).toEqual(expect.arrayContaining([
+      `ServiceRequest/${testCase.order.serviceRequestId}`,
+      `DiagnosticReport/${testCase.report.diagnosticReportId}`,
+      `Condition/${testCase.draft.conditionId}`,
+      `Composition/${testCase.signed.compositionId}`,
+      `Prescription/${testCase.draft.prescriptionId}`,
+      `Encounter/${testCase.registration.encounterId}`,
+    ]))
+
+    const filteredResponse = await runtime.app.request(
+      '/api/his/v1/doctor/completed-cases?diagnosisCatalogItemId=diagnosis-influenza&pageSize=20',
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+
+    expect(filteredResponse.status).toBe(200)
+    expect(doctorCompletedCaseListSchema.parse(await filteredResponse.json())).toMatchObject({
+      items: [{
+        caseId: testCase.caseId,
+        primaryDiagnosis: {
+          catalogItemId: 'diagnosis-influenza',
+          code: 'J10.1',
+        },
+      }],
+      total: 1,
+    })
+  })
+
+  it('rejects a malformed completed-case logical ID at the HTTP boundary', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-completed-case-invalid-id-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
+
+    const response = await runtime.app.request(
+      '/api/his/v1/doctor/completed-cases/invalid%20case',
+      { headers: { cookie: doctorCookie } },
+    )
+
+    expect(response.status).toBe(400)
+    expect(apiErrorSchema.parse(await response.json())).toEqual({
+      error: {
+        code: 'INVALID_INPUT',
+        message: 'The request is invalid',
+      },
+    })
+  })
+
   it('archives a completed Encounter only for its responsible doctor', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-completed-case-archive-http-'))
     temporaryDirectories.push(directory)
@@ -1026,7 +1142,7 @@ describe('outpatient workflow HTTP contract', () => {
 
     const beforeCompletion = await archive(doctorCookie)
     expect(beforeCompletion.status).toBe(200)
-    expect(await beforeCompletion.json()).toEqual({
+    expect(doctorCompletedCaseListSchema.parse(await beforeCompletion.json())).toEqual({
       items: [],
       page: 1,
       pageSize: 20,
@@ -1048,7 +1164,9 @@ describe('outpatient workflow HTTP contract', () => {
 
     const responsibleDoctorArchive = await archive(doctorCookie)
     expect(responsibleDoctorArchive.status).toBe(200)
-    expect(await responsibleDoctorArchive.json()).toMatchObject({
+    expect(doctorCompletedCaseListSchema.parse(
+      await responsibleDoctorArchive.json(),
+    )).toMatchObject({
       items: [{
         caseId: started.caseId,
         completedAt: completion.data.completedAt,
@@ -1070,7 +1188,7 @@ describe('outpatient workflow HTTP contract', () => {
 
     const otherDoctorArchive = await archive(administratorCookie)
     expect(otherDoctorArchive.status).toBe(200)
-    expect(await otherDoctorArchive.json()).toEqual({
+    expect(doctorCompletedCaseListSchema.parse(await otherDoctorArchive.json())).toEqual({
       items: [],
       page: 1,
       pageSize: 20,
@@ -1112,6 +1230,7 @@ describe('outpatient workflow HTTP contract', () => {
         },
       )
       expect(response.status).toBe(200)
+      encounterCompletionResponseSchema.parse(await response.json())
     }
     const first = await createCompletionReadyConsultation(runtime, password)
     await complete(first)
@@ -1128,7 +1247,7 @@ describe('outpatient workflow HTTP contract', () => {
     )
 
     expect(response.status).toBe(200)
-    expect(await response.json()).toMatchObject({
+    expect(doctorCompletedCaseListSchema.parse(await response.json())).toMatchObject({
       items: [{
         caseId: second.started.caseId,
         patient: {
@@ -1192,7 +1311,7 @@ describe('outpatient workflow HTTP contract', () => {
     )
 
     expect(response.status).toBe(200)
-    expect(await response.json()).toMatchObject({
+    expect(doctorCompletedCaseListSchema.parse(await response.json())).toMatchObject({
       items: [{
         caseId: second.started.caseId,
         completedAt: secondCompletion.data.completedAt,
@@ -1237,6 +1356,7 @@ describe('outpatient workflow HTTP contract', () => {
         },
       )
       expect(response.status).toBe(200)
+      encounterCompletionResponseSchema.parse(await response.json())
     }
     const influenza = await createCompletionReadyConsultation(runtime, password)
     await complete(influenza)
@@ -1251,7 +1371,7 @@ describe('outpatient workflow HTTP contract', () => {
     )
 
     expect(response.status).toBe(200)
-    expect(await response.json()).toMatchObject({
+    expect(doctorCompletedCaseListSchema.parse(await response.json())).toMatchObject({
       items: [{
         caseId: upperRespiratoryInfection.started.caseId,
         primaryDiagnosis: {
@@ -1364,6 +1484,9 @@ describe('outpatient workflow HTTP contract', () => {
 
     const beforeCompletion = await detail(candidate.doctorCookie)
     expect(beforeCompletion.status).toBe(409)
+    expect(apiErrorSchema.parse(await beforeCompletion.json())).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
 
     const completionResponse = await runtime.app.request(
       `/api/his/v1/encounters/${candidate.started.encounterId}/actions/complete`,
@@ -1382,7 +1505,7 @@ describe('outpatient workflow HTTP contract', () => {
 
     const ownerResponse = await detail(candidate.doctorCookie)
     expect(ownerResponse.status).toBe(200)
-    const ownerDetail = await ownerResponse.json()
+    const ownerDetail = doctorCompletedCaseDetailSchema.parse(await ownerResponse.json())
     expect(ownerDetail).toMatchObject({
       caseId: candidate.started.caseId,
       clinicalDocuments: [{
@@ -1402,6 +1525,9 @@ describe('outpatient workflow HTTP contract', () => {
     const otherDoctorCookie = await selectAdditionalDoctorRole(runtime, password)
     const otherDoctorResponse = await detail(otherDoctorCookie)
     expect(otherDoctorResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await otherDoctorResponse.json())).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
   })
 
   it('returns completed case facts from each clinical owner without drafts', async () => {
@@ -1453,6 +1579,7 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
     expect(completionResponse.status).toBe(200)
+    encounterCompletionResponseSchema.parse(await completionResponse.json())
 
     const detailResponse = await runtime.app.request(
       `/api/his/v1/doctor/completed-cases/${candidate.started.caseId}`,
@@ -1460,7 +1587,7 @@ describe('outpatient workflow HTTP contract', () => {
     )
 
     expect(detailResponse.status).toBe(200)
-    const detail = await detailResponse.json()
+    const detail = doctorCompletedCaseDetailSchema.parse(await detailResponse.json())
     expect(detail).toMatchObject({
       consultation: {
         records: [{
@@ -1616,6 +1743,7 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
     expect(completionResponse.status).toBe(200)
+    encounterCompletionResponseSchema.parse(await completionResponse.json())
 
     const archiveResponse = await runtime.app.request(
       `/api/his/v1/doctor/completed-cases/${candidate.started.caseId}`,
@@ -1623,7 +1751,7 @@ describe('outpatient workflow HTTP contract', () => {
     )
 
     expect(archiveResponse.status).toBe(200)
-    const archive = await archiveResponse.json()
+    const archive = doctorCompletedCaseDetailSchema.parse(await archiveResponse.json())
     expect(archive).toMatchObject({
       clinicalDocuments: [
         { compositionId: originalDocument.compositionId, revisionNumber: 1 },
@@ -2260,6 +2388,43 @@ describe('outpatient workflow HTTP contract', () => {
       trustedOrigins: ['http://localhost'],
     })
     runtimes.push(runtime)
+    runtime.fhir.create(
+      { epoch: 'epoch-1', workspaceId: 'workspace-demo' },
+      {
+        resourceType: 'Practitioner',
+        id: 'practitioner-direct-intake-doctor',
+        active: true,
+        name: [{ text: '合成直达接诊医生' }],
+      },
+    )
+    runtime.fhir.create(
+      { epoch: 'epoch-1', workspaceId: 'workspace-demo' },
+      {
+        resourceType: 'PractitionerRole',
+        id: 'practitioner-role-direct-intake-doctor',
+        active: true,
+        code: [{ text: 'outpatient-doctor' }],
+        practitioner: { reference: 'Practitioner/practitioner-direct-intake-doctor' },
+      },
+    )
+    runtime.database.driver.prepare(`
+      INSERT INTO practitioner_role_binding (
+        workspace_id, practitioner_role_id, practitioner_id, role_code,
+        organization_id, location_id, active
+      ) VALUES (
+        'workspace-demo', 'practitioner-role-direct-intake-doctor',
+        'practitioner-direct-intake-doctor', 'outpatient-doctor',
+        'organization-clinmesh', 'location-outpatient-doctor', 1
+      )
+    `).run()
+    runtime.database.driver.prepare(`
+      INSERT INTO membership_practitioner_role (
+        membership_id, workspace_id, practitioner_role_id
+      ) VALUES (
+        'membership-administrator', 'workspace-demo',
+        'practitioner-role-direct-intake-doctor'
+      )
+    `).run()
     const administratorCookie = await signIn(runtime, 'admin@demo.clinmesh.local', password)
     const selectRole = (practitionerRoleId: string) => runtime.app.request('/api/auth/role', {
       body: JSON.stringify({ practitionerRoleId }),
@@ -2270,7 +2435,7 @@ describe('outpatient workflow HTTP contract', () => {
       },
       method: 'POST',
     })
-    expect((await selectRole('practitioner-role-outpatient-doctor')).status).toBe(200)
+    expect((await selectRole('practitioner-role-direct-intake-doctor')).status).toBe(200)
     const candidatesResponse = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
       headers: { cookie: administratorCookie },
     })
@@ -2311,6 +2476,9 @@ describe('outpatient workflow HTTP contract', () => {
       expect(fhirResourceSchema.parse(await resourceResponse.json())).toMatchObject({
         id: resourceId,
         resourceType,
+        ...(resourceType === 'Task'
+          ? { owner: { reference: 'PractitionerRole/practitioner-role-direct-intake-doctor' } }
+          : {}),
       })
     }
     const encounterSearchResponse = await runtime.app.request(
@@ -2330,7 +2498,7 @@ describe('outpatient workflow HTTP contract', () => {
         }),
         expect.objectContaining({
           requestor: false,
-          who: { identifier: expect.objectContaining({ value: 'practitioner-outpatient-doctor' }) },
+          who: { identifier: expect.objectContaining({ value: 'practitioner-direct-intake-doctor' }) },
         }),
       ]),
       code: { text: 'virtual-patient.start-consultation' },

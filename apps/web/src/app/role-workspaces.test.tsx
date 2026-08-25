@@ -382,7 +382,8 @@ function stubLaboratoryReportPolling(reportingSupported: boolean) {
   }
 }
 
-function stubDoctorCompletedCaseArchive(options: {
+function stubDoctorCompletedCaseLibrary(options: {
+  activeDetail?: DoctorCaseDetail
   detail?: DoctorCompletedCaseDetail
   list: DoctorCompletedCaseList
   onListRequest?: (url: URL) => void
@@ -420,6 +421,12 @@ function stubDoctorCompletedCaseArchive(options: {
       && url.pathname === `/api/his/v1/doctor/completed-cases/${options.detail.caseId}`
     ) {
       return Response.json(options.detail)
+    }
+    if (
+      options.activeDetail !== undefined
+      && url.pathname === `/api/his/v1/doctor/cases/${options.activeDetail.caseId}`
+    ) {
+      return Response.json(options.activeDetail)
     }
     throw new Error(`Unexpected request: ${url.pathname}`)
   }))
@@ -3634,7 +3641,7 @@ describe('role workspaces', () => {
 
   it('searches completed cases with controlled patient, date, and diagnosis filters and shows the empty state', async () => {
     const listRequests: URL[] = []
-    stubDoctorCompletedCaseArchive({
+    stubDoctorCompletedCaseLibrary({
       list: { items: [], ...pagination(0) },
       onListRequest: url => listRequests.push(url),
     })
@@ -3663,7 +3670,7 @@ describe('role workspaces', () => {
     expect(screen.getByText('请调整筛选条件后重试。')).toBeTruthy()
   })
 
-  it('opens long completed case facts and preserves the server timeline as a read-only archive', async () => {
+  it('opens long completed case facts and preserves the server timeline in read-only details', async () => {
     const longPatientName = '合成患者欧阳晨曦阿依古丽娜扎诸葛明远司马清和上官云舒测试长姓名'
     const longAssessment = '患者持续高热伴咽痛，结合流行病学接触史、甲型流感抗原结果及完整查体，当前生命体征稳定，未见呼吸衰竭或其他重症危险征象；已详细告知居家隔离、补液、体温监测、复诊时限与需要立即就医的危险表现。'
     const patient = {
@@ -3792,7 +3799,7 @@ describe('role workspaces', () => {
         relatedReferences: [],
       }],
     } satisfies DoctorCompletedCaseDetail
-    stubDoctorCompletedCaseArchive({
+    stubDoctorCompletedCaseLibrary({
       detail,
       list: {
         items: [{
@@ -3814,7 +3821,7 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: `查看病例 ${longPatientName}` }))
 
     expect(await screen.findByRole('heading', { name: '已完诊病例详情' })).toBeTruthy()
-    expect(screen.getByText('只读归档')).toBeTruthy()
+    expect(screen.getByText('只读详情')).toBeTruthy()
     expect(screen.getByText(longAssessment)).toBeTruthy()
     expect(screen.getByText('处方号 RX-COMPLETED-001')).toBeTruthy()
     expect(screen.getByText('已确认无需用药')).toBeTruthy()
@@ -3832,6 +3839,135 @@ describe('role workspaces', () => {
     for (const name of ['保存病历草稿', '提交病历修订', '确认已阅', '撤回处方', '确认完诊']) {
       expect(screen.queryByRole('button', { name })).toBeNull()
     }
+  })
+
+  it('navigates from completed case details to the controlled clinical correction owners', async () => {
+    const patient = {
+      birthDate: '1988-03-16',
+      gender: 'female',
+      id: 'patient-completed-correction-1',
+      identifier: 'CM-SYN-CORRECTION-001',
+      name: '合成患者病例更正',
+      synthetic: true,
+      versionId: '2',
+    } as const
+    const signedDocument = {
+      bundleId: 'bundle-completed-correction-1',
+      compositionId: 'composition-completed-correction-1',
+      compositionVersion: '1',
+      content: structuredClinicalDocument,
+      documentId: 'document-completed-correction-1',
+      provenanceId: 'provenance-completed-correction-1',
+      revisionNumber: 1,
+      signedAt: '2026-08-24T08:20:00+08:00',
+    } as const
+    const report: NonNullable<LaboratoryRequest['report']> = {
+      acknowledgement: {
+        acknowledgedAt: '2026-08-24T08:45:00+08:00',
+        acknowledgedBy: 'actor-outpatient-doctor',
+        id: 'laboratory-acknowledgement-correction-1',
+      },
+      conclusion: 'C 反应蛋白升高，结合临床表现评估。',
+      diagnosticReportId: 'diagnostic-report-correction-1',
+      diagnosticReportVersion: '1',
+      issuedAt: '2026-08-24T08:40:00+08:00',
+      revisionNumber: 1,
+      results: [{
+        code: '1988-5',
+        display: 'C 反应蛋白',
+        interpretation: 'high',
+        observationId: 'observation-correction-1',
+        referenceRange: { high: 10, low: 0, text: '0-10 mg/L' },
+        unit: {
+          code: 'mg/L',
+          display: 'mg/L',
+          system: 'http://unitsofmeasure.org',
+        },
+        value: 28.6,
+      }],
+      specimenId: 'specimen-correction-1',
+      status: 'final',
+    }
+    const laboratoryRequest: LaboratoryRequest = {
+      catalogItemId: 'lab-crp',
+      id: 'laboratory-request-correction-1',
+      indicationCode: 'fever',
+      previousReports: [],
+      report,
+      serviceRequestId: 'service-request-correction-1',
+      serviceRequestVersion: '2',
+      status: 'acknowledged',
+      taskId: 'task-laboratory-correction-1',
+      taskVersion: '5',
+      version: 5,
+    }
+    const completedDetail = {
+      caseId: 'case-completed-correction-1',
+      clinicalDocuments: [signedDocument],
+      completedAt: '2026-08-24T09:00:00+08:00',
+      encounter: {
+        id: 'encounter-completed-correction-1',
+        status: 'completed',
+        versionId: '6',
+      },
+      laboratoryRequests: [laboratoryRequest],
+      patient,
+      timeline: [],
+    } satisfies DoctorCompletedCaseDetail
+    const activeDetail = {
+      allergies: [],
+      caseId: completedDetail.caseId,
+      clinicalDocument: { signed: [signedDocument] },
+      consultation: { questions: [], records: [], version: 1 },
+      encounter: completedDetail.encounter,
+      laboratoryRequests: {
+        draftVersion: 0,
+        reportingSupported: true,
+        requests: [laboratoryRequest],
+      },
+      patient,
+      presentation: doctorPresentation,
+      priorFacts: [],
+      status: 'completed',
+      taskId: 'task-doctor-completed-correction-1',
+      taskVersion: '2',
+    } satisfies DoctorCaseDetail
+    stubDoctorCompletedCaseLibrary({
+      activeDetail,
+      detail: completedDetail,
+      list: {
+        items: [{
+          caseId: completedDetail.caseId,
+          completedAt: completedDetail.completedAt,
+          encounterId: completedDetail.encounter.id,
+          encounterVersion: completedDetail.encounter.versionId,
+          patient,
+        }],
+        ...pagination(1),
+      },
+    })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('tab', { name: '已完诊病例' }))
+    await user.click(await screen.findByRole('button', { name: `查看病例 ${patient.name}` }))
+    expect(await screen.findByText('只读详情')).toBeTruthy()
+    expect(screen.getByText('偏高').getAttribute('data-variant')).toBe('warning')
+    expect(screen.queryByRole('button', { name: '提交病历修订' })).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: '更正病历' }))
+    await waitFor(() => {
+      expect(document.activeElement?.id).toBe('encounter-completion-target-clinical-document')
+    })
+    expect(screen.getByRole('tab', { name: '当前诊疗' }).getAttribute('aria-selected')).toBe('true')
+
+    await user.click(screen.getByRole('tab', { name: '已完诊病例' }))
+    await user.click(await screen.findByRole('button', { name: `查看病例 ${patient.name}` }))
+    await user.click(await screen.findByRole('button', { name: '更正检查报告' }))
+    await waitFor(() => {
+      expect(document.activeElement?.id).toBe('encounter-completion-target-laboratory')
+    })
+    expect(screen.getByRole('tab', { name: '当前诊疗' }).getAttribute('aria-selected')).toBe('true')
   })
 
   it('partially dispenses from a versioned lot before completing the Scenario Run', async () => {

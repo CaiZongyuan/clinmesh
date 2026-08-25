@@ -917,10 +917,86 @@ describe('SQLite lifecycle', () => {
       executionPeriod: { start: '2026-08-24T09:02:00+08:00' },
     })
     database.driver.prepare(`
+      INSERT INTO practitioner_role_binding (
+        workspace_id, practitioner_role_id, practitioner_id, role_code,
+        organization_id, location_id, active
+      ) VALUES (?, ?, ?, 'outpatient-doctor', ?, ?, 1)
+    `).run(
+      context.workspaceId,
+      'role-direct-intake-doctor',
+      'practitioner-direct-intake-doctor',
+      'organization-legacy',
+      'location-legacy',
+    )
+    repository.create(context, {
+      resourceType: 'PractitionerRole',
+      id: 'role-direct-intake-doctor',
+      active: true,
+      code: [{ text: 'outpatient-doctor' }],
+    })
+    repository.create(context, {
+      resourceType: 'Task',
+      id: 'task-direct-intake',
+      status: 'in-progress',
+      intent: 'order',
+      owner: { reference: 'PractitionerRole/role-legacy-doctor' },
+      authoredOn: '2026-08-24T09:03:00+08:00',
+      executionPeriod: { start: '2026-08-24T09:03:00+08:00' },
+    })
+    database.driver.prepare(`
       UPDATE outpatient_case
       SET doctor_task_id = 'task-doctor-legacy', status = 'first-visit'
       WHERE workspace_id = ? AND epoch = ? AND case_id = 'case-legacy'
     `).run(context.workspaceId, context.epoch)
+    database.driver.prepare(`
+      INSERT INTO outpatient_case (
+        workspace_id, epoch, case_id, scenario_run_id, patient_id,
+        registration_id, encounter_id, account_id, department_id, location_id,
+        initial_task_id, doctor_task_id, status, arrived_at, updated_at
+      ) SELECT
+        workspace_id, epoch, 'case-direct-intake', scenario_run_id, patient_id,
+        'registration-direct-intake', 'encounter-direct-intake', 'account-direct-intake',
+        department_id, location_id, 'task-direct-intake', 'task-direct-intake',
+        'first-visit', '2026-08-24T09:03:00+08:00', '2026-08-24T09:03:00+08:00'
+      FROM outpatient_case
+      WHERE workspace_id = ? AND epoch = ? AND case_id = 'case-legacy'
+    `).run(context.workspaceId, context.epoch)
+    const directIntakeRequestHash = 'direct-intake-request-hash'
+    database.driver.prepare(`
+      INSERT INTO command_receipt (
+        workspace_id, epoch, actor_id, operation, idempotency_key,
+        request_hash, status, response_json, created_at, updated_at
+      ) VALUES (?, ?, ?, 'virtual-patient.start-consultation', ?, ?, 'completed', ?, ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'actor-direct-intake-doctor',
+      'direct-intake-idempotency-key',
+      directIntakeRequestHash,
+      JSON.stringify({ data: { caseId: 'case-direct-intake' } }),
+      '2026-08-24T09:03:00+08:00',
+      '2026-08-24T09:03:00+08:00',
+    )
+    database.driver.prepare(`
+      INSERT INTO audit_log (
+        workspace_id, epoch, audit_id, sequence, previous_hash, current_hash,
+        real_timestamp, actor_id, practitioner_id, practitioner_role_id,
+        role_code, scenario_run_id, operation, outcome, request_hash
+      ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'outpatient-doctor', ?,
+        'virtual-patient.start-consultation', 'success', ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'audit-direct-intake',
+      'legacy-audit-head',
+      'legacy-audit-current',
+      '2026-08-24T09:03:00+08:00',
+      'actor-direct-intake-doctor',
+      'practitioner-direct-intake-doctor',
+      'role-direct-intake-doctor',
+      'run-legacy',
+      directIntakeRequestHash,
+    )
     await copyFile(
       join(process.cwd(), 'drizzle', '0019_outpatient-case-responsibility.sql'),
       join(legacyMigrationDirectory, '0019_outpatient-case-responsibility.sql'),
@@ -933,7 +1009,12 @@ describe('SQLite lifecycle', () => {
       SELECT case_id, practitioner_role_id, assigned_at
       FROM outpatient_case_responsibility
       WHERE workspace_id = ? AND epoch = ?
+      ORDER BY case_id
     `).all(context.workspaceId, context.epoch)).toEqual([{
+      assigned_at: '2026-08-24T09:03:00+08:00',
+      case_id: 'case-direct-intake',
+      practitioner_role_id: 'role-direct-intake-doctor',
+    }, {
       assigned_at: '2026-08-24T09:02:00+08:00',
       case_id: 'case-legacy',
       practitioner_role_id: 'role-legacy-doctor',

@@ -2,7 +2,6 @@ import {
   type ClinicalCatalog,
   type DoctorCompletedCaseDetail,
   type DoctorCompletedCaseTimelineEvent,
-  type LaboratoryReport,
   type SessionContext,
 } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
@@ -16,12 +15,14 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { useQuery } from '@tanstack/react-query'
 import {
-  ArchiveIcon,
   CircleAlertIcon,
   Clock3Icon,
   EyeIcon,
   FileClockIcon,
+  FilePenLineIcon,
   FilterXIcon,
+  FlaskConicalIcon,
+  LibraryBigIcon,
   SearchIcon,
 } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
@@ -40,10 +41,13 @@ import {
 } from './workspace-i18n.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 
-interface DoctorCompletedCaseArchiveProps {
+interface DoctorCompletedCaseLibraryProps {
   locale: WorkspaceLocale
+  onOpenCorrection: (caseId: string, target: CompletedCaseCorrectionTarget) => void
   session: SessionContext
 }
+
+export type CompletedCaseCorrectionTarget = 'clinical-document' | 'laboratory'
 
 interface FilterFormState {
   completedFrom: string
@@ -56,6 +60,9 @@ type CompletedPrescription = NonNullable<
   NonNullable<DoctorCompletedCaseDetail['medicationConclusion']>['prescription']
 >
 type LaboratoryRequestStatus = DoctorCompletedCaseDetail['laboratoryRequests'][number]['status']
+type CompletedLaboratoryReport = NonNullable<
+  DoctorCompletedCaseDetail['laboratoryRequests'][number]['report']
+>
 
 const allDiagnoses = '__all_diagnoses__'
 const emptyFilters: FilterFormState = {
@@ -124,10 +131,11 @@ function formatDateTime(value: string, locale: WorkspaceLocale): string {
   return dateTimeFormatters[locale].format(new Date(value))
 }
 
-export function DoctorCompletedCaseArchive({
+export function DoctorCompletedCaseLibrary({
   locale,
+  onOpenCorrection,
   session,
-}: DoctorCompletedCaseArchiveProps): React.JSX.Element {
+}: DoctorCompletedCaseLibraryProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
   const scope = [session.actor.workspaceId, session.actor.epoch] as const
   const [draftFilters, setDraftFilters] = useState<FilterFormState>(emptyFilters)
@@ -255,14 +263,14 @@ export function DoctorCompletedCaseArchive({
             <Badge variant="secondary">{cases.data?.total ?? 0}</Badge>
           </div>
           {catalog.isError ? (
-            <ArchiveError
+            <CompletedCaseError
               error={catalog.error}
               fallbackTitle={messages.completedCasesUnavailable}
               messages={messages}
             />
           ) : null}
           {cases.isPending ? <Skeleton className="h-52 w-full" /> : cases.isError ? (
-            <ArchiveError
+            <CompletedCaseError
               error={cases.error}
               fallbackTitle={messages.completedCasesUnavailable}
               messages={messages}
@@ -270,7 +278,7 @@ export function DoctorCompletedCaseArchive({
           ) : cases.data.items.length === 0 ? (
             <Empty className="min-h-52 border">
               <EmptyHeader>
-                <EmptyMedia variant="icon"><ArchiveIcon aria-hidden="true" /></EmptyMedia>
+                <EmptyMedia variant="icon"><LibraryBigIcon aria-hidden="true" /></EmptyMedia>
                 <EmptyTitle>{messages.noCompletedCases}</EmptyTitle>
                 <EmptyDescription>{messages.noCompletedCasesDescription}</EmptyDescription>
               </EmptyHeader>
@@ -336,10 +344,10 @@ export function DoctorCompletedCaseArchive({
           <h2 className="text-base font-semibold" id="completed-case-detail-heading">
             {messages.completedCaseDetail}
           </h2>
-          {detail.data === undefined ? null : <Badge variant="outline">{messages.readOnlyArchive}</Badge>}
+          {detail.data === undefined ? null : <Badge variant="outline">{messages.readOnlyDetail}</Badge>}
         </div>
         {detail.isPending && selectedCaseId !== undefined ? <Skeleton className="h-72 w-full" /> : detail.isError ? (
-          <ArchiveError
+          <CompletedCaseError
             error={detail.error}
             fallbackTitle={messages.completedCasesUnavailable}
             messages={messages}
@@ -353,14 +361,19 @@ export function DoctorCompletedCaseArchive({
             </EmptyHeader>
           </Empty>
         ) : (
-          <CompletedCaseDetailView catalog={catalog.data} detail={detail.data} locale={locale} />
+          <CompletedCaseDetailView
+            catalog={catalog.data}
+            detail={detail.data}
+            locale={locale}
+            onOpenCorrection={onOpenCorrection}
+          />
         )}
       </section>
     </div>
   )
 }
 
-function ArchiveError({ error, fallbackTitle, messages }: {
+function CompletedCaseError({ error, fallbackTitle, messages }: {
   error: Error
   fallbackTitle: string
   messages: ReturnType<typeof getWorkspaceMessages>
@@ -374,12 +387,16 @@ function ArchiveError({ error, fallbackTitle, messages }: {
   )
 }
 
-function CompletedCaseDetailView({ catalog, detail, locale }: {
+function CompletedCaseDetailView({ catalog, detail, locale, onOpenCorrection }: {
   catalog?: ClinicalCatalog | undefined
   detail: DoctorCompletedCaseDetail
   locale: WorkspaceLocale
+  onOpenCorrection: (caseId: string, target: CompletedCaseCorrectionTarget) => void
 }): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  const hasLaboratoryReport = detail.laboratoryRequests.some(
+    request => request.report !== undefined || request.previousReports.length > 0,
+  )
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
@@ -391,9 +408,34 @@ function CompletedCaseDetailView({ catalog, detail, locale }: {
         <Fact label={messages.status} value={messages.encounterCompleted} />
       </dl>
 
+      <div className="flex flex-wrap justify-end gap-2">
+        {detail.clinicalDocuments.length === 0 ? null : (
+          <Button
+            onClick={() => onOpenCorrection(detail.caseId, 'clinical-document')}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <FilePenLineIcon data-icon="inline-start" />
+            {messages.openClinicalDocumentCorrection}
+          </Button>
+        )}
+        {hasLaboratoryReport ? (
+          <Button
+            onClick={() => onOpenCorrection(detail.caseId, 'laboratory')}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <FlaskConicalIcon data-icon="inline-start" />
+            {messages.openLaboratoryReportCorrection}
+          </Button>
+        ) : null}
+      </div>
+
       <Separator />
 
-      <ArchiveSection heading={messages.consultationRecord}>
+      <CompletedCaseSection heading={messages.consultationRecord}>
         {detail.consultation === undefined || detail.consultation.records.length === 0 ? (
           <p className="text-sm text-muted-foreground">{messages.noConsultationHistory}</p>
         ) : (
@@ -414,9 +456,9 @@ function CompletedCaseDetailView({ catalog, detail, locale }: {
             ))}
           </ol>
         )}
-      </ArchiveSection>
+      </CompletedCaseSection>
 
-      <ArchiveSection heading={messages.structuredClinicalDocument}>
+      <CompletedCaseSection heading={messages.structuredClinicalDocument}>
         {detail.clinicalDocuments.length === 0 ? (
           <p className="text-sm text-muted-foreground">{messages.noSignedClinicalDocuments}</p>
         ) : (
@@ -443,9 +485,9 @@ function CompletedCaseDetailView({ catalog, detail, locale }: {
             ))}
           </ol>
         )}
-      </ArchiveSection>
+      </CompletedCaseSection>
 
-      <ArchiveSection heading={messages.laboratoryOrder}>
+      <CompletedCaseSection heading={messages.laboratoryOrder}>
         {detail.laboratoryRequests.length === 0 ? (
           <p className="text-sm text-muted-foreground">{messages.noLaboratoryRequests}</p>
         ) : (
@@ -456,7 +498,7 @@ function CompletedCaseDetailView({ catalog, detail, locale }: {
                   <span className="text-sm font-medium">
                     {catalog?.laboratory.find(item => item.id === request.catalogItemId)?.[
                       locale === 'zh-CN' ? 'nameZh' : 'nameEn'
-                    ] ?? request.catalogItemId}
+                    ] ?? request.catalogDisplay ?? request.catalogItemId ?? '—'}
                   </span>
                   <Badge variant="outline">{messages[laboratoryStatusMessageKeys[request.status]]}</Badge>
                 </div>
@@ -473,9 +515,9 @@ function CompletedCaseDetailView({ catalog, detail, locale }: {
             ))}
           </ol>
         )}
-      </ArchiveSection>
+      </CompletedCaseSection>
 
-      <ArchiveSection heading={messages.diagnosisRecord}>
+      <CompletedCaseSection heading={messages.diagnosisRecord}>
         {detail.diagnosis === undefined ? (
           <p className="text-sm text-muted-foreground">{messages.noDiagnosisConfirmation}</p>
         ) : (
@@ -507,11 +549,11 @@ function CompletedCaseDetailView({ catalog, detail, locale }: {
             </span>
           </div>
         )}
-      </ArchiveSection>
+      </CompletedCaseSection>
 
-      <ArchiveSection heading={messages.medicationConclusion}>
+      <CompletedCaseSection heading={messages.medicationConclusion}>
         <MedicationConclusion detail={detail} locale={locale} />
-      </ArchiveSection>
+      </CompletedCaseSection>
 
       <section aria-label={messages.completedCaseTimeline} className="flex min-w-0 flex-col gap-4">
         <div className="flex items-center gap-2">
@@ -550,7 +592,7 @@ function CompletedCaseDetailView({ catalog, detail, locale }: {
   )
 }
 
-function ArchiveSection({ children, heading }: {
+function CompletedCaseSection({ children, heading }: {
   children: React.ReactNode
   heading: string
 }): React.JSX.Element {
@@ -579,16 +621,22 @@ function ClinicalDocumentFacts({ content, messages }: {
   content: DoctorCompletedCaseDetail['clinicalDocuments'][number]['content']
   messages: ReturnType<typeof getWorkspaceMessages>
 }): React.JSX.Element {
-  return (
-    <dl className="grid gap-x-5 gap-y-3 sm:grid-cols-2">
-      {[
+  const facts: Array<[label: string, value: string]> = 'plan' in content
+    ? [
+        [messages.assessment, content.assessment],
+        [messages.clinicalPlan, content.plan],
+      ]
+    : [
         [messages.chiefComplaint, content.chiefComplaint],
         [messages.historyOfPresentIllness, content.historyOfPresentIllness],
         [messages.physicalExamination, content.physicalExamination],
         [messages.assessment, content.assessment],
         [messages.disposition, content.disposition],
         [messages.followUp, content.followUp],
-      ].map(([label, value]) => (
+      ]
+  return (
+    <dl className="grid gap-x-5 gap-y-3 sm:grid-cols-2">
+      {facts.map(([label, value]) => (
         <div className="min-w-0" key={label}>
           <dt className="text-xs text-muted-foreground">{label}</dt>
           <dd className="mt-1 whitespace-pre-wrap break-words text-sm">{value}</dd>
@@ -601,7 +649,7 @@ function ClinicalDocumentFacts({ content, messages }: {
 function LaboratoryReportView({ current, locale, report }: {
   current: boolean
   locale: WorkspaceLocale
-  report: LaboratoryReport
+  report: CompletedLaboratoryReport
 }): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
   const versionLabel = (
@@ -644,16 +692,23 @@ function LaboratoryReportView({ current, locale, report }: {
               <TableRow key={result.observationId}>
                 <TableCell>{result.display}</TableCell>
                 <TableCell>
-                  {result.value.toLocaleString(locale)} {result.unit.display}
-                  <Badge className="ml-2" variant={result.interpretation === 'normal' ? 'success' : 'destructive'}>
-                    {result.interpretation === 'normal'
-                      ? messages.normal
-                      : result.interpretation === 'high'
-                        ? messages.abnormalHigh
-                        : messages.abnormalLow}
-                  </Badge>
+                  {typeof result.value === 'number'
+                    ? result.value.toLocaleString(locale)
+                    : String(result.value)}
+                  {result.unit === undefined ? null : ` ${result.unit.display}`}
+                  {result.interpretation === undefined ? null : (
+                    <Badge className="ml-2" variant={result.interpretation === 'normal' ? 'success' : 'warning'}>
+                      {result.interpretation === 'normal'
+                        ? messages.normal
+                        : result.interpretation === 'high'
+                          ? messages.abnormalHigh
+                          : result.interpretation === 'low'
+                            ? messages.abnormalLow
+                            : result.interpretation}
+                    </Badge>
+                  )}
                 </TableCell>
-                <TableCell>{result.referenceRange.text}</TableCell>
+                <TableCell>{result.referenceRange?.text ?? '—'}</TableCell>
               </TableRow>
             ))}
           </TableBody>

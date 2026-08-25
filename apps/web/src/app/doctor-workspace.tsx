@@ -46,8 +46,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/component
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArchiveIcon, ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardCheckIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, LockKeyholeIcon, MessagesSquareIcon, PillIcon, PlayIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, SendIcon, ShieldAlertIcon, StethoscopeIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
-import { useState } from 'react'
+import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardCheckIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, LibraryBigIcon, LockKeyholeIcon, MessagesSquareIcon, PillIcon, PlayIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, SendIcon, ShieldAlertIcon, StethoscopeIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import {
   ApiClientError,
   acknowledgeLaboratoryReport,
@@ -83,7 +83,10 @@ import {
   startVirtualPatient,
   withdrawPrescription,
 } from './api-client.ts'
-import { DoctorCompletedCaseArchive } from './doctor-completed-cases.tsx'
+import {
+  DoctorCompletedCaseLibrary,
+  type CompletedCaseCorrectionTarget,
+} from './doctor-completed-cases.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
@@ -93,6 +96,18 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 interface DoctorWorkspaceProps {
   locale: WorkspaceLocale
   session: SessionContext
+}
+
+interface CompletedCaseCorrectionNavigation {
+  caseId: string
+  target: CompletedCaseCorrectionTarget
+}
+
+interface ActiveDoctorWorkspaceProps extends DoctorWorkspaceProps {
+  correctionNavigation: CompletedCaseCorrectionNavigation | undefined
+  onCorrectionNavigationHandled: () => void
+  onSelectedCaseIdChange: (caseId: string | undefined) => void
+  selectedCaseId: string | undefined
 }
 
 interface ConsultationAction {
@@ -161,29 +176,56 @@ function isLaboratoryRequestCatalogItemId(
 
 export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  const [activeTab, setActiveTab] = useState<'active' | 'completed'>('active')
+  const [selectedCaseId, setSelectedCaseId] = useState<string>()
+  const [correctionNavigation, setCorrectionNavigation] = useState<
+    CompletedCaseCorrectionNavigation
+  >()
   return (
-    <Tabs defaultValue="active">
+    <Tabs onValueChange={value => setActiveTab(value as 'active' | 'completed')} value={activeTab}>
       <TabsList aria-label={messages.consultation} className="w-full sm:w-fit" variant="line">
         <TabsTrigger className="min-w-0 px-3" value="active">
           <StethoscopeIcon data-icon="inline-start" />
           {messages.doctorActiveCases}
         </TabsTrigger>
         <TabsTrigger className="min-w-0 px-3" value="completed">
-          <ArchiveIcon data-icon="inline-start" />
+          <LibraryBigIcon data-icon="inline-start" />
           {messages.doctorCompletedCases}
         </TabsTrigger>
       </TabsList>
       <TabsContent className="pt-4" value="active">
-        <ActiveDoctorWorkspace locale={locale} session={session} />
+        <ActiveDoctorWorkspace
+          correctionNavigation={correctionNavigation}
+          locale={locale}
+          onCorrectionNavigationHandled={() => setCorrectionNavigation(undefined)}
+          onSelectedCaseIdChange={setSelectedCaseId}
+          selectedCaseId={selectedCaseId}
+          session={session}
+        />
       </TabsContent>
       <TabsContent className="pt-4" value="completed">
-        <DoctorCompletedCaseArchive locale={locale} session={session} />
+        <DoctorCompletedCaseLibrary
+          locale={locale}
+          onOpenCorrection={(caseId, target) => {
+            setSelectedCaseId(caseId)
+            setCorrectionNavigation({ caseId, target })
+            setActiveTab('active')
+          }}
+          session={session}
+        />
       </TabsContent>
     </Tabs>
   )
 }
 
-function ActiveDoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
+function ActiveDoctorWorkspace({
+  correctionNavigation,
+  locale,
+  onCorrectionNavigationHandled,
+  onSelectedCaseIdChange,
+  selectedCaseId,
+  session,
+}: ActiveDoctorWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
   const queryClient = useQueryClient()
   const scope = [session.actor.workspaceId, session.actor.epoch] as const
@@ -204,7 +246,6 @@ function ActiveDoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React
       ? 1_500
       : false,
   })
-  const [selectedCaseId, setSelectedCaseId] = useState<string>()
   const [selectedVirtualPatientId, setSelectedVirtualPatientId] = useState<string>()
   const [laboratoryItemId, setLaboratoryItemId] = useState('')
   const [indicationCode, setIndicationCode] = useState('')
@@ -239,6 +280,19 @@ function ActiveDoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React
     queryFn: ({ signal }) => getClinicalCatalog(signal),
     queryKey: ['clinical-catalog', ...scope],
   })
+  useEffect(() => {
+    if (
+      correctionNavigation === undefined
+      || detail.data?.caseId !== correctionNavigation.caseId
+    ) return
+    const target = document.getElementById(
+      encounterCompletionTargetElementIds[correctionNavigation.target],
+    )
+    if (target === null) return
+    target.focus()
+    target.scrollIntoView?.({ block: 'start' })
+    onCorrectionNavigationHandled()
+  }, [correctionNavigation, detail.data?.caseId, onCorrectionNavigationHandled])
   const usesIndependentLaboratoryRequests = detail.data?.consultation !== undefined
   const laboratoryCatalog = catalog.data?.laboratory.filter(item => (
     usesIndependentLaboratoryRequests
@@ -282,7 +336,7 @@ function ActiveDoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React
       ])
       setVirtualPatientPage(1)
       setSelectedVirtualPatientId(undefined)
-      setSelectedCaseId(response.data.caseId)
+      onSelectedCaseIdChange(response.data.caseId)
     },
   })
   const refreshCase = async () => {
@@ -293,7 +347,7 @@ function ActiveDoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React
     ])
   }
   const refreshCompletedCase = async () => {
-    if (detail.data !== undefined) setSelectedCaseId(detail.data.caseId)
+    if (detail.data !== undefined) onSelectedCaseIdChange(detail.data.caseId)
     await refreshCase()
   }
   const askQuestion = useMutation({
@@ -651,7 +705,7 @@ function ActiveDoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React
                   item={item}
                   key={item.caseId}
                   messages={messages}
-                  onSelect={() => setSelectedCaseId(item.caseId)}
+                  onSelect={() => onSelectedCaseIdChange(item.caseId)}
                   selected={item.caseId === activeCaseId}
                 />
               ))}
@@ -659,7 +713,7 @@ function ActiveDoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React
                 messages={messages}
                 onPageChange={(nextPage) => {
                   setPage(nextPage)
-                  setSelectedCaseId(undefined)
+                  onSelectedCaseIdChange(undefined)
                 }}
                 page={queue.data.page}
                 pageSize={queue.data.pageSize}

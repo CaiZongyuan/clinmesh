@@ -405,9 +405,12 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
     app.get('/api/his/v1/doctor/completed-cases/:caseId', async (context) => {
       try {
+        const caseId = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/).parse(
+          context.req.param('caseId'),
+        )
         return context.json(workflow.doctorCompletedCaseDetail(
           await actor(context),
-          context.req.param('caseId'),
+          caseId,
         ))
       } catch (error) {
         return apiErrorResponse(context, error)

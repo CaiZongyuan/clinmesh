@@ -191,7 +191,7 @@ const prescriptionDispensingRowSchema = z.object({
 
 const issuedPrescriptionRowSchema = z.object({
   authored_at: z.string().datetime({ offset: true }),
-  authored_by_practitioner_role_id: z.string().min(1),
+  authored_by_practitioner_role_id: z.string().min(1).nullable(),
   prescription_id: z.string().min(1),
   prescription_number: z.string().min(1),
   status: z.enum(['dispensed', 'paid', 'signed']),
@@ -252,7 +252,7 @@ const paymentPreviewRowSchema = paymentWorkflowRowSchema.extend({
 const issuedMedicationRequestSchema = z.object({
   medication: z.object({
     reference: z.object({
-      display: z.string().min(1),
+      display: z.string().min(1).optional(),
       reference: z.string().min(1),
     }),
   }),
@@ -750,8 +750,159 @@ const structuredCompositionSchema = z.object({
         system: z.string(),
       }).loose()),
     }).loose().optional(),
+    entry: z.array(z.object({ reference: z.string().min(1) }).loose()).optional(),
     text: z.object({ div: z.string() }).loose(),
+    title: z.string().optional(),
   }).loose()),
+}).loose()
+
+const legacyCompletedCaseLaboratoryRowSchema = z.object({
+  diagnostic_report_id: z.string().min(1).nullable(),
+  laboratory_task_id: z.string().min(1).nullable(),
+  service_request_id: z.string().min(1).nullable(),
+}).strict()
+
+const completedCaseListRowSchema = z.object({
+  case_id: z.string().min(1),
+  encounter_json: z.string().min(1),
+  patient_json: z.string().min(1),
+}).strict()
+
+const completedCaseDetailRowSchema = completedCaseListRowSchema.omit({ case_id: true }).strict()
+
+const practitionerRoleIdRowSchema = z.object({
+  practitioner_role_id: z.string().min(1),
+}).strict()
+
+const completedCaseSelectionSql = `
+  FROM outpatient_case
+  JOIN outpatient_case_responsibility AS responsibility
+    ON responsibility.workspace_id = outpatient_case.workspace_id
+   AND responsibility.epoch = outpatient_case.epoch
+   AND responsibility.case_id = outpatient_case.case_id
+  JOIN fhir_resource AS patient
+    ON patient.workspace_id = outpatient_case.workspace_id
+   AND patient.epoch = outpatient_case.epoch
+   AND patient.resource_type = 'Patient'
+   AND patient.resource_id = outpatient_case.patient_id
+  JOIN fhir_resource AS encounter
+    ON encounter.workspace_id = outpatient_case.workspace_id
+   AND encounter.epoch = outpatient_case.epoch
+   AND encounter.resource_type = 'Encounter'
+   AND encounter.resource_id = outpatient_case.encounter_id
+  WHERE outpatient_case.workspace_id = ? AND outpatient_case.epoch = ?
+    AND responsibility.practitioner_role_id = ?
+    AND json_extract(encounter.content_json, '$.status') = 'completed'
+    AND json_extract(encounter.content_json, '$.actualPeriod.end') IS NOT NULL
+    AND (? IS NULL OR outpatient_case.patient_id = ?)
+    AND (
+      ? IS NULL
+      OR substr(json_extract(encounter.content_json, '$.actualPeriod.end'), 1, 10) >= ?
+    )
+    AND (
+      ? IS NULL
+      OR substr(json_extract(encounter.content_json, '$.actualPeriod.end'), 1, 10) <= ?
+    )
+    AND (
+      ? IS NULL
+      OR EXISTS (
+        SELECT 1
+        FROM diagnosis_confirmation
+        JOIN diagnosis_entry
+          ON diagnosis_entry.workspace_id = diagnosis_confirmation.workspace_id
+         AND diagnosis_entry.epoch = diagnosis_confirmation.epoch
+         AND diagnosis_entry.confirmation_id = diagnosis_confirmation.confirmation_id
+        WHERE diagnosis_confirmation.workspace_id = outpatient_case.workspace_id
+          AND diagnosis_confirmation.epoch = outpatient_case.epoch
+          AND diagnosis_confirmation.case_id = outpatient_case.case_id
+          AND diagnosis_entry.catalog_item_id = ?
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM signed_clinical_document AS legacy_document
+        JOIN fhir_resource AS legacy_composition
+          ON legacy_composition.workspace_id = legacy_document.workspace_id
+         AND legacy_composition.epoch = legacy_document.epoch
+         AND legacy_composition.resource_type = 'Composition'
+         AND legacy_composition.resource_id = legacy_document.composition_id
+        JOIN diagnosis_catalog AS legacy_catalog
+          ON legacy_catalog.workspace_id = legacy_document.workspace_id
+         AND legacy_catalog.epoch = legacy_document.epoch
+         AND legacy_catalog.item_id = ?
+        JOIN fhir_resource AS legacy_condition
+          ON legacy_condition.workspace_id = legacy_document.workspace_id
+         AND legacy_condition.epoch = legacy_document.epoch
+         AND legacy_condition.resource_type = 'Condition'
+         AND legacy_condition.resource_id = substr(
+           (
+             SELECT json_extract(legacy_entry.value, '$.reference')
+             FROM json_each(legacy_composition.content_json, '$.section') AS legacy_section
+             JOIN json_each(legacy_section.value, '$.entry') AS legacy_entry
+             WHERE json_extract(legacy_section.value, '$.title') = '诊断'
+               AND json_extract(legacy_entry.value, '$.reference') LIKE 'Condition/%'
+             LIMIT 1
+           ),
+           length('Condition/') + 1
+         )
+        WHERE legacy_document.workspace_id = outpatient_case.workspace_id
+          AND legacy_document.epoch = outpatient_case.epoch
+          AND legacy_document.case_id = outpatient_case.case_id
+          AND json_extract(legacy_condition.content_json, '$.code.coding[0].system')
+            = legacy_catalog.code_system
+          AND json_extract(legacy_condition.content_json, '$.code.coding[0].code')
+            = legacy_catalog.code
+      )
+    )
+`
+
+const completedCaseServiceRequestSchema = z.object({
+  authoredOn: z.iso.datetime({ offset: true }),
+  code: z.object({
+    concept: z.object({ text: z.string().min(1) }).loose(),
+  }).loose(),
+  meta: z.object({ versionId: z.string().regex(/^\d+$/) }).loose(),
+  reason: z.array(z.object({
+    concept: z.object({
+      coding: z.array(z.object({ code: z.string().min(1) }).loose()).min(1),
+    }).loose(),
+  }).loose()).min(1),
+  resourceType: z.literal('ServiceRequest'),
+}).loose()
+
+const completedCaseDiagnosticReportSchema = z.object({
+  conclusion: z.string().min(1),
+  issued: z.iso.datetime({ offset: true }),
+  meta: z.object({ versionId: z.string().regex(/^\d+$/) }).loose(),
+  resourceType: z.literal('DiagnosticReport'),
+  result: z.array(z.object({ reference: z.string().min(1) }).loose()).min(1),
+  specimen: z.array(z.object({ reference: z.string().min(1) }).loose()).min(1),
+  status: z.literal('final'),
+}).loose()
+
+const completedCaseObservationSchema = z.object({
+  code: z.object({
+    coding: z.array(z.object({
+      code: z.string().min(1),
+      display: z.string().min(1).optional(),
+    }).loose()).min(1),
+  }).loose(),
+  interpretation: z.array(z.object({
+    coding: z.array(z.object({ code: z.string().min(1) }).loose()).min(1),
+  }).loose()).optional(),
+  referenceRange: z.array(z.object({
+    high: z.object({ value: z.number().finite() }).loose().optional(),
+    low: z.object({ value: z.number().finite() }).loose().optional(),
+    text: z.string().min(1).optional(),
+  }).loose()).optional(),
+  resourceType: z.literal('Observation'),
+  valueBoolean: z.boolean().optional(),
+  valueQuantity: z.object({
+    code: z.string().min(1).optional(),
+    system: z.string().url().optional(),
+    unit: z.string().min(1).optional(),
+    value: z.number().finite(),
+  }).loose().optional(),
+  valueString: z.string().optional(),
 }).loose()
 
 const provenanceReasonSchema = z.object({
@@ -790,6 +941,39 @@ function structuredClinicalDocumentFromComposition(resource: FhirResource): Clin
   ]))
   const parsed = clinicalDocumentContentSchema.safeParse(content)
   return parsed.success ? parsed.data : undefined
+}
+
+function legacyClinicalDocumentFromComposition(resource: FhirResource) {
+  const composition = structuredCompositionSchema.safeParse(resource)
+  if (!composition.success) return undefined
+  const sections = new Map(composition.data.section.flatMap(section => {
+    const value = xhtmlTextValue(section.text.div)
+    return section.title === undefined || value === undefined ? [] : [[section.title, value] as const]
+  }))
+  const parsed = z.object({
+    assessment: z.string().trim().min(2).max(4_000),
+    plan: z.string().trim().min(2).max(4_000),
+  }).strict().safeParse({
+    assessment: sections.get('评估'),
+    plan: sections.get('计划'),
+  })
+  return parsed.success ? parsed.data : undefined
+}
+
+function legacyDiagnosisReferenceFromComposition(resource: FhirResource): string | undefined {
+  const composition = structuredCompositionSchema.safeParse(resource)
+  if (!composition.success) return undefined
+  return composition.data.section
+    .find(section => section.title === '诊断')
+    ?.entry?.find(entry => entry.reference.startsWith('Condition/'))
+    ?.reference
+}
+
+function completedCaseInterpretation(code: string | undefined): string | undefined {
+  if (code === undefined) return undefined
+  return ({ H: 'high', L: 'low', N: 'normal', NEG: 'negative', POS: 'positive' } as const)[
+    code as 'H' | 'L' | 'N' | 'NEG' | 'POS'
+  ] ?? code
 }
 
 export class WorkflowService {
@@ -1730,95 +1914,17 @@ export class WorkflowService {
       completedTo,
       diagnosisCatalogItemId,
       diagnosisCatalogItemId,
+      diagnosisCatalogItemId,
     ]
     const total = countRowSchema.parse(this.#database.driver.prepare(`
       SELECT COUNT(*) AS count
-      FROM outpatient_case
-      JOIN outpatient_case_responsibility AS responsibility
-        ON responsibility.workspace_id = outpatient_case.workspace_id
-       AND responsibility.epoch = outpatient_case.epoch
-       AND responsibility.case_id = outpatient_case.case_id
-      JOIN fhir_resource AS encounter
-        ON encounter.workspace_id = outpatient_case.workspace_id
-       AND encounter.epoch = outpatient_case.epoch
-       AND encounter.resource_type = 'Encounter'
-       AND encounter.resource_id = outpatient_case.encounter_id
-      WHERE outpatient_case.workspace_id = ? AND outpatient_case.epoch = ?
-        AND responsibility.practitioner_role_id = ?
-        AND json_extract(encounter.content_json, '$.status') = 'completed'
-        AND json_extract(encounter.content_json, '$.actualPeriod.end') IS NOT NULL
-        AND (? IS NULL OR outpatient_case.patient_id = ?)
-        AND (
-          ? IS NULL
-          OR substr(json_extract(encounter.content_json, '$.actualPeriod.end'), 1, 10) >= ?
-        )
-        AND (
-          ? IS NULL
-          OR substr(json_extract(encounter.content_json, '$.actualPeriod.end'), 1, 10) <= ?
-        )
-        AND (
-          ? IS NULL
-          OR EXISTS (
-            SELECT 1
-            FROM diagnosis_confirmation
-            JOIN diagnosis_entry
-              ON diagnosis_entry.workspace_id = diagnosis_confirmation.workspace_id
-             AND diagnosis_entry.epoch = diagnosis_confirmation.epoch
-             AND diagnosis_entry.confirmation_id = diagnosis_confirmation.confirmation_id
-            WHERE diagnosis_confirmation.workspace_id = outpatient_case.workspace_id
-              AND diagnosis_confirmation.epoch = outpatient_case.epoch
-              AND diagnosis_confirmation.case_id = outpatient_case.case_id
-              AND diagnosis_entry.catalog_item_id = ?
-          )
-        )
+      ${completedCaseSelectionSql}
     `).get(...bindings))
-    const rows = this.#database.driver.prepare(`
+    const rows = z.array(completedCaseListRowSchema).parse(this.#database.driver.prepare(`
       SELECT outpatient_case.case_id,
         patient.content_json AS patient_json,
         encounter.content_json AS encounter_json
-      FROM outpatient_case
-      JOIN outpatient_case_responsibility AS responsibility
-        ON responsibility.workspace_id = outpatient_case.workspace_id
-       AND responsibility.epoch = outpatient_case.epoch
-       AND responsibility.case_id = outpatient_case.case_id
-      JOIN fhir_resource AS patient
-        ON patient.workspace_id = outpatient_case.workspace_id
-       AND patient.epoch = outpatient_case.epoch
-       AND patient.resource_type = 'Patient'
-       AND patient.resource_id = outpatient_case.patient_id
-      JOIN fhir_resource AS encounter
-        ON encounter.workspace_id = outpatient_case.workspace_id
-       AND encounter.epoch = outpatient_case.epoch
-       AND encounter.resource_type = 'Encounter'
-       AND encounter.resource_id = outpatient_case.encounter_id
-      WHERE outpatient_case.workspace_id = ? AND outpatient_case.epoch = ?
-        AND responsibility.practitioner_role_id = ?
-        AND json_extract(encounter.content_json, '$.status') = 'completed'
-        AND json_extract(encounter.content_json, '$.actualPeriod.end') IS NOT NULL
-        AND (? IS NULL OR outpatient_case.patient_id = ?)
-        AND (
-          ? IS NULL
-          OR substr(json_extract(encounter.content_json, '$.actualPeriod.end'), 1, 10) >= ?
-        )
-        AND (
-          ? IS NULL
-          OR substr(json_extract(encounter.content_json, '$.actualPeriod.end'), 1, 10) <= ?
-        )
-        AND (
-          ? IS NULL
-          OR EXISTS (
-            SELECT 1
-            FROM diagnosis_confirmation
-            JOIN diagnosis_entry
-              ON diagnosis_entry.workspace_id = diagnosis_confirmation.workspace_id
-             AND diagnosis_entry.epoch = diagnosis_confirmation.epoch
-             AND diagnosis_entry.confirmation_id = diagnosis_confirmation.confirmation_id
-            WHERE diagnosis_confirmation.workspace_id = outpatient_case.workspace_id
-              AND diagnosis_confirmation.epoch = outpatient_case.epoch
-              AND diagnosis_confirmation.case_id = outpatient_case.case_id
-              AND diagnosis_entry.catalog_item_id = ?
-          )
-        )
+      ${completedCaseSelectionSql}
       ORDER BY json_extract(encounter.content_json, '$.actualPeriod.end') DESC,
         outpatient_case.case_id
       LIMIT ? OFFSET ?
@@ -1826,17 +1932,13 @@ export class WorkflowService {
       ...bindings,
       filters.pageSize,
       (filters.page - 1) * filters.pageSize,
-    ) as Array<{
-      case_id: string
-      encounter_json: string
-      patient_json: string
-    }>
+    ))
     return doctorCompletedCaseListSchema.parse({
       items: rows.map((row) => {
         const encounter = encounterCompletionResourceSchema.parse(
           parseStoredFhirResource(row.encounter_json),
         )
-        const primaryDiagnosis = this.#diagnosisConfirmation(context, row.case_id)
+        const primaryDiagnosis = this.#completedCaseDiagnosis(context, row.case_id)
           ?.entries.find(entry => entry.role === 'primary')
         if (encounter.status !== 'completed' || encounter.actualPeriod.end === undefined) {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The completed Encounter is incomplete')
@@ -1858,7 +1960,7 @@ export class WorkflowService {
 
   doctorCompletedCaseDetail(context: ActorContext, caseId: string) {
     this.#assertRole(context, ['outpatient-doctor'])
-    const row = this.#database.driver.prepare(`
+    const row = completedCaseDetailRowSchema.optional().parse(this.#database.driver.prepare(`
       SELECT patient.content_json AS patient_json,
         encounter.content_json AS encounter_json
       FROM outpatient_case
@@ -1886,7 +1988,7 @@ export class WorkflowService {
       context.epoch,
       caseId,
       this.#requiredPractitionerRoleId(context),
-    ) as { encounter_json: string; patient_json: string } | undefined
+    ))
     if (row === undefined) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The completed outpatient case was not found')
     }
@@ -1897,18 +1999,18 @@ export class WorkflowService {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The completed Encounter is incomplete')
     }
     const consultation = this.#consultationDetail(context, caseId)
-    const diagnosis = this.#diagnosisConfirmation(context, caseId)
+    const diagnosis = this.#completedCaseDiagnosis(context, caseId)
     const prescription = this.#issuedPrescription(context, caseId)
     const noMedication = this.#noMedicationConclusion(context, caseId)
-    const clinicalDocuments = this.#structuredClinicalDocuments(context, caseId)
-    const laboratoryRequests = this.#laboratoryRequests(context, caseId)
+    const clinicalDocuments = this.#completedCaseClinicalDocuments(context, caseId)
+    const laboratoryRequests = this.#completedCaseLaboratoryRequests(context, caseId)
     const medicationConclusion = prescription === undefined && noMedication === undefined
       ? undefined
       : {
           ...(noMedication === undefined ? {} : { noMedication }),
           ...(prescription === undefined ? {} : { prescription }),
         }
-    return doctorCompletedCaseDetailSchema.parse({
+    const facts = doctorCompletedCaseDetailSchema.omit({ timeline: true }).parse({
       caseId,
       clinicalDocuments,
       completedAt: encounter.actualPeriod.end,
@@ -1927,19 +2029,12 @@ export class WorkflowService {
       laboratoryRequests,
       ...(medicationConclusion === undefined ? {} : { medicationConclusion }),
       patient: patientSummary(parseStoredFhirResource(row.patient_json)),
+    })
+    return doctorCompletedCaseDetailSchema.parse({
+      ...facts,
       timeline: this.#completedCaseTimeline(context, {
-        clinicalDocuments,
-        completedAt: encounter.actualPeriod.end,
-        ...(consultation === undefined ? {} : {
-          consultation: {
-            records: consultation.records,
-            version: consultation.version,
-          },
-        }),
-        ...(diagnosis === undefined ? {} : { diagnosis }),
+        ...facts,
         encounterId: encounter.id,
-        laboratoryRequests,
-        ...(medicationConclusion === undefined ? {} : { medicationConclusion }),
       }),
     })
   }
@@ -2032,6 +2127,7 @@ export class WorkflowService {
       operation: 'virtual-patient.start-consultation',
     }, transaction => {
       this.#assertRole(input.context, ['outpatient-doctor'])
+      const practitionerRoleId = this.#requiredPractitionerRoleId(input.context)
       const virtualPatient = virtualPatientRowSchema.optional().parse(
         this.#database.driver.prepare(`
           SELECT virtual_patient_id, version, patient_id, clinical_summary_json, available
@@ -2095,7 +2191,7 @@ export class WorkflowService {
           code: { text: 'Outpatient consultation' },
           for: { reference: `Patient/${patient.id}` },
           focus: { reference: `Encounter/${encounterId}` },
-          owner: { reference: 'PractitionerRole/practitioner-role-outpatient-doctor' },
+          owner: { reference: `PractitionerRole/${practitionerRoleId}` },
           authoredOn: now,
           executionPeriod: { start: now },
         })
@@ -8028,13 +8124,13 @@ export class WorkflowService {
       practitionerRoleId,
       assignedAt,
     )
-    const responsibility = this.#database.driver.prepare(`
+    const responsibility = practitionerRoleIdRowSchema.optional().parse(
+      this.#database.driver.prepare(`
       SELECT practitioner_role_id
       FROM outpatient_case_responsibility
       WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-    `).get(context.workspaceId, context.epoch, caseId) as {
-      practitioner_role_id: string
-    } | undefined
+    `).get(context.workspaceId, context.epoch, caseId),
+    )
     if (responsibility?.practitioner_role_id !== practitionerRoleId) {
       throw new WorkflowError('ROLE_NOT_ALLOWED', 'The outpatient case belongs to another doctor')
     }
@@ -8402,6 +8498,27 @@ export class WorkflowService {
   }
 
   #structuredClinicalDocuments(context: ActorContext, caseId: string) {
+    return this.#clinicalDocuments(
+      context,
+      caseId,
+      structuredClinicalDocumentFromComposition,
+    )
+  }
+
+  #completedCaseClinicalDocuments(context: ActorContext, caseId: string) {
+    return this.#clinicalDocuments(
+      context,
+      caseId,
+      resource => structuredClinicalDocumentFromComposition(resource)
+        ?? legacyClinicalDocumentFromComposition(resource),
+    )
+  }
+
+  #clinicalDocuments<Content>(
+    context: ActorContext,
+    caseId: string,
+    contentFromComposition: (resource: FhirResource) => Content | undefined,
+  ) {
     const rows = z.array(signedClinicalDocumentRowSchema).parse(
       this.#database.driver.prepare(`
         SELECT document_id, composition_id, bundle_id, provenance_id,
@@ -8414,7 +8531,7 @@ export class WorkflowService {
     const documentsById = new Map<string, { compositionId: string; revisionNumber: number }>()
     return rows.flatMap(row => {
       const composition = this.#fhir.read(context, 'Composition', row.composition_id)
-      const content = structuredClinicalDocumentFromComposition(composition)
+      const content = contentFromComposition(composition)
       if (content === undefined) return []
       const provenance = provenanceReasonSchema.parse(
         this.#fhir.read(context, 'Provenance', row.provenance_id),
@@ -8624,6 +8741,174 @@ export class WorkflowService {
     return z.array(laboratoryRequestSchema).parse(requests)
   }
 
+  #completedCaseLaboratoryRequests(context: ActorContext, caseId: string) {
+    const independentRequests = this.#laboratoryRequests(context, caseId)
+    if (independentRequests.length > 0) return independentRequests
+    const row = legacyCompletedCaseLaboratoryRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT service_request_id, laboratory_task_id, diagnostic_report_id
+        FROM outpatient_case
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      `).get(context.workspaceId, context.epoch, caseId),
+    )
+    if (
+      row?.service_request_id === null
+      || row?.diagnostic_report_id === null
+      || row === undefined
+    ) return []
+    const serviceRequestResource = this.#fhir.read(
+      context,
+      'ServiceRequest',
+      row.service_request_id,
+    )
+    const serviceRequest = completedCaseServiceRequestSchema.parse(serviceRequestResource)
+    const task = row.laboratory_task_id === null
+      ? undefined
+      : this.#fhir.read(context, 'Task', row.laboratory_task_id)
+    const reportResource = this.#fhir.read(context, 'DiagnosticReport', row.diagnostic_report_id)
+    const report = completedCaseDiagnosticReportSchema.parse(reportResource)
+    const specimenReference = report.specimen[0]?.reference
+    if (specimenReference === undefined || !specimenReference.startsWith('Specimen/')) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The completed laboratory report specimen is invalid')
+    }
+    const results = report.result.map((reference) => {
+      if (!reference.reference.startsWith('Observation/')) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The completed laboratory result is invalid')
+      }
+      const observationId = reference.reference.slice('Observation/'.length)
+      const observation = completedCaseObservationSchema.parse(
+        this.#fhir.read(context, 'Observation', observationId),
+      )
+      const coding = observation.code.coding[0]
+      const value = observation.valueBoolean
+        ?? observation.valueQuantity?.value
+        ?? observation.valueString
+      if (coding === undefined || value === undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The completed laboratory result is incomplete')
+      }
+      const referenceRange = observation.referenceRange?.[0]
+      const unit = observation.valueQuantity?.unit
+      return {
+        code: coding.code,
+        display: coding.display ?? coding.code,
+        ...(completedCaseInterpretation(observation.interpretation?.[0]?.coding[0]?.code) === undefined
+          ? {}
+          : {
+              interpretation: completedCaseInterpretation(
+                observation.interpretation?.[0]?.coding[0]?.code,
+              ),
+            }),
+        observationId,
+        ...(referenceRange?.text === undefined ? {} : { referenceRange }),
+        ...(unit === undefined
+          ? {}
+          : {
+              unit: {
+                ...(observation.valueQuantity?.code === undefined
+                  ? {}
+                  : { code: observation.valueQuantity.code }),
+                display: unit,
+                ...(observation.valueQuantity?.system === undefined
+                  ? {}
+                  : { system: observation.valueQuantity.system }),
+              },
+            }),
+        value,
+      }
+    })
+    const catalog = z.object({ item_id: z.string().min(1) }).strict().optional().parse(
+      this.#database.driver.prepare(`
+        SELECT item_id FROM outpatient_catalog
+        WHERE workspace_id = ? AND epoch = ? AND kind = 'laboratory'
+          AND (name_zh = ? OR name_en = ?)
+        ORDER BY item_id
+        LIMIT 1
+      `).get(
+        context.workspaceId,
+        context.epoch,
+        serviceRequest.code.concept.text,
+        serviceRequest.code.concept.text,
+      ),
+    )
+    return [{
+      catalogDisplay: serviceRequest.code.concept.text,
+      ...(catalog === undefined ? {} : { catalogItemId: catalog.item_id }),
+      id: `legacy-${row.service_request_id}`,
+      indicationCode: serviceRequest.reason[0]?.concept.coding[0]?.code ?? 'legacy-indication',
+      previousReports: [],
+      report: {
+        conclusion: report.conclusion,
+        diagnosticReportId: row.diagnostic_report_id,
+        diagnosticReportVersion: report.meta.versionId,
+        issuedAt: report.issued,
+        revisionNumber: 1,
+        results,
+        specimenId: specimenReference.slice('Specimen/'.length),
+        status: report.status,
+      },
+      serviceRequestId: row.service_request_id,
+      serviceRequestVersion: serviceRequest.meta.versionId,
+      status: 'reported' as const,
+      ...(row.laboratory_task_id === null
+        ? {}
+        : {
+            taskId: row.laboratory_task_id,
+            taskVersion: task?.meta?.versionId ?? '1',
+          }),
+      version: 1,
+    }]
+  }
+
+  #completedCaseDiagnosis(context: ActorContext, caseId: string) {
+    const confirmation = this.#diagnosisConfirmation(context, caseId)
+    if (confirmation !== undefined) return confirmation
+    const rows = z.array(signedClinicalDocumentRowSchema).parse(
+      this.#database.driver.prepare(`
+        SELECT document_id, composition_id, bundle_id, provenance_id,
+          revision_of_document_id, signed_at
+        FROM signed_clinical_document
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        ORDER BY signed_at DESC, document_id DESC
+      `).all(context.workspaceId, context.epoch, caseId),
+    )
+    for (const row of rows) {
+      const conditionReference = legacyDiagnosisReferenceFromComposition(
+        this.#fhir.read(context, 'Composition', row.composition_id),
+      )
+      if (conditionReference === undefined) continue
+      const conditionId = conditionReference.slice('Condition/'.length)
+      const resource = this.#fhir.read(context, 'Condition', conditionId)
+      const condition = confirmedDiagnosisConditionSchema.parse(resource)
+      const coding = condition.code.coding[0]
+      if (coding === undefined) continue
+      const catalog = z.object({ item_id: z.string().min(1) }).strict().optional().parse(
+        this.#database.driver.prepare(`
+          SELECT item_id FROM diagnosis_catalog
+          WHERE workspace_id = ? AND epoch = ? AND code_system = ? AND code = ?
+          ORDER BY item_id
+          LIMIT 1
+        `).get(context.workspaceId, context.epoch, coding.system, coding.code),
+      )
+      const note = condition.note?.[0]?.text
+      return {
+        confirmedAt: row.signed_at,
+        entries: [{
+          ...(catalog === undefined ? {} : { catalogItemId: catalog.item_id }),
+          code: coding.code,
+          conditionId,
+          conditionVersion: resource.meta?.versionId ?? '1',
+          display: coding.display,
+          ...(note === undefined ? {} : { note }),
+          role: 'primary' as const,
+          system: coding.system,
+        }],
+        id: `legacy-${row.document_id}`,
+        provenanceId: row.provenance_id,
+      }
+    }
+    return undefined
+  }
+
   #completedCaseTimeline(
     context: ActorContext,
     input: Pick<
@@ -8673,7 +8958,7 @@ export class WorkflowService {
         reference: `ServiceRequest/${request.serviceRequestId}`,
         relatedReferences: [
           `LaboratoryRequest/${request.id}`,
-          `Task/${request.taskId}`,
+          ...(request.taskId === undefined ? [] : [`Task/${request.taskId}`]),
         ],
       })
       for (const report of [
@@ -8706,12 +8991,19 @@ export class WorkflowService {
       }
     }
     if (input.diagnosis !== undefined) {
+      const legacyCondition = input.diagnosis.id.startsWith('legacy-')
+        ? input.diagnosis.entries[0]
+        : undefined
       events.push({
         kind: 'diagnosis-confirmed',
         occurredAt: input.diagnosis.confirmedAt,
-        reference: `DiagnosisConfirmation/${input.diagnosis.id}`,
+        reference: legacyCondition === undefined
+          ? `DiagnosisConfirmation/${input.diagnosis.id}`
+          : `Condition/${legacyCondition.conditionId}`,
         relatedReferences: [
-          ...input.diagnosis.entries.map(entry => `Condition/${entry.conditionId}`),
+          ...(legacyCondition === undefined
+            ? input.diagnosis.entries.map(entry => `Condition/${entry.conditionId}`)
+            : []),
           `Provenance/${input.diagnosis.provenanceId}`,
         ],
       })
@@ -9138,7 +9430,7 @@ export class WorkflowService {
           prescription.status, prescription.version, prescription.authored_at,
           authorship.authored_by_practitioner_role_id
         FROM prescription
-        JOIN prescription_authorship AS authorship
+        LEFT JOIN prescription_authorship AS authorship
           ON authorship.workspace_id = prescription.workspace_id
          AND authorship.epoch = prescription.epoch
          AND authorship.prescription_id = prescription.prescription_id
@@ -9151,6 +9443,7 @@ export class WorkflowService {
       context,
       prescription.prescription_id,
     )
+    let authoredByPractitionerRoleId = prescription.authored_by_practitioner_role_id ?? undefined
     const items = z.array(issuedPrescriptionItemRowSchema).parse(
       this.#database.driver.prepare(`
         SELECT medication_request_id, medication_id, quantity, dose_text,
@@ -9166,16 +9459,28 @@ export class WorkflowService {
     ).map((item) => {
       const resource = this.#fhir.read(context, 'MedicationRequest', item.medication_request_id)
       const request = issuedMedicationRequestSchema.parse(resource)
-      if (
-        request.requester.reference
-        !== `PractitionerRole/${prescription.authored_by_practitioner_role_id}`
-      ) {
+      if (!request.requester.reference.startsWith('PractitionerRole/')) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription requester is inconsistent')
       }
+      const requesterRoleId = request.requester.reference.slice('PractitionerRole/'.length)
+      authoredByPractitionerRoleId ??= requesterRoleId
+      if (requesterRoleId !== authoredByPractitionerRoleId) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription requester is inconsistent')
+      }
+      const catalog = z.object({
+        name_en: z.string().min(1),
+        name_zh: z.string().min(1),
+      }).strict().optional().parse(this.#database.driver.prepare(`
+        SELECT name_zh, name_en FROM outpatient_catalog
+        WHERE workspace_id = ? AND epoch = ? AND item_id = ? AND kind = 'medication'
+      `).get(context.workspaceId, context.epoch, item.medication_id))
       return {
         catalogItemId: item.medication_id,
         courseDays: item.course_days,
-        display: request.medication.reference.display,
+        display: request.medication.reference.display
+          ?? catalog?.name_zh
+          ?? catalog?.name_en
+          ?? item.medication_id,
         doseText: item.dose_text,
         frequencyCode: item.frequency_code,
         medicationRequestId: item.medication_request_id,
@@ -9183,9 +9488,12 @@ export class WorkflowService {
         quantity: item.quantity,
       }
     })
+    if (authoredByPractitionerRoleId === undefined) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription requester is incomplete')
+    }
     return issuedPrescriptionSchema.parse({
       authoredAt: prescription.authored_at,
-      authoredByPractitionerRoleId: prescription.authored_by_practitioner_role_id,
+      authoredByPractitionerRoleId,
       id: prescription.prescription_id,
       items,
       number: prescription.prescription_number,
