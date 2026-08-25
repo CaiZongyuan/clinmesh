@@ -45,11 +45,3 @@ export function getWorkspaceErrorMessage(
   }
   return fallback
 }
-
-export function getCorrectionErrorMessage(
-  error: Error,
-  messages: WorkspaceMessages,
-): string {
-  if (error instanceof ApiClientError && error.status === 409) return error.message
-  return getWorkspaceErrorMessage(error, messages)
-}

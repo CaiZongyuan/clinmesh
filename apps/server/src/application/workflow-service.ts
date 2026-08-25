@@ -5872,6 +5872,7 @@ export class WorkflowService {
         || request.authored_by !== (input.context.practitionerId ?? input.context.actorId)) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request was not found')
       }
+      this.#assertCaseResponsibility(input.context, request.case_id)
       this.#assertExpectedVersions(input.expectedVersions, [
         `ServiceRequest/${request.service_request_id}`,
         `Task/${request.execution_task_id}`,
@@ -8182,16 +8183,7 @@ export class WorkflowService {
       practitionerRoleId,
       assignedAt,
     )
-    const responsibility = practitionerRoleIdRowSchema.optional().parse(
-      this.#database.driver.prepare(`
-      SELECT practitioner_role_id
-      FROM outpatient_case_responsibility
-      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-    `).get(context.workspaceId, context.epoch, caseId),
-    )
-    if (responsibility?.practitioner_role_id !== practitionerRoleId) {
-      throw new WorkflowError('ROLE_NOT_ALLOWED', 'The outpatient case belongs to another doctor')
-    }
+    this.#assertCaseResponsibility(context, caseId)
   }
 
   #assertCaseResponsibility(context: ActorContext, caseId: string): void {

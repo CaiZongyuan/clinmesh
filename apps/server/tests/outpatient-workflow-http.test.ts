@@ -4451,6 +4451,112 @@ describe('outpatient workflow HTTP contract', () => {
     })
   })
 
+  it('rejects laboratory cancellation from another role held by the responsible practitioner', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-cancel-role-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const draftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: {
+            catalogItemId: 'lab-crp',
+            expectedDraftVersion: 0,
+            indicationCode: 'fever',
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    const draft = laboratoryRequestDraftResponseSchema.parse(await draftResponse.json()).data
+    const issueResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { expectedDraftVersion: draft.draftVersion },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    const issued = issueLaboratoryRequestResponseSchema.parse(await issueResponse.json()).data.request
+    const alternateRoleId = 'practitioner-role-outpatient-doctor-alternate'
+    runtime.fhir.create(
+      { epoch: 'epoch-1', workspaceId: 'workspace-demo' },
+      {
+        resourceType: 'PractitionerRole',
+        id: alternateRoleId,
+        active: true,
+        code: [{ text: 'outpatient-doctor' }],
+        location: [{ reference: 'Location/location-outpatient-doctor' }],
+        organization: { reference: 'Organization/organization-clinmesh' },
+        practitioner: { reference: 'Practitioner/practitioner-outpatient-doctor' },
+      },
+    )
+    runtime.database.driver.prepare(`
+      INSERT INTO practitioner_role_binding (
+        workspace_id, practitioner_role_id, practitioner_id, role_code,
+        organization_id, location_id, active
+      ) VALUES (
+        'workspace-demo', ?, 'practitioner-outpatient-doctor', 'outpatient-doctor',
+        'organization-clinmesh', 'location-outpatient-doctor', 1
+      )
+    `).run(alternateRoleId)
+    runtime.database.driver.prepare(`
+      INSERT INTO membership_practitioner_role (
+        membership_id, workspace_id, practitioner_role_id
+      ) VALUES ('membership-outpatient-doctor', 'workspace-demo', ?)
+    `).run(alternateRoleId)
+    const roleResponse = await runtime.app.request('/api/auth/role', {
+      body: JSON.stringify({ practitionerRoleId: alternateRoleId }),
+      headers: commandHeaders(doctorCookie),
+      method: 'POST',
+    })
+    expect(roleResponse.status).toBe(200)
+    expect(sessionContextSchema.parse(await roleResponse.json()).actor).toMatchObject({
+      practitionerId: 'practitioner-outpatient-doctor',
+      practitionerRoleId: alternateRoleId,
+    })
+
+    const cancelResponse = await runtime.app.request(
+      `/api/his/v1/laboratory-requests/${issued.id}/actions/cancel`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`ServiceRequest/${issued.serviceRequestId}`]: issued.serviceRequestVersion,
+            [`Task/${issued.taskId}`]: issued.taskVersion,
+          },
+          input: {
+            expectedRequestVersion: issued.version,
+            reasonCode: 'no-longer-needed',
+          },
+        } satisfies typeof cancelLaboratoryRequestRequestSchema._output),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    expect(cancelResponse.status).toBe(403)
+    expect(apiErrorSchema.parse(await cancelResponse.json())).toMatchObject({
+      error: { code: 'ROLE_NOT_ALLOWED' },
+    })
+  })
+
   it('does not advertise report delivery when the Scenario has no laboratory result facts', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-report-capability-http-'))
     temporaryDirectories.push(directory)

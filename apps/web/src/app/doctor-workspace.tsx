@@ -91,7 +91,6 @@ import {
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import {
-  getCorrectionErrorMessage,
   getWorkspaceErrorMessage,
   getWorkspaceErrorTitle,
 } from './workspace-error.ts'
@@ -148,7 +147,10 @@ interface LaboratoryRequestActions {
     error: Error | null
     onSubmit: () => void
     pending: boolean
-    successVersion?: number
+    success?: {
+      caseId: string
+      draftVersion: number
+    }
   }
   issue: {
     error: Error | null
@@ -870,7 +872,7 @@ function ActiveDoctorWorkspace({
                 pending: deleteRequestDraft.isPending,
                 ...(deleteRequestDraft.data === undefined
                   ? {}
-                  : { successVersion: deleteRequestDraft.data.data.draftVersion }),
+                  : { success: deleteRequestDraft.data.data }),
               },
               issue: {
                 error: issueRequest.error,
@@ -1268,6 +1270,7 @@ function CaseDetail({
           ) : (
             <LaboratoryRequestEditor
               actions={laboratoryRequestActions}
+              caseId={detail.caseId}
               catalog={laboratoryCatalog}
               indicationCode={indicationCode}
               indicationItems={indicationItems}
@@ -1425,6 +1428,7 @@ function EncounterCompletionPanel({ detail, messages, onCompleted, onRefresh, qu
 
 function LaboratoryRequestEditor({
   actions,
+  caseId,
   catalog,
   indicationCode,
   indicationItems,
@@ -1439,6 +1443,7 @@ function LaboratoryRequestEditor({
   state,
 }: {
   actions: LaboratoryRequestActions
+  caseId: string
   catalog: ClinicalCatalog['laboratory']
   indicationCode: string
   indicationItems: Array<{ label: string; value: string }>
@@ -1521,16 +1526,16 @@ function LaboratoryRequestEditor({
             </AlertDescription>
           </Alert>
         )}
-        {actions.deleteDraft.successVersion !== undefined
+        {actions.deleteDraft.success?.caseId === caseId
           && state?.draft === undefined
-          && state?.draftVersion === actions.deleteDraft.successVersion ? (
+          && state?.draftVersion === actions.deleteDraft.success.draftVersion ? (
           <Alert>
             <CheckIcon aria-hidden="true" />
             <AlertTitle>{messages.laboratoryRequestDraftDeleted}</AlertTitle>
           </Alert>
         ) : null}
         {actions.save.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.save.error, messages)} title={getWorkspaceErrorTitle(actions.save.error, messages, messages.operationFailed)} />}
-        {actions.deleteDraft.error === null ? null : <ErrorAlert message={getCorrectionErrorMessage(actions.deleteDraft.error, messages)} title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)} />}
+        {actions.deleteDraft.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.deleteDraft.error, messages)} title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)} />}
         {actions.issue.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.issue.error, messages)} title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)} />}
       </FieldGroup>}
       <div className="flex flex-col gap-2">
@@ -1625,7 +1630,7 @@ function LaboratoryRequestEditor({
             <AlertTitle>{messages.laboratoryRequestCancelled}</AlertTitle>
           </Alert>
         ) : null}
-        {actions.cancel.error === null ? null : <ErrorAlert message={getCorrectionErrorMessage(actions.cancel.error, messages)} title={getWorkspaceErrorTitle(actions.cancel.error, messages, messages.operationFailed)} />}
+        {actions.cancel.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.cancel.error, messages)} title={getWorkspaceErrorTitle(actions.cancel.error, messages, messages.operationFailed)} />}
         {state?.requests.map((request) => {
           if (request.status !== 'in-progress') return null
           const item = catalogById.get(request.catalogItemId)
@@ -1832,7 +1837,7 @@ function LaboratoryReportCorrectionForm({ action, itemName, messages, report, re
       </form>
       {action.error !== null && action.lastRequestId === request.id ? (
         <ErrorAlert
-          message={getCorrectionErrorMessage(action.error, messages)}
+          message={getWorkspaceErrorMessage(action.error, messages)}
           title={getWorkspaceErrorTitle(action.error, messages, messages.operationFailed)}
         />
       ) : null}
@@ -2201,7 +2206,7 @@ function StructuredClinicalDocumentPanel({
               </AlertDialog>
               {revise.error === null ? null : (
                 <ErrorAlert
-                  message={getCorrectionErrorMessage(revise.error, messages)}
+                  message={getWorkspaceErrorMessage(revise.error, messages)}
                   title={getWorkspaceErrorTitle(revise.error, messages, messages.operationFailed)}
                 />
               )}
@@ -3073,7 +3078,7 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
           </Table>
           {readOnly || withdraw.error === null ? null : (
             <ErrorAlert
-              message={getCorrectionErrorMessage(withdraw.error, messages)}
+              message={getWorkspaceErrorMessage(withdraw.error, messages)}
               title={getWorkspaceErrorTitle(withdraw.error, messages, messages.operationFailed)}
             />
           )}
@@ -3315,7 +3320,7 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
               )}
               {removeDraft.error === null ? null : (
                 <ErrorAlert
-                  message={getCorrectionErrorMessage(removeDraft.error, messages)}
+                  message={getWorkspaceErrorMessage(removeDraft.error, messages)}
                   title={getWorkspaceErrorTitle(removeDraft.error, messages, messages.operationFailed)}
                 />
               )}

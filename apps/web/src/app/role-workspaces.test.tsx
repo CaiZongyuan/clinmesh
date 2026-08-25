@@ -1635,6 +1635,15 @@ describe('role workspaces', () => {
       synthetic: true,
       versionId: '1',
     }
+    const otherPatient = {
+      birthDate: '1979-11-08',
+      gender: 'male',
+      id: 'patient-virtual-2',
+      identifier: 'CM-SYN-VP-002',
+      name: '合成候选患者周远',
+      synthetic: true,
+      versionId: '1',
+    }
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
@@ -1675,8 +1684,17 @@ describe('role workspaces', () => {
             status: 'first-visit',
             taskId: 'task-doctor-virtual-1',
             taskVersion: '1',
+          }, {
+            caseId: 'case-virtual-2',
+            encounterId: 'encounter-virtual-2',
+            encounterVersion: '1',
+            patient: otherPatient,
+            presentation: virtualPatientPresentation,
+            status: 'first-visit',
+            taskId: 'task-doctor-virtual-2',
+            taskVersion: '1',
           }],
-          ...pagination(1),
+          ...pagination(2),
         })
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-virtual-1') {
@@ -1699,6 +1717,25 @@ describe('role workspaces', () => {
           taskVersion: '1',
         })
       }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-virtual-2') {
+        return Response.json({
+          allergies: [],
+          caseId: 'case-virtual-2',
+          consultation: { questions: [], records: [], version: 1 },
+          encounter: { id: 'encounter-virtual-2', status: 'in-progress', versionId: '1' },
+          laboratoryRequests: {
+            draftVersion: 2,
+            reportingSupported: true,
+            requests: [],
+          },
+          patient: otherPatient,
+          presentation: virtualPatientPresentation,
+          priorFacts: [],
+          status: 'first-visit',
+          taskId: 'task-doctor-virtual-2',
+          taskVersion: '1',
+        })
+      }
       if (url.pathname === '/api/his/v1/laboratory-requests/laboratory-request-1/actions/cancel') {
         cancellationRequests += 1
         const body = JSON.parse(String(init?.body)) as unknown
@@ -1709,6 +1746,14 @@ describe('role workspaces', () => {
           },
           input: { expectedRequestVersion: 1, reasonCode: 'no-longer-needed' },
         })
+        if (cancellationRequests === 1) {
+          return Response.json({
+            error: {
+              code: 'LABORATORY_REQUEST_NOT_CANCELLABLE',
+              message: 'The laboratory request cannot be cancelled from status "accepted"',
+            },
+          }, { status: 409 })
+        }
         const issuedRequest = requests.find(request => request.id === 'laboratory-request-1')
         if (issuedRequest === undefined) throw new Error('Issued laboratory request was not found')
         const cancelled = {
@@ -1796,8 +1841,13 @@ describe('role workspaces', () => {
     expect(within(cancelDialog).getByText('C 反应蛋白')).toBeTruthy()
     expect(within(cancelDialog).getByText('已开具')).toBeTruthy()
     await user.click(within(cancelDialog).getByRole('button', { name: '确认取消' }))
-    expect(await screen.findByText('检查申请已取消')).toBeTruthy()
+    expect(await screen.findByText('只有已开具且尚未受理的检查申请可以取消。')).toBeTruthy()
+    expect(screen.queryByText(/The laboratory request cannot be cancelled/)).toBeNull()
     expect(cancellationRequests).toBe(1)
+
+    await user.click(within(cancelDialog).getByRole('button', { name: '确认取消' }))
+    expect(await screen.findByText('检查申请已取消')).toBeTruthy()
+    expect(cancellationRequests).toBe(2)
     await waitFor(() => expect(screen.queryByText('已开具')).toBeNull())
     await user.click(screen.getByRole('button', { name: '删除检查草稿' }))
     const deleteDialog = await screen.findByRole('alertdialog', { name: '确认删除检查草稿' })
@@ -1807,6 +1857,10 @@ describe('role workspaces', () => {
     expect(await screen.findByText('检查草稿已删除')).toBeTruthy()
     expect(draftDeletionRequests).toBe(1)
     await waitFor(() => expect(screen.queryByText('检查草稿已保存')).toBeNull())
+
+    await user.click(screen.getByRole('listitem', { name: '选择病例 合成候选患者周远' }))
+    expect(await screen.findByText('当前无正式检查申请')).toBeTruthy()
+    expect(screen.queryByText('检查草稿已删除')).toBeNull()
   })
 
   it('keeps polling an in-progress laboratory request until its report arrives', async () => {
@@ -3731,9 +3785,10 @@ describe('role workspaces', () => {
         reason: '补充复诊时限和危险征象。',
       },
     })
-    expect(await screen.findByText(
+    expect(await screen.findByText('数据已发生变化，请刷新后重新确认。')).toBeTruthy()
+    expect(screen.queryByText(
       'The Clinical Document is superseded; only the latest version can be revised',
-    )).toBeTruthy()
+    )).toBeNull()
   })
 
   it('searches completed cases with controlled patient, date, and diagnosis filters and shows the empty state', async () => {
