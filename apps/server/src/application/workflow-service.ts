@@ -139,13 +139,43 @@ const prescriptionWithdrawalRowSchema = z.object({
   withdrawn_by_practitioner_role_id: z.string().min(1),
 })
 
+const outpatientCaseStatusRowSchema = z.enum([
+  'awaiting-triage',
+  'awaiting-doctor',
+  'first-visit',
+  'awaiting-lab-payment',
+  'awaiting-lis',
+  'awaiting-report',
+  'awaiting-revisit',
+  'revisit-draft',
+  'awaiting-medication-payment',
+  'awaiting-dispense',
+  'completed',
+])
+
+const prescriptionStatusRowSchema = z.enum(['dispensed', 'draft', 'paid', 'signed'])
+
 const activePrescriptionRowSchema = z.object({
   withdrawal_id: z.string().nullable(),
 })
 
 const withdrawablePrescriptionRowSchema = activePrescriptionRowSchema.extend({
-  status: z.enum(['dispensed', 'draft', 'paid', 'signed']),
+  status: prescriptionStatusRowSchema,
   version: z.number().int().positive(),
+})
+
+const prescriptionWorkflowRowSchema = withdrawablePrescriptionRowSchema.extend({
+  case_status: outpatientCaseStatusRowSchema,
+  encounter_id: z.string().min(1),
+})
+
+const prescriptionDispenseWorkflowRowSchema = prescriptionWorkflowRowSchema.extend({
+  case_id: z.string().min(1),
+  patient_id: z.string().min(1),
+  prescription_id: z.string().min(1),
+  prescription_number: z.string().min(1),
+  review_id: z.string().min(1).nullable(),
+  scenario_run_id: z.string().min(1),
 })
 
 const prescriptionDispensingRowSchema = z.object({
@@ -169,6 +199,48 @@ const issuedPrescriptionItemRowSchema = z.object({
   medication_id: z.string().min(1),
   medication_request_id: z.string().min(1),
   quantity: z.number().int().positive(),
+})
+
+const chargeStatusRowSchema = z.enum([
+  'ambiguous',
+  'billable',
+  'declined',
+  'paid',
+  'payment-pending',
+])
+
+const paymentWorkflowRowSchema = activePrescriptionRowSchema.extend({
+  case_status: outpatientCaseStatusRowSchema,
+  prescription_status: prescriptionStatusRowSchema.nullable(),
+})
+
+const paymentChargeRowSchema = paymentWorkflowRowSchema.extend({
+  charge_id: z.string().min(1),
+  charge_item_id: z.string().min(1),
+  status: chargeStatusRowSchema,
+  total_fen: z.number().int().nonnegative(),
+  version: z.number().int().positive(),
+})
+
+const paymentPreviewRowSchema = paymentWorkflowRowSchema.extend({
+  account_id: z.string().min(1),
+  amount_fen: z.number().int().nonnegative(),
+  case_id: z.string().min(1),
+  category: z.enum(['laboratory', 'medication']),
+  charge_id: z.string().min(1),
+  charge_item_id: z.string().min(1),
+  charge_status: chargeStatusRowSchema,
+  charge_version: z.number().int().positive(),
+  consumed_at: z.string().datetime({ offset: true }).nullable(),
+  current_amount_fen: z.number().int().nonnegative(),
+  encounter_id: z.string().min(1),
+  expected_charge_version: z.number().int().positive(),
+  expires_at: z.string().datetime({ offset: true }),
+  patient_id: z.string().min(1),
+  prescription_id: z.string().min(1).nullable(),
+  service_request_id: z.string().min(1).nullable(),
+  simulator_rule: z.string().min(1),
+  token_hash: z.string().min(1),
 })
 
 const issuedMedicationRequestSchema = z.object({
@@ -6677,28 +6749,24 @@ export class WorkflowService {
       if (input.context.locationId === undefined) {
         throw new WorkflowError('ROLE_NOT_ALLOWED', 'The pharmacist has no active pharmacy location')
       }
-      const prescription = this.#database.driver.prepare(`
-        SELECT prescription.version, prescription.status,
-          outpatient_case.encounter_id, outpatient_case.status AS case_status,
-          withdrawal.withdrawal_id
-        FROM prescription
-        JOIN outpatient_case
-          ON outpatient_case.workspace_id = prescription.workspace_id
-         AND outpatient_case.epoch = prescription.epoch
-         AND outpatient_case.case_id = prescription.case_id
-        LEFT JOIN prescription_withdrawal AS withdrawal
-          ON withdrawal.workspace_id = prescription.workspace_id
-         AND withdrawal.epoch = prescription.epoch
-         AND withdrawal.prescription_id = prescription.prescription_id
-        WHERE prescription.workspace_id = ? AND prescription.epoch = ?
-          AND prescription.prescription_id = ?
-      `).get(input.context.workspaceId, input.context.epoch, input.prescriptionId) as {
-        case_status: string
-        encounter_id: string
-        status: string
-        version: number
-        withdrawal_id: string | null
-      } | undefined
+      const prescription = prescriptionWorkflowRowSchema.optional().parse(
+        this.#database.driver.prepare(`
+          SELECT prescription.version, prescription.status,
+            outpatient_case.encounter_id, outpatient_case.status AS case_status,
+            withdrawal.withdrawal_id
+          FROM prescription
+          JOIN outpatient_case
+            ON outpatient_case.workspace_id = prescription.workspace_id
+           AND outpatient_case.epoch = prescription.epoch
+           AND outpatient_case.case_id = prescription.case_id
+          LEFT JOIN prescription_withdrawal AS withdrawal
+            ON withdrawal.workspace_id = prescription.workspace_id
+           AND withdrawal.epoch = prescription.epoch
+           AND withdrawal.prescription_id = prescription.prescription_id
+          WHERE prescription.workspace_id = ? AND prescription.epoch = ?
+            AND prescription.prescription_id = ?
+        `).get(input.context.workspaceId, input.context.epoch, input.prescriptionId),
+      )
       if (
         prescription === undefined
         || prescription.status !== 'paid'
@@ -6804,41 +6872,31 @@ export class WorkflowService {
       if (new Set(input.lotSelections.map(selection => selection.lotId)).size !== input.lotSelections.length) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'A lot can be selected only once')
       }
-      const prescription = this.#database.driver.prepare(`
-        SELECT prescription.prescription_id, prescription.prescription_number,
-          prescription.version, prescription.status,
-          outpatient_case.case_id, outpatient_case.patient_id,
-          outpatient_case.encounter_id, outpatient_case.status AS case_status,
-          outpatient_case.scenario_run_id,
-          review.review_id, withdrawal.withdrawal_id
-        FROM prescription
-        JOIN outpatient_case
-          ON outpatient_case.workspace_id = prescription.workspace_id
-         AND outpatient_case.epoch = prescription.epoch
-         AND outpatient_case.case_id = prescription.case_id
-        LEFT JOIN prescription_review AS review
-          ON review.workspace_id = prescription.workspace_id
-         AND review.epoch = prescription.epoch
-         AND review.prescription_id = prescription.prescription_id
-        LEFT JOIN prescription_withdrawal AS withdrawal
-          ON withdrawal.workspace_id = prescription.workspace_id
-         AND withdrawal.epoch = prescription.epoch
-         AND withdrawal.prescription_id = prescription.prescription_id
-        WHERE prescription.workspace_id = ? AND prescription.epoch = ?
-          AND prescription.prescription_id = ?
-      `).get(input.context.workspaceId, input.context.epoch, input.prescriptionId) as {
-        case_id: string
-        case_status: string
-        encounter_id: string
-        patient_id: string
-        prescription_id: string
-        prescription_number: string
-        review_id: string | null
-        scenario_run_id: string
-        status: string
-        version: number
-        withdrawal_id: string | null
-      } | undefined
+      const prescription = prescriptionDispenseWorkflowRowSchema.optional().parse(
+        this.#database.driver.prepare(`
+          SELECT prescription.prescription_id, prescription.prescription_number,
+            prescription.version, prescription.status,
+            outpatient_case.case_id, outpatient_case.patient_id,
+            outpatient_case.encounter_id, outpatient_case.status AS case_status,
+            outpatient_case.scenario_run_id,
+            review.review_id, withdrawal.withdrawal_id
+          FROM prescription
+          JOIN outpatient_case
+            ON outpatient_case.workspace_id = prescription.workspace_id
+           AND outpatient_case.epoch = prescription.epoch
+           AND outpatient_case.case_id = prescription.case_id
+          LEFT JOIN prescription_review AS review
+            ON review.workspace_id = prescription.workspace_id
+           AND review.epoch = prescription.epoch
+           AND review.prescription_id = prescription.prescription_id
+          LEFT JOIN prescription_withdrawal AS withdrawal
+            ON withdrawal.workspace_id = prescription.workspace_id
+           AND withdrawal.epoch = prescription.epoch
+           AND withdrawal.prescription_id = prescription.prescription_id
+          WHERE prescription.workspace_id = ? AND prescription.epoch = ?
+            AND prescription.prescription_id = ?
+        `).get(input.context.workspaceId, input.context.epoch, input.prescriptionId),
+      )
       if (
         prescription === undefined
         || prescription.status !== 'paid'
@@ -7159,36 +7217,29 @@ export class WorkflowService {
       operation: 'payment.preview',
     }, () => {
       this.#assertRole(input.context, ['cashier'])
-      const charge = this.#database.driver.prepare(`
-        SELECT charge.charge_id, charge.charge_item_id, charge.total_fen,
-          charge.version, charge.status, outpatient_case.status AS case_status,
-          prescription.status AS prescription_status,
-          withdrawal.withdrawal_id
-        FROM charge_record AS charge
-        JOIN outpatient_case
-          ON outpatient_case.workspace_id = charge.workspace_id
-         AND outpatient_case.epoch = charge.epoch
-         AND outpatient_case.case_id = charge.case_id
-        LEFT JOIN prescription
-          ON prescription.workspace_id = outpatient_case.workspace_id
-         AND prescription.epoch = outpatient_case.epoch
-         AND prescription.prescription_id = outpatient_case.prescription_id
-        LEFT JOIN prescription_withdrawal AS withdrawal
-          ON withdrawal.workspace_id = prescription.workspace_id
-         AND withdrawal.epoch = prescription.epoch
-         AND withdrawal.prescription_id = prescription.prescription_id
-        WHERE charge.workspace_id = ? AND charge.epoch = ?
-          AND charge.case_id = ? AND charge.category = ?
-      `).get(input.context.workspaceId, input.context.epoch, input.caseId, input.category) as {
-        case_status: string
-        charge_id: string
-        charge_item_id: string
-        prescription_status: string | null
-        status: string
-        total_fen: number
-        version: number
-        withdrawal_id: string | null
-      } | undefined
+      const charge = paymentChargeRowSchema.optional().parse(
+        this.#database.driver.prepare(`
+          SELECT charge.charge_id, charge.charge_item_id, charge.total_fen,
+            charge.version, charge.status, outpatient_case.status AS case_status,
+            prescription.status AS prescription_status,
+            withdrawal.withdrawal_id
+          FROM charge_record AS charge
+          JOIN outpatient_case
+            ON outpatient_case.workspace_id = charge.workspace_id
+           AND outpatient_case.epoch = charge.epoch
+           AND outpatient_case.case_id = charge.case_id
+          LEFT JOIN prescription
+            ON prescription.workspace_id = outpatient_case.workspace_id
+           AND prescription.epoch = outpatient_case.epoch
+           AND prescription.prescription_id = outpatient_case.prescription_id
+          LEFT JOIN prescription_withdrawal AS withdrawal
+            ON withdrawal.workspace_id = prescription.workspace_id
+           AND withdrawal.epoch = prescription.epoch
+           AND withdrawal.prescription_id = prescription.prescription_id
+          WHERE charge.workspace_id = ? AND charge.epoch = ?
+            AND charge.case_id = ? AND charge.category = ?
+        `).get(input.context.workspaceId, input.context.epoch, input.caseId, input.category),
+      )
       if (charge === undefined || !['billable', 'declined'].includes(charge.status)) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The charge is not available for payment')
       }
@@ -7274,57 +7325,37 @@ export class WorkflowService {
       operation: 'payment.confirm',
     }, transaction => {
       this.#assertRole(input.context, ['cashier'])
-      const preview = this.#database.driver.prepare(`
-        SELECT preview.*, charge.charge_id, charge.charge_item_id,
-          charge.status AS charge_status, charge.version AS charge_version,
-          charge.total_fen AS current_amount_fen,
-          outpatient_case.patient_id, outpatient_case.encounter_id,
-          outpatient_case.account_id, outpatient_case.service_request_id,
-          outpatient_case.prescription_id, outpatient_case.status AS case_status,
-          prescription.status AS prescription_status,
-          withdrawal.withdrawal_id
-        FROM payment_preview AS preview
-        JOIN charge_record AS charge
-          ON charge.workspace_id = preview.workspace_id
-         AND charge.epoch = preview.epoch
-         AND charge.case_id = preview.case_id
-         AND charge.category = preview.category
-        JOIN outpatient_case
-          ON outpatient_case.workspace_id = preview.workspace_id
-         AND outpatient_case.epoch = preview.epoch
-         AND outpatient_case.case_id = preview.case_id
-        LEFT JOIN prescription
-          ON prescription.workspace_id = outpatient_case.workspace_id
-         AND prescription.epoch = outpatient_case.epoch
-         AND prescription.prescription_id = outpatient_case.prescription_id
-        LEFT JOIN prescription_withdrawal AS withdrawal
-          ON withdrawal.workspace_id = prescription.workspace_id
-         AND withdrawal.epoch = prescription.epoch
-         AND withdrawal.prescription_id = prescription.prescription_id
-        WHERE preview.workspace_id = ? AND preview.epoch = ? AND preview.preview_id = ?
-      `).get(input.context.workspaceId, input.context.epoch, input.previewId) as {
-        account_id: string
-        amount_fen: number
-        case_id: string
-        case_status: string
-        category: 'laboratory' | 'medication'
-        charge_id: string
-        charge_item_id: string
-        charge_status: string
-        charge_version: number
-        consumed_at: string | null
-        current_amount_fen: number
-        encounter_id: string
-        expected_charge_version: number
-        expires_at: string
-        patient_id: string
-        prescription_id: string | null
-        prescription_status: string | null
-        service_request_id: string | null
-        simulator_rule: string
-        token_hash: string
-        withdrawal_id: string | null
-      } | undefined
+      const preview = paymentPreviewRowSchema.optional().parse(
+        this.#database.driver.prepare(`
+          SELECT preview.*, charge.charge_id, charge.charge_item_id,
+            charge.status AS charge_status, charge.version AS charge_version,
+            charge.total_fen AS current_amount_fen,
+            outpatient_case.patient_id, outpatient_case.encounter_id,
+            outpatient_case.account_id, outpatient_case.service_request_id,
+            outpatient_case.prescription_id, outpatient_case.status AS case_status,
+            prescription.status AS prescription_status,
+            withdrawal.withdrawal_id
+          FROM payment_preview AS preview
+          JOIN charge_record AS charge
+            ON charge.workspace_id = preview.workspace_id
+           AND charge.epoch = preview.epoch
+           AND charge.case_id = preview.case_id
+           AND charge.category = preview.category
+          JOIN outpatient_case
+            ON outpatient_case.workspace_id = preview.workspace_id
+           AND outpatient_case.epoch = preview.epoch
+           AND outpatient_case.case_id = preview.case_id
+          LEFT JOIN prescription
+            ON prescription.workspace_id = outpatient_case.workspace_id
+           AND prescription.epoch = outpatient_case.epoch
+           AND prescription.prescription_id = outpatient_case.prescription_id
+          LEFT JOIN prescription_withdrawal AS withdrawal
+            ON withdrawal.workspace_id = prescription.workspace_id
+           AND withdrawal.epoch = prescription.epoch
+           AND withdrawal.prescription_id = prescription.prescription_id
+          WHERE preview.workspace_id = ? AND preview.epoch = ? AND preview.preview_id = ?
+        `).get(input.context.workspaceId, input.context.epoch, input.previewId),
+      )
       if (preview === undefined || preview.consumed_at !== null) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The payment preview is unavailable')
       }
