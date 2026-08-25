@@ -22,6 +22,8 @@ Virtual Patient 是独立于 Patient Identity 和 Encounter 的候选病例事�
 
 带 Consultation 的医生病例由独立检查申请聚合拥有草稿版本和正式状态。草稿删除与开具都递增同一个单调版本，开具才创建 ServiceRequest 和以该请求为 `focus` 的执行 Task；同一病例中同项目只允许一个未取消申请。LIS 通过持久 outbox 推进受理与执行，只有尚未受理的 `issued` 申请可普通取消，晚到受理事件不能恢复已取消申请。详细生命周期和 FHIR 映射由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。
 
+执行中的独立申请由下一条持久 outbox 事件签发报告。确定性结果属于 Scenario Hidden Fact；LIS Command 为每个申请创建关联的 Specimen、数值 Observation、DiagnosticReport 和 Provenance，并完成 ServiceRequest 与执行 Task，但保留 Encounter、医生 Queue Task 和 Report Acknowledgement 的独立生命周期。申请只保存 DiagnosticReport 关联，医生读模型从已签发 FHIR 资源还原数值、UCUM 单位、参考范围、异常标识和结论，避免目录或后续模板变化改写历史报告。稳定资源 ID 与申请级终态检查共同覆盖同 event ID 重放和不同 event ID 重复投递。
+
 既有多岗位发热闭环继续使用带收费的 `issue-laboratory-order` 兼容命令和发热检验组合。独立入口只接受血常规与 C 反应蛋白，不创建 ChargeItem，也不完成医生 Queue Task；两条路径共享 FHIR 资源类型，但不共享草稿、领域状态机或计费触发点。
 
 Encounter Completion Policy 只汇总各 owner 已确认的事实，不复制其状态机。医生只有在主诊断已确认、病历已签署、必要检查已报告且完成 Report Acknowledgement、处方已开具或明确无需用药、没有未处理草稿、处置和随访完整时才能完成 Encounter。完诊后病例进入只读查询入口，展示 Consultation Record、病历版本、检查、报告、诊断、处方和业务时间线；更正通过原模块的受控命令产生新事实，不解锁并覆盖历史内容。

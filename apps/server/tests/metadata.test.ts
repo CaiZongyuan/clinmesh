@@ -63,7 +63,14 @@ describe('FHIR metadata endpoint', () => {
     expect(resources.find(resource => resource.type === 'Provenance')).toMatchObject({
       searchParam: [{
         name: 'target',
-        target: ['Bundle', 'Composition'],
+        target: [
+          'Bundle',
+          'Composition',
+          'DiagnosticReport',
+          'Observation',
+          'ServiceRequest',
+          'Task',
+        ],
         type: 'reference',
       }],
     })

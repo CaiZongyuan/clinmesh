@@ -4,6 +4,7 @@ import {
   type ClinicalDocumentContent,
   type DoctorCaseDetail,
   type DoctorQueueItem,
+  type LaboratoryReport,
   type LaboratoryRequest,
   type LaboratoryRequestCatalogItemId,
   type SessionContext,
@@ -1073,8 +1074,84 @@ function LaboratoryRequestEditor({
           </Table>
         )}
         {actions.cancel.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.cancel.error, messages)} title={getWorkspaceErrorTitle(actions.cancel.error, messages, messages.operationFailed)} />}
+        {state?.requests.map((request) => {
+          if (request.status !== 'in-progress') return null
+          const item = catalogById.get(request.catalogItemId)
+          return (
+            <Alert key={`waiting:${request.id}`}>
+              <RefreshCwIcon aria-hidden="true" className="animate-spin" />
+              <AlertTitle>{messages.laboratoryResultPending}</AlertTitle>
+              <AlertDescription>
+                {locale === 'zh-CN' ? item?.nameZh : item?.nameEn}
+              </AlertDescription>
+            </Alert>
+          )
+        })}
+        {state?.requests.map((request) => {
+          if (request.report === undefined) return null
+          const item = catalogById.get(request.catalogItemId)
+          return (
+            <LaboratoryRequestReport
+              itemName={(locale === 'zh-CN' ? item?.nameZh : item?.nameEn) ?? request.catalogItemId}
+              key={`report:${request.id}`}
+              locale={locale}
+              messages={messages}
+              report={request.report}
+              requestId={request.id}
+            />
+          )
+        })}
       </div>
     </div>
+  )
+}
+
+function LaboratoryRequestReport({ itemName, locale, messages, report, requestId }: {
+  itemName: string
+  locale: WorkspaceLocale
+  messages: ReturnType<typeof getWorkspaceMessages>
+  report: LaboratoryReport
+  requestId: string
+}): React.JSX.Element {
+  const headingId = `laboratory-request-report-${requestId}`
+  return (
+    <section aria-labelledby={headingId} className="flex flex-col gap-3 border-t pt-4">
+      <h5 className="text-sm font-semibold" id={headingId}>
+        {itemName} · {messages.laboratoryReport}
+      </h5>
+      <p className="text-sm">
+        <span className="font-medium">{messages.laboratoryReportConclusion}: </span>
+        {report.conclusion}
+      </p>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{messages.laboratoryItem}</TableHead>
+            <TableHead>{messages.result}</TableHead>
+            <TableHead>{messages.referenceRange}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {report.results.map(result => (
+            <TableRow key={result.observationId}>
+              <TableCell className="font-medium">
+                {laboratoryResultName(result.code, messages, result.display)}
+              </TableCell>
+              <TableCell>
+                <span>{laboratoryResultValue(result.value, result.unit.display, locale, messages)}</span>
+                <Badge
+                  className="ml-2"
+                  variant={result.interpretation === 'normal' ? 'success' : 'destructive'}
+                >
+                  {interpretationLabel(result.interpretation, messages)}
+                </Badge>
+              </TableCell>
+              <TableCell>{result.referenceRange.text}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </section>
   )
 }
 
@@ -1771,10 +1848,17 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
   )
 }
 
-function laboratoryResultName(code: string, messages: ReturnType<typeof getWorkspaceMessages>): string {
+function laboratoryResultName(
+  code: string,
+  messages: ReturnType<typeof getWorkspaceMessages>,
+  fallback = code,
+): string {
   if (code === '80382-5') return messages.resultCode_803825
   if (code === '6690-2') return messages.resultCode_66902
-  return code
+  if (code === '718-7') return messages.resultCode_7187
+  if (code === '777-3') return messages.resultCode_7773
+  if (code === '1988-5') return messages.resultCode_19885
+  return fallback
 }
 
 function indicationLabel(code: string, messages: ReturnType<typeof getWorkspaceMessages>): string {
@@ -1805,8 +1889,9 @@ function laboratoryResultValue(
 }
 
 function interpretationLabel(code: string, messages: ReturnType<typeof getWorkspaceMessages>): string {
-  if (code === 'H') return messages.abnormalHigh
-  if (code === 'L') return messages.abnormalLow
+  if (code === 'H' || code === 'high') return messages.abnormalHigh
+  if (code === 'L' || code === 'low') return messages.abnormalLow
+  if (code === 'N' || code === 'normal') return messages.normal
   if (code === 'POS') return messages.positive
   return messages.abnormal
 }

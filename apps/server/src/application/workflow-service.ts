@@ -18,8 +18,10 @@ import {
   firstVisitDraftResponseSchema,
   issueLaboratoryRequestResponseSchema,
   laboratoryOrderResponseSchema,
+  laboratoryReportSchema,
   laboratoryRequestDraftResponseSchema,
   laboratoryRequestSchema,
+  laboratoryResultMeasurementSchema,
   type LaboratoryRequestCatalogItemId,
   paymentPreviewResponseSchema,
   paymentResponseSchema,
@@ -146,6 +148,7 @@ const consultationRecordRowSchema = z.object({
 
 const laboratoryRequestRowSchema = z.object({
   catalog_item_id: laboratoryRequestSchema.shape.catalogItemId,
+  diagnostic_report_id: z.string().min(1).nullable(),
   execution_task_id: z.string().min(1),
   indication_code: z.string().min(1),
   request_id: z.string().min(1),
@@ -157,11 +160,30 @@ const laboratoryRequestRowSchema = z.object({
 const laboratoryRequestCommandRowSchema = laboratoryRequestRowSchema.extend({
   authored_by: z.string().min(1),
   case_id: z.string().min(1),
+  encounter_id: z.string().min(1),
+  patient_id: z.string().min(1),
 })
 
 const laboratoryRequestSystemResponseSchema = z.object({
   requestId: z.string().min(1),
   status: z.enum(['accepted', 'cancelled', 'in-progress']),
+}).strict()
+
+const laboratoryReportSystemResponseSchema = z.object({
+  diagnosticReportId: z.string().min(1),
+  requestId: z.string().min(1),
+  status: z.literal('reported'),
+}).strict()
+
+const laboratoryResultsFactSchema = z.object({
+  'lab-cbc': z.object({
+    conclusion: z.string().min(1),
+    results: z.array(laboratoryResultMeasurementSchema).min(1),
+  }).strict(),
+  'lab-crp': z.object({
+    conclusion: z.string().min(1),
+    results: z.array(laboratoryResultMeasurementSchema).min(1),
+  }).strict(),
 }).strict()
 
 const laboratoryRequestStateRowSchema = z.object({
@@ -283,6 +305,40 @@ const observationResultContentSchema = z.object({
     value: z.number().optional(),
   }).loose().optional(),
   valueString: z.string().optional(),
+}).loose()
+
+const laboratoryDiagnosticReportContentSchema = z.object({
+  basedOn: z.array(z.object({ reference: z.string().min(1) }).loose()).min(1),
+  conclusion: z.string().min(1),
+  issued: z.string().datetime({ offset: true }),
+  result: z.array(z.object({ reference: z.string().min(1) }).loose()).min(1),
+  specimen: z.array(z.object({ reference: z.string().min(1) }).loose()).min(1),
+  status: z.literal('final'),
+}).loose()
+
+const laboratoryObservationContentSchema = z.object({
+  basedOn: z.array(z.object({ reference: z.string().min(1) }).loose()).min(1),
+  code: z.object({
+    coding: z.array(z.object({
+      code: z.string().min(1),
+      display: z.string().min(1),
+    }).loose()).min(1),
+  }).loose(),
+  interpretation: z.array(z.object({
+    coding: z.array(z.object({ code: z.enum(['N', 'H', 'L']) }).loose()).min(1),
+  }).loose()).min(1),
+  referenceRange: z.array(z.object({
+    high: z.object({ value: z.number().finite() }).loose(),
+    low: z.object({ value: z.number().finite() }).loose(),
+    text: z.string().min(1),
+  }).loose()).min(1),
+  specimen: z.object({ reference: z.string().min(1) }).loose(),
+  valueQuantity: z.object({
+    code: z.string().min(1),
+    system: z.literal('http://unitsofmeasure.org'),
+    unit: z.string().min(1),
+    value: z.number().finite(),
+  }).loose(),
 }).loose()
 
 const lisOrderDataSchema = z.object({
@@ -1835,7 +1891,7 @@ export class WorkflowService {
     const laboratoryRequests = z.array(laboratoryRequestRowSchema).parse(
       this.#database.driver.prepare(`
         SELECT request_id, catalog_item_id, indication_code, service_request_id,
-          execution_task_id, status, version
+          execution_task_id, diagnostic_report_id, status, version
         FROM laboratory_request
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
         ORDER BY authored_at, request_id
@@ -1851,6 +1907,13 @@ export class WorkflowService {
         catalogItemId: request.catalog_item_id,
         id: request.request_id,
         indicationCode: request.indication_code,
+        ...(request.diagnostic_report_id === null ? {} : {
+          report: this.#laboratoryReport(
+            context,
+            request.diagnostic_report_id,
+            request.service_request_id,
+          ),
+        }),
         serviceRequestId: request.service_request_id,
         serviceRequestVersion: serviceRequest.meta?.versionId ?? '1',
         status: request.status,
@@ -4170,6 +4233,11 @@ export class WorkflowService {
           'The laboratory request version has changed',
         )
       }
+      transaction.enqueue({
+        dedupKey: `laboratory-request:${request.request_id}:report`,
+        kind: 'laboratory.report-request',
+        payload: { requestId: request.request_id },
+      })
       return {
         data: { requestId: request.request_id, status: 'in-progress' as const },
         effects: [{
@@ -4177,6 +4245,232 @@ export class WorkflowService {
           reference: `Task/${updatedTask.id}`,
           versionId: updatedTask.meta?.versionId ?? '3',
         }],
+      }
+    })
+  }
+
+  reportLaboratoryRequest(input: {
+    context: ActorContext
+    eventId: string
+    requestId: string
+  }) {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: laboratoryReportSystemResponseSchema,
+      expectedVersions: {},
+      idempotencyKey: input.eventId,
+      input: { requestId: input.requestId },
+      operation: 'laboratory-request.report',
+    }, (transaction) => {
+      this.#assertRole(input.context, ['lis-system'])
+      const request = this.#laboratoryRequest(input.context, input.requestId)
+      if (request === undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request was not found')
+      }
+      if (request.status === 'reported' && request.diagnostic_report_id !== null) {
+        transaction.fhir.read(input.context, 'DiagnosticReport', request.diagnostic_report_id)
+        return {
+          data: {
+            diagnosticReportId: request.diagnostic_report_id,
+            requestId: request.request_id,
+            status: 'reported' as const,
+          },
+          effects: [],
+        }
+      }
+      if (request.status !== 'in-progress') {
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          'Only an in-progress laboratory request can be reported',
+        )
+      }
+      const hiddenFact = this.#database.driver.prepare(`
+        SELECT value_json FROM scenario_hidden_fact
+        WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
+      `).get(input.context.workspaceId, input.context.epoch) as { value_json: string } | undefined
+      if (hiddenFact === undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory result fact is unavailable')
+      }
+      const fixture = laboratoryResultsFactSchema.parse(JSON.parse(hiddenFact.value_json))[
+        request.catalog_item_id
+      ]
+      const serviceRequest = transaction.fhir.read(
+        input.context,
+        'ServiceRequest',
+        request.service_request_id,
+      )
+      const task = transaction.fhir.read(input.context, 'Task', request.execution_task_id)
+      if (serviceRequest.status !== 'active' || task.status !== 'in-progress') {
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          'The formal laboratory request is not in progress',
+        )
+      }
+      const specimenId = `sp-${request.service_request_id}`
+      const diagnosticReportId = `dr-${request.service_request_id}`
+      const provenanceId = `prov-${request.service_request_id}`
+      const now = this.#virtualTime(input.context)
+      const specimen = transaction.fhir.create(input.context, {
+        resourceType: 'Specimen',
+        id: specimenId,
+        status: 'available',
+        type: {
+          coding: [{
+            code: '119297000',
+            display: 'Blood specimen',
+            system: 'http://snomed.info/sct',
+          }],
+          text: 'Synthetic blood specimen',
+        },
+        subject: { reference: `Patient/${request.patient_id}` },
+        request: [{ reference: `ServiceRequest/${request.service_request_id}` }],
+        collection: { collectedDateTime: now },
+        receivedTime: now,
+      })
+      const observations = fixture.results.map((result) => {
+        const observationId = `obs-${result.code}-${request.service_request_id}`
+        const interpretationCode = result.interpretation === 'normal'
+          ? 'N'
+          : result.interpretation === 'high' ? 'H' : 'L'
+        return transaction.fhir.create(input.context, {
+          resourceType: 'Observation',
+          id: observationId,
+          status: 'final',
+          category: [{
+            coding: [{
+              code: 'laboratory',
+              system: 'http://terminology.hl7.org/CodeSystem/observation-category',
+            }],
+          }],
+          code: {
+            coding: [{ code: result.code, display: result.display, system: 'http://loinc.org' }],
+            text: result.display,
+          },
+          subject: { reference: `Patient/${request.patient_id}` },
+          encounter: { reference: `Encounter/${request.encounter_id}` },
+          basedOn: [{ reference: `ServiceRequest/${request.service_request_id}` }],
+          specimen: { reference: `Specimen/${specimenId}` },
+          effectiveDateTime: now,
+          issued: now,
+          valueQuantity: {
+            code: result.unit.code,
+            system: result.unit.system,
+            unit: result.unit.display,
+            value: result.value,
+          },
+          referenceRange: [{
+            low: {
+              code: result.unit.code,
+              system: result.unit.system,
+              unit: result.unit.display,
+              value: result.referenceRange.low,
+            },
+            high: {
+              code: result.unit.code,
+              system: result.unit.system,
+              unit: result.unit.display,
+              value: result.referenceRange.high,
+            },
+            text: result.referenceRange.text,
+          }],
+          interpretation: [{
+            coding: [{
+              code: interpretationCode,
+              system: 'http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation',
+            }],
+          }],
+        })
+      })
+      const reportName = request.catalog_item_id === 'lab-cbc' ? '血常规报告' : 'C 反应蛋白报告'
+      const report = transaction.fhir.create(input.context, {
+        resourceType: 'DiagnosticReport',
+        id: diagnosticReportId,
+        status: 'final',
+        code: {
+          coding: [{
+            code: request.catalog_item_id === 'lab-cbc' ? 'CBC' : 'CRP',
+            display: reportName,
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-service',
+          }],
+          text: reportName,
+        },
+        subject: { reference: `Patient/${request.patient_id}` },
+        encounter: { reference: `Encounter/${request.encounter_id}` },
+        basedOn: [{ reference: `ServiceRequest/${request.service_request_id}` }],
+        specimen: [{ reference: `Specimen/${specimenId}` }],
+        result: observations.map(observation => ({
+          reference: `Observation/${observation.id}`,
+        })),
+        effectiveDateTime: now,
+        issued: now,
+        conclusion: fixture.conclusion,
+      })
+      const completedServiceRequest = transaction.fhir.update(input.context, {
+        ...serviceRequest,
+        status: 'completed',
+      }, serviceRequest.meta?.versionId ?? '1')
+      const completedTask = transaction.fhir.update(input.context, {
+        ...task,
+        status: 'completed',
+        lastModified: now,
+        executionPeriod: {
+          ...((typeof task.executionPeriod === 'object' && task.executionPeriod !== null)
+            ? task.executionPeriod as Record<string, unknown>
+            : {}),
+          end: now,
+        },
+      }, task.meta?.versionId ?? '3')
+      const provenance = transaction.fhir.createImmutable(input.context, {
+        resourceType: 'Provenance',
+        id: provenanceId,
+        target: [
+          { reference: `DiagnosticReport/${diagnosticReportId}` },
+          ...observations.map(observation => ({ reference: `Observation/${observation.id}` })),
+          { reference: `ServiceRequest/${request.service_request_id}` },
+          { reference: `Task/${request.execution_task_id}` },
+        ],
+        recorded: now,
+        activity: { text: 'Laboratory result generation and report issuance' },
+        agent: provenanceAgents(input.context, 'Laboratory report issuer'),
+      })
+      const update = this.#database.driver.prepare(`
+        UPDATE laboratory_request
+        SET status = 'reported', version = version + 1, reported_at = ?,
+          diagnostic_report_id = ?
+        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+          AND status = 'in-progress' AND version = ?
+      `).run(
+        now,
+        diagnosticReportId,
+        input.context.workspaceId,
+        input.context.epoch,
+        request.request_id,
+        request.version,
+      )
+      if (update.changes !== 1) {
+        throw new WorkflowError(
+          'LABORATORY_REQUEST_VERSION_CONFLICT',
+          'The laboratory request version has changed',
+        )
+      }
+      return {
+        data: {
+          diagnosticReportId,
+          requestId: request.request_id,
+          status: 'reported' as const,
+        },
+        effects: [
+          specimen,
+          ...observations,
+          report,
+          provenance,
+          completedServiceRequest,
+          completedTask,
+        ].map(resource => ({
+          kind: resource.meta?.versionId === '1' ? 'created' as const : 'updated' as const,
+          reference: `${resource.resourceType}/${resource.id}`,
+          versionId: resource.meta?.versionId ?? '1',
+        })),
       }
     })
   }
@@ -6038,13 +6332,93 @@ export class WorkflowService {
     )
   }
 
+  #laboratoryReport(
+    context: ActorContext,
+    diagnosticReportId: string,
+    serviceRequestId: string,
+  ) {
+    const report = laboratoryDiagnosticReportContentSchema.parse(
+      this.#fhir.read(context, 'DiagnosticReport', diagnosticReportId),
+    )
+    const serviceRequestReference = `ServiceRequest/${serviceRequestId}`
+    if (!report.basedOn.some(reference => reference.reference === serviceRequestReference)) {
+      throw new WorkflowError(
+        'WORKFLOW_CONFLICT',
+        'The laboratory report does not reference its request',
+      )
+    }
+    const specimenReference = report.specimen[0]?.reference
+    if (specimenReference === undefined || !specimenReference.startsWith('Specimen/')) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory report specimen is invalid')
+    }
+    const specimenId = specimenReference.slice('Specimen/'.length)
+    return laboratoryReportSchema.parse({
+      conclusion: report.conclusion,
+      diagnosticReportId,
+      issuedAt: report.issued,
+      results: report.result.map((resultReference) => {
+        if (!resultReference.reference.startsWith('Observation/')) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory report result is invalid')
+        }
+        const observationId = resultReference.reference.slice('Observation/'.length)
+        const observation = laboratoryObservationContentSchema.parse(
+          this.#fhir.read(context, 'Observation', observationId),
+        )
+        if (!observation.basedOn.some(reference => (
+          reference.reference === serviceRequestReference
+        )) || observation.specimen.reference !== specimenReference) {
+          throw new WorkflowError(
+            'WORKFLOW_CONFLICT',
+            'The laboratory result does not reference its request and specimen',
+          )
+        }
+        const coding = observation.code.coding[0]
+        const interpretationCode = observation.interpretation[0]?.coding[0]?.code
+        const referenceRange = observation.referenceRange[0]
+        if (coding === undefined || interpretationCode === undefined || referenceRange === undefined) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory result is incomplete')
+        }
+        return {
+          code: coding.code,
+          display: coding.display,
+          interpretation: interpretationCode === 'N'
+            ? 'normal' as const
+            : interpretationCode === 'H' ? 'high' as const : 'low' as const,
+          observationId,
+          referenceRange: {
+            high: referenceRange.high.value,
+            low: referenceRange.low.value,
+            text: referenceRange.text,
+          },
+          unit: {
+            code: observation.valueQuantity.code,
+            display: observation.valueQuantity.unit,
+            system: observation.valueQuantity.system,
+          },
+          value: observation.valueQuantity.value,
+        }
+      }),
+      specimenId,
+      status: report.status,
+    })
+  }
+
   #laboratoryRequest(context: ActorContext, requestId: string) {
     return laboratoryRequestCommandRowSchema.optional().parse(
       this.#database.driver.prepare(`
-        SELECT request_id, case_id, catalog_item_id, indication_code,
-          service_request_id, execution_task_id, status, version, authored_by
+        SELECT laboratory_request.request_id, laboratory_request.case_id,
+          laboratory_request.catalog_item_id, laboratory_request.indication_code,
+          laboratory_request.service_request_id, laboratory_request.execution_task_id,
+          laboratory_request.diagnostic_report_id, laboratory_request.status,
+          laboratory_request.version, laboratory_request.authored_by,
+          outpatient_case.patient_id, outpatient_case.encounter_id
         FROM laboratory_request
-        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+        JOIN outpatient_case
+          ON outpatient_case.workspace_id = laboratory_request.workspace_id
+         AND outpatient_case.epoch = laboratory_request.epoch
+         AND outpatient_case.case_id = laboratory_request.case_id
+        WHERE laboratory_request.workspace_id = ? AND laboratory_request.epoch = ?
+          AND laboratory_request.request_id = ?
       `).get(context.workspaceId, context.epoch, requestId),
     )
   }

@@ -119,6 +119,15 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           })
           return { status: 'completed' }
         },
+        'laboratory.report-request': async event => {
+          const payload = laboratoryRequestPayloadSchema.parse(event.payload)
+          workflow.reportLaboratoryRequest({
+            context: lisActorContext(event),
+            eventId: event.eventId,
+            requestId: payload.requestId,
+          })
+          return { status: 'completed' }
+        },
         'lis.process-order': async event => {
           workflow.processLisOrder({
             context: lisActorContext(event),

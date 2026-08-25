@@ -442,10 +442,64 @@ export const laboratoryRequestStatusSchema = z.enum([
   'cancelled',
 ])
 
+export const laboratoryResultInterpretationSchema = z.enum(['normal', 'high', 'low'])
+
+const laboratoryResultMeasurementShape = {
+  code: z.string().min(1),
+  display: z.string().min(1),
+  interpretation: laboratoryResultInterpretationSchema,
+  referenceRange: z.object({
+    high: z.number().finite(),
+    low: z.number().finite(),
+    text: z.string().min(1),
+  }).strict().refine(range => range.low <= range.high, {
+    message: 'Laboratory result reference range low must not exceed high',
+  }),
+  unit: z.object({
+    code: z.string().min(1),
+    display: z.string().min(1),
+    system: z.literal('http://unitsofmeasure.org'),
+  }).strict(),
+  value: z.number().finite(),
+} as const
+
+function laboratoryInterpretationMatchesRange(result: {
+  interpretation: z.infer<typeof laboratoryResultInterpretationSchema>
+  referenceRange: { high: number; low: number }
+  value: number
+}): boolean {
+  if (result.value < result.referenceRange.low) return result.interpretation === 'low'
+  if (result.value > result.referenceRange.high) return result.interpretation === 'high'
+  return result.interpretation === 'normal'
+}
+
+export const laboratoryResultMeasurementSchema = z.object(
+  laboratoryResultMeasurementShape,
+).strict().refine(laboratoryInterpretationMatchesRange, {
+  message: 'Laboratory result interpretation must match its value and reference range',
+})
+
+export const laboratoryResultSchema = z.object({
+  ...laboratoryResultMeasurementShape,
+  observationId: z.string().min(1),
+}).strict().refine(laboratoryInterpretationMatchesRange, {
+  message: 'Laboratory result interpretation must match its value and reference range',
+})
+
+export const laboratoryReportSchema = z.object({
+  conclusion: z.string().min(1),
+  diagnosticReportId: z.string().min(1),
+  issuedAt: z.string().datetime({ offset: true }),
+  results: z.array(laboratoryResultSchema).min(1),
+  specimenId: z.string().min(1),
+  status: z.literal('final'),
+}).strict()
+
 export const laboratoryRequestSchema = z.object({
   catalogItemId: laboratoryRequestCatalogItemIdSchema,
   id: z.string().min(1),
   indicationCode: z.string().min(1),
+  report: laboratoryReportSchema.optional(),
   serviceRequestId: z.string().min(1),
   serviceRequestVersion: z.string().regex(/^\d+$/),
   status: laboratoryRequestStatusSchema,
@@ -754,5 +808,6 @@ export type DoctorQueueItem = z.infer<typeof doctorQueueItemSchema>
 export type DoctorCaseDetail = z.infer<typeof doctorCaseDetailSchema>
 export type LaboratoryRequestCatalogItemId = z.infer<typeof laboratoryRequestCatalogItemIdSchema>
 export type LaboratoryRequest = z.infer<typeof laboratoryRequestSchema>
+export type LaboratoryReport = z.infer<typeof laboratoryReportSchema>
 export type BillingQueueItem = z.infer<typeof billingQueueSchema>['items'][number]
 export type PharmacyQueueItem = z.infer<typeof pharmacyQueueSchema>['items'][number]

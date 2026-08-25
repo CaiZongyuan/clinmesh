@@ -2350,6 +2350,388 @@ describe('outpatient workflow HTTP contract', () => {
     })
   })
 
+  it('recovers an independent laboratory report after restart and creates its FHIR results once', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-report-restart-http-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'clinmesh.sqlite')
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtimeOptions = {
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath,
+      demoPassword: password,
+      migrationMode: 'apply' as const,
+      trustedOrigins: ['http://localhost'],
+    }
+    const initialRuntime = await createClinMeshRuntime(runtimeOptions)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(initialRuntime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const draftResponse = await initialRuntime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: {
+            catalogItemId: 'lab-cbc',
+            expectedDraftVersion: 0,
+            indicationCode: 'fever',
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    const draft = laboratoryRequestDraftResponseSchema.parse(await draftResponse.json()).data
+    const issueResponse = await initialRuntime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { expectedDraftVersion: draft.draftVersion },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    const issued = issueLaboratoryRequestResponseSchema.parse(await issueResponse.json()).data.request
+    expect(await initialRuntime.dispatcher.dispatchOnce()).toMatchObject({
+      kind: 'laboratory.accept-request',
+      status: 'completed',
+    })
+    expect(await initialRuntime.dispatcher.dispatchOnce()).toMatchObject({
+      kind: 'laboratory.start-request',
+      status: 'completed',
+    })
+    expect(initialRuntime.database.driver.prepare(`
+      SELECT kind, status FROM outbox_event
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND kind = 'laboratory.report-request'
+    `).get()).toEqual({ kind: 'laboratory.report-request', status: 'queued' })
+    await initialRuntime.close()
+
+    const restartedRuntime = await createClinMeshRuntime(runtimeOptions)
+    runtimes.push(restartedRuntime)
+    expect(await restartedRuntime.dispatcher.dispatchOnce()).toMatchObject({
+      kind: 'laboratory.report-request',
+      status: 'completed',
+    })
+    expect(await restartedRuntime.dispatcher.dispatchOnce()).toBeUndefined()
+
+    const restartedDoctorCookie = await signIn(
+      restartedRuntime,
+      'doctor@demo.clinmesh.local',
+      password,
+    )
+    const detailResponse = await restartedRuntime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: restartedDoctorCookie } },
+    )
+    const detail = doctorCaseDetailSchema.parse(await detailResponse.json())
+    const reported = detail.laboratoryRequests?.requests.find(request => request.id === issued.id)
+    expect(reported).toMatchObject({
+      report: {
+        conclusion: '白细胞计数升高，其余血常规指标在参考范围内。',
+        issuedAt: '2026-08-24T09:00:00+08:00',
+        results: [{
+          code: '6690-2',
+          display: '白细胞计数',
+          interpretation: 'high',
+          referenceRange: { high: 9.5, low: 3.5, text: '3.5-9.5 x10^9/L' },
+          unit: {
+            code: '10*9/L',
+            display: '10^9/L',
+            system: 'http://unitsofmeasure.org',
+          },
+          value: 11.2,
+        }, {
+          code: '718-7',
+          display: '血红蛋白',
+          interpretation: 'normal',
+          referenceRange: { high: 150, low: 115, text: '115-150 g/L' },
+          unit: {
+            code: 'g/L',
+            display: 'g/L',
+            system: 'http://unitsofmeasure.org',
+          },
+          value: 135,
+        }, {
+          code: '777-3',
+          display: '血小板计数',
+          interpretation: 'normal',
+          referenceRange: { high: 350, low: 125, text: '125-350 x10^9/L' },
+          unit: {
+            code: '10*9/L',
+            display: '10^9/L',
+            system: 'http://unitsofmeasure.org',
+          },
+          value: 210,
+        }],
+        status: 'final',
+      },
+      serviceRequestVersion: '2',
+      status: 'reported',
+      taskVersion: '4',
+      version: 4,
+    })
+    if (reported?.report === undefined) throw new Error('Laboratory report was not projected')
+
+    const serviceRequestResponse = await restartedRuntime.app.request(
+      `/fhir/R5/ServiceRequest/${reported.serviceRequestId}`,
+      { headers: { cookie: restartedDoctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await serviceRequestResponse.json())).toMatchObject({
+      encounter: { reference: `Encounter/${started.encounterId}` },
+      meta: { versionId: '2' },
+      status: 'completed',
+      subject: { reference: `Patient/${started.patientId}` },
+    })
+    const taskResponse = await restartedRuntime.app.request(
+      `/fhir/R5/Task/${reported.taskId}`,
+      { headers: { cookie: restartedDoctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await taskResponse.json())).toMatchObject({
+      focus: { reference: `ServiceRequest/${reported.serviceRequestId}` },
+      meta: { versionId: '4' },
+      status: 'completed',
+    })
+    const reportResponse = await restartedRuntime.app.request(
+      `/fhir/R5/DiagnosticReport/${reported.report.diagnosticReportId}`,
+      { headers: { cookie: restartedDoctorCookie } },
+    )
+    const report = fhirResourceSchema.parse(await reportResponse.json())
+    const observationReferences = reported.report.results.map(
+      result => `Observation/${result.observationId}`,
+    )
+    expect(report).toMatchObject({
+      basedOn: [{ reference: `ServiceRequest/${reported.serviceRequestId}` }],
+      encounter: { reference: `Encounter/${started.encounterId}` },
+      issued: '2026-08-24T09:00:00+08:00',
+      result: observationReferences.map(reference => ({ reference })),
+      specimen: [{ reference: `Specimen/${reported.report.specimenId}` }],
+      status: 'final',
+      subject: { reference: `Patient/${started.patientId}` },
+    })
+    for (const result of reported.report.results) {
+      const observationResponse = await restartedRuntime.app.request(
+        `/fhir/R5/Observation/${result.observationId}`,
+        { headers: { cookie: restartedDoctorCookie } },
+      )
+      expect(fhirResourceSchema.parse(await observationResponse.json())).toMatchObject({
+        basedOn: [{ reference: `ServiceRequest/${reported.serviceRequestId}` }],
+        encounter: { reference: `Encounter/${started.encounterId}` },
+        interpretation: [{ coding: [{
+          code: result.interpretation === 'normal'
+            ? 'N'
+            : result.interpretation === 'high' ? 'H' : 'L',
+        }] }],
+        referenceRange: [{
+          high: { value: result.referenceRange.high },
+          low: { value: result.referenceRange.low },
+          text: result.referenceRange.text,
+        }],
+        specimen: { reference: `Specimen/${reported.report.specimenId}` },
+        status: 'final',
+        subject: { reference: `Patient/${started.patientId}` },
+        valueQuantity: {
+          code: result.unit.code,
+          system: result.unit.system,
+          unit: result.unit.display,
+          value: result.value,
+        },
+      })
+    }
+
+    const reportSearch = await restartedRuntime.app.request(
+      `/fhir/R5/DiagnosticReport?encounter=Encounter/${started.encounterId}&_total=accurate`,
+      { headers: { cookie: restartedDoctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await reportSearch.json())).toMatchObject({
+      entry: [{ resource: { id: reported.report.diagnosticReportId } }],
+      total: 1,
+    })
+    const observationSearch = await restartedRuntime.app.request(
+      `/fhir/R5/Observation?encounter=Encounter/${started.encounterId}&_count=100&_total=accurate`,
+      { headers: { cookie: restartedDoctorCookie } },
+    )
+    const observationBundle = fhirBundleSchema.parse(await observationSearch.json())
+    expect(observationBundle.entry?.map(entry => entry.resource?.id)).toEqual(
+      expect.arrayContaining(reported.report.results.map(result => result.observationId)),
+    )
+    const serviceRequestHistory = await restartedRuntime.app.request(
+      `/fhir/R5/ServiceRequest/${reported.serviceRequestId}/_history`,
+      { headers: { cookie: restartedDoctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await serviceRequestHistory.json())).toMatchObject({
+      entry: [
+        { resource: { meta: { versionId: '2' }, status: 'completed' } },
+        { resource: { meta: { versionId: '1' }, status: 'active' } },
+      ],
+      total: 2,
+      type: 'history',
+    })
+
+    const duplicate = restartedRuntime.workflow.reportLaboratoryRequest({
+      context: {
+        actorId: 'actor-lis-system',
+        epoch: 'epoch-1',
+        organizationId: 'organization-clinmesh',
+        roleCode: 'lis-system',
+        scenarioRunId: 'scenario-run-1',
+        workspaceId: 'workspace-demo',
+      },
+      eventId: randomUUID(),
+      requestId: reported.id,
+    })
+    expect(duplicate).toMatchObject({
+      data: {
+        diagnosticReportId: reported.report.diagnosticReportId,
+        requestId: reported.id,
+        status: 'reported',
+      },
+      effects: [],
+    })
+    const reportsAfterDuplicate = await restartedRuntime.app.request(
+      `/fhir/R5/DiagnosticReport?encounter=Encounter/${started.encounterId}&_total=accurate`,
+      { headers: { cookie: restartedDoctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await reportsAfterDuplicate.json())).toMatchObject({ total: 1 })
+    expect(reported).not.toHaveProperty('acknowledgement')
+  })
+
+  it('reports only an in-progress formal request and deduplicates a different delivery event', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-report-guards-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const draftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: {
+            catalogItemId: 'lab-crp',
+            expectedDraftVersion: 0,
+            indicationCode: 'fever',
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    const draft = laboratoryRequestDraftResponseSchema.parse(await draftResponse.json()).data
+    const issueResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { expectedDraftVersion: draft.draftVersion },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    const issued = issueLaboratoryRequestResponseSchema.parse(await issueResponse.json()).data.request
+    const systemContext = {
+      actorId: 'actor-lis-system',
+      epoch: 'epoch-1',
+      organizationId: 'organization-clinmesh',
+      roleCode: 'lis-system',
+      scenarioRunId: 'scenario-run-1',
+      workspaceId: 'workspace-demo',
+    }
+    const report = () => runtime.workflow.reportLaboratoryRequest({
+      context: systemContext,
+      eventId: randomUUID(),
+      requestId: issued.id,
+    })
+
+    expect(report).toThrow('Only an in-progress laboratory request can be reported')
+    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({
+      kind: 'laboratory.accept-request',
+      status: 'completed',
+    })
+    expect(report).toThrow('Only an in-progress laboratory request can be reported')
+    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({
+      kind: 'laboratory.start-request',
+      status: 'completed',
+    })
+
+    const firstReport = report()
+    expect(firstReport).toMatchObject({
+      data: { requestId: issued.id, status: 'reported' },
+      effects: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'created',
+          reference: expect.stringMatching(/^Observation\//),
+        }),
+        expect.objectContaining({
+          kind: 'created',
+          reference: expect.stringMatching(/^DiagnosticReport\//),
+        }),
+        expect.objectContaining({
+          kind: 'updated',
+          reference: `ServiceRequest/${issued.serviceRequestId}`,
+        }),
+        expect.objectContaining({
+          kind: 'updated',
+          reference: `Task/${issued.taskId}`,
+        }),
+      ]),
+    })
+    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({
+      kind: 'laboratory.report-request',
+      status: 'completed',
+    })
+    expect(await runtime.dispatcher.dispatchOnce()).toBeUndefined()
+
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    const detail = doctorCaseDetailSchema.parse(await detailResponse.json())
+    expect(detail.laboratoryRequests?.requests).toContainEqual(expect.objectContaining({
+      id: issued.id,
+      report: expect.objectContaining({
+        conclusion: 'C 反应蛋白升高。',
+        results: [expect.objectContaining({
+          code: '1988-5',
+          interpretation: 'high',
+          referenceRange: { high: 8, low: 0, text: '0-8 mg/L' },
+          unit: {
+            code: 'mg/L',
+            display: 'mg/L',
+            system: 'http://unitsofmeasure.org',
+          },
+          value: 18.6,
+        })],
+      }),
+      status: 'reported',
+      version: 4,
+    }))
+    const reports = await runtime.app.request(
+      `/fhir/R5/DiagnosticReport?encounter=Encounter/${started.encounterId}&_total=accurate`,
+      { headers: { cookie: doctorCookie } },
+    )
+    const observations = await runtime.app.request(
+      `/fhir/R5/Observation?encounter=Encounter/${started.encounterId}&_count=100&_total=accurate`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await reports.json())).toMatchObject({ total: 1 })
+    expect(fhirBundleSchema.parse(await observations.json())).toMatchObject({ total: 1 })
+  })
+
   it('reuses an existing registration when the doctor starts its Virtual Patient', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-virtual-patient-registered-http-'))
     temporaryDirectories.push(directory)

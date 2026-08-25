@@ -1300,11 +1300,46 @@ describe('role workspaces', () => {
       taskVersion: status === 'issued' ? '1' : '2',
       version: status === 'issued' ? 1 : 2,
     })
+    const reportedRequest = {
+      ...request('reported', 4),
+      report: {
+        conclusion: '白细胞计数升高，其余血常规指标在参考范围内。',
+        diagnosticReportId: 'diagnostic-report-cbc-1',
+        issuedAt: '2026-08-24T09:00:00+08:00',
+        results: [{
+          code: '6690-2',
+          display: '白细胞计数',
+          interpretation: 'high',
+          observationId: 'observation-wbc-1',
+          referenceRange: { high: 9.5, low: 3.5, text: '3.5-9.5 x10^9/L' },
+          unit: {
+            code: '10*9/L',
+            display: '10^9/L',
+            system: 'http://unitsofmeasure.org',
+          },
+          value: 11.2,
+        }, {
+          code: '718-7',
+          display: '血红蛋白',
+          interpretation: 'normal',
+          observationId: 'observation-hgb-1',
+          referenceRange: { high: 150, low: 115, text: '115-150 g/L' },
+          unit: {
+            code: 'g/L',
+            display: 'g/L',
+            system: 'http://unitsofmeasure.org',
+          },
+          value: 135,
+        }],
+        specimenId: 'specimen-cbc-1',
+        status: 'final',
+      },
+    } as const
     let requests = [
       request('issued', 1),
       request('accepted', 2),
       request('in-progress', 3),
-      request('reported', 4),
+      reportedRequest,
       request('acknowledged', 5),
       request('cancelled', 6),
     ]
@@ -1419,6 +1454,12 @@ describe('role workspaces', () => {
     for (const label of ['已受理', '执行中', '已报告', '医生已阅', '已取消']) {
       expect(screen.getByText(label)).toBeTruthy()
     }
+    expect(screen.getByText('等待检验结果')).toBeTruthy()
+    expect(screen.getByText('白细胞计数升高，其余血常规指标在参考范围内。')).toBeTruthy()
+    expect(screen.getByRole('cell', { name: /11\.2 10\^9\/L/ })).toBeTruthy()
+    expect(screen.getByRole('cell', { name: '3.5-9.5 x10^9/L' })).toBeTruthy()
+    expect(screen.getByText('偏高')).toBeTruthy()
+    expect(screen.getByText('正常')).toBeTruthy()
     const cancelButtons = screen.getAllByRole('button', { name: /取消检查申请/ })
     expect(cancelButtons).toHaveLength(1)
     expect(cancelButtons[0]?.getAttribute('aria-label')).toBe('取消检查申请 C 反应蛋白')
