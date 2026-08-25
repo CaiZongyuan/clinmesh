@@ -34,7 +34,7 @@ Status: implemented
 
 ## Consequences
 
-迁移 `0018_prescription-conclusion.sql` 扩展处方项目疗程，并新增 `prescription_authorship`、处方草稿、无需用药结论和撤回表；数据库 schema version 为 `19`。迁移不修改已有 Epoch 的药品目录配置，也不向历史 Prescription 增加可空 Practitioner Role 列；旧处方项目按已知药品回填疗程，未知条目保留约束内默认值。当前 v3 Scenario 在 seed 时获得固定疗程、数量和允许诊断，v1/v2 保留原配置。
+迁移 `0018_prescription-conclusion.sql` 扩展处方项目疗程，并新增 `prescription_authorship`、处方草稿、无需用药结论和撤回表。迁移不修改已有 Epoch 的药品目录配置，也不向历史 Prescription 增加可空 Practitioner Role 列；旧处方项目按已知药品回填疗程，未知条目保留约束内默认值。当前 v3 Scenario 在 seed 时获得固定疗程、数量和允许诊断，v1/v2 保留原配置。
 
 处方正式开具依赖已确认诊断；目录或患者事实在保存后变化时，开具会重新校验并返回稳定目录或工作流冲突，不会把草稿值直接提升为正式资源。已开具处方、无需用药结论和撤回事实均可在刷新或重新登录后恢复。
 

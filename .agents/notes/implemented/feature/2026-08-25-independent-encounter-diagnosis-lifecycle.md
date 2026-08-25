@@ -30,7 +30,7 @@ Web 只在带 Consultation 的病例中渲染独立诊断编辑器，以 TanStac
 
 ## Consequences
 
-迁移 `0017_diagnosis-draft.sql` 新增目录、草稿状态、确认分组和有序条目表，将现有 Epoch 回填三个合成 ICD-10 条目，并把数据库 schema version 提升为 `18`。目录和关系约束阻止重复编码、非法状态、重复条目及同一确认中的多个主诊断；“至少一个主诊断”仍由共享 Command 返回稳定 `DIAGNOSIS_PRIMARY_REQUIRED`。
+迁移 `0017_diagnosis-draft.sql` 新增目录、草稿状态、确认分组和有序条目表，并为现有 Epoch 回填三个合成 ICD-10 条目。目录和关系约束阻止重复编码、非法状态、重复条目及同一确认中的多个主诊断；“至少一个主诊断”仍由共享 Command 返回稳定 `DIAGNOSIS_PRIMARY_REQUIRED`。
 
 确认后的 Condition、Encounter.diagnosis 和 Provenance 可通过 FHIR R5 read、history 与白名单 Search 读取；既往 Condition 不被修改或并入独立草稿。诊断确认当前不可重新打开或普通覆盖，再次保存或确认会返回稳定业务冲突。
 
