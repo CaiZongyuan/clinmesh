@@ -3616,14 +3616,11 @@ export class WorkflowService {
       },
       operation: 'laboratory-request.save-draft',
     }, () => {
-      this.#assertRole(input.context, ['outpatient-doctor'])
-      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
-      if (outpatientCase.status !== 'first-visit' || this.#consultationState(
+      const outpatientCase = this.#laboratoryRequestCaseForAction(
         input.context,
-        outpatientCase.case_id,
-      ) === undefined) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter cannot edit a laboratory request draft')
-      }
+        input.encounterId,
+        'edit-draft',
+      )
       this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
       const catalog = this.#catalogItem(input.context, input.catalogItemId, 'laboratory')
       const catalogConfig = laboratoryCatalogConfigSchema.parse(
@@ -3710,14 +3707,11 @@ export class WorkflowService {
       },
       operation: 'laboratory-request.delete-draft',
     }, () => {
-      this.#assertRole(input.context, ['outpatient-doctor'])
-      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
-      if (outpatientCase.status !== 'first-visit' || this.#consultationState(
+      const outpatientCase = this.#laboratoryRequestCaseForAction(
         input.context,
-        outpatientCase.case_id,
-      ) === undefined) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter cannot edit a laboratory request draft')
-      }
+        input.encounterId,
+        'edit-draft',
+      )
       this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
       const current = this.#laboratoryRequestState(input.context, outpatientCase.case_id)
       if (current === undefined
@@ -3775,14 +3769,11 @@ export class WorkflowService {
       },
       operation: 'laboratory-request.issue',
     }, (transaction) => {
-      this.#assertRole(input.context, ['outpatient-doctor'])
-      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
-      if (outpatientCase.status !== 'first-visit' || this.#consultationState(
+      const outpatientCase = this.#laboratoryRequestCaseForAction(
         input.context,
-        outpatientCase.case_id,
-      ) === undefined) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter cannot issue a laboratory request')
-      }
+        input.encounterId,
+        'issue',
+      )
       this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
       const state = this.#laboratoryRequestState(input.context, outpatientCase.case_id)
       if (state === undefined
@@ -5855,6 +5846,23 @@ export class WorkflowService {
     } | undefined
     if (row === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter was not found')
     return row
+  }
+
+  #laboratoryRequestCaseForAction(
+    context: ActorContext,
+    encounterId: string,
+    action: 'edit-draft' | 'issue',
+  ) {
+    this.#assertRole(context, ['outpatient-doctor'])
+    const outpatientCase = this.#caseByEncounter(context, encounterId)
+    if (outpatientCase.status !== 'first-visit'
+      || this.#consultationState(context, outpatientCase.case_id) === undefined) {
+      const message = action === 'issue'
+        ? 'The Encounter cannot issue a laboratory request'
+        : 'The Encounter cannot edit a laboratory request draft'
+      throw new WorkflowError('WORKFLOW_CONFLICT', message)
+    }
+    return outpatientCase
   }
 
   #consultationDetail(context: ActorContext, caseId: string) {

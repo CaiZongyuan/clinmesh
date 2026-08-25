@@ -481,7 +481,7 @@ export const laboratoryRequestActionResponseSchema = commandResponseSchema(z.obj
 
 export const laboratoryRequestStateSchema = z.object({
   draft: z.object({
-    catalogItemId: z.string().min(1),
+    catalogItemId: laboratoryRequestCatalogItemIdSchema,
     indicationCode: z.string().min(1),
   }).strict().optional(),
   draftVersion: z.number().int().nonnegative(),
