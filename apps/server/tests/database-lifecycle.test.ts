@@ -37,7 +37,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 18,
+      schemaVersion: 19,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -59,14 +59,15 @@ describe('SQLite lifecycle', () => {
         '0015_laboratory-report-acknowledgement.sql',
         '0016_laboratory-report-revision.sql',
         '0017_diagnosis-draft.sql',
+        '0018_prescription-conclusion.sql',
       ],
-      schemaVersion: 18,
+      schemaVersion: 19,
     })
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 18 })
-    expect(reopened.diagnostics().schemaVersion).toBe(18)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 19 })
+    expect(reopened.diagnostics().schemaVersion).toBe(19)
     reopened.close()
   })
 
@@ -695,6 +696,82 @@ describe('SQLite lifecycle', () => {
       SELECT value_json FROM scenario_hidden_fact
       WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
     `).get(context.workspaceId, context.epoch)).toBeUndefined()
+    const insertMedicationCatalog = database.driver.prepare(`
+      INSERT INTO outpatient_catalog (
+        workspace_id, epoch, item_id, kind, code, name_zh, name_en,
+        price_fen, version, active, config_json
+      ) VALUES (?, ?, ?, 'medication', ?, ?, ?, ?, 1, 1, ?)
+    `)
+    insertMedicationCatalog.run(
+      context.workspaceId,
+      context.epoch,
+      'medication-oseltamivir',
+      'OSELTAMIVIR',
+      '磷酸奥司他韦胶囊',
+      'Oseltamivir phosphate capsules',
+      760,
+      '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"]}',
+    )
+    insertMedicationCatalog.run(
+      context.workspaceId,
+      context.epoch,
+      'medication-acetaminophen',
+      'ACETAMINOPHEN',
+      '对乙酰氨基酚片',
+      'Acetaminophen tablets',
+      120,
+      '{"dose":"0.5 g","frequency":"PRN","allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"]}',
+    )
+    await copyFile(
+      join(process.cwd(), 'drizzle', '0018_prescription-conclusion.sql'),
+      join(legacyMigrationDirectory, '0018_prescription-conclusion.sql'),
+    )
+    expect(applyMigrations(database, legacyMigrationDirectory)).toEqual({
+      applied: ['0018_prescription-conclusion.sql'],
+      schemaVersion: 19,
+    })
+    expect((database.driver.prepare(`
+      SELECT name FROM sqlite_schema
+      WHERE type = 'table' AND name IN (
+        'no_medication_conclusion',
+        'prescription_draft_state',
+        'prescription_withdrawal'
+      )
+      ORDER BY name
+    `).all() as Array<{ name: string }>).map(row => row.name)).toEqual([
+      'no_medication_conclusion',
+      'prescription_draft_state',
+      'prescription_withdrawal',
+    ])
+    expect((database.driver.prepare(
+      'PRAGMA table_info(prescription)',
+    ).all() as Array<{ name: string }>).map(column => column.name)).toContain(
+      'authored_by_practitioner_role_id',
+    )
+    expect((database.driver.prepare(
+      'PRAGMA table_info(prescription_item)',
+    ).all() as Array<{ name: string }>).map(column => column.name)).toContain(
+      'course_days',
+    )
+    expect(database.driver.prepare(`
+      SELECT item_id,
+        json_extract(config_json, '$.defaultCourseDays') AS default_course_days,
+        json_extract(config_json, '$.defaultQuantity') AS default_quantity
+      FROM outpatient_catalog
+      WHERE workspace_id = ? AND epoch = ? AND kind = 'medication'
+      ORDER BY item_id
+    `).all(context.workspaceId, context.epoch)).toEqual([
+      {
+        default_course_days: 3,
+        default_quantity: 6,
+        item_id: 'medication-acetaminophen',
+      },
+      {
+        default_course_days: 5,
+        default_quantity: 10,
+        item_id: 'medication-oseltamivir',
+      },
+    ])
     expect(database.driver.pragma('foreign_key_check')).toEqual([])
     expect(database.driver.pragma('integrity_check', { simple: true })).toBe('ok')
     database.close()
@@ -721,7 +798,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(18)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(19)
     await runtime.close()
   })
 
@@ -791,7 +868,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 18,
+      schemaVersion: 19,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -803,11 +880,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 18,
+      expectedSchemaVersion: 19,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 18,
+      schemaVersion: 19,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -991,7 +1068,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(18),
+      schemaVersion: z.literal(19),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -1009,26 +1086,27 @@ describe('SQLite lifecycle', () => {
       '0015_laboratory-report-acknowledgement.sql',
       '0016_laboratory-report-revision.sql',
       '0017_diagnosis-draft.sql',
+      '0018_prescription-conclusion.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 18 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 19 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 18 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 19 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 18 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 19 })
   })
 })

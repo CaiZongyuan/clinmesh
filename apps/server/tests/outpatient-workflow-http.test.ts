@@ -21,15 +21,18 @@ import {
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
   confirmDiagnosisResponseSchema,
+  confirmNoMedicationResponseSchema,
   correctLaboratoryReportResponseSchema,
   createPatientResponseSchema,
   deleteLaboratoryRequestDraftRequestSchema,
+  deletePrescriptionDraftRequestSchema,
   diagnosisDraftResponseSchema,
   dispenseResponseSchema,
   doctorCaseDetailSchema,
   doctorQueueSchema,
   firstVisitDraftResponseSchema,
   issueLaboratoryRequestResponseSchema,
+  issuePrescriptionResponseSchema,
   laboratoryRequestActionResponseSchema,
   laboratoryOrderResponseSchema,
   laboratoryRequestDraftResponseSchema,
@@ -37,6 +40,7 @@ import {
   paymentPreviewResponseSchema,
   paymentResponseSchema,
   pharmacyQueueSchema,
+  prescriptionDraftResponseSchema,
   prescriptionReviewResponseSchema,
   registrationQueueSchema,
   registrationCatalogSchema,
@@ -50,6 +54,7 @@ import {
   triageQueueSchema,
   triageResponseSchema,
   virtualPatientListSchema,
+  withdrawPrescriptionResponseSchema,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AuditQuery } from '../src/application/audit-query.ts'
@@ -218,6 +223,77 @@ async function createSignedStructuredClinicalDocument(runtime: TestRuntime, pass
   )
   const signed = clinicalDocumentSignResponseSchema.parse(await signResponse.json()).data
   return { doctorCookie, expectedVersions, signed, started }
+}
+
+async function createIssuedIndependentPrescription(runtime: TestRuntime, password: string) {
+  const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+  const diagnosisDraftResponse = await runtime.app.request(
+    `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
+    {
+      body: JSON.stringify({
+        expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+        input: {
+          entries: [{ catalogItemId: 'diagnosis-influenza', role: 'primary' }],
+          expectedDraftVersion: 0,
+        },
+      }),
+      headers: commandHeaders(doctorCookie),
+      method: 'PUT',
+    },
+  )
+  const diagnosisDraft = diagnosisDraftResponseSchema.parse(
+    await diagnosisDraftResponse.json(),
+  ).data
+  const confirmDiagnosisResponse = await runtime.app.request(
+    `/api/his/v1/encounters/${started.encounterId}/diagnosis/actions/confirm`,
+    {
+      body: JSON.stringify({
+        expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+        input: { expectedDraftVersion: diagnosisDraft.draftVersion },
+      }),
+      headers: commandHeaders(doctorCookie),
+      method: 'POST',
+    },
+  )
+  const encounterVersion = confirmDiagnosisResponseSchema.parse(
+    await confirmDiagnosisResponse.json(),
+  ).data.encounterVersion
+  const draft = {
+    items: [{
+      catalogItemId: 'medication-oseltamivir',
+      courseDays: 5,
+      doseText: '75 mg',
+      frequencyCode: 'BID',
+      quantity: 10,
+    }],
+  }
+  const prescriptionDraftResponse = await runtime.app.request(
+    `/api/his/v1/encounters/${started.encounterId}/prescription/draft`,
+    {
+      body: JSON.stringify({
+        expectedVersions: { [`Encounter/${started.encounterId}`]: encounterVersion },
+        input: { ...draft, expectedDraftVersion: 0 },
+      }),
+      headers: commandHeaders(doctorCookie),
+      method: 'PUT',
+    },
+  )
+  const draftVersion = prescriptionDraftResponseSchema.parse(
+    await prescriptionDraftResponse.json(),
+  ).data.draftVersion
+  const issueResponse = await runtime.app.request(
+    `/api/his/v1/encounters/${started.encounterId}/prescription/actions/issue`,
+    {
+      body: JSON.stringify({
+        expectedVersions: { [`Encounter/${started.encounterId}`]: encounterVersion },
+        input: { expectedDraftVersion: draftVersion },
+      }),
+      headers: commandHeaders(doctorCookie),
+      method: 'POST',
+    },
+  )
+  const issued = issuePrescriptionResponseSchema.parse(await issueResponse.json()).data
+  return { doctorCookie, draft, encounterVersion, issued, started }
 }
 
 async function createRegisteredCase(runtime: TestRuntime, password: string) {
@@ -5138,6 +5214,1037 @@ describe('outpatient workflow HTTP contract', () => {
       { headers: { cookie: testCase.doctorCookie } },
     )
     expect(fhirBundleSchema.parse(await conditionSearchResponse.json()).total).toBe(0)
+  })
+
+  it('persists a controlled prescription draft without creating formal MedicationRequests', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-prescription-draft-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const catalogResponse = await runtime.app.request('/api/his/v1/catalogs/clinical', {
+      headers: { cookie: doctorCookie },
+    })
+    const catalog = clinicalCatalogSchema.parse(await catalogResponse.json())
+    expect(catalog.medications).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        allowedCourseDays: [5],
+        allowedQuantities: [10],
+        defaultCourseDays: 5,
+        defaultQuantity: 10,
+        id: 'medication-oseltamivir',
+      }),
+    ]))
+    const medicationSearchPath
+      = `/fhir/R5/MedicationRequest?encounter=Encounter/${started.encounterId}&_total=accurate`
+    const medicationCountBefore = fhirBundleSchema.parse(await (
+      await runtime.app.request(medicationSearchPath, { headers: { cookie: doctorCookie } })
+    ).json()).total
+    const draft = {
+      items: [{
+        catalogItemId: 'medication-oseltamivir',
+        courseDays: 5,
+        doseText: '75 mg',
+        frequencyCode: 'BID',
+        quantity: 10,
+      }],
+    }
+
+    const saveResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          input: { ...draft, expectedDraftVersion: 0 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+
+    expect(saveResponse.status).toBe(200)
+    expect(prescriptionDraftResponseSchema.parse(await saveResponse.json())).toMatchObject({
+      data: { draftVersion: 1 },
+      effects: [{
+        kind: 'created',
+        reference: expect.stringMatching(/^PrescriptionDraft\//),
+        versionId: '1',
+      }],
+    })
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
+      medicationConclusion: { draft, draftVersion: 1 },
+    })
+    const medicationCountAfter = fhirBundleSchema.parse(await (
+      await runtime.app.request(medicationSearchPath, { headers: { cookie: doctorCookie } })
+    ).json()).total
+    expect(medicationCountAfter).toBe(medicationCountBefore)
+  })
+
+  it('issues a controlled prescription once with a formal FHIR MedicationRequest', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-prescription-issue-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const saveDiagnosisResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          input: {
+            entries: [{ catalogItemId: 'diagnosis-influenza', role: 'primary' }],
+            expectedDraftVersion: 0,
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(diagnosisDraftResponseSchema.parse(await saveDiagnosisResponse.json())).toMatchObject({
+      data: { draftVersion: 1 },
+    })
+    const confirmDiagnosisResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/diagnosis/actions/confirm`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          input: { expectedDraftVersion: 1 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(confirmDiagnosisResponseSchema.parse(await confirmDiagnosisResponse.json())).toMatchObject({
+      data: { encounterVersion: '2' },
+    })
+    const draft = {
+      items: [{
+        catalogItemId: 'medication-oseltamivir',
+        courseDays: 5,
+        doseText: '75 mg',
+        frequencyCode: 'BID',
+        quantity: 10,
+      }],
+    }
+    const savePrescriptionResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '2' },
+          input: { ...draft, expectedDraftVersion: 0 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(prescriptionDraftResponseSchema.parse(await savePrescriptionResponse.json())).toMatchObject({
+      data: { draftVersion: 1 },
+    })
+    const endpoint
+      = `/api/his/v1/encounters/${started.encounterId}/prescription/actions/issue`
+    const issue = () => runtime.app.request(endpoint, {
+      body: JSON.stringify({
+        expectedVersions: { [`Encounter/${started.encounterId}`]: '2' },
+        input: { expectedDraftVersion: 1 },
+      }),
+      headers: commandHeaders(doctorCookie),
+      method: 'POST',
+    })
+
+    const issueResponse = await issue()
+
+    expect(issueResponse.status).toBe(200)
+    const issued = issuePrescriptionResponseSchema.parse(await issueResponse.json()).data
+    expect(issued).toMatchObject({
+      draftVersion: 2,
+      prescription: {
+        authoredAt: '2026-08-24T09:00:00+08:00',
+        authoredByPractitionerRoleId: 'practitioner-role-outpatient-doctor',
+        items: [{
+          ...draft.items[0],
+          display: '磷酸奥司他韦胶囊',
+          medicationRequestVersion: '1',
+        }],
+        status: 'signed',
+        version: 1,
+      },
+    })
+    const medicationRequestId = issued.prescription.items[0]?.medicationRequestId
+    if (medicationRequestId === undefined) throw new Error('Prescription has no MedicationRequest')
+    const medicationRequest = fhirResourceSchema.parse(await (
+      await runtime.app.request(`/fhir/R5/MedicationRequest/${medicationRequestId}`, {
+        headers: { cookie: doctorCookie },
+      })
+    ).json())
+    expect(medicationRequest).toMatchObject({
+      authoredOn: '2026-08-24T09:00:00+08:00',
+      dispenseRequest: { quantity: { value: 10 } },
+      dosageInstruction: [{
+        text: '75 mg BID for 5 days',
+        timing: { repeat: { boundsDuration: { code: 'd', value: 5 } } },
+      }],
+      encounter: { reference: `Encounter/${started.encounterId}` },
+      groupIdentifier: { value: issued.prescription.number },
+      intent: 'order',
+      medication: { reference: {
+        display: '磷酸奥司他韦胶囊',
+        reference: 'Medication/medication-oseltamivir',
+      } },
+      requester: { reference: 'PractitionerRole/practitioner-role-outpatient-doctor' },
+      status: 'active',
+      subject: { reference: `Patient/${started.patientId}` },
+    })
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
+      medicationConclusion: {
+        draftVersion: 2,
+        prescription: issued.prescription,
+      },
+    })
+    const duplicateResponse = await issue()
+    expect(duplicateResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await duplicateResponse.json())).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
+    const medicationSearchResponse = await runtime.app.request(
+      `/fhir/R5/MedicationRequest?encounter=Encounter/${started.encounterId}&_total=accurate`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await medicationSearchResponse.json()).total).toBe(1)
+  })
+
+  it('keeps the prescription draft when diagnosis or allergy validation rejects issuing', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-prescription-safety-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const diagnosisDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          input: {
+            entries: [{
+              catalogItemId: 'diagnosis-acute-upper-respiratory-infection',
+              role: 'primary',
+            }],
+            expectedDraftVersion: 0,
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(diagnosisDraftResponse.status).toBe(200)
+    const diagnosisDraft = diagnosisDraftResponseSchema.parse(
+      await diagnosisDraftResponse.json(),
+    ).data
+    const confirmDiagnosisResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/diagnosis/actions/confirm`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          input: { expectedDraftVersion: diagnosisDraft.draftVersion },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(confirmDiagnosisResponse.status).toBe(200)
+    const encounterVersion = confirmDiagnosisResponseSchema.parse(
+      await confirmDiagnosisResponse.json(),
+    ).data.encounterVersion
+    const draft = {
+      items: [{
+        catalogItemId: 'medication-oseltamivir',
+        courseDays: 5,
+        doseText: '75 mg',
+        frequencyCode: 'BID',
+        quantity: 10,
+      }],
+    }
+    const prescriptionDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: encounterVersion },
+          input: { ...draft, expectedDraftVersion: 0 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(prescriptionDraftResponse.status).toBe(200)
+    const prescriptionDraftVersion = prescriptionDraftResponseSchema.parse(
+      await prescriptionDraftResponse.json(),
+    ).data.draftVersion
+    const issue = () => runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/prescription/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: encounterVersion },
+          input: { expectedDraftVersion: prescriptionDraftVersion },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    const diagnosisRejected = await issue()
+
+    expect(diagnosisRejected.status).toBe(409)
+    expect(apiErrorSchema.parse(await diagnosisRejected.json())).toMatchObject({
+      error: { code: 'CATALOG_CONFLICT' },
+    })
+    runtime.fhir.create({ epoch: 'epoch-1', workspaceId: 'workspace-demo' }, {
+      resourceType: 'AllergyIntolerance',
+      id: `allergy-${randomUUID()}`,
+      clinicalStatus: {
+        coding: [{
+          code: 'active',
+          system: 'http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical',
+        }],
+      },
+      verificationStatus: {
+        coding: [{
+          code: 'confirmed',
+          system: 'http://terminology.hl7.org/CodeSystem/allergyintolerance-verification',
+        }],
+      },
+      category: ['medication'],
+      criticality: 'high',
+      code: {
+        coding: [{
+          code: 'OSELTAMIVIR',
+          display: '磷酸奥司他韦',
+          system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/synthetic-medication',
+        }],
+        text: '磷酸奥司他韦过敏',
+      },
+      patient: { reference: `Patient/${started.patientId}` },
+      recordedDate: '2026-08-24T08:30:00+08:00',
+    })
+
+    const allergyRejected = await issue()
+
+    expect(allergyRejected.status).toBe(409)
+    expect(apiErrorSchema.parse(await allergyRejected.json())).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
+      medicationConclusion: {
+        draft,
+        draftVersion: prescriptionDraftVersion,
+      },
+    })
+    const medicationSearchResponse = await runtime.app.request(
+      `/fhir/R5/MedicationRequest?encounter=Encounter/${started.encounterId}&_total=accurate`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await medicationSearchResponse.json()).total).toBe(0)
+  })
+
+  it('records a responsible no-medication conclusion and locks prescription editing', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-no-medication-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const endpoint
+      = `/api/his/v1/encounters/${started.encounterId}/medication-conclusion/actions/confirm-no-medication`
+
+    const response = await runtime.app.request(endpoint, {
+      body: JSON.stringify({
+        expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+        input: { expectedDraftVersion: 0 },
+      }),
+      headers: commandHeaders(doctorCookie),
+      method: 'POST',
+    })
+
+    expect(response.status).toBe(200)
+    const conclusion = confirmNoMedicationResponseSchema.parse(await response.json()).data
+    expect(conclusion).toMatchObject({
+      draftVersion: 1,
+      noMedication: {
+        authoredAt: '2026-08-24T09:00:00+08:00',
+        authoredByActorId: 'actor-outpatient-doctor',
+        authoredByPractitionerRoleId: 'practitioner-role-outpatient-doctor',
+        version: 1,
+      },
+    })
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
+      medicationConclusion: {
+        draftVersion: 1,
+        noMedication: conclusion.noMedication,
+      },
+    })
+    const medicationSearchResponse = await runtime.app.request(
+      `/fhir/R5/MedicationRequest?encounter=Encounter/${started.encounterId}&_total=accurate`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await medicationSearchResponse.json()).total).toBe(0)
+    const saveDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          input: {
+            expectedDraftVersion: 1,
+            items: [{
+              catalogItemId: 'medication-acetaminophen',
+              courseDays: 3,
+              doseText: '0.5 g',
+              frequencyCode: 'PRN',
+              quantity: 6,
+            }],
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(saveDraftResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await saveDraftResponse.json())).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
+    const duplicateResponse = await runtime.app.request(endpoint, {
+      body: JSON.stringify({
+        expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+        input: { expectedDraftVersion: 1 },
+      }),
+      headers: commandHeaders(doctorCookie),
+      method: 'POST',
+    })
+    expect(duplicateResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await duplicateResponse.json())).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
+  })
+
+  it('withdraws an undispensed prescription and cancels its formal medication requests', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-prescription-withdrawal-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createSignedCase(runtime, password)
+    const medicationRequestId = testCase.draft.medicationRequestIds[0]
+    if (medicationRequestId === undefined) throw new Error('Signed prescription has no medication')
+    const endpoint
+      = `/api/his/v1/prescriptions/${testCase.draft.prescriptionId}/actions/withdraw`
+
+    const response = await runtime.app.request(endpoint, {
+      body: JSON.stringify({
+        expectedVersions: { [`MedicationRequest/${medicationRequestId}`]: '2' },
+        input: { expectedPrescriptionVersion: 2 },
+      }),
+      headers: commandHeaders(testCase.doctorCookie),
+      method: 'POST',
+    })
+
+    expect(response.status).toBe(200)
+    const withdrawn = withdrawPrescriptionResponseSchema.parse(await response.json()).data
+    expect(withdrawn).toMatchObject({
+      medicationRequests: [{ id: medicationRequestId, version: '3' }],
+      prescriptionId: testCase.draft.prescriptionId,
+      prescriptionVersion: 3,
+      status: 'withdrawn',
+      withdrawal: {
+        prescriptionId: testCase.draft.prescriptionId,
+        version: 1,
+        withdrawnAt: '2026-08-24T09:00:00+08:00',
+        withdrawnByActorId: 'actor-outpatient-doctor',
+        withdrawnByPractitionerRoleId: 'practitioner-role-outpatient-doctor',
+      },
+    })
+    const requestResponse = await runtime.app.request(
+      `/fhir/R5/MedicationRequest/${medicationRequestId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await requestResponse.json())).toMatchObject({
+      meta: { versionId: '3' },
+      status: 'cancelled',
+    })
+    const historyResponse = await runtime.app.request(
+      `/fhir/R5/MedicationRequest/${medicationRequestId}/_history`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    const history = fhirBundleSchema.parse(await historyResponse.json())
+    expect(history.total).toBe(3)
+    expect(history.entry?.map(entry => entry.resource?.status)).toEqual([
+      'cancelled',
+      'active',
+      'draft',
+    ])
+    const cashierCookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const billingQueueResponse = await runtime.app.request(
+      '/api/his/v1/billing/queue?category=medication&status=pending&pageSize=20',
+      { headers: { cookie: cashierCookie } },
+    )
+    expect(billingQueueSchema.parse(await billingQueueResponse.json())).toMatchObject({
+      items: [],
+      total: 0,
+    })
+    const paymentResponse = await runtime.app.request('/api/his/v1/payments/actions/preview', {
+      body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${testCase.signed.chargeItemId}`]: '1' },
+        input: {
+          caseId: testCase.caseId,
+          category: 'medication',
+          simulatorRule: 'success',
+        },
+      }),
+      headers: commandHeaders(cashierCookie),
+      method: 'POST',
+    })
+    expect(paymentResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await paymentResponse.json())).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
+    const duplicateResponse = await runtime.app.request(endpoint, {
+      body: JSON.stringify({
+        expectedVersions: { [`MedicationRequest/${medicationRequestId}`]: '3' },
+        input: { expectedPrescriptionVersion: 3 },
+      }),
+      headers: commandHeaders(testCase.doctorCookie),
+      method: 'POST',
+    })
+    expect(duplicateResponse.status).toBe(409)
+  })
+
+  it('withdraws a paid prescription without refunding it and excludes pharmacy fulfillment', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-paid-prescription-withdrawal-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createPaidMedicationCase(runtime, password)
+    const beforeWithdrawalResponse = await runtime.app.request(
+      '/api/his/v1/pharmacy/queue?pageSize=20',
+      { headers: { cookie: testCase.pharmacistCookie } },
+    )
+    const pendingPrescription = pharmacyQueueSchema.parse(
+      await beforeWithdrawalResponse.json(),
+    ).items[0]
+    const pendingMedication = pendingPrescription?.medications[0]
+    const pendingLot = pendingMedication?.lots[0]
+    if (
+      pendingPrescription === undefined
+      || pendingMedication === undefined
+      || pendingLot === undefined
+    ) {
+      throw new Error('Paid prescription did not expose dispensable inventory')
+    }
+
+    const withdrawalResponse = await runtime.app.request(
+      `/api/his/v1/prescriptions/${pendingPrescription.prescriptionId}/actions/withdraw`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`MedicationRequest/${pendingMedication.medicationRequestId}`]
+              : pendingMedication.medicationRequestVersion,
+          },
+          input: { expectedPrescriptionVersion: pendingPrescription.prescriptionVersion },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    expect(withdrawalResponse.status).toBe(200)
+    const withdrawn = withdrawPrescriptionResponseSchema.parse(
+      await withdrawalResponse.json(),
+    ).data
+    const paidBillingResponse = await runtime.app.request(
+      '/api/his/v1/billing/queue?category=medication&status=paid&pageSize=20',
+      { headers: { cookie: testCase.cashierCookie } },
+    )
+    expect(billingQueueSchema.parse(await paidBillingResponse.json())).toMatchObject({
+      items: [{
+        caseId: testCase.caseId,
+        chargeItemId: testCase.signed.chargeItemId,
+        status: 'paid',
+      }],
+      total: 1,
+    })
+    const pharmacyQueueResponse = await runtime.app.request(
+      '/api/his/v1/pharmacy/queue?pageSize=20',
+      { headers: { cookie: testCase.pharmacistCookie } },
+    )
+    expect(pharmacyQueueSchema.parse(await pharmacyQueueResponse.json())).toMatchObject({
+      items: [],
+      total: 0,
+    })
+    const dispenseResponse = await runtime.app.request(
+      `/api/his/v1/prescriptions/${pendingPrescription.prescriptionId}/actions/dispense`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${pendingPrescription.encounterId}`]
+              : pendingPrescription.encounterVersion,
+            [`MedicationRequest/${pendingMedication.medicationRequestId}`]
+              : withdrawn.medicationRequests[0]?.version,
+          },
+          input: {
+            expectedPrescriptionVersion: withdrawn.prescriptionVersion,
+            lotSelections: [{
+              expectedVersion: pendingLot.version,
+              lotId: pendingLot.id,
+              quantity: pendingMedication.remainingQuantity,
+            }],
+          },
+        }),
+        headers: commandHeaders(testCase.pharmacistCookie),
+        method: 'POST',
+      },
+    )
+    expect(dispenseResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await dispenseResponse.json())).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
+  })
+
+  it('prevents the legacy revisit draft from taking over an independent prescription draft', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-prescription-owner-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createReportedCase(runtime, password)
+    const startRevisitResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/start-revisit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${testCase.registration.encounterId}`]: '5',
+            [`Task/${testCase.report.taskId}`]: '1',
+          },
+          input: {},
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(startRevisitResponse.status).toBe(200)
+    const draft = {
+      items: [{
+        catalogItemId: 'medication-oseltamivir',
+        courseDays: 5,
+        doseText: '75 mg',
+        frequencyCode: 'BID',
+        quantity: 10,
+      }],
+    }
+    const independentResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${testCase.registration.encounterId}`]: '6' },
+          input: { ...draft, expectedDraftVersion: 0 },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(independentResponse.status).toBe(200)
+    const independentVersion = prescriptionDraftResponseSchema.parse(
+      await independentResponse.json(),
+    ).data.draftVersion
+
+    const legacyResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/drafts/revisit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${testCase.registration.encounterId}`]: '6' },
+          input: {
+            diagnosis: { code: 'J10.1', display: '甲型流感' },
+            document: {
+              assessment: '甲型流感，生命体征稳定。',
+              plan: '继续对症治疗并观察。',
+            },
+            expectedVersions: {
+              documentDraft: 0,
+              prescription: 0,
+              revisitDraft: 0,
+            },
+            medications: [{
+              catalogItemId: 'medication-oseltamivir',
+              doseText: '75 mg',
+              frequencyCode: 'BID',
+              quantity: 10,
+            }],
+          },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'PUT',
+      },
+    )
+
+    expect(legacyResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await legacyResponse.json())).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${testCase.caseId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
+      medicationConclusion: { draft, draftVersion: independentVersion },
+    })
+    const requestSearchResponse = await runtime.app.request(
+      `/fhir/R5/MedicationRequest?encounter=Encounter/${testCase.registration.encounterId}&_total=accurate`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await requestSearchResponse.json()).total).toBe(0)
+  })
+
+  it('deletes only the current unissued prescription draft version', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-prescription-draft-delete-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const draftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: {
+            expectedDraftVersion: 0,
+            items: [{
+              catalogItemId: 'medication-acetaminophen',
+              courseDays: 3,
+              doseText: '0.5 g',
+              frequencyCode: 'PRN',
+              quantity: 6,
+            }],
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(draftResponse.status).toBe(200)
+    const endpoint = `/api/his/v1/encounters/${started.encounterId}/prescription/draft`
+    const idempotencyKey = randomUUID()
+    const remove = () => runtime.app.request(endpoint, {
+      body: JSON.stringify({
+        expectedVersions,
+        input: { expectedDraftVersion: 1 },
+      } satisfies typeof deletePrescriptionDraftRequestSchema._output),
+      headers: commandHeaders(doctorCookie, idempotencyKey),
+      method: 'DELETE',
+    })
+
+    const deleteResponse = await remove()
+
+    expect(deleteResponse.status).toBe(200)
+    const deleted = prescriptionDraftResponseSchema.parse(await deleteResponse.json())
+    expect(deleted).toMatchObject({
+      data: { draftVersion: 2 },
+      effects: [{
+        kind: 'updated',
+        reference: `PrescriptionDraft/${started.caseId}`,
+        versionId: '2',
+      }],
+    })
+    expect(prescriptionDraftResponseSchema.parse(await (await remove()).json())).toEqual(deleted)
+    const staleResponse = await runtime.app.request(endpoint, {
+      body: JSON.stringify({
+        expectedVersions,
+        input: { expectedDraftVersion: 1 },
+      } satisfies typeof deletePrescriptionDraftRequestSchema._output),
+      headers: commandHeaders(doctorCookie),
+      method: 'DELETE',
+    })
+    expect(staleResponse.status).toBe(409)
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    const detail = doctorCaseDetailSchema.parse(await detailResponse.json())
+    expect(detail).toMatchObject({ medicationConclusion: { draftVersion: 2 } })
+    expect(detail.medicationConclusion?.draft).toBeUndefined()
+    const issueResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/prescription/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { expectedDraftVersion: 2 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(issueResponse.status).toBe(409)
+    const requestSearchResponse = await runtime.app.request(
+      `/fhir/R5/MedicationRequest?encounter=Encounter/${started.encounterId}&_total=accurate`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await requestSearchResponse.json()).total).toBe(0)
+  })
+
+  it('allows no medication only after the active prescription is withdrawn', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-medication-conclusion-switch-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createIssuedIndependentPrescription(runtime, password)
+    const noMedicationEndpoint
+      = `/api/his/v1/encounters/${testCase.started.encounterId}/medication-conclusion/actions/confirm-no-medication`
+    const confirmNoMedication = (expectedDraftVersion: number) => runtime.app.request(
+      noMedicationEndpoint,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${testCase.started.encounterId}`]: testCase.encounterVersion,
+          },
+          input: { expectedDraftVersion },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    const activeConclusionResponse = await confirmNoMedication(testCase.issued.draftVersion)
+    expect(activeConclusionResponse.status).toBe(409)
+    const editResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${testCase.started.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${testCase.started.encounterId}`]: testCase.encounterVersion,
+          },
+          input: {
+            ...testCase.draft,
+            expectedDraftVersion: testCase.issued.draftVersion,
+          },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(editResponse.status).toBe(409)
+    const medicationRequest = testCase.issued.prescription.items[0]
+    if (medicationRequest === undefined) throw new Error('Issued prescription has no medication')
+    const withdrawalResponse = await runtime.app.request(
+      `/api/his/v1/prescriptions/${testCase.issued.prescription.id}/actions/withdraw`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`MedicationRequest/${medicationRequest.medicationRequestId}`]
+              : medicationRequest.medicationRequestVersion,
+          },
+          input: { expectedPrescriptionVersion: testCase.issued.prescription.version },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(withdrawalResponse.status).toBe(200)
+
+    const noMedicationResponse = await confirmNoMedication(testCase.issued.draftVersion)
+
+    expect(noMedicationResponse.status).toBe(200)
+    const noMedication = confirmNoMedicationResponseSchema.parse(
+      await noMedicationResponse.json(),
+    ).data
+    expect(noMedication.draftVersion).toBe(testCase.issued.draftVersion + 1)
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${testCase.started.caseId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
+      medicationConclusion: {
+        draftVersion: noMedication.draftVersion,
+        noMedication: noMedication.noMedication,
+        prescription: {
+          id: testCase.issued.prescription.id,
+          status: 'withdrawn',
+          version: 2,
+        },
+      },
+    })
+  })
+
+  it('rejects prescription withdrawal after any quantity has been dispensed', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-dispensed-withdrawal-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createPaidMedicationCase(runtime, password)
+    const queueResponse = await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
+      headers: { cookie: testCase.pharmacistCookie },
+    })
+    const prescription = pharmacyQueueSchema.parse(await queueResponse.json()).items[0]
+    const medication = prescription?.medications[0]
+    const lot = medication?.lots[0]
+    if (prescription === undefined || medication === undefined || lot === undefined) {
+      throw new Error('Paid prescription did not expose dispensable inventory')
+    }
+    const dispenseResponse = await runtime.app.request(
+      `/api/his/v1/prescriptions/${prescription.prescriptionId}/actions/dispense`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${prescription.encounterId}`]: prescription.encounterVersion,
+            [`MedicationRequest/${medication.medicationRequestId}`]
+              : medication.medicationRequestVersion,
+          },
+          input: {
+            expectedPrescriptionVersion: prescription.prescriptionVersion,
+            lotSelections: [{
+              expectedVersion: lot.version,
+              lotId: lot.id,
+              quantity: 5,
+            }],
+          },
+        }),
+        headers: commandHeaders(testCase.pharmacistCookie),
+        method: 'POST',
+      },
+    )
+    expect(dispenseResponse.status).toBe(200)
+    const dispensed = dispenseResponseSchema.parse(await dispenseResponse.json()).data
+    expect(dispensed).toMatchObject({ status: 'partial' })
+
+    const withdrawalResponse = await runtime.app.request(
+      `/api/his/v1/prescriptions/${prescription.prescriptionId}/actions/withdraw`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`MedicationRequest/${medication.medicationRequestId}`]
+              : medication.medicationRequestVersion,
+          },
+          input: { expectedPrescriptionVersion: dispensed.prescriptionVersion },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    expect(withdrawalResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await withdrawalResponse.json())).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
+    const requestResponse = await runtime.app.request(
+      `/fhir/R5/MedicationRequest/${medication.medicationRequestId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await requestResponse.json())).toMatchObject({
+      meta: { versionId: medication.medicationRequestVersion },
+      status: 'active',
+    })
+    const dispenseSearchResponse = await runtime.app.request(
+      `/fhir/R5/MedicationDispense?prescription=MedicationRequest/${medication.medicationRequestId}&_total=accurate`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await dispenseSearchResponse.json()).total).toBe(1)
   })
 
   it('starts revisit and saves versioned diagnosis, prescription, and document drafts without charging', async () => {

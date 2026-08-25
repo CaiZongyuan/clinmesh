@@ -10,6 +10,7 @@ import {
   clinicalDocumentSignResponseSchema,
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
+  confirmNoMedicationResponseSchema,
   confirmDiagnosisResponseSchema,
   createPatientResponseSchema,
   clinicalCatalogSchema,
@@ -18,11 +19,13 @@ import {
   doctorQueueSchema,
   firstVisitDraftResponseSchema,
   issueLaboratoryRequestResponseSchema,
+  issuePrescriptionResponseSchema,
   laboratoryOrderResponseSchema,
   laboratoryRequestDraftResponseSchema,
   paymentPreviewResponseSchema,
   paymentResponseSchema,
   pharmacyQueueSchema,
+  prescriptionDraftResponseSchema,
   prescriptionReviewResponseSchema,
   dispenseResponseSchema,
   patientSearchSchema,
@@ -38,9 +41,11 @@ import {
   triageQueueSchema,
   triageResponseSchema,
   virtualPatientListSchema,
+  withdrawPrescriptionResponseSchema,
   type ClinicalDocumentContent,
   type DiagnosisDraftEntry,
   type LaboratoryRequestCatalogItemId,
+  type PrescriptionDraftItem,
   type ScenarioState,
   type SessionContext,
 } from '@clinmesh/contracts/his'
@@ -355,6 +360,93 @@ export function confirmDiagnosis(input: {
     {
       expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
       input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function savePrescriptionDraft(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+  items: PrescriptionDraftItem[]
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/prescription/draft`,
+    prescriptionDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: {
+        expectedDraftVersion: input.expectedDraftVersion,
+        items: input.items,
+      },
+    },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function deletePrescriptionDraft(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/prescription/draft`,
+    prescriptionDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey, method: 'DELETE' },
+  )
+}
+
+export function issuePrescription(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/prescription/actions/issue`,
+    issuePrescriptionResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function confirmNoMedication(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/medication-conclusion/actions/confirm-no-medication`,
+    confirmNoMedicationResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function withdrawPrescription(input: {
+  expectedPrescriptionVersion: number
+  medicationRequests: Array<{ id: string; version: string }>
+  prescriptionId: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/prescriptions/${encodeURIComponent(input.prescriptionId)}/actions/withdraw`,
+    withdrawPrescriptionResponseSchema,
+    {
+      expectedVersions: Object.fromEntries(input.medicationRequests.map(request => [
+        `MedicationRequest/${request.id}`,
+        request.version,
+      ])),
+      input: { expectedPrescriptionVersion: input.expectedPrescriptionVersion },
     },
     { idempotencyKey },
   )

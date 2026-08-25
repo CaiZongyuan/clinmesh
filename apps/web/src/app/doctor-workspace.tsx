@@ -8,10 +8,22 @@ import {
   type LaboratoryReport,
   type LaboratoryRequest,
   type LaboratoryRequestCatalogItemId,
+  type PrescriptionDraftItem,
   type SessionContext,
   type VirtualPatientList,
 } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@clinmesh/ui/components/alert-dialog'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Bubble, BubbleContent } from '@clinmesh/ui/components/bubble'
@@ -32,20 +44,24 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, MessagesSquareIcon, PlayIcon, PlusIcon, RefreshCwIcon, SendIcon, ShieldAlertIcon, StethoscopeIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
+import { CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, MessagesSquareIcon, PillIcon, PlayIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, SendIcon, ShieldAlertIcon, StethoscopeIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
 import { useState } from 'react'
 import {
+  ApiClientError,
   acknowledgeLaboratoryReport,
   askConsultationQuestion,
   cancelLaboratoryRequest,
+  confirmNoMedication,
   confirmDiagnosis,
   deleteLaboratoryRequestDraft,
+  deletePrescriptionDraft,
   getClinicalCatalog,
   getDoctorCase,
   getDoctorQueue,
   getVirtualPatients,
   issueLaboratoryRequest,
   issueLaboratoryOrder,
+  issuePrescription,
   newIdempotencyKey,
   previewClinicalSign,
   previewStructuredClinicalDocumentSign,
@@ -54,12 +70,14 @@ import {
   saveDiagnosisDraft,
   saveFirstVisitDraft,
   saveLaboratoryRequestDraft,
+  savePrescriptionDraft,
   saveRevisitDraft,
   signClinicalDocument,
   signStructuredClinicalDocument,
   startFirstVisit,
   startRevisit,
   startVirtualPatient,
+  withdrawPrescription,
 } from './api-client.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
@@ -977,14 +995,24 @@ function CaseDetail({
         ) : (
           <div className="flex flex-col gap-3">
             {detail.consultation !== undefined ? (
-              <DiagnosisEditor
-                actions={diagnosisActions}
-                catalog={catalog.data.diagnoses}
-                key={`${detail.caseId}:${detail.diagnosis?.draftVersion ?? 0}`}
-                locale={locale}
-                messages={messages}
-                state={detail.diagnosis}
-              />
+              <>
+                <DiagnosisEditor
+                  actions={diagnosisActions}
+                  catalog={catalog.data.diagnoses}
+                  key={`${detail.caseId}:${detail.diagnosis?.draftVersion ?? 0}`}
+                  locale={locale}
+                  messages={messages}
+                  state={detail.diagnosis}
+                />
+                <MedicationConclusionPanel
+                  catalog={catalog.data.medications}
+                  detail={detail}
+                  key={`medication-conclusion:${detail.caseId}`}
+                  locale={locale}
+                  messages={messages}
+                  onRefresh={onRefreshCase}
+                />
+              </>
             ) : (
               <>
                 {saveRevisitSuccess ? (
@@ -2110,6 +2138,461 @@ function DiagnosisEditor({ actions, catalog, locale, messages, state }: {
       </form>
     </section>
   )
+}
+
+interface PrescriptionDraftLine extends PrescriptionDraftItem {
+  key: string
+}
+
+type MedicationConclusionMode = 'no-medication' | 'prescription'
+
+function createPrescriptionDraftLine(
+  medication: ClinicalCatalog['medications'][number],
+  key: string,
+): PrescriptionDraftLine {
+  return {
+    catalogItemId: medication.id,
+    courseDays: medication.defaultCourseDays,
+    doseText: medication.defaultDoseText,
+    frequencyCode: medication.defaultFrequencyCode,
+    key,
+    quantity: medication.defaultQuantity,
+  }
+}
+
+function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefresh }: {
+  catalog: ClinicalCatalog['medications']
+  detail: DoctorCaseDetail
+  locale: WorkspaceLocale
+  messages: ReturnType<typeof getWorkspaceMessages>
+  onRefresh: () => Promise<void>
+}): React.JSX.Element {
+  const state = detail.medicationConclusion
+  const prescription = state?.prescription
+  const noMedicationConclusion = state?.noMedication
+  const hasActivePrescription = prescription !== undefined && prescription.status !== 'withdrawn'
+  const [mode, setMode] = useState<MedicationConclusionMode>(
+    noMedicationConclusion === undefined ? 'prescription' : 'no-medication',
+  )
+  const [dirty, setDirty] = useState(false)
+  const [items, setItems] = useState<PrescriptionDraftLine[]>(() => {
+    if (state?.draft !== undefined) {
+      return state.draft.items.map((item, index) => ({ ...item, key: `saved-${index}` }))
+    }
+    const firstMedication = catalog[0]
+    return firstMedication === undefined ? [] : [createPrescriptionDraftLine(firstMedication, 'new-0')]
+  })
+  const saveDraft = useMutation({
+    mutationFn: () => savePrescriptionDraft({
+      encounterId: detail.encounter.id,
+      encounterVersion: detail.encounter.versionId,
+      expectedDraftVersion: state?.draftVersion ?? 0,
+      items: items.map(({ key: _key, ...item }) => item),
+    }, newIdempotencyKey()),
+    onError: onRefresh,
+    onSuccess: async () => {
+      setDirty(false)
+      await onRefresh()
+    },
+  })
+  const removeDraft = useMutation({
+    mutationFn: () => {
+      if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
+      return deletePrescriptionDraft({
+        encounterId: detail.encounter.id,
+        encounterVersion: detail.encounter.versionId,
+        expectedDraftVersion: state.draftVersion,
+      }, newIdempotencyKey())
+    },
+    onError: onRefresh,
+    onSuccess: async () => {
+      setDirty(false)
+      await onRefresh()
+    },
+  })
+  const issue = useMutation({
+    mutationFn: () => {
+      if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
+      return issuePrescription({
+        encounterId: detail.encounter.id,
+        encounterVersion: detail.encounter.versionId,
+        expectedDraftVersion: state.draftVersion,
+      }, newIdempotencyKey())
+    },
+    onError: onRefresh,
+    onSuccess: onRefresh,
+  })
+  const confirmNone = useMutation({
+    mutationFn: () => confirmNoMedication({
+      encounterId: detail.encounter.id,
+      encounterVersion: detail.encounter.versionId,
+      expectedDraftVersion: state?.draftVersion ?? 0,
+    }, newIdempotencyKey()),
+    onError: onRefresh,
+    onSuccess: onRefresh,
+  })
+  const withdraw = useMutation({
+    mutationFn: () => {
+      if (prescription === undefined) throw new Error(messages.consultationUnavailable)
+      return withdrawPrescription({
+        expectedPrescriptionVersion: prescription.version,
+        medicationRequests: prescription.items.map(item => ({
+          id: item.medicationRequestId,
+          version: item.medicationRequestVersion,
+        })),
+        prescriptionId: prescription.id,
+      }, newIdempotencyKey())
+    },
+    onError: onRefresh,
+    onSuccess: onRefresh,
+  })
+  const usedCatalogItemIds = new Set(items.map(item => item.catalogItemId))
+  const canCombineWithCurrentItems = (
+    candidate: ClinicalCatalog['medications'][number],
+    ignoredIndex?: number,
+  ) => items.every((item, index) => {
+    if (index === ignoredIndex || item.catalogItemId === candidate.id) return true
+    const selected = catalog.find(medication => medication.id === item.catalogItemId)
+    return selected?.allowedCombinationIds.includes(candidate.id) === true
+      && candidate.allowedCombinationIds.includes(item.catalogItemId)
+  })
+  const addMedication = () => {
+    const nextMedication = catalog.find(candidate => (
+      !usedCatalogItemIds.has(candidate.id) && canCombineWithCurrentItems(candidate)
+    ))
+    if (nextMedication === undefined) return
+    setItems(current => [
+      ...current,
+      createPrescriptionDraftLine(nextMedication, globalThis.crypto.randomUUID()),
+    ])
+    setDirty(true)
+  }
+  const updateItem = (index: number, update: Partial<PrescriptionDraftLine>) => {
+    setItems(current => current.map((item, itemIndex) => (
+      itemIndex === index ? { ...item, ...update } : item
+    )))
+    setDirty(true)
+  }
+  const canAddMedication = items.length < 8 && catalog.some(candidate => (
+    !usedCatalogItemIds.has(candidate.id) && canCombineWithCurrentItems(candidate)
+  ))
+
+  return (
+    <section aria-labelledby="medication-conclusion-heading" className="flex flex-col gap-4 border-t pt-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold" id="medication-conclusion-heading">
+          {messages.medicationConclusion}
+        </h3>
+        {state === undefined ? null : <Badge variant="outline">{messages.documentVersion} {state.draftVersion}</Badge>}
+      </div>
+
+      {prescription === undefined ? null : (
+        <div className="flex flex-col gap-3">
+          <Alert>
+            {prescription.status === 'withdrawn'
+              ? <RotateCcwIcon aria-hidden="true" />
+              : <PillIcon aria-hidden="true" />}
+            <AlertTitle>
+              {prescription.status === 'signed'
+                ? messages.prescriptionIssued
+                : prescription.status === 'withdrawn'
+                  ? messages.prescriptionWithdrawn
+                  : prescriptionStatusLabel(prescription.status, messages)}
+            </AlertTitle>
+            <AlertDescription>
+              {messages.prescriptionNumber} {prescription.number} · {formatClinicalDocumentTime(prescription.authoredAt, locale)}
+            </AlertDescription>
+          </Alert>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted-foreground">{messages.prescriptionStatus}</span>
+              <Badge variant="secondary">{prescriptionStatusLabel(prescription.status, messages)}</Badge>
+            </div>
+            {prescription.status === 'signed' || prescription.status === 'paid' ? (
+              <AlertDialog>
+                <AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" />}>
+                  <RotateCcwIcon data-icon="inline-start" />{messages.withdrawPrescription}
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{messages.withdrawPrescriptionTitle}</AlertDialogTitle>
+                    <AlertDialogDescription>{messages.withdrawPrescriptionDescription}</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
+                    <AlertDialogAction disabled={withdraw.isPending} onClick={() => withdraw.mutate()}>
+                      <RotateCcwIcon data-icon="inline-start" />{messages.confirmWithdrawal}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            ) : null}
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{messages.medication}</TableHead>
+                <TableHead>{messages.dose}</TableHead>
+                <TableHead>{messages.frequency}</TableHead>
+                <TableHead>{messages.course}</TableHead>
+                <TableHead>{messages.quantity}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {prescription.items.map(item => (
+                <TableRow key={item.medicationRequestId}>
+                  <TableCell className="font-medium">{item.display}</TableCell>
+                  <TableCell>{item.doseText}</TableCell>
+                  <TableCell>{item.frequencyCode}</TableCell>
+                  <TableCell>{item.courseDays} {messages.days}</TableCell>
+                  <TableCell>{item.quantity}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          {withdraw.error === null ? null : (
+            <ErrorAlert
+              message={getWorkspaceErrorMessage(withdraw.error, messages)}
+              title={getWorkspaceErrorTitle(withdraw.error, messages, messages.operationFailed)}
+            />
+          )}
+        </div>
+      )}
+
+      {noMedicationConclusion === undefined ? null : (
+        <Alert>
+          <CircleXIcon aria-hidden="true" />
+          <AlertTitle>{messages.noMedicationConfirmed}</AlertTitle>
+          <AlertDescription>
+            {messages.authoredAt} · {formatClinicalDocumentTime(noMedicationConclusion.authoredAt, locale)}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {noMedicationConclusion !== undefined || hasActivePrescription ? null : (
+        <Field>
+          <FieldLabel id="medication-conclusion-mode-label">{messages.medicationConclusionMode}</FieldLabel>
+          <ToggleGroup
+            aria-labelledby="medication-conclusion-mode-label"
+            onValueChange={value => {
+              const selectedMode = value[0]
+              if (selectedMode === 'prescription' || selectedMode === 'no-medication') {
+                setMode(selectedMode)
+              }
+            }}
+            size="sm"
+            spacing={2}
+            value={[mode]}
+            variant="outline"
+          >
+            <ToggleGroupItem value="prescription">{messages.prescriptionMode}</ToggleGroupItem>
+            <ToggleGroupItem value="no-medication">{messages.noMedicationMode}</ToggleGroupItem>
+          </ToggleGroup>
+        </Field>
+      )}
+
+      {noMedicationConclusion === undefined
+        && !hasActivePrescription
+        && mode === 'prescription'
+        && prescription === undefined ? (
+          <form
+            onSubmit={event => {
+              event.preventDefault()
+              saveDraft.mutate()
+            }}
+          >
+            <FieldGroup>
+              <div className="flex justify-end">
+                <Button disabled={!canAddMedication} onClick={addMedication} size="sm" type="button" variant="outline">
+                  <PlusIcon data-icon="inline-start" />{messages.addMedication}
+                </Button>
+              </div>
+              {items.map((item, index) => {
+                const suffix = index === 0 ? '' : ` ${index + 1}`
+                const selectedMedication = catalog.find(medication => medication.id === item.catalogItemId)
+                const medicationItems = catalog
+                  .filter(candidate => (
+                    candidate.id === item.catalogItemId
+                    || (!usedCatalogItemIds.has(candidate.id) && canCombineWithCurrentItems(candidate, index))
+                  ))
+                  .map(medication => ({
+                    label: locale === 'zh-CN' ? medication.nameZh : medication.nameEn,
+                    value: medication.id,
+                  }))
+                const doseItems = selectedMedication?.allowedDoseTexts.map(value => ({ label: value, value })) ?? []
+                const frequencyItems = selectedMedication?.allowedFrequencyCodes.map(value => ({ label: value, value })) ?? []
+                const courseItems = selectedMedication?.allowedCourseDays.map(value => ({
+                  label: `${value} ${messages.days}`,
+                  value: String(value),
+                })) ?? []
+                const quantityItems = selectedMedication?.allowedQuantities.map(value => ({
+                  label: String(value),
+                  value: String(value),
+                })) ?? []
+                return (
+                  <FieldSet className="border-b pb-4" key={item.key}>
+                    <FieldLegend variant="label">{messages.medication} {index + 1}</FieldLegend>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(12rem,1.4fr)_minmax(7rem,0.8fr)_minmax(7rem,0.8fr)_minmax(6rem,0.7fr)_minmax(6rem,0.7fr)_auto]">
+                      <Field>
+                        <FieldLabel htmlFor={`prescription-medication-${index}`}>{messages.medication}{suffix}</FieldLabel>
+                        <WorkspaceSelect
+                          id={`prescription-medication-${index}`}
+                          items={medicationItems}
+                          onValueChange={value => {
+                            const medication = catalog.find(candidate => candidate.id === value)
+                            if (medication === undefined) return
+                            updateItem(index, createPrescriptionDraftLine(medication, item.key))
+                          }}
+                          value={item.catalogItemId}
+                        />
+                      </Field>
+                      <Field>
+                        <FieldLabel htmlFor={`prescription-dose-${index}`}>{messages.dose}{suffix}</FieldLabel>
+                        <WorkspaceSelect
+                          id={`prescription-dose-${index}`}
+                          items={doseItems}
+                          onValueChange={value => {
+                            if (value !== null) updateItem(index, { doseText: value })
+                          }}
+                          value={item.doseText}
+                        />
+                      </Field>
+                      <Field>
+                        <FieldLabel htmlFor={`prescription-frequency-${index}`}>{messages.frequency}{suffix}</FieldLabel>
+                        <WorkspaceSelect
+                          id={`prescription-frequency-${index}`}
+                          items={frequencyItems}
+                          onValueChange={value => {
+                            if (value !== null) updateItem(index, { frequencyCode: value })
+                          }}
+                          value={item.frequencyCode}
+                        />
+                      </Field>
+                      <Field>
+                        <FieldLabel htmlFor={`prescription-course-${index}`}>{messages.course}{suffix}</FieldLabel>
+                        <WorkspaceSelect
+                          id={`prescription-course-${index}`}
+                          items={courseItems}
+                          onValueChange={value => {
+                            if (value !== null) updateItem(index, { courseDays: Number(value) })
+                          }}
+                          value={String(item.courseDays)}
+                        />
+                      </Field>
+                      <Field>
+                        <FieldLabel htmlFor={`prescription-quantity-${index}`}>{messages.quantity}{suffix}</FieldLabel>
+                        <WorkspaceSelect
+                          id={`prescription-quantity-${index}`}
+                          items={quantityItems}
+                          onValueChange={value => {
+                            if (value !== null) updateItem(index, { quantity: Number(value) })
+                          }}
+                          value={String(item.quantity)}
+                        />
+                      </Field>
+                      <div className="flex items-end">
+                        <Button
+                          aria-label={`${messages.removeMedication}${suffix}`}
+                          disabled={items.length === 1}
+                          onClick={() => {
+                            setItems(current => current.filter((_, itemIndex) => itemIndex !== index))
+                            setDirty(true)
+                          }}
+                          size="icon"
+                          title={`${messages.removeMedication}${suffix}`}
+                          type="button"
+                          variant="ghost"
+                        >
+                          <Trash2Icon />
+                        </Button>
+                      </div>
+                    </div>
+                  </FieldSet>
+                )
+              })}
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button disabled={saveDraft.isPending || items.length === 0} type="submit" variant="outline">
+                  <ClipboardPenIcon data-icon="inline-start" />{messages.savePrescriptionDraft}
+                </Button>
+                {state?.draft === undefined ? null : (
+                  <>
+                    <Button disabled={removeDraft.isPending || issue.isPending} onClick={() => removeDraft.mutate()} type="button" variant="ghost">
+                      <Trash2Icon data-icon="inline-start" />{messages.deletePrescriptionDraft}
+                    </Button>
+                    <Button disabled={dirty || issue.isPending || saveDraft.isPending} onClick={() => issue.mutate()} type="button">
+                      <PillIcon data-icon="inline-start" />{messages.issuePrescription}
+                    </Button>
+                  </>
+                )}
+              </div>
+              {saveDraft.isSuccess && state?.draft !== undefined ? (
+                <Alert>
+                  <CheckIcon aria-hidden="true" />
+                  <AlertTitle>{messages.prescriptionDraftSaved}</AlertTitle>
+                </Alert>
+              ) : null}
+              {saveDraft.error === null ? null : (
+                <ErrorAlert
+                  message={getWorkspaceErrorMessage(saveDraft.error, messages)}
+                  title={getWorkspaceErrorTitle(saveDraft.error, messages, messages.operationFailed)}
+                />
+              )}
+              {removeDraft.error === null ? null : (
+                <ErrorAlert
+                  message={getWorkspaceErrorMessage(removeDraft.error, messages)}
+                  title={getWorkspaceErrorTitle(removeDraft.error, messages, messages.operationFailed)}
+                />
+              )}
+              {issue.error === null ? null : (
+                <ErrorAlert
+                  message={getPrescriptionIssueErrorMessage(issue.error, messages)}
+                  title={getWorkspaceErrorTitle(issue.error, messages, messages.operationFailed)}
+                />
+              )}
+            </FieldGroup>
+          </form>
+        ) : null}
+
+      {noMedicationConclusion === undefined
+        && !hasActivePrescription
+        && mode === 'no-medication' ? (
+          <div className="flex flex-col items-end gap-3">
+            <Button disabled={confirmNone.isPending} onClick={() => confirmNone.mutate()} type="button">
+              <CircleXIcon data-icon="inline-start" />{messages.confirmNoMedication}
+            </Button>
+            {confirmNone.error === null ? null : (
+              <ErrorAlert
+                message={getWorkspaceErrorMessage(confirmNone.error, messages)}
+                title={getWorkspaceErrorTitle(confirmNone.error, messages, messages.operationFailed)}
+              />
+            )}
+          </div>
+        ) : null}
+    </section>
+  )
+}
+
+function prescriptionStatusLabel(
+  status: 'dispensed' | 'paid' | 'signed' | 'withdrawn',
+  messages: ReturnType<typeof getWorkspaceMessages>,
+): string {
+  if (status === 'signed') return messages.prescriptionStatus_signed
+  if (status === 'paid') return messages.prescriptionStatus_paid
+  if (status === 'dispensed') return messages.prescriptionStatus_dispensed
+  return messages.prescriptionStatus_withdrawn
+}
+
+function getPrescriptionIssueErrorMessage(
+  error: Error,
+  messages: ReturnType<typeof getWorkspaceMessages>,
+): string {
+  if (
+    error instanceof ApiClientError
+    && (error.code === 'CATALOG_CONFLICT' || error.code === 'WORKFLOW_CONFLICT')
+  ) {
+    return messages.prescriptionIssueConflictDescription
+  }
+  return getWorkspaceErrorMessage(error, messages)
 }
 
 interface MedicationDraftLine {

@@ -507,8 +507,8 @@ export class ScenarioService {
       ['lab-fever-panel', 'laboratory', 'FEVER-PANEL', '发热检验组合', 'Fever laboratory panel', 6800, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[]}'],
       ['lab-cbc', 'laboratory', 'CBC', '血常规', 'Complete blood count', 2500, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[]}'],
       ['lab-crp', 'laboratory', 'CRP', 'C 反应蛋白', 'C-reactive protein', 4300, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[]}'],
-      ['medication-oseltamivir', 'medication', 'OSELTAMIVIR', '磷酸奥司他韦胶囊', 'Oseltamivir phosphate capsules', 760, '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"]}'],
-      ['medication-acetaminophen', 'medication', 'ACETAMINOPHEN', '对乙酰氨基酚片', 'Acetaminophen tablets', 120, '{"dose":"0.5 g","frequency":"PRN","allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"]}'],
+      ['medication-oseltamivir', 'medication', 'OSELTAMIVIR', '磷酸奥司他韦胶囊', 'Oseltamivir phosphate capsules', 760, '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"],"allowedCourseDays":[5],"allowedDiagnosisCatalogItemIds":["diagnosis-influenza"],"allowedQuantities":[10],"defaultCourseDays":5,"defaultQuantity":10}'],
+      ['medication-acetaminophen', 'medication', 'ACETAMINOPHEN', '对乙酰氨基酚片', 'Acetaminophen tablets', 120, '{"dose":"0.5 g","frequency":"PRN","allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"],"allowedCourseDays":[3],"allowedDiagnosisCatalogItemIds":["diagnosis-influenza","diagnosis-acute-upper-respiratory-infection","diagnosis-fever"],"allowedQuantities":[6],"defaultCourseDays":3,"defaultQuantity":6}'],
     ] as const
     for (const item of catalog) {
       insertCatalog.run(input.workspaceId, input.epoch, ...item)

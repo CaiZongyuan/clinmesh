@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
-import type { DiagnosisDraftEntry, DiagnosisState, LaboratoryRequest } from '@clinmesh/contracts/his'
+import type { DiagnosisDraftEntry, DiagnosisState, DoctorCaseDetail, LaboratoryRequest } from '@clinmesh/contracts/his'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebApp } from './web-app.tsx'
@@ -2097,10 +2097,14 @@ describe('role workspaces', () => {
           laboratory: [],
           medications: [{
             allowedCombinationIds: [],
+            allowedCourseDays: [5],
             allowedDoseTexts: ['75 mg'],
             allowedFrequencyCodes: ['BID'],
+            allowedQuantities: [10],
+            defaultCourseDays: 5,
             defaultDoseText: '75 mg',
             defaultFrequencyCode: 'BID',
+            defaultQuantity: 10,
             id: 'medication-oseltamivir',
             nameEn: 'Oseltamivir capsules',
             nameZh: '磷酸奥司他韦胶囊',
@@ -2508,6 +2512,324 @@ describe('role workspaces', () => {
     expect(await screen.findByText('必须且只能选择一个主诊断。')).toBeTruthy()
   })
 
+  it('saves and issues a controlled prescription, withdraws it, and confirms no medication', async () => {
+    const patient = {
+      birthDate: '1990-05-10',
+      gender: 'male',
+      id: 'patient-prescription-conclusion',
+      identifier: 'CM-SYN-PRESCRIPTION-001',
+      name: '合成患者周明',
+      synthetic: true,
+      versionId: '1',
+    }
+    const draftItem = {
+      catalogItemId: 'medication-oseltamivir',
+      courseDays: 5,
+      doseText: '75 mg',
+      frequencyCode: 'BID',
+      quantity: 10,
+    }
+    const issuedItem = {
+      ...draftItem,
+      display: '磷酸奥司他韦胶囊',
+      medicationRequestId: 'medication-request-oseltamivir-1',
+      medicationRequestVersion: '1',
+    }
+    const issuedPrescription = {
+      authoredAt: '2026-08-24T09:00:00+08:00',
+      authoredByPractitionerRoleId: 'practitioner-role-outpatient-doctor',
+      id: 'prescription-independent-1',
+      items: [issuedItem],
+      number: 'CM-RX-20260824-0001',
+      status: 'signed' as const,
+      version: 1,
+    }
+    const withdrawal = {
+      id: 'prescription-withdrawal-1',
+      prescriptionId: issuedPrescription.id,
+      version: 1,
+      withdrawnAt: '2026-08-24T09:00:00+08:00',
+      withdrawnByActorId: 'actor-outpatient-doctor',
+      withdrawnByPractitionerRoleId: 'practitioner-role-outpatient-doctor',
+    }
+    const noMedication = {
+      authoredAt: '2026-08-24T09:00:00+08:00',
+      authoredByActorId: 'actor-outpatient-doctor',
+      authoredByPractitionerRoleId: 'practitioner-role-outpatient-doctor',
+      id: 'no-medication-conclusion-1',
+      version: 1,
+    }
+    let medicationConclusion: DoctorCaseDetail['medicationConclusion']
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({
+          diagnoses: [],
+          laboratory: [],
+          medications: [{
+            allowedCombinationIds: ['medication-oseltamivir'],
+            allowedCourseDays: [5],
+            allowedDoseTexts: ['75 mg'],
+            allowedFrequencyCodes: ['BID'],
+            allowedQuantities: [10],
+            defaultCourseDays: 5,
+            defaultDoseText: '75 mg',
+            defaultFrequencyCode: 'BID',
+            defaultQuantity: 10,
+            id: 'medication-oseltamivir',
+            nameEn: 'Oseltamivir phosphate capsules',
+            nameZh: '磷酸奥司他韦胶囊',
+            priceFen: 1_680,
+            version: 1,
+          }],
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        return Response.json({
+          items: [{
+            caseId: 'case-prescription-conclusion',
+            encounterId: 'encounter-prescription-conclusion',
+            encounterVersion: '6',
+            patient,
+            presentation: doctorPresentation,
+            status: 'revisit-draft',
+            taskId: 'task-prescription-conclusion',
+            taskVersion: '2',
+          }],
+          ...pagination(1),
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-prescription-conclusion') {
+        return Response.json({
+          allergies: [],
+          caseId: 'case-prescription-conclusion',
+          consultation: { questions: [], records: [], version: 1 },
+          diagnosis: {
+            confirmation: {
+              confirmedAt: '2026-08-24T09:00:00+08:00',
+              entries: [{
+                catalogItemId: 'diagnosis-influenza',
+                code: 'J10.1',
+                conditionId: 'condition-influenza-1',
+                conditionVersion: '1',
+                display: '流感伴其他呼吸道表现',
+                role: 'primary',
+                system: 'http://hl7.org/fhir/sid/icd-10',
+              }],
+              id: 'diagnosis-confirmation-prescription-1',
+              provenanceId: 'provenance-diagnosis-prescription-1',
+            },
+            draftVersion: 2,
+          },
+          encounter: {
+            id: 'encounter-prescription-conclusion',
+            status: 'in-progress',
+            versionId: '6',
+          },
+          ...(medicationConclusion === undefined ? {} : { medicationConclusion }),
+          patient,
+          presentation: doctorPresentation,
+          priorFacts: [],
+          status: 'revisit-draft',
+          taskId: 'task-prescription-conclusion',
+          taskVersion: '2',
+        })
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-prescription-conclusion/prescription/draft') {
+        expect(init?.method).toBe('PUT')
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedVersions: { 'Encounter/encounter-prescription-conclusion': '6' },
+          input: { expectedDraftVersion: 0, items: [draftItem] },
+        })
+        medicationConclusion = { draft: { items: [draftItem] }, draftVersion: 1 }
+        return Response.json(commandResponse({ draftVersion: 1 }))
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-prescription-conclusion/prescription/actions/issue') {
+        expect(init?.method).toBe('POST')
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedVersions: { 'Encounter/encounter-prescription-conclusion': '6' },
+          input: { expectedDraftVersion: 1 },
+        })
+        medicationConclusion = { draftVersion: 2, prescription: issuedPrescription }
+        return Response.json(commandResponse({
+          draftVersion: 2,
+          prescription: issuedPrescription,
+        }))
+      }
+      if (url.pathname === '/api/his/v1/prescriptions/prescription-independent-1/actions/withdraw') {
+        expect(init?.method).toBe('POST')
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedVersions: { 'MedicationRequest/medication-request-oseltamivir-1': '1' },
+          input: { expectedPrescriptionVersion: 1 },
+        })
+        medicationConclusion = {
+          draftVersion: 2,
+          prescription: {
+            ...issuedPrescription,
+            status: 'withdrawn',
+            version: 2,
+            withdrawal,
+          },
+        }
+        return Response.json(commandResponse({
+          medicationRequests: [{ id: issuedItem.medicationRequestId, version: '2' }],
+          prescriptionId: issuedPrescription.id,
+          prescriptionVersion: 2,
+          status: 'withdrawn',
+          withdrawal,
+        }))
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-prescription-conclusion/medication-conclusion/actions/confirm-no-medication') {
+        expect(init?.method).toBe('POST')
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedVersions: { 'Encounter/encounter-prescription-conclusion': '6' },
+          input: { expectedDraftVersion: 2 },
+        })
+        medicationConclusion = {
+          ...medicationConclusion,
+          draftVersion: 3,
+          noMedication,
+        }
+        return Response.json(commandResponse({ draftVersion: 3, noMedication }))
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    expect((await screen.findByRole('combobox', { name: '药品' })).textContent).toContain('磷酸奥司他韦胶囊')
+    expect(screen.getByRole('combobox', { name: '剂量' }).textContent).toContain('75 mg')
+    expect(screen.getByRole('combobox', { name: '频次' }).textContent).toContain('BID')
+    expect(screen.getByRole('combobox', { name: '疗程' }).textContent).toContain('5 天')
+    expect(screen.getByRole('combobox', { name: '数量' }).textContent).toContain('10')
+    await user.click(screen.getByRole('button', { name: '保存处方草稿' }))
+
+    expect(await screen.findByText('处方草稿已保存')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '正式开具处方' }))
+    expect(await screen.findByText('处方已正式开具')).toBeTruthy()
+    expect(screen.getByText(/CM-RX-20260824-0001/)).toBeTruthy()
+    expect(screen.queryByRole('combobox', { name: '药品' })).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: '撤回处方' }))
+    const dialog = await screen.findByRole('alertdialog', { name: '确认撤回处方' })
+    await user.click(within(dialog).getByRole('button', { name: '确认撤回' }))
+    expect(await screen.findByText('处方已撤回')).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: '无需用药' }))
+    await user.click(screen.getByRole('button', { name: '确认无需用药' }))
+    expect(await screen.findByText('已确认无需用药')).toBeTruthy()
+  })
+
+  it('keeps the prescription draft visible when controlled issuance is rejected', async () => {
+    const patient = {
+      birthDate: '1990-05-10',
+      gender: 'male',
+      id: 'patient-prescription-conflict',
+      identifier: 'CM-SYN-PRESCRIPTION-002',
+      name: '合成患者周明',
+      synthetic: true,
+      versionId: '1',
+    }
+    const draftItem = {
+      catalogItemId: 'medication-oseltamivir',
+      courseDays: 5,
+      doseText: '75 mg',
+      frequencyCode: 'BID',
+      quantity: 10,
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({
+          diagnoses: [],
+          laboratory: [],
+          medications: [{
+            allowedCombinationIds: ['medication-oseltamivir'],
+            allowedCourseDays: [5],
+            allowedDoseTexts: ['75 mg'],
+            allowedFrequencyCodes: ['BID'],
+            allowedQuantities: [10],
+            defaultCourseDays: 5,
+            defaultDoseText: '75 mg',
+            defaultFrequencyCode: 'BID',
+            defaultQuantity: 10,
+            id: 'medication-oseltamivir',
+            nameEn: 'Oseltamivir phosphate capsules',
+            nameZh: '磷酸奥司他韦胶囊',
+            priceFen: 1_680,
+            version: 1,
+          }],
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        return Response.json({
+          items: [{
+            caseId: 'case-prescription-conflict',
+            encounterId: 'encounter-prescription-conflict',
+            encounterVersion: '6',
+            patient,
+            presentation: doctorPresentation,
+            status: 'revisit-draft',
+            taskId: 'task-prescription-conflict',
+            taskVersion: '2',
+          }],
+          ...pagination(1),
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-prescription-conflict') {
+        return Response.json({
+          allergies: [{ code: 'OSELTAMIVIR', display: '磷酸奥司他韦过敏' }],
+          caseId: 'case-prescription-conflict',
+          consultation: { questions: [], records: [], version: 1 },
+          encounter: {
+            id: 'encounter-prescription-conflict',
+            status: 'in-progress',
+            versionId: '6',
+          },
+          medicationConclusion: { draft: { items: [draftItem] }, draftVersion: 1 },
+          patient,
+          presentation: doctorPresentation,
+          priorFacts: [],
+          status: 'revisit-draft',
+          taskId: 'task-prescription-conflict',
+          taskVersion: '2',
+        })
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-prescription-conflict/prescription/actions/issue') {
+        expect(init?.method).toBe('POST')
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedVersions: { 'Encounter/encounter-prescription-conflict': '6' },
+          input: { expectedDraftVersion: 1 },
+        })
+        return Response.json({
+          error: {
+            code: 'CATALOG_CONFLICT',
+            message: 'The confirmed diagnosis does not allow medication-oseltamivir',
+          },
+        }, { status: 409 })
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('button', { name: '正式开具处方' }))
+    expect(await screen.findByText('当前诊断、过敏信息、目录或处方状态不允许正式开具，请检查后重试。')).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: '药品' }).textContent).toContain('磷酸奥司他韦胶囊')
+    expect(screen.getByRole('combobox', { name: '剂量' }).textContent).toContain('75 mg')
+    expect(screen.getByRole('combobox', { name: '频次' }).textContent).toContain('BID')
+    expect(screen.getByRole('combobox', { name: '疗程' }).textContent).toContain('5 天')
+    expect(screen.getByRole('combobox', { name: '数量' }).textContent).toContain('10')
+  })
+
   it('previews clinical signing and completes the Encounter before medication payment', async () => {
     let signed = false
     const patient = {
@@ -2536,10 +2858,14 @@ describe('role workspaces', () => {
           laboratory: [],
           medications: [{
             allowedCombinationIds: [],
+            allowedCourseDays: [5],
             allowedDoseTexts: ['75 mg'],
             allowedFrequencyCodes: ['BID'],
+            allowedQuantities: [10],
+            defaultCourseDays: 5,
             defaultDoseText: '75 mg',
             defaultFrequencyCode: 'BID',
+            defaultQuantity: 10,
             id: 'medication-oseltamivir',
             nameEn: 'Oseltamivir capsules',
             nameZh: '磷酸奥司他韦胶囊',

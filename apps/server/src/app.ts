@@ -4,15 +4,20 @@ import {
   acknowledgeLaboratoryReportRequestSchema,
   cancelLaboratoryRequestRequestSchema,
   confirmDiagnosisRequestSchema,
+  confirmNoMedicationRequestSchema,
   correctLaboratoryReportRequestSchema,
   deleteLaboratoryRequestDraftRequestSchema,
+  deletePrescriptionDraftRequestSchema,
   issueLaboratoryRequestRequestSchema,
+  issuePrescriptionRequestSchema,
   previewClinicalDocumentSignRequestSchema,
   reviseClinicalDocumentRequestSchema,
   saveClinicalDocumentDraftRequestSchema,
   saveDiagnosisDraftRequestSchema,
   saveLaboratoryRequestDraftRequestSchema,
+  savePrescriptionDraftRequestSchema,
   signClinicalDocumentRequestSchema,
+  withdrawPrescriptionRequestSchema,
 } from '@clinmesh/contracts/his'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono, type Context } from 'hono'
@@ -469,6 +474,67 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.put('/api/his/v1/encounters/:encounterId/prescription/draft', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = savePrescriptionDraftRequestSchema.parse(await context.req.json())
+        return context.json(workflow.savePrescriptionDraft({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          items: body.input.items,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.delete('/api/his/v1/encounters/:encounterId/prescription/draft', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = deletePrescriptionDraftRequestSchema.parse(await context.req.json())
+        return context.json(workflow.deletePrescriptionDraft({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/prescription/actions/issue', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = issuePrescriptionRequestSchema.parse(await context.req.json())
+        return context.json(workflow.issuePrescription({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/medication-conclusion/actions/confirm-no-medication', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = confirmNoMedicationRequestSchema.parse(await context.req.json())
+        return context.json(workflow.confirmNoMedication({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
     app.put('/api/his/v1/encounters/:encounterId/clinical-document/draft', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
@@ -869,6 +935,21 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           expectedVersions: body.expectedVersions,
           idempotencyKey: idempotencyKey(context),
           lotSelections: body.input.lotSelections,
+          prescriptionId: context.req.param('prescriptionId'),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/prescriptions/:prescriptionId/actions/withdraw', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = withdrawPrescriptionRequestSchema.parse(await context.req.json())
+        return context.json(workflow.withdrawPrescription({
+          context: await actor(context),
+          expectedPrescriptionVersion: body.input.expectedPrescriptionVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
           prescriptionId: context.req.param('prescriptionId'),
         }))
       } catch (error) {

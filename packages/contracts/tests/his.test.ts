@@ -1,11 +1,60 @@
 import { describe, expect, it } from 'vitest'
 import {
+  clinicalCatalogSchema,
   laboratoryRequestSchema,
   laboratoryRequestStateSchema,
   laboratoryResultSchema,
+  prescriptionDraftContentSchema,
 } from '../src/his.ts'
 
 describe('HIS contracts', () => {
+  it('requires controlled course and quantity values in medication drafts', () => {
+    const medication = {
+      allowedCombinationIds: ['medication-acetaminophen'],
+      allowedCourseDays: [5],
+      allowedDoseTexts: ['75 mg'],
+      allowedFrequencyCodes: ['BID'],
+      allowedQuantities: [10],
+      defaultCourseDays: 5,
+      defaultDoseText: '75 mg',
+      defaultFrequencyCode: 'BID',
+      defaultQuantity: 10,
+      id: 'medication-oseltamivir',
+      nameEn: 'Oseltamivir phosphate capsules',
+      nameZh: '磷酸奥司他韦胶囊',
+      priceFen: 760,
+      version: 1,
+    }
+    expect(clinicalCatalogSchema.safeParse({
+      diagnoses: [],
+      laboratory: [],
+      medications: [medication],
+    }).success).toBe(true)
+    const { allowedCourseDays: _allowedCourseDays, ...missingCourseControl } = medication
+    expect(clinicalCatalogSchema.safeParse({
+      diagnoses: [],
+      laboratory: [],
+      medications: [missingCourseControl],
+    }).success).toBe(false)
+    expect(prescriptionDraftContentSchema.safeParse({
+      items: [{
+        catalogItemId: medication.id,
+        courseDays: 5,
+        doseText: '75 mg',
+        frequencyCode: 'BID',
+        quantity: 10,
+      }],
+    }).success).toBe(true)
+    expect(prescriptionDraftContentSchema.safeParse({
+      items: [{
+        catalogItemId: medication.id,
+        doseText: '75 mg',
+        frequencyCode: 'BID',
+        quantity: 10,
+      }],
+    }).success).toBe(false)
+  })
+
   it('rejects unsupported catalog items in a laboratory request draft', () => {
     expect(laboratoryRequestStateSchema.safeParse({
       draft: {

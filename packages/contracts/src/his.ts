@@ -147,10 +147,14 @@ export const clinicalCatalogSchema = z.object({
   })),
   medications: z.array(catalogItemSchema.extend({
     allowedCombinationIds: z.array(z.string().min(1)),
+    allowedCourseDays: z.array(z.number().int().positive()).min(1),
     allowedDoseTexts: z.array(z.string().min(1)).min(1),
     allowedFrequencyCodes: z.array(z.string().min(1)).min(1),
+    allowedQuantities: z.array(z.number().int().positive()).min(1),
+    defaultCourseDays: z.number().int().positive(),
     defaultDoseText: z.string().min(1),
     defaultFrequencyCode: z.string().min(1),
+    defaultQuantity: z.number().int().positive(),
   })),
 })
 
@@ -210,6 +214,119 @@ export const diagnosisStateSchema = z.object({
   confirmation: diagnosisConfirmationSchema.optional(),
   draft: diagnosisDraftContentSchema.optional(),
   draftVersion: z.number().int().positive(),
+}).strict()
+
+export const prescriptionDraftItemSchema = z.object({
+  catalogItemId: z.string().min(1),
+  courseDays: z.number().int().min(1).max(30),
+  doseText: z.string().trim().min(1).max(120),
+  frequencyCode: z.string().trim().min(1).max(32),
+  quantity: z.number().int().min(1).max(1_000),
+}).strict()
+
+export const prescriptionDraftContentSchema = z.object({
+  items: z.array(prescriptionDraftItemSchema).min(1).max(8),
+}).strict()
+
+export const savePrescriptionDraftRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: prescriptionDraftContentSchema.extend({
+    expectedDraftVersion: z.number().int().nonnegative(),
+  }),
+}).strict()
+
+export const deletePrescriptionDraftRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: z.object({
+    expectedDraftVersion: z.number().int().positive(),
+  }).strict(),
+}).strict()
+
+export const prescriptionDraftResponseSchema = commandResponseSchema(z.object({
+  draftVersion: z.number().int().positive(),
+}).strict())
+
+export const issuedPrescriptionItemSchema = prescriptionDraftItemSchema.extend({
+  display: z.string().min(1),
+  medicationRequestId: z.string().min(1),
+  medicationRequestVersion: z.string().regex(/^\d+$/),
+}).strict()
+
+export const prescriptionWithdrawalSchema = z.object({
+  id: z.string().min(1),
+  prescriptionId: z.string().min(1),
+  version: z.number().int().positive(),
+  withdrawnAt: z.iso.datetime({ offset: true }),
+  withdrawnByActorId: z.string().min(1),
+  withdrawnByPractitionerRoleId: z.string().min(1),
+}).strict()
+
+export const issuedPrescriptionSchema = z.object({
+  authoredAt: z.iso.datetime({ offset: true }),
+  authoredByPractitionerRoleId: z.string().min(1),
+  id: z.string().min(1),
+  items: z.array(issuedPrescriptionItemSchema).min(1).max(8),
+  number: z.string().min(1),
+  status: z.enum(['dispensed', 'paid', 'signed', 'withdrawn']),
+  version: z.number().int().positive(),
+  withdrawal: prescriptionWithdrawalSchema.optional(),
+}).strict()
+
+export const issuePrescriptionRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: z.object({
+    expectedDraftVersion: z.number().int().positive(),
+  }).strict(),
+}).strict()
+
+export const issuePrescriptionResponseSchema = commandResponseSchema(z.object({
+  draftVersion: z.number().int().positive(),
+  prescription: issuedPrescriptionSchema,
+}).strict())
+
+export const noMedicationConclusionSchema = z.object({
+  authoredAt: z.iso.datetime({ offset: true }),
+  authoredByActorId: z.string().min(1),
+  authoredByPractitionerRoleId: z.string().min(1),
+  id: z.string().min(1),
+  version: z.number().int().positive(),
+}).strict()
+
+export const confirmNoMedicationRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: z.object({
+    expectedDraftVersion: z.number().int().nonnegative(),
+  }).strict(),
+}).strict()
+
+export const confirmNoMedicationResponseSchema = commandResponseSchema(z.object({
+  draftVersion: z.number().int().positive(),
+  noMedication: noMedicationConclusionSchema,
+}).strict())
+
+export const withdrawPrescriptionRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: z.object({
+    expectedPrescriptionVersion: z.number().int().positive(),
+  }).strict(),
+}).strict()
+
+export const withdrawPrescriptionResponseSchema = commandResponseSchema(z.object({
+  medicationRequests: z.array(z.object({
+    id: z.string().min(1),
+    version: z.string().regex(/^\d+$/),
+  }).strict()).min(1),
+  prescriptionId: z.string().min(1),
+  prescriptionVersion: z.number().int().positive(),
+  status: z.literal('withdrawn'),
+  withdrawal: prescriptionWithdrawalSchema,
+}).strict())
+
+export const medicationConclusionStateSchema = z.object({
+  draft: prescriptionDraftContentSchema.optional(),
+  draftVersion: z.number().int().positive(),
+  noMedication: noMedicationConclusionSchema.optional(),
+  prescription: issuedPrescriptionSchema.optional(),
 }).strict()
 
 export const registrationCatalogSchema = z.object({
@@ -751,6 +868,7 @@ export const doctorCaseDetailSchema = z.object({
     versionId: z.string().regex(/^\d+$/),
   }),
   laboratoryRequests: laboratoryRequestStateSchema.optional(),
+  medicationConclusion: medicationConclusionStateSchema.optional(),
   patient: patientSummarySchema,
   presentation: clinicalPresentationSchema,
   priorFacts: z.array(priorFactSchema),
@@ -964,6 +1082,7 @@ export type ClinicalDocumentContent = z.infer<typeof clinicalDocumentContentSche
 export type DiagnosisDraftEntry = z.infer<typeof diagnosisDraftEntrySchema>
 export type DiagnosisConfirmation = z.infer<typeof diagnosisConfirmationSchema>
 export type DiagnosisState = z.infer<typeof diagnosisStateSchema>
+export type PrescriptionDraftItem = z.infer<typeof prescriptionDraftItemSchema>
 export type VirtualPatientList = z.infer<typeof virtualPatientListSchema>
 export type ClinicalCatalog = z.infer<typeof clinicalCatalogSchema>
 export type TriageQueueItem = z.infer<typeof triageQueueSchema>['items'][number]
