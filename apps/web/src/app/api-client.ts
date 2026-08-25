@@ -10,8 +10,10 @@ import {
   clinicalDocumentSignResponseSchema,
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
+  confirmDiagnosisResponseSchema,
   createPatientResponseSchema,
   clinicalCatalogSchema,
+  diagnosisDraftResponseSchema,
   doctorCaseDetailSchema,
   doctorQueueSchema,
   firstVisitDraftResponseSchema,
@@ -37,6 +39,7 @@ import {
   triageResponseSchema,
   virtualPatientListSchema,
   type ClinicalDocumentContent,
+  type DiagnosisDraftEntry,
   type LaboratoryRequestCatalogItemId,
   type ScenarioState,
   type SessionContext,
@@ -318,6 +321,42 @@ export function getDoctorCase(caseId: string, signal?: AbortSignal) {
     `/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}`,
     doctorCaseDetailSchema,
     signal,
+  )
+}
+
+export function saveDiagnosisDraft(input: {
+  encounterId: string
+  encounterVersion: string
+  entries: DiagnosisDraftEntry[]
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/diagnosis/draft`,
+    diagnosisDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: {
+        entries: input.entries,
+        expectedDraftVersion: input.expectedDraftVersion,
+      },
+    },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function confirmDiagnosis(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/diagnosis/actions/confirm`,
+    confirmDiagnosisResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey },
   )
 }
 

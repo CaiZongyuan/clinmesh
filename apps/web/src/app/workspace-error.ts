@@ -27,6 +27,9 @@ export function getWorkspaceErrorMessage(
   }
   if (error.code === 'INVALID_INPUT') return messages.invalidInputDescription
   if (error.code === 'CATALOG_CONFLICT') return messages.catalogConflictDescription
+  if (error.code === 'DIAGNOSIS_PRIMARY_REQUIRED') {
+    return messages.diagnosisPrimaryRequiredDescription
+  }
   if (error.code === 'DUPLICATE_PATIENT') return messages.duplicatePatientDescription
   if (error.code === 'LABORATORY_REQUEST_DUPLICATE') {
     return messages.laboratoryRequestDuplicateDescription

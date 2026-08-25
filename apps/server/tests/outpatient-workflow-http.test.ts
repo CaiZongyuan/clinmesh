@@ -20,6 +20,7 @@ import {
   clinicalDocumentSignResponseSchema,
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
+  confirmDiagnosisResponseSchema,
   correctLaboratoryReportResponseSchema,
   createPatientResponseSchema,
   deleteLaboratoryRequestDraftRequestSchema,
@@ -4574,6 +4575,427 @@ describe('outpatient workflow HTTP contract', () => {
       if (queueItem === undefined) await new Promise(resolve => setTimeout(resolve, 20))
     }
     expect(queueItem).toMatchObject({ caseId: testCase.caseId, status: 'awaiting-revisit' })
+  })
+
+  it('persists a controlled diagnosis draft without creating formal FHIR Conditions', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-diagnosis-draft-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+
+    const catalogResponse = await runtime.app.request('/api/his/v1/catalogs/clinical', {
+      headers: { cookie: doctorCookie },
+    })
+    expect(catalogResponse.status).toBe(200)
+    expect(await catalogResponse.json()).toMatchObject({
+      diagnoses: expect.arrayContaining([
+        expect.objectContaining({
+          code: 'J10.1',
+          id: 'diagnosis-influenza',
+          nameZh: '流感伴其他呼吸道表现，季节性流感病毒已标明',
+          system: 'http://hl7.org/fhir/sid/icd-10',
+          version: 1,
+        }),
+        expect.objectContaining({
+          code: 'J06.9',
+          id: 'diagnosis-acute-upper-respiratory-infection',
+          version: 1,
+        }),
+      ]),
+    })
+    const conditionSearchPath
+      = `/fhir/R5/Condition?patient=Patient/${started.patientId}&_total=accurate`
+    const conditionCountBefore = fhirBundleSchema.parse(await (
+      await runtime.app.request(conditionSearchPath, { headers: { cookie: doctorCookie } })
+    ).json()).total
+
+    const saveResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          input: {
+            entries: [{
+              catalogItemId: 'diagnosis-influenza',
+              note: '结合发热与甲型流感抗原结果。',
+              role: 'primary',
+            }, {
+              catalogItemId: 'diagnosis-acute-upper-respiratory-infection',
+              role: 'secondary',
+            }],
+            expectedDraftVersion: 0,
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+
+    expect(saveResponse.status).toBe(200)
+    expect(await saveResponse.json()).toMatchObject({
+      data: { draftVersion: 1 },
+      effects: [{
+        kind: 'created',
+        reference: expect.stringMatching(/^DiagnosisDraft\//),
+        versionId: '1',
+      }],
+    })
+    const restoredDetailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(restoredDetailResponse.status).toBe(200)
+    expect(await restoredDetailResponse.json()).toMatchObject({
+      diagnosis: {
+        draft: {
+          entries: [{
+            catalogItemId: 'diagnosis-influenza',
+            note: '结合发热与甲型流感抗原结果。',
+            role: 'primary',
+          }, {
+            catalogItemId: 'diagnosis-acute-upper-respiratory-infection',
+            role: 'secondary',
+          }],
+        },
+        draftVersion: 1,
+      },
+    })
+    const conditionCountAfter = fhirBundleSchema.parse(await (
+      await runtime.app.request(conditionSearchPath, { headers: { cookie: doctorCookie } })
+    ).json()).total
+    expect(conditionCountAfter).toBe(conditionCountBefore)
+  })
+
+  it('rejects a stale diagnosis draft version without overwriting the current draft', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-diagnosis-draft-cas-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const endpoint = `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const saveDraft = (catalogItemId: string, note: string, expectedDraftVersion: number) => (
+      runtime.app.request(endpoint, {
+        body: JSON.stringify({
+          expectedVersions,
+          input: {
+            entries: [{ catalogItemId, note, role: 'primary' }],
+            expectedDraftVersion,
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      })
+    )
+
+    expect((await saveDraft(
+      'diagnosis-influenza',
+      '初始诊断草稿。',
+      0,
+    )).status).toBe(200)
+    const currentResponse = await saveDraft(
+      'diagnosis-acute-upper-respiratory-infection',
+      '较新诊断草稿。',
+      1,
+    )
+    expect(currentResponse.status).toBe(200)
+    expect(await currentResponse.json()).toMatchObject({ data: { draftVersion: 2 } })
+
+    const staleResponse = await saveDraft(
+      'diagnosis-fever',
+      '过期客户端不应覆盖此内容。',
+      1,
+    )
+    expect(staleResponse.status).toBe(409)
+    expect(await staleResponse.json()).toMatchObject({
+      error: {
+        code: 'WORKFLOW_CONFLICT',
+        message: 'The diagnosis draft version has changed',
+      },
+    })
+
+    const restoredDetail = doctorCaseDetailSchema.parse(await (
+      await runtime.app.request(`/api/his/v1/doctor/cases/${started.caseId}`, {
+        headers: { cookie: doctorCookie },
+      })
+    ).json())
+    expect(restoredDetail.diagnosis).toEqual({
+      draft: {
+        entries: [{
+          catalogItemId: 'diagnosis-acute-upper-respiratory-infection',
+          note: '较新诊断草稿。',
+          role: 'primary',
+        }],
+      },
+      draftVersion: 2,
+    })
+  })
+
+  it('rejects diagnosis confirmation unless exactly one draft entry is primary', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-diagnosis-primary-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const saveResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: {
+            entries: [{
+              catalogItemId: 'diagnosis-influenza',
+              role: 'primary',
+            }, {
+              catalogItemId: 'diagnosis-acute-upper-respiratory-infection',
+              role: 'primary',
+            }],
+            expectedDraftVersion: 0,
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(saveResponse.status).toBe(200)
+    const conditionSearchPath
+      = `/fhir/R5/Condition?patient=Patient/${started.patientId}&_total=accurate`
+    const conditionCountBefore = fhirBundleSchema.parse(await (
+      await runtime.app.request(conditionSearchPath, { headers: { cookie: doctorCookie } })
+    ).json()).total
+
+    const confirmResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/diagnosis/actions/confirm`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { expectedDraftVersion: 1 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    expect(confirmResponse.status).toBe(409)
+    expect(await confirmResponse.json()).toEqual({
+      error: {
+        code: 'DIAGNOSIS_PRIMARY_REQUIRED',
+        message: 'Exactly one primary diagnosis is required',
+      },
+    })
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(await detailResponse.json()).toMatchObject({
+      diagnosis: {
+        draft: {
+          entries: [
+            expect.objectContaining({ role: 'primary' }),
+            expect.objectContaining({ role: 'primary' }),
+          ],
+        },
+        draftVersion: 1,
+      },
+      encounter: { versionId: '1' },
+    })
+    const conditionCountAfter = fhirBundleSchema.parse(await (
+      await runtime.app.request(conditionSearchPath, { headers: { cookie: doctorCookie } })
+    ).json()).total
+    expect(conditionCountAfter).toBe(conditionCountBefore)
+  })
+
+  it('confirms one primary and secondary diagnoses once with FHIR Conditions and Provenance', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-diagnosis-confirm-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const initialDetail = doctorCaseDetailSchema.parse(await (
+      await runtime.app.request(`/api/his/v1/doctor/cases/${started.caseId}`, {
+        headers: { cookie: doctorCookie },
+      })
+    ).json())
+    const saveResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: {
+            entries: [{
+              catalogItemId: 'diagnosis-influenza',
+              note: '结合发热与甲型流感抗原结果。',
+              role: 'primary',
+            }, {
+              catalogItemId: 'diagnosis-acute-upper-respiratory-infection',
+              role: 'secondary',
+            }],
+            expectedDraftVersion: 0,
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(saveResponse.status).toBe(200)
+    const confirm = (idempotencyKey: ReturnType<typeof randomUUID>) => runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/diagnosis/actions/confirm`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { expectedDraftVersion: 1 },
+        }),
+        headers: commandHeaders(doctorCookie, idempotencyKey),
+        method: 'POST',
+      },
+    )
+
+    const responses = await Promise.all([
+      confirm(randomUUID()),
+      confirm(randomUUID()),
+    ])
+    expect(responses.map(response => response.status).toSorted()).toEqual([200, 409])
+    const successfulResponse = responses.find(response => response.status === 200)
+    if (successfulResponse === undefined) throw new Error('Diagnosis confirmation did not succeed')
+    const confirmed = confirmDiagnosisResponseSchema.parse(await successfulResponse.json()).data
+    expect(confirmed).toMatchObject({
+      confirmation: {
+        confirmedAt: '2026-08-24T09:00:00+08:00',
+        entries: [{
+          catalogItemId: 'diagnosis-influenza',
+          code: 'J10.1',
+          conditionVersion: '1',
+          display: '流感伴其他呼吸道表现，季节性流感病毒已标明',
+          note: '结合发热与甲型流感抗原结果。',
+          role: 'primary',
+          system: 'http://hl7.org/fhir/sid/icd-10',
+        }, {
+          catalogItemId: 'diagnosis-acute-upper-respiratory-infection',
+          code: 'J06.9',
+          conditionVersion: '1',
+          display: '急性上呼吸道感染，未特指',
+          role: 'secondary',
+          system: 'http://hl7.org/fhir/sid/icd-10',
+        }],
+      },
+      diagnosisVersion: 2,
+      encounterId: started.encounterId,
+      encounterVersion: '2',
+    })
+    const conditionIds = confirmed.confirmation.entries.map(entry => entry.conditionId)
+    const conditionSearchResponse = await runtime.app.request(
+      `/fhir/R5/Condition?patient=Patient/${started.patientId}&encounter=Encounter/${started.encounterId}&_total=accurate`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(conditionSearchResponse.status).toBe(200)
+    const conditions = fhirBundleSchema.parse(await conditionSearchResponse.json())
+    expect(conditions).toMatchObject({ total: 2 })
+    expect(conditions.entry?.map(entry => entry.resource)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        category: [expect.objectContaining({
+          coding: [expect.objectContaining({ code: 'encounter-diagnosis' })],
+        })],
+        code: expect.objectContaining({ coding: [expect.objectContaining({ code: 'J10.1' })] }),
+        encounter: { reference: `Encounter/${started.encounterId}` },
+        id: conditionIds[0],
+        note: [{ text: '结合发热与甲型流感抗原结果。' }],
+        resourceType: 'Condition',
+        subject: { reference: `Patient/${started.patientId}` },
+        verificationStatus: expect.objectContaining({
+          coding: [expect.objectContaining({ code: 'confirmed' })],
+        }),
+      }),
+      expect.objectContaining({
+        code: expect.objectContaining({ coding: [expect.objectContaining({ code: 'J06.9' })] }),
+        id: conditionIds[1],
+        resourceType: 'Condition',
+      }),
+    ]))
+    const encounter = fhirResourceSchema.parse(await (
+      await runtime.app.request(`/fhir/R5/Encounter/${started.encounterId}`, {
+        headers: { cookie: doctorCookie },
+      })
+    ).json())
+    expect(encounter).toMatchObject({
+      diagnosis: [{
+        condition: [{ reference: { reference: `Condition/${conditionIds[0]}` } }],
+        use: [{ coding: [expect.objectContaining({ code: 'primary' })] }],
+      }, {
+        condition: [{ reference: { reference: `Condition/${conditionIds[1]}` } }],
+        use: [{ coding: [expect.objectContaining({ code: 'secondary' })] }],
+      }],
+      meta: { versionId: '2' },
+    })
+    const provenanceSearchResponse = await runtime.app.request(
+      `/fhir/R5/Provenance?target=Condition/${conditionIds[0]}&_total=accurate`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(provenanceSearchResponse.status).toBe(200)
+    const provenance = fhirBundleSchema.parse(await provenanceSearchResponse.json())
+    expect(provenance).toMatchObject({
+      entry: [{ resource: {
+        activity: { text: 'Encounter diagnosis confirmation' },
+        id: confirmed.confirmation.provenanceId,
+        target: expect.arrayContaining([
+          { reference: `Condition/${conditionIds[0]}` },
+          { reference: `Condition/${conditionIds[1]}` },
+          { reference: `Encounter/${started.encounterId}` },
+        ]),
+      } }],
+      total: 1,
+    })
+    const restoredDetail = doctorCaseDetailSchema.parse(await (
+      await runtime.app.request(`/api/his/v1/doctor/cases/${started.caseId}`, {
+        headers: { cookie: doctorCookie },
+      })
+    ).json())
+    expect(restoredDetail.diagnosis).toEqual({
+      confirmation: confirmed.confirmation,
+      draftVersion: 2,
+    })
+    expect(restoredDetail.priorFacts).toEqual(initialDetail.priorFacts)
+    expect(restoredDetail.priorFacts.map(fact => fact.id)).not.toEqual(
+      expect.arrayContaining(conditionIds),
+    )
   })
 
   it('starts revisit and saves versioned diagnosis, prescription, and document drafts without charging', async () => {

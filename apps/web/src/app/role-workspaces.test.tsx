@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
-import type { LaboratoryRequest } from '@clinmesh/contracts/his'
+import type { DiagnosisDraftEntry, DiagnosisState, LaboratoryRequest } from '@clinmesh/contracts/his'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebApp } from './web-app.tsx'
@@ -2258,6 +2258,254 @@ describe('role workspaces', () => {
 
     expect(await screen.findByText('复诊草稿已保存')).toBeTruthy()
     expect(screen.getByText('CM-RX-20260824-0001')).toBeTruthy()
+  })
+
+  it('saves and confirms independent primary and secondary diagnoses from the controlled catalog', async () => {
+    const patient = {
+      birthDate: '1990-05-10',
+      gender: 'male',
+      id: 'patient-independent-diagnosis',
+      identifier: 'CM-SYN-DIAGNOSIS-001',
+      name: '合成患者周明',
+      synthetic: true,
+      versionId: '1',
+    }
+    const diagnoses = [{
+      code: 'J10.1',
+      id: 'diagnosis-influenza',
+      nameEn: 'Influenza with respiratory manifestations',
+      nameZh: '流感伴其他呼吸道表现',
+      system: 'http://hl7.org/fhir/sid/icd-10',
+      version: 1,
+    }, {
+      code: 'J06.9',
+      id: 'diagnosis-acute-upper-respiratory-infection',
+      nameEn: 'Acute upper respiratory infection',
+      nameZh: '急性上呼吸道感染',
+      system: 'http://hl7.org/fhir/sid/icd-10',
+      version: 1,
+    }, {
+      code: 'R50.9',
+      id: 'diagnosis-fever',
+      nameEn: 'Fever, unspecified',
+      nameZh: '发热，未特指',
+      system: 'http://hl7.org/fhir/sid/icd-10',
+      version: 1,
+    }]
+    const draftEntries: [DiagnosisDraftEntry, DiagnosisDraftEntry] = [{
+      catalogItemId: 'diagnosis-influenza',
+      note: '结合甲型流感抗原结果。',
+      role: 'primary',
+    }, {
+      catalogItemId: 'diagnosis-acute-upper-respiratory-infection',
+      role: 'secondary',
+    }]
+    const confirmation = {
+      confirmedAt: '2026-08-24T09:00:00+08:00',
+      entries: [{
+        ...draftEntries[0],
+        code: 'J10.1',
+        conditionId: 'condition-diagnosis-primary',
+        conditionVersion: '1',
+        display: '流感伴其他呼吸道表现',
+        system: 'http://hl7.org/fhir/sid/icd-10',
+      }, {
+        ...draftEntries[1],
+        code: 'J06.9',
+        conditionId: 'condition-diagnosis-secondary',
+        conditionVersion: '1',
+        display: '急性上呼吸道感染',
+        system: 'http://hl7.org/fhir/sid/icd-10',
+      }],
+      id: 'diagnosis-confirmation-1',
+      provenanceId: 'provenance-diagnosis-1',
+    }
+    let diagnosis: DiagnosisState | undefined
+    let encounterVersion = '6'
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({ diagnoses, laboratory: [], medications: [] })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        return Response.json({
+          items: [{
+            caseId: 'case-independent-diagnosis',
+            encounterId: 'encounter-independent-diagnosis',
+            encounterVersion,
+            patient,
+            presentation: doctorPresentation,
+            status: 'revisit-draft',
+            taskId: 'task-independent-diagnosis',
+            taskVersion: '2',
+          }],
+          ...pagination(1),
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-independent-diagnosis') {
+        return Response.json({
+          allergies: [],
+          caseId: 'case-independent-diagnosis',
+          consultation: { questions: [], records: [], version: 1 },
+          ...(diagnosis === undefined ? {} : { diagnosis }),
+          encounter: {
+            id: 'encounter-independent-diagnosis',
+            status: 'in-progress',
+            versionId: encounterVersion,
+          },
+          patient,
+          presentation: doctorPresentation,
+          priorFacts: [{
+            clinicalStatus: 'active',
+            code: 'R05',
+            display: '既往咳嗽',
+            id: 'condition-prior-cough',
+            recordedDate: '2025-08-24',
+          }],
+          status: 'revisit-draft',
+          taskId: 'task-independent-diagnosis',
+          taskVersion: '2',
+        })
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-independent-diagnosis/diagnosis/draft') {
+        expect(init?.method).toBe('PUT')
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedVersions: { 'Encounter/encounter-independent-diagnosis': '6' },
+          input: { entries: draftEntries, expectedDraftVersion: 0 },
+        })
+        diagnosis = { draft: { entries: draftEntries }, draftVersion: 1 }
+        return Response.json(commandResponse({ draftVersion: 1 }))
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-independent-diagnosis/diagnosis/actions/confirm') {
+        expect(init?.method).toBe('POST')
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedVersions: { 'Encounter/encounter-independent-diagnosis': '6' },
+          input: { expectedDraftVersion: 1 },
+        })
+        encounterVersion = '7'
+        diagnosis = { confirmation, draftVersion: 2 }
+        return Response.json(commandResponse({
+          confirmation,
+          diagnosisVersion: 2,
+          encounterId: 'encounter-independent-diagnosis',
+          encounterVersion,
+        }))
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    expect(await screen.findByText(/既往咳嗽/)).toBeTruthy()
+    expect(screen.queryByLabelText('诊断编码')).toBeNull()
+    await user.click(screen.getByRole('button', { name: '添加诊断' }))
+    await user.click(screen.getByRole('combobox', { name: '诊断项目' }))
+    await user.click(await screen.findByRole('option', { name: '流感伴其他呼吸道表现 · J10.1' }))
+    await user.type(screen.getByLabelText('诊断备注'), '结合甲型流感抗原结果。')
+    await user.click(screen.getByRole('button', { name: '添加诊断' }))
+    await user.click(screen.getByRole('combobox', { name: '诊断项目 2' }))
+    await user.click(await screen.findByRole('option', { name: '急性上呼吸道感染 · J06.9' }))
+    await user.click(screen.getByRole('button', { name: '保存诊断草稿' }))
+
+    expect(await screen.findByText('诊断草稿已保存')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '确认诊断' }))
+    expect(await screen.findByText('诊断已确认')).toBeTruthy()
+    expect(screen.getByText('J10.1 · 流感伴其他呼吸道表现')).toBeTruthy()
+    expect(screen.getByText('J06.9 · 急性上呼吸道感染')).toBeTruthy()
+    expect(screen.getByText(/既往咳嗽/)).toBeTruthy()
+  })
+
+  it('shows the server diagnosis primary validation error in the doctor workspace', async () => {
+    const patient = {
+      birthDate: '1990-05-10',
+      gender: 'male',
+      id: 'patient-diagnosis-validation',
+      identifier: 'CM-SYN-DIAGNOSIS-002',
+      name: '合成患者周明',
+      synthetic: true,
+      versionId: '1',
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({
+          diagnoses: [{
+            code: 'J10.1',
+            id: 'diagnosis-influenza',
+            nameEn: 'Influenza with respiratory manifestations',
+            nameZh: '流感伴其他呼吸道表现',
+            system: 'http://hl7.org/fhir/sid/icd-10',
+            version: 1,
+          }],
+          laboratory: [],
+          medications: [],
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        return Response.json({
+          items: [{
+            caseId: 'case-diagnosis-validation',
+            encounterId: 'encounter-diagnosis-validation',
+            encounterVersion: '6',
+            patient,
+            presentation: doctorPresentation,
+            status: 'revisit-draft',
+            taskId: 'task-diagnosis-validation',
+            taskVersion: '2',
+          }],
+          ...pagination(1),
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-diagnosis-validation') {
+        return Response.json({
+          allergies: [],
+          caseId: 'case-diagnosis-validation',
+          consultation: { questions: [], records: [], version: 1 },
+          diagnosis: {
+            draft: {
+              entries: [{
+                catalogItemId: 'diagnosis-influenza',
+                role: 'primary',
+              }],
+            },
+            draftVersion: 1,
+          },
+          encounter: {
+            id: 'encounter-diagnosis-validation',
+            status: 'in-progress',
+            versionId: '6',
+          },
+          patient,
+          presentation: doctorPresentation,
+          priorFacts: [],
+          status: 'revisit-draft',
+          taskId: 'task-diagnosis-validation',
+          taskVersion: '2',
+        })
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-diagnosis-validation/diagnosis/actions/confirm') {
+        return Response.json({
+          error: {
+            code: 'DIAGNOSIS_PRIMARY_REQUIRED',
+            message: 'Exactly one primary diagnosis is required',
+          },
+        }, { status: 409 })
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('button', { name: '确认诊断' }))
+    expect(await screen.findByText('必须且只能选择一个主诊断。')).toBeTruthy()
   })
 
   it('previews clinical signing and completes the Encounter before medication payment', async () => {

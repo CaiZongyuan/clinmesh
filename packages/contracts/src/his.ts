@@ -137,6 +137,10 @@ const catalogItemSchema = z.object({
 })
 
 export const clinicalCatalogSchema = z.object({
+  diagnoses: z.array(catalogItemSchema.extend({
+    code: z.string().min(1),
+    system: z.url(),
+  })).default([]),
   laboratory: z.array(catalogItemSchema.extend({
     allowedIndicationCodes: z.array(z.string().min(1)).min(1),
     contraindicatedAllergyCodes: z.array(z.string().min(1)),
@@ -149,6 +153,64 @@ export const clinicalCatalogSchema = z.object({
     defaultFrequencyCode: z.string().min(1),
   })),
 })
+
+export const diagnosisRoleSchema = z.enum(['primary', 'secondary'])
+
+export const diagnosisDraftEntrySchema = z.object({
+  catalogItemId: z.string().min(1),
+  note: z.string().trim().min(1).max(500).optional(),
+  role: diagnosisRoleSchema,
+}).strict()
+
+export const diagnosisDraftContentSchema = z.object({
+  entries: z.array(diagnosisDraftEntrySchema).min(1).max(8),
+}).strict()
+
+export const saveDiagnosisDraftRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: diagnosisDraftContentSchema.extend({
+    expectedDraftVersion: z.number().int().nonnegative(),
+  }),
+}).strict()
+
+export const diagnosisDraftResponseSchema = commandResponseSchema(z.object({
+  draftVersion: z.number().int().positive(),
+}).strict())
+
+export const confirmDiagnosisRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: z.object({
+    expectedDraftVersion: z.number().int().positive(),
+  }).strict(),
+}).strict()
+
+export const diagnosisConfirmationEntrySchema = diagnosisDraftEntrySchema.extend({
+  code: z.string().min(1),
+  conditionId: z.string().min(1),
+  conditionVersion: z.string().regex(/^\d+$/),
+  display: z.string().min(1),
+  system: z.url(),
+}).strict()
+
+export const diagnosisConfirmationSchema = z.object({
+  confirmedAt: z.iso.datetime({ offset: true }),
+  entries: z.array(diagnosisConfirmationEntrySchema).min(1).max(8),
+  id: z.string().min(1),
+  provenanceId: z.string().min(1),
+}).strict()
+
+export const confirmDiagnosisResponseSchema = commandResponseSchema(z.object({
+  confirmation: diagnosisConfirmationSchema,
+  diagnosisVersion: z.number().int().positive(),
+  encounterId: z.string().min(1),
+  encounterVersion: z.string().regex(/^\d+$/),
+}).strict())
+
+export const diagnosisStateSchema = z.object({
+  confirmation: diagnosisConfirmationSchema.optional(),
+  draft: diagnosisDraftContentSchema.optional(),
+  draftVersion: z.number().int().positive(),
+}).strict()
 
 export const registrationCatalogSchema = z.object({
   departments: z.array(catalogItemSchema),
@@ -648,6 +710,7 @@ export const doctorCaseDetailSchema = z.object({
     records: z.array(consultationRecordSchema),
     version: z.number().int().positive(),
   }).strict().optional(),
+  diagnosis: diagnosisStateSchema.optional(),
   drafts: z.object({
     document: z.object({
       assessment: z.string(),
@@ -898,6 +961,9 @@ export type ScenarioState = z.infer<typeof scenarioStateSchema>
 export type PatientSummary = z.infer<typeof patientSummarySchema>
 export type ClinicalPresentation = z.infer<typeof clinicalPresentationSchema>
 export type ClinicalDocumentContent = z.infer<typeof clinicalDocumentContentSchema>
+export type DiagnosisDraftEntry = z.infer<typeof diagnosisDraftEntrySchema>
+export type DiagnosisConfirmation = z.infer<typeof diagnosisConfirmationSchema>
+export type DiagnosisState = z.infer<typeof diagnosisStateSchema>
 export type VirtualPatientList = z.infer<typeof virtualPatientListSchema>
 export type ClinicalCatalog = z.infer<typeof clinicalCatalogSchema>
 export type TriageQueueItem = z.infer<typeof triageQueueSchema>['items'][number]

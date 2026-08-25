@@ -14,8 +14,13 @@ import {
   clinicalDocumentRevisionResponseSchema,
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
+  confirmDiagnosisResponseSchema,
   correctLaboratoryReportResponseSchema,
   createPatientResponseSchema,
+  diagnosisDraftContentSchema,
+  diagnosisDraftResponseSchema,
+  type DiagnosisDraftEntry,
+  type DiagnosisConfirmation,
   dispenseResponseSchema,
   firstVisitDraftResponseSchema,
   issueLaboratoryRequestResponseSchema,
@@ -48,11 +53,11 @@ import {
 } from './command-executor.ts'
 
 export class WorkflowError extends Error {
-  readonly code: 'CATALOG_CONFLICT' | 'DUPLICATE_PATIENT' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
+  readonly code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
   readonly status: 403 | 409
 
   constructor(
-    code: 'CATALOG_CONFLICT' | 'DUPLICATE_PATIENT' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT',
+    code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT',
     message: string,
   ) {
     super(message)
@@ -71,6 +76,34 @@ interface CatalogRow {
   price_fen: number
   version: number
 }
+
+const diagnosisCatalogRowSchema = z.object({
+  code: z.string().min(1),
+  code_system: z.string().url(),
+  item_id: z.string().min(1),
+  name_en: z.string().min(1),
+  name_zh: z.string().min(1),
+  version: z.number().int().positive(),
+})
+
+const diagnosisStateRowSchema = z.object({
+  draft_json: z.string().nullable(),
+  status: z.enum(['draft', 'confirmed']),
+  version: z.number().int().positive(),
+})
+
+const diagnosisConfirmationRowSchema = z.object({
+  confirmation_id: z.string().min(1),
+  confirmed_at: z.string().datetime({ offset: true }),
+  provenance_id: z.string().min(1),
+})
+
+const diagnosisEntryRowSchema = z.object({
+  catalog_item_id: z.string().min(1),
+  condition_id: z.string().min(1),
+  ordinal: z.number().int().positive(),
+  role: z.enum(['primary', 'secondary']),
+})
 
 interface MedicationRuleSelection {
   catalogItemId: string
@@ -303,6 +336,17 @@ const priorConditionSchema = z.object({
   }).loose().optional(),
   encounter: z.object({ reference: z.string().optional() }).loose().optional(),
   recordedDate: z.string().optional(),
+}).loose()
+
+const confirmedDiagnosisConditionSchema = z.object({
+  code: z.object({
+    coding: z.array(z.object({
+      code: z.string().min(1),
+      display: z.string().min(1),
+      system: z.string().url(),
+    }).loose()).min(1),
+  }).loose(),
+  note: z.array(z.object({ text: z.string().min(1) }).loose()).optional(),
 }).loose()
 
 const diagnosticReportContentSchema = z.object({
@@ -644,7 +688,23 @@ export class WorkflowService {
       priceFen: row.price_fen,
       version: row.version,
     })
+    const diagnoses = z.array(diagnosisCatalogRowSchema).parse(
+      this.#database.driver.prepare(`
+        SELECT item_id, code_system, code, name_zh, name_en, version
+        FROM diagnosis_catalog
+        WHERE workspace_id = ? AND epoch = ? AND active = 1
+        ORDER BY item_id
+      `).all(context.workspaceId, context.epoch),
+    )
     return {
+      diagnoses: diagnoses.map(diagnosis => ({
+        code: diagnosis.code,
+        id: diagnosis.item_id,
+        nameEn: diagnosis.name_en,
+        nameZh: diagnosis.name_zh,
+        system: diagnosis.code_system,
+        version: diagnosis.version,
+      })),
       laboratory: rows.filter(row => row.kind === 'laboratory').map(row => {
         const config = laboratoryCatalogConfigSchema.parse(JSON.parse(row.config_json) as unknown)
         return { ...summary(row), ...config }
@@ -1944,6 +2004,13 @@ export class WorkflowService {
         version: request.version,
       }
     })
+    const diagnosisState = diagnosisStateRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT version, status, draft_json FROM diagnosis_state
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      `).get(context.workspaceId, context.epoch, row.case_id),
+    )
+    const diagnosisConfirmation = this.#diagnosisConfirmation(context, row.case_id)
     return {
       allergies: this.#patientAllergyWarnings(context, patient.id),
       caseId: row.case_id,
@@ -1960,6 +2027,15 @@ export class WorkflowService {
         },
       }),
       ...(consultation === undefined ? {} : { consultation }),
+      ...(diagnosisState === undefined ? {} : {
+        diagnosis: {
+          ...(diagnosisConfirmation === undefined ? {} : { confirmation: diagnosisConfirmation }),
+          ...(diagnosisState.draft_json === null
+            ? {}
+            : { draft: diagnosisDraftContentSchema.parse(JSON.parse(diagnosisState.draft_json)) }),
+          draftVersion: diagnosisState.version,
+        },
+      }),
       encounter: {
         id: encounter.id,
         status: encounter.status,
@@ -2114,6 +2190,334 @@ export class WorkflowService {
           reference: `Consultation/${outpatientCase.case_id}`,
           versionId: String(consultationVersion),
         }],
+      }
+    })
+  }
+
+  saveDiagnosisDraft(input: {
+    context: ActorContext
+    encounterId: string
+    entries: DiagnosisDraftEntry[]
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+  }): CommandResponse<z.infer<typeof diagnosisDraftResponseSchema.shape.data>> {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: diagnosisDraftResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: {
+        encounterId: input.encounterId,
+        entries: input.entries,
+        expectedDraftVersion: input.expectedDraftVersion,
+      },
+      operation: 'encounter.save-diagnosis-draft',
+    }, () => {
+      this.#assertRole(input.context, ['outpatient-doctor'])
+      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+      const encounter = this.#fhir.read(input.context, 'Encounter', input.encounterId)
+      if (encounter.status !== 'in-progress' || outpatientCase.status === 'completed') {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for diagnosis editing')
+      }
+      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+      if (new Set(input.entries.map(entry => entry.catalogItemId)).size !== input.entries.length) {
+        throw new WorkflowError('CATALOG_CONFLICT', 'The diagnosis draft contains a duplicate catalog item')
+      }
+      for (const entry of input.entries) {
+        this.#diagnosisCatalogItem(input.context, entry.catalogItemId)
+      }
+      const legacyDraft = this.#database.driver.prepare(`
+        SELECT 1 AS present FROM clinical_draft
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND draft_kind = 'revisit'
+      `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id)
+      if (legacyDraft !== undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The legacy revisit draft already owns diagnosis editing')
+      }
+      const current = diagnosisStateRowSchema.optional().parse(
+        this.#database.driver.prepare(`
+          SELECT version, status, draft_json FROM diagnosis_state
+          WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id),
+      )
+      if (current?.status === 'confirmed') {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter diagnosis is already confirmed')
+      }
+      if ((current?.version ?? 0) !== input.expectedDraftVersion) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The diagnosis draft version has changed')
+      }
+      const draft = diagnosisDraftContentSchema.parse({ entries: input.entries })
+      const nextVersion = input.expectedDraftVersion + 1
+      const updatedAt = this.#virtualTime(input.context)
+      if (current === undefined) {
+        this.#database.driver.prepare(`
+          INSERT INTO diagnosis_state (
+            workspace_id, epoch, case_id, version, status, draft_json,
+            updated_by, updated_at
+          ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)
+        `).run(
+          input.context.workspaceId,
+          input.context.epoch,
+          outpatientCase.case_id,
+          nextVersion,
+          JSON.stringify(draft),
+          input.context.actorId,
+          updatedAt,
+        )
+      } else {
+        const update = this.#database.driver.prepare(`
+          UPDATE diagnosis_state
+          SET version = ?, draft_json = ?, updated_by = ?, updated_at = ?
+          WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+            AND status = 'draft' AND version = ?
+        `).run(
+          nextVersion,
+          JSON.stringify(draft),
+          input.context.actorId,
+          updatedAt,
+          input.context.workspaceId,
+          input.context.epoch,
+          outpatientCase.case_id,
+          input.expectedDraftVersion,
+        )
+        if (update.changes !== 1) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'The diagnosis draft version has changed')
+        }
+      }
+      return {
+        data: { draftVersion: nextVersion },
+        effects: [{
+          kind: current === undefined ? 'created' as const : 'updated' as const,
+          reference: `DiagnosisDraft/${outpatientCase.case_id}`,
+          versionId: String(nextVersion),
+        }],
+      }
+    })
+  }
+
+  confirmDiagnosis(input: {
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+  }): CommandResponse<z.infer<typeof confirmDiagnosisResponseSchema.shape.data>> {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: confirmDiagnosisResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: {
+        encounterId: input.encounterId,
+        expectedDraftVersion: input.expectedDraftVersion,
+      },
+      operation: 'encounter.confirm-diagnosis',
+    }, transaction => {
+      this.#assertRole(input.context, ['outpatient-doctor'])
+      if (input.context.practitionerRoleId === undefined) {
+        throw new WorkflowError('ROLE_NOT_ALLOWED', 'A Practitioner Role is required to confirm diagnosis')
+      }
+      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+      const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
+      if (encounter.status !== 'in-progress' || outpatientCase.status === 'completed') {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for diagnosis confirmation')
+      }
+      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+      const state = diagnosisStateRowSchema.optional().parse(
+        this.#database.driver.prepare(`
+          SELECT version, status, draft_json FROM diagnosis_state
+          WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id),
+      )
+      if (
+        state?.status !== 'draft'
+        || state.draft_json === null
+        || state.version !== input.expectedDraftVersion
+      ) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The diagnosis draft version has changed')
+      }
+      const draft = diagnosisDraftContentSchema.parse(JSON.parse(state.draft_json))
+      if (draft.entries.filter(entry => entry.role === 'primary').length !== 1) {
+        throw new WorkflowError(
+          'DIAGNOSIS_PRIMARY_REQUIRED',
+          'Exactly one primary diagnosis is required',
+        )
+      }
+      const resolvedEntries = draft.entries.map(entry => ({
+        ...entry,
+        catalog: this.#diagnosisCatalogItem(input.context, entry.catalogItemId),
+      }))
+      const confirmedAt = this.#virtualTime(input.context)
+      const confirmedEntries = resolvedEntries.map(entry => ({
+        condition: transaction.fhir.create(input.context, {
+          resourceType: 'Condition',
+          id: uuidv7(),
+          category: [{
+            coding: [{
+              code: 'encounter-diagnosis',
+              display: 'Encounter Diagnosis',
+              system: 'http://terminology.hl7.org/CodeSystem/condition-category',
+            }],
+          }],
+          clinicalStatus: {
+            coding: [{
+              code: 'active',
+              system: 'http://terminology.hl7.org/CodeSystem/condition-clinical',
+            }],
+          },
+          verificationStatus: {
+            coding: [{
+              code: 'confirmed',
+              system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status',
+            }],
+          },
+          code: {
+            coding: [{
+              code: entry.catalog.code,
+              display: entry.catalog.name_zh,
+              system: entry.catalog.code_system,
+            }],
+            text: entry.catalog.name_zh,
+          },
+          subject: { reference: `Patient/${outpatientCase.patient_id}` },
+          encounter: { reference: `Encounter/${input.encounterId}` },
+          recordedDate: confirmedAt,
+          recorder: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
+          ...(entry.note === undefined ? {} : { note: [{ text: entry.note }] }),
+        }),
+        entry,
+      }))
+      const updatedEncounter = transaction.fhir.update(input.context, {
+        ...encounter,
+        diagnosis: [
+          ...(Array.isArray(encounter.diagnosis) ? encounter.diagnosis : []),
+          ...confirmedEntries.map(({ condition, entry }) => ({
+            condition: [{ reference: { reference: `Condition/${condition.id}` } }],
+            use: [{
+              coding: [{
+                code: entry.role,
+                display: entry.role === 'primary'
+                  ? 'Primary diagnosis'
+                  : 'Secondary diagnosis',
+                system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/encounter-diagnosis-role',
+              }],
+            }],
+          })),
+        ],
+      }, encounter.meta?.versionId ?? '1')
+      const provenanceId = uuidv7()
+      const provenance = transaction.fhir.createImmutable(input.context, {
+        resourceType: 'Provenance',
+        id: provenanceId,
+        target: [
+          ...confirmedEntries.map(({ condition }) => ({ reference: `Condition/${condition.id}` })),
+          { reference: `Encounter/${input.encounterId}` },
+        ],
+        recorded: confirmedAt,
+        activity: { text: 'Encounter diagnosis confirmation' },
+        agent: provenanceAgents(input.context, 'Diagnosis confirmer'),
+      })
+      const confirmationId = uuidv7()
+      this.#database.driver.prepare(`
+        INSERT INTO diagnosis_confirmation (
+          workspace_id, epoch, confirmation_id, case_id, provenance_id,
+          confirmed_by_actor_id, confirmed_by_practitioner_role_id, confirmed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        confirmationId,
+        outpatientCase.case_id,
+        provenanceId,
+        input.context.actorId,
+        input.context.practitionerRoleId,
+        confirmedAt,
+      )
+      const insertEntry = this.#database.driver.prepare(`
+        INSERT INTO diagnosis_entry (
+          workspace_id, epoch, confirmation_id, ordinal,
+          condition_id, catalog_item_id, role
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `)
+      confirmedEntries.forEach(({ condition, entry }, index) => {
+        insertEntry.run(
+          input.context.workspaceId,
+          input.context.epoch,
+          confirmationId,
+          index + 1,
+          condition.id,
+          entry.catalogItemId,
+          entry.role,
+        )
+      })
+      const diagnosisVersion = state.version + 1
+      const update = this.#database.driver.prepare(`
+        UPDATE diagnosis_state
+        SET version = ?, status = 'confirmed', draft_json = NULL,
+          updated_by = ?, updated_at = ?
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+          AND status = 'draft' AND version = ?
+      `).run(
+        diagnosisVersion,
+        input.context.actorId,
+        confirmedAt,
+        input.context.workspaceId,
+        input.context.epoch,
+        outpatientCase.case_id,
+        state.version,
+      )
+      if (update.changes !== 1) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The diagnosis draft version has changed')
+      }
+      const confirmation: DiagnosisConfirmation = {
+        confirmedAt,
+        entries: confirmedEntries.map(({ condition, entry }) => ({
+          catalogItemId: entry.catalogItemId,
+          code: entry.catalog.code,
+          conditionId: condition.id,
+          conditionVersion: condition.meta?.versionId ?? '1',
+          display: entry.catalog.name_zh,
+          ...(entry.note === undefined ? {} : { note: entry.note }),
+          role: entry.role,
+          system: entry.catalog.code_system,
+        })),
+        id: confirmationId,
+        provenanceId,
+      }
+      return {
+        data: {
+          confirmation,
+          diagnosisVersion,
+          encounterId: input.encounterId,
+          encounterVersion: updatedEncounter.meta?.versionId ?? '2',
+        },
+        effects: [
+          ...confirmedEntries.map(({ condition }) => ({
+            kind: 'created' as const,
+            reference: `Condition/${condition.id}`,
+            versionId: condition.meta?.versionId ?? '1',
+          })),
+          {
+            kind: 'updated' as const,
+            reference: `Encounter/${input.encounterId}`,
+            versionId: updatedEncounter.meta?.versionId ?? '2',
+          },
+          {
+            kind: 'created' as const,
+            reference: `Provenance/${provenance.id}`,
+            versionId: provenance.meta?.versionId ?? '1',
+          },
+          {
+            kind: 'created' as const,
+            reference: `DiagnosisConfirmation/${confirmationId}`,
+            versionId: '1',
+          },
+          {
+            kind: 'updated' as const,
+            reference: `DiagnosisDraft/${outpatientCase.case_id}`,
+            versionId: String(diagnosisVersion),
+          },
+        ],
       }
     })
   }
@@ -6954,6 +7358,70 @@ export class WorkflowService {
     `).get(context.workspaceId, context.epoch, itemId, kind) as CatalogRow | undefined
     if (row === undefined) throw new WorkflowError('CATALOG_CONFLICT', 'The catalog item is unavailable')
     return row
+  }
+
+  #diagnosisCatalogItem(context: ActorContext, itemId: string) {
+    const row = diagnosisCatalogRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT item_id, code_system, code, name_zh, name_en, version
+        FROM diagnosis_catalog
+        WHERE workspace_id = ? AND epoch = ? AND item_id = ? AND active = 1
+      `).get(context.workspaceId, context.epoch, itemId),
+    )
+    if (row === undefined) {
+      throw new WorkflowError('CATALOG_CONFLICT', 'The diagnosis catalog item is unavailable')
+    }
+    return row
+  }
+
+  #diagnosisConfirmation(
+    context: ActorContext,
+    caseId: string,
+  ): DiagnosisConfirmation | undefined {
+    const confirmation = diagnosisConfirmationRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT confirmation_id, provenance_id, confirmed_at
+        FROM diagnosis_confirmation
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      `).get(context.workspaceId, context.epoch, caseId),
+    )
+    if (confirmation === undefined) return undefined
+    const entries = z.array(diagnosisEntryRowSchema).parse(
+      this.#database.driver.prepare(`
+        SELECT ordinal, condition_id, catalog_item_id, role
+        FROM diagnosis_entry
+        WHERE workspace_id = ? AND epoch = ? AND confirmation_id = ?
+        ORDER BY ordinal
+      `).all(
+        context.workspaceId,
+        context.epoch,
+        confirmation.confirmation_id,
+      ),
+    ).map((entry) => {
+      const resource = this.#fhir.read(context, 'Condition', entry.condition_id)
+      const condition = confirmedDiagnosisConditionSchema.parse(resource)
+      const coding = condition.code.coding[0]
+      if (coding === undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The confirmed diagnosis is incomplete')
+      }
+      const note = condition.note?.[0]?.text
+      return {
+        catalogItemId: entry.catalog_item_id,
+        code: coding.code,
+        conditionId: entry.condition_id,
+        conditionVersion: resource.meta?.versionId ?? '1',
+        display: coding.display,
+        ...(note === undefined ? {} : { note }),
+        role: entry.role,
+        system: coding.system,
+      }
+    })
+    return {
+      confirmedAt: confirmation.confirmed_at,
+      entries,
+      id: confirmation.confirmation_id,
+      provenanceId: confirmation.provenance_id,
+    }
   }
 
   #patientAllergies(context: ActorContext, patientId: string): FhirResource[] {

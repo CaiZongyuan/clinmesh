@@ -2,6 +2,7 @@ import {
   laboratoryRequestCatalogItemIdSchema,
   type ClinicalCatalog,
   type ClinicalDocumentContent,
+  type DiagnosisDraftEntry,
   type DoctorCaseDetail,
   type DoctorQueueItem,
   type LaboratoryReport,
@@ -37,6 +38,7 @@ import {
   acknowledgeLaboratoryReport,
   askConsultationQuestion,
   cancelLaboratoryRequest,
+  confirmDiagnosis,
   deleteLaboratoryRequestDraft,
   getClinicalCatalog,
   getDoctorCase,
@@ -49,6 +51,7 @@ import {
   previewStructuredClinicalDocumentSign,
   reviseStructuredClinicalDocument,
   saveClinicalDocumentDraft,
+  saveDiagnosisDraft,
   saveFirstVisitDraft,
   saveLaboratoryRequestDraft,
   saveRevisitDraft,
@@ -101,6 +104,20 @@ interface LaboratoryRequestActions {
     error: Error | null
     onSubmit: () => void
     pending: boolean
+  }
+}
+
+interface DiagnosisActions {
+  confirm: {
+    error: Error | null
+    onSubmit: () => void
+    pending: boolean
+  }
+  save: {
+    error: Error | null
+    onSubmit: (entries: DiagnosisDraftEntry[]) => void
+    pending: boolean
+    success: boolean
   }
 }
 
@@ -395,6 +412,33 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
     },
     onSuccess: refreshCase,
   })
+  const saveDiagnosis = useMutation({
+    mutationFn: (entries: DiagnosisDraftEntry[]) => {
+      const current = detail.data
+      if (current === undefined) throw new Error(messages.consultationUnavailable)
+      return saveDiagnosisDraft({
+        encounterId: current.encounter.id,
+        encounterVersion: current.encounter.versionId,
+        entries,
+        expectedDraftVersion: current.diagnosis?.draftVersion ?? 0,
+      }, newIdempotencyKey())
+    },
+    onSuccess: refreshCase,
+  })
+  const confirmCaseDiagnosis = useMutation({
+    mutationFn: () => {
+      const current = detail.data
+      if (current?.diagnosis?.draft === undefined) {
+        throw new Error(messages.consultationUnavailable)
+      }
+      return confirmDiagnosis({
+        encounterId: current.encounter.id,
+        encounterVersion: current.encounter.versionId,
+        expectedDraftVersion: current.diagnosis.draftVersion,
+      }, newIdempotencyKey())
+    },
+    onSuccess: refreshCase,
+  })
   const saveRevisit = useMutation({
     mutationFn: (input: {
       diagnosis: { code: string; display: string }
@@ -595,6 +639,19 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
             }}
             catalog={catalog}
             detail={detail.data}
+            diagnosisActions={{
+              confirm: {
+                error: confirmCaseDiagnosis.error,
+                onSubmit: () => confirmCaseDiagnosis.mutate(),
+                pending: confirmCaseDiagnosis.isPending,
+              },
+              save: {
+                error: saveDiagnosis.error,
+                onSubmit: entries => saveDiagnosis.mutate(entries),
+                pending: saveDiagnosis.isPending,
+                success: saveDiagnosis.isSuccess,
+              },
+            }}
             indicationCode={resolvedIndicationCode}
             laboratoryCatalog={laboratoryCatalog}
             laboratoryItemId={resolvedLaboratoryItemId}
@@ -672,6 +729,7 @@ function CaseDetail({
   catalog,
   consultationAction,
   detail,
+  diagnosisActions,
   indicationCode,
   issueOrderError,
   issueOrderPending,
@@ -710,6 +768,7 @@ function CaseDetail({
   catalog: ReturnType<typeof useQuery<Awaited<ReturnType<typeof getClinicalCatalog>>>>
   consultationAction: ConsultationAction
   detail: DoctorCaseDetail
+  diagnosisActions: DiagnosisActions
   indicationCode: string
   issueOrderError: Error | null
   issueOrderPending: boolean
@@ -917,64 +976,77 @@ function CaseDetail({
           <ErrorAlert message={getWorkspaceErrorMessage(catalog.error, messages)} title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)} />
         ) : (
           <div className="flex flex-col gap-3">
-            {saveRevisitSuccess ? (
-              <Alert>
-                <CheckIcon aria-hidden="true" />
-                <AlertTitle>{messages.revisitDraftSaved}</AlertTitle>
-              </Alert>
-            ) : null}
-            {detail.drafts?.prescription === undefined ? null : (
-              <div className="flex flex-wrap items-center gap-2 text-sm">
-                <span className="text-muted-foreground">{messages.prescriptionNumber}</span>
-                <Badge variant="outline">{detail.drafts.prescription.number}</Badge>
-              </div>
-            )}
-            <RevisitEditor
-              catalog={catalog.data}
-              detail={detail}
-              key={`${detail.caseId}:${detail.drafts?.prescription?.version ?? 0}`}
-              locale={locale}
-              messages={messages}
-              onSave={onSaveRevisit}
-              pending={saveRevisitPending}
-            />
-            {saveRevisitError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(saveRevisitError, messages)} title={getWorkspaceErrorTitle(saveRevisitError, messages, messages.operationFailed)} />}
-            {signCompleted ? null : (
-              <section aria-labelledby="clinical-sign-heading" className="flex flex-col gap-3 border-t pt-5">
-                <div className="flex justify-end">
-                  <Button disabled={signPreviewPending} onClick={onPreviewSign} type="button" variant="outline">
-                    <FileSignatureIcon data-icon="inline-start" />{messages.previewClinicalSign}
-                  </Button>
-                </div>
-                {signPreviewError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(signPreviewError, messages)} title={getWorkspaceErrorTitle(signPreviewError, messages, messages.operationFailed)} />}
-                {signPreview === undefined ? null : (
-                  <div className="flex flex-col gap-3">
-                    <h3 className="text-sm font-semibold" id="clinical-sign-heading">{messages.clinicalSignPreview}</h3>
-                    <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-                      <div><dt className="text-muted-foreground">{messages.diagnosis}</dt><dd className="font-medium">{signPreview.summary.diagnosis.code} · {signPreview.summary.diagnosis.display}</dd></div>
-                      <div><dt className="text-muted-foreground">{messages.documentSummary}</dt><dd className="font-medium">{signPreview.summary.document.assessment}</dd><dd className="text-muted-foreground">{signPreview.summary.document.plan}</dd></div>
-                      <div><dt className="text-muted-foreground">{messages.amount}</dt><dd className="font-medium">{formatFen(signPreview.medicationTotalFen, locale)}</dd></div>
-                    </dl>
-                    <Table>
-                      <TableHeader><TableRow><TableHead>{messages.medication}</TableHead><TableHead>{messages.quantity}</TableHead><TableHead>{messages.unitPrice}</TableHead><TableHead>{messages.subtotal}</TableHead></TableRow></TableHeader>
-                      <TableBody>{signPreview.summary.medications.map(medication => (
-                        <TableRow key={medication.medicationRequestId}>
-                          <TableCell className="font-medium">{locale === 'zh-CN' ? medication.nameZh : medication.nameEn}</TableCell>
-                          <TableCell>{medication.quantity}</TableCell>
-                          <TableCell>{formatFen(medication.unitPriceFen, locale)}</TableCell>
-                          <TableCell>{formatFen(medication.subtotalFen, locale)}</TableCell>
-                        </TableRow>
-                      ))}</TableBody>
-                    </Table>
-                    <div className="flex justify-end">
-                      <Button disabled={signPending} onClick={onSign} type="button">
-                        <CheckCircleIcon data-icon="inline-start" />{messages.confirmClinicalSign}
-                      </Button>
-                    </div>
+            {detail.consultation !== undefined ? (
+              <DiagnosisEditor
+                actions={diagnosisActions}
+                catalog={catalog.data.diagnoses}
+                key={`${detail.caseId}:${detail.diagnosis?.draftVersion ?? 0}`}
+                locale={locale}
+                messages={messages}
+                state={detail.diagnosis}
+              />
+            ) : (
+              <>
+                {saveRevisitSuccess ? (
+                  <Alert>
+                    <CheckIcon aria-hidden="true" />
+                    <AlertTitle>{messages.revisitDraftSaved}</AlertTitle>
+                  </Alert>
+                ) : null}
+                {detail.drafts?.prescription === undefined ? null : (
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    <span className="text-muted-foreground">{messages.prescriptionNumber}</span>
+                    <Badge variant="outline">{detail.drafts.prescription.number}</Badge>
                   </div>
                 )}
-                {signError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(signError, messages)} title={getWorkspaceErrorTitle(signError, messages, messages.operationFailed)} />}
-              </section>
+                <RevisitEditor
+                  catalog={catalog.data}
+                  detail={detail}
+                  key={`${detail.caseId}:${detail.drafts?.prescription?.version ?? 0}`}
+                  locale={locale}
+                  messages={messages}
+                  onSave={onSaveRevisit}
+                  pending={saveRevisitPending}
+                />
+                {saveRevisitError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(saveRevisitError, messages)} title={getWorkspaceErrorTitle(saveRevisitError, messages, messages.operationFailed)} />}
+                {signCompleted ? null : (
+                  <section aria-labelledby="clinical-sign-heading" className="flex flex-col gap-3 border-t pt-5">
+                    <div className="flex justify-end">
+                      <Button disabled={signPreviewPending} onClick={onPreviewSign} type="button" variant="outline">
+                        <FileSignatureIcon data-icon="inline-start" />{messages.previewClinicalSign}
+                      </Button>
+                    </div>
+                    {signPreviewError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(signPreviewError, messages)} title={getWorkspaceErrorTitle(signPreviewError, messages, messages.operationFailed)} />}
+                    {signPreview === undefined ? null : (
+                      <div className="flex flex-col gap-3">
+                        <h3 className="text-sm font-semibold" id="clinical-sign-heading">{messages.clinicalSignPreview}</h3>
+                        <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                          <div><dt className="text-muted-foreground">{messages.diagnosis}</dt><dd className="font-medium">{signPreview.summary.diagnosis.code} · {signPreview.summary.diagnosis.display}</dd></div>
+                          <div><dt className="text-muted-foreground">{messages.documentSummary}</dt><dd className="font-medium">{signPreview.summary.document.assessment}</dd><dd className="text-muted-foreground">{signPreview.summary.document.plan}</dd></div>
+                          <div><dt className="text-muted-foreground">{messages.amount}</dt><dd className="font-medium">{formatFen(signPreview.medicationTotalFen, locale)}</dd></div>
+                        </dl>
+                        <Table>
+                          <TableHeader><TableRow><TableHead>{messages.medication}</TableHead><TableHead>{messages.quantity}</TableHead><TableHead>{messages.unitPrice}</TableHead><TableHead>{messages.subtotal}</TableHead></TableRow></TableHeader>
+                          <TableBody>{signPreview.summary.medications.map(medication => (
+                            <TableRow key={medication.medicationRequestId}>
+                              <TableCell className="font-medium">{locale === 'zh-CN' ? medication.nameZh : medication.nameEn}</TableCell>
+                              <TableCell>{medication.quantity}</TableCell>
+                              <TableCell>{formatFen(medication.unitPriceFen, locale)}</TableCell>
+                              <TableCell>{formatFen(medication.subtotalFen, locale)}</TableCell>
+                            </TableRow>
+                          ))}</TableBody>
+                        </Table>
+                        <div className="flex justify-end">
+                          <Button disabled={signPending} onClick={onSign} type="button">
+                            <CheckCircleIcon data-icon="inline-start" />{messages.confirmClinicalSign}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                    {signError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(signError, messages)} title={getWorkspaceErrorTitle(signError, messages, messages.operationFailed)} />}
+                  </section>
+                )}
+              </>
             )}
           </div>
         )
@@ -1807,6 +1879,235 @@ function LaboratoryReport({ locale, messages, report }: {
           ))}
         </TableBody>
       </Table>
+    </section>
+  )
+}
+
+interface DiagnosisDraftLine extends DiagnosisDraftEntry {
+  key: string
+  note: string
+}
+
+function DiagnosisEditor({ actions, catalog, locale, messages, state }: {
+  actions: DiagnosisActions
+  catalog: ClinicalCatalog['diagnoses']
+  locale: WorkspaceLocale
+  messages: ReturnType<typeof getWorkspaceMessages>
+  state: DoctorCaseDetail['diagnosis']
+}): React.JSX.Element {
+  const [entries, setEntries] = useState<DiagnosisDraftLine[]>(() => (
+    state?.draft?.entries.map((entry, index) => ({
+      ...entry,
+      key: `saved-${index}`,
+      note: entry.note ?? '',
+    })) ?? []
+  ))
+  const [dirty, setDirty] = useState(false)
+  const usedCatalogItemIds = new Set(entries.map(entry => entry.catalogItemId))
+  const addEntry = () => {
+    const catalogItem = catalog.find(item => !usedCatalogItemIds.has(item.id))
+    if (catalogItem === undefined) return
+    setEntries(current => [...current, {
+      catalogItemId: catalogItem.id,
+      key: globalThis.crypto.randomUUID(),
+      note: '',
+      role: current.some(entry => entry.role === 'primary') ? 'secondary' : 'primary',
+    }])
+    setDirty(true)
+  }
+  const updateEntry = (index: number, update: Partial<DiagnosisDraftLine>) => {
+    setEntries(current => current.map((entry, entryIndex) => (
+      entryIndex === index ? { ...entry, ...update } : entry
+    )))
+    setDirty(true)
+  }
+  const updateRole = (index: number, role: DiagnosisDraftEntry['role']) => {
+    setEntries(current => {
+      if (
+        role === 'secondary'
+        && current[index]?.role === 'primary'
+        && !current.some((entry, entryIndex) => entryIndex !== index && entry.role === 'primary')
+      ) {
+        return current
+      }
+      return current.map((entry, entryIndex) => {
+        if (entryIndex === index) return { ...entry, role }
+        if (role === 'primary' && entry.role === 'primary') {
+          return { ...entry, role: 'secondary' }
+        }
+        return entry
+      })
+    })
+    setDirty(true)
+  }
+  const removeEntry = (index: number) => {
+    setEntries(current => {
+      const remaining = current.filter((_, entryIndex) => entryIndex !== index)
+      if (remaining.length > 0 && !remaining.some(entry => entry.role === 'primary')) {
+        const first = remaining[0]
+        if (first !== undefined) remaining[0] = { ...first, role: 'primary' }
+      }
+      return remaining
+    })
+    setDirty(true)
+  }
+
+  if (state?.confirmation !== undefined) {
+    return (
+      <section aria-labelledby="diagnosis-heading" className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold" id="diagnosis-heading">{messages.diagnosisRecord}</h3>
+          <Badge variant="secondary">{state.confirmation.entries.length}</Badge>
+        </div>
+        <Alert>
+          <CheckCircleIcon aria-hidden="true" />
+          <AlertTitle>{messages.diagnosisConfirmed}</AlertTitle>
+          <AlertDescription>{messages.diagnosisConfirmedAt} · {state.confirmation.confirmedAt}</AlertDescription>
+        </Alert>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{messages.diagnosisRole}</TableHead>
+              <TableHead>{messages.diagnosisItem}</TableHead>
+              <TableHead>{messages.diagnosisNote}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {state.confirmation.entries.map(entry => (
+              <TableRow key={entry.conditionId}>
+                <TableCell>
+                  <Badge variant={entry.role === 'primary' ? 'default' : 'secondary'}>
+                    {entry.role === 'primary' ? messages.primaryDiagnosis : messages.secondaryDiagnosis}
+                  </Badge>
+                </TableCell>
+                <TableCell className="font-medium">{entry.code} · {entry.display}</TableCell>
+                <TableCell>{entry.note ?? ''}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </section>
+    )
+  }
+
+  return (
+    <section aria-labelledby="diagnosis-heading" className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold" id="diagnosis-heading">{messages.diagnosisRecord}</h3>
+        <Button
+          disabled={entries.length >= Math.min(catalog.length, 8)}
+          onClick={addEntry}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          <PlusIcon data-icon="inline-start" />{messages.addDiagnosis}
+        </Button>
+      </div>
+      <form
+        onSubmit={event => {
+          event.preventDefault()
+          const submittedEntries: DiagnosisDraftEntry[] = entries.map(({ key: _key, note, ...entry }) => ({
+            ...entry,
+            ...(note.trim().length === 0 ? {} : { note: note.trim() }),
+          }))
+          actions.save.onSubmit(submittedEntries)
+        }}
+      >
+        <FieldGroup>
+          {entries.map((entry, index) => {
+            const suffix = index === 0 ? '' : ` ${index + 1}`
+            const diagnosisItems = catalog
+              .filter(item => item.id === entry.catalogItemId || !usedCatalogItemIds.has(item.id))
+              .map(item => ({
+                label: `${locale === 'zh-CN' ? item.nameZh : item.nameEn} · ${item.code}`,
+                value: item.id,
+              }))
+            return (
+              <FieldSet className="border-b pb-4" key={entry.key}>
+                <FieldLegend variant="label">{messages.diagnosis} {index + 1}</FieldLegend>
+                <FieldGroup>
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(15rem,1.5fr)_minmax(12rem,0.8fr)_auto]">
+                    <Field>
+                      <FieldLabel htmlFor={`diagnosis-item-${index}`}>{messages.diagnosisItem}{suffix}</FieldLabel>
+                      <WorkspaceSelect
+                        id={`diagnosis-item-${index}`}
+                        items={diagnosisItems}
+                        onValueChange={value => {
+                          if (value !== null) updateEntry(index, { catalogItemId: value })
+                        }}
+                        value={entry.catalogItemId}
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel id={`diagnosis-role-${index}`}>{messages.diagnosisRole}{suffix}</FieldLabel>
+                      <ToggleGroup
+                        aria-labelledby={`diagnosis-role-${index}`}
+                        onValueChange={value => {
+                          const role = value[0]
+                          if (role === 'primary' || role === 'secondary') updateRole(index, role)
+                        }}
+                        size="sm"
+                        spacing={2}
+                        value={[entry.role]}
+                        variant="outline"
+                      >
+                        <ToggleGroupItem value="primary">{messages.primaryDiagnosis}</ToggleGroupItem>
+                        <ToggleGroupItem value="secondary">{messages.secondaryDiagnosis}</ToggleGroupItem>
+                      </ToggleGroup>
+                    </Field>
+                    <div className="flex items-end">
+                      <Button
+                        aria-label={`${messages.removeDiagnosis}${suffix}`}
+                        onClick={() => removeEntry(index)}
+                        size="icon"
+                        title={`${messages.removeDiagnosis}${suffix}`}
+                        type="button"
+                        variant="ghost"
+                      >
+                        <Trash2Icon />
+                      </Button>
+                    </div>
+                  </div>
+                  <Field>
+                    <FieldLabel htmlFor={`diagnosis-note-${index}`}>{messages.diagnosisNote}{suffix}</FieldLabel>
+                    <Textarea
+                      id={`diagnosis-note-${index}`}
+                      maxLength={500}
+                      onChange={event => updateEntry(index, { note: event.currentTarget.value })}
+                      value={entry.note}
+                    />
+                  </Field>
+                </FieldGroup>
+              </FieldSet>
+            )
+          })}
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              disabled={actions.save.pending || entries.length === 0 || !entries.some(entry => entry.role === 'primary')}
+              type="submit"
+              variant="outline"
+            >
+              <ClipboardPenIcon data-icon="inline-start" />{messages.saveDiagnosisDraft}
+            </Button>
+            <Button
+              disabled={actions.confirm.pending || actions.save.pending || dirty || state?.draft === undefined}
+              onClick={actions.confirm.onSubmit}
+              type="button"
+            >
+              <CheckCircleIcon data-icon="inline-start" />{messages.confirmDiagnosis}
+            </Button>
+          </div>
+          {actions.save.success && !dirty && state?.draft !== undefined ? (
+            <Alert>
+              <CheckIcon aria-hidden="true" />
+              <AlertTitle>{messages.diagnosisDraftSaved}</AlertTitle>
+            </Alert>
+          ) : null}
+          {actions.save.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.save.error, messages)} title={getWorkspaceErrorTitle(actions.save.error, messages, messages.operationFailed)} />}
+          {actions.confirm.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.confirm.error, messages)} title={getWorkspaceErrorTitle(actions.confirm.error, messages, messages.operationFailed)} />}
+        </FieldGroup>
+      </form>
     </section>
   )
 }

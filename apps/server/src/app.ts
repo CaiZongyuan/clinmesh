@@ -3,12 +3,14 @@ import type { HealthResponse } from '@clinmesh/contracts/health'
 import {
   acknowledgeLaboratoryReportRequestSchema,
   cancelLaboratoryRequestRequestSchema,
+  confirmDiagnosisRequestSchema,
   correctLaboratoryReportRequestSchema,
   deleteLaboratoryRequestDraftRequestSchema,
   issueLaboratoryRequestRequestSchema,
   previewClinicalDocumentSignRequestSchema,
   reviseClinicalDocumentRequestSchema,
   saveClinicalDocumentDraftRequestSchema,
+  saveDiagnosisDraftRequestSchema,
   saveLaboratoryRequestDraftRequestSchema,
   signClinicalDocumentRequestSchema,
 } from '@clinmesh/contracts/his'
@@ -431,6 +433,37 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           expectedVersion: body.input.expectedVersion,
           idempotencyKey: idempotencyKey(context),
           questionCode: body.input.questionCode,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.put('/api/his/v1/encounters/:encounterId/diagnosis/draft', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = saveDiagnosisDraftRequestSchema.parse(await context.req.json())
+        return context.json(workflow.saveDiagnosisDraft({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          entries: body.input.entries,
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/diagnosis/actions/confirm', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = confirmDiagnosisRequestSchema.parse(await context.req.json())
+        return context.json(workflow.confirmDiagnosis({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
         }))
       } catch (error) {
         return apiErrorResponse(context, error)

@@ -37,7 +37,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 17,
+      schemaVersion: 18,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -58,14 +58,15 @@ describe('SQLite lifecycle', () => {
         '0014_laboratory-report.sql',
         '0015_laboratory-report-acknowledgement.sql',
         '0016_laboratory-report-revision.sql',
+        '0017_diagnosis-draft.sql',
       ],
-      schemaVersion: 17,
+      schemaVersion: 18,
     })
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 17 })
-    expect(reopened.diagnostics().schemaVersion).toBe(17)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 18 })
+    expect(reopened.diagnostics().schemaVersion).toBe(18)
     reopened.close()
   })
 
@@ -541,6 +542,7 @@ describe('SQLite lifecycle', () => {
     for (const migration of [
       '0015_laboratory-report-acknowledgement.sql',
       '0016_laboratory-report-revision.sql',
+      '0017_diagnosis-draft.sql',
     ]) {
       await copyFile(
         join(process.cwd(), 'drizzle', migration),
@@ -551,8 +553,9 @@ describe('SQLite lifecycle', () => {
       applied: [
         '0015_laboratory-report-acknowledgement.sql',
         '0016_laboratory-report-revision.sql',
+        '0017_diagnosis-draft.sql',
       ],
-      schemaVersion: 17,
+      schemaVersion: 18,
     })
     expect((database.driver.prepare(
       'PRAGMA table_info(laboratory_report_acknowledgement)',
@@ -564,6 +567,89 @@ describe('SQLite lifecycle', () => {
     ).all() as Array<{ name: string }>).map(column => column.name)).toContain(
       'revision_of_diagnostic_report_id',
     )
+    expect((database.driver.prepare(`
+      SELECT name FROM sqlite_schema
+      WHERE type = 'table' AND name LIKE 'diagnosis_%'
+      ORDER BY name
+    `).all() as Array<{ name: string }>).map(row => row.name)).toEqual([
+      'diagnosis_catalog',
+      'diagnosis_confirmation',
+      'diagnosis_entry',
+      'diagnosis_state',
+    ])
+    expect(database.driver.prepare(`
+      SELECT item_id, code FROM diagnosis_catalog
+      WHERE workspace_id = ? AND epoch = ?
+      ORDER BY item_id
+    `).all(context.workspaceId, context.epoch)).toEqual([
+      { code: 'J06.9', item_id: 'diagnosis-acute-upper-respiratory-infection' },
+      { code: 'R50.9', item_id: 'diagnosis-fever' },
+      { code: 'J10.1', item_id: 'diagnosis-influenza' },
+    ])
+    expect(() => database.driver.prepare(`
+      INSERT INTO diagnosis_state (
+        workspace_id, epoch, case_id, version, status, draft_json,
+        updated_by, updated_at
+      ) VALUES (?, ?, ?, 1, 'confirmed', ?, ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'case-legacy',
+      JSON.stringify({ entries: [] }),
+      'actor-legacy-doctor',
+      '2026-08-24T09:03:00+08:00',
+    )).toThrow(/CHECK constraint failed/)
+    database.driver.prepare(`
+      INSERT INTO diagnosis_state (
+        workspace_id, epoch, case_id, version, status, draft_json,
+        updated_by, updated_at
+      ) VALUES (?, ?, ?, 2, 'confirmed', NULL, ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'case-legacy',
+      'actor-legacy-doctor',
+      '2026-08-24T09:03:00+08:00',
+    )
+    database.driver.prepare(`
+      INSERT INTO diagnosis_confirmation (
+        workspace_id, epoch, confirmation_id, case_id, provenance_id,
+        confirmed_by_actor_id, confirmed_by_practitioner_role_id, confirmed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'confirmation-legacy',
+      'case-legacy',
+      'provenance-diagnosis-legacy',
+      'actor-legacy-doctor',
+      'role-legacy-doctor',
+      '2026-08-24T09:03:00+08:00',
+    )
+    const insertDiagnosisEntry = database.driver.prepare(`
+      INSERT INTO diagnosis_entry (
+        workspace_id, epoch, confirmation_id, ordinal,
+        condition_id, catalog_item_id, role
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+    insertDiagnosisEntry.run(
+      context.workspaceId,
+      context.epoch,
+      'confirmation-legacy',
+      1,
+      'condition-legacy-primary',
+      'diagnosis-influenza',
+      'primary',
+    )
+    expect(() => insertDiagnosisEntry.run(
+      context.workspaceId,
+      context.epoch,
+      'confirmation-legacy',
+      2,
+      'condition-legacy-second-primary',
+      'diagnosis-fever',
+      'primary',
+    )).toThrow(/UNIQUE constraint failed/)
     expect(database.driver.prepare(`
       SELECT value_json FROM scenario_hidden_fact
       WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
@@ -594,7 +680,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(17)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(18)
     await runtime.close()
   })
 
@@ -664,7 +750,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 17,
+      schemaVersion: 18,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -676,11 +762,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 17,
+      expectedSchemaVersion: 18,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 17,
+      schemaVersion: 18,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -864,7 +950,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(17),
+      schemaVersion: z.literal(18),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -881,26 +967,27 @@ describe('SQLite lifecycle', () => {
       '0014_laboratory-report.sql',
       '0015_laboratory-report-acknowledgement.sql',
       '0016_laboratory-report-revision.sql',
+      '0017_diagnosis-draft.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 17 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 18 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 17 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 18 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 17 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 18 })
   })
 })

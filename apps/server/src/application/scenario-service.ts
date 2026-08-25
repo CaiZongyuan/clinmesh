@@ -513,6 +513,29 @@ export class ScenarioService {
     for (const item of catalog) {
       insertCatalog.run(input.workspaceId, input.epoch, ...item)
     }
+    const insertDiagnosisCatalog = this.#database.driver.prepare(`
+      INSERT INTO diagnosis_catalog (
+        workspace_id, epoch, item_id, code_system, code, name_zh, name_en,
+        version, active
+      ) VALUES (?, ?, ?, 'http://hl7.org/fhir/sid/icd-10', ?, ?, ?, 1, 1)
+    `)
+    for (const diagnosis of [
+      [
+        'diagnosis-influenza',
+        'J10.1',
+        '流感伴其他呼吸道表现，季节性流感病毒已标明',
+        'Influenza with other respiratory manifestations, seasonal influenza virus identified',
+      ],
+      [
+        'diagnosis-acute-upper-respiratory-infection',
+        'J06.9',
+        '急性上呼吸道感染，未特指',
+        'Acute upper respiratory infection, unspecified',
+      ],
+      ['diagnosis-fever', 'R50.9', '发热，未特指', 'Fever, unspecified'],
+    ] as const) {
+      insertDiagnosisCatalog.run(input.workspaceId, input.epoch, ...diagnosis)
+    }
     const insertLot = this.#database.driver.prepare(`
       INSERT INTO inventory_lot (
         workspace_id, epoch, lot_id, medication_id, location_id,
