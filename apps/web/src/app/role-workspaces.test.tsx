@@ -8,9 +8,12 @@ import type {
   DoctorCompletedCaseDetail,
   DoctorCompletedCaseList,
   LaboratoryRequest,
+  SessionContext,
 } from '@clinmesh/contracts/his'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DoctorWorkspace } from './doctor-workspace.tsx'
 import { WebApp } from './web-app.tsx'
 
 const doctorTriage = {
@@ -187,6 +190,19 @@ const doctorSession = {
     id: 'user-outpatient-doctor',
     name: '合成门诊医生',
   },
+}
+
+const administratorAsDoctorSession: SessionContext = {
+  actor: {
+    ...doctorSession.actor,
+    actorId: 'actor-administrator',
+    roleCode: 'outpatient-doctor',
+  },
+  availableRoles: [
+    { ...administratorSession.availableRoles[0]!, code: 'administrator' },
+    { ...doctorSession.availableRoles[0]!, code: 'outpatient-doctor' },
+  ],
+  user: administratorSession.user,
 }
 
 const cashierSession = {
@@ -387,10 +403,17 @@ function stubDoctorCompletedCaseLibrary(options: {
   detail?: DoctorCompletedCaseDetail
   list: DoctorCompletedCaseList
   onListRequest?: (url: URL) => void
+  onRequest?: (
+    url: URL,
+    init?: RequestInit,
+  ) => Promise<Response | undefined> | Response | undefined
+  session?: SessionContext
 }) {
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost')
-    if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+    if (url.pathname === '/api/auth/context') return Response.json(options.session ?? doctorSession)
+    const response = await options.onRequest?.(url, init)
+    if (response !== undefined) return response
     if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
       return Response.json({ items: [], ...pagination(0) })
     }
@@ -3842,6 +3865,8 @@ describe('role workspaces', () => {
   })
 
   it('navigates from completed case details to the controlled clinical correction owners', async () => {
+    let clinicalRevisionRequest: unknown
+    let laboratoryCorrectionRequest: unknown
     const patient = {
       birthDate: '1988-03-16',
       gender: 'female',
@@ -3914,6 +3939,48 @@ describe('role workspaces', () => {
       patient,
       timeline: [],
     } satisfies DoctorCompletedCaseDetail
+    const revisedDocument: DoctorCompletedCaseDetail['clinicalDocuments'][number] = {
+      ...signedDocument,
+      bundleId: 'bundle-completed-correction-2',
+      compositionId: 'composition-completed-correction-2',
+      documentId: 'document-completed-correction-2',
+      provenanceId: 'provenance-completed-correction-2',
+      revisionNumber: 2,
+      revisionOfCompositionId: signedDocument.compositionId,
+      revisionReason: '补充检验复核后的处置说明。',
+      signedAt: '2026-08-24T09:10:00+08:00',
+    }
+    const revisedReport: NonNullable<
+      DoctorCompletedCaseDetail['laboratoryRequests'][number]['report']
+    > = {
+      conclusion: '复核后 C 反应蛋白仍升高。',
+      diagnosticReportId: 'diagnostic-report-correction-2',
+      diagnosticReportVersion: '1',
+      issuedAt: '2026-08-24T09:20:00+08:00',
+      revisionNumber: 2,
+      revisionOfDiagnosticReportId: report.diagnosticReportId,
+      revisionReason: '复核仪器原始数据后更正。',
+      results: report.results.map(result => ({
+        ...result,
+        observationId: 'observation-correction-2',
+        value: 29.1,
+      })),
+      specimenId: report.specimenId,
+      status: 'final',
+    }
+    let currentCompletedDetail: DoctorCompletedCaseDetail = completedDetail
+    const clinicalRevisionEvent: DoctorCompletedCaseDetail['timeline'][number] = {
+      kind: 'clinical-document-revised',
+      occurredAt: revisedDocument.signedAt,
+      reference: `Composition/${revisedDocument.compositionId}`,
+      relatedReferences: [`Composition/${signedDocument.compositionId}`],
+    }
+    const laboratoryCorrectionEvent: DoctorCompletedCaseDetail['timeline'][number] = {
+      kind: 'laboratory-report-revised',
+      occurredAt: revisedReport.issuedAt,
+      reference: `DiagnosticReport/${revisedReport.diagnosticReportId}`,
+      relatedReferences: [`DiagnosticReport/${report.diagnosticReportId}`],
+    }
     const activeDetail = {
       allergies: [],
       caseId: completedDetail.caseId,
@@ -3934,7 +4001,6 @@ describe('role workspaces', () => {
     } satisfies DoctorCaseDetail
     stubDoctorCompletedCaseLibrary({
       activeDetail,
-      detail: completedDetail,
       list: {
         items: [{
           caseId: completedDetail.caseId,
@@ -3945,9 +4011,74 @@ describe('role workspaces', () => {
         }],
         ...pagination(1),
       },
+      onRequest: (url, init) => {
+        if (
+          url.pathname
+          === `/api/his/v1/doctor/completed-cases/${completedDetail.caseId}`
+        ) {
+          return Response.json(currentCompletedDetail)
+        }
+        if (
+          url.pathname
+          === '/api/his/v1/clinical-documents/composition-completed-correction-1/actions/revise'
+        ) {
+          clinicalRevisionRequest = JSON.parse(String(init?.body))
+          currentCompletedDetail = {
+            ...currentCompletedDetail,
+            clinicalDocuments: [signedDocument, revisedDocument],
+            timeline: [...currentCompletedDetail.timeline, clinicalRevisionEvent],
+          }
+          return Response.json(commandResponse({
+            bundleId: 'bundle-completed-correction-2',
+            compositionId: 'composition-completed-correction-2',
+            compositionVersion: '1',
+            documentId: 'document-completed-correction-2',
+            provenanceId: 'provenance-completed-correction-2',
+            revisionNumber: 2,
+            revisionOfCompositionId: signedDocument.compositionId,
+          }))
+        }
+        if (
+          url.pathname
+          === '/api/his/v1/laboratory-requests/laboratory-request-correction-1/reports/diagnostic-report-correction-1/actions/correct'
+        ) {
+          laboratoryCorrectionRequest = JSON.parse(String(init?.body))
+          currentCompletedDetail = {
+            ...currentCompletedDetail,
+            laboratoryRequests: [{
+              ...laboratoryRequest,
+              previousReports: [report],
+              report: revisedReport,
+              status: 'reported',
+              version: laboratoryRequest.version + 1,
+            }],
+            timeline: [...currentCompletedDetail.timeline, laboratoryCorrectionEvent],
+          }
+          return Response.json(commandResponse({
+            diagnosticReportId: 'diagnostic-report-correction-2',
+            previousDiagnosticReportId: report.diagnosticReportId,
+            provenanceId: 'provenance-report-correction-2',
+            requestId: laboratoryRequest.id,
+            requestVersion: laboratoryRequest.version + 1,
+            status: 'reported',
+          }))
+        }
+        return undefined
+      },
+      session: administratorAsDoctorSession,
     })
     const user = userEvent.setup()
-    render(<WebApp />)
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        mutations: { retry: false },
+        queries: { retry: false, staleTime: Infinity },
+      },
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DoctorWorkspace locale="zh-CN" session={administratorAsDoctorSession} />
+      </QueryClientProvider>,
+    )
 
     await user.click(await screen.findByRole('tab', { name: '已完诊病例' }))
     await user.click(await screen.findByRole('button', { name: `查看病例 ${patient.name}` }))
@@ -3960,14 +4091,59 @@ describe('role workspaces', () => {
       expect(document.activeElement?.id).toBe('encounter-completion-target-clinical-document')
     })
     expect(screen.getByRole('tab', { name: '当前诊疗' }).getAttribute('aria-selected')).toBe('true')
+    const revisionForm = await screen.findByRole('form', { name: '修订病历版本 1' })
+    await user.type(within(revisionForm).getByLabelText('修订原因'), '补充检验复核后的处置说明。')
+    await user.click(within(revisionForm).getByRole('button', { name: '提交病历修订' }))
+    await waitFor(() => {
+      expect(clinicalRevisionRequest).toMatchObject({
+        expectedVersions: {
+          'Composition/composition-completed-correction-1': '1',
+          'Encounter/encounter-completed-correction-1': '6',
+        },
+        input: { reason: '补充检验复核后的处置说明。' },
+      })
+    })
 
     await user.click(screen.getByRole('tab', { name: '已完诊病例' }))
     await user.click(await screen.findByRole('button', { name: `查看病例 ${patient.name}` }))
+    expect(await screen.findByText('版本 2')).toBeTruthy()
+    expect(screen.getByText('补充检验复核后的处置说明。')).toBeTruthy()
     await user.click(await screen.findByRole('button', { name: '更正检查报告' }))
     await waitFor(() => {
       expect(document.activeElement?.id).toBe('encounter-completion-target-laboratory')
     })
     expect(screen.getByRole('tab', { name: '当前诊疗' }).getAttribute('aria-selected')).toBe('true')
+    const correctionForm = await screen.findByRole('form', { name: '更正检查报告 lab-crp' })
+    await user.clear(within(correctionForm).getByLabelText('更正后结论'))
+    await user.type(within(correctionForm).getByLabelText('更正后结论'), '复核后 C 反应蛋白仍升高。')
+    await user.clear(within(correctionForm).getByLabelText('C 反应蛋白 · 结果'))
+    await user.type(within(correctionForm).getByLabelText('C 反应蛋白 · 结果'), '29.1')
+    await user.type(within(correctionForm).getByLabelText('更正原因'), '复核仪器原始数据后更正。')
+    await user.click(within(correctionForm).getByRole('button', { name: '预览报告更正' }))
+    const confirmation = await screen.findByRole('alertdialog', { name: '确认更正检查报告' })
+    expect(within(confirmation).getByText('复核后 C 反应蛋白仍升高。')).toBeTruthy()
+    expect(within(confirmation).getByText('29.1 mg/L')).toBeTruthy()
+    expect(within(confirmation).getByText('复核仪器原始数据后更正。')).toBeTruthy()
+    await user.click(within(confirmation).getByRole('button', { name: '确认更正检查报告' }))
+    await waitFor(() => {
+      expect(laboratoryCorrectionRequest).toEqual({
+        expectedVersions: { 'DiagnosticReport/diagnostic-report-correction-1': '1' },
+        input: {
+          conclusion: '复核后 C 反应蛋白仍升高。',
+          expectedRequestVersion: 5,
+          reason: '复核仪器原始数据后更正。',
+          results: [{ code: '1988-5', value: 29.1 }],
+        },
+      })
+    })
+
+    await user.click(screen.getByRole('tab', { name: '已完诊病例' }))
+    await user.click(await screen.findByRole('button', { name: `查看病例 ${patient.name}` }))
+    expect(await screen.findByText('第 2 版（当前）')).toBeTruthy()
+    expect(screen.getByText('复核后 C 反应蛋白仍升高。')).toBeTruthy()
+    const timeline = screen.getByRole('region', { name: '业务时间线' })
+    expect(within(timeline).getByText('修订病历')).toBeTruthy()
+    expect(within(timeline).getByText('更正检查报告')).toBeTruthy()
   })
 
   it('partially dispenses from a versioned lot before completing the Scenario Run', async () => {

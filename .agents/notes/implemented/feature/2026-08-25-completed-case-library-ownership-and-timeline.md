@@ -18,7 +18,7 @@ Migration `0019_outpatient-case-responsibility.sql` 为既有病例回填责任�
 
 病例库拥有独立 strict DTO，只包含 Patient、已完成 Encounter 和各 owner 的正式事实。Consultation 只返回不可变记录，Clinical Document 返回完整签署修订链，检查返回正式申请、报告修订和版本级确认，诊断与用药返回确认或签发事实；任何草稿、表单状态、expected edit version 或写入 action 都不进入该 DTO。病例库页面使用 TanStack Query 管理列表和详情，活动诊疗与病例库用同级页签分隔。
 
-业务时间线由服务端从同一批正式事实组装。事件以稳定 kind、发生时间、主资源引用和关联资源引用表达，按发生时间、主引用、kind 的顺序确定性排列；客户端按给定顺序渲染，不重新遍历 owner 数据决定哪些事件存在或哪个版本有效。病例库详情没有普通写入口；病历或报告更正跳转到原 owner 的受控 Command，重新读取详情即可看到新版本和对应事件。
+业务时间线由服务端从同一批正式事实组装。事件以稳定 kind、发生时间、主资源引用和关联资源引用表达，按发生时间、主引用、kind 的顺序确定性排列；客户端按给定顺序渲染，不重新遍历 owner 数据决定哪些事件存在或哪个版本有效。病例库详情没有普通写入口；病历更正从病例库显式跳转到最新版本修订 Command，该 Command 重新校验当前 Practitioner Role 与 `outpatient_case_responsibility` 一致。报告更正导航还要求登录 session 具有 administrator 能力。Command 成功后 Web 同时失效活动病例和病例库详情 Query 前缀，重新读取新版本与对应事件；完诊成功还会失效病例库列表前缀。
 
 ## Alternatives considered
 
@@ -36,4 +36,4 @@ Migration `0019_outpatient-case-responsibility.sql` 为既有病例回填责任�
 
 病例库授权不依赖 `outpatient_case.status`、当前 Queue Task 状态或客户端传入的医生标识。列表只接受窄筛选参数并稳定分页；详情不暴露属于其他岗位或未完成病例是否存在。
 
-正式 owner 增加修订事实时，病例库详情和时间线随下一次查询反映新事实，不需要复制或更新快照。时间线不是新的状态 owner，调用方仍从各区段读取当前诊断、文书、报告和用药事实，不能只凭事件序列判断当前临床有效性。
+正式 owner 增加修订事实时，病例库详情和时间线通过失效后的查询反映新事实，不需要复制或更新快照。时间线不是新的状态 owner，调用方仍从各区段读取当前诊断、文书、报告和用药事实，不能只凭事件序列判断当前临床有效性。

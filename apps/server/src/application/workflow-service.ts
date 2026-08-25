@@ -4913,12 +4913,16 @@ export class WorkflowService {
       this.#assertRole(input.context, ['outpatient-doctor'])
       const source = this.#database.driver.prepare(`
         SELECT document.document_id, document.bundle_id, outpatient_case.patient_id,
-          outpatient_case.encounter_id
+          outpatient_case.encounter_id, responsibility.practitioner_role_id
         FROM signed_clinical_document AS document
         JOIN outpatient_case
           ON outpatient_case.workspace_id = document.workspace_id
          AND outpatient_case.epoch = document.epoch
          AND outpatient_case.case_id = document.case_id
+        JOIN outpatient_case_responsibility AS responsibility
+          ON responsibility.workspace_id = outpatient_case.workspace_id
+         AND responsibility.epoch = outpatient_case.epoch
+         AND responsibility.case_id = outpatient_case.case_id
         WHERE document.workspace_id = ? AND document.epoch = ?
           AND document.composition_id = ?
       `).get(
@@ -4930,9 +4934,16 @@ export class WorkflowService {
         document_id: string
         encounter_id: string
         patient_id: string
+        practitioner_role_id: string
       } | undefined
       if (source === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The signed clinical document was not found')
+      }
+      if (source.practitioner_role_id !== input.context.practitionerRoleId) {
+        throw new WorkflowError(
+          'ROLE_NOT_ALLOWED',
+          'Only the doctor responsible for the outpatient case can revise its Clinical Document',
+        )
       }
       const successor = this.#database.driver.prepare(`
         SELECT document_id FROM signed_clinical_document

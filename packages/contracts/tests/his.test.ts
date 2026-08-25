@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   clinicalCatalogSchema,
   completeEncounterRequestSchema,
+  completedCaseLaboratoryRequestSchema,
   encounterCompletionPreviewSchema,
   encounterCompletionResponseSchema,
   laboratoryRequestSchema,
@@ -9,6 +10,47 @@ import {
   laboratoryResultSchema,
   prescriptionDraftContentSchema,
 } from '../src/his.ts'
+
+function completedCaseLaboratoryRequestFixture() {
+  const report = {
+    conclusion: 'C 反应蛋白升高。',
+    diagnosticReportId: 'diagnostic-report-crp-1',
+    diagnosticReportVersion: '1',
+    issuedAt: '2026-08-24T09:00:00+08:00',
+    revisionNumber: 1,
+    results: [{
+      code: '1988-5',
+      display: 'C 反应蛋白',
+      interpretation: 'high',
+      observationId: 'observation-crp-1',
+      referenceRange: { text: '0-8 mg/L' },
+      unit: {
+        code: 'mg/L',
+        display: 'mg/L',
+        system: 'http://unitsofmeasure.org',
+      },
+      value: 18.6,
+    }],
+    specimenId: 'specimen-crp-1',
+    status: 'final',
+  }
+  return {
+    report,
+    request: {
+      catalogItemId: 'lab-crp',
+      id: 'laboratory-request-crp-1',
+      indicationCode: 'fever',
+      previousReports: [],
+      report,
+      serviceRequestId: 'service-request-crp-1',
+      serviceRequestVersion: '2',
+      status: 'reported',
+      taskId: 'task-crp-1',
+      taskVersion: '4',
+      version: 4,
+    },
+  }
+}
 
 describe('HIS contracts', () => {
   it('requires every stable Encounter completion condition with a Chinese status and navigation target', () => {
@@ -310,5 +352,74 @@ describe('HIS contracts', () => {
       },
       status: 'acknowledged',
     }).success).toBe(true)
+  })
+
+  it('rejects inconsistent completed-case laboratory report revisions', () => {
+    const { report, request } = completedCaseLaboratoryRequestFixture()
+
+    expect(completedCaseLaboratoryRequestSchema.safeParse(request).success).toBe(true)
+    expect(completedCaseLaboratoryRequestSchema.safeParse({
+      ...request,
+      report: {
+        ...report,
+        revisionOfDiagnosticReportId: 'diagnostic-report-crp-0',
+      },
+    }).success).toBe(false)
+    expect(completedCaseLaboratoryRequestSchema.safeParse({
+      ...request,
+      report: {
+        ...report,
+        revisionNumber: 2,
+        revisionOfDiagnosticReportId: 'diagnostic-report-crp-0',
+        revisionReason: '复核仪器原始数据。',
+      },
+    }).success).toBe(true)
+    expect(completedCaseLaboratoryRequestSchema.safeParse({
+      ...request,
+      report: {
+        ...report,
+        revisionNumber: 2,
+        revisionOfDiagnosticReportId: 'diagnostic-report-crp-0',
+      },
+    }).success).toBe(false)
+  })
+
+  it('rejects unpaired completed-case laboratory task references', () => {
+    const { request } = completedCaseLaboratoryRequestFixture()
+
+    expect(completedCaseLaboratoryRequestSchema.safeParse(request).success).toBe(true)
+    expect(completedCaseLaboratoryRequestSchema.safeParse({
+      ...request,
+      taskVersion: undefined,
+    }).success).toBe(false)
+    expect(completedCaseLaboratoryRequestSchema.safeParse({
+      ...request,
+      taskId: undefined,
+    }).success).toBe(false)
+  })
+
+  it('rejects completed-case laboratory reports that contradict request status', () => {
+    const { report, request } = completedCaseLaboratoryRequestFixture()
+
+    expect(completedCaseLaboratoryRequestSchema.safeParse(request).success).toBe(true)
+    expect(completedCaseLaboratoryRequestSchema.safeParse({
+      ...request,
+      status: 'issued',
+    }).success).toBe(false)
+    expect(completedCaseLaboratoryRequestSchema.safeParse({
+      ...request,
+      status: 'acknowledged',
+    }).success).toBe(false)
+    expect(completedCaseLaboratoryRequestSchema.safeParse({
+      ...request,
+      report: {
+        ...report,
+        acknowledgement: {
+          acknowledgedAt: '2026-08-24T09:05:00+08:00',
+          acknowledgedBy: 'practitioner-outpatient-doctor',
+          id: 'acknowledgement-crp-1',
+        },
+      },
+    }).success).toBe(false)
   })
 })

@@ -12,6 +12,7 @@ import {
   clinicalSignResponseSchema,
   confirmNoMedicationResponseSchema,
   confirmDiagnosisResponseSchema,
+  correctLaboratoryReportResponseSchema,
   createPatientResponseSchema,
   clinicalCatalogSchema,
   diagnosisDraftResponseSchema,
@@ -756,6 +757,33 @@ export function acknowledgeLaboratoryReport(input: {
         [`DiagnosticReport/${input.diagnosticReportId}`]: input.diagnosticReportVersion,
       },
       input: { expectedRequestVersion: input.requestVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function correctLaboratoryReport(input: {
+  conclusion: string
+  diagnosticReportId: string
+  diagnosticReportVersion: string
+  reason: string
+  requestId: string
+  requestVersion: number
+  results: Array<{ code: string; value: number }>
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/laboratory-requests/${encodeURIComponent(input.requestId)}/reports/${encodeURIComponent(input.diagnosticReportId)}/actions/correct`,
+    correctLaboratoryReportResponseSchema,
+    {
+      expectedVersions: {
+        [`DiagnosticReport/${input.diagnosticReportId}`]: input.diagnosticReportVersion,
+      },
+      input: {
+        conclusion: input.conclusion,
+        expectedRequestVersion: input.requestVersion,
+        reason: input.reason,
+        results: input.results,
+      },
     },
     { idempotencyKey },
   )

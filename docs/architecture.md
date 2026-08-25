@@ -889,7 +889,7 @@ Consultation 是病例级领域聚合，Consultation Record 是按序号追加�
 
 Report Acknowledgement 是按报告版本独立保存的领域事实，只能由原检查申请的开具医生对当前 `DiagnosticReport.status=final` 且申请为 `reported` 的报告创建。成功确认把申请推进到 `acknowledged` 并递增申请版本，但不更新 DiagnosticReport 或其 FHIR `meta.versionId`；确认 Command 以 `ReportAcknowledgement/<id>` effect 进入审计和 Action Trace。每个报告版本至多有一条确认事实，不同幂等键的重复确认返回第一次确认的 ID、时间和当时的申请版本。
 
-报告更正只接受当前 `reported` 或 `acknowledged` 报告、申请 expected version、原 DiagnosticReport expected version、原因、结论，以及覆盖既有结果代码全集且不重复的数值。每次更正为 DiagnosticReport 和全部 Observation 创建新的 logical ID，旧资源和旧 Report Acknowledgement 保持可读；新的 Provenance 以 `entity.role=revision` 引用被替代报告和结果，领域修订表以 latest-only 唯一约束维持线性链。更正后申请指向新报告并回到 `reported`，当前确认投影清空，医生必须对新版本重新确认；并发更正只有一次能通过申请 CAS。FHIR R5 DiagnosticReport 没有 Composition 式 `relatesTo`，因此替代关系由标准 Provenance 与领域修订链共同表达，不添加伪标准字段。公开 HTTP adapter 只接受已认证 administrator，再由服务端绑定受信 `lis-system` context 调用更正 Command；调用方不能自行声明系统角色。
+报告更正只接受当前 `reported` 或 `acknowledged` 报告、申请 expected version、原 DiagnosticReport expected version、原因、结论，以及覆盖既有结果代码全集且不重复的数值。每次更正为 DiagnosticReport 和全部 Observation 创建新的 logical ID，旧资源和旧 Report Acknowledgement 保持可读；新的 Provenance 以 `entity.role=revision` 引用被替代报告和结果，领域修订表以 latest-only 唯一约束维持线性链。更正后申请指向新报告并回到 `reported`，当前确认投影清空，医生必须对新版本重新确认；并发更正只有一次能通过申请 CAS。FHIR R5 DiagnosticReport 没有 Composition 式 `relatesTo`，因此替代关系由标准 Provenance 与领域修订链共同表达，不添加伪标准字段。公开 HTTP adapter 从受信 session 的 `availableRoles` 判断登录账户是否具有 administrator 能力，因此管理员可在当前 Acting Practitioner Context 为门诊医生时进入病例并发起更正；adapter 再把调用绑定为受信 `lis-system` context，普通医生和请求正文都不能声明或伪造该系统角色。
 
 只有 `issued` 申请可由原开具医生普通取消；取消把 ServiceRequest 改为 `revoked`、执行 Task 改为 `cancelled`，并递增正式申请版本。取消与受理竞争时由版本和条件更新决定唯一结果，已取消申请收到晚到受理事件时以无副作用完成。医生病例详情读取草稿版本、可选草稿和全部正式申请；报告 DTO 从已签发的 DiagnosticReport 和 Observation 还原，不从当前目录或结果模板重建。Web 只对当前草稿显示删除、只对 `issued` 行显示取消、只对当前 `reported` 报告显示确认已阅；执行中申请显示等待状态，当前报告和被替代报告分别展示结论、结构化结果、参考范围、异常标识、修订原因和已有确认事实。
 
@@ -903,7 +903,7 @@ Report Acknowledgement 是按报告版本独立保存的领域事实，只能由
 
 医生通过 `GET /api/his/v1/doctor/completed-cases` 查询当前 Practitioner Role 负责且 `Encounter.status=completed`、具有 `actualPeriod.end` 的病例。查询支持 Patient logical ID、完诊业务日期闭区间和诊断目录项筛选，按 `actualPeriod.end` 降序、病例 ID 升序稳定分页。`GET /api/his/v1/doctor/completed-cases/{caseId}` 对未完诊、未分配或属于其他医生的病例统一返回业务冲突，只读取各 owner 的正式事实：Consultation Record、不可变 Clinical Document 修订链、检查申请与报告修订及确认、诊断确认、处方或无需用药结论、Patient 和已完成 Encounter；活动草稿、编辑版本和页面状态不进入病例库合同。
 
-病例库详情的业务时间线由服务端从上述正式事实组装，按虚拟业务时间升序排列，相同时间依次按主资源引用和事件 kind 排序。每个事件返回稳定 kind、主资源引用和关联资源引用；Web 只按响应顺序展示，不重新推断事件、当前版本或临床状态。医生工作台以“当前诊疗”和“已完诊病例”页签分隔写入与查询入口；病例库页只提供受控筛选、分页和只读事实展示，病历或报告更正跳转到各自 owner 的受控 Command，并产生新版本，不能在病例库 DTO 上普通覆盖。
+病例库详情的业务时间线由服务端从上述正式事实组装，按虚拟业务时间升序排列，相同时间依次按主资源引用和事件 kind 排序。每个事件返回稳定 kind、主资源引用和关联资源引用；Web 只按响应顺序展示，不重新推断事件、当前版本或临床状态。医生工作台以“当前诊疗”和“已完诊病例”页签分隔写入与查询入口；病例库页只提供受控筛选、分页和只读事实展示。病历更正仅在用户从病例库显式跳转后显示最新版本修订表单，修订 Command 重新校验当前 Practitioner Role 是该病例的持久责任岗位；报告更正还要求当前登录 session 具有 administrator 能力，并使用结构化字段和提交前确认。两个动作都调用各自 owner 的受控 Command，成功后同时失效活动病例与病例库详情查询，使新版本和时间线从服务端正式事实重新读取；完诊成功还会失效病例库列表。任何动作都不能在病例库 DTO 上普通覆盖。
 
 关键约束：
 
@@ -1530,7 +1530,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 
 ### 15.3 Web 与明确边界
 
-- Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员 Scenario 控制入口；医生工作台提供六字段病历草稿、签署预览、独立签署、只读历史和最新版本修订。带 Consultation 的病例使用受控目录编辑主次诊断、保存独立草稿并确认正式诊断，同时显示 CBC/CRP 独立检查草稿、开具、状态、等待结果、结构化报告和有效纠错操作；目录声明独立用药结论能力时，同一病例可编辑五项受控用药字段、保存或删除处方草稿、开具只读处方、受控撤回，或者确认无需用药。没有该能力的旧 Scenario 不显示此面板；没有 Consultation 的既有病例保留复诊组合编辑器和发热检验组合兼容控件。服务端状态只由 TanStack Query 缓存，退出/跨账户登录会清除非 session 查询。
+- Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员 Scenario 控制入口；医生工作台提供六字段病历草稿、签署预览、独立签署、只读历史和最新版本修订。带 Consultation 的病例使用受控目录编辑主次诊断、保存独立草稿并确认正式诊断，同时显示 CBC/CRP 独立检查草稿、开具、状态、等待结果、结构化报告和有效纠错操作；目录声明独立用药结论能力时，同一病例可编辑五项受控用药字段、保存或删除处方草稿、开具只读处方、受控撤回，或者确认无需用药。没有该能力的旧 Scenario 不显示此面板；没有 Consultation 的既有病例保留复诊组合编辑器和发热检验组合兼容控件。病例库提供责任范围内的已完诊 Encounter 筛选、只读详情和服务端业务时间线，并把病历与报告更正导向受控 owner。服务端状态只由 TanStack Query 缓存，退出/跨账户登录会清除非 session 查询；更正后失效病例库详情，完诊后同时失效列表和详情。
 - 可见字符串具有中文和英文 catalog；主题支持 system、light 与 dark。岗位页面具有分页、加载、空、错误、冲突、无权限和成功状态，并覆盖长中文文本与窄视口。
 - 首期不包含 Desktop/Mobile 产品行为、Agent/AG-UI/MCP、评分、附件、真实外部系统、完整医保/住院/库存、远程数据库、多实例或高可用。
 - 当前没有 FHIR generic write、自定义 FHIR Operation、正式 Profile/IG、官方 Validator、标准 compartment、metrics exporter 或公开在线 SLA。

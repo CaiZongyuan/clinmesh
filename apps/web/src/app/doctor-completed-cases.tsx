@@ -362,6 +362,9 @@ export function DoctorCompletedCaseLibrary({
           </Empty>
         ) : (
           <CompletedCaseDetailView
+            canCorrectLaboratoryReport={session.availableRoles.some(
+              role => role.code === 'administrator',
+            )}
             catalog={catalog.data}
             detail={detail.data}
             locale={locale}
@@ -387,7 +390,8 @@ function CompletedCaseError({ error, fallbackTitle, messages }: {
   )
 }
 
-function CompletedCaseDetailView({ catalog, detail, locale, onOpenCorrection }: {
+function CompletedCaseDetailView({ canCorrectLaboratoryReport, catalog, detail, locale, onOpenCorrection }: {
+  canCorrectLaboratoryReport: boolean
   catalog?: ClinicalCatalog | undefined
   detail: DoctorCompletedCaseDetail
   locale: WorkspaceLocale
@@ -420,7 +424,7 @@ function CompletedCaseDetailView({ catalog, detail, locale, onOpenCorrection }: 
             {messages.openClinicalDocumentCorrection}
           </Button>
         )}
-        {hasLaboratoryReport ? (
+        {hasLaboratoryReport && canCorrectLaboratoryReport ? (
           <Button
             onClick={() => onOpenCorrection(detail.caseId, 'laboratory')}
             size="sm"

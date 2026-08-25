@@ -16,7 +16,7 @@ Report Acknowledgement 是独立于 DiagnosticReport 的不可变领域事实，
 
 更正通过申请 expected version 和当前报告关联做 CAS。成功后申请指向新报告、递增版本、回到 `reported` 并清除当前确认投影，因此负责医生必须重新确认新版本；并发更正只有一个提交成功。FHIR R5 DiagnosticReport 没有 Composition 式 `relatesTo`，替代引用由标准 Provenance 和领域修订链共同表达，不向 DiagnosticReport 添加自定义伪标准字段。
 
-公开更正 HTTP adapter 要求已认证 administrator，并在服务端把该调用绑定为受信 `lis-system` context；请求 schema 不接受角色或任意 FHIR 内容。共享 Command 仍只授权 `lis-system`，普通调用方不能通过正文把自己声明为报告签发系统。
+公开更正 HTTP adapter 从受信 session 的 `availableRoles` 判断登录账户是否具有 administrator 能力，而不把当前 Acting Practitioner Role 当作账户权限。因此管理员可在门诊医生 Acting Practitioner Context 中打开自己有权查看的病例，再由服务端把更正调用绑定为受信 `lis-system` context；请求 schema 不接受角色或任意 FHIR 内容。共享 Command 仍只授权 `lis-system`，普通医生和请求正文都不能把调用方声明为报告签发系统。
 
 ## Alternatives considered
 
@@ -33,6 +33,8 @@ Report Acknowledgement 是独立于 DiagnosticReport 的不可变领域事实，
 迁移 `0015_laboratory-report-acknowledgement.sql` 和 `0016_laboratory-report-revision.sql` 分别保存版本级确认事实和 latest-only 修订链，数据库 schema version 为 `17`。报告确认、申请状态变化、FHIR 资源、Provenance、Command receipt、审计与 Action Trace 在同一事务中提交或回滚。
 
 医生病例读模型把最新报告放在 `report`，按业务修订顺序把旧版本放在 `previousReports`；每个版本只展示属于自己的确认事实。Web 仅在当前申请为 `reported` 时提供确认动作，并把当前报告与被替代版本分区展示，不能从旧版本发起新的确认。
+
+已完诊病例库只在受信 session 的 `availableRoles` 包含 `administrator` 时显示报告更正导航。更正使用结构化结论、完整结果值和原因字段，并在 `AlertDialog` 中预览确认；成功后 Web 同时失效活动病例与病例库详情查询，病例库从服务端重新读取新报告、旧版本链和 `laboratory-report-revised` 时间线事件。
 
 `previousReports` 在共享响应 schema 中对缺失输入使用空数组默认值，使升级前已经持久化的检查开具或取消 Command receipt 仍可按原幂等键重放；新响应始终显式返回该字段。
 

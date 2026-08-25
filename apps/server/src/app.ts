@@ -891,13 +891,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         try {
           identity.assertTrustedMutation(context.req.raw.headers)
           const body = correctLaboratoryReportRequestSchema.parse(await context.req.json())
-          const authenticatedContext = await actor(context)
-          if (authenticatedContext.roleCode !== 'administrator') {
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          if (!session.availableRoles.some(role => role.code === 'administrator')) {
             throw new WorkflowError(
               'ROLE_NOT_ALLOWED',
               'Only an administrator can invoke the controlled laboratory report actor',
             )
           }
+          const authenticatedContext = session.actor
           return context.json(workflow.correctLaboratoryReport({
             conclusion: body.input.conclusion,
             context: {

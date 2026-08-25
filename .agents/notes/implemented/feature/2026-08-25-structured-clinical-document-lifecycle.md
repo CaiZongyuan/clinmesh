@@ -16,7 +16,7 @@ Status: implemented
 
 Composition 使用稳定 section code 重建六字段正文，关系表不复制已签正文。每个 Workspace、Epoch 和病例只有一个 `revision_of_document_id IS NULL` 的签署根文书。修订只能引用没有后继版本的最新 Composition，创建新的 amended Composition、document Bundle 和 Provenance，以 `Composition.relatesTo.type=replaces` 和关系表父链指向上一版本；修订原因由 Provenance 保存。FHIR `_history` 仍只表达同一 logical resource 的技术版本，不承担临床修订链。
 
-`revise` 接口继续接受首期两字段文书输入，也接受新的六字段文书输入，由同一个修订 Command 创建不可变资源；两字段输入只修订首期文书，六字段输入只修订结构化文书，不能跨格式破坏历史重建。首期 `preview-sign` 与 `sign-and-complete` 兼容流只适用于尚无结构化签署根文书的病例；已有根文书时两个入口都返回稳定 `WORKFLOW_CONFLICT`，不会依赖 SQLite 唯一索引错误作为外部协议。
+`revise` 接口继续接受首期两字段文书输入，也接受新的六字段文书输入，由同一个修订 Command 创建不可变资源；两字段输入只修订首期文书，六字段输入只修订结构化文书，不能跨格式破坏历史重建。Command 在读取修订后继或创建资源前校验当前 Practitioner Role 与病例的持久责任岗位一致，普通医生不能修订其他医生负责的病例。首期 `preview-sign` 与 `sign-and-complete` 兼容流只适用于尚无结构化签署根文书的病例；已有根文书时两个入口都返回稳定 `WORKFLOW_CONFLICT`，不会依赖 SQLite 唯一索引错误作为外部协议。
 
 ## Alternatives considered
 
@@ -34,6 +34,6 @@ Composition 使用稳定 section code 重建六字段正文，关系表不复制
 
 迁移 `0011_structured-clinical-document.sql` 新增结构化草稿、签署预览和每病例唯一根索引；`0012_structured-clinical-document-preview-binding.sql` 为预览补充 Encounter version 和 Actor context 绑定，旧预览迁移后不可提交。数据库 schema version 为 `13`。旧库升级保留已有 `signed_clinical_document` 根文书，并允许在其后追加修订。
 
-Web 只向最新签署版本显示修订表单，所有历史版本只读；保存或修订冲突后重新读取病例 detail。HTTP 和 Web 公共入口覆盖缺失必填字段、草稿 CAS、旧预览、不可变 FHIR 资源、Encounter 不变、最新版本修订和历史恢复。
+Web 只向最新签署版本显示修订表单，所有历史版本只读；已完诊 Encounter 只有从病例库显式进入病历更正模式时显示该表单，普通打开仍保持只读。保存或修订冲突后重新读取病例 detail，修订成功同时失效病例库详情和时间线查询。HTTP 和 Web 公共入口覆盖缺失必填字段、草稿 CAS、旧预览、不可变 FHIR 资源、Encounter 不变、最新版本修订和历史恢复。
 
 同一病例不能先走独立结构化签署，再走首期组合签署完诊；组合入口会返回已有文书冲突。这项互斥保证避免第二个根文书，Encounter Completion 仍由独立的业务事实判断，不能通过覆盖或重复签署绕过。

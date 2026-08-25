@@ -47,7 +47,7 @@ import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardCheckIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, LibraryBigIcon, LockKeyholeIcon, MessagesSquareIcon, PillIcon, PlayIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, SendIcon, ShieldAlertIcon, StethoscopeIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import {
   ApiClientError,
   acknowledgeLaboratoryReport,
@@ -56,6 +56,7 @@ import {
   completeEncounter,
   confirmNoMedication,
   confirmDiagnosis,
+  correctLaboratoryReport,
   deleteLaboratoryRequestDraft,
   deletePrescriptionDraft,
   getClinicalCatalog,
@@ -100,6 +101,7 @@ interface DoctorWorkspaceProps {
 
 interface CompletedCaseCorrectionNavigation {
   caseId: string
+  handled: boolean
   target: CompletedCaseCorrectionTarget
 }
 
@@ -128,6 +130,15 @@ interface LaboratoryRequestActions {
     onSubmit: (request: LaboratoryRequest) => void
     pending: boolean
   }
+  correct: {
+    allowed: boolean
+    error: Error | null
+    lastRequestId?: string
+    onSubmit: (request: LaboratoryRequest, input: LaboratoryReportCorrectionInput) => void
+    pending: boolean
+    pendingRequestId?: string
+    successRequestId?: string
+  }
   deleteDraft: {
     error: Error | null
     onSubmit: () => void
@@ -143,6 +154,12 @@ interface LaboratoryRequestActions {
     onSubmit: () => void
     pending: boolean
   }
+}
+
+interface LaboratoryReportCorrectionInput {
+  conclusion: string
+  reason: string
+  results: Array<{ code: string; value: number }>
 }
 
 interface DiagnosisActions {
@@ -197,7 +214,9 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
         <ActiveDoctorWorkspace
           correctionNavigation={correctionNavigation}
           locale={locale}
-          onCorrectionNavigationHandled={() => setCorrectionNavigation(undefined)}
+          onCorrectionNavigationHandled={() => setCorrectionNavigation(current => (
+            current === undefined ? undefined : { ...current, handled: true }
+          ))}
           onSelectedCaseIdChange={setSelectedCaseId}
           selectedCaseId={selectedCaseId}
           session={session}
@@ -208,7 +227,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
           locale={locale}
           onOpenCorrection={(caseId, target) => {
             setSelectedCaseId(caseId)
-            setCorrectionNavigation({ caseId, target })
+            setCorrectionNavigation({ caseId, handled: false, target })
             setActiveTab('active')
           }}
           session={session}
@@ -234,6 +253,8 @@ function ActiveDoctorWorkspace({
   const queueKey = ['doctor-queue', ...scope, page] as const
   const virtualPatientScopeKey = ['doctor-virtual-patients', ...scope] as const
   const encounterCompletionScopeKey = ['encounter-completion', ...scope] as const
+  const completedCaseListScopeKey = ['doctor-completed-cases', ...scope] as const
+  const completedCaseDetailScopeKey = ['doctor-completed-case', ...scope] as const
   const virtualPatientKey = [...virtualPatientScopeKey, virtualPatientPage] as const
   const virtualPatients = useQuery({
     queryFn: ({ signal }) => getVirtualPatients(signal, virtualPatientPage),
@@ -283,6 +304,7 @@ function ActiveDoctorWorkspace({
   useEffect(() => {
     if (
       correctionNavigation === undefined
+      || correctionNavigation.handled
       || detail.data?.caseId !== correctionNavigation.caseId
     ) return
     const target = document.getElementById(
@@ -346,9 +368,19 @@ function ActiveDoctorWorkspace({
       queryClient.invalidateQueries({ queryKey: encounterCompletionScopeKey }),
     ])
   }
-  const refreshCompletedCase = async () => {
+  const refreshCompletedCaseDetails = async () => {
+    await queryClient.invalidateQueries({ queryKey: completedCaseDetailScopeKey })
+  }
+  const refreshAfterCorrection = async () => {
+    await Promise.all([refreshCase(), refreshCompletedCaseDetails()])
+  }
+  const refreshAfterCompletion = async () => {
     if (detail.data !== undefined) onSelectedCaseIdChange(detail.data.caseId)
-    await refreshCase()
+    await Promise.all([
+      refreshCase(),
+      refreshCompletedCaseDetails(),
+      queryClient.invalidateQueries({ queryKey: completedCaseListScopeKey }),
+    ])
   }
   const askQuestion = useMutation({
     mutationFn: (questionCode: string) => {
@@ -527,6 +559,22 @@ function ActiveDoctorWorkspace({
       }, newIdempotencyKey())
     },
     onSuccess: refreshCase,
+  })
+  const correctReport = useMutation({
+    mutationFn: ({ input, request }: {
+      input: LaboratoryReportCorrectionInput
+      request: LaboratoryRequest
+    }) => {
+      if (request.report === undefined) throw new Error(messages.consultationUnavailable)
+      return correctLaboratoryReport({
+        ...input,
+        diagnosticReportId: request.report.diagnosticReportId,
+        diagnosticReportVersion: request.report.diagnosticReportVersion,
+        requestId: request.id,
+        requestVersion: request.version,
+      }, newIdempotencyKey())
+    },
+    onSuccess: refreshAfterCorrection,
   })
   const saveDiagnosis = useMutation({
     mutationFn: (entries: DiagnosisDraftEntry[]) => {
@@ -749,6 +797,9 @@ function ActiveDoctorWorkspace({
         ) : (
           <CaseDetail
             completionQueryScope={encounterCompletionScopeKey}
+            correctionTarget={correctionNavigation?.caseId === detail.data.caseId
+              ? correctionNavigation.target
+              : undefined}
             consultationAction={{
               error: askQuestion.error,
               onAsk: questionCode => askQuestion.mutate(questionCode),
@@ -786,6 +837,21 @@ function ActiveDoctorWorkspace({
                 onSubmit: request => cancelRequest.mutate(request),
                 pending: cancelRequest.isPending,
               },
+              correct: {
+                allowed: session.availableRoles.some(role => role.code === 'administrator'),
+                error: correctReport.error,
+                ...(correctReport.variables === undefined
+                  ? {}
+                  : { lastRequestId: correctReport.variables.request.id }),
+                onSubmit: (request, input) => correctReport.mutate({ input, request }),
+                pending: correctReport.isPending,
+                ...(correctReport.isPending && correctReport.variables !== undefined
+                  ? { pendingRequestId: correctReport.variables.request.id }
+                  : {}),
+                ...(correctReport.isSuccess && correctReport.variables !== undefined
+                  ? { successRequestId: correctReport.variables.request.id }
+                  : {}),
+              },
               deleteDraft: {
                 error: deleteRequestDraft.error,
                 onSubmit: () => deleteRequestDraft.mutate(),
@@ -805,7 +871,8 @@ function ActiveDoctorWorkspace({
             locale={locale}
             messages={messages}
             onIndicationChange={setIndicationCode}
-            onEncounterCompleted={refreshCompletedCase}
+            onCorrectionCompleted={refreshAfterCorrection}
+            onEncounterCompleted={refreshAfterCompletion}
             onLaboratoryItemChange={(value) => {
               setLaboratoryItemId(value)
               setIndicationCode('')
@@ -847,6 +914,7 @@ function CaseDetail({
   catalog,
   completionQueryScope,
   consultationAction,
+  correctionTarget,
   detail,
   diagnosisActions,
   indicationCode,
@@ -860,6 +928,7 @@ function CaseDetail({
   onEncounterCompleted,
   onIssueOrder,
   onIndicationChange,
+  onCorrectionCompleted,
   onRefreshCase,
   onPreviewSign,
   onLaboratoryItemChange,
@@ -888,6 +957,7 @@ function CaseDetail({
   catalog: ReturnType<typeof useQuery<Awaited<ReturnType<typeof getClinicalCatalog>>>>
   completionQueryScope: EncounterCompletionQueryScope
   consultationAction: ConsultationAction
+  correctionTarget: CompletedCaseCorrectionTarget | undefined
   detail: DoctorCaseDetail
   diagnosisActions: DiagnosisActions
   indicationCode: string
@@ -901,6 +971,7 @@ function CaseDetail({
   onEncounterCompleted: () => Promise<void>
   onIssueOrder: () => void
   onIndicationChange: (value: string) => void
+  onCorrectionCompleted: () => Promise<void>
   onRefreshCase: () => Promise<void>
   onPreviewSign: () => void
   onLaboratoryItemChange: (value: string) => void
@@ -1192,6 +1263,7 @@ function CaseDetail({
               onIndicationChange={onIndicationChange}
               onLaboratoryItemChange={onLaboratoryItemChange}
               readOnly={readOnly}
+              showCorrection={correctionTarget === 'laboratory'}
               state={detail.laboratoryRequests}
             />
           )}
@@ -1229,10 +1301,12 @@ function CaseDetail({
         </>
       )}
       <StructuredClinicalDocumentPanel
+        allowRevision={!readOnly || correctionTarget === 'clinical-document'}
         detail={detail}
         key={`structured-clinical-document:${detail.caseId}`}
         locale={locale}
         messages={messages}
+        onRevisionCompleted={onCorrectionCompleted}
         onRefresh={onRefreshCase}
       />
     </div>
@@ -1346,6 +1420,7 @@ function LaboratoryRequestEditor({
   onIndicationChange,
   onLaboratoryItemChange,
   readOnly,
+  showCorrection,
   state,
 }: {
   actions: LaboratoryRequestActions
@@ -1359,6 +1434,7 @@ function LaboratoryRequestEditor({
   onIndicationChange: (value: string) => void
   onLaboratoryItemChange: (value: string) => void
   readOnly: boolean
+  showCorrection: boolean
   state: DoctorCaseDetail['laboratoryRequests']
 }): React.JSX.Element {
   const catalogById = new Map(catalog.map(item => [item.id, item]))
@@ -1471,12 +1547,14 @@ function LaboratoryRequestEditor({
           return (
             <LaboratoryRequestReport
               action={actions.acknowledge}
+              correctionAction={actions.correct}
               itemName={(locale === 'zh-CN' ? item?.nameZh : item?.nameEn) ?? request.catalogItemId}
-              key={`report:${request.id}`}
+              key={`report:${request.id}:${request.report.diagnosticReportId}`}
               locale={locale}
               messages={messages}
               readOnly={readOnly}
               request={request}
+              showCorrection={showCorrection}
             />
           )
         })}
@@ -1495,13 +1573,15 @@ function LaboratoryRequestEditor({
   )
 }
 
-function LaboratoryRequestReport({ action, itemName, locale, messages, readOnly, request }: {
+function LaboratoryRequestReport({ action, correctionAction, itemName, locale, messages, readOnly, request, showCorrection }: {
   action: LaboratoryRequestActions['acknowledge']
+  correctionAction: LaboratoryRequestActions['correct']
   itemName: string
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   readOnly: boolean
   request: LaboratoryRequest
+  showCorrection: boolean
 }): React.JSX.Element {
   const report = request.report
   if (report === undefined) throw new Error('The laboratory report is required')
@@ -1534,6 +1614,15 @@ function LaboratoryRequestReport({ action, itemName, locale, messages, readOnly,
         messages={messages}
         report={report}
       />
+      {correctionAction.allowed && showCorrection ? (
+        <LaboratoryReportCorrectionForm
+          action={correctionAction}
+          itemName={itemName}
+          messages={messages}
+          report={report}
+          request={request}
+        />
+      ) : null}
       {request.previousReports.length === 0 ? null : (
         <div className="flex flex-col gap-3">
           <h6 className="text-xs font-semibold text-muted-foreground">
@@ -1550,6 +1639,166 @@ function LaboratoryRequestReport({ action, itemName, locale, messages, readOnly,
           ))}
         </div>
       )}
+    </section>
+  )
+}
+
+function LaboratoryReportCorrectionForm({ action, itemName, messages, report, request }: {
+  action: LaboratoryRequestActions['correct']
+  itemName: string
+  messages: ReturnType<typeof getWorkspaceMessages>
+  report: LaboratoryReport
+  request: LaboratoryRequest
+}): React.JSX.Element {
+  const [preview, setPreview] = useState<LaboratoryReportCorrectionInput>()
+  const pendingThisRequest = action.pending && action.pendingRequestId === request.id
+  const submitPreview = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    setPreview({
+      conclusion: String(form.get('conclusion') ?? ''),
+      reason: String(form.get('reason') ?? ''),
+      results: report.results.map(result => ({
+        code: result.code,
+        value: Number(form.get(`result:${result.code}`)),
+      })),
+    })
+  }
+  return (
+    <section className="flex flex-col gap-3 border-t pt-4">
+      {action.successRequestId === request.id ? (
+        <Alert>
+          <CheckIcon aria-hidden="true" />
+          <AlertTitle>{messages.laboratoryReportCorrectionSaved}</AlertTitle>
+        </Alert>
+      ) : null}
+      <form
+        aria-label={`${messages.openLaboratoryReportCorrection} ${itemName}`}
+        onSubmit={submitPreview}
+      >
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor={`laboratory-report-correction-conclusion-${request.id}`}>
+              {messages.laboratoryReportCorrectionConclusion}
+            </FieldLabel>
+            <Textarea
+              defaultValue={report.conclusion}
+              id={`laboratory-report-correction-conclusion-${request.id}`}
+              maxLength={2_000}
+              minLength={2}
+              name="conclusion"
+              required
+            />
+          </Field>
+          <FieldSet>
+            <FieldLegend variant="label">{messages.result}</FieldLegend>
+            <FieldGroup className="grid gap-3 sm:grid-cols-2">
+              {report.results.map(result => (
+                <Field key={result.code}>
+                  <FieldLabel htmlFor={`laboratory-report-correction-${request.id}-${result.code}`}>
+                    {result.display} · {messages.result}
+                  </FieldLabel>
+                  <Input
+                    defaultValue={result.value}
+                    id={`laboratory-report-correction-${request.id}-${result.code}`}
+                    name={`result:${result.code}`}
+                    required
+                    step="any"
+                    type="number"
+                  />
+                </Field>
+              ))}
+            </FieldGroup>
+          </FieldSet>
+          <Field>
+            <FieldLabel htmlFor={`laboratory-report-correction-reason-${request.id}`}>
+              {messages.laboratoryReportCorrectionReason}
+            </FieldLabel>
+            <Textarea
+              id={`laboratory-report-correction-reason-${request.id}`}
+              maxLength={500}
+              minLength={2}
+              name="reason"
+              required
+            />
+          </Field>
+          <div className="flex justify-end">
+            <Button disabled={action.pending} type="submit" variant="outline">
+              {pendingThisRequest
+                ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
+                : <FlaskConicalIcon data-icon="inline-start" />}
+              {messages.previewLaboratoryReportCorrection}
+            </Button>
+          </div>
+        </FieldGroup>
+      </form>
+      {action.error !== null && action.lastRequestId === request.id ? (
+        <ErrorAlert
+          message={getWorkspaceErrorMessage(action.error, messages)}
+          title={getWorkspaceErrorTitle(action.error, messages, messages.operationFailed)}
+        />
+      ) : null}
+      <AlertDialog
+        onOpenChange={open => {
+          if (!open) setPreview(undefined)
+        }}
+        open={preview !== undefined}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{messages.confirmLaboratoryReportCorrection}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {messages.laboratoryReportCorrectionConfirmationDescription}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {preview === undefined ? null : (
+            <div className="max-h-[50vh] space-y-3 overflow-y-auto text-sm">
+              <dl className="space-y-3">
+                <div>
+                  <dt className="text-xs text-muted-foreground">
+                    {messages.laboratoryReportCorrectionConclusion}
+                  </dt>
+                  <dd className="mt-1 whitespace-pre-wrap break-words">{preview.conclusion}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">{messages.result}</dt>
+                  <dd className="mt-1">
+                    <ul className="space-y-1.5">
+                      {preview.results.map((result, index) => (
+                        <li className="flex flex-wrap justify-between gap-x-3 gap-y-1" key={result.code}>
+                          <span>{report.results[index]?.display ?? result.code}</span>
+                          <span className="font-medium">
+                            {result.value} {report.results[index]?.unit.display ?? ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">
+                    {messages.laboratoryReportCorrectionReason}
+                  </dt>
+                  <dd className="mt-1 whitespace-pre-wrap break-words">{preview.reason}</dd>
+                </div>
+              </dl>
+            </div>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={action.pending}
+              onClick={() => {
+                if (preview === undefined) return
+                action.onSubmit(request, preview)
+                setPreview(undefined)
+              }}
+            >
+              {messages.confirmLaboratoryReportCorrection}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   )
 }
@@ -1624,16 +1873,24 @@ const emptyClinicalDocument: ClinicalDocumentContent = {
   physicalExamination: '',
 }
 
-function StructuredClinicalDocumentPanel({ detail, locale, messages, onRefresh }: {
+function StructuredClinicalDocumentPanel({
+  allowRevision,
+  detail,
+  locale,
+  messages,
+  onRefresh,
+  onRevisionCompleted,
+}: {
+  allowRevision: boolean
   detail: DoctorCaseDetail
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   onRefresh: () => Promise<void>
+  onRevisionCompleted: () => Promise<void>
 }): React.JSX.Element | null {
   const draft = detail.clinicalDocument?.draft
   const signedDocuments = detail.clinicalDocument?.signed ?? []
   const latestSignedDocument = signedDocuments.at(-1)
-  const readOnly = detail.encounter.status !== 'in-progress'
   const previewSign = useMutation({
     mutationFn: () => {
       if (draft === undefined) throw new Error(messages.consultationUnavailable)
@@ -1695,7 +1952,7 @@ function StructuredClinicalDocumentPanel({ detail, locale, messages, onRefresh }
       await onRefresh()
     },
     onSuccess: async () => {
-      await onRefresh()
+      await onRevisionCompleted()
     },
   })
 
@@ -1763,7 +2020,7 @@ function StructuredClinicalDocumentPanel({ detail, locale, messages, onRefresh }
               ))}
             </ol>
           </section>
-          {readOnly || latestSignedDocument === undefined ? null : (
+          {!allowRevision || latestSignedDocument === undefined ? null : (
             <div className="flex flex-col gap-3 border-t pt-5">
               <h4 className="text-sm font-semibold">
                 {messages.clinicalDocumentRevisionForm} {latestSignedDocument.revisionNumber}

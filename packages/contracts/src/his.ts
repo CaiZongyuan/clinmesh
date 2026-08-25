@@ -777,19 +777,16 @@ export const laboratoryReportAcknowledgementSchema = z.object({
   id: z.string().min(1),
 }).strict()
 
-export const laboratoryReportSchema = z.object({
-  acknowledgement: laboratoryReportAcknowledgementSchema.optional(),
-  conclusion: z.string().min(1),
-  diagnosticReportId: z.string().min(1),
-  diagnosticReportVersion: z.string().regex(/^\d+$/),
-  issuedAt: z.string().datetime({ offset: true }),
-  revisionNumber: z.number().int().positive(),
-  revisionOfDiagnosticReportId: z.string().min(1).optional(),
-  revisionReason: z.string().min(1).optional(),
-  results: z.array(laboratoryResultSchema).min(1),
-  specimenId: z.string().min(1),
-  status: z.literal('final'),
-}).strict().superRefine((report, context) => {
+interface LaboratoryReportRevisionFields {
+  revisionNumber: number
+  revisionOfDiagnosticReportId?: string | undefined
+  revisionReason?: string | undefined
+}
+
+function validateLaboratoryReportRevision(
+  report: LaboratoryReportRevisionFields,
+  context: z.RefinementCtx,
+): void {
   const isRevision = report.revisionNumber > 1
   if (
     isRevision === (report.revisionOfDiagnosticReportId !== undefined)
@@ -802,7 +799,53 @@ export const laboratoryReportSchema = z.object({
       : 'The initial laboratory report cannot identify a revision source',
     path: ['revisionNumber'],
   })
-})
+}
+
+interface LaboratoryRequestReportFields {
+  report?: { acknowledgement?: unknown } | undefined
+  status: z.infer<typeof laboratoryRequestStatusSchema>
+}
+
+function validateLaboratoryRequestReport(
+  request: LaboratoryRequestReportFields,
+  context: z.RefinementCtx,
+): void {
+  const requiresReport = request.status === 'reported' || request.status === 'acknowledged'
+  if (requiresReport !== (request.report !== undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: requiresReport
+        ? 'A reported laboratory request must include its report'
+        : 'A laboratory request cannot include a report before it is reported',
+      path: ['report'],
+    })
+    return
+  }
+  if (request.report === undefined) return
+  const requiresAcknowledgement = request.status === 'acknowledged'
+  if (requiresAcknowledgement === (request.report.acknowledgement !== undefined)) return
+  context.addIssue({
+    code: 'custom',
+    message: requiresAcknowledgement
+      ? 'An acknowledged laboratory request must include its acknowledgement'
+      : 'A reported laboratory request cannot include a current acknowledgement',
+    path: ['report', 'acknowledgement'],
+  })
+}
+
+export const laboratoryReportSchema = z.object({
+  acknowledgement: laboratoryReportAcknowledgementSchema.optional(),
+  conclusion: z.string().min(1),
+  diagnosticReportId: z.string().min(1),
+  diagnosticReportVersion: z.string().regex(/^\d+$/),
+  issuedAt: z.string().datetime({ offset: true }),
+  revisionNumber: z.number().int().positive(),
+  revisionOfDiagnosticReportId: z.string().min(1).optional(),
+  revisionReason: z.string().min(1).optional(),
+  results: z.array(laboratoryResultSchema).min(1),
+  specimenId: z.string().min(1),
+  status: z.literal('final'),
+}).strict().superRefine(validateLaboratoryReportRevision)
 
 export const acknowledgeLaboratoryReportRequestSchema = z.object({
   expectedVersions: z.record(z.string(), z.string()),
@@ -865,29 +908,7 @@ export const laboratoryRequestSchema = z.object({
   taskId: z.string().min(1),
   taskVersion: z.string().regex(/^\d+$/),
   version: z.number().int().positive(),
-}).strict().superRefine((request, context) => {
-  const requiresReport = request.status === 'reported' || request.status === 'acknowledged'
-  if (requiresReport !== (request.report !== undefined)) {
-    context.addIssue({
-      code: 'custom',
-      message: requiresReport
-        ? 'A reported laboratory request must include its report'
-        : 'A laboratory request cannot include a report before it is reported',
-      path: ['report'],
-    })
-    return
-  }
-  if (request.report === undefined) return
-  const requiresAcknowledgement = request.status === 'acknowledged'
-  if (requiresAcknowledgement === (request.report.acknowledgement !== undefined)) return
-  context.addIssue({
-    code: 'custom',
-    message: requiresAcknowledgement
-      ? 'An acknowledged laboratory request must include its acknowledgement'
-      : 'A reported laboratory request cannot include a current acknowledgement',
-    path: ['report', 'acknowledgement'],
-  })
-})
+}).strict().superRefine(validateLaboratoryRequestReport)
 
 const completedCaseLaboratoryResultSchema = z.object({
   code: z.string().min(1),
@@ -917,20 +938,7 @@ const completedCaseLaboratoryReportSchema = z.object({
   results: z.array(completedCaseLaboratoryResultSchema).min(1),
   specimenId: z.string().min(1),
   status: z.literal('final'),
-}).strict().superRefine((report, context) => {
-  const isRevision = report.revisionNumber > 1
-  if (
-    isRevision === (report.revisionOfDiagnosticReportId !== undefined)
-    && isRevision === (report.revisionReason !== undefined)
-  ) return
-  context.addIssue({
-    code: 'custom',
-    message: isRevision
-      ? 'A revised laboratory report must identify its source and reason'
-      : 'The initial laboratory report cannot identify a revision source',
-    path: ['revisionNumber'],
-  })
-})
+}).strict().superRefine(validateLaboratoryReportRevision)
 
 export const completedCaseLaboratoryRequestSchema = z.object({
   catalogDisplay: z.string().min(1).optional(),
@@ -953,27 +961,7 @@ export const completedCaseLaboratoryRequestSchema = z.object({
       path: ['taskId'],
     })
   }
-  const requiresReport = request.status === 'reported' || request.status === 'acknowledged'
-  if (requiresReport !== (request.report !== undefined)) {
-    context.addIssue({
-      code: 'custom',
-      message: requiresReport
-        ? 'A reported laboratory request must include its report'
-        : 'A laboratory request cannot include a report before it is reported',
-      path: ['report'],
-    })
-    return
-  }
-  if (request.report === undefined) return
-  const requiresAcknowledgement = request.status === 'acknowledged'
-  if (requiresAcknowledgement === (request.report.acknowledgement !== undefined)) return
-  context.addIssue({
-    code: 'custom',
-    message: requiresAcknowledgement
-      ? 'An acknowledged laboratory request must include its acknowledgement'
-      : 'A reported laboratory request cannot include a current acknowledgement',
-    path: ['report', 'acknowledgement'],
-  })
+  validateLaboratoryRequestReport(request, context)
 })
 
 export const issueLaboratoryRequestRequestSchema = z.object({

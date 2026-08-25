@@ -557,15 +557,15 @@ async function selectAdditionalDoctorRole(
   const repositoryContext = { epoch: 'epoch-1', workspaceId: 'workspace-demo' }
   runtime.fhir.create(repositoryContext, {
     resourceType: 'Practitioner',
-    id: 'practitioner-archive-doctor',
+    id: 'practitioner-library-doctor',
     active: true,
-    name: [{ text: '合成归档医生' }],
+    name: [{ text: '合成病例库医生' }],
   })
   runtime.fhir.create(repositoryContext, {
     resourceType: 'PractitionerRole',
-    id: 'practitioner-role-archive-doctor',
+    id: 'practitioner-role-library-doctor',
     active: true,
-    practitioner: { reference: 'Practitioner/practitioner-archive-doctor' },
+    practitioner: { reference: 'Practitioner/practitioner-library-doctor' },
     organization: { reference: 'Organization/organization-clinmesh' },
     code: [{ text: 'outpatient-doctor' }],
     location: [{ reference: 'Location/location-outpatient-doctor' }],
@@ -577,8 +577,8 @@ async function selectAdditionalDoctorRole(
     ) VALUES (?, ?, ?, 'outpatient-doctor', ?, ?, 1)
   `).run(
     'workspace-demo',
-    'practitioner-role-archive-doctor',
-    'practitioner-archive-doctor',
+    'practitioner-role-library-doctor',
+    'practitioner-library-doctor',
     'organization-clinmesh',
     'location-outpatient-doctor',
   )
@@ -586,10 +586,10 @@ async function selectAdditionalDoctorRole(
     INSERT INTO membership_practitioner_role (
       membership_id, workspace_id, practitioner_role_id
     ) VALUES ('membership-administrator', ?, ?)
-  `).run('workspace-demo', 'practitioner-role-archive-doctor')
+  `).run('workspace-demo', 'practitioner-role-library-doctor')
   const administratorCookie = await signIn(runtime, 'admin@demo.clinmesh.local', password)
   const selectRoleResponse = await runtime.app.request('/api/auth/role', {
-    body: JSON.stringify({ practitionerRoleId: 'practitioner-role-archive-doctor' }),
+    body: JSON.stringify({ practitionerRoleId: 'practitioner-role-library-doctor' }),
     headers: commandHeaders(administratorCookie),
     method: 'POST',
   })
@@ -1117,8 +1117,8 @@ describe('outpatient workflow HTTP contract', () => {
     })
   })
 
-  it('archives a completed Encounter only for its responsible doctor', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-completed-case-archive-http-'))
+  it('lists a completed Encounter only for its responsible doctor', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-completed-case-library-http-'))
     temporaryDirectories.push(directory)
     const password = `Test-${randomUUID()}-Aa1!`
     const runtime = await createClinMeshRuntime({
@@ -1135,12 +1135,12 @@ describe('outpatient workflow HTTP contract', () => {
       runtime,
       password,
     )
-    const archive = (cookie: string) => runtime.app.request(
+    const completedCaseLibrary = (cookie: string) => runtime.app.request(
       '/api/his/v1/doctor/completed-cases?pageSize=20',
       { headers: { cookie } },
     )
 
-    const beforeCompletion = await archive(doctorCookie)
+    const beforeCompletion = await completedCaseLibrary(doctorCookie)
     expect(beforeCompletion.status).toBe(200)
     expect(doctorCompletedCaseListSchema.parse(await beforeCompletion.json())).toEqual({
       items: [],
@@ -1162,10 +1162,10 @@ describe('outpatient workflow HTTP contract', () => {
     )
     const completion = encounterCompletionResponseSchema.parse(await completionResponse.json())
 
-    const responsibleDoctorArchive = await archive(doctorCookie)
-    expect(responsibleDoctorArchive.status).toBe(200)
+    const responsibleDoctorLibrary = await completedCaseLibrary(doctorCookie)
+    expect(responsibleDoctorLibrary.status).toBe(200)
     expect(doctorCompletedCaseListSchema.parse(
-      await responsibleDoctorArchive.json(),
+      await responsibleDoctorLibrary.json(),
     )).toMatchObject({
       items: [{
         caseId: started.caseId,
@@ -1186,9 +1186,9 @@ describe('outpatient workflow HTTP contract', () => {
 
     const administratorCookie = await selectAdditionalDoctorRole(runtime, password)
 
-    const otherDoctorArchive = await archive(administratorCookie)
-    expect(otherDoctorArchive.status).toBe(200)
-    expect(doctorCompletedCaseListSchema.parse(await otherDoctorArchive.json())).toEqual({
+    const otherDoctorLibrary = await completedCaseLibrary(administratorCookie)
+    expect(otherDoctorLibrary.status).toBe(200)
+    expect(doctorCompletedCaseListSchema.parse(await otherDoctorLibrary.json())).toEqual({
       items: [],
       page: 1,
       pageSize: 20,
@@ -1462,7 +1462,7 @@ describe('outpatient workflow HTTP contract', () => {
     })
   })
 
-  it('opens only an assigned completed case through the read-only archive detail', async () => {
+  it('protects completed case detail and revision with the responsible doctor assignment', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-completed-case-detail-http-'))
     temporaryDirectories.push(directory)
     const password = `Test-${randomUUID()}-Aa1!`
@@ -1528,6 +1528,36 @@ describe('outpatient workflow HTTP contract', () => {
     expect(apiErrorSchema.parse(await otherDoctorResponse.json())).toMatchObject({
       error: { code: 'WORKFLOW_CONFLICT' },
     })
+
+    const signedDocument = ownerDetail.clinicalDocuments.at(-1)
+    if (signedDocument === undefined) throw new Error('Completion test document was not signed')
+    const unauthorizedRevisionResponse = await runtime.app.request(
+      `/api/his/v1/clinical-documents/${signedDocument.compositionId}/actions/revise`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Composition/${signedDocument.compositionId}`]: signedDocument.compositionVersion,
+            [`Encounter/${ownerDetail.encounter.id}`]: ownerDetail.encounter.versionId,
+          },
+          input: {
+            document: structuredClinicalDocument,
+            reason: '非责任医生不应提交此项更正。',
+          },
+        }),
+        headers: commandHeaders(otherDoctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(unauthorizedRevisionResponse.status).toBe(403)
+    expect(apiErrorSchema.parse(await unauthorizedRevisionResponse.json())).toMatchObject({
+      error: { code: 'ROLE_NOT_ALLOWED' },
+    })
+
+    const unchangedOwnerResponse = await detail(candidate.doctorCookie)
+    expect(unchangedOwnerResponse.status).toBe(200)
+    expect(doctorCompletedCaseDetailSchema.parse(
+      await unchangedOwnerResponse.json(),
+    ).clinicalDocuments).toHaveLength(1)
   })
 
   it('returns completed case facts from each clinical owner without drafts', async () => {
@@ -1675,6 +1705,20 @@ describe('outpatient workflow HTTP contract', () => {
 
     setVirtualTime('2026-08-24T11:00:00+08:00')
     const administratorCookie = await signIn(runtime, 'admin@demo.clinmesh.local', password)
+    const actingDoctorResponse = await runtime.app.request('/api/auth/role', {
+      body: JSON.stringify({ practitionerRoleId: 'practitioner-role-outpatient-doctor' }),
+      headers: {
+        'content-type': 'application/json',
+        cookie: administratorCookie,
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect(actingDoctorResponse.status).toBe(200)
+    expect(sessionContextSchema.parse(await actingDoctorResponse.json()).actor).toMatchObject({
+      actorId: 'actor-administrator',
+      roleCode: 'outpatient-doctor',
+    })
     const correctionResponse = await runtime.app.request(
       `/api/his/v1/laboratory-requests/${originalRequest.id}/reports/${originalRequest.report.diagnosticReportId}/actions/correct`,
       {
@@ -1745,14 +1789,14 @@ describe('outpatient workflow HTTP contract', () => {
     expect(completionResponse.status).toBe(200)
     encounterCompletionResponseSchema.parse(await completionResponse.json())
 
-    const archiveResponse = await runtime.app.request(
+    const libraryDetailResponse = await runtime.app.request(
       `/api/his/v1/doctor/completed-cases/${candidate.started.caseId}`,
       { headers: { cookie: candidate.doctorCookie } },
     )
 
-    expect(archiveResponse.status).toBe(200)
-    const archive = doctorCompletedCaseDetailSchema.parse(await archiveResponse.json())
-    expect(archive).toMatchObject({
+    expect(libraryDetailResponse.status).toBe(200)
+    const libraryDetail = doctorCompletedCaseDetailSchema.parse(await libraryDetailResponse.json())
+    expect(libraryDetail).toMatchObject({
       clinicalDocuments: [
         { compositionId: originalDocument.compositionId, revisionNumber: 1 },
         {
@@ -1774,7 +1818,7 @@ describe('outpatient workflow HTTP contract', () => {
         },
       }],
     })
-    expect(archive.timeline.slice(-4)).toEqual([
+    expect(libraryDetail.timeline.slice(-4)).toEqual([
       expect.objectContaining({
         kind: 'clinical-document-revised',
         occurredAt: '2026-08-24T10:00:00+08:00',
