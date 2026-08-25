@@ -50,6 +50,11 @@ export const apiErrorSchema = z.object({
   }),
 })
 
+const fhirExpectedVersionsSchema = z.record(
+  z.string().regex(/^[A-Z][A-Za-z]+\/[A-Za-z0-9.-]{1,64}$/),
+  z.string().regex(/^\d+$/),
+)
+
 export const patientSummarySchema = z.object({
   birthDate: z.string().optional(),
   gender: z.string().optional(),
@@ -221,7 +226,7 @@ export const diagnosisDraftContentSchema = z.object({
 }).strict()
 
 export const saveDiagnosisDraftRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: fhirExpectedVersionsSchema,
   input: diagnosisDraftContentSchema.extend({
     expectedDraftVersion: z.number().int().nonnegative(),
   }),
@@ -232,7 +237,7 @@ export const diagnosisDraftResponseSchema = commandResponseSchema(z.object({
 }).strict())
 
 export const confirmDiagnosisRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
     expectedDraftVersion: z.number().int().positive(),
   }).strict(),
@@ -279,14 +284,14 @@ export const prescriptionDraftContentSchema = z.object({
 }).strict()
 
 export const savePrescriptionDraftRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: fhirExpectedVersionsSchema,
   input: prescriptionDraftContentSchema.extend({
     expectedDraftVersion: z.number().int().nonnegative(),
   }),
 }).strict()
 
 export const deletePrescriptionDraftRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
     expectedDraftVersion: z.number().int().positive(),
   }).strict(),
@@ -327,7 +332,7 @@ const completedCasePrescriptionSchema = issuedPrescriptionSchema.extend({
 }).strict()
 
 export const issuePrescriptionRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
     expectedDraftVersion: z.number().int().positive(),
   }).strict(),
@@ -347,7 +352,7 @@ export const noMedicationConclusionSchema = z.object({
 }).strict()
 
 export const confirmNoMedicationRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
     expectedDraftVersion: z.number().int().nonnegative(),
   }).strict(),
@@ -359,7 +364,7 @@ export const confirmNoMedicationResponseSchema = commandResponseSchema(z.object(
 }).strict())
 
 export const withdrawPrescriptionRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
     expectedPrescriptionVersion: z.number().int().positive(),
   }).strict(),
@@ -636,7 +641,7 @@ export const clinicalDocumentContentSchema = z.object({
 }).strict()
 
 export const saveClinicalDocumentDraftRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
     document: clinicalDocumentContentSchema,
     expectedDraftVersion: z.number().int().nonnegative(),
@@ -649,7 +654,7 @@ export const clinicalDocumentDraftResponseSchema = commandResponseSchema(z.objec
 }).strict())
 
 export const previewClinicalDocumentSignRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
     expectedDraftVersion: z.number().int().positive(),
   }).strict(),
@@ -666,7 +671,7 @@ export const clinicalDocumentSignPreviewResponseSchema = commandResponseSchema(z
 }).strict())
 
 export const signClinicalDocumentRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
     commitToken: z.string().min(16).max(256),
     previewId: z.string().min(1).max(128),
@@ -676,7 +681,7 @@ export const signClinicalDocumentRequestSchema = z.object({
 const clinicalDocumentRevisionReasonSchema = z.string().trim().min(2).max(500)
 
 export const reviseClinicalDocumentRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: fhirExpectedVersionsSchema,
   input: z.union([
     z.object({
       document: clinicalDocumentContentSchema,
@@ -741,7 +746,7 @@ export const laboratoryRequestDraftResponseSchema = commandResponseSchema(z.obje
 export const laboratoryRequestCatalogItemIdSchema = z.enum(['lab-cbc', 'lab-crp'])
 
 export const saveLaboratoryRequestDraftRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
     catalogItemId: laboratoryRequestCatalogItemIdSchema,
     expectedDraftVersion: z.number().int().nonnegative(),
@@ -750,7 +755,7 @@ export const saveLaboratoryRequestDraftRequestSchema = z.object({
 }).strict()
 
 export const deleteLaboratoryRequestDraftRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
     expectedDraftVersion: z.number().int().positive(),
   }).strict(),
@@ -886,7 +891,7 @@ export const laboratoryReportSchema = z.object({
 }).strict().superRefine(validateLaboratoryReportRevision)
 
 export const acknowledgeLaboratoryReportRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
     expectedRequestVersion: z.number().int().positive(),
   }).strict(),
@@ -908,7 +913,7 @@ const laboratoryReportCorrectionResultSchema = z.object({
 }).strict()
 
 export const correctLaboratoryReportRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
     conclusion: z.string().trim().min(2).max(2_000),
     expectedRequestVersion: z.number().int().positive(),
@@ -1004,7 +1009,7 @@ export const completedCaseLaboratoryRequestSchema = z.object({
 })
 
 export const issueLaboratoryRequestRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
     expectedDraftVersion: z.number().int().positive(),
   }).strict(),
@@ -1017,7 +1022,7 @@ export const issueLaboratoryRequestResponseSchema = commandResponseSchema(z.obje
 }).strict())
 
 export const cancelLaboratoryRequestRequestSchema = z.object({
-  expectedVersions: z.record(z.string(), z.string()),
+  expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
     expectedRequestVersion: z.number().int().positive(),
     reasonCode: z.literal('no-longer-needed'),

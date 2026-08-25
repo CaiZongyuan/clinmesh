@@ -782,6 +782,10 @@ const practitionerRoleIdRowSchema = z.object({
   practitioner_role_id: z.string().min(1),
 }).strict()
 
+const clinicalDocumentIdRowSchema = z.object({
+  document_id: z.string().min(1),
+}).strict()
+
 const clinicalDocumentRevisionSourceRowSchema = practitionerRoleIdRowSchema.extend({
   bundle_id: z.string().min(1),
   document_id: z.string().min(1),
@@ -2020,9 +2024,11 @@ export class WorkflowService {
       ? undefined
       : {
           ...prescription,
-          withdrawalSupported: (
-            prescription.status === 'signed' || prescription.status === 'paid'
-          ) && !this.#prescriptionHasDispensedQuantity(context, prescription.id),
+          withdrawalSupported: this.#prescriptionConclusionSupportedInContext(context)
+            && (
+              prescription.status === 'signed' || prescription.status === 'paid'
+            )
+            && !this.#prescriptionHasDispensedQuantity(context, prescription.id),
         }
     const noMedication = this.#noMedicationConclusion(context, caseId)
     const clinicalDocuments = this.#completedCaseClinicalDocuments(context, caseId)
@@ -5126,15 +5132,7 @@ export class WorkflowService {
           },
         )
       }
-      const successor = this.#database.driver.prepare(`
-        SELECT document_id FROM signed_clinical_document
-        WHERE workspace_id = ? AND epoch = ? AND revision_of_document_id = ?
-      `).get(
-        input.context.workspaceId,
-        input.context.epoch,
-        source.document_id,
-      ) as { document_id: string } | undefined
-      if (successor !== undefined) {
+      if (this.#clinicalDocumentHasSuccessor(input.context, source.document_id)) {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
           'The Clinical Document is superseded; only the latest version can be revised',
@@ -9067,18 +9065,26 @@ export class WorkflowService {
     context: ActorContext,
     compositionId: string,
   ): NonNullable<ApiConflict['currentStatus']> {
-    const source = z.object({ document_id: z.string().min(1) }).optional().parse(
+    const source = clinicalDocumentIdRowSchema.optional().parse(
       this.#database.driver.prepare(`
         SELECT document_id FROM signed_clinical_document
         WHERE workspace_id = ? AND epoch = ? AND composition_id = ?
       `).get(context.workspaceId, context.epoch, compositionId),
     )
     if (source === undefined) return 'missing'
-    const successor = this.#database.driver.prepare(`
-      SELECT 1 FROM signed_clinical_document
-      WHERE workspace_id = ? AND epoch = ? AND revision_of_document_id = ?
-    `).get(context.workspaceId, context.epoch, source.document_id)
-    return successor === undefined ? 'signed' : 'superseded'
+    return this.#clinicalDocumentHasSuccessor(context, source.document_id)
+      ? 'superseded'
+      : 'signed'
+  }
+
+  #clinicalDocumentHasSuccessor(context: ActorContext, documentId: string): boolean {
+    const successor = clinicalDocumentIdRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT document_id FROM signed_clinical_document
+        WHERE workspace_id = ? AND epoch = ? AND revision_of_document_id = ?
+      `).get(context.workspaceId, context.epoch, documentId),
+    )
+    return successor !== undefined
   }
 
   #laboratoryReportConflictStatus(
@@ -10059,20 +10065,24 @@ export class WorkflowService {
   }
 
   #assertPrescriptionConclusionSupported(context: ActorContext): void {
+    if (!this.#prescriptionConclusionSupportedInContext(context)) {
+      throw new WorkflowError(
+        'CATALOG_CONFLICT',
+        'Independent medication conclusions are not supported by this Scenario',
+      )
+    }
+  }
+
+  #prescriptionConclusionSupportedInContext(context: ActorContext): boolean {
     const rows = z.array(medicationCatalogConfigRowSchema).parse(
       this.#database.driver.prepare(`
         SELECT config_json FROM outpatient_catalog
         WHERE workspace_id = ? AND epoch = ? AND kind = 'medication' AND active = 1
       `).all(context.workspaceId, context.epoch),
     )
-    if (!this.#prescriptionConclusionSupported(
+    return this.#prescriptionConclusionSupported(
       rows.map(row => JSON.parse(row.config_json) as unknown),
-    )) {
-      throw new WorkflowError(
-        'CATALOG_CONFLICT',
-        'Independent medication conclusions are not supported by this Scenario',
-      )
-    }
+    )
   }
 
   #prescriptionConclusionSupported(configs: unknown[]): boolean {

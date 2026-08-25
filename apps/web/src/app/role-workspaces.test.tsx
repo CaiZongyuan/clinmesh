@@ -4247,6 +4247,27 @@ describe('role workspaces', () => {
         taskVersion: '4',
         version: 1,
       }],
+      medicationConclusion: {
+        prescription: {
+          authoredAt: '2026-08-24T08:35:00+08:00',
+          authoredByPractitionerRoleId: 'practitioner-role-outpatient-doctor',
+          id: 'prescription-completed-legacy-1',
+          items: [{
+            catalogItemId: 'medication-oseltamivir',
+            courseDays: 5,
+            display: '磷酸奥司他韦胶囊',
+            doseText: '75 mg',
+            frequencyCode: 'BID',
+            medicationRequestId: 'medication-request-completed-legacy-1',
+            medicationRequestVersion: '1',
+            quantity: 10,
+          }],
+          number: 'RX-COMPLETED-LEGACY-001',
+          status: 'signed',
+          version: 1,
+          withdrawalSupported: false,
+        },
+      },
       patient,
       timeline: [],
     } satisfies DoctorCompletedCaseDetail
@@ -4272,8 +4293,10 @@ describe('role workspaces', () => {
 
     expect(await screen.findByText('甲型流感，生命体征稳定。')).toBeTruthy()
     expect(screen.getByText('甲型流感抗原阳性。')).toBeTruthy()
+    expect(screen.getByText('处方号 RX-COMPLETED-LEGACY-001')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '更正病历' })).toBeNull()
     expect(screen.queryByRole('button', { name: '更正检查报告' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '撤回处方' })).toBeNull()
   })
 
   it('completes all five controlled clinical correction classes and shows the final timeline', async () => {

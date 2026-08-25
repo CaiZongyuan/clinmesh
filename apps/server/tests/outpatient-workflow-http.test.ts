@@ -1043,6 +1043,7 @@ describe('outpatient workflow HTTP contract', () => {
       trustedOrigins: ['http://localhost'],
     })
     runtimes.push(runtime)
+    useLegacyMedicationCatalog(runtime)
     const testCase = await createSignedCase(runtime, password)
 
     const response = await runtime.app.request(
@@ -1088,6 +1089,7 @@ describe('outpatient workflow HTTP contract', () => {
       items: [expect.objectContaining({
         medicationRequestId: testCase.draft.medicationRequestIds[0],
       })],
+      withdrawalSupported: false,
     }))
     expect(detail.timeline.map(event => event.reference)).toEqual(expect.arrayContaining([
       `ServiceRequest/${testCase.order.serviceRequestId}`,

@@ -4,6 +4,7 @@ import {
   completeEncounterRequestSchema,
   completedCaseClinicalDocumentSchema,
   completedCaseLaboratoryRequestSchema,
+  deletePrescriptionDraftRequestSchema,
   encounterCompletionPreviewSchema,
   encounterCompletionResponseSchema,
   laboratoryRequestSchema,
@@ -160,6 +161,23 @@ describe('HIS contracts', () => {
       requestId: 'request-1',
       warnings: [],
     }).success).toBe(true)
+  })
+
+  it('validates FHIR expected-version records before a command is accepted', () => {
+    const input = { expectedDraftVersion: 1 }
+    expect(deletePrescriptionDraftRequestSchema.safeParse({
+      expectedVersions: { 'Encounter/encounter-1': '4' },
+      input,
+    }).success).toBe(true)
+    for (const expectedVersions of [
+      { 'Encounter/encounter-1': 'latest' },
+      { 'not-a-fhir-reference': '4' },
+    ]) {
+      expect(deletePrescriptionDraftRequestSchema.safeParse({
+        expectedVersions,
+        input,
+      }).success).toBe(false)
+    }
   })
 
   it('requires controlled course and quantity values in medication drafts', () => {
