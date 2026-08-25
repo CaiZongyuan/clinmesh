@@ -2016,14 +2016,22 @@ export class WorkflowService {
     const consultation = this.#consultationDetail(context, caseId)
     const diagnosis = this.#completedCaseDiagnosis(context, caseId)
     const prescription = this.#issuedPrescription(context, caseId)
+    const completedPrescription = prescription === undefined
+      ? undefined
+      : {
+          ...prescription,
+          withdrawalSupported: (
+            prescription.status === 'signed' || prescription.status === 'paid'
+          ) && !this.#prescriptionHasDispensedQuantity(context, prescription.id),
+        }
     const noMedication = this.#noMedicationConclusion(context, caseId)
     const clinicalDocuments = this.#completedCaseClinicalDocuments(context, caseId)
     const laboratoryRequests = this.#completedCaseLaboratoryRequests(context, caseId)
-    const medicationConclusion = prescription === undefined && noMedication === undefined
+    const medicationConclusion = completedPrescription === undefined && noMedication === undefined
       ? undefined
       : {
           ...(noMedication === undefined ? {} : { noMedication }),
-          ...(prescription === undefined ? {} : { prescription }),
+          ...(completedPrescription === undefined ? {} : { prescription: completedPrescription }),
         }
     const facts = doctorCompletedCaseDetailSchema.omit({ timeline: true }).parse({
       caseId,
@@ -3289,6 +3297,16 @@ export class WorkflowService {
         encounterId: input.encounterId,
         expectedDraftVersion: input.expectedDraftVersion,
       },
+      mapExpectedVersionConflict: error => this.#expectedVersionWorkflowError(error, {
+        code: 'WORKFLOW_CONFLICT',
+        currentStatus: this.#prescriptionDraftConflictStatus(
+          input.context,
+          input.encounterId,
+        ),
+        message: 'A prescription draft resource version has changed',
+        owner: 'prescription-draft',
+        resource: `Encounter/${input.encounterId}`,
+      }),
       operation: 'encounter.delete-prescription-draft',
     }, () => {
       this.#assertPrescriptionConclusionSupported(input.context)
@@ -3825,6 +3843,16 @@ export class WorkflowService {
         expectedPrescriptionVersion: input.expectedPrescriptionVersion,
         prescriptionId: input.prescriptionId,
       },
+      mapExpectedVersionConflict: error => this.#expectedVersionWorkflowError(error, {
+        code: 'WORKFLOW_CONFLICT',
+        currentStatus: this.#prescriptionWithdrawalConflictStatus(
+          input.context,
+          input.prescriptionId,
+        ),
+        message: 'A prescription resource version has changed',
+        owner: 'prescription',
+        resource: `Prescription/${input.prescriptionId}`,
+      }),
       operation: 'prescription.withdraw',
     }, transaction => {
       const prescription = prescriptionWithdrawalLookupRowSchema.optional().parse(
@@ -5054,6 +5082,16 @@ export class WorkflowService {
         reason: input.reason,
         ...revision.payload,
       },
+      mapExpectedVersionConflict: error => this.#expectedVersionWorkflowError(error, {
+        code: 'WORKFLOW_CONFLICT',
+        currentStatus: this.#clinicalDocumentConflictStatus(
+          input.context,
+          input.compositionId,
+        ),
+        message: 'A Clinical Document resource version has changed',
+        owner: 'clinical-document',
+        resource: `Composition/${input.compositionId}`,
+      }),
       operation: 'clinical-document.revise',
     }, transaction => {
       const source = clinicalDocumentRevisionSourceRowSchema.optional().parse(
@@ -5731,6 +5769,16 @@ export class WorkflowService {
         encounterId: input.encounterId,
         expectedDraftVersion: input.expectedDraftVersion,
       },
+      mapExpectedVersionConflict: error => this.#expectedVersionWorkflowError(error, {
+        code: 'LABORATORY_REQUEST_VERSION_CONFLICT',
+        currentStatus: this.#laboratoryRequestDraftConflictStatus(
+          input.context,
+          input.encounterId,
+        ),
+        message: 'A laboratory request draft resource version has changed',
+        owner: 'laboratory-request-draft',
+        resource: `Encounter/${input.encounterId}`,
+      }),
       operation: 'laboratory-request.delete-draft',
     }, () => {
       const outpatientCase = this.#laboratoryRequestCaseForAction(
@@ -6692,6 +6740,17 @@ export class WorkflowService {
         requestId: input.requestId,
         results: input.results,
       },
+      mapExpectedVersionConflict: error => this.#expectedVersionWorkflowError(error, {
+        code: 'LABORATORY_REQUEST_VERSION_CONFLICT',
+        currentStatus: this.#laboratoryReportConflictStatus(
+          input.context,
+          input.requestId,
+          input.diagnosticReportId,
+        ),
+        message: 'A laboratory report resource version has changed',
+        owner: 'laboratory-report',
+        resource: `DiagnosticReport/${input.diagnosticReportId}`,
+      }),
       operation: 'laboratory-report.correct',
     }, (transaction) => {
       this.#assertExpectedVersions(
@@ -8958,6 +9017,81 @@ export class WorkflowService {
     )
   }
 
+  #expectedVersionWorkflowError(
+    error: ExpectedVersionConflictError,
+    options: {
+      code: WorkflowError['code']
+      currentStatus: NonNullable<ApiConflict['currentStatus']>
+      message: string
+      owner: ApiConflict['owner']
+      resource: string
+    },
+  ): WorkflowError {
+    return new WorkflowError(options.code, options.message, {
+      currentStatus: options.currentStatus,
+      ...(error.currentVersion === undefined
+        ? {}
+        : { currentVersion: error.currentVersion }),
+      expectedVersion: error.expectedVersion,
+      owner: options.owner,
+      resource: error.reference ?? options.resource,
+    })
+  }
+
+  #prescriptionDraftConflictStatus(
+    context: ActorContext,
+    encounterId: string,
+  ): NonNullable<ApiConflict['currentStatus']> {
+    const outpatientCase = this.#caseByEncounter(context, encounterId)
+    const state = prescriptionDraftStateRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT version, draft_json FROM prescription_draft_state
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      `).get(context.workspaceId, context.epoch, outpatientCase.case_id),
+    )
+    if (state === undefined) return 'missing'
+    return state.draft_json === null ? 'empty' : 'draft'
+  }
+
+  #laboratoryRequestDraftConflictStatus(
+    context: ActorContext,
+    encounterId: string,
+  ): NonNullable<ApiConflict['currentStatus']> {
+    const outpatientCase = this.#caseByEncounter(context, encounterId)
+    const state = this.#laboratoryRequestState(context, outpatientCase.case_id)
+    if (state === undefined) return 'missing'
+    return state.draft_catalog_item_id === null ? 'empty' : 'draft'
+  }
+
+  #clinicalDocumentConflictStatus(
+    context: ActorContext,
+    compositionId: string,
+  ): NonNullable<ApiConflict['currentStatus']> {
+    const source = z.object({ document_id: z.string().min(1) }).optional().parse(
+      this.#database.driver.prepare(`
+        SELECT document_id FROM signed_clinical_document
+        WHERE workspace_id = ? AND epoch = ? AND composition_id = ?
+      `).get(context.workspaceId, context.epoch, compositionId),
+    )
+    if (source === undefined) return 'missing'
+    const successor = this.#database.driver.prepare(`
+      SELECT 1 FROM signed_clinical_document
+      WHERE workspace_id = ? AND epoch = ? AND revision_of_document_id = ?
+    `).get(context.workspaceId, context.epoch, source.document_id)
+    return successor === undefined ? 'signed' : 'superseded'
+  }
+
+  #laboratoryReportConflictStatus(
+    context: ActorContext,
+    requestId: string,
+    diagnosticReportId: string,
+  ): NonNullable<ApiConflict['currentStatus']> {
+    const request = this.#laboratoryRequest(context, requestId)
+    if (request === undefined) return 'missing'
+    if (request.diagnostic_report_id !== diagnosticReportId) return 'superseded'
+    return request.status
+  }
+
   #laboratoryRequests(context: ActorContext, caseId: string) {
     const requests = z.array(laboratoryRequestRowSchema).parse(
       this.#database.driver.prepare(`
@@ -9700,6 +9834,41 @@ export class WorkflowService {
       withdrawnByActorId: withdrawal.withdrawn_by_actor_id,
       withdrawnByPractitionerRoleId: withdrawal.withdrawn_by_practitioner_role_id,
     })
+  }
+
+  #prescriptionHasDispensedQuantity(context: ActorContext, prescriptionId: string): boolean {
+    const row = countRowSchema.parse(this.#database.driver.prepare(`
+      SELECT COUNT(*) AS count
+      FROM prescription_item
+      WHERE workspace_id = ? AND epoch = ? AND prescription_id = ?
+        AND dispensed_quantity > 0
+    `).get(context.workspaceId, context.epoch, prescriptionId))
+    return row.count > 0
+  }
+
+  #prescriptionWithdrawalConflictStatus(
+    context: ActorContext,
+    prescriptionId: string,
+  ): NonNullable<ApiConflict['currentStatus']> {
+    const prescription = prescriptionWithdrawalLookupRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT prescription.case_id, prescription.version, prescription.status,
+          withdrawal.withdrawal_id
+        FROM prescription
+        LEFT JOIN prescription_withdrawal AS withdrawal
+          ON withdrawal.workspace_id = prescription.workspace_id
+         AND withdrawal.epoch = prescription.epoch
+         AND withdrawal.prescription_id = prescription.prescription_id
+        WHERE prescription.workspace_id = ? AND prescription.epoch = ?
+          AND prescription.prescription_id = ?
+      `).get(context.workspaceId, context.epoch, prescriptionId),
+    )
+    if (prescription === undefined) return 'missing'
+    if (prescription.withdrawal_id !== null) return 'withdrawn'
+    if (this.#prescriptionHasDispensedQuantity(context, prescriptionId)) {
+      return 'dispensing-started'
+    }
+    return prescription.status
   }
 
   #issuedPrescription(

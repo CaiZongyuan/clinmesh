@@ -2449,7 +2449,7 @@ describe('outpatient workflow HTTP contract', () => {
       data: { encounterVersion: '3', status: 'completed' },
     })
     expect(apiErrorSchema.parse(await rejected.json())).toMatchObject({
-      error: { code: 'IDEMPOTENCY_KEY_REUSED' },
+      error: { code: 'EXPECTED_VERSION_CONFLICT' },
     })
     expect(fhirResourceSchema.parse(await (await runtime.app.request(
       `/fhir/R5/Encounter/${candidate.started.encounterId}`,
@@ -3428,6 +3428,37 @@ describe('outpatient workflow HTTP contract', () => {
       error: { message: 'The signed Clinical Document requires a revision' },
     })
 
+    const staleRevisionResponse = await runtime.app.request(
+      `/api/his/v1/clinical-documents/${signed.compositionId}/actions/revise`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Composition/${signed.compositionId}`]: '999',
+            ...expectedVersions,
+          },
+          input: {
+            document: revisedStructuredClinicalDocument,
+            reason: '验证过期病历版本反馈。',
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(staleRevisionResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await staleRevisionResponse.json())).toMatchObject({
+      error: {
+        code: 'WORKFLOW_CONFLICT',
+        conflict: {
+          currentStatus: 'signed',
+          currentVersion: signed.compositionVersion,
+          expectedVersion: '999',
+          owner: 'clinical-document',
+          resource: `Composition/${signed.compositionId}`,
+        },
+      },
+    })
+
     const revisionIdempotencyKey = randomUUID()
     const revise = () => runtime.app.request(
       `/api/his/v1/clinical-documents/${signed.compositionId}/actions/revise`,
@@ -3550,7 +3581,11 @@ describe('outpatient workflow HTTP contract', () => {
         message: 'The Clinical Document is superseded; only the latest version can be revised',
       },
     })
-    expectCommandAuditOutcomes(runtime, 'clinical-document.revise', ['success', 'failed'])
+    expectCommandAuditOutcomes(runtime, 'clinical-document.revise', [
+      'failed',
+      'success',
+      'failed',
+    ])
   })
 
   it('rejects legacy revision content for a structured Clinical Document without hiding its history', async () => {
@@ -3986,6 +4021,30 @@ describe('outpatient workflow HTTP contract', () => {
         message: 'The outpatient case belongs to another doctor',
       },
     })
+    const staleFhirDeleteResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '999' },
+          input: { expectedDraftVersion: 1 },
+        } satisfies typeof deleteLaboratoryRequestDraftRequestSchema._output),
+        headers: commandHeaders(doctorCookie),
+        method: 'DELETE',
+      },
+    )
+    expect(staleFhirDeleteResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await staleFhirDeleteResponse.json())).toMatchObject({
+      error: {
+        code: 'LABORATORY_REQUEST_VERSION_CONFLICT',
+        conflict: {
+          currentStatus: 'draft',
+          currentVersion: '1',
+          expectedVersion: '999',
+          owner: 'laboratory-request-draft',
+          resource: `Encounter/${started.encounterId}`,
+        },
+      },
+    })
     const remove = () => runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
@@ -4034,6 +4093,7 @@ describe('outpatient workflow HTTP contract', () => {
       },
     })
     expectCommandAuditOutcomes(runtime, 'laboratory-request.delete-draft', [
+      'failed',
       'failed',
       'success',
       'failed',
@@ -4915,6 +4975,32 @@ describe('outpatient workflow HTTP contract', () => {
     })
 
     const administratorCookie = await signIn(runtime, 'admin@demo.clinmesh.local', password)
+    const staleCorrectionResponse = await runtime.app.request(
+      `/api/his/v1/laboratory-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/correct`,
+      {
+        body: JSON.stringify({
+          ...correctionBody,
+          expectedVersions: {
+            [`DiagnosticReport/${request.report.diagnosticReportId}`]: '999',
+          },
+        }),
+        headers: commandHeaders(administratorCookie),
+        method: 'POST',
+      },
+    )
+    expect(staleCorrectionResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await staleCorrectionResponse.json())).toMatchObject({
+      error: {
+        code: 'LABORATORY_REQUEST_VERSION_CONFLICT',
+        conflict: {
+          currentStatus: 'acknowledged',
+          currentVersion: request.report.diagnosticReportVersion,
+          expectedVersion: '999',
+          owner: 'laboratory-report',
+          resource: `DiagnosticReport/${request.report.diagnosticReportId}`,
+        },
+      },
+    })
     const correctionResponse = await runtime.app.request(
       `/api/his/v1/laboratory-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/correct`,
       {
@@ -4938,7 +5024,7 @@ describe('outpatient workflow HTTP contract', () => {
       correction.auditId,
       'laboratory-report.correct',
     )
-    expectCommandAuditOutcomes(runtime, 'laboratory-report.correct', ['success'])
+    expectCommandAuditOutcomes(runtime, 'laboratory-report.correct', ['failed', 'success'])
 
     const repeatedAcknowledgementResponse = await runtime.app.request(
       `/api/his/v1/laboratory-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/acknowledge`,
@@ -6140,7 +6226,7 @@ describe('outpatient workflow HTTP contract', () => {
     const staleResponse = await triage('1', randomUUID())
     expect(staleResponse.status).toBe(409)
     expect(apiErrorSchema.parse(await staleResponse.json())).toMatchObject({
-      error: { code: 'IDEMPOTENCY_KEY_REUSED' },
+      error: { code: 'EXPECTED_VERSION_CONFLICT' },
     })
     const observationSearch = await runtime.app.request('/fhir/R5/Observation?_total=accurate', {
       headers: { cookie: doctorCookie },
@@ -8081,6 +8167,53 @@ describe('outpatient workflow HTTP contract', () => {
       throw new Error('Paid prescription did not expose dispensable inventory')
     }
 
+    const completedDetailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/completed-cases/${testCase.caseId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(doctorCompletedCaseDetailSchema.parse(
+      await completedDetailResponse.json(),
+    )).toMatchObject({
+      medicationConclusion: {
+        prescription: {
+          id: pendingPrescription.prescriptionId,
+          status: 'paid',
+          withdrawalSupported: true,
+        },
+      },
+    })
+
+    const staleMedicationRequestVersion = String(
+      Number(pendingMedication.medicationRequestVersion) + 1,
+    )
+    const staleWithdrawalResponse = await runtime.app.request(
+      `/api/his/v1/prescriptions/${pendingPrescription.prescriptionId}/actions/withdraw`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`MedicationRequest/${pendingMedication.medicationRequestId}`]
+              : staleMedicationRequestVersion,
+          },
+          input: { expectedPrescriptionVersion: pendingPrescription.prescriptionVersion },
+        }),
+        headers: commandHeaders(testCase.doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(staleWithdrawalResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await staleWithdrawalResponse.json())).toMatchObject({
+      error: {
+        code: 'WORKFLOW_CONFLICT',
+        conflict: {
+          currentStatus: 'paid',
+          currentVersion: pendingMedication.medicationRequestVersion,
+          expectedVersion: staleMedicationRequestVersion,
+          owner: 'prescription',
+          resource: `MedicationRequest/${pendingMedication.medicationRequestId}`,
+        },
+      },
+    })
+
     const withdrawalResponse = await runtime.app.request(
       `/api/his/v1/prescriptions/${pendingPrescription.prescriptionId}/actions/withdraw`,
       {
@@ -8119,6 +8252,20 @@ describe('outpatient workflow HTTP contract', () => {
     expect(pharmacyQueueSchema.parse(await pharmacyQueueResponse.json())).toMatchObject({
       items: [],
       total: 0,
+    })
+    const withdrawnDetailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/completed-cases/${testCase.caseId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(doctorCompletedCaseDetailSchema.parse(
+      await withdrawnDetailResponse.json(),
+    )).toMatchObject({
+      medicationConclusion: {
+        prescription: {
+          status: 'withdrawn',
+          withdrawalSupported: false,
+        },
+      },
     })
     const dispenseResponse = await runtime.app.request(
       `/api/his/v1/prescriptions/${pendingPrescription.prescriptionId}/actions/dispense`,
@@ -8306,6 +8453,27 @@ describe('outpatient workflow HTTP contract', () => {
         message: 'The outpatient case belongs to another doctor',
       },
     })
+    const staleFhirDeleteResponse = await runtime.app.request(endpoint, {
+      body: JSON.stringify({
+        expectedVersions: { [`Encounter/${started.encounterId}`]: '999' },
+        input: { expectedDraftVersion: 1 },
+      } satisfies typeof deletePrescriptionDraftRequestSchema._output),
+      headers: commandHeaders(doctorCookie),
+      method: 'DELETE',
+    })
+    expect(staleFhirDeleteResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await staleFhirDeleteResponse.json())).toMatchObject({
+      error: {
+        code: 'WORKFLOW_CONFLICT',
+        conflict: {
+          currentStatus: 'draft',
+          currentVersion: '1',
+          expectedVersion: '999',
+          owner: 'prescription-draft',
+          resource: `Encounter/${started.encounterId}`,
+        },
+      },
+    })
     const remove = () => runtime.app.request(endpoint, {
       body: JSON.stringify({
         expectedVersions,
@@ -8357,6 +8525,7 @@ describe('outpatient workflow HTTP contract', () => {
       },
     })
     expectCommandAuditOutcomes(runtime, 'encounter.delete-prescription-draft', [
+      'failed',
       'failed',
       'success',
       'failed',
@@ -8555,6 +8724,20 @@ describe('outpatient workflow HTTP contract', () => {
           resource: `Prescription/${prescription.prescriptionId}`,
         },
         message: 'The prescription cannot be withdrawn because its current state is "dispensing-started"',
+      },
+    })
+    const completedDetailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/completed-cases/${testCase.caseId}`,
+      { headers: { cookie: testCase.doctorCookie } },
+    )
+    expect(doctorCompletedCaseDetailSchema.parse(
+      await completedDetailResponse.json(),
+    )).toMatchObject({
+      medicationConclusion: {
+        prescription: {
+          status: 'paid',
+          withdrawalSupported: false,
+        },
       },
     })
     expectCommandAuditOutcomes(runtime, 'prescription.withdraw', ['failed'])

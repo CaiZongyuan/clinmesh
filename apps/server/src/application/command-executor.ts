@@ -91,6 +91,7 @@ export interface CommandInvocation<Input, Data> {
   idempotencyScope?: 'epoch' | 'workspace'
   idempotencyKey: string
   input: Input
+  mapExpectedVersionConflict?: (error: ExpectedVersionConflictError) => Error
   operation: string
 }
 
@@ -140,7 +141,27 @@ export class CommandConflictError extends Error {
   readonly code = 'IDEMPOTENCY_KEY_REUSED'
 }
 
-export class ExpectedVersionConflictError extends CommandConflictError {}
+export class ExpectedVersionConflictError extends Error {
+  readonly code = 'EXPECTED_VERSION_CONFLICT'
+  readonly currentVersion: string | undefined
+  readonly expectedVersion: string
+  readonly reference: string | undefined
+
+  constructor(
+    message: string,
+    details: {
+      currentVersion?: string
+      expectedVersion: string
+      reference?: string
+    },
+  ) {
+    super(message)
+    this.name = 'ExpectedVersionConflictError'
+    this.currentVersion = details.currentVersion
+    this.expectedVersion = details.expectedVersion
+    this.reference = details.reference
+  }
+}
 
 export class CommandTransaction {
   readonly fhir: FhirRepository
@@ -317,6 +338,12 @@ export class CommandExecutor {
     } catch (error) {
       if (this.#database.driver.inTransaction) this.#database.driver.exec('ROLLBACK')
       this.#recordFailedAttempt(context, invocation.operation, requestHash, now)
+      if (
+        error instanceof ExpectedVersionConflictError
+        && invocation.mapExpectedVersionConflict !== undefined
+      ) {
+        throw invocation.mapExpectedVersionConflict(error)
+      }
       throw error
     }
   }
@@ -325,18 +352,33 @@ export class CommandExecutor {
     for (const [reference, expectedVersion] of Object.entries(expectedVersions)) {
       const match = /^([A-Z][A-Za-z]+)\/([A-Za-z0-9.-]{1,64})$/.exec(reference)
       if (match === null) {
-        throw new ExpectedVersionConflictError(`Expected version reference is invalid: ${reference}`)
+        throw new ExpectedVersionConflictError(
+          `Expected version reference is invalid: ${reference}`,
+          { expectedVersion },
+        )
       }
       const [, resourceType = '', resourceId = ''] = match
       try {
         const resource = this.#fhir.read(context, resourceType, resourceId)
         if (resource.meta?.versionId !== expectedVersion) {
-          throw new ExpectedVersionConflictError(`Expected ${reference} version ${expectedVersion}`)
+          throw new ExpectedVersionConflictError(
+            `Expected ${reference} version ${expectedVersion}`,
+            {
+              ...(resource.meta?.versionId === undefined
+                ? {}
+                : { currentVersion: resource.meta.versionId }),
+              expectedVersion,
+              reference,
+            },
+          )
         }
       } catch (error) {
         if (error instanceof ExpectedVersionConflictError) throw error
         if (error instanceof FhirRepositoryError) {
-          throw new ExpectedVersionConflictError(`Expected resource is unavailable: ${reference}`)
+          throw new ExpectedVersionConflictError(
+            `Expected resource is unavailable: ${reference}`,
+            { expectedVersion, reference },
+          )
         }
         throw error
       }

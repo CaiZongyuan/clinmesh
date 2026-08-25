@@ -322,6 +322,10 @@ export const issuedPrescriptionSchema = z.object({
   withdrawal: prescriptionWithdrawalSchema.optional(),
 }).strict()
 
+const completedCasePrescriptionSchema = issuedPrescriptionSchema.extend({
+  withdrawalSupported: z.boolean().default(false),
+}).strict()
+
 export const issuePrescriptionRequestSchema = z.object({
   expectedVersions: z.record(z.string(), z.string()),
   input: z.object({
@@ -1082,7 +1086,7 @@ export const doctorCompletedCaseDetailSchema = z.object({
   laboratoryRequests: z.array(completedCaseLaboratoryRequestSchema),
   medicationConclusion: z.object({
     noMedication: noMedicationConclusionSchema.optional(),
-    prescription: issuedPrescriptionSchema.optional(),
+    prescription: completedCasePrescriptionSchema.optional(),
   }).strict().optional(),
   patient: patientSummarySchema,
   timeline: z.array(doctorCompletedCaseTimelineEventSchema),

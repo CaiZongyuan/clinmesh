@@ -3145,7 +3145,7 @@ describe('role workspaces', () => {
     expect(within(dialog).getByText('CM-RX-20260824-0001')).toBeTruthy()
     expect(within(dialog).getByText('已开具')).toBeTruthy()
     await user.click(within(dialog).getByRole('button', { name: '确认撤回' }))
-    expect(await screen.findByText('处方已撤回')).toBeTruthy()
+    expect(await screen.findByText(/处方已撤回/)).toBeTruthy()
 
     await user.click(screen.getByRole('button', { name: '无需用药' }))
     await user.click(screen.getByRole('button', { name: '确认无需用药' }))
@@ -3931,6 +3931,7 @@ describe('role workspaces', () => {
           number: 'RX-COMPLETED-001',
           status: 'withdrawn',
           version: 2,
+          withdrawalSupported: false,
           withdrawal: {
             id: 'prescription-withdrawal-completed-1',
             prescriptionId: 'prescription-completed-1',
@@ -4019,6 +4020,170 @@ describe('role workspaces', () => {
     for (const name of ['保存病历草稿', '提交病历修订', '确认已阅', '撤回处方', '确认完诊']) {
       expect(screen.queryByRole('button', { name })).toBeNull()
     }
+  })
+
+  it('withdraws a paid undispensed prescription from its completed case', async () => {
+    const patient = {
+      birthDate: '1988-03-16',
+      gender: 'female',
+      id: 'patient-completed-paid-1',
+      identifier: 'CM-SYN-PAID-001',
+      name: '合成患者已收费处方',
+      synthetic: true,
+      versionId: '2',
+    } as const
+    const prescription = {
+      authoredAt: '2026-08-24T08:35:00+08:00',
+      authoredByPractitionerRoleId: 'practitioner-role-outpatient-doctor',
+      id: 'prescription-completed-paid-1',
+      items: [{
+        catalogItemId: 'medication-oseltamivir',
+        courseDays: 5,
+        display: '磷酸奥司他韦胶囊',
+        doseText: '75 mg',
+        frequencyCode: 'BID',
+        medicationRequestId: 'medication-request-completed-paid-1',
+        medicationRequestVersion: '2',
+        quantity: 10,
+      }],
+      number: 'RX-COMPLETED-PAID-001',
+      status: 'paid' as const,
+      version: 2,
+    }
+    const withdrawal = {
+      id: 'prescription-withdrawal-completed-paid-1',
+      prescriptionId: prescription.id,
+      version: 1,
+      withdrawnAt: '2026-08-24T09:05:00+08:00',
+      withdrawnByActorId: 'actor-outpatient-doctor',
+      withdrawnByPractitionerRoleId: 'practitioner-role-outpatient-doctor',
+    }
+    let activeDetail: DoctorCaseDetail = {
+      allergies: [],
+      caseId: 'case-completed-paid-1',
+      consultation: { questions: [], records: [], version: 1 },
+      encounter: { id: 'encounter-completed-paid-1', status: 'completed', versionId: '6' },
+      medicationConclusion: { draftVersion: 3, prescription },
+      patient,
+      presentation: doctorPresentation,
+      priorFacts: [],
+      status: 'completed',
+      taskId: 'task-completed-paid-1',
+      taskVersion: '2',
+    }
+    let completedDetail: DoctorCompletedCaseDetail = {
+      caseId: activeDetail.caseId,
+      clinicalDocuments: [],
+      completedAt: '2026-08-24T09:00:00+08:00',
+      encounter: {
+        id: activeDetail.encounter.id,
+        status: 'completed',
+        versionId: activeDetail.encounter.versionId,
+      },
+      laboratoryRequests: [],
+      medicationConclusion: {
+        prescription: { ...prescription, withdrawalSupported: true },
+      },
+      patient,
+      timeline: [{
+        kind: 'encounter-completed',
+        occurredAt: '2026-08-24T09:00:00+08:00',
+        reference: `Encounter/${activeDetail.encounter.id}`,
+        relatedReferences: [],
+      }],
+    }
+    let withdrawalRequest: unknown
+    stubDoctorCompletedCaseLibrary({
+      list: {
+        items: [{
+          caseId: completedDetail.caseId,
+          completedAt: completedDetail.completedAt,
+          encounterId: completedDetail.encounter.id,
+          encounterVersion: completedDetail.encounter.versionId,
+          patient,
+        }],
+        ...pagination(1),
+      },
+      onRequest: (url, init) => {
+        if (url.pathname === `/api/his/v1/doctor/cases/${activeDetail.caseId}`) {
+          return Response.json(activeDetail)
+        }
+        if (url.pathname === `/api/his/v1/doctor/completed-cases/${completedDetail.caseId}`) {
+          return Response.json(completedDetail)
+        }
+        if (url.pathname === `/api/his/v1/prescriptions/${prescription.id}/actions/withdraw`) {
+          withdrawalRequest = JSON.parse(String(init?.body))
+          const withdrawnPrescription = {
+            ...prescription,
+            status: 'withdrawn' as const,
+            version: 3,
+            withdrawal,
+          }
+          activeDetail = {
+            ...activeDetail,
+            medicationConclusion: { draftVersion: 3, prescription: withdrawnPrescription },
+          }
+          completedDetail = {
+            ...completedDetail,
+            medicationConclusion: {
+              prescription: { ...withdrawnPrescription, withdrawalSupported: false },
+            },
+            timeline: [...completedDetail.timeline, {
+              kind: 'prescription-withdrawn',
+              occurredAt: withdrawal.withdrawnAt,
+              reference: `PrescriptionWithdrawal/${withdrawal.id}`,
+              relatedReferences: [`Prescription/${prescription.id}`],
+            }],
+          }
+          return Response.json(commandResponse({
+            medicationRequests: [{
+              id: prescription.items[0]?.medicationRequestId,
+              version: '3',
+            }],
+            prescriptionId: prescription.id,
+            prescriptionVersion: 3,
+            status: 'withdrawn',
+            withdrawal,
+          }))
+        }
+        return undefined
+      },
+    })
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        mutations: { retry: false },
+        queries: { retry: false, staleTime: Infinity },
+      },
+    })
+    const user = userEvent.setup()
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DoctorWorkspace locale="zh-CN" session={doctorSession} />
+      </QueryClientProvider>,
+    )
+
+    await user.click(await screen.findByRole('tab', { name: '已完诊病例' }))
+    await user.click(await screen.findByRole('button', { name: `查看病例 ${patient.name}` }))
+    await user.click(await screen.findByRole('button', { name: '撤回处方' }))
+    await waitFor(() => {
+      expect(document.activeElement?.id).toBe('encounter-completion-target-medication-conclusion')
+    })
+    await user.click(await screen.findByRole('button', { name: '撤回处方' }))
+    const dialog = await screen.findByRole('alertdialog', { name: '确认撤回处方' })
+    expect(within(dialog).getByText(prescription.number)).toBeTruthy()
+    await user.click(within(dialog).getByRole('button', { name: '确认撤回' }))
+
+    expect(await screen.findByText('处方已撤回')).toBeTruthy()
+    expect(withdrawalRequest).toEqual({
+      expectedVersions: {
+        [`MedicationRequest/${prescription.items[0]?.medicationRequestId}`]: '2',
+      },
+      input: { expectedPrescriptionVersion: 2 },
+    })
+    await user.click(screen.getByRole('tab', { name: '已完诊病例' }))
+    await user.click(await screen.findByRole('button', { name: `查看病例 ${patient.name}` }))
+    expect(await screen.findByText(/处方已撤回/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '撤回处方' })).toBeNull()
   })
 
   it('keeps legacy completed facts readable without unsupported correction navigation', async () => {
@@ -4532,7 +4697,9 @@ describe('role workspaces', () => {
           }
           currentCompletedDetail = {
             ...currentCompletedDetail,
-            medicationConclusion: { prescription: issuedPrescription },
+            medicationConclusion: {
+              prescription: { ...issuedPrescription, withdrawalSupported: true },
+            },
             timeline: [...currentCompletedDetail.timeline, prescriptionIssuedEvent],
           }
           return Response.json(commandResponse({
@@ -4554,7 +4721,9 @@ describe('role workspaces', () => {
           }
           currentCompletedDetail = {
             ...currentCompletedDetail,
-            medicationConclusion: { prescription: withdrawnPrescription },
+            medicationConclusion: {
+              prescription: { ...withdrawnPrescription, withdrawalSupported: false },
+            },
             timeline: [...currentCompletedDetail.timeline, prescriptionWithdrawalEvent],
           }
           return Response.json(commandResponse({

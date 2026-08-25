@@ -1328,12 +1328,15 @@ function CaseDetail({
           />
           {catalog.data.prescriptionConclusionSupported ? (
             <MedicationConclusionPanel
+              allowWithdrawal={!readOnly || correctionTarget === 'medication-conclusion'}
               catalog={catalog.data.medications}
               detail={detail}
               key={`medication-conclusion:${detail.caseId}`}
               locale={locale}
               messages={messages}
-              onRefresh={onRefreshCase}
+              onRefresh={correctionTarget === 'medication-conclusion'
+                ? onCorrectionCompleted
+                : onRefreshCase}
               readOnly={readOnly}
             />
           ) : null}
@@ -2894,7 +2897,16 @@ function createPrescriptionDraftLine(
   }
 }
 
-function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefresh, readOnly }: {
+function MedicationConclusionPanel({
+  allowWithdrawal,
+  catalog,
+  detail,
+  locale,
+  messages,
+  onRefresh,
+  readOnly,
+}: {
+  allowWithdrawal: boolean
   catalog: PrescriptionClinicalCatalog['medications']
   detail: DoctorCaseDetail
   locale: WorkspaceLocale
@@ -3056,7 +3068,8 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
               <span className="text-muted-foreground">{messages.prescriptionStatus}</span>
               <Badge variant="secondary">{prescriptionStatusLabel(prescription.status, messages)}</Badge>
             </div>
-            {!readOnly && (prescription.status === 'signed' || prescription.status === 'paid') ? (
+            {allowWithdrawal
+              && (prescription.status === 'signed' || prescription.status === 'paid') ? (
               <AlertDialog>
                 <AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" />}>
                   <RotateCcwIcon data-icon="inline-start" />{messages.withdrawPrescription}
@@ -3116,7 +3129,7 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
               ))}
             </TableBody>
           </Table>
-          {readOnly
+          {!allowWithdrawal
             || withdraw.error === null
             || withdraw.variables?.caseId !== detail.caseId
             || withdraw.variables.prescriptionId !== prescription.id ? null : (

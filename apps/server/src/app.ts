@@ -25,7 +25,10 @@ import { Hono, type Context } from 'hono'
 import { z } from 'zod'
 import type { IdentityService } from './application/identity-service.ts'
 import { IdentityError } from './application/identity-service.ts'
-import { CommandConflictError } from './application/command-executor.ts'
+import {
+  CommandConflictError,
+  ExpectedVersionConflictError,
+} from './application/command-executor.ts'
 import type { ScenarioService } from './application/scenario-service.ts'
 import { ScenarioError } from './application/scenario-service.ts'
 import type { WorkflowService } from './application/workflow-service.ts'
@@ -88,6 +91,7 @@ function apiErrorResponse(
   }
   if (
     error instanceof CommandConflictError
+    || error instanceof ExpectedVersionConflictError
     || error instanceof FhirRepositoryError
     || error instanceof WorkspaceContextError
   ) {

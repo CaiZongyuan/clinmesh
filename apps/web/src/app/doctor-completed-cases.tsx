@@ -23,6 +23,7 @@ import {
   FilterXIcon,
   FlaskConicalIcon,
   LibraryBigIcon,
+  RotateCcwIcon,
   SearchIcon,
 } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
@@ -47,7 +48,10 @@ interface DoctorCompletedCaseLibraryProps {
   session: SessionContext
 }
 
-export type CompletedCaseCorrectionTarget = 'clinical-document' | 'laboratory'
+export type CompletedCaseCorrectionTarget =
+  | 'clinical-document'
+  | 'laboratory'
+  | 'medication-conclusion'
 
 interface FilterFormState {
   completedFrom: string
@@ -406,6 +410,8 @@ function CompletedCaseDetailView({ canCorrectLaboratoryReport, catalog, detail, 
     request => request.correctionSupported
       && (request.report !== undefined || request.previousReports.length > 0),
   )
+  const hasWithdrawablePrescription = detail.medicationConclusion?.prescription
+    ?.withdrawalSupported === true
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
@@ -438,6 +444,17 @@ function CompletedCaseDetailView({ canCorrectLaboratoryReport, catalog, detail, 
           >
             <FlaskConicalIcon data-icon="inline-start" />
             {messages.openLaboratoryReportCorrection}
+          </Button>
+        ) : null}
+        {hasWithdrawablePrescription ? (
+          <Button
+            onClick={() => onOpenCorrection(detail.caseId, 'medication-conclusion')}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <RotateCcwIcon data-icon="inline-start" />
+            {messages.withdrawPrescription}
           </Button>
         ) : null}
       </div>

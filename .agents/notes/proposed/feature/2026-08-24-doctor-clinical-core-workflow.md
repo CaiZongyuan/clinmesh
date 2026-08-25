@@ -28,7 +28,7 @@ Virtual Patient 是独立于 Patient Identity 和 Encounter 的候选病例事�
 
 Encounter Completion Policy 只汇总各 owner 已确认的事实，不复制其状态机。医生只有在主诊断已确认、病历已签署、必要检查已报告且完成 Report Acknowledgement、处方已开具或明确无需用药、没有未处理草稿、处置和随访完整时才能完成 Encounter。完诊后病例进入只读查询入口，展示 Consultation Record、病历版本、检查、报告、诊断、处方和业务时间线；更正通过原模块的受控命令产生新事实，不解锁并覆盖历史内容。
 
-首期提供最小纠错能力：删除未开具草稿、取消尚未执行的检查、撤回尚未调剂的处方、签署后更正病历和签发后更正报告。五类入口统一展示待处理对象、要求显式确认并反馈结果，服务端仍按 owner 状态机重新校验 expected version、幂等、身份和可逆窗口。可向用户解释的冲突返回 strict `conflict` 对象，以受控 `owner`、本地资源引用、当前状态、当前版本和预期版本表达服务端已知事实；Web 只从验证后的字段生成本地化反馈，不解析或显示服务端英文诊断。每个纠错 Command 在 expected version 校验前执行岗位、作者和病例责任预检，未授权请求不能借过期版本探测资源状态，失败尝试仍进入 Command 审计。Web mutation error 同时绑定病例和目标对象，切换病例后不显示上一病例的失败。每个成功动作生成 Audit Event，病历和报告更正还生成适用 Provenance 与替代关系。退费、退药、医保和库存等跨部门逆向流程另立范围。
+[最小临床纠错](https://github.com/CaiZongyuan/clinmesh/issues/32)提供删除未开具草稿、取消尚未执行的检查、撤回尚未调剂的处方、签署后更正病历和签发后更正报告。五类入口统一展示待处理对象、要求显式确认并反馈结果，服务端仍按 owner 状态机重新校验 expected version、幂等、身份和可逆窗口。可向用户解释的冲突返回 strict `conflict` 对象，以受控 `owner`、本地资源引用、当前状态、当前版本和预期版本表达服务端已知事实；Web 只从验证后的字段生成本地化反馈，不解析或显示服务端英文诊断。每个纠错 Command 在 expected version 校验前执行岗位、作者和病例责任预检，未授权请求不能借过期版本探测资源状态，失败尝试仍进入 Command 审计。Web mutation error 同时绑定病例和目标对象，切换病例后不显示上一病例的失败。每个成功动作生成 Audit Event，病历和报告更正还生成适用 Provenance 与替代关系。退费、退药、医保和库存等跨部门逆向流程另立范围。
 
 一个 Super Administrator 账户可以从全局顶栏选择 Acting Practitioner Context，项目显示“岗位 · 人员”，并直接进入对应工作台。页面持续显示当前操作身份；Command、Audit Event 和 Provenance 同时记录超级管理员 Actor 与被选择的 Practitioner/Practitioner Role，跨身份重放服从[幂等合同](../../../../docs/architecture.md#65-idempotency)。该能力不增加独立代理页面、原因输入或限时授权，也不允许普通账户任意指定行动身份。
 
