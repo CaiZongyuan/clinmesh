@@ -13,8 +13,23 @@ describe('HIS contracts', () => {
         indicationCode: 'fever',
       },
       draftVersion: 1,
+      reportingSupported: true,
       requests: [],
     }).success).toBe(false)
+  })
+
+  it('requires an explicit Scenario reporting capability in the request read model', () => {
+    const state = { draftVersion: 0, requests: [] }
+
+    expect(laboratoryRequestStateSchema.safeParse(state).success).toBe(false)
+    expect(laboratoryRequestStateSchema.safeParse({
+      ...state,
+      reportingSupported: false,
+    }).success).toBe(true)
+    expect(laboratoryRequestStateSchema.safeParse({
+      ...state,
+      reportingSupported: true,
+    }).success).toBe(true)
   })
 
   it('validates numeric laboratory results, UCUM units, ranges, and interpretation flags', () => {

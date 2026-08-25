@@ -143,11 +143,14 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
     queryFn: ({ signal }) => getDoctorCase(activeCaseId ?? '', signal),
     queryKey: detailKey,
     refetchInterval: query => selectedCase?.status === 'awaiting-report'
-      || query.state.data?.laboratoryRequests?.requests.some(
-        request => request.status === 'issued'
-          || request.status === 'accepted'
-          || request.status === 'in-progress',
-      ) === true
+      || (
+        query.state.data?.laboratoryRequests?.reportingSupported === true
+        && query.state.data.laboratoryRequests.requests.some(
+          request => request.status === 'issued'
+            || request.status === 'accepted'
+            || request.status === 'in-progress',
+        )
+      )
       ? 1_500
       : false,
   })

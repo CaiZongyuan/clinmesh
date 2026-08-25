@@ -2350,6 +2350,53 @@ describe('outpatient workflow HTTP contract', () => {
     })
   })
 
+  it('does not advertise report delivery when the Scenario has no laboratory result facts', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-report-capability-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const draftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          input: {
+            catalogItemId: 'lab-cbc',
+            expectedDraftVersion: 0,
+            indicationCode: 'fever',
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(draftResponse.status).toBe(200)
+    runtime.database.driver.prepare(`
+      DELETE FROM scenario_hidden_fact
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND fact_code = 'laboratory-results'
+    `).run()
+
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+
+    expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
+      laboratoryRequests: { reportingSupported: false },
+    })
+  })
+
   it('recovers an independent laboratory report after restart and creates its FHIR results once', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-report-restart-http-'))
     temporaryDirectories.push(directory)
@@ -2428,6 +2475,7 @@ describe('outpatient workflow HTTP contract', () => {
       { headers: { cookie: restartedDoctorCookie } },
     )
     const detail = doctorCaseDetailSchema.parse(await detailResponse.json())
+    expect(detail.laboratoryRequests?.reportingSupported).toBe(true)
     const reported = detail.laboratoryRequests?.requests.find(request => request.id === issued.id)
     expect(reported).toMatchObject({
       report: {

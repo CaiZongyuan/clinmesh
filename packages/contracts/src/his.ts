@@ -549,6 +549,7 @@ export const laboratoryRequestStateSchema = z.object({
     indicationCode: z.string().min(1),
   }).strict().optional(),
   draftVersion: z.number().int().nonnegative(),
+  reportingSupported: z.boolean(),
   requests: z.array(laboratoryRequestSchema),
 }).strict()
 

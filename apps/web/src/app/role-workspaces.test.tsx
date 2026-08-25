@@ -262,6 +262,114 @@ function createMediaQueryList(media: string): MediaQueryList {
   }
 }
 
+function stubLaboratoryReportPolling(reportingSupported: boolean) {
+  let reportReady = false
+  let detailRequests = 0
+  const patient = {
+    birthDate: '1988-03-16',
+    gender: 'female',
+    id: 'patient-virtual-1',
+    identifier: 'CM-SYN-VP-001',
+    name: '合成候选患者林晓',
+    synthetic: true,
+    versionId: '1',
+  }
+  const report = {
+    conclusion: 'C 反应蛋白升高。',
+    diagnosticReportId: 'diagnostic-report-crp-1',
+    issuedAt: '2026-08-24T09:00:00+08:00',
+    results: [{
+      code: '1988-5',
+      display: 'C 反应蛋白',
+      interpretation: 'high',
+      observationId: 'observation-crp-1',
+      referenceRange: { high: 8, low: 0, text: '0-8 mg/L' },
+      unit: {
+        code: 'mg/L',
+        display: 'mg/L',
+        system: 'http://unitsofmeasure.org',
+      },
+      value: 18.6,
+    }],
+    specimenId: 'specimen-crp-1',
+    status: 'final',
+  }
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+    if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+      return Response.json({ items: [], ...pagination(0) })
+    }
+    if (url.pathname === '/api/his/v1/catalogs/clinical') {
+      return Response.json({
+        laboratory: [{
+          allowedIndicationCodes: ['fever'],
+          contraindicatedAllergyCodes: [],
+          id: 'lab-crp',
+          nameEn: 'C-reactive protein',
+          nameZh: 'C 反应蛋白',
+          priceFen: 4300,
+          version: 1,
+        }],
+        medications: [],
+      })
+    }
+    if (url.pathname === '/api/his/v1/doctor/queue') {
+      return Response.json({
+        items: [{
+          caseId: 'case-virtual-1',
+          encounterId: 'encounter-virtual-1',
+          encounterVersion: '1',
+          patient,
+          presentation: virtualPatientPresentation,
+          status: 'first-visit',
+          taskId: 'task-doctor-virtual-1',
+          taskVersion: '1',
+        }],
+        ...pagination(1),
+      })
+    }
+    if (url.pathname === '/api/his/v1/doctor/cases/case-virtual-1') {
+      detailRequests += 1
+      return Response.json({
+        allergies: [],
+        caseId: 'case-virtual-1',
+        consultation: { questions: [], records: [], version: 1 },
+        encounter: { id: 'encounter-virtual-1', status: 'in-progress', versionId: '1' },
+        laboratoryRequests: {
+          draftVersion: 0,
+          reportingSupported,
+          requests: [{
+            catalogItemId: 'lab-crp',
+            id: 'laboratory-request-crp-1',
+            indicationCode: 'fever',
+            ...(reportReady ? { report } : {}),
+            serviceRequestId: 'service-request-crp-1',
+            serviceRequestVersion: reportReady ? '2' : '1',
+            status: reportReady ? 'reported' : 'in-progress',
+            taskId: 'task-crp-1',
+            taskVersion: reportReady ? '4' : '3',
+            version: reportReady ? 4 : 3,
+          }],
+        },
+        patient,
+        presentation: virtualPatientPresentation,
+        priorFacts: [],
+        status: 'first-visit',
+        taskId: 'task-doctor-virtual-1',
+        taskVersion: '1',
+      })
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`)
+  }))
+  return {
+    detailRequestCount: () => detailRequests,
+    makeReportReady: () => {
+      reportReady = true
+    },
+  }
+}
+
 describe('role workspaces', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -1207,6 +1315,7 @@ describe('role workspaces', () => {
           laboratoryRequests: {
             ...(draft === undefined ? {} : { draft }),
             draftVersion,
+            reportingSupported: true,
             requests: request === undefined ? [] : [request],
           },
           patient,
@@ -1427,6 +1536,7 @@ describe('role workspaces', () => {
           laboratoryRequests: {
             ...(draft === undefined ? {} : { draft }),
             draftVersion,
+            reportingSupported: true,
             requests,
           },
           patient,
@@ -1494,113 +1604,27 @@ describe('role workspaces', () => {
   })
 
   it('keeps polling an in-progress laboratory request until its report arrives', async () => {
-    let reportReady = false
-    let detailRequests = 0
-    const patient = {
-      birthDate: '1988-03-16',
-      gender: 'female',
-      id: 'patient-virtual-1',
-      identifier: 'CM-SYN-VP-001',
-      name: '合成候选患者林晓',
-      synthetic: true,
-      versionId: '1',
-    }
-    const report = {
-      conclusion: 'C 反应蛋白升高。',
-      diagnosticReportId: 'diagnostic-report-crp-1',
-      issuedAt: '2026-08-24T09:00:00+08:00',
-      results: [{
-        code: '1988-5',
-        display: 'C 反应蛋白',
-        interpretation: 'high',
-        observationId: 'observation-crp-1',
-        referenceRange: { high: 8, low: 0, text: '0-8 mg/L' },
-        unit: {
-          code: 'mg/L',
-          display: 'mg/L',
-          system: 'http://unitsofmeasure.org',
-        },
-        value: 18.6,
-      }],
-      specimenId: 'specimen-crp-1',
-      status: 'final',
-    }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'http://localhost')
-      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
-      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
-        return Response.json({ items: [], ...pagination(0) })
-      }
-      if (url.pathname === '/api/his/v1/catalogs/clinical') {
-        return Response.json({
-          laboratory: [{
-            allowedIndicationCodes: ['fever'],
-            contraindicatedAllergyCodes: [],
-            id: 'lab-crp',
-            nameEn: 'C-reactive protein',
-            nameZh: 'C 反应蛋白',
-            priceFen: 4300,
-            version: 1,
-          }],
-          medications: [],
-        })
-      }
-      if (url.pathname === '/api/his/v1/doctor/queue') {
-        return Response.json({
-          items: [{
-            caseId: 'case-virtual-1',
-            encounterId: 'encounter-virtual-1',
-            encounterVersion: '1',
-            patient,
-            presentation: virtualPatientPresentation,
-            status: 'first-visit',
-            taskId: 'task-doctor-virtual-1',
-            taskVersion: '1',
-          }],
-          ...pagination(1),
-        })
-      }
-      if (url.pathname === '/api/his/v1/doctor/cases/case-virtual-1') {
-        detailRequests += 1
-        return Response.json({
-          allergies: [],
-          caseId: 'case-virtual-1',
-          consultation: { questions: [], records: [], version: 1 },
-          encounter: { id: 'encounter-virtual-1', status: 'in-progress', versionId: '1' },
-          laboratoryRequests: {
-            draftVersion: 0,
-            requests: [{
-              catalogItemId: 'lab-crp',
-              id: 'laboratory-request-crp-1',
-              indicationCode: 'fever',
-              ...(reportReady ? { report } : {}),
-              serviceRequestId: 'service-request-crp-1',
-              serviceRequestVersion: reportReady ? '2' : '1',
-              status: reportReady ? 'reported' : 'in-progress',
-              taskId: 'task-crp-1',
-              taskVersion: reportReady ? '4' : '3',
-              version: reportReady ? 4 : 3,
-            }],
-          },
-          patient,
-          presentation: virtualPatientPresentation,
-          priorFacts: [],
-          status: 'first-visit',
-          taskId: 'task-doctor-virtual-1',
-          taskVersion: '1',
-        })
-      }
-      throw new Error(`Unexpected request: ${url.pathname}`)
-    }))
+    const polling = stubLaboratoryReportPolling(true)
     render(<WebApp />)
 
     expect(await screen.findByText('等待检验结果')).toBeTruthy()
-    reportReady = true
+    polling.makeReportReady()
     await waitFor(() => {
       expect(screen.getByText('C 反应蛋白升高。')).toBeTruthy()
     }, { timeout: 3_000 })
     expect(screen.queryByText('等待检验结果')).toBeNull()
-    expect(detailRequests).toBeGreaterThanOrEqual(2)
+    expect(polling.detailRequestCount()).toBeGreaterThanOrEqual(2)
+  })
+
+  it('does not poll an in-progress request when Scenario reporting is unsupported', async () => {
+    const polling = stubLaboratoryReportPolling(false)
+    render(<WebApp />)
+
+    expect(await screen.findByText('等待检验结果')).toBeTruthy()
+    const initialDetailRequests = polling.detailRequestCount()
+    await act(async () => new Promise(resolve => setTimeout(resolve, 1_700)))
+
+    expect(polling.detailRequestCount()).toBe(initialDetailRequests)
   })
 
   it('starts the first visit, saves a CAS draft, and issues the laboratory order', async () => {

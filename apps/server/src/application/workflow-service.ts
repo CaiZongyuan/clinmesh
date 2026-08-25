@@ -1955,6 +1955,7 @@ export class WorkflowService {
                 },
               }),
           draftVersion: laboratoryRequestState.version,
+          reportingSupported: this.#supportsLaboratoryReports(context),
           requests: laboratoryRequests,
         },
       }),
@@ -4233,11 +4234,7 @@ export class WorkflowService {
           'The laboratory request version has changed',
         )
       }
-      const supportsLaboratoryReports = this.#database.driver.prepare(`
-        SELECT 1 AS present FROM scenario_hidden_fact
-        WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
-      `).get(input.context.workspaceId, input.context.epoch) !== undefined
-      if (supportsLaboratoryReports) {
+      if (this.#supportsLaboratoryReports(input.context)) {
         transaction.enqueue({
           dedupKey: `laboratory-request:${request.request_id}:report`,
           kind: 'laboratory.report-request',
@@ -6337,6 +6334,13 @@ export class WorkflowService {
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
       `).get(context.workspaceId, context.epoch, caseId),
     )
+  }
+
+  #supportsLaboratoryReports(context: ActorContext): boolean {
+    return this.#database.driver.prepare(`
+      SELECT 1 AS present FROM scenario_hidden_fact
+      WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
+    `).get(context.workspaceId, context.epoch) !== undefined
   }
 
   #laboratoryReport(
