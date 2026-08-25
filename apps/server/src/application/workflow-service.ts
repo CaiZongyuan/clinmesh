@@ -23,6 +23,9 @@ import {
   type DiagnosisDraftEntry,
   type DiagnosisConfirmation,
   dispenseResponseSchema,
+  encounterCompletionPreviewSchema,
+  encounterCompletionResponseSchema,
+  type EncounterCompletionTarget,
   firstVisitDraftResponseSchema,
   issuedPrescriptionSchema,
   issueLaboratoryRequestResponseSchema,
@@ -62,11 +65,11 @@ import {
 } from './command-executor.ts'
 
 export class WorkflowError extends Error {
-  readonly code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
+  readonly code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
   readonly status: 403 | 409
 
   constructor(
-    code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT',
+    code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT',
     message: string,
   ) {
     super(message)
@@ -1583,7 +1586,14 @@ export class WorkflowService {
     const bindings = [context.workspaceId, context.epoch, ...statuses]
     const total = this.#database.driver.prepare(`
       SELECT COUNT(*) AS count FROM outpatient_case
-      WHERE workspace_id = ? AND epoch = ? AND status IN (${placeholders})
+      JOIN fhir_resource AS encounter
+        ON encounter.workspace_id = outpatient_case.workspace_id
+       AND encounter.epoch = outpatient_case.epoch
+       AND encounter.resource_type = 'Encounter'
+       AND encounter.resource_id = outpatient_case.encounter_id
+      WHERE outpatient_case.workspace_id = ? AND outpatient_case.epoch = ?
+        AND outpatient_case.status IN (${placeholders})
+        AND json_extract(encounter.content_json, '$.status') = 'in-progress'
     `).get(...bindings) as { count: number }
     const rows = this.#database.driver.prepare(`
       SELECT outpatient_case.*, patient.content_json AS patient_json,
@@ -1620,6 +1630,7 @@ export class WorkflowService {
        AND task.resource_id = outpatient_case.doctor_task_id
       WHERE outpatient_case.workspace_id = ? AND outpatient_case.epoch = ?
         AND outpatient_case.status IN (${placeholders})
+        AND json_extract(encounter.content_json, '$.status') = 'in-progress'
       ORDER BY outpatient_case.arrived_at, outpatient_case.case_id
       LIMIT ? OFFSET ?
     `).all(...bindings, pageSize, (page - 1) * pageSize) as Array<{
@@ -2282,6 +2293,71 @@ export class WorkflowService {
       taskVersion: String(row.task_version),
       ...(triage === undefined ? {} : { triage }),
     }
+  }
+
+  encounterCompletionPreview(context: ActorContext, encounterId: string) {
+    this.#assertRole(context, ['outpatient-doctor'])
+    return encounterCompletionPreviewSchema.parse(
+      this.#encounterCompletionPolicy(context, encounterId),
+    )
+  }
+
+  completeEncounter(input: {
+    context: ActorContext
+    encounterId: string
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+  }): CommandResponse<z.infer<typeof encounterCompletionResponseSchema.shape.data>> {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: encounterCompletionResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: { encounterId: input.encounterId },
+      operation: 'encounter.complete',
+    }, transaction => {
+      this.#assertRole(input.context, ['outpatient-doctor'])
+      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+      const policy = encounterCompletionPreviewSchema.parse(
+        this.#encounterCompletionPolicy(input.context, input.encounterId),
+      )
+      if (!policy.canComplete) {
+        const missing = policy.items
+          .filter(item => item.status === 'incomplete')
+          .map(item => item.statusText)
+        throw new WorkflowError(
+          'ENCOUNTER_COMPLETION_BLOCKED',
+          missing.length === 0
+            ? '该就诊当前不可完诊'
+            : `完诊条件未满足：${missing.join('；')}`,
+        )
+      }
+      const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
+      const completedAt = this.#virtualTime(input.context)
+      const completedEncounter = transaction.fhir.update(input.context, {
+        ...encounter,
+        status: 'completed',
+        actualPeriod: {
+          ...((typeof encounter.actualPeriod === 'object' && encounter.actualPeriod !== null)
+            ? encounter.actualPeriod as Record<string, unknown>
+            : {}),
+          end: completedAt,
+        },
+      }, encounter.meta?.versionId ?? '1')
+      return {
+        data: {
+          completedAt,
+          encounterId: input.encounterId,
+          encounterVersion: completedEncounter.meta?.versionId ?? '1',
+          status: 'completed' as const,
+        },
+        effects: [{
+          kind: 'updated' as const,
+          reference: `Encounter/${input.encounterId}`,
+          versionId: completedEncounter.meta?.versionId ?? '1',
+        }],
+      }
+    })
   }
 
   askConsultationQuestion(input: {
@@ -8109,6 +8185,117 @@ export class WorkflowService {
           AND consultation.case_id = ?
       `).get(context.workspaceId, context.epoch, caseId),
     )
+  }
+
+  #encounterCompletionPolicy(context: ActorContext, encounterId: string) {
+    const outpatientCase = this.#caseByEncounter(context, encounterId)
+    if (this.#consultationState(context, outpatientCase.case_id) === undefined) {
+      throw new WorkflowError(
+        'WORKFLOW_CONFLICT',
+        'Encounter completion is available only for an independent Consultation',
+      )
+    }
+    const encounter = this.#fhir.read(context, 'Encounter', encounterId)
+    const diagnosis = this.#diagnosisConfirmation(context, outpatientCase.case_id)
+    const primaryDiagnosisConfirmed = diagnosis?.entries.some(entry => entry.role === 'primary') === true
+    const documents = this.#structuredClinicalDocuments(context, outpatientCase.case_id)
+    const signedDocument = documents.at(-1)
+    const activeLaboratoryRequests = this.#database.driver.prepare(`
+      SELECT status FROM laboratory_request
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND status <> 'cancelled'
+    `).all(context.workspaceId, context.epoch, outpatientCase.case_id) as Array<{
+      status: string
+    }>
+    const requiredReportsAcknowledged = activeLaboratoryRequests.every(
+      request => request.status === 'acknowledged',
+    )
+    const prescription = this.#issuedPrescription(context, outpatientCase.case_id)
+    const medicationConclusionRecorded = (
+      prescription !== undefined && prescription.status !== 'withdrawn'
+    ) || this.#noMedicationConclusion(context, outpatientCase.case_id) !== undefined
+    const clinicalDocumentDraft = this.#database.driver.prepare(`
+      SELECT 1 AS present FROM clinical_document_draft
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get(context.workspaceId, context.epoch, outpatientCase.case_id)
+    const diagnosisDraft = this.#database.driver.prepare(`
+      SELECT draft_json FROM diagnosis_state
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get(context.workspaceId, context.epoch, outpatientCase.case_id) as {
+      draft_json: string | null
+    } | undefined
+    const laboratoryDraft = this.#laboratoryRequestState(context, outpatientCase.case_id)
+    const prescriptionDraft = this.#database.driver.prepare(`
+      SELECT draft_json FROM prescription_draft_state
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get(context.workspaceId, context.epoch, outpatientCase.case_id) as {
+      draft_json: string | null
+    } | undefined
+    let pendingDraftTarget: EncounterCompletionTarget | undefined
+    if (signedDocument === undefined && clinicalDocumentDraft !== undefined) {
+      pendingDraftTarget = 'clinical-document'
+    } else if (typeof laboratoryDraft?.draft_catalog_item_id === 'string') {
+      pendingDraftTarget = 'laboratory'
+    } else if (diagnosisDraft?.draft_json !== null && diagnosisDraft?.draft_json !== undefined) {
+      pendingDraftTarget = 'diagnosis'
+    } else if (prescriptionDraft?.draft_json !== null && prescriptionDraft?.draft_json !== undefined) {
+      pendingDraftTarget = 'medication-conclusion'
+    }
+    const noPendingDrafts = pendingDraftTarget === undefined
+    const dispositionComplete = (signedDocument?.content.disposition.trim().length ?? 0) >= 2
+    const followUpComplete = (signedDocument?.content.followUp.trim().length ?? 0) >= 2
+    const items = [
+      {
+        code: 'primary-diagnosis-confirmed' as const,
+        status: primaryDiagnosisConfirmed ? 'complete' as const : 'incomplete' as const,
+        statusText: primaryDiagnosisConfirmed ? '已确认主诊断' : '待确认主诊断',
+        target: 'diagnosis' as const,
+      },
+      {
+        code: 'clinical-document-signed' as const,
+        status: signedDocument === undefined ? 'incomplete' as const : 'complete' as const,
+        statusText: signedDocument === undefined ? '待签署结构化病历' : '已签署结构化病历',
+        target: 'clinical-document' as const,
+      },
+      {
+        code: 'required-reports-acknowledged' as const,
+        status: requiredReportsAcknowledged ? 'complete' as const : 'incomplete' as const,
+        statusText: requiredReportsAcknowledged
+          ? '必要报告已全部确认已阅'
+          : '待确认必要报告已阅',
+        target: 'laboratory' as const,
+      },
+      {
+        code: 'medication-conclusion-recorded' as const,
+        status: medicationConclusionRecorded ? 'complete' as const : 'incomplete' as const,
+        statusText: medicationConclusionRecorded ? '已记录用药结论' : '待记录用药结论',
+        target: 'medication-conclusion' as const,
+      },
+      {
+        code: 'no-pending-drafts' as const,
+        status: noPendingDrafts ? 'complete' as const : 'incomplete' as const,
+        statusText: noPendingDrafts ? '无未处理临床草稿' : '存在未处理临床草稿',
+        target: pendingDraftTarget ?? 'clinical-document',
+      },
+      {
+        code: 'disposition-complete' as const,
+        status: dispositionComplete ? 'complete' as const : 'incomplete' as const,
+        statusText: dispositionComplete ? '已完善处置' : '待完善处置',
+        target: 'clinical-document' as const,
+      },
+      {
+        code: 'follow-up-complete' as const,
+        status: followUpComplete ? 'complete' as const : 'incomplete' as const,
+        statusText: followUpComplete ? '已完善随访安排' : '待完善随访安排',
+        target: 'clinical-document' as const,
+      },
+    ]
+    return {
+      canComplete: encounter.status === 'in-progress'
+        && items.every(item => item.status === 'complete'),
+      encounterId,
+      encounterVersion: encounter.meta?.versionId ?? '1',
+      items,
+    }
   }
 
   #laboratoryRequestState(context: ActorContext, caseId: string) {

@@ -3,6 +3,7 @@ import type { HealthResponse } from '@clinmesh/contracts/health'
 import {
   acknowledgeLaboratoryReportRequestSchema,
   cancelLaboratoryRequestRequestSchema,
+  completeEncounterRequestSchema,
   confirmDiagnosisRequestSchema,
   confirmNoMedicationRequestSchema,
   correctLaboratoryReportRequestSchema,
@@ -417,6 +418,30 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           await actor(context),
           context.req.param('caseId'),
         ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/encounters/:encounterId/completion', async (context) => {
+      try {
+        return context.json(workflow.encounterCompletionPreview(
+          await actor(context),
+          context.req.param('encounterId'),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/actions/complete', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = completeEncounterRequestSchema.parse(await context.req.json())
+        return context.json(workflow.completeEncounter({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
       } catch (error) {
         return apiErrorResponse(context, error)
       }

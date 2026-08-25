@@ -5,6 +5,7 @@ import {
   type DiagnosisDraftEntry,
   type DoctorCaseDetail,
   type DoctorQueueItem,
+  type EncounterCompletionTarget,
   type LaboratoryReport,
   type LaboratoryRequest,
   type LaboratoryRequestCatalogItemId,
@@ -44,13 +45,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, MessagesSquareIcon, PillIcon, PlayIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, SendIcon, ShieldAlertIcon, StethoscopeIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
+import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardCheckIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, LockKeyholeIcon, MessagesSquareIcon, PillIcon, PlayIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, SendIcon, ShieldAlertIcon, StethoscopeIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
 import { useState } from 'react'
 import {
   ApiClientError,
   acknowledgeLaboratoryReport,
   askConsultationQuestion,
   cancelLaboratoryRequest,
+  completeEncounter,
   confirmNoMedication,
   confirmDiagnosis,
   deleteLaboratoryRequestDraft,
@@ -58,6 +60,7 @@ import {
   getClinicalCatalog,
   getDoctorCase,
   getDoctorQueue,
+  getEncounterCompletion,
   getVirtualPatients,
   issueLaboratoryRequest,
   issueLaboratoryOrder,
@@ -139,6 +142,15 @@ interface DiagnosisActions {
   }
 }
 
+type EncounterCompletionQueryScope = readonly ['encounter-completion', string, string]
+
+const encounterCompletionTargetElementIds = {
+  diagnosis: 'encounter-completion-target-diagnosis',
+  'clinical-document': 'encounter-completion-target-clinical-document',
+  laboratory: 'encounter-completion-target-laboratory',
+  'medication-conclusion': 'encounter-completion-target-medication-conclusion',
+} satisfies Record<EncounterCompletionTarget, string>
+
 function isLaboratoryRequestCatalogItemId(
   value: string,
 ): value is LaboratoryRequestCatalogItemId {
@@ -153,6 +165,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
   const [virtualPatientPage, setVirtualPatientPage] = useState(1)
   const queueKey = ['doctor-queue', ...scope, page] as const
   const virtualPatientScopeKey = ['doctor-virtual-patients', ...scope] as const
+  const encounterCompletionScopeKey = ['encounter-completion', ...scope] as const
   const virtualPatientKey = [...virtualPatientScopeKey, virtualPatientPage] as const
   const virtualPatients = useQuery({
     queryFn: ({ signal }) => getVirtualPatients(signal, virtualPatientPage),
@@ -250,7 +263,12 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queueKey }),
       queryClient.invalidateQueries({ queryKey: detailKey }),
+      queryClient.invalidateQueries({ queryKey: encounterCompletionScopeKey }),
     ])
+  }
+  const refreshCompletedCase = async () => {
+    if (detail.data !== undefined) setSelectedCaseId(detail.data.caseId)
+    await refreshCase()
   }
   const askQuestion = useMutation({
     mutationFn: (questionCode: string) => {
@@ -650,6 +668,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
           <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
         ) : (
           <CaseDetail
+            completionQueryScope={encounterCompletionScopeKey}
             consultationAction={{
               error: askQuestion.error,
               onAsk: questionCode => askQuestion.mutate(questionCode),
@@ -706,6 +725,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
             locale={locale}
             messages={messages}
             onIndicationChange={setIndicationCode}
+            onEncounterCompleted={refreshCompletedCase}
             onLaboratoryItemChange={(value) => {
               setLaboratoryItemId(value)
               setIndicationCode('')
@@ -745,6 +765,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
 
 function CaseDetail({
   catalog,
+  completionQueryScope,
   consultationAction,
   detail,
   diagnosisActions,
@@ -756,6 +777,7 @@ function CaseDetail({
   laboratoryRequestActions,
   locale,
   messages,
+  onEncounterCompleted,
   onIssueOrder,
   onIndicationChange,
   onRefreshCase,
@@ -784,6 +806,7 @@ function CaseDetail({
   startRevisitPending,
 }: {
   catalog: ReturnType<typeof useQuery<Awaited<ReturnType<typeof getClinicalCatalog>>>>
+  completionQueryScope: EncounterCompletionQueryScope
   consultationAction: ConsultationAction
   detail: DoctorCaseDetail
   diagnosisActions: DiagnosisActions
@@ -795,6 +818,7 @@ function CaseDetail({
   laboratoryRequestActions: LaboratoryRequestActions
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
+  onEncounterCompleted: () => Promise<void>
   onIssueOrder: () => void
   onIndicationChange: (value: string) => void
   onRefreshCase: () => Promise<void>
@@ -833,6 +857,7 @@ function CaseDetail({
 }): React.JSX.Element {
   const firstVisitDraft = detail.drafts?.firstVisit
   const presentation = detail.presentation
+  const readOnly = detail.encounter.status !== 'in-progress'
   const laboratoryItems = laboratoryCatalog.map(item => ({
     label: `${locale === 'zh-CN' ? item.nameZh : item.nameEn} · ${formatFen(item.priceFen ?? 0, locale)}`,
     value: item.id,
@@ -852,6 +877,20 @@ function CaseDetail({
         </div>
         <Badge variant="outline">{statusLabel(detail.status, messages)}</Badge>
       </div>
+      {readOnly ? (
+        <Alert>
+          <LockKeyholeIcon aria-hidden="true" />
+          <AlertTitle>{messages.encounterReadOnly}</AlertTitle>
+        </Alert>
+      ) : detail.consultation === undefined ? null : (
+        <EncounterCompletionPanel
+          detail={detail}
+          messages={messages}
+          onCompleted={onEncounterCompleted}
+          onRefresh={onRefreshCase}
+          queryScope={completionQueryScope}
+        />
+      )}
       <section aria-labelledby="clinical-presentation-heading" className="flex flex-col gap-2">
         <h3 className="text-sm font-semibold" id="clinical-presentation-heading">
           {detail.triage === undefined ? messages.clinicalPresentation : messages.triageSummary}
@@ -879,6 +918,7 @@ function CaseDetail({
           locale={locale}
           messages={messages}
           patientName={detail.patient.name}
+          readOnly={readOnly}
         />
       )}
       <section aria-labelledby="prior-facts-heading" className="flex flex-col gap-2 border-b pb-4">
@@ -914,7 +954,7 @@ function CaseDetail({
       {detail.report === undefined ? null : (
         <LaboratoryReport locale={locale} messages={messages} report={detail.report} />
       )}
-      {detail.status === 'awaiting-doctor' ? (
+      {readOnly ? null : detail.status === 'awaiting-doctor' ? (
         <div className="flex flex-col items-start gap-3">
           <Button disabled={startPending} onClick={onStart} type="button"><StethoscopeIcon data-icon="inline-start" />{messages.startFirstVisit}</Button>
           {startError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(startError, messages)} title={getWorkspaceErrorTitle(startError, messages, messages.operationFailed)} />}
@@ -944,23 +984,10 @@ function CaseDetail({
               </FieldGroup>
             </form>
           </section>
-          <section aria-labelledby="laboratory-order-heading" className="flex flex-col gap-3 border-t pt-5">
-            <h3 className="text-sm font-semibold" id="laboratory-order-heading">{messages.laboratoryOrder}</h3>
-            {catalog.isPending ? <Skeleton className="h-20 w-full" /> : catalog.isError ? <ErrorAlert message={getWorkspaceErrorMessage(catalog.error, messages)} title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)} /> : detail.consultation !== undefined ? (
-              <LaboratoryRequestEditor
-                actions={laboratoryRequestActions}
-                catalog={laboratoryCatalog}
-                indicationCode={indicationCode}
-                indicationItems={indicationItems}
-                laboratoryItemId={laboratoryItemId}
-                laboratoryItems={laboratoryItems}
-                locale={locale}
-                messages={messages}
-                onIndicationChange={onIndicationChange}
-                onLaboratoryItemChange={onLaboratoryItemChange}
-                state={detail.laboratoryRequests}
-              />
-            ) : (
+          {detail.consultation !== undefined ? null : (
+            <section aria-labelledby="laboratory-order-heading" className="flex flex-col gap-3 border-t pt-5">
+              <h3 className="text-sm font-semibold" id="laboratory-order-heading">{messages.laboratoryOrder}</h3>
+              {catalog.isPending ? <Skeleton className="h-20 w-full" /> : catalog.isError ? <ErrorAlert message={getWorkspaceErrorMessage(catalog.error, messages)} title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)} /> : (
               <FieldGroup>
                 <Field>
                   <FieldLabel htmlFor="laboratory-item">{messages.laboratoryItem}</FieldLabel>
@@ -973,8 +1000,9 @@ function CaseDetail({
                 <div className="flex justify-end"><Button disabled={firstVisitDraft === undefined || issueOrderPending} onClick={onIssueOrder} type="button"><FlaskConicalIcon data-icon="inline-start" />{messages.issueLaboratoryOrder}</Button></div>
                 {issueOrderError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(issueOrderError, messages)} title={getWorkspaceErrorTitle(issueOrderError, messages, messages.operationFailed)} />}
               </FieldGroup>
-            )}
-          </section>
+              )}
+            </section>
+          )}
         </div>
       ) : detail.status === 'awaiting-report' ? (
         <Alert>
@@ -989,98 +1017,137 @@ function CaseDetail({
           </Button>
           {startRevisitError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(startRevisitError, messages)} title={getWorkspaceErrorTitle(startRevisitError, messages, messages.operationFailed)} />}
         </div>
-      ) : detail.status === 'revisit-draft' ? (
+      ) : detail.status === 'revisit-draft' && detail.consultation === undefined ? (
         catalog.isPending ? <Skeleton className="h-72 w-full" /> : catalog.isError ? (
           <ErrorAlert message={getWorkspaceErrorMessage(catalog.error, messages)} title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)} />
         ) : (
           <div className="flex flex-col gap-3">
-            {detail.consultation !== undefined ? (
-              <>
-                <DiagnosisEditor
-                  actions={diagnosisActions}
-                  catalog={catalog.data.diagnoses}
-                  key={`${detail.caseId}:${detail.diagnosis?.draftVersion ?? 0}`}
-                  locale={locale}
-                  messages={messages}
-                  state={detail.diagnosis}
-                />
-                {catalog.data.prescriptionConclusionSupported ? (
-                  <MedicationConclusionPanel
-                    catalog={catalog.data.medications}
-                    detail={detail}
-                    key={`medication-conclusion:${detail.caseId}`}
-                    locale={locale}
-                    messages={messages}
-                    onRefresh={onRefreshCase}
-                  />
-                ) : null}
-              </>
-            ) : (
-              <>
-                {saveRevisitSuccess ? (
-                  <Alert>
-                    <CheckIcon aria-hidden="true" />
-                    <AlertTitle>{messages.revisitDraftSaved}</AlertTitle>
-                  </Alert>
-                ) : null}
-                {detail.drafts?.prescription === undefined ? null : (
-                  <div className="flex flex-wrap items-center gap-2 text-sm">
-                    <span className="text-muted-foreground">{messages.prescriptionNumber}</span>
-                    <Badge variant="outline">{detail.drafts.prescription.number}</Badge>
-                  </div>
-                )}
-                <RevisitEditor
-                  catalog={catalog.data}
-                  detail={detail}
-                  key={`${detail.caseId}:${detail.drafts?.prescription?.version ?? 0}`}
-                  locale={locale}
-                  messages={messages}
-                  onSave={onSaveRevisit}
-                  pending={saveRevisitPending}
-                />
-                {saveRevisitError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(saveRevisitError, messages)} title={getWorkspaceErrorTitle(saveRevisitError, messages, messages.operationFailed)} />}
-                {signCompleted ? null : (
-                  <section aria-labelledby="clinical-sign-heading" className="flex flex-col gap-3 border-t pt-5">
+            {saveRevisitSuccess ? (
+              <Alert>
+                <CheckIcon aria-hidden="true" />
+                <AlertTitle>{messages.revisitDraftSaved}</AlertTitle>
+              </Alert>
+            ) : null}
+            {detail.drafts?.prescription === undefined ? null : (
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="text-muted-foreground">{messages.prescriptionNumber}</span>
+                <Badge variant="outline">{detail.drafts.prescription.number}</Badge>
+              </div>
+            )}
+            <RevisitEditor
+              catalog={catalog.data}
+              detail={detail}
+              key={`${detail.caseId}:${detail.drafts?.prescription?.version ?? 0}`}
+              locale={locale}
+              messages={messages}
+              onSave={onSaveRevisit}
+              pending={saveRevisitPending}
+            />
+            {saveRevisitError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(saveRevisitError, messages)} title={getWorkspaceErrorTitle(saveRevisitError, messages, messages.operationFailed)} />}
+            {signCompleted ? null : (
+              <section aria-labelledby="clinical-sign-heading" className="flex flex-col gap-3 border-t pt-5">
+                <div className="flex justify-end">
+                  <Button disabled={signPreviewPending} onClick={onPreviewSign} type="button" variant="outline">
+                    <FileSignatureIcon data-icon="inline-start" />{messages.previewClinicalSign}
+                  </Button>
+                </div>
+                {signPreviewError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(signPreviewError, messages)} title={getWorkspaceErrorTitle(signPreviewError, messages, messages.operationFailed)} />}
+                {signPreview === undefined ? null : (
+                  <div className="flex flex-col gap-3">
+                    <h3 className="text-sm font-semibold" id="clinical-sign-heading">{messages.clinicalSignPreview}</h3>
+                    <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                      <div><dt className="text-muted-foreground">{messages.diagnosis}</dt><dd className="font-medium">{signPreview.summary.diagnosis.code} · {signPreview.summary.diagnosis.display}</dd></div>
+                      <div><dt className="text-muted-foreground">{messages.documentSummary}</dt><dd className="font-medium">{signPreview.summary.document.assessment}</dd><dd className="text-muted-foreground">{signPreview.summary.document.plan}</dd></div>
+                      <div><dt className="text-muted-foreground">{messages.amount}</dt><dd className="font-medium">{formatFen(signPreview.medicationTotalFen, locale)}</dd></div>
+                    </dl>
+                    <Table>
+                      <TableHeader><TableRow><TableHead>{messages.medication}</TableHead><TableHead>{messages.quantity}</TableHead><TableHead>{messages.unitPrice}</TableHead><TableHead>{messages.subtotal}</TableHead></TableRow></TableHeader>
+                      <TableBody>{signPreview.summary.medications.map(medication => (
+                        <TableRow key={medication.medicationRequestId}>
+                          <TableCell className="font-medium">{locale === 'zh-CN' ? medication.nameZh : medication.nameEn}</TableCell>
+                          <TableCell>{medication.quantity}</TableCell>
+                          <TableCell>{formatFen(medication.unitPriceFen, locale)}</TableCell>
+                          <TableCell>{formatFen(medication.subtotalFen, locale)}</TableCell>
+                        </TableRow>
+                      ))}</TableBody>
+                    </Table>
                     <div className="flex justify-end">
-                      <Button disabled={signPreviewPending} onClick={onPreviewSign} type="button" variant="outline">
-                        <FileSignatureIcon data-icon="inline-start" />{messages.previewClinicalSign}
+                      <Button disabled={signPending} onClick={onSign} type="button">
+                        <CheckCircleIcon data-icon="inline-start" />{messages.confirmClinicalSign}
                       </Button>
                     </div>
-                    {signPreviewError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(signPreviewError, messages)} title={getWorkspaceErrorTitle(signPreviewError, messages, messages.operationFailed)} />}
-                    {signPreview === undefined ? null : (
-                      <div className="flex flex-col gap-3">
-                        <h3 className="text-sm font-semibold" id="clinical-sign-heading">{messages.clinicalSignPreview}</h3>
-                        <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-                          <div><dt className="text-muted-foreground">{messages.diagnosis}</dt><dd className="font-medium">{signPreview.summary.diagnosis.code} · {signPreview.summary.diagnosis.display}</dd></div>
-                          <div><dt className="text-muted-foreground">{messages.documentSummary}</dt><dd className="font-medium">{signPreview.summary.document.assessment}</dd><dd className="text-muted-foreground">{signPreview.summary.document.plan}</dd></div>
-                          <div><dt className="text-muted-foreground">{messages.amount}</dt><dd className="font-medium">{formatFen(signPreview.medicationTotalFen, locale)}</dd></div>
-                        </dl>
-                        <Table>
-                          <TableHeader><TableRow><TableHead>{messages.medication}</TableHead><TableHead>{messages.quantity}</TableHead><TableHead>{messages.unitPrice}</TableHead><TableHead>{messages.subtotal}</TableHead></TableRow></TableHeader>
-                          <TableBody>{signPreview.summary.medications.map(medication => (
-                            <TableRow key={medication.medicationRequestId}>
-                              <TableCell className="font-medium">{locale === 'zh-CN' ? medication.nameZh : medication.nameEn}</TableCell>
-                              <TableCell>{medication.quantity}</TableCell>
-                              <TableCell>{formatFen(medication.unitPriceFen, locale)}</TableCell>
-                              <TableCell>{formatFen(medication.subtotalFen, locale)}</TableCell>
-                            </TableRow>
-                          ))}</TableBody>
-                        </Table>
-                        <div className="flex justify-end">
-                          <Button disabled={signPending} onClick={onSign} type="button">
-                            <CheckCircleIcon data-icon="inline-start" />{messages.confirmClinicalSign}
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                    {signError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(signError, messages)} title={getWorkspaceErrorTitle(signError, messages, messages.operationFailed)} />}
-                  </section>
+                  </div>
                 )}
-              </>
+                {signError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(signError, messages)} title={getWorkspaceErrorTitle(signError, messages, messages.operationFailed)} />}
+              </section>
             )}
           </div>
         )
       ) : null}
+      {detail.consultation === undefined ? null : (
+        <section
+          aria-labelledby="independent-laboratory-order-heading"
+          className="flex flex-col gap-3 border-t pt-5"
+          id={encounterCompletionTargetElementIds.laboratory}
+          tabIndex={-1}
+        >
+          <h3 className="text-sm font-semibold" id="independent-laboratory-order-heading">
+            {messages.laboratoryOrder}
+          </h3>
+          {catalog.isPending ? <Skeleton className="h-20 w-full" /> : catalog.isError ? (
+            <ErrorAlert
+              message={getWorkspaceErrorMessage(catalog.error, messages)}
+              title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)}
+            />
+          ) : (
+            <LaboratoryRequestEditor
+              actions={laboratoryRequestActions}
+              catalog={laboratoryCatalog}
+              indicationCode={indicationCode}
+              indicationItems={indicationItems}
+              laboratoryItemId={laboratoryItemId}
+              laboratoryItems={laboratoryItems}
+              locale={locale}
+              messages={messages}
+              onIndicationChange={onIndicationChange}
+              onLaboratoryItemChange={onLaboratoryItemChange}
+              readOnly={readOnly}
+              state={detail.laboratoryRequests}
+            />
+          )}
+        </section>
+      )}
+      {detail.consultation === undefined ? null : catalog.isPending ? (
+        <Skeleton className="h-72 w-full" />
+      ) : catalog.isError ? (
+        <ErrorAlert
+          message={getWorkspaceErrorMessage(catalog.error, messages)}
+          title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)}
+        />
+      ) : (
+        <>
+          <DiagnosisEditor
+            actions={diagnosisActions}
+            catalog={catalog.data.diagnoses}
+            key={`${detail.caseId}:${detail.diagnosis?.draftVersion ?? 0}`}
+            locale={locale}
+            messages={messages}
+            readOnly={readOnly}
+            state={detail.diagnosis}
+          />
+          {catalog.data.prescriptionConclusionSupported ? (
+            <MedicationConclusionPanel
+              catalog={catalog.data.medications}
+              detail={detail}
+              key={`medication-conclusion:${detail.caseId}`}
+              locale={locale}
+              messages={messages}
+              onRefresh={onRefreshCase}
+              readOnly={readOnly}
+            />
+          ) : null}
+        </>
+      )}
       <StructuredClinicalDocumentPanel
         detail={detail}
         key={`structured-clinical-document:${detail.caseId}`}
@@ -1089,6 +1156,101 @@ function CaseDetail({
         onRefresh={onRefreshCase}
       />
     </div>
+  )
+}
+
+function EncounterCompletionPanel({ detail, messages, onCompleted, onRefresh, queryScope }: {
+  detail: DoctorCaseDetail
+  messages: ReturnType<typeof getWorkspaceMessages>
+  onCompleted: () => Promise<void>
+  onRefresh: () => Promise<void>
+  queryScope: EncounterCompletionQueryScope
+}): React.JSX.Element {
+  const preview = useQuery({
+    queryFn: ({ signal }) => getEncounterCompletion(detail.encounter.id, signal),
+    queryKey: [...queryScope, detail.encounter.id, detail.encounter.versionId],
+  })
+  const complete = useMutation({
+    mutationFn: () => {
+      if (preview.data === undefined) throw new Error(messages.encounterCompletionUnavailable)
+      return completeEncounter({
+        encounterId: preview.data.encounterId,
+        encounterVersion: preview.data.encounterVersion,
+      }, newIdempotencyKey())
+    },
+    onError: onRefresh,
+    onSuccess: onCompleted,
+  })
+  if (preview.isPending) return <Skeleton className="h-40 w-full" />
+  if (preview.isError) {
+    return (
+      <ErrorAlert
+        message={getWorkspaceErrorMessage(preview.error, messages)}
+        title={getWorkspaceErrorTitle(preview.error, messages, messages.encounterCompletionUnavailable)}
+      />
+    )
+  }
+  const completedItems = preview.data.items.filter(item => item.status === 'complete').length
+  const completionCount = messages.encounterCompletionSatisfied
+    .replace('{complete}', String(completedItems))
+    .replace('{total}', String(preview.data.items.length))
+
+  return (
+    <section aria-labelledby="encounter-completion-heading" className="flex flex-col gap-3 border-b pb-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold" id="encounter-completion-heading">
+          {messages.encounterCompletionChecklist}
+        </h3>
+        <span className="text-xs text-muted-foreground">{completionCount}</span>
+      </div>
+      <ul className="divide-y rounded-md border">
+        {preview.data.items.map(item => {
+          const navigationLabel = messages.encounterCompletionTarget.replace('{status}', item.statusText)
+          return (
+            <li className="flex min-h-12 items-center justify-between gap-3 px-3 py-2" key={item.code}>
+              <Badge variant={item.status === 'complete' ? 'success' : 'outline'}>
+                {item.status === 'complete'
+                  ? <CheckCircleIcon aria-hidden="true" />
+                  : <CircleAlertIcon aria-hidden="true" />}
+                {item.statusText}
+              </Badge>
+              <Button
+                aria-label={navigationLabel}
+                onClick={() => {
+                  const target = document.getElementById(encounterCompletionTargetElementIds[item.target])
+                  target?.focus()
+                  target?.scrollIntoView?.({ block: 'start' })
+                }}
+                size="icon-sm"
+                title={navigationLabel}
+                type="button"
+                variant="ghost"
+              >
+                <ArrowRightIcon />
+              </Button>
+            </li>
+          )
+        })}
+      </ul>
+      <div className="flex justify-end">
+        <Button
+          disabled={!preview.data.canComplete || complete.isPending}
+          onClick={() => complete.mutate()}
+          type="button"
+        >
+          {complete.isPending
+            ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
+            : <ClipboardCheckIcon aria-hidden="true" data-icon="inline-start" />}
+          {complete.isPending ? messages.completingEncounter : messages.confirmEncounterCompletion}
+        </Button>
+      </div>
+      {complete.error === null ? null : (
+        <ErrorAlert
+          message={getWorkspaceErrorMessage(complete.error, messages)}
+          title={getWorkspaceErrorTitle(complete.error, messages, messages.operationFailed)}
+        />
+      )}
+    </section>
   )
 }
 
@@ -1103,6 +1265,7 @@ function LaboratoryRequestEditor({
   messages,
   onIndicationChange,
   onLaboratoryItemChange,
+  readOnly,
   state,
 }: {
   actions: LaboratoryRequestActions
@@ -1115,6 +1278,7 @@ function LaboratoryRequestEditor({
   messages: ReturnType<typeof getWorkspaceMessages>
   onIndicationChange: (value: string) => void
   onLaboratoryItemChange: (value: string) => void
+  readOnly: boolean
   state: DoctorCaseDetail['laboratoryRequests']
 }): React.JSX.Element {
   const catalogById = new Map(catalog.map(item => [item.id, item]))
@@ -1125,7 +1289,7 @@ function LaboratoryRequestEditor({
     && state.draft.indicationCode === indicationCode
   return (
     <div className="flex flex-col gap-4">
-      <FieldGroup>
+      {readOnly ? null : <FieldGroup>
         <Field>
           <FieldLabel htmlFor="laboratory-item">{messages.laboratoryItem}</FieldLabel>
           <WorkspaceSelect id="laboratory-item" items={laboratoryItems} onValueChange={value => onLaboratoryItemChange(value ?? '')} value={laboratoryItemId} />
@@ -1161,7 +1325,7 @@ function LaboratoryRequestEditor({
         {actions.save.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.save.error, messages)} title={getWorkspaceErrorTitle(actions.save.error, messages, messages.operationFailed)} />}
         {actions.deleteDraft.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.deleteDraft.error, messages)} title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)} />}
         {actions.issue.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.issue.error, messages)} title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)} />}
-      </FieldGroup>
+      </FieldGroup>}
       <div className="flex flex-col gap-2">
         <h4 className="text-sm font-semibold">{messages.laboratoryRequestStatus}</h4>
         {state === undefined || state.requests.length === 0 ? (
@@ -1187,7 +1351,7 @@ function LaboratoryRequestEditor({
                     <TableCell><Badge variant="outline">{laboratoryRequestStatusLabel(request, messages)}</Badge></TableCell>
                     <TableCell>{request.version}</TableCell>
                     <TableCell className="text-right">
-                      {request.status !== 'issued' ? null : (
+                      {readOnly || request.status !== 'issued' ? null : (
                         <Button
                           aria-label={`${messages.cancelLaboratoryRequest} ${locale === 'zh-CN' ? item?.nameZh : item?.nameEn}`}
                           disabled={actions.cancel.pending}
@@ -1231,11 +1395,12 @@ function LaboratoryRequestEditor({
               key={`report:${request.id}`}
               locale={locale}
               messages={messages}
+              readOnly={readOnly}
               request={request}
             />
           )
         })}
-        {actions.acknowledge.error === null ? null : (
+        {readOnly || actions.acknowledge.error === null ? null : (
           <ErrorAlert
             message={getWorkspaceErrorMessage(actions.acknowledge.error, messages)}
             title={getWorkspaceErrorTitle(
@@ -1250,11 +1415,12 @@ function LaboratoryRequestEditor({
   )
 }
 
-function LaboratoryRequestReport({ action, itemName, locale, messages, request }: {
+function LaboratoryRequestReport({ action, itemName, locale, messages, readOnly, request }: {
   action: LaboratoryRequestActions['acknowledge']
   itemName: string
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
+  readOnly: boolean
   request: LaboratoryRequest
 }): React.JSX.Element {
   const report = request.report
@@ -1267,7 +1433,7 @@ function LaboratoryRequestReport({ action, itemName, locale, messages, request }
         <h5 className="text-sm font-semibold" id={headingId}>
           {itemName} · {messages.laboratoryReport}
         </h5>
-        {request.status !== 'reported' ? null : (
+        {readOnly || request.status !== 'reported' ? null : (
           <Button
             aria-label={`${messages.acknowledgeLaboratoryReport} ${itemName}`}
             disabled={action.pending}
@@ -1387,6 +1553,7 @@ function StructuredClinicalDocumentPanel({ detail, locale, messages, onRefresh }
   const draft = detail.clinicalDocument?.draft
   const signedDocuments = detail.clinicalDocument?.signed ?? []
   const latestSignedDocument = signedDocuments.at(-1)
+  const readOnly = detail.encounter.status !== 'in-progress'
   const previewSign = useMutation({
     mutationFn: () => {
       if (draft === undefined) throw new Error(messages.consultationUnavailable)
@@ -1464,7 +1631,12 @@ function StructuredClinicalDocumentPanel({ detail, locale, messages, onRefresh }
     ? preview
     : undefined
   return (
-    <section aria-labelledby="structured-clinical-document-heading" className="flex flex-col gap-4 border-t pt-5">
+    <section
+      aria-labelledby="structured-clinical-document-heading"
+      className="flex flex-col gap-4 border-t pt-5"
+      id={encounterCompletionTargetElementIds['clinical-document']}
+      tabIndex={-1}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold" id="structured-clinical-document-heading">
           {messages.structuredClinicalDocument}
@@ -1511,7 +1683,7 @@ function StructuredClinicalDocumentPanel({ detail, locale, messages, onRefresh }
               ))}
             </ol>
           </section>
-          {latestSignedDocument === undefined ? null : (
+          {readOnly || latestSignedDocument === undefined ? null : (
             <div className="flex flex-col gap-3 border-t pt-5">
               <h4 className="text-sm font-semibold">
                 {messages.clinicalDocumentRevisionForm} {latestSignedDocument.revisionNumber}
@@ -1770,12 +1942,13 @@ function formatClinicalDocumentTime(value: string, locale: WorkspaceLocale): str
   }).format(new Date(value))
 }
 
-function ConsultationPanel({ action, consultation, locale, messages, patientName }: {
+function ConsultationPanel({ action, consultation, locale, messages, patientName, readOnly }: {
   action: ConsultationAction
   consultation: NonNullable<DoctorCaseDetail['consultation']>
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   patientName: string
+  readOnly: boolean
 }): React.JSX.Element {
   const [questionCode, setQuestionCode] = useState('')
   const timeFormatter = new Intl.DateTimeFormat(locale, {
@@ -1825,7 +1998,7 @@ function ConsultationPanel({ action, consultation, locale, messages, patientName
           <MessageScrollerButton />
         </MessageScroller>
       </MessageScrollerProvider>
-      <form
+      {readOnly ? null : <form
         onSubmit={event => {
           event.preventDefault()
           if (questionCode !== '') action.onAsk(questionCode)
@@ -1870,7 +2043,7 @@ function ConsultationPanel({ action, consultation, locale, messages, patientName
             />
           )}
         </FieldGroup>
-      </form>
+      </form>}
     </section>
   )
 }
@@ -1918,11 +2091,12 @@ interface DiagnosisDraftLine extends DiagnosisDraftEntry {
   note: string
 }
 
-function DiagnosisEditor({ actions, catalog, locale, messages, state }: {
+function DiagnosisEditor({ actions, catalog, locale, messages, readOnly, state }: {
   actions: DiagnosisActions
   catalog: ClinicalCatalog['diagnoses']
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
+  readOnly: boolean
   state: DoctorCaseDetail['diagnosis']
 }): React.JSX.Element {
   const [entries, setEntries] = useState<DiagnosisDraftLine[]>(() => (
@@ -1984,7 +2158,12 @@ function DiagnosisEditor({ actions, catalog, locale, messages, state }: {
 
   if (state?.confirmation !== undefined) {
     return (
-      <section aria-labelledby="diagnosis-heading" className="flex flex-col gap-3">
+      <section
+        aria-labelledby="diagnosis-heading"
+        className="flex flex-col gap-3"
+        id={encounterCompletionTargetElementIds.diagnosis}
+        tabIndex={-1}
+      >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-semibold" id="diagnosis-heading">{messages.diagnosisRecord}</h3>
           <Badge variant="secondary">{state.confirmation.entries.length}</Badge>
@@ -2020,8 +2199,26 @@ function DiagnosisEditor({ actions, catalog, locale, messages, state }: {
     )
   }
 
+  if (readOnly) {
+    return (
+      <section
+        aria-labelledby="diagnosis-heading"
+        className="flex flex-col gap-3"
+        id={encounterCompletionTargetElementIds.diagnosis}
+        tabIndex={-1}
+      >
+        <h3 className="text-sm font-semibold" id="diagnosis-heading">{messages.diagnosisRecord}</h3>
+      </section>
+    )
+  }
+
   return (
-    <section aria-labelledby="diagnosis-heading" className="flex flex-col gap-4">
+    <section
+      aria-labelledby="diagnosis-heading"
+      className="flex flex-col gap-4"
+      id={encounterCompletionTargetElementIds.diagnosis}
+      tabIndex={-1}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold" id="diagnosis-heading">{messages.diagnosisRecord}</h3>
         <Button
@@ -2167,12 +2364,13 @@ function createPrescriptionDraftLine(
   }
 }
 
-function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefresh }: {
+function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefresh, readOnly }: {
   catalog: PrescriptionClinicalCatalog['medications']
   detail: DoctorCaseDetail
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   onRefresh: () => Promise<void>
+  readOnly: boolean
 }): React.JSX.Element {
   const state = detail.medicationConclusion
   const prescription = state?.prescription
@@ -2285,7 +2483,12 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
   ))
 
   return (
-    <section aria-labelledby="medication-conclusion-heading" className="flex flex-col gap-4 border-t pt-5">
+    <section
+      aria-labelledby="medication-conclusion-heading"
+      className="flex flex-col gap-4 border-t pt-5"
+      id={encounterCompletionTargetElementIds['medication-conclusion']}
+      tabIndex={-1}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold" id="medication-conclusion-heading">
           {messages.medicationConclusion}
@@ -2315,7 +2518,7 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
               <span className="text-muted-foreground">{messages.prescriptionStatus}</span>
               <Badge variant="secondary">{prescriptionStatusLabel(prescription.status, messages)}</Badge>
             </div>
-            {prescription.status === 'signed' || prescription.status === 'paid' ? (
+            {!readOnly && (prescription.status === 'signed' || prescription.status === 'paid') ? (
               <AlertDialog>
                 <AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" />}>
                   <RotateCcwIcon data-icon="inline-start" />{messages.withdrawPrescription}
@@ -2357,7 +2560,7 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
               ))}
             </TableBody>
           </Table>
-          {withdraw.error === null ? null : (
+          {readOnly || withdraw.error === null ? null : (
             <ErrorAlert
               message={getWorkspaceErrorMessage(withdraw.error, messages)}
               title={getWorkspaceErrorTitle(withdraw.error, messages, messages.operationFailed)}
@@ -2376,7 +2579,7 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
         </Alert>
       )}
 
-      {noMedicationConclusion !== undefined || hasActivePrescription ? null : (
+      {readOnly || noMedicationConclusion !== undefined || hasActivePrescription ? null : (
         <Field>
           <FieldLabel id="medication-conclusion-mode-label">{messages.medicationConclusionMode}</FieldLabel>
           <ToggleGroup
@@ -2398,7 +2601,8 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
         </Field>
       )}
 
-      {noMedicationConclusion === undefined
+      {!readOnly
+        && noMedicationConclusion === undefined
         && !hasActivePrescription
         && mode === 'prescription'
         && prescription === undefined ? (
@@ -2560,7 +2764,8 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
           </form>
         ) : null}
 
-      {noMedicationConclusion === undefined
+      {!readOnly
+        && noMedicationConclusion === undefined
         && !hasActivePrescription
         && mode === 'no-medication' ? (
           <div className="flex flex-col items-end gap-3">

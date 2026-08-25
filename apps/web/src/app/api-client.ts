@@ -28,6 +28,8 @@ import {
   prescriptionDraftResponseSchema,
   prescriptionReviewResponseSchema,
   dispenseResponseSchema,
+  encounterCompletionPreviewSchema,
+  encounterCompletionResponseSchema,
   patientSearchSchema,
   registrationCatalogSchema,
   registrationQueueSchema,
@@ -326,6 +328,29 @@ export function getDoctorCase(caseId: string, signal?: AbortSignal) {
     `/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}`,
     doctorCaseDetailSchema,
     signal,
+  )
+}
+
+export function getEncounterCompletion(encounterId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/his/v1/encounters/${encodeURIComponent(encounterId)}/completion`,
+    encounterCompletionPreviewSchema,
+    signal,
+  )
+}
+
+export function completeEncounter(input: {
+  encounterId: string
+  encounterVersion: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/actions/complete`,
+    encounterCompletionResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: {},
+    },
+    { idempotencyKey },
   )
 }
 

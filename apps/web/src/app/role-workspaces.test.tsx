@@ -2458,6 +2458,203 @@ describe('role workspaces', () => {
     expect(screen.getByText(/既往咳嗽/)).toBeTruthy()
   })
 
+  it('navigates the completion checklist and converts a completed Encounter to read-only', async () => {
+    const patient = {
+      birthDate: '1990-05-10',
+      gender: 'male',
+      id: 'patient-completion',
+      identifier: 'CM-SYN-COMPLETION-001',
+      name: '合成患者周明',
+      synthetic: true,
+      versionId: '1',
+    }
+    const diagnosis = {
+      confirmation: {
+        confirmedAt: '2026-08-24T09:00:00+08:00',
+        entries: [{
+          catalogItemId: 'diagnosis-influenza',
+          code: 'J10.1',
+          conditionId: 'condition-completion-primary',
+          conditionVersion: '1',
+          display: '流感伴其他呼吸道表现',
+          role: 'primary' as const,
+          system: 'http://hl7.org/fhir/sid/icd-10',
+        }],
+        id: 'diagnosis-confirmation-completion',
+        provenanceId: 'provenance-diagnosis-completion',
+      },
+      draftVersion: 2,
+    }
+    const noMedication = {
+      authoredAt: '2026-08-24T09:00:00+08:00',
+      authoredByActorId: 'actor-outpatient-doctor',
+      authoredByPractitionerRoleId: 'practitioner-role-outpatient-doctor',
+      id: 'no-medication-completion',
+      version: 1,
+    }
+    const signedDocument = {
+      bundleId: 'bundle-completion',
+      compositionId: 'composition-completion',
+      compositionVersion: '1',
+      content: structuredClinicalDocument,
+      documentId: 'document-completion',
+      provenanceId: 'provenance-document-completion',
+      revisionNumber: 1,
+      signedAt: '2026-08-24T09:00:00+08:00',
+    }
+    const completionItems = [{
+      code: 'primary-diagnosis-confirmed',
+      status: 'complete',
+      statusText: '已确认主诊断',
+      target: 'diagnosis',
+    }, {
+      code: 'clinical-document-signed',
+      status: 'complete',
+      statusText: '已签署结构化病历',
+      target: 'clinical-document',
+    }, {
+      code: 'required-reports-acknowledged',
+      status: 'complete',
+      statusText: '必要报告已全部确认已阅',
+      target: 'laboratory',
+    }, {
+      code: 'medication-conclusion-recorded',
+      status: 'complete',
+      statusText: '已记录用药结论',
+      target: 'medication-conclusion',
+    }, {
+      code: 'no-pending-drafts',
+      status: 'complete',
+      statusText: '无未处理临床草稿',
+      target: 'clinical-document',
+    }, {
+      code: 'disposition-complete',
+      status: 'complete',
+      statusText: '已完善处置',
+      target: 'clinical-document',
+    }, {
+      code: 'follow-up-complete',
+      status: 'complete',
+      statusText: '已完善随访安排',
+      target: 'clinical-document',
+    }] as const
+    let completed = false
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({
+          diagnoses: [],
+          laboratory: [],
+          medications: [],
+          prescriptionConclusionSupported: true,
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        return Response.json({
+          items: completed ? [] : [{
+            caseId: 'case-completion',
+            encounterId: 'encounter-completion',
+            encounterVersion: '2',
+            patient,
+            presentation: doctorPresentation,
+            status: 'first-visit',
+            taskId: 'task-completion',
+            taskVersion: '1',
+          }],
+          ...pagination(completed ? 0 : 1),
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-completion') {
+        return Response.json({
+          allergies: [],
+          caseId: 'case-completion',
+          clinicalDocument: {
+            draft: {
+              ...structuredClinicalDocument,
+              updatedAt: '2026-08-24T08:55:00+08:00',
+              version: 1,
+            },
+            signed: [signedDocument],
+          },
+          consultation: {
+            questions: [{ code: 'symptom-onset', text: '什么时候开始发热？' }],
+            records: [],
+            version: 1,
+          },
+          diagnosis,
+          encounter: {
+            id: 'encounter-completion',
+            status: completed ? 'completed' : 'in-progress',
+            versionId: completed ? '3' : '2',
+          },
+          laboratoryRequests: {
+            draftVersion: 0,
+            reportingSupported: true,
+            requests: [],
+          },
+          medicationConclusion: {
+            draftVersion: 1,
+            noMedication,
+          },
+          patient,
+          presentation: doctorPresentation,
+          priorFacts: [],
+          status: 'first-visit',
+          taskId: 'task-completion',
+          taskVersion: '1',
+        })
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-completion/completion') {
+        return Response.json({
+          canComplete: !completed,
+          encounterId: 'encounter-completion',
+          encounterVersion: completed ? '3' : '2',
+          items: completionItems,
+        })
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-completion/actions/complete') {
+        expect(init?.method).toBe('POST')
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedVersions: { 'Encounter/encounter-completion': '2' },
+          input: {},
+        })
+        completed = true
+        return Response.json(commandResponse({
+          completedAt: '2026-08-24T09:00:00+08:00',
+          encounterId: 'encounter-completion',
+          encounterVersion: '3',
+          status: 'completed',
+        }))
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    const checklist = await screen.findByRole('heading', { name: '完诊清单' })
+    expect(within(checklist.parentElement as HTMLElement).getByText('已满足 7 / 7')).toBeTruthy()
+    const diagnosisTargetButton = screen.getByRole('button', { name: '前往：已确认主诊断' })
+    await user.click(diagnosisTargetButton)
+    expect(document.activeElement).toBe(screen.getByRole('region', { name: '本次诊断' }))
+    const completeButton = screen.getByRole('button', { name: '确认完诊' }) as HTMLButtonElement
+    expect(completeButton.disabled).toBe(false)
+
+    await user.click(completeButton)
+
+    expect(await screen.findByText('Encounter 已完成，当前病例为只读。')).toBeTruthy()
+    expect(screen.getByText('当前无待诊病例')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '向患者提问' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '提交病历修订' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '撤回处方' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '确认完诊' })).toBeNull()
+    expect(screen.getByRole('heading', { name: '签署历史' })).toBeTruthy()
+    expect(screen.getByText('已确认无需用药')).toBeTruthy()
+  })
+
   it('shows the server diagnosis primary validation error in the doctor workspace', async () => {
     const patient = {
       birthDate: '1990-05-10',

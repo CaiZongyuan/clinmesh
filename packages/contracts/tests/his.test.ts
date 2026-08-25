@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   clinicalCatalogSchema,
+  completeEncounterRequestSchema,
+  encounterCompletionPreviewSchema,
+  encounterCompletionResponseSchema,
   laboratoryRequestSchema,
   laboratoryRequestStateSchema,
   laboratoryResultSchema,
@@ -8,6 +11,103 @@ import {
 } from '../src/his.ts'
 
 describe('HIS contracts', () => {
+  it('requires every stable Encounter completion condition with a Chinese status and navigation target', () => {
+    const preview = {
+      canComplete: false,
+      encounterId: 'encounter-1',
+      encounterVersion: '4',
+      items: [
+        {
+          code: 'primary-diagnosis-confirmed',
+          status: 'complete',
+          statusText: '已确认主诊断',
+          target: 'diagnosis',
+        },
+        {
+          code: 'clinical-document-signed',
+          status: 'incomplete',
+          statusText: '待签署结构化病历',
+          target: 'clinical-document',
+        },
+        {
+          code: 'required-reports-acknowledged',
+          status: 'complete',
+          statusText: '必要报告已全部确认已阅',
+          target: 'laboratory',
+        },
+        {
+          code: 'medication-conclusion-recorded',
+          status: 'incomplete',
+          statusText: '待记录用药结论',
+          target: 'medication-conclusion',
+        },
+        {
+          code: 'no-pending-drafts',
+          status: 'complete',
+          statusText: '无未处理临床草稿',
+          target: 'clinical-document',
+        },
+        {
+          code: 'disposition-complete',
+          status: 'incomplete',
+          statusText: '待完善处置',
+          target: 'clinical-document',
+        },
+        {
+          code: 'follow-up-complete',
+          status: 'incomplete',
+          statusText: '待完善随访安排',
+          target: 'clinical-document',
+        },
+      ],
+    }
+
+    expect(encounterCompletionPreviewSchema.safeParse(preview).success).toBe(true)
+    expect(encounterCompletionPreviewSchema.safeParse({
+      ...preview,
+      items: preview.items.slice(0, -1),
+    }).success).toBe(false)
+    expect(encounterCompletionPreviewSchema.safeParse({
+      ...preview,
+      items: preview.items.map((item, index) => index === 0
+        ? { ...item, code: 'diagnosis-ready' }
+        : item),
+    }).success).toBe(false)
+    expect(encounterCompletionPreviewSchema.safeParse({
+      ...preview,
+      items: preview.items.map((item, index) => index === 0
+        ? { ...item, statusText: 'Complete' }
+        : item),
+    }).success).toBe(false)
+  })
+
+  it('limits Encounter completion commands to the expected Encounter version', () => {
+    expect(completeEncounterRequestSchema.safeParse({
+      expectedVersions: { 'Encounter/encounter-1': '4' },
+      input: {},
+    }).success).toBe(true)
+    expect(completeEncounterRequestSchema.safeParse({
+      expectedVersions: { 'Encounter/encounter-1': '4' },
+      input: { completeScenario: true },
+    }).success).toBe(false)
+    expect(encounterCompletionResponseSchema.safeParse({
+      auditId: 'audit-1',
+      data: {
+        completedAt: '2026-08-25T10:30:00+08:00',
+        encounterId: 'encounter-1',
+        encounterVersion: '5',
+        status: 'completed',
+      },
+      effects: [{
+        kind: 'updated',
+        reference: 'Encounter/encounter-1',
+        versionId: '5',
+      }],
+      requestId: 'request-1',
+      warnings: [],
+    }).success).toBe(true)
+  })
+
   it('requires controlled course and quantity values in medication drafts', () => {
     const medication = {
       allowedCombinationIds: ['medication-acetaminophen'],

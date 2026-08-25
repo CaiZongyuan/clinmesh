@@ -480,6 +480,62 @@ export const doctorQueueSchema = z.object({
   ...paginationShape,
 })
 
+export const encounterCompletionItemCodeSchema = z.enum([
+  'primary-diagnosis-confirmed',
+  'clinical-document-signed',
+  'required-reports-acknowledged',
+  'medication-conclusion-recorded',
+  'no-pending-drafts',
+  'disposition-complete',
+  'follow-up-complete',
+])
+
+export const encounterCompletionTargetSchema = z.enum([
+  'diagnosis',
+  'clinical-document',
+  'laboratory',
+  'medication-conclusion',
+])
+
+export const encounterCompletionItemSchema = z.object({
+  code: encounterCompletionItemCodeSchema,
+  status: z.enum(['complete', 'incomplete']),
+  statusText: z.string().min(1).regex(/[\u3400-\u9fff]/),
+  target: encounterCompletionTargetSchema,
+}).strict()
+
+const encounterCompletionItemCodes = encounterCompletionItemCodeSchema.options
+
+export const encounterCompletionPreviewSchema = z.object({
+  canComplete: z.boolean(),
+  encounterId: z.string().min(1),
+  encounterVersion: z.string().regex(/^\d+$/),
+  items: z.array(encounterCompletionItemSchema).length(encounterCompletionItemCodes.length)
+    .superRefine((items, context) => {
+      const codes = new Set(items.map(item => item.code))
+      for (const code of encounterCompletionItemCodes) {
+        if (!codes.has(code)) {
+          context.addIssue({
+            code: 'custom',
+            message: `Missing Encounter completion condition: ${code}`,
+          })
+        }
+      }
+    }),
+}).strict()
+
+export const completeEncounterRequestSchema = z.object({
+  expectedVersions: z.record(z.string(), z.string()),
+  input: z.object({}).strict(),
+}).strict()
+
+export const encounterCompletionResponseSchema = commandResponseSchema(z.object({
+  completedAt: z.iso.datetime({ offset: true }),
+  encounterId: z.string().min(1),
+  encounterVersion: z.string().regex(/^\d+$/),
+  status: z.literal('completed'),
+}).strict())
+
 export const priorFactSchema = z.object({
   clinicalStatus: z.string(),
   code: z.string(),
@@ -1105,6 +1161,9 @@ export type ClinicalCatalog = z.infer<typeof clinicalCatalogSchema>
 export type TriageQueueItem = z.infer<typeof triageQueueSchema>['items'][number]
 export type DoctorQueueItem = z.infer<typeof doctorQueueItemSchema>
 export type DoctorCaseDetail = z.infer<typeof doctorCaseDetailSchema>
+export type EncounterCompletionItem = z.infer<typeof encounterCompletionItemSchema>
+export type EncounterCompletionPreview = z.infer<typeof encounterCompletionPreviewSchema>
+export type EncounterCompletionTarget = z.infer<typeof encounterCompletionTargetSchema>
 export type LaboratoryRequestCatalogItemId = z.infer<typeof laboratoryRequestCatalogItemIdSchema>
 export type LaboratoryRequest = z.infer<typeof laboratoryRequestSchema>
 export type LaboratoryReport = z.infer<typeof laboratoryReportSchema>

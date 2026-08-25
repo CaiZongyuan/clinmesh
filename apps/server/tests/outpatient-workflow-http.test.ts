@@ -30,6 +30,8 @@ import {
   dispenseResponseSchema,
   doctorCaseDetailSchema,
   doctorQueueSchema,
+  encounterCompletionPreviewSchema,
+  encounterCompletionResponseSchema,
   firstVisitDraftResponseSchema,
   issueLaboratoryRequestResponseSchema,
   issuePrescriptionResponseSchema,
@@ -239,6 +241,207 @@ async function createSignedStructuredClinicalDocument(runtime: TestRuntime, pass
   )
   const signed = clinicalDocumentSignResponseSchema.parse(await signResponse.json()).data
   return { doctorCookie, expectedVersions, signed, started }
+}
+
+async function createCompletionReadyConsultation(
+  runtime: TestRuntime,
+  password: string,
+  options: {
+    diagnosis?: boolean
+    document?: boolean
+    laboratory?: 'acknowledged' | 'reported'
+    medication?: boolean
+    pendingLaboratoryDraft?: boolean
+  } = {},
+) {
+  const includeDiagnosis = options.diagnosis ?? true
+  const includeDocument = options.document ?? true
+  const includeMedication = options.medication ?? true
+  const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+  const encounterReference = `Encounter/${started.encounterId}`
+  let encounterVersion = '1'
+  if (includeDocument) {
+    const expectedVersions = { [encounterReference]: encounterVersion }
+    const documentDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { document: structuredClinicalDocument, expectedDraftVersion: 0 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    const documentDraft = clinicalDocumentDraftResponseSchema.parse(
+      await documentDraftResponse.json(),
+    ).data
+    const documentPreviewResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/clinical-document/actions/preview-sign`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { expectedDraftVersion: documentDraft.draftVersion },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    const documentPreview = clinicalDocumentSignPreviewResponseSchema.parse(
+      await documentPreviewResponse.json(),
+    ).data
+    const documentSignResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/clinical-document/actions/sign`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: {
+            commitToken: documentPreview.commitToken,
+            previewId: documentPreview.previewId,
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    clinicalDocumentSignResponseSchema.parse(await documentSignResponse.json())
+  }
+  if (includeDiagnosis) {
+    const expectedVersions = { [encounterReference]: encounterVersion }
+    const diagnosisDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: {
+            entries: [{ catalogItemId: 'diagnosis-influenza', role: 'primary' }],
+            expectedDraftVersion: 0,
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    const diagnosisDraft = diagnosisDraftResponseSchema.parse(
+      await diagnosisDraftResponse.json(),
+    ).data
+    const diagnosisResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/diagnosis/actions/confirm`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { expectedDraftVersion: diagnosisDraft.draftVersion },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    encounterVersion = confirmDiagnosisResponseSchema.parse(
+      await diagnosisResponse.json(),
+    ).data.encounterVersion
+  }
+  if (includeMedication) {
+    const noMedicationResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/medication-conclusion/actions/confirm-no-medication`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: encounterVersion },
+          input: { expectedDraftVersion: 0 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    confirmNoMedicationResponseSchema.parse(await noMedicationResponse.json())
+  }
+  let laboratoryDraftVersion = 0
+  if (options.laboratory !== undefined) {
+    const laboratoryDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: encounterVersion },
+          input: {
+            catalogItemId: 'lab-cbc',
+            expectedDraftVersion: laboratoryDraftVersion,
+            indicationCode: 'fever',
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    laboratoryDraftVersion = laboratoryRequestDraftResponseSchema.parse(
+      await laboratoryDraftResponse.json(),
+    ).data.draftVersion
+    const issueResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: encounterVersion },
+          input: { expectedDraftVersion: laboratoryDraftVersion },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    const issued = issueLaboratoryRequestResponseSchema.parse(await issueResponse.json()).data
+    laboratoryDraftVersion = issued.draftVersion
+    for (const kind of [
+      'laboratory.accept-request',
+      'laboratory.start-request',
+      'laboratory.report-request',
+    ]) {
+      expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({ kind, status: 'completed' })
+    }
+    if (options.laboratory === 'acknowledged') {
+      const detailResponse = await runtime.app.request(
+        `/api/his/v1/doctor/cases/${started.caseId}`,
+        { headers: { cookie: doctorCookie } },
+      )
+      const request = doctorCaseDetailSchema.parse(
+        await detailResponse.json(),
+      ).laboratoryRequests?.requests.find(candidate => candidate.id === issued.request.id)
+      if (request?.report === undefined) throw new Error('Completion test report was not created')
+      const acknowledgeResponse = await runtime.app.request(
+        `/api/his/v1/laboratory-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/acknowledge`,
+        {
+          body: JSON.stringify({
+            expectedVersions: {
+              [`DiagnosticReport/${request.report.diagnosticReportId}`]: request.report.diagnosticReportVersion,
+            },
+            input: { expectedRequestVersion: request.version },
+          }),
+          headers: commandHeaders(doctorCookie),
+          method: 'POST',
+        },
+      )
+      acknowledgeLaboratoryReportResponseSchema.parse(await acknowledgeResponse.json())
+    }
+  }
+  if (options.pendingLaboratoryDraft === true) {
+    const laboratoryDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: encounterVersion },
+          input: {
+            catalogItemId: options.laboratory === undefined ? 'lab-cbc' : 'lab-crp',
+            expectedDraftVersion: laboratoryDraftVersion,
+            indicationCode: 'fever',
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    laboratoryRequestDraftResponseSchema.parse(await laboratoryDraftResponse.json())
+  }
+  return {
+    doctorCookie,
+    encounterVersion,
+    started,
+  }
 }
 
 async function createIssuedIndependentPrescription(runtime: TestRuntime, password: string) {
@@ -644,6 +847,360 @@ describe('outpatient workflow HTTP contract', () => {
   afterEach(async () => {
     await Promise.all(runtimes.splice(0).map(runtime => runtime.close()))
     await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true })))
+  })
+
+  it('previews every Encounter completion condition from formal owner facts', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-encounter-completion-preview-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+
+    const response = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/completion`,
+      { headers: { cookie: doctorCookie } },
+    )
+
+    expect(response.status).toBe(200)
+    expect(encounterCompletionPreviewSchema.parse(await response.json())).toEqual({
+      canComplete: false,
+      encounterId: started.encounterId,
+      encounterVersion: '1',
+      items: [
+        {
+          code: 'primary-diagnosis-confirmed',
+          status: 'incomplete',
+          statusText: '待确认主诊断',
+          target: 'diagnosis',
+        },
+        {
+          code: 'clinical-document-signed',
+          status: 'incomplete',
+          statusText: '待签署结构化病历',
+          target: 'clinical-document',
+        },
+        {
+          code: 'required-reports-acknowledged',
+          status: 'complete',
+          statusText: '必要报告已全部确认已阅',
+          target: 'laboratory',
+        },
+        {
+          code: 'medication-conclusion-recorded',
+          status: 'incomplete',
+          statusText: '待记录用药结论',
+          target: 'medication-conclusion',
+        },
+        {
+          code: 'no-pending-drafts',
+          status: 'complete',
+          statusText: '无未处理临床草稿',
+          target: 'clinical-document',
+        },
+        {
+          code: 'disposition-complete',
+          status: 'incomplete',
+          statusText: '待完善处置',
+          target: 'clinical-document',
+        },
+        {
+          code: 'follow-up-complete',
+          status: 'incomplete',
+          statusText: '待完善随访安排',
+          target: 'clinical-document',
+        },
+      ],
+    })
+  })
+
+  it('completes only the Encounter and replays the successful completion receipt', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-encounter-completion-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, encounterVersion, started } = await createCompletionReadyConsultation(
+      runtime,
+      password,
+    )
+    const previewResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/completion`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(encounterCompletionPreviewSchema.parse(await previewResponse.json())).toMatchObject({
+      canComplete: true,
+      encounterVersion,
+      items: expect.arrayContaining([
+        expect.objectContaining({ code: 'no-pending-drafts', status: 'complete' }),
+      ]),
+    })
+    const taskBefore = fhirResourceSchema.parse(await (await runtime.app.request(
+      `/fhir/R5/Task/${started.queueTaskId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    const scenarioBefore = scenarioStateSchema.parse(await (await runtime.app.request(
+      '/api/sim/v1/scenario-runs/current',
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    const idempotencyKey = randomUUID()
+    const complete = () => runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/actions/complete`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: encounterVersion },
+          input: {},
+        }),
+        headers: commandHeaders(doctorCookie, idempotencyKey),
+        method: 'POST',
+      },
+    )
+
+    const response = await complete()
+
+    expect(response.status).toBe(200)
+    const completed = encounterCompletionResponseSchema.parse(await response.json())
+    expect(completed).toMatchObject({
+      data: {
+        completedAt: expect.any(String),
+        encounterId: started.encounterId,
+        encounterVersion: '3',
+        status: 'completed',
+      },
+      effects: [{
+        kind: 'updated',
+        reference: `Encounter/${started.encounterId}`,
+        versionId: '3',
+      }],
+    })
+    const replay = await complete()
+    expect(replay.status).toBe(200)
+    expect(encounterCompletionResponseSchema.parse(await replay.json())).toEqual(completed)
+    const encounter = fhirResourceSchema.parse(await (await runtime.app.request(
+      `/fhir/R5/Encounter/${started.encounterId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    expect(encounter).toMatchObject({
+      actualPeriod: { end: completed.data.completedAt },
+      meta: { versionId: '3' },
+      status: 'completed',
+    })
+    expect(fhirResourceSchema.parse(await (await runtime.app.request(
+      `/fhir/R5/Task/${started.queueTaskId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())).toEqual(taskBefore)
+    expect(scenarioStateSchema.parse(await (await runtime.app.request(
+      '/api/sim/v1/scenario-runs/current',
+      { headers: { cookie: doctorCookie } },
+    )).json())).toEqual(scenarioBefore)
+    expect(doctorQueueSchema.parse(await (await runtime.app.request(
+      '/api/his/v1/doctor/queue?pageSize=20',
+      { headers: { cookie: doctorCookie } },
+    )).json())).toMatchObject({ items: [], total: 0 })
+    expect(doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())).toMatchObject({
+      encounter: { status: 'completed', versionId: '3' },
+      status: 'first-visit',
+    })
+    const cashierCookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    for (const category of ['laboratory', 'medication'] as const) {
+      expect(billingQueueSchema.parse(await (await runtime.app.request(
+        `/api/his/v1/billing/queue?category=${category}&status=pending&pageSize=20`,
+        { headers: { cookie: cashierCookie } },
+      )).json())).toMatchObject({ items: [], total: 0 })
+    }
+    const pharmacistCookie = await signIn(runtime, 'pharmacist@demo.clinmesh.local', password)
+    expect(pharmacyQueueSchema.parse(await (await runtime.app.request(
+      '/api/his/v1/pharmacy/queue?status=pending&pageSize=20',
+      { headers: { cookie: pharmacistCookie } },
+    )).json())).toMatchObject({ items: [], total: 0 })
+    expect(fhirResourceSchema.parse(await (await runtime.app.request(
+      `/fhir/R5/AuditEvent/${completed.auditId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())).toMatchObject({
+      code: { coding: [expect.objectContaining({ code: 'encounter.complete' })] },
+      outcome: { code: expect.objectContaining({ code: '0' }) },
+    })
+  })
+
+  it('atomically rejects each independently observable Encounter completion blocker', async () => {
+    const cases: Array<{
+      expectedCodes: string[]
+      expectedStatusTexts: string[]
+      options: Parameters<typeof createCompletionReadyConsultation>[2]
+    }> = [
+      {
+        expectedCodes: ['primary-diagnosis-confirmed'],
+        expectedStatusTexts: ['待确认主诊断'],
+        options: { diagnosis: false },
+      },
+      {
+        expectedCodes: [
+          'clinical-document-signed',
+          'disposition-complete',
+          'follow-up-complete',
+        ],
+        expectedStatusTexts: ['待签署结构化病历', '待完善处置', '待完善随访安排'],
+        options: { document: false },
+      },
+      {
+        expectedCodes: ['medication-conclusion-recorded'],
+        expectedStatusTexts: ['待记录用药结论'],
+        options: { medication: false },
+      },
+      {
+        expectedCodes: ['required-reports-acknowledged'],
+        expectedStatusTexts: ['待确认必要报告已阅'],
+        options: { laboratory: 'reported' },
+      },
+      {
+        expectedCodes: ['no-pending-drafts'],
+        expectedStatusTexts: ['存在未处理临床草稿'],
+        options: { pendingLaboratoryDraft: true },
+      },
+    ]
+    for (const testCase of cases) {
+      const directory = await mkdtemp(join(tmpdir(), 'clinmesh-encounter-completion-blocker-http-'))
+      temporaryDirectories.push(directory)
+      const password = `Test-${randomUUID()}-Aa1!`
+      const runtime = await createClinMeshRuntime({
+        authBaseUrl: 'http://localhost',
+        authSecret: 'test-auth-secret-with-at-least-32-characters',
+        cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+        databasePath: join(directory, 'clinmesh.sqlite'),
+        demoPassword: password,
+        migrationMode: 'apply',
+        trustedOrigins: ['http://localhost'],
+      })
+      runtimes.push(runtime)
+      const candidate = await createCompletionReadyConsultation(
+        runtime,
+        password,
+        testCase.options,
+      )
+      const encounterBefore = fhirResourceSchema.parse(await (await runtime.app.request(
+        `/fhir/R5/Encounter/${candidate.started.encounterId}`,
+        { headers: { cookie: candidate.doctorCookie } },
+      )).json())
+      const preview = encounterCompletionPreviewSchema.parse(await (await runtime.app.request(
+        `/api/his/v1/encounters/${candidate.started.encounterId}/completion`,
+        { headers: { cookie: candidate.doctorCookie } },
+      )).json())
+      expect(preview.canComplete).toBe(false)
+      expect(preview.items.filter(item => item.status === 'incomplete').map(item => item.code)).toEqual(
+        testCase.expectedCodes,
+      )
+
+      const response = await runtime.app.request(
+        `/api/his/v1/encounters/${candidate.started.encounterId}/actions/complete`,
+        {
+          body: JSON.stringify({
+            expectedVersions: {
+              [`Encounter/${candidate.started.encounterId}`]: candidate.encounterVersion,
+            },
+            input: {},
+          }),
+          headers: commandHeaders(candidate.doctorCookie),
+          method: 'POST',
+        },
+      )
+
+      expect(response.status).toBe(409)
+      expect(apiErrorSchema.parse(await response.json())).toEqual({
+        error: {
+          code: 'ENCOUNTER_COMPLETION_BLOCKED',
+          message: `完诊条件未满足：${testCase.expectedStatusTexts.join('；')}`,
+        },
+      })
+      expect(fhirResourceSchema.parse(await (await runtime.app.request(
+        `/fhir/R5/Encounter/${candidate.started.encounterId}`,
+        { headers: { cookie: candidate.doctorCookie } },
+      )).json())).toEqual(encounterBefore)
+      expect(doctorQueueSchema.parse(await (await runtime.app.request(
+        '/api/his/v1/doctor/queue?pageSize=20',
+        { headers: { cookie: candidate.doctorCookie } },
+      )).json())).toMatchObject({ total: 1 })
+      expect(new AuditQuery(runtime.database).list({
+        epoch: 'epoch-1',
+        workspaceId: 'workspace-demo',
+      })).toEqual(expect.arrayContaining([
+        expect.objectContaining({ operation: 'encounter.complete', outcome: 'failed' }),
+      ]))
+    }
+  })
+
+  it('allows only one completion command for the same expected Encounter version', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-encounter-completion-cas-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const candidate = await createCompletionReadyConsultation(runtime, password)
+    const complete = () => runtime.app.request(
+      `/api/his/v1/encounters/${candidate.started.encounterId}/actions/complete`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${candidate.started.encounterId}`]: candidate.encounterVersion,
+          },
+          input: {},
+        }),
+        headers: commandHeaders(candidate.doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    const responses = await Promise.all([complete(), complete()])
+
+    expect(responses.map(response => response.status).toSorted()).toEqual([200, 409])
+    const successful = responses.find(response => response.status === 200)
+    const rejected = responses.find(response => response.status === 409)
+    if (successful === undefined || rejected === undefined) {
+      throw new Error('Encounter completion race did not produce one winner')
+    }
+    expect(encounterCompletionResponseSchema.parse(await successful.json())).toMatchObject({
+      data: { encounterVersion: '3', status: 'completed' },
+    })
+    expect(apiErrorSchema.parse(await rejected.json())).toMatchObject({
+      error: { code: 'IDEMPOTENCY_KEY_REUSED' },
+    })
+    expect(fhirResourceSchema.parse(await (await runtime.app.request(
+      `/fhir/R5/Encounter/${candidate.started.encounterId}`,
+      { headers: { cookie: candidate.doctorCookie } },
+    )).json())).toMatchObject({ meta: { versionId: '3' }, status: 'completed' })
+    expect(new AuditQuery(runtime.database).list({
+      epoch: 'epoch-1',
+      workspaceId: 'workspace-demo',
+    }).filter(event => event.operation === 'encounter.complete').map(event => event.outcome).toSorted()).toEqual([
+      'failed',
+      'success',
+    ])
   })
 
   it('lists only the clinically visible Virtual Patient summary for the doctor', async () => {
