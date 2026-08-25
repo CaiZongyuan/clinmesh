@@ -20,6 +20,7 @@ import {
   laboratoryOrderResponseSchema,
   laboratoryRequestDraftResponseSchema,
   laboratoryRequestSchema,
+  type LaboratoryRequestCatalogItemId,
   paymentPreviewResponseSchema,
   paymentResponseSchema,
   type PatientSummary,
@@ -3591,7 +3592,7 @@ export class WorkflowService {
   }
 
   saveLaboratoryRequestDraft(input: {
-    catalogItemId: 'lab-cbc' | 'lab-crp'
+    catalogItemId: LaboratoryRequestCatalogItemId
     context: ActorContext
     encounterId: string
     expectedDraftVersion: number
@@ -3948,7 +3949,7 @@ export class WorkflowService {
     reasonCode: 'no-longer-needed'
     requestId: string
   }) {
-    return this.#commands.execute({
+    const execute = () => this.#commands.execute({
       context: input.context,
       dataSchema: laboratoryRequestActionResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
@@ -3992,6 +3993,11 @@ export class WorkflowService {
       const updatedServiceRequest = transaction.fhir.update(input.context, {
         ...serviceRequest,
         status: 'revoked',
+      }, serviceRequest.meta?.versionId ?? '1')
+      const updatedTask = transaction.fhir.update(input.context, {
+        ...task,
+        status: 'cancelled',
+        lastModified: now,
         statusReason: {
           concept: {
             coding: [{
@@ -3999,17 +4005,6 @@ export class WorkflowService {
               system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/request-status-reason',
             }],
           },
-        },
-      }, serviceRequest.meta?.versionId ?? '1')
-      const updatedTask = transaction.fhir.update(input.context, {
-        ...task,
-        status: 'cancelled',
-        lastModified: now,
-        statusReason: {
-          coding: [{
-            code: input.reasonCode,
-            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/request-status-reason',
-          }],
         },
       }, task.meta?.versionId ?? '1')
       const version = request.version + 1
@@ -4053,6 +4048,18 @@ export class WorkflowService {
         })),
       }
     })
+
+    try {
+      return execute()
+    } catch (error) {
+      if (error instanceof ExpectedVersionConflictError) {
+        throw new WorkflowError(
+          'LABORATORY_REQUEST_VERSION_CONFLICT',
+          'The laboratory request version has changed',
+        )
+      }
+      throw error
+    }
   }
 
   acceptLaboratoryRequest(input: {

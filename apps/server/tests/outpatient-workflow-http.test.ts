@@ -2287,6 +2287,11 @@ describe('outpatient workflow HTTP contract', () => {
       kind: 'laboratory.accept-request',
       status: 'completed',
     })
+    const staleAcceptedCancelResponse = await cancel(active.request)
+    expect(staleAcceptedCancelResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await staleAcceptedCancelResponse.json())).toMatchObject({
+      error: { code: 'LABORATORY_REQUEST_VERSION_CONFLICT' },
+    })
     const acceptedDetailResponse = await runtime.app.request(
       `/api/his/v1/doctor/cases/${started.caseId}`,
       { headers: { cookie: doctorCookie } },
@@ -2305,6 +2310,11 @@ describe('outpatient workflow HTTP contract', () => {
     expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({
       kind: 'laboratory.start-request',
       status: 'completed',
+    })
+    const staleInProgressCancelResponse = await cancel(active.request)
+    expect(staleInProgressCancelResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await staleInProgressCancelResponse.json())).toMatchObject({
+      error: { code: 'LABORATORY_REQUEST_VERSION_CONFLICT' },
     })
     const inProgressDetailResponse = await runtime.app.request(
       `/api/his/v1/doctor/cases/${started.caseId}`,
@@ -2325,15 +2335,19 @@ describe('outpatient workflow HTTP contract', () => {
       `/fhir/R5/ServiceRequest/${cancelled.data.request.serviceRequestId}`,
       { headers: { cookie: doctorCookie } },
     )
-    expect(fhirResourceSchema.parse(await cancelledServiceRequest.json())).toMatchObject({
-      status: 'revoked',
-      statusReason: { concept: { coding: [{ code: 'no-longer-needed' }] } },
-    })
+    const cancelledServiceRequestResource = fhirResourceSchema.parse(
+      await cancelledServiceRequest.json(),
+    )
+    expect(cancelledServiceRequestResource).toMatchObject({ status: 'revoked' })
+    expect(cancelledServiceRequestResource).not.toHaveProperty('statusReason')
     const cancelledTask = await runtime.app.request(
       `/fhir/R5/Task/${cancelled.data.request.taskId}`,
       { headers: { cookie: doctorCookie } },
     )
-    expect(fhirResourceSchema.parse(await cancelledTask.json())).toMatchObject({ status: 'cancelled' })
+    expect(fhirResourceSchema.parse(await cancelledTask.json())).toMatchObject({
+      status: 'cancelled',
+      statusReason: { concept: { coding: [{ code: 'no-longer-needed' }] } },
+    })
   })
 
   it('reuses an existing registration when the doctor starts its Virtual Patient', async () => {

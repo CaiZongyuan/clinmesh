@@ -415,10 +415,12 @@ export const laboratoryRequestDraftResponseSchema = commandResponseSchema(z.obje
   draftVersion: z.number().int().positive(),
 }).strict())
 
+export const laboratoryRequestCatalogItemIdSchema = z.enum(['lab-cbc', 'lab-crp'])
+
 export const saveLaboratoryRequestDraftRequestSchema = z.object({
   expectedVersions: z.record(z.string(), z.string()),
   input: z.object({
-    catalogItemId: z.enum(['lab-cbc', 'lab-crp']),
+    catalogItemId: laboratoryRequestCatalogItemIdSchema,
     expectedDraftVersion: z.number().int().nonnegative(),
     indicationCode: z.string().min(1).max(64),
   }).strict(),
@@ -441,7 +443,7 @@ export const laboratoryRequestStatusSchema = z.enum([
 ])
 
 export const laboratoryRequestSchema = z.object({
-  catalogItemId: z.enum(['lab-cbc', 'lab-crp']),
+  catalogItemId: laboratoryRequestCatalogItemIdSchema,
   id: z.string().min(1),
   indicationCode: z.string().min(1),
   serviceRequestId: z.string().min(1),
@@ -750,6 +752,7 @@ export type ClinicalCatalog = z.infer<typeof clinicalCatalogSchema>
 export type TriageQueueItem = z.infer<typeof triageQueueSchema>['items'][number]
 export type DoctorQueueItem = z.infer<typeof doctorQueueItemSchema>
 export type DoctorCaseDetail = z.infer<typeof doctorCaseDetailSchema>
+export type LaboratoryRequestCatalogItemId = z.infer<typeof laboratoryRequestCatalogItemIdSchema>
 export type LaboratoryRequest = z.infer<typeof laboratoryRequestSchema>
 export type BillingQueueItem = z.infer<typeof billingQueueSchema>['items'][number]
 export type PharmacyQueueItem = z.infer<typeof pharmacyQueueSchema>['items'][number]

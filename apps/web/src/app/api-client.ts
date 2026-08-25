@@ -36,6 +36,7 @@ import {
   triageResponseSchema,
   virtualPatientListSchema,
   type ClinicalDocumentContent,
+  type LaboratoryRequestCatalogItemId,
   type ScenarioState,
   type SessionContext,
 } from '@clinmesh/contracts/his'
@@ -470,7 +471,7 @@ export function issueLaboratoryOrder(input: {
 }
 
 export function saveLaboratoryRequestDraft(input: {
-  catalogItemId: 'lab-cbc' | 'lab-crp'
+  catalogItemId: LaboratoryRequestCatalogItemId
   encounterId: string
   encounterVersion: string
   expectedDraftVersion: number

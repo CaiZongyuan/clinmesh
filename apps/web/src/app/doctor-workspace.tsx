@@ -1,4 +1,14 @@
-import type { ClinicalCatalog, ClinicalDocumentContent, DoctorCaseDetail, DoctorQueueItem, LaboratoryRequest, SessionContext, VirtualPatientList } from '@clinmesh/contracts/his'
+import {
+  laboratoryRequestCatalogItemIdSchema,
+  type ClinicalCatalog,
+  type ClinicalDocumentContent,
+  type DoctorCaseDetail,
+  type DoctorQueueItem,
+  type LaboratoryRequest,
+  type LaboratoryRequestCatalogItemId,
+  type SessionContext,
+  type VirtualPatientList,
+} from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
@@ -86,10 +96,10 @@ interface LaboratoryRequestActions {
   }
 }
 
-type IndependentLaboratoryItemId = 'lab-cbc' | 'lab-crp'
-
-function isIndependentLaboratoryItemId(value: string): value is IndependentLaboratoryItemId {
-  return value === 'lab-cbc' || value === 'lab-crp'
+function isLaboratoryRequestCatalogItemId(
+  value: string,
+): value is LaboratoryRequestCatalogItemId {
+  return laboratoryRequestCatalogItemIdSchema.safeParse(value).success
 }
 
 export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
@@ -145,7 +155,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
   const usesIndependentLaboratoryRequests = detail.data?.consultation !== undefined
   const laboratoryCatalog = catalog.data?.laboratory.filter(item => (
     usesIndependentLaboratoryRequests
-      ? isIndependentLaboratoryItemId(item.id)
+      ? isLaboratoryRequestCatalogItemId(item.id)
       : item.id === 'lab-fever-panel'
   )) ?? []
   const draftLaboratoryItemId = detail.data?.laboratoryRequests?.draft?.catalogItemId
@@ -305,7 +315,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
     mutationFn: () => {
       const current = detail.data
       if (current === undefined
-        || !isIndependentLaboratoryItemId(resolvedLaboratoryItemId)
+        || !isLaboratoryRequestCatalogItemId(resolvedLaboratoryItemId)
         || resolvedIndicationCode.length === 0) {
         throw new Error(messages.consultationUnavailable)
       }
