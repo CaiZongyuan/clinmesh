@@ -572,7 +572,7 @@ export const laboratoryRequestSchema = z.object({
   catalogItemId: laboratoryRequestCatalogItemIdSchema,
   id: z.string().min(1),
   indicationCode: z.string().min(1),
-  previousReports: z.array(laboratoryReportSchema),
+  previousReports: z.array(laboratoryReportSchema).default([]),
   report: laboratoryReportSchema.optional(),
   serviceRequestId: z.string().min(1),
   serviceRequestVersion: z.string().regex(/^\d+$/),

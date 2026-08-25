@@ -2096,7 +2096,24 @@ describe('outpatient workflow HTTP contract', () => {
         { kind: 'created', reference: `Task/${issued.data.request.taskId}` },
       ],
     })
-    expect(issueLaboratoryRequestResponseSchema.parse(await (await issue()).json())).toEqual(issued)
+    const { previousReports, ...legacyRequest } = issued.data.request
+    expect(previousReports).toEqual([])
+    const receiptUpdate = runtime.database.driver.prepare(`
+      UPDATE command_receipt
+      SET response_json = ?
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND operation = 'laboratory-request.issue' AND idempotency_key = ?
+    `).run(
+      JSON.stringify({
+        ...issued,
+        data: { ...issued.data, request: legacyRequest },
+      }),
+      idempotencyKey,
+    )
+    expect(receiptUpdate.changes).toBe(1)
+    const replayResponse = await issue()
+    expect(replayResponse.status).toBe(200)
+    expect(issueLaboratoryRequestResponseSchema.parse(await replayResponse.json())).toEqual(issued)
 
     const serviceRequestResponse = await runtime.app.request(
       `/fhir/R5/ServiceRequest/${issued.data.request.serviceRequestId}`,
@@ -2746,27 +2763,8 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/doctor/cases/${started.caseId}`,
       { headers: { cookie: doctorCookie } },
     )
-    const detail = await detailResponse.json() as {
-      laboratoryRequests: { requests: Array<{
-        id: string
-        previousReports: Array<{
-          acknowledgement?: { id: string }
-          diagnosticReportId: string
-          results: Array<{ code: string; value: number }>
-          revisionNumber: number
-        }>
-        report: {
-          acknowledgement?: { id: string }
-          diagnosticReportId: string
-          results: Array<{ code: string; value: number }>
-          revisionNumber: number
-          revisionOfDiagnosticReportId?: string
-          revisionReason?: string
-        }
-        status: string
-      }> }
-    }
-    const correctedRequest = detail.laboratoryRequests.requests.find(item => item.id === request.id)
+    const detail = doctorCaseDetailSchema.parse(await detailResponse.json())
+    const correctedRequest = detail.laboratoryRequests?.requests.find(item => item.id === request.id)
     expect(correctedRequest).toMatchObject({
       previousReports: [{
         acknowledgement: { id: acknowledgement.data.acknowledgementId },
@@ -2781,8 +2779,8 @@ describe('outpatient workflow HTTP contract', () => {
       },
       status: 'reported',
     })
-    expect(correctedRequest?.report.acknowledgement).toBeUndefined()
-    expect(correctedRequest?.report.results.find(result => result.code === '6690-2')).toMatchObject({
+    expect(correctedRequest?.report?.acknowledgement).toBeUndefined()
+    expect(correctedRequest?.report?.results.find(result => result.code === '6690-2')).toMatchObject({
       value: correctedWhiteCellValue,
     })
     expect(correctedRequest?.previousReports[0]?.results.find(

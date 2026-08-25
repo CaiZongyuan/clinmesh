@@ -1212,9 +1212,11 @@ function LaboratoryReportVersion({ current, locale, messages, report }: {
   messages: ReturnType<typeof getWorkspaceMessages>
   report: LaboratoryReport
 }): React.JSX.Element {
-  const versionLabel = locale === 'zh-CN'
-    ? `第 ${report.revisionNumber} 版（${current ? '当前' : '已替代'}）`
-    : `Version ${report.revisionNumber} (${current ? 'current' : 'replaced'})`
+  const versionLabel = (
+    current
+      ? messages.laboratoryReportCurrentVersion
+      : messages.laboratoryReportReplacedVersion
+  ).replace('{version}', report.revisionNumber.toLocaleString(locale))
   return (
     <div className="flex flex-col gap-3 border-t pt-3">
       <div className="flex flex-wrap items-center gap-2">

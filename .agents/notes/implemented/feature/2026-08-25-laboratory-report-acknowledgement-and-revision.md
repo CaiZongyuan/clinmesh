@@ -34,4 +34,6 @@ Report Acknowledgement 是独立于 DiagnosticReport 的不可变领域事实，
 
 医生病例读模型把最新报告放在 `report`，按业务修订顺序把旧版本放在 `previousReports`；每个版本只展示属于自己的确认事实。Web 仅在当前申请为 `reported` 时提供确认动作，并把当前报告与被替代版本分区展示，不能从旧版本发起新的确认。
 
+`previousReports` 在共享响应 schema 中对缺失输入使用空数组默认值，使升级前已经持久化的检查开具或取消 Command receipt 仍可按原幂等键重放；新响应始终显式返回该字段。
+
 调用方不能从 `DiagnosticReport.status=final` 推断医生已经阅读，也不能从旧版本存在确认推断新版本已经阅读。后续 Encounter Completion Policy 必须读取当前申请的 `acknowledged` 状态和当前报告确认事实；报告更正会重新打开这项门禁。

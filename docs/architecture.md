@@ -1305,7 +1305,7 @@ AND field policy
 - scenario-admin
 - lis-system
 
-首期只有 `scenario-admin` 能 reset Scenario。`lis-system` 只从受控 outbox context 调用允许的检验结果 Command，不具有交互式登录或任意患者搜索能力。住院、医保、完整库存、病案、审计员和未来 Agent 角色在相应能力实施前不进入 seed、导航或授权矩阵。
+首期只有 `scenario-admin` 能 reset Scenario。`lis-system` 不具有交互式登录或任意患者搜索能力；允许的检验结果 Command 只能由受控 outbox context 调用，报告更正还可由窄 HTTP adapter 在验证 administrator 后由服务端绑定同一系统 context。请求正文不能声明系统角色或提交任意 FHIR 内容。住院、医保、完整库存、病案、审计员和未来 Agent 角色在相应能力实施前不进入 seed、导航或授权矩阵。
 
 查询授权必须下推 SQL。不能先查 100 个患者，再在 JavaScript 中删掉 90 个；否则 total、排序、include 和时间差都可能泄漏信息。
 
