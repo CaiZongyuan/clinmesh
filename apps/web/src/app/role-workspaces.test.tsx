@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
-import type { DiagnosisDraftEntry, DiagnosisState, DoctorCaseDetail, LaboratoryRequest } from '@clinmesh/contracts/his'
+import type {
+  DiagnosisDraftEntry,
+  DiagnosisState,
+  DoctorCaseDetail,
+  DoctorCompletedCaseDetail,
+  DoctorCompletedCaseList,
+  LaboratoryRequest,
+} from '@clinmesh/contracts/his'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebApp } from './web-app.tsx'
@@ -373,6 +380,49 @@ function stubLaboratoryReportPolling(reportingSupported: boolean) {
       reportReady = true
     },
   }
+}
+
+function stubDoctorCompletedCaseArchive(options: {
+  detail?: DoctorCompletedCaseDetail
+  list: DoctorCompletedCaseList
+  onListRequest?: (url: URL) => void
+}) {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+    if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+      return Response.json({ items: [], ...pagination(0) })
+    }
+    if (url.pathname === '/api/his/v1/doctor/queue') {
+      return Response.json({ items: [], ...pagination(0) })
+    }
+    if (url.pathname === '/api/his/v1/catalogs/clinical') {
+      return Response.json({
+        diagnoses: [{
+          code: 'J10.1',
+          id: 'diagnosis-influenza-a',
+          nameEn: 'Influenza with other respiratory manifestations',
+          nameZh: '流感伴其他呼吸道表现',
+          system: 'http://hl7.org/fhir/sid/icd-10',
+          version: 1,
+        }],
+        laboratory: [],
+        medications: [],
+        prescriptionConclusionSupported: true,
+      })
+    }
+    if (url.pathname === '/api/his/v1/doctor/completed-cases') {
+      options.onListRequest?.(url)
+      return Response.json(options.list)
+    }
+    if (
+      options.detail !== undefined
+      && url.pathname === `/api/his/v1/doctor/completed-cases/${options.detail.caseId}`
+    ) {
+      return Response.json(options.detail)
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`)
+  }))
 }
 
 describe('role workspaces', () => {
@@ -3580,6 +3630,208 @@ describe('role workspaces', () => {
     expect(screen.getByText(/补充复诊时限和危险征象。/)).toBeTruthy()
     expect(screen.getByText(structuredClinicalDocument.assessment)).toBeTruthy()
     expect(screen.getAllByRole('button', { name: '提交病历修订' })).toHaveLength(1)
+  })
+
+  it('searches completed cases with controlled patient, date, and diagnosis filters and shows the empty state', async () => {
+    const listRequests: URL[] = []
+    stubDoctorCompletedCaseArchive({
+      list: { items: [], ...pagination(0) },
+      onListRequest: url => listRequests.push(url),
+    })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('tab', { name: '已完诊病例' }))
+    expect(await screen.findByText('未找到已完诊病例')).toBeTruthy()
+
+    await user.type(screen.getByLabelText('患者 ID'), 'patient-synthetic-1')
+    await user.type(screen.getByLabelText('完诊开始日期'), '2026-08-01')
+    await user.type(screen.getByLabelText('完诊结束日期'), '2026-08-24')
+    await user.click(screen.getByRole('combobox', { name: '诊断' }))
+    await user.click(await screen.findByRole('option', { name: '流感伴其他呼吸道表现 · J10.1' }))
+    await user.click(screen.getByRole('button', { name: '检索病例' }))
+
+    await waitFor(() => expect(listRequests.length).toBeGreaterThanOrEqual(2))
+    expect(Object.fromEntries(listRequests.at(-1)?.searchParams ?? [])).toEqual({
+      completedFrom: '2026-08-01',
+      completedTo: '2026-08-24',
+      diagnosisCatalogItemId: 'diagnosis-influenza-a',
+      page: '1',
+      pageSize: '20',
+      patientId: 'patient-synthetic-1',
+    })
+    expect(screen.getByText('请调整筛选条件后重试。')).toBeTruthy()
+  })
+
+  it('opens long completed case facts and preserves the server timeline as a read-only archive', async () => {
+    const longPatientName = '合成患者欧阳晨曦阿依古丽娜扎诸葛明远司马清和上官云舒测试长姓名'
+    const longAssessment = '患者持续高热伴咽痛，结合流行病学接触史、甲型流感抗原结果及完整查体，当前生命体征稳定，未见呼吸衰竭或其他重症危险征象；已详细告知居家隔离、补液、体温监测、复诊时限与需要立即就医的危险表现。'
+    const patient = {
+      birthDate: '1988-03-16',
+      gender: 'female',
+      id: 'patient-completed-1',
+      identifier: 'CM-SYN-COMPLETED-001',
+      name: longPatientName,
+      synthetic: true,
+      versionId: '2',
+    } as const
+    const diagnosisEntry = {
+      catalogItemId: 'diagnosis-influenza-a',
+      code: 'J10.1',
+      conditionId: 'condition-completed-1',
+      conditionVersion: '1',
+      display: '流感伴其他呼吸道表现',
+      note: '结合抗原结果与临床表现。',
+      role: 'primary',
+      system: 'http://hl7.org/fhir/sid/icd-10',
+    } as const
+    const detail = {
+      caseId: 'case-completed-1',
+      clinicalDocuments: [{
+        bundleId: 'bundle-completed-1',
+        compositionId: 'composition-completed-1',
+        compositionVersion: '1',
+        content: {
+          ...structuredClinicalDocument,
+          assessment: longAssessment,
+        },
+        documentId: 'document-completed-1',
+        provenanceId: 'provenance-completed-1',
+        revisionNumber: 1,
+        signedAt: '2026-08-24T08:20:00+08:00',
+      }],
+      completedAt: '2026-08-24T09:00:00+08:00',
+      consultation: {
+        records: [{
+          answer: '症状自前日晚间开始，最高体温 38.7 摄氏度，并伴有持续咽痛、乏力及同住家属近期流感样症状。',
+          id: 'consultation-record-completed-1',
+          question: { code: 'symptom-onset', text: '症状何时开始？' },
+          recordedAt: '2026-08-24T08:05:00+08:00',
+          sequence: 1,
+        }],
+        version: 1,
+      },
+      diagnosis: {
+        confirmedAt: '2026-08-24T08:30:00+08:00',
+        entries: [diagnosisEntry],
+        id: 'diagnosis-confirmation-completed-1',
+        provenanceId: 'provenance-diagnosis-completed-1',
+      },
+      encounter: { id: 'encounter-completed-1', status: 'completed', versionId: '6' },
+      laboratoryRequests: [],
+      medicationConclusion: {
+        noMedication: {
+          authoredAt: '2026-08-24T08:40:00+08:00',
+          authoredByActorId: 'actor-outpatient-doctor',
+          authoredByPractitionerRoleId: 'practitioner-role-outpatient-doctor',
+          id: 'no-medication-completed-1',
+          version: 1,
+        },
+        prescription: {
+          authoredAt: '2026-08-24T08:35:00+08:00',
+          authoredByPractitionerRoleId: 'practitioner-role-outpatient-doctor',
+          id: 'prescription-completed-1',
+          items: [{
+            catalogItemId: 'medication-oseltamivir',
+            courseDays: 5,
+            display: '磷酸奥司他韦胶囊',
+            doseText: '75 mg',
+            frequencyCode: 'BID',
+            medicationRequestId: 'medication-request-completed-1',
+            medicationRequestVersion: '2',
+            quantity: 10,
+          }],
+          number: 'RX-COMPLETED-001',
+          status: 'withdrawn',
+          version: 2,
+          withdrawal: {
+            id: 'prescription-withdrawal-completed-1',
+            prescriptionId: 'prescription-completed-1',
+            version: 1,
+            withdrawnAt: '2026-08-24T08:38:00+08:00',
+            withdrawnByActorId: 'actor-outpatient-doctor',
+            withdrawnByPractitionerRoleId: 'practitioner-role-outpatient-doctor',
+          },
+        },
+      },
+      patient,
+      timeline: [{
+        kind: 'consultation-recorded',
+        occurredAt: '2026-08-24T08:05:00+08:00',
+        reference: 'ConsultationRecord/consultation-record-completed-1',
+        relatedReferences: ['Encounter/encounter-completed-1'],
+      }, {
+        kind: 'clinical-document-signed',
+        occurredAt: '2026-08-24T08:20:00+08:00',
+        reference: 'Composition/composition-completed-1',
+        relatedReferences: ['Bundle/bundle-completed-1'],
+      }, {
+        kind: 'diagnosis-confirmed',
+        occurredAt: '2026-08-24T08:30:00+08:00',
+        reference: 'DiagnosisConfirmation/diagnosis-confirmation-completed-1',
+        relatedReferences: ['Condition/condition-completed-1'],
+      }, {
+        kind: 'prescription-issued',
+        occurredAt: '2026-08-24T08:35:00+08:00',
+        reference: 'Prescription/prescription-completed-1',
+        relatedReferences: ['MedicationRequest/medication-request-completed-1'],
+      }, {
+        kind: 'prescription-withdrawn',
+        occurredAt: '2026-08-24T08:38:00+08:00',
+        reference: 'PrescriptionWithdrawal/prescription-withdrawal-completed-1',
+        relatedReferences: ['Prescription/prescription-completed-1'],
+      }, {
+        kind: 'no-medication-confirmed',
+        occurredAt: '2026-08-24T08:40:00+08:00',
+        reference: 'NoMedicationConclusion/no-medication-completed-1',
+        relatedReferences: [],
+      }, {
+        kind: 'encounter-completed',
+        occurredAt: '2026-08-24T09:00:00+08:00',
+        reference: 'Encounter/encounter-completed-1',
+        relatedReferences: [],
+      }],
+    } satisfies DoctorCompletedCaseDetail
+    stubDoctorCompletedCaseArchive({
+      detail,
+      list: {
+        items: [{
+          caseId: detail.caseId,
+          completedAt: detail.completedAt,
+          encounterId: detail.encounter.id,
+          encounterVersion: detail.encounter.versionId,
+          patient,
+          primaryDiagnosis: diagnosisEntry,
+        }],
+        ...pagination(1),
+      },
+    })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('tab', { name: '已完诊病例' }))
+    expect(await screen.findByText(longPatientName)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: `查看病例 ${longPatientName}` }))
+
+    expect(await screen.findByRole('heading', { name: '已完诊病例详情' })).toBeTruthy()
+    expect(screen.getByText('只读归档')).toBeTruthy()
+    expect(screen.getByText(longAssessment)).toBeTruthy()
+    expect(screen.getByText('处方号 RX-COMPLETED-001')).toBeTruthy()
+    expect(screen.getByText('已确认无需用药')).toBeTruthy()
+    expect(screen.getAllByText('Composition/composition-completed-1').length).toBeGreaterThanOrEqual(1)
+    const timeline = screen.getByRole('region', { name: '业务时间线' })
+    expect(within(timeline).getAllByRole('listitem').map(item => item.textContent)).toEqual([
+      expect.stringContaining('记录问诊'),
+      expect.stringContaining('签署病历'),
+      expect.stringContaining('确认诊断'),
+      expect.stringContaining('开具处方'),
+      expect.stringContaining('撤回处方'),
+      expect.stringContaining('确认无需用药'),
+      expect.stringContaining('完成 Encounter'),
+    ])
+    for (const name of ['保存病历草稿', '提交病历修订', '确认已阅', '撤回处方', '确认完诊']) {
+      expect(screen.queryByRole('button', { name })).toBeNull()
+    }
   })
 
   it('partially dispenses from a versioned lot before completing the Scenario Run', async () => {

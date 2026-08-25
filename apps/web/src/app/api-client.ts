@@ -16,6 +16,8 @@ import {
   clinicalCatalogSchema,
   diagnosisDraftResponseSchema,
   doctorCaseDetailSchema,
+  doctorCompletedCaseDetailSchema,
+  doctorCompletedCaseListSchema,
   doctorQueueSchema,
   firstVisitDraftResponseSchema,
   issueLaboratoryRequestResponseSchema,
@@ -275,6 +277,40 @@ export function getClinicalCatalog(signal?: AbortSignal) {
 export function getDoctorQueue(signal?: AbortSignal, page = 1) {
   const search = new URLSearchParams({ page: String(page), pageSize: '20' })
   return apiGet(`/api/his/v1/doctor/queue?${search.toString()}`, doctorQueueSchema, signal)
+}
+
+export interface DoctorCompletedCaseFilters {
+  completedFrom?: string
+  completedTo?: string
+  diagnosisCatalogItemId?: string
+  patientId?: string
+}
+
+export function getDoctorCompletedCases(
+  filters: DoctorCompletedCaseFilters,
+  signal?: AbortSignal,
+  page = 1,
+) {
+  const search = new URLSearchParams({ page: String(page), pageSize: '20' })
+  if (filters.completedFrom !== undefined) search.set('completedFrom', filters.completedFrom)
+  if (filters.completedTo !== undefined) search.set('completedTo', filters.completedTo)
+  if (filters.diagnosisCatalogItemId !== undefined) {
+    search.set('diagnosisCatalogItemId', filters.diagnosisCatalogItemId)
+  }
+  if (filters.patientId !== undefined) search.set('patientId', filters.patientId)
+  return apiGet(
+    `/api/his/v1/doctor/completed-cases?${search.toString()}`,
+    doctorCompletedCaseListSchema,
+    signal,
+  )
+}
+
+export function getDoctorCompletedCase(caseId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/his/v1/doctor/completed-cases/${encodeURIComponent(caseId)}`,
+    doctorCompletedCaseDetailSchema,
+    signal,
+  )
 }
 
 export function getVirtualPatients(signal?: AbortSignal, page = 1) {

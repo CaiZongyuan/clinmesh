@@ -480,6 +480,20 @@ export const doctorQueueSchema = z.object({
   ...paginationShape,
 })
 
+export const doctorCompletedCaseSummarySchema = z.object({
+  caseId: z.string().min(1),
+  completedAt: z.iso.datetime({ offset: true }),
+  encounterId: z.string().min(1),
+  encounterVersion: z.string().regex(/^\d+$/),
+  patient: patientSummarySchema,
+  primaryDiagnosis: diagnosisConfirmationEntrySchema.optional(),
+}).strict()
+
+export const doctorCompletedCaseListSchema = z.object({
+  items: z.array(doctorCompletedCaseSummarySchema),
+  ...paginationShape,
+}).strict()
+
 export const encounterCompletionItemCodeSchema = z.enum([
   'primary-diagnosis-confirmed',
   'clinical-document-signed',
@@ -896,6 +910,55 @@ export const laboratoryRequestStateSchema = z.object({
   requests: z.array(laboratoryRequestSchema),
 }).strict()
 
+export const doctorCompletedCaseTimelineKindSchema = z.enum([
+  'consultation-recorded',
+  'clinical-document-signed',
+  'clinical-document-revised',
+  'laboratory-request-issued',
+  'laboratory-report-issued',
+  'laboratory-report-revised',
+  'laboratory-report-acknowledged',
+  'diagnosis-confirmed',
+  'prescription-issued',
+  'prescription-withdrawn',
+  'no-medication-confirmed',
+  'encounter-completed',
+])
+
+const doctorCompletedCaseTimelineReferenceSchema = z.string().regex(
+  /^[A-Za-z][A-Za-z0-9]+\/[A-Za-z0-9.-]+$/,
+)
+
+export const doctorCompletedCaseTimelineEventSchema = z.object({
+  kind: doctorCompletedCaseTimelineKindSchema,
+  occurredAt: z.iso.datetime({ offset: true }),
+  reference: doctorCompletedCaseTimelineReferenceSchema,
+  relatedReferences: z.array(doctorCompletedCaseTimelineReferenceSchema),
+}).strict()
+
+export const doctorCompletedCaseDetailSchema = z.object({
+  caseId: z.string().min(1),
+  clinicalDocuments: z.array(signedClinicalDocumentSchema),
+  completedAt: z.iso.datetime({ offset: true }),
+  consultation: z.object({
+    records: z.array(consultationRecordSchema),
+    version: z.number().int().positive(),
+  }).strict().optional(),
+  diagnosis: diagnosisConfirmationSchema.optional(),
+  encounter: z.object({
+    id: z.string().min(1),
+    status: z.literal('completed'),
+    versionId: z.string().regex(/^\d+$/),
+  }).strict(),
+  laboratoryRequests: z.array(laboratoryRequestSchema),
+  medicationConclusion: z.object({
+    noMedication: noMedicationConclusionSchema.optional(),
+    prescription: issuedPrescriptionSchema.optional(),
+  }).strict().optional(),
+  patient: patientSummarySchema,
+  timeline: z.array(doctorCompletedCaseTimelineEventSchema),
+}).strict()
+
 export const doctorCaseDetailSchema = z.object({
   allergies: z.array(allergyWarningSchema),
   caseId: z.string().min(1),
@@ -1165,6 +1228,10 @@ export type VirtualPatientList = z.infer<typeof virtualPatientListSchema>
 export type ClinicalCatalog = z.infer<typeof clinicalCatalogSchema>
 export type TriageQueueItem = z.infer<typeof triageQueueSchema>['items'][number]
 export type DoctorQueueItem = z.infer<typeof doctorQueueItemSchema>
+export type DoctorCompletedCaseSummary = z.infer<typeof doctorCompletedCaseSummarySchema>
+export type DoctorCompletedCaseList = z.infer<typeof doctorCompletedCaseListSchema>
+export type DoctorCompletedCaseDetail = z.infer<typeof doctorCompletedCaseDetailSchema>
+export type DoctorCompletedCaseTimelineEvent = z.infer<typeof doctorCompletedCaseTimelineEventSchema>
 export type DoctorCaseDetail = z.infer<typeof doctorCaseDetailSchema>
 export type EncounterCompletionItem = z.infer<typeof encounterCompletionItemSchema>
 export type EncounterCompletionPreview = z.infer<typeof encounterCompletionPreviewSchema>

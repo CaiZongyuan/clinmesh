@@ -28,6 +28,7 @@ import {
   deletePrescriptionDraftRequestSchema,
   diagnosisDraftResponseSchema,
   dispenseResponseSchema,
+  doctorCompletedCaseListSchema,
   doctorCaseDetailSchema,
   doctorQueueSchema,
   encounterCompletionPreviewSchema,
@@ -248,6 +249,7 @@ async function createCompletionReadyConsultation(
   password: string,
   options: {
     diagnosis?: boolean | 'draft'
+    diagnosisCatalogItemId?: 'diagnosis-acute-upper-respiratory-infection' | 'diagnosis-influenza'
     document?: boolean | 'draft'
     laboratory?: 'acknowledged' | 'reported'
     medication?: boolean | 'draft' | 'prescription' | 'withdrawn-prescription'
@@ -316,7 +318,10 @@ async function createCompletionReadyConsultation(
         body: JSON.stringify({
           expectedVersions,
           input: {
-            entries: [{ catalogItemId: 'diagnosis-influenza', role: 'primary' }],
+            entries: [{
+              catalogItemId: options.diagnosisCatalogItemId ?? 'diagnosis-influenza',
+              role: 'primary',
+            }],
             expectedDraftVersion: 0,
           },
         }),
@@ -507,6 +512,88 @@ async function createCompletionReadyConsultation(
     encounterVersion,
     started,
   }
+}
+
+function seedAdditionalVirtualPatient(
+  runtime: TestRuntime,
+  input: { id: string; name: string; patientId: string },
+): void {
+  const repositoryContext = { epoch: 'epoch-1', workspaceId: 'workspace-demo' }
+  runtime.fhir.create(repositoryContext, {
+    resourceType: 'Patient',
+    id: input.patientId,
+    active: true,
+    birthDate: '1990-06-15',
+    gender: 'female',
+    identifier: [{
+      system: 'https://caizongyuan.github.io/clinmesh/fhir/sid/synthetic-patient',
+      value: `CM-SYN-${input.patientId.toUpperCase()}`,
+    }],
+    name: [{ text: input.name }],
+  })
+  runtime.database.driver.prepare(`
+    INSERT INTO virtual_patient (
+      workspace_id, epoch, virtual_patient_id, version, patient_id,
+      clinical_summary_json, available
+    ) VALUES ('workspace-demo', 'epoch-1', ?, 1, ?, ?, 1)
+  `).run(input.id, input.patientId, JSON.stringify({
+    chiefComplaint: '反复发热伴明显咽痛两天。',
+    summary: '合成患者出现发热与咽部不适，需门诊评估。',
+    vitalSigns: {
+      bloodPressure: { diastolicMmHg: 78, systolicMmHg: 120 },
+      oxygenSaturationPct: 98,
+      pulseBpm: 94,
+      respirationBpm: 19,
+      temperatureC: 38.4,
+    },
+  }))
+}
+
+async function selectAdditionalDoctorRole(
+  runtime: TestRuntime,
+  password: string,
+): Promise<string> {
+  const repositoryContext = { epoch: 'epoch-1', workspaceId: 'workspace-demo' }
+  runtime.fhir.create(repositoryContext, {
+    resourceType: 'Practitioner',
+    id: 'practitioner-archive-doctor',
+    active: true,
+    name: [{ text: '合成归档医生' }],
+  })
+  runtime.fhir.create(repositoryContext, {
+    resourceType: 'PractitionerRole',
+    id: 'practitioner-role-archive-doctor',
+    active: true,
+    practitioner: { reference: 'Practitioner/practitioner-archive-doctor' },
+    organization: { reference: 'Organization/organization-clinmesh' },
+    code: [{ text: 'outpatient-doctor' }],
+    location: [{ reference: 'Location/location-outpatient-doctor' }],
+  })
+  runtime.database.driver.prepare(`
+    INSERT INTO practitioner_role_binding (
+      workspace_id, practitioner_role_id, practitioner_id, role_code,
+      organization_id, location_id, active
+    ) VALUES (?, ?, ?, 'outpatient-doctor', ?, ?, 1)
+  `).run(
+    'workspace-demo',
+    'practitioner-role-archive-doctor',
+    'practitioner-archive-doctor',
+    'organization-clinmesh',
+    'location-outpatient-doctor',
+  )
+  runtime.database.driver.prepare(`
+    INSERT INTO membership_practitioner_role (
+      membership_id, workspace_id, practitioner_role_id
+    ) VALUES ('membership-administrator', ?, ?)
+  `).run('workspace-demo', 'practitioner-role-archive-doctor')
+  const administratorCookie = await signIn(runtime, 'admin@demo.clinmesh.local', password)
+  const selectRoleResponse = await runtime.app.request('/api/auth/role', {
+    body: JSON.stringify({ practitionerRoleId: 'practitioner-role-archive-doctor' }),
+    headers: commandHeaders(administratorCookie),
+    method: 'POST',
+  })
+  expect(selectRoleResponse.status).toBe(200)
+  return administratorCookie
 }
 
 async function createIssuedIndependentPrescription(runtime: TestRuntime, password: string) {
@@ -912,6 +999,675 @@ describe('outpatient workflow HTTP contract', () => {
   afterEach(async () => {
     await Promise.all(runtimes.splice(0).map(runtime => runtime.close()))
     await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true })))
+  })
+
+  it('archives a completed Encounter only for its responsible doctor', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-completed-case-archive-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, encounterVersion, started } = await createCompletionReadyConsultation(
+      runtime,
+      password,
+    )
+    const archive = (cookie: string) => runtime.app.request(
+      '/api/his/v1/doctor/completed-cases?pageSize=20',
+      { headers: { cookie } },
+    )
+
+    const beforeCompletion = await archive(doctorCookie)
+    expect(beforeCompletion.status).toBe(200)
+    expect(await beforeCompletion.json()).toEqual({
+      items: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    })
+
+    const completionResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/actions/complete`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: encounterVersion },
+          input: {},
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    const completion = encounterCompletionResponseSchema.parse(await completionResponse.json())
+
+    const responsibleDoctorArchive = await archive(doctorCookie)
+    expect(responsibleDoctorArchive.status).toBe(200)
+    expect(await responsibleDoctorArchive.json()).toMatchObject({
+      items: [{
+        caseId: started.caseId,
+        completedAt: completion.data.completedAt,
+        encounterId: started.encounterId,
+        encounterVersion: completion.data.encounterVersion,
+        patient: { id: started.patientId },
+        primaryDiagnosis: {
+          catalogItemId: 'diagnosis-influenza',
+          code: 'J10.1',
+          role: 'primary',
+        },
+      }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    })
+
+    const administratorCookie = await selectAdditionalDoctorRole(runtime, password)
+
+    const otherDoctorArchive = await archive(administratorCookie)
+    expect(otherDoctorArchive.status).toBe(200)
+    expect(await otherDoctorArchive.json()).toEqual({
+      items: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    })
+  })
+
+  it('filters completed cases by the controlled Patient logical ID', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-completed-case-patient-filter-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    seedAdditionalVirtualPatient(runtime, {
+      id: 'virtual-patient-fever-002',
+      name: '合成患者林晓雨',
+      patientId: 'candidate-patient-002',
+    })
+    const complete = async (candidate: Awaited<ReturnType<typeof createCompletionReadyConsultation>>) => {
+      const response = await runtime.app.request(
+        `/api/his/v1/encounters/${candidate.started.encounterId}/actions/complete`,
+        {
+          body: JSON.stringify({
+            expectedVersions: {
+              [`Encounter/${candidate.started.encounterId}`]: candidate.encounterVersion,
+            },
+            input: {},
+          }),
+          headers: commandHeaders(candidate.doctorCookie),
+          method: 'POST',
+        },
+      )
+      expect(response.status).toBe(200)
+    }
+    const first = await createCompletionReadyConsultation(runtime, password)
+    await complete(first)
+    runtime.database.driver.prepare(`
+      UPDATE scenario_epoch_state SET virtual_time = ?
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+    `).run('2026-08-24T10:00:00+08:00')
+    const second = await createCompletionReadyConsultation(runtime, password)
+    await complete(second)
+
+    const response = await runtime.app.request(
+      `/api/his/v1/doctor/completed-cases?patientId=${second.started.patientId}&pageSize=20`,
+      { headers: { cookie: second.doctorCookie } },
+    )
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      items: [{
+        caseId: second.started.caseId,
+        patient: {
+          id: 'candidate-patient-002',
+          name: '合成患者林晓雨',
+        },
+      }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    })
+  })
+
+  it('filters completed cases by an inclusive completion business-date range', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-completed-case-date-filter-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    seedAdditionalVirtualPatient(runtime, {
+      id: 'virtual-patient-fever-002',
+      name: '合成患者林晓雨',
+      patientId: 'candidate-patient-002',
+    })
+    const complete = async (candidate: Awaited<ReturnType<typeof createCompletionReadyConsultation>>) => {
+      const response = await runtime.app.request(
+        `/api/his/v1/encounters/${candidate.started.encounterId}/actions/complete`,
+        {
+          body: JSON.stringify({
+            expectedVersions: {
+              [`Encounter/${candidate.started.encounterId}`]: candidate.encounterVersion,
+            },
+            input: {},
+          }),
+          headers: commandHeaders(candidate.doctorCookie),
+          method: 'POST',
+        },
+      )
+      return encounterCompletionResponseSchema.parse(await response.json())
+    }
+    const first = await createCompletionReadyConsultation(runtime, password)
+    await complete(first)
+    runtime.database.driver.prepare(`
+      UPDATE scenario_epoch_state SET virtual_time = ?
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+    `).run('2026-08-25T08:30:00+08:00')
+    const second = await createCompletionReadyConsultation(runtime, password)
+    const secondCompletion = await complete(second)
+
+    const response = await runtime.app.request(
+      '/api/his/v1/doctor/completed-cases?completedFrom=2026-08-25&completedTo=2026-08-25&pageSize=20',
+      { headers: { cookie: second.doctorCookie } },
+    )
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      items: [{
+        caseId: second.started.caseId,
+        completedAt: secondCompletion.data.completedAt,
+      }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    })
+  })
+
+  it('filters completed cases by a controlled diagnosis catalog item', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-completed-case-diagnosis-filter-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    seedAdditionalVirtualPatient(runtime, {
+      id: 'virtual-patient-fever-002',
+      name: '合成患者林晓雨',
+      patientId: 'candidate-patient-002',
+    })
+    const complete = async (candidate: Awaited<ReturnType<typeof createCompletionReadyConsultation>>) => {
+      const response = await runtime.app.request(
+        `/api/his/v1/encounters/${candidate.started.encounterId}/actions/complete`,
+        {
+          body: JSON.stringify({
+            expectedVersions: {
+              [`Encounter/${candidate.started.encounterId}`]: candidate.encounterVersion,
+            },
+            input: {},
+          }),
+          headers: commandHeaders(candidate.doctorCookie),
+          method: 'POST',
+        },
+      )
+      expect(response.status).toBe(200)
+    }
+    const influenza = await createCompletionReadyConsultation(runtime, password)
+    await complete(influenza)
+    const upperRespiratoryInfection = await createCompletionReadyConsultation(runtime, password, {
+      diagnosisCatalogItemId: 'diagnosis-acute-upper-respiratory-infection',
+    })
+    await complete(upperRespiratoryInfection)
+
+    const response = await runtime.app.request(
+      '/api/his/v1/doctor/completed-cases?diagnosisCatalogItemId=diagnosis-acute-upper-respiratory-infection&pageSize=20',
+      { headers: { cookie: upperRespiratoryInfection.doctorCookie } },
+    )
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      items: [{
+        caseId: upperRespiratoryInfection.started.caseId,
+        primaryDiagnosis: {
+          catalogItemId: 'diagnosis-acute-upper-respiratory-infection',
+          code: 'J06.9',
+        },
+      }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    })
+  })
+
+  it('orders and paginates completed cases with a stable newest-first contract', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-completed-case-order-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    seedAdditionalVirtualPatient(runtime, {
+      id: 'virtual-patient-fever-002',
+      name: '合成患者林晓雨',
+      patientId: 'candidate-patient-002',
+    })
+    seedAdditionalVirtualPatient(runtime, {
+      id: 'virtual-patient-fever-003',
+      name: '合成患者周清和',
+      patientId: 'candidate-patient-003',
+    })
+    const complete = async (candidate: Awaited<ReturnType<typeof createCompletionReadyConsultation>>) => {
+      const response = await runtime.app.request(
+        `/api/his/v1/encounters/${candidate.started.encounterId}/actions/complete`,
+        {
+          body: JSON.stringify({
+            expectedVersions: {
+              [`Encounter/${candidate.started.encounterId}`]: candidate.encounterVersion,
+            },
+            input: {},
+          }),
+          headers: commandHeaders(candidate.doctorCookie),
+          method: 'POST',
+        },
+      )
+      expect(response.status).toBe(200)
+    }
+    const oldest = await createCompletionReadyConsultation(runtime, password)
+    await complete(oldest)
+    runtime.database.driver.prepare(`
+      UPDATE scenario_epoch_state SET virtual_time = ?
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+    `).run('2026-08-24T10:00:00+08:00')
+    const tiedFirst = await createCompletionReadyConsultation(runtime, password)
+    await complete(tiedFirst)
+    const tiedSecond = await createCompletionReadyConsultation(runtime, password)
+    await complete(tiedSecond)
+    const tiedCaseIds = [tiedFirst.started.caseId, tiedSecond.started.caseId].sort()
+
+    const firstPageResponse = await runtime.app.request(
+      '/api/his/v1/doctor/completed-cases?page=1&pageSize=2',
+      { headers: { cookie: tiedSecond.doctorCookie } },
+    )
+    const secondPageResponse = await runtime.app.request(
+      '/api/his/v1/doctor/completed-cases?page=2&pageSize=2',
+      { headers: { cookie: tiedSecond.doctorCookie } },
+    )
+
+    expect(firstPageResponse.status).toBe(200)
+    expect(doctorCompletedCaseListSchema.parse(await firstPageResponse.json())).toMatchObject({
+      items: tiedCaseIds.map(caseId => ({ caseId, completedAt: '2026-08-24T10:00:00+08:00' })),
+      page: 1,
+      pageSize: 2,
+      total: 3,
+    })
+    expect(secondPageResponse.status).toBe(200)
+    expect(doctorCompletedCaseListSchema.parse(await secondPageResponse.json())).toMatchObject({
+      items: [{ caseId: oldest.started.caseId, completedAt: '2026-08-24T09:00:00+08:00' }],
+      page: 2,
+      pageSize: 2,
+      total: 3,
+    })
+  })
+
+  it('opens only an assigned completed case through the read-only archive detail', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-completed-case-detail-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const candidate = await createCompletionReadyConsultation(runtime, password)
+    const detail = (cookie: string) => runtime.app.request(
+      `/api/his/v1/doctor/completed-cases/${candidate.started.caseId}`,
+      { headers: { cookie } },
+    )
+
+    const beforeCompletion = await detail(candidate.doctorCookie)
+    expect(beforeCompletion.status).toBe(409)
+
+    const completionResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${candidate.started.encounterId}/actions/complete`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${candidate.started.encounterId}`]: candidate.encounterVersion,
+          },
+          input: {},
+        }),
+        headers: commandHeaders(candidate.doctorCookie),
+        method: 'POST',
+      },
+    )
+    const completion = encounterCompletionResponseSchema.parse(await completionResponse.json())
+
+    const ownerResponse = await detail(candidate.doctorCookie)
+    expect(ownerResponse.status).toBe(200)
+    const ownerDetail = await ownerResponse.json()
+    expect(ownerDetail).toMatchObject({
+      caseId: candidate.started.caseId,
+      clinicalDocuments: [{
+        content: structuredClinicalDocument,
+        revisionNumber: 1,
+      }],
+      completedAt: completion.data.completedAt,
+      encounter: {
+        id: candidate.started.encounterId,
+        status: 'completed',
+        versionId: completion.data.encounterVersion,
+      },
+      patient: { id: candidate.started.patientId },
+    })
+    expect(ownerDetail).not.toHaveProperty('drafts')
+
+    const otherDoctorCookie = await selectAdditionalDoctorRole(runtime, password)
+    const otherDoctorResponse = await detail(otherDoctorCookie)
+    expect(otherDoctorResponse.status).toBe(409)
+  })
+
+  it('returns completed case facts from each clinical owner without drafts', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-completed-case-owner-facts-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const candidate = await createCompletionReadyConsultation(runtime, password, {
+      laboratory: 'acknowledged',
+      medication: 'prescription',
+    })
+    const questionResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${candidate.started.encounterId}/actions/ask-consultation-question`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${candidate.started.encounterId}`]: candidate.encounterVersion,
+            [`Task/${candidate.started.queueTaskId}`]: '1',
+          },
+          input: { expectedVersion: 1, questionCode: 'symptom-onset' },
+        }),
+        headers: commandHeaders(candidate.doctorCookie),
+        method: 'POST',
+      },
+    )
+    const consultationRecord = askConsultationQuestionResponseSchema.parse(
+      await questionResponse.json(),
+    ).data.record
+    const completionResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${candidate.started.encounterId}/actions/complete`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${candidate.started.encounterId}`]: candidate.encounterVersion,
+          },
+          input: {},
+        }),
+        headers: commandHeaders(candidate.doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(completionResponse.status).toBe(200)
+
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/completed-cases/${candidate.started.caseId}`,
+      { headers: { cookie: candidate.doctorCookie } },
+    )
+
+    expect(detailResponse.status).toBe(200)
+    const detail = await detailResponse.json()
+    expect(detail).toMatchObject({
+      consultation: {
+        records: [{
+          answer: consultationRecord.answer,
+          id: consultationRecord.id,
+          question: consultationRecord.question,
+          sequence: 1,
+        }],
+        version: 2,
+      },
+      diagnosis: {
+        entries: [{
+          catalogItemId: 'diagnosis-influenza',
+          code: 'J10.1',
+          role: 'primary',
+        }],
+      },
+      laboratoryRequests: [{
+        catalogItemId: 'lab-cbc',
+        report: { acknowledgement: { id: expect.any(String) } },
+        status: 'acknowledged',
+      }],
+      medicationConclusion: {
+        prescription: {
+          items: [{ catalogItemId: 'medication-oseltamivir' }],
+          status: 'signed',
+        },
+      },
+    })
+    expect(JSON.stringify(detail)).not.toMatch(/"draft(?:Version)?"/)
+  })
+
+  it('preserves clinical version chains in a stable completed-case timeline', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-completed-case-timeline-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const candidate = await createCompletionReadyConsultation(runtime, password, {
+      laboratory: 'acknowledged',
+      medication: 'prescription',
+    })
+    const activeDetailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${candidate.started.caseId}`,
+      { headers: { cookie: candidate.doctorCookie } },
+    )
+    const activeDetail = doctorCaseDetailSchema.parse(await activeDetailResponse.json())
+    const originalDocument = activeDetail.clinicalDocument?.signed[0]
+    const originalRequest = activeDetail.laboratoryRequests?.requests[0]
+    if (originalDocument === undefined || originalRequest?.report === undefined) {
+      throw new Error('Completed-case timeline fixture is missing signed owner facts')
+    }
+    const setVirtualTime = (value: string) => runtime.database.driver.prepare(`
+      UPDATE scenario_epoch_state SET virtual_time = ?
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+    `).run(value)
+
+    setVirtualTime('2026-08-24T10:00:00+08:00')
+    const revisionResponse = await runtime.app.request(
+      `/api/his/v1/clinical-documents/${originalDocument.compositionId}/actions/revise`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Composition/${originalDocument.compositionId}`]: originalDocument.compositionVersion,
+            [`Encounter/${candidate.started.encounterId}`]: candidate.encounterVersion,
+          },
+          input: {
+            document: revisedStructuredClinicalDocument,
+            reason: '复核检验结果后更正评估、处置和随访。',
+          },
+        }),
+        headers: commandHeaders(candidate.doctorCookie),
+        method: 'POST',
+      },
+    )
+    const revision = clinicalDocumentRevisionResponseSchema.parse(await revisionResponse.json()).data
+
+    setVirtualTime('2026-08-24T11:00:00+08:00')
+    const administratorCookie = await signIn(runtime, 'admin@demo.clinmesh.local', password)
+    const correctionResponse = await runtime.app.request(
+      `/api/his/v1/laboratory-requests/${originalRequest.id}/reports/${originalRequest.report.diagnosticReportId}/actions/correct`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`DiagnosticReport/${originalRequest.report.diagnosticReportId}`]: originalRequest.report.diagnosticReportVersion,
+          },
+          input: {
+            conclusion: '复核后白细胞计数位于参考范围内。',
+            expectedRequestVersion: originalRequest.version,
+            reason: '复核仪器原始数据后更正白细胞计数。',
+            results: originalRequest.report.results.map(result => ({
+              code: result.code,
+              value: result.code === '6690-2' ? 9.4 : result.value,
+            })),
+          },
+        }),
+        headers: commandHeaders(administratorCookie),
+        method: 'POST',
+      },
+    )
+    const correction = correctLaboratoryReportResponseSchema.parse(
+      await correctionResponse.json(),
+    ).data
+
+    setVirtualTime('2026-08-24T12:00:00+08:00')
+    const correctedDetailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${candidate.started.caseId}`,
+      { headers: { cookie: candidate.doctorCookie } },
+    )
+    const correctedRequest = doctorCaseDetailSchema.parse(
+      await correctedDetailResponse.json(),
+    ).laboratoryRequests?.requests[0]
+    if (correctedRequest?.report === undefined) {
+      throw new Error('Corrected laboratory report was not available for acknowledgement')
+    }
+    const acknowledgementResponse = await runtime.app.request(
+      `/api/his/v1/laboratory-requests/${correctedRequest.id}/reports/${correctedRequest.report.diagnosticReportId}/actions/acknowledge`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`DiagnosticReport/${correctedRequest.report.diagnosticReportId}`]: correctedRequest.report.diagnosticReportVersion,
+          },
+          input: { expectedRequestVersion: correctedRequest.version },
+        }),
+        headers: commandHeaders(candidate.doctorCookie),
+        method: 'POST',
+      },
+    )
+    const acknowledgement = acknowledgeLaboratoryReportResponseSchema.parse(
+      await acknowledgementResponse.json(),
+    ).data
+
+    setVirtualTime('2026-08-24T13:00:00+08:00')
+    const completionResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${candidate.started.encounterId}/actions/complete`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${candidate.started.encounterId}`]: candidate.encounterVersion,
+          },
+          input: {},
+        }),
+        headers: commandHeaders(candidate.doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(completionResponse.status).toBe(200)
+
+    const archiveResponse = await runtime.app.request(
+      `/api/his/v1/doctor/completed-cases/${candidate.started.caseId}`,
+      { headers: { cookie: candidate.doctorCookie } },
+    )
+
+    expect(archiveResponse.status).toBe(200)
+    const archive = await archiveResponse.json()
+    expect(archive).toMatchObject({
+      clinicalDocuments: [
+        { compositionId: originalDocument.compositionId, revisionNumber: 1 },
+        {
+          compositionId: revision.compositionId,
+          revisionNumber: 2,
+          revisionOfCompositionId: originalDocument.compositionId,
+        },
+      ],
+      laboratoryRequests: [{
+        previousReports: [{
+          diagnosticReportId: originalRequest.report.diagnosticReportId,
+          revisionNumber: 1,
+        }],
+        report: {
+          acknowledgement: { id: acknowledgement.acknowledgementId },
+          diagnosticReportId: correction.diagnosticReportId,
+          revisionNumber: 2,
+          revisionOfDiagnosticReportId: originalRequest.report.diagnosticReportId,
+        },
+      }],
+    })
+    expect(archive.timeline.slice(-4)).toEqual([
+      expect.objectContaining({
+        kind: 'clinical-document-revised',
+        occurredAt: '2026-08-24T10:00:00+08:00',
+        reference: `Composition/${revision.compositionId}`,
+      }),
+      expect.objectContaining({
+        kind: 'laboratory-report-revised',
+        occurredAt: '2026-08-24T11:00:00+08:00',
+        reference: `DiagnosticReport/${correction.diagnosticReportId}`,
+      }),
+      expect.objectContaining({
+        kind: 'laboratory-report-acknowledged',
+        occurredAt: '2026-08-24T12:00:00+08:00',
+        reference: `ReportAcknowledgement/${acknowledgement.acknowledgementId}`,
+      }),
+      expect.objectContaining({
+        kind: 'encounter-completed',
+        occurredAt: '2026-08-24T13:00:00+08:00',
+        reference: `Encounter/${candidate.started.encounterId}`,
+      }),
+    ])
   })
 
   it('previews every Encounter completion condition from formal owner facts', async () => {

@@ -42,10 +42,11 @@ import {
 } from '@clinmesh/ui/components/message-scroller'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardCheckIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, LockKeyholeIcon, MessagesSquareIcon, PillIcon, PlayIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, SendIcon, ShieldAlertIcon, StethoscopeIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
+import { ArchiveIcon, ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardCheckIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, LockKeyholeIcon, MessagesSquareIcon, PillIcon, PlayIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, SendIcon, ShieldAlertIcon, StethoscopeIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
 import { useState } from 'react'
 import {
   ApiClientError,
@@ -82,6 +83,7 @@ import {
   startVirtualPatient,
   withdrawPrescription,
 } from './api-client.ts'
+import { DoctorCompletedCaseArchive } from './doctor-completed-cases.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
@@ -158,6 +160,30 @@ function isLaboratoryRequestCatalogItemId(
 }
 
 export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
+  const messages = getWorkspaceMessages(locale)
+  return (
+    <Tabs defaultValue="active">
+      <TabsList aria-label={messages.consultation} className="w-full sm:w-fit" variant="line">
+        <TabsTrigger className="min-w-0 px-3" value="active">
+          <StethoscopeIcon data-icon="inline-start" />
+          {messages.doctorActiveCases}
+        </TabsTrigger>
+        <TabsTrigger className="min-w-0 px-3" value="completed">
+          <ArchiveIcon data-icon="inline-start" />
+          {messages.doctorCompletedCases}
+        </TabsTrigger>
+      </TabsList>
+      <TabsContent className="pt-4" value="active">
+        <ActiveDoctorWorkspace locale={locale} session={session} />
+      </TabsContent>
+      <TabsContent className="pt-4" value="completed">
+        <DoctorCompletedCaseArchive locale={locale} session={session} />
+      </TabsContent>
+    </Tabs>
+  )
+}
+
+function ActiveDoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
   const queryClient = useQueryClient()
   const scope = [session.actor.workspaceId, session.actor.epoch] as const

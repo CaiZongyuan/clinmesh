@@ -378,6 +378,41 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.get('/api/his/v1/doctor/completed-cases', async (context) => {
+      try {
+        const query = z.object({
+          completedFrom: z.iso.date().optional(),
+          completedTo: z.iso.date().optional(),
+          diagnosisCatalogItemId: z.string().regex(/^[A-Za-z0-9.-]{1,64}$/).optional(),
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(20),
+          patientId: z.string().regex(/^[A-Za-z0-9.-]{1,64}$/).optional(),
+        }).refine(value => (
+          value.completedFrom === undefined
+          || value.completedTo === undefined
+          || value.completedFrom <= value.completedTo
+        ), {
+          message: 'completedFrom must not be after completedTo',
+          path: ['completedFrom'],
+        }).parse(context.req.query())
+        return context.json(workflow.doctorCompletedCases(
+          await actor(context),
+          query,
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/doctor/completed-cases/:caseId', async (context) => {
+      try {
+        return context.json(workflow.doctorCompletedCaseDetail(
+          await actor(context),
+          context.req.param('caseId'),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
     app.get('/api/his/v1/doctor/virtual-patients', async (context) => {
       try {
         const query = z.object({
