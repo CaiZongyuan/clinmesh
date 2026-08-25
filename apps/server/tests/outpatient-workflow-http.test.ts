@@ -1566,7 +1566,7 @@ describe('outpatient workflow HTTP contract', () => {
       {
         body: JSON.stringify({
           expectedVersions: {
-            [`Composition/${signedDocument.compositionId}`]: signedDocument.compositionVersion,
+            [`Composition/${signedDocument.compositionId}`]: '999',
             [`Encounter/${ownerDetail.encounter.id}`]: ownerDetail.encounter.versionId,
           },
           input: {
@@ -1582,6 +1582,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(apiErrorSchema.parse(await unauthorizedRevisionResponse.json())).toMatchObject({
       error: { code: 'ROLE_NOT_ALLOWED' },
     })
+    expectCommandAuditOutcomes(runtime, 'clinical-document.revise', ['failed'])
 
     const unchangedOwnerResponse = await detail(candidate.doctorCookie)
     expect(unchangedOwnerResponse.status).toBe(200)
@@ -3541,6 +3542,11 @@ describe('outpatient workflow HTTP contract', () => {
     expect(forkResponse.status).toBe(409)
     expect(apiErrorSchema.parse(await forkResponse.json())).toMatchObject({
       error: {
+        conflict: {
+          currentStatus: 'superseded',
+          owner: 'clinical-document',
+          resource: `Composition/${signed.compositionId}`,
+        },
         message: 'The Clinical Document is superseded; only the latest version can be revised',
       },
     })
@@ -3966,7 +3972,7 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions,
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '999' },
           input: { expectedDraftVersion: 1 },
         } satisfies typeof deleteLaboratoryRequestDraftRequestSchema._output),
         headers: commandHeaders(otherDoctorCookie),
@@ -4017,6 +4023,13 @@ describe('outpatient workflow HTTP contract', () => {
     expect(apiErrorSchema.parse(await staleDeleteResponse.json())).toMatchObject({
       error: {
         code: 'LABORATORY_REQUEST_VERSION_CONFLICT',
+        conflict: {
+          currentStatus: 'empty',
+          currentVersion: '2',
+          expectedVersion: '1',
+          owner: 'laboratory-request-draft',
+          resource: `LaboratoryRequestDraft/${started.caseId}`,
+        },
         message: 'The laboratory request draft is empty at version 2',
       },
     })
@@ -4375,7 +4388,16 @@ describe('outpatient workflow HTTP contract', () => {
     const staleAcceptedCancelResponse = await cancel(active.request)
     expect(staleAcceptedCancelResponse.status).toBe(409)
     expect(apiErrorSchema.parse(await staleAcceptedCancelResponse.json())).toMatchObject({
-      error: { code: 'LABORATORY_REQUEST_VERSION_CONFLICT' },
+      error: {
+        code: 'LABORATORY_REQUEST_VERSION_CONFLICT',
+        conflict: {
+          currentStatus: 'accepted',
+          currentVersion: '2',
+          expectedVersion: '1',
+          owner: 'laboratory-request',
+          resource: `LaboratoryRequest/${active.request.id}`,
+        },
+      },
     })
     const acceptedDetailResponse = await runtime.app.request(
       `/api/his/v1/doctor/cases/${started.caseId}`,
@@ -4391,6 +4413,12 @@ describe('outpatient workflow HTTP contract', () => {
     expect(apiErrorSchema.parse(await acceptedCancelResponse.json())).toMatchObject({
       error: {
         code: 'LABORATORY_REQUEST_NOT_CANCELLABLE',
+        conflict: {
+          currentStatus: 'accepted',
+          currentVersion: '2',
+          owner: 'laboratory-request',
+          resource: `LaboratoryRequest/${active.request.id}`,
+        },
         message: 'The laboratory request cannot be cancelled from status "accepted"',
       },
     })
@@ -4404,6 +4432,13 @@ describe('outpatient workflow HTTP contract', () => {
     expect(apiErrorSchema.parse(await staleInProgressCancelResponse.json())).toMatchObject({
       error: {
         code: 'LABORATORY_REQUEST_VERSION_CONFLICT',
+        conflict: {
+          currentStatus: 'in-progress',
+          currentVersion: '3',
+          expectedVersion: '1',
+          owner: 'laboratory-request',
+          resource: `LaboratoryRequest/${active.request.id}`,
+        },
         message: 'The laboratory request is "in-progress" at version 3; a related resource version has changed',
       },
     })
@@ -4555,6 +4590,30 @@ describe('outpatient workflow HTTP contract', () => {
     expect(apiErrorSchema.parse(await cancelResponse.json())).toMatchObject({
       error: { code: 'ROLE_NOT_ALLOWED' },
     })
+
+    const staleCancelResponse = await runtime.app.request(
+      `/api/his/v1/laboratory-requests/${issued.id}/actions/cancel`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`ServiceRequest/${issued.serviceRequestId}`]: '999',
+            [`Task/${issued.taskId}`]: issued.taskVersion,
+          },
+          input: {
+            expectedRequestVersion: issued.version,
+            reasonCode: 'no-longer-needed',
+          },
+        } satisfies typeof cancelLaboratoryRequestRequestSchema._output),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    expect(staleCancelResponse.status).toBe(403)
+    expect(apiErrorSchema.parse(await staleCancelResponse.json())).toMatchObject({
+      error: { code: 'ROLE_NOT_ALLOWED' },
+    })
+    expectCommandAuditOutcomes(runtime, 'laboratory-request.cancel', ['failed', 'failed'])
   })
 
   it('does not advertise report delivery when the Scenario has no laboratory result facts', async () => {
@@ -5003,6 +5062,13 @@ describe('outpatient workflow HTTP contract', () => {
     expect(apiErrorSchema.parse(await rejected.json())).toMatchObject({
       error: {
         code: 'LABORATORY_REQUEST_VERSION_CONFLICT',
+        conflict: {
+          currentStatus: 'reported',
+          currentVersion: String(request.version + 1),
+          expectedVersion: String(request.version),
+          owner: 'laboratory-report',
+          resource: `DiagnosticReport/${request.report.diagnosticReportId}`,
+        },
         message: `The laboratory request is "reported" at version ${request.version + 1}; expected version ${request.version}`,
       },
     })
@@ -7870,7 +7936,7 @@ describe('outpatient workflow HTTP contract', () => {
     const otherDoctorCookie = await selectAdditionalDoctorRole(runtime, password)
     const unauthorizedResponse = await runtime.app.request(endpoint, {
       body: JSON.stringify({
-        expectedVersions: { [`MedicationRequest/${medicationRequestId}`]: '2' },
+        expectedVersions: { [`MedicationRequest/${medicationRequestId}`]: '999' },
         input: { expectedPrescriptionVersion: 2 },
       }),
       headers: commandHeaders(otherDoctorCookie),
@@ -7971,6 +8037,12 @@ describe('outpatient workflow HTTP contract', () => {
     expect(apiErrorSchema.parse(await duplicateResponse.json())).toMatchObject({
       error: {
         code: 'WORKFLOW_CONFLICT',
+        conflict: {
+          currentStatus: 'withdrawn',
+          currentVersion: '3',
+          owner: 'prescription',
+          resource: `Prescription/${testCase.draft.prescriptionId}`,
+        },
         message: 'The prescription is already withdrawn at version 3',
       },
     })
@@ -8221,7 +8293,7 @@ describe('outpatient workflow HTTP contract', () => {
     const otherDoctorCookie = await selectAdditionalDoctorRole(runtime, password)
     const unauthorizedDeleteResponse = await runtime.app.request(endpoint, {
       body: JSON.stringify({
-        expectedVersions,
+        expectedVersions: { [`Encounter/${started.encounterId}`]: '999' },
         input: { expectedDraftVersion: 1 },
       } satisfies typeof deletePrescriptionDraftRequestSchema._output),
       headers: commandHeaders(otherDoctorCookie),
@@ -8274,6 +8346,13 @@ describe('outpatient workflow HTTP contract', () => {
     expect(apiErrorSchema.parse(await staleResponse.json())).toMatchObject({
       error: {
         code: 'WORKFLOW_CONFLICT',
+        conflict: {
+          currentStatus: 'empty',
+          currentVersion: '2',
+          expectedVersion: '1',
+          owner: 'prescription-draft',
+          resource: `PrescriptionDraft/${started.caseId}`,
+        },
         message: 'The prescription draft is empty at version 2',
       },
     })
@@ -8469,6 +8548,12 @@ describe('outpatient workflow HTTP contract', () => {
     expect(apiErrorSchema.parse(await withdrawalResponse.json())).toMatchObject({
       error: {
         code: 'WORKFLOW_CONFLICT',
+        conflict: {
+          currentStatus: 'dispensing-started',
+          currentVersion: String(dispensed.prescriptionVersion),
+          owner: 'prescription',
+          resource: `Prescription/${prescription.prescriptionId}`,
+        },
         message: 'The prescription cannot be withdrawn because its current state is "dispensing-started"',
       },
     })

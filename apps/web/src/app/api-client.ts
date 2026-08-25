@@ -47,6 +47,7 @@ import {
   triageResponseSchema,
   virtualPatientListSchema,
   withdrawPrescriptionResponseSchema,
+  type ApiConflict,
   type ClinicalDocumentContent,
   type DiagnosisDraftEntry,
   type LaboratoryRequestCatalogItemId,
@@ -60,12 +61,14 @@ export const sessionQueryKey = ['session-context'] as const
 
 export class ApiClientError extends Error {
   readonly code: string
+  readonly conflict: ApiConflict | undefined
   readonly status: number
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, conflict?: ApiConflict) {
     super(message)
     this.name = 'ApiClientError'
     this.code = code
+    this.conflict = conflict
     this.status = status
   }
 }
@@ -81,6 +84,7 @@ async function parseResponse<Schema extends z.ZodType>(
       response.status,
       parsed.success ? parsed.data.error.code : 'UNEXPECTED_RESPONSE',
       parsed.success ? parsed.data.error.message : `Request failed with status ${response.status}`,
+      parsed.success ? parsed.data.error.conflict : undefined,
     )
   }
   return schema.parse(body)

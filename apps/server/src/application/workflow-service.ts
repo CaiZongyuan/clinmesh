@@ -3,6 +3,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
 import {
   acknowledgeLaboratoryReportResponseSchema,
+  type ApiConflict,
   askConsultationQuestionResponseSchema,
   laboratoryRequestActionResponseSchema,
   type ClinicalDocumentContent,
@@ -69,15 +70,18 @@ import {
 
 export class WorkflowError extends Error {
   readonly code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
+  readonly conflict: ApiConflict | undefined
   readonly status: 403 | 409
 
   constructor(
     code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT',
     message: string,
+    conflict?: ApiConflict,
   ) {
     super(message)
     this.name = 'WorkflowError'
     this.code = code
+    this.conflict = conflict
     this.status = code === 'ROLE_NOT_ALLOWED' ? 403 : 409
   }
 }
@@ -3272,6 +3276,11 @@ export class WorkflowService {
     idempotencyKey: string
   }): CommandResponse<z.infer<typeof prescriptionDraftResponseSchema.shape.data>> {
     return this.#commands.execute({
+      authorize: () => {
+        this.#assertRole(input.context, ['outpatient-doctor'])
+        const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+        this.#assertCaseResponsibility(input.context, outpatientCase.case_id)
+      },
       context: input.context,
       dataSchema: prescriptionDraftResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
@@ -3282,13 +3291,19 @@ export class WorkflowService {
       },
       operation: 'encounter.delete-prescription-draft',
     }, () => {
-      this.#assertRole(input.context, ['outpatient-doctor'])
       this.#assertPrescriptionConclusionSupported(input.context)
       const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
-      this.#assertCaseResponsibility(input.context, outpatientCase.case_id)
       const encounter = this.#fhir.read(input.context, 'Encounter', input.encounterId)
       if (encounter.status !== 'in-progress' || outpatientCase.status === 'completed') {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription draft cannot be deleted')
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          'The prescription draft cannot be deleted',
+          {
+            currentStatus: 'closed',
+            owner: 'prescription-draft',
+            resource: `PrescriptionDraft/${outpatientCase.case_id}`,
+          },
+        )
       }
       this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
       const state = prescriptionDraftStateRowSchema.optional().parse(
@@ -3298,18 +3313,41 @@ export class WorkflowService {
         `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id),
       )
       if (state === undefined) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription draft does not exist')
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          'The prescription draft does not exist',
+          {
+            currentStatus: 'missing',
+            expectedVersion: String(input.expectedDraftVersion),
+            owner: 'prescription-draft',
+            resource: `PrescriptionDraft/${outpatientCase.case_id}`,
+          },
+        )
       }
       if (state.draft_json === null) {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
           `The prescription draft is empty at version ${state.version}`,
+          {
+            currentStatus: 'empty',
+            currentVersion: String(state.version),
+            expectedVersion: String(input.expectedDraftVersion),
+            owner: 'prescription-draft',
+            resource: `PrescriptionDraft/${outpatientCase.case_id}`,
+          },
         )
       }
       if (state.version !== input.expectedDraftVersion) {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
           `The prescription draft is at version ${state.version}; expected version ${input.expectedDraftVersion}`,
+          {
+            currentStatus: 'draft',
+            currentVersion: String(state.version),
+            expectedVersion: String(input.expectedDraftVersion),
+            owner: 'prescription-draft',
+            resource: `PrescriptionDraft/${outpatientCase.case_id}`,
+          },
         )
       }
       const draftVersion = state.version + 1
@@ -3759,6 +3797,26 @@ export class WorkflowService {
     prescriptionId: string
   }): CommandResponse<z.infer<typeof withdrawPrescriptionResponseSchema.shape.data>> {
     return this.#commands.execute({
+      authorize: () => {
+        this.#assertRole(input.context, ['outpatient-doctor'])
+        this.#assertPrescriptionConclusionSupported(input.context)
+        if (input.context.practitionerRoleId === undefined) {
+          throw new WorkflowError(
+            'ROLE_NOT_ALLOWED',
+            'A Practitioner Role is required to withdraw a prescription',
+          )
+        }
+        const prescription = z.object({ case_id: z.string().min(1) }).optional().parse(
+          this.#database.driver.prepare(`
+            SELECT case_id FROM prescription
+            WHERE workspace_id = ? AND epoch = ? AND prescription_id = ?
+          `).get(input.context.workspaceId, input.context.epoch, input.prescriptionId),
+        )
+        if (prescription === undefined) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription was not found')
+        }
+        this.#assertCaseResponsibility(input.context, prescription.case_id)
+      },
       context: input.context,
       dataSchema: withdrawPrescriptionResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
@@ -3769,14 +3827,6 @@ export class WorkflowService {
       },
       operation: 'prescription.withdraw',
     }, transaction => {
-      this.#assertRole(input.context, ['outpatient-doctor'])
-      this.#assertPrescriptionConclusionSupported(input.context)
-      if (input.context.practitionerRoleId === undefined) {
-        throw new WorkflowError(
-          'ROLE_NOT_ALLOWED',
-          'A Practitioner Role is required to withdraw a prescription',
-        )
-      }
       const prescription = prescriptionWithdrawalLookupRowSchema.optional().parse(
         this.#database.driver.prepare(`
           SELECT prescription.case_id, prescription.version, prescription.status,
@@ -3797,23 +3847,43 @@ export class WorkflowService {
       if (prescription === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription was not found')
       }
-      this.#assertCaseResponsibility(input.context, prescription.case_id)
       if (prescription.version !== input.expectedPrescriptionVersion) {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
           `The prescription is at version ${prescription.version}; expected version ${input.expectedPrescriptionVersion}`,
+          {
+            currentStatus: prescription.withdrawal_id === null
+              ? prescription.status
+              : 'withdrawn',
+            currentVersion: String(prescription.version),
+            expectedVersion: String(input.expectedPrescriptionVersion),
+            owner: 'prescription',
+            resource: `Prescription/${input.prescriptionId}`,
+          },
         )
       }
       if (prescription.withdrawal_id !== null) {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
           `The prescription is already withdrawn at version ${prescription.version}`,
+          {
+            currentStatus: 'withdrawn',
+            currentVersion: String(prescription.version),
+            owner: 'prescription',
+            resource: `Prescription/${input.prescriptionId}`,
+          },
         )
       }
       if (!['signed', 'paid'].includes(prescription.status)) {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
           `The prescription cannot be withdrawn from status "${prescription.status}"`,
+          {
+            currentStatus: prescription.status,
+            currentVersion: String(prescription.version),
+            owner: 'prescription',
+            resource: `Prescription/${input.prescriptionId}`,
+          },
         )
       }
       const items = z.array(prescriptionDispensingRowSchema).parse(
@@ -3832,6 +3902,12 @@ export class WorkflowService {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
           'The prescription cannot be withdrawn because its current state is "dispensing-started"',
+          {
+            currentStatus: 'dispensing-started',
+            currentVersion: String(prescription.version),
+            owner: 'prescription',
+            resource: `Prescription/${input.prescriptionId}`,
+          },
         )
       }
       const medicationReferences = items.map(
@@ -4933,6 +5009,42 @@ export class WorkflowService {
   }> {
     const revision = clinicalDocumentRevisionDefinition(input.revision, input.reason)
     return this.#commands.execute({
+      authorize: () => {
+        this.#assertRole(input.context, ['outpatient-doctor'])
+        const source = practitionerRoleIdRowSchema.optional().parse(
+          this.#database.driver.prepare(`
+            SELECT responsibility.practitioner_role_id
+            FROM signed_clinical_document AS document
+            JOIN outpatient_case_responsibility AS responsibility
+              ON responsibility.workspace_id = document.workspace_id
+             AND responsibility.epoch = document.epoch
+             AND responsibility.case_id = document.case_id
+            WHERE document.workspace_id = ? AND document.epoch = ?
+              AND document.composition_id = ?
+          `).get(
+            input.context.workspaceId,
+            input.context.epoch,
+            input.compositionId,
+          ),
+        )
+        if (source === undefined) {
+          throw new WorkflowError(
+            'WORKFLOW_CONFLICT',
+            'The signed clinical document was not found',
+            {
+              currentStatus: 'missing',
+              owner: 'clinical-document',
+              resource: `Composition/${input.compositionId}`,
+            },
+          )
+        }
+        if (source.practitioner_role_id !== input.context.practitionerRoleId) {
+          throw new WorkflowError(
+            'ROLE_NOT_ALLOWED',
+            'Only the doctor responsible for the outpatient case can revise its Clinical Document',
+          )
+        }
+      },
       context: input.context,
       dataSchema: clinicalDocumentRevisionResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
@@ -4944,7 +5056,6 @@ export class WorkflowService {
       },
       operation: 'clinical-document.revise',
     }, transaction => {
-      this.#assertRole(input.context, ['outpatient-doctor'])
       const source = clinicalDocumentRevisionSourceRowSchema.optional().parse(
         this.#database.driver.prepare(`
           SELECT document.document_id, document.bundle_id, outpatient_case.patient_id,
@@ -4967,12 +5078,14 @@ export class WorkflowService {
         ),
       )
       if (source === undefined) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The signed clinical document was not found')
-      }
-      if (source.practitioner_role_id !== input.context.practitionerRoleId) {
         throw new WorkflowError(
-          'ROLE_NOT_ALLOWED',
-          'Only the doctor responsible for the outpatient case can revise its Clinical Document',
+          'WORKFLOW_CONFLICT',
+          'The signed clinical document was not found',
+          {
+            currentStatus: 'missing',
+            owner: 'clinical-document',
+            resource: `Composition/${input.compositionId}`,
+          },
         )
       }
       const successor = this.#database.driver.prepare(`
@@ -4987,6 +5100,11 @@ export class WorkflowService {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
           'The Clinical Document is superseded; only the latest version can be revised',
+          {
+            currentStatus: 'superseded',
+            owner: 'clinical-document',
+            resource: `Composition/${input.compositionId}`,
+          },
         )
       }
       this.#assertExpectedVersions(input.expectedVersions, [
@@ -5600,6 +5718,11 @@ export class WorkflowService {
     draftVersion: number
   }> {
     return this.#commands.execute({
+      authorize: () => {
+        this.#assertRole(input.context, ['outpatient-doctor'])
+        const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+        this.#assertCaseResponsibility(input.context, outpatientCase.case_id)
+      },
       context: input.context,
       dataSchema: laboratoryRequestDraftResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
@@ -5621,18 +5744,38 @@ export class WorkflowService {
         throw new WorkflowError(
           'LABORATORY_REQUEST_VERSION_CONFLICT',
           'The laboratory request draft does not exist',
+          {
+            currentStatus: 'missing',
+            expectedVersion: String(input.expectedDraftVersion),
+            owner: 'laboratory-request-draft',
+            resource: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
+          },
         )
       }
       if (current.draft_catalog_item_id === null) {
         throw new WorkflowError(
           'LABORATORY_REQUEST_VERSION_CONFLICT',
           `The laboratory request draft is empty at version ${current.version}`,
+          {
+            currentStatus: 'empty',
+            currentVersion: String(current.version),
+            expectedVersion: String(input.expectedDraftVersion),
+            owner: 'laboratory-request-draft',
+            resource: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
+          },
         )
       }
       if (current.version !== input.expectedDraftVersion) {
         throw new WorkflowError(
           'LABORATORY_REQUEST_VERSION_CONFLICT',
           `The laboratory request draft is at version ${current.version}; expected version ${input.expectedDraftVersion}`,
+          {
+            currentStatus: 'draft',
+            currentVersion: String(current.version),
+            expectedVersion: String(input.expectedDraftVersion),
+            owner: 'laboratory-request-draft',
+            resource: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
+          },
         )
       }
       const draftVersion = current.version + 1
@@ -5855,6 +5998,17 @@ export class WorkflowService {
     requestId: string
   }) {
     const execute = () => this.#commands.execute({
+      authorize: () => {
+        this.#assertRole(input.context, ['outpatient-doctor'])
+        const request = this.#laboratoryRequest(input.context, input.requestId)
+        if (request === undefined
+          || request.authored_by !== (
+            input.context.practitionerId ?? input.context.actorId
+          )) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request was not found')
+        }
+        this.#assertCaseResponsibility(input.context, request.case_id)
+      },
       context: input.context,
       dataSchema: laboratoryRequestActionResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
@@ -5866,13 +6020,10 @@ export class WorkflowService {
       },
       operation: 'laboratory-request.cancel',
     }, (transaction) => {
-      this.#assertRole(input.context, ['outpatient-doctor'])
       const request = this.#laboratoryRequest(input.context, input.requestId)
-      if (request === undefined
-        || request.authored_by !== (input.context.practitionerId ?? input.context.actorId)) {
+      if (request === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request was not found')
       }
-      this.#assertCaseResponsibility(input.context, request.case_id)
       this.#assertExpectedVersions(input.expectedVersions, [
         `ServiceRequest/${request.service_request_id}`,
         `Task/${request.execution_task_id}`,
@@ -5881,12 +6032,25 @@ export class WorkflowService {
         throw new WorkflowError(
           'LABORATORY_REQUEST_VERSION_CONFLICT',
           `The laboratory request is "${request.status}" at version ${request.version}; expected version ${input.expectedRequestVersion}`,
+          {
+            currentStatus: request.status,
+            currentVersion: String(request.version),
+            expectedVersion: String(input.expectedRequestVersion),
+            owner: 'laboratory-request',
+            resource: `LaboratoryRequest/${request.request_id}`,
+          },
         )
       }
       if (request.status !== 'issued') {
         throw new WorkflowError(
           'LABORATORY_REQUEST_NOT_CANCELLABLE',
           `The laboratory request cannot be cancelled from status "${request.status}"`,
+          {
+            currentStatus: request.status,
+            currentVersion: String(request.version),
+            owner: 'laboratory-request',
+            resource: `LaboratoryRequest/${request.request_id}`,
+          },
         )
       }
       const serviceRequest = transaction.fhir.read(
@@ -5967,6 +6131,13 @@ export class WorkflowService {
         throw new WorkflowError(
           'LABORATORY_REQUEST_VERSION_CONFLICT',
           `The laboratory request is "${current.status}" at version ${current.version}; a related resource version has changed`,
+          {
+            currentStatus: current.status,
+            currentVersion: String(current.version),
+            expectedVersion: String(input.expectedRequestVersion),
+            owner: 'laboratory-request',
+            resource: `LaboratoryRequest/${current.request_id}`,
+          },
         )
       }
       throw error
@@ -6508,6 +6679,7 @@ export class WorkflowService {
     status: 'reported'
   }> {
     return this.#commands.execute({
+      authorize: () => this.#assertRole(input.context, ['lis-system']),
       context: input.context,
       dataSchema: correctLaboratoryReportResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
@@ -6522,7 +6694,6 @@ export class WorkflowService {
       },
       operation: 'laboratory-report.correct',
     }, (transaction) => {
-      this.#assertRole(input.context, ['lis-system'])
       this.#assertExpectedVersions(
         input.expectedVersions,
         [`DiagnosticReport/${input.diagnosticReportId}`],
@@ -6535,18 +6706,38 @@ export class WorkflowService {
         throw new WorkflowError(
           'LABORATORY_REQUEST_VERSION_CONFLICT',
           `The laboratory request is "${request.status}" at version ${request.version}; expected version ${input.expectedRequestVersion}`,
+          {
+            currentStatus: request.status,
+            currentVersion: String(request.version),
+            expectedVersion: String(input.expectedRequestVersion),
+            owner: 'laboratory-report',
+            resource: `DiagnosticReport/${input.diagnosticReportId}`,
+          },
         )
       }
       if (request.diagnostic_report_id !== input.diagnosticReportId) {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
           'The laboratory report is superseded; only the latest signed report can be corrected',
+          {
+            currentStatus: 'superseded',
+            currentVersion: String(request.version),
+            expectedVersion: String(input.expectedRequestVersion),
+            owner: 'laboratory-report',
+            resource: `DiagnosticReport/${input.diagnosticReportId}`,
+          },
         )
       }
       if (request.status !== 'reported' && request.status !== 'acknowledged') {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
           `The laboratory report cannot be corrected while the request status is "${request.status}"`,
+          {
+            currentStatus: request.status,
+            currentVersion: String(request.version),
+            owner: 'laboratory-report',
+            resource: `DiagnosticReport/${input.diagnosticReportId}`,
+          },
         )
       }
       const sourceReportResource = transaction.fhir.read(

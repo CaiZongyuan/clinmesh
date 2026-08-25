@@ -1750,6 +1750,12 @@ describe('role workspaces', () => {
           return Response.json({
             error: {
               code: 'LABORATORY_REQUEST_NOT_CANCELLABLE',
+              conflict: {
+                currentStatus: 'accepted',
+                currentVersion: '2',
+                owner: 'laboratory-request',
+                resource: 'LaboratoryRequest/laboratory-request-1',
+              },
               message: 'The laboratory request cannot be cancelled from status "accepted"',
             },
           }, { status: 409 })
@@ -1841,11 +1847,25 @@ describe('role workspaces', () => {
     expect(within(cancelDialog).getByText('C 反应蛋白')).toBeTruthy()
     expect(within(cancelDialog).getByText('已开具')).toBeTruthy()
     await user.click(within(cancelDialog).getByRole('button', { name: '确认取消' }))
-    expect(await screen.findByText('只有已开具且尚未受理的检查申请可以取消。')).toBeTruthy()
+    expect(await screen.findByText(
+      '检查申请当前状态为“已受理”，版本为 2。请刷新后重新确认。',
+    )).toBeTruthy()
     expect(screen.queryByText(/The laboratory request cannot be cancelled/)).toBeNull()
     expect(cancellationRequests).toBe(1)
 
-    await user.click(within(cancelDialog).getByRole('button', { name: '确认取消' }))
+    await user.click(within(cancelDialog).getByRole('button', { name: '取消' }))
+    await user.click(screen.getByRole('listitem', { name: '选择病例 合成候选患者周远' }))
+    expect(await screen.findByText('当前无正式检查申请')).toBeTruthy()
+    expect(screen.queryByText(
+      '检查申请当前状态为“已受理”，版本为 2。请刷新后重新确认。',
+    )).toBeNull()
+
+    await user.click(screen.getByRole('listitem', { name: '选择病例 合成候选患者林晓' }))
+    const retryCancelButton = (await screen.findAllByRole('button', { name: /取消检查申请/ }))[0]
+    if (retryCancelButton === undefined) throw new Error('Cancellable request was not restored')
+    await user.click(retryCancelButton)
+    const retryCancelDialog = await screen.findByRole('alertdialog', { name: '确认取消检查申请' })
+    await user.click(within(retryCancelDialog).getByRole('button', { name: '确认取消' }))
     expect(await screen.findByText('检查申请已取消')).toBeTruthy()
     expect(cancellationRequests).toBe(2)
     await waitFor(() => expect(screen.queryByText('已开具')).toBeNull())
@@ -3715,6 +3735,11 @@ describe('role workspaces', () => {
         return Response.json({
           error: {
             code: 'WORKFLOW_CONFLICT',
+            conflict: {
+              currentStatus: 'superseded',
+              owner: 'clinical-document',
+              resource: 'Composition/composition-structured-2',
+            },
             message: 'The Clinical Document is superseded; only the latest version can be revised',
           },
         }, { status: 409 })
@@ -3785,7 +3810,9 @@ describe('role workspaces', () => {
         reason: '补充复诊时限和危险征象。',
       },
     })
-    expect(await screen.findByText('数据已发生变化，请刷新后重新确认。')).toBeTruthy()
+    expect(await screen.findByText(
+      '病历当前状态为“已被后续版本替代”。请刷新后重新确认。',
+    )).toBeTruthy()
     expect(screen.queryByText(
       'The Clinical Document is superseded; only the latest version can be revised',
     )).toBeNull()

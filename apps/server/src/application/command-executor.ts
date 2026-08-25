@@ -83,6 +83,7 @@ export interface CommandResponse<Data> extends CommandHandlerResult<Data> {
 }
 
 export interface CommandInvocation<Input, Data> {
+  authorize?: () => void
   context: ActorContext
   contextRequirement?: 'active' | 'current'
   dataSchema: z.ZodType<Data>
@@ -268,6 +269,7 @@ export class CommandExecutor {
         this.#workspaces.assertActive(context, context.scenarioRunId)
       }
 
+      invocation.authorize?.()
       this.#checkExpectedVersions(context, invocation.expectedVersions)
       this.#database.driver.prepare(`
         INSERT INTO command_receipt (

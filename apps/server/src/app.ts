@@ -76,7 +76,15 @@ function apiErrorResponse(
     || error instanceof ScenarioError
     || error instanceof WorkflowError
   ) {
-    return context.json({ error: { code: error.code, message: error.message } }, error.status)
+    return context.json({
+      error: {
+        code: error.code,
+        ...(error instanceof WorkflowError && error.conflict !== undefined
+          ? { conflict: error.conflict }
+          : {}),
+        message: error.message,
+      },
+    }, error.status)
   }
   if (
     error instanceof CommandConflictError

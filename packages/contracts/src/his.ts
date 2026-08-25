@@ -10,9 +10,42 @@ export const roleCodeSchema = z.enum([
   'triage-nurse',
 ])
 
+export const apiConflictSchema = z.object({
+  currentStatus: z.enum([
+    'accepted',
+    'acknowledged',
+    'cancelled',
+    'closed',
+    'dispensed',
+    'dispensing-started',
+    'draft',
+    'empty',
+    'in-progress',
+    'issued',
+    'missing',
+    'paid',
+    'reported',
+    'signed',
+    'superseded',
+    'withdrawn',
+  ]).optional(),
+  currentVersion: z.string().regex(/^\d+$/).optional(),
+  expectedVersion: z.string().regex(/^\d+$/).optional(),
+  owner: z.enum([
+    'clinical-document',
+    'laboratory-report',
+    'laboratory-request',
+    'laboratory-request-draft',
+    'prescription',
+    'prescription-draft',
+  ]),
+  resource: z.string().regex(/^[A-Z][A-Za-z]+\/[A-Za-z0-9.-]{1,128}$/),
+}).strict()
+
 export const apiErrorSchema = z.object({
   error: z.object({
     code: z.string().min(1),
+    conflict: apiConflictSchema.optional(),
     message: z.string().min(1),
   }),
 })
@@ -1311,6 +1344,7 @@ export const dispenseResponseSchema = commandResponseSchema(z.object({
 }))
 
 export type RoleCode = z.infer<typeof roleCodeSchema>
+export type ApiConflict = z.infer<typeof apiConflictSchema>
 export type SessionContext = z.infer<typeof sessionContextSchema>
 export type ScenarioState = z.infer<typeof scenarioStateSchema>
 export type PatientSummary = z.infer<typeof patientSummarySchema>

@@ -531,10 +531,10 @@ function ActiveDoctorWorkspace({
     onSuccess: refreshCase,
   })
   const deleteRequestDraft = useMutation({
-    mutationFn: () => {
+    mutationFn: (caseId: string) => {
       const current = detail.data
       const requestState = current?.laboratoryRequests
-      if (current === undefined || requestState?.draft === undefined) {
+      if (current?.caseId !== caseId || requestState?.draft === undefined) {
         throw new Error(messages.consultationUnavailable)
       }
       return deleteLaboratoryRequestDraft({
@@ -547,14 +547,16 @@ function ActiveDoctorWorkspace({
     onSuccess: refreshCase,
   })
   const cancelRequest = useMutation({
-    mutationFn: (request: LaboratoryRequest) => cancelLaboratoryRequest({
-      requestId: request.id,
-      requestVersion: request.version,
-      serviceRequestId: request.serviceRequestId,
-      serviceRequestVersion: request.serviceRequestVersion,
-      taskId: request.taskId,
-      taskVersion: request.taskVersion,
-    }, newIdempotencyKey()),
+    mutationFn: ({ request }: { caseId: string; request: LaboratoryRequest }) => (
+      cancelLaboratoryRequest({
+        requestId: request.id,
+        requestVersion: request.version,
+        serviceRequestId: request.serviceRequestId,
+        serviceRequestVersion: request.serviceRequestVersion,
+        taskId: request.taskId,
+        taskVersion: request.taskVersion,
+      }, newIdempotencyKey())
+    ),
     onError: refreshCase,
     onSuccess: refreshCase,
   })
@@ -572,6 +574,7 @@ function ActiveDoctorWorkspace({
   })
   const correctReport = useMutation({
     mutationFn: ({ input, request }: {
+      caseId: string
       input: LaboratoryReportCorrectionInput
       request: LaboratoryRequest
     }) => {
@@ -844,20 +847,36 @@ function ActiveDoctorWorkspace({
                   : {}),
               },
               cancel: {
-                error: cancelRequest.error,
-                onSubmit: request => cancelRequest.mutate(request),
+                error: cancelRequest.variables?.caseId === detail.data.caseId
+                  && detail.data.laboratoryRequests?.requests.some(
+                    request => request.id === cancelRequest.variables?.request.id,
+                  ) === true
+                  ? cancelRequest.error
+                  : null,
+                onSubmit: request => cancelRequest.mutate({ caseId: detail.data.caseId, request }),
                 pending: cancelRequest.isPending,
                 ...(cancelRequest.isSuccess && cancelRequest.variables !== undefined
-                  ? { successRequestId: cancelRequest.variables.id }
+                  ? { successRequestId: cancelRequest.variables.request.id }
                   : {}),
               },
               correct: {
                 allowed: session.availableRoles.some(role => role.code === 'administrator'),
-                error: correctReport.error,
+                error: correctReport.variables?.caseId === detail.data.caseId
+                  && detail.data.laboratoryRequests?.requests.some(request => (
+                    request.id === correctReport.variables?.request.id
+                    && request.report?.diagnosticReportId
+                      === correctReport.variables?.request.report?.diagnosticReportId
+                  )) === true
+                  ? correctReport.error
+                  : null,
                 ...(correctReport.variables === undefined
                   ? {}
                   : { lastRequestId: correctReport.variables.request.id }),
-                onSubmit: (request, input) => correctReport.mutate({ input, request }),
+                onSubmit: (request, input) => correctReport.mutate({
+                  caseId: detail.data.caseId,
+                  input,
+                  request,
+                }),
                 pending: correctReport.isPending,
                 ...(correctReport.isPending && correctReport.variables !== undefined
                   ? { pendingRequestId: correctReport.variables.request.id }
@@ -867,8 +886,10 @@ function ActiveDoctorWorkspace({
                   : {}),
               },
               deleteDraft: {
-                error: deleteRequestDraft.error,
-                onSubmit: () => deleteRequestDraft.mutate(),
+                error: deleteRequestDraft.variables === detail.data.caseId
+                  ? deleteRequestDraft.error
+                  : null,
+                onSubmit: () => deleteRequestDraft.mutate(detail.data.caseId),
                 pending: deleteRequestDraft.isPending,
                 ...(deleteRequestDraft.data === undefined
                   ? {}
@@ -1995,6 +2016,7 @@ function StructuredClinicalDocumentPanel({
   const signedDocuments = detail.clinicalDocument?.signed ?? []
   const latestSignedDocument = signedDocuments.at(-1)
   const [revisionPreview, setRevisionPreview] = useState<{
+    caseId: string
     compositionId: string
     compositionVersion: string
     document: ClinicalDocumentContent
@@ -2049,22 +2071,21 @@ function StructuredClinicalDocumentPanel({
   })
   const revise = useMutation({
     mutationFn: (input: {
+      caseId: string
       compositionId: string
       compositionVersion: string
       document: ClinicalDocumentContent
       encounterId: string
       encounterVersion: string
       reason: string
-    }) => {
-      return reviseStructuredClinicalDocument({
-        compositionId: input.compositionId,
-        compositionVersion: input.compositionVersion,
-        document: input.document,
-        encounterId: input.encounterId,
-        encounterVersion: input.encounterVersion,
-        reason: input.reason,
-      }, newIdempotencyKey())
-    },
+    }) => reviseStructuredClinicalDocument({
+      compositionId: input.compositionId,
+      compositionVersion: input.compositionVersion,
+      document: input.document,
+      encounterId: input.encounterId,
+      encounterVersion: input.encounterVersion,
+      reason: input.reason,
+    }, newIdempotencyKey()),
     onError: async () => {
       await onRefresh()
     },
@@ -2150,6 +2171,7 @@ function StructuredClinicalDocumentPanel({
                 key={latestSignedDocument.compositionId}
                 messages={messages}
                 onSubmit={(document, reason) => setRevisionPreview({
+                  caseId: detail.caseId,
                   compositionId: latestSignedDocument.compositionId,
                   compositionVersion: latestSignedDocument.compositionVersion,
                   document,
@@ -2204,7 +2226,11 @@ function StructuredClinicalDocumentPanel({
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
-              {revise.error === null ? null : (
+              {revise.error === null
+                || revise.variables?.caseId !== detail.caseId
+                || !signedDocuments.some(document => (
+                  document.compositionId === revise.variables?.compositionId
+                )) ? null : (
                 <ErrorAlert
                   message={getWorkspaceErrorMessage(revise.error, messages)}
                   title={getWorkspaceErrorTitle(revise.error, messages, messages.operationFailed)}
@@ -2905,8 +2931,10 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
     },
   })
   const removeDraft = useMutation({
-    mutationFn: () => {
-      if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
+    mutationFn: (caseId: string) => {
+      if (detail.caseId !== caseId || state?.draft === undefined) {
+        throw new Error(messages.consultationUnavailable)
+      }
       return deletePrescriptionDraft({
         encounterId: detail.encounter.id,
         encounterVersion: detail.encounter.versionId,
@@ -2941,8 +2969,14 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
     onSuccess: onRefresh,
   })
   const withdraw = useMutation({
-    mutationFn: () => {
-      if (prescription === undefined) throw new Error(messages.consultationUnavailable)
+    mutationFn: ({ caseId, prescriptionId }: { caseId: string; prescriptionId: string }) => {
+      if (
+        detail.caseId !== caseId
+        || prescription === undefined
+        || prescription.id !== prescriptionId
+      ) {
+        throw new Error(messages.consultationUnavailable)
+      }
       return withdrawPrescription({
         expectedPrescriptionVersion: prescription.version,
         medicationRequests: prescription.items.map(item => ({
@@ -3046,7 +3080,13 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
                   </dl>
                   <AlertDialogFooter>
                     <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
-                    <AlertDialogAction disabled={withdraw.isPending} onClick={() => withdraw.mutate()}>
+                    <AlertDialogAction
+                      disabled={withdraw.isPending}
+                      onClick={() => withdraw.mutate({
+                        caseId: detail.caseId,
+                        prescriptionId: prescription.id,
+                      })}
+                    >
                       <RotateCcwIcon data-icon="inline-start" />{messages.confirmWithdrawal}
                     </AlertDialogAction>
                   </AlertDialogFooter>
@@ -3076,7 +3116,10 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
               ))}
             </TableBody>
           </Table>
-          {readOnly || withdraw.error === null ? null : (
+          {readOnly
+            || withdraw.error === null
+            || withdraw.variables?.caseId !== detail.caseId
+            || withdraw.variables.prescriptionId !== prescription.id ? null : (
             <ErrorAlert
               message={getWorkspaceErrorMessage(withdraw.error, messages)}
               title={getWorkspaceErrorTitle(withdraw.error, messages, messages.operationFailed)}
@@ -3284,7 +3327,7 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
                           <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
                           <AlertDialogAction
                             disabled={removeDraft.isPending}
-                            onClick={() => removeDraft.mutate()}
+                            onClick={() => removeDraft.mutate(detail.caseId)}
                             variant="destructive"
                           >
                             <Trash2Icon data-icon="inline-start" />{messages.confirmDelete}
@@ -3305,6 +3348,7 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
                 </Alert>
               ) : null}
               {removeDraft.data !== undefined
+                && removeDraft.variables === detail.caseId
                 && state?.draft === undefined
                 && state?.draftVersion === removeDraft.data.data.draftVersion ? (
                 <Alert>
@@ -3318,7 +3362,8 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
                   title={getWorkspaceErrorTitle(saveDraft.error, messages, messages.operationFailed)}
                 />
               )}
-              {removeDraft.error === null ? null : (
+              {removeDraft.error === null
+                || removeDraft.variables !== detail.caseId ? null : (
                 <ErrorAlert
                   message={getWorkspaceErrorMessage(removeDraft.error, messages)}
                   title={getWorkspaceErrorTitle(removeDraft.error, messages, messages.operationFailed)}
