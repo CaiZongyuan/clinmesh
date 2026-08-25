@@ -1,28 +1,3 @@
-UPDATE outpatient_catalog
-SET config_json = json_set(
-  config_json,
-  '$.allowedCourseDays', json('[5]'),
-  '$.allowedDiagnosisCatalogItemIds', json('["diagnosis-influenza"]'),
-  '$.allowedQuantities', json('[10]'),
-  '$.defaultCourseDays', 5,
-  '$.defaultQuantity', 10
-)
-WHERE kind = 'medication' AND item_id = 'medication-oseltamivir';
-
-UPDATE outpatient_catalog
-SET config_json = json_set(
-  config_json,
-  '$.allowedCourseDays', json('[3]'),
-  '$.allowedDiagnosisCatalogItemIds', json('["diagnosis-influenza","diagnosis-acute-upper-respiratory-infection","diagnosis-fever"]'),
-  '$.allowedQuantities', json('[6]'),
-  '$.defaultCourseDays', 3,
-  '$.defaultQuantity', 6
-)
-WHERE kind = 'medication' AND item_id = 'medication-acetaminophen';
-
-ALTER TABLE prescription
-ADD COLUMN authored_by_practitioner_role_id TEXT;
-
 ALTER TABLE prescription_item
 ADD COLUMN course_days INTEGER NOT NULL DEFAULT 1
 CHECK (course_days > 0 AND course_days <= 30);
@@ -34,6 +9,23 @@ SET course_days = CASE medication_id
   ELSE course_days
 END;
 
+CREATE TABLE prescription_authorship (
+  workspace_id TEXT NOT NULL,
+  epoch TEXT NOT NULL,
+  prescription_id TEXT NOT NULL,
+  authored_by_actor_id TEXT NOT NULL,
+  authored_by_practitioner_role_id TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, epoch, prescription_id),
+  FOREIGN KEY (workspace_id, epoch, prescription_id)
+    REFERENCES prescription (workspace_id, epoch, prescription_id) ON DELETE RESTRICT,
+  FOREIGN KEY (workspace_id, authored_by_actor_id)
+    REFERENCES workspace_membership (workspace_id, actor_id) ON DELETE RESTRICT,
+  FOREIGN KEY (workspace_id, authored_by_practitioner_role_id)
+    REFERENCES practitioner_role_binding (
+      workspace_id, practitioner_role_id
+    ) ON DELETE RESTRICT
+) STRICT;
+
 CREATE TABLE prescription_draft_state (
   workspace_id TEXT NOT NULL,
   epoch TEXT NOT NULL,
@@ -44,7 +36,9 @@ CREATE TABLE prescription_draft_state (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, epoch, case_id),
   FOREIGN KEY (workspace_id, epoch, case_id)
-    REFERENCES outpatient_case (workspace_id, epoch, case_id) ON DELETE RESTRICT
+    REFERENCES outpatient_case (workspace_id, epoch, case_id) ON DELETE RESTRICT,
+  FOREIGN KEY (workspace_id, updated_by)
+    REFERENCES workspace_membership (workspace_id, actor_id) ON DELETE RESTRICT
 ) STRICT;
 
 CREATE TABLE no_medication_conclusion (
@@ -59,7 +53,13 @@ CREATE TABLE no_medication_conclusion (
   PRIMARY KEY (workspace_id, epoch, conclusion_id),
   UNIQUE (workspace_id, epoch, case_id),
   FOREIGN KEY (workspace_id, epoch, case_id)
-    REFERENCES outpatient_case (workspace_id, epoch, case_id) ON DELETE RESTRICT
+    REFERENCES outpatient_case (workspace_id, epoch, case_id) ON DELETE RESTRICT,
+  FOREIGN KEY (workspace_id, authored_by_actor_id)
+    REFERENCES workspace_membership (workspace_id, actor_id) ON DELETE RESTRICT,
+  FOREIGN KEY (workspace_id, authored_by_practitioner_role_id)
+    REFERENCES practitioner_role_binding (
+      workspace_id, practitioner_role_id
+    ) ON DELETE RESTRICT
 ) STRICT;
 
 CREATE TABLE prescription_withdrawal (
@@ -74,5 +74,11 @@ CREATE TABLE prescription_withdrawal (
   PRIMARY KEY (workspace_id, epoch, withdrawal_id),
   UNIQUE (workspace_id, epoch, prescription_id),
   FOREIGN KEY (workspace_id, epoch, prescription_id)
-    REFERENCES prescription (workspace_id, epoch, prescription_id) ON DELETE RESTRICT
+    REFERENCES prescription (workspace_id, epoch, prescription_id) ON DELETE RESTRICT,
+  FOREIGN KEY (workspace_id, withdrawn_by_actor_id)
+    REFERENCES workspace_membership (workspace_id, actor_id) ON DELETE RESTRICT,
+  FOREIGN KEY (workspace_id, withdrawn_by_practitioner_role_id)
+    REFERENCES practitioner_role_binding (
+      workspace_id, practitioner_role_id
+    ) ON DELETE RESTRICT
 ) STRICT;

@@ -29,13 +29,28 @@ describe('HIS contracts', () => {
       diagnoses: [],
       laboratory: [],
       medications: [medication],
+      prescriptionConclusionSupported: true,
     }).success).toBe(true)
     const { allowedCourseDays: _allowedCourseDays, ...missingCourseControl } = medication
     expect(clinicalCatalogSchema.safeParse({
       diagnoses: [],
       laboratory: [],
       medications: [missingCourseControl],
+      prescriptionConclusionSupported: true,
     }).success).toBe(false)
+    const {
+      allowedCourseDays: _legacyAllowedCourseDays,
+      allowedQuantities: _legacyAllowedQuantities,
+      defaultCourseDays: _legacyDefaultCourseDays,
+      defaultQuantity: _legacyDefaultQuantity,
+      ...legacyMedication
+    } = medication
+    expect(clinicalCatalogSchema.safeParse({
+      diagnoses: [],
+      laboratory: [],
+      medications: [legacyMedication],
+      prescriptionConclusionSupported: false,
+    }).success).toBe(true)
     expect(prescriptionDraftContentSchema.safeParse({
       items: [{
         catalogItemId: medication.id,

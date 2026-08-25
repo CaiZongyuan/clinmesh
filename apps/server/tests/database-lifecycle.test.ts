@@ -702,6 +702,8 @@ describe('SQLite lifecycle', () => {
         price_fen, version, active, config_json
       ) VALUES (?, ?, ?, 'medication', ?, ?, ?, ?, 1, 1, ?)
     `)
+    const legacyOseltamivirConfig = '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"]}'
+    const legacyAcetaminophenConfig = '{"dose":"0.5 g","frequency":"PRN","allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"]}'
     insertMedicationCatalog.run(
       context.workspaceId,
       context.epoch,
@@ -710,7 +712,7 @@ describe('SQLite lifecycle', () => {
       '磷酸奥司他韦胶囊',
       'Oseltamivir phosphate capsules',
       760,
-      '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"]}',
+      legacyOseltamivirConfig,
     )
     insertMedicationCatalog.run(
       context.workspaceId,
@@ -720,7 +722,41 @@ describe('SQLite lifecycle', () => {
       '对乙酰氨基酚片',
       'Acetaminophen tablets',
       120,
-      '{"dose":"0.5 g","frequency":"PRN","allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"]}',
+      legacyAcetaminophenConfig,
+    )
+    database.driver.prepare(`
+      INSERT INTO user (
+        id, name, email, email_verified, created_at, updated_at
+      ) VALUES (?, ?, ?, 1, ?, ?)
+    `).run(
+      'user-legacy-doctor',
+      '合成升级医生',
+      'legacy-doctor@example.invalid',
+      1,
+      1,
+    )
+    database.driver.prepare(`
+      INSERT INTO workspace_membership (
+        membership_id, workspace_id, user_id, actor_id, status, created_at
+      ) VALUES (?, ?, ?, ?, 'active', ?)
+    `).run(
+      'membership-legacy-doctor',
+      context.workspaceId,
+      'user-legacy-doctor',
+      'actor-legacy-doctor',
+      '2026-08-24T09:00:00+08:00',
+    )
+    database.driver.prepare(`
+      INSERT INTO practitioner_role_binding (
+        workspace_id, practitioner_role_id, practitioner_id, role_code,
+        organization_id, location_id, active
+      ) VALUES (?, ?, ?, 'outpatient-doctor', ?, ?, 1)
+    `).run(
+      context.workspaceId,
+      'role-legacy-doctor',
+      'practitioner-legacy-doctor',
+      'organization-legacy',
+      'location-legacy',
     )
     await copyFile(
       join(process.cwd(), 'drizzle', '0018_prescription-conclusion.sql'),
@@ -734,18 +770,20 @@ describe('SQLite lifecycle', () => {
       SELECT name FROM sqlite_schema
       WHERE type = 'table' AND name IN (
         'no_medication_conclusion',
+        'prescription_authorship',
         'prescription_draft_state',
         'prescription_withdrawal'
       )
       ORDER BY name
     `).all() as Array<{ name: string }>).map(row => row.name)).toEqual([
       'no_medication_conclusion',
+      'prescription_authorship',
       'prescription_draft_state',
       'prescription_withdrawal',
     ])
     expect((database.driver.prepare(
       'PRAGMA table_info(prescription)',
-    ).all() as Array<{ name: string }>).map(column => column.name)).toContain(
+    ).all() as Array<{ name: string }>).map(column => column.name)).not.toContain(
       'authored_by_practitioner_role_id',
     )
     expect((database.driver.prepare(
@@ -753,22 +791,111 @@ describe('SQLite lifecycle', () => {
     ).all() as Array<{ name: string }>).map(column => column.name)).toContain(
       'course_days',
     )
+    database.driver.prepare(`
+      INSERT INTO prescription (
+        workspace_id, epoch, prescription_id, case_id, prescription_number,
+        status, version, authored_by, authored_at, signed_at
+      ) VALUES (?, ?, ?, ?, ?, 'signed', 1, ?, ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'prescription-v19-identity-check',
+      'case-legacy',
+      'CM-RX-IDENTITY-CHECK',
+      'actor-legacy-doctor',
+      '2026-08-24T09:04:00+08:00',
+      '2026-08-24T09:04:00+08:00',
+    )
+    expect(() => database.driver.prepare(`
+      INSERT INTO prescription_draft_state (
+        workspace_id, epoch, case_id, version, draft_json, updated_by, updated_at
+      ) VALUES (?, ?, ?, 1, NULL, 'actor-missing', ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      'case-legacy',
+      '2026-08-24T09:04:00+08:00',
+    )).toThrow(/FOREIGN KEY constraint failed/)
+    const insertPrescriptionAuthorship = database.driver.prepare(`
+      INSERT INTO prescription_authorship (
+        workspace_id, epoch, prescription_id,
+        authored_by_actor_id, authored_by_practitioner_role_id
+      ) VALUES (?, ?, ?, ?, ?)
+    `)
+    expect(() => insertPrescriptionAuthorship.run(
+      context.workspaceId,
+      context.epoch,
+      'prescription-v19-identity-check',
+      'actor-missing',
+      'role-legacy-doctor',
+    )).toThrow(/FOREIGN KEY constraint failed/)
+    expect(() => insertPrescriptionAuthorship.run(
+      context.workspaceId,
+      context.epoch,
+      'prescription-v19-identity-check',
+      'actor-legacy-doctor',
+      'role-missing',
+    )).toThrow(/FOREIGN KEY constraint failed/)
+    const insertNoMedicationConclusion = database.driver.prepare(`
+      INSERT INTO no_medication_conclusion (
+        workspace_id, epoch, conclusion_id, case_id, version,
+        authored_by_actor_id, authored_by_practitioner_role_id, authored_at
+      ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+    `)
+    expect(() => insertNoMedicationConclusion.run(
+      context.workspaceId,
+      context.epoch,
+      'no-medication-v19-invalid-actor',
+      'case-legacy',
+      'actor-missing',
+      'role-legacy-doctor',
+      '2026-08-24T09:04:00+08:00',
+    )).toThrow(/FOREIGN KEY constraint failed/)
+    expect(() => insertNoMedicationConclusion.run(
+      context.workspaceId,
+      context.epoch,
+      'no-medication-v19-invalid-role',
+      'case-legacy',
+      'actor-legacy-doctor',
+      'role-missing',
+      '2026-08-24T09:04:00+08:00',
+    )).toThrow(/FOREIGN KEY constraint failed/)
+    const insertPrescriptionWithdrawal = database.driver.prepare(`
+      INSERT INTO prescription_withdrawal (
+        workspace_id, epoch, withdrawal_id, prescription_id, version,
+        withdrawn_by_actor_id, withdrawn_by_practitioner_role_id, withdrawn_at
+      ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+    `)
+    expect(() => insertPrescriptionWithdrawal.run(
+      context.workspaceId,
+      context.epoch,
+      'withdrawal-v19-invalid-actor',
+      'prescription-v19-identity-check',
+      'actor-missing',
+      'role-legacy-doctor',
+      '2026-08-24T09:04:00+08:00',
+    )).toThrow(/FOREIGN KEY constraint failed/)
+    expect(() => insertPrescriptionWithdrawal.run(
+      context.workspaceId,
+      context.epoch,
+      'withdrawal-v19-invalid-role',
+      'prescription-v19-identity-check',
+      'actor-legacy-doctor',
+      'role-missing',
+      '2026-08-24T09:04:00+08:00',
+    )).toThrow(/FOREIGN KEY constraint failed/)
     expect(database.driver.prepare(`
-      SELECT item_id,
-        json_extract(config_json, '$.defaultCourseDays') AS default_course_days,
-        json_extract(config_json, '$.defaultQuantity') AS default_quantity
+      SELECT item_id, config_json
       FROM outpatient_catalog
       WHERE workspace_id = ? AND epoch = ? AND kind = 'medication'
       ORDER BY item_id
     `).all(context.workspaceId, context.epoch)).toEqual([
       {
-        default_course_days: 3,
-        default_quantity: 6,
+        config_json: legacyAcetaminophenConfig,
         item_id: 'medication-acetaminophen',
       },
       {
-        default_course_days: 5,
-        default_quantity: 10,
+        config_json: legacyOseltamivirConfig,
         item_id: 'medication-oseltamivir',
       },
     ])

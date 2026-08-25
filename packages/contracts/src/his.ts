@@ -136,7 +136,7 @@ const catalogItemSchema = z.object({
   version: z.number().int().positive(),
 })
 
-export const clinicalCatalogSchema = z.object({
+const clinicalCatalogBaseShape = {
   diagnoses: z.array(catalogItemSchema.extend({
     code: z.string().min(1),
     system: z.url(),
@@ -145,18 +145,35 @@ export const clinicalCatalogSchema = z.object({
     allowedIndicationCodes: z.array(z.string().min(1)).min(1),
     contraindicatedAllergyCodes: z.array(z.string().min(1)),
   })),
-  medications: z.array(catalogItemSchema.extend({
-    allowedCombinationIds: z.array(z.string().min(1)),
-    allowedCourseDays: z.array(z.number().int().positive()).min(1),
-    allowedDoseTexts: z.array(z.string().min(1)).min(1),
-    allowedFrequencyCodes: z.array(z.string().min(1)).min(1),
-    allowedQuantities: z.array(z.number().int().positive()).min(1),
-    defaultCourseDays: z.number().int().positive(),
-    defaultDoseText: z.string().min(1),
-    defaultFrequencyCode: z.string().min(1),
-    defaultQuantity: z.number().int().positive(),
-  })),
-})
+}
+
+const legacyMedicationCatalogItemSchema = catalogItemSchema.extend({
+  allowedCombinationIds: z.array(z.string().min(1)),
+  allowedDoseTexts: z.array(z.string().min(1)).min(1),
+  allowedFrequencyCodes: z.array(z.string().min(1)).min(1),
+  defaultDoseText: z.string().min(1),
+  defaultFrequencyCode: z.string().min(1),
+}).strict()
+
+const prescriptionMedicationCatalogItemSchema = legacyMedicationCatalogItemSchema.extend({
+  allowedCourseDays: z.array(z.number().int().positive()).min(1),
+  allowedQuantities: z.array(z.number().int().positive()).min(1),
+  defaultCourseDays: z.number().int().positive(),
+  defaultQuantity: z.number().int().positive(),
+}).strict()
+
+export const clinicalCatalogSchema = z.discriminatedUnion('prescriptionConclusionSupported', [
+  z.object({
+    ...clinicalCatalogBaseShape,
+    medications: z.array(legacyMedicationCatalogItemSchema),
+    prescriptionConclusionSupported: z.literal(false),
+  }),
+  z.object({
+    ...clinicalCatalogBaseShape,
+    medications: z.array(prescriptionMedicationCatalogItemSchema),
+    prescriptionConclusionSupported: z.literal(true),
+  }),
+])
 
 export const diagnosisRoleSchema = z.enum(['primary', 'secondary'])
 

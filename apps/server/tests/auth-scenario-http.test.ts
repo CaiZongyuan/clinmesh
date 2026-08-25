@@ -543,7 +543,7 @@ describe('trusted session and Scenario HTTP contract', () => {
     expect(density.data).toMatchObject({
       epoch: 'epoch-2',
       kind: 'density',
-      scenarioId: 'density-fever-outpatient-v2',
+      scenarioId: 'density-fever-outpatient-v3',
       scenarioRunId: 'scenario-run-2',
     })
     expect(scenarioCommandResponseSchema.parse(

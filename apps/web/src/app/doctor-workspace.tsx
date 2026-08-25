@@ -1004,14 +1004,16 @@ function CaseDetail({
                   messages={messages}
                   state={detail.diagnosis}
                 />
-                <MedicationConclusionPanel
-                  catalog={catalog.data.medications}
-                  detail={detail}
-                  key={`medication-conclusion:${detail.caseId}`}
-                  locale={locale}
-                  messages={messages}
-                  onRefresh={onRefreshCase}
-                />
+                {catalog.data.prescriptionConclusionSupported ? (
+                  <MedicationConclusionPanel
+                    catalog={catalog.data.medications}
+                    detail={detail}
+                    key={`medication-conclusion:${detail.caseId}`}
+                    locale={locale}
+                    messages={messages}
+                    onRefresh={onRefreshCase}
+                  />
+                ) : null}
               </>
             ) : (
               <>
@@ -2145,9 +2147,14 @@ interface PrescriptionDraftLine extends PrescriptionDraftItem {
 }
 
 type MedicationConclusionMode = 'no-medication' | 'prescription'
+type PrescriptionClinicalCatalog = Extract<
+  ClinicalCatalog,
+  { prescriptionConclusionSupported: true }
+>
+type PrescriptionMedicationCatalogItem = PrescriptionClinicalCatalog['medications'][number]
 
 function createPrescriptionDraftLine(
-  medication: ClinicalCatalog['medications'][number],
+  medication: PrescriptionMedicationCatalogItem,
   key: string,
 ): PrescriptionDraftLine {
   return {
@@ -2161,7 +2168,7 @@ function createPrescriptionDraftLine(
 }
 
 function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefresh }: {
-  catalog: ClinicalCatalog['medications']
+  catalog: PrescriptionClinicalCatalog['medications']
   detail: DoctorCaseDetail
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
@@ -2248,7 +2255,7 @@ function MedicationConclusionPanel({ catalog, detail, locale, messages, onRefres
   })
   const usedCatalogItemIds = new Set(items.map(item => item.catalogItemId))
   const canCombineWithCurrentItems = (
-    candidate: ClinicalCatalog['medications'][number],
+    candidate: PrescriptionMedicationCatalogItem,
     ignoredIndex?: number,
   ) => items.every((item, index) => {
     if (index === ignoredIndex || item.catalogItemId === candidate.id) return true

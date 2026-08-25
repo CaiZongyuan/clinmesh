@@ -114,6 +114,10 @@ const diagnosisEntryRowSchema = z.object({
   role: z.enum(['primary', 'secondary']),
 })
 
+const confirmedDiagnosisCatalogItemRowSchema = z.object({
+  catalog_item_id: z.string().min(1),
+})
+
 const prescriptionDraftStateRowSchema = z.object({
   draft_json: z.string().nullable(),
   version: z.number().int().positive(),
@@ -133,6 +137,20 @@ const prescriptionWithdrawalRowSchema = z.object({
   withdrawn_at: z.string().datetime({ offset: true }),
   withdrawn_by_actor_id: z.string().min(1),
   withdrawn_by_practitioner_role_id: z.string().min(1),
+})
+
+const activePrescriptionRowSchema = z.object({
+  withdrawal_id: z.string().nullable(),
+})
+
+const withdrawablePrescriptionRowSchema = activePrescriptionRowSchema.extend({
+  status: z.enum(['dispensed', 'draft', 'paid', 'signed']),
+  version: z.number().int().positive(),
+})
+
+const prescriptionDispensingRowSchema = z.object({
+  dispensed_quantity: z.number().int().nonnegative(),
+  medication_request_id: z.string().min(1),
 })
 
 const issuedPrescriptionRowSchema = z.object({
@@ -170,17 +188,24 @@ interface MedicationRuleSelection {
   frequencyCode: string
 }
 
-const medicationCatalogConfigSchema = z.object({
+const legacyMedicationCatalogConfigSchema = z.object({
   allowedCombinationIds: z.array(z.string().min(1)),
-  allowedCourseDays: z.array(z.number().int().positive()).min(1),
-  allowedDiagnosisCatalogItemIds: z.array(z.string().min(1)).min(1),
   allowedDoseTexts: z.array(z.string().min(1)).min(1),
   allowedFrequencyCodes: z.array(z.string().min(1)).min(1),
+  dose: z.string().min(1),
+  frequency: z.string().min(1),
+})
+
+const prescriptionMedicationCatalogConfigSchema = legacyMedicationCatalogConfigSchema.extend({
+  allowedCourseDays: z.array(z.number().int().positive()).min(1),
+  allowedDiagnosisCatalogItemIds: z.array(z.string().min(1)).min(1),
   allowedQuantities: z.array(z.number().int().positive()).min(1),
   defaultCourseDays: z.number().int().positive(),
   defaultQuantity: z.number().int().positive(),
-  dose: z.string().min(1),
-  frequency: z.string().min(1),
+})
+
+const medicationCatalogConfigRowSchema = z.object({
+  config_json: z.string().min(1),
 })
 
 const laboratoryCatalogConfigSchema = z.object({
@@ -759,7 +784,7 @@ export class WorkflowService {
         ORDER BY item_id
       `).all(context.workspaceId, context.epoch),
     )
-    return {
+    const catalog = {
       diagnoses: diagnoses.map(diagnosis => ({
         code: diagnosis.code,
         id: diagnosis.item_id,
@@ -772,8 +797,36 @@ export class WorkflowService {
         const config = laboratoryCatalogConfigSchema.parse(JSON.parse(row.config_json) as unknown)
         return { ...summary(row), ...config }
       }),
-      medications: rows.filter(row => row.kind === 'medication').map(row => {
-        const config = medicationCatalogConfigSchema.parse(JSON.parse(row.config_json) as unknown)
+    }
+    const medications = rows.filter(row => row.kind === 'medication').map(row => {
+      const rawConfig = JSON.parse(row.config_json) as unknown
+      return {
+        config: legacyMedicationCatalogConfigSchema.parse(rawConfig),
+        rawConfig,
+        row,
+      }
+    })
+    const prescriptionConclusionSupported = this.#prescriptionConclusionSupported(
+      medications.map(({ rawConfig }) => rawConfig),
+    )
+    if (!prescriptionConclusionSupported) {
+      return {
+        ...catalog,
+        medications: medications.map(({ config, row }) => ({
+          ...summary(row),
+          allowedCombinationIds: config.allowedCombinationIds,
+          allowedDoseTexts: config.allowedDoseTexts,
+          allowedFrequencyCodes: config.allowedFrequencyCodes,
+          defaultDoseText: config.dose,
+          defaultFrequencyCode: config.frequency,
+        })),
+        prescriptionConclusionSupported: false as const,
+      }
+    }
+    return {
+      ...catalog,
+      medications: medications.map(({ rawConfig, row }) => {
+        const config = prescriptionMedicationCatalogConfigSchema.parse(rawConfig)
         return {
           ...summary(row),
           allowedCombinationIds: config.allowedCombinationIds,
@@ -787,6 +840,7 @@ export class WorkflowService {
           defaultQuantity: config.defaultQuantity,
         }
       }),
+      prescriptionConclusionSupported: true as const,
     }
   }
 
@@ -2627,6 +2681,7 @@ export class WorkflowService {
       operation: 'encounter.save-prescription-draft',
     }, () => {
       this.#assertRole(input.context, ['outpatient-doctor'])
+      this.#assertPrescriptionConclusionSupported(input.context)
       const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
       const encounter = this.#fhir.read(input.context, 'Encounter', input.encounterId)
       if (encounter.status !== 'in-progress' || outpatientCase.status === 'completed') {
@@ -2731,6 +2786,7 @@ export class WorkflowService {
       operation: 'encounter.delete-prescription-draft',
     }, () => {
       this.#assertRole(input.context, ['outpatient-doctor'])
+      this.#assertPrescriptionConclusionSupported(input.context)
       const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
       const encounter = this.#fhir.read(input.context, 'Encounter', input.encounterId)
       if (encounter.status !== 'in-progress' || outpatientCase.status === 'completed') {
@@ -2798,6 +2854,7 @@ export class WorkflowService {
       operation: 'encounter.issue-prescription',
     }, transaction => {
       this.#assertRole(input.context, ['outpatient-doctor'])
+      this.#assertPrescriptionConclusionSupported(input.context)
       if (input.context.practitionerRoleId === undefined) {
         throw new WorkflowError('ROLE_NOT_ALLOWED', 'A Practitioner Role is required to issue a prescription')
       }
@@ -2845,25 +2902,29 @@ export class WorkflowService {
         outpatientCase.patient_id,
         medications.map(medication => medication.catalog),
       )
-      const confirmedDiagnosisIds = new Set((this.#database.driver.prepare(`
-        SELECT diagnosis_entry.catalog_item_id
-        FROM diagnosis_confirmation
-        JOIN diagnosis_entry
-          ON diagnosis_entry.workspace_id = diagnosis_confirmation.workspace_id
-         AND diagnosis_entry.epoch = diagnosis_confirmation.epoch
-         AND diagnosis_entry.confirmation_id = diagnosis_confirmation.confirmation_id
-        WHERE diagnosis_confirmation.workspace_id = ?
-          AND diagnosis_confirmation.epoch = ? AND diagnosis_confirmation.case_id = ?
-      `).all(
-        input.context.workspaceId,
-        input.context.epoch,
-        outpatientCase.case_id,
-      ) as Array<{ catalog_item_id: string }>).map(row => row.catalog_item_id))
+      const confirmedDiagnosisIds = new Set(
+        z.array(confirmedDiagnosisCatalogItemRowSchema).parse(
+          this.#database.driver.prepare(`
+            SELECT diagnosis_entry.catalog_item_id
+            FROM diagnosis_confirmation
+            JOIN diagnosis_entry
+              ON diagnosis_entry.workspace_id = diagnosis_confirmation.workspace_id
+             AND diagnosis_entry.epoch = diagnosis_confirmation.epoch
+             AND diagnosis_entry.confirmation_id = diagnosis_confirmation.confirmation_id
+            WHERE diagnosis_confirmation.workspace_id = ?
+              AND diagnosis_confirmation.epoch = ? AND diagnosis_confirmation.case_id = ?
+          `).all(
+            input.context.workspaceId,
+            input.context.epoch,
+            outpatientCase.case_id,
+          ),
+        ).map(row => row.catalog_item_id),
+      )
       if (confirmedDiagnosisIds.size === 0) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'A confirmed diagnosis is required to issue a prescription')
       }
       for (const medication of medications) {
-        const config = medicationCatalogConfigSchema.parse(
+        const config = prescriptionMedicationCatalogConfigSchema.parse(
           JSON.parse(medication.catalog.config_json ?? '{}') as unknown,
         )
         if (!config.allowedDiagnosisCatalogItemIds.some(id => confirmedDiagnosisIds.has(id))) {
@@ -2875,17 +2936,16 @@ export class WorkflowService {
       }
       const prescriptionId = uuidv7()
       const authoredAt = this.#virtualTime(input.context)
-      const prescriptionCount = (this.#database.driver.prepare(`
+      const prescriptionCount = countRowSchema.parse(this.#database.driver.prepare(`
         SELECT COUNT(*) AS count FROM prescription WHERE workspace_id = ? AND epoch = ?
-      `).get(input.context.workspaceId, input.context.epoch) as { count: number }).count + 1
+      `).get(input.context.workspaceId, input.context.epoch)).count + 1
       const prescriptionNumber
         = `CM-RX-${authoredAt.slice(0, 10).replaceAll('-', '')}-${String(prescriptionCount).padStart(4, '0')}`
       this.#database.driver.prepare(`
         INSERT INTO prescription (
           workspace_id, epoch, prescription_id, case_id, prescription_number,
-          status, version, authored_by, authored_at, signed_at,
-          authored_by_practitioner_role_id
-        ) VALUES (?, ?, ?, ?, ?, 'signed', 1, ?, ?, ?, ?)
+          status, version, authored_by, authored_at, signed_at
+        ) VALUES (?, ?, ?, ?, ?, 'signed', 1, ?, ?, ?)
       `).run(
         input.context.workspaceId,
         input.context.epoch,
@@ -2895,6 +2955,17 @@ export class WorkflowService {
         input.context.actorId,
         authoredAt,
         authoredAt,
+      )
+      this.#database.driver.prepare(`
+        INSERT INTO prescription_authorship (
+          workspace_id, epoch, prescription_id,
+          authored_by_actor_id, authored_by_practitioner_role_id
+        ) VALUES (?, ?, ?, ?, ?)
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        prescriptionId,
+        input.context.actorId,
         input.context.practitionerRoleId,
       )
       const insertItem = this.#database.driver.prepare(`
@@ -3043,6 +3114,7 @@ export class WorkflowService {
       operation: 'encounter.confirm-no-medication',
     }, () => {
       this.#assertRole(input.context, ['outpatient-doctor'])
+      this.#assertPrescriptionConclusionSupported(input.context)
       if (input.context.practitionerRoleId === undefined) {
         throw new WorkflowError(
           'ROLE_NOT_ALLOWED',
@@ -3059,20 +3131,22 @@ export class WorkflowService {
       }
       this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
       this.#assertNoLegacyPrescriptionOwner(input.context, outpatientCase.case_id)
-      const prescription = this.#database.driver.prepare(`
-        SELECT withdrawal.withdrawal_id
-        FROM prescription
-        LEFT JOIN prescription_withdrawal AS withdrawal
-          ON withdrawal.workspace_id = prescription.workspace_id
-         AND withdrawal.epoch = prescription.epoch
-         AND withdrawal.prescription_id = prescription.prescription_id
-        WHERE prescription.workspace_id = ? AND prescription.epoch = ?
-          AND prescription.case_id = ?
-      `).get(
-        input.context.workspaceId,
-        input.context.epoch,
-        outpatientCase.case_id,
-      ) as { withdrawal_id: string | null } | undefined
+      const prescription = activePrescriptionRowSchema.optional().parse(
+        this.#database.driver.prepare(`
+          SELECT withdrawal.withdrawal_id
+          FROM prescription
+          LEFT JOIN prescription_withdrawal AS withdrawal
+            ON withdrawal.workspace_id = prescription.workspace_id
+           AND withdrawal.epoch = prescription.epoch
+           AND withdrawal.prescription_id = prescription.prescription_id
+          WHERE prescription.workspace_id = ? AND prescription.epoch = ?
+            AND prescription.case_id = ?
+        `).get(
+          input.context.workspaceId,
+          input.context.epoch,
+          outpatientCase.case_id,
+        ),
+      )
       if (prescription !== undefined && prescription.withdrawal_id === null) {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
@@ -3190,31 +3264,30 @@ export class WorkflowService {
       operation: 'prescription.withdraw',
     }, transaction => {
       this.#assertRole(input.context, ['outpatient-doctor'])
+      this.#assertPrescriptionConclusionSupported(input.context)
       if (input.context.practitionerRoleId === undefined) {
         throw new WorkflowError(
           'ROLE_NOT_ALLOWED',
           'A Practitioner Role is required to withdraw a prescription',
         )
       }
-      const prescription = this.#database.driver.prepare(`
-        SELECT prescription.version, prescription.status,
-          withdrawal.withdrawal_id
-        FROM prescription
-        LEFT JOIN prescription_withdrawal AS withdrawal
-          ON withdrawal.workspace_id = prescription.workspace_id
-         AND withdrawal.epoch = prescription.epoch
-         AND withdrawal.prescription_id = prescription.prescription_id
-        WHERE prescription.workspace_id = ? AND prescription.epoch = ?
-          AND prescription.prescription_id = ?
-      `).get(
-        input.context.workspaceId,
-        input.context.epoch,
-        input.prescriptionId,
-      ) as {
-        status: string
-        version: number
-        withdrawal_id: string | null
-      } | undefined
+      const prescription = withdrawablePrescriptionRowSchema.optional().parse(
+        this.#database.driver.prepare(`
+          SELECT prescription.version, prescription.status,
+            withdrawal.withdrawal_id
+          FROM prescription
+          LEFT JOIN prescription_withdrawal AS withdrawal
+            ON withdrawal.workspace_id = prescription.workspace_id
+           AND withdrawal.epoch = prescription.epoch
+           AND withdrawal.prescription_id = prescription.prescription_id
+          WHERE prescription.workspace_id = ? AND prescription.epoch = ?
+            AND prescription.prescription_id = ?
+        `).get(
+          input.context.workspaceId,
+          input.context.epoch,
+          input.prescriptionId,
+        ),
+      )
       if (
         prescription === undefined
         || !['signed', 'paid'].includes(prescription.status)
@@ -3223,16 +3296,18 @@ export class WorkflowService {
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription cannot be withdrawn')
       }
-      const items = this.#database.driver.prepare(`
-        SELECT medication_request_id, dispensed_quantity
-        FROM prescription_item
-        WHERE workspace_id = ? AND epoch = ? AND prescription_id = ?
-        ORDER BY medication_request_id
-      `).all(
-        input.context.workspaceId,
-        input.context.epoch,
-        input.prescriptionId,
-      ) as Array<{ dispensed_quantity: number; medication_request_id: string }>
+      const items = z.array(prescriptionDispensingRowSchema).parse(
+        this.#database.driver.prepare(`
+          SELECT medication_request_id, dispensed_quantity
+          FROM prescription_item
+          WHERE workspace_id = ? AND epoch = ? AND prescription_id = ?
+          ORDER BY medication_request_id
+        `).all(
+          input.context.workspaceId,
+          input.context.epoch,
+          input.prescriptionId,
+        ),
+      )
       if (items.length === 0 || items.some(item => item.dispensed_quantity > 0)) {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
@@ -8391,11 +8466,16 @@ export class WorkflowService {
   ): z.infer<typeof issuedPrescriptionSchema> | undefined {
     const prescription = issuedPrescriptionRowSchema.optional().parse(
       this.#database.driver.prepare(`
-        SELECT prescription_id, prescription_number, status, version,
-          authored_at, authored_by_practitioner_role_id
+        SELECT prescription.prescription_id, prescription.prescription_number,
+          prescription.status, prescription.version, prescription.authored_at,
+          authorship.authored_by_practitioner_role_id
         FROM prescription
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-          AND status != 'draft' AND authored_by_practitioner_role_id IS NOT NULL
+        JOIN prescription_authorship AS authorship
+          ON authorship.workspace_id = prescription.workspace_id
+         AND authorship.epoch = prescription.epoch
+         AND authorship.prescription_id = prescription.prescription_id
+        WHERE prescription.workspace_id = ? AND prescription.epoch = ?
+          AND prescription.case_id = ? AND prescription.status != 'draft'
       `).get(context.workspaceId, context.epoch, caseId),
     )
     if (prescription === undefined) return undefined
@@ -8491,7 +8571,7 @@ export class WorkflowService {
       frequencyCode: medication.frequencyCode,
     })))
     for (const medication of medications) {
-      const config = medicationCatalogConfigSchema.parse(
+      const config = prescriptionMedicationCatalogConfigSchema.parse(
         JSON.parse(medication.catalog.config_json ?? '{}') as unknown,
       )
       if (
@@ -8527,7 +8607,7 @@ export class WorkflowService {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'A medication can appear only once in a prescription')
     }
     for (const medication of medications) {
-      const config = medicationCatalogConfigSchema.parse(
+      const config = legacyMedicationCatalogConfigSchema.parse(
         JSON.parse(medication.configJson ?? '{}') as unknown,
       )
       if (
@@ -8549,6 +8629,28 @@ export class WorkflowService {
         )
       }
     }
+  }
+
+  #assertPrescriptionConclusionSupported(context: ActorContext): void {
+    const rows = z.array(medicationCatalogConfigRowSchema).parse(
+      this.#database.driver.prepare(`
+        SELECT config_json FROM outpatient_catalog
+        WHERE workspace_id = ? AND epoch = ? AND kind = 'medication' AND active = 1
+      `).all(context.workspaceId, context.epoch),
+    )
+    if (!this.#prescriptionConclusionSupported(
+      rows.map(row => JSON.parse(row.config_json) as unknown),
+    )) {
+      throw new WorkflowError(
+        'CATALOG_CONFLICT',
+        'Independent medication conclusions are not supported by this Scenario',
+      )
+    }
+  }
+
+  #prescriptionConclusionSupported(configs: unknown[]): boolean {
+    return configs.length > 0
+      && configs.every(config => prescriptionMedicationCatalogConfigSchema.safeParse(config).success)
   }
 
   #patientAllergyWarnings(context: ActorContext, patientId: string): Array<{ code: string; display: string }> {

@@ -315,6 +315,7 @@ function stubLaboratoryReportPolling(reportingSupported: boolean) {
           version: 1,
         }],
         medications: [],
+        prescriptionConclusionSupported: true,
       })
     }
     if (url.pathname === '/api/his/v1/doctor/queue') {
@@ -836,7 +837,11 @@ describe('role workspaces', () => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
-        return Response.json({ laboratory: [], medications: [] })
+        return Response.json({
+          laboratory: [],
+          medications: [],
+          prescriptionConclusionSupported: true,
+        })
       }
       if (url.pathname === '/api/his/v1/doctor/virtual-patients' && init?.method === undefined) {
         return Response.json({ items: [virtualPatient], ...pagination(1) })
@@ -907,7 +912,11 @@ describe('role workspaces', () => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
-        return Response.json({ laboratory: [], medications: [] })
+        return Response.json({
+          laboratory: [],
+          medications: [],
+          prescriptionConclusionSupported: true,
+        })
       }
       if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
         virtualPatientRequests += 1
@@ -1026,7 +1035,11 @@ describe('role workspaces', () => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
-        return Response.json({ laboratory: [], medications: [] })
+        return Response.json({
+          laboratory: [],
+          medications: [],
+          prescriptionConclusionSupported: true,
+        })
       }
       if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
         return Response.json({ items: [], ...pagination(0) })
@@ -1123,7 +1136,11 @@ describe('role workspaces', () => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
-        return Response.json({ laboratory: [], medications: [] })
+        return Response.json({
+          laboratory: [],
+          medications: [],
+          prescriptionConclusionSupported: true,
+        })
       }
       if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
         return Response.json({ items: [], ...pagination(0) })
@@ -1184,7 +1201,11 @@ describe('role workspaces', () => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
-        return Response.json({ laboratory: [], medications: [] })
+        return Response.json({
+          laboratory: [],
+          medications: [],
+          prescriptionConclusionSupported: true,
+        })
       }
       if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
         return Response.json({ items: [], ...pagination(0) })
@@ -1206,7 +1227,11 @@ describe('role workspaces', () => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
-        return Response.json({ laboratory: [], medications: [] })
+        return Response.json({
+          laboratory: [],
+          medications: [],
+          prescriptionConclusionSupported: true,
+        })
       }
       if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
         return Response.json({ items: [virtualPatient], ...pagination(1) })
@@ -1294,6 +1319,7 @@ describe('role workspaces', () => {
             version: 1,
           }],
           medications: [],
+          prescriptionConclusionSupported: true,
         })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
@@ -1553,6 +1579,7 @@ describe('role workspaces', () => {
             version: 1,
           }],
           medications: [],
+          prescriptionConclusionSupported: true,
         })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
@@ -1742,6 +1769,7 @@ describe('role workspaces', () => {
             version: 1,
           }],
           medications: [],
+          prescriptionConclusionSupported: true,
         })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
@@ -2111,6 +2139,7 @@ describe('role workspaces', () => {
             priceFen: 7600,
             version: 1,
           }],
+          prescriptionConclusionSupported: true,
         })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
@@ -2333,7 +2362,12 @@ describe('role workspaces', () => {
         return Response.json({ items: [], ...pagination(0) })
       }
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
-        return Response.json({ diagnoses, laboratory: [], medications: [] })
+        return Response.json({
+          diagnoses,
+          laboratory: [],
+          medications: [],
+          prescriptionConclusionSupported: false,
+        })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
@@ -2405,6 +2439,7 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     expect(await screen.findByText(/既往咳嗽/)).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: '用药结论' })).toBeNull()
     expect(screen.queryByLabelText('诊断编码')).toBeNull()
     await user.click(screen.getByRole('button', { name: '添加诊断' }))
     await user.click(screen.getByRole('combobox', { name: '诊断项目' }))
@@ -2451,6 +2486,7 @@ describe('role workspaces', () => {
           }],
           laboratory: [],
           medications: [],
+          prescriptionConclusionSupported: true,
         })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
@@ -2586,6 +2622,7 @@ describe('role workspaces', () => {
             priceFen: 1_680,
             version: 1,
           }],
+          prescriptionConclusionSupported: true,
         })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
@@ -2767,6 +2804,7 @@ describe('role workspaces', () => {
             priceFen: 1_680,
             version: 1,
           }],
+          prescriptionConclusionSupported: true,
         })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
@@ -2872,6 +2910,7 @@ describe('role workspaces', () => {
             priceFen: 7600,
             version: 1,
           }],
+          prescriptionConclusionSupported: true,
         })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
@@ -3044,7 +3083,11 @@ describe('role workspaces', () => {
         return Response.json({ items: [], ...pagination(0) })
       }
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
-        return Response.json({ laboratory: [], medications: [] })
+        return Response.json({
+          laboratory: [],
+          medications: [],
+          prescriptionConclusionSupported: true,
+        })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
@@ -3246,7 +3289,11 @@ describe('role workspaces', () => {
         return Response.json({ items: [], ...pagination(0) })
       }
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
-        return Response.json({ laboratory: [], medications: [] })
+        return Response.json({
+          laboratory: [],
+          medications: [],
+          prescriptionConclusionSupported: true,
+        })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({

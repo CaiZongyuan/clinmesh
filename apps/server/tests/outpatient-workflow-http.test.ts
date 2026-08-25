@@ -107,6 +107,22 @@ function commandHeaders(cookie: string, idempotencyKey = randomUUID()) {
   }
 }
 
+function useLegacyMedicationCatalog(runtime: TestRuntime): void {
+  const updateMedicationConfig = runtime.database.driver.prepare(`
+    UPDATE outpatient_catalog SET config_json = ?
+    WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+      AND kind = 'medication' AND item_id = ?
+  `)
+  updateMedicationConfig.run(
+    '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"]}',
+    'medication-oseltamivir',
+  )
+  updateMedicationConfig.run(
+    '{"dose":"0.5 g","frequency":"PRN","allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"]}',
+    'medication-acetaminophen',
+  )
+}
+
 async function startVirtualPatientConsultation(runtime: TestRuntime, password: string) {
   const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
   const candidatesResponse = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
@@ -4066,6 +4082,7 @@ describe('outpatient workflow HTTP contract', () => {
           id: 'medication-oseltamivir',
         }),
       ],
+      prescriptionConclusionSupported: true,
     })
 
     const detailResponse = await runtime.app.request(
@@ -4652,6 +4669,100 @@ describe('outpatient workflow HTTP contract', () => {
       if (queueItem === undefined) await new Promise(resolve => setTimeout(resolve, 20))
     }
     expect(queueItem).toMatchObject({ caseId: testCase.caseId, status: 'awaiting-revisit' })
+  })
+
+  it('serves a legacy medication catalog without advertising independent prescription support', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-legacy-medication-catalog-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
+    useLegacyMedicationCatalog(runtime)
+
+    const response = await runtime.app.request('/api/his/v1/catalogs/clinical', {
+      headers: { cookie: doctorCookie },
+    })
+
+    expect(response.status).toBe(200)
+    const catalog = clinicalCatalogSchema.parse(await response.json())
+    expect(catalog).toMatchObject({
+      medications: expect.arrayContaining([
+        expect.objectContaining({
+          allowedDoseTexts: ['75 mg'],
+          allowedFrequencyCodes: ['BID'],
+          defaultDoseText: '75 mg',
+          defaultFrequencyCode: 'BID',
+          id: 'medication-oseltamivir',
+        }),
+      ]),
+      prescriptionConclusionSupported: false,
+    })
+    expect(catalog.medications[0]).not.toHaveProperty('allowedCourseDays')
+  })
+
+  it('rejects independent medication conclusion commands for a legacy medication catalog', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-legacy-medication-command-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    useLegacyMedicationCatalog(runtime)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const draftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: {
+            expectedDraftVersion: 0,
+            items: [{
+              catalogItemId: 'medication-oseltamivir',
+              courseDays: 5,
+              doseText: '75 mg',
+              frequencyCode: 'BID',
+              quantity: 10,
+            }],
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    const noMedicationResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/medication-conclusion/actions/confirm-no-medication`,
+      {
+        body: JSON.stringify({
+          expectedVersions,
+          input: { expectedDraftVersion: 0 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    expect([draftResponse.status, noMedicationResponse.status]).toEqual([409, 409])
+    expect([
+      apiErrorSchema.parse(await draftResponse.json()).error.code,
+      apiErrorSchema.parse(await noMedicationResponse.json()).error.code,
+    ]).toEqual(['CATALOG_CONFLICT', 'CATALOG_CONFLICT'])
   })
 
   it('persists a controlled diagnosis draft without creating formal FHIR Conditions', async () => {

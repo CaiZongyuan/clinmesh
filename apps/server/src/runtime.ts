@@ -55,7 +55,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     if (workspace === undefined) {
       new WorkspaceRepository(database).install({
         epoch: 'epoch-1',
-        scenarioId: 'candidate-fever-outpatient-v2',
+        scenarioId: 'candidate-fever-outpatient-v3',
         scenarioRunId: 'scenario-run-1',
         workspaceId: 'workspace-demo',
         workspaceName: '合成市立医院演示空间',
