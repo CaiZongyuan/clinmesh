@@ -165,7 +165,7 @@ const triageNurseSession = {
   },
 }
 
-const doctorSession = {
+const doctorSession: SessionContext = {
   actor: {
     actorId: 'actor-outpatient-doctor',
     epoch: 'epoch-1',
@@ -1505,6 +1505,8 @@ describe('role workspaces', () => {
   })
 
   it('shows laboratory request statuses and exposes only valid correction actions', async () => {
+    let cancellationRequests = 0
+    let draftDeletionRequests = 0
     let draft: { catalogItemId: string; indicationCode: string } | undefined = {
       catalogItemId: 'lab-cbc',
       indicationCode: 'fever',
@@ -1698,6 +1700,7 @@ describe('role workspaces', () => {
         })
       }
       if (url.pathname === '/api/his/v1/laboratory-requests/laboratory-request-1/actions/cancel') {
+        cancellationRequests += 1
         const body = JSON.parse(String(init?.body)) as unknown
         expect(body).toEqual({
           expectedVersions: {
@@ -1750,6 +1753,7 @@ describe('role workspaces', () => {
         }))
       }
       if (url.pathname === '/api/his/v1/encounters/encounter-virtual-1/laboratory-request/draft') {
+        draftDeletionRequests += 1
         expect(init?.method).toBe('DELETE')
         expect(JSON.parse(String(init?.body))).toEqual({
           expectedVersions: { 'Encounter/encounter-virtual-1': '1' },
@@ -1787,8 +1791,21 @@ describe('role workspaces', () => {
     expect(cancelButtons[0]?.getAttribute('aria-label')).toBe('取消检查申请 C 反应蛋白')
 
     await user.click(cancelButtons[0] as HTMLElement)
+    const cancelDialog = await screen.findByRole('alertdialog', { name: '确认取消检查申请' })
+    expect(cancellationRequests).toBe(0)
+    expect(within(cancelDialog).getByText('C 反应蛋白')).toBeTruthy()
+    expect(within(cancelDialog).getByText('已开具')).toBeTruthy()
+    await user.click(within(cancelDialog).getByRole('button', { name: '确认取消' }))
+    expect(await screen.findByText('检查申请已取消')).toBeTruthy()
+    expect(cancellationRequests).toBe(1)
     await waitFor(() => expect(screen.queryByText('已开具')).toBeNull())
     await user.click(screen.getByRole('button', { name: '删除检查草稿' }))
+    const deleteDialog = await screen.findByRole('alertdialog', { name: '确认删除检查草稿' })
+    expect(draftDeletionRequests).toBe(0)
+    expect(within(deleteDialog).getByText('血常规')).toBeTruthy()
+    await user.click(within(deleteDialog).getByRole('button', { name: '确认删除' }))
+    expect(await screen.findByText('检查草稿已删除')).toBeTruthy()
+    expect(draftDeletionRequests).toBe(1)
     await waitFor(() => expect(screen.queryByText('检查草稿已保存')).toBeNull())
   })
 
@@ -2872,6 +2889,7 @@ describe('role workspaces', () => {
       id: 'no-medication-conclusion-1',
       version: 1,
     }
+    let draftDeletionRequests = 0
     let medicationConclusion: DoctorCaseDetail['medicationConclusion']
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
@@ -2954,23 +2972,34 @@ describe('role workspaces', () => {
         })
       }
       if (url.pathname === '/api/his/v1/encounters/encounter-prescription-conclusion/prescription/draft') {
+        if (init?.method === 'DELETE') {
+          draftDeletionRequests += 1
+          expect(JSON.parse(String(init.body))).toEqual({
+            expectedVersions: { 'Encounter/encounter-prescription-conclusion': '6' },
+            input: { expectedDraftVersion: 1 },
+          })
+          medicationConclusion = { draftVersion: 2 }
+          return Response.json(commandResponse({ draftVersion: 2 }))
+        }
         expect(init?.method).toBe('PUT')
+        const expectedDraftVersion = medicationConclusion?.draftVersion ?? 0
         expect(JSON.parse(String(init?.body))).toEqual({
           expectedVersions: { 'Encounter/encounter-prescription-conclusion': '6' },
-          input: { expectedDraftVersion: 0, items: [draftItem] },
+          input: { expectedDraftVersion, items: [draftItem] },
         })
-        medicationConclusion = { draft: { items: [draftItem] }, draftVersion: 1 }
-        return Response.json(commandResponse({ draftVersion: 1 }))
+        const draftVersion = expectedDraftVersion + 1
+        medicationConclusion = { draft: { items: [draftItem] }, draftVersion }
+        return Response.json(commandResponse({ draftVersion }))
       }
       if (url.pathname === '/api/his/v1/encounters/encounter-prescription-conclusion/prescription/actions/issue') {
         expect(init?.method).toBe('POST')
         expect(JSON.parse(String(init?.body))).toEqual({
           expectedVersions: { 'Encounter/encounter-prescription-conclusion': '6' },
-          input: { expectedDraftVersion: 1 },
+          input: { expectedDraftVersion: 3 },
         })
-        medicationConclusion = { draftVersion: 2, prescription: issuedPrescription }
+        medicationConclusion = { draftVersion: 4, prescription: issuedPrescription }
         return Response.json(commandResponse({
-          draftVersion: 2,
+          draftVersion: 4,
           prescription: issuedPrescription,
         }))
       }
@@ -2981,7 +3010,7 @@ describe('role workspaces', () => {
           input: { expectedPrescriptionVersion: 1 },
         })
         medicationConclusion = {
-          draftVersion: 2,
+          draftVersion: 4,
           prescription: {
             ...issuedPrescription,
             status: 'withdrawn',
@@ -3001,14 +3030,14 @@ describe('role workspaces', () => {
         expect(init?.method).toBe('POST')
         expect(JSON.parse(String(init?.body))).toEqual({
           expectedVersions: { 'Encounter/encounter-prescription-conclusion': '6' },
-          input: { expectedDraftVersion: 2 },
+          input: { expectedDraftVersion: 4 },
         })
         medicationConclusion = {
           ...medicationConclusion,
-          draftVersion: 3,
+          draftVersion: 5,
           noMedication,
         }
-        return Response.json(commandResponse({ draftVersion: 3, noMedication }))
+        return Response.json(commandResponse({ draftVersion: 5, noMedication }))
       }
       throw new Error(`Unexpected request: ${url.pathname}`)
     }))
@@ -3023,6 +3052,15 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: '保存处方草稿' }))
 
     expect(await screen.findByText('处方草稿已保存')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '删除处方草稿' }))
+    const deleteDialog = await screen.findByRole('alertdialog', { name: '确认删除处方草稿' })
+    expect(draftDeletionRequests).toBe(0)
+    expect(within(deleteDialog).getByText('磷酸奥司他韦胶囊')).toBeTruthy()
+    await user.click(within(deleteDialog).getByRole('button', { name: '确认删除' }))
+    expect(await screen.findByText('处方草稿已删除')).toBeTruthy()
+    expect(draftDeletionRequests).toBe(1)
+    await user.click(screen.getByRole('button', { name: '保存处方草稿' }))
+    expect(await screen.findByText('处方草稿已保存')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '正式开具处方' }))
     expect(await screen.findByText('处方已正式开具')).toBeTruthy()
     expect(screen.getByText(/CM-RX-20260824-0001/)).toBeTruthy()
@@ -3030,6 +3068,8 @@ describe('role workspaces', () => {
 
     await user.click(screen.getByRole('button', { name: '撤回处方' }))
     const dialog = await screen.findByRole('alertdialog', { name: '确认撤回处方' })
+    expect(within(dialog).getByText('CM-RX-20260824-0001')).toBeTruthy()
+    expect(within(dialog).getByText('已开具')).toBeTruthy()
     await user.click(within(dialog).getByRole('button', { name: '确认撤回' }))
     expect(await screen.findByText('处方已撤回')).toBeTruthy()
 
@@ -3528,7 +3568,10 @@ describe('role workspaces', () => {
     expect(screen.getByText('版本 1')).toBeTruthy()
   })
 
-  it('keeps signed Clinical Document history read-only and revises only the latest version', async () => {
+  it('binds a Clinical Document revision confirmation to its previewed source version', async () => {
+    let caseDetailRequests = 0
+    let clinicalRevisionRequest: unknown
+    let clinicalRevisionPath: string | undefined
     const patient = {
       birthDate: '1990-05-10',
       gender: 'male',
@@ -3590,6 +3633,7 @@ describe('role workspaces', () => {
         })
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-1') {
+        caseDetailRequests += 1
         return Response.json({
           allergies: [],
           caseId: 'case-1',
@@ -3604,43 +3648,37 @@ describe('role workspaces', () => {
           triage: doctorTriage,
         })
       }
-      if (url.pathname === '/api/his/v1/clinical-documents/composition-structured-2/actions/revise') {
+      if (
+        url.pathname.startsWith('/api/his/v1/clinical-documents/')
+        && url.pathname.endsWith('/actions/revise')
+      ) {
+        clinicalRevisionPath = url.pathname
         const body = JSON.parse(String(init?.body)) as {
           expectedVersions: Record<string, string>
           input: { document: typeof structuredClinicalDocument; reason: string }
         }
-        expect(body.expectedVersions).toEqual({
-          'Composition/composition-structured-2': '1',
-          'Encounter/encounter-1': '5',
-        })
-        expect(body.input.reason).toBe('补充复诊时限和危险征象。')
-        expect(body.input.document.assessment).toBe('修订后明确为甲型流感轻症。')
-        signedDocuments = [...signedDocuments, {
-          bundleId: 'bundle-structured-3',
-          compositionId: 'composition-structured-3',
-          compositionVersion: '1',
-          content: body.input.document,
-          documentId: 'document-structured-3',
-          provenanceId: 'provenance-structured-3',
-          revisionNumber: 3,
-          revisionOfCompositionId: 'composition-structured-2',
-          revisionReason: body.input.reason,
-          signedAt: '2026-08-24T09:20:00+08:00',
-        }]
-        return Response.json(commandResponse({
-          bundleId: 'bundle-structured-3',
-          compositionId: 'composition-structured-3',
-          compositionVersion: '1',
-          documentId: 'document-structured-3',
-          provenanceId: 'provenance-structured-3',
-          revisionNumber: 3,
-          revisionOfCompositionId: 'composition-structured-2',
-        }))
+        clinicalRevisionRequest = body
+        return Response.json({
+          error: {
+            code: 'WORKFLOW_CONFLICT',
+            message: 'The Clinical Document is superseded; only the latest version can be revised',
+          },
+        }, { status: 409 })
       }
       throw new Error(`Unexpected request: ${url.pathname}`)
     }))
     const user = userEvent.setup()
-    render(<WebApp />)
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        mutations: { retry: false },
+        queries: { retry: false, staleTime: Infinity },
+      },
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DoctorWorkspace locale="zh-CN" session={doctorSession} />
+      </QueryClientProvider>,
+    )
 
     expect(await screen.findByRole('heading', { name: '签署历史' })).toBeTruthy()
     expect(screen.getByText('版本 1')).toBeTruthy()
@@ -3655,11 +3693,47 @@ describe('role workspaces', () => {
     await user.type(within(revisionForm).getByLabelText('修订原因'), '补充复诊时限和危险征象。')
     await user.click(within(revisionForm).getByRole('button', { name: '提交病历修订' }))
 
-    expect(await screen.findByText('病历修订已保存')).toBeTruthy()
-    expect(screen.getByText('版本 3')).toBeTruthy()
-    expect(screen.getByText(/补充复诊时限和危险征象。/)).toBeTruthy()
-    expect(screen.getByText(structuredClinicalDocument.assessment)).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: '提交病历修订' })).toHaveLength(1)
+    const revisionDialog = await screen.findByRole('alertdialog', { name: '确认提交病历修订' })
+    expect(clinicalRevisionRequest).toBeUndefined()
+    expect(within(revisionDialog).getByText('修订后明确为甲型流感轻症。')).toBeTruthy()
+    expect(within(revisionDialog).getByText('补充复诊时限和危险征象。')).toBeTruthy()
+    signedDocuments = [...signedDocuments, {
+      bundleId: 'bundle-structured-concurrent',
+      compositionId: 'composition-structured-concurrent',
+      compositionVersion: '1',
+      content: {
+        ...revisedStructuredClinicalDocument,
+        assessment: '另一工作站已提交的并发修订。',
+      },
+      documentId: 'document-structured-concurrent',
+      provenanceId: 'provenance-structured-concurrent',
+      revisionNumber: 3,
+      revisionOfCompositionId: 'composition-structured-2',
+      revisionReason: '并发修订。',
+      signedAt: '2026-08-24T09:20:00+08:00',
+    }]
+    await queryClient.invalidateQueries({ queryKey: ['doctor-case'] })
+    await waitFor(() => expect(caseDetailRequests).toBeGreaterThan(1))
+    await user.click(within(revisionDialog).getByRole('button', { name: '确认提交修订' }))
+
+    await waitFor(() => {
+      expect(clinicalRevisionPath).toBe(
+        '/api/his/v1/clinical-documents/composition-structured-2/actions/revise',
+      )
+    })
+    expect(clinicalRevisionRequest).toMatchObject({
+      expectedVersions: {
+        'Composition/composition-structured-2': '1',
+        'Encounter/encounter-1': '5',
+      },
+      input: {
+        document: { assessment: '修订后明确为甲型流感轻症。' },
+        reason: '补充复诊时限和危险征象。',
+      },
+    })
+    expect(await screen.findByText(
+      'The Clinical Document is superseded; only the latest version can be revised',
+    )).toBeTruthy()
   })
 
   it('searches completed cases with controlled patient, date, and diagnosis filters and shows the empty state', async () => {
@@ -3955,9 +4029,15 @@ describe('role workspaces', () => {
     expect(screen.queryByRole('button', { name: '更正检查报告' })).toBeNull()
   })
 
-  it('navigates from completed case details to the controlled clinical correction owners', async () => {
+  it('completes all five controlled clinical correction classes and shows the final timeline', async () => {
     let clinicalRevisionRequest: unknown
+    let laboratoryCancellationRequest: unknown
     let laboratoryCorrectionRequest: unknown
+    let laboratoryDraftDeletionRequest: unknown
+    let prescriptionDraftDeletionRequest: unknown
+    let prescriptionDraftRequest: unknown
+    let prescriptionIssueRequest: unknown
+    let prescriptionWithdrawalRequest: unknown
     const patient = {
       birthDate: '1988-03-16',
       gender: 'female',
@@ -3967,6 +4047,42 @@ describe('role workspaces', () => {
       synthetic: true,
       versionId: '2',
     } as const
+    const prescriptionDraftItem = {
+      catalogItemId: 'medication-oseltamivir',
+      courseDays: 5,
+      doseText: '75 mg',
+      frequencyCode: 'BID',
+      quantity: 10,
+    } as const
+    const issuedPrescriptionItem = {
+      ...prescriptionDraftItem,
+      display: '磷酸奥司他韦胶囊',
+      medicationRequestId: 'medication-request-correction-replacement-1',
+      medicationRequestVersion: '1',
+    }
+    const issuedPrescription = {
+      authoredAt: '2026-08-24T09:07:00+08:00',
+      authoredByPractitionerRoleId: 'practitioner-role-outpatient-doctor',
+      id: 'prescription-correction-replacement-1',
+      items: [issuedPrescriptionItem],
+      number: 'CM-RX-20260824-0032',
+      status: 'signed' as const,
+      version: 1,
+    }
+    const withdrawal = {
+      id: 'prescription-withdrawal-correction-1',
+      prescriptionId: issuedPrescription.id,
+      version: 1,
+      withdrawnAt: '2026-08-24T09:08:00+08:00',
+      withdrawnByActorId: 'actor-administrator',
+      withdrawnByPractitionerRoleId: 'practitioner-role-outpatient-doctor',
+    }
+    const withdrawnPrescription = {
+      ...issuedPrescription,
+      status: 'withdrawn' as const,
+      version: 2,
+      withdrawal,
+    }
     const signedDocument = {
       bundleId: 'bundle-completed-correction-1',
       compositionId: 'composition-completed-correction-1',
@@ -4021,9 +4137,25 @@ describe('role workspaces', () => {
       taskVersion: '5',
       version: 5,
     }
+    const issuedLaboratoryRequest: LaboratoryRequest = {
+      catalogItemId: 'lab-cbc',
+      id: 'laboratory-request-cancellation-1',
+      indicationCode: 'fever',
+      previousReports: [],
+      serviceRequestId: 'service-request-cancellation-1',
+      serviceRequestVersion: '1',
+      status: 'issued',
+      taskId: 'task-laboratory-cancellation-1',
+      taskVersion: '1',
+      version: 1,
+    }
     const completedLaboratoryRequest = {
       ...laboratoryRequest,
       correctionSupported: true,
+    } as const
+    const completedIssuedLaboratoryRequest = {
+      ...issuedLaboratoryRequest,
+      correctionSupported: false,
     } as const
     const completedDetail = {
       caseId: 'case-completed-correction-1',
@@ -4034,9 +4166,24 @@ describe('role workspaces', () => {
         status: 'completed',
         versionId: '6',
       },
-      laboratoryRequests: [completedLaboratoryRequest],
+      laboratoryRequests: [completedIssuedLaboratoryRequest, completedLaboratoryRequest],
       patient,
-      timeline: [],
+      timeline: [{
+        kind: 'clinical-document-signed',
+        occurredAt: signedDocument.signedAt,
+        reference: `Composition/${signedDocument.compositionId}`,
+        relatedReferences: [`Bundle/${signedDocument.bundleId}`],
+      }, {
+        kind: 'laboratory-request-issued',
+        occurredAt: '2026-08-24T08:30:00+08:00',
+        reference: `ServiceRequest/${issuedLaboratoryRequest.serviceRequestId}`,
+        relatedReferences: [`Task/${issuedLaboratoryRequest.taskId}`],
+      }, {
+        kind: 'laboratory-report-issued',
+        occurredAt: report.issuedAt,
+        reference: `DiagnosticReport/${report.diagnosticReportId}`,
+        relatedReferences: report.results.map(result => `Observation/${result.observationId}`),
+      }],
     } satisfies DoctorCompletedCaseDetail
     const revisedDocument: DoctorCompletedCaseDetail['clinicalDocuments'][number] = {
       ...completedSignedDocument,
@@ -4049,9 +4196,7 @@ describe('role workspaces', () => {
       revisionReason: '补充检验复核后的处置说明。',
       signedAt: '2026-08-24T09:10:00+08:00',
     }
-    const revisedReport: NonNullable<
-      DoctorCompletedCaseDetail['laboratoryRequests'][number]['report']
-    > = {
+    const revisedReport: NonNullable<LaboratoryRequest['report']> = {
       conclusion: '复核后 C 反应蛋白仍升高。',
       diagnosticReportId: 'diagnostic-report-correction-2',
       diagnosticReportVersion: '1',
@@ -4080,26 +4225,57 @@ describe('role workspaces', () => {
       reference: `DiagnosticReport/${revisedReport.diagnosticReportId}`,
       relatedReferences: [`DiagnosticReport/${report.diagnosticReportId}`],
     }
-    const activeDetail = {
+    const laboratoryCancellationEvent: DoctorCompletedCaseDetail['timeline'][number] = {
+      kind: 'laboratory-request-cancelled',
+      occurredAt: '2026-08-24T09:05:00+08:00',
+      reference: `LaboratoryRequest/${issuedLaboratoryRequest.id}`,
+      relatedReferences: [
+        `ServiceRequest/${issuedLaboratoryRequest.serviceRequestId}`,
+        `Task/${issuedLaboratoryRequest.taskId}`,
+      ],
+    }
+    const prescriptionIssuedEvent: DoctorCompletedCaseDetail['timeline'][number] = {
+      kind: 'prescription-issued',
+      occurredAt: issuedPrescription.authoredAt,
+      reference: `Prescription/${issuedPrescription.id}`,
+      relatedReferences: issuedPrescription.items.map(
+        item => `MedicationRequest/${item.medicationRequestId}`,
+      ),
+    }
+    const prescriptionWithdrawalEvent: DoctorCompletedCaseDetail['timeline'][number] = {
+      kind: 'prescription-withdrawn',
+      occurredAt: withdrawal.withdrawnAt,
+      reference: `PrescriptionWithdrawal/${withdrawal.id}`,
+      relatedReferences: [`Prescription/${issuedPrescription.id}`],
+    }
+    let currentActiveDetail: DoctorCaseDetail = {
       allergies: [],
       caseId: completedDetail.caseId,
       clinicalDocument: { signed: [signedDocument] },
       consultation: { questions: [], records: [], version: 1 },
-      encounter: completedDetail.encounter,
+      encounter: {
+        id: completedDetail.encounter.id,
+        status: 'in-progress',
+        versionId: completedDetail.encounter.versionId,
+      },
       laboratoryRequests: {
-        draftVersion: 0,
+        draft: { catalogItemId: 'lab-crp', indicationCode: 'fever' },
+        draftVersion: 1,
         reportingSupported: true,
-        requests: [laboratoryRequest],
+        requests: [issuedLaboratoryRequest, laboratoryRequest],
+      },
+      medicationConclusion: {
+        draft: { items: [prescriptionDraftItem] },
+        draftVersion: 1,
       },
       patient,
       presentation: doctorPresentation,
       priorFacts: [],
-      status: 'completed',
+      status: 'revisit-draft',
       taskId: 'task-doctor-completed-correction-1',
       taskVersion: '2',
-    } satisfies DoctorCaseDetail
+    }
     stubDoctorCompletedCaseLibrary({
-      activeDetail,
       list: {
         items: [{
           caseId: completedDetail.caseId,
@@ -4111,11 +4287,204 @@ describe('role workspaces', () => {
         ...pagination(1),
       },
       onRequest: (url, init) => {
+        if (url.pathname === '/api/his/v1/catalogs/clinical') {
+          return Response.json({
+            diagnoses: [{
+              code: 'J10.1',
+              id: 'diagnosis-influenza-a',
+              nameEn: 'Influenza with other respiratory manifestations',
+              nameZh: '流感伴其他呼吸道表现',
+              system: 'http://hl7.org/fhir/sid/icd-10',
+              version: 1,
+            }],
+            laboratory: [{
+              allowedIndicationCodes: ['fever'],
+              contraindicatedAllergyCodes: [],
+              id: 'lab-cbc',
+              nameEn: 'Complete blood count',
+              nameZh: '血常规',
+              priceFen: 2_500,
+              version: 1,
+            }, {
+              allowedIndicationCodes: ['fever'],
+              contraindicatedAllergyCodes: [],
+              id: 'lab-crp',
+              nameEn: 'C-reactive protein',
+              nameZh: 'C 反应蛋白',
+              priceFen: 4_300,
+              version: 1,
+            }],
+            medications: [{
+              allowedCombinationIds: ['medication-oseltamivir'],
+              allowedCourseDays: [5],
+              allowedDoseTexts: ['75 mg'],
+              allowedFrequencyCodes: ['BID'],
+              allowedQuantities: [10],
+              defaultCourseDays: 5,
+              defaultDoseText: '75 mg',
+              defaultFrequencyCode: 'BID',
+              defaultQuantity: 10,
+              id: 'medication-oseltamivir',
+              nameEn: 'Oseltamivir phosphate capsules',
+              nameZh: '磷酸奥司他韦胶囊',
+              priceFen: 1_680,
+              version: 1,
+            }],
+            prescriptionConclusionSupported: true,
+          })
+        }
+        if (url.pathname === '/api/his/v1/doctor/queue') {
+          return Response.json({
+            items: [{
+              caseId: completedDetail.caseId,
+              encounterId: completedDetail.encounter.id,
+              encounterVersion: completedDetail.encounter.versionId,
+              patient,
+              presentation: doctorPresentation,
+              status: 'revisit-draft',
+              taskId: currentActiveDetail.taskId,
+              taskVersion: currentActiveDetail.taskVersion,
+            }],
+            ...pagination(1),
+          })
+        }
+        if (
+          url.pathname
+          === `/api/his/v1/doctor/cases/${completedDetail.caseId}`
+        ) {
+          return Response.json(currentActiveDetail)
+        }
         if (
           url.pathname
           === `/api/his/v1/doctor/completed-cases/${completedDetail.caseId}`
         ) {
           return Response.json(currentCompletedDetail)
+        }
+        if (
+          url.pathname
+          === `/api/his/v1/encounters/${completedDetail.encounter.id}/laboratory-request/draft`
+        ) {
+          laboratoryDraftDeletionRequest = JSON.parse(String(init?.body))
+          const requestState = currentActiveDetail.laboratoryRequests
+          if (requestState === undefined) throw new Error('Laboratory state was not found')
+          currentActiveDetail = {
+            ...currentActiveDetail,
+            laboratoryRequests: {
+              draftVersion: 2,
+              reportingSupported: requestState.reportingSupported,
+              requests: requestState.requests,
+            },
+          }
+          return Response.json(commandResponse({
+            caseId: completedDetail.caseId,
+            draftVersion: 2,
+          }))
+        }
+        if (
+          url.pathname
+          === `/api/his/v1/laboratory-requests/${issuedLaboratoryRequest.id}/actions/cancel`
+        ) {
+          laboratoryCancellationRequest = JSON.parse(String(init?.body))
+          const cancelledRequest: LaboratoryRequest = {
+            ...issuedLaboratoryRequest,
+            serviceRequestVersion: '2',
+            status: 'cancelled',
+            taskVersion: '2',
+            version: 2,
+          }
+          const requestState = currentActiveDetail.laboratoryRequests
+          if (requestState === undefined) throw new Error('Laboratory state was not found')
+          currentActiveDetail = {
+            ...currentActiveDetail,
+            laboratoryRequests: {
+              ...requestState,
+              requests: requestState.requests.map(request => (
+                request.id === cancelledRequest.id ? cancelledRequest : request
+              )),
+            },
+          }
+          currentCompletedDetail = {
+            ...currentCompletedDetail,
+            laboratoryRequests: currentCompletedDetail.laboratoryRequests.map(request => (
+              request.id === cancelledRequest.id
+                ? { ...cancelledRequest, correctionSupported: false }
+                : request
+            )),
+            timeline: [...currentCompletedDetail.timeline, laboratoryCancellationEvent],
+          }
+          return Response.json(commandResponse({ request: cancelledRequest }))
+        }
+        if (
+          url.pathname
+          === `/api/his/v1/encounters/${completedDetail.encounter.id}/prescription/draft`
+        ) {
+          if (init?.method === 'DELETE') {
+            prescriptionDraftDeletionRequest = JSON.parse(String(init.body))
+            currentActiveDetail = {
+              ...currentActiveDetail,
+              medicationConclusion: { draftVersion: 2 },
+            }
+            return Response.json(commandResponse({ draftVersion: 2 }))
+          }
+          prescriptionDraftRequest = JSON.parse(String(init?.body))
+          currentActiveDetail = {
+            ...currentActiveDetail,
+            medicationConclusion: {
+              draft: { items: [prescriptionDraftItem] },
+              draftVersion: 3,
+            },
+          }
+          return Response.json(commandResponse({ draftVersion: 3 }))
+        }
+        if (
+          url.pathname
+          === `/api/his/v1/encounters/${completedDetail.encounter.id}/prescription/actions/issue`
+        ) {
+          prescriptionIssueRequest = JSON.parse(String(init?.body))
+          currentActiveDetail = {
+            ...currentActiveDetail,
+            medicationConclusion: {
+              draftVersion: 4,
+              prescription: issuedPrescription,
+            },
+          }
+          currentCompletedDetail = {
+            ...currentCompletedDetail,
+            medicationConclusion: { prescription: issuedPrescription },
+            timeline: [...currentCompletedDetail.timeline, prescriptionIssuedEvent],
+          }
+          return Response.json(commandResponse({
+            draftVersion: 4,
+            prescription: issuedPrescription,
+          }))
+        }
+        if (
+          url.pathname
+          === `/api/his/v1/prescriptions/${issuedPrescription.id}/actions/withdraw`
+        ) {
+          prescriptionWithdrawalRequest = JSON.parse(String(init?.body))
+          currentActiveDetail = {
+            ...currentActiveDetail,
+            medicationConclusion: {
+              draftVersion: 4,
+              prescription: withdrawnPrescription,
+            },
+          }
+          currentCompletedDetail = {
+            ...currentCompletedDetail,
+            medicationConclusion: { prescription: withdrawnPrescription },
+            timeline: [...currentCompletedDetail.timeline, prescriptionWithdrawalEvent],
+          }
+          return Response.json(commandResponse({
+            medicationRequests: [{
+              id: issuedPrescriptionItem.medicationRequestId,
+              version: '2',
+            }],
+            prescriptionId: issuedPrescription.id,
+            prescriptionVersion: 2,
+            status: 'withdrawn',
+            withdrawal,
+          }))
         }
         if (
           url.pathname
@@ -4142,15 +4511,31 @@ describe('role workspaces', () => {
           === '/api/his/v1/laboratory-requests/laboratory-request-correction-1/reports/diagnostic-report-correction-1/actions/correct'
         ) {
           laboratoryCorrectionRequest = JSON.parse(String(init?.body))
+          const revisedLaboratoryRequest: LaboratoryRequest = {
+            ...laboratoryRequest,
+            previousReports: [report],
+            report: revisedReport,
+            status: 'reported',
+            version: laboratoryRequest.version + 1,
+          }
+          const requestState = currentActiveDetail.laboratoryRequests
+          if (requestState === undefined) throw new Error('Laboratory state was not found')
+          currentActiveDetail = {
+            ...currentActiveDetail,
+            laboratoryRequests: {
+              ...requestState,
+              requests: requestState.requests.map(request => (
+                request.id === revisedLaboratoryRequest.id ? revisedLaboratoryRequest : request
+              )),
+            },
+          }
           currentCompletedDetail = {
             ...currentCompletedDetail,
-            laboratoryRequests: [{
-              ...completedLaboratoryRequest,
-              previousReports: [report],
-              report: revisedReport,
-              status: 'reported',
-              version: laboratoryRequest.version + 1,
-            }],
+            laboratoryRequests: currentCompletedDetail.laboratoryRequests.map(request => (
+              request.id === revisedLaboratoryRequest.id
+                ? { ...revisedLaboratoryRequest, correctionSupported: true }
+                : request
+            )),
             timeline: [...currentCompletedDetail.timeline, laboratoryCorrectionEvent],
           }
           return Response.json(commandResponse({
@@ -4179,6 +4564,72 @@ describe('role workspaces', () => {
       </QueryClientProvider>,
     )
 
+    await user.click(await screen.findByRole('button', { name: '删除检查草稿' }))
+    const laboratoryDraftDialog = await screen.findByRole('alertdialog', {
+      name: '确认删除检查草稿',
+    })
+    expect(within(laboratoryDraftDialog).getByText('C 反应蛋白')).toBeTruthy()
+    await user.click(within(laboratoryDraftDialog).getByRole('button', { name: '确认删除' }))
+    expect(await screen.findByText('检查草稿已删除')).toBeTruthy()
+    expect(laboratoryDraftDeletionRequest).toEqual({
+      expectedVersions: { 'Encounter/encounter-completed-correction-1': '6' },
+      input: { expectedDraftVersion: 1 },
+    })
+
+    await user.click(screen.getByRole('button', { name: '取消检查申请 血常规' }))
+    const laboratoryCancellationDialog = await screen.findByRole('alertdialog', {
+      name: '确认取消检查申请',
+    })
+    expect(within(laboratoryCancellationDialog).getByText('血常规')).toBeTruthy()
+    await user.click(within(laboratoryCancellationDialog).getByRole('button', { name: '确认取消' }))
+    expect(await screen.findByText('检查申请已取消')).toBeTruthy()
+    expect(laboratoryCancellationRequest).toEqual({
+      expectedVersions: {
+        'ServiceRequest/service-request-cancellation-1': '1',
+        'Task/task-laboratory-cancellation-1': '1',
+      },
+      input: { expectedRequestVersion: 1, reasonCode: 'no-longer-needed' },
+    })
+
+    await user.click(screen.getByRole('button', { name: '删除处方草稿' }))
+    const prescriptionDraftDialog = await screen.findByRole('alertdialog', {
+      name: '确认删除处方草稿',
+    })
+    expect(within(prescriptionDraftDialog).getByText('磷酸奥司他韦胶囊')).toBeTruthy()
+    await user.click(within(prescriptionDraftDialog).getByRole('button', { name: '确认删除' }))
+    expect(await screen.findByText('处方草稿已删除')).toBeTruthy()
+    expect(prescriptionDraftDeletionRequest).toEqual({
+      expectedVersions: { 'Encounter/encounter-completed-correction-1': '6' },
+      input: { expectedDraftVersion: 1 },
+    })
+
+    await user.click(screen.getByRole('button', { name: '保存处方草稿' }))
+    expect(await screen.findByText('处方草稿已保存')).toBeTruthy()
+    expect(prescriptionDraftRequest).toEqual({
+      expectedVersions: { 'Encounter/encounter-completed-correction-1': '6' },
+      input: { expectedDraftVersion: 2, items: [prescriptionDraftItem] },
+    })
+    await user.click(screen.getByRole('button', { name: '正式开具处方' }))
+    expect(await screen.findByText('处方已正式开具')).toBeTruthy()
+    expect(prescriptionIssueRequest).toEqual({
+      expectedVersions: { 'Encounter/encounter-completed-correction-1': '6' },
+      input: { expectedDraftVersion: 3 },
+    })
+
+    await user.click(screen.getByRole('button', { name: '撤回处方' }))
+    const prescriptionWithdrawalDialog = await screen.findByRole('alertdialog', {
+      name: '确认撤回处方',
+    })
+    expect(within(prescriptionWithdrawalDialog).getByText(issuedPrescription.number)).toBeTruthy()
+    await user.click(within(prescriptionWithdrawalDialog).getByRole('button', { name: '确认撤回' }))
+    expect(await screen.findByText('处方已撤回')).toBeTruthy()
+    expect(prescriptionWithdrawalRequest).toEqual({
+      expectedVersions: {
+        'MedicationRequest/medication-request-correction-replacement-1': '1',
+      },
+      input: { expectedPrescriptionVersion: 1 },
+    })
+
     await user.click(await screen.findByRole('tab', { name: '已完诊病例' }))
     await user.click(await screen.findByRole('button', { name: `查看病例 ${patient.name}` }))
     expect(await screen.findByText('只读详情')).toBeTruthy()
@@ -4193,6 +4644,10 @@ describe('role workspaces', () => {
     const revisionForm = await screen.findByRole('form', { name: '修订病历版本 1' })
     await user.type(within(revisionForm).getByLabelText('修订原因'), '补充检验复核后的处置说明。')
     await user.click(within(revisionForm).getByRole('button', { name: '提交病历修订' }))
+    const revisionConfirmation = await screen.findByRole('alertdialog', {
+      name: '确认提交病历修订',
+    })
+    await user.click(within(revisionConfirmation).getByRole('button', { name: '确认提交修订' }))
     await waitFor(() => {
       expect(clinicalRevisionRequest).toMatchObject({
         expectedVersions: {
@@ -4212,7 +4667,7 @@ describe('role workspaces', () => {
       expect(document.activeElement?.id).toBe('encounter-completion-target-laboratory')
     })
     expect(screen.getByRole('tab', { name: '当前诊疗' }).getAttribute('aria-selected')).toBe('true')
-    const correctionForm = await screen.findByRole('form', { name: '更正检查报告 lab-crp' })
+    const correctionForm = await screen.findByRole('form', { name: '更正检查报告 C 反应蛋白' })
     await user.clear(within(correctionForm).getByLabelText('更正后结论'))
     await user.type(within(correctionForm).getByLabelText('更正后结论'), '复核后 C 反应蛋白仍升高。')
     await user.clear(within(correctionForm).getByLabelText('C 反应蛋白 · 结果'))
@@ -4241,8 +4696,14 @@ describe('role workspaces', () => {
     expect(await screen.findByText('第 2 版（当前）')).toBeTruthy()
     expect(screen.getByText('复核后 C 反应蛋白仍升高。')).toBeTruthy()
     const timeline = screen.getByRole('region', { name: '业务时间线' })
+    expect(within(timeline).getByText('签署病历')).toBeTruthy()
     expect(within(timeline).getByText('修订病历')).toBeTruthy()
+    expect(within(timeline).getByText('开具检查申请')).toBeTruthy()
+    expect(within(timeline).getByText('取消检查申请')).toBeTruthy()
+    expect(within(timeline).getByText('签发检查报告')).toBeTruthy()
     expect(within(timeline).getByText('更正检查报告')).toBeTruthy()
+    expect(within(timeline).getByText('开具处方')).toBeTruthy()
+    expect(within(timeline).getByText('撤回处方')).toBeTruthy()
   })
 
   it('partially dispenses from a versioned lot before completing the Scenario Run', async () => {

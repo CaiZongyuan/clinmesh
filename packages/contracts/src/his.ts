@@ -1006,6 +1006,7 @@ export const doctorCompletedCaseTimelineKindSchema = z.enum([
   'clinical-document-signed',
   'clinical-document-revised',
   'laboratory-request-issued',
+  'laboratory-request-cancelled',
   'laboratory-report-issued',
   'laboratory-report-revised',
   'laboratory-report-acknowledged',

@@ -170,6 +170,10 @@ const withdrawablePrescriptionRowSchema = activePrescriptionRowSchema.extend({
   version: z.number().int().positive(),
 })
 
+const prescriptionWithdrawalLookupRowSchema = withdrawablePrescriptionRowSchema.extend({
+  case_id: z.string().min(1),
+})
+
 const prescriptionWorkflowRowSchema = withdrawablePrescriptionRowSchema.extend({
   case_status: outpatientCaseStatusRowSchema,
   encounter_id: z.string().min(1),
@@ -3281,6 +3285,7 @@ export class WorkflowService {
       this.#assertRole(input.context, ['outpatient-doctor'])
       this.#assertPrescriptionConclusionSupported(input.context)
       const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+      this.#assertCaseResponsibility(input.context, outpatientCase.case_id)
       const encounter = this.#fhir.read(input.context, 'Encounter', input.encounterId)
       if (encounter.status !== 'in-progress' || outpatientCase.status === 'completed') {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription draft cannot be deleted')
@@ -3292,12 +3297,20 @@ export class WorkflowService {
           WHERE workspace_id = ? AND epoch = ? AND case_id = ?
         `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id),
       )
-      if (
-        state === undefined
-        || state.version !== input.expectedDraftVersion
-        || state.draft_json === null
-      ) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription draft version has changed')
+      if (state === undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription draft does not exist')
+      }
+      if (state.draft_json === null) {
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          `The prescription draft is empty at version ${state.version}`,
+        )
+      }
+      if (state.version !== input.expectedDraftVersion) {
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          `The prescription draft is at version ${state.version}; expected version ${input.expectedDraftVersion}`,
+        )
       }
       const draftVersion = state.version + 1
       const update = this.#database.driver.prepare(`
@@ -3764,9 +3777,9 @@ export class WorkflowService {
           'A Practitioner Role is required to withdraw a prescription',
         )
       }
-      const prescription = withdrawablePrescriptionRowSchema.optional().parse(
+      const prescription = prescriptionWithdrawalLookupRowSchema.optional().parse(
         this.#database.driver.prepare(`
-          SELECT prescription.version, prescription.status,
+          SELECT prescription.case_id, prescription.version, prescription.status,
             withdrawal.withdrawal_id
           FROM prescription
           LEFT JOIN prescription_withdrawal AS withdrawal
@@ -3781,13 +3794,27 @@ export class WorkflowService {
           input.prescriptionId,
         ),
       )
-      if (
-        prescription === undefined
-        || !['signed', 'paid'].includes(prescription.status)
-        || prescription.version !== input.expectedPrescriptionVersion
-        || prescription.withdrawal_id !== null
-      ) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription cannot be withdrawn')
+      if (prescription === undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription was not found')
+      }
+      this.#assertCaseResponsibility(input.context, prescription.case_id)
+      if (prescription.version !== input.expectedPrescriptionVersion) {
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          `The prescription is at version ${prescription.version}; expected version ${input.expectedPrescriptionVersion}`,
+        )
+      }
+      if (prescription.withdrawal_id !== null) {
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          `The prescription is already withdrawn at version ${prescription.version}`,
+        )
+      }
+      if (!['signed', 'paid'].includes(prescription.status)) {
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          `The prescription cannot be withdrawn from status "${prescription.status}"`,
+        )
       }
       const items = z.array(prescriptionDispensingRowSchema).parse(
         this.#database.driver.prepare(`
@@ -3804,7 +3831,7 @@ export class WorkflowService {
       if (items.length === 0 || items.some(item => item.dispensed_quantity > 0)) {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
-          'A dispensed prescription cannot be withdrawn',
+          'The prescription cannot be withdrawn because its current state is "dispensing-started"',
         )
       }
       const medicationReferences = items.map(
@@ -4959,7 +4986,7 @@ export class WorkflowService {
       if (successor !== undefined) {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
-          'Only the latest Clinical Document version can be revised',
+          'The Clinical Document is superseded; only the latest version can be revised',
         )
       }
       this.#assertExpectedVersions(input.expectedVersions, [
@@ -5590,12 +5617,22 @@ export class WorkflowService {
       )
       this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
       const current = this.#laboratoryRequestState(input.context, outpatientCase.case_id)
-      if (current === undefined
-        || current.version !== input.expectedDraftVersion
-        || current.draft_catalog_item_id === null) {
+      if (current === undefined) {
         throw new WorkflowError(
           'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request draft version has changed',
+          'The laboratory request draft does not exist',
+        )
+      }
+      if (current.draft_catalog_item_id === null) {
+        throw new WorkflowError(
+          'LABORATORY_REQUEST_VERSION_CONFLICT',
+          `The laboratory request draft is empty at version ${current.version}`,
+        )
+      }
+      if (current.version !== input.expectedDraftVersion) {
+        throw new WorkflowError(
+          'LABORATORY_REQUEST_VERSION_CONFLICT',
+          `The laboratory request draft is at version ${current.version}; expected version ${input.expectedDraftVersion}`,
         )
       }
       const draftVersion = current.version + 1
@@ -5842,13 +5879,13 @@ export class WorkflowService {
       if (request.version !== input.expectedRequestVersion) {
         throw new WorkflowError(
           'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request version has changed',
+          `The laboratory request is "${request.status}" at version ${request.version}; expected version ${input.expectedRequestVersion}`,
         )
       }
       if (request.status !== 'issued') {
         throw new WorkflowError(
           'LABORATORY_REQUEST_NOT_CANCELLABLE',
-          'Only an issued laboratory request can be cancelled',
+          `The laboratory request cannot be cancelled from status "${request.status}"`,
         )
       }
       const serviceRequest = transaction.fhir.read(
@@ -5922,9 +5959,13 @@ export class WorkflowService {
       return execute()
     } catch (error) {
       if (error instanceof ExpectedVersionConflictError) {
+        const current = this.#laboratoryRequest(input.context, input.requestId)
+        if (current === undefined) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request was not found')
+        }
         throw new WorkflowError(
           'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request version has changed',
+          `The laboratory request is "${current.status}" at version ${current.version}; a related resource version has changed`,
         )
       }
       throw error
@@ -6492,16 +6533,19 @@ export class WorkflowService {
       if (request.version !== input.expectedRequestVersion) {
         throw new WorkflowError(
           'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request version has changed',
+          `The laboratory request is "${request.status}" at version ${request.version}; expected version ${input.expectedRequestVersion}`,
         )
       }
-      if (
-        request.diagnostic_report_id !== input.diagnosticReportId
-        || (request.status !== 'reported' && request.status !== 'acknowledged')
-      ) {
+      if (request.diagnostic_report_id !== input.diagnosticReportId) {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
-          'Only the latest signed laboratory report can be corrected',
+          'The laboratory report is superseded; only the latest signed report can be corrected',
+        )
+      }
+      if (request.status !== 'reported' && request.status !== 'acknowledged') {
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          `The laboratory report cannot be corrected while the request status is "${request.status}"`,
         )
       }
       const sourceReportResource = transaction.fhir.read(
@@ -8150,6 +8194,19 @@ export class WorkflowService {
     }
   }
 
+  #assertCaseResponsibility(context: ActorContext, caseId: string): void {
+    const responsibility = practitionerRoleIdRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT practitioner_role_id
+        FROM outpatient_case_responsibility
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      `).get(context.workspaceId, context.epoch, caseId),
+    )
+    if (responsibility?.practitioner_role_id !== this.#requiredPractitionerRoleId(context)) {
+      throw new WorkflowError('ROLE_NOT_ALLOWED', 'The outpatient case belongs to another doctor')
+    }
+  }
+
   #isRegistrationLocation(resource: FhirResource): boolean {
     if (resource.resourceType !== 'Location' || resource.status !== 'active') return false
     if (!Array.isArray(resource.type)) return false
@@ -8400,6 +8457,7 @@ export class WorkflowService {
   ) {
     this.#assertRole(context, ['outpatient-doctor'])
     const outpatientCase = this.#caseByEncounter(context, encounterId)
+    this.#assertCaseResponsibility(context, outpatientCase.case_id)
     if (outpatientCase.status !== 'first-visit'
       || this.#consultationState(context, outpatientCase.case_id) === undefined) {
       const message = action === 'issue'
@@ -8984,6 +9042,24 @@ export class WorkflowService {
           ...(request.taskId === undefined ? [] : [`Task/${request.taskId}`]),
         ],
       })
+      if (request.status === 'cancelled') {
+        const cancellation = z.object({
+          cancelled_at: z.iso.datetime({ offset: true }),
+        }).strict().parse(this.#database.driver.prepare(`
+          SELECT cancelled_at FROM laboratory_request
+          WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+            AND cancelled_at IS NOT NULL
+        `).get(context.workspaceId, context.epoch, request.id))
+        events.push({
+          kind: 'laboratory-request-cancelled',
+          occurredAt: cancellation.cancelled_at,
+          reference: `LaboratoryRequest/${request.id}`,
+          relatedReferences: [
+            `ServiceRequest/${request.serviceRequestId}`,
+            ...(request.taskId === undefined ? [] : [`Task/${request.taskId}`]),
+          ],
+        })
+      }
       for (const report of [
         ...request.previousReports,
         ...(request.report === undefined ? [] : [request.report]),
