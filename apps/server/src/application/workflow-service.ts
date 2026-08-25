@@ -4294,7 +4294,7 @@ export class WorkflowService {
       if (hiddenFact === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory result fact is unavailable')
       }
-      const fixture = laboratoryResultsFactSchema.parse(JSON.parse(hiddenFact.value_json))[
+      const laboratoryResultFact = laboratoryResultsFactSchema.parse(JSON.parse(hiddenFact.value_json))[
         request.catalog_item_id
       ]
       const serviceRequest = transaction.fhir.read(
@@ -4330,7 +4330,7 @@ export class WorkflowService {
         collection: { collectedDateTime: now },
         receivedTime: now,
       })
-      const observations = fixture.results.map((result) => {
+      const observations = laboratoryResultFact.results.map((result) => {
         const observationId = `obs-${result.code}-${request.service_request_id}`
         const interpretationCode = result.interpretation === 'normal'
           ? 'N'
@@ -4406,7 +4406,7 @@ export class WorkflowService {
         })),
         effectiveDateTime: now,
         issued: now,
-        conclusion: fixture.conclusion,
+        conclusion: laboratoryResultFact.conclusion,
       })
       const completedServiceRequest = transaction.fhir.update(input.context, {
         ...serviceRequest,
