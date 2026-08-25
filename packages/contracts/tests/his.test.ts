@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   clinicalCatalogSchema,
   completeEncounterRequestSchema,
+  completedCaseClinicalDocumentSchema,
   completedCaseLaboratoryRequestSchema,
   encounterCompletionPreviewSchema,
   encounterCompletionResponseSchema,
@@ -421,5 +422,33 @@ describe('HIS contracts', () => {
         },
       },
     }).success).toBe(false)
+  })
+
+  it('defaults missing completed-case correction capabilities to unavailable', () => {
+    const document = {
+      bundleId: 'bundle-legacy-1',
+      compositionId: 'composition-legacy-1',
+      compositionVersion: '1',
+      content: {
+        assessment: '甲型流感，生命体征稳定。',
+        plan: '口服抗病毒药物，对症处理。',
+      },
+      documentId: 'document-legacy-1',
+      provenanceId: 'provenance-legacy-1',
+      revisionNumber: 1,
+      signedAt: '2026-08-24T08:20:00+08:00',
+    }
+    const { request } = completedCaseLaboratoryRequestFixture()
+
+    expect(completedCaseClinicalDocumentSchema.parse(document).correctionSupported).toBe(false)
+    expect(completedCaseClinicalDocumentSchema.parse({
+      ...document,
+      correctionSupported: true,
+    }).correctionSupported).toBe(true)
+    expect(completedCaseLaboratoryRequestSchema.parse(request).correctionSupported).toBe(false)
+    expect(completedCaseLaboratoryRequestSchema.parse({
+      ...request,
+      correctionSupported: true,
+    }).correctionSupported).toBe(true)
   })
 })

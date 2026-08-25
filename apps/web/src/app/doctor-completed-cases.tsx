@@ -398,8 +398,12 @@ function CompletedCaseDetailView({ canCorrectLaboratoryReport, catalog, detail, 
   onOpenCorrection: (caseId: string, target: CompletedCaseCorrectionTarget) => void
 }): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
-  const hasLaboratoryReport = detail.laboratoryRequests.some(
-    request => request.report !== undefined || request.previousReports.length > 0,
+  const hasCorrectableClinicalDocument = detail.clinicalDocuments.some(
+    document => document.correctionSupported,
+  )
+  const hasCorrectableLaboratoryReport = detail.laboratoryRequests.some(
+    request => request.correctionSupported
+      && (request.report !== undefined || request.previousReports.length > 0),
   )
   return (
     <div className="flex min-w-0 flex-col gap-5">
@@ -413,7 +417,7 @@ function CompletedCaseDetailView({ canCorrectLaboratoryReport, catalog, detail, 
       </dl>
 
       <div className="flex flex-wrap justify-end gap-2">
-        {detail.clinicalDocuments.length === 0 ? null : (
+        {hasCorrectableClinicalDocument ? (
           <Button
             onClick={() => onOpenCorrection(detail.caseId, 'clinical-document')}
             size="sm"
@@ -423,8 +427,8 @@ function CompletedCaseDetailView({ canCorrectLaboratoryReport, catalog, detail, 
             <FilePenLineIcon data-icon="inline-start" />
             {messages.openClinicalDocumentCorrection}
           </Button>
-        )}
-        {hasLaboratoryReport && canCorrectLaboratoryReport ? (
+        ) : null}
+        {hasCorrectableLaboratoryReport && canCorrectLaboratoryReport ? (
           <Button
             onClick={() => onOpenCorrection(detail.caseId, 'laboratory')}
             size="sm"

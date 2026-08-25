@@ -685,6 +685,7 @@ export const completedCaseClinicalDocumentSchema = signedClinicalDocumentSchema.
     clinicalDocumentContentSchema,
     legacyClinicalDocumentContentSchema,
   ]),
+  correctionSupported: z.boolean().default(false),
 }).strict()
 
 export const clinicalDocumentStateSchema = z.object({
@@ -943,6 +944,7 @@ const completedCaseLaboratoryReportSchema = z.object({
 export const completedCaseLaboratoryRequestSchema = z.object({
   catalogDisplay: z.string().min(1).optional(),
   catalogItemId: z.string().regex(/^[A-Za-z0-9.-]{1,64}$/).optional(),
+  correctionSupported: z.boolean().default(false),
   id: z.string().min(1),
   indicationCode: z.string().min(1),
   previousReports: z.array(completedCaseLaboratoryReportSchema).default([]),

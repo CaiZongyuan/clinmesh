@@ -3725,6 +3725,7 @@ describe('role workspaces', () => {
           ...structuredClinicalDocument,
           assessment: longAssessment,
         },
+        correctionSupported: true,
         documentId: 'document-completed-1',
         provenanceId: 'provenance-completed-1',
         revisionNumber: 1,
@@ -3864,6 +3865,96 @@ describe('role workspaces', () => {
     }
   })
 
+  it('keeps legacy completed facts readable without unsupported correction navigation', async () => {
+    const patient = {
+      birthDate: '1988-03-16',
+      gender: 'female',
+      id: 'patient-completed-legacy-1',
+      identifier: 'CM-SYN-LEGACY-001',
+      name: '合成患者旧版病例',
+      synthetic: true,
+      versionId: '2',
+    } as const
+    const detail = {
+      caseId: 'case-completed-legacy-1',
+      clinicalDocuments: [{
+        bundleId: 'bundle-completed-legacy-1',
+        compositionId: 'composition-completed-legacy-1',
+        compositionVersion: '1',
+        content: {
+          assessment: '甲型流感，生命体征稳定。',
+          plan: '口服抗病毒药物，对症处理，必要时复诊。',
+        },
+        correctionSupported: false,
+        documentId: 'document-completed-legacy-1',
+        provenanceId: 'provenance-completed-legacy-1',
+        revisionNumber: 1,
+        signedAt: '2026-08-24T08:20:00+08:00',
+      }],
+      completedAt: '2026-08-24T09:00:00+08:00',
+      encounter: {
+        id: 'encounter-completed-legacy-1',
+        status: 'completed',
+        versionId: '6',
+      },
+      laboratoryRequests: [{
+        catalogDisplay: '发热检验组合',
+        correctionSupported: false,
+        id: 'legacy-service-request-completed-1',
+        indicationCode: 'legacy-indication',
+        previousReports: [],
+        report: {
+          conclusion: '甲型流感抗原阳性。',
+          diagnosticReportId: 'diagnostic-report-completed-legacy-1',
+          diagnosticReportVersion: '1',
+          issuedAt: '2026-08-24T08:40:00+08:00',
+          revisionNumber: 1,
+          results: [{
+            code: '80382-5',
+            display: '甲型流感病毒抗原',
+            interpretation: 'positive',
+            observationId: 'observation-completed-legacy-1',
+            value: true,
+          }],
+          specimenId: 'specimen-completed-legacy-1',
+          status: 'final',
+        },
+        serviceRequestId: 'service-request-completed-legacy-1',
+        serviceRequestVersion: '1',
+        status: 'reported',
+        taskId: 'task-completed-legacy-1',
+        taskVersion: '4',
+        version: 1,
+      }],
+      patient,
+      timeline: [],
+    } satisfies DoctorCompletedCaseDetail
+    stubDoctorCompletedCaseLibrary({
+      detail,
+      list: {
+        items: [{
+          caseId: detail.caseId,
+          completedAt: detail.completedAt,
+          encounterId: detail.encounter.id,
+          encounterVersion: detail.encounter.versionId,
+          patient,
+        }],
+        ...pagination(1),
+      },
+      session: administratorAsDoctorSession,
+    })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('tab', { name: '已完诊病例' }))
+    await user.click(await screen.findByRole('button', { name: `查看病例 ${patient.name}` }))
+
+    expect(await screen.findByText('甲型流感，生命体征稳定。')).toBeTruthy()
+    expect(screen.getByText('甲型流感抗原阳性。')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '更正病历' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '更正检查报告' })).toBeNull()
+  })
+
   it('navigates from completed case details to the controlled clinical correction owners', async () => {
     let clinicalRevisionRequest: unknown
     let laboratoryCorrectionRequest: unknown
@@ -3885,6 +3976,10 @@ describe('role workspaces', () => {
       provenanceId: 'provenance-completed-correction-1',
       revisionNumber: 1,
       signedAt: '2026-08-24T08:20:00+08:00',
+    } as const
+    const completedSignedDocument = {
+      ...signedDocument,
+      correctionSupported: true,
     } as const
     const report: NonNullable<LaboratoryRequest['report']> = {
       acknowledgement: {
@@ -3926,21 +4021,25 @@ describe('role workspaces', () => {
       taskVersion: '5',
       version: 5,
     }
+    const completedLaboratoryRequest = {
+      ...laboratoryRequest,
+      correctionSupported: true,
+    } as const
     const completedDetail = {
       caseId: 'case-completed-correction-1',
-      clinicalDocuments: [signedDocument],
+      clinicalDocuments: [completedSignedDocument],
       completedAt: '2026-08-24T09:00:00+08:00',
       encounter: {
         id: 'encounter-completed-correction-1',
         status: 'completed',
         versionId: '6',
       },
-      laboratoryRequests: [laboratoryRequest],
+      laboratoryRequests: [completedLaboratoryRequest],
       patient,
       timeline: [],
     } satisfies DoctorCompletedCaseDetail
     const revisedDocument: DoctorCompletedCaseDetail['clinicalDocuments'][number] = {
-      ...signedDocument,
+      ...completedSignedDocument,
       bundleId: 'bundle-completed-correction-2',
       compositionId: 'composition-completed-correction-2',
       documentId: 'document-completed-correction-2',
@@ -4025,7 +4124,7 @@ describe('role workspaces', () => {
           clinicalRevisionRequest = JSON.parse(String(init?.body))
           currentCompletedDetail = {
             ...currentCompletedDetail,
-            clinicalDocuments: [signedDocument, revisedDocument],
+            clinicalDocuments: [completedSignedDocument, revisedDocument],
             timeline: [...currentCompletedDetail.timeline, clinicalRevisionEvent],
           }
           return Response.json(commandResponse({
@@ -4046,7 +4145,7 @@ describe('role workspaces', () => {
           currentCompletedDetail = {
             ...currentCompletedDetail,
             laboratoryRequests: [{
-              ...laboratoryRequest,
+              ...completedLaboratoryRequest,
               previousReports: [report],
               report: revisedReport,
               status: 'reported',

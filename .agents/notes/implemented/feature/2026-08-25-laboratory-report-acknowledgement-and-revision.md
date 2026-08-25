@@ -30,11 +30,11 @@ Report Acknowledgement 是独立于 DiagnosticReport 的不可变领域事实，
 
 ## Consequences
 
-迁移 `0015_laboratory-report-acknowledgement.sql` 和 `0016_laboratory-report-revision.sql` 分别保存版本级确认事实和 latest-only 修订链，数据库 schema version 为 `17`。报告确认、申请状态变化、FHIR 资源、Provenance、Command receipt、审计与 Action Trace 在同一事务中提交或回滚。
+迁移 `0015_laboratory-report-acknowledgement.sql` 和 `0016_laboratory-report-revision.sql` 分别保存版本级确认事实和 latest-only 修订链。报告确认、申请状态变化、FHIR 资源、Provenance、Command receipt、审计与 Action Trace 在同一事务中提交或回滚。
 
 医生病例读模型把最新报告放在 `report`，按业务修订顺序把旧版本放在 `previousReports`；每个版本只展示属于自己的确认事实。Web 仅在当前申请为 `reported` 时提供确认动作，并把当前报告与被替代版本分区展示，不能从旧版本发起新的确认。
 
-已完诊病例库只在受信 session 的 `availableRoles` 包含 `administrator` 时显示报告更正导航。更正使用结构化结论、完整结果值和原因字段，并在 `AlertDialog` 中预览确认；成功后 Web 同时失效活动病例与病例库详情查询，病例库从服务端重新读取新报告、旧版本链和 `laboratory-report-revised` 时间线事件。
+已完诊病例库只对标记为 `correctionSupported` 的独立检查申请显示报告更正导航，并同时要求受信 session 的 `availableRoles` 包含 `administrator`；兼容检验报告继续可读但不进入独立报告 Command。更正使用结构化结论、完整结果值和原因字段，并在 `AlertDialog` 中预览确认；成功后 Web 同时失效活动病例与病例库详情查询，病例库从服务端重新读取新报告、旧版本链和 `laboratory-report-revised` 时间线事件。
 
 `previousReports` 在共享响应 schema 中对缺失输入使用空数组默认值，使升级前已经持久化的检查开具或取消 Command receipt 仍可按原幂等键重放；新响应始终显式返回该字段。
 

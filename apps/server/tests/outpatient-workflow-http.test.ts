@@ -1033,6 +1033,7 @@ describe('outpatient workflow HTTP contract', () => {
           assessment: '甲型流感，生命体征稳定。',
           plan: '口服抗病毒药物，对症处理，必要时复诊。',
         },
+        correctionSupported: false,
       }),
     ])
     expect(detail.diagnosis?.entries).toEqual([
@@ -1044,6 +1045,7 @@ describe('outpatient workflow HTTP contract', () => {
     ])
     expect(detail.laboratoryRequests).toEqual([
       expect.objectContaining({
+        correctionSupported: false,
         report: expect.objectContaining({
           diagnosticReportId: testCase.report.diagnosticReportId,
           results: expect.arrayContaining([
@@ -1510,6 +1512,7 @@ describe('outpatient workflow HTTP contract', () => {
       caseId: candidate.started.caseId,
       clinicalDocuments: [{
         content: structuredClinicalDocument,
+        correctionSupported: true,
         revisionNumber: 1,
       }],
       completedAt: completion.data.completedAt,
@@ -1637,6 +1640,7 @@ describe('outpatient workflow HTTP contract', () => {
       },
       laboratoryRequests: [{
         catalogItemId: 'lab-cbc',
+        correctionSupported: true,
         report: { acknowledgement: { id: expect.any(String) } },
         status: 'acknowledged',
       }],

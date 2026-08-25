@@ -774,6 +774,13 @@ const practitionerRoleIdRowSchema = z.object({
   practitioner_role_id: z.string().min(1),
 }).strict()
 
+const clinicalDocumentRevisionSourceRowSchema = practitionerRoleIdRowSchema.extend({
+  bundle_id: z.string().min(1),
+  document_id: z.string().min(1),
+  encounter_id: z.string().min(1),
+  patient_id: z.string().min(1),
+}).strict()
+
 const completedCaseSelectionSql = `
   FROM outpatient_case
   JOIN outpatient_case_responsibility AS responsibility
@@ -4911,31 +4918,27 @@ export class WorkflowService {
       operation: 'clinical-document.revise',
     }, transaction => {
       this.#assertRole(input.context, ['outpatient-doctor'])
-      const source = this.#database.driver.prepare(`
-        SELECT document.document_id, document.bundle_id, outpatient_case.patient_id,
-          outpatient_case.encounter_id, responsibility.practitioner_role_id
-        FROM signed_clinical_document AS document
-        JOIN outpatient_case
-          ON outpatient_case.workspace_id = document.workspace_id
-         AND outpatient_case.epoch = document.epoch
-         AND outpatient_case.case_id = document.case_id
-        JOIN outpatient_case_responsibility AS responsibility
-          ON responsibility.workspace_id = outpatient_case.workspace_id
-         AND responsibility.epoch = outpatient_case.epoch
-         AND responsibility.case_id = outpatient_case.case_id
-        WHERE document.workspace_id = ? AND document.epoch = ?
-          AND document.composition_id = ?
-      `).get(
-        input.context.workspaceId,
-        input.context.epoch,
-        input.compositionId,
-      ) as {
-        bundle_id: string
-        document_id: string
-        encounter_id: string
-        patient_id: string
-        practitioner_role_id: string
-      } | undefined
+      const source = clinicalDocumentRevisionSourceRowSchema.optional().parse(
+        this.#database.driver.prepare(`
+          SELECT document.document_id, document.bundle_id, outpatient_case.patient_id,
+            outpatient_case.encounter_id, responsibility.practitioner_role_id
+          FROM signed_clinical_document AS document
+          JOIN outpatient_case
+            ON outpatient_case.workspace_id = document.workspace_id
+           AND outpatient_case.epoch = document.epoch
+           AND outpatient_case.case_id = document.case_id
+          JOIN outpatient_case_responsibility AS responsibility
+            ON responsibility.workspace_id = outpatient_case.workspace_id
+           AND responsibility.epoch = outpatient_case.epoch
+           AND responsibility.case_id = outpatient_case.case_id
+          WHERE document.workspace_id = ? AND document.epoch = ?
+            AND document.composition_id = ?
+        `).get(
+          input.context.workspaceId,
+          input.context.epoch,
+          input.compositionId,
+        ),
+      )
       if (source === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The signed clinical document was not found')
       }
@@ -8522,7 +8525,10 @@ export class WorkflowService {
       caseId,
       resource => structuredClinicalDocumentFromComposition(resource)
         ?? legacyClinicalDocumentFromComposition(resource),
-    )
+    ).map(document => ({
+      ...document,
+      correctionSupported: clinicalDocumentContentSchema.safeParse(document.content).success,
+    }))
   }
 
   #clinicalDocuments<Content>(
@@ -8754,7 +8760,12 @@ export class WorkflowService {
 
   #completedCaseLaboratoryRequests(context: ActorContext, caseId: string) {
     const independentRequests = this.#laboratoryRequests(context, caseId)
-    if (independentRequests.length > 0) return independentRequests
+    if (independentRequests.length > 0) {
+      return independentRequests.map(request => ({
+        ...request,
+        correctionSupported: true,
+      }))
+    }
     const row = legacyCompletedCaseLaboratoryRowSchema.optional().parse(
       this.#database.driver.prepare(`
         SELECT service_request_id, laboratory_task_id, diagnostic_report_id
@@ -8844,6 +8855,7 @@ export class WorkflowService {
     return [{
       catalogDisplay: serviceRequest.code.concept.text,
       ...(catalog === undefined ? {} : { catalogItemId: catalog.item_id }),
+      correctionSupported: false,
       id: `legacy-${row.service_request_id}`,
       indicationCode: serviceRequest.reason[0]?.concept.coding[0]?.code ?? 'legacy-indication',
       previousReports: [],

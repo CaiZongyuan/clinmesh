@@ -32,8 +32,8 @@ Composition 使用稳定 section code 重建六字段正文，关系表不复制
 
 医生可以在 Encounter 仍为 `in-progress` 时保存、预览和签署病历；签署成功不代表 Encounter Completion。调用方必须分别读取病历历史和 Encounter 状态，不能从 Composition 存在推断完诊。
 
-迁移 `0011_structured-clinical-document.sql` 新增结构化草稿、签署预览和每病例唯一根索引；`0012_structured-clinical-document-preview-binding.sql` 为预览补充 Encounter version 和 Actor context 绑定，旧预览迁移后不可提交。数据库 schema version 为 `13`。旧库升级保留已有 `signed_clinical_document` 根文书，并允许在其后追加修订。
+迁移 `0011_structured-clinical-document.sql` 新增结构化草稿、签署预览和每病例唯一根索引；`0012_structured-clinical-document-preview-binding.sql` 为预览补充 Encounter version 和 Actor context 绑定，旧预览迁移后不可提交。旧库升级保留已有 `signed_clinical_document` 根文书，并允许在其后追加修订。
 
-Web 只向最新签署版本显示修订表单，所有历史版本只读；已完诊 Encounter 只有从病例库显式进入病历更正模式时显示该表单，普通打开仍保持只读。保存或修订冲突后重新读取病例 detail，修订成功同时失效病例库详情和时间线查询。HTTP 和 Web 公共入口覆盖缺失必填字段、草稿 CAS、旧预览、不可变 FHIR 资源、Encounter 不变、最新版本修订和历史恢复。
+Web 只向最新签署版本显示修订表单，所有历史版本只读；已完诊结构化文书只有从病例库中标记为 `correctionSupported` 的事实显式进入病历更正模式时显示该表单，首期两字段文书继续可读但不提供空导航。保存或修订冲突后重新读取病例 detail，修订成功同时失效病例库详情和时间线查询。HTTP 和 Web 公共入口覆盖缺失必填字段、草稿 CAS、旧预览、不可变 FHIR 资源、Encounter 不变、最新版本修订和历史恢复。
 
 同一病例不能先走独立结构化签署，再走首期组合签署完诊；组合入口会返回已有文书冲突。这项互斥保证避免第二个根文书，Encounter Completion 仍由独立的业务事实判断，不能通过覆盖或重复签署绕过。
