@@ -12,11 +12,11 @@ Status: implemented
 
 结构化 Clinical Document 以主诉、现病史、查体、评估、处置和随访六个字段作为共享 strict schema。未签署正文是 `clinical_document_draft` 中按 Workspace、Epoch 和病例唯一的 domain-native 草稿；保存同时校验 Encounter expected version 和 `expectedDraftVersion`，冲突不覆盖较新的正文。医生病例查询恢复草稿正文、更新时间和版本，Web 使用 TanStack Query 重新读取服务端状态。
 
-签署采用独立的预览与提交协议。预览保存草稿版本、正文摘要、五分钟有效的 token hash 和过期时间；提交重新校验 Actor context、Encounter version、token、草稿版本和正文。成功提交创建不可变 FHIR R5 Composition、以 Composition 为首 entry 的 document Bundle 和同时引用二者的 Provenance，并写入 `signed_clinical_document` 关联；它不改变 Encounter、病例或 Queue Task 状态。
+签署采用独立的预览与提交协议。预览保存 Actor context HMAC、Encounter version、草稿版本、正文摘要、token hash 和按服务端真实时间计算的五分钟过期时间；提交重新校验这些绑定。成功提交创建不可变 FHIR R5 Composition、带稳定 identifier 且以 Composition 为首 entry 的自包含 document Bundle，以及同时引用二者的 Provenance，并写入 `signed_clinical_document` 关联；它不改变 Encounter、病例或 Queue Task 状态。
 
 Composition 使用稳定 section code 重建六字段正文，关系表不复制已签正文。每个 Workspace、Epoch 和病例只有一个 `revision_of_document_id IS NULL` 的签署根文书。修订只能引用没有后继版本的最新 Composition，创建新的 amended Composition、document Bundle 和 Provenance，以 `Composition.relatesTo.type=replaces` 和关系表父链指向上一版本；修订原因由 Provenance 保存。FHIR `_history` 仍只表达同一 logical resource 的技术版本，不承担临床修订链。
 
-`revise` 接口继续接受首期两字段文书输入，也接受新的六字段文书输入，由同一个修订 Command 创建不可变资源。首期 `preview-sign` 与 `sign-and-complete` 兼容流只适用于尚无结构化签署根文书的病例；已有根文书时两个入口都返回稳定 `WORKFLOW_CONFLICT`，不会依赖 SQLite 唯一索引错误作为外部协议。
+`revise` 接口继续接受首期两字段文书输入，也接受新的六字段文书输入，由同一个修订 Command 创建不可变资源；两字段输入只修订首期文书，六字段输入只修订结构化文书，不能跨格式破坏历史重建。首期 `preview-sign` 与 `sign-and-complete` 兼容流只适用于尚无结构化签署根文书的病例；已有根文书时两个入口都返回稳定 `WORKFLOW_CONFLICT`，不会依赖 SQLite 唯一索引错误作为外部协议。
 
 ## Alternatives considered
 
@@ -32,7 +32,7 @@ Composition 使用稳定 section code 重建六字段正文，关系表不复制
 
 医生可以在 Encounter 仍为 `in-progress` 时保存、预览和签署病历；签署成功不代表 Encounter Completion。调用方必须分别读取病历历史和 Encounter 状态，不能从 Composition 存在推断完诊。
 
-迁移 `0011_structured-clinical-document.sql` 新增结构化草稿、签署预览和每病例唯一根索引，数据库 schema version 为 `12`。旧库升级保留已有 `signed_clinical_document` 根文书，并允许在其后追加修订。
+迁移 `0011_structured-clinical-document.sql` 新增结构化草稿、签署预览和每病例唯一根索引；`0012_structured-clinical-document-preview-binding.sql` 为预览补充 Encounter version 和 Actor context 绑定，旧预览迁移后不可提交。数据库 schema version 为 `13`。旧库升级保留已有 `signed_clinical_document` 根文书，并允许在其后追加修订。
 
 Web 只向最新签署版本显示修订表单，所有历史版本只读；保存或修订冲突后重新读取病例 detail。HTTP 和 Web 公共入口覆盖缺失必填字段、草稿 CAS、旧预览、不可变 FHIR 资源、Encounter 不变、最新版本修订和历史恢复。
 

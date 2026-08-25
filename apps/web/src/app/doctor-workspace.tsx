@@ -1067,8 +1067,8 @@ function ClinicalDocumentForm({
         }, String(data.get('revisionReason') ?? ''))
       }}
     >
-      <FieldGroup className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <Field className="md:col-span-2">
+      <FieldGroup className="grid grid-cols-1 gap-0 overflow-hidden rounded-md border md:grid-cols-2">
+        <Field className="border-b p-3 md:col-span-2">
           <FieldLabel htmlFor={`${idPrefix}-chief-complaint`}>{messages.chiefComplaint}</FieldLabel>
           <Textarea
             defaultValue={content.chiefComplaint}
@@ -1079,7 +1079,7 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field className="md:col-span-2">
+        <Field className="border-b p-3 md:col-span-2">
           <FieldLabel htmlFor={`${idPrefix}-history`}>{messages.historyOfPresentIllness}</FieldLabel>
           <Textarea
             className="min-h-24"
@@ -1091,7 +1091,7 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field className="md:col-span-2">
+        <Field className="border-b p-3 md:col-span-2">
           <FieldLabel htmlFor={`${idPrefix}-examination`}>{messages.physicalExamination}</FieldLabel>
           <Textarea
             defaultValue={content.physicalExamination}
@@ -1102,7 +1102,7 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field>
+        <Field className="border-b p-3 md:border-r">
           <FieldLabel htmlFor={`${idPrefix}-assessment`}>{messages.assessment}</FieldLabel>
           <Textarea
             defaultValue={content.assessment}
@@ -1113,7 +1113,7 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field>
+        <Field className="border-b p-3">
           <FieldLabel htmlFor={`${idPrefix}-disposition`}>{messages.disposition}</FieldLabel>
           <Textarea
             defaultValue={content.disposition}
@@ -1124,7 +1124,7 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field className="md:col-span-2">
+        <Field className="border-b p-3 md:col-span-2">
           <FieldLabel htmlFor={`${idPrefix}-follow-up`}>{messages.followUp}</FieldLabel>
           <Textarea
             defaultValue={content.followUp}
@@ -1136,7 +1136,7 @@ function ClinicalDocumentForm({
           />
         </Field>
         {includeRevisionReason ? (
-          <Field className="md:col-span-2">
+          <Field className="border-b p-3 md:col-span-2">
             <FieldLabel htmlFor={`${idPrefix}-reason`}>{messages.revisionReason}</FieldLabel>
             <Textarea
               id={`${idPrefix}-reason`}
@@ -1147,7 +1147,7 @@ function ClinicalDocumentForm({
             />
           </Field>
         ) : null}
-        <Field className="items-end md:col-span-2">
+        <Field className="items-end p-3 md:col-span-2">
           <Button disabled={pending} type="submit">
             {pending
               ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />

@@ -21,6 +21,7 @@ export interface CreateClinMeshRuntimeOptions {
   databasePath: string
   demoPassword: string
   migrationMode: 'apply' | 'verify'
+  now?: () => Date
   trustedOrigins: string[]
   webRoot?: string
 }
@@ -45,8 +46,12 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         workspaceName: '合成市立医院演示空间',
       })
     }
-    const fhir = new FhirRepository(database, { cursorSecret: options.cursorSecret })
-    const commands = new CommandExecutor(database, fhir)
+    const clockOptions = options.now === undefined ? {} : { now: options.now }
+    const fhir = new FhirRepository(database, {
+      cursorSecret: options.cursorSecret,
+      ...clockOptions,
+    })
+    const commands = new CommandExecutor(database, fhir, clockOptions)
     const scenario = new ScenarioService(database, fhir, commands)
     scenario.ensureInitialEpoch({
       epoch: 'epoch-1',
@@ -63,6 +68,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       workspaceId: 'workspace-demo',
     })
     const workflow = new WorkflowService(database, fhir, commands, {
+      ...clockOptions,
       tokenSecret: options.cursorSecret,
     })
     const lisPayloadSchema = z.object({
@@ -100,6 +106,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       leaseDurationMs: 30_000,
       leaseOwner: `runtime-${process.pid}`,
       maxAttempts: 3,
+      ...clockOptions,
       retryDelayMs: 250,
     })
     let closed = false

@@ -316,6 +316,8 @@ function xhtmlText(value: string): string {
 }
 
 const clinicalDocumentSectionSystem = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/clinical-document-section'
+const clinicalDocumentBundleIdentifierSystem = 'https://caizongyuan.github.io/clinmesh/fhir/identifier/clinical-document-bundle'
+const fhirCanonicalBase = 'https://caizongyuan.github.io/clinmesh/fhir'
 
 const clinicalDocumentSections = [
   { code: 'chief-complaint', field: 'chiefComplaint', title: '主诉' },
@@ -342,6 +344,49 @@ function structuredClinicalDocumentSections(document: ClinicalDocumentContent) {
     },
     title: section.title,
   }))
+}
+
+function clinicalDocumentRevisionDefinition(
+  revision: { assessment: string; plan: string } | { document: ClinicalDocumentContent },
+  reason: string,
+) {
+  const reasonSection = {
+    title: '更正原因',
+    text: {
+      status: 'generated',
+      div: `<div xmlns="http://www.w3.org/1999/xhtml">${xhtmlText(reason)}</div>`,
+    },
+  }
+  if ('document' in revision) {
+    return {
+      kind: 'structured' as const,
+      payload: { document: revision.document },
+      sections: [reasonSection, ...structuredClinicalDocumentSections(revision.document)],
+      title: '门诊结构化病历修订',
+    }
+  }
+  return {
+    kind: 'legacy' as const,
+    payload: { assessment: revision.assessment, plan: revision.plan },
+    sections: [
+      reasonSection,
+      {
+        title: '评估',
+        text: {
+          status: 'generated',
+          div: `<div xmlns="http://www.w3.org/1999/xhtml">${xhtmlText(revision.assessment)}</div>`,
+        },
+      },
+      {
+        title: '计划',
+        text: {
+          status: 'generated',
+          div: `<div xmlns="http://www.w3.org/1999/xhtml">${xhtmlText(revision.plan)}</div>`,
+        },
+      },
+    ],
+    title: '门诊病历更正',
+  }
 }
 
 function xhtmlTextValue(value: string): string | undefined {
@@ -374,6 +419,22 @@ const provenanceReasonSchema = z.object({
   }).loose()).optional(),
 }).loose()
 
+const documentBundleEntrySchema = z.object({
+  fullUrl: z.string().optional(),
+  resource: fhirResourceSchema,
+}).loose()
+
+function localFhirReferences(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(localFhirReferences)
+  if (typeof value !== 'object' || value === null) return []
+  const record = value as Record<string, unknown>
+  const reference = typeof record.reference === 'string'
+    && /^[A-Z][A-Za-z]+\/[A-Za-z0-9.-]{1,64}$/.test(record.reference)
+    ? [record.reference]
+    : []
+  return [...reference, ...Object.values(record).flatMap(localFhirReferences)]
+}
+
 function structuredClinicalDocumentFromComposition(resource: FhirResource): ClinicalDocumentContent | undefined {
   const composition = structuredCompositionSchema.safeParse(resource)
   if (!composition.success) return undefined
@@ -394,6 +455,7 @@ export class WorkflowService {
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
   readonly #fhir: FhirRepository
+  readonly #now: () => Date
   readonly #tokenSecret: string
   readonly #virtualPatientVersionTokenKey: Buffer
 
@@ -401,11 +463,12 @@ export class WorkflowService {
     database: ClinMeshDatabase,
     fhir: FhirRepository,
     commands: CommandExecutor,
-    options: { tokenSecret: string },
+    options: { now?: () => Date; tokenSecret: string },
   ) {
     this.#commands = commands
     this.#database = database
     this.#fhir = fhir
+    this.#now = options.now ?? (() => new Date())
     this.#tokenSecret = options.tokenSecret
     this.#virtualPatientVersionTokenKey = createHash('sha256')
       .update('clinmesh.virtual-patient-version.v1\0')
@@ -2895,23 +2958,17 @@ export class WorkflowService {
     revisionNumber: number
     revisionOfCompositionId: string
   }> {
+    const revision = clinicalDocumentRevisionDefinition(input.revision, input.reason)
     return this.#commands.execute({
       context: input.context,
       dataSchema: clinicalDocumentRevisionResponseSchema.shape.data,
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
-      input: 'document' in input.revision
-        ? {
-            compositionId: input.compositionId,
-            document: input.revision.document,
-            reason: input.reason,
-          }
-        : {
-            assessment: input.revision.assessment,
-            compositionId: input.compositionId,
-            plan: input.revision.plan,
-            reason: input.reason,
-          },
+      input: {
+        compositionId: input.compositionId,
+        reason: input.reason,
+        ...revision.payload,
+      },
       operation: 'clinical-document.revise',
     }, transaction => {
       this.#assertRole(input.context, ['outpatient-doctor'])
@@ -2962,40 +3019,18 @@ export class WorkflowService {
         input.compositionId,
       )
       const originalBundle = transaction.fhir.read(input.context, 'Bundle', source.bundle_id)
-      if (
-        'document' in input.revision
-        && structuredClinicalDocumentFromComposition(originalComposition) === undefined
-      ) {
+      const structuredSource = structuredClinicalDocumentFromComposition(originalComposition)
+      if (revision.kind === 'structured' && structuredSource === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The structured Clinical Document was not found')
+      }
+      if (revision.kind === 'legacy' && structuredSource !== undefined) {
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          'The structured Clinical Document requires structured revision content',
+        )
       }
       const now = this.#virtualTime(input.context)
       const compositionId = uuidv7()
-      const reasonSection = {
-        title: '更正原因',
-        text: {
-          status: 'generated',
-          div: `<div xmlns="http://www.w3.org/1999/xhtml">${xhtmlText(input.reason)}</div>`,
-        },
-      }
-      const sections = 'document' in input.revision
-        ? [reasonSection, ...structuredClinicalDocumentSections(input.revision.document)]
-        : [
-            reasonSection,
-            {
-              title: '评估',
-              text: {
-                status: 'generated',
-                div: `<div xmlns="http://www.w3.org/1999/xhtml">${xhtmlText(input.revision.assessment)}</div>`,
-              },
-            },
-            {
-              title: '计划',
-              text: {
-                status: 'generated',
-                div: `<div xmlns="http://www.w3.org/1999/xhtml">${xhtmlText(input.revision.plan)}</div>`,
-              },
-            },
-          ]
       const composition = transaction.fhir.createImmutable(input.context, {
         resourceType: 'Composition',
         id: compositionId,
@@ -3006,32 +3041,29 @@ export class WorkflowService {
           ?? { reference: `Encounter/${source.encounter_id}` },
         date: now,
         author: [{ reference: `PractitionerRole/${input.context.practitionerRoleId}` }],
-        title: 'document' in input.revision ? '门诊结构化病历修订' : '门诊病历更正',
+        title: revision.title,
         relatesTo: [{
           type: 'replaces',
           resourceReference: { reference: `Composition/${input.compositionId}` },
         }],
-        section: sections,
+        section: revision.sections,
       })
-      const originalEntries = Array.isArray(originalBundle.entry)
-        ? originalBundle.entry.filter(candidate => {
-            if (typeof candidate !== 'object' || candidate === null) return false
-            const resource = (candidate as Record<string, unknown>).resource
-            return typeof resource !== 'object'
-              || resource === null
-              || (resource as Record<string, unknown>).id !== input.compositionId
-          })
-        : []
       const bundleId = uuidv7()
       const bundle = transaction.fhir.createImmutable(input.context, {
         resourceType: 'Bundle',
         id: bundleId,
         type: 'document',
+        identifier: {
+          system: clinicalDocumentBundleIdentifierSystem,
+          value: bundleId,
+        },
         timestamp: now,
-        entry: [{
-          fullUrl: `https://caizongyuan.github.io/clinmesh/fhir/Composition/${compositionId}`,
-          resource: composition,
-        }, ...originalEntries],
+        entry: this.#documentBundleEntries(
+          input.context,
+          transaction,
+          composition,
+          originalBundle.entry,
+        ),
       })
       const provenanceId = uuidv7()
       const provenance = transaction.fhir.createImmutable(input.context, {
@@ -3283,12 +3315,15 @@ export class WorkflowService {
       const document = clinicalDocumentContentSchema.parse(JSON.parse(draft.content_json))
       const previewId = uuidv7()
       const commitToken = `${previewId}.${this.#hashToken(`clinical-document-sign:${previewId}`)}`
-      const expiresAt = new Date(Date.parse(this.#virtualTime(input.context)) + 5 * 60_000).toISOString()
+      const expiresAt = new Date(this.#now().getTime() + 5 * 60_000).toISOString()
+      const encounterVersion = z.string().parse(
+        input.expectedVersions[`Encounter/${input.encounterId}`],
+      )
       this.#database.driver.prepare(`
         INSERT INTO clinical_document_sign_preview (
           workspace_id, epoch, preview_id, case_id, draft_version,
-          summary_json, token_hash, expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          summary_json, token_hash, expires_at, encounter_version, actor_context_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.context.workspaceId,
         input.context.epoch,
@@ -3298,6 +3333,8 @@ export class WorkflowService {
         JSON.stringify(document),
         this.#hashToken(commitToken),
         expiresAt,
+        encounterVersion,
+        this.#actorContextHash(input.context),
       )
       return {
         data: {
@@ -3350,13 +3387,16 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document is not available for signing')
       }
       const preview = this.#database.driver.prepare(`
-        SELECT case_id, draft_version, summary_json, token_hash, expires_at, consumed_at
+        SELECT case_id, draft_version, summary_json, token_hash, expires_at, consumed_at,
+          encounter_version, actor_context_hash
         FROM clinical_document_sign_preview
         WHERE workspace_id = ? AND epoch = ? AND preview_id = ?
       `).get(input.context.workspaceId, input.context.epoch, input.previewId) as {
+        actor_context_hash: string
         case_id: string
         consumed_at: string | null
         draft_version: number
+        encounter_version: string
         expires_at: string
         summary_json: string
         token_hash: string
@@ -3366,9 +3406,18 @@ export class WorkflowService {
         || preview.case_id !== outpatientCase.case_id
         || preview.consumed_at !== null
         || preview.token_hash !== this.#hashToken(input.commitToken)
-        || Date.parse(preview.expires_at) < Date.parse(this.#virtualTime(input.context))
+        || Date.parse(preview.expires_at) < this.#now().getTime()
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document signing preview is unavailable')
+      }
+      if (
+        preview.encounter_version !== input.expectedVersions[`Encounter/${input.encounterId}`]
+        || preview.actor_context_hash !== this.#actorContextHash(input.context)
+      ) {
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          'The Clinical Document signing preview context has changed',
+        )
       }
       const draft = this.#database.driver.prepare(`
         SELECT version, content_json FROM clinical_document_draft
@@ -3407,11 +3456,12 @@ export class WorkflowService {
         resourceType: 'Bundle',
         id: bundleId,
         type: 'document',
+        identifier: {
+          system: clinicalDocumentBundleIdentifierSystem,
+          value: bundleId,
+        },
         timestamp: now,
-        entry: [{
-          fullUrl: `https://caizongyuan.github.io/clinmesh/fhir/Composition/${compositionId}`,
-          resource: composition,
-        }],
+        entry: this.#documentBundleEntries(input.context, transaction, composition),
       })
       const provenanceId = uuidv7()
       const provenance = transaction.fhir.createImmutable(input.context, {
@@ -5169,6 +5219,37 @@ export class WorkflowService {
     }
   }
 
+  #documentBundleEntries(
+    context: ActorContext,
+    transaction: CommandTransaction,
+    composition: FhirResource,
+    sourceEntries: unknown = [],
+  ) {
+    const parsedSourceEntries = z.array(documentBundleEntrySchema).safeParse(sourceEntries)
+    const sourceResources = new Map((parsedSourceEntries.success ? parsedSourceEntries.data : []).map(entry => [
+      `${entry.resource.resourceType}/${entry.resource.id}`,
+      entry.resource,
+    ]))
+    const resources = [composition]
+    const visited = new Set([`${composition.resourceType}/${composition.id}`])
+    const pendingReferences = localFhirReferences(composition)
+    for (let index = 0; index < pendingReferences.length; index += 1) {
+      const reference = pendingReferences[index]
+      if (reference === undefined || visited.has(reference)) continue
+      const [resourceType, resourceId] = reference.split('/')
+      if (resourceType === undefined || resourceId === undefined) continue
+      const resource = sourceResources.get(reference)
+        ?? transaction.fhir.read(context, resourceType, resourceId)
+      visited.add(reference)
+      resources.push(resource)
+      pendingReferences.push(...localFhirReferences(resource))
+    }
+    return resources.map(resource => ({
+      fullUrl: `${fhirCanonicalBase}/${resource.resourceType}/${resource.id}`,
+      resource,
+    }))
+  }
+
   #signedClinicalDocumentRoot(context: ActorContext, caseId: string) {
     return this.#database.driver.prepare(`
       SELECT document_id FROM signed_clinical_document
@@ -5461,6 +5542,20 @@ export class WorkflowService {
 
   #hashToken(value: string): string {
     return createHmac('sha256', this.#tokenSecret).update(value).digest('hex')
+  }
+
+  #actorContextHash(context: ActorContext): string {
+    return this.#hashToken(JSON.stringify([
+      context.workspaceId,
+      context.epoch,
+      context.scenarioRunId,
+      context.actorId,
+      context.roleCode,
+      context.practitionerId ?? null,
+      context.practitionerRoleId ?? null,
+      context.organizationId ?? null,
+      context.locationId ?? null,
+    ]))
   }
 }
 
