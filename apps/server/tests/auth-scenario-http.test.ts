@@ -12,6 +12,7 @@ import {
   sessionContextSchema,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
+import { readServerConfig } from '../src/config.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 
 describe('trusted session and Scenario HTTP contract', () => {
@@ -121,6 +122,79 @@ describe('trusted session and Scenario HTTP contract', () => {
         id: 'practitioner-role-registrar',
       }],
     })
+  })
+
+  it('rejects an untrusted origin without ending the authenticated session', async () => {
+    const { password, runtime } = await createTestRuntime('clinmesh-untrusted-sign-out-http-')
+    const cookie = await signInSyntheticAccount(runtime, password, 'doctor@demo.clinmesh.local')
+
+    const signOutResponse = await runtime.app.request('/api/auth/sign-out', {
+      body: '{}',
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        origin: 'https://untrusted.example',
+      },
+      method: 'POST',
+    })
+    expect(signOutResponse.status).toBe(403)
+
+    const contextResponse = await runtime.app.request('/api/auth/context', {
+      headers: { cookie },
+    })
+    expect(contextResponse.status).toBe(200)
+  })
+
+  it('allows the documented Vite origin to end a session under the default local configuration', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-vite-sign-out-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const config = readServerConfig({
+      CLINMESH_AUTH_SECRET: 'test-auth-secret-with-at-least-32-characters',
+      CLINMESH_CURSOR_SECRET: 'test-cursor-secret-with-at-least-32-characters',
+      CLINMESH_DATABASE_PATH: join(directory, 'clinmesh.sqlite'),
+      CLINMESH_DEMO_PASSWORD: password,
+    })
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: config.authBaseUrl,
+      authSecret: config.authSecret,
+      cursorSecret: config.cursorSecret,
+      databasePath: config.databasePath,
+      demoPassword: config.demoPassword,
+      migrationMode: 'apply',
+      trustedOrigins: config.trustedOrigins,
+    })
+    runtimes.push(runtime)
+
+    const signInResponse = await runtime.app.request(`${config.authBaseUrl}/api/auth/sign-in/email`, {
+      body: JSON.stringify({
+        email: 'doctor@demo.clinmesh.local',
+        password,
+      }),
+      headers: {
+        'content-type': 'application/json',
+        origin: config.authBaseUrl,
+      },
+      method: 'POST',
+    })
+    expect(signInResponse.status).toBe(200)
+    const cookie = signInResponse.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
+
+    const signOutResponse = await runtime.app.request(`${config.authBaseUrl}/api/auth/sign-out`, {
+      body: '{}',
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        origin: 'http://127.0.0.1:5173',
+      },
+      method: 'POST',
+    })
+    expect(signOutResponse.status).toBe(200)
+
+    const contextResponse = await runtime.app.request(`${config.authBaseUrl}/api/auth/context`, {
+      headers: { cookie },
+    })
+    expect(contextResponse.status).toBe(401)
   })
 
   it('lets the Super Administrator select and restore every synthetic Acting Practitioner Context', async () => {

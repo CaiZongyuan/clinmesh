@@ -19,12 +19,26 @@ describe('Node.js server configuration', () => {
       demoPassword: 'Synthetic-password-2026!',
       hostname: '127.0.0.1',
       port: 8787,
-      trustedOrigins: ['http://127.0.0.1:8787'],
+      trustedOrigins: ['http://127.0.0.1:8787', 'http://127.0.0.1:5173'],
     })
   })
 
   it('requires runtime secrets and the controlled synthetic account password', () => {
     expect(() => readServerConfig({})).toThrow()
+  })
+
+  it('keeps explicit public and trusted origins authoritative', () => {
+    expect(readServerConfig({
+      CLINMESH_AUTH_SECRET: 'auth-secret-with-at-least-32-characters',
+      CLINMESH_CURSOR_SECRET: 'cursor-secret-with-at-least-32-characters',
+      CLINMESH_DATABASE_PATH: '/var/lib/clinmesh/clinmesh.sqlite',
+      CLINMESH_DEMO_PASSWORD: 'Synthetic-password-2026!',
+      CLINMESH_PUBLIC_ORIGIN: 'https://clinmesh.example',
+      CLINMESH_TRUSTED_ORIGINS: 'https://clinmesh.example,https://review.clinmesh.example',
+    })).toMatchObject({
+      authBaseUrl: 'https://clinmesh.example',
+      trustedOrigins: ['https://clinmesh.example', 'https://review.clinmesh.example'],
+    })
   })
 
   it('rejects an invalid listener port before startup', () => {

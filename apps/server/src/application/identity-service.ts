@@ -106,6 +106,10 @@ export class IdentityError extends Error {
 function createAuth(database: ClinMeshDatabase, options: IdentityServiceOptions) {
   const orm = drizzle(database.driver, { schema: authSchema })
   return betterAuth({
+    advanced: {
+      // Better Auth otherwise skips origin validation when NODE_ENV=test.
+      disableOriginCheck: false,
+    },
     baseURL: options.authBaseUrl,
     database: drizzleAdapter(orm, {
       provider: 'sqlite',
