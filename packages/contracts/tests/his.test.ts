@@ -242,10 +242,19 @@ describe('HIS contracts', () => {
     }).success).toBe(false)
   })
 
-  it('rejects unsupported catalog items in a laboratory request draft', () => {
+  it('accepts dynamic laboratory catalog IDs and rejects malformed IDs', () => {
     expect(laboratoryRequestStateSchema.safeParse({
       draft: {
         catalogItemId: 'lab-fever-panel',
+        indicationCode: 'fever',
+      },
+      draftVersion: 1,
+      reportingSupported: true,
+      requests: [],
+    }).success).toBe(true)
+    expect(laboratoryRequestStateSchema.safeParse({
+      draft: {
+        catalogItemId: 'catalog/lab-fever-panel',
         indicationCode: 'fever',
       },
       draftVersion: 1,
