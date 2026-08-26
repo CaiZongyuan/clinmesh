@@ -4504,6 +4504,12 @@ describe('role workspaces', () => {
         `Task/${issuedLaboratoryRequest.taskId}`,
       ],
     }
+    const laboratoryDraftDeletionEvent: DoctorCompletedCaseDetail['timeline'][number] = {
+      kind: 'laboratory-request-draft-deleted',
+      occurredAt: '2026-08-24T09:01:00+08:00',
+      reference: 'ActionTrace/trace-laboratory-draft-deletion-1',
+      relatedReferences: [`LaboratoryRequestDraft/${completedDetail.caseId}`],
+    }
     const prescriptionIssuedEvent: DoctorCompletedCaseDetail['timeline'][number] = {
       kind: 'prescription-issued',
       occurredAt: issuedPrescription.authoredAt,
@@ -4511,6 +4517,12 @@ describe('role workspaces', () => {
       relatedReferences: issuedPrescription.items.map(
         item => `MedicationRequest/${item.medicationRequestId}`,
       ),
+    }
+    const prescriptionDraftDeletionEvent: DoctorCompletedCaseDetail['timeline'][number] = {
+      kind: 'prescription-draft-deleted',
+      occurredAt: '2026-08-24T09:06:00+08:00',
+      reference: 'ActionTrace/trace-prescription-draft-deletion-1',
+      relatedReferences: [`PrescriptionDraft/${completedDetail.caseId}`],
     }
     const prescriptionWithdrawalEvent: DoctorCompletedCaseDetail['timeline'][number] = {
       kind: 'prescription-withdrawn',
@@ -4645,6 +4657,10 @@ describe('role workspaces', () => {
               requests: requestState.requests,
             },
           }
+          currentCompletedDetail = {
+            ...currentCompletedDetail,
+            timeline: [...currentCompletedDetail.timeline, laboratoryDraftDeletionEvent],
+          }
           return Response.json(commandResponse({
             caseId: completedDetail.caseId,
             draftVersion: 2,
@@ -4693,6 +4709,10 @@ describe('role workspaces', () => {
             currentActiveDetail = {
               ...currentActiveDetail,
               medicationConclusion: { draftVersion: 2 },
+            }
+            currentCompletedDetail = {
+              ...currentCompletedDetail,
+              timeline: [...currentCompletedDetail.timeline, prescriptionDraftDeletionEvent],
             }
             return Response.json(commandResponse({ draftVersion: 2 }))
           }
@@ -4972,10 +4992,12 @@ describe('role workspaces', () => {
     const timeline = screen.getByRole('region', { name: '业务时间线' })
     expect(within(timeline).getByText('签署病历')).toBeTruthy()
     expect(within(timeline).getByText('修订病历')).toBeTruthy()
+    expect(within(timeline).getByText('删除检查草稿')).toBeTruthy()
     expect(within(timeline).getByText('开具检查申请')).toBeTruthy()
     expect(within(timeline).getByText('取消检查申请')).toBeTruthy()
     expect(within(timeline).getByText('签发检查报告')).toBeTruthy()
     expect(within(timeline).getByText('更正检查报告')).toBeTruthy()
+    expect(within(timeline).getByText('删除处方草稿')).toBeTruthy()
     expect(within(timeline).getByText('开具处方')).toBeTruthy()
     expect(within(timeline).getByText('撤回处方')).toBeTruthy()
   })

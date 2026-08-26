@@ -18,7 +18,7 @@ Migration `0019_outpatient-case-responsibility.sql` 为既有病例回填责任�
 
 病例库拥有独立 strict DTO，只包含 Patient、已完成 Encounter 和各 owner 的正式事实。Consultation 只返回不可变记录，Clinical Document 返回完整签署修订链，检查返回正式申请、报告修订和版本级确认，诊断与用药返回确认或签发事实；任何草稿、表单状态、expected edit version 或写入 action 都不进入该 DTO。病例库页面使用 TanStack Query 管理列表和详情，活动诊疗与病例库用同级页签分隔。
 
-业务时间线由服务端从同一批正式事实组装。事件以稳定 kind、发生时间、主资源引用和关联资源引用表达，按发生时间、主引用、kind 的顺序确定性排列；客户端按给定顺序渲染，不重新遍历 owner 数据决定哪些事件存在或哪个版本有效。病例库详情没有普通写入口；DTO 为每个 Clinical Document 和检查申请返回保守的 `correctionSupported` capability，只有活动病例读模型和既有 Command 都能恢复的结构化病历与独立检查申请可显示更正导航，兼容旧事实保持只读。病历修订 Command 重新校验当前 Practitioner Role 与 `outpatient_case_responsibility` 一致，报告更正导航还要求登录 session 具有 administrator 能力。Command 成功后 Web 同时失效活动病例和病例库详情 Query 前缀，重新读取新版本与对应事件；完诊成功还会失效病例库列表前缀。
+业务时间线由服务端从同一批正式事实组装。活动草稿正文和编辑版本不进入病例库；检查或处方草稿成功删除后，不可变 Action Trace 以当前 Epoch 的 Virtual Time、ActionTrace 主引用和对应 Draft Effect 进入时间线。事件以稳定 kind、发生时间、主资源引用和关联资源引用表达，按发生时间、主引用、kind 的顺序确定性排列；客户端按给定顺序渲染，不重新遍历 owner 数据决定哪些事件存在或哪个版本有效。病例库详情没有普通写入口；DTO 为每个 Clinical Document 和检查申请返回保守的 `correctionSupported` capability，只有活动病例读模型和既有 Command 都能恢复的结构化病历与独立检查申请可显示更正导航，兼容旧事实保持只读。病历修订 Command 重新校验当前 Practitioner Role 与 `outpatient_case_responsibility` 一致，报告更正导航还要求登录 session 具有 administrator 能力。Command 成功后 Web 同时失效活动病例和病例库详情 Query 前缀，重新读取新版本与对应事件；完诊成功还会失效病例库列表前缀。
 
 ## Alternatives considered
 

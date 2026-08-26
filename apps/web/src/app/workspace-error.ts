@@ -16,6 +16,7 @@ function getConflictOwner(
 }
 
 function getConflictStatus(
+  owner: NonNullable<ApiClientError['conflict']>['owner'],
   status: NonNullable<NonNullable<ApiClientError['conflict']>['currentStatus']>,
   messages: WorkspaceMessages,
 ): string {
@@ -33,7 +34,9 @@ function getConflictStatus(
     case 'missing': return messages.conflictStatus_missing
     case 'paid': return messages.prescriptionStatus_paid
     case 'reported': return messages.laboratoryRequestStatus_reported
-    case 'signed': return messages.prescriptionStatus_signed
+    case 'signed': return owner === 'clinical-document'
+      ? messages.conflictStatus_clinicalDocumentSigned
+      : messages.prescriptionStatus_signed
     case 'superseded': return messages.conflictStatus_superseded
     case 'withdrawn': return messages.prescriptionStatus_withdrawn
   }
@@ -60,7 +63,7 @@ function getConflictMessage(
     }
     return undefined
   }
-  const status = getConflictStatus(conflict.currentStatus, messages)
+  const status = getConflictStatus(conflict.owner, conflict.currentStatus, messages)
   if (conflict.currentVersion !== undefined && conflict.expectedVersion !== undefined) {
     return messages.conflictStatusExpectedVersionDescription
       .replace('{owner}', owner)

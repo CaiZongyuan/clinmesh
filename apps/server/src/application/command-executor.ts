@@ -111,6 +111,10 @@ interface ReceiptRow {
   status: string
 }
 
+const virtualTimeRowSchema = z.object({
+  virtual_time: z.iso.datetime({ offset: true }),
+}).strict()
+
 const storedCommandResponseSchema = z.object({
   auditId: z.string().min(1),
   data: z.unknown(),
@@ -503,6 +507,13 @@ export class CommandExecutor {
     timestamp: string,
     outcome: 'failed' | 'success',
   ): void {
+    const virtualTime = virtualTimeRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT virtual_time FROM scenario_epoch_state
+        WHERE workspace_id = ? AND epoch = ?
+      `).get(context.workspaceId, context.epoch),
+    )
+    const virtualTimestamp = virtualTime?.virtual_time ?? timestamp
     const row = this.#database.driver.prepare(`
       SELECT COALESCE(MAX(sequence), 0) AS sequence
       FROM action_trace
@@ -523,7 +534,7 @@ export class CommandExecutor {
       operation,
       outcome,
       JSON.stringify(effects),
-      timestamp,
+      virtualTimestamp,
     )
   }
 

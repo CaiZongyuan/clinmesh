@@ -443,6 +443,22 @@ const signedClinicalDocumentRowSchema = z.object({
   signed_at: z.iso.datetime({ offset: true }),
 }).strict()
 
+const draftDeletionTraceRowSchema = z.object({
+  effect_json: z.string(),
+  operation: z.enum([
+    'encounter.delete-prescription-draft',
+    'laboratory-request.delete-draft',
+  ]),
+  trace_id: z.string().min(1),
+  virtual_timestamp: z.iso.datetime({ offset: true }),
+}).strict()
+
+const actionTraceEffectSchema = z.object({
+  kind: z.enum(['created', 'updated']),
+  reference: z.string().regex(/^[A-Z][A-Za-z]+\/[A-Za-z0-9.-]+$/),
+  versionId: z.string().regex(/^\d+$/),
+}).strict()
+
 const virtualPatientVersionPayloadSchema = z.object({
   epoch: z.string().min(1),
   expectedVersions: z.record(z.string(), z.string()),
@@ -5848,7 +5864,11 @@ export class WorkflowService {
       }
       return {
         data: { caseId: outpatientCase.case_id, draftVersion },
-        effects: [],
+        effects: [{
+          kind: 'updated' as const,
+          reference: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
+          versionId: String(draftVersion),
+        }],
       }
     })
   }
@@ -9318,6 +9338,7 @@ export class WorkflowService {
     input: Pick<
       z.infer<typeof doctorCompletedCaseDetailSchema>,
       | 'clinicalDocuments'
+      | 'caseId'
       | 'completedAt'
       | 'consultation'
       | 'diagnosis'
@@ -9325,7 +9346,9 @@ export class WorkflowService {
       | 'medicationConclusion'
     > & { encounterId: string },
   ) {
-    const events: Array<z.input<typeof doctorCompletedCaseTimelineEventSchema>> = []
+    const events: Array<z.input<typeof doctorCompletedCaseTimelineEventSchema>> = [
+      ...this.#completedCaseDraftDeletionEvents(context, input.caseId),
+    ]
     for (const record of input.consultation?.records ?? []) {
       events.push({
         kind: 'consultation-recorded',
@@ -9470,6 +9493,41 @@ export class WorkflowService {
       || left.kind.localeCompare(right.kind)
     ))
     return z.array(doctorCompletedCaseTimelineEventSchema).parse(events)
+  }
+
+  #completedCaseDraftDeletionEvents(context: ActorContext, caseId: string) {
+    const rows = z.array(draftDeletionTraceRowSchema).parse(this.#database.driver.prepare(`
+      SELECT trace_id, operation, effect_json, virtual_timestamp
+      FROM action_trace
+      WHERE workspace_id = ? AND epoch = ? AND scenario_run_id = ?
+        AND outcome = 'success'
+        AND operation IN (
+          'encounter.delete-prescription-draft',
+          'laboratory-request.delete-draft'
+        )
+      ORDER BY sequence
+    `).all(
+      context.workspaceId,
+      context.epoch,
+      context.scenarioRunId,
+    ))
+    return rows.flatMap(row => {
+      const draftReference = row.operation === 'encounter.delete-prescription-draft'
+        ? `PrescriptionDraft/${caseId}`
+        : `LaboratoryRequestDraft/${caseId}`
+      const effects = z.array(actionTraceEffectSchema).parse(
+        JSON.parse(row.effect_json) as unknown,
+      )
+      if (!effects.some(effect => effect.reference === draftReference)) return []
+      return [{
+        kind: row.operation === 'encounter.delete-prescription-draft'
+          ? 'prescription-draft-deleted' as const
+          : 'laboratory-request-draft-deleted' as const,
+        occurredAt: row.virtual_timestamp,
+        reference: `ActionTrace/${row.trace_id}`,
+        relatedReferences: [draftReference],
+      }]
+    })
   }
 
   #supportsLaboratoryReports(context: ActorContext): boolean {

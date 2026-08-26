@@ -85,9 +85,11 @@ const timelineMessageKeys = {
   'laboratory-report-acknowledged': 'timeline_laboratoryReportAcknowledged',
   'laboratory-report-issued': 'timeline_laboratoryReportIssued',
   'laboratory-report-revised': 'timeline_laboratoryReportRevised',
+  'laboratory-request-draft-deleted': 'timeline_laboratoryRequestDraftDeleted',
   'laboratory-request-cancelled': 'timeline_laboratoryRequestCancelled',
   'laboratory-request-issued': 'timeline_laboratoryRequestIssued',
   'no-medication-confirmed': 'timeline_noMedicationConfirmed',
+  'prescription-draft-deleted': 'timeline_prescriptionDraftDeleted',
   'prescription-issued': 'timeline_prescriptionIssued',
   'prescription-withdrawn': 'timeline_prescriptionWithdrawn',
 } satisfies Record<DoctorCompletedCaseTimelineEvent['kind'], WorkspaceMessageKey>

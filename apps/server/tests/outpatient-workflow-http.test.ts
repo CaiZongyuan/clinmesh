@@ -1700,7 +1700,7 @@ describe('outpatient workflow HTTP contract', () => {
     runtimes.push(runtime)
     const candidate = await createCompletionReadyConsultation(runtime, password, {
       laboratory: 'acknowledged',
-      medication: 'prescription',
+      medication: false,
     })
     const activeDetailResponse = await runtime.app.request(
       `/api/his/v1/doctor/cases/${candidate.started.caseId}`,
@@ -1722,6 +1722,117 @@ describe('outpatient workflow HTTP contract', () => {
       WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
     `).run(value)
 
+    setVirtualTime('2026-08-24T09:00:00+08:00')
+    const prescriptionDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${candidate.started.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${candidate.started.encounterId}`]: candidate.encounterVersion,
+          },
+          input: {
+            expectedDraftVersion: 0,
+            items: [{
+              catalogItemId: 'medication-oseltamivir',
+              courseDays: 5,
+              doseText: '75 mg',
+              frequencyCode: 'BID',
+              quantity: 10,
+            }],
+          },
+        }),
+        headers: commandHeaders(candidate.doctorCookie),
+        method: 'PUT',
+      },
+    )
+    const prescriptionDraft = prescriptionDraftResponseSchema.parse(
+      await prescriptionDraftResponse.json(),
+    ).data
+
+    setVirtualTime('2026-08-24T09:05:00+08:00')
+    const prescriptionDraftDeletionResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${candidate.started.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${candidate.started.encounterId}`]: candidate.encounterVersion,
+          },
+          input: { expectedDraftVersion: prescriptionDraft.draftVersion },
+        }),
+        headers: commandHeaders(candidate.doctorCookie),
+        method: 'DELETE',
+      },
+    )
+    const prescriptionDraftDeletion = prescriptionDraftResponseSchema.parse(
+      await prescriptionDraftDeletionResponse.json(),
+    )
+    expect(prescriptionDraftDeletion.effects).toEqual([{
+      kind: 'updated',
+      reference: `PrescriptionDraft/${candidate.started.caseId}`,
+      versionId: String(prescriptionDraftDeletion.data.draftVersion),
+    }])
+
+    setVirtualTime('2026-08-24T09:10:00+08:00')
+    const noMedicationResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${candidate.started.encounterId}/medication-conclusion/actions/confirm-no-medication`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${candidate.started.encounterId}`]: candidate.encounterVersion,
+          },
+          input: { expectedDraftVersion: prescriptionDraftDeletion.data.draftVersion },
+        }),
+        headers: commandHeaders(candidate.doctorCookie),
+        method: 'POST',
+      },
+    )
+    confirmNoMedicationResponseSchema.parse(await noMedicationResponse.json())
+
+    setVirtualTime('2026-08-24T09:15:00+08:00')
+    const laboratoryDeletionDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${candidate.started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${candidate.started.encounterId}`]: candidate.encounterVersion,
+          },
+          input: {
+            catalogItemId: 'lab-crp',
+            expectedDraftVersion: laboratoryDraftVersion,
+            indicationCode: 'fever',
+          },
+        }),
+        headers: commandHeaders(candidate.doctorCookie),
+        method: 'PUT',
+      },
+    )
+    const laboratoryDeletionDraft = laboratoryRequestDraftResponseSchema.parse(
+      await laboratoryDeletionDraftResponse.json(),
+    ).data
+
+    setVirtualTime('2026-08-24T09:20:00+08:00')
+    const laboratoryDraftDeletionResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${candidate.started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${candidate.started.encounterId}`]: candidate.encounterVersion,
+          },
+          input: { expectedDraftVersion: laboratoryDeletionDraft.draftVersion },
+        }),
+        headers: commandHeaders(candidate.doctorCookie),
+        method: 'DELETE',
+      },
+    )
+    const laboratoryDraftDeletion = laboratoryRequestDraftResponseSchema.parse(
+      await laboratoryDraftDeletionResponse.json(),
+    )
+    expect(laboratoryDraftDeletion.effects).toEqual([{
+      kind: 'updated',
+      reference: `LaboratoryRequestDraft/${candidate.started.caseId}`,
+      versionId: String(laboratoryDraftDeletion.data.draftVersion),
+    }])
+
     setVirtualTime('2026-08-24T09:30:00+08:00')
     const cancellationDraftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${candidate.started.encounterId}/laboratory-request/draft`,
@@ -1732,7 +1843,7 @@ describe('outpatient workflow HTTP contract', () => {
           },
           input: {
             catalogItemId: 'lab-crp',
-            expectedDraftVersion: laboratoryDraftVersion,
+            expectedDraftVersion: laboratoryDraftDeletion.data.draftVersion,
             indicationCode: 'fever',
           },
         }),
@@ -1918,6 +2029,18 @@ describe('outpatient workflow HTTP contract', () => {
     expect(libraryDetail.laboratoryRequests.find(
       request => request.id === requestToCancel.id,
     )).toMatchObject({ id: requestToCancel.id, status: 'cancelled' })
+    expect(libraryDetail.timeline).toContainEqual(expect.objectContaining({
+      kind: 'prescription-draft-deleted',
+      occurredAt: '2026-08-24T09:05:00+08:00',
+      reference: expect.stringMatching(/^ActionTrace\//),
+      relatedReferences: [`PrescriptionDraft/${candidate.started.caseId}`],
+    }))
+    expect(libraryDetail.timeline).toContainEqual(expect.objectContaining({
+      kind: 'laboratory-request-draft-deleted',
+      occurredAt: '2026-08-24T09:20:00+08:00',
+      reference: expect.stringMatching(/^ActionTrace\//),
+      relatedReferences: [`LaboratoryRequestDraft/${candidate.started.caseId}`],
+    }))
     expect(libraryDetail.timeline).toContainEqual(expect.objectContaining({
       kind: 'laboratory-request-cancelled',
       occurredAt: '2026-08-24T09:30:00+08:00',
@@ -4061,7 +4184,14 @@ describe('outpatient workflow HTTP contract', () => {
     const deleteResponse = await remove()
     expect(deleteResponse.status).toBe(200)
     const deleted = laboratoryRequestDraftResponseSchema.parse(await deleteResponse.json())
-    expect(deleted).toMatchObject({ data: { draftVersion: 2 }, effects: [] })
+    expect(deleted).toMatchObject({
+      data: { draftVersion: 2 },
+      effects: [{
+        kind: 'updated',
+        reference: `LaboratoryRequestDraft/${started.caseId}`,
+        versionId: '2',
+      }],
+    })
     await expectCommandAudit(
       runtime,
       doctorCookie,
