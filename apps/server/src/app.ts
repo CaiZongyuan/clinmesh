@@ -1,11 +1,34 @@
 import { extname } from 'node:path'
 import type { HealthResponse } from '@clinmesh/contracts/health'
+import {
+  acknowledgeLaboratoryReportRequestSchema,
+  cancelLaboratoryRequestRequestSchema,
+  completeEncounterRequestSchema,
+  confirmDiagnosisRequestSchema,
+  confirmNoMedicationRequestSchema,
+  correctLaboratoryReportRequestSchema,
+  deleteLaboratoryRequestDraftRequestSchema,
+  deletePrescriptionDraftRequestSchema,
+  issueLaboratoryRequestRequestSchema,
+  issuePrescriptionRequestSchema,
+  previewClinicalDocumentSignRequestSchema,
+  reviseClinicalDocumentRequestSchema,
+  saveClinicalDocumentDraftRequestSchema,
+  saveDiagnosisDraftRequestSchema,
+  saveLaboratoryRequestDraftRequestSchema,
+  savePrescriptionDraftRequestSchema,
+  signClinicalDocumentRequestSchema,
+  withdrawPrescriptionRequestSchema,
+} from '@clinmesh/contracts/his'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
 import type { IdentityService } from './application/identity-service.ts'
 import { IdentityError } from './application/identity-service.ts'
-import { CommandConflictError } from './application/command-executor.ts'
+import {
+  CommandConflictError,
+  ExpectedVersionConflictError,
+} from './application/command-executor.ts'
 import type { ScenarioService } from './application/scenario-service.ts'
 import { ScenarioError } from './application/scenario-service.ts'
 import type { WorkflowService } from './application/workflow-service.ts'
@@ -56,10 +79,19 @@ function apiErrorResponse(
     || error instanceof ScenarioError
     || error instanceof WorkflowError
   ) {
-    return context.json({ error: { code: error.code, message: error.message } }, error.status)
+    return context.json({
+      error: {
+        code: error.code,
+        ...(error instanceof WorkflowError && error.conflict !== undefined
+          ? { conflict: error.conflict }
+          : {}),
+        message: error.message,
+      },
+    }, error.status)
   }
   if (
     error instanceof CommandConflictError
+    || error instanceof ExpectedVersionConflictError
     || error instanceof FhirRepositoryError
     || error instanceof WorkspaceContextError
   ) {
@@ -358,12 +390,269 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.get('/api/his/v1/doctor/completed-cases', async (context) => {
+      try {
+        const query = z.object({
+          completedFrom: z.iso.date().optional(),
+          completedTo: z.iso.date().optional(),
+          diagnosisCatalogItemId: z.string().regex(/^[A-Za-z0-9.-]{1,64}$/).optional(),
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(20),
+          patientId: z.string().regex(/^[A-Za-z0-9.-]{1,64}$/).optional(),
+        }).refine(value => (
+          value.completedFrom === undefined
+          || value.completedTo === undefined
+          || value.completedFrom <= value.completedTo
+        ), {
+          message: 'completedFrom must not be after completedTo',
+          path: ['completedFrom'],
+        }).parse(context.req.query())
+        return context.json(workflow.doctorCompletedCases(
+          await actor(context),
+          query,
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/doctor/completed-cases/:caseId', async (context) => {
+      try {
+        const caseId = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/).parse(
+          context.req.param('caseId'),
+        )
+        return context.json(workflow.doctorCompletedCaseDetail(
+          await actor(context),
+          caseId,
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/doctor/virtual-patients', async (context) => {
+      try {
+        const query = z.object({
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(20),
+        }).parse(context.req.query())
+        return context.json(workflow.virtualPatients(
+          await actor(context),
+          query.pageSize,
+          query.page,
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/doctor/virtual-patients/:virtualPatientId/actions/start', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.object({}).strict(),
+          input: z.object({
+            expectedVersion: z.string().min(32).max(2_048),
+          }),
+        }).parse(await context.req.json())
+        return context.json(workflow.startVirtualPatient({
+          context: await actor(context),
+          expectedVersion: body.input.expectedVersion,
+          idempotencyKey: idempotencyKey(context),
+          virtualPatientId: context.req.param('virtualPatientId'),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
     app.get('/api/his/v1/doctor/cases/:caseId', async (context) => {
       try {
         return context.json(workflow.doctorCaseDetail(
           await actor(context),
           context.req.param('caseId'),
         ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/encounters/:encounterId/completion', async (context) => {
+      try {
+        return context.json(workflow.encounterCompletionPreview(
+          await actor(context),
+          context.req.param('encounterId'),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/actions/complete', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = completeEncounterRequestSchema.parse(await context.req.json())
+        return context.json(workflow.completeEncounter({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/actions/ask-consultation-question', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({
+            expectedVersion: z.number().int().positive(),
+            questionCode: z.string().min(1).max(64),
+          }).strict(),
+        }).strict().parse(await context.req.json())
+        return context.json(workflow.askConsultationQuestion({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedVersions: body.expectedVersions,
+          expectedVersion: body.input.expectedVersion,
+          idempotencyKey: idempotencyKey(context),
+          questionCode: body.input.questionCode,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.put('/api/his/v1/encounters/:encounterId/diagnosis/draft', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = saveDiagnosisDraftRequestSchema.parse(await context.req.json())
+        return context.json(workflow.saveDiagnosisDraft({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          entries: body.input.entries,
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/diagnosis/actions/confirm', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = confirmDiagnosisRequestSchema.parse(await context.req.json())
+        return context.json(workflow.confirmDiagnosis({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.put('/api/his/v1/encounters/:encounterId/prescription/draft', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = savePrescriptionDraftRequestSchema.parse(await context.req.json())
+        return context.json(workflow.savePrescriptionDraft({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          items: body.input.items,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.delete('/api/his/v1/encounters/:encounterId/prescription/draft', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = deletePrescriptionDraftRequestSchema.parse(await context.req.json())
+        return context.json(workflow.deletePrescriptionDraft({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/prescription/actions/issue', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = issuePrescriptionRequestSchema.parse(await context.req.json())
+        return context.json(workflow.issuePrescription({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/medication-conclusion/actions/confirm-no-medication', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = confirmNoMedicationRequestSchema.parse(await context.req.json())
+        return context.json(workflow.confirmNoMedication({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.put('/api/his/v1/encounters/:encounterId/clinical-document/draft', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = saveClinicalDocumentDraftRequestSchema.parse(await context.req.json())
+        return context.json(workflow.saveClinicalDocumentDraft({
+          context: await actor(context),
+          document: body.input.document,
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/clinical-document/actions/preview-sign', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = previewClinicalDocumentSignRequestSchema.parse(await context.req.json())
+        return context.json(workflow.previewStructuredClinicalDocumentSign({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/clinical-document/actions/sign', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = signClinicalDocumentRequestSchema.parse(await context.req.json())
+        return context.json(workflow.signStructuredClinicalDocument({
+          commitToken: body.input.commitToken,
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          previewId: body.input.previewId,
+        }))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
@@ -511,18 +800,46 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.post('/api/his/v1/clinical-documents/:compositionId/actions/revise', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
-        const body = z.object({
-          expectedVersions: z.record(z.string(), z.string()),
-          input: z.object({
-            assessment: z.string().trim().min(2).max(4_000),
-            plan: z.string().trim().min(2).max(4_000),
-            reason: z.string().trim().min(2).max(500),
-          }),
-        }).parse(await context.req.json())
+        const body = reviseClinicalDocumentRequestSchema.parse(await context.req.json())
         return context.json(workflow.reviseClinicalDocument({
-          ...body.input,
           compositionId: context.req.param('compositionId'),
           context: await actor(context),
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          reason: body.input.reason,
+          revision: 'document' in body.input
+            ? { document: body.input.document }
+            : { assessment: body.input.assessment, plan: body.input.plan },
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.put('/api/his/v1/encounters/:encounterId/laboratory-request/draft', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = saveLaboratoryRequestDraftRequestSchema.parse(await context.req.json())
+        return context.json(workflow.saveLaboratoryRequestDraft({
+          catalogItemId: body.input.catalogItemId,
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          indicationCode: body.input.indicationCode,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.delete('/api/his/v1/encounters/:encounterId/laboratory-request/draft', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = deleteLaboratoryRequestDraftRequestSchema.parse(await context.req.json())
+        return context.json(workflow.deleteLaboratoryRequestDraft({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
           expectedVersions: body.expectedVersions,
           idempotencyKey: idempotencyKey(context),
         }))
@@ -530,6 +847,95 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.post('/api/his/v1/encounters/:encounterId/laboratory-request/actions/issue', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = issueLaboratoryRequestRequestSchema.parse(await context.req.json())
+        return context.json(workflow.issueLaboratoryRequest({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedDraftVersion: body.input.expectedDraftVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/laboratory-requests/:requestId/actions/cancel', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = cancelLaboratoryRequestRequestSchema.parse(await context.req.json())
+        return context.json(workflow.cancelLaboratoryRequest({
+          context: await actor(context),
+          expectedRequestVersion: body.input.expectedRequestVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          reasonCode: body.input.reasonCode,
+          requestId: context.req.param('requestId'),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post(
+      '/api/his/v1/laboratory-requests/:requestId/reports/:diagnosticReportId/actions/acknowledge',
+      async (context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const body = acknowledgeLaboratoryReportRequestSchema.parse(await context.req.json())
+          return context.json(workflow.acknowledgeLaboratoryReport({
+            context: await actor(context),
+            diagnosticReportId: context.req.param('diagnosticReportId'),
+            expectedRequestVersion: body.input.expectedRequestVersion,
+            expectedVersions: body.expectedVersions,
+            idempotencyKey: idempotencyKey(context),
+            requestId: context.req.param('requestId'),
+          }))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      },
+    )
+    app.post(
+      '/api/his/v1/laboratory-requests/:requestId/reports/:diagnosticReportId/actions/correct',
+      async (context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const body = correctLaboratoryReportRequestSchema.parse(await context.req.json())
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          if (!session.availableRoles.some(role => role.code === 'administrator')) {
+            throw new WorkflowError(
+              'ROLE_NOT_ALLOWED',
+              'Only an administrator can invoke the controlled laboratory report actor',
+            )
+          }
+          const authenticatedContext = session.actor
+          return context.json(workflow.correctLaboratoryReport({
+            conclusion: body.input.conclusion,
+            context: {
+              actorId: authenticatedContext.actorId,
+              epoch: authenticatedContext.epoch,
+              ...(authenticatedContext.organizationId === undefined ? {} : {
+                organizationId: authenticatedContext.organizationId,
+              }),
+              roleCode: 'lis-system',
+              scenarioRunId: authenticatedContext.scenarioRunId,
+              workspaceId: authenticatedContext.workspaceId,
+            },
+            diagnosticReportId: context.req.param('diagnosticReportId'),
+            expectedRequestVersion: body.input.expectedRequestVersion,
+            expectedVersions: body.expectedVersions,
+            idempotencyKey: idempotencyKey(context),
+            reason: body.input.reason,
+            requestId: context.req.param('requestId'),
+            results: body.input.results,
+          }))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      },
+    )
     app.post('/api/his/v1/encounters/:encounterId/actions/issue-laboratory-order', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
@@ -605,6 +1011,21 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           expectedVersions: body.expectedVersions,
           idempotencyKey: idempotencyKey(context),
           lotSelections: body.input.lotSelections,
+          prescriptionId: context.req.param('prescriptionId'),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/prescriptions/:prescriptionId/actions/withdraw', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = withdrawPrescriptionRequestSchema.parse(await context.req.json())
+        return context.json(workflow.withdrawPrescription({
+          context: await actor(context),
+          expectedPrescriptionVersion: body.input.expectedPrescriptionVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
           prescriptionId: context.req.param('prescriptionId'),
         }))
       } catch (error) {

@@ -22,6 +22,8 @@ const registrarSession = {
     id: 'practitioner-role-registrar',
     locationId: 'location-registrar',
     organizationId: 'organization-clinmesh',
+    practitionerId: 'practitioner-registrar',
+    practitionerName: '合成挂号员',
   }],
   user: {
     email: 'registrar@demo.clinmesh.local',
@@ -120,6 +122,119 @@ describe('Web application shell', () => {
     expect(screen.getByRole('button', { name: '用户菜单' })).toBeTruthy()
     expect(await screen.findByText('暂无挂号记录')).toBeTruthy()
     expect(screen.queryByText(/Agent|AI|助手/i)).toBeNull()
+  })
+
+  it('opens the public component catalog without requesting application data', async () => {
+    window.history.replaceState(null, '', '/components')
+
+    await renderWebApp()
+
+    expect(screen.getByRole('heading', { level: 1, name: '组件目录' })).toBeTruthy()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('localizes the public component catalog from the saved Web preference', async () => {
+    localStorage.setItem('clinmesh.preferences:v1', JSON.stringify({
+      locale: 'en-US',
+      theme: 'system',
+    }))
+    window.history.replaceState(null, '', '/components')
+
+    await renderWebApp()
+
+    expect(document.documentElement.lang).toBe('en-US')
+    expect(screen.getByRole('heading', { level: 1, name: 'Component catalog' })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: 'Controls and forms' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Dark theme' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { level: 1, name: '组件目录' })).toBeNull()
+  })
+
+  it('switches component catalog sections with the keyboard', async () => {
+    window.history.replaceState(null, '', '/components')
+    const user = userEvent.setup()
+    await renderWebApp()
+
+    const controlsTab = screen.getByRole('tab', { name: '控件与表单' })
+    expect(controlsTab.getAttribute('aria-selected')).toBe('true')
+
+    controlsTab.focus()
+    await user.keyboard('{ArrowRight}')
+
+    const clinicalTab = screen.getByRole('tab', { name: '临床数据与状态' })
+    expect(document.activeElement).toBe(clinicalTab)
+
+    await user.keyboard('{Enter}')
+
+    expect(clinicalTab.getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByRole('tabpanel', { name: '临床数据与状态' })).toBeTruthy()
+  })
+
+  it('exposes form, validation, loading, and submit states in the component catalog', async () => {
+    window.history.replaceState(null, '', '/components')
+    await renderWebApp()
+
+    expect(screen.getByRole('textbox', { name: '主诉' })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: '患者姓名' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('textbox', { name: '初步诊断' }).getAttribute('aria-invalid')).toBe('true')
+    expect(screen.getByRole('alert', { name: '诊断不能为空' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '正在提交' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('region', { name: '固定提交区' })).toBeTruthy()
+  })
+
+  it('shows clinical tables, semantic states, loading, and long Chinese content', async () => {
+    window.history.replaceState(null, '', '/components')
+    const user = userEvent.setup()
+    await renderWebApp()
+
+    await user.click(screen.getByRole('tab', { name: '临床数据与状态' }))
+
+    expect(screen.getByRole('table', { name: '门诊检验结果' })).toBeTruthy()
+    expect(screen.getByText('青霉素过敏')).toBeTruthy()
+    expect(screen.getByText('已完成')).toBeTruthy()
+    expect(screen.getByRole('status', { name: '正在加载病例' })).toBeTruthy()
+    expect(screen.getByRole('alert', { name: '处方审查失败' })).toBeTruthy()
+    expect(screen.getByText(/请复核同一患者在本次就诊中已开具的全部药品/)).toBeTruthy()
+  })
+
+  it('opens catalog feedback, restores dialog focus, and emits a toast', async () => {
+    window.history.replaceState(null, '', '/components')
+    const user = userEvent.setup()
+    await renderWebApp()
+
+    await user.click(screen.getByRole('tab', { name: '弹层与反馈' }))
+    const deleteTrigger = screen.getByRole('button', { name: '删除医嘱' })
+    await user.click(deleteTrigger)
+
+    expect(await screen.findByRole('alertdialog', { name: '确认删除医嘱' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '取消删除' }))
+    expect(document.activeElement).toBe(deleteTrigger)
+
+    await user.click(screen.getByRole('button', { name: '发送成功反馈' }))
+    expect(await screen.findByText('病历已保存')).toBeTruthy()
+  })
+
+  it('previews and persists light and dark component themes', async () => {
+    window.history.replaceState(null, '', '/components')
+    const user = userEvent.setup()
+    await renderWebApp()
+
+    const darkTheme = screen.getByRole('button', { name: '暗色主题' })
+    await user.click(darkTheme)
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(darkTheme.getAttribute('aria-pressed')).toBe('true')
+    expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1') ?? '')).toEqual({
+      locale: 'zh-CN',
+      theme: 'dark',
+    })
+
+    await user.click(darkTheme)
+    expect(darkTheme.getAttribute('aria-pressed')).toBe('true')
+    expect(document.documentElement.dataset.theme).toBe('dark')
+
+    await user.click(screen.getByRole('button', { name: '亮色主题' }))
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(document.documentElement.dataset.theme).toBe('light')
   })
 
   it('navigates between role workspaces without reloading the application shell', async () => {

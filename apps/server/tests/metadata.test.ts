@@ -42,11 +42,10 @@ describe('FHIR metadata endpoint', () => {
       documentation: expect.stringContaining('Read-only projection'),
     })
     expect(resources.find(resource => resource.type === 'Condition')).toMatchObject({
-      searchParam: [{
-        name: 'patient',
-        target: ['Patient'],
-        type: 'reference',
-      }],
+      searchParam: expect.arrayContaining([
+        expect.objectContaining({ name: 'patient', target: ['Patient'], type: 'reference' }),
+        expect.objectContaining({ name: 'encounter', target: ['Encounter'], type: 'reference' }),
+      ]),
     })
     expect(resources.find(resource => resource.type === 'DiagnosticReport')).toMatchObject({
       searchParam: expect.arrayContaining([
@@ -63,7 +62,17 @@ describe('FHIR metadata endpoint', () => {
     expect(resources.find(resource => resource.type === 'Provenance')).toMatchObject({
       searchParam: [{
         name: 'target',
-        target: ['Bundle', 'Composition'],
+        target: [
+          'Bundle',
+          'Composition',
+          'Condition',
+          'DiagnosticReport',
+          'Encounter',
+          'Observation',
+          'ServiceRequest',
+          'Specimen',
+          'Task',
+        ],
         type: 'reference',
       }],
     })

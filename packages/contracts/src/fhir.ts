@@ -25,6 +25,11 @@ export const operationOutcomeSchema = z.object({
   }).loose()).min(1),
 }).loose()
 
+const fhirBundleEntrySchema = z.object({
+  fullUrl: z.url().optional(),
+  resource: fhirResourceSchema,
+})
+
 export const fhirBundleSchema = z.object({
   resourceType: z.literal('Bundle'),
   type: z.enum(['searchset', 'history']),
@@ -33,10 +38,18 @@ export const fhirBundleSchema = z.object({
     relation: z.string().min(1),
     url: z.url(),
   })).optional(),
-  entry: z.array(z.object({
-    fullUrl: z.url().optional(),
-    resource: fhirResourceSchema,
-  })).optional(),
+  entry: z.array(fhirBundleEntrySchema).optional(),
+}).loose()
+
+export const fhirDocumentBundleSchema = fhirResourceSchema.extend({
+  resourceType: z.literal('Bundle'),
+  type: z.literal('document'),
+  identifier: z.object({
+    system: z.url(),
+    value: z.string().min(1),
+  }).loose(),
+  timestamp: z.iso.datetime({ offset: true }),
+  entry: z.array(fhirBundleEntrySchema.extend({ fullUrl: z.url() })).min(1),
 }).loose()
 
 export const capabilityStatementSchema = z.object({
@@ -80,5 +93,6 @@ export const capabilityStatementSchema = z.object({
 export type FhirReference = z.infer<typeof fhirReferenceSchema>
 export type FhirResource = z.infer<typeof fhirResourceSchema>
 export type FhirBundle = z.infer<typeof fhirBundleSchema>
+export type FhirDocumentBundle = z.infer<typeof fhirDocumentBundleSchema>
 export type OperationOutcome = z.infer<typeof operationOutcomeSchema>
 export type CapabilityStatement = z.infer<typeof capabilityStatementSchema>

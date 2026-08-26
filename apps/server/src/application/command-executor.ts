@@ -20,6 +20,50 @@ export interface ActorContext extends RepositoryContext {
   scenarioRunId: string
 }
 
+const actorIdentifierSystem = 'https://caizongyuan.github.io/clinmesh/identifier/actor'
+const practitionerIdentifierSystem = 'https://caizongyuan.github.io/clinmesh/identifier/practitioner'
+const practitionerRoleSystem = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/practitioner-role'
+
+function authenticatedActorAgent(context: ActorContext) {
+  return {
+    type: { text: 'Authenticated actor' },
+    who: {
+      identifier: {
+        system: actorIdentifierSystem,
+        value: context.actorId,
+      },
+    },
+  }
+}
+
+function actingPractitionerRole(context: ActorContext) {
+  return {
+    ...(context.practitionerRoleId === undefined
+      ? {}
+      : {
+          coding: [{
+            code: context.practitionerRoleId,
+            display: context.roleCode,
+            system: practitionerRoleSystem,
+          }],
+        }),
+    text: context.roleCode,
+  }
+}
+
+export function provenanceAgents(context: ActorContext, responsibility: string) {
+  return [authenticatedActorAgent(context), ...(context.practitionerId === undefined
+    ? []
+    : [{
+        type: { text: 'Acting practitioner' },
+        role: [actingPractitionerRole(context), { text: responsibility }],
+        who: { reference: `Practitioner/${context.practitionerId}` },
+        ...(context.organizationId === undefined
+          ? {}
+          : { onBehalfOf: { reference: `Organization/${context.organizationId}` } }),
+      }])]
+}
+
 export interface CommandEffect {
   kind: 'created' | 'updated'
   reference: string
@@ -39,6 +83,7 @@ export interface CommandResponse<Data> extends CommandHandlerResult<Data> {
 }
 
 export interface CommandInvocation<Input, Data> {
+  authorize?: () => void
   context: ActorContext
   contextRequirement?: 'active' | 'current'
   dataSchema: z.ZodType<Data>
@@ -46,6 +91,7 @@ export interface CommandInvocation<Input, Data> {
   idempotencyScope?: 'epoch' | 'workspace'
   idempotencyKey: string
   input: Input
+  mapExpectedVersionConflict?: (error: ExpectedVersionConflictError) => Error
   operation: string
 }
 
@@ -64,6 +110,10 @@ interface ReceiptRow {
   response_json: string | null
   status: string
 }
+
+const virtualTimeRowSchema = z.object({
+  virtual_time: z.iso.datetime({ offset: true }),
+}).strict()
 
 const storedCommandResponseSchema = z.object({
   auditId: z.string().min(1),
@@ -93,6 +143,28 @@ function hashJson(value: unknown): string {
 
 export class CommandConflictError extends Error {
   readonly code = 'IDEMPOTENCY_KEY_REUSED'
+}
+
+export class ExpectedVersionConflictError extends Error {
+  readonly code = 'EXPECTED_VERSION_CONFLICT'
+  readonly currentVersion: string | undefined
+  readonly expectedVersion: string
+  readonly reference: string | undefined
+
+  constructor(
+    message: string,
+    details: {
+      currentVersion?: string
+      expectedVersion: string
+      reference?: string
+    },
+  ) {
+    super(message)
+    this.name = 'ExpectedVersionConflictError'
+    this.currentVersion = details.currentVersion
+    this.expectedVersion = details.expectedVersion
+    this.reference = details.reference
+  }
 }
 
 export class CommandTransaction {
@@ -160,6 +232,13 @@ export class CommandExecutor {
   ): CommandResponse<Data> {
     const { context } = invocation
     const requestHash = hashJson({
+      actingContext: {
+        locationId: context.locationId,
+        organizationId: context.organizationId,
+        practitionerId: context.practitionerId,
+        practitionerRoleId: context.practitionerRoleId,
+        roleCode: context.roleCode,
+      },
       expectedVersions: invocation.expectedVersions,
       input: invocation.input,
       operation: invocation.operation,
@@ -215,6 +294,7 @@ export class CommandExecutor {
         this.#workspaces.assertActive(context, context.scenarioRunId)
       }
 
+      invocation.authorize?.()
       this.#checkExpectedVersions(context, invocation.expectedVersions)
       this.#database.driver.prepare(`
         INSERT INTO command_receipt (
@@ -262,6 +342,12 @@ export class CommandExecutor {
     } catch (error) {
       if (this.#database.driver.inTransaction) this.#database.driver.exec('ROLLBACK')
       this.#recordFailedAttempt(context, invocation.operation, requestHash, now)
+      if (
+        error instanceof ExpectedVersionConflictError
+        && invocation.mapExpectedVersionConflict !== undefined
+      ) {
+        throw invocation.mapExpectedVersionConflict(error)
+      }
       throw error
     }
   }
@@ -269,17 +355,34 @@ export class CommandExecutor {
   #checkExpectedVersions(context: RepositoryContext, expectedVersions: Record<string, string>): void {
     for (const [reference, expectedVersion] of Object.entries(expectedVersions)) {
       const match = /^([A-Z][A-Za-z]+)\/([A-Za-z0-9.-]{1,64})$/.exec(reference)
-      if (match === null) throw new CommandConflictError(`Expected version reference is invalid: ${reference}`)
+      if (match === null) {
+        throw new ExpectedVersionConflictError(
+          `Expected version reference is invalid: ${reference}`,
+          { expectedVersion },
+        )
+      }
       const [, resourceType = '', resourceId = ''] = match
       try {
         const resource = this.#fhir.read(context, resourceType, resourceId)
         if (resource.meta?.versionId !== expectedVersion) {
-          throw new CommandConflictError(`Expected ${reference} version ${expectedVersion}`)
+          throw new ExpectedVersionConflictError(
+            `Expected ${reference} version ${expectedVersion}`,
+            {
+              ...(resource.meta?.versionId === undefined
+                ? {}
+                : { currentVersion: resource.meta.versionId }),
+              expectedVersion,
+              reference,
+            },
+          )
         }
       } catch (error) {
-        if (error instanceof CommandConflictError) throw error
+        if (error instanceof ExpectedVersionConflictError) throw error
         if (error instanceof FhirRepositoryError) {
-          throw new CommandConflictError(`Expected resource is unavailable: ${reference}`)
+          throw new ExpectedVersionConflictError(
+            `Expected resource is unavailable: ${reference}`,
+            { expectedVersion, reference },
+          )
         }
         throw error
       }
@@ -303,8 +406,11 @@ export class CommandExecutor {
       actorId: context.actorId,
       auditId,
       operation,
+      practitionerId: context.practitionerId,
+      practitionerRoleId: context.practitionerRoleId,
       previousHash: head.hash,
       requestHash,
+      roleCode: context.roleCode,
       sequence,
       timestamp,
     })
@@ -357,17 +463,21 @@ export class CommandExecutor {
         },
       },
       agent: [{
-        type: { text: context.roleCode },
-        who: {
-          identifier: {
-            system: context.practitionerId === undefined
-              ? 'https://caizongyuan.github.io/clinmesh/identifier/actor'
-              : 'https://caizongyuan.github.io/clinmesh/identifier/practitioner',
-            value: context.practitionerId ?? context.actorId,
-          },
-        },
+        ...authenticatedActorAgent(context),
         requestor: true,
-      }],
+      }, ...(context.practitionerId === undefined
+        ? []
+        : [{
+            type: { text: 'Acting practitioner' },
+            role: [actingPractitionerRole(context)],
+            who: {
+              identifier: {
+                system: practitionerIdentifierSystem,
+                value: context.practitionerId,
+              },
+            },
+            requestor: false,
+          }])],
       source: {
         observer: {
           identifier: {
@@ -397,6 +507,13 @@ export class CommandExecutor {
     timestamp: string,
     outcome: 'failed' | 'success',
   ): void {
+    const virtualTime = virtualTimeRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT virtual_time FROM scenario_epoch_state
+        WHERE workspace_id = ? AND epoch = ?
+      `).get(context.workspaceId, context.epoch),
+    )
+    const virtualTimestamp = virtualTime?.virtual_time ?? timestamp
     const row = this.#database.driver.prepare(`
       SELECT COALESCE(MAX(sequence), 0) AS sequence
       FROM action_trace
@@ -417,7 +534,7 @@ export class CommandExecutor {
       operation,
       outcome,
       JSON.stringify(effects),
-      timestamp,
+      virtualTimestamp,
     )
   }
 

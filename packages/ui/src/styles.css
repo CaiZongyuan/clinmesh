@@ -139,6 +139,8 @@
 }
 
 :root[data-clinmesh-app="web"] {
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.5;
   --background: oklch(1 0 0);
   --foreground: oklch(0.3181 0.0249 281.67);
   --card: oklch(1 0 0);
@@ -178,6 +180,16 @@
   --sidebar-accent-foreground: oklch(0.3181 0.0249 281.67);
   --sidebar-border: oklch(0.9061 0.0088 264.52);
   --sidebar-ring: oklch(0.5854 0.207 261.84);
+}
+
+:root[data-clinmesh-app="web"] body,
+:root[data-clinmesh-app="web"] body * {
+  letter-spacing: 0;
+}
+
+:root[data-clinmesh-app="web"] body {
+  font-size: 0.8125rem;
+  line-height: 1.5;
 }
 
 :root[data-clinmesh-app="web"].dark {

@@ -68,8 +68,12 @@ export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
   const parsed = serverEnvironmentSchema.parse(environment)
   const authBaseUrl = parsed.CLINMESH_PUBLIC_ORIGIN
     ?? `http://${parsed.CLINMESH_HOST}:${parsed.CLINMESH_PORT}`
+  const defaultTrustedOrigins = [authBaseUrl]
+  if (parsed.CLINMESH_PUBLIC_ORIGIN === undefined && parsed.CLINMESH_HOST === '127.0.0.1') {
+    defaultTrustedOrigins.push('http://127.0.0.1:5173')
+  }
   const trustedOrigins = parsed.CLINMESH_TRUSTED_ORIGINS === undefined
-    ? [authBaseUrl]
+    ? defaultTrustedOrigins
     : parsed.CLINMESH_TRUSTED_ORIGINS.split(',').map(origin => z.url().parse(origin.trim()))
 
   return {

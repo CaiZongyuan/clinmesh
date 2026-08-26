@@ -34,7 +34,11 @@ import {
 } from '@tanstack/react-query'
 import { CircleAlertIcon, LogInIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { readWebPreferences, writeWebPreferences } from './preferences.ts'
+import {
+  applyResolvedWebTheme,
+  readWebPreferences,
+  writeWebPreferences,
+} from './preferences.ts'
 import {
   ApiClientError,
   getSession,
@@ -47,6 +51,7 @@ import { getWorkspaceMessages } from './workspace-i18n.ts'
 import { RoleWorkspace } from './role-workspaces.tsx'
 import { roleSections } from './workspace-shell.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
+import { ComponentCatalog } from './component-catalog.tsx'
 
 const DARK_MODE_QUERY = '(prefers-color-scheme: dark)'
 
@@ -98,21 +103,13 @@ function WorkspacePage({ activeSection }: { activeSection: WorkspaceSection }): 
   }, [preferences])
 
   useEffect(() => {
-    const root = document.documentElement
-
-    const applyTheme = (theme: 'light' | 'dark'): void => {
-      root.classList.toggle('dark', theme === 'dark')
-      root.dataset.theme = theme
-      root.style.colorScheme = theme
-    }
-
     if (preferences.theme !== 'system') {
-      applyTheme(preferences.theme)
+      applyResolvedWebTheme(preferences.theme)
       return
     }
 
     const mediaQuery = window.matchMedia(DARK_MODE_QUERY)
-    const applySystemTheme = (): void => applyTheme(mediaQuery.matches ? 'dark' : 'light')
+    const applySystemTheme = (): void => applyResolvedWebTheme(mediaQuery.matches ? 'dark' : 'light')
 
     applySystemTheme()
     mediaQuery.addEventListener('change', applySystemTheme)
@@ -271,7 +268,13 @@ const routes = workspaceRoutes.map(({ key, path }) => createRoute({
   path,
 }))
 
-const routeTree = rootRoute.addChildren(routes)
+const componentCatalogRoute = createRoute({
+  component: ComponentCatalog,
+  getParentRoute: () => rootRoute,
+  path: '/components',
+})
+
+const routeTree = rootRoute.addChildren([...routes, componentCatalogRoute])
 
 export function createWebRouter(): ReturnType<typeof createRouter<typeof routeTree>> {
   return createRouter({ routeTree })

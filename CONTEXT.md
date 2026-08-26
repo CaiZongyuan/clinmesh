@@ -106,6 +106,26 @@ _Avoid_: Patient, Appointment, Episode
 某次就诊在候诊、叫号或岗位工作队列中的待处理工作。
 _Avoid_: Appointment status, Encounter status
 
+**Virtual Patient**:
+由版本固定的合成病例事实和确定性回答规则驱动、可供参与者完成诊疗流程的患者表现。Virtual Patient 不是真实患者，也不等同于 Scenario 或 Patient Identity。
+_Avoid_: Real patient, chatbot, Scenario
+
+**Consultation Record**:
+一次 Encounter 中医患问答的有序业务记录。它保存问诊过程，但不等同于医生整理和签署的 Clinical Document。
+_Avoid_: Clinical Document, chat transcript, medical record
+
+**Report Acknowledgement**:
+负责医生确认已查看一份已签发诊断报告的业务事实。它不改变报告内容或签发状态。
+_Avoid_: Report status, report approval, read receipt
+
+**Encounter Completion**:
+负责医生确认一次 Encounter 已满足临床收尾条件并结束本次诊疗责任的业务事实。它不等同于收费、发药、Scenario Run 完成或病案归档。
+_Avoid_: Discharge, Scenario completion, archive
+
+**Acting Practitioner Context**:
+超级管理员在不改变登录身份的前提下选择的当前 Practitioner Role 和 Practitioner 行动上下文。审计同时保留超级管理员 Actor 与被选择的工作人员。
+_Avoid_: Login identity, account switch, unrestricted impersonation
+
 **Bed Occupancy**:
 一个床位在一段时间内被某次住院就诊预占或实际占用的互斥事实。
 _Avoid_: Encounter location, bed status text

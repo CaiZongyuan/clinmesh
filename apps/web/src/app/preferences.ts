@@ -1,6 +1,7 @@
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
 export type ThemePreference = 'system' | 'light' | 'dark'
+export type ResolvedWebTheme = Exclude<ThemePreference, 'system'>
 
 export interface WebPreferences {
   locale: WorkspaceLocale
@@ -48,4 +49,11 @@ export function writeWebPreferences(preferences: WebPreferences): void {
   } catch {
     // The shell remains usable when browser storage is unavailable.
   }
+}
+
+export function applyResolvedWebTheme(theme: ResolvedWebTheme): void {
+  const root = document.documentElement
+  root.classList.toggle('dark', theme === 'dark')
+  root.dataset.theme = theme
+  root.style.colorScheme = theme
 }

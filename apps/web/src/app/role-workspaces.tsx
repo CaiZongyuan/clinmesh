@@ -82,18 +82,10 @@ function AdminWorkspace({ locale, session }: Omit<RoleWorkspaceProps, 'activeSec
             {messages[`scenarioStatus_${state.status}`]}
           </Badge>
         </div>
-        <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
-          <div className="min-w-0">
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+          <div>
             <dt className="text-muted-foreground">{messages.scenarioDefinition}</dt>
-            <dd className="truncate font-medium" title={state.scenarioId}>{state.scenarioId}</dd>
-          </div>
-          <div>
-            <dt className="text-muted-foreground">{messages.scenarioKind}</dt>
             <dd className="font-medium">{messages[`scenarioKind_${state.kind}`]}</dd>
-          </div>
-          <div>
-            <dt className="text-muted-foreground">{messages.epoch}</dt>
-            <dd className="font-medium">{state.epoch}</dd>
           </div>
           <div>
             <dt className="text-muted-foreground">{messages.virtualTime}</dt>

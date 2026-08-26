@@ -1,19 +1,38 @@
 import {
+  acknowledgeLaboratoryReportResponseSchema,
   apiErrorSchema,
+  askConsultationQuestionResponseSchema,
   billingQueueSchema,
+  laboratoryRequestActionResponseSchema,
+  clinicalDocumentDraftResponseSchema,
+  clinicalDocumentRevisionResponseSchema,
+  clinicalDocumentSignPreviewResponseSchema,
+  clinicalDocumentSignResponseSchema,
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
+  confirmNoMedicationResponseSchema,
+  confirmDiagnosisResponseSchema,
+  correctLaboratoryReportResponseSchema,
   createPatientResponseSchema,
   clinicalCatalogSchema,
+  diagnosisDraftResponseSchema,
   doctorCaseDetailSchema,
+  doctorCompletedCaseDetailSchema,
+  doctorCompletedCaseListSchema,
   doctorQueueSchema,
   firstVisitDraftResponseSchema,
+  issueLaboratoryRequestResponseSchema,
+  issuePrescriptionResponseSchema,
   laboratoryOrderResponseSchema,
+  laboratoryRequestDraftResponseSchema,
   paymentPreviewResponseSchema,
   paymentResponseSchema,
   pharmacyQueueSchema,
+  prescriptionDraftResponseSchema,
   prescriptionReviewResponseSchema,
   dispenseResponseSchema,
+  encounterCompletionPreviewSchema,
+  encounterCompletionResponseSchema,
   patientSearchSchema,
   registrationCatalogSchema,
   registrationQueueSchema,
@@ -22,9 +41,17 @@ import {
   scenarioCommandResponseSchema,
   scenarioStateSchema,
   sessionContextSchema,
+  startVirtualPatientResponseSchema,
   startVisitResponseSchema,
   triageQueueSchema,
   triageResponseSchema,
+  virtualPatientListSchema,
+  withdrawPrescriptionResponseSchema,
+  type ApiConflict,
+  type ClinicalDocumentContent,
+  type DiagnosisDraftEntry,
+  type LaboratoryRequestCatalogItemId,
+  type PrescriptionDraftItem,
   type ScenarioState,
   type SessionContext,
 } from '@clinmesh/contracts/his'
@@ -34,12 +61,14 @@ export const sessionQueryKey = ['session-context'] as const
 
 export class ApiClientError extends Error {
   readonly code: string
+  readonly conflict: ApiConflict | undefined
   readonly status: number
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, conflict?: ApiConflict) {
     super(message)
     this.name = 'ApiClientError'
     this.code = code
+    this.conflict = conflict
     this.status = status
   }
 }
@@ -55,6 +84,7 @@ async function parseResponse<Schema extends z.ZodType>(
       response.status,
       parsed.success ? parsed.data.error.code : 'UNEXPECTED_RESPONSE',
       parsed.success ? parsed.data.error.message : `Request failed with status ${response.status}`,
+      parsed.success ? parsed.data.error.conflict : undefined,
     )
   }
   return schema.parse(body)
@@ -77,7 +107,7 @@ export async function apiMutation<Schema extends z.ZodType>(
   path: string,
   schema: Schema,
   body?: unknown,
-  options: { idempotencyKey?: string; method?: 'POST' | 'PUT' } = {},
+  options: { idempotencyKey?: string; method?: 'DELETE' | 'POST' | 'PUT' } = {},
 ): Promise<z.infer<Schema>> {
   const headers: Record<string, string> = {
     accept: 'application/json',
@@ -254,11 +284,237 @@ export function getDoctorQueue(signal?: AbortSignal, page = 1) {
   return apiGet(`/api/his/v1/doctor/queue?${search.toString()}`, doctorQueueSchema, signal)
 }
 
+export interface DoctorCompletedCaseFilters {
+  completedFrom?: string
+  completedTo?: string
+  diagnosisCatalogItemId?: string
+  patientId?: string
+}
+
+export function getDoctorCompletedCases(
+  filters: DoctorCompletedCaseFilters,
+  signal?: AbortSignal,
+  page = 1,
+) {
+  const search = new URLSearchParams({ page: String(page), pageSize: '20' })
+  if (filters.completedFrom !== undefined) search.set('completedFrom', filters.completedFrom)
+  if (filters.completedTo !== undefined) search.set('completedTo', filters.completedTo)
+  if (filters.diagnosisCatalogItemId !== undefined) {
+    search.set('diagnosisCatalogItemId', filters.diagnosisCatalogItemId)
+  }
+  if (filters.patientId !== undefined) search.set('patientId', filters.patientId)
+  return apiGet(
+    `/api/his/v1/doctor/completed-cases?${search.toString()}`,
+    doctorCompletedCaseListSchema,
+    signal,
+  )
+}
+
+export function getDoctorCompletedCase(caseId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/his/v1/doctor/completed-cases/${encodeURIComponent(caseId)}`,
+    doctorCompletedCaseDetailSchema,
+    signal,
+  )
+}
+
+export function getVirtualPatients(signal?: AbortSignal, page = 1) {
+  const search = new URLSearchParams({ page: String(page), pageSize: '20' })
+  return apiGet(`/api/his/v1/doctor/virtual-patients?${search.toString()}`, virtualPatientListSchema, signal)
+}
+
+export function startVirtualPatient(
+  virtualPatientId: string,
+  expectedVersion: string,
+  idempotencyKey: string,
+) {
+  return apiMutation(
+    `/api/his/v1/doctor/virtual-patients/${encodeURIComponent(virtualPatientId)}/actions/start`,
+    startVirtualPatientResponseSchema,
+    {
+      expectedVersions: {},
+      input: { expectedVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function askConsultationQuestion(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedVersion: number
+  questionCode: string
+  taskId: string
+  taskVersion: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/actions/ask-consultation-question`,
+    askConsultationQuestionResponseSchema,
+    {
+      expectedVersions: {
+        [`Encounter/${input.encounterId}`]: input.encounterVersion,
+        [`Task/${input.taskId}`]: input.taskVersion,
+      },
+      input: {
+        expectedVersion: input.expectedVersion,
+        questionCode: input.questionCode,
+      },
+    },
+    { idempotencyKey },
+  )
+}
+
 export function getDoctorCase(caseId: string, signal?: AbortSignal) {
   return apiGet(
     `/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}`,
     doctorCaseDetailSchema,
     signal,
+  )
+}
+
+export function getEncounterCompletion(encounterId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/his/v1/encounters/${encodeURIComponent(encounterId)}/completion`,
+    encounterCompletionPreviewSchema,
+    signal,
+  )
+}
+
+export function completeEncounter(input: {
+  encounterId: string
+  encounterVersion: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/actions/complete`,
+    encounterCompletionResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: {},
+    },
+    { idempotencyKey },
+  )
+}
+
+export function saveDiagnosisDraft(input: {
+  encounterId: string
+  encounterVersion: string
+  entries: DiagnosisDraftEntry[]
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/diagnosis/draft`,
+    diagnosisDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: {
+        entries: input.entries,
+        expectedDraftVersion: input.expectedDraftVersion,
+      },
+    },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function confirmDiagnosis(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/diagnosis/actions/confirm`,
+    confirmDiagnosisResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function savePrescriptionDraft(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+  items: PrescriptionDraftItem[]
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/prescription/draft`,
+    prescriptionDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: {
+        expectedDraftVersion: input.expectedDraftVersion,
+        items: input.items,
+      },
+    },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function deletePrescriptionDraft(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/prescription/draft`,
+    prescriptionDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey, method: 'DELETE' },
+  )
+}
+
+export function issuePrescription(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/prescription/actions/issue`,
+    issuePrescriptionResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function confirmNoMedication(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/medication-conclusion/actions/confirm-no-medication`,
+    confirmNoMedicationResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function withdrawPrescription(input: {
+  expectedPrescriptionVersion: number
+  medicationRequests: Array<{ id: string; version: string }>
+  prescriptionId: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/prescriptions/${encodeURIComponent(input.prescriptionId)}/actions/withdraw`,
+    withdrawPrescriptionResponseSchema,
+    {
+      expectedVersions: Object.fromEntries(input.medicationRequests.map(request => [
+        `MedicationRequest/${request.id}`,
+        request.version,
+      ])),
+      input: { expectedPrescriptionVersion: input.expectedPrescriptionVersion },
+    },
+    { idempotencyKey },
   )
 }
 
@@ -304,6 +560,87 @@ export function saveFirstVisitDraft(input: {
   )
 }
 
+export function saveClinicalDocumentDraft(input: {
+  document: ClinicalDocumentContent
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/clinical-document/draft`,
+    clinicalDocumentDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: {
+        document: input.document,
+        expectedDraftVersion: input.expectedDraftVersion,
+      },
+    },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function previewStructuredClinicalDocumentSign(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/clinical-document/actions/preview-sign`,
+    clinicalDocumentSignPreviewResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function signStructuredClinicalDocument(input: {
+  commitToken: string
+  encounterId: string
+  encounterVersion: string
+  previewId: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/clinical-document/actions/sign`,
+    clinicalDocumentSignResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: {
+        commitToken: input.commitToken,
+        previewId: input.previewId,
+      },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function reviseStructuredClinicalDocument(input: {
+  compositionId: string
+  compositionVersion: string
+  document: ClinicalDocumentContent
+  encounterId: string
+  encounterVersion: string
+  reason: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/clinical-documents/${encodeURIComponent(input.compositionId)}/actions/revise`,
+    clinicalDocumentRevisionResponseSchema,
+    {
+      expectedVersions: {
+        [`Composition/${input.compositionId}`]: input.compositionVersion,
+        [`Encounter/${input.encounterId}`]: input.encounterVersion,
+      },
+      input: {
+        document: input.document,
+        reason: input.reason,
+      },
+    },
+    { idempotencyKey },
+  )
+}
+
 export function issueLaboratoryOrder(input: {
   catalogItemId: string
   encounterId: string
@@ -325,6 +662,131 @@ export function issueLaboratoryOrder(input: {
         catalogItemId: input.catalogItemId,
         expectedDraftVersion: input.expectedDraftVersion,
         indicationCode: input.indicationCode,
+      },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function saveLaboratoryRequestDraft(input: {
+  catalogItemId: LaboratoryRequestCatalogItemId
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+  indicationCode: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/laboratory-request/draft`,
+    laboratoryRequestDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: {
+        catalogItemId: input.catalogItemId,
+        expectedDraftVersion: input.expectedDraftVersion,
+        indicationCode: input.indicationCode,
+      },
+    },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function deleteLaboratoryRequestDraft(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/laboratory-request/draft`,
+    laboratoryRequestDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey, method: 'DELETE' },
+  )
+}
+
+export function issueLaboratoryRequest(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/laboratory-request/actions/issue`,
+    issueLaboratoryRequestResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function cancelLaboratoryRequest(input: {
+  requestId: string
+  requestVersion: number
+  serviceRequestId: string
+  serviceRequestVersion: string
+  taskId: string
+  taskVersion: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/laboratory-requests/${encodeURIComponent(input.requestId)}/actions/cancel`,
+    laboratoryRequestActionResponseSchema,
+    {
+      expectedVersions: {
+        [`ServiceRequest/${input.serviceRequestId}`]: input.serviceRequestVersion,
+        [`Task/${input.taskId}`]: input.taskVersion,
+      },
+      input: {
+        expectedRequestVersion: input.requestVersion,
+        reasonCode: 'no-longer-needed',
+      },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function acknowledgeLaboratoryReport(input: {
+  diagnosticReportId: string
+  diagnosticReportVersion: string
+  requestId: string
+  requestVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/laboratory-requests/${encodeURIComponent(input.requestId)}/reports/${encodeURIComponent(input.diagnosticReportId)}/actions/acknowledge`,
+    acknowledgeLaboratoryReportResponseSchema,
+    {
+      expectedVersions: {
+        [`DiagnosticReport/${input.diagnosticReportId}`]: input.diagnosticReportVersion,
+      },
+      input: { expectedRequestVersion: input.requestVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function correctLaboratoryReport(input: {
+  conclusion: string
+  diagnosticReportId: string
+  diagnosticReportVersion: string
+  reason: string
+  requestId: string
+  requestVersion: number
+  results: Array<{ code: string; value: number }>
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/laboratory-requests/${encodeURIComponent(input.requestId)}/reports/${encodeURIComponent(input.diagnosticReportId)}/actions/correct`,
+    correctLaboratoryReportResponseSchema,
+    {
+      expectedVersions: {
+        [`DiagnosticReport/${input.diagnosticReportId}`]: input.diagnosticReportVersion,
+      },
+      input: {
+        conclusion: input.conclusion,
+        expectedRequestVersion: input.requestVersion,
+        reason: input.reason,
+        results: input.results,
       },
     },
     { idempotencyKey },

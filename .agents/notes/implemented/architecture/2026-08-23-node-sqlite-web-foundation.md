@@ -16,7 +16,7 @@ SQLite 连接启用 foreign keys、WAL 和五秒 `busy_timeout`。一个服务�
 
 所有适用的业务表、唯一键、外键和岗位查询索引包含 `workspace_id + epoch`。Scenario reset 构建并激活新 Epoch，不删除数据库文件；审计保留域跨 Epoch 保存。LIS 与药房就绪事件由同进程 outbox dispatcher 处理，claim、结果、失败和 correlation 状态持久化，使进程重启后可以恢复且重复投递不重复产生业务结果。支付 success/declined/ambiguous 由支付 Command 确定性提交，只有成功结果产生后续 outbox。
 
-数据库 schema 只通过 `apps/server/drizzle/` 中的八个有序 migration 变更。Server 进程只验证 schema；数据库 CLI 显式执行 migration、verify、reindex、backup 和 restore。已有旧版数据库执行 migration 前先在同目录创建并验证升级前备份。backup 与 restore 都验证源和候选的 schema、integrity 与 canonical state hash，候选必须与源等价后才能保留或成为新目标。Compose 使用单副本与命名持久卷，数据库文件不得位于缺少 SQLite 锁语义保证的共享网络文件系统。
+数据库 schema 只通过 `apps/server/drizzle/` 中的有序 migration 变更。Server 进程只验证 schema；数据库 CLI 显式执行 migration、verify、reindex、backup 和 restore。已有旧版数据库执行 migration 前先在同目录创建并验证升级前备份。backup 与 restore 都验证源和候选的 schema、integrity 与 canonical state hash，候选必须与源等价后才能保留或成为新目标。Compose 使用单副本与命名持久卷，数据库文件不得位于缺少 SQLite 锁语义保证的共享网络文件系统。
 
 Server 与数据库 CLI 在 workspace 中运行时读取仓库根 `.env`，显式 shell 环境变量拥有更高优先级；文件中的相对数据库和 Web 路径以 `.env` 所在目录为基准。本地 `.env` 不进入版本库，仓库只提供合成开发值模板。`pnpm dev:server` 依次构建 Web、通过数据库 CLI 应用 migration，再启动只验证 schema 的 Server 进程。
 

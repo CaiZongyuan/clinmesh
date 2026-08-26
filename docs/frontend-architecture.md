@@ -68,6 +68,8 @@ Mobile 可以在布局和交互上不同。桌面医生工作站的多栏高密�
 
 组件通过 shadcn CLI 作为源码加入本包，优先使用现有 variant 和语义颜色。Mobile 使用原生或 React Native primitives，不导入这个包。
 
+Web/Desktop 的尺寸、主题、组件组合与真实目录由[临床 UI 设计合同](ui/design.md)统一说明。
+
 ### views
 
 `packages/views` 保存 Web/Desktop 共享业务页面和组合组件。它可依赖 `core + ui`，但不得导入 Vite、Electron、Expo、Next.js 或具体路由库。

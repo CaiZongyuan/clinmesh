@@ -9,7 +9,49 @@ import { syntheticAccounts } from './identity-service.ts'
 
 const clinicalReviewSchema = z.record(z.string(), z.unknown())
 
-const scenarioBlueprints = {
+const laboratoryResultsHiddenFact = {
+  code: 'laboratory-results',
+  value: {
+    'lab-cbc': {
+      conclusion: '白细胞计数升高，其余血常规指标在参考范围内。',
+      results: [{
+        code: '6690-2',
+        display: '白细胞计数',
+        interpretation: 'high',
+        referenceRange: { high: 9.5, low: 3.5, text: '3.5-9.5 x10^9/L' },
+        unit: { code: '10*9/L', display: '10^9/L', system: 'http://unitsofmeasure.org' },
+        value: 11.2,
+      }, {
+        code: '718-7',
+        display: '血红蛋白',
+        interpretation: 'normal',
+        referenceRange: { high: 150, low: 115, text: '115-150 g/L' },
+        unit: { code: 'g/L', display: 'g/L', system: 'http://unitsofmeasure.org' },
+        value: 135,
+      }, {
+        code: '777-3',
+        display: '血小板计数',
+        interpretation: 'normal',
+        referenceRange: { high: 350, low: 125, text: '125-350 x10^9/L' },
+        unit: { code: '10*9/L', display: '10^9/L', system: 'http://unitsofmeasure.org' },
+        value: 210,
+      }],
+    },
+    'lab-crp': {
+      conclusion: 'C 反应蛋白升高。',
+      results: [{
+        code: '1988-5',
+        display: 'C 反应蛋白',
+        interpretation: 'high',
+        referenceRange: { high: 8, low: 0, text: '0-8 mg/L' },
+        unit: { code: 'mg/L', display: 'mg/L', system: 'http://unitsofmeasure.org' },
+        value: 18.6,
+      }],
+    },
+  },
+} as const
+
+const legacyScenarioBlueprints = {
   candidate: {
     clinicalReview: null,
     hiddenFacts: [{
@@ -30,6 +72,47 @@ const scenarioBlueprints = {
       { code: 'ambiguous', outcome: 'ambiguous', simulator: 'payment' },
       { code: 'deterministic-report', outcome: 'success', simulator: 'lis' },
     ],
+    virtualPatients: [{
+      id: 'virtual-patient-fever-001',
+      patientId: 'candidate-patient-001',
+      presentation: {
+        chiefComplaint: '发热、咽痛 1 天。',
+        summary: '昨日傍晚开始发热，最高 38.7 °C，伴咽痛。',
+        vitalSigns: {
+          bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
+          oxygenSaturationPct: 98,
+          pulseBpm: 96,
+          respirationBpm: 20,
+          temperatureC: 38.6,
+        },
+      },
+      questions: [{
+        answer: '昨天傍晚开始发热，最高量到 38.7 °C。',
+        code: 'symptom-onset',
+        factCode: null,
+        ordinal: 1,
+        revealedAnswer: null,
+        text: '什么时候开始发热？',
+        version: 1,
+      }, {
+        answer: '咽痛，吞咽时更明显，没有气促。',
+        code: 'associated-symptoms',
+        factCode: null,
+        ordinal: 2,
+        revealedAnswer: null,
+        text: '除了发热，还有哪里不舒服？',
+        version: 1,
+      }, {
+        answer: '目前还不知道，需要等检查结果。',
+        code: 'infection-cause',
+        factCode: 'respiratory-pathogen',
+        ordinal: 3,
+        revealedAnswer: '检验结果显示是甲型流感病毒感染。',
+        text: '知道是什么感染引起的吗？',
+        version: 1,
+      }],
+      version: 1,
+    }],
     scenarioId: 'candidate-fever-outpatient-v1',
     version: '1.0.0',
     virtualTime: '2026-08-24T09:00:00+08:00',
@@ -52,13 +135,60 @@ const scenarioBlueprints = {
       { code: 'success', outcome: 'success', simulator: 'payment' },
       { code: 'deterministic-report', outcome: 'success', simulator: 'lis' },
     ],
+    virtualPatients: [],
     scenarioId: 'density-fever-outpatient-v1',
     version: '1.0.0',
     virtualTime: '2026-08-24T09:00:00+08:00',
   },
 } as const
 
-type ScenarioBlueprint = (typeof scenarioBlueprints)[keyof typeof scenarioBlueprints]
+const versionTwoScenarioBlueprints = {
+  candidate: {
+    ...legacyScenarioBlueprints.candidate,
+    hiddenFacts: [
+      ...legacyScenarioBlueprints.candidate.hiddenFacts,
+      laboratoryResultsHiddenFact,
+    ],
+    scenarioId: 'candidate-fever-outpatient-v2',
+    schemaVersion: '2',
+    version: '2.0.0',
+  },
+  density: {
+    ...legacyScenarioBlueprints.density,
+    hiddenFacts: [
+      ...legacyScenarioBlueprints.density.hiddenFacts,
+      laboratoryResultsHiddenFact,
+    ],
+    scenarioId: 'density-fever-outpatient-v2',
+    schemaVersion: '2',
+    version: '2.0.0',
+  },
+} as const
+
+const installableScenarioBlueprints = {
+  candidate: {
+    ...versionTwoScenarioBlueprints.candidate,
+    medicationRulesVersion: 'prescription-conclusion-v1',
+    scenarioId: 'candidate-fever-outpatient-v3',
+    schemaVersion: '3',
+    version: '3.0.0',
+  },
+  density: {
+    ...versionTwoScenarioBlueprints.density,
+    medicationRulesVersion: 'prescription-conclusion-v1',
+    scenarioId: 'density-fever-outpatient-v3',
+    schemaVersion: '3',
+    version: '3.0.0',
+  },
+} as const
+
+const knownScenarioBlueprints = [
+  ...Object.values(legacyScenarioBlueprints),
+  ...Object.values(versionTwoScenarioBlueprints),
+  ...Object.values(installableScenarioBlueprints),
+] as const
+
+type ScenarioBlueprint = (typeof knownScenarioBlueprints)[number]
 
 export interface ScenarioState {
   clinicalReview: null | Record<string, unknown>
@@ -131,7 +261,7 @@ export class ScenarioService {
     this.#database.driver.exec('BEGIN IMMEDIATE')
     try {
       this.#seedEpoch({
-        blueprint: scenarioBlueprints.candidate,
+        blueprint: installableScenarioBlueprints.candidate,
         epoch: input.epoch,
         scenarioRunId: input.scenarioRunId,
         workspaceId: input.workspaceId,
@@ -198,9 +328,9 @@ export class ScenarioService {
         throw new ScenarioError('SCENARIO_RUN_CONFLICT', 'The Scenario Run is no longer active')
       }
       const currentState = this.current(input.context)
-      const blueprint = Object.values(scenarioBlueprints).find(
+      const blueprint = knownScenarioBlueprints.find(
         candidate => candidate.scenarioId === currentState.scenarioId,
-      ) ?? scenarioBlueprints.candidate
+      ) ?? installableScenarioBlueprints.candidate
       return this.#transitionEpoch(input.context, blueprint)
     })
   }
@@ -208,7 +338,7 @@ export class ScenarioService {
   install(input: {
     context: ActorContext
     idempotencyKey: string
-    kind: keyof typeof scenarioBlueprints
+    kind: keyof typeof installableScenarioBlueprints
   }): CommandResponse<ScenarioState> {
     return this.#commands.execute({
       context: input.context,
@@ -223,7 +353,7 @@ export class ScenarioService {
       if (input.context.roleCode !== 'administrator') {
         throw new ScenarioError('ROLE_NOT_ALLOWED', 'Only an administrator can install a Scenario')
       }
-      return this.#transitionEpoch(input.context, scenarioBlueprints[input.kind])
+      return this.#transitionEpoch(input.context, installableScenarioBlueprints[input.kind])
     })
   }
 
@@ -304,7 +434,7 @@ export class ScenarioService {
         scenario_id, version, kind, schema_version, clinical_review_json
       ) VALUES (?, ?, ?, ?, ?)
     `)
-    for (const blueprint of Object.values(scenarioBlueprints)) {
+    for (const blueprint of knownScenarioBlueprints) {
       insert.run(
         blueprint.scenarioId,
         blueprint.version,
@@ -389,15 +519,46 @@ export class ScenarioService {
         price_fen, version, active, config_json
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)
     `)
+    const supportsPrescriptionConclusion = 'medicationRulesVersion' in blueprint
+      && blueprint.medicationRulesVersion === 'prescription-conclusion-v1'
     const catalog = [
       ['department-general-medicine', 'department', 'GM', '全科医学科', 'General Medicine', 0, '{}'],
       ['visit-general', 'visit-type', 'GENERAL', '普通门诊挂号费', 'General outpatient registration', 2000, '{}'],
       ['lab-fever-panel', 'laboratory', 'FEVER-PANEL', '发热检验组合', 'Fever laboratory panel', 6800, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[]}'],
-      ['medication-oseltamivir', 'medication', 'OSELTAMIVIR', '磷酸奥司他韦胶囊', 'Oseltamivir phosphate capsules', 760, '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"]}'],
-      ['medication-acetaminophen', 'medication', 'ACETAMINOPHEN', '对乙酰氨基酚片', 'Acetaminophen tablets', 120, '{"dose":"0.5 g","frequency":"PRN","allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"]}'],
+      ['lab-cbc', 'laboratory', 'CBC', '血常规', 'Complete blood count', 2500, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[]}'],
+      ['lab-crp', 'laboratory', 'CRP', 'C 反应蛋白', 'C-reactive protein', 4300, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[]}'],
+      ['medication-oseltamivir', 'medication', 'OSELTAMIVIR', '磷酸奥司他韦胶囊', 'Oseltamivir phosphate capsules', 760, supportsPrescriptionConclusion
+        ? '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"],"allowedCourseDays":[5],"allowedDiagnosisCatalogItemIds":["diagnosis-influenza"],"allowedQuantities":[10],"defaultCourseDays":5,"defaultQuantity":10}'
+        : '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"]}'],
+      ['medication-acetaminophen', 'medication', 'ACETAMINOPHEN', '对乙酰氨基酚片', 'Acetaminophen tablets', 120, supportsPrescriptionConclusion
+        ? '{"dose":"0.5 g","frequency":"PRN","allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"],"allowedCourseDays":[3],"allowedDiagnosisCatalogItemIds":["diagnosis-influenza","diagnosis-acute-upper-respiratory-infection","diagnosis-fever"],"allowedQuantities":[6],"defaultCourseDays":3,"defaultQuantity":6}'
+        : '{"dose":"0.5 g","frequency":"PRN","allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"]}'],
     ] as const
     for (const item of catalog) {
       insertCatalog.run(input.workspaceId, input.epoch, ...item)
+    }
+    const insertDiagnosisCatalog = this.#database.driver.prepare(`
+      INSERT INTO diagnosis_catalog (
+        workspace_id, epoch, item_id, code_system, code, name_zh, name_en,
+        version, active
+      ) VALUES (?, ?, ?, 'http://hl7.org/fhir/sid/icd-10', ?, ?, ?, 1, 1)
+    `)
+    for (const diagnosis of [
+      [
+        'diagnosis-influenza',
+        'J10.1',
+        '流感伴其他呼吸道表现，季节性流感病毒已标明',
+        'Influenza with other respiratory manifestations, seasonal influenza virus identified',
+      ],
+      [
+        'diagnosis-acute-upper-respiratory-infection',
+        'J06.9',
+        '急性上呼吸道感染，未特指',
+        'Acute upper respiratory infection, unspecified',
+      ],
+      ['diagnosis-fever', 'R50.9', '发热，未特指', 'Fever, unspecified'],
+    ] as const) {
+      insertDiagnosisCatalog.run(input.workspaceId, input.epoch, ...diagnosis)
     }
     const insertLot = this.#database.driver.prepare(`
       INSERT INTO inventory_lot (
@@ -420,6 +581,43 @@ export class ScenarioService {
       'SYN-ACE-202608',
     )
     this.#seedFhirResources(input)
+    const insertVirtualPatient = this.#database.driver.prepare(`
+      INSERT INTO virtual_patient (
+        workspace_id, epoch, virtual_patient_id, version, patient_id,
+        clinical_summary_json, available
+      ) VALUES (?, ?, ?, ?, ?, ?, 1)
+    `)
+    const insertQuestionRule = this.#database.driver.prepare(`
+      INSERT INTO virtual_patient_question_rule (
+        workspace_id, epoch, virtual_patient_id, question_code,
+        rule_version, ordinal, question_text, answer_text,
+        fact_code, revealed_answer_text
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    for (const patient of blueprint.virtualPatients) {
+      insertVirtualPatient.run(
+        input.workspaceId,
+        input.epoch,
+        patient.id,
+        patient.version,
+        patient.patientId,
+        JSON.stringify(patient.presentation),
+      )
+      for (const question of patient.questions) {
+        insertQuestionRule.run(
+          input.workspaceId,
+          input.epoch,
+          patient.id,
+          question.code,
+          question.version,
+          question.ordinal,
+          question.text,
+          question.answer,
+          question.factCode,
+          question.revealedAnswer,
+        )
+      }
+    }
   }
 
   #seedFhirResources(input: {
