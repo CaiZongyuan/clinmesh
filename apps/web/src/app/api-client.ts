@@ -192,9 +192,10 @@ export function getScenarioProviders(signal?: AbortSignal) {
   )
 }
 
-export function getScenarioDatasets(signal?: AbortSignal, page = 1) {
-  const search = new URLSearchParams({ page: String(page), pageSize: '20' })
-  return apiGet(`/api/sim/v1/scenario-datasets?${search.toString()}`, scenarioDatasetListSchema, signal)
+export function getScenarioDatasets(signal?: AbortSignal, page = 1, search?: string) {
+  const params = new URLSearchParams({ page: String(page), pageSize: '20' })
+  if (search !== undefined && search !== '') params.set('search', search)
+  return apiGet(`/api/sim/v1/scenario-datasets?${params.toString()}`, scenarioDatasetListSchema, signal)
 }
 
 export function generateScenarioDataset(

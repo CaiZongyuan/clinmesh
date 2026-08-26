@@ -565,6 +565,32 @@ describe('trusted session and Scenario HTTP contract', () => {
       total: 1,
     })
 
+    const secondGenerationResponse = await runtime.app.request(
+      '/api/sim/v1/scenario-datasets/actions/generate',
+      {
+        body: JSON.stringify({ ...generationRequest, name: '糖尿病随访数据' }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: adminCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(secondGenerationResponse.status).toBe(200)
+    const searchResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets?page=1&pageSize=20&search=${encodeURIComponent('发热门诊')}`,
+      { headers: { cookie: adminCookie } },
+    )
+    expect(searchResponse.status).toBe(200)
+    expect(await searchResponse.json()).toMatchObject({
+      items: [{ datasetId: generated.data.datasetId, name: generationRequest.name }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    })
+
     const registrarCookie = await signInSyntheticAccount(runtime, password, 'registrar@demo.clinmesh.local')
     const forbiddenResponse = await runtime.app.request(
       `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.data.datasetId)}`,
@@ -793,6 +819,15 @@ describe('trusted session and Scenario HTTP contract', () => {
       scenarioId: installed.packageId,
       scenarioRunId: 'scenario-run-2',
     })
+    expect(runtime.database.driver.prepare(`
+      SELECT policy_code, fact_code, trigger_code
+      FROM scenario_reveal_policy
+      WHERE workspace_id = ? AND epoch = ?
+    `).all('workspace-demo', installed.scenario.epoch)).toEqual([{
+      fact_code: `objective-primary-diagnosis-${generatedPatient.id}`,
+      policy_code: `policy-primary-diagnosis-${generatedPatient.id}`,
+      trigger_code: 'evaluator-only',
+    }])
     const conditionResponse = await runtime.app.request(
       `/fhir/R5/Condition?patient=Patient/${generatedPatient.id}&_total=accurate`,
       { headers: { cookie } },

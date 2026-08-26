@@ -237,7 +237,7 @@ export class ScenarioDataService {
     })
   }
 
-  list(context: ActorContext, input: { page: number; pageSize: number }) {
+  list(context: ActorContext, input: { page: number; pageSize: number; search?: string }) {
     this.#assertAdministrator(context)
     return this.#repository.list({ ...input, workspaceId: context.workspaceId })
   }

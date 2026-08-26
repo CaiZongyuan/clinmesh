@@ -85,19 +85,42 @@ export class ScenarioDatasetRepository {
     return this.#map(row)
   }
 
-  list(input: { page: number; pageSize: number; workspaceId: string }): ScenarioDatasetList {
+  list(input: {
+    page: number
+    pageSize: number
+    search?: string
+    workspaceId: string
+  }): ScenarioDatasetList {
+    const search = input.search ?? null
     const total = (this.#database.driver.prepare(`
-      SELECT COUNT(*) AS count FROM scenario_dataset WHERE workspace_id = ?
-    `).get(input.workspaceId) as { count: number }).count
+      SELECT COUNT(*) AS count FROM scenario_dataset
+      WHERE workspace_id = ?
+        AND (
+          ? IS NULL
+          OR instr(lower(name), lower(?)) > 0
+          OR instr(lower(dataset_id), lower(?)) > 0
+          OR instr(lower(provider_id), lower(?)) > 0
+        )
+    `).get(input.workspaceId, search, search, search, search) as { count: number }).count
     const rows = this.#database.driver.prepare(`
       SELECT workspace_id, dataset_id, name, provider_id, version, content_json,
         content_hash, diagnostics_json, created_at, updated_at
       FROM scenario_dataset
       WHERE workspace_id = ?
+        AND (
+          ? IS NULL
+          OR instr(lower(name), lower(?)) > 0
+          OR instr(lower(dataset_id), lower(?)) > 0
+          OR instr(lower(provider_id), lower(?)) > 0
+        )
       ORDER BY updated_at DESC, dataset_id
       LIMIT ? OFFSET ?
     `).all(
       input.workspaceId,
+      search,
+      search,
+      search,
+      search,
       input.pageSize,
       (input.page - 1) * input.pageSize,
     ) as ScenarioDatasetRow[]

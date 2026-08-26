@@ -384,10 +384,52 @@ interface ScenarioVirtualPatient {
     factCode: null | string
     ordinal: number
     revealedAnswer: null | string
+    secondAskAnswer?: string
     text: string
     version: number
   }>
   version: number
+}
+
+function scenarioPatientQuestions(
+  patient: ScenarioDatasetContent['patients'][number],
+): ScenarioVirtualPatient['questions'] {
+  const questions = patient.symptomResponses.flatMap((response) => {
+    const responseText = [...response.responsePoints, ...response.denies].join(' ')
+      || patient.patientKnowledge.chiefComplaint
+    return [{
+      answer: response.secondAskConcede?.firstResponse ?? responseText,
+      code: response.id,
+      factCode: null,
+      revealedAnswer: null,
+      ...(response.secondAskConcede === undefined
+        ? {}
+        : { secondAskAnswer: response.secondAskConcede.revealedResponse }),
+      text: response.name,
+      version: 1,
+    }, ...response.avoids.map((avoid, index) => ({
+      answer: avoid.response,
+      code: `${response.id}-avoid-${index + 1}`,
+      factCode: null,
+      revealedAnswer: null,
+      text: avoid.questionPattern,
+      version: 1,
+    }))]
+  })
+  const availableQuestions = questions.length === 0
+    ? [{
+        answer: patient.patientKnowledge.chiefComplaint,
+        code: 'chief-complaint',
+        factCode: null,
+        revealedAnswer: null,
+        text: '这次主要哪里不舒服？',
+        version: 1,
+      }]
+    : questions
+  return availableQuestions.map((question, index) => ({
+    ...question,
+    ordinal: index + 1,
+  }))
 }
 
 interface ScenarioBlueprint {
@@ -704,16 +746,6 @@ export class ScenarioService {
     version: number,
     content: ScenarioDatasetContent,
   ): ScenarioBlueprint {
-    const policies = z.array(z.object({
-      code: z.string().min(1),
-      factCode: z.string().min(1),
-      triggerCode: z.string().min(1),
-    }).strict()).safeParse(content.revealPolicies)
-    const rules = z.array(z.object({
-      code: z.string().min(1),
-      outcome: z.string().min(1),
-      simulator: z.string().min(1),
-    }).strict()).safeParse(content.simulatorRules)
     return {
       clinicalReview: null,
       hiddenFacts: content.hiddenFacts,
@@ -722,38 +754,42 @@ export class ScenarioService {
       catalog: content.catalog,
       hospital: content.hospital,
       inventory: content.inventory,
-      revealPolicies: policies.success ? policies.data : [],
+      revealPolicies: content.revealPolicies.map(policy => ({
+        code: policy.code,
+        factCode: policy.factCode,
+        triggerCode: policy.triggerCode,
+      })),
       scenarioId: packageId,
       schemaVersion: content.schemaVersion,
       seed: content.reproduction.clinicalSeed,
-      simulatorRules: rules.success ? rules.data : installableScenarioBlueprints.candidate.simulatorRules,
+      simulatorRules: content.simulatorRules,
       version: `dataset-${version}`,
       virtualPatients: content.patients.map((patient) => {
         const chiefComplaint = patient.patientKnowledge.chiefComplaint
-        const answers = patient.symptomResponses.flatMap(response => response.responsePoints.slice(0, 1))
         const physiology = patient.physiologyBaseline.vitalSigns
         return {
-          ...candidateVirtualPatient({
-          answers: [answers[0] ?? chiefComplaint, answers[1] ?? '无其他明显不适。', answers[2] ?? '无补充病史。'],
           birthDate: patient.birthDate,
-          chiefComplaint,
           gender: patient.gender === 'other' || patient.gender === 'unknown' ? 'female' : patient.gender,
           id: `virtual-${patient.id}`,
           name: patient.name,
           patientId: patient.id,
-          summary: chiefComplaint,
-          vitalSigns: {
-            bloodPressure: {
-              diastolicMmHg: typeof physiology.diastolicMmHg === 'number' ? physiology.diastolicMmHg : 76,
-              systolicMmHg: typeof physiology.systolicMmHg === 'number' ? physiology.systolicMmHg : 118,
+          presentation: {
+            chiefComplaint,
+            summary: chiefComplaint,
+            vitalSigns: {
+              bloodPressure: {
+                diastolicMmHg: typeof physiology.diastolicMmHg === 'number' ? physiology.diastolicMmHg : 76,
+                systolicMmHg: typeof physiology.systolicMmHg === 'number' ? physiology.systolicMmHg : 118,
+              },
+              oxygenSaturationPct: typeof physiology.oxygenSaturationPct === 'number' ? physiology.oxygenSaturationPct : 98,
+              pulseBpm: typeof physiology.pulseBpm === 'number' ? physiology.pulseBpm : 88,
+              respirationBpm: typeof physiology.respirationBpm === 'number' ? physiology.respirationBpm : 18,
+              temperatureC: typeof physiology.temperatureC === 'number' ? physiology.temperatureC : 36.8,
             },
-            oxygenSaturationPct: typeof physiology.oxygenSaturationPct === 'number' ? physiology.oxygenSaturationPct : 98,
-            pulseBpm: typeof physiology.pulseBpm === 'number' ? physiology.pulseBpm : 88,
-            respirationBpm: typeof physiology.respirationBpm === 'number' ? physiology.respirationBpm : 18,
-            temperatureC: typeof physiology.temperatureC === 'number' ? physiology.temperatureC : 36.8,
           },
-          }),
+          questions: scenarioPatientQuestions(patient),
           fhirHistory: patient.fhirHistory,
+          version: 1,
         }
       }),
       virtualTime: `${content.reproduction.timeRange.end}T09:00:00+08:00`,
@@ -991,8 +1027,8 @@ export class ScenarioService {
       INSERT INTO virtual_patient_question_rule (
         workspace_id, epoch, virtual_patient_id, question_code,
         rule_version, ordinal, question_text, answer_text,
-        fact_code, revealed_answer_text
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        fact_code, revealed_answer_text, second_ask_answer_text
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     for (const patient of blueprint.virtualPatients) {
       insertVirtualPatient.run(
@@ -1015,6 +1051,7 @@ export class ScenarioService {
           question.answer,
           question.factCode,
           question.revealedAnswer,
+          question.secondAskAnswer ?? null,
         )
       }
     }

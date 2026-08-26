@@ -5,7 +5,7 @@ import {
 } from '../src/infrastructure/scenario-generation/synthea-provider.ts'
 
 const syntheaCommit = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
-const configHash = 'a'.repeat(64)
+const configHash = '4587ecbfbb1cf0afa8e0ebb384f7e809c4977a7fc857783f859d28971261711c'
 const request = scenarioGenerationRequestSchema.parse({
   modules: ['fever'],
   name: 'Synthea 发热病史',
@@ -44,7 +44,7 @@ function patientBundle(extraResources: unknown[] = []) {
       resource,
     }))],
     resourceType: 'Bundle',
-    type: 'transaction',
+    type: 'collection',
   }
 }
 
@@ -154,6 +154,22 @@ describe('Synthea Scenario generation Provider contract', () => {
       }])]),
       code: 'FHIR_R4_PATIENT_OWNERSHIP_INVALID',
       name: 'second patient owner',
+    },
+    {
+      body: providerResponse([{ ...patientBundle(), type: 'transaction' }]),
+      code: 'FHIR_R4_BUNDLE_INVALID',
+      name: 'transaction Bundle',
+    },
+    {
+      body: {
+        ...providerResponse([patientBundle()]),
+        metadata: {
+          ...providerResponse([]).metadata,
+          configHash: 'b'.repeat(64),
+        },
+      },
+      code: 'REPRODUCTION_METADATA_MISMATCH',
+      name: 'unexpected Provider config hash',
     },
   ])('rejects $name before it enters a Dataset', async ({ body, code }) => {
     await expect(providerFor(body).generate(request)).rejects.toMatchObject({

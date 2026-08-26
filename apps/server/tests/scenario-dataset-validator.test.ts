@@ -118,4 +118,67 @@ describe('Scenario Dataset diagnostics', () => {
       }),
     ]))
   })
+
+  it('rejects an L3 sampling domain outside its numeric reference range', async () => {
+    const provider = new BuiltInScenarioGenerationProvider()
+    const generated = await provider.generate(scenarioGenerationRequestSchema.parse({
+      modules: ['type-2-diabetes'],
+      name: 'L3 参考范围冲突病例',
+      population: { age: { maximum: 40, minimum: 40 }, count: 1, gender: 'female' },
+      providerId: 'builtin',
+      seeds: { clinical: 66, population: 55 },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    }))
+    const investigationIndex = generated.content.catalog.investigations.findIndex(
+      item => item.id === 'lab-tsh',
+    )
+    const investigations = generated.content.catalog.investigations.map((item, index) => (
+      index === investigationIndex && item.normalDistribution !== undefined
+        ? {
+            ...item,
+            normalDistribution: { ...item.normalDistribution, minimum: -1 },
+          }
+        : item
+    ))
+
+    expect(validateScenarioDataset({
+      ...generated.content,
+      catalog: { ...generated.content.catalog, investigations },
+    })).toContainEqual(expect.objectContaining({
+      code: 'INVESTIGATION_L3_REFERENCE_CONFLICT',
+      path: `catalog.investigations[${investigationIndex}].normalDistribution`,
+      severity: 'error',
+    }))
+  })
+
+  it('rejects a catalog physiology binding missing from a patient baseline', async () => {
+    const provider = new BuiltInScenarioGenerationProvider()
+    const generated = await provider.generate(scenarioGenerationRequestSchema.parse({
+      modules: ['type-2-diabetes'],
+      name: '生理引用冲突病例',
+      population: { age: { maximum: 40, minimum: 40 }, count: 1, gender: 'female' },
+      providerId: 'builtin',
+      seeds: { clinical: 88, population: 77 },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    }))
+    const investigationIndex = generated.content.catalog.investigations.findIndex(
+      item => item.id === 'lab-tsh',
+    )
+    const investigations = generated.content.catalog.investigations.map((item, index) => (
+      index === investigationIndex
+        ? { ...item, physiologyGeneratorId: 'missing-physiology-generator' }
+        : item
+    ))
+
+    expect(validateScenarioDataset({
+      ...generated.content,
+      catalog: { ...generated.content.catalog, investigations },
+    })).toContainEqual(expect.objectContaining({
+      code: 'PHYSIOLOGY_GENERATOR_REFERENCE_MISSING',
+      path: `catalog.investigations[${investigationIndex}].physiologyGeneratorId`,
+      severity: 'error',
+    }))
+  })
 })

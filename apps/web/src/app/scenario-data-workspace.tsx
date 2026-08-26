@@ -44,6 +44,7 @@ import {
   PencilIcon,
   PlayIcon,
   SaveIcon,
+  SearchIcon,
   Trash2Icon,
 } from 'lucide-react'
 import {
@@ -61,6 +62,7 @@ import {
 } from './api-client.ts'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
+import { PaginationControls } from './pagination-controls.tsx'
 
 const providersQueryKey = ['scenario-providers'] as const
 const datasetsQueryKey = ['scenario-datasets'] as const
@@ -894,6 +896,9 @@ export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): 
   const messages = getWorkspaceMessages(locale)
   const queryClient = useQueryClient()
   const [request, setRequest] = useState(initialRequest)
+  const [datasetPage, setDatasetPage] = useState(1)
+  const [datasetSearch, setDatasetSearch] = useState('')
+  const [submittedDatasetSearch, setSubmittedDatasetSearch] = useState('')
   const [generationJobId, setGenerationJobId] = useState<string>()
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>()
   const providers = useQuery({
@@ -901,8 +906,8 @@ export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): 
     queryKey: providersQueryKey,
   })
   const datasets = useQuery({
-    queryFn: ({ signal }) => getScenarioDatasets(signal),
-    queryKey: datasetsQueryKey,
+    queryFn: ({ signal }) => getScenarioDatasets(signal, datasetPage, submittedDatasetSearch),
+    queryKey: [...datasetsQueryKey, datasetPage, submittedDatasetSearch],
   })
   const selectedDataset = useQuery({
     enabled: selectedDatasetId !== undefined,
@@ -1122,6 +1127,29 @@ export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): 
           <DatabaseIcon aria-hidden="true" className="size-4" />
           <h2 className="text-base font-semibold" id="dataset-list-heading">{messages.datasets}</h2>
         </div>
+        <form
+          className="flex max-w-lg items-end gap-2"
+          onSubmit={event => {
+            event.preventDefault()
+            setDatasetPage(1)
+            setSubmittedDatasetSearch(datasetSearch.trim())
+          }}
+        >
+          <Field>
+            <FieldLabel htmlFor="scenario-dataset-search">{messages.searchDatasets}</FieldLabel>
+            <Input
+              id="scenario-dataset-search"
+              maxLength={120}
+              onChange={event => setDatasetSearch(event.currentTarget.value)}
+              placeholder={messages.datasetSearchPlaceholder}
+              value={datasetSearch}
+            />
+          </Field>
+          <Button type="submit">
+            <SearchIcon data-icon="inline-start" />
+            {messages.search}
+          </Button>
+        </form>
         {datasets.isPending ? <Skeleton className="h-32 w-full" /> : null}
         {datasets.isError ? (
           <Alert variant="destructive">
@@ -1157,6 +1185,15 @@ export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): 
               ))}
             </TableBody>
           </Table>
+        ) : null}
+        {datasets.data !== undefined ? (
+          <PaginationControls
+            messages={messages}
+            onPageChange={setDatasetPage}
+            page={datasets.data.page}
+            pageSize={datasets.data.pageSize}
+            total={datasets.data.total}
+          />
         ) : null}
         {selectedDataset.isPending && selectedDatasetId !== undefined ? <Skeleton className="h-48 w-full" /> : null}
         {selectedDataset.isError ? (

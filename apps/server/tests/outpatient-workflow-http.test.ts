@@ -5361,6 +5361,60 @@ describe('outpatient workflow HTTP contract', () => {
 
     const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
     const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const adherenceResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            ...expectedVersions,
+            [`Task/${started.queueTaskId}`]: '1',
+          },
+          input: {
+            expectedVersion: 1,
+            questionCode: 'symptom-medication-adherence',
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(adherenceResponse.status).toBe(200)
+    expect(askConsultationQuestionResponseSchema.parse(await adherenceResponse.json())).toMatchObject({
+      data: {
+        consultationVersion: 2,
+        record: {
+          answer: '基本都按时吃。',
+          question: { code: 'symptom-medication-adherence', text: '用药依从性' },
+        },
+      },
+    })
+    const concededResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            ...expectedVersions,
+            [`Task/${started.queueTaskId}`]: '1',
+          },
+          input: {
+            expectedVersion: 2,
+            questionCode: 'symptom-medication-adherence',
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(concededResponse.status).toBe(200)
+    expect(askConsultationQuestionResponseSchema.parse(await concededResponse.json())).toMatchObject({
+      data: {
+        consultationVersion: 3,
+        record: {
+          answer: '说实话经常漏服，有时一天只吃一次。',
+          question: { code: 'symptom-medication-adherence' },
+        },
+      },
+    })
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {

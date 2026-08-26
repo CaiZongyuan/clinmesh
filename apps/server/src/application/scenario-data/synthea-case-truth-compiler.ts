@@ -375,6 +375,49 @@ function hematologyGenerators(): ScenarioPatient['physiologyBaseline']['generato
   }]
 }
 
+function renalGenerators(): ScenarioPatient['physiologyBaseline']['generators'] {
+  return [{
+    assayCv: 0.03,
+    id: 'serum-creatinine',
+    kind: 'normal',
+    maximum: 104,
+    mean: 75,
+    minimum: 45,
+    source: 'scenario:renal-baseline',
+    standardDeviation: 12,
+    unit: 'μmol/L',
+  }, {
+    dependencies: ['serum-creatinine'],
+    formula: 'egfr-ckd-epi-2021',
+    id: 'estimated-gfr',
+    kind: 'derived',
+    source: 'scenario:ckd-epi-2021',
+    unit: 'mL/min/1.73m²',
+  }]
+}
+
+function bodyMassIndexGenerator(): ScenarioPatient['physiologyBaseline']['generators'][number] {
+  return {
+    dependencies: ['vital:weightKg', 'vital:heightCm'],
+    formula: 'bmi',
+    id: 'body-mass-index',
+    kind: 'derived',
+    source: 'scenario:height-weight',
+    unit: 'kg/m²',
+  }
+}
+
+function urineGlucoseGenerator(): ScenarioPatient['physiologyBaseline']['generators'][number] {
+  return {
+    dependencies: ['random-glucose'],
+    formula: 'urine-glucose-from-blood-glucose',
+    id: 'urine-glucose',
+    kind: 'derived',
+    source: 'scenario:renal-glucose-threshold',
+    unit: 'qualitative',
+  }
+}
+
 function feverCaseTruth(input: {
   conditions: Array<z.infer<typeof conditionSchema>>
   observations: R4Observation[]
@@ -441,8 +484,25 @@ function feverCaseTruth(input: {
         source: 'synthea-r4:Observation/8310-5',
         unit: '°C',
         value: temperature,
-      }, ...hematologyGenerators()],
-      vitalSigns: { oxygenSaturationPct: 98, pulseBpm: 92, respirationBpm: 18, temperatureC: temperature },
+      }, ...hematologyGenerators(), {
+        assayCv: 0.02,
+        id: 'random-glucose',
+        kind: 'normal',
+        maximum: 7.8,
+        mean: 5.4,
+        minimum: 3.9,
+        source: 'scenario:normal-glucose-baseline',
+        standardDeviation: 0.7,
+        unit: 'mmol/L',
+      }, ...renalGenerators(), bodyMassIndexGenerator(), urineGlucoseGenerator()],
+      vitalSigns: {
+        heightCm: 165,
+        oxygenSaturationPct: 98,
+        pulseBpm: 92,
+        respirationBpm: 18,
+        temperatureC: temperature,
+        weightKg: 60,
+      },
     },
     symptomResponses: [{
       avoids: [],
@@ -539,6 +599,13 @@ function diabetesCaseTruth(input: {
     },
     physiologyBaseline: {
       generators: [{
+        assayCv: 0.005,
+        id: 'body-temperature',
+        kind: 'constant' as const,
+        source: 'scenario:vital-signs',
+        unit: '°C',
+        value: 36.5,
+      }, {
         assayCv: 0.03,
         id: 'random-glucose',
         kind: 'trajectory' as const,
@@ -548,38 +615,7 @@ function diabetesCaseTruth(input: {
         target: glucose,
         unit: 'mmol/L',
         walkStep: 0.8,
-      }, ...hematologyGenerators(), {
-        assayCv: 0.03,
-        id: 'serum-creatinine',
-        kind: 'normal' as const,
-        maximum: 104,
-        mean: 75,
-        minimum: 45,
-        source: 'scenario:renal-baseline',
-        standardDeviation: 12,
-        unit: 'μmol/L',
-      }, {
-        dependencies: ['serum-creatinine'],
-        formula: 'egfr-ckd-epi-2021' as const,
-        id: 'estimated-gfr',
-        kind: 'derived' as const,
-        source: 'scenario:ckd-epi-2021',
-        unit: 'mL/min/1.73m²',
-      }, {
-        dependencies: ['vital:weightKg', 'vital:heightCm'],
-        formula: 'bmi' as const,
-        id: 'body-mass-index',
-        kind: 'derived' as const,
-        source: 'scenario:height-weight',
-        unit: 'kg/m²',
-      }, {
-        dependencies: ['random-glucose'],
-        formula: 'urine-glucose-from-blood-glucose' as const,
-        id: 'urine-glucose',
-        kind: 'derived' as const,
-        source: 'scenario:renal-glucose-threshold',
-        unit: 'qualitative',
-      }],
+      }, ...hematologyGenerators(), ...renalGenerators(), bodyMassIndexGenerator(), urineGlucoseGenerator()],
       vitalSigns: { diastolicMmHg: 96, heightCm: 172, pulseBpm: 88, systolicMmHg: 162, temperatureC: 36.5, weightKg: 80.2 },
     },
     symptomResponses: [{

@@ -16,6 +16,7 @@ import {
 } from '../../application/scenario-data/synthea-case-truth-compiler.ts'
 
 const SYNTHEA_COMMIT = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
+const SYNTHEA_CONFIG_HASH = '4587ecbfbb1cf0afa8e0ebb384f7e809c4977a7fc857783f859d28971261711c'
 const allowedR4ResourceTypes = syntheaR4ResourceTypes
 
 const r4ResourceSchema = z.object({
@@ -29,7 +30,7 @@ const r4BundleSchema = z.object({
     resource: r4ResourceSchema,
   }).passthrough()).min(1).max(20_000),
   resourceType: z.literal('Bundle'),
-  type: z.enum(['batch', 'collection', 'transaction']),
+  type: z.literal('collection'),
 }).passthrough()
 
 const providerResponseSchema = z.object({
@@ -204,6 +205,7 @@ function assertReproductionMetadata(
 ): void {
   if (
     metadata.clinicalSeed !== request.seeds.clinical
+    || metadata.configHash !== SYNTHEA_CONFIG_HASH
     || metadata.populationSeed !== request.seeds.population
     || metadata.timeZone !== request.timeZone
     || metadata.timeRange.start !== request.timeRange.start

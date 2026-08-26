@@ -278,8 +278,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         const query = z.object({
           page: z.coerce.number().int().min(1).default(1),
           pageSize: z.coerce.number().int().min(1).max(100).default(20),
+          search: z.string().trim().min(1).max(120).optional(),
         }).parse(context.req.query())
-        return context.json(scenarioData.list(session.actor, query))
+        return context.json(scenarioData.list(session.actor, {
+          page: query.page,
+          pageSize: query.pageSize,
+          ...(query.search === undefined ? {} : { search: query.search }),
+        }))
       } catch (error) {
         return apiErrorResponse(context, error)
       }

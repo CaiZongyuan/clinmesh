@@ -73,6 +73,24 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
   }
 
   for (const [investigationIndex, investigation] of content.catalog.investigations.entries()) {
+    const distribution = investigation.normalDistribution
+    if (distribution !== undefined) {
+      const numericRanges = investigation.referenceRanges.filter(range => (
+        range.minimum !== undefined || range.maximum !== undefined
+      ))
+      const outsideReferenceRange = numericRanges.length === 0 || numericRanges.some(range => (
+        (range.minimum !== undefined && distribution.minimum < range.minimum)
+        || (range.maximum !== undefined && distribution.maximum > range.maximum)
+      ))
+      if (outsideReferenceRange) {
+        add({
+          code: 'INVESTIGATION_L3_REFERENCE_CONFLICT',
+          message: `Investigation ${investigation.id} has an L3 domain outside its reference range`,
+          path: `catalog.investigations[${investigationIndex}].normalDistribution`,
+          severity: 'error',
+        })
+      }
+    }
     for (const [componentIndex, componentItemId] of investigation.componentItemIds?.entries() ?? []) {
       if (!investigationCatalog.has(componentItemId)) {
         add({
@@ -134,6 +152,19 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
     const generators = new Map(
       patient.physiologyBaseline.generators.map(generator => [generator.id, generator]),
     )
+    for (const [investigationIndex, investigation] of content.catalog.investigations.entries()) {
+      if (
+        investigation.physiologyGeneratorId !== undefined
+        && !generatorIds.has(investigation.physiologyGeneratorId)
+      ) {
+        add({
+          code: 'PHYSIOLOGY_GENERATOR_REFERENCE_MISSING',
+          message: `Investigation ${investigation.id} references a physiology generator missing from patient ${patient.id}`,
+          path: `catalog.investigations[${investigationIndex}].physiologyGeneratorId`,
+          severity: 'error',
+        })
+      }
+    }
     const encounterIds = new Set(patient.fhirHistory.flatMap(resource => (
       resource.resourceType === 'Encounter' ? [resource.id] : []
     )))

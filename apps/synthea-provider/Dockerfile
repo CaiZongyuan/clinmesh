@@ -2,17 +2,17 @@
 
 FROM eclipse-temurin:17-jdk-jammy AS build
 
-ARG SYNTHEA_COMMIT=d9d07a6eef91ee5144293b42ab64224d84d124f8
-ARG SYNTHEA_ARCHIVE_SHA256=e5f097863440524935e8d1e081e66aea811692a66ba450d78e78e8a728f4722b
 WORKDIR /src
 
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
-RUN curl --fail --location --silent --show-error \
-    "https://github.com/synthetichealth/synthea/archive/${SYNTHEA_COMMIT}.tar.gz" \
+RUN synthea_commit=d9d07a6eef91ee5144293b42ab64224d84d124f8 \
+  && synthea_archive_sha256=e5f097863440524935e8d1e081e66aea811692a66ba450d78e78e8a728f4722b \
+  && curl --fail --location --silent --show-error \
+    "https://github.com/synthetichealth/synthea/archive/${synthea_commit}.tar.gz" \
     --output /tmp/synthea.tar.gz \
-  && echo "${SYNTHEA_ARCHIVE_SHA256}  /tmp/synthea.tar.gz" | sha256sum --check - \
+  && echo "${synthea_archive_sha256}  /tmp/synthea.tar.gz" | sha256sum --check - \
   && mkdir synthea \
   && tar --extract --gzip --file /tmp/synthea.tar.gz --directory synthea --strip-components=1 \
   && rm /tmp/synthea.tar.gz

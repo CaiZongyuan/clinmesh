@@ -349,6 +349,7 @@ const consultationQuestionRuleRowSchema = consultationQuestionRowSchema.extend({
   fact_code: z.string().min(1).nullable(),
   revealed_answer_text: z.string().min(1).nullable(),
   rule_version: z.number().int().positive(),
+  second_ask_answer_text: z.string().min(1).nullable(),
 }).refine(
   row => (row.fact_code === null) === (row.revealed_answer_text === null),
   { message: 'Consultation question reveal fields must be present together' },
@@ -2857,7 +2858,7 @@ export class WorkflowService {
       const question = consultationQuestionRuleRowSchema.optional().parse(
         this.#database.driver.prepare(`
           SELECT question_code, question_text, answer_text, rule_version,
-            fact_code, revealed_answer_text
+            fact_code, revealed_answer_text, second_ask_answer_text
           FROM virtual_patient_question_rule
           WHERE workspace_id = ? AND epoch = ? AND virtual_patient_id = ?
             AND question_code = ?
@@ -2871,7 +2872,7 @@ export class WorkflowService {
       if (question === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The consultation question is unavailable')
       }
-      const answer = this.#consultationAnswer(input.context, question)
+      const answer = this.#consultationAnswer(input.context, outpatientCase.case_id, question)
       const recordId = uuidv7()
       const recordedAt = this.#virtualTime(input.context)
       const sequence = state.version
@@ -9898,8 +9899,17 @@ export class WorkflowService {
 
   #consultationAnswer(
     context: ActorContext,
+    caseId: string,
     question: z.infer<typeof consultationQuestionRuleRowSchema>,
   ): string {
+    if (question.second_ask_answer_text !== null) {
+      const previous = this.#database.driver.prepare(`
+        SELECT 1 AS present FROM consultation_record
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND question_code = ?
+        LIMIT 1
+      `).get(context.workspaceId, context.epoch, caseId, question.question_code)
+      if (previous !== undefined) return question.second_ask_answer_text
+    }
     if (question.fact_code === null || question.revealed_answer_text === null) {
       return question.answer_text
     }

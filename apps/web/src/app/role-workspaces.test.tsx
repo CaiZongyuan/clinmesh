@@ -312,6 +312,8 @@ function stubAdministratorWorkspace() {
 }
 
 function stubScenarioDataWorkspace(options: {
+  datasetTotal?: number | ((url: URL) => number)
+  onDatasetListRequest?: (url: URL) => void
   onUpdate?: (content: unknown) => void
   syntheaAvailable?: boolean
 } = {}) {
@@ -535,8 +537,12 @@ function stubScenarioDataWorkspace(options: {
       })
     }
     if (url.pathname === '/api/sim/v1/scenario-datasets' && init?.method !== 'POST') {
+      options.onDatasetListRequest?.(url)
+      const total = typeof options.datasetTotal === 'function'
+        ? options.datasetTotal(url)
+        : options.datasetTotal ?? (generated ? 1 : 0)
       return Response.json({
-        items: generated ? [{
+        items: total > 0 ? [{
           contentHash: dataset.contentHash,
           createdAt: dataset.createdAt,
           datasetId: dataset.datasetId,
@@ -547,9 +553,9 @@ function stubScenarioDataWorkspace(options: {
           updatedAt: dataset.updatedAt,
           version: 1,
         }] : [],
-        page: 1,
+        page: Number(url.searchParams.get('page') ?? '1'),
         pageSize: 20,
-        total: generated ? 1 : 0,
+        total,
       })
     }
     if (url.pathname === '/api/sim/v1/scenario-datasets/actions/generate') {
@@ -889,6 +895,43 @@ describe('role workspaces', () => {
     expect(screen.getByText('未配置 Synthea Provider')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '生成数据' }))
     expect(await screen.findByText('发热门诊样本')).toBeTruthy()
+  })
+
+  it('searches and pages Scenario Datasets through the administrator Web seam', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    const listRequests: URL[] = []
+    stubScenarioDataWorkspace({
+      datasetTotal: url => url.searchParams.has('search') ? 1 : 21,
+      onDatasetListRequest: url => listRequests.push(new URL(url)),
+    })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await screen.findByText('发热门诊样本')
+    const previousPage = screen.getByRole('button', { name: '上一页' })
+    const nextPage = screen.getByRole('button', { name: '下一页' })
+    expect(previousPage.hasAttribute('disabled')).toBe(true)
+    expect(nextPage.hasAttribute('disabled')).toBe(false)
+
+    await user.click(nextPage)
+    await waitFor(() => {
+      expect(listRequests.at(-1)?.searchParams.get('page')).toBe('2')
+    })
+    expect(screen.getByRole('button', { name: '上一页' }).hasAttribute('disabled')).toBe(false)
+    expect(screen.getByRole('button', { name: '下一页' }).hasAttribute('disabled')).toBe(true)
+
+    await user.type(screen.getByLabelText('搜索数据集'), '  糖尿病  ')
+    await user.click(screen.getByRole('button', { name: '搜索' }))
+    await waitFor(() => {
+      expect(Object.fromEntries(listRequests.at(-1)?.searchParams ?? [])).toEqual({
+        page: '1',
+        pageSize: '20',
+        search: '糖尿病',
+      })
+    })
+    expect(screen.queryByRole('button', { name: '上一页' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '下一页' })).toBeNull()
   })
 
   it('edits a generated patient through structured Dataset fields', async () => {

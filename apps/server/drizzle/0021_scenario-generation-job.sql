@@ -13,8 +13,6 @@ CREATE TABLE scenario_generation_job (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, job_id),
   FOREIGN KEY (workspace_id) REFERENCES workspace (workspace_id) ON DELETE RESTRICT,
-  FOREIGN KEY (workspace_id, dataset_id)
-    REFERENCES scenario_dataset (workspace_id, dataset_id) ON DELETE RESTRICT,
   CHECK (
     (status = 'queued' AND started_at IS NULL AND finished_at IS NULL
       AND dataset_id IS NULL AND error_code IS NULL AND error_message IS NULL)

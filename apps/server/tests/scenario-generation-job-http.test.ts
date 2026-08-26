@@ -173,6 +173,28 @@ describe('persistent Scenario generation job HTTP contract', () => {
       name: generationRequest.name,
       providerId: 'synthea',
     })
+    const deleteResponse = await restartedRuntime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(succeeded.datasetId ?? '')}`,
+      {
+        body: JSON.stringify({ expectedVersion: 1 }),
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'DELETE',
+      },
+    )
+    expect(deleteResponse.status).toBe(200)
+    expect(await getJob(restartedRuntime, cookie, queued.jobId)).toMatchObject({
+      datasetId: succeeded.datasetId,
+      status: 'succeeded',
+    })
+    expect((await restartedRuntime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(succeeded.datasetId ?? '')}`,
+      { headers: { cookie } },
+    )).status).toBe(404)
     const after = scenarioStateSchema.parse(await (await restartedRuntime.app.request(
       '/api/sim/v1/scenario-runs/current',
       { headers: { cookie } },
