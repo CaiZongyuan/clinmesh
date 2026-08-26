@@ -199,6 +199,17 @@ function optionalString<T extends object, Key extends keyof T>(
   return copy
 }
 
+function optionalNumber<T extends object, Key extends keyof T>(
+  value: T,
+  key: Key,
+  next: string,
+): T {
+  if (next !== '') return Object.assign({}, value, { [key]: Number(next) })
+  const copy = { ...value }
+  Reflect.deleteProperty(copy, key)
+  return copy
+}
+
 const fhirHistoryTypes = [
   'Condition',
   'Encounter',
@@ -901,7 +912,7 @@ function DatasetEditor({
                 ...current,
                 physiologyBaseline: {
                   ...current.physiologyBaseline,
-                  vitalSigns: { ...current.physiologyBaseline.vitalSigns, temperatureC: Number(event.target.value) },
+                  vitalSigns: optionalNumber(current.physiologyBaseline.vitalSigns, 'temperatureC', event.target.value),
                 },
               }))} step="0.1" type="number" value={patient.physiologyBaseline.vitalSigns.temperatureC ?? ''} />
             </Field>
@@ -911,7 +922,7 @@ function DatasetEditor({
                 ...current,
                 physiologyBaseline: {
                   ...current.physiologyBaseline,
-                  vitalSigns: { ...current.physiologyBaseline.vitalSigns, systolicMmHg: Number(event.target.value) },
+                  vitalSigns: optionalNumber(current.physiologyBaseline.vitalSigns, 'systolicMmHg', event.target.value),
                 },
               }))} type="number" value={patient.physiologyBaseline.vitalSigns.systolicMmHg ?? ''} />
             </Field>
@@ -921,9 +932,59 @@ function DatasetEditor({
                 ...current,
                 physiologyBaseline: {
                   ...current.physiologyBaseline,
-                  vitalSigns: { ...current.physiologyBaseline.vitalSigns, diastolicMmHg: Number(event.target.value) },
+                  vitalSigns: optionalNumber(current.physiologyBaseline.vitalSigns, 'diastolicMmHg', event.target.value),
                 },
               }))} type="number" value={patient.physiologyBaseline.vitalSigns.diastolicMmHg ?? ''} />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="editor-height">{messages.heightCm}</FieldLabel>
+              <Input id="editor-height" min={0} onChange={event => updatePatient(current => ({
+                ...current,
+                physiologyBaseline: {
+                  ...current.physiologyBaseline,
+                  vitalSigns: optionalNumber(current.physiologyBaseline.vitalSigns, 'heightCm', event.target.value),
+                },
+              }))} step="0.1" type="number" value={patient.physiologyBaseline.vitalSigns.heightCm ?? ''} />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="editor-weight">{messages.weightKg}</FieldLabel>
+              <Input id="editor-weight" min={0} onChange={event => updatePatient(current => ({
+                ...current,
+                physiologyBaseline: {
+                  ...current.physiologyBaseline,
+                  vitalSigns: optionalNumber(current.physiologyBaseline.vitalSigns, 'weightKg', event.target.value),
+                },
+              }))} step="0.1" type="number" value={patient.physiologyBaseline.vitalSigns.weightKg ?? ''} />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="editor-pulse">{messages.pulseBpm}</FieldLabel>
+              <Input id="editor-pulse" min={0} onChange={event => updatePatient(current => ({
+                ...current,
+                physiologyBaseline: {
+                  ...current.physiologyBaseline,
+                  vitalSigns: optionalNumber(current.physiologyBaseline.vitalSigns, 'pulseBpm', event.target.value),
+                },
+              }))} type="number" value={patient.physiologyBaseline.vitalSigns.pulseBpm ?? ''} />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="editor-respiration">{messages.respirationBpm}</FieldLabel>
+              <Input id="editor-respiration" min={0} onChange={event => updatePatient(current => ({
+                ...current,
+                physiologyBaseline: {
+                  ...current.physiologyBaseline,
+                  vitalSigns: optionalNumber(current.physiologyBaseline.vitalSigns, 'respirationBpm', event.target.value),
+                },
+              }))} type="number" value={patient.physiologyBaseline.vitalSigns.respirationBpm ?? ''} />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="editor-oxygen-saturation">{messages.oxygenSaturationPct}</FieldLabel>
+              <Input id="editor-oxygen-saturation" max={100} min={0} onChange={event => updatePatient(current => ({
+                ...current,
+                physiologyBaseline: {
+                  ...current.physiologyBaseline,
+                  vitalSigns: optionalNumber(current.physiologyBaseline.vitalSigns, 'oxygenSaturationPct', event.target.value),
+                },
+              }))} step="0.1" type="number" value={patient.physiologyBaseline.vitalSigns.oxygenSaturationPct ?? ''} />
             </Field>
           </FieldGroup>
           <div className="mt-6 flex flex-col gap-4">
@@ -1073,6 +1134,58 @@ function DatasetEditor({
                     : item),
                 }))} value={joinLines(response.denies)} />
               </Field>
+              <div className="flex flex-col gap-3 md:col-span-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="text-sm font-medium">{messages.avoidRules}</h4>
+                  <Button onClick={() => updatePatient(current => ({
+                    ...current,
+                    symptomResponses: updateAt(current.symptomResponses, responseIndex, item => ({
+                      ...item,
+                      avoids: [...item.avoids, {
+                        questionPattern: '待编辑问题',
+                        response: '待编辑回答',
+                      }],
+                    })),
+                  }))} size="sm" type="button" variant="outline">
+                    <PlusIcon data-icon="inline-start" />{messages.addAvoidRule} {responseIndex + 1}
+                  </Button>
+                </div>
+                {response.avoids.map((avoid, avoidIndex) => {
+                  const suffix = `${responseIndex + 1}.${avoidIndex + 1}`
+                  return <fieldset className="grid gap-3 border-b pb-3 md:grid-cols-2" key={`${response.id}-avoid-${avoidIndex}`}>
+                    <legend className="sr-only">{messages.avoidRules} {suffix}</legend>
+                    <Field>
+                      <FieldLabel htmlFor={`editor-avoid-pattern-${responseIndex}-${avoidIndex}`}>{messages.avoidQuestionPattern} {suffix}</FieldLabel>
+                      <Input id={`editor-avoid-pattern-${responseIndex}-${avoidIndex}`} onChange={event => updatePatient(current => ({
+                        ...current,
+                        symptomResponses: updateAt(current.symptomResponses, responseIndex, item => ({
+                          ...item,
+                          avoids: updateAt(item.avoids, avoidIndex, currentAvoid => ({ ...currentAvoid, questionPattern: event.target.value })),
+                        })),
+                      }))} value={avoid.questionPattern} />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor={`editor-avoid-response-${responseIndex}-${avoidIndex}`}>{messages.avoidResponse} {suffix}</FieldLabel>
+                      <Input id={`editor-avoid-response-${responseIndex}-${avoidIndex}`} onChange={event => updatePatient(current => ({
+                        ...current,
+                        symptomResponses: updateAt(current.symptomResponses, responseIndex, item => ({
+                          ...item,
+                          avoids: updateAt(item.avoids, avoidIndex, currentAvoid => ({ ...currentAvoid, response: event.target.value })),
+                        })),
+                      }))} value={avoid.response} />
+                    </Field>
+                    <div className="flex justify-end md:col-span-2">
+                      <Button aria-label={`${messages.removeAvoidRule} ${suffix}`} onClick={() => updatePatient(current => ({
+                        ...current,
+                        symptomResponses: updateAt(current.symptomResponses, responseIndex, item => ({
+                          ...item,
+                          avoids: item.avoids.filter((_, index) => index !== avoidIndex),
+                        })),
+                      }))} size="icon" title={`${messages.removeAvoidRule} ${suffix}`} type="button" variant="ghost"><Trash2Icon /></Button>
+                    </div>
+                  </fieldset>
+                })}
+              </div>
               {response.secondAskConcede === undefined ? null : (
                 <>
                   <Field>
@@ -1178,6 +1291,16 @@ function DatasetEditor({
                       ? { ...item, feeFen: Number(event.target.value) }
                       : item),
                   }))} type="number" value={investigation.feeFen} />
+                </Field>
+                <Field className="self-end pb-2" orientation="horizontal">
+                  <Checkbox checked={investigation.critical} id={`editor-investigation-critical-${investigationIndex}`} onCheckedChange={checked => updatePatient(current => ({
+                    ...current,
+                    investigations: updateAt(current.investigations, investigationIndex, item => ({
+                      ...item,
+                      critical: checked === true,
+                    })),
+                  }))} />
+                  <FieldLabel htmlFor={`editor-investigation-critical-${investigationIndex}`}>{messages.criticalResult} {investigationIndex + 1}</FieldLabel>
                 </Field>
                 <Field className="md:col-span-2 xl:col-span-4">
                   <FieldLabel htmlFor={`editor-investigation-report-${investigationIndex}`}>{messages.reportText}</FieldLabel>
@@ -1342,6 +1465,14 @@ function DatasetEditor({
                     const { maximum: _removed, ...remaining } = range
                     return remaining
                   }))} type="number" value={item.referenceRanges[0]?.maximum ?? ''} />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor={`editor-catalog-investigation-critical-minimum-${itemIndex}`}>{messages.criticalMinimum}</FieldLabel>
+                  <Input id={`editor-catalog-investigation-critical-minimum-${itemIndex}`} onChange={event => updateCatalogInvestigation(itemIndex, catalogItem => optionalNumber(catalogItem, 'criticalMinimum', event.target.value))} type="number" value={item.criticalMinimum ?? ''} />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor={`editor-catalog-investigation-critical-maximum-${itemIndex}`}>{messages.criticalMaximum}</FieldLabel>
+                  <Input id={`editor-catalog-investigation-critical-maximum-${itemIndex}`} onChange={event => updateCatalogInvestigation(itemIndex, catalogItem => optionalNumber(catalogItem, 'criticalMaximum', event.target.value))} type="number" value={item.criticalMaximum ?? ''} />
                 </Field>
                 <Field>
                   <FieldLabel htmlFor={`editor-catalog-investigation-generator-${itemIndex}`}>{messages.physiologyGeneratorId}</FieldLabel>

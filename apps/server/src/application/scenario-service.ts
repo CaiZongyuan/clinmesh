@@ -16,6 +16,11 @@ import { CommandExecutor } from './command-executor.ts'
 import { syntheticAccounts } from './identity-service.ts'
 
 const clinicalReviewSchema = z.record(z.string(), z.unknown())
+const scenarioPackageRowSchema = z.object({
+  content_json: z.string(),
+  source_dataset_version: z.number().int().positive(),
+}).strict()
+const countRowSchema = z.object({ count: z.number().int().nonnegative() }).strict()
 
 const laboratoryResultsHiddenFact = {
   code: 'laboratory-results',
@@ -655,9 +660,9 @@ export class ScenarioService {
   }
 
   #transitionEpoch(context: ActorContext, blueprint: ScenarioBlueprint) {
-    const sequence = (this.#database.driver.prepare(`
+    const sequence = countRowSchema.parse(this.#database.driver.prepare(`
       SELECT COUNT(*) AS count FROM workspace_epoch WHERE workspace_id = ?
-    `).get(context.workspaceId) as { count: number }).count + 1
+    `).get(context.workspaceId)).count + 1
     const epoch = `epoch-${sequence}`
     const scenarioRunId = `scenario-run-${sequence}`
     const now = new Date().toISOString()
@@ -743,15 +748,13 @@ export class ScenarioService {
   }
 
   #packageBlueprint(workspaceId: string, packageId: string): ScenarioBlueprint | undefined {
-    const row = this.#database.driver.prepare(`
+    const result = this.#database.driver.prepare(`
       SELECT content_json, source_dataset_version
       FROM scenario_package
       WHERE workspace_id = ? AND package_id = ?
-    `).get(workspaceId, packageId) as {
-      content_json: string
-      source_dataset_version: number
-    } | undefined
-    if (row === undefined) return undefined
+    `).get(workspaceId, packageId)
+    if (result === undefined) return undefined
+    const row = scenarioPackageRowSchema.parse(result)
     return this.#blueprintFromPackage(
       packageId,
       row.source_dataset_version,

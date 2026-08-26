@@ -246,4 +246,79 @@ describe('Scenario Dataset diagnostics', () => {
       }),
     ]))
   })
+
+  it('rejects duplicate runtime identifiers before installation', async () => {
+    const provider = new BuiltInScenarioGenerationProvider()
+    const generated = await provider.generate(scenarioGenerationRequestSchema.parse({
+      modules: ['fever'],
+      name: '重复标识病例',
+      population: { age: { maximum: 40, minimum: 40 }, count: 1, gender: 'female' },
+      providerId: 'builtin',
+      seeds: { clinical: 122, population: 111 },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    }))
+    const patient = generated.content.patients[0]!
+    const hiddenFact = generated.content.hiddenFacts[0]!
+    const revealPolicy = generated.content.revealPolicies[0]!
+
+    expect(validateScenarioDataset({
+      ...generated.content,
+      hiddenFacts: [hiddenFact, { ...hiddenFact }],
+      patients: [patient, { ...patient }],
+      revealPolicies: [revealPolicy, { ...revealPolicy }],
+    })).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'DUPLICATE_HIDDEN_FACT_CODE',
+        path: 'hiddenFacts[1].code',
+      }),
+      expect.objectContaining({
+        code: 'DUPLICATE_PATIENT_ID',
+        path: 'patients[1].id',
+      }),
+      expect.objectContaining({
+        code: 'DUPLICATE_REVEAL_POLICY_CODE',
+        path: 'revealPolicies[1].code',
+      }),
+    ]))
+  })
+
+  it('rejects an after-topic policy bound to a different patient than its Hidden Fact', async () => {
+    const provider = new BuiltInScenarioGenerationProvider()
+    const generated = await provider.generate(scenarioGenerationRequestSchema.parse({
+      modules: ['fever'],
+      name: '跨患者揭示病例',
+      population: { age: { maximum: 40, minimum: 40 }, count: 1, gender: 'female' },
+      providerId: 'builtin',
+      seeds: { clinical: 144, population: 133 },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    }))
+    const firstPatient = generated.content.patients[0]!
+    const secondPatient = { ...firstPatient, id: 'synthetic-patient-002', name: '合成患者乙' }
+    const factCode = 'patient-one-topic-fact'
+
+    expect(validateScenarioDataset({
+      ...generated.content,
+      hiddenFacts: [
+        ...generated.content.hiddenFacts,
+        { code: factCode, patientId: firstPatient.id, value: '只属于患者甲的事实' },
+      ],
+      patients: [firstPatient, secondPatient],
+      revealPolicies: [
+        ...generated.content.revealPolicies,
+        {
+          code: 'cross-patient-topic-policy',
+          factCode,
+          patientId: secondPatient.id,
+          triggerCode: 'after-topic',
+          triggerId: secondPatient.symptomResponses[0]!.id,
+        },
+      ],
+    })).toContainEqual(expect.objectContaining({
+      code: 'REVEAL_TOPIC_PATIENT_MISMATCH',
+      path: `revealPolicies[${generated.content.revealPolicies.length}].patientId`,
+      severity: 'error',
+    }))
+  })
 })

@@ -1170,7 +1170,7 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 - 数量：基准单位定点整数，不使用 JavaScript 浮点累加余额。
 - JSON：`TEXT CHECK(json_valid(...))`，只用于 FHIR 正文、外部快照和不可检索文档内容。
 - 关系集合：关联表，不使用逗号串。
-- 所有 workspace-scoped 表的主键/唯一键以 `(workspace_id, epoch, ...)` 开头；所有租户内关系使用 `(workspace_id, epoch, target_id)` 复合外键，禁止只引用裸 ID，删除默认 `RESTRICT`。
+- 所有 Workspace/Epoch 运行事实表的主键和唯一键以 `(workspace_id, epoch, ...)` 开头；运行事实之间使用 `(workspace_id, epoch, target_id)` 复合外键，禁止只引用裸 ID，删除默认 `RESTRICT`。安装前的 Workspace 级 authoring 资产及其 Dataset 来源链接遵循[仿真隔离与安装快照边界](#101-workspace-隔离)。
 - registry 声明的 reference Search 路径在写入时解析目标、验证 Workspace/Epoch，并写入包含隔离键的 `fhir_sp_string`。
 - migrations 固定并记录最低 SQLite 版本；依赖 JSON 函数、`RETURNING` 或其他版本相关能力前，以真实 file-backed 数据库测试证明目标运行时支持。
 

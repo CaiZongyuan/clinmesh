@@ -1162,6 +1162,11 @@ describe('role workspaces', () => {
     fireEvent.change(screen.getByLabelText('已告知诊断'), {
       target: { value: '上呼吸道感染' },
     })
+    await changeText('身高（cm）', '168')
+    await changeText('体重（kg）', '62')
+    await changeText('脉搏（次/分）', '96')
+    await changeText('呼吸（次/分）', '19')
+    await changeText('血氧饱和度（%）', '97')
 
     await user.click(screen.getByRole('button', { name: '新增生活方式' }))
     await changeText('生活方式名称 1', '吸烟')
@@ -1178,6 +1183,18 @@ describe('role workspaces', () => {
     await changeText('生成器来源 1', '合成病例基线')
     await changeText('生成器单位 1', 'mmol/L')
     await changeText('常量值 1', '6.1')
+
+    await user.click(screen.getByRole('tab', { name: '问诊应答' }))
+    await user.click(screen.getByRole('button', { name: '新增回避回答 1' }))
+    await changeText('回避问题模式 1.1', '是否自行服用抗菌药物')
+    await changeText('回避回答 1.1', '先不想说这个。')
+
+    await user.click(screen.getByRole('tab', { name: '查体与检查' }))
+    await user.click(screen.getByRole('checkbox', { name: '危急结果 1' }))
+
+    await user.click(screen.getByRole('tab', { name: '目录与库存' }))
+    await changeText('危急值下限', '2')
+    await changeText('危急值上限', '10')
 
     await user.click(screen.getByRole('tab', { name: '诊断与处置' }))
     fireEvent.change(screen.getByLabelText('必要处置要素'), {
@@ -1238,8 +1255,25 @@ describe('role workspaces', () => {
             unit: 'mmol/L',
             value: 6.1,
           }],
+          vitalSigns: {
+            heightCm: 168,
+            oxygenSaturationPct: 97,
+            pulseBpm: 96,
+            respirationBpm: 19,
+            weightKg: 62,
+          },
         },
+        symptomResponses: [{
+          avoids: [{
+            questionPattern: '是否自行服用抗菌药物',
+            response: '先不想说这个。',
+          }],
+        }],
+        investigations: [{ critical: true }],
       }],
+      catalog: {
+        investigations: [{ criticalMaximum: 10, criticalMinimum: 2 }],
+      },
       revealPolicies: [{}, {
         code: 'reveal-fever-detail',
         factCode: 'topic-fever-detail',

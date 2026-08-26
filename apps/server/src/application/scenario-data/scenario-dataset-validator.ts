@@ -39,6 +39,83 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
     diagnostics.push(diagnostic)
   }
 
+  const diagnoseDuplicates = <Item>(input: {
+    code: string
+    items: readonly Item[]
+    key: (item: Item) => string
+    label: string
+    path: (item: Item, index: number) => string
+  }): void => {
+    const seen = new Set<string>()
+    for (const [index, item] of input.items.entries()) {
+      const key = input.key(item)
+      if (seen.has(key)) {
+        add({
+          code: input.code,
+          message: `${input.label} ${key} is duplicated`,
+          path: input.path(item, index),
+          severity: 'error',
+        })
+      }
+      seen.add(key)
+    }
+  }
+
+  diagnoseDuplicates({
+    code: 'DUPLICATE_PATIENT_ID',
+    items: content.patients,
+    key: patient => patient.id,
+    label: 'Patient ID',
+    path: (_, index) => `patients[${index}].id`,
+  })
+  diagnoseDuplicates({
+    code: 'DUPLICATE_HIDDEN_FACT_CODE',
+    items: content.hiddenFacts,
+    key: fact => fact.code,
+    label: 'Hidden Fact code',
+    path: (_, index) => `hiddenFacts[${index}].code`,
+  })
+  diagnoseDuplicates({
+    code: 'DUPLICATE_REVEAL_POLICY_CODE',
+    items: content.revealPolicies,
+    key: policy => policy.code,
+    label: 'Reveal Policy code',
+    path: (_, index) => `revealPolicies[${index}].code`,
+  })
+  diagnoseDuplicates({
+    code: 'DUPLICATE_CATALOG_ITEM_ID',
+    items: [
+      ...content.catalog.departments.map((item, index) => ({ item, path: `catalog.departments[${index}].id` })),
+      ...content.catalog.diagnoses.map((item, index) => ({ item, path: `catalog.diagnoses[${index}].id` })),
+      ...content.catalog.investigations.map((item, index) => ({ item, path: `catalog.investigations[${index}].id` })),
+      ...content.catalog.medications.map((item, index) => ({ item, path: `catalog.medications[${index}].id` })),
+    ],
+    key: entry => entry.item.id,
+    label: 'Catalog item ID',
+    path: entry => entry.path,
+  })
+  diagnoseDuplicates({
+    code: 'DUPLICATE_DIAGNOSIS_CODE',
+    items: content.catalog.diagnoses,
+    key: diagnosis => diagnosis.code,
+    label: 'Diagnosis code',
+    path: (_, index) => `catalog.diagnoses[${index}].code`,
+  })
+  diagnoseDuplicates({
+    code: 'DUPLICATE_INVENTORY_LOT_ID',
+    items: content.inventory,
+    key: lot => lot.lotId,
+    label: 'Inventory lot ID',
+    path: (_, index) => `inventory[${index}].lotId`,
+  })
+  diagnoseDuplicates({
+    code: 'DUPLICATE_SIMULATOR_RULE_CODE',
+    items: content.simulatorRules,
+    key: rule => `${rule.simulator}\u0000${rule.code}`,
+    label: 'Simulator rule',
+    path: (_, index) => `simulatorRules[${index}].code`,
+  })
+
   for (const [index, lot] of content.inventory.entries()) {
     if (!medicationIds.has(lot.itemId)) {
       add({
@@ -130,6 +207,7 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
   }
 
   for (const [index, policy] of content.revealPolicies.entries()) {
+    const hiddenFact = hiddenFactsByCode.get(policy.factCode)
     if (!hiddenFactCodes.has(policy.factCode)) {
       add({
         code: 'HIDDEN_FACT_REFERENCE_MISSING',
@@ -152,6 +230,17 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
         add({
           code: 'REVEAL_TOPIC_PATIENT_REQUIRED',
           message: `Reveal Policy ${policy.code} must bind an existing patient for an after-topic trigger`,
+          path: `revealPolicies[${index}].patientId`,
+          severity: 'error',
+        })
+      }
+      if (
+        hiddenFact?.patientId !== undefined
+        && hiddenFact.patientId !== policy.patientId
+      ) {
+        add({
+          code: 'REVEAL_TOPIC_PATIENT_MISMATCH',
+          message: `Reveal Policy ${policy.code} and Hidden Fact ${policy.factCode} must bind the same patient`,
           path: `revealPolicies[${index}].patientId`,
           severity: 'error',
         })
@@ -180,6 +269,34 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
 
   for (const [patientIndex, patient] of content.patients.entries()) {
     const patientPath = `patients[${patientIndex}]`
+    diagnoseDuplicates({
+      code: 'DUPLICATE_SYMPTOM_RESPONSE_ID',
+      items: patient.symptomResponses,
+      key: response => response.id,
+      label: `Symptom response ID for patient ${patient.id}`,
+      path: (_, index) => `${patientPath}.symptomResponses[${index}].id`,
+    })
+    diagnoseDuplicates({
+      code: 'DUPLICATE_INVESTIGATION_ID',
+      items: patient.investigations,
+      key: investigation => investigation.id,
+      label: `Investigation ID for patient ${patient.id}`,
+      path: (_, index) => `${patientPath}.investigations[${index}].id`,
+    })
+    diagnoseDuplicates({
+      code: 'DUPLICATE_PHYSIOLOGY_GENERATOR_ID',
+      items: patient.physiologyBaseline.generators,
+      key: generator => generator.id,
+      label: `Physiology generator ID for patient ${patient.id}`,
+      path: (_, index) => `${patientPath}.physiologyBaseline.generators[${index}].id`,
+    })
+    diagnoseDuplicates({
+      code: 'DUPLICATE_FHIR_HISTORY_ID',
+      items: patient.fhirHistory,
+      key: resource => `${resource.resourceType}\u0000${resource.id}`,
+      label: `FHIR history ID for patient ${patient.id}`,
+      path: (_, index) => `${patientPath}.fhirHistory[${index}].id`,
+    })
     const generatorIds = new Set(patient.physiologyBaseline.generators.map(generator => generator.id))
     const generators = new Map(
       patient.physiologyBaseline.generators.map(generator => [generator.id, generator]),

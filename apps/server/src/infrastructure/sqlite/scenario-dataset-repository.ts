@@ -1,19 +1,24 @@
 import type { ScenarioDataset, ScenarioDatasetList } from '@clinmesh/contracts/scenario'
 import { scenarioDatasetSchema } from '@clinmesh/contracts/scenario'
+import { z } from 'zod'
 import type { ClinMeshDatabase } from './database.ts'
 
-interface ScenarioDatasetRow {
-  content_hash: string
-  content_json: string
-  created_at: string
-  dataset_id: string
-  diagnostics_json: string
-  name: string
-  provider_id: ScenarioDataset['providerId']
-  updated_at: string
-  version: number
-  workspace_id: string
-}
+const scenarioDatasetRowSchema = z.object({
+  content_hash: z.string(),
+  content_json: z.string(),
+  created_at: z.string(),
+  dataset_id: z.string(),
+  diagnostics_json: z.string(),
+  name: z.string(),
+  provider_id: z.enum(['builtin', 'synthea']),
+  updated_at: z.string(),
+  version: z.number().int().positive(),
+  workspace_id: z.string(),
+}).strict()
+
+const countRowSchema = z.object({ count: z.number().int().nonnegative() }).strict()
+
+type ScenarioDatasetRow = z.infer<typeof scenarioDatasetRowSchema>
 
 export class ScenarioDatasetRepository {
   readonly #database: ClinMeshDatabase
@@ -75,13 +80,14 @@ export class ScenarioDatasetRepository {
   }
 
   get(workspaceId: string, datasetId: string): ScenarioDataset | undefined {
-    const row = this.#database.driver.prepare(`
+    const result = this.#database.driver.prepare(`
       SELECT workspace_id, dataset_id, name, provider_id, version, content_json,
         content_hash, diagnostics_json, created_at, updated_at
       FROM scenario_dataset
       WHERE workspace_id = ? AND dataset_id = ?
-    `).get(workspaceId, datasetId) as ScenarioDatasetRow | undefined
-    if (row === undefined) return undefined
+    `).get(workspaceId, datasetId)
+    if (result === undefined) return undefined
+    const row = scenarioDatasetRowSchema.parse(result)
     return this.#map(row)
   }
 
@@ -92,7 +98,7 @@ export class ScenarioDatasetRepository {
     workspaceId: string
   }): ScenarioDatasetList {
     const search = input.search ?? null
-    const total = (this.#database.driver.prepare(`
+    const total = countRowSchema.parse(this.#database.driver.prepare(`
       SELECT COUNT(*) AS count FROM scenario_dataset
       WHERE workspace_id = ?
         AND (
@@ -101,8 +107,8 @@ export class ScenarioDatasetRepository {
           OR instr(lower(dataset_id), lower(?)) > 0
           OR instr(lower(provider_id), lower(?)) > 0
         )
-    `).get(input.workspaceId, search, search, search, search) as { count: number }).count
-    const rows = this.#database.driver.prepare(`
+    `).get(input.workspaceId, search, search, search, search)).count
+    const rows = z.array(scenarioDatasetRowSchema).parse(this.#database.driver.prepare(`
       SELECT workspace_id, dataset_id, name, provider_id, version, content_json,
         content_hash, diagnostics_json, created_at, updated_at
       FROM scenario_dataset
@@ -123,7 +129,7 @@ export class ScenarioDatasetRepository {
       search,
       input.pageSize,
       (input.page - 1) * input.pageSize,
-    ) as ScenarioDatasetRow[]
+    ))
     return {
       items: rows.map((row) => {
         const dataset = this.#map(row)
