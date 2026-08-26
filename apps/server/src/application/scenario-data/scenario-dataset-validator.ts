@@ -83,6 +83,19 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
     path: (_, index) => `revealPolicies[${index}].code`,
   })
   diagnoseDuplicates({
+    code: 'DUPLICATE_REVEAL_TOPIC_POLICY',
+    items: content.revealPolicies.flatMap((policy, index) => (
+      policy.triggerCode === 'after-topic'
+      && policy.patientId !== undefined
+      && policy.triggerId !== undefined
+        ? [{ index, policy }]
+        : []
+    )),
+    key: entry => `${entry.policy.patientId}\u0000${entry.policy.triggerId}`,
+    label: 'Reveal Policy patient topic',
+    path: entry => `revealPolicies[${entry.index}].triggerId`,
+  })
+  diagnoseDuplicates({
     code: 'DUPLICATE_CATALOG_ITEM_ID',
     items: [
       ...content.catalog.departments.map((item, index) => ({ item, path: `catalog.departments[${index}].id` })),
@@ -152,8 +165,51 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
   }
 
   for (const [investigationIndex, investigation] of content.catalog.investigations.entries()) {
+    const investigationPath = `catalog.investigations[${investigationIndex}]`
+    for (const [rangeIndex, range] of investigation.referenceRanges.entries()) {
+      if (
+        range.minimum !== undefined
+        && range.maximum !== undefined
+        && range.minimum > range.maximum
+      ) {
+        add({
+          code: 'INVESTIGATION_REFERENCE_RANGE_INVERTED',
+          message: `Investigation ${investigation.id} reference range minimum exceeds its maximum`,
+          path: `${investigationPath}.referenceRanges[${rangeIndex}].minimum`,
+          severity: 'error',
+        })
+      }
+    }
+    if (
+      investigation.criticalMinimum !== undefined
+      && investigation.criticalMaximum !== undefined
+      && investigation.criticalMinimum > investigation.criticalMaximum
+    ) {
+      add({
+        code: 'INVESTIGATION_CRITICAL_RANGE_INVERTED',
+        message: `Investigation ${investigation.id} critical minimum exceeds its maximum`,
+        path: `${investigationPath}.criticalMinimum`,
+        severity: 'error',
+      })
+    }
     const distribution = investigation.normalDistribution
     if (distribution !== undefined) {
+      if (distribution.minimum > distribution.maximum) {
+        add({
+          code: 'INVESTIGATION_L3_RANGE_INVERTED',
+          message: `Investigation ${investigation.id} L3 minimum exceeds its maximum`,
+          path: `${investigationPath}.normalDistribution.minimum`,
+          severity: 'error',
+        })
+      }
+      if (distribution.mean < distribution.minimum || distribution.mean > distribution.maximum) {
+        add({
+          code: 'INVESTIGATION_L3_MEAN_OUTSIDE_RANGE',
+          message: `Investigation ${investigation.id} L3 mean is outside its sampling domain`,
+          path: `${investigationPath}.normalDistribution.mean`,
+          severity: 'error',
+        })
+      }
       const numericRanges = investigation.referenceRanges.filter(range => (
         range.minimum !== undefined || range.maximum !== undefined
       ))
@@ -165,7 +221,7 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
         add({
           code: 'INVESTIGATION_L3_REFERENCE_CONFLICT',
           message: `Investigation ${investigation.id} has an L3 domain outside its reference range`,
-          path: `catalog.investigations[${investigationIndex}].normalDistribution`,
+          path: `${investigationPath}.normalDistribution`,
           severity: 'error',
         })
       }

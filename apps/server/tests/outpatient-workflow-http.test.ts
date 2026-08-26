@@ -21,6 +21,7 @@ import {
   clinicalDocumentSignResponseSchema,
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
+  commandResponseSchema,
   confirmDiagnosisResponseSchema,
   confirmNoMedicationResponseSchema,
   correctLaboratoryReportResponseSchema,
@@ -62,7 +63,6 @@ import {
   withdrawPrescriptionResponseSchema,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { z } from 'zod'
 import { AuditQuery } from '../src/application/audit-query.ts'
 import { WorkspaceContextError } from '../src/infrastructure/sqlite/workspace-repository.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
@@ -3946,7 +3946,7 @@ describe('outpatient workflow HTTP contract', () => {
         method: 'POST',
       },
     )
-    const generated = z.object({ data: scenarioDatasetSchema }).passthrough()
+    const generated = commandResponseSchema(scenarioDatasetSchema)
       .parse(await generateResponse.json()).data
     const patient = generated.content.patients[0]!
     const topic = patient.symptomResponses[0]!
@@ -3980,7 +3980,7 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
     expect(updateResponse.status).toBe(200)
-    const updated = z.object({ data: scenarioDatasetSchema }).passthrough()
+    const updated = commandResponseSchema(scenarioDatasetSchema)
       .parse(await updateResponse.json()).data
     const installResponse = await runtime.app.request(
       `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}/actions/install`,
@@ -5451,7 +5451,7 @@ describe('outpatient workflow HTTP contract', () => {
         method: 'POST',
       },
     )
-    const generated = z.object({ data: scenarioDatasetSchema }).passthrough()
+    const generated = commandResponseSchema(scenarioDatasetSchema)
       .parse(await generatedResponse.json()).data
     const installResponse = await runtime.app.request(
       `/api/sim/v1/scenario-datasets/${generated.datasetId}/actions/install`,

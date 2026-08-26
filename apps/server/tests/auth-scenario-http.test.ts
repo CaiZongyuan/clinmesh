@@ -661,7 +661,7 @@ describe('trusted session and Scenario HTTP contract', () => {
         method: 'POST',
       },
     )
-    const generated = z.object({ data: scenarioDatasetSchema }).passthrough()
+    const generated = commandResponseSchema(scenarioDatasetSchema)
       .parse(await generateResponse.json()).data
     const invalidContent = {
       ...generated.content,
@@ -720,7 +720,7 @@ describe('trusted session and Scenario HTTP contract', () => {
 
     const updateResponse = await update(1, randomUUID())
     expect(updateResponse.status).toBe(200)
-    const updated = z.object({ data: scenarioDatasetSchema }).passthrough()
+    const updated = commandResponseSchema(scenarioDatasetSchema)
       .parse(await updateResponse.json()).data
     expect(updated).toMatchObject({
       name: '存在引用问题的数据',
@@ -786,7 +786,7 @@ describe('trusted session and Scenario HTTP contract', () => {
         method: 'POST',
       },
     )
-    const generated = z.object({ data: scenarioDatasetSchema }).passthrough()
+    const generated = commandResponseSchema(scenarioDatasetSchema)
       .parse(await generateResponse.json()).data
     const generatedPatient = generated.content.patients[0]!
     expect(generatedPatient).toMatchObject({
@@ -811,12 +811,10 @@ describe('trusted session and Scenario HTTP contract', () => {
       },
     )
     expect(installResponse.status).toBe(200)
-    const installed = z.object({
-      data: z.object({
-        packageId: z.string().min(1),
-        scenario: scenarioStateSchema,
-      }).strict(),
-    }).passthrough().parse(await installResponse.json()).data
+    const installed = commandResponseSchema(z.object({
+      packageId: z.string().min(1),
+      scenario: scenarioStateSchema,
+    }).strict()).parse(await installResponse.json()).data
     expect(installed.scenario).toMatchObject({
       epoch: 'epoch-2',
       scenarioId: installed.packageId,
@@ -991,7 +989,7 @@ describe('trusted session and Scenario HTTP contract', () => {
         method: 'POST',
       },
     )
-    const generated = z.object({ data: scenarioDatasetSchema }).passthrough()
+    const generated = commandResponseSchema(scenarioDatasetSchema)
       .parse(await generatedResponse.json()).data
     const patient = generated.content.patients[0]!
     const updatedResponse = await runtime.app.request(

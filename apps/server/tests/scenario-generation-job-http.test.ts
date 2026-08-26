@@ -9,7 +9,7 @@ import {
   type ScenarioGenerationRequest,
   type ScenarioProviderCapabilities,
 } from '@clinmesh/contracts/scenario'
-import { apiErrorSchema, scenarioStateSchema } from '@clinmesh/contracts/his'
+import { apiErrorSchema, commandResponseSchema, scenarioStateSchema } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
 import type {
   ScenarioGenerationProvider,
@@ -102,7 +102,7 @@ describe('persistent Scenario generation job HTTP contract', () => {
       method: 'POST',
     })
     expect(response.status).toBe(200)
-    return scenarioGenerationJobSchema.parse((await response.json() as { data: unknown }).data)
+    return commandResponseSchema(scenarioGenerationJobSchema).parse(await response.json()).data
   }
 
   const getJob = async (
@@ -268,7 +268,7 @@ describe('persistent Scenario generation job HTTP contract', () => {
       },
     )
     expect(builtInResponse.status).toBe(200)
-    expect(scenarioDatasetSchema.parse((await builtInResponse.json() as { data: unknown }).data))
+    expect(commandResponseSchema(scenarioDatasetSchema).parse(await builtInResponse.json()).data)
       .toMatchObject({ providerId: 'builtin' })
   })
 

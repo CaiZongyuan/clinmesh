@@ -321,4 +321,108 @@ describe('Scenario Dataset diagnostics', () => {
       severity: 'error',
     }))
   })
+
+  it('rejects ambiguous after-topic policies for the same patient topic', async () => {
+    const provider = new BuiltInScenarioGenerationProvider()
+    const generated = await provider.generate(scenarioGenerationRequestSchema.parse({
+      modules: ['fever'],
+      name: '重复问诊揭示病例',
+      population: { age: { maximum: 40, minimum: 40 }, count: 1, gender: 'female' },
+      providerId: 'builtin',
+      seeds: { clinical: 166, population: 155 },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    }))
+    const patient = generated.content.patients[0]!
+    const triggerId = patient.symptomResponses[0]!.id
+    const factCode = 'ambiguous-topic-fact'
+    const firstPolicyIndex = generated.content.revealPolicies.length
+
+    expect(validateScenarioDataset({
+      ...generated.content,
+      hiddenFacts: [
+        ...generated.content.hiddenFacts,
+        { code: factCode, patientId: patient.id, value: '同一主题只能绑定一个事实' },
+      ],
+      revealPolicies: [
+        ...generated.content.revealPolicies,
+        {
+          code: 'ambiguous-topic-policy-one',
+          factCode,
+          patientId: patient.id,
+          triggerCode: 'after-topic',
+          triggerId,
+        },
+        {
+          code: 'ambiguous-topic-policy-two',
+          factCode,
+          patientId: patient.id,
+          triggerCode: 'after-topic',
+          triggerId,
+        },
+      ],
+    })).toContainEqual(expect.objectContaining({
+      code: 'DUPLICATE_REVEAL_TOPIC_POLICY',
+      path: `revealPolicies[${firstPolicyIndex + 1}].triggerId`,
+      severity: 'error',
+    }))
+  })
+
+  it('rejects inverted clinical ranges and an L3 mean outside its sampling domain', async () => {
+    const provider = new BuiltInScenarioGenerationProvider()
+    const generated = await provider.generate(scenarioGenerationRequestSchema.parse({
+      modules: ['type-2-diabetes'],
+      name: '非法检查范围病例',
+      population: { age: { maximum: 40, minimum: 40 }, count: 1, gender: 'female' },
+      providerId: 'builtin',
+      seeds: { clinical: 188, population: 177 },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    }))
+    const investigationIndex = generated.content.catalog.investigations.findIndex(
+      item => item.id === 'lab-tsh',
+    )
+    const investigations = generated.content.catalog.investigations.map((item, index) => (
+      index === investigationIndex && item.normalDistribution !== undefined
+        ? {
+            ...item,
+            criticalMaximum: 4,
+            criticalMinimum: 5,
+            normalDistribution: {
+              ...item.normalDistribution,
+              maximum: 2,
+              mean: 4,
+              minimum: 3,
+            },
+            referenceRanges: [{
+              ...item.referenceRanges[0]!,
+              maximum: 1,
+              minimum: 10,
+            }, ...item.referenceRanges.slice(1)],
+          }
+        : item
+    ))
+
+    expect(validateScenarioDataset({
+      ...generated.content,
+      catalog: { ...generated.content.catalog, investigations },
+    })).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'INVESTIGATION_CRITICAL_RANGE_INVERTED',
+        path: `catalog.investigations[${investigationIndex}].criticalMinimum`,
+      }),
+      expect.objectContaining({
+        code: 'INVESTIGATION_L3_MEAN_OUTSIDE_RANGE',
+        path: `catalog.investigations[${investigationIndex}].normalDistribution.mean`,
+      }),
+      expect.objectContaining({
+        code: 'INVESTIGATION_L3_RANGE_INVERTED',
+        path: `catalog.investigations[${investigationIndex}].normalDistribution.minimum`,
+      }),
+      expect.objectContaining({
+        code: 'INVESTIGATION_REFERENCE_RANGE_INVERTED',
+        path: `catalog.investigations[${investigationIndex}].referenceRanges[0].minimum`,
+      }),
+    ]))
+  })
 })

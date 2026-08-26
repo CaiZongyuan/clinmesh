@@ -320,7 +320,7 @@ const triageRecordContentSchema = z.object({
   temperatureC: z.number(),
 })
 
-const countRowSchema = z.object({ count: z.number().int().nonnegative() })
+const countRowSchema = z.object({ count: z.number().int().nonnegative() }).strict()
 
 const virtualPatientRowSchema = z.object({
   available: z.union([z.literal(0), z.literal(1)]),
@@ -6454,7 +6454,7 @@ export class WorkflowService {
       const scenarioContent = this.#activeScenarioDataset(input.context)
       const repeatIndex = scenarioContent === undefined
         ? 0
-        : (this.#database.driver.prepare(`
+        : countRowSchema.parse(this.#database.driver.prepare(`
           SELECT COUNT(*) AS count FROM laboratory_request
           WHERE workspace_id = ? AND epoch = ? AND case_id = ?
             AND catalog_item_id = ? AND reported_at IS NOT NULL
@@ -6463,7 +6463,7 @@ export class WorkflowService {
           input.context.epoch,
           request.case_id,
           request.catalog_item_id,
-        ) as { count: number }).count
+        )).count
       const scenarioResult = scenarioContent === undefined
         ? undefined
         : {

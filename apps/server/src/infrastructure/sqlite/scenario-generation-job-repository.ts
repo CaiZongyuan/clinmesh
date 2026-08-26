@@ -5,25 +5,27 @@ import {
   type ScenarioDataset,
   type ScenarioGenerationJob,
 } from '@clinmesh/contracts/scenario'
-import type { ClinMeshDatabase } from './database.ts'
-import type { ActorContext } from '../../application/command-executor.ts'
 import { z } from 'zod'
+import type { ActorContext } from '../../application/command-executor.ts'
+import type { ClinMeshDatabase } from './database.ts'
 
-interface ScenarioGenerationJobRow {
-  actor_context_json: string
-  created_at: string
-  created_by_actor_id: string
-  dataset_id: string | null
-  error_code: string | null
-  error_message: string | null
-  finished_at: string | null
-  job_id: string
-  request_json: string
-  started_at: string | null
-  status: ScenarioGenerationJob['status']
-  updated_at: string
-  workspace_id: string
-}
+const scenarioGenerationJobRowSchema = z.object({
+  actor_context_json: z.string(),
+  created_at: z.iso.datetime({ offset: true }),
+  created_by_actor_id: z.string().min(1),
+  dataset_id: z.string().min(1).nullable(),
+  error_code: z.string().min(1).nullable(),
+  error_message: z.string().min(1).nullable(),
+  finished_at: z.iso.datetime({ offset: true }).nullable(),
+  job_id: z.string().min(1),
+  request_json: z.string(),
+  started_at: z.iso.datetime({ offset: true }).nullable(),
+  status: z.enum(['queued', 'running', 'succeeded', 'failed']),
+  updated_at: z.iso.datetime({ offset: true }),
+  workspace_id: z.string().min(1),
+}).strict()
+
+type ScenarioGenerationJobRow = z.infer<typeof scenarioGenerationJobRowSchema>
 
 const selectJob = `
   SELECT workspace_id, job_id, request_json, status,
@@ -114,10 +116,10 @@ export class ScenarioGenerationJobRepository {
   }
 
   get(workspaceId: string, jobId: string): ScenarioGenerationJob | undefined {
-    const row = this.#database.driver.prepare(`${selectJob}
+    const result = this.#database.driver.prepare(`${selectJob}
       WHERE workspace_id = ? AND job_id = ?
-    `).get(workspaceId, jobId) as ScenarioGenerationJobRow | undefined
-    return row === undefined ? undefined : this.#map(row)
+    `).get(workspaceId, jobId)
+    return result === undefined ? undefined : this.#map(scenarioGenerationJobRowSchema.parse(result))
   }
 
   requeueInterrupted(now: string): number {
@@ -130,12 +132,13 @@ export class ScenarioGenerationJobRepository {
 
   claimNext(now: string): ClaimedScenarioGenerationJob | undefined {
     const claim = this.#database.driver.transaction(() => {
-      const candidate = this.#database.driver.prepare(`${selectJob}
+      const result = this.#database.driver.prepare(`${selectJob}
         WHERE status = 'queued'
         ORDER BY created_at, job_id
         LIMIT 1
-      `).get() as ScenarioGenerationJobRow | undefined
-      if (candidate === undefined) return undefined
+      `).get()
+      if (result === undefined) return undefined
+      const candidate = scenarioGenerationJobRowSchema.parse(result)
       const update = this.#database.driver.prepare(`
         UPDATE scenario_generation_job
         SET status = 'running', started_at = ?, updated_at = ?
