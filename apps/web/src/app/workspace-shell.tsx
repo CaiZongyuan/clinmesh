@@ -394,8 +394,8 @@ export function WorkspaceShell({
             />
           </SidebarFooter>
         </Sidebar>
-        <SidebarInset className="min-w-0 overflow-hidden">
-          <header className="sticky top-0 flex h-14 shrink-0 items-center gap-2 border-b bg-background px-3 sm:px-4">
+        <SidebarInset className="min-w-0 overflow-hidden shadow-none md:shadow-none">
+          <header className="sticky top-0 flex h-[3.375rem] shrink-0 items-center gap-2 border-b bg-background px-3 sm:px-4">
             <SidebarTrigger aria-label={messages.sidebarToggle} title={messages.sidebarToggle} />
             <div className="min-w-0 flex-1 truncate text-sm font-medium">{messages[activeSection]}</div>
             <div className="ml-auto flex shrink-0 items-center gap-1">

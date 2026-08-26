@@ -54,6 +54,15 @@ export const docsPages: DocsPage[] = [
     order: 1,
   },
   {
+    source: 'docs/ui/design.md',
+    route: 'architecture/clinical-ui.md',
+    label: '临床 UI 设计合同',
+    sidebar: 'architecture',
+    section: 'Reference',
+    order: 2,
+    outline: [2, 3],
+  },
+  {
     source: 'docs/agent-development.md',
     route: 'engineering/agent-development.md',
     label: 'Agent 工程开发',

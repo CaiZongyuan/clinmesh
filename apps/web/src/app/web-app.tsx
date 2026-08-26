@@ -47,6 +47,7 @@ import { getWorkspaceMessages } from './workspace-i18n.ts'
 import { RoleWorkspace } from './role-workspaces.tsx'
 import { roleSections } from './workspace-shell.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
+import { ComponentCatalog } from './component-catalog.tsx'
 
 const DARK_MODE_QUERY = '(prefers-color-scheme: dark)'
 
@@ -271,7 +272,13 @@ const routes = workspaceRoutes.map(({ key, path }) => createRoute({
   path,
 }))
 
-const routeTree = rootRoute.addChildren(routes)
+const componentCatalogRoute = createRoute({
+  component: ComponentCatalog,
+  getParentRoute: () => rootRoute,
+  path: '/components',
+})
+
+const routeTree = rootRoute.addChildren([...routes, componentCatalogRoute])
 
 export function createWebRouter(): ReturnType<typeof createRouter<typeof routeTree>> {
   return createRouter({ routeTree })
