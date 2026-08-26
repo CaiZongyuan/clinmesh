@@ -131,31 +131,31 @@ export function RoleWorkspace({ activeSection, locale, session }: RoleWorkspaceP
   }
   if (
     session.actor.roleCode === 'registrar'
-    && (activeSection === 'overview' || activeSection === 'registration')
+    && activeSection === 'registration'
   ) {
     return <RegistrarWorkspace locale={locale} session={session} />
   }
   if (
     session.actor.roleCode === 'triage-nurse'
-    && (activeSection === 'overview' || activeSection === 'triage')
+    && activeSection === 'triage'
   ) {
     return <TriageWorkspace locale={locale} session={session} />
   }
   if (
     session.actor.roleCode === 'outpatient-doctor'
-    && (activeSection === 'overview' || activeSection === 'consultation')
+    && activeSection === 'consultation'
   ) {
     return <DoctorWorkspace locale={locale} session={session} />
   }
   if (
     session.actor.roleCode === 'cashier'
-    && (activeSection === 'overview' || activeSection === 'billing')
+    && activeSection === 'billing'
   ) {
     return <BillingWorkspace locale={locale} session={session} />
   }
   if (
     session.actor.roleCode === 'pharmacist'
-    && (activeSection === 'overview' || activeSection === 'pharmacy')
+    && activeSection === 'pharmacy'
   ) {
     return <PharmacyWorkspace locale={locale} session={session} />
   }

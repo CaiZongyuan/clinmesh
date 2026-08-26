@@ -47,8 +47,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/component
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardCheckIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, LibraryBigIcon, LockKeyholeIcon, MessagesSquareIcon, PillIcon, PlayIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, SendIcon, ShieldAlertIcon, StethoscopeIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
-import { useEffect, useState, type FormEvent } from 'react'
+import { ActivityIcon, ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, FileTextIcon, FlaskConicalIcon, LibraryBigIcon, LockKeyholeIcon, MessagesSquareIcon, PanelRightCloseIcon, PanelRightOpenIcon, PillIcon, PlayIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, SendIcon, ShieldAlertIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   ApiClientError,
   acknowledgeLaboratoryReport,
@@ -59,7 +59,6 @@ import {
   confirmDiagnosis,
   correctLaboratoryReport,
   deleteLaboratoryRequestDraft,
-  deletePrescriptionDraft,
   getClinicalCatalog,
   getDoctorCase,
   getDoctorQueue,
@@ -174,14 +173,8 @@ interface LaboratoryReportCorrectionInput {
 interface DiagnosisActions {
   confirm: {
     error: Error | null
-    onSubmit: () => void
-    pending: boolean
-  }
-  save: {
-    error: Error | null
     onSubmit: (entries: DiagnosisDraftEntry[]) => void
     pending: boolean
-    success: boolean
   }
 }
 
@@ -194,10 +187,40 @@ const encounterCompletionTargetElementIds = {
   'medication-conclusion': 'encounter-completion-target-medication-conclusion',
 } satisfies Record<EncounterCompletionTarget, string>
 
+type CaseDetailSection = 'record' | 'diagnosis' | 'prescription' | 'examination'
+
+const caseDetailSectionByCompletionTarget = {
+  diagnosis: 'diagnosis',
+  'clinical-document': 'record',
+  laboratory: 'examination',
+  'medication-conclusion': 'prescription',
+} satisfies Record<EncounterCompletionTarget, CaseDetailSection>
+
 function isLaboratoryRequestCatalogItemId(
   value: string,
 ): value is LaboratoryRequestCatalogItemId {
   return laboratoryRequestCatalogItemIdSchema.safeParse(value).success
+}
+
+function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocumentContent {
+  const persisted = detail.clinicalDocument?.draft
+    ?? detail.clinicalDocument?.signed.at(-1)?.content
+  if (persisted !== undefined) return persisted
+  const vitals = detail.presentation.vitalSigns
+  return {
+    assessment: '',
+    auxiliaryExamination: detail.report === undefined
+      ? '暂无辅助检查结果。'
+      : detail.report.results.map(result => `${result.code} ${String(result.value)}`).join('；'),
+    chiefComplaint: detail.presentation.chiefComplaint,
+    disposition: '',
+    followUp: '',
+    historyOfPresentIllness: detail.presentation.summary,
+    physicalExamination: `T ${vitals.temperatureC} °C，P ${vitals.pulseBpm} 次/分，R ${vitals.respirationBpm} 次/分，BP ${vitals.bloodPressure.systolicMmHg}/${vitals.bloodPressure.diastolicMmHg} mmHg，SpO₂ ${vitals.oxygenSaturationPct}%。`,
+    priorMedicalHistory: detail.priorFacts.length === 0
+      ? '系统未记录既往病史。'
+      : detail.priorFacts.map(fact => fact.display || fact.code).join('；'),
+  }
 }
 
 export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
@@ -279,6 +302,10 @@ function ActiveDoctorWorkspace({
   const [selectedVirtualPatientId, setSelectedVirtualPatientId] = useState<string>()
   const [laboratoryItemId, setLaboratoryItemId] = useState('')
   const [indicationCode, setIndicationCode] = useState('')
+  const [workingClinicalDocuments, setWorkingClinicalDocuments] = useState<
+    Record<string, ClinicalDocumentContent>
+  >({})
+  const autoStartRequested = useRef(false)
   const activeCaseId = selectedCaseId ?? queue.data?.items[0]?.caseId
   const selectedCase = queue.data?.items.find(item => item.caseId === activeCaseId)
   const selectedVirtualPatient = virtualPatients.data?.items.find(
@@ -310,20 +337,6 @@ function ActiveDoctorWorkspace({
     queryFn: ({ signal }) => getClinicalCatalog(signal),
     queryKey: ['clinical-catalog', ...scope],
   })
-  useEffect(() => {
-    if (
-      correctionNavigation === undefined
-      || correctionNavigation.handled
-      || detail.data?.caseId !== correctionNavigation.caseId
-    ) return
-    const target = document.getElementById(
-      encounterCompletionTargetElementIds[correctionNavigation.target],
-    )
-    if (target === null) return
-    target.focus()
-    target.scrollIntoView?.({ block: 'start' })
-    onCorrectionNavigationHandled()
-  }, [correctionNavigation, detail.data?.caseId, onCorrectionNavigationHandled])
   const usesIndependentLaboratoryRequests = detail.data?.consultation !== undefined
   const laboratoryCatalog = catalog.data?.laboratory.filter(item => (
     usesIndependentLaboratoryRequests
@@ -350,13 +363,10 @@ function ActiveDoctorWorkspace({
     ? requestedIndicationCode ?? ''
     : resolvedLaboratoryItem?.allowedIndicationCodes[0] ?? ''
   const startCandidate = useMutation({
-    mutationFn: () => {
-      if (selectedVirtualPatient === undefined) {
-        throw new Error(messages.virtualPatientsUnavailable)
-      }
+    mutationFn: (patient: VirtualPatientList['items'][number]) => {
       return startVirtualPatient(
-        selectedVirtualPatient.id,
-        selectedVirtualPatient.version,
+        patient.id,
+        patient.version,
         newIdempotencyKey(),
       )
     },
@@ -370,6 +380,18 @@ function ActiveDoctorWorkspace({
       onSelectedCaseIdChange(response.data.caseId)
     },
   })
+  const autoStartCandidate = virtualPatients.data?.items[0]
+  useEffect(() => {
+    if (
+      autoStartRequested.current
+      || queue.data?.total !== 0
+      || virtualPatients.data === undefined
+      || virtualPatients.data.total < 12
+      || autoStartCandidate === undefined
+    ) return
+    autoStartRequested.current = true
+    startCandidate.mutate(autoStartCandidate)
+  }, [autoStartCandidate, queue.data?.total, startCandidate, virtualPatients.data])
   const refreshCase = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queueKey }),
@@ -498,35 +520,25 @@ function ActiveDoctorWorkspace({
     },
     onSuccess: refreshCase,
   })
-  const saveLaboratoryRequest = useMutation({
-    mutationFn: () => {
+  const issueRequest = useMutation({
+    mutationFn: async () => {
       const current = detail.data
       if (current === undefined
         || !isLaboratoryRequestCatalogItemId(resolvedLaboratoryItemId)
         || resolvedIndicationCode.length === 0) {
         throw new Error(messages.consultationUnavailable)
       }
-      return saveLaboratoryRequestDraft({
+      const saved = await saveLaboratoryRequestDraft({
         catalogItemId: resolvedLaboratoryItemId,
         encounterId: current.encounter.id,
         encounterVersion: current.encounter.versionId,
         expectedDraftVersion: current.laboratoryRequests?.draftVersion ?? 0,
         indicationCode: resolvedIndicationCode,
       }, newIdempotencyKey())
-    },
-    onSuccess: refreshCase,
-  })
-  const issueRequest = useMutation({
-    mutationFn: () => {
-      const current = detail.data
-      const requestState = current?.laboratoryRequests
-      if (current === undefined || requestState?.draft === undefined) {
-        throw new Error(messages.consultationUnavailable)
-      }
       return issueLaboratoryRequest({
         encounterId: current.encounter.id,
         encounterVersion: current.encounter.versionId,
-        expectedDraftVersion: requestState.draftVersion,
+        expectedDraftVersion: saved.data.draftVersion,
       }, newIdempotencyKey())
     },
     onSuccess: refreshCase,
@@ -591,29 +603,20 @@ function ActiveDoctorWorkspace({
     onError: refreshAfterCorrection,
     onSuccess: refreshAfterCorrection,
   })
-  const saveDiagnosis = useMutation({
-    mutationFn: (entries: DiagnosisDraftEntry[]) => {
+  const confirmCaseDiagnosis = useMutation({
+    mutationFn: async (entries: DiagnosisDraftEntry[]) => {
       const current = detail.data
       if (current === undefined) throw new Error(messages.consultationUnavailable)
-      return saveDiagnosisDraft({
+      const saved = await saveDiagnosisDraft({
         encounterId: current.encounter.id,
         encounterVersion: current.encounter.versionId,
         entries,
         expectedDraftVersion: current.diagnosis?.draftVersion ?? 0,
       }, newIdempotencyKey())
-    },
-    onSuccess: refreshCase,
-  })
-  const confirmCaseDiagnosis = useMutation({
-    mutationFn: () => {
-      const current = detail.data
-      if (current?.diagnosis?.draft === undefined) {
-        throw new Error(messages.consultationUnavailable)
-      }
       return confirmDiagnosis({
         encounterId: current.encounter.id,
         encounterVersion: current.encounter.versionId,
-        expectedDraftVersion: current.diagnosis.draftVersion,
+        expectedDraftVersion: saved.data.draftVersion,
       }, newIdempotencyKey())
     },
     onSuccess: refreshCase,
@@ -671,8 +674,11 @@ function ActiveDoctorWorkspace({
     onSuccess: refreshCase,
   })
   return (
-    <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(18rem,0.72fr)_minmax(30rem,1.28fr)]">
-      <div className="flex min-w-0 flex-col gap-5 border-b pb-6 xl:border-r xl:border-b-0 xl:pr-6">
+    <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-[minmax(15rem,16rem)_minmax(0,1fr)]">
+      <aside
+        aria-label={messages.consultationQueue}
+        className="flex min-w-0 flex-col gap-5 border-b pb-5 xl:border-r xl:border-b-0 xl:pr-5"
+      >
         <section aria-labelledby="virtual-patient-heading" className="flex min-w-0 flex-col gap-3 border-b pb-5">
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-base font-semibold" id="virtual-patient-heading">{messages.virtualPatientCandidates}</h2>
@@ -708,11 +714,11 @@ function ActiveDoctorWorkspace({
                     <Badge variant="outline">{messages[`gender_${selectedVirtualPatient.gender}` as 'gender_male']}</Badge>
                     <span>{messages.birthDate} {selectedVirtualPatient.birthDate}</span>
                   </div>
-                  <div className="space-y-1 text-sm">
+                  <div className="flex flex-col gap-1 text-sm">
                     <div className="text-xs text-muted-foreground">{messages.presentationSummary}</div>
                     <p>{selectedVirtualPatient.presentation.summary}</p>
                   </div>
-                  <dl className="grid grid-cols-3 gap-x-3 gap-y-2 text-xs sm:grid-cols-5">
+                  <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
                     <VitalSummary label="T" value={selectedVirtualPatient.presentation.vitalSigns.temperatureC} />
                     <VitalSummary label="P" value={selectedVirtualPatient.presentation.vitalSigns.pulseBpm} />
                     <VitalSummary label="R" value={selectedVirtualPatient.presentation.vitalSigns.respirationBpm} />
@@ -722,7 +728,11 @@ function ActiveDoctorWorkspace({
                   {startCandidate.isError ? (
                     <ErrorAlert message={getWorkspaceErrorMessage(startCandidate.error, messages)} title={getWorkspaceErrorTitle(startCandidate.error, messages, messages.operationFailed)} />
                   ) : null}
-                  <Button disabled={startCandidate.isPending} onClick={() => startCandidate.mutate()} type="button">
+                  <Button
+                    disabled={startCandidate.isPending}
+                    onClick={() => startCandidate.mutate(selectedVirtualPatient)}
+                    type="button"
+                  >
                     {startCandidate.isPending
                       ? <Spinner aria-hidden="true" />
                       : <PlayIcon aria-hidden="true" />}
@@ -785,10 +795,10 @@ function ActiveDoctorWorkspace({
             </div>
           )}
         </section>
-      </div>
+      </aside>
 
       <section aria-labelledby="case-detail-heading" className="flex min-w-0 flex-col gap-5">
-        <h2 className="text-base font-semibold" id="case-detail-heading">{messages.caseDetail}</h2>
+        <h2 className="sr-only" id="case-detail-heading">{messages.caseDetail}</h2>
         {issueOrder.isSuccess ? (
           <Alert>
             <CheckIcon aria-hidden="true" />
@@ -813,6 +823,7 @@ function ActiveDoctorWorkspace({
           <CaseDetail
             completionQueryScope={encounterCompletionScopeKey}
             correctionTarget={correctionNavigation?.caseId === detail.data.caseId
+              && !correctionNavigation.handled
               ? correctionNavigation.target
               : undefined}
             consultationAction={{
@@ -825,14 +836,8 @@ function ActiveDoctorWorkspace({
             diagnosisActions={{
               confirm: {
                 error: confirmCaseDiagnosis.error,
-                onSubmit: () => confirmCaseDiagnosis.mutate(),
+                onSubmit: entries => confirmCaseDiagnosis.mutate(entries),
                 pending: confirmCaseDiagnosis.isPending,
-              },
-              save: {
-                error: saveDiagnosis.error,
-                onSubmit: entries => saveDiagnosis.mutate(entries),
-                pending: saveDiagnosis.isPending,
-                success: saveDiagnosis.isSuccess,
               },
             }}
             indicationCode={resolvedIndicationCode}
@@ -902,15 +907,22 @@ function ActiveDoctorWorkspace({
                 pending: issueRequest.isPending,
               },
               save: {
-                error: saveLaboratoryRequest.error,
-                onSubmit: () => saveLaboratoryRequest.mutate(),
-                pending: saveLaboratoryRequest.isPending,
+                error: null,
+                onSubmit: () => issueRequest.mutate(),
+                pending: issueRequest.isPending,
               },
             }}
             locale={locale}
             messages={messages}
+            onClinicalDocumentChange={document => {
+              setWorkingClinicalDocuments(current => ({
+                ...current,
+                [detail.data.caseId]: document,
+              }))
+            }}
             onIndicationChange={setIndicationCode}
             onCorrectionCompleted={refreshAfterCorrection}
+            onCorrectionNavigationHandled={onCorrectionNavigationHandled}
             onEncounterCompleted={refreshAfterCompletion}
             onLaboratoryItemChange={(value) => {
               setLaboratoryItemId(value)
@@ -942,6 +954,8 @@ function ActiveDoctorWorkspace({
             startPending={start.isPending}
             startRevisitError={beginRevisit.error}
             startRevisitPending={beginRevisit.isPending}
+            workingClinicalDocument={workingClinicalDocuments[detail.data.caseId]
+              ?? createWorkingClinicalDocument(detail.data)}
           />
         )}
       </section>
@@ -964,10 +978,12 @@ function CaseDetail({
   laboratoryRequestActions,
   locale,
   messages,
+  onClinicalDocumentChange,
   onEncounterCompleted,
   onIssueOrder,
   onIndicationChange,
   onCorrectionCompleted,
+  onCorrectionNavigationHandled,
   onRefreshCase,
   onPreviewSign,
   onLaboratoryItemChange,
@@ -992,6 +1008,7 @@ function CaseDetail({
   startPending,
   startRevisitError,
   startRevisitPending,
+  workingClinicalDocument,
 }: {
   catalog: ReturnType<typeof useQuery<Awaited<ReturnType<typeof getClinicalCatalog>>>>
   completionQueryScope: EncounterCompletionQueryScope
@@ -1007,10 +1024,12 @@ function CaseDetail({
   laboratoryRequestActions: LaboratoryRequestActions
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
+  onClinicalDocumentChange: (document: ClinicalDocumentContent) => void
   onEncounterCompleted: () => Promise<void>
   onIssueOrder: () => void
   onIndicationChange: (value: string) => void
   onCorrectionCompleted: () => Promise<void>
+  onCorrectionNavigationHandled: () => void
   onRefreshCase: () => Promise<void>
   onPreviewSign: () => void
   onLaboratoryItemChange: (value: string) => void
@@ -1044,10 +1063,17 @@ function CaseDetail({
   startPending: boolean
   startRevisitError: Error | null
   startRevisitPending: boolean
+  workingClinicalDocument: ClinicalDocumentContent
 }): React.JSX.Element {
   const firstVisitDraft = detail.drafts?.firstVisit
   const presentation = detail.presentation
   const readOnly = detail.encounter.status !== 'in-progress'
+  const [activeSection, setActiveSection] = useState<CaseDetailSection>('record')
+  const [consultationSidebarOpen, setConsultationSidebarOpen] = useState(false)
+  const [pendingNavigation, setPendingNavigation] = useState<{
+    source: 'checklist' | 'correction'
+    target: EncounterCompletionTarget
+  }>()
   const laboratoryItems = laboratoryCatalog.map(item => ({
     label: `${locale === 'zh-CN' ? item.nameZh : item.nameEn} · ${formatFen(item.priceFen ?? 0, locale)}`,
     value: item.id,
@@ -1058,311 +1084,554 @@ function CaseDetail({
       label: indicationLabel(code, messages),
       value: code,
     })) ?? []
-  return (
-    <div className="flex flex-col gap-5">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-4">
-        <div>
-          <div className="text-lg font-semibold">{detail.patient.name}</div>
-          <div className="text-sm text-muted-foreground">{detail.patient.identifier}</div>
-        </div>
-        <Badge variant="outline">{statusLabel(detail.status, messages)}</Badge>
-      </div>
-      {readOnly ? (
-        <Alert>
-          <LockKeyholeIcon aria-hidden="true" />
-          <AlertTitle>{messages.encounterReadOnly}</AlertTitle>
-        </Alert>
-      ) : detail.consultation === undefined ? null : (
-        <EncounterCompletionPanel
-          detail={detail}
-          messages={messages}
-          onCompleted={onEncounterCompleted}
-          onRefresh={onRefreshCase}
-          queryScope={completionQueryScope}
+
+  useEffect(() => {
+    if (correctionTarget === undefined) return
+    setActiveSection(caseDetailSectionByCompletionTarget[correctionTarget])
+    setPendingNavigation({ source: 'correction', target: correctionTarget })
+  }, [correctionTarget, detail.caseId])
+
+  useEffect(() => {
+    if (pendingNavigation === undefined) return
+    const target = document.getElementById(
+      encounterCompletionTargetElementIds[pendingNavigation.target],
+    )
+    if (target === null) return
+    target.focus()
+    target.scrollIntoView?.({ block: 'start' })
+    if (pendingNavigation.source === 'correction') onCorrectionNavigationHandled()
+    setPendingNavigation(undefined)
+  }, [activeSection, onCorrectionNavigationHandled, pendingNavigation])
+
+  const navigateToCompletionTarget = (target: EncounterCompletionTarget): void => {
+    setActiveSection(caseDetailSectionByCompletionTarget[target])
+    setPendingNavigation({ source: 'checklist', target })
+  }
+
+  const overviewWorkflow = readOnly ? null : detail.status === 'awaiting-doctor' ? (
+    <div className="flex flex-col items-start gap-3">
+      <Button disabled={startPending} onClick={onStart} type="button">
+        <StethoscopeIcon data-icon="inline-start" />
+        {messages.startFirstVisit}
+      </Button>
+      {startError === null ? null : (
+        <ErrorAlert
+          message={getWorkspaceErrorMessage(startError, messages)}
+          title={getWorkspaceErrorTitle(startError, messages, messages.operationFailed)}
         />
       )}
-      <section aria-labelledby="clinical-presentation-heading" className="flex flex-col gap-2">
-        <h3 className="text-sm font-semibold" id="clinical-presentation-heading">
-          {detail.triage === undefined ? messages.clinicalPresentation : messages.triageSummary}
+    </div>
+  ) : detail.status === 'awaiting-revisit' ? (
+    <div className="flex flex-col items-start gap-3">
+      <Button disabled={startRevisitPending} onClick={onStartRevisit} type="button">
+        <StethoscopeIcon data-icon="inline-start" />
+        {messages.startRevisit}
+      </Button>
+      {startRevisitError === null ? null : (
+        <ErrorAlert
+          message={getWorkspaceErrorMessage(startRevisitError, messages)}
+          title={getWorkspaceErrorTitle(startRevisitError, messages, messages.operationFailed)}
+        />
+      )}
+    </div>
+  ) : null
+
+  const firstVisitRecord = readOnly || detail.status !== 'first-visit' ? null : (
+    <section aria-labelledby="first-visit-heading" className="flex flex-col gap-3">
+      <h3 className="text-sm font-semibold" id="first-visit-heading">{messages.firstVisitRecord}</h3>
+      <form
+        aria-labelledby="first-visit-heading"
+        key={`${detail.caseId}:${firstVisitDraft?.version ?? 0}`}
+        onSubmit={event => {
+          event.preventDefault()
+          const data = new FormData(event.currentTarget)
+          onSaveDraft({
+            assessment: String(data.get('assessment') ?? ''),
+            historyOfPresentIllness: String(data.get('historyOfPresentIllness') ?? ''),
+          })
+        }}
+      >
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="first-visit-history">{messages.historyOfPresentIllness}</FieldLabel>
+            <Textarea
+              defaultValue={firstVisitDraft?.historyOfPresentIllness}
+              id="first-visit-history"
+              name="historyOfPresentIllness"
+              required
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="first-visit-assessment">{messages.firstVisitAssessment}</FieldLabel>
+            <Textarea
+              defaultValue={firstVisitDraft?.assessment}
+              id="first-visit-assessment"
+              name="assessment"
+              required
+            />
+          </Field>
+          <div className="flex justify-end">
+            <Button disabled={saveDraftPending} type="submit">
+              <ClipboardPenIcon data-icon="inline-start" />
+              {messages.saveFirstVisitDraft}
+            </Button>
+          </div>
+          {saveDraftSuccess ? (
+            <Alert><CheckIcon aria-hidden="true" /><AlertTitle>{messages.draftSaved}</AlertTitle></Alert>
+          ) : null}
+          {saveDraftError === null ? null : (
+            <ErrorAlert
+              message={getWorkspaceErrorMessage(saveDraftError, messages)}
+              title={getWorkspaceErrorTitle(saveDraftError, messages, messages.operationFailed)}
+            />
+          )}
+        </FieldGroup>
+      </form>
+    </section>
+  )
+
+  const legacyLaboratoryOrder = readOnly
+    || detail.consultation !== undefined
+    || detail.status !== 'first-visit'
+    ? null
+    : (
+      <section aria-labelledby="laboratory-order-heading" className="flex flex-col gap-3">
+        <h3 className="text-sm font-semibold" id="laboratory-order-heading">
+          {messages.laboratoryOrder}
         </h3>
-        <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-          <div className="sm:col-span-2"><dt className="text-muted-foreground">{messages.chiefComplaint}</dt><dd className="font-medium">{presentation.chiefComplaint}</dd></div>
-          {presentation.summary === presentation.chiefComplaint ? null : (
-            <div className="sm:col-span-2"><dt className="text-muted-foreground">{messages.presentationSummary}</dt><dd className="font-medium">{presentation.summary}</dd></div>
-          )}
-          <div><dt className="text-muted-foreground">{messages.temperatureC}</dt><dd className="font-medium">{presentation.vitalSigns.temperatureC}</dd></div>
-          <div><dt className="text-muted-foreground">{messages.pulseBpm}</dt><dd className="font-medium">{presentation.vitalSigns.pulseBpm}</dd></div>
-          <div><dt className="text-muted-foreground">{messages.respirationBpm}</dt><dd className="font-medium">{presentation.vitalSigns.respirationBpm}</dd></div>
-          <div><dt className="text-muted-foreground">{messages.bloodPressure}</dt><dd className="font-medium">{presentation.vitalSigns.bloodPressure.systolicMmHg}/{presentation.vitalSigns.bloodPressure.diastolicMmHg}</dd></div>
-          <div><dt className="text-muted-foreground">{messages.oxygenSaturationPct}</dt><dd className="font-medium">{presentation.vitalSigns.oxygenSaturationPct}</dd></div>
-          {detail.triage === undefined ? null : (
-            <div><dt className="text-muted-foreground">{messages.acuity}</dt><dd className="font-medium">{messages[`acuity_${detail.triage.acuityCode.replace('-', '')}` as 'acuity_level1']}</dd></div>
-          )}
-        </dl>
+        {catalog.isPending ? <Skeleton className="h-20 w-full" /> : catalog.isError ? (
+          <ErrorAlert
+            message={getWorkspaceErrorMessage(catalog.error, messages)}
+            title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)}
+          />
+        ) : (
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="laboratory-item">{messages.laboratoryItem}</FieldLabel>
+              <WorkspaceSelect
+                id="laboratory-item"
+                items={laboratoryItems}
+                onValueChange={value => onLaboratoryItemChange(value ?? '')}
+                value={laboratoryItemId}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="laboratory-indication">{messages.laboratoryIndication}</FieldLabel>
+              <WorkspaceSelect
+                id="laboratory-indication"
+                items={indicationItems}
+                onValueChange={value => onIndicationChange(value ?? '')}
+                value={indicationCode}
+              />
+            </Field>
+            <div className="flex justify-end">
+              <Button
+                disabled={firstVisitDraft === undefined || issueOrderPending}
+                onClick={onIssueOrder}
+                type="button"
+              >
+                <FlaskConicalIcon data-icon="inline-start" />
+                {messages.issueLaboratoryOrder}
+              </Button>
+            </div>
+            {issueOrderError === null ? null : (
+              <ErrorAlert
+                message={getWorkspaceErrorMessage(issueOrderError, messages)}
+                title={getWorkspaceErrorTitle(issueOrderError, messages, messages.operationFailed)}
+              />
+            )}
+          </FieldGroup>
+        )}
       </section>
-      {detail.consultation === undefined ? null : (
-        <ConsultationPanel
-          action={consultationAction}
-          consultation={detail.consultation}
-          key={detail.caseId}
+    )
+
+  const awaitingReport = readOnly || detail.status !== 'awaiting-report' ? null : (
+    <Alert>
+      <RefreshCwIcon aria-hidden="true" />
+      <AlertTitle>{messages.awaitingLisReport}</AlertTitle>
+      <AlertDescription>{messages.awaitingLisReportDescription}</AlertDescription>
+    </Alert>
+  )
+
+  const revisitWorkflow = readOnly
+    || detail.status !== 'revisit-draft'
+    || detail.consultation !== undefined
+    ? null
+    : catalog.isPending ? <Skeleton className="h-72 w-full" /> : catalog.isError ? (
+      <ErrorAlert
+        message={getWorkspaceErrorMessage(catalog.error, messages)}
+        title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)}
+      />
+    ) : (
+      <div className="flex flex-col gap-3">
+        {saveRevisitSuccess ? (
+          <Alert><CheckIcon aria-hidden="true" /><AlertTitle>{messages.revisitDraftSaved}</AlertTitle></Alert>
+        ) : null}
+        {detail.drafts?.prescription === undefined ? null : (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-muted-foreground">{messages.prescriptionNumber}</span>
+            <Badge variant="outline">{detail.drafts.prescription.number}</Badge>
+          </div>
+        )}
+        <RevisitEditor
+          catalog={catalog.data}
+          detail={detail}
+          key={`${detail.caseId}:${detail.drafts?.prescription?.version ?? 0}`}
           locale={locale}
           messages={messages}
-          patientName={detail.patient.name}
-          readOnly={readOnly}
+          onSave={onSaveRevisit}
+          pending={saveRevisitPending}
         />
-      )}
-      <section aria-labelledby="prior-facts-heading" className="flex flex-col gap-2 border-b pb-4">
-        <h3 className="text-sm font-semibold" id="prior-facts-heading">{messages.priorFacts}</h3>
-        {detail.priorFacts.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{messages.noPriorFacts}</p>
-        ) : (
-          <ul className="flex list-disc flex-col gap-1 pl-5 text-sm">
-            {detail.priorFacts.map(fact => (
-              <li key={fact.id}>{fact.display || fact.code}{fact.recordedDate === undefined ? '' : ` · ${fact.recordedDate}`}</li>
-            ))}
-          </ul>
+        {saveRevisitError === null ? null : (
+          <ErrorAlert
+            message={getWorkspaceErrorMessage(saveRevisitError, messages)}
+            title={getWorkspaceErrorTitle(saveRevisitError, messages, messages.operationFailed)}
+          />
         )}
-      </section>
-      <section aria-labelledby="allergy-summary-heading" className="flex flex-col gap-2 border-b pb-4">
-        <h3 className="text-sm font-semibold" id="allergy-summary-heading">{messages.allergySummary}</h3>
-        {detail.allergies.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{messages.noKnownAllergies}</p>
-        ) : (
-          <Alert variant="destructive">
-            <ShieldAlertIcon aria-hidden="true" />
-            <AlertTitle>{messages.allergySummary}</AlertTitle>
-            <AlertDescription>
-              <ul className="flex list-disc flex-col gap-1 pl-4">
-                {detail.allergies.map(allergy => (
-                  <li key={allergy.code}>{allergy.display}</li>
-                ))}
-              </ul>
-            </AlertDescription>
-          </Alert>
-        )}
-      </section>
-      {detail.report === undefined ? null : (
-        <LaboratoryReport locale={locale} messages={messages} report={detail.report} />
-      )}
-      {readOnly ? null : detail.status === 'awaiting-doctor' ? (
-        <div className="flex flex-col items-start gap-3">
-          <Button disabled={startPending} onClick={onStart} type="button"><StethoscopeIcon data-icon="inline-start" />{messages.startFirstVisit}</Button>
-          {startError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(startError, messages)} title={getWorkspaceErrorTitle(startError, messages, messages.operationFailed)} />}
-        </div>
-      ) : detail.status === 'first-visit' ? (
-        <div className="flex flex-col gap-6">
-          <section aria-labelledby="first-visit-heading" className="flex flex-col gap-3">
-            <h3 className="text-sm font-semibold" id="first-visit-heading">{messages.firstVisitRecord}</h3>
-            <form
-              aria-labelledby="first-visit-heading"
-              key={`${detail.caseId}:${firstVisitDraft?.version ?? 0}`}
-              onSubmit={event => {
-                event.preventDefault()
-                const data = new FormData(event.currentTarget)
-                onSaveDraft({
-                  assessment: String(data.get('assessment') ?? ''),
-                  historyOfPresentIllness: String(data.get('historyOfPresentIllness') ?? ''),
-                })
-              }}
-            >
-              <FieldGroup>
-                <Field><FieldLabel htmlFor="first-visit-history">{messages.historyOfPresentIllness}</FieldLabel><Textarea defaultValue={firstVisitDraft?.historyOfPresentIllness} id="first-visit-history" name="historyOfPresentIllness" required /></Field>
-                <Field><FieldLabel htmlFor="first-visit-assessment">{messages.firstVisitAssessment}</FieldLabel><Textarea defaultValue={firstVisitDraft?.assessment} id="first-visit-assessment" name="assessment" required /></Field>
-                <div className="flex justify-end"><Button disabled={saveDraftPending} type="submit"><ClipboardPenIcon data-icon="inline-start" />{messages.saveFirstVisitDraft}</Button></div>
-                {saveDraftSuccess ? <Alert><CheckIcon aria-hidden="true" /><AlertTitle>{messages.draftSaved}</AlertTitle></Alert> : null}
-                {saveDraftError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(saveDraftError, messages)} title={getWorkspaceErrorTitle(saveDraftError, messages, messages.operationFailed)} />}
-              </FieldGroup>
-            </form>
-          </section>
-          {detail.consultation !== undefined ? null : (
-            <section aria-labelledby="laboratory-order-heading" className="flex flex-col gap-3 border-t pt-5">
-              <h3 className="text-sm font-semibold" id="laboratory-order-heading">{messages.laboratoryOrder}</h3>
-              {catalog.isPending ? <Skeleton className="h-20 w-full" /> : catalog.isError ? <ErrorAlert message={getWorkspaceErrorMessage(catalog.error, messages)} title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)} /> : (
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="laboratory-item">{messages.laboratoryItem}</FieldLabel>
-                  <WorkspaceSelect id="laboratory-item" items={laboratoryItems} onValueChange={value => onLaboratoryItemChange(value ?? '')} value={laboratoryItemId} />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="laboratory-indication">{messages.laboratoryIndication}</FieldLabel>
-                  <WorkspaceSelect id="laboratory-indication" items={indicationItems} onValueChange={value => onIndicationChange(value ?? '')} value={indicationCode} />
-                </Field>
-                <div className="flex justify-end"><Button disabled={firstVisitDraft === undefined || issueOrderPending} onClick={onIssueOrder} type="button"><FlaskConicalIcon data-icon="inline-start" />{messages.issueLaboratoryOrder}</Button></div>
-                {issueOrderError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(issueOrderError, messages)} title={getWorkspaceErrorTitle(issueOrderError, messages, messages.operationFailed)} />}
-              </FieldGroup>
-              )}
-            </section>
-          )}
-        </div>
-      ) : detail.status === 'awaiting-report' ? (
-        <Alert>
-          <RefreshCwIcon aria-hidden="true" />
-          <AlertTitle>{messages.awaitingLisReport}</AlertTitle>
-          <AlertDescription>{messages.awaitingLisReportDescription}</AlertDescription>
-        </Alert>
-      ) : detail.status === 'awaiting-revisit' ? (
-        <div className="flex flex-col items-start gap-3">
-          <Button disabled={startRevisitPending} onClick={onStartRevisit} type="button">
-            <StethoscopeIcon data-icon="inline-start" />{messages.startRevisit}
-          </Button>
-          {startRevisitError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(startRevisitError, messages)} title={getWorkspaceErrorTitle(startRevisitError, messages, messages.operationFailed)} />}
-        </div>
-      ) : detail.status === 'revisit-draft' && detail.consultation === undefined ? (
-        catalog.isPending ? <Skeleton className="h-72 w-full" /> : catalog.isError ? (
-          <ErrorAlert message={getWorkspaceErrorMessage(catalog.error, messages)} title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)} />
-        ) : (
-          <div className="flex flex-col gap-3">
-            {saveRevisitSuccess ? (
-              <Alert>
-                <CheckIcon aria-hidden="true" />
-                <AlertTitle>{messages.revisitDraftSaved}</AlertTitle>
-              </Alert>
-            ) : null}
-            {detail.drafts?.prescription === undefined ? null : (
-              <div className="flex flex-wrap items-center gap-2 text-sm">
-                <span className="text-muted-foreground">{messages.prescriptionNumber}</span>
-                <Badge variant="outline">{detail.drafts.prescription.number}</Badge>
-              </div>
+        {signCompleted ? null : (
+          <section aria-labelledby="clinical-sign-heading" className="flex flex-col gap-3 border-t pt-5">
+            <div className="flex justify-end">
+              <Button
+                disabled={signPreviewPending}
+                onClick={onPreviewSign}
+                type="button"
+                variant="outline"
+              >
+                <FileSignatureIcon data-icon="inline-start" />
+                {messages.previewClinicalSign}
+              </Button>
+            </div>
+            {signPreviewError === null ? null : (
+              <ErrorAlert
+                message={getWorkspaceErrorMessage(signPreviewError, messages)}
+                title={getWorkspaceErrorTitle(signPreviewError, messages, messages.operationFailed)}
+              />
             )}
-            <RevisitEditor
-              catalog={catalog.data}
-              detail={detail}
-              key={`${detail.caseId}:${detail.drafts?.prescription?.version ?? 0}`}
-              locale={locale}
-              messages={messages}
-              onSave={onSaveRevisit}
-              pending={saveRevisitPending}
-            />
-            {saveRevisitError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(saveRevisitError, messages)} title={getWorkspaceErrorTitle(saveRevisitError, messages, messages.operationFailed)} />}
-            {signCompleted ? null : (
-              <section aria-labelledby="clinical-sign-heading" className="flex flex-col gap-3 border-t pt-5">
+            {signPreview === undefined ? null : (
+              <div className="flex flex-col gap-3">
+                <h3 className="text-sm font-semibold" id="clinical-sign-heading">
+                  {messages.clinicalSignPreview}
+                </h3>
+                <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                  <div>
+                    <dt className="text-muted-foreground">{messages.diagnosis}</dt>
+                    <dd className="font-medium">
+                      {signPreview.summary.diagnosis.code} · {signPreview.summary.diagnosis.display}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">{messages.documentSummary}</dt>
+                    <dd className="font-medium">{signPreview.summary.document.assessment}</dd>
+                    <dd className="text-muted-foreground">{signPreview.summary.document.plan}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">{messages.amount}</dt>
+                    <dd className="font-medium">{formatFen(signPreview.medicationTotalFen, locale)}</dd>
+                  </div>
+                </dl>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{messages.medication}</TableHead>
+                      <TableHead>{messages.quantity}</TableHead>
+                      <TableHead>{messages.unitPrice}</TableHead>
+                      <TableHead>{messages.subtotal}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {signPreview.summary.medications.map(medication => (
+                      <TableRow key={medication.medicationRequestId}>
+                        <TableCell className="font-medium">
+                          {locale === 'zh-CN' ? medication.nameZh : medication.nameEn}
+                        </TableCell>
+                        <TableCell>{medication.quantity}</TableCell>
+                        <TableCell>{formatFen(medication.unitPriceFen, locale)}</TableCell>
+                        <TableCell>{formatFen(medication.subtotalFen, locale)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
                 <div className="flex justify-end">
-                  <Button disabled={signPreviewPending} onClick={onPreviewSign} type="button" variant="outline">
-                    <FileSignatureIcon data-icon="inline-start" />{messages.previewClinicalSign}
+                  <Button disabled={signPending} onClick={onSign} type="button">
+                    <CheckCircleIcon data-icon="inline-start" />
+                    {messages.confirmClinicalSign}
                   </Button>
                 </div>
-                {signPreviewError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(signPreviewError, messages)} title={getWorkspaceErrorTitle(signPreviewError, messages, messages.operationFailed)} />}
-                {signPreview === undefined ? null : (
-                  <div className="flex flex-col gap-3">
-                    <h3 className="text-sm font-semibold" id="clinical-sign-heading">{messages.clinicalSignPreview}</h3>
-                    <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-                      <div><dt className="text-muted-foreground">{messages.diagnosis}</dt><dd className="font-medium">{signPreview.summary.diagnosis.code} · {signPreview.summary.diagnosis.display}</dd></div>
-                      <div><dt className="text-muted-foreground">{messages.documentSummary}</dt><dd className="font-medium">{signPreview.summary.document.assessment}</dd><dd className="text-muted-foreground">{signPreview.summary.document.plan}</dd></div>
-                      <div><dt className="text-muted-foreground">{messages.amount}</dt><dd className="font-medium">{formatFen(signPreview.medicationTotalFen, locale)}</dd></div>
-                    </dl>
-                    <Table>
-                      <TableHeader><TableRow><TableHead>{messages.medication}</TableHead><TableHead>{messages.quantity}</TableHead><TableHead>{messages.unitPrice}</TableHead><TableHead>{messages.subtotal}</TableHead></TableRow></TableHeader>
-                      <TableBody>{signPreview.summary.medications.map(medication => (
-                        <TableRow key={medication.medicationRequestId}>
-                          <TableCell className="font-medium">{locale === 'zh-CN' ? medication.nameZh : medication.nameEn}</TableCell>
-                          <TableCell>{medication.quantity}</TableCell>
-                          <TableCell>{formatFen(medication.unitPriceFen, locale)}</TableCell>
-                          <TableCell>{formatFen(medication.subtotalFen, locale)}</TableCell>
-                        </TableRow>
-                      ))}</TableBody>
-                    </Table>
-                    <div className="flex justify-end">
-                      <Button disabled={signPending} onClick={onSign} type="button">
-                        <CheckCircleIcon data-icon="inline-start" />{messages.confirmClinicalSign}
-                      </Button>
-                    </div>
-                  </div>
+              </div>
+            )}
+            {signError === null ? null : (
+              <ErrorAlert
+                message={getWorkspaceErrorMessage(signError, messages)}
+                title={getWorkspaceErrorTitle(signError, messages, messages.operationFailed)}
+              />
+            )}
+          </section>
+        )}
+      </div>
+    )
+
+  return (
+    <div className={consultationSidebarOpen
+      ? 'grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(16rem,18rem)]'
+      : 'grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_2.75rem]'}>
+      <div className="flex min-w-0 flex-col gap-4">
+        <section className="overflow-hidden rounded-md border bg-background" aria-label={messages.caseDetail}>
+          <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="truncate text-lg font-semibold">{detail.patient.name}</h2>
+                <Badge variant="outline">{messages[`gender_${detail.patient.gender}` as 'gender_male']}</Badge>
+                <span className="text-sm text-muted-foreground">{detail.patient.birthDate}</span>
+              </div>
+              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                <span>{messages.registrationNumber}：{detail.patient.identifier}</span>
+                <span>{messages.chiefComplaint}：{presentation.chiefComplaint}</span>
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Badge variant="secondary">{statusLabel(detail.status, messages)}</Badge>
+              {readOnly ? (
+                <Badge variant="outline"><LockKeyholeIcon aria-hidden="true" />{messages.encounterReadOnly}</Badge>
+              ) : detail.consultation === undefined ? null : (
+                <EncounterCompletionPanel
+                  detail={detail}
+                  messages={messages}
+                  onCompleted={onEncounterCompleted}
+                  onNavigate={navigateToCompletionTarget}
+                  onRefresh={onRefreshCase}
+                  queryScope={completionQueryScope}
+                />
+              )}
+            </div>
+          </div>
+          <dl className="grid grid-cols-2 gap-px border-t bg-border sm:grid-cols-3 lg:grid-cols-5 [&>div]:bg-background [&>div]:px-3 [&>div]:py-2.5">
+            <VitalSummary label="T" value={`${presentation.vitalSigns.temperatureC} °C`} />
+            <VitalSummary label="P" value={`${presentation.vitalSigns.pulseBpm} 次/分`} />
+            <VitalSummary label="R" value={`${presentation.vitalSigns.respirationBpm} 次/分`} />
+            <VitalSummary label="BP" value={`${presentation.vitalSigns.bloodPressure.systolicMmHg}/${presentation.vitalSigns.bloodPressure.diastolicMmHg} mmHg`} />
+            <VitalSummary label="SpO₂" value={`${presentation.vitalSigns.oxygenSaturationPct}%`} />
+          </dl>
+        </section>
+
+        <Tabs
+          className="min-w-0 gap-0 rounded-md border bg-background"
+          onValueChange={value => {
+            if (value === 'record' || value === 'diagnosis' || value === 'prescription' || value === 'examination') {
+              setActiveSection(value)
+            }
+          }}
+          value={activeSection}
+        >
+          <div className="overflow-x-auto border-b px-2">
+            <TabsList className="h-11 min-w-max" variant="line">
+              <TabsTrigger value="record"><ClipboardListIcon aria-hidden="true" />{messages.medicalRecord}</TabsTrigger>
+              <TabsTrigger value="diagnosis"><StethoscopeIcon aria-hidden="true" />{messages.diagnosis}</TabsTrigger>
+              <TabsTrigger value="prescription"><PillIcon aria-hidden="true" />{messages.prescription}</TabsTrigger>
+              <TabsTrigger value="examination"><TestTubesIcon aria-hidden="true" />{messages.healthRecord}</TabsTrigger>
+            </TabsList>
+          </div>
+
+          <TabsContent className="p-4" value="record">
+            <div className="flex flex-col gap-4">
+              {overviewWorkflow}
+              <div className="min-w-0">
+                {detail.consultation === undefined ? firstVisitRecord : (
+                  <StructuredClinicalDocumentPanel
+                    allowRevision={!readOnly || correctionTarget === 'clinical-document'}
+                    detail={detail}
+                    key={`structured-clinical-document:${detail.caseId}`}
+                    locale={locale}
+                    messages={messages}
+                    onDocumentChange={onClinicalDocumentChange}
+                    onRevisionCompleted={onCorrectionCompleted}
+                    onRefresh={onRefreshCase}
+                    workingDocument={workingClinicalDocument}
+                  />
                 )}
-                {signError === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(signError, messages)} title={getWorkspaceErrorTitle(signError, messages, messages.operationFailed)} />}
-              </section>
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent className="p-4" value="diagnosis">
+            {detail.consultation === undefined ? revisitWorkflow : catalog.isPending ? (
+              <Skeleton className="h-72 w-full" />
+            ) : catalog.isError ? (
+              <ErrorAlert
+                message={getWorkspaceErrorMessage(catalog.error, messages)}
+                title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)}
+              />
+            ) : (
+              <DiagnosisEditor
+                actions={diagnosisActions}
+                catalog={catalog.data.diagnoses}
+                key={`${detail.caseId}:${detail.diagnosis?.draftVersion ?? 0}`}
+                locale={locale}
+                messages={messages}
+                readOnly={readOnly}
+                state={detail.diagnosis}
+              />
+            )}
+          </TabsContent>
+
+          <TabsContent className="p-4" value="prescription">
+            {detail.consultation === undefined || catalog.isPending ? (
+              detail.consultation === undefined ? revisitWorkflow : <Skeleton className="h-72 w-full" />
+            ) : catalog.isError ? (
+              <ErrorAlert
+                message={getWorkspaceErrorMessage(catalog.error, messages)}
+                title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)}
+              />
+            ) : catalog.data.prescriptionConclusionSupported ? (
+              <MedicationConclusionPanel
+                allowWithdrawal={!readOnly || correctionTarget === 'medication-conclusion'}
+                catalog={catalog.data.medications}
+                detail={detail}
+                key={`medication-conclusion:${detail.caseId}`}
+                locale={locale}
+                messages={messages}
+                onRefresh={correctionTarget === 'medication-conclusion'
+                  ? onCorrectionCompleted
+                  : onRefreshCase}
+                readOnly={readOnly}
+              />
+            ) : null}
+          </TabsContent>
+
+          <TabsContent className="p-4" value="examination">
+            <div className="flex flex-col gap-5">
+              <ClinicalBackgroundPanel detail={detail} messages={messages} />
+              {detail.report === undefined ? null : (
+                <LaboratoryReport locale={locale} messages={messages} report={detail.report} />
+              )}
+              {awaitingReport}
+              {legacyLaboratoryOrder}
+              {detail.consultation === undefined ? null : (
+                <section
+                  aria-labelledby="independent-laboratory-order-heading"
+                  className="flex flex-col gap-3"
+                  id={encounterCompletionTargetElementIds.laboratory}
+                  tabIndex={-1}
+                >
+                  <h3 className="text-sm font-semibold" id="independent-laboratory-order-heading">{messages.laboratoryOrder}</h3>
+                  {catalog.isPending ? <Skeleton className="h-20 w-full" /> : catalog.isError ? (
+                    <ErrorAlert
+                      message={getWorkspaceErrorMessage(catalog.error, messages)}
+                      title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)}
+                    />
+                  ) : (
+                    <LaboratoryRequestEditor
+                      actions={laboratoryRequestActions}
+                      caseId={detail.caseId}
+                      catalog={laboratoryCatalog}
+                      indicationCode={indicationCode}
+                      indicationItems={indicationItems}
+                      laboratoryItemId={laboratoryItemId}
+                      laboratoryItems={laboratoryItems}
+                      locale={locale}
+                      messages={messages}
+                      onIndicationChange={onIndicationChange}
+                      onLaboratoryItemChange={onLaboratoryItemChange}
+                      readOnly={readOnly}
+                      showCorrection={correctionTarget === 'laboratory'}
+                      state={detail.laboratoryRequests}
+                    />
+                  )}
+                </section>
+              )}
+            </div>
+          </TabsContent>
+        </Tabs>
+      </div>
+
+      <aside
+        aria-label={messages.consultationDialogue}
+        className="flex min-w-0 flex-col rounded-md border bg-background xl:sticky xl:top-4 xl:max-h-[calc(100svh-7rem)] xl:self-start"
+      >
+        <div className="flex items-center gap-2 p-2">
+          <Button
+            aria-expanded={consultationSidebarOpen}
+            aria-label={consultationSidebarOpen ? messages.closeRightSidebar : messages.openRightSidebar}
+            onClick={() => setConsultationSidebarOpen(open => !open)}
+            size="icon-sm"
+            title={consultationSidebarOpen ? messages.closeRightSidebar : messages.openRightSidebar}
+            type="button"
+            variant="ghost"
+          >
+            {consultationSidebarOpen
+              ? <PanelRightCloseIcon aria-hidden="true" />
+              : <PanelRightOpenIcon aria-hidden="true" />}
+          </Button>
+          {consultationSidebarOpen ? (
+            <div className="min-w-0">
+              <div className="text-xs text-muted-foreground">{messages.rightSidebar}</div>
+              <h2 className="truncate text-sm font-semibold">{messages.consultationDialogue}</h2>
+            </div>
+          ) : null}
+        </div>
+        {!consultationSidebarOpen ? null : (
+          <div className="flex min-h-0 flex-col gap-4 border-t p-4 pt-3">
+            {detail.consultation === undefined ? (
+              <p className="text-sm text-muted-foreground">{messages.noConsultationHistory}</p>
+            ) : (
+              <ConsultationPanel
+                action={consultationAction}
+                consultation={detail.consultation}
+                key={detail.caseId}
+                locale={locale}
+                messages={messages}
+                patientName={detail.patient.name}
+                readOnly={readOnly}
+              />
             )}
           </div>
-        )
-      ) : null}
-      {detail.consultation === undefined ? null : (
-        <section
-          aria-labelledby="independent-laboratory-order-heading"
-          className="flex flex-col gap-3 border-t pt-5"
-          id={encounterCompletionTargetElementIds.laboratory}
-          tabIndex={-1}
-        >
-          <h3 className="text-sm font-semibold" id="independent-laboratory-order-heading">
-            {messages.laboratoryOrder}
-          </h3>
-          {catalog.isPending ? <Skeleton className="h-20 w-full" /> : catalog.isError ? (
-            <ErrorAlert
-              message={getWorkspaceErrorMessage(catalog.error, messages)}
-              title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)}
-            />
-          ) : (
-            <LaboratoryRequestEditor
-              actions={laboratoryRequestActions}
-              caseId={detail.caseId}
-              catalog={laboratoryCatalog}
-              indicationCode={indicationCode}
-              indicationItems={indicationItems}
-              laboratoryItemId={laboratoryItemId}
-              laboratoryItems={laboratoryItems}
-              locale={locale}
-              messages={messages}
-              onIndicationChange={onIndicationChange}
-              onLaboratoryItemChange={onLaboratoryItemChange}
-              readOnly={readOnly}
-              showCorrection={correctionTarget === 'laboratory'}
-              state={detail.laboratoryRequests}
-            />
-          )}
-        </section>
-      )}
-      {detail.consultation === undefined ? null : catalog.isPending ? (
-        <Skeleton className="h-72 w-full" />
-      ) : catalog.isError ? (
-        <ErrorAlert
-          message={getWorkspaceErrorMessage(catalog.error, messages)}
-          title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)}
-        />
-      ) : (
-        <>
-          <DiagnosisEditor
-            actions={diagnosisActions}
-            catalog={catalog.data.diagnoses}
-            key={`${detail.caseId}:${detail.diagnosis?.draftVersion ?? 0}`}
-            locale={locale}
-            messages={messages}
-            readOnly={readOnly}
-            state={detail.diagnosis}
-          />
-          {catalog.data.prescriptionConclusionSupported ? (
-            <MedicationConclusionPanel
-              allowWithdrawal={!readOnly || correctionTarget === 'medication-conclusion'}
-              catalog={catalog.data.medications}
-              detail={detail}
-              key={`medication-conclusion:${detail.caseId}`}
-              locale={locale}
-              messages={messages}
-              onRefresh={correctionTarget === 'medication-conclusion'
-                ? onCorrectionCompleted
-                : onRefreshCase}
-              readOnly={readOnly}
-            />
-          ) : null}
-        </>
-      )}
-      <StructuredClinicalDocumentPanel
-        allowRevision={!readOnly || correctionTarget === 'clinical-document'}
-        detail={detail}
-        key={`structured-clinical-document:${detail.caseId}`}
-        locale={locale}
-        messages={messages}
-        onRevisionCompleted={onCorrectionCompleted}
-        onRefresh={onRefreshCase}
-      />
+        )}
+      </aside>
     </div>
   )
 }
 
-function EncounterCompletionPanel({ detail, messages, onCompleted, onRefresh, queryScope }: {
+function ClinicalBackgroundPanel({ detail, messages }: {
+  detail: DoctorCaseDetail
+  messages: ReturnType<typeof getWorkspaceMessages>
+}): React.JSX.Element {
+  const headingId = `clinical-background-heading-${detail.caseId}`
+  return (
+    <section aria-labelledby={headingId} className="flex min-w-0 flex-col gap-3">
+      <div className="flex items-center gap-2">
+        <ActivityIcon aria-hidden="true" className="size-4 text-muted-foreground" />
+        <h3 className="text-sm font-semibold" id={headingId}>{messages.priorDiseases}</h3>
+      </div>
+      <dl className="flex min-w-0 flex-col overflow-hidden rounded-md border">
+        <div className="flex flex-col gap-1 border-b px-3 py-2.5">
+          <dt className="text-xs text-muted-foreground">{messages.priorMedicalHistory}</dt>
+          <dd className="text-sm leading-relaxed">
+            {detail.priorFacts.length === 0 ? messages.noPriorDiseases : detail.priorFacts.map(fact => fact.display || fact.code).join('；')}
+          </dd>
+        </div>
+        <div className="flex min-w-0 flex-col gap-1 px-3 py-2.5">
+          <dt className="text-xs text-muted-foreground">{messages.allergySummary}</dt>
+          <dd className="flex flex-wrap gap-1.5">
+            {detail.allergies.length === 0 ? (
+              <span className="text-sm text-muted-foreground">{messages.noKnownAllergies}</span>
+            ) : detail.allergies.map(allergy => (
+              <Badge key={allergy.code} variant="destructive">{allergy.display}</Badge>
+            ))}
+          </dd>
+        </div>
+      </dl>
+    </section>
+  )
+}
+
+function EncounterCompletionPanel({ detail, messages, onCompleted, onNavigate, onRefresh, queryScope }: {
   detail: DoctorCaseDetail
   messages: ReturnType<typeof getWorkspaceMessages>
   onCompleted: () => Promise<void>
+  onNavigate: (target: EncounterCompletionTarget) => void
   onRefresh: () => Promise<void>
   queryScope: EncounterCompletionQueryScope
 }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
   const preview = useQuery({
     queryFn: ({ signal }) => getEncounterCompletion(detail.encounter.id, signal),
     queryKey: [...queryScope, detail.encounter.id, detail.encounter.versionId],
@@ -1376,78 +1645,83 @@ function EncounterCompletionPanel({ detail, messages, onCompleted, onRefresh, qu
       }, newIdempotencyKey())
     },
     onError: onRefresh,
-    onSuccess: onCompleted,
+    onSuccess: async () => {
+      setOpen(false)
+      await onCompleted()
+    },
   })
-  if (preview.isPending) return <Skeleton className="h-40 w-full" />
-  if (preview.isError) {
-    return (
-      <ErrorAlert
-        message={getWorkspaceErrorMessage(preview.error, messages)}
-        title={getWorkspaceErrorTitle(preview.error, messages, messages.encounterCompletionUnavailable)}
-      />
-    )
-  }
-  const completedItems = preview.data.items.filter(item => item.status === 'complete').length
-  const completionCount = messages.encounterCompletionSatisfied
-    .replace('{complete}', String(completedItems))
-    .replace('{total}', String(preview.data.items.length))
+  const incompleteItems = preview.data?.items.filter(item => item.status !== 'complete') ?? []
 
   return (
-    <section aria-labelledby="encounter-completion-heading" className="flex flex-col gap-3 border-b pb-5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold" id="encounter-completion-heading">
-          {messages.encounterCompletionChecklist}
-        </h3>
-        <span className="text-xs text-muted-foreground">{completionCount}</span>
-      </div>
-      <ul className="divide-y rounded-md border">
-        {preview.data.items.map(item => {
-          const navigationLabel = messages.encounterCompletionTarget.replace('{status}', item.statusText)
-          return (
-            <li className="flex min-h-12 items-center justify-between gap-3 px-3 py-2" key={item.code}>
-              <Badge variant={item.status === 'complete' ? 'success' : 'outline'}>
-                {item.status === 'complete'
-                  ? <CheckCircleIcon aria-hidden="true" />
-                  : <CircleAlertIcon aria-hidden="true" />}
-                {item.statusText}
-              </Badge>
-              <Button
-                aria-label={navigationLabel}
-                onClick={() => {
-                  const target = document.getElementById(encounterCompletionTargetElementIds[item.target])
-                  target?.focus()
-                  target?.scrollIntoView?.({ block: 'start' })
-                }}
-                size="icon-sm"
-                title={navigationLabel}
-                type="button"
-                variant="ghost"
-              >
-                <ArrowRightIcon />
-              </Button>
-            </li>
-          )
-        })}
-      </ul>
-      <div className="flex justify-end">
-        <Button
-          disabled={!preview.data.canComplete || complete.isPending}
-          onClick={() => complete.mutate()}
-          type="button"
-        >
-          {complete.isPending
-            ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
-            : <ClipboardCheckIcon aria-hidden="true" data-icon="inline-start" />}
-          {complete.isPending ? messages.completingEncounter : messages.confirmEncounterCompletion}
-        </Button>
-      </div>
-      {complete.error === null ? null : (
-        <ErrorAlert
-          message={getWorkspaceErrorMessage(complete.error, messages)}
-          title={getWorkspaceErrorTitle(complete.error, messages, messages.operationFailed)}
-        />
-      )}
-    </section>
+    <AlertDialog onOpenChange={setOpen} open={open}>
+      <AlertDialogTrigger
+        render={<Button disabled={preview.isPending} size="sm" type="button" />}
+      >
+        <ClipboardCheckIcon aria-hidden="true" data-icon="inline-start" />
+        {messages.finishEncounter}
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {preview.data?.canComplete === true
+              ? messages.confirmEncounterCompletion
+              : messages.encounterBlocked}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {preview.data?.canComplete === true
+              ? messages.confirmEncounterCompletionDescription
+              : messages.encounterBlockedDescription}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {preview.isPending ? <Skeleton className="h-28 w-full" /> : preview.isError ? (
+          <ErrorAlert
+            message={getWorkspaceErrorMessage(preview.error, messages)}
+            title={getWorkspaceErrorTitle(preview.error, messages, messages.encounterCompletionUnavailable)}
+          />
+        ) : incompleteItems.length === 0 ? null : (
+          <ul className="grid gap-2">
+            {incompleteItems.map(item => {
+              const navigationLabel = messages.encounterCompletionTarget.replace('{status}', item.statusText)
+              return (
+                <li className="flex items-center justify-between gap-3 rounded-md border px-3 py-2" key={item.code}>
+                  <span className="text-sm">{item.statusText}</span>
+                  <Button
+                    aria-label={navigationLabel}
+                    onClick={() => {
+                      setOpen(false)
+                      onNavigate(item.target)
+                    }}
+                    size="icon-sm"
+                    title={navigationLabel}
+                    type="button"
+                    variant="ghost"
+                  >
+                    <ArrowRightIcon />
+                  </Button>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+        {complete.error === null ? null : (
+          <ErrorAlert
+            message={getWorkspaceErrorMessage(complete.error, messages)}
+            title={getWorkspaceErrorTitle(complete.error, messages, messages.operationFailed)}
+          />
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
+          {preview.data?.canComplete === true ? (
+            <Button disabled={complete.isPending} onClick={() => complete.mutate()} type="button">
+              {complete.isPending
+                ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
+                : <ClipboardCheckIcon aria-hidden="true" data-icon="inline-start" />}
+              {complete.isPending ? messages.completingEncounter : messages.confirmEncounterCompletion}
+            </Button>
+          ) : null}
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 
@@ -1483,11 +1757,6 @@ function LaboratoryRequestEditor({
   state: DoctorCaseDetail['laboratoryRequests']
 }): React.JSX.Element {
   const catalogById = new Map(catalog.map(item => [item.id, item]))
-  const draftItem = state?.draft === undefined
-    ? undefined
-    : catalogById.get(state.draft.catalogItemId)
-  const draftMatchesSelection = state?.draft?.catalogItemId === laboratoryItemId
-    && state.draft.indicationCode === indicationCode
   return (
     <div className="flex flex-col gap-4">
       {readOnly ? null : <FieldGroup>
@@ -1500,67 +1769,14 @@ function LaboratoryRequestEditor({
           <WorkspaceSelect id="laboratory-indication" items={indicationItems} onValueChange={value => onIndicationChange(value ?? '')} value={indicationCode} />
         </Field>
         <div className="flex flex-wrap justify-end gap-2">
-          <Button disabled={actions.save.pending || laboratoryItemId.length === 0 || indicationCode.length === 0} onClick={actions.save.onSubmit} type="button" variant="outline">
-            <ClipboardPenIcon data-icon="inline-start" />{messages.saveLaboratoryRequestDraft}
+          <Button
+            disabled={actions.issue.pending || laboratoryItemId.length === 0 || indicationCode.length === 0}
+            onClick={actions.issue.onSubmit}
+            type="button"
+          >
+            <FlaskConicalIcon data-icon="inline-start" />{messages.issueLaboratoryRequest}
           </Button>
-          {state?.draft === undefined ? null : (
-            <>
-              <AlertDialog>
-                <AlertDialogTrigger render={<Button disabled={actions.deleteDraft.pending} type="button" variant="destructive" />}>
-                  <Trash2Icon data-icon="inline-start" />{messages.deleteLaboratoryRequestDraft}
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>{messages.deleteLaboratoryRequestDraftTitle}</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      {messages.deleteLaboratoryRequestDraftDescription}
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <dl className="text-sm">
-                    <div>
-                      <dt className="text-xs text-muted-foreground">{messages.laboratoryItem}</dt>
-                      <dd className="mt-1 font-medium">
-                        {locale === 'zh-CN' ? draftItem?.nameZh : draftItem?.nameEn}
-                      </dd>
-                    </div>
-                  </dl>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
-                    <AlertDialogAction
-                      disabled={actions.deleteDraft.pending}
-                      onClick={actions.deleteDraft.onSubmit}
-                      variant="destructive"
-                    >
-                      <Trash2Icon data-icon="inline-start" />{messages.confirmDelete}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-              <Button disabled={actions.issue.pending || !draftMatchesSelection} onClick={actions.issue.onSubmit} type="button">
-                <FlaskConicalIcon data-icon="inline-start" />{messages.issueLaboratoryRequest}
-              </Button>
-            </>
-          )}
         </div>
-        {state?.draft === undefined ? null : (
-          <Alert>
-            <CheckIcon aria-hidden="true" />
-            <AlertTitle>{messages.laboratoryRequestDraftSaved}</AlertTitle>
-            <AlertDescription>
-              {locale === 'zh-CN' ? draftItem?.nameZh : draftItem?.nameEn} · {indicationLabel(state.draft.indicationCode, messages)}
-            </AlertDescription>
-          </Alert>
-        )}
-        {actions.deleteDraft.success?.caseId === caseId
-          && state?.draft === undefined
-          && state?.draftVersion === actions.deleteDraft.success.draftVersion ? (
-          <Alert>
-            <CheckIcon aria-hidden="true" />
-            <AlertTitle>{messages.laboratoryRequestDraftDeleted}</AlertTitle>
-          </Alert>
-        ) : null}
-        {actions.save.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.save.error, messages)} title={getWorkspaceErrorTitle(actions.save.error, messages, messages.operationFailed)} />}
-        {actions.deleteDraft.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.deleteDraft.error, messages)} title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)} />}
         {actions.issue.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.issue.error, messages)} title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)} />}
       </FieldGroup>}
       <div className="flex flex-col gap-2">
@@ -1574,7 +1790,6 @@ function LaboratoryRequestEditor({
                 <TableHead>{messages.laboratoryItem}</TableHead>
                 <TableHead>{messages.laboratoryIndication}</TableHead>
                 <TableHead>{messages.status}</TableHead>
-                <TableHead>{messages.documentVersion}</TableHead>
                 <TableHead><span className="sr-only">{messages.laboratoryRequestActions}</span></TableHead>
               </TableRow>
             </TableHeader>
@@ -1588,7 +1803,6 @@ function LaboratoryRequestEditor({
                     <TableCell className="font-medium">{itemName}</TableCell>
                     <TableCell>{indicationLabel(request.indicationCode, messages)}</TableCell>
                     <TableCell><Badge variant="outline">{laboratoryRequestStatusLabel(request, messages)}</Badge></TableCell>
-                    <TableCell>{request.version}</TableCell>
                     <TableCell className="text-right">
                       {readOnly || request.status !== 'issued' ? null : (
                         <AlertDialog>
@@ -1992,29 +2206,24 @@ function LaboratoryReportVersion({ current, locale, messages, report }: {
   )
 }
 
-const emptyClinicalDocument: ClinicalDocumentContent = {
-  assessment: '',
-  chiefComplaint: '',
-  disposition: '',
-  followUp: '',
-  historyOfPresentIllness: '',
-  physicalExamination: '',
-}
-
 function StructuredClinicalDocumentPanel({
   allowRevision,
   detail,
   locale,
   messages,
+  onDocumentChange,
   onRefresh,
   onRevisionCompleted,
+  workingDocument,
 }: {
   allowRevision: boolean
   detail: DoctorCaseDetail
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
+  onDocumentChange: (document: ClinicalDocumentContent) => void
   onRefresh: () => Promise<void>
   onRevisionCompleted: () => Promise<void>
+  workingDocument: ClinicalDocumentContent
 }): React.JSX.Element | null {
   const draft = detail.clinicalDocument?.draft
   const signedDocuments = detail.clinicalDocument?.signed ?? []
@@ -2028,48 +2237,38 @@ function StructuredClinicalDocumentPanel({
     encounterVersion: string
     reason: string
   }>()
-  const previewSign = useMutation({
-    mutationFn: () => {
-      if (draft === undefined) throw new Error(messages.consultationUnavailable)
+  const prepareSign = useMutation({
+    mutationFn: async (document: ClinicalDocumentContent) => {
+      const saved = await saveClinicalDocumentDraft({
+        document,
+        encounterId: detail.encounter.id,
+        encounterVersion: detail.encounter.versionId,
+        expectedDraftVersion: draft?.version ?? 0,
+      }, newIdempotencyKey())
       return previewStructuredClinicalDocumentSign({
         encounterId: detail.encounter.id,
         encounterVersion: detail.encounter.versionId,
-        expectedDraftVersion: draft.version,
+        expectedDraftVersion: saved.data.draftVersion,
       }, newIdempotencyKey())
     },
-  })
-  const saveDraft = useMutation({
-    mutationFn: (document: ClinicalDocumentContent) => saveClinicalDocumentDraft({
-      document,
-      encounterId: detail.encounter.id,
-      encounterVersion: detail.encounter.versionId,
-      expectedDraftVersion: draft?.version ?? 0,
-    }, newIdempotencyKey()),
     onError: async () => {
-      await onRefresh()
-    },
-    onMutate: () => {
-      previewSign.reset()
-    },
-    onSuccess: async () => {
       await onRefresh()
     },
   })
   const sign = useMutation({
-    mutationFn: () => {
-      const preview = previewSign.data?.data
-      if (preview === undefined) throw new Error(messages.consultationUnavailable)
-      return signStructuredClinicalDocument({
+    mutationFn: (preview: Awaited<ReturnType<typeof previewStructuredClinicalDocumentSign>>['data']) => (
+      signStructuredClinicalDocument({
         commitToken: preview.commitToken,
         encounterId: detail.encounter.id,
         encounterVersion: detail.encounter.versionId,
         previewId: preview.previewId,
       }, newIdempotencyKey())
-    },
+    ),
     onError: async () => {
       await onRefresh()
     },
     onSuccess: async () => {
+      prepareSign.reset()
       await onRefresh()
     },
   })
@@ -2105,25 +2304,17 @@ function StructuredClinicalDocumentPanel({
     return null
   }
 
-  const preview = previewSign.data?.data
-  const currentPreview = preview?.document.version === draft?.version
-    ? preview
-    : undefined
+  const currentPreview = prepareSign.data?.data
   return (
     <section
       aria-labelledby="structured-clinical-document-heading"
-      className="flex flex-col gap-4 border-t pt-5"
+      className="flex flex-col gap-4"
       id={encounterCompletionTargetElementIds['clinical-document']}
       tabIndex={-1}
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold" id="structured-clinical-document-heading">
-          {messages.structuredClinicalDocument}
-        </h3>
-        {draft === undefined || signedDocuments.length > 0 ? null : (
-          <Badge variant="outline">{messages.documentVersion} {draft.version}</Badge>
-        )}
-      </div>
+      <h3 className="text-sm font-semibold" id="structured-clinical-document-heading">
+        {messages.structuredClinicalDocument}
+      </h3>
       {sign.isSuccess ? (
         <Alert>
           <CheckCircleIcon aria-hidden="true" />
@@ -2147,7 +2338,7 @@ function StructuredClinicalDocumentPanel({
               {signedDocuments.map(document => (
                 <li className="flex flex-col gap-3 border-b pb-4 last:border-b-0 last:pb-0" key={document.documentId}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <Badge variant="secondary">{messages.documentVersion} {document.revisionNumber}</Badge>
+                    <Badge variant="secondary">{messages.clinicalDocumentSigned}</Badge>
                     <span className="text-xs text-muted-foreground">
                       {messages.signedAt} {formatClinicalDocumentTime(document.signedAt, locale)}
                     </span>
@@ -2165,12 +2356,12 @@ function StructuredClinicalDocumentPanel({
           {!allowRevision || latestSignedDocument === undefined ? null : (
             <div className="flex flex-col gap-3 border-t pt-5">
               <h4 className="text-sm font-semibold">
-                {messages.clinicalDocumentRevisionForm} {latestSignedDocument.revisionNumber}
+                {messages.clinicalDocumentRevisionForm}
               </h4>
               <ClinicalDocumentForm
                 content={latestSignedDocument.content}
-                formName={`${messages.clinicalDocumentRevisionForm} ${latestSignedDocument.revisionNumber}`}
-                idPrefix={`clinical-document-revision-${latestSignedDocument.revisionNumber}`}
+                formName={messages.clinicalDocumentRevisionForm}
+                idPrefix={`clinical-document-revision-${latestSignedDocument.compositionId}`}
                 includeRevisionReason
                 key={latestSignedDocument.compositionId}
                 messages={messages}
@@ -2245,64 +2436,68 @@ function StructuredClinicalDocumentPanel({
         </>
       ) : (
         <>
-          <ClinicalDocumentForm
-            content={draft ?? emptyClinicalDocument}
-            formName={messages.structuredClinicalDocument}
-            idPrefix="clinical-document-draft"
-            key={`${detail.caseId}:${draft?.version ?? 0}`}
-            messages={messages}
-            onSubmit={document => saveDraft.mutate(document)}
-            pending={saveDraft.isPending}
-            pendingLabel={messages.savingClinicalDocument}
-            submitLabel={messages.saveClinicalDocumentDraft}
-          />
-          {saveDraft.isSuccess ? (
-            <Alert>
-              <CheckIcon aria-hidden="true" />
-              <AlertTitle>{messages.clinicalDocumentDraftSaved}</AlertTitle>
-            </Alert>
-          ) : null}
-          {saveDraft.error === null ? null : (
+          <form
+            aria-label={messages.structuredClinicalDocument}
+            className="flex flex-col gap-3"
+            onSubmit={event => {
+              event.preventDefault()
+              prepareSign.mutate(workingDocument)
+            }}
+          >
+            <ClinicalRecordEditor
+              content={workingDocument}
+              idPrefix={`clinical-record-${detail.caseId}`}
+              messages={messages}
+              onChange={onDocumentChange}
+            />
+            <div className="flex justify-end border-t pt-3">
+              <Button disabled={prepareSign.isPending} type="submit">
+                {prepareSign.isPending
+                  ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
+                  : <FileSignatureIcon aria-hidden="true" data-icon="inline-start" />}
+                {prepareSign.isPending ? messages.signingClinicalRecord : messages.signClinicalRecord}
+              </Button>
+            </div>
+          </form>
+          {prepareSign.error === null ? null : (
             <ErrorAlert
-              message={getWorkspaceErrorMessage(saveDraft.error, messages)}
-              title={getWorkspaceErrorTitle(saveDraft.error, messages, messages.operationFailed)}
+              message={getWorkspaceErrorMessage(prepareSign.error, messages)}
+              title={getWorkspaceErrorTitle(prepareSign.error, messages, messages.operationFailed)}
             />
           )}
-          <div className="flex justify-end">
-            <Button
-              disabled={draft === undefined || previewSign.isPending || saveDraft.isPending}
-              onClick={() => previewSign.mutate()}
-              type="button"
-              variant="outline"
-            >
-              {previewSign.isPending
-                ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
-                : <FileSignatureIcon aria-hidden="true" data-icon="inline-start" />}
-              {messages.previewClinicalDocumentSign}
-            </Button>
-          </div>
-          {previewSign.error === null ? null : (
-            <ErrorAlert
-              message={getWorkspaceErrorMessage(previewSign.error, messages)}
-              title={getWorkspaceErrorTitle(previewSign.error, messages, messages.operationFailed)}
-            />
-          )}
-          {currentPreview === undefined ? null : (
-            <section aria-labelledby="structured-clinical-document-sign-preview-heading" className="flex flex-col gap-3 border-t pt-5">
-              <h4 className="text-sm font-semibold" id="structured-clinical-document-sign-preview-heading">
-                {messages.structuredClinicalDocumentSignPreview}
-              </h4>
-              <ClinicalDocumentContentView content={currentPreview.document.content} messages={messages} />
-              <div className="flex justify-end">
-                <Button disabled={sign.isPending} onClick={() => sign.mutate()} type="button">
+          <AlertDialog
+            onOpenChange={open => {
+              if (!open && !sign.isPending) prepareSign.reset()
+            }}
+            open={currentPreview !== undefined}
+          >
+            <AlertDialogContent className="sm:max-w-2xl">
+              <AlertDialogHeader>
+                <AlertDialogTitle>{messages.confirmClinicalRecordSign}</AlertDialogTitle>
+                <AlertDialogDescription>{messages.clinicalDocumentSignDescription}</AlertDialogDescription>
+              </AlertDialogHeader>
+              {currentPreview === undefined ? null : (
+                <div className="max-h-[55vh] overflow-y-auto">
+                  <ClinicalDocumentContentView content={currentPreview.document.content} messages={messages} />
+                </div>
+              )}
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={sign.isPending}>{messages.cancel}</AlertDialogCancel>
+                <Button
+                  disabled={currentPreview === undefined || sign.isPending}
+                  onClick={() => {
+                    if (currentPreview !== undefined) sign.mutate(currentPreview)
+                  }}
+                  type="button"
+                >
                   {sign.isPending
                     ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
                     : <CheckCircleIcon aria-hidden="true" data-icon="inline-start" />}
-                  {messages.confirmStructuredClinicalSign}
+                  {messages.confirmClinicalRecordSign}
                 </Button>
-              </div>
-            </section>
-          )}
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           {sign.error === null ? null : (
             <ErrorAlert
               message={getWorkspaceErrorMessage(sign.error, messages)}
@@ -2312,6 +2507,62 @@ function StructuredClinicalDocumentPanel({
         </>
       )}
     </section>
+  )
+}
+
+function ClinicalRecordEditor({ content, idPrefix, messages, onChange }: {
+  content: ClinicalDocumentContent
+  idPrefix: string
+  messages: ReturnType<typeof getWorkspaceMessages>
+  onChange: (document: ClinicalDocumentContent) => void
+}): React.JSX.Element {
+  const fields = [
+    { field: 'chiefComplaint', label: messages.chiefComplaint, maxLength: 1_000, multiline: false },
+    { field: 'historyOfPresentIllness', label: messages.historyOfPresentIllness, maxLength: 5_000, multiline: true },
+    { field: 'priorMedicalHistory', label: messages.priorMedicalHistory, maxLength: 4_000, multiline: true },
+    { field: 'physicalExamination', label: messages.physicalExamination, maxLength: 4_000, multiline: true },
+    { field: 'auxiliaryExamination', label: messages.auxiliaryExamination, maxLength: 4_000, multiline: true },
+    { field: 'assessment', label: messages.assessment, maxLength: 4_000, multiline: true },
+    { field: 'disposition', label: messages.disposition, maxLength: 4_000, multiline: true },
+    { field: 'followUp', label: messages.followUp, maxLength: 4_000, multiline: true },
+  ] satisfies Array<{
+    field: keyof ClinicalDocumentContent
+    label: string
+    maxLength: number
+    multiline: boolean
+  }>
+  return (
+    <FieldGroup className="gap-0 overflow-hidden rounded-md border">
+      {fields.map(({ field, label, maxLength, multiline }) => {
+        const id = `${idPrefix}-${field}`
+        const value = content[field] ?? ''
+        return (
+          <Field className="grid gap-2 border-b px-3 py-2.5 last:border-b-0 sm:grid-cols-[6rem_minmax(0,1fr)] sm:items-start" key={field}>
+            <FieldLabel className="pt-2" htmlFor={id}>{label}</FieldLabel>
+            {multiline ? (
+              <Textarea
+                className="min-h-10 resize-y"
+                id={id}
+                maxLength={maxLength}
+                minLength={2}
+                onChange={event => onChange({ ...content, [field]: event.currentTarget.value })}
+                required
+                value={value}
+              />
+            ) : (
+              <Input
+                id={id}
+                maxLength={maxLength}
+                minLength={2}
+                onChange={event => onChange({ ...content, [field]: event.currentTarget.value })}
+                required
+                value={value}
+              />
+            )}
+          </Field>
+        )
+      })}
+    </FieldGroup>
   )
 }
 
@@ -2344,11 +2595,13 @@ function ClinicalDocumentForm({
         const data = new FormData(event.currentTarget)
         onSubmit({
           assessment: String(data.get('assessment') ?? ''),
+          auxiliaryExamination: String(data.get('auxiliaryExamination') ?? ''),
           chiefComplaint: String(data.get('chiefComplaint') ?? ''),
           disposition: String(data.get('disposition') ?? ''),
           followUp: String(data.get('followUp') ?? ''),
           historyOfPresentIllness: String(data.get('historyOfPresentIllness') ?? ''),
           physicalExamination: String(data.get('physicalExamination') ?? ''),
+          priorMedicalHistory: String(data.get('priorMedicalHistory') ?? ''),
         }, String(data.get('revisionReason') ?? ''))
       }}
     >
@@ -2377,6 +2630,17 @@ function ClinicalDocumentForm({
           />
         </Field>
         <Field className="border-b p-3 md:col-span-2">
+          <FieldLabel htmlFor={`${idPrefix}-prior-history`}>{messages.priorMedicalHistory}</FieldLabel>
+          <Textarea
+            defaultValue={content.priorMedicalHistory}
+            id={`${idPrefix}-prior-history`}
+            maxLength={4_000}
+            minLength={2}
+            name="priorMedicalHistory"
+            required
+          />
+        </Field>
+        <Field className="border-b p-3 md:col-span-2">
           <FieldLabel htmlFor={`${idPrefix}-examination`}>{messages.physicalExamination}</FieldLabel>
           <Textarea
             defaultValue={content.physicalExamination}
@@ -2384,6 +2648,17 @@ function ClinicalDocumentForm({
             maxLength={4_000}
             minLength={2}
             name="physicalExamination"
+            required
+          />
+        </Field>
+        <Field className="border-b p-3 md:col-span-2">
+          <FieldLabel htmlFor={`${idPrefix}-auxiliary`}>{messages.auxiliaryExamination}</FieldLabel>
+          <Textarea
+            defaultValue={content.auxiliaryExamination}
+            id={`${idPrefix}-auxiliary`}
+            maxLength={4_000}
+            minLength={2}
+            name="auxiliaryExamination"
             required
           />
         </Field>
@@ -2452,19 +2727,21 @@ function ClinicalDocumentContentView({ content, messages }: {
   const fields = [
     [messages.chiefComplaint, content.chiefComplaint],
     [messages.historyOfPresentIllness, content.historyOfPresentIllness],
+    [messages.priorMedicalHistory, content.priorMedicalHistory],
     [messages.physicalExamination, content.physicalExamination],
+    [messages.auxiliaryExamination, content.auxiliaryExamination],
     [messages.assessment, content.assessment],
     [messages.disposition, content.disposition],
     [messages.followUp, content.followUp],
   ]
   return (
     <dl className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
-      {fields.map(([label, value]) => (
+      {fields.flatMap(([label, value]) => value === undefined ? [] : [(
         <div key={label}>
           <dt className="text-muted-foreground">{label}</dt>
           <dd className="whitespace-pre-wrap font-medium">{value}</dd>
         </div>
-      ))}
+      )])}
     </dl>
   )
 }
@@ -2640,7 +2917,6 @@ function DiagnosisEditor({ actions, catalog, locale, messages, readOnly, state }
       note: entry.note ?? '',
     })) ?? []
   ))
-  const [dirty, setDirty] = useState(false)
   const usedCatalogItemIds = new Set(entries.map(entry => entry.catalogItemId))
   const addEntry = () => {
     const catalogItem = catalog.find(item => !usedCatalogItemIds.has(item.id))
@@ -2651,13 +2927,11 @@ function DiagnosisEditor({ actions, catalog, locale, messages, readOnly, state }
       note: '',
       role: current.some(entry => entry.role === 'primary') ? 'secondary' : 'primary',
     }])
-    setDirty(true)
   }
   const updateEntry = (index: number, update: Partial<DiagnosisDraftLine>) => {
     setEntries(current => current.map((entry, entryIndex) => (
       entryIndex === index ? { ...entry, ...update } : entry
     )))
-    setDirty(true)
   }
   const updateRole = (index: number, role: DiagnosisDraftEntry['role']) => {
     setEntries(current => {
@@ -2676,7 +2950,6 @@ function DiagnosisEditor({ actions, catalog, locale, messages, readOnly, state }
         return entry
       })
     })
-    setDirty(true)
   }
   const removeEntry = (index: number) => {
     setEntries(current => {
@@ -2687,7 +2960,6 @@ function DiagnosisEditor({ actions, catalog, locale, messages, readOnly, state }
       }
       return remaining
     })
-    setDirty(true)
   }
 
   if (state?.confirmation !== undefined) {
@@ -2772,7 +3044,7 @@ function DiagnosisEditor({ actions, catalog, locale, messages, readOnly, state }
             ...entry,
             ...(note.trim().length === 0 ? {} : { note: note.trim() }),
           }))
-          actions.save.onSubmit(submittedEntries)
+          actions.confirm.onSubmit(submittedEntries)
         }}
       >
         <FieldGroup>
@@ -2845,27 +3117,12 @@ function DiagnosisEditor({ actions, catalog, locale, messages, readOnly, state }
           })}
           <div className="flex flex-wrap justify-end gap-2">
             <Button
-              disabled={actions.save.pending || entries.length === 0 || !entries.some(entry => entry.role === 'primary')}
+              disabled={actions.confirm.pending || entries.length === 0 || !entries.some(entry => entry.role === 'primary')}
               type="submit"
-              variant="outline"
-            >
-              <ClipboardPenIcon data-icon="inline-start" />{messages.saveDiagnosisDraft}
-            </Button>
-            <Button
-              disabled={actions.confirm.pending || actions.save.pending || dirty || state?.draft === undefined}
-              onClick={actions.confirm.onSubmit}
-              type="button"
             >
               <CheckCircleIcon data-icon="inline-start" />{messages.confirmDiagnosis}
             </Button>
           </div>
-          {actions.save.success && !dirty && state?.draft !== undefined ? (
-            <Alert>
-              <CheckIcon aria-hidden="true" />
-              <AlertTitle>{messages.diagnosisDraftSaved}</AlertTitle>
-            </Alert>
-          ) : null}
-          {actions.save.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.save.error, messages)} title={getWorkspaceErrorTitle(actions.save.error, messages, messages.operationFailed)} />}
           {actions.confirm.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.confirm.error, messages)} title={getWorkspaceErrorTitle(actions.confirm.error, messages, messages.operationFailed)} />}
         </FieldGroup>
       </form>
@@ -2922,7 +3179,6 @@ function MedicationConclusionPanel({
   const [mode, setMode] = useState<MedicationConclusionMode>(
     noMedicationConclusion === undefined ? 'prescription' : 'no-medication',
   )
-  const [dirty, setDirty] = useState(false)
   const [items, setItems] = useState<PrescriptionDraftLine[]>(() => {
     if (state?.draft !== undefined) {
       return state.draft.items.map((item, index) => ({ ...item, key: `saved-${index}` }))
@@ -2930,43 +3186,18 @@ function MedicationConclusionPanel({
     const firstMedication = catalog[0]
     return firstMedication === undefined ? [] : [createPrescriptionDraftLine(firstMedication, 'new-0')]
   })
-  const saveDraft = useMutation({
-    mutationFn: () => savePrescriptionDraft({
-      encounterId: detail.encounter.id,
-      encounterVersion: detail.encounter.versionId,
-      expectedDraftVersion: state?.draftVersion ?? 0,
-      items: items.map(({ key: _key, ...item }) => item),
-    }, newIdempotencyKey()),
-    onError: onRefresh,
-    onSuccess: async () => {
-      setDirty(false)
-      await onRefresh()
-    },
-  })
-  const removeDraft = useMutation({
-    mutationFn: (caseId: string) => {
-      if (detail.caseId !== caseId || state?.draft === undefined) {
-        throw new Error(messages.consultationUnavailable)
-      }
-      return deletePrescriptionDraft({
+  const issue = useMutation({
+    mutationFn: async () => {
+      const saved = await savePrescriptionDraft({
         encounterId: detail.encounter.id,
         encounterVersion: detail.encounter.versionId,
-        expectedDraftVersion: state.draftVersion,
+        expectedDraftVersion: state?.draftVersion ?? 0,
+        items: items.map(({ key: _key, ...item }) => item),
       }, newIdempotencyKey())
-    },
-    onError: onRefresh,
-    onSuccess: async () => {
-      setDirty(false)
-      await onRefresh()
-    },
-  })
-  const issue = useMutation({
-    mutationFn: () => {
-      if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
       return issuePrescription({
         encounterId: detail.encounter.id,
         encounterVersion: detail.encounter.versionId,
-        expectedDraftVersion: state.draftVersion,
+        expectedDraftVersion: saved.data.draftVersion,
       }, newIdempotencyKey())
     },
     onError: onRefresh,
@@ -3021,13 +3252,11 @@ function MedicationConclusionPanel({
       ...current,
       createPrescriptionDraftLine(nextMedication, globalThis.crypto.randomUUID()),
     ])
-    setDirty(true)
   }
   const updateItem = (index: number, update: Partial<PrescriptionDraftLine>) => {
     setItems(current => current.map((item, itemIndex) => (
       itemIndex === index ? { ...item, ...update } : item
     )))
-    setDirty(true)
   }
   const canAddMedication = items.length < 8 && catalog.some(candidate => (
     !usedCatalogItemIds.has(candidate.id) && canCombineWithCurrentItems(candidate)
@@ -3036,7 +3265,7 @@ function MedicationConclusionPanel({
   return (
     <section
       aria-labelledby="medication-conclusion-heading"
-      className="flex flex-col gap-4 border-t pt-5"
+      className="flex flex-col gap-4"
       id={encounterCompletionTargetElementIds['medication-conclusion']}
       tabIndex={-1}
     >
@@ -3044,7 +3273,6 @@ function MedicationConclusionPanel({
         <h3 className="text-sm font-semibold" id="medication-conclusion-heading">
           {messages.medicationConclusion}
         </h3>
-        {state === undefined ? null : <Badge variant="outline">{messages.documentVersion} {state.draftVersion}</Badge>}
       </div>
 
       {prescription === undefined ? null : (
@@ -3182,7 +3410,7 @@ function MedicationConclusionPanel({
           <form
             onSubmit={event => {
               event.preventDefault()
-              saveDraft.mutate()
+              issue.mutate()
             }}
           >
             <FieldGroup>
@@ -3280,7 +3508,6 @@ function MedicationConclusionPanel({
                           disabled={items.length === 1}
                           onClick={() => {
                             setItems(current => current.filter((_, itemIndex) => itemIndex !== index))
-                            setDirty(true)
                           }}
                           size="icon"
                           title={`${messages.removeMedication}${suffix}`}
@@ -3295,94 +3522,10 @@ function MedicationConclusionPanel({
                 )
               })}
               <div className="flex flex-wrap justify-end gap-2">
-                <Button disabled={saveDraft.isPending || items.length === 0} type="submit" variant="outline">
-                  <ClipboardPenIcon data-icon="inline-start" />{messages.savePrescriptionDraft}
+                <Button disabled={issue.isPending || items.length === 0} type="submit">
+                  <PillIcon data-icon="inline-start" />{messages.issuePrescription}
                 </Button>
-                {state?.draft === undefined ? null : (
-                  <>
-                    <AlertDialog>
-                      <AlertDialogTrigger
-                        render={(
-                          <Button
-                            disabled={removeDraft.isPending || issue.isPending}
-                            type="button"
-                            variant="ghost"
-                          />
-                        )}
-                      >
-                        <Trash2Icon data-icon="inline-start" />{messages.deletePrescriptionDraft}
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>{messages.deletePrescriptionDraftTitle}</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            {messages.deletePrescriptionDraftDescription}
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <ul className="space-y-1.5 text-sm">
-                          {state.draft.items.map((item) => {
-                            const medication = catalog.find(
-                              candidate => candidate.id === item.catalogItemId,
-                            )
-                            return (
-                              <li className="flex flex-wrap justify-between gap-2" key={item.catalogItemId}>
-                                <span className="font-medium">
-                                  {(locale === 'zh-CN' ? medication?.nameZh : medication?.nameEn)
-                                    ?? item.catalogItemId}
-                                </span>
-                                <span className="text-muted-foreground">
-                                  {messages.quantity} {item.quantity}
-                                </span>
-                              </li>
-                            )
-                          })}
-                        </ul>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
-                          <AlertDialogAction
-                            disabled={removeDraft.isPending}
-                            onClick={() => removeDraft.mutate(detail.caseId)}
-                            variant="destructive"
-                          >
-                            <Trash2Icon data-icon="inline-start" />{messages.confirmDelete}
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                    <Button disabled={dirty || issue.isPending || saveDraft.isPending} onClick={() => issue.mutate()} type="button">
-                      <PillIcon data-icon="inline-start" />{messages.issuePrescription}
-                    </Button>
-                  </>
-                )}
               </div>
-              {saveDraft.isSuccess && state?.draft !== undefined ? (
-                <Alert>
-                  <CheckIcon aria-hidden="true" />
-                  <AlertTitle>{messages.prescriptionDraftSaved}</AlertTitle>
-                </Alert>
-              ) : null}
-              {removeDraft.data !== undefined
-                && removeDraft.variables === detail.caseId
-                && state?.draft === undefined
-                && state?.draftVersion === removeDraft.data.data.draftVersion ? (
-                <Alert>
-                  <CheckIcon aria-hidden="true" />
-                  <AlertTitle>{messages.prescriptionDraftDeleted}</AlertTitle>
-                </Alert>
-              ) : null}
-              {saveDraft.error === null ? null : (
-                <ErrorAlert
-                  message={getWorkspaceErrorMessage(saveDraft.error, messages)}
-                  title={getWorkspaceErrorTitle(saveDraft.error, messages, messages.operationFailed)}
-                />
-              )}
-              {removeDraft.error === null
-                || removeDraft.variables !== detail.caseId ? null : (
-                <ErrorAlert
-                  message={getWorkspaceErrorMessage(removeDraft.error, messages)}
-                  title={getWorkspaceErrorTitle(removeDraft.error, messages, messages.operationFailed)}
-                />
-              )}
               {issue.error === null ? null : (
                 <ErrorAlert
                   message={getPrescriptionIssueErrorMessage(issue.error, messages)}

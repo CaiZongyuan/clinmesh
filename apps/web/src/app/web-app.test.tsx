@@ -111,15 +111,19 @@ describe('Web application shell', () => {
     vi.unstubAllGlobals()
   })
 
-  it('opens in Chinese with role navigation and no Agent surface', async () => {
+  it('opens the active role workspace without a duplicate overview entry', async () => {
     await renderWebApp()
 
-    expect(screen.getByRole('heading', { name: '工作台总览' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '门诊挂号' })).toBeTruthy()
+    expect(window.location.pathname).toBe('/registration')
     expect(screen.getByRole('navigation', { name: '岗位导航' })).toBeTruthy()
     expect(screen.getByRole('link', { name: '门诊挂号' })).toBeTruthy()
+    expect(screen.queryByRole('link', { name: '工作台总览' })).toBeNull()
     expect(screen.queryByRole('link', { name: '门诊收费' })).toBeNull()
     expect(screen.getByRole('button', { name: '通知' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '用户菜单' })).toBeTruthy()
+    expect(screen.queryByText('外观')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'English' })).toBeNull()
     expect(await screen.findByText('暂无挂号记录')).toBeTruthy()
     expect(screen.queryByText(/Agent|AI|助手/i)).toBeNull()
   })
@@ -144,29 +148,23 @@ describe('Web application shell', () => {
 
     expect(document.documentElement.lang).toBe('en-US')
     expect(screen.getByRole('heading', { level: 1, name: 'Component catalog' })).toBeTruthy()
-    expect(screen.getByRole('tab', { name: 'Controls and forms' })).toBeTruthy()
+    expect(screen.getByRole('heading', { level: 2, name: 'Controls and forms' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Dark theme' })).toBeTruthy()
     expect(screen.queryByRole('heading', { level: 1, name: '组件目录' })).toBeNull()
   })
 
-  it('switches component catalog sections with the keyboard', async () => {
+  it('shows every component group in one continuous column', async () => {
     window.history.replaceState(null, '', '/components')
-    const user = userEvent.setup()
     await renderWebApp()
 
-    const controlsTab = screen.getByRole('tab', { name: '控件与表单' })
-    expect(controlsTab.getAttribute('aria-selected')).toBe('true')
-
-    controlsTab.focus()
-    await user.keyboard('{ArrowRight}')
-
-    const clinicalTab = screen.getByRole('tab', { name: '临床数据与状态' })
-    expect(document.activeElement).toBe(clinicalTab)
-
-    await user.keyboard('{Enter}')
-
-    expect(clinicalTab.getAttribute('aria-selected')).toBe('true')
-    expect(screen.getByRole('tabpanel', { name: '临床数据与状态' })).toBeTruthy()
+    for (const heading of [
+      '控件与表单',
+      '临床数据与状态',
+      '弹层与反馈',
+      '基础与导航',
+      '会话组件',
+    ]) expect(screen.getByRole('heading', { level: 2, name: heading })).toBeTruthy()
+    expect(screen.queryByRole('tablist', { name: '组件分类' })).toBeNull()
   })
 
   it('exposes form, validation, loading, and submit states in the component catalog', async () => {
@@ -183,10 +181,7 @@ describe('Web application shell', () => {
 
   it('shows clinical tables, semantic states, loading, and long Chinese content', async () => {
     window.history.replaceState(null, '', '/components')
-    const user = userEvent.setup()
     await renderWebApp()
-
-    await user.click(screen.getByRole('tab', { name: '临床数据与状态' }))
 
     expect(screen.getByRole('table', { name: '门诊检验结果' })).toBeTruthy()
     expect(screen.getByText('青霉素过敏')).toBeTruthy()
@@ -201,7 +196,6 @@ describe('Web application shell', () => {
     const user = userEvent.setup()
     await renderWebApp()
 
-    await user.click(screen.getByRole('tab', { name: '弹层与反馈' }))
     const deleteTrigger = screen.getByRole('button', { name: '删除医嘱' })
     await user.click(deleteTrigger)
 
@@ -247,6 +241,29 @@ describe('Web application shell', () => {
     expect(screen.getByRole('heading', { name: '门诊挂号' })).toBeTruthy()
   })
 
+  it('opens the UI component catalog from the developer settings navigation', async () => {
+    const user = userEvent.setup()
+    await renderWebApp()
+
+    expect(screen.queryByRole('link', { name: '设置' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    await user.click(await screen.findByRole('menuitem', { name: '设置' }))
+
+    expect(window.location.pathname).toBe('/settings')
+    expect(screen.getByRole('navigation', { name: '设置导航' })).toBeTruthy()
+    expect(screen.getByRole('heading', { level: 1, name: '通用' })).toBeTruthy()
+    expect(screen.getByRole('group', { name: '语言' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'English' })).toBeTruthy()
+    expect(screen.getByText('开发者')).toBeTruthy()
+
+    await user.click(screen.getByRole('link', { name: 'UI 组件' }))
+
+    expect(window.location.pathname).toBe('/settings/developer/components')
+    expect(screen.getByRole('heading', { level: 1, name: 'UI 组件' })).toBeTruthy()
+    expect(screen.getByRole('heading', { level: 2, name: '控件与表单' })).toBeTruthy()
+    expect(screen.queryByRole('tablist', { name: '组件分类' })).toBeNull()
+  })
+
   it('localizes the mobile navigation dialog', async () => {
     vi.stubGlobal('matchMedia', vi.fn((query: string) => (
       createMediaQueryList(query, query === '(max-width: 767px)')
@@ -264,15 +281,15 @@ describe('Web application shell', () => {
     const user = userEvent.setup()
     const rendered = await renderWebApp()
 
+    await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    await user.click(await screen.findByRole('menuitem', { name: '设置' }))
     await user.click(screen.getByRole('button', { name: 'English' }))
 
-    expect(screen.getByRole('heading', { name: 'Workspace overview' })).toBeTruthy()
-    expect(screen.getByRole('navigation', { name: 'Role navigation' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
+    expect(screen.getByRole('navigation', { name: 'Settings navigation' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Notifications' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'User menu' })).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'Registration' })).toBeTruthy()
-    expect(screen.queryByRole('link', { name: 'Triage' })).toBeNull()
-    expect(screen.queryByRole('link', { name: '门诊挂号' })).toBeNull()
+    expect(screen.getByRole('group', { name: 'Language' })).toBeTruthy()
     expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1') ?? '')).toEqual({
       locale: 'en-US',
       theme: 'system',
@@ -280,7 +297,7 @@ describe('Web application shell', () => {
 
     rendered.unmount()
     await renderWebApp()
-    expect(screen.getByRole('heading', { name: 'Workspace overview' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
   })
 
   it('follows the system theme and supports explicit light and dark modes', async () => {
@@ -330,7 +347,8 @@ describe('Web application shell', () => {
 
     await user.keyboard('{Escape}')
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
-    expect(await screen.findByRole('menuitemradio', { name: 'English' })).toBeTruthy()
+    expect(await screen.findByRole('menuitem', { name: '设置' })).toBeTruthy()
+    expect(screen.queryByRole('menuitemradio', { name: 'English' })).toBeNull()
     expect(screen.getByRole('menuitemradio', { name: '暗色' })).toBeTruthy()
   })
 })

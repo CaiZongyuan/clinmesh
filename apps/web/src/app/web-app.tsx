@@ -1,6 +1,9 @@
 import {
+  type AppSection,
+  isSettingsSection,
+  roleSections,
+  settingsRoutes,
   WorkspaceShell,
-  type WorkspaceSection,
   workspaceRoutes,
 } from './workspace-shell.tsx'
 import {
@@ -49,13 +52,13 @@ import {
 } from './api-client.ts'
 import { getWorkspaceMessages } from './workspace-i18n.ts'
 import { RoleWorkspace } from './role-workspaces.tsx'
-import { roleSections } from './workspace-shell.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { ComponentCatalog } from './component-catalog.tsx'
+import { SettingsWorkspace } from './settings-workspace.tsx'
 
 const DARK_MODE_QUERY = '(prefers-color-scheme: dark)'
 
-function WorkspacePage({ activeSection }: { activeSection: WorkspaceSection }): React.JSX.Element {
+function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.JSX.Element {
   const [preferences, setPreferences] = useState(readWebPreferences)
   const messages = getWorkspaceMessages(preferences.locale)
   const navigate = useNavigate()
@@ -91,8 +94,12 @@ function WorkspacePage({ activeSection }: { activeSection: WorkspaceSection }): 
 
   useEffect(() => {
     if (roleCode === undefined) return
+    if (isSettingsSection(activeSection)) return
     const roleSection = roleSections[roleCode]
-    if (activeSection === 'overview' || activeSection === roleSection) return
+    if (
+      activeSection === roleSection
+      || (roleCode === 'administrator' && activeSection === 'overview')
+    ) return
     const roleRoute = workspaceRoutes.find(route => route.key === roleSection)
     void navigate({ replace: true, to: roleRoute?.path ?? '/' })
   }, [activeSection, navigate, roleCode])
@@ -143,9 +150,12 @@ function WorkspacePage({ activeSection }: { activeSection: WorkspaceSection }): 
   }
 
   const roleSection = roleSections[session.data.actor.roleCode]
-  const effectiveSection = activeSection === 'overview' || activeSection === roleSection
+  const effectiveSection = isSettingsSection(activeSection)
     ? activeSection
-    : roleSection
+    : activeSection === roleSection
+      || (session.data.actor.roleCode === 'administrator' && activeSection === 'overview')
+      ? activeSection
+      : roleSection
 
   return (
     <WorkspaceShell
@@ -174,11 +184,21 @@ function WorkspacePage({ activeSection }: { activeSection: WorkspaceSection }): 
           <AlertDescription>{getWorkspaceErrorMessage(signOutRequest.error, messages)}</AlertDescription>
         </Alert>
       ) : null}
-      <RoleWorkspace
-        activeSection={effectiveSection}
-        locale={preferences.locale}
-        session={session.data}
-      />
+      {isSettingsSection(effectiveSection) ? (
+        <SettingsWorkspace
+          activeSection={effectiveSection}
+          locale={preferences.locale}
+          onLocaleChange={locale => setPreferences(current => ({ ...current, locale }))}
+          onThemeChange={theme => setPreferences(current => ({ ...current, theme }))}
+          theme={preferences.theme}
+        />
+      ) : (
+        <RoleWorkspace
+          activeSection={effectiveSection}
+          locale={preferences.locale}
+          session={session.data}
+        />
+      )}
     </WorkspaceShell>
   )
 }
@@ -268,13 +288,19 @@ const routes = workspaceRoutes.map(({ key, path }) => createRoute({
   path,
 }))
 
+const settingsRouteTree = settingsRoutes.map(({ key, path }) => createRoute({
+  component: () => <WorkspacePage activeSection={key} />,
+  getParentRoute: () => rootRoute,
+  path,
+}))
+
 const componentCatalogRoute = createRoute({
   component: ComponentCatalog,
   getParentRoute: () => rootRoute,
   path: '/components',
 })
 
-const routeTree = rootRoute.addChildren([...routes, componentCatalogRoute])
+const routeTree = rootRoute.addChildren([...routes, ...settingsRouteTree, componentCatalogRoute])
 
 export function createWebRouter(): ReturnType<typeof createRouter<typeof routeTree>> {
   return createRouter({ routeTree })

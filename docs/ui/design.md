@@ -1,111 +1,119 @@
-# 临床 UI 设计合同
+# ClinMesh UI 设计合同
 
-ClinMesh Web 与 Desktop 使用同一套高信息密度临床视觉语言。界面保持安静、紧凑且可扫描，患者事实、业务状态和可执行动作始终优先于装饰。
+ClinMesh Web 与 Desktop 共享一套面向临床工作的界面语言：安静、高密度、可快速扫读。患者事实、业务状态和当前任务优先于装饰，界面通过表面、边线、排版和间距建立层级。
+
+## 核心原则
+
+1. **安静的密度**：在单个视口中呈现足够的临床上下文，但不用装饰色、大标题或重阴影竞争注意力。
+2. **表面优先于阴影**：常驻区域使用中性背景、1px 边线和稳定间距；阴影只属于菜单、Dialog、Sheet 和 Toast 等临时覆盖层。
+3. **动作紧邻对象**：确认诊断、签署病历、签发处方、签发申请、取消和更正位于所操作事实附近，长表单的提交区保持稳定。
+4. **渐进展开**：默认只显示当前任务所需信息；使用 Tabs、Sheet 和菜单切换上下文，不把完整病例堆成一条长页面。
+5. **工作区连续性**：侧栏、顶栏、当前岗位和设置入口在页面间保持稳定，避免重复 Dashboard 和跳转迷失。
+6. **语义色克制**：色彩用于选中、焦点、成功、警告和风险，不作为大面积装饰。
 
 ## 所有权
 
 | 内容 | Owner |
 | --- | --- |
-| 亮色、暗色、语义色、字号和圆角 token | [`packages/ui/src/styles.css`](../../packages/ui/src/styles.css) |
-| Button、Field、Table、Tabs、AlertDialog、Toast 等 primitive | [`packages/ui/src/components/`](../../packages/ui/src/components/) |
-| Web 工作台布局与平台交互 | [`apps/web/src/app/`](../../apps/web/src/app/) |
+| 主题、语义色、字体、字号和圆角 token | [`packages/ui/src/styles.css`](../../packages/ui/src/styles.css) |
+| Button、Field、Table、Tabs、Dialog 等 primitive | [`packages/ui/src/components/`](../../packages/ui/src/components/) |
+| Web 工作区布局和平台交互 | [`apps/web/src/app/`](../../apps/web/src/app/) |
 | 真实组件目录 | [`apps/web/src/app/component-catalog.tsx`](../../apps/web/src/app/component-catalog.tsx) |
 | 跨端依赖方向 | [跨端前端架构](../frontend-architecture.md) |
 
-`packages/ui` 不包含 Patient、Encounter 或 Medication 等业务概念。业务页面只通过公开组件入口和语义 token 组合界面，不复制 primitive 的样式。Mobile 使用独立的 React Native UI，不导入本合同中的 DOM 组件。
+`packages/ui` 不包含 Patient、Encounter 或 Medication 等业务概念。业务页通过公开组件入口和语义 token 组合界面，不复制 primitive 样式。Mobile 使用独立 React Native UI，不导入 DOM 组件。
 
-## 密度与几何
+## 应用框架
 
-| 合同 | 值 | 用途 |
+### 桌面端
+
+| 区域 | 合同 |
+| --- | --- |
+| 侧栏 | 220px；冷灰表面；导航行高 32px；当前项使用中性表面，不使用强彩色底 |
+| 折叠侧栏 | 48px 内容宽；只显示图标，通过 Tooltip 补足名称 |
+| 顶栏 | 54px；包含唯一页面 H1、通知和用户菜单；设置位于用户菜单内 |
+| 主内容 | 16–20px 页边距；不重复顶栏标题；业务网格充分使用宽度 |
+| 应用表面 | 主区域与侧栏通过背景、边线和最大 8px 圆角区分，无常驻阴影 |
+
+非管理员侧栏只显示当前岗位工作台，不再同时显示“工作台总览”。管理员使用总览作为其岗位首页。设置使用同一框架，但侧栏切换为“设置”与“开发者”导航。
+
+### 移动端
+
+`< 768px` 时桌面侧栏替换为 Sheet。主内容使用 16px 页边距，多列表单回落为单列，Tabs 可水平滚动。表格保持列语义并在自身容器内水平滚动，不通过缩小字号隐藏数据。
+
+## 密度与排版
+
+| 用途 | 尺寸 | 规则 |
 | --- | ---: | --- |
-| 桌面侧栏 | 204px (`12.75rem`) | 岗位导航与当前操作身份 |
-| 顶栏 | 54px (`3.375rem`) | 当前工作区、导航切换和账户操作 |
-| 正文与 `text-sm` | 13px (`0.8125rem`) | 表单、表格、状态和常规说明 |
-| XS / SM / 默认 / LG 按钮 | 24 / 28 / 32 / 36px | 按动作密度选择，不随视口缩放 |
-| 状态标签圆角 | 约 5px | 风险、信息、警告、成功和中性状态 |
-| 常规控件圆角 | 6px | Button、Input、Tabs 和 Select |
-| 页面级最大圆角 | 8px | 独立业务项、弹层和真正需要边框的工具 |
-| 字距 | 0 | 中文、英文、数字和控件文字 |
+| 顶栏标题 | 13px | 600 字重，单行截断 |
+| 业务分区标题 | 13–16px | 与内容紧密对齐 |
+| 正文与控件 | 13px | 1.5 行高，不随视口缩放 |
+| 辅助信息 | 11–12px | 使用 `muted-foreground` |
+| 按钮 | 24 / 28 / 32 / 36px | XS / SM / 默认 / LG |
+| 常规控件圆角 | 6px | Button、Input、Select、Tabs |
+| 业务表面圆角 | 最大 8px | 独立重复项、弹层和真正的工具容器 |
 
-常驻区域不使用投影。页面层级通过背景、1px 边线、间距和固定位置表达；阴影仅用于菜单、Select、Dialog、Sheet 和 Toast 等脱离文档流的临时覆盖层。Card 只包裹独立重复项或真正需要边界的工具，页面分区不使用装饰卡片，也不嵌套 Card。
+全局字距为 0。日期、时间、金额和检验值使用等宽数字特性。页面不使用负字距、视口缩放字号或超大仪表盘标题。
 
-页面标题保持紧凑，工作台一级标题通常为 20px，分区标题使用 13px 至 16px。临床数值可提高字号和字重，但不使用随视口变化的字号。日期、时间、金额和检验值使用等宽数字特性。
+## 颜色与主题
 
-## 色彩与主题
+业务组件只消费语义 token，不直接写入 Tailwind 色阶。
 
-应用只消费语义 token，不在业务组件中写入任意 Tailwind 色阶。
-
-| Token | 含义 |
+| Token | 用途 |
 | --- | --- |
-| `background` / `foreground` | 主画布和默认文字 |
-| `card` / `popover` | 独立业务项和临时覆盖层 |
-| `primary` | 明确主操作和当前选择 |
-| `destructive` | 过敏、危急、删除和不可逆风险 |
-| `warning` | 偏高、待复核和需要注意 |
+| `background` / `foreground` | 主画布与默认文字 |
+| `card` / `popover` | 独立业务项与临时覆盖层 |
+| `primary` | 近黑主操作，避免整页被单一彩色支配 |
+| `info` / `ring` | ClinMesh 品牌标识、信息和键盘焦点 |
 | `success` | 正常、通过和已完成 |
-| `info` | 常规信息、同步和进行中 |
+| `warning` | 待复核、偏高和需要注意 |
+| `destructive` | 过敏、危急、删除和不可逆风险 |
 | `secondary` / `muted` | 中性状态、辅助表面和弱化文字 |
-| `border` / `input` / `ring` | 分隔线、控件边界和键盘焦点 |
+| `border` / `input` | 分隔线和控件边界 |
 
-亮色以白色主画布和冷灰辅助面为主；暗色重新映射画布、文字、边线和各语义色，而不是反相亮色值。Web 在根节点使用 `dark` class 与 `data-theme`，主题选择写入 `clinmesh.preferences:v1`。`/components` 顶栏的亮色/暗色 ToggleGroup 操作同一主题机制，因此展示的是产品实际 token。
+亮色主题使用白色主画布和冷灰辅助面。暗色主题独立映射画布、文字、边线和语义色，不直接反相亮色值。主题选择写入 `clinmesh.preferences:v1`，公共组件目录和登录后工作区使用同一机制。
 
-语义色只表达含义，不扩散为大面积背景、Logo 或装饰。页面不使用品牌渐变、光斑、渐变球或纯氛围图形。
+## 临床信息架构
 
-## 响应式断点
+当前诊疗工作区在 `>= 1280px` 时使用三栏信息架构：
 
-断点沿用 Tailwind 的稳定尺寸，不创建只服务单页的相近断点。
+| 区域 | 宽度 | 职责 |
+| --- | ---: | --- |
+| 左栏 | `15–17rem` | 候选患者与诊疗队列，选中病例后不离开当前工作区 |
+| 中栏 | 剩余宽度 | 患者抬头、生命体征与四个诊疗 Tabs，是唯一主操作区 |
+| 右栏 | `16–18rem` | 诊疗对话、医生问题与患者回答 |
 
-| 宽度 | 行为 |
+右栏只呈现已实现的诊疗对话，不用静态文案伪装 AI 助手或实时建议。窄屏按左栏、中栏、右栏的 DOM 顺序回落为单列；页面不产生水平滚动，Tabs 和表格在自身容器内滚动。
+
+| 分区 | 内容 |
 | --- | --- |
-| `< 640px` | 单列内容，紧凑页边距，Tabs 可横向滚动，提交区固定在可视区底部 |
-| `640px–767px` | 扩大页边距，仍使用移动导航 Sheet 和单列主流程 |
-| `768px–1023px` | 显示 204px 桌面侧栏，表单可转两列，Input 与 Textarea 使用 13px 字号 |
-| `1024px–1279px` | 独立预览、反馈和临床辅助区域可并列显示 |
-| `>= 1280px` | 业务网格使用完整桌面密度，主任务继续优先占用宽度 |
+| 病历记录 | 主诉、现病史、既往史、查体、辅助检查、临床评估、处置和随访输入；既往事实与过敏信息位于同一区域 |
+| 诊断 | 受控诊断目录、主次诊断和确认诊断 |
+| 处方 | 用药结论、处方明细、签发和撤回 |
+| 检验检查 | 检查项目、适应证、签发申请、报告、已阅状态和报告更正 |
 
-固定格式控件和状态区域使用稳定高度、网格列或最小宽度。内容过长时换行或让 Table 容器横向滚动，不通过缩小字体隐藏信息。移动端不会把桌面侧栏压成不可读窄栏，而是使用 Sheet。
+患者抬头常驻“完诊”动作。存在阻断项时，点击后以 Dialog 显示未完成的临床事项并可跳转到对应 Tab；满足条件后才允许确认完诊。已完诊病例的更正入口同样先激活目标 Tab，再将焦点和滚动位置移到目标区域。
 
-## 组件组合
+病历输入以 `caseId` 隔离保存在当前前端会话状态中。切换诊疗 Tab 或患者不会丢失输入，也不会将一个患者的内容带入另一个患者；刷新或关闭页面会丢弃尚未提交的内容。界面不暴露草稿、草稿版本、FHIR 版本或乐观锁版本。正式持久化只由“确认诊断”“签署病历”“签发处方”“签发申请”和“完诊”等业务动作触发，服务端继续在内部执行草稿、版本校验和审计。
 
-### 命令与工具
+所有演示患者和岗位在底层仍带 synthetic provenance、FHIR extension、受控标识和审计边界。临床显示名称、岗位名称和患者抬头不添加“合成”前缀，也不显示“教学环境”等与当前诊疗无关的提示。
 
-命令使用 Button。新增、保存、提交、删除等责任明确的动作使用 Lucide 图标加文字；熟悉的纯工具动作可使用带可访问名称的图标按钮。尺寸和 variant 由 Button 的公开 API 提供，页面 `className` 只负责布局。加载按钮为 `disabled` Button 加 Spinner，Spinner 必须保留可本地化的 `role=status` 名称。
+## 组件与组合
 
-### 表单
+- 命令使用 Button。新增、确认、签署、签发和删除使用来自统一 Lucide 集合的图标加文字；熟悉的工具动作可使用带可访问名称的图标按钮。
+- 表单使用 `FieldGroup + Field + FieldLabel`。错误同时设置 Field 状态、`aria-invalid` 和具体 `FieldError`。
+- 状态使用 Badge，集合加载使用 Skeleton，操作中使用 Spinner，完整错误和风险提示使用 Alert。
+- Card 只包裹独立重复项、弹层和真正需要边界的工具；页面分区不做浮动 Card，不嵌套 Card。
+- 长表单的提交区使用顶边线和稳定高度，不用常驻阴影。
 
-表单使用 `FieldGroup + Field + FieldLabel`。无效状态同时在 Field 上设置 `data-invalid`、在控件上设置 `aria-invalid`，并用 `FieldError` 绑定具体错误。禁用状态同时落在 Field 和原生控件。二至七个选项使用 ToggleGroup；相关复选项使用 `FieldSet + FieldLegend`。
+## 开发者组件目录
 
-### Tabs 与数据
+设置中的“开发者 → UI 组件”与公共 `/components` 路由共享同一个真实目录实现。目录静态导入 `@clinmesh/ui/components/*`，在单栏内容流中依次展示控件与表单、临床数据与状态、弹层与反馈、基础与导航、会话组件。
 
-`TabsTrigger` 只出现在 `TabsList` 中，并与同值 `TabsContent` 配对。默认键盘合同是方向键移动焦点，Enter 或 Space 激活面板。Table 保留原生表格语义，通过 caption 或 `aria-label` 命名；窄屏由 Table 容器负责横向滚动。
-
-状态使用 Badge 的 `destructive`、`warning`、`success`、`info`、`secondary` 或 `outline` variant。加载集合使用 Skeleton，操作中状态使用 Spinner，错误和需要注意的完整消息使用 Alert。
-
-### 弹层与反馈
-
-AlertDialog 必须包含 Title 和 Description，打开后管理焦点，关闭后把焦点还给触发按钮。Dialog、Sheet 和菜单由 primitive 管理 Portal 与堆叠，不由页面写入 z-index。Toast 使用共享 Base UI manager；成功、警告、错误和加载反馈通过 `type` 映射图标与语义。
-
-### 提交区
-
-长表单和临床编辑器使用底部 `sticky` 提交区。次要动作位于主动作之前，区域通过顶边线与内容分隔，不增加浮动 Card 或常驻阴影。动态文案和按钮状态不得改变工具条高度。
-
-## 真实组件目录
-
-Web 的公共 `/components` 路由不要求登录，也不请求应用 API。页面静态导入 `@clinmesh/ui/components/*`，因此展示、测试和业务页面消费同一份 primitive 源码。目录读取现有 Web 偏好中的 locale 与主题，中文和英文使用同一布局与组件状态。
-
-目录分为“控件与表单”“临床数据与状态”“弹层与反馈”三个 Tabs，覆盖：
-
-- Button 尺寸、variant、disabled、真实键盘 focus 和 Spinner loading；
-- Field、Input、Textarea、ToggleGroup、无效和禁用表单状态；
-- Table、Badge、Skeleton、Alert、长中文和紧凑数字；
-- AlertDialog、Toast、亮色/暗色主题和固定提交区。
-
-目录是可执行设计合同，不承担业务流程、组件注册表或完整导出清单。新增共享组件时仍先确认真实消费者；只有属于临床通用状态且需要人工检查的组合才进入目录。
+组件目录使用产品实际 token、主题和本地化文案，不维护第二套示例样式，也不使用同质化的名称清单代替真实组件。新增共享组件时，目录必须同步增加至少一个可视状态。
 
 ## 可访问性与验证
 
-所有交互控件必须有可访问名称，图标装饰使用 `aria-hidden`，焦点使用 `ring` token 且不可被布局裁切。错误文本命名错误主体，Toast 使用礼貌 live region，确认弹层使用 `alertdialog`。长中文必须在 390px 移动宽度内保持可读，不遮挡相邻内容或固定提交区。
+所有交互控件必须有可访问名称，装饰图标使用 `aria-hidden`，键盘焦点使用 `ring` token 且不被布局裁切。Tabs 保留方向键移动焦点和 Enter / Space 激活行为。Dialog 和 AlertDialog 在关闭后将焦点还给触发器。
 
-包级契约位于 [`packages/ui/tests/accessibility.test.tsx`](../../packages/ui/tests/accessibility.test.tsx)，覆盖 Spinner、Tabs 和 AlertDialog。公共路由与目录工作流位于 [`apps/web/src/app/web-app.test.tsx`](../../apps/web/src/app/web-app.test.tsx)，覆盖零网络访问、中英文偏好、键盘 Tabs、表单状态、临床数据、弹层、Toast 和主题持久化。
-
-代码变更先运行受影响包的 typecheck 与测试。文档或公开投影变更运行 `pnpm doc-sync`。用户可见变更还需从真实 `/components` 入口在桌面和移动视口检查布局、焦点、弹层、Toast 和主题。
+产品可见改动从真实 Web 入口在桌面和窄屏视口验证，检查导航、长中英文、Tabs、表格滚动、弹层、主题和焦点。只运行覆盖当前 diff 的最小检查。

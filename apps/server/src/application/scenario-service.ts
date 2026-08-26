@@ -51,6 +51,208 @@ const laboratoryResultsHiddenFact = {
   },
 } as const
 
+interface CandidateVirtualPatientSeed {
+  answers: readonly [string, string, string]
+  birthDate: string
+  chiefComplaint: string
+  gender: 'female' | 'male'
+  hiddenCause?: boolean
+  id: string
+  name: string
+  patientId: string
+  priorCondition?: { display: string; recordedDate: string }
+  summary: string
+  vitalSigns: {
+    bloodPressure: { diastolicMmHg: number; systolicMmHg: number }
+    oxygenSaturationPct: number
+    pulseBpm: number
+    respirationBpm: number
+    temperatureC: number
+  }
+}
+
+function candidateVirtualPatient(seed: CandidateVirtualPatientSeed) {
+  return {
+    birthDate: seed.birthDate,
+    gender: seed.gender,
+    id: seed.id,
+    name: seed.name,
+    patientId: seed.patientId,
+    presentation: {
+      chiefComplaint: seed.chiefComplaint,
+      summary: seed.summary,
+      vitalSigns: seed.vitalSigns,
+    },
+    ...(seed.priorCondition === undefined ? {} : { priorCondition: seed.priorCondition }),
+    questions: [{
+      answer: seed.answers[0],
+      code: 'symptom-onset',
+      factCode: null,
+      ordinal: 1,
+      revealedAnswer: null,
+      text: '什么时候开始不舒服？',
+      version: 1,
+    }, {
+      answer: seed.answers[1],
+      code: 'associated-symptoms',
+      factCode: null,
+      ordinal: 2,
+      revealedAnswer: null,
+      text: '还有哪些伴随症状？',
+      version: 1,
+    }, {
+      answer: seed.answers[2],
+      code: 'relevant-history',
+      factCode: seed.hiddenCause === true ? 'respiratory-pathogen' : null,
+      ordinal: 3,
+      revealedAnswer: seed.hiddenCause === true ? '检验结果显示是甲型流感病毒感染。' : null,
+      text: seed.hiddenCause === true ? '知道是什么感染引起的吗？' : '近期是否用药或有相关病史？',
+      version: 1,
+    }],
+    version: 1,
+  }
+}
+
+const candidateVirtualPatients = [
+  candidateVirtualPatient({
+    answers: ['昨天下午开始发热，夜里最高 38.7 °C。', '咽痛，吞咽时明显，没有气促。', '目前不清楚，需要等检查结果。'],
+    birthDate: '1988-03-16',
+    chiefComplaint: '发热、咽痛 1 天',
+    gender: 'female',
+    hiddenCause: true,
+    id: 'virtual-patient-fever-001',
+    name: '林晓',
+    patientId: 'candidate-patient-001',
+    priorCondition: { display: '上呼吸道感染', recordedDate: '2025-11-08' },
+    summary: '昨日傍晚开始发热，最高 38.7 °C，伴咽痛。',
+    vitalSigns: { bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 }, oxygenSaturationPct: 98, pulseBpm: 96, respirationBpm: 20, temperatureC: 38.6 },
+  }),
+  candidateVirtualPatient({
+    answers: ['三天前开始咳嗽，昨晚出现发热。', '咳少量黄痰，胸口不痛。', '服过一次对乙酰氨基酚，退热后又升高。'],
+    birthDate: '1981-06-12',
+    chiefComplaint: '咳嗽、发热 3 天',
+    gender: 'male',
+    id: 'virtual-patient-fever-002',
+    name: '王晓明',
+    patientId: 'candidate-patient-002',
+    priorCondition: { display: '高血压', recordedDate: '2019-06-12' },
+    summary: '咳嗽三天，昨夜体温升至 38.3 °C，伴少量黄痰。',
+    vitalSigns: { bloodPressure: { diastolicMmHg: 86, systolicMmHg: 142 }, oxygenSaturationPct: 97, pulseBpm: 92, respirationBpm: 19, temperatureC: 38.1 },
+  }),
+  candidateVirtualPatient({
+    answers: ['今天清晨开始畏寒和头痛。', '全身酸痛，没有呕吐。', '尚未服药，既往没有慢性病。'],
+    birthDate: '1994-11-03',
+    chiefComplaint: '畏寒、头痛半天',
+    gender: 'female',
+    id: 'virtual-patient-fever-003',
+    name: '李静',
+    patientId: 'candidate-patient-003',
+    summary: '清晨突发畏寒、头痛及全身酸痛，体温 38.9 °C。',
+    vitalSigns: { bloodPressure: { diastolicMmHg: 72, systolicMmHg: 110 }, oxygenSaturationPct: 99, pulseBpm: 104, respirationBpm: 21, temperatureC: 38.9 },
+  }),
+  candidateVirtualPatient({
+    answers: ['两天前开始鼻塞流涕。', '偶尔干咳，不胸闷。', '自行服用过一包感冒冲剂。'],
+    birthDate: '1976-02-28',
+    chiefComplaint: '鼻塞、流涕 2 天',
+    gender: 'male',
+    id: 'virtual-patient-fever-004',
+    name: '张伟',
+    patientId: 'candidate-patient-004',
+    summary: '鼻塞流涕两天，伴轻度咽干和偶发干咳。',
+    vitalSigns: { bloodPressure: { diastolicMmHg: 82, systolicMmHg: 130 }, oxygenSaturationPct: 98, pulseBpm: 78, respirationBpm: 18, temperatureC: 37.4 },
+  }),
+  candidateVirtualPatient({
+    answers: ['昨晚开始咽部疼痛。', '没有咳嗽，吞咽时加重。', '青霉素过敏，暂未服药。'],
+    birthDate: '1985-09-21',
+    chiefComplaint: '咽痛伴低热 1 天',
+    gender: 'female',
+    id: 'virtual-patient-fever-005',
+    name: '刘洋',
+    patientId: 'candidate-patient-005',
+    summary: '咽痛一天，吞咽时加重，最高体温 37.9 °C。',
+    vitalSigns: { bloodPressure: { diastolicMmHg: 74, systolicMmHg: 116 }, oxygenSaturationPct: 99, pulseBpm: 84, respirationBpm: 18, temperatureC: 37.8 },
+  }),
+  candidateVirtualPatient({
+    answers: ['四天前开始反复咳嗽。', '夜间较重，有少量白痰。', '有慢性支气管炎史，近期未规律用药。'],
+    birthDate: '1968-12-05',
+    chiefComplaint: '反复咳嗽 4 天',
+    gender: 'male',
+    id: 'virtual-patient-fever-006',
+    name: '陈勇',
+    patientId: 'candidate-patient-006',
+    priorCondition: { display: '慢性支气管炎', recordedDate: '2022-03-09' },
+    summary: '咳嗽四天，夜间加重，伴少量白痰，无明显发热。',
+    vitalSigns: { bloodPressure: { diastolicMmHg: 80, systolicMmHg: 128 }, oxygenSaturationPct: 96, pulseBpm: 88, respirationBpm: 20, temperatureC: 37.2 },
+  }),
+  candidateVirtualPatient({
+    answers: ['昨天开始发热和乏力。', '胃口差，没有腹泻。', '家中有人近期也有发热。'],
+    birthDate: '2000-07-14',
+    chiefComplaint: '发热、乏力 1 天',
+    gender: 'female',
+    id: 'virtual-patient-fever-007',
+    name: '赵雪',
+    patientId: 'candidate-patient-007',
+    summary: '发热伴明显乏力一天，最高体温 38.5 °C。',
+    vitalSigns: { bloodPressure: { diastolicMmHg: 70, systolicMmHg: 108 }, oxygenSaturationPct: 99, pulseBpm: 98, respirationBpm: 19, temperatureC: 38.4 },
+  }),
+  candidateVirtualPatient({
+    answers: ['一周前开始间断咳嗽。', '运动后稍气促，休息可缓解。', '有吸烟史，没有哮喘史。'],
+    birthDate: '1972-04-30',
+    chiefComplaint: '咳嗽伴活动后气促 1 周',
+    gender: 'male',
+    id: 'virtual-patient-fever-008',
+    name: '周敏',
+    patientId: 'candidate-patient-008',
+    summary: '间断咳嗽一周，活动后轻度气促，无胸痛。',
+    vitalSigns: { bloodPressure: { diastolicMmHg: 84, systolicMmHg: 136 }, oxygenSaturationPct: 95, pulseBpm: 90, respirationBpm: 22, temperatureC: 37.1 },
+  }),
+  candidateVirtualPatient({
+    answers: ['今天凌晨开始高热。', '伴寒战和肌肉酸痛。', '两周前接种过流感疫苗，未服药。'],
+    birthDate: '1991-01-19',
+    chiefComplaint: '高热、寒战 6 小时',
+    gender: 'female',
+    id: 'virtual-patient-fever-009',
+    name: '孙磊',
+    patientId: 'candidate-patient-009',
+    summary: '凌晨突发高热寒战，体温最高 39.4 °C，伴肌肉酸痛。',
+    vitalSigns: { bloodPressure: { diastolicMmHg: 68, systolicMmHg: 104 }, oxygenSaturationPct: 98, pulseBpm: 112, respirationBpm: 22, temperatureC: 39.2 },
+  }),
+  candidateVirtualPatient({
+    answers: ['两天前开始声音嘶哑。', '咽干、偶尔咳嗽，没有发热。', '职业需要频繁讲话，未服药。'],
+    birthDate: '1983-08-08',
+    chiefComplaint: '声音嘶哑、咽干 2 天',
+    gender: 'male',
+    id: 'virtual-patient-fever-010',
+    name: '胡明',
+    patientId: 'candidate-patient-010',
+    summary: '声音嘶哑伴咽干两天，偶发干咳，无发热。',
+    vitalSigns: { bloodPressure: { diastolicMmHg: 78, systolicMmHg: 124 }, oxygenSaturationPct: 99, pulseBpm: 76, respirationBpm: 17, temperatureC: 36.8 },
+  }),
+  candidateVirtualPatient({
+    answers: ['三天前开始发热。', '伴鼻塞和耳闷，没有耳痛。', '服过布洛芬，无药物过敏史。'],
+    birthDate: '1997-05-26',
+    chiefComplaint: '发热、鼻塞 3 天',
+    gender: 'female',
+    id: 'virtual-patient-fever-011',
+    name: '韩萍',
+    patientId: 'candidate-patient-011',
+    summary: '发热鼻塞三天，最高体温 38.2 °C，伴双侧耳闷。',
+    vitalSigns: { bloodPressure: { diastolicMmHg: 73, systolicMmHg: 112 }, oxygenSaturationPct: 98, pulseBpm: 91, respirationBpm: 18, temperatureC: 37.9 },
+  }),
+  candidateVirtualPatient({
+    answers: ['五天前开始咳嗽。', '痰少，夜间有喘鸣。', '小时候有哮喘，近几年未发作。'],
+    birthDate: '1979-10-17',
+    chiefComplaint: '咳嗽伴夜间喘鸣 5 天',
+    gender: 'male',
+    id: 'virtual-patient-fever-012',
+    name: '朱凯',
+    patientId: 'candidate-patient-012',
+    priorCondition: { display: '支气管哮喘', recordedDate: '2016-04-21' },
+    summary: '咳嗽五天，夜间出现喘鸣，活动耐量较平时下降。',
+    vitalSigns: { bloodPressure: { diastolicMmHg: 79, systolicMmHg: 126 }, oxygenSaturationPct: 94, pulseBpm: 94, respirationBpm: 23, temperatureC: 37.0 },
+  }),
+] as const
+
 const legacyScenarioBlueprints = {
   candidate: {
     clinicalReview: null,
@@ -72,47 +274,7 @@ const legacyScenarioBlueprints = {
       { code: 'ambiguous', outcome: 'ambiguous', simulator: 'payment' },
       { code: 'deterministic-report', outcome: 'success', simulator: 'lis' },
     ],
-    virtualPatients: [{
-      id: 'virtual-patient-fever-001',
-      patientId: 'candidate-patient-001',
-      presentation: {
-        chiefComplaint: '发热、咽痛 1 天。',
-        summary: '昨日傍晚开始发热，最高 38.7 °C，伴咽痛。',
-        vitalSigns: {
-          bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
-          oxygenSaturationPct: 98,
-          pulseBpm: 96,
-          respirationBpm: 20,
-          temperatureC: 38.6,
-        },
-      },
-      questions: [{
-        answer: '昨天傍晚开始发热，最高量到 38.7 °C。',
-        code: 'symptom-onset',
-        factCode: null,
-        ordinal: 1,
-        revealedAnswer: null,
-        text: '什么时候开始发热？',
-        version: 1,
-      }, {
-        answer: '咽痛，吞咽时更明显，没有气促。',
-        code: 'associated-symptoms',
-        factCode: null,
-        ordinal: 2,
-        revealedAnswer: null,
-        text: '除了发热，还有哪里不舒服？',
-        version: 1,
-      }, {
-        answer: '目前还不知道，需要等检查结果。',
-        code: 'infection-cause',
-        factCode: 'respiratory-pathogen',
-        ordinal: 3,
-        revealedAnswer: '检验结果显示是甲型流感病毒感染。',
-        text: '知道是什么感染引起的吗？',
-        version: 1,
-      }],
-      version: 1,
-    }],
+    virtualPatients: [candidateVirtualPatients[0]],
     scenarioId: 'candidate-fever-outpatient-v1',
     version: '1.0.0',
     virtualTime: '2026-08-24T09:00:00+08:00',
@@ -172,6 +334,7 @@ const installableScenarioBlueprints = {
     scenarioId: 'candidate-fever-outpatient-v3',
     schemaVersion: '3',
     version: '3.0.0',
+    virtualPatients: candidateVirtualPatients,
   },
   density: {
     ...versionTwoScenarioBlueprints.density,
@@ -711,35 +874,39 @@ export class ScenarioService {
       })
     }
     if (input.blueprint.kind === 'candidate') {
-      this.#fhir.create(context, {
-        resourceType: 'Patient',
-        id: 'candidate-patient-001',
-        active: true,
-        identifier: [{
-          system: 'https://caizongyuan.github.io/clinmesh/fhir/sid/synthetic-patient',
-          value: 'CM-CANDIDATE-001',
-        }],
-        name: [{ text: '合成候选患者林晓' }],
-        gender: 'female',
-        birthDate: '1988-03-16',
-        extension: [{
-          url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/synthetic-data',
-          valueBoolean: true,
-        }],
-      })
-      this.#fhir.create(context, {
-        resourceType: 'Condition',
-        id: 'candidate-prior-condition-001',
-        clinicalStatus: {
-          coding: [{
-            code: 'resolved',
-            system: 'http://terminology.hl7.org/CodeSystem/condition-clinical',
+      for (const [index, patient] of input.blueprint.virtualPatients.entries()) {
+        const sequence = String(index + 1).padStart(3, '0')
+        this.#fhir.create(context, {
+          resourceType: 'Patient',
+          id: patient.patientId,
+          active: true,
+          identifier: [{
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/sid/synthetic-patient',
+            value: `MZ20260826${sequence}`,
           }],
-        },
-        code: { text: '既往上呼吸道感染（合成）' },
-        subject: { reference: 'Patient/candidate-patient-001' },
-        recordedDate: '2025-11-08',
-      })
+          name: [{ text: patient.name }],
+          gender: patient.gender,
+          birthDate: patient.birthDate,
+          extension: [{
+            url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/synthetic-data',
+            valueBoolean: true,
+          }],
+        })
+        if (patient.priorCondition === undefined) continue
+        this.#fhir.create(context, {
+          resourceType: 'Condition',
+          id: `candidate-prior-condition-${sequence}`,
+          clinicalStatus: {
+            coding: [{
+              code: 'active',
+              system: 'http://terminology.hl7.org/CodeSystem/condition-clinical',
+            }],
+          },
+          code: { text: patient.priorCondition.display },
+          subject: { reference: `Patient/${patient.patientId}` },
+          recordedDate: patient.priorCondition.recordedDate,
+        })
+      }
     }
     const inventoryLots = this.#database.driver.prepare(`
       SELECT lot.lot_id, lot.lot_number, lot.expires_on, lot.quantity_on_hand,

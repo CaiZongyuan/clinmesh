@@ -633,12 +633,15 @@ function patientSummary(resource: FhirResource): PatientSummary {
   const name = Array.isArray(resource.name)
     ? (resource.name[0] as { text?: unknown } | undefined)?.text
     : undefined
+  const clinicalName = typeof name === 'string'
+    ? name.replace(/^合成(?:候选|密度)?患者/, '').replace(/^Synthetic\s+(?:candidate\s+)?patient\s+/i, '')
+    : ''
   return {
     ...(typeof resource.birthDate === 'string' ? { birthDate: resource.birthDate } : {}),
     ...(typeof resource.gender === 'string' ? { gender: resource.gender } : {}),
     id: resource.id,
     identifier: typeof identifier === 'string' ? identifier : '',
-    name: typeof name === 'string' ? name : '',
+    name: clinicalName,
     synthetic: true,
     versionId: resource.meta?.versionId ?? '1',
   }
@@ -687,14 +690,19 @@ const fhirCanonicalBase = 'https://caizongyuan.github.io/clinmesh/fhir'
 const clinicalDocumentSections = [
   { code: 'chief-complaint', field: 'chiefComplaint', title: '主诉' },
   { code: 'history-of-present-illness', field: 'historyOfPresentIllness', title: '现病史' },
+  { code: 'prior-medical-history', field: 'priorMedicalHistory', title: '既往史' },
   { code: 'physical-examination', field: 'physicalExamination', title: '查体' },
+  { code: 'auxiliary-examination', field: 'auxiliaryExamination', title: '辅助检查' },
   { code: 'assessment', field: 'assessment', title: '评估' },
   { code: 'disposition', field: 'disposition', title: '处置' },
   { code: 'follow-up', field: 'followUp', title: '随访' },
 ] as const
 
 function structuredClinicalDocumentSections(document: ClinicalDocumentContent) {
-  return clinicalDocumentSections.map(section => ({
+  return clinicalDocumentSections.flatMap(section => {
+    const value = document[section.field]
+    if (value === undefined) return []
+    return [{
     code: {
       coding: [{
         code: section.code,
@@ -704,11 +712,12 @@ function structuredClinicalDocumentSections(document: ClinicalDocumentContent) {
       text: section.title,
     },
     text: {
-      div: `<div xmlns="http://www.w3.org/1999/xhtml">${xhtmlText(document[section.field])}</div>`,
+      div: `<div xmlns="http://www.w3.org/1999/xhtml">${xhtmlText(value)}</div>`,
       status: 'generated',
     },
-    title: section.title,
-  }))
+      title: section.title,
+    }]
+  })
 }
 
 function clinicalDocumentRevisionDefinition(
@@ -970,10 +979,10 @@ function structuredClinicalDocumentFromComposition(resource: FhirResource): Clin
     const value = xhtmlTextValue(section.text.div)
     return coding === undefined || value === undefined ? [] : [[coding.code, value] as const]
   }))
-  const content = Object.fromEntries(clinicalDocumentSections.map(section => [
-    section.field,
-    sections.get(section.code),
-  ]))
+  const content = Object.fromEntries(clinicalDocumentSections.flatMap(section => {
+    const value = sections.get(section.code)
+    return value === undefined ? [] : [[section.field, value]]
+  }))
   const parsed = clinicalDocumentContentSchema.safeParse(content)
   return parsed.success ? parsed.data : undefined
 }

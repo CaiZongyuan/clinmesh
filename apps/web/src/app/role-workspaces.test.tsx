@@ -673,7 +673,8 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    await user.click(await screen.findByRole('tab', { name: '新建合成患者' }))
+    await screen.findByText('普通门诊挂号费 · ¥20.00')
+    await user.click(screen.getByRole('tab', { name: '新建合成患者' }))
     expect((await screen.findByRole('combobox', { name: '性别' })).textContent).toContain('男')
     expect((await screen.findByRole('combobox', { name: '科室' })).textContent).toContain('全科医学科')
     expect(screen.getByRole('combobox', { name: '号别' }).textContent).toContain('普通门诊挂号费 · ¥20.00')
@@ -2692,9 +2693,11 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
+    await user.click(await screen.findByRole('tab', { name: '健康记录' }))
     expect(await screen.findByText(/既往咳嗽/)).toBeTruthy()
     expect(screen.queryByRole('heading', { name: '用药结论' })).toBeNull()
     expect(screen.queryByLabelText('诊断编码')).toBeNull()
+    await user.click(screen.getByRole('tab', { name: '诊断' }))
     await user.click(screen.getByRole('button', { name: '添加诊断' }))
     await user.click(screen.getByRole('combobox', { name: '诊断项目' }))
     await user.click(await screen.findByRole('option', { name: '流感伴其他呼吸道表现 · J10.1' }))
@@ -2702,17 +2705,128 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: '添加诊断' }))
     await user.click(screen.getByRole('combobox', { name: '诊断项目 2' }))
     await user.click(await screen.findByRole('option', { name: '急性上呼吸道感染 · J06.9' }))
-    await user.click(screen.getByRole('button', { name: '保存诊断草稿' }))
-
-    expect(await screen.findByText('诊断草稿已保存')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '确认诊断' }))
     expect(await screen.findByText('诊断已确认')).toBeTruthy()
     expect(screen.getByText('J10.1 · 流感伴其他呼吸道表现')).toBeTruthy()
     expect(screen.getByText('J06.9 · 急性上呼吸道感染')).toBeTruthy()
+    await user.click(screen.getByRole('tab', { name: '健康记录' }))
     expect(screen.getByText(/既往咳嗽/)).toBeTruthy()
   })
 
-  it('navigates the completion checklist and converts a completed Encounter to read-only', async () => {
+  it('keeps each patient clinical record in session state and collapses consultation on the right', async () => {
+    const questions = [{ code: 'symptom-onset', text: '什么时候开始不舒服？' }]
+    const patients = [{
+      birthDate: '1981-06-12',
+      gender: 'male',
+      id: 'patient-wang-xiaoming',
+      identifier: 'MZ20260826001',
+      name: '王晓明',
+      synthetic: true,
+      versionId: '1',
+    }, {
+      birthDate: '1994-11-03',
+      gender: 'female',
+      id: 'patient-li-jing',
+      identifier: 'MZ20260826002',
+      name: '李静',
+      synthetic: true,
+      versionId: '1',
+    }]
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({
+          diagnoses: [],
+          laboratory: [],
+          medications: [],
+          prescriptionConclusionSupported: true,
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        return Response.json({
+          items: patients.map((patient, index) => ({
+            caseId: `case-${index + 1}`,
+            encounterId: `encounter-${index + 1}`,
+            encounterVersion: '1',
+            patient,
+            presentation: {
+              ...doctorPresentation,
+              chiefComplaint: index === 0 ? '咳嗽、发热三天' : '间断头痛一周',
+              summary: index === 0 ? '三天前出现咳嗽伴发热。' : '一周来间断头痛。',
+            },
+            status: 'first-visit',
+            taskId: `task-${index + 1}`,
+            taskVersion: '1',
+          })),
+          ...pagination(2),
+        })
+      }
+      const caseMatch = /^\/api\/his\/v1\/doctor\/cases\/case-(\d)$/.exec(url.pathname)
+      if (caseMatch !== null) {
+        const index = Number(caseMatch[1]) - 1
+        const patient = patients[index]
+        if (patient === undefined) throw new Error('Patient fixture was not found')
+        return Response.json({
+          allergies: [],
+          caseId: `case-${index + 1}`,
+          consultation: { questions, records: [], version: 1 },
+          encounter: { id: `encounter-${index + 1}`, status: 'in-progress', versionId: '1' },
+          laboratoryRequests: { draftVersion: 0, reportingSupported: true, requests: [] },
+          patient,
+          presentation: {
+            ...doctorPresentation,
+            chiefComplaint: index === 0 ? '咳嗽、发热三天' : '间断头痛一周',
+            summary: index === 0 ? '三天前出现咳嗽伴发热。' : '一周来间断头痛。',
+          },
+          priorFacts: [],
+          status: 'first-visit',
+          taskId: `task-${index + 1}`,
+          taskVersion: '1',
+        })
+      }
+      const completionMatch = /^\/api\/his\/v1\/encounters\/encounter-(\d)\/completion$/.exec(url.pathname)
+      if (completionMatch !== null) {
+        return Response.json({
+          canComplete: false,
+          encounterId: `encounter-${completionMatch[1]}`,
+          encounterVersion: '1',
+          items: [{ code: 'primary-diagnosis-confirmed', status: 'incomplete', statusText: '待确认诊断', target: 'diagnosis' },
+            { code: 'clinical-document-signed', status: 'incomplete', statusText: '待签署病历', target: 'clinical-document' },
+            { code: 'required-reports-acknowledged', status: 'complete', statusText: '无需确认报告', target: 'laboratory' },
+            { code: 'medication-conclusion-recorded', status: 'incomplete', statusText: '待记录用药结论', target: 'medication-conclusion' },
+            { code: 'no-pending-drafts', status: 'complete', statusText: '无待处理项目', target: 'clinical-document' },
+            { code: 'disposition-complete', status: 'incomplete', statusText: '待填写处置', target: 'clinical-document' },
+            { code: 'follow-up-complete', status: 'incomplete', statusText: '待填写随访', target: 'clinical-document' }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    expect(await screen.findByRole('tab', { name: '病历记录' })).toBeTruthy()
+    expect(screen.getByRole('complementary', { name: '诊疗对话' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '展开右侧边栏' }).getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('button', { name: '向患者提问' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: '展开右侧边栏' }))
+    expect(screen.getByRole('button', { name: '收起右侧边栏' }).getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('button', { name: '向患者提问' })).toBeTruthy()
+    const history = screen.getByLabelText('现病史') as HTMLTextAreaElement
+    await user.clear(history)
+    await user.type(history, '患者三天前受凉后出现咳嗽、发热。')
+    await user.click(screen.getByRole('listitem', { name: '选择病例 李静' }))
+    await user.click(await screen.findByRole('listitem', { name: '选择病例 王晓明' }))
+
+    expect((await screen.findByLabelText('现病史') as HTMLTextAreaElement).value)
+      .toBe('患者三天前受凉后出现咳嗽、发热。')
+    expect(screen.queryByText(/保存.*草稿|草稿版本|版本 \d/)).toBeNull()
+  })
+
+  it('completes an eligible Encounter from the patient header and converts it to read-only', async () => {
     const patient = {
       birthDate: '1990-05-10',
       gender: 'male',
@@ -2889,15 +3003,16 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    const checklist = await screen.findByRole('heading', { name: '完诊清单' })
-    expect(within(checklist.parentElement as HTMLElement).getByText('已满足 7 / 7')).toBeTruthy()
-    const diagnosisTargetButton = screen.getByRole('button', { name: '前往：已确认主诊断' })
-    await user.click(diagnosisTargetButton)
-    expect(document.activeElement).toBe(screen.getByRole('region', { name: '本次诊断' }))
-    const completeButton = screen.getByRole('button', { name: '确认完诊' }) as HTMLButtonElement
-    expect(completeButton.disabled).toBe(false)
-
-    await user.click(completeButton)
+    expect(await screen.findByRole('complementary', { name: '诊疗队列' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: '病例详情' })).toBeTruthy()
+    expect(screen.getByRole('complementary', { name: '诊疗对话' })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '病历记录' })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '诊断' })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '处方' })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '健康记录' })).toBeTruthy()
+    await user.click(await screen.findByRole('button', { name: '完诊' }))
+    expect(screen.getByRole('heading', { name: '确认完诊' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '确认完诊' }))
 
     expect(await screen.findByText('Encounter 已完成，当前病例为只读。')).toBeTruthy()
     expect(screen.getByText('当前无待诊病例')).toBeTruthy()
@@ -2905,8 +3020,9 @@ describe('role workspaces', () => {
     expect(screen.queryByRole('button', { name: '提交病历修订' })).toBeNull()
     expect(screen.queryByRole('button', { name: '撤回处方' })).toBeNull()
     expect(screen.queryByRole('button', { name: '确认完诊' })).toBeNull()
-    expect(screen.getByRole('heading', { name: '签署历史' })).toBeTruthy()
     expect(screen.getByText('已确认无需用药')).toBeTruthy()
+    await user.click(screen.getByRole('tab', { name: '病历记录' }))
+    expect(screen.getByRole('heading', { name: '签署历史' })).toBeTruthy()
   })
 
   it('shows the server diagnosis primary validation error in the doctor workspace', async () => {

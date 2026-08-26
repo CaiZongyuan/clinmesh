@@ -633,11 +633,13 @@ export const askConsultationQuestionResponseSchema = commandResponseSchema(z.obj
 
 export const clinicalDocumentContentSchema = z.object({
   assessment: z.string().trim().min(2).max(4_000),
+  auxiliaryExamination: z.string().trim().min(2).max(4_000).optional(),
   chiefComplaint: z.string().trim().min(2).max(1_000),
   disposition: z.string().trim().min(2).max(4_000),
   followUp: z.string().trim().min(2).max(4_000),
   historyOfPresentIllness: z.string().trim().min(2).max(5_000),
   physicalExamination: z.string().trim().min(2).max(4_000),
+  priorMedicalHistory: z.string().trim().min(2).max(4_000).optional(),
 }).strict()
 
 export const saveClinicalDocumentDraftRequestSchema = z.object({

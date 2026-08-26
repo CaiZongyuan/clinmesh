@@ -1,5 +1,4 @@
 import { Avatar, AvatarFallback } from '@clinmesh/ui/components/avatar'
-import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import {
   DropdownMenu,
@@ -34,17 +33,21 @@ import type { SessionContext } from '@clinmesh/contracts/his'
 import {
   BellIcon,
   ClipboardPlusIcon,
+  ChevronDownIcon,
+  ComponentIcon,
   HeartPulseIcon,
+  HospitalIcon,
   LayoutDashboardIcon,
+  LogOutIcon,
   MonitorIcon,
   MoonIcon,
   PillIcon,
   ReceiptTextIcon,
-  LogOutIcon,
+  SettingsIcon,
+  SlidersHorizontalIcon,
   StethoscopeIcon,
   SunIcon,
   UserRoundIcon,
-  ChevronDownIcon,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { getWorkspaceMessages, type WorkspaceLocale, type WorkspaceMessageKey } from './workspace-i18n.ts'
@@ -62,8 +65,20 @@ export const workspaceRoutes = [
 
 export type WorkspaceSection = (typeof workspaceRoutes)[number]['key']
 
+export const settingsRoutes = [
+  { key: 'settingsGeneral', path: '/settings', icon: SlidersHorizontalIcon },
+  { key: 'uiComponents', path: '/settings/developer/components', icon: ComponentIcon },
+] as const
+
+export type SettingsSection = (typeof settingsRoutes)[number]['key']
+export type AppSection = WorkspaceSection | SettingsSection
+
+export function isSettingsSection(section: AppSection): section is SettingsSection {
+  return settingsRoutes.some(route => route.key === section)
+}
+
 interface WorkspaceShellProps {
-  activeSection: WorkspaceSection
+  activeSection: AppSection
   children: ReactNode
   session: SessionContext
   locale: WorkspaceLocale
@@ -79,7 +94,11 @@ interface WorkspaceShellProps {
 type PreferenceControlProps = Pick<
   WorkspaceShellProps,
   'locale' | 'onLocaleChange' | 'onThemeChange' | 'theme'
-> & { messages: ReturnType<typeof getWorkspaceMessages> }
+> & {
+  messages: ReturnType<typeof getWorkspaceMessages>
+  showLabel?: boolean
+  showLocale?: boolean
+}
 
 export const roleSections: Record<SessionContext['actor']['roleCode'], WorkspaceSection> = {
   administrator: 'overview',
@@ -121,7 +140,11 @@ function actingPractitionerLabel(
   role: SessionContext['availableRoles'][number],
   messages: ReturnType<typeof getWorkspaceMessages>,
 ): string {
-  return `${messages[roleMessageKeys[role.code]]} · ${role.practitionerName}`
+  return `${messages[roleMessageKeys[role.code]]} · ${clinicalDisplayName(role.practitionerName)}`
+}
+
+function clinicalDisplayName(value: string): string {
+  return value.replace(/^合成/, '').replace(/^Synthetic\s+/i, '')
 }
 
 function firstValue<Value extends string>(values: Value[]): Value | undefined {
@@ -131,8 +154,8 @@ function firstValue<Value extends string>(values: Value[]): Value | undefined {
 function Brand({ appName, hospitalName }: { appName: string; hospitalName: string }): React.JSX.Element {
   return (
     <div className="flex min-w-0 items-center gap-2 px-1 py-1.5">
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
-        <HeartPulseIcon aria-hidden="true" />
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-info text-info-foreground">
+        <HospitalIcon aria-hidden="true" />
       </div>
       <div className="min-w-0 group-data-[collapsible=icon]:hidden">
         <div className="truncate text-sm font-semibold">{appName}</div>
@@ -142,34 +165,40 @@ function Brand({ appName, hospitalName }: { appName: string; hospitalName: strin
   )
 }
 
-function AppearanceControls({
+export function AppearanceControls({
   locale,
   messages,
   onLocaleChange,
   onThemeChange,
+  showLabel = true,
+  showLocale = true,
   theme,
 }: PreferenceControlProps): React.JSX.Element {
   return (
     <div className="flex flex-col gap-2 group-data-[collapsible=icon]:hidden">
-      <div className="text-xs font-medium text-muted-foreground">{messages.appearanceLabel}</div>
+      {showLabel ? (
+        <div className="text-xs font-medium text-muted-foreground">{messages.appearanceLabel}</div>
+      ) : null}
       <div className="flex items-center justify-between gap-2">
-        <ToggleGroup
-          aria-label={messages.languageLabel}
-          onValueChange={values => {
-            const value = firstValue(values as WorkspaceLocale[])
-            if (value !== undefined) onLocaleChange(value)
-          }}
-          size="sm"
-          spacing={0}
-          value={[locale]}
-          variant="outline"
-        >
-          {localeOptions.map(option => (
-            <ToggleGroupItem key={option.value} value={option.value}>
-              {messages[option.label]}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
+        {showLocale ? (
+          <ToggleGroup
+            aria-label={messages.languageLabel}
+            onValueChange={values => {
+              const value = firstValue(values as WorkspaceLocale[])
+              if (value !== undefined) onLocaleChange(value)
+            }}
+            size="sm"
+            spacing={0}
+            value={[locale]}
+            variant="outline"
+          >
+            {localeOptions.map(option => (
+              <ToggleGroupItem key={option.value} value={option.value}>
+                {messages[option.label]}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        ) : null}
         <ToggleGroup
           aria-label={messages.themeLabel}
           onValueChange={values => {
@@ -198,9 +227,7 @@ function AppearanceControls({
 }
 
 function UserMenu({
-  locale,
   messages,
-  onLocaleChange,
   onRoleChange,
   onSignOut,
   onThemeChange,
@@ -208,7 +235,7 @@ function UserMenu({
   signOutPending,
   theme,
   session,
-}: PreferenceControlProps & {
+}: Pick<PreferenceControlProps, 'messages' | 'onThemeChange' | 'theme'> & {
   onRoleChange: (practitionerRoleId: string) => void
   onSignOut: () => void
   roleChangePending: boolean
@@ -244,9 +271,16 @@ function UserMenu({
       <DropdownMenuContent align="end" className="min-w-64">
         <DropdownMenuGroup>
           <DropdownMenuLabel>
-            <span className="block text-foreground">{session.user.name}</span>
+            <span className="block text-foreground">{clinicalDisplayName(session.user.name)}</span>
             <span className="block font-normal">{session.user.email}</span>
           </DropdownMenuLabel>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuItem render={<Link to="/settings" />}>
+            <SettingsIcon aria-hidden="true" />
+            {messages.settings}
+          </DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
@@ -262,20 +296,6 @@ function UserMenu({
                 value={role.id}
               >
                 {actingPractitionerLabel(role, messages)}
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>{messages.languageLabel}</DropdownMenuLabel>
-          <DropdownMenuRadioGroup
-            onValueChange={value => onLocaleChange(value as WorkspaceLocale)}
-            value={locale}
-          >
-            {localeOptions.map(option => (
-              <DropdownMenuRadioItem key={option.value} value={option.value}>
-                {messages[option.label]}
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>
@@ -339,32 +359,79 @@ export function WorkspaceShell({
 }: WorkspaceShellProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
   const activeRoleSection = roleSections[session.actor.roleCode]
-  const visibleRoutes = workspaceRoutes.filter(route => (
-    route.key === 'overview' || route.key === activeRoleSection
-  ))
+  const visibleRoutes = workspaceRoutes.filter(route => route.key === activeRoleSection)
+  const settingsMode = isSettingsSection(activeSection)
+  const navigationLabel = settingsMode ? messages.settingsNavigation : messages.navigationLabel
+  const mobileDescription = settingsMode
+    ? messages.mobileSettingsNavigationDescription
+    : messages.mobileNavigationDescription
 
   return (
     <TooltipProvider>
       <SidebarProvider
         style={{
-          '--sidebar-width': '12.75rem',
-          '--sidebar-width-icon': '4.25rem',
+          '--sidebar-width': '13.75rem',
+          '--sidebar-width-icon': '3rem',
         } as React.CSSProperties}
       >
         <Sidebar
           collapsible="icon"
-          mobileDescription={messages.mobileNavigationDescription}
-          mobileTitle={messages.navigationLabel}
+          mobileDescription={mobileDescription}
+          mobileTitle={navigationLabel}
           variant="inset"
         >
           <SidebarHeader>
             <Brand appName={messages.appName} hospitalName={messages.hospitalName} />
           </SidebarHeader>
           <SidebarContent>
-            <SidebarGroup>
-              <SidebarGroupLabel>{messages.navigationGroup}</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <nav aria-label={messages.navigationLabel}>
+            {settingsMode ? (
+              <nav aria-label={messages.settingsNavigation}>
+                <SidebarGroup>
+                  <SidebarGroupLabel>{messages.settings}</SidebarGroupLabel>
+                  <SidebarGroupContent>
+                    <SidebarMenu>
+                      {settingsRoutes.slice(0, 1).map(item => (
+                        <SidebarMenuItem key={item.key}>
+                          <SidebarMenuButton
+                            aria-current={item.key === activeSection ? 'page' : undefined}
+                            isActive={item.key === activeSection}
+                            render={<Link to={item.path} />}
+                            tooltip={messages[item.key]}
+                          >
+                            <item.icon aria-hidden="true" />
+                            <span>{messages[item.key]}</span>
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
+                      ))}
+                    </SidebarMenu>
+                  </SidebarGroupContent>
+                </SidebarGroup>
+                <SidebarGroup>
+                  <SidebarGroupLabel>{messages.developer}</SidebarGroupLabel>
+                  <SidebarGroupContent>
+                    <SidebarMenu>
+                      {settingsRoutes.slice(1).map(item => (
+                        <SidebarMenuItem key={item.key}>
+                          <SidebarMenuButton
+                            aria-current={item.key === activeSection ? 'page' : undefined}
+                            isActive={item.key === activeSection}
+                            render={<Link to={item.path} />}
+                            tooltip={messages[item.key]}
+                          >
+                            <item.icon aria-hidden="true" />
+                            <span>{messages[item.key]}</span>
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
+                      ))}
+                    </SidebarMenu>
+                  </SidebarGroupContent>
+                </SidebarGroup>
+              </nav>
+            ) : (
+              <SidebarGroup>
+                <SidebarGroupLabel>{messages.navigationGroup}</SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <nav aria-label={messages.navigationLabel}>
                   <SidebarMenu>
                     {visibleRoutes.map(item => (
                       <SidebarMenuItem key={item.key}>
@@ -380,9 +447,10 @@ export function WorkspaceShell({
                       </SidebarMenuItem>
                     ))}
                   </SidebarMenu>
-                </nav>
-              </SidebarGroupContent>
-            </SidebarGroup>
+                  </nav>
+                </SidebarGroupContent>
+              </SidebarGroup>
+            )}
           </SidebarContent>
           <SidebarFooter>
             <AppearanceControls
@@ -390,20 +458,22 @@ export function WorkspaceShell({
               messages={messages}
               onLocaleChange={onLocaleChange}
               onThemeChange={onThemeChange}
+              showLabel={false}
+              showLocale={false}
               theme={theme}
             />
           </SidebarFooter>
         </Sidebar>
         <SidebarInset className="min-w-0 overflow-hidden">
-          <header className="sticky top-0 flex h-[3.375rem] shrink-0 items-center gap-2 border-b bg-background px-3 sm:px-4">
+          <header className="sticky top-0 z-10 flex h-[3.375rem] shrink-0 items-center gap-2 border-b bg-background px-3 sm:px-4">
             <SidebarTrigger aria-label={messages.sidebarToggle} title={messages.sidebarToggle} />
-            <div className="min-w-0 flex-1 truncate text-sm font-medium">{messages[activeSection]}</div>
+            <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
+              {messages[activeSection]}
+            </h1>
             <div className="ml-auto flex shrink-0 items-center gap-1">
               <NotificationsMenu messages={messages} />
               <UserMenu
-                locale={locale}
                 messages={messages}
-                onLocaleChange={onLocaleChange}
                 onRoleChange={onRoleChange}
                 onSignOut={onSignOut}
                 onThemeChange={onThemeChange}
@@ -414,11 +484,7 @@ export function WorkspaceShell({
               />
             </div>
           </header>
-          <div className="flex flex-1 flex-col gap-5 p-4 sm:p-6">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h1 className="text-xl font-semibold">{messages[activeSection]}</h1>
-              <Badge variant="secondary">{messages.simulationBadge}</Badge>
-            </div>
+          <div className="flex flex-1 flex-col gap-5 bg-muted/40 p-4 sm:p-5">
             {children}
           </div>
         </SidebarInset>
