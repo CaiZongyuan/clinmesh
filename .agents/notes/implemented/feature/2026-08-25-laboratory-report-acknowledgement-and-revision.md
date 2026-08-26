@@ -6,7 +6,7 @@ Status: implemented
 
 [报告已阅与签发后更正](https://github.com/CaiZongyuan/clinmesh/issues/27)要求负责医生明确确认已经查看检验报告，并允许受控报告 Actor 纠正已签发结果。DiagnosticReport 的签发状态、医生阅读责任和报告替代关系是三个不同事实；若把它们压缩进申请列、FHIR 技术版本或同一报告内容，重试与纠错会覆盖旧结果、丢失原确认语境，或让读取方无法确定当前有效报告。
 
-总体医生链路与完诊门禁由[医生核心临床业务流提案](../../proposed/feature/2026-08-24-doctor-clinical-core-workflow.md)拥有；当前状态机和接口细节由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。本 Note 只记录报告确认与签发后修订已经采用的持久化和协议取舍。
+总体医生链路与完诊门禁由[医生核心临床业务流](./2026-08-24-doctor-clinical-core-workflow.md)拥有；当前状态机和接口细节由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。本 Note 只记录报告确认与签发后修订已经采用的持久化和协议取舍。
 
 ## Decision
 

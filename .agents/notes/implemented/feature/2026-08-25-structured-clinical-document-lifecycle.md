@@ -6,7 +6,7 @@ Status: implemented
 
 [医生核心临床业务流](https://github.com/caizongyuan/clinmesh/issues/24)要求医生把 Consultation Record 手工整理为正式 Clinical Document，并支持可恢复草稿、并发控制、签署和签署后修订。首期复诊流把诊断、Prescription、两字段文书和 Encounter 完成放在同一个预览与提交动作中；继续扩展该组合会让文书生命周期依赖处方和完诊状态，也无法表达签署件不可覆盖、修订替代关系和六字段共享合同。
 
-总体医生核心边界由[医生核心临床业务流提案](../../proposed/feature/2026-08-24-doctor-clinical-core-workflow.md)拥有；本 Note 只记录已经交付的结构化 Clinical Document 持久化和协议决策。
+总体医生核心边界由[医生核心临床业务流](./2026-08-24-doctor-clinical-core-workflow.md)拥有；本 Note 只记录已经交付的结构化 Clinical Document 持久化和协议决策。
 
 ## Decision
 

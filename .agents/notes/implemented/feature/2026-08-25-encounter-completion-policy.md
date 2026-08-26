@@ -6,7 +6,7 @@ Status: implemented
 
 [用临床门禁完成 Encounter](https://github.com/CaiZongyuan/clinmesh/issues/30)要求医生在独立诊断、结构化病历、检查报告和用药结论各自完成后结束同一个 Encounter。首期复诊兼容流把诊断、两字段文书、处方、费用交接和完诊放在一次组合签署中，无法复用各临床 owner 已交付的独立事实，也会让页面状态或某个下游队列错误地成为临床完成依据。
 
-总体医生核心边界由[医生核心临床业务流提案](../../proposed/feature/2026-08-24-doctor-clinical-core-workflow.md)拥有；当前接口、条件语义和状态机由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。本 Note 只记录已经交付的汇总门禁、状态所有权和只读转换取舍。
+总体医生核心边界由[医生核心临床业务流](./2026-08-24-doctor-clinical-core-workflow.md)拥有；当前接口、条件语义和状态机由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。本 Note 只记录已经交付的汇总门禁、状态所有权和只读转换取舍。
 
 ## Decision
 

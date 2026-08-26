@@ -6,7 +6,7 @@ Status: implemented
 
 [保存并确认主次诊断](https://github.com/CaiZongyuan/clinmesh/issues/28)要求医生在同一个 Encounter 中恢复诊断草稿、选择主诊断和次诊断，并把确认结果发布为正式 FHIR Condition。首期复诊流把一个自由文本诊断、Prescription、两字段文书和 Encounter 完成绑定在同一组草稿版本与签署动作中；继续扩展该组合无法独立表达多条诊断、唯一主诊断、确认来源和草稿并发，也会把本次编辑与患者既往 Condition 混在一起。
 
-总体医生核心边界由[医生核心临床业务流提案](../../proposed/feature/2026-08-24-doctor-clinical-core-workflow.md)拥有；当前接口和 FHIR 映射由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。本 Note 只记录已经交付的诊断聚合、持久化和兼容取舍。
+总体医生核心边界由[医生核心临床业务流](./2026-08-24-doctor-clinical-core-workflow.md)拥有；当前接口和 FHIR 映射由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。本 Note 只记录已经交付的诊断聚合、持久化和兼容取舍。
 
 ## Decision
 

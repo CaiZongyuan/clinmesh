@@ -289,6 +289,63 @@ function createMediaQueryList(media: string): MediaQueryList {
   }
 }
 
+function stubAdministratorWorkspace() {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const path = new URL(String(input), 'http://localhost').pathname
+    if (path === '/api/auth/context') return Response.json(administratorSession)
+    if (path === '/api/sim/v1/scenario-runs/current') {
+      return Response.json({
+        clinicalReview: null,
+        epoch: 'epoch-1',
+        initialStateHash: '0123456789abcdef',
+        kind: 'candidate',
+        scenarioId: 'candidate-fever-outpatient-v1',
+        scenarioRunId: 'scenario-run-1',
+        seed: 20260824,
+        status: 'active',
+        virtualTime: '2026-08-24T09:00:00+08:00',
+        workspaceId: 'workspace-demo',
+      })
+    }
+    throw new Error(`Unexpected request: ${path}`)
+  }))
+}
+
+function stubEmptyRegistrarWorkspace() {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const path = new URL(String(input), 'http://localhost').pathname
+    if (path === '/api/auth/context') return Response.json(registrarSession)
+    if (path === '/api/his/v1/catalogs/registration') {
+      return Response.json({ departments: [], locations: [], virtualDate: '2026-08-24', visitTypes: [] })
+    }
+    if (path === '/api/his/v1/registrations') {
+      return Response.json({ items: [], ...pagination(0) })
+    }
+    throw new Error(`Unexpected request: ${path}`)
+  }))
+}
+
+function stubEmptyDoctorWorkspace() {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const path = new URL(String(input), 'http://localhost').pathname
+    if (path === '/api/auth/context') return Response.json(doctorSession)
+    if (path === '/api/his/v1/catalogs/clinical') {
+      return Response.json({
+        laboratory: [],
+        medications: [],
+        prescriptionConclusionSupported: true,
+      })
+    }
+    if (path === '/api/his/v1/doctor/virtual-patients') {
+      return Response.json({ items: [], ...pagination(0) })
+    }
+    if (path === '/api/his/v1/doctor/queue') {
+      return Response.json({ items: [], ...pagination(0) })
+    }
+    throw new Error(`Unexpected request: ${path}`)
+  }))
+}
+
 function stubLaboratoryReportPolling(reportingSupported: boolean) {
   let reportReady = false
   let detailRequests = 0
@@ -472,25 +529,7 @@ describe('role workspaces', () => {
   })
 
   it('uses clinical operator language for administrator data controls', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const path = new URL(String(input), 'http://localhost').pathname
-      if (path === '/api/auth/context') return Response.json(administratorSession)
-      if (path === '/api/sim/v1/scenario-runs/current') {
-        return Response.json({
-          clinicalReview: null,
-          epoch: 'epoch-1',
-          initialStateHash: '0123456789abcdef',
-          kind: 'candidate',
-          scenarioId: 'candidate-fever-outpatient-v1',
-          scenarioRunId: 'scenario-run-1',
-          seed: 20260824,
-          status: 'active',
-          virtualTime: '2026-08-24T09:00:00+08:00',
-          workspaceId: 'workspace-demo',
-        })
-      }
-      throw new Error(`Unexpected request: ${path}`)
-    }))
+    stubAdministratorWorkspace()
 
     render(<WebApp />)
 
@@ -509,25 +548,7 @@ describe('role workspaces', () => {
       locale: 'en-US',
       theme: 'light',
     }))
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const path = new URL(String(input), 'http://localhost').pathname
-      if (path === '/api/auth/context') return Response.json(administratorSession)
-      if (path === '/api/sim/v1/scenario-runs/current') {
-        return Response.json({
-          clinicalReview: null,
-          epoch: 'epoch-1',
-          initialStateHash: '0123456789abcdef',
-          kind: 'candidate',
-          scenarioId: 'candidate-fever-outpatient-v1',
-          scenarioRunId: 'scenario-run-1',
-          seed: 20260824,
-          status: 'active',
-          virtualTime: '2026-08-24T09:00:00+08:00',
-          workspaceId: 'workspace-demo',
-        })
-      }
-      throw new Error(`Unexpected request: ${path}`)
-    }))
+    stubAdministratorWorkspace()
 
     render(<WebApp />)
 
@@ -538,6 +559,28 @@ describe('role workspaces', () => {
     expect(screen.getByRole('button', { name: 'Load standard data' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Load high-volume data' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Reset current data' })).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
+  })
+
+  it('uses clinical operator language for the registrar empty state', async () => {
+    stubEmptyRegistrarWorkspace()
+
+    render(<WebApp />)
+
+    expect(await screen.findByText('当前暂无门诊挂号。')).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(forbiddenChineseClinicalUiTerms)
+  })
+
+  it('uses clinical operator language for the English registrar empty state', async () => {
+    localStorage.setItem('clinmesh.preferences:v1', JSON.stringify({
+      locale: 'en-US',
+      theme: 'light',
+    }))
+    stubEmptyRegistrarWorkspace()
+
+    render(<WebApp />)
+
+    expect(await screen.findByText('No outpatient registrations are currently available.')).toBeTruthy()
     expect(document.body.textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
   })
 
@@ -1319,24 +1362,7 @@ describe('role workspaces', () => {
   })
 
   it('renders a specific empty state when no Virtual Patient is available', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'http://localhost')
-      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
-      if (url.pathname === '/api/his/v1/catalogs/clinical') {
-        return Response.json({
-          laboratory: [],
-          medications: [],
-          prescriptionConclusionSupported: true,
-        })
-      }
-      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
-        return Response.json({ items: [], ...pagination(0) })
-      }
-      if (url.pathname === '/api/his/v1/doctor/queue') {
-        return Response.json({ items: [], ...pagination(0) })
-      }
-      throw new Error(`Unexpected request: ${url.pathname}`)
-    }))
+    stubEmptyDoctorWorkspace()
 
     render(<WebApp />)
 
@@ -1350,24 +1376,7 @@ describe('role workspaces', () => {
       locale: 'en-US',
       theme: 'light',
     }))
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'http://localhost')
-      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
-      if (url.pathname === '/api/his/v1/catalogs/clinical') {
-        return Response.json({
-          laboratory: [],
-          medications: [],
-          prescriptionConclusionSupported: true,
-        })
-      }
-      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
-        return Response.json({ items: [], ...pagination(0) })
-      }
-      if (url.pathname === '/api/his/v1/doctor/queue') {
-        return Response.json({ items: [], ...pagination(0) })
-      }
-      throw new Error(`Unexpected request: ${url.pathname}`)
-    }))
+    stubEmptyDoctorWorkspace()
 
     render(<WebApp />)
 

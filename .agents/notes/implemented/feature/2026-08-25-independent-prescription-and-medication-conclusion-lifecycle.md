@@ -6,7 +6,7 @@ Status: implemented
 
 [开具处方或确认无需用药](https://github.com/CaiZongyuan/clinmesh/issues/29)要求医生在同一个 Encounter 中保存处方草稿、开具正式处方，或者明确记录无需用药，并在尚未调剂时受控撤回处方。首期复诊流把诊断、Prescription、两字段文书和 Encounter 完成绑定在同一组草稿与签署动作中；继续扩展该组合无法让处方独立恢复和并发控制，也无法把无需用药和撤回表达为可审计的正式事实。
 
-总体医生核心边界由[医生核心临床业务流提案](../../proposed/feature/2026-08-24-doctor-clinical-core-workflow.md)拥有；当前接口和状态机制由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。本 Note 只记录处方草稿、正式用药结论和撤回的持久化取舍。
+总体医生核心边界由[医生核心临床业务流](./2026-08-24-doctor-clinical-core-workflow.md)拥有；当前接口和状态机制由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。本 Note 只记录处方草稿、正式用药结论和撤回的持久化取舍。
 
 ## Decision
 
