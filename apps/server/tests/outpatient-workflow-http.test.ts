@@ -1020,6 +1020,88 @@ async function createPaidMedicationCase(
   return { ...testCase, cashierCookie, payment, pharmacistCookie }
 }
 
+const completionBlockerCases: Array<{
+  expectedCodes: string[]
+  expectedPendingDraftTarget?: string
+  expectedStatusTexts: string[]
+  name: string
+  options: Parameters<typeof createCompletionReadyConsultation>[2]
+}> = [
+  {
+    expectedCodes: ['primary-diagnosis-confirmed'],
+    expectedStatusTexts: ['待确认主诊断'],
+    name: 'the primary diagnosis is unconfirmed',
+    options: { diagnosis: false },
+  },
+  // A signed document always has valid disposition and follow-up fields by contract.
+  {
+    expectedCodes: [
+      'clinical-document-signed',
+      'disposition-complete',
+      'follow-up-complete',
+    ],
+    expectedStatusTexts: ['待签署结构化病历', '待完善处置', '待完善随访安排'],
+    name: 'the clinical document is unsigned',
+    options: { document: false },
+  },
+  {
+    expectedCodes: [
+      'clinical-document-signed',
+      'no-pending-drafts',
+      'disposition-complete',
+      'follow-up-complete',
+    ],
+    expectedPendingDraftTarget: 'clinical-document',
+    expectedStatusTexts: [
+      '待签署结构化病历',
+      '存在未处理临床草稿',
+      '待完善处置',
+      '待完善随访安排',
+    ],
+    name: 'the clinical document remains a draft',
+    options: { document: 'draft' },
+  },
+  {
+    expectedCodes: ['primary-diagnosis-confirmed', 'no-pending-drafts'],
+    expectedPendingDraftTarget: 'diagnosis',
+    expectedStatusTexts: ['待确认主诊断', '存在未处理临床草稿'],
+    name: 'the diagnosis remains a draft',
+    options: { diagnosis: 'draft' },
+  },
+  {
+    expectedCodes: ['medication-conclusion-recorded'],
+    expectedStatusTexts: ['待记录用药结论'],
+    name: 'no medication conclusion exists',
+    options: { medication: false },
+  },
+  {
+    expectedCodes: ['medication-conclusion-recorded'],
+    expectedStatusTexts: ['待记录用药结论'],
+    name: 'the only prescription was withdrawn',
+    options: { medication: 'withdrawn-prescription' },
+  },
+  {
+    expectedCodes: ['medication-conclusion-recorded', 'no-pending-drafts'],
+    expectedPendingDraftTarget: 'medication-conclusion',
+    expectedStatusTexts: ['待记录用药结论', '存在未处理临床草稿'],
+    name: 'the medication conclusion remains a draft',
+    options: { medication: 'draft' },
+  },
+  {
+    expectedCodes: ['required-reports-acknowledged'],
+    expectedStatusTexts: ['待确认必要报告已阅'],
+    name: 'a required report is unacknowledged',
+    options: { laboratory: 'reported' },
+  },
+  {
+    expectedCodes: ['no-pending-drafts'],
+    expectedPendingDraftTarget: 'laboratory',
+    expectedStatusTexts: ['存在未处理临床草稿'],
+    name: 'a laboratory request remains a draft',
+    options: { pendingLaboratoryDraft: true },
+  },
+]
+
 describe('outpatient workflow HTTP contract', () => {
   const runtimes: Array<Awaited<ReturnType<typeof createClinMeshRuntime>>> = []
   const temporaryDirectories: string[] = []
@@ -2386,79 +2468,9 @@ describe('outpatient workflow HTTP contract', () => {
     })
   })
 
-  it('atomically rejects each independently observable Encounter completion blocker', async () => {
-    const cases: Array<{
-      expectedCodes: string[]
-      expectedPendingDraftTarget?: string
-      expectedStatusTexts: string[]
-      options: Parameters<typeof createCompletionReadyConsultation>[2]
-    }> = [
-      {
-        expectedCodes: ['primary-diagnosis-confirmed'],
-        expectedStatusTexts: ['待确认主诊断'],
-        options: { diagnosis: false },
-      },
-      // A signed document always has valid disposition and follow-up fields by contract.
-      {
-        expectedCodes: [
-          'clinical-document-signed',
-          'disposition-complete',
-          'follow-up-complete',
-        ],
-        expectedStatusTexts: ['待签署结构化病历', '待完善处置', '待完善随访安排'],
-        options: { document: false },
-      },
-      {
-        expectedCodes: [
-          'clinical-document-signed',
-          'no-pending-drafts',
-          'disposition-complete',
-          'follow-up-complete',
-        ],
-        expectedPendingDraftTarget: 'clinical-document',
-        expectedStatusTexts: [
-          '待签署结构化病历',
-          '存在未处理临床草稿',
-          '待完善处置',
-          '待完善随访安排',
-        ],
-        options: { document: 'draft' },
-      },
-      {
-        expectedCodes: ['primary-diagnosis-confirmed', 'no-pending-drafts'],
-        expectedPendingDraftTarget: 'diagnosis',
-        expectedStatusTexts: ['待确认主诊断', '存在未处理临床草稿'],
-        options: { diagnosis: 'draft' },
-      },
-      {
-        expectedCodes: ['medication-conclusion-recorded'],
-        expectedStatusTexts: ['待记录用药结论'],
-        options: { medication: false },
-      },
-      {
-        expectedCodes: ['medication-conclusion-recorded'],
-        expectedStatusTexts: ['待记录用药结论'],
-        options: { medication: 'withdrawn-prescription' },
-      },
-      {
-        expectedCodes: ['medication-conclusion-recorded', 'no-pending-drafts'],
-        expectedPendingDraftTarget: 'medication-conclusion',
-        expectedStatusTexts: ['待记录用药结论', '存在未处理临床草稿'],
-        options: { medication: 'draft' },
-      },
-      {
-        expectedCodes: ['required-reports-acknowledged'],
-        expectedStatusTexts: ['待确认必要报告已阅'],
-        options: { laboratory: 'reported' },
-      },
-      {
-        expectedCodes: ['no-pending-drafts'],
-        expectedPendingDraftTarget: 'laboratory',
-        expectedStatusTexts: ['存在未处理临床草稿'],
-        options: { pendingLaboratoryDraft: true },
-      },
-    ]
-    for (const testCase of cases) {
+  it.each(completionBlockerCases)(
+    'atomically rejects Encounter completion when $name',
+    async (testCase) => {
       const directory = await mkdtemp(join(tmpdir(), 'clinmesh-encounter-completion-blocker-http-'))
       temporaryDirectories.push(directory)
       const password = `Test-${randomUUID()}-Aa1!`
@@ -2530,8 +2542,8 @@ describe('outpatient workflow HTTP contract', () => {
       })).toEqual(expect.arrayContaining([
         expect.objectContaining({ operation: 'encounter.complete', outcome: 'failed' }),
       ]))
-    }
-  })
+    },
+  )
 
   it('allows only one completion command for the same expected Encounter version', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-encounter-completion-cas-http-'))
