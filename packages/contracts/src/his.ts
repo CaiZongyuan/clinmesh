@@ -745,7 +745,7 @@ export const laboratoryRequestDraftResponseSchema = commandResponseSchema(z.obje
   draftVersion: z.number().int().positive(),
 }).strict())
 
-export const laboratoryRequestCatalogItemIdSchema = z.enum(['lab-cbc', 'lab-crp'])
+export const laboratoryRequestCatalogItemIdSchema = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 
 export const saveLaboratoryRequestDraftRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
@@ -774,17 +774,30 @@ export const laboratoryRequestStatusSchema = z.enum([
 
 export const laboratoryResultInterpretationSchema = z.enum(['normal', 'high', 'low'])
 
+const quantitativeLaboratoryReferenceRangeSchema = z.object({
+  high: z.number().finite().optional(),
+  low: z.number().finite().optional(),
+  text: z.string().min(1),
+}).strict().superRefine((range, context) => {
+  if (range.low === undefined && range.high === undefined) {
+    context.addIssue({
+      code: 'custom',
+      message: 'A quantitative laboratory reference range must contain a low or high boundary',
+    })
+  }
+  if (range.low !== undefined && range.high !== undefined && range.low > range.high) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Laboratory result reference range low must not exceed high',
+    })
+  }
+})
+
 const laboratoryResultMeasurementShape = {
   code: z.string().min(1),
   display: z.string().min(1),
   interpretation: laboratoryResultInterpretationSchema,
-  referenceRange: z.object({
-    high: z.number().finite(),
-    low: z.number().finite(),
-    text: z.string().min(1),
-  }).strict().refine(range => range.low <= range.high, {
-    message: 'Laboratory result reference range low must not exceed high',
-  }),
+  referenceRange: quantitativeLaboratoryReferenceRangeSchema,
   unit: z.object({
     code: z.string().min(1),
     display: z.string().min(1),
@@ -795,11 +808,15 @@ const laboratoryResultMeasurementShape = {
 
 function laboratoryInterpretationMatchesRange(result: {
   interpretation: z.infer<typeof laboratoryResultInterpretationSchema>
-  referenceRange: { high: number; low: number }
+  referenceRange: { high?: number | undefined; low?: number | undefined }
   value: number
 }): boolean {
-  if (result.value < result.referenceRange.low) return result.interpretation === 'low'
-  if (result.value > result.referenceRange.high) return result.interpretation === 'high'
+  if (result.referenceRange.low !== undefined && result.value < result.referenceRange.low) {
+    return result.interpretation === 'low'
+  }
+  if (result.referenceRange.high !== undefined && result.value > result.referenceRange.high) {
+    return result.interpretation === 'high'
+  }
   return result.interpretation === 'normal'
 }
 
@@ -809,12 +826,26 @@ export const laboratoryResultMeasurementSchema = z.object(
   message: 'Laboratory result interpretation must match its value and reference range',
 })
 
-export const laboratoryResultSchema = z.object({
+const quantitativeLaboratoryResultSchema = z.object({
   ...laboratoryResultMeasurementShape,
   observationId: z.string().min(1),
 }).strict().refine(laboratoryInterpretationMatchesRange, {
   message: 'Laboratory result interpretation must match its value and reference range',
 })
+
+const qualitativeLaboratoryResultSchema = z.object({
+  code: z.string().min(1),
+  display: z.string().min(1),
+  interpretation: laboratoryResultInterpretationSchema,
+  observationId: z.string().min(1),
+  referenceRange: z.object({ text: z.string().min(1) }).strict(),
+  value: z.union([z.boolean(), z.string().min(1)]),
+}).strict()
+
+export const laboratoryResultSchema = z.union([
+  quantitativeLaboratoryResultSchema,
+  qualitativeLaboratoryResultSchema,
+])
 
 export const laboratoryReportAcknowledgementSchema = z.object({
   acknowledgedAt: z.string().datetime({ offset: true }),

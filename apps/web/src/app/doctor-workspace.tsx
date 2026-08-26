@@ -1929,6 +1929,7 @@ function LaboratoryRequestReport({ action, correctionAction, itemName, locale, m
   if (report === undefined) throw new Error('The laboratory report is required')
   const headingId = `laboratory-request-report-${request.id}`
   const pendingThisReport = action.pendingRequestId === request.id
+  const correctionSupported = report.results.every(isQuantitativeLaboratoryResult)
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3 border-t pt-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1956,7 +1957,7 @@ function LaboratoryRequestReport({ action, correctionAction, itemName, locale, m
         messages={messages}
         report={report}
       />
-      {correctionAction.allowed && showCorrection ? (
+      {correctionAction.allowed && showCorrection && correctionSupported ? (
         <LaboratoryReportCorrectionForm
           action={correctionAction}
           itemName={itemName}
@@ -1994,13 +1995,14 @@ function LaboratoryReportCorrectionForm({ action, itemName, messages, report, re
 }): React.JSX.Element {
   const [preview, setPreview] = useState<LaboratoryReportCorrectionInput>()
   const pendingThisRequest = action.pending && action.pendingRequestId === request.id
+  const quantitativeResults = report.results.filter(isQuantitativeLaboratoryResult)
   const submitPreview = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     setPreview({
       conclusion: String(form.get('conclusion') ?? ''),
       reason: String(form.get('reason') ?? ''),
-      results: report.results.map(result => ({
+      results: quantitativeResults.map(result => ({
         code: result.code,
         value: Number(form.get(`result:${result.code}`)),
       })),
@@ -2035,7 +2037,7 @@ function LaboratoryReportCorrectionForm({ action, itemName, messages, report, re
           <FieldSet>
             <FieldLegend variant="label">{messages.result}</FieldLegend>
             <FieldGroup className="grid gap-3 sm:grid-cols-2">
-              {report.results.map(result => (
+              {quantitativeResults.map(result => (
                 <Field key={result.code}>
                   <FieldLabel htmlFor={`laboratory-report-correction-${request.id}-${result.code}`}>
                     {result.display} · {messages.result}
@@ -2108,9 +2110,9 @@ function LaboratoryReportCorrectionForm({ action, itemName, messages, report, re
                     <ul className="space-y-1.5">
                       {preview.results.map((result, index) => (
                         <li className="flex flex-wrap justify-between gap-x-3 gap-y-1" key={result.code}>
-                          <span>{report.results[index]?.display ?? result.code}</span>
+                          <span>{quantitativeResults[index]?.display ?? result.code}</span>
                           <span className="font-medium">
-                            {result.value} {report.results[index]?.unit.display ?? ''}
+                            {result.value} {quantitativeResults[index]?.unit.display ?? ''}
                           </span>
                         </li>
                       ))}
@@ -2183,23 +2185,26 @@ function LaboratoryReportVersion({ current, locale, messages, report }: {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {report.results.map(result => (
-            <TableRow key={result.observationId}>
-              <TableCell className="font-medium">
-                {laboratoryResultName(result.code, messages, result.display)}
-              </TableCell>
-              <TableCell>
-                <span>{laboratoryResultValue(result.value, result.unit.display, locale, messages)}</span>
-                <Badge
-                  className="ml-2"
-                  variant={result.interpretation === 'normal' ? 'success' : 'destructive'}
-                >
-                  {interpretationLabel(result.interpretation, messages)}
-                </Badge>
-              </TableCell>
-              <TableCell>{result.referenceRange.text}</TableCell>
-            </TableRow>
-          ))}
+          {report.results.map((result) => {
+            const unit = 'unit' in result ? result.unit.display : undefined
+            return (
+              <TableRow key={result.observationId}>
+                <TableCell className="font-medium">
+                  {laboratoryResultName(result.code, messages, result.display)}
+                </TableCell>
+                <TableCell>
+                  <span>{laboratoryResultValue(result.value, unit, locale, messages)}</span>
+                  <Badge
+                    className="ml-2"
+                    variant={result.interpretation === 'normal' ? 'success' : 'destructive'}
+                  >
+                    {interpretationLabel(result.interpretation, messages)}
+                  </Badge>
+                </TableCell>
+                <TableCell>{result.referenceRange.text}</TableCell>
+              </TableRow>
+            )
+          })}
         </TableBody>
       </Table>
     </div>
@@ -3766,6 +3771,12 @@ function laboratoryResultValue(
   if (typeof value === 'boolean') return value ? messages.positive : messages.negative
   const formatted = typeof value === 'number' ? new Intl.NumberFormat(locale).format(value) : value
   return unit === undefined ? formatted : `${formatted} ${unit}`
+}
+
+function isQuantitativeLaboratoryResult(
+  result: LaboratoryReport['results'][number],
+): result is Extract<LaboratoryReport['results'][number], { value: number }> {
+  return typeof result.value === 'number' && 'unit' in result
 }
 
 function interpretationLabel(code: string, messages: ReturnType<typeof getWorkspaceMessages>): string {

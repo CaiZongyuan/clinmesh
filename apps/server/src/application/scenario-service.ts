@@ -960,11 +960,13 @@ export class ScenarioService {
       expiresOn: '2027-12-31',
       itemId: 'medication-oseltamivir',
       lotId: 'lot-oseltamivir-202608',
+      lotNumber: 'SYN-OSE-202608',
       quantity: 1_000,
     }, {
       expiresOn: '2027-12-31',
       itemId: 'medication-acetaminophen',
       lotId: 'lot-acetaminophen-202608',
+      lotNumber: 'SYN-ACE-202608',
       quantity: 1_000,
     }]
     for (const lot of inventory) {
@@ -973,7 +975,7 @@ export class ScenarioService {
         input.epoch,
         lot.lotId,
         lot.itemId,
-        lot.lotId,
+        'lotNumber' in lot ? lot.lotNumber : lot.lotId,
         lot.expiresOn,
         lot.quantity,
       )

@@ -16,6 +16,10 @@ Hospital Baseline 的字段形状参考 OpenHIS 的中国医院目录关系和�
 
 Dataset 更新后由 `validateScenarioDataset` 重新生成稳定诊断。未映射代码是 warning；悬空患者、就诊、目录、Hidden Fact、药品适应诊断或联用引用，以及时间倒置、费用范围倒置、非法血压和检查结果冲突是 error。管理员可以继续保存带诊断的 Dataset；任何 error 都阻止安装。
 
+`resolveScenarioInvestigation` 是活动 Package 检查结果的共享运行时边界。它按 L1 CaseTruth 精确结果、L2 患者生理生成器或派生链、L3 正常域确定性采样的顺序解析叶子项目；检查组合只通过显式 `componentItemIds` 递归展开。BMI、CKD-EPI 2021 eGFR、RBC/MCV/HCT 和血糖/尿糖使用受控公式及命名依赖，Validator 在安装前拒绝检查组合环、生理依赖环和悬空引用。相同 Scenario Run、患者、项目与复测序号得到相同结果；复测只在生理叶子上增加截断到三倍标准差的 assay CV 噪声。L3 记录 `unmodeled_item`，限制在正常域且不产生危急值。
+
+活动 Package 的检查申请继续使用现有 Laboratory Request、LIS outbox 和报告生命周期。resolver 在签发事务中同时提供结构化或定性结果、报告、TAT、费用、危急值和一致性诊断；Observation、DiagnosticReport 扩展、Provenance 与申请终态一起提交。任一组件无法解析时整个事务回滚，不留下部分 Specimen、Observation 或 DiagnosticReport。已报告项目可以复测，唯一索引只阻止 `issued`、`accepted` 和 `in-progress` 的同项目并发申请；旧内置 Scenario 继续读取原 Hidden Fact。
+
 安装仍由共享 `ScenarioService` 执行。不可变 Package 中的患者认知、症状和生命体征进入现有 Virtual Patient；白名单病史进入 FHIR R5 Repository；医院目录进入现有门诊、诊断和库存表，并生成 Medication 与 InventoryItem 投影。通用挂号目录由运行时保留。管理员 Web 工作台以 TanStack Query 拥有服务端状态，并提供患者与就诊、问诊应答、查体与检查、诊断与处置、目录与库存、Hidden Fact 与 Reveal Policy 的结构化编辑，不暴露通用 JSON 编辑器。
 
 ## Alternatives considered
@@ -36,4 +40,4 @@ CaseTruth 和 Hospital Baseline 是 Dataset 与 Package 的持久格式。字段
 
 OpenHIS 和外部参考材料只校准字段、关系与状态。`references/` 保持只读，真实患者、真实机构目录、医保或支付凭证和来源受限数据不能进入生成产物或仓库。
 
-检查行已经保存 L1、L2 和 L3 来源级别及所需的参考数据，但本决策不声明任意门诊开单已按三级模型解析。确定性结果解析、复测噪声、计算耦合和失败原子性由 [issue 40](https://github.com/CaiZongyuan/clinmesh/issues/40) 的共享检查运行时负责。
+三级检查运行时只解析活动 Package 声明的目录、CaseTruth 和生理生成器，不从显示文本猜测公式或项目组合。新增公式、结果类型或组合语义必须同时扩展持久 schema、Validator、共享 resolver、FHIR 投影和固定 worked example；不能在 Web、HTTP adapter 或 LIS consumer 中各自补随机值。

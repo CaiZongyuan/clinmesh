@@ -920,6 +920,22 @@ describe('role workspaces', () => {
     await user.type(diagnosis, '急性发热待查')
 
     await user.click(screen.getByRole('tab', { name: '目录与库存' }))
+    const referenceRange = screen.getByLabelText('参考范围文本')
+    await user.clear(referenceRange)
+    await user.type(referenceRange, '3.5-9.5 x10^9/L')
+    await user.type(screen.getByLabelText('参考下限'), '3.5')
+    await user.type(screen.getByLabelText('参考上限'), '9.5')
+    await user.type(screen.getByLabelText('生理生成器 ID'), 'hematology-panel')
+    fireEvent.change(screen.getByLabelText('组合项目 ID'), {
+      target: { value: 'lab-wbc\nlab-hemoglobin' },
+    })
+    await user.click(screen.getByRole('checkbox', { name: '启用 L3 正常参考采样' }))
+    await user.clear(screen.getByLabelText('L3 均值'))
+    await user.type(screen.getByLabelText('L3 均值'), '6.5')
+    await user.clear(screen.getByLabelText('L3 标准差'))
+    await user.type(screen.getByLabelText('L3 标准差'), '1.2')
+    await user.clear(screen.getByLabelText('测定变异系数'))
+    await user.type(screen.getByLabelText('测定变异系数'), '0.04')
     const inventory = screen.getByLabelText('库存数量')
     await user.clear(inventory)
     await user.type(inventory, '800')
@@ -932,6 +948,20 @@ describe('role workspaces', () => {
 
     expect(await screen.findByText('版本 2')).toBeTruthy()
     expect(savedContent).toMatchObject({
+      catalog: {
+        investigations: [{
+          componentItemIds: ['lab-wbc', 'lab-hemoglobin'],
+          normalDistribution: {
+            assayCv: 0.04,
+            maximum: 9.5,
+            mean: 6.5,
+            minimum: 3.5,
+            standardDeviation: 1.2,
+          },
+          physiologyGeneratorId: 'hematology-panel',
+          referenceRanges: [{ maximum: 9.5, minimum: 3.5, text: '3.5-9.5 x10^9/L' }],
+        }],
+      },
       hiddenFacts: [{ value: '急性病毒性上呼吸道感染' }],
       inventory: [{ quantity: 800 }],
       patients: [{
@@ -5070,11 +5100,13 @@ describe('role workspaces', () => {
       revisionNumber: 2,
       revisionOfDiagnosticReportId: report.diagnosticReportId,
       revisionReason: '复核仪器原始数据后更正。',
-      results: report.results.map(result => ({
-        ...result,
-        observationId: 'observation-correction-2',
-        value: 29.1,
-      })),
+      results: report.results.map(result => typeof result.value === 'number' && 'unit' in result
+        ? {
+            ...result,
+            observationId: 'observation-correction-2',
+            value: 29.1,
+          }
+        : result),
       specimenId: report.specimenId,
       status: 'final',
     }

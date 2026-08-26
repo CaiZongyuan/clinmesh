@@ -334,6 +334,47 @@ function deterministicPersona(ordinal: number) {
   }
 }
 
+function hematologyGenerators(): ScenarioPatient['physiologyBaseline']['generators'] {
+  return [{
+    assayCv: 0.02,
+    id: 'hemoglobin',
+    kind: 'normal',
+    maximum: 165,
+    mean: 148,
+    minimum: 130,
+    source: 'scenario:normal-routine-lab',
+    standardDeviation: 4,
+    unit: 'g/L',
+  }, {
+    assayCv: 0.03,
+    id: 'red-blood-cells',
+    kind: 'normal',
+    maximum: 5.8,
+    mean: 4.7,
+    minimum: 3.8,
+    source: 'scenario:hematology-baseline',
+    standardDeviation: 0.35,
+    unit: '10^12/L',
+  }, {
+    assayCv: 0.02,
+    id: 'mean-corpuscular-volume',
+    kind: 'normal',
+    maximum: 100,
+    mean: 90,
+    minimum: 80,
+    source: 'scenario:hematology-baseline',
+    standardDeviation: 4,
+    unit: 'fL',
+  }, {
+    dependencies: ['red-blood-cells', 'mean-corpuscular-volume'],
+    formula: 'hematocrit-from-rbc-mcv',
+    id: 'hematocrit',
+    kind: 'derived',
+    source: 'scenario:rbc-mcv',
+    unit: 'L/L',
+  }]
+}
+
 function feverCaseTruth(input: {
   conditions: Array<z.infer<typeof conditionSchema>>
   observations: R4Observation[]
@@ -400,7 +441,7 @@ function feverCaseTruth(input: {
         source: 'synthea-r4:Observation/8310-5',
         unit: '°C',
         value: temperature,
-      }],
+      }, ...hematologyGenerators()],
       vitalSigns: { oxygenSaturationPct: 98, pulseBpm: 92, respirationBpm: 18, temperatureC: temperature },
     },
     symptomResponses: [{
@@ -507,16 +548,37 @@ function diabetesCaseTruth(input: {
         target: glucose,
         unit: 'mmol/L',
         walkStep: 0.8,
-      }, {
-        assayCv: 0.02,
-        id: 'hemoglobin',
+      }, ...hematologyGenerators(), {
+        assayCv: 0.03,
+        id: 'serum-creatinine',
         kind: 'normal' as const,
-        maximum: 165,
-        mean: 148,
-        minimum: 130,
-        source: 'scenario:normal-routine-lab',
-        standardDeviation: 4,
-        unit: 'g/L',
+        maximum: 104,
+        mean: 75,
+        minimum: 45,
+        source: 'scenario:renal-baseline',
+        standardDeviation: 12,
+        unit: 'μmol/L',
+      }, {
+        dependencies: ['serum-creatinine'],
+        formula: 'egfr-ckd-epi-2021' as const,
+        id: 'estimated-gfr',
+        kind: 'derived' as const,
+        source: 'scenario:ckd-epi-2021',
+        unit: 'mL/min/1.73m²',
+      }, {
+        dependencies: ['vital:weightKg', 'vital:heightCm'],
+        formula: 'bmi' as const,
+        id: 'body-mass-index',
+        kind: 'derived' as const,
+        source: 'scenario:height-weight',
+        unit: 'kg/m²',
+      }, {
+        dependencies: ['random-glucose'],
+        formula: 'urine-glucose-from-blood-glucose' as const,
+        id: 'urine-glucose',
+        kind: 'derived' as const,
+        source: 'scenario:renal-glucose-threshold',
+        unit: 'qualitative',
       }],
       vitalSigns: { diastolicMmHg: 96, heightCm: 172, pulseBpm: 88, systolicMmHg: 162, temperatureC: 36.5, weightKg: 80.2 },
     },

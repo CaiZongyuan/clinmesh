@@ -2,6 +2,10 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes }
 import { v7 as uuidv7 } from 'uuid'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
 import {
+  scenarioDatasetContentSchema,
+  type ScenarioDatasetContent,
+} from '@clinmesh/contracts/scenario'
+import {
   acknowledgeLaboratoryReportResponseSchema,
   type ApiConflict,
   askConsultationQuestionResponseSchema,
@@ -67,6 +71,10 @@ import {
   ExpectedVersionConflictError,
   provenanceAgents,
 } from './command-executor.ts'
+import {
+  resolveScenarioInvestigation,
+  type ScenarioInvestigationResolution,
+} from './scenario-data/scenario-investigation-resolver.ts'
 
 export class WorkflowError extends Error {
   readonly code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
@@ -412,6 +420,53 @@ const laboratoryResultsFactSchema = z.object({
   }).strict(),
 }).strict()
 
+function ucumCode(unit: string): string {
+  return unit
+    .replace('10^9', '10*9')
+    .replace('10^12', '10*12')
+    .replace('μmol', 'umol')
+}
+
+function scenarioLaboratoryResultFact(
+  content: ScenarioDatasetContent,
+  resolution: ScenarioInvestigationResolution,
+) {
+  const results = (resolution.components ?? [resolution]).map((component) => {
+    if (component.result.outcome !== 'reported') {
+      throw new Error(`Investigation ${component.itemId} did not produce a laboratory result`)
+    }
+    const catalogItem = content.catalog.investigations.find(item => item.id === component.itemId)
+    if (catalogItem === undefined) throw new Error(`Investigation ${component.itemId} was not found`)
+    const referenceRange = catalogItem.referenceRanges.find(
+      range => range.appliesToGender === 'any',
+    ) ?? catalogItem.referenceRanges[0]
+    if (referenceRange === undefined) {
+      throw new Error(`Investigation ${component.itemId} has no reference range`)
+    }
+    return {
+      code: catalogItem.code,
+      display: catalogItem.name,
+      interpretation: component.result.flag === 'H'
+        ? 'high'
+        : component.result.flag === 'L' ? 'low' : 'normal',
+      referenceRange: {
+        ...(referenceRange.maximum === undefined ? {} : { high: referenceRange.maximum }),
+        ...(referenceRange.minimum === undefined ? {} : { low: referenceRange.minimum }),
+        text: referenceRange.text,
+      },
+      ...(catalogItem.unit === undefined ? {} : {
+        unit: {
+          code: ucumCode(catalogItem.unit),
+          display: catalogItem.unit,
+          system: 'http://unitsofmeasure.org' as const,
+        },
+      }),
+      value: component.result.value,
+    }
+  })
+  return { conclusion: resolution.report, results }
+}
+
 const laboratoryRequestStateRowSchema = z.object({
   draft_catalog_item_id: laboratoryRequestSchema.shape.catalogItemId.nullable(),
   draft_indication_code: z.string().min(1).nullable(),
@@ -603,18 +658,24 @@ const laboratoryObservationContentSchema = z.object({
     coding: z.array(z.object({ code: z.enum(['N', 'H', 'L']) }).loose()).min(1),
   }).loose()).min(1),
   referenceRange: z.array(z.object({
-    high: z.object({ value: z.number().finite() }).loose(),
-    low: z.object({ value: z.number().finite() }).loose(),
+    high: z.object({ value: z.number().finite() }).loose().optional(),
+    low: z.object({ value: z.number().finite() }).loose().optional(),
     text: z.string().min(1),
   }).loose()).min(1),
   specimen: z.object({ reference: z.string().min(1) }).loose(),
+  valueBoolean: z.boolean().optional(),
   valueQuantity: z.object({
     code: z.string().min(1),
     system: z.literal('http://unitsofmeasure.org'),
     unit: z.string().min(1),
     value: z.number().finite(),
-  }).loose(),
-}).loose()
+  }).loose().optional(),
+  valueString: z.string().min(1).optional(),
+}).loose().refine(value => (
+  Number(value.valueBoolean !== undefined)
+  + Number(value.valueQuantity !== undefined)
+  + Number(value.valueString !== undefined)
+) === 1, { message: 'Laboratory Observation must contain exactly one supported value' })
 
 const lisOrderDataSchema = z.object({
   diagnosticReportId: z.string().min(1),
@@ -5919,7 +5980,7 @@ export class WorkflowService {
       const duplicate = this.#database.driver.prepare(`
         SELECT request_id FROM laboratory_request
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-          AND catalog_item_id = ? AND status <> 'cancelled'
+          AND catalog_item_id = ? AND status IN ('issued', 'accepted', 'in-progress')
       `).get(
         input.context.workspaceId,
         input.context.epoch,
@@ -6389,16 +6450,36 @@ export class WorkflowService {
           'Only an in-progress laboratory request can be reported',
         )
       }
-      const hiddenFact = this.#database.driver.prepare(`
-        SELECT value_json FROM scenario_hidden_fact
-        WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
-      `).get(input.context.workspaceId, input.context.epoch) as { value_json: string } | undefined
-      if (hiddenFact === undefined) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory result fact is unavailable')
-      }
-      const laboratoryResultFact = laboratoryResultsFactSchema.parse(JSON.parse(hiddenFact.value_json))[
-        request.catalog_item_id
-      ]
+      const scenarioContent = this.#activeScenarioDataset(input.context)
+      const repeatIndex = scenarioContent === undefined
+        ? 0
+        : (this.#database.driver.prepare(`
+          SELECT COUNT(*) AS count FROM laboratory_request
+          WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+            AND catalog_item_id = ? AND reported_at IS NOT NULL
+        `).get(
+          input.context.workspaceId,
+          input.context.epoch,
+          request.case_id,
+          request.catalog_item_id,
+        ) as { count: number }).count
+      const scenarioResult = scenarioContent === undefined
+        ? undefined
+        : {
+            content: scenarioContent,
+            resolution: resolveScenarioInvestigation({
+              catalogItemId: request.catalog_item_id,
+              content: scenarioContent,
+              indicationCode: request.indication_code,
+              patientId: request.patient_id,
+              repeatIndex,
+              scenarioRunId: input.context.scenarioRunId,
+            }),
+          }
+      const scenarioResolution = scenarioResult?.resolution
+      const laboratoryResultFact = scenarioResult === undefined
+        ? this.#legacyLaboratoryResultFact(input.context, request.catalog_item_id)
+        : scenarioLaboratoryResultFact(scenarioResult.content, scenarioResult.resolution)
       const serviceRequest = transaction.fhir.read(
         input.context,
         'ServiceRequest',
@@ -6437,6 +6518,20 @@ export class WorkflowService {
         const interpretationCode = result.interpretation === 'normal'
           ? 'N'
           : result.interpretation === 'high' ? 'H' : 'L'
+        const value = typeof result.value === 'number'
+          ? result.unit === undefined
+            ? { valueQuantity: { value: result.value } }
+            : {
+                valueQuantity: {
+                  code: result.unit.code,
+                  system: result.unit.system,
+                  unit: result.unit.display,
+                  value: result.value,
+                },
+              }
+          : typeof result.value === 'boolean'
+            ? { valueBoolean: result.value }
+            : { valueString: result.value }
         return transaction.fhir.create(input.context, {
           resourceType: 'Observation',
           id: observationId,
@@ -6457,25 +6552,28 @@ export class WorkflowService {
           specimen: { reference: `Specimen/${specimenId}` },
           effectiveDateTime: now,
           issued: now,
-          valueQuantity: {
-            code: result.unit.code,
-            system: result.unit.system,
-            unit: result.unit.display,
-            value: result.value,
-          },
+          ...value,
           referenceRange: [{
-            low: {
-              code: result.unit.code,
-              system: result.unit.system,
-              unit: result.unit.display,
-              value: result.referenceRange.low,
-            },
-            high: {
-              code: result.unit.code,
-              system: result.unit.system,
-              unit: result.unit.display,
-              value: result.referenceRange.high,
-            },
+            ...(result.referenceRange.low === undefined ? {} : {
+              low: {
+                ...(result.unit === undefined ? {} : {
+                  code: result.unit.code,
+                  system: result.unit.system,
+                  unit: result.unit.display,
+                }),
+                value: result.referenceRange.low,
+              },
+            }),
+            ...(result.referenceRange.high === undefined ? {} : {
+              high: {
+                ...(result.unit === undefined ? {} : {
+                  code: result.unit.code,
+                  system: result.unit.system,
+                  unit: result.unit.display,
+                }),
+                value: result.referenceRange.high,
+              },
+            }),
             text: result.referenceRange.text,
           }],
           interpretation: [{
@@ -6486,14 +6584,42 @@ export class WorkflowService {
           }],
         })
       })
-      const reportName = request.catalog_item_id === 'lab-cbc' ? '血常规报告' : 'C 反应蛋白报告'
+      const reportName = scenarioResolution === undefined
+        ? request.catalog_item_id === 'lab-cbc' ? '血常规报告' : 'C 反应蛋白报告'
+        : `${scenarioResolution.name}报告`
       const report = transaction.fhir.create(input.context, {
         resourceType: 'DiagnosticReport',
         id: diagnosticReportId,
         status: 'final',
+        ...(scenarioResolution === undefined ? {} : {
+          extension: [
+            {
+              url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/investigation-source-level',
+              valueCode: scenarioResolution.sourceLevel,
+            },
+            {
+              url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/investigation-tat-minutes',
+              valueInteger: scenarioResolution.tatMinutes,
+            },
+            {
+              url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/investigation-fee',
+              valueMoney: { currency: 'CNY', value: scenarioResolution.feeFen / 100 },
+            },
+            {
+              url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/investigation-critical',
+              valueBoolean: scenarioResolution.critical,
+            },
+            ...scenarioResolution.diagnostics.map(diagnostic => ({
+              url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/investigation-diagnostic',
+              valueCode: diagnostic,
+            })),
+          ],
+        }),
         code: {
           coding: [{
-            code: request.catalog_item_id === 'lab-cbc' ? 'CBC' : 'CRP',
+            code: scenarioContent?.catalog.investigations.find(
+              item => item.id === request.catalog_item_id,
+            )?.code ?? (request.catalog_item_id === 'lab-cbc' ? 'CBC' : 'CRP'),
             display: reportName,
             system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-service',
           }],
@@ -6870,16 +6996,21 @@ export class WorkflowService {
       const observations = sourceObservations.map((source) => {
         const code = source.content.code.coding[0]?.code
         const referenceRange = source.content.referenceRange[0]
-        if (code === undefined || referenceRange === undefined) {
+        if (
+          code === undefined
+          || referenceRange === undefined
+          || source.content.valueQuantity === undefined
+          || (referenceRange.low === undefined && referenceRange.high === undefined)
+        ) {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory result is incomplete')
         }
         const value = corrections.get(code)
         if (value === undefined) {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory result correction is incomplete')
         }
-        const interpretation = value < referenceRange.low.value
+        const interpretation = referenceRange.low !== undefined && value < referenceRange.low.value
           ? 'L'
-          : value > referenceRange.high.value ? 'H' : 'N'
+          : referenceRange.high !== undefined && value > referenceRange.high.value ? 'H' : 'N'
         const content = Object.fromEntries(Object.entries(source.resource).filter(
           ([key]) => key !== 'id' && key !== 'meta',
         ))
@@ -9540,10 +9671,42 @@ export class WorkflowService {
   }
 
   #supportsLaboratoryReports(context: ActorContext): boolean {
-    return this.#database.driver.prepare(`
+    return this.#activeScenarioDataset(context) !== undefined || this.#database.driver.prepare(`
       SELECT 1 AS present FROM scenario_hidden_fact
       WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
     `).get(context.workspaceId, context.epoch) !== undefined
+  }
+
+  #activeScenarioDataset(context: ActorContext): ScenarioDatasetContent | undefined {
+    const row = this.#database.driver.prepare(`
+      SELECT package.content_json
+      FROM scenario_run AS run
+      JOIN scenario_package AS package
+        ON package.workspace_id = run.workspace_id
+       AND package.package_id = run.scenario_id
+      WHERE run.workspace_id = ? AND run.epoch = ? AND run.scenario_run_id = ?
+    `).get(context.workspaceId, context.epoch, context.scenarioRunId) as {
+      content_json: string
+    } | undefined
+    return row === undefined
+      ? undefined
+      : scenarioDatasetContentSchema.parse(JSON.parse(row.content_json))
+  }
+
+  #legacyLaboratoryResultFact(
+    context: ActorContext,
+    catalogItemId: LaboratoryRequestCatalogItemId,
+  ) {
+    const hiddenFact = this.#database.driver.prepare(`
+      SELECT value_json FROM scenario_hidden_fact
+      WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
+    `).get(context.workspaceId, context.epoch) as { value_json: string } | undefined
+    if (hiddenFact === undefined) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory result fact is unavailable')
+    }
+    const facts = laboratoryResultsFactSchema.parse(JSON.parse(hiddenFact.value_json))
+    if (catalogItemId === 'lab-cbc' || catalogItemId === 'lab-crp') return facts[catalogItemId]
+    throw new WorkflowError('CATALOG_CONFLICT', 'The laboratory result fact is unavailable for this item')
   }
 
   #laboratoryReportVersions(
@@ -9669,24 +9832,43 @@ export class WorkflowService {
         if (coding === undefined || interpretationCode === undefined || referenceRange === undefined) {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory result is incomplete')
         }
-        return {
+        const base = {
           code: coding.code,
           display: coding.display,
           interpretation: interpretationCode === 'N'
             ? 'normal' as const
             : interpretationCode === 'H' ? 'high' as const : 'low' as const,
           observationId,
+        }
+        if (observation.valueQuantity !== undefined) {
+          if (referenceRange.high === undefined && referenceRange.low === undefined) {
+            throw new WorkflowError('WORKFLOW_CONFLICT', 'The quantitative laboratory result is incomplete')
+          }
+          return {
+            ...base,
+            referenceRange: {
+              ...(referenceRange.high === undefined ? {} : { high: referenceRange.high.value }),
+              ...(referenceRange.low === undefined ? {} : { low: referenceRange.low.value }),
+              text: referenceRange.text,
+            },
+            unit: {
+              code: observation.valueQuantity.code,
+              display: observation.valueQuantity.unit,
+              system: observation.valueQuantity.system,
+            },
+            value: observation.valueQuantity.value,
+          }
+        }
+        const qualitativeValue = observation.valueBoolean ?? observation.valueString
+        if (qualitativeValue === undefined) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'The qualitative laboratory result is incomplete')
+        }
+        return {
+          ...base,
           referenceRange: {
-            high: referenceRange.high.value,
-            low: referenceRange.low.value,
             text: referenceRange.text,
           },
-          unit: {
-            code: observation.valueQuantity.code,
-            display: observation.valueQuantity.unit,
-            system: observation.valueQuantity.system,
-          },
-          value: observation.valueQuantity.value,
+          value: qualitativeValue,
         }
       }),
       specimenId,

@@ -15,10 +15,12 @@ function catalogBase(input: { code: string; id: string; name: string; priceFen: 
 }
 
 function investigation(input: {
+  allowedIndicationCodes?: string[]
   assayCv?: number
   available?: boolean
   category?: 'examination' | 'imaging' | 'laboratory'
   code: string
+  componentItemIds?: string[]
   criticalMaximum?: number
   criticalMinimum?: number
   id: string
@@ -26,6 +28,7 @@ function investigation(input: {
   mean?: number
   minimum?: number
   name: string
+  physiologyGeneratorId?: string
   priceFen: number
   referenceRange: string
   reportTemplate: string
@@ -49,16 +52,25 @@ function investigation(input: {
     : undefined
   return {
     ...catalogBase(input),
-    allowedIndicationCodes: input.category === 'examination'
+    allowedIndicationCodes: input.allowedIndicationCodes ?? (input.category === 'examination'
       ? ['clinical-assessment']
-      : ['fever', 'type-2-diabetes'],
+      : ['fever', 'type-2-diabetes']),
     available: input.available ?? true,
     category: input.category ?? 'laboratory',
+    ...(input.componentItemIds === undefined ? {} : { componentItemIds: input.componentItemIds }),
     contraindicatedAllergyCodes: [],
     ...(input.criticalMaximum === undefined ? {} : { criticalMaximum: input.criticalMaximum }),
     ...(input.criticalMinimum === undefined ? {} : { criticalMinimum: input.criticalMinimum }),
     ...(normalDistribution === undefined ? {} : { normalDistribution }),
-    referenceRanges: [{ appliesToGender: 'any', text: input.referenceRange }],
+    ...(input.physiologyGeneratorId === undefined
+      ? {}
+      : { physiologyGeneratorId: input.physiologyGeneratorId }),
+    referenceRanges: [{
+      appliesToGender: 'any',
+      ...(input.maximum === undefined ? {} : { maximum: input.maximum }),
+      ...(input.minimum === undefined ? {} : { minimum: input.minimum }),
+      text: input.referenceRange,
+    }],
     reportTemplate: input.reportTemplate,
     tatMinutes: input.tatMinutes,
     ...(input.unit === undefined ? {} : { unit: input.unit }),
@@ -106,6 +118,7 @@ export function createHospitalBaseline(): Pick<
           mean: 36.6,
           minimum: 36,
           name: '体温',
+          physiologyGeneratorId: 'body-temperature',
           priceFen: 0,
           referenceRange: '36.0-37.3 °C',
           reportTemplate: '体温 {value} °C。',
@@ -115,7 +128,23 @@ export function createHospitalBaseline(): Pick<
           unit: '°C',
         }),
         investigation({
+          allowedIndicationCodes: ['type-2-diabetes'],
+          category: 'examination',
+          code: 'BMI',
+          id: 'exam-bmi',
+          maximum: 23.9,
+          minimum: 18.5,
+          name: '体重指数',
+          physiologyGeneratorId: 'body-mass-index',
+          priceFen: 0,
+          referenceRange: '18.5-23.9 kg/m²',
+          reportTemplate: '体重指数 {value} kg/m²。',
+          tatMinutes: 0,
+          unit: 'kg/m²',
+        }),
+        investigation({
           code: 'CBC',
+          componentItemIds: ['lab-wbc', 'lab-hemoglobin', 'lab-rbc', 'lab-mcv', 'lab-hematocrit'],
           id: 'lab-cbc',
           name: '血常规',
           priceFen: 2_500,
@@ -151,6 +180,7 @@ export function createHospitalBaseline(): Pick<
           mean: 145,
           minimum: 115,
           name: '血红蛋白',
+          physiologyGeneratorId: 'hemoglobin',
           priceFen: 800,
           referenceRange: '115-175 g/L（需结合性别）',
           reportTemplate: '血红蛋白 {value} g/L。',
@@ -166,6 +196,7 @@ export function createHospitalBaseline(): Pick<
           mean: 4.7,
           minimum: 3.8,
           name: '红细胞计数',
+          physiologyGeneratorId: 'red-blood-cells',
           priceFen: 800,
           referenceRange: '3.8-5.8 x10^12/L（需结合性别）',
           reportTemplate: '红细胞计数 {value} x10^12/L。',
@@ -181,6 +212,7 @@ export function createHospitalBaseline(): Pick<
           mean: 90,
           minimum: 80,
           name: '平均红细胞体积',
+          physiologyGeneratorId: 'mean-corpuscular-volume',
           priceFen: 800,
           referenceRange: '80-100 fL',
           reportTemplate: '平均红细胞体积 {value} fL。',
@@ -196,6 +228,7 @@ export function createHospitalBaseline(): Pick<
           mean: 0.43,
           minimum: 0.35,
           name: '红细胞压积',
+          physiologyGeneratorId: 'hematocrit',
           priceFen: 800,
           referenceRange: '0.35-0.52 L/L（需结合性别）',
           reportTemplate: '红细胞压积 {value} L/L。',
@@ -228,12 +261,24 @@ export function createHospitalBaseline(): Pick<
           mean: 6.2,
           minimum: 3.9,
           name: '随机血糖',
+          physiologyGeneratorId: 'random-glucose',
           priceFen: 500,
           referenceRange: '3.9-11.1 mmol/L',
           reportTemplate: '随机血糖 {value} mmol/L。',
           standardDeviation: 1.5,
           tatMinutes: 30,
           unit: 'mmol/L',
+        }),
+        investigation({
+          code: 'URINE-GLUCOSE',
+          id: 'lab-urine-glucose',
+          name: '尿糖',
+          physiologyGeneratorId: 'urine-glucose',
+          priceFen: 500,
+          referenceRange: '阴性',
+          reportTemplate: '尿糖 {value}。',
+          tatMinutes: 30,
+          valueType: 'codeable',
         }),
         investigation({
           assayCv: 0.02,
@@ -259,12 +304,25 @@ export function createHospitalBaseline(): Pick<
           mean: 75,
           minimum: 45,
           name: '血清肌酐',
+          physiologyGeneratorId: 'serum-creatinine',
           priceFen: 1_500,
           referenceRange: '45-104 μmol/L（需结合性别）',
           reportTemplate: '血清肌酐 {value} μmol/L。',
           standardDeviation: 12,
           tatMinutes: 60,
           unit: 'μmol/L',
+        }),
+        investigation({
+          code: 'EGFR',
+          id: 'lab-egfr',
+          minimum: 60,
+          name: '估算肾小球滤过率',
+          physiologyGeneratorId: 'estimated-gfr',
+          priceFen: 0,
+          referenceRange: '>=60 mL/min/1.73m²',
+          reportTemplate: '估算肾小球滤过率 {value} mL/min/1.73m²。',
+          tatMinutes: 60,
+          unit: 'mL/min/1.73m²',
         }),
         investigation({
           assayCv: 0.02,

@@ -91,6 +91,32 @@ function splitLines(value: string): string[] {
   return value.split('\n').map(line => line.trim()).filter(line => line.length > 0)
 }
 
+type InvestigationCatalogItem = ScenarioDataset['content']['catalog']['investigations'][number]
+type InvestigationReferenceRange = InvestigationCatalogItem['referenceRanges'][number]
+
+function updateFirstReferenceRange(
+  item: InvestigationCatalogItem,
+  update: (range: InvestigationReferenceRange) => InvestigationReferenceRange,
+): InvestigationCatalogItem {
+  const current = item.referenceRanges[0] ?? { appliesToGender: 'any' as const, text: '未设置' }
+  return { ...item, referenceRanges: [update(current), ...item.referenceRanges.slice(1)] }
+}
+
+function withoutPhysiologyGenerator(item: InvestigationCatalogItem): InvestigationCatalogItem {
+  const { physiologyGeneratorId: _removed, ...remaining } = item
+  return remaining
+}
+
+function withoutComponents(item: InvestigationCatalogItem): InvestigationCatalogItem {
+  const { componentItemIds: _removed, ...remaining } = item
+  return remaining
+}
+
+function withoutNormalDistribution(item: InvestigationCatalogItem): InvestigationCatalogItem {
+  const { normalDistribution: _removed, ...remaining } = item
+  return remaining
+}
+
 function scalarHiddenFactValue(value: ScenarioDataset['content']['hiddenFacts'][number]['value']): string {
   if (typeof value === 'string') return value
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
@@ -680,6 +706,72 @@ function DatasetEditor({
                   <Checkbox checked={item.available} id={`editor-catalog-investigation-available-${itemIndex}`} onCheckedChange={checked => updateCatalogInvestigation(itemIndex, catalogItem => ({ ...catalogItem, available: checked === true }))} />
                   <FieldLabel htmlFor={`editor-catalog-investigation-available-${itemIndex}`}>{messages.availableAtHospital}</FieldLabel>
                 </Field>
+                <Field className="md:col-span-2">
+                  <FieldLabel htmlFor={`editor-catalog-investigation-reference-${itemIndex}`}>{messages.referenceRangeText}</FieldLabel>
+                  <Input id={`editor-catalog-investigation-reference-${itemIndex}`} onChange={event => updateCatalogInvestigation(itemIndex, catalogItem => updateFirstReferenceRange(catalogItem, range => ({ ...range, text: event.target.value })))} value={item.referenceRanges[0]?.text ?? ''} />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor={`editor-catalog-investigation-reference-minimum-${itemIndex}`}>{messages.referenceMinimum}</FieldLabel>
+                  <Input id={`editor-catalog-investigation-reference-minimum-${itemIndex}`} onChange={event => updateCatalogInvestigation(itemIndex, catalogItem => updateFirstReferenceRange(catalogItem, (range) => {
+                    if (event.target.value !== '') return { ...range, minimum: Number(event.target.value) }
+                    const { minimum: _removed, ...remaining } = range
+                    return remaining
+                  }))} type="number" value={item.referenceRanges[0]?.minimum ?? ''} />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor={`editor-catalog-investigation-reference-maximum-${itemIndex}`}>{messages.referenceMaximum}</FieldLabel>
+                  <Input id={`editor-catalog-investigation-reference-maximum-${itemIndex}`} onChange={event => updateCatalogInvestigation(itemIndex, catalogItem => updateFirstReferenceRange(catalogItem, (range) => {
+                    if (event.target.value !== '') return { ...range, maximum: Number(event.target.value) }
+                    const { maximum: _removed, ...remaining } = range
+                    return remaining
+                  }))} type="number" value={item.referenceRanges[0]?.maximum ?? ''} />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor={`editor-catalog-investigation-generator-${itemIndex}`}>{messages.physiologyGeneratorId}</FieldLabel>
+                  <Input id={`editor-catalog-investigation-generator-${itemIndex}`} onChange={event => updateCatalogInvestigation(itemIndex, catalogItem => event.target.value === '' ? withoutPhysiologyGenerator(catalogItem) : { ...catalogItem, physiologyGeneratorId: event.target.value })} value={item.physiologyGeneratorId ?? ''} />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor={`editor-catalog-investigation-components-${itemIndex}`}>{messages.componentItemIds}</FieldLabel>
+                  <Textarea id={`editor-catalog-investigation-components-${itemIndex}`} onChange={event => updateCatalogInvestigation(itemIndex, catalogItem => {
+                    const componentItemIds = splitLines(event.target.value)
+                    return componentItemIds.length === 0
+                      ? withoutComponents(catalogItem)
+                      : { ...catalogItem, componentItemIds }
+                  })} value={joinLines(item.componentItemIds ?? [])} />
+                </Field>
+                <Field className="self-end pb-2" orientation="horizontal">
+                  <Checkbox checked={item.normalDistribution !== undefined} id={`editor-catalog-investigation-l3-${itemIndex}`} onCheckedChange={checked => updateCatalogInvestigation(itemIndex, (catalogItem) => {
+                    if (checked !== true) return withoutNormalDistribution(catalogItem)
+                    const range = catalogItem.referenceRanges[0]
+                    const minimum = range?.minimum ?? 0
+                    const maximum = range?.maximum ?? Math.max(1, minimum + 1)
+                    return {
+                      ...catalogItem,
+                      normalDistribution: {
+                        assayCv: 0.02,
+                        maximum,
+                        mean: (minimum + maximum) / 2,
+                        minimum,
+                        standardDeviation: Math.max((maximum - minimum) / 6, 0.01),
+                      },
+                    }
+                  })} />
+                  <FieldLabel htmlFor={`editor-catalog-investigation-l3-${itemIndex}`}>{messages.enableL3Sampling}</FieldLabel>
+                </Field>
+                {item.normalDistribution === undefined ? null : <>
+                  <Field>
+                    <FieldLabel htmlFor={`editor-catalog-investigation-l3-mean-${itemIndex}`}>{messages.l3Mean}</FieldLabel>
+                    <Input id={`editor-catalog-investigation-l3-mean-${itemIndex}`} onChange={event => updateCatalogInvestigation(itemIndex, catalogItem => catalogItem.normalDistribution === undefined ? catalogItem : ({ ...catalogItem, normalDistribution: { ...catalogItem.normalDistribution, mean: Number(event.target.value) } }))} type="number" value={item.normalDistribution.mean} />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor={`editor-catalog-investigation-l3-standard-deviation-${itemIndex}`}>{messages.l3StandardDeviation}</FieldLabel>
+                    <Input id={`editor-catalog-investigation-l3-standard-deviation-${itemIndex}`} min={0.0001} onChange={event => updateCatalogInvestigation(itemIndex, catalogItem => catalogItem.normalDistribution === undefined ? catalogItem : ({ ...catalogItem, normalDistribution: { ...catalogItem.normalDistribution, standardDeviation: Number(event.target.value) } }))} type="number" value={item.normalDistribution.standardDeviation} />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor={`editor-catalog-investigation-l3-cv-${itemIndex}`}>{messages.assayCv}</FieldLabel>
+                    <Input id={`editor-catalog-investigation-l3-cv-${itemIndex}`} max={1} min={0} onChange={event => updateCatalogInvestigation(itemIndex, catalogItem => catalogItem.normalDistribution === undefined ? catalogItem : ({ ...catalogItem, normalDistribution: { ...catalogItem.normalDistribution, assayCv: Number(event.target.value) } }))} step={0.01} type="number" value={item.normalDistribution.assayCv} />
+                  </Field>
+                </>}
               </fieldset>
             ))}
           </div>

@@ -3,6 +3,18 @@ import type {
   ScenarioDiagnostic,
 } from '@clinmesh/contracts/scenario'
 
+function graphReaches(
+  currentId: string,
+  targetId: string,
+  children: (id: string) => readonly string[],
+  visited = new Set<string>(),
+): boolean {
+  if (currentId === targetId) return true
+  if (visited.has(currentId)) return false
+  visited.add(currentId)
+  return children(currentId).some(child => graphReaches(child, targetId, children, visited))
+}
+
 export function validateScenarioDataset(content: ScenarioDatasetContent): ScenarioDiagnostic[] {
   const diagnostics: ScenarioDiagnostic[] = []
   const diagnosisCodes = new Set(content.catalog.diagnoses.map(item => item.code))
@@ -10,6 +22,16 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
   const medicationIds = new Set(content.catalog.medications.map(item => item.id))
   const patientIds = new Set(content.patients.map(patient => patient.id))
   const hiddenFactCodes = new Set(content.hiddenFacts.map(fact => fact.code))
+  const vitalSignKeys = new Set([
+    'diastolicMmHg',
+    'heightCm',
+    'oxygenSaturationPct',
+    'pulseBpm',
+    'respirationBpm',
+    'systolicMmHg',
+    'temperatureC',
+    'weightKg',
+  ])
 
   const add = (diagnostic: ScenarioDiagnostic): void => {
     diagnostics.push(diagnostic)
@@ -50,6 +72,32 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
     }
   }
 
+  for (const [investigationIndex, investigation] of content.catalog.investigations.entries()) {
+    for (const [componentIndex, componentItemId] of investigation.componentItemIds?.entries() ?? []) {
+      if (!investigationCatalog.has(componentItemId)) {
+        add({
+          code: 'INVESTIGATION_COMPONENT_REFERENCE_MISSING',
+          message: `Investigation ${investigation.id} references an unknown component`,
+          path: `catalog.investigations[${investigationIndex}].componentItemIds[${componentIndex}]`,
+          severity: 'error',
+        })
+        continue
+      }
+      if (graphReaches(
+        componentItemId,
+        investigation.id,
+        id => investigationCatalog.get(id)?.componentItemIds ?? [],
+      )) {
+        add({
+          code: 'INVESTIGATION_COMPONENT_CYCLE',
+          message: `Investigation ${investigation.id} has a cyclic component reference`,
+          path: `catalog.investigations[${investigationIndex}].componentItemIds[${componentIndex}]`,
+          severity: 'error',
+        })
+      }
+    }
+  }
+
   for (const [index, fact] of content.hiddenFacts.entries()) {
     if (fact.patientId !== undefined && !patientIds.has(fact.patientId)) {
       add({
@@ -82,6 +130,10 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
 
   for (const [patientIndex, patient] of content.patients.entries()) {
     const patientPath = `patients[${patientIndex}]`
+    const generatorIds = new Set(patient.physiologyBaseline.generators.map(generator => generator.id))
+    const generators = new Map(
+      patient.physiologyBaseline.generators.map(generator => [generator.id, generator]),
+    )
     const encounterIds = new Set(patient.fhirHistory.flatMap(resource => (
       resource.resourceType === 'Encounter' ? [resource.id] : []
     )))
@@ -148,6 +200,41 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
           path: `${historyPath}.period.end`,
           severity: 'error',
         })
+      }
+    }
+
+    for (const [generatorIndex, generator] of patient.physiologyBaseline.generators.entries()) {
+      if (generator.kind !== 'derived') continue
+      for (const [dependencyIndex, dependency] of generator.dependencies.entries()) {
+        const missing = dependency.startsWith('vital:')
+          ? !vitalSignKeys.has(dependency.slice('vital:'.length))
+          : !generatorIds.has(dependency)
+        if (missing) {
+          add({
+            code: 'PHYSIOLOGY_DEPENDENCY_MISSING',
+            message: `Physiology generator ${generator.id} references an unknown dependency`,
+            path: `${patientPath}.physiologyBaseline.generators[${generatorIndex}].dependencies[${dependencyIndex}]`,
+            severity: 'error',
+          })
+          continue
+        }
+        if (!dependency.startsWith('vital:') && graphReaches(
+          dependency,
+          generator.id,
+          id => {
+            const candidate = generators.get(id)
+            return candidate?.kind === 'derived'
+              ? candidate.dependencies.filter(value => !value.startsWith('vital:'))
+              : []
+          },
+        )) {
+          add({
+            code: 'PHYSIOLOGY_DEPENDENCY_CYCLE',
+            message: `Physiology generator ${generator.id} has a cyclic dependency`,
+            path: `${patientPath}.physiologyBaseline.generators[${generatorIndex}].dependencies[${dependencyIndex}]`,
+            severity: 'error',
+          })
+        }
       }
     }
 

@@ -591,6 +591,15 @@ POST /api/his/v1/prescriptions/{prescriptionId}/actions/withdraw
 POST /api/his/v1/prescriptions/{prescriptionId}/actions/dispense
 POST /api/sim/v1/scenarios/actions/install
 POST /api/sim/v1/scenario-runs/{id}/actions/reset
+GET  /api/sim/v1/scenario-providers
+POST /api/sim/v1/scenario-generation-jobs
+GET  /api/sim/v1/scenario-generation-jobs/{id}
+GET  /api/sim/v1/scenario-datasets
+POST /api/sim/v1/scenario-datasets/actions/generate
+GET  /api/sim/v1/scenario-datasets/{id}
+PUT  /api/sim/v1/scenario-datasets/{id}
+DELETE /api/sim/v1/scenario-datasets/{id}
+POST /api/sim/v1/scenario-datasets/{id}/actions/install
 ```
 
 `GET /api/his/v1/doctor/virtual-patients` 按 `page/pageSize` 分页，只返回当前 Workspace/Epoch 中仍可接诊的 Virtual Patient 名称、性别、出生日期、临床可见摘要、协议 ID 和固定长度的 opaque `version`。姓名、性别和出生日期读取自绑定的 `fhir-native` Patient，Virtual Patient 领域表不重复保存 Patient Identity；响应不返回 Patient logical ID、Scenario、Hidden Fact、病原体、运行时状态、底层资源引用或确定性回答规则。`version` 的绑定和冲突语义由[门诊闭环](#81-门诊闭环)定义。
@@ -1261,15 +1270,18 @@ clock_revision
 
 ### 10.3 场景定义
 
-首期 Scenario blueprint 由 `ScenarioService` 中的受版本控制 TypeScript 数据定义，包含 scenario ID/version、schema version、seed、固定虚拟时间、Virtual Patient 可见表现与 Patient 绑定、合成目录、Hidden Fact、Reveal Policy 和模拟器规则。安装过程在一个 Command 事务中把定义和当前 Epoch 数据写入 SQLite；普通岗位 API 不暴露 Hidden Fact 或 Reveal Policy。
+内置 Scenario blueprint 由 `ScenarioService` 中的受版本控制 TypeScript 数据定义，包含 scenario ID/version、schema version、seed、固定虚拟时间、Virtual Patient 可见表现与 Patient 绑定、合成目录、Hidden Fact、Reveal Policy 和模拟器规则。管理员也可以通过内置生成器或可选 Synthea Provider 创建 `scenario_dataset`，结构化编辑 CaseTruth 与 Hospital Baseline，再把指定 Dataset 版本复制为不可变 `scenario_package` 并安装。安装过程在一个 Command 事务中创建新 Epoch；普通岗位 API 不暴露 Dataset、Hidden Fact 或 Reveal Policy。
 
 当前安装 API 提供 `candidate-fever-outpatient-v3` 与 `density-fever-outpatient-v3`，并只接受 `candidate` 或 `density`。v1 是基线定义，v2 增加确定性结构化检验结果，v3 再以进入初始定义 hash 的 `medicationRulesVersion` 增加独立用药结论目录规则。v1/v2 blueprint、Hidden Fact 和药品目录配置保持原定义，既有 Scenario Run 的 reset 继续按其固定 scenario ID seed，不由 migration 改写。两个当前 v3 定义的 `clinicalReview` 都是 `null`，因此没有任何场景标记为 `golden`；数据库约束要求未来 `golden` 定义必须同时具有临床审核元数据。`density` 使用同一业务 schema，并增加合成患者和队列数据以验证分页与界面密度。
 
-所有 seed、账户、患者、机构、目录、支付和检验内容都是合成数据。首期不从 Synthea 或 LLM 在线生成数据，也没有独立的外部 Scenario package 或 FHIR Profile 校验步骤。
+所有 seed、账户、患者、机构、目录、支付和检验内容都是合成数据。内置生成器始终可用；Synthea 固定版本并通过 `compose.synthea.yaml` 中的独立容器按需启用，未配置、不可达或失败只影响对应持久生成任务，不影响 Server 启动、既有 Dataset、Scenario Run 或内置生成。Synthea FHIR R4 Bundle 只作为编译输入，严格白名单转换为中国化 CaseTruth；美国机构、地址、付款方和标识不进入运行事实。LLM 不生成结构化真值，当前也不声明正式 FHIR Profile/IG 校验。
+
+Dataset 保存规范化内容哈希、expected version 和稳定诊断；错误诊断允许继续编辑但阻止安装。Package 与来源 Dataset 分离，安装后的 reset 只读取不可变 Package 快照，不重新调用 Provider 或当前编译器。CaseTruth 保存患者认知、纵向病史、本次就诊、生理生成器、三级检查来源、诊断与处置空间及费用基准；Hospital Baseline 保存虚构医院、科室、诊断、检查、药品和库存目录。OpenHIS 只用于校准中国医院字段、关系和状态语义，不复制其数据或物理模型。
 
 ### 10.4 确定性与故障注入
 
-- Scenario 定义固定 seed，但当前业务路径不执行随机抽样。
+- Scenario 定义固定 seed。共享检查 resolver 按 Scenario Run、患者、项目和复测序号生成可重放结果：L1 使用 CaseTruth 精确值，L2 读取或派生患者生理基线，L3 在正常域确定性采样并记录 `unmodeled_item`；复测只增加受控 assay CV 噪声，L3 不产生危急值。
+- BMI、CKD-EPI 2021 eGFR、RBC/MCV/HCT 和血糖/尿糖通过显式依赖与公式保持耦合。Dataset Validator 在安装前拒绝检查组合环、派生依赖环、悬空引用和一致性错误；无法解析的组合检查不发布部分 Specimen、Observation 或 DiagnosticReport。
 - 支付规则可确定地产生 success、declined 或 ambiguous；LIS 规则确定地产生结构化报告。outbox 通过测试 handler 验证 retryable failure、lease 恢复、重复消费和结果未知。
 - 数据库备份的 canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引、schema migration 和 runtime metadata 外的全部持久领域表；`*_json` 按 JSON 值规范化，递归排除 FHIR `lastUpdated` 和存放 hash 自身的列。它用于同一 schema 下的备份/恢复等价校验，不宣称是跨版本 replay hash。
 - 同一 blueprint 安装得到相同初始定义 hash。当前没有 command-log replay、逐步 state hash 或通用故障编排 API。
@@ -1513,11 +1525,11 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 ### 15.1 运行与持久化
 
 - Node.js Hono 同时提供 Web SPA、认证、HIS/Scenario API、FHIR R5 只读 API 和健康检查。
-- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；二十个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、Virtual Patient 接诊与问诊、门诊事实、结构化病历、独立检查申请、检验报告关联、报告确认与修订、诊断草稿与确认、处方审核状态、处方草稿、无需用药结论与撤回事实，以及门诊病例责任。
+- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；二十三个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、Virtual Patient 接诊与问诊、门诊事实、结构化病历、独立检查申请、检验报告关联、报告确认与修订、诊断草稿与确认、处方审核状态、处方草稿、无需用药结论与撤回事实、门诊病例责任、Scenario Dataset/Package、持久生成任务和已报告检查复测约束。
 - 数据库 CLI 提供 migrate、verify、reindex、backup 和 restore；已有旧版数据库执行 migrate 时先在同目录创建并验证升级前备份，Server 进程只验证 migration。
 - CommandExecutor 统一 `BEGIN IMMEDIATE`、expected versions、幂等 receipt、FHIR current/history/search、领域事实、AuditEvent、Action Trace 和 outbox 原子提交。
 - 同进程 dispatcher 持久化 claim/lease/attempt/correlation，支持失败重试、ambiguous、重复消费和旧 Epoch abandon。
-- Dockerfile 与 Compose 固定单实例和命名持久卷；当前开发环境没有 Docker，容器 build/healthcheck/卷重建仍是发布环境验证项。
+- 默认 Dockerfile 与 Compose 固定单实例和命名持久卷，不包含 Java 或 Synthea。附加 `compose.synthea.yaml` 构建独立非 root Provider 容器；Server 通过可选 URL adapter 调用固定协议，不把 Provider 健康状态作为启动门禁。
 
 ### 15.2 协议与业务
 
@@ -1532,7 +1544,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 
 ### 15.3 Web 与明确边界
 
-- Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员 Scenario 控制入口；医生工作台提供六字段病历草稿、签署预览、独立签署、只读历史和最新版本修订。带 Consultation 的病例使用受控目录编辑主次诊断、保存独立草稿并确认正式诊断，同时显示 CBC/CRP 独立检查草稿、开具、状态、等待结果、结构化报告和有效纠错操作；目录声明独立用药结论能力时，同一病例可编辑五项受控用药字段、保存或删除处方草稿、开具只读处方、受控撤回，或者确认无需用药。草稿删除、检查取消、处方撤回、病历修订和报告更正均先展示对象预览，再显式确认并反馈结果。没有该能力的旧 Scenario 不显示此面板；没有 Consultation 的既有病例保留复诊组合编辑器和发热检验组合兼容控件。病例库提供责任范围内的已完诊 Encounter 筛选、只读详情和服务端业务时间线，只把标记为可更正的结构化病历与独立报告、标记为可撤回的未调剂处方导向受控 owner；兼容旧事实保持只读。服务端状态只由 TanStack Query 缓存，退出/跨账户登录会清除非 session 查询；纠错后失效病例库详情，完诊后同时失效列表和详情。
+- Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员入口；管理员可直接生成、查看、结构化编辑、删除和安装模拟 Dataset，并查看 Provider、持久生成任务与稳定诊断。医生工作台提供六字段病历草稿、签署预览、独立签署、只读历史和最新版本修订。带 Consultation 的病例使用受控目录编辑主次诊断、保存独立草稿并确认正式诊断，同时显示活动 Package 目录允许的独立检查草稿、开具、状态、等待结果和结构化报告；数值报告保留既有受控纠错入口，定性结果只读展示。目录声明独立用药结论能力时，同一病例可编辑五项受控用药字段、保存或删除处方草稿、开具只读处方、受控撤回，或者确认无需用药。草稿删除、检查取消、处方撤回、病历修订和报告更正均先展示对象预览，再显式确认并反馈结果。没有该能力的旧 Scenario 不显示此面板；没有 Consultation 的既有病例保留复诊组合编辑器和发热检验组合兼容控件。病例库提供责任范围内的已完诊 Encounter 筛选、只读详情和服务端业务时间线，只把标记为可更正的结构化病历与独立数值报告、标记为可撤回的未调剂处方导向受控 owner；兼容旧事实保持只读。服务端状态只由 TanStack Query 缓存，退出/跨账户登录会清除非 session 查询；纠错后失效病例库详情，完诊后同时失效列表和详情。
 - 可见字符串具有中文和英文 catalog；主题支持 system、light 与 dark。岗位页面具有分页、加载、空、错误、冲突、无权限和成功状态，并覆盖长中文文本与窄视口。
 - 首期不包含 Desktop/Mobile 产品行为、Agent/AG-UI/MCP、评分、附件、真实外部系统、完整医保/住院/库存、远程数据库、多实例或高可用。
 - 当前没有 FHIR generic write、自定义 FHIR Operation、正式 Profile/IG、官方 Validator、标准 compartment、metrics exporter 或公开在线 SLA。
