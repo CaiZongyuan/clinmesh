@@ -361,6 +361,7 @@ const knownScenarioBlueprints = [
 
 interface ScenarioVirtualPatient {
   birthDate: string
+  fhirHistory?: ScenarioDatasetContent['patients'][number]['fhirHistory']
   gender: 'female' | 'male' | 'other' | 'unknown'
   id: string
   name: string
@@ -390,8 +391,11 @@ interface ScenarioVirtualPatient {
 }
 
 interface ScenarioBlueprint {
+  catalog?: ScenarioDatasetContent['catalog']
   clinicalReview: null | Record<string, unknown>
   hiddenFacts: ReadonlyArray<{ code: string; value: unknown }>
+  hospital?: ScenarioDatasetContent['hospital']
+  inventory?: ScenarioDatasetContent['inventory']
   kind: 'candidate' | 'density' | 'golden'
   medicationRulesVersion?: string
   revealPolicies: ReadonlyArray<{ code: string; factCode: string; triggerCode: string }>
@@ -715,6 +719,9 @@ export class ScenarioService {
       hiddenFacts: content.hiddenFacts,
       kind: 'candidate',
       medicationRulesVersion: 'prescription-conclusion-v1',
+      catalog: content.catalog,
+      hospital: content.hospital,
+      inventory: content.inventory,
       revealPolicies: policies.success ? policies.data : [],
       scenarioId: packageId,
       schemaVersion: content.schemaVersion,
@@ -722,14 +729,11 @@ export class ScenarioService {
       simulatorRules: rules.success ? rules.data : installableScenarioBlueprints.candidate.simulatorRules,
       version: `dataset-${version}`,
       virtualPatients: content.patients.map((patient) => {
-        const chiefComplaint = typeof patient.patientKnowledge.chiefComplaint === 'string'
-          ? patient.patientKnowledge.chiefComplaint
-          : '门诊复诊'
-        const answers = patient.symptomResponses.map(response => (
-          typeof response.answer === 'string' ? response.answer : '患者无补充。'
-        ))
-        const physiology = patient.physiologyBaseline
-        return candidateVirtualPatient({
+        const chiefComplaint = patient.patientKnowledge.chiefComplaint
+        const answers = patient.symptomResponses.flatMap(response => response.responsePoints.slice(0, 1))
+        const physiology = patient.physiologyBaseline.vitalSigns
+        return {
+          ...candidateVirtualPatient({
           answers: [answers[0] ?? chiefComplaint, answers[1] ?? '无其他明显不适。', answers[2] ?? '无补充病史。'],
           birthDate: patient.birthDate,
           chiefComplaint,
@@ -748,7 +752,9 @@ export class ScenarioService {
             respirationBpm: typeof physiology.respirationBpm === 'number' ? physiology.respirationBpm : 18,
             temperatureC: typeof physiology.temperatureC === 'number' ? physiology.temperatureC : 36.8,
           },
-        })
+          }),
+          fhirHistory: patient.fhirHistory,
+        }
       }),
       virtualTime: `${content.reproduction.timeRange.end}T09:00:00+08:00`,
     }
@@ -828,9 +834,14 @@ export class ScenarioService {
         price_fen, version, active, config_json
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)
     `)
-    const supportsPrescriptionConclusion = 'medicationRulesVersion' in blueprint
-      && blueprint.medicationRulesVersion === 'prescription-conclusion-v1'
-    const catalog = [
+    const supportsPrescriptionConclusion = blueprint.medicationRulesVersion === 'prescription-conclusion-v1'
+    const packageDiagnosisCatalog = blueprint.catalog?.diagnoses.filter(
+      diagnosis => diagnosis.active && diagnosis.status === 'active',
+    )
+    const diagnosisIdByCode = new Map(
+      packageDiagnosisCatalog?.map(diagnosis => [diagnosis.code, diagnosis.id]),
+    )
+    const legacyCatalog = [
       ['department-general-medicine', 'department', 'GM', '全科医学科', 'General Medicine', 0, '{}'],
       ['visit-general', 'visit-type', 'GENERAL', '普通门诊挂号费', 'General outpatient registration', 2000, '{}'],
       ['lab-fever-panel', 'laboratory', 'FEVER-PANEL', '发热检验组合', 'Fever laboratory panel', 6800, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[]}'],
@@ -843,52 +854,130 @@ export class ScenarioService {
         ? '{"dose":"0.5 g","frequency":"PRN","allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"],"allowedCourseDays":[3],"allowedDiagnosisCatalogItemIds":["diagnosis-influenza","diagnosis-acute-upper-respiratory-infection","diagnosis-fever"],"allowedQuantities":[6],"defaultCourseDays":3,"defaultQuantity":6}'
         : '{"dose":"0.5 g","frequency":"PRN","allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"]}'],
     ] as const
-    for (const item of catalog) {
+    const catalog = blueprint.catalog === undefined
+      ? legacyCatalog
+      : [
+          legacyCatalog[0],
+          legacyCatalog[1],
+          ...blueprint.catalog.departments
+            .filter(item => item.active && item.status === 'active')
+            .map(item => [
+              item.id,
+              'department',
+              item.code,
+              item.name,
+              item.name,
+              item.priceFen,
+              '{}',
+            ] as const),
+          ...blueprint.catalog.investigations
+            .filter(item => item.active && item.available && item.status === 'active'
+              && item.category === 'laboratory')
+            .map(item => [
+              item.id,
+              'laboratory',
+              item.code,
+              item.name,
+              item.name,
+              item.priceFen,
+              JSON.stringify({
+                allowedIndicationCodes: item.allowedIndicationCodes,
+                contraindicatedAllergyCodes: item.contraindicatedAllergyCodes,
+              }),
+            ] as const),
+          ...blueprint.catalog.medications
+            .filter(item => item.active && item.status === 'active')
+            .map(item => [
+              item.id,
+              'medication',
+              item.code,
+              item.name,
+              item.name,
+              item.priceFen,
+              JSON.stringify({
+                allowedCombinationIds: item.workflow.allowedCombinationIds,
+                allowedCourseDays: item.workflow.allowedCourseDays,
+                allowedDiagnosisCatalogItemIds: item.workflow.allowedDiagnosisCodes.flatMap((code) => {
+                  const diagnosisId = diagnosisIdByCode.get(code)
+                  return diagnosisId === undefined ? [] : [diagnosisId]
+                }),
+                allowedDoseTexts: item.workflow.allowedDoseTexts,
+                allowedFrequencyCodes: item.workflow.allowedFrequencyCodes,
+                allowedQuantities: item.workflow.allowedQuantities,
+                defaultCourseDays: item.workflow.defaultCourseDays,
+                defaultQuantity: item.workflow.defaultQuantity,
+                dose: item.defaultDose,
+                frequency: item.defaultFrequency,
+              }),
+            ] as const),
+        ]
+    const installedCatalog = new Map(catalog.map(item => [item[0], item])).values()
+    for (const item of installedCatalog) {
       insertCatalog.run(input.workspaceId, input.epoch, ...item)
     }
     const insertDiagnosisCatalog = this.#database.driver.prepare(`
       INSERT INTO diagnosis_catalog (
         workspace_id, epoch, item_id, code_system, code, name_zh, name_en,
         version, active
-      ) VALUES (?, ?, ?, 'http://hl7.org/fhir/sid/icd-10', ?, ?, ?, 1, 1)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1)
     `)
-    for (const diagnosis of [
+    const legacyDiagnosisCatalog = [
       [
         'diagnosis-influenza',
+        'http://hl7.org/fhir/sid/icd-10',
         'J10.1',
         '流感伴其他呼吸道表现，季节性流感病毒已标明',
         'Influenza with other respiratory manifestations, seasonal influenza virus identified',
       ],
       [
         'diagnosis-acute-upper-respiratory-infection',
+        'http://hl7.org/fhir/sid/icd-10',
         'J06.9',
         '急性上呼吸道感染，未特指',
         'Acute upper respiratory infection, unspecified',
       ],
-      ['diagnosis-fever', 'R50.9', '发热，未特指', 'Fever, unspecified'],
-    ] as const) {
+      ['diagnosis-fever', 'http://hl7.org/fhir/sid/icd-10', 'R50.9', '发热，未特指', 'Fever, unspecified'],
+    ] as const
+    const diagnosisCatalog = packageDiagnosisCatalog === undefined
+      ? legacyDiagnosisCatalog
+      : packageDiagnosisCatalog.map(diagnosis => [
+          diagnosis.id,
+          diagnosis.codeSystem,
+          diagnosis.code,
+          diagnosis.name,
+          diagnosis.name,
+        ] as const)
+    for (const diagnosis of diagnosisCatalog) {
       insertDiagnosisCatalog.run(input.workspaceId, input.epoch, ...diagnosis)
     }
     const insertLot = this.#database.driver.prepare(`
       INSERT INTO inventory_lot (
         workspace_id, epoch, lot_id, medication_id, location_id,
         lot_number, expires_on, quantity_on_hand, version
-      ) VALUES (?, ?, ?, ?, 'location-pharmacist', ?, '2027-12-31', 1000, 1)
+      ) VALUES (?, ?, ?, ?, 'location-pharmacist', ?, ?, ?, 1)
     `)
-    insertLot.run(
-      input.workspaceId,
-      input.epoch,
-      'lot-oseltamivir-202608',
-      'medication-oseltamivir',
-      'SYN-OSE-202608',
-    )
-    insertLot.run(
-      input.workspaceId,
-      input.epoch,
-      'lot-acetaminophen-202608',
-      'medication-acetaminophen',
-      'SYN-ACE-202608',
-    )
+    const inventory = blueprint.inventory ?? [{
+      expiresOn: '2027-12-31',
+      itemId: 'medication-oseltamivir',
+      lotId: 'lot-oseltamivir-202608',
+      quantity: 1_000,
+    }, {
+      expiresOn: '2027-12-31',
+      itemId: 'medication-acetaminophen',
+      lotId: 'lot-acetaminophen-202608',
+      quantity: 1_000,
+    }]
+    for (const lot of inventory) {
+      insertLot.run(
+        input.workspaceId,
+        input.epoch,
+        lot.lotId,
+        lot.itemId,
+        lot.lotId,
+        lot.expiresOn,
+        lot.quantity,
+      )
+    }
     this.#seedFhirResources(input)
     const insertVirtualPatient = this.#database.driver.prepare(`
       INSERT INTO virtual_patient (
@@ -935,15 +1024,16 @@ export class ScenarioService {
     workspaceId: string
   }): void {
     const context = { epoch: input.epoch, workspaceId: input.workspaceId }
+    const hospital = input.blueprint.hospital
     this.#fhir.create(context, {
       resourceType: 'Organization',
       id: 'organization-clinmesh',
-      active: true,
+      active: hospital?.active ?? true,
       identifier: [{
         system: 'https://caizongyuan.github.io/clinmesh/fhir/sid/synthetic-organization',
-        value: 'CM-SYN-HOSPITAL-001',
+        value: hospital?.businessCode ?? 'CM-SYN-HOSPITAL-001',
       }],
-      name: '安康市临床仿真医院',
+      name: hospital?.name ?? '安康市临床仿真医院',
       alias: ['Ankang Clinical Simulation Hospital'],
     })
     const locations: Array<readonly [string, string, string]> = [
@@ -996,15 +1086,22 @@ export class ScenarioService {
         location: [{ reference: `Location/location-${account.roleCode}` }],
       })
     }
-    for (const medication of [{
-      id: 'medication-oseltamivir',
-      code: 'OSELTAMIVIR',
-      name: '磷酸奥司他韦胶囊',
-    }, {
-      id: 'medication-acetaminophen',
-      code: 'ACETAMINOPHEN',
-      name: '对乙酰氨基酚片',
-    }]) {
+    const medications = input.blueprint.catalog?.medications
+      .filter(medication => medication.active && medication.status === 'active')
+      .map(medication => ({
+        code: medication.code,
+        id: medication.id,
+        name: medication.name,
+      })) ?? [{
+        id: 'medication-oseltamivir',
+        code: 'OSELTAMIVIR',
+        name: '磷酸奥司他韦胶囊',
+      }, {
+        id: 'medication-acetaminophen',
+        code: 'ACETAMINOPHEN',
+        name: '对乙酰氨基酚片',
+      }]
+    for (const medication of medications) {
       this.#fhir.create(context, {
         resourceType: 'Medication',
         id: medication.id,
@@ -1038,6 +1135,7 @@ export class ScenarioService {
             valueBoolean: true,
           }],
         })
+        this.#seedPatientFhirHistory(context, patient)
         if (patient.priorCondition === undefined) continue
         this.#fhir.create(context, {
           resourceType: 'Condition',
@@ -1128,6 +1226,160 @@ export class ScenarioService {
           url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/synthetic-data',
           valueBoolean: true,
         }],
+      })
+    }
+  }
+
+  #seedPatientFhirHistory(
+    context: { epoch: string; workspaceId: string },
+    patient: ScenarioVirtualPatient,
+  ): void {
+    for (const resource of patient.fhirHistory ?? []) {
+      if (resource.resourceType === 'Encounter') {
+        this.#fhir.create(context, {
+          actualPeriod: resource.period,
+          class: [{
+            coding: [{
+              code: resource.classCode,
+              display: 'ambulatory',
+              system: 'http://terminology.hl7.org/CodeSystem/v3-ActCode',
+            }],
+          }],
+          id: resource.id,
+          resourceType: resource.resourceType,
+          serviceProvider: { reference: 'Organization/organization-clinmesh' },
+          status: resource.status,
+          subject: { reference: `Patient/${patient.patientId}` },
+        })
+        continue
+      }
+      const encounter = 'encounterId' in resource && resource.encounterId !== undefined
+        ? { encounter: { reference: `Encounter/${resource.encounterId}` } }
+        : {}
+      if (resource.resourceType === 'Condition') {
+        this.#fhir.create(context, {
+          clinicalStatus: {
+            coding: [{
+              code: resource.clinicalStatus,
+              system: 'http://terminology.hl7.org/CodeSystem/condition-clinical',
+            }],
+          },
+          code: {
+            ...(resource.code.code === undefined
+              ? {}
+              : {
+                  coding: [{
+                    code: resource.code.code,
+                    display: resource.code.display,
+                    ...(resource.code.system === undefined ? {} : { system: resource.code.system }),
+                  }],
+                }),
+            text: resource.code.display,
+          },
+          ...encounter,
+          id: resource.id,
+          ...(resource.onsetDateTime === undefined ? {} : { onsetDateTime: resource.onsetDateTime }),
+          ...(resource.recordedDate === undefined ? {} : { recordedDate: resource.recordedDate }),
+          resourceType: resource.resourceType,
+          subject: { reference: `Patient/${patient.patientId}` },
+        })
+        continue
+      }
+      if (resource.resourceType === 'Observation') {
+        const result = resource.value.outcome === 'reported'
+          ? typeof resource.value.value === 'number'
+            ? {
+                valueQuantity: {
+                  ...(resource.value.unit === undefined ? {} : { unit: resource.value.unit }),
+                  value: resource.value.value,
+                },
+              }
+            : typeof resource.value.value === 'boolean'
+              ? { valueBoolean: resource.value.value }
+              : { valueString: resource.value.value }
+          : { valueString: resource.value.message }
+        this.#fhir.create(context, {
+          code: {
+            ...(resource.code.code === undefined
+              ? {}
+              : {
+                  coding: [{
+                    code: resource.code.code,
+                    display: resource.code.display,
+                    ...(resource.code.system === undefined ? {} : { system: resource.code.system }),
+                  }],
+                }),
+            text: resource.code.display,
+          },
+          ...(resource.effectiveDateTime === undefined ? {} : { effectiveDateTime: resource.effectiveDateTime }),
+          ...encounter,
+          id: resource.id,
+          ...(resource.value.outcome !== 'reported' || resource.value.flag === undefined
+            ? {}
+            : {
+                interpretation: [{
+                  coding: [{
+                    code: resource.value.flag,
+                    system: 'http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation',
+                  }],
+                }],
+              }),
+          resourceType: resource.resourceType,
+          status: resource.status,
+          subject: { reference: `Patient/${patient.patientId}` },
+          ...result,
+        })
+        continue
+      }
+      if (resource.resourceType === 'MedicationRequest') {
+        this.#fhir.create(context, {
+          ...(resource.authoredOn === undefined ? {} : { authoredOn: resource.authoredOn }),
+          ...encounter,
+          id: resource.id,
+          intent: resource.intent,
+          medication: {
+            concept: {
+              ...(resource.medication.code === undefined
+                ? {}
+                : {
+                    coding: [{
+                      code: resource.medication.code,
+                      display: resource.medication.display,
+                      ...(resource.medication.system === undefined ? {} : { system: resource.medication.system }),
+                    }],
+                  }),
+              text: resource.medication.display,
+            },
+          },
+          resourceType: resource.resourceType,
+          status: resource.status,
+          subject: { reference: `Patient/${patient.patientId}` },
+        })
+        continue
+      }
+      this.#fhir.create(context, {
+        clinicalStatus: {
+          coding: [{
+            code: resource.clinicalStatus,
+            system: 'http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical',
+          }],
+        },
+        code: {
+          ...(resource.code.code === undefined
+            ? {}
+            : {
+                coding: [{
+                  code: resource.code.code,
+                  display: resource.code.display,
+                  ...(resource.code.system === undefined ? {} : { system: resource.code.system }),
+                }],
+              }),
+          text: resource.code.display,
+        },
+        id: resource.id,
+        patient: { reference: `Patient/${patient.patientId}` },
+        ...(resource.recordedDate === undefined ? {} : { recordedDate: resource.recordedDate }),
+        resourceType: resource.resourceType,
       })
     }
   }

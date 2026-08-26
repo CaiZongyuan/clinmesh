@@ -4,10 +4,13 @@ import type {
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
 } from '@clinmesh/contracts/scenario'
+import { scenarioPatientSchema } from '@clinmesh/contracts/scenario'
 import type {
   ScenarioGenerationProvider,
   SourcePatientCorpus,
 } from '../../application/scenario-data/provider.ts'
+import { createHospitalBaseline } from '../../application/scenario-data/hospital-baseline.ts'
+import { compileSyntheaR4Bundle } from '../../application/scenario-data/synthea-case-truth-compiler.ts'
 
 const syntheticNames = ['林晓', '王晓明', '李静', '张伟', '刘洋', '陈勇'] as const
 
@@ -36,39 +39,80 @@ function patient(request: ScenarioGenerationRequest, ordinal: number) {
     .digest('hex')
     .slice(0, 12)
   const isDiabetes = module === 'type-2-diabetes'
-  return {
-    birthDate: birthDate(request, ordinal),
-    diagnosisSpace: {
-      primary: isDiabetes ? '2型糖尿病血糖控制不佳' : '急性上呼吸道感染',
+  const patientId = `builtin-source-${idSuffix}`
+  const patientReference = `Patient/${patientId}`
+  const encounterId = `builtin-encounter-${idSuffix}`
+  const encounterReference = `Encounter/${encounterId}`
+  const observationInputs = isDiabetes
+    ? [{ code: '2339-0', display: 'Glucose', id: `glucose-${idSuffix}`, unit: 'mmol/L', value: 13.8 },
+        { code: '4548-4', display: 'Hemoglobin A1c', id: `hba1c-${idSuffix}`, unit: '%', value: 9.2 }]
+    : [{ code: '8310-5', display: 'Body temperature', id: `temperature-${idSuffix}`, unit: '°C', value: 38.6 }]
+  const conditionInputs = isDiabetes
+    ? [{ code: '44054006', display: 'Diabetes mellitus type 2', id: `diabetes-${idSuffix}` },
+        { code: '38341003', display: 'Hypertension', id: `hypertension-${idSuffix}` }]
+    : [{ code: '386661006', display: 'Fever', id: `fever-${idSuffix}` }]
+  const compiled = compileSyntheaR4Bundle({
+    bundle: {
+      entry: [{
+        resource: {
+          birthDate: birthDate(request, ordinal),
+          gender: gender(request, ordinal),
+          id: patientId,
+          resourceType: 'Patient',
+        },
+      }, {
+        resource: {
+          class: { code: 'AMB' },
+          id: encounterId,
+          period: {
+            end: `${request.timeRange.end}T09:40:00+08:00`,
+            start: `${request.timeRange.end}T09:00:00+08:00`,
+          },
+          resourceType: 'Encounter',
+          status: 'finished',
+          subject: { reference: patientReference },
+        },
+      }, ...conditionInputs.map(condition => ({
+        resource: {
+          clinicalStatus: { coding: [{ code: 'active' }] },
+          code: { coding: [{ code: condition.code, display: condition.display, system: 'http://snomed.info/sct' }] },
+          encounter: { reference: encounterReference },
+          id: condition.id,
+          onsetDateTime: `${request.timeRange.end}T08:00:00+08:00`,
+          recordedDate: `${request.timeRange.end}T09:05:00+08:00`,
+          resourceType: 'Condition',
+          subject: { reference: patientReference },
+        },
+      })), ...observationInputs.map(observation => ({
+        resource: {
+          code: { coding: [{ code: observation.code, display: observation.display, system: 'http://loinc.org' }] },
+          effectiveDateTime: `${request.timeRange.end}T09:10:00+08:00`,
+          encounter: { reference: encounterReference },
+          id: observation.id,
+          resourceType: 'Observation',
+          status: 'final',
+          subject: { reference: patientReference },
+          valueQuantity: { unit: observation.unit, value: observation.value },
+        },
+      }))],
+      resourceType: 'Bundle',
+      type: 'collection',
     },
-    examinationFindings: {
-      general: isDiabetes ? '神志清，查体合作。' : '神志清，咽部充血。',
-    },
-    gender: gender(request, ordinal),
+    ordinal,
+    request,
+  })
+  return scenarioPatientSchema.parse({
+    ...compiled,
     id: `synthetic-patient-${idSuffix}`,
-    investigations: isDiabetes
-      ? [{ code: 'hba1c', level: 'L1', value: 9.2, unit: '%' }]
-      : [{ code: 'cbc', level: 'L1', value: 11.2, unit: '10^9/L' }],
-    longitudinalHistory: [{
-      code: isDiabetes ? 'type-2-diabetes' : 'fever',
-      occurredOn: request.timeRange.end,
-      source: 'builtin',
-    }],
-    managementSpace: {
-      options: isDiabetes ? ['依从性教育', '评估肝肾功能后优化降糖方案'] : ['对症治疗', '门诊随访'],
-    },
     name: syntheticNames[deterministicNumber([request.seeds.population, ordinal, 'name']) % syntheticNames.length]!,
-    patientKnowledge: {
-      chiefComplaint: isDiabetes ? '口渴、多饮两个月' : '发热、咽痛一天',
+    physiologyBaseline: {
+      ...compiled.physiologyBaseline,
+      generators: compiled.physiologyBaseline.generators.map(generator => ({
+        ...generator,
+        source: generator.source.replace('synthea-r4:', 'builtin:'),
+      })),
     },
-    physiologyBaseline: isDiabetes
-      ? { glucoseMmolL: 13.8, heightCm: 172, weightKg: 80.2 }
-      : { oxygenSaturationPct: 98, temperatureC: 38.6 },
-    symptomResponses: [{
-      answer: isDiabetes ? '这两个月总是口渴，水喝得很多。' : '昨天下午开始发热，夜里最高 38.7 度。',
-      topic: isDiabetes ? 'polydipsia' : 'symptom-onset',
-    }],
-  }
+  })
 }
 
 export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProvider {
@@ -83,24 +127,18 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
   }
 
   async generate(request: ScenarioGenerationRequest): Promise<SourcePatientCorpus> {
+    const patients = Array.from({ length: request.population.count }, (_, index) => patient(request, index))
+    const baseline = createHospitalBaseline()
     const content: ScenarioDatasetContent = {
-      catalog: {
-        departments: [{ code: 'GM', id: 'department-general-medicine', name: '全科医学科', priceFen: 0 }],
-        investigations: [
-          { code: 'CBC', id: 'lab-cbc', name: '血常规', priceFen: 2_500 },
-          { code: 'HBA1C', id: 'lab-hba1c', name: '糖化血红蛋白', priceFen: 4_500 },
-        ],
-        medications: [{ code: 'MED-SYN-001', id: 'medication-synthetic-001', name: '合成示例药品', priceFen: 1_200 }],
-      },
-      hiddenFacts: [],
-      hospital: { id: 'hospital-synthetic-renhe', locale: 'zh-CN', name: '仁和医院' },
-      inventory: [{
-        expiresOn: '2030-12-31',
-        itemId: 'medication-synthetic-001',
-        lotId: 'lot-synthetic-001',
-        quantity: 1_000,
-      }],
-      patients: Array.from({ length: request.population.count }, (_, index) => patient(request, index)),
+      catalog: baseline.catalog,
+      hiddenFacts: patients.map(patient => ({
+        code: `objective-primary-diagnosis-${patient.id}`,
+        patientId: patient.id,
+        value: patient.diagnosisSpace.primary.display,
+      })),
+      hospital: baseline.hospital,
+      inventory: baseline.inventory,
+      patients,
       reproduction: {
         clinicalSeed: request.seeds.clinical,
         generator: 'clinmesh-builtin-v1',
@@ -109,9 +147,14 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
         timeRange: request.timeRange,
         timeZone: request.timeZone,
       },
-      revealPolicies: [],
+      revealPolicies: patients.map(patient => ({
+        code: `policy-primary-diagnosis-${patient.id}`,
+        factCode: `objective-primary-diagnosis-${patient.id}`,
+        patientId: patient.id,
+        triggerCode: 'evaluator-only',
+      })),
       schemaVersion: '1',
-      simulatorRules: [],
+      simulatorRules: [{ code: 'default-success', outcome: 'success', simulator: 'lis' }],
     }
     return { content, kind: 'case-truth' }
   }

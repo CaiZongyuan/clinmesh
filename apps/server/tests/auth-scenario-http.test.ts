@@ -6,8 +6,10 @@ import { fhirBundleSchema, fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import { scenarioDatasetSchema } from '@clinmesh/contracts/scenario'
 import {
   apiErrorSchema,
+  clinicalCatalogSchema,
   createPatientResponseSchema,
   patientSearchSchema,
+  registrationCatalogSchema,
   scenarioCommandResponseSchema,
   scenarioStateSchema,
   sessionContextSchema,
@@ -634,9 +636,40 @@ describe('trusted session and Scenario HTTP contract', () => {
       .parse(await generateResponse.json()).data
     const invalidContent = {
       ...generated.content,
+      catalog: {
+        ...generated.content.catalog,
+        medications: [{
+          ...generated.content.catalog.medications[0]!,
+          workflow: {
+            ...generated.content.catalog.medications[0]!.workflow,
+            allowedCombinationIds: ['missing-combination-medication'],
+            allowedDiagnosisCodes: ['MISSING-DIAGNOSIS'],
+          },
+        }, ...generated.content.catalog.medications.slice(1)],
+      },
       inventory: [{
         ...generated.content.inventory[0]!,
         itemId: 'missing-medication',
+      }],
+      patients: [{
+        ...generated.content.patients[0]!,
+        fhirHistory: [...generated.content.patients[0]!.fhirHistory, {
+          clinicalStatus: 'active',
+          code: { display: '悬空就诊诊断' },
+          encounterId: 'history-encounter-missing',
+          id: 'history-condition-dangling',
+          resourceType: 'Condition' as const,
+        }],
+        investigations: [{
+          ...generated.content.patients[0]!.investigations[0]!,
+          result: { message: '错误标记为本院未开展', outcome: 'catalog-boundary' as const },
+        }],
+        longitudinalHistory: [{
+          ...generated.content.patients[0]!.longitudinalHistory[0]!,
+          endedAt: '2025-01-01T00:00:00Z',
+          mappedCode: null,
+          occurredAt: '2026-01-01T00:00:00Z',
+        }, ...generated.content.patients[0]!.longitudinalHistory.slice(1)],
       }],
     }
     const update = (expectedVersion: number, idempotencyKey: string) => runtime.app.request(
@@ -663,12 +696,16 @@ describe('trusted session and Scenario HTTP contract', () => {
     expect(updated).toMatchObject({
       name: '存在引用问题的数据',
       version: 2,
-      diagnostics: [{
-        code: 'CATALOG_REFERENCE_MISSING',
-        path: 'inventory[0].itemId',
-        severity: 'error',
-      }],
     })
+    expect(updated.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'CATALOG_REFERENCE_MISSING', path: 'inventory[0].itemId' }),
+      expect.objectContaining({ code: 'CLINICAL_CODE_UNMAPPED', path: 'patients[0].longitudinalHistory[0].mappedCode' }),
+      expect.objectContaining({ code: 'CLINICAL_TIME_INVERTED', path: 'patients[0].longitudinalHistory[0].endedAt' }),
+      expect.objectContaining({ code: 'FHIR_HISTORY_REFERENCE_MISSING', path: 'patients[0].fhirHistory[3].encounterId' }),
+      expect.objectContaining({ code: 'INVESTIGATION_CATALOG_CONFLICT', path: 'patients[0].investigations[0].result.outcome' }),
+      expect.objectContaining({ code: 'MEDICATION_COMBINATION_REFERENCE_MISSING', path: 'catalog.medications[0].workflow.allowedCombinationIds[0]' }),
+      expect.objectContaining({ code: 'MEDICATION_DIAGNOSIS_REFERENCE_MISSING', path: 'catalog.medications[0].workflow.allowedDiagnosisCodes[0]' }),
+    ]))
 
     const invalidInstallResponse = await runtime.app.request(
       `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}/actions/install`,
@@ -722,6 +759,20 @@ describe('trusted session and Scenario HTTP contract', () => {
     )
     const generated = z.object({ data: scenarioDatasetSchema }).passthrough()
       .parse(await generateResponse.json()).data
+    const generatedPatient = generated.content.patients[0]!
+    expect(generatedPatient).toMatchObject({
+      diagnosisSpace: { primary: expect.objectContaining({ code: 'E11.65' }) },
+      encounter: { openingStatement: '这两个月总是口渴，水喝得很多，人也瘦了。' },
+      investigations: expect.arrayContaining([
+        expect.objectContaining({ catalogItemId: 'lab-hba1c', sourceLevel: 'L1' }),
+      ]),
+      patientKnowledge: expect.objectContaining({
+        chiefComplaint: '口渴、多饮两个月，体重下降。',
+      }),
+      symptomResponses: expect.arrayContaining([
+        expect.objectContaining({ id: 'symptom-foot-numbness', passive: true }),
+      ]),
+    })
     const installResponse = await runtime.app.request(
       `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}/actions/install`,
       {
@@ -742,6 +793,77 @@ describe('trusted session and Scenario HTTP contract', () => {
       scenarioId: installed.packageId,
       scenarioRunId: 'scenario-run-2',
     })
+    const conditionResponse = await runtime.app.request(
+      `/fhir/R5/Condition?patient=Patient/${generatedPatient.id}&_total=accurate`,
+      { headers: { cookie } },
+    )
+    expect(conditionResponse.status).toBe(200)
+    expect(fhirBundleSchema.parse(await conditionResponse.json())).toMatchObject({
+      entry: expect.arrayContaining([
+        expect.objectContaining({
+          resource: expect.objectContaining({
+            code: expect.objectContaining({ text: '2型糖尿病伴高血糖' }),
+            resourceType: 'Condition',
+          }),
+        }),
+      ]),
+      total: 2,
+    })
+
+    const doctorCookie = await signInSyntheticAccount(
+      runtime,
+      password,
+      'doctor@demo.clinmesh.local',
+    )
+    const clinicalCatalogResponse = await runtime.app.request(
+      '/api/his/v1/catalogs/clinical',
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(clinicalCatalogResponse.status).toBe(200)
+    expect(clinicalCatalogSchema.parse(await clinicalCatalogResponse.json())).toMatchObject({
+      diagnoses: expect.arrayContaining([
+        expect.objectContaining({ code: 'E11.65', nameZh: '2型糖尿病伴高血糖' }),
+      ]),
+      laboratory: expect.arrayContaining([
+        expect.objectContaining({ id: 'lab-hba1c', nameZh: '糖化血红蛋白' }),
+      ]),
+      medications: expect.arrayContaining([
+        expect.objectContaining({ id: 'medication-metformin', nameZh: '盐酸二甲双胍片' }),
+      ]),
+    })
+
+    const registrarCookie = await signInSyntheticAccount(
+      runtime,
+      password,
+      'registrar@demo.clinmesh.local',
+    )
+    const registrationCatalogResponse = await runtime.app.request(
+      '/api/his/v1/catalogs/registration',
+      { headers: { cookie: registrarCookie } },
+    )
+    expect(registrationCatalogResponse.status).toBe(200)
+    expect(registrationCatalogSchema.parse(await registrationCatalogResponse.json())).toMatchObject({
+      departments: expect.arrayContaining([
+        expect.objectContaining({ id: 'department-general-medicine' }),
+      ]),
+      visitTypes: expect.arrayContaining([
+        expect.objectContaining({ id: 'visit-general' }),
+      ]),
+    })
+
+    for (const [resourceType, resourceId] of [
+      ['Medication', 'medication-metformin'],
+      ['InventoryItem', 'lot-metformin-synthetic-001'],
+    ] as const) {
+      const response = await runtime.app.request(`/fhir/R5/${resourceType}/${resourceId}`, {
+        headers: { cookie },
+      })
+      expect(response.status).toBe(200)
+      expect(fhirResourceSchema.parse(await response.json())).toMatchObject({
+        id: resourceId,
+        resourceType,
+      })
+    }
 
     const editedContent = {
       ...generated.content,

@@ -28,6 +28,6 @@ Provider HTTP 协议只接受已验证的人数、年龄、性别、模块、双
 
 Synthea 未配置、未启动、不可达、超时或返回坏数据时，只影响对应生成能力和任务。已有 Dataset、Package、Scenario Run、reset、内置生成和普通岗位 HTTP 路径不调用该 Provider。
 
-R4 Bundle 仍是来源材料，不是 ClinMesh FHIR R5 权威数据。美国地址、机构、付款方、标识和目录语义必须在编译阶段删除或替换后才能安装；相关转换由[Scenario 数据编译与参考数据接入](../../proposed/architecture/2026-08-21-scenario-data-compilation.md)继续拥有。
+R4 Bundle 仍是来源材料，不是 ClinMesh FHIR R5 权威数据。美国地址、机构、付款方、标识和目录语义必须在编译阶段删除或替换后才能安装；相关转换由[Scenario 数据编译与参考数据接入](./2026-08-21-scenario-data-compilation.md)拥有。
 
 固定 seed 只在固定 commit、配置、模块、时间范围和时区下提供复现。改变容器配置、模块映射、R4 白名单或转换规则时必须产生不同复现元数据，不能沿用旧结果的等价性声明。

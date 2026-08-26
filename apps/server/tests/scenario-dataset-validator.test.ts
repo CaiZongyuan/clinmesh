@@ -1,0 +1,52 @@
+import { scenarioGenerationRequestSchema } from '@clinmesh/contracts/scenario'
+import { describe, expect, it } from 'vitest'
+import { validateScenarioDataset } from '../src/application/scenario-data/scenario-dataset-validator.ts'
+import { BuiltInScenarioGenerationProvider } from '../src/infrastructure/scenario-generation/builtin-provider.ts'
+
+describe('Scenario Dataset diagnostics', () => {
+  it('reports mapping, reference, chronology, catalog and business-rule errors with stable paths', async () => {
+    const provider = new BuiltInScenarioGenerationProvider()
+    const generated = await provider.generate(scenarioGenerationRequestSchema.parse({
+      modules: ['fever'],
+      name: '待诊断病例',
+      population: { age: { maximum: 40, minimum: 40 }, count: 1, gender: 'female' },
+      providerId: 'builtin',
+      seeds: { clinical: 22, population: 11 },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    }))
+    const patient = generated.content.patients[0]!
+    const invalidContent = {
+      ...generated.content,
+      inventory: [{ ...generated.content.inventory[0]!, itemId: 'missing-medication' }],
+      patients: [{
+        ...patient,
+        fhirHistory: [...patient.fhirHistory, {
+          clinicalStatus: 'active',
+          code: { display: '悬空就诊诊断' },
+          encounterId: 'history-encounter-missing',
+          id: 'history-condition-dangling',
+          resourceType: 'Condition' as const,
+        }],
+        investigations: [{
+          ...patient.investigations[0]!,
+          result: { message: '错误标记为本院未开展', outcome: 'catalog-boundary' as const },
+        }],
+        longitudinalHistory: [{
+          ...patient.longitudinalHistory[0]!,
+          endedAt: '2025-01-01T00:00:00Z',
+          mappedCode: null,
+          occurredAt: '2026-01-01T00:00:00Z',
+        }, ...patient.longitudinalHistory.slice(1)],
+      }],
+    }
+
+    expect(validateScenarioDataset(invalidContent)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'CATALOG_REFERENCE_MISSING', path: 'inventory[0].itemId' }),
+      expect.objectContaining({ code: 'CLINICAL_CODE_UNMAPPED', path: 'patients[0].longitudinalHistory[0].mappedCode' }),
+      expect.objectContaining({ code: 'CLINICAL_TIME_INVERTED', path: 'patients[0].longitudinalHistory[0].endedAt' }),
+      expect.objectContaining({ code: 'FHIR_HISTORY_REFERENCE_MISSING', path: 'patients[0].fhirHistory[3].encounterId' }),
+      expect.objectContaining({ code: 'INVESTIGATION_CATALOG_CONFLICT', path: 'patients[0].investigations[0].result.outcome' }),
+    ]))
+  })
+})

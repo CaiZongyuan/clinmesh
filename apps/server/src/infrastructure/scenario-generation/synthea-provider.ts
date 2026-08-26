@@ -9,33 +9,14 @@ import {
   type ScenarioGenerationProvider,
   type SourcePatientCorpus,
 } from '../../application/scenario-data/provider.ts'
+import { createHospitalBaseline } from '../../application/scenario-data/hospital-baseline.ts'
+import {
+  compileSyntheaR4Bundle,
+  syntheaR4ResourceTypes,
+} from '../../application/scenario-data/synthea-case-truth-compiler.ts'
 
 const SYNTHEA_COMMIT = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
-const allowedR4ResourceTypes = [
-  'AllergyIntolerance',
-  'CarePlan',
-  'CareTeam',
-  'Claim',
-  'Condition',
-  'Coverage',
-  'Device',
-  'DiagnosticReport',
-  'Encounter',
-  'ExplanationOfBenefit',
-  'Goal',
-  'ImagingStudy',
-  'Immunization',
-  'Location',
-  'Medication',
-  'MedicationRequest',
-  'Observation',
-  'Organization',
-  'Patient',
-  'Practitioner',
-  'Procedure',
-  'Provenance',
-  'SupplyDelivery',
-] as const
+const allowedR4ResourceTypes = syntheaR4ResourceTypes
 
 const r4ResourceSchema = z.object({
   id: z.string().min(1),
@@ -336,30 +317,19 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
     }
 
     const patients = parsed.bundles.map((bundle, index) => {
-      const patient = validateBundle(bundle)
-      return {
-        birthDate: patient.birthDate,
-        diagnosisSpace: {},
-        examinationFindings: {},
-        gender: patient.gender,
-        id: `synthea-patient-${patient.id}`,
-        investigations: [],
-        longitudinalHistory: bundle.entry.map(entry => ({
-          resource: entry.resource,
-          source: 'synthea-fhir-r4',
-        })),
-        managementSpace: {},
-        name: `合成患者 ${String(index + 1).padStart(3, '0')}`,
-        patientKnowledge: {},
-        physiologyBaseline: {},
-        symptomResponses: [],
-      }
+      validateBundle(bundle)
+      return compileSyntheaR4Bundle({ bundle, ordinal: index, request })
     })
+    const baseline = createHospitalBaseline()
     const content: ScenarioDatasetContent = {
-      catalog: { departments: [], investigations: [], medications: [] },
-      hiddenFacts: [],
-      hospital: { id: 'hospital-synthetic-renhe', locale: 'zh-CN', name: '仁和医院' },
-      inventory: [],
+      catalog: baseline.catalog,
+      hiddenFacts: patients.map(patient => ({
+        code: `objective-primary-diagnosis-${patient.id}`,
+        patientId: patient.id,
+        value: patient.diagnosisSpace.primary.display,
+      })),
+      hospital: baseline.hospital,
+      inventory: baseline.inventory,
       patients,
       reproduction: {
         clinicalSeed: request.seeds.clinical,
@@ -371,9 +341,14 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
         timeRange: request.timeRange,
         timeZone: request.timeZone,
       },
-      revealPolicies: [],
+      revealPolicies: patients.map(patient => ({
+        code: `policy-primary-diagnosis-${patient.id}`,
+        factCode: `objective-primary-diagnosis-${patient.id}`,
+        patientId: patient.id,
+        triggerCode: 'evaluator-only',
+      })),
       schemaVersion: '1',
-      simulatorRules: [],
+      simulatorRules: [{ code: 'default-success', outcome: 'success', simulator: 'lis' }],
     }
     return { content, kind: 'case-truth' }
   }

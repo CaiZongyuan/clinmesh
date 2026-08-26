@@ -89,18 +89,19 @@ describe('Synthea Scenario generation Provider contract', () => {
 
     const corpus = await provider.generate(request)
 
-    expect(corpus.content.patients).toEqual([expect.objectContaining({
+    expect(corpus.content.patients[0]).toMatchObject({
       birthDate: '1988-03-16',
+      fhirHistory: [
+        expect.objectContaining({ resourceType: 'Encounter' }),
+        expect.objectContaining({ resourceType: 'Condition' }),
+      ],
       gender: 'female',
       id: 'synthea-patient-patient-1',
-      longitudinalHistory: [
-        expect.objectContaining({ resource: expect.objectContaining({ resourceType: 'Patient' }) }),
-        expect.objectContaining({ resource: expect.objectContaining({ resourceType: 'Encounter' }) }),
-        expect.objectContaining({ resource: expect.objectContaining({ resourceType: 'Condition' }) }),
-        expect.objectContaining({ resource: expect.objectContaining({ resourceType: 'Goal' }) }),
-      ],
-      name: '合成患者 001',
-    })])
+      longitudinalHistory: expect.arrayContaining([
+        expect.objectContaining({ kind: 'condition', mappedCode: null }),
+      ]),
+      name: '林安宁',
+    })
     expect(corpus.content.reproduction).toEqual({
       clinicalSeed: 7331,
       configHash,

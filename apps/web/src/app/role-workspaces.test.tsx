@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type {
   DiagnosisDraftEntry,
   DiagnosisState,
@@ -311,28 +311,178 @@ function stubAdministratorWorkspace() {
   }))
 }
 
-function stubScenarioDataWorkspace(options: { syntheaAvailable?: boolean } = {}) {
+function stubScenarioDataWorkspace(options: {
+  onUpdate?: (content: unknown) => void
+  syntheaAvailable?: boolean
+} = {}) {
   let generated = false
   let jobReads = 0
   let dataset = {
     content: {
-      catalog: { departments: [], investigations: [], medications: [] },
-      hiddenFacts: [],
-      hospital: { id: 'hospital-synthetic-renhe', locale: 'zh-CN', name: '仁和医院' },
-      inventory: [],
+      catalog: {
+        departments: [{
+          active: true,
+          code: 'GM',
+          displayOrder: 10,
+          id: 'department-general-medicine',
+          name: '全科医学科',
+          organizationId: 'hospital-synthetic-renhe',
+          parentId: 'hospital-synthetic-renhe',
+          priceFen: 0,
+          status: 'active',
+          type: 'department',
+        }],
+        diagnoses: [{
+          active: true,
+          code: 'R50.9',
+          codeSystem: 'http://hl7.org/fhir/sid/icd-10',
+          id: 'diagnosis-fever',
+          name: '发热，未特指',
+          organizationId: 'hospital-synthetic-renhe',
+          priceFen: 0,
+          status: 'active',
+        }],
+        investigations: [{
+          active: true,
+          allowedIndicationCodes: ['fever'],
+          available: true,
+          category: 'laboratory',
+          code: 'CBC',
+          contraindicatedAllergyCodes: [],
+          id: 'lab-cbc',
+          name: '血常规',
+          organizationId: 'hospital-synthetic-renhe',
+          priceFen: 2500,
+          referenceRanges: [{ appliesToGender: 'any', text: '按血细胞分类项目报告' }],
+          reportTemplate: '{value}',
+          status: 'active',
+          tatMinutes: 20,
+          valueType: 'panel',
+        }],
+        medications: [{
+          active: true,
+          category: '解热镇痛药',
+          code: 'ACETAMINOPHEN',
+          defaultDose: '0.5 g',
+          defaultFrequency: 'PRN',
+          defaultRoute: '口服',
+          dosageForm: '片剂',
+          id: 'medication-acetaminophen',
+          name: '对乙酰氨基酚片',
+          organizationId: 'hospital-synthetic-renhe',
+          priceFen: 120,
+          restriction: '注意总剂量。',
+          status: 'active',
+          unit: '片',
+          workflow: {
+            allowedCombinationIds: [],
+            allowedCourseDays: [3],
+            allowedDiagnosisCodes: ['R50.9'],
+            allowedDoseTexts: ['0.5 g'],
+            allowedFrequencyCodes: ['PRN'],
+            allowedQuantities: [6],
+            defaultCourseDays: 3,
+            defaultQuantity: 6,
+          },
+        }],
+      },
+      hiddenFacts: [{ code: 'objective-diagnosis', patientId: 'synthetic-patient-001', value: '发热' }],
+      hospital: {
+        active: true,
+        businessCode: 'CM-SYN-HOSPITAL-001',
+        displayOrder: 1,
+        id: 'hospital-synthetic-renhe',
+        locale: 'zh-CN',
+        name: '仁和医院',
+        status: 'active',
+        type: 'public-general-hospital',
+      },
+      inventory: [{
+        expiresOn: '2030-12-31',
+        itemId: 'medication-acetaminophen',
+        lotId: 'lot-acetaminophen-001',
+        quantity: 1000,
+      }],
       patients: [{
         birthDate: '1988-03-16',
-        diagnosisSpace: {},
-        examinationFindings: {},
+        costBaseline: {
+          note: '仅用于合成门诊场景。',
+          overInvestigationThresholdFen: 50000,
+          reasonableRangeFen: [2500, 15000],
+          referencePath: '按临床需要选择检查。',
+        },
+        diagnosisSpace: {
+          comorbidities: [],
+          differentials: [],
+          primary: {
+            code: 'R50.9',
+            display: '发热，原因待查',
+            evidence: ['体温升高'],
+            id: 'diagnosis-primary-fever',
+          },
+          traps: ['不能仅凭发热使用抗菌药物。'],
+        },
+        encounter: {
+          openingStatement: '昨天下午开始发热。',
+          setting: '全科医学科门诊',
+          timeStateItems: [],
+        },
+        examinationFindings: [{
+          abnormal: ['体温升高'],
+          finding: '神志清，咽部轻度充血。',
+          id: 'exam-vital-signs',
+          name: '生命体征',
+        }],
+        fhirHistory: [],
         gender: 'female',
         id: 'synthetic-patient-001',
-        investigations: [],
+        investigations: [{
+          catalogItemId: 'lab-cbc',
+          critical: false,
+          feeFen: 2500,
+          id: 'investigation-cbc',
+          name: '血常规',
+          report: '白细胞计数升高。',
+          result: { flag: 'H', outcome: 'reported', value: '白细胞计数升高' },
+          sourceLevel: 'L1',
+          tatMinutes: 20,
+        }],
         longitudinalHistory: [],
-        managementSpace: {},
+        managementSpace: {
+          acceptableOptions: ['对症退热。'],
+          contraindications: ['无指征使用抗菌药物。'],
+          followUp: '高热不退时复诊。',
+          requiredElements: ['评估危险征象'],
+        },
         name: '林晓',
-        patientKnowledge: { chiefComplaint: '发热、咽痛一天' },
-        physiologyBaseline: { temperatureC: 38.6 },
-        symptomResponses: [],
+        patientKnowledge: {
+          careMemory: '没有接受相关检查。',
+          chiefComplaint: '发热、咽痛一天',
+          healthLiteracy: '一般',
+          lifestyle: [],
+          medicationMemory: '未规律用药。',
+          neverKnows: ['尚未告知的检查数值'],
+          toldDiagnoses: [],
+        },
+        persona: {
+          attitude: '希望尽快明确原因。',
+          character: '表达直接。',
+          healthLiteracy: '一般',
+          occupation: '教师',
+          speechStyle: '自然口语。',
+        },
+        physiologyBaseline: {
+          generators: [],
+          vitalSigns: { temperatureC: 38.6 },
+        },
+        symptomResponses: [{
+          avoids: [],
+          denies: ['没有气促。'],
+          id: 'symptom-fever',
+          name: '发热经过',
+          passive: false,
+          responsePoints: ['昨天下午开始发热。'],
+        }],
       }],
       reproduction: {
         clinicalSeed: 7331,
@@ -342,7 +492,12 @@ function stubScenarioDataWorkspace(options: { syntheaAvailable?: boolean } = {})
         timeRange: { end: '2026-08-01', start: '2020-01-01' },
         timeZone: 'Asia/Shanghai',
       },
-      revealPolicies: [],
+      revealPolicies: [{
+        code: 'policy-objective-diagnosis',
+        factCode: 'objective-diagnosis',
+        patientId: 'synthetic-patient-001',
+        triggerCode: 'evaluator-only',
+      }],
       schemaVersion: '1',
       simulatorRules: [],
     },
@@ -453,6 +608,7 @@ function stubScenarioDataWorkspace(options: { syntheaAvailable?: boolean } = {})
         expectedVersion: number
         input: { content: typeof dataset.content; name: string }
       }
+      options.onUpdate?.(body.input.content)
       dataset = {
         ...dataset,
         content: body.input.content,
@@ -737,7 +893,8 @@ describe('role workspaces', () => {
 
   it('edits a generated patient through structured Dataset fields', async () => {
     window.history.replaceState(null, '', '/scenario-data')
-    stubScenarioDataWorkspace()
+    let savedContent: unknown
+    stubScenarioDataWorkspace({ onUpdate: content => { savedContent = content } })
     const user = userEvent.setup()
 
     render(<WebApp />)
@@ -747,10 +904,43 @@ describe('role workspaces', () => {
     const patientName = await screen.findByLabelText('患者姓名')
     await user.clear(patientName)
     await user.type(patientName, '合成患者李明')
+
+    await user.click(screen.getByRole('tab', { name: '问诊应答' }))
+    const responsePoints = screen.getByLabelText('应答要点')
+    fireEvent.change(responsePoints, { target: { value: '昨夜开始高热。\n伴轻度咽痛。' } })
+
+    await user.click(screen.getByRole('tab', { name: '查体与检查' }))
+    const report = screen.getByLabelText('报告文本')
+    await user.clear(report)
+    await user.type(report, '白细胞计数 11.2 x10^9/L。')
+
+    await user.click(screen.getByRole('tab', { name: '诊断与处置' }))
+    const diagnosis = screen.getByLabelText('主诊断名称')
+    await user.clear(diagnosis)
+    await user.type(diagnosis, '急性发热待查')
+
+    await user.click(screen.getByRole('tab', { name: '目录与库存' }))
+    const inventory = screen.getByLabelText('库存数量')
+    await user.clear(inventory)
+    await user.type(inventory, '800')
+
+    await user.click(screen.getByRole('tab', { name: '隐藏事实与揭示' }))
+    const hiddenFact = screen.getByLabelText('Hidden Fact 值')
+    await user.clear(hiddenFact)
+    await user.type(hiddenFact, '急性病毒性上呼吸道感染')
     await user.click(screen.getByRole('button', { name: '保存修改' }))
 
     expect(await screen.findByText('版本 2')).toBeTruthy()
-    expect(screen.getByDisplayValue('合成患者李明')).toBeTruthy()
+    expect(savedContent).toMatchObject({
+      hiddenFacts: [{ value: '急性病毒性上呼吸道感染' }],
+      inventory: [{ quantity: 800 }],
+      patients: [{
+        diagnosisSpace: { primary: { display: '急性发热待查' } },
+        investigations: [{ report: '白细胞计数 11.2 x10^9/L。' }],
+        name: '合成患者李明',
+        symptomResponses: [{ responsePoints: ['昨夜开始高热。', '伴轻度咽痛。'] }],
+      }],
+    })
   })
 
   it('selects Synthea and follows a persistent generation job to completion', async () => {

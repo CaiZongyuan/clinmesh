@@ -23,16 +23,18 @@ describe('Scenario generation Provider contract', () => {
     const replay = await provider.generate(request)
 
     expect(replay).toEqual(first)
-    expect(first.content.patients).toEqual([expect.objectContaining({
+    expect(first.content.patients[0]).toMatchObject({
       birthDate: '1962-01-01',
       gender: 'male',
       id: 'synthetic-patient-5eb27dffe7f2',
       name: '王晓明',
       physiologyBaseline: {
-        oxygenSaturationPct: 98,
-        temperatureC: 38.6,
+        vitalSigns: {
+          oxygenSaturationPct: 98,
+          temperatureC: 38.6,
+        },
       },
-    })])
+    })
     expect(first.content.reproduction).toEqual({
       clinicalSeed: 7331,
       generator: 'clinmesh-builtin-v1',
