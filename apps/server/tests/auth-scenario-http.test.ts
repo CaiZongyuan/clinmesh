@@ -12,8 +12,28 @@ import {
   sessionContextSchema,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { readServerConfig } from '../src/config.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+
+const betterAuthErrorSchema = z.object({
+  code: z.string().min(1),
+  message: z.string().min(1),
+})
+
+const betterAuthSignInResponseSchema = z.object({
+  redirect: z.literal(false),
+  token: z.string().min(1),
+  user: z.object({
+    email: z.email(),
+    id: z.string().min(1),
+    name: z.string().min(1),
+  }),
+})
+
+const betterAuthSignOutResponseSchema = z.object({
+  success: z.literal(true),
+})
 
 describe('trusted session and Scenario HTTP contract', () => {
   const runtimes: Array<Awaited<ReturnType<typeof createClinMeshRuntime>>> = []
@@ -138,11 +158,19 @@ describe('trusted session and Scenario HTTP contract', () => {
       method: 'POST',
     })
     expect(signOutResponse.status).toBe(403)
+    expect(betterAuthErrorSchema.parse(await signOutResponse.json())).toEqual({
+      code: 'INVALID_ORIGIN',
+      message: 'Invalid origin',
+    })
 
     const contextResponse = await runtime.app.request('/api/auth/context', {
       headers: { cookie },
     })
     expect(contextResponse.status).toBe(200)
+    expect(sessionContextSchema.parse(await contextResponse.json()).actor).toMatchObject({
+      actorId: 'actor-outpatient-doctor',
+      roleCode: 'outpatient-doctor',
+    })
   })
 
   it('allows the documented Vite origin to end a session under the default local configuration', async () => {
@@ -178,6 +206,10 @@ describe('trusted session and Scenario HTTP contract', () => {
       method: 'POST',
     })
     expect(signInResponse.status).toBe(200)
+    expect(betterAuthSignInResponseSchema.parse(await signInResponse.clone().json())).toMatchObject({
+      redirect: false,
+      user: { email: 'doctor@demo.clinmesh.local' },
+    })
     const cookie = signInResponse.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
 
     const signOutResponse = await runtime.app.request(`${config.authBaseUrl}/api/auth/sign-out`, {
@@ -190,11 +222,15 @@ describe('trusted session and Scenario HTTP contract', () => {
       method: 'POST',
     })
     expect(signOutResponse.status).toBe(200)
+    expect(betterAuthSignOutResponseSchema.parse(await signOutResponse.json())).toEqual({ success: true })
 
     const contextResponse = await runtime.app.request(`${config.authBaseUrl}/api/auth/context`, {
       headers: { cookie },
     })
     expect(contextResponse.status).toBe(401)
+    expect(apiErrorSchema.parse(await contextResponse.json())).toMatchObject({
+      error: { code: 'AUTHENTICATION_REQUIRED' },
+    })
   })
 
   it('lets the Super Administrator select and restore every synthetic Acting Practitioner Context', async () => {

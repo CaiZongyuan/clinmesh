@@ -27,16 +27,27 @@ describe('Node.js server configuration', () => {
     expect(() => readServerConfig({})).toThrow()
   })
 
-  it('keeps explicit public and trusted origins authoritative', () => {
-    expect(readServerConfig({
+  it('keeps explicit public and trusted origin configuration authoritative', () => {
+    const requiredEnvironment = {
       CLINMESH_AUTH_SECRET: 'auth-secret-with-at-least-32-characters',
       CLINMESH_CURSOR_SECRET: 'cursor-secret-with-at-least-32-characters',
       CLINMESH_DATABASE_PATH: '/var/lib/clinmesh/clinmesh.sqlite',
       CLINMESH_DEMO_PASSWORD: 'Synthetic-password-2026!',
+    }
+
+    expect(readServerConfig({
+      ...requiredEnvironment,
       CLINMESH_PUBLIC_ORIGIN: 'https://clinmesh.example',
-      CLINMESH_TRUSTED_ORIGINS: 'https://clinmesh.example,https://review.clinmesh.example',
     })).toMatchObject({
       authBaseUrl: 'https://clinmesh.example',
+      trustedOrigins: ['https://clinmesh.example'],
+    })
+
+    expect(readServerConfig({
+      ...requiredEnvironment,
+      CLINMESH_TRUSTED_ORIGINS: 'https://clinmesh.example,https://review.clinmesh.example',
+    })).toMatchObject({
+      authBaseUrl: 'http://127.0.0.1:8787',
       trustedOrigins: ['https://clinmesh.example', 'https://review.clinmesh.example'],
     })
   })
