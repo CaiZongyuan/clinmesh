@@ -113,6 +113,7 @@ type ScenarioPatient = ScenarioDataset['content']['patients'][number]
 type ScenarioHistoryEvent = ScenarioPatient['longitudinalHistory'][number]
 type ScenarioFhirHistory = ScenarioPatient['fhirHistory'][number]
 type ScenarioDiagnosis = ScenarioPatient['diagnosisSpace']['primary']
+type ScenarioPhysiologyGenerator = ScenarioPatient['physiologyBaseline']['generators'][number]
 type UpdatePatient = (update: (patient: ScenarioPatient) => ScenarioPatient) => void
 
 function updateFirstReferenceRange(
@@ -149,6 +150,42 @@ function nextScopedId(prefix: string, ids: readonly string[]): string {
   let sequence = 1
   while (existing.has(`${prefix}-${sequence}`)) sequence += 1
   return `${prefix}-${sequence}`
+}
+
+function createPhysiologyGenerator(
+  kind: ScenarioPhysiologyGenerator['kind'],
+  id: string,
+): ScenarioPhysiologyGenerator {
+  const common = { id, source: '合成病例基线' }
+  if (kind === 'text') return { ...common, kind, value: '待编辑结果' }
+  if (kind === 'derived') {
+    return { ...common, dependencies: ['baseline-weight'], formula: 'bmi', kind, unit: 'kg/m2' }
+  }
+  if (kind === 'normal') {
+    return {
+      ...common,
+      assayCv: 0.02,
+      kind,
+      maximum: 1,
+      mean: 0.5,
+      minimum: 0,
+      standardDeviation: 0.1,
+      unit: '1',
+    }
+  }
+  if (kind === 'trajectory') {
+    return {
+      ...common,
+      assayCv: 0.02,
+      kind,
+      maximum: 1,
+      minimum: 0,
+      target: 0.5,
+      unit: '1',
+      walkStep: 0.1,
+    }
+  }
+  return { ...common, kind, unit: '1', value: 0 }
 }
 
 function optionalString<T extends object, Key extends keyof T>(
@@ -789,6 +826,13 @@ function DatasetEditor({
               }))} value={patient.encounter.openingStatement} />
             </Field>
             <Field className="md:col-span-2">
+              <FieldLabel htmlFor="editor-encounter-setting">{messages.encounterSetting}</FieldLabel>
+              <Input id="editor-encounter-setting" onChange={event => updatePatient(current => ({
+                ...current,
+                encounter: { ...current.encounter, setting: event.target.value },
+              }))} value={patient.encounter.setting} />
+            </Field>
+            <Field className="md:col-span-2">
               <FieldLabel htmlFor="editor-persona-attitude">{messages.patientAttitude}</FieldLabel>
               <Textarea id="editor-persona-attitude" onChange={event => updatePatient(current => ({
                 ...current,
@@ -796,11 +840,60 @@ function DatasetEditor({
               }))} value={patient.persona.attitude} />
             </Field>
             <Field className="md:col-span-2">
+              <FieldLabel htmlFor="editor-persona-character">{messages.patientCharacter}</FieldLabel>
+              <Textarea id="editor-persona-character" onChange={event => updatePatient(current => ({
+                ...current,
+                persona: { ...current.persona, character: event.target.value },
+              }))} value={patient.persona.character} />
+            </Field>
+            <Field className="md:col-span-2">
+              <FieldLabel htmlFor="editor-patient-health-literacy">{messages.patientKnowledgeHealthLiteracy}</FieldLabel>
+              <Textarea id="editor-patient-health-literacy" onChange={event => updatePatient(current => ({
+                ...current,
+                patientKnowledge: { ...current.patientKnowledge, healthLiteracy: event.target.value },
+              }))} value={patient.patientKnowledge.healthLiteracy} />
+            </Field>
+            <Field className="md:col-span-2">
+              <FieldLabel htmlFor="editor-persona-health-literacy">{messages.personaHealthLiteracy}</FieldLabel>
+              <Textarea id="editor-persona-health-literacy" onChange={event => updatePatient(current => ({
+                ...current,
+                persona: { ...current.persona, healthLiteracy: event.target.value },
+              }))} value={patient.persona.healthLiteracy} />
+            </Field>
+            <Field className="md:col-span-2">
+              <FieldLabel htmlFor="editor-persona-speech-style">{messages.speechStyle}</FieldLabel>
+              <Textarea id="editor-persona-speech-style" onChange={event => updatePatient(current => ({
+                ...current,
+                persona: { ...current.persona, speechStyle: event.target.value },
+              }))} value={patient.persona.speechStyle} />
+            </Field>
+            <Field className="md:col-span-2">
+              <FieldLabel htmlFor="editor-care-memory">{messages.careMemory}</FieldLabel>
+              <Textarea id="editor-care-memory" onChange={event => updatePatient(current => ({
+                ...current,
+                patientKnowledge: { ...current.patientKnowledge, careMemory: event.target.value },
+              }))} value={patient.patientKnowledge.careMemory} />
+            </Field>
+            <Field className="md:col-span-2">
               <FieldLabel htmlFor="editor-medication-memory">{messages.medicationMemory}</FieldLabel>
               <Textarea id="editor-medication-memory" onChange={event => updatePatient(current => ({
                 ...current,
                 patientKnowledge: { ...current.patientKnowledge, medicationMemory: event.target.value },
               }))} value={patient.patientKnowledge.medicationMemory} />
+            </Field>
+            <Field className="md:col-span-2">
+              <FieldLabel htmlFor="editor-never-knows">{messages.neverKnows}</FieldLabel>
+              <Textarea id="editor-never-knows" onChange={event => updatePatient(current => ({
+                ...current,
+                patientKnowledge: { ...current.patientKnowledge, neverKnows: splitLines(event.target.value) },
+              }))} value={joinLines(patient.patientKnowledge.neverKnows)} />
+            </Field>
+            <Field className="md:col-span-2">
+              <FieldLabel htmlFor="editor-told-diagnoses">{messages.toldDiagnoses}</FieldLabel>
+              <Textarea id="editor-told-diagnoses" onChange={event => updatePatient(current => ({
+                ...current,
+                patientKnowledge: { ...current.patientKnowledge, toldDiagnoses: splitLines(event.target.value) },
+              }))} value={joinLines(patient.patientKnowledge.toldDiagnoses)} />
             </Field>
             <Field>
               <FieldLabel htmlFor="editor-temperature">{messages.temperatureC}</FieldLabel>
@@ -833,6 +926,104 @@ function DatasetEditor({
               }))} type="number" value={patient.physiologyBaseline.vitalSigns.diastolicMmHg ?? ''} />
             </Field>
           </FieldGroup>
+          <div className="mt-6 flex flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold">{messages.lifestyle}</h3>
+              <Button onClick={() => updatePatient(current => {
+                const id = nextScopedId('lifestyle-new', current.patientKnowledge.lifestyle.map(item => item.id))
+                return {
+                  ...current,
+                  patientKnowledge: {
+                    ...current.patientKnowledge,
+                    lifestyle: [...current.patientKnowledge.lifestyle, {
+                      actual: '待编辑',
+                      admittedOnFirstAsk: '待编辑',
+                      concedeOnSecondAsk: false,
+                      id,
+                      label: '待编辑生活方式',
+                    }],
+                  },
+                }
+              })} size="sm" type="button" variant="outline"><PlusIcon data-icon="inline-start" />{messages.addLifestyle}</Button>
+            </div>
+            {patient.patientKnowledge.lifestyle.map((item, itemIndex) => {
+              const suffix = ` ${itemIndex + 1}`
+              return <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-2 xl:grid-cols-4" key={item.id}>
+                <legend className="sr-only">{messages.lifestyleLabel}{suffix}</legend>
+                <Field><FieldLabel htmlFor={`editor-lifestyle-label-${itemIndex}`}>{messages.lifestyleLabel}{suffix}</FieldLabel><Input id={`editor-lifestyle-label-${itemIndex}`} onChange={event => updatePatient(current => ({ ...current, patientKnowledge: { ...current.patientKnowledge, lifestyle: updateAt(current.patientKnowledge.lifestyle, itemIndex, lifestyle => ({ ...lifestyle, label: event.target.value })) } }))} value={item.label} /></Field>
+                <Field><FieldLabel htmlFor={`editor-lifestyle-actual-${itemIndex}`}>{messages.lifestyleActual}{suffix}</FieldLabel><Input id={`editor-lifestyle-actual-${itemIndex}`} onChange={event => updatePatient(current => ({ ...current, patientKnowledge: { ...current.patientKnowledge, lifestyle: updateAt(current.patientKnowledge.lifestyle, itemIndex, lifestyle => ({ ...lifestyle, actual: event.target.value })) } }))} value={item.actual} /></Field>
+                <Field><FieldLabel htmlFor={`editor-lifestyle-first-${itemIndex}`}>{messages.lifestyleFirstAsk}{suffix}</FieldLabel><Input id={`editor-lifestyle-first-${itemIndex}`} onChange={event => updatePatient(current => ({ ...current, patientKnowledge: { ...current.patientKnowledge, lifestyle: updateAt(current.patientKnowledge.lifestyle, itemIndex, lifestyle => ({ ...lifestyle, admittedOnFirstAsk: event.target.value })) } }))} value={item.admittedOnFirstAsk} /></Field>
+                <Field className="self-end pb-2" orientation="horizontal"><Checkbox checked={item.concedeOnSecondAsk} id={`editor-lifestyle-concede-${itemIndex}`} onCheckedChange={checked => updatePatient(current => ({ ...current, patientKnowledge: { ...current.patientKnowledge, lifestyle: updateAt(current.patientKnowledge.lifestyle, itemIndex, lifestyle => ({ ...lifestyle, concedeOnSecondAsk: checked === true })) } }))} /><FieldLabel htmlFor={`editor-lifestyle-concede-${itemIndex}`}>{messages.lifestyleSecondAsk}{suffix}</FieldLabel></Field>
+                <div className="flex justify-end md:col-span-2 xl:col-span-4"><Button aria-label={`${messages.removeLifestyle}${suffix}`} onClick={() => updatePatient(current => ({ ...current, patientKnowledge: { ...current.patientKnowledge, lifestyle: current.patientKnowledge.lifestyle.filter((_, index) => index !== itemIndex) } }))} size="icon" title={`${messages.removeLifestyle}${suffix}`} type="button" variant="ghost"><Trash2Icon /></Button></div>
+              </fieldset>
+            })}
+          </div>
+          <div className="mt-6 flex flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold">{messages.timeStateItems}</h3>
+              <Button onClick={() => updatePatient(current => {
+                const id = nextScopedId('time-state-new', current.encounter.timeStateItems.map(item => item.id))
+                return { ...current, encounter: { ...current.encounter, timeStateItems: [...current.encounter.timeStateItems, { change: '待编辑状态变化', id, triggerAfterMinutes: 30 }] } }
+              })} size="sm" type="button" variant="outline"><PlusIcon data-icon="inline-start" />{messages.addTimeStateItem}</Button>
+            </div>
+            {patient.encounter.timeStateItems.map((item, itemIndex) => {
+              const suffix = ` ${itemIndex + 1}`
+              return <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-3" key={item.id}>
+                <legend className="sr-only">{messages.timeStateChange}{suffix}</legend>
+                <Field className="md:col-span-2"><FieldLabel htmlFor={`editor-time-state-change-${itemIndex}`}>{messages.timeStateChange}{suffix}</FieldLabel><Input id={`editor-time-state-change-${itemIndex}`} onChange={event => updatePatient(current => ({ ...current, encounter: { ...current.encounter, timeStateItems: updateAt(current.encounter.timeStateItems, itemIndex, state => ({ ...state, change: event.target.value })) } }))} value={item.change} /></Field>
+                <Field><FieldLabel htmlFor={`editor-time-state-minutes-${itemIndex}`}>{messages.triggerAfterMinutes}{suffix}</FieldLabel><Input id={`editor-time-state-minutes-${itemIndex}`} min={1} onChange={event => updatePatient(current => ({ ...current, encounter: { ...current.encounter, timeStateItems: updateAt(current.encounter.timeStateItems, itemIndex, state => ({ ...state, triggerAfterMinutes: Number(event.target.value) })) } }))} type="number" value={item.triggerAfterMinutes} /></Field>
+                <div className="flex justify-end md:col-span-3"><Button aria-label={`${messages.removeTimeStateItem}${suffix}`} onClick={() => updatePatient(current => ({ ...current, encounter: { ...current.encounter, timeStateItems: current.encounter.timeStateItems.filter((_, index) => index !== itemIndex) } }))} size="icon" title={`${messages.removeTimeStateItem}${suffix}`} type="button" variant="ghost"><Trash2Icon /></Button></div>
+              </fieldset>
+            })}
+          </div>
+          <div className="mt-6 flex flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold">{messages.physiologyGenerators}</h3>
+              <Button onClick={() => updatePatient(current => {
+                const id = nextScopedId('physiology-generator-new', current.physiologyBaseline.generators.map(generator => generator.id))
+                return { ...current, physiologyBaseline: { ...current.physiologyBaseline, generators: [...current.physiologyBaseline.generators, createPhysiologyGenerator('constant', id)] } }
+              })} size="sm" type="button" variant="outline"><PlusIcon data-icon="inline-start" />{messages.addPhysiologyGenerator}</Button>
+            </div>
+            {patient.physiologyBaseline.generators.map((generator, generatorIndex) => {
+              const suffix = ` ${generatorIndex + 1}`
+              const updateGenerator = (update: (current: ScenarioPhysiologyGenerator) => ScenarioPhysiologyGenerator): void => updatePatient(current => ({ ...current, physiologyBaseline: { ...current.physiologyBaseline, generators: updateAt(current.physiologyBaseline.generators, generatorIndex, update) } }))
+              return <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-2 xl:grid-cols-4" key={generatorIndex}>
+                <legend className="sr-only">{messages.generatorId}{suffix}</legend>
+                <Field><FieldLabel htmlFor={`editor-generator-id-${generatorIndex}`}>{messages.generatorId}{suffix}</FieldLabel><Input id={`editor-generator-id-${generatorIndex}`} onChange={event => updateGenerator(current => ({ ...current, id: event.target.value }))} value={generator.id} /></Field>
+                <Field><FieldLabel htmlFor={`editor-generator-kind-${generatorIndex}`}>{messages.generatorKind}{suffix}</FieldLabel><select className="h-8 rounded-md border border-input bg-background px-2 text-sm" id={`editor-generator-kind-${generatorIndex}`} onChange={event => updateGenerator(current => createPhysiologyGenerator(event.target.value as ScenarioPhysiologyGenerator['kind'], current.id))} value={generator.kind}>{(['constant', 'normal', 'trajectory', 'derived', 'text'] as const).map(kind => <option key={kind} value={kind}>{kind}</option>)}</select></Field>
+                <Field><FieldLabel htmlFor={`editor-generator-source-${generatorIndex}`}>{messages.generatorSource}{suffix}</FieldLabel><Input id={`editor-generator-source-${generatorIndex}`} onChange={event => updateGenerator(current => ({ ...current, source: event.target.value }))} value={generator.source} /></Field>
+                {generator.kind === 'text' ? null : <Field><FieldLabel htmlFor={`editor-generator-unit-${generatorIndex}`}>{messages.generatorUnit}{suffix}</FieldLabel><Input id={`editor-generator-unit-${generatorIndex}`} onChange={event => updateGenerator(current => ({ ...current, unit: event.target.value }))} value={generator.unit} /></Field>}
+                {generator.kind === 'constant' ? <>
+                  <Field><FieldLabel htmlFor={`editor-generator-value-${generatorIndex}`}>{messages.generatorValue}{suffix}</FieldLabel><Input id={`editor-generator-value-${generatorIndex}`} onChange={event => updateGenerator(current => current.kind === 'constant' ? ({ ...current, value: Number(event.target.value) }) : current)} type="number" value={generator.value} /></Field>
+                  <Field><FieldLabel htmlFor={`editor-generator-assay-cv-${generatorIndex}`}>{messages.generatorAssayCv}{suffix}</FieldLabel><Input id={`editor-generator-assay-cv-${generatorIndex}`} max={1} min={0} onChange={event => updateGenerator((current) => {
+                    if (current.kind !== 'constant') return current
+                    if (event.target.value !== '') return { ...current, assayCv: Number(event.target.value) }
+                    const { assayCv: _removed, ...remaining } = current
+                    return remaining
+                  })} step="0.01" type="number" value={generator.assayCv ?? ''} /></Field>
+                </> : null}
+                {generator.kind === 'normal' ? <>
+                  <Field><FieldLabel htmlFor={`editor-generator-mean-${generatorIndex}`}>{messages.generatorMean}{suffix}</FieldLabel><Input id={`editor-generator-mean-${generatorIndex}`} onChange={event => updateGenerator(current => ({ ...current, mean: Number(event.target.value) }))} type="number" value={generator.mean} /></Field>
+                  <Field><FieldLabel htmlFor={`editor-generator-standard-deviation-${generatorIndex}`}>{messages.generatorStandardDeviation}{suffix}</FieldLabel><Input id={`editor-generator-standard-deviation-${generatorIndex}`} min={0.0001} onChange={event => updateGenerator(current => ({ ...current, standardDeviation: Number(event.target.value) }))} type="number" value={generator.standardDeviation} /></Field>
+                </> : null}
+                {generator.kind === 'normal' || generator.kind === 'trajectory' ? <>
+                  <Field><FieldLabel htmlFor={`editor-generator-minimum-${generatorIndex}`}>{messages.generatorMinimum}{suffix}</FieldLabel><Input id={`editor-generator-minimum-${generatorIndex}`} onChange={event => updateGenerator(current => ({ ...current, minimum: Number(event.target.value) }))} type="number" value={generator.minimum} /></Field>
+                  <Field><FieldLabel htmlFor={`editor-generator-maximum-${generatorIndex}`}>{messages.generatorMaximum}{suffix}</FieldLabel><Input id={`editor-generator-maximum-${generatorIndex}`} onChange={event => updateGenerator(current => ({ ...current, maximum: Number(event.target.value) }))} type="number" value={generator.maximum} /></Field>
+                  <Field><FieldLabel htmlFor={`editor-generator-assay-cv-${generatorIndex}`}>{messages.generatorAssayCv}{suffix}</FieldLabel><Input id={`editor-generator-assay-cv-${generatorIndex}`} max={1} min={0} onChange={event => updateGenerator(current => ({ ...current, assayCv: Number(event.target.value) }))} step="0.01" type="number" value={generator.assayCv} /></Field>
+                </> : null}
+                {generator.kind === 'trajectory' ? <>
+                  <Field><FieldLabel htmlFor={`editor-generator-target-${generatorIndex}`}>{messages.generatorTarget}{suffix}</FieldLabel><Input id={`editor-generator-target-${generatorIndex}`} onChange={event => updateGenerator(current => ({ ...current, target: Number(event.target.value) }))} type="number" value={generator.target} /></Field>
+                  <Field><FieldLabel htmlFor={`editor-generator-walk-step-${generatorIndex}`}>{messages.generatorWalkStep}{suffix}</FieldLabel><Input id={`editor-generator-walk-step-${generatorIndex}`} min={0.0001} onChange={event => updateGenerator(current => ({ ...current, walkStep: Number(event.target.value) }))} type="number" value={generator.walkStep} /></Field>
+                </> : null}
+                {generator.kind === 'derived' ? <>
+                  <Field><FieldLabel htmlFor={`editor-generator-formula-${generatorIndex}`}>{messages.generatorFormula}{suffix}</FieldLabel><select className="h-8 rounded-md border border-input bg-background px-2 text-sm" id={`editor-generator-formula-${generatorIndex}`} onChange={event => updateGenerator(current => current.kind === 'derived' ? ({ ...current, formula: event.target.value as typeof current.formula }) : current)} value={generator.formula}>{(['bmi', 'egfr-ckd-epi-2021', 'friedewald-ldl', 'hematocrit-from-rbc-mcv', 'urine-glucose-from-blood-glucose'] as const).map(formula => <option key={formula} value={formula}>{formula}</option>)}</select></Field>
+                  <Field className="md:col-span-2"><FieldLabel htmlFor={`editor-generator-dependencies-${generatorIndex}`}>{messages.generatorDependencies}{suffix}</FieldLabel><Textarea id={`editor-generator-dependencies-${generatorIndex}`} onChange={event => updateGenerator(current => current.kind === 'derived' ? ({ ...current, dependencies: splitLines(event.target.value) }) : current)} value={joinLines(generator.dependencies)} /></Field>
+                </> : null}
+                {generator.kind === 'text' ? <Field className="md:col-span-2"><FieldLabel htmlFor={`editor-generator-text-value-${generatorIndex}`}>{messages.generatorTextValue}{suffix}</FieldLabel><Textarea id={`editor-generator-text-value-${generatorIndex}`} onChange={event => updateGenerator(current => current.kind === 'text' ? ({ ...current, value: event.target.value }) : current)} value={generator.value} /></Field> : null}
+                <div className="flex justify-end md:col-span-2 xl:col-span-4"><Button aria-label={`${messages.removePhysiologyGenerator}${suffix}`} onClick={() => updatePatient(current => ({ ...current, physiologyBaseline: { ...current.physiologyBaseline, generators: current.physiologyBaseline.generators.filter((_, index) => index !== generatorIndex) } }))} size="icon" title={`${messages.removePhysiologyGenerator}${suffix}`} type="button" variant="ghost"><Trash2Icon /></Button></div>
+              </fieldset>
+            })}
+          </div>
         </TabsContent>
 
         <HistoryEditor
@@ -1040,6 +1231,13 @@ function DatasetEditor({
               }))} value={joinLines(patient.managementSpace.contraindications)} />
             </Field>
             <Field className="md:col-span-2">
+              <FieldLabel htmlFor="editor-management-required">{messages.requiredManagementElements}</FieldLabel>
+              <Textarea id="editor-management-required" onChange={event => updatePatient(current => ({
+                ...current,
+                managementSpace: { ...current.managementSpace, requiredElements: splitLines(event.target.value) },
+              }))} value={joinLines(patient.managementSpace.requiredElements)} />
+            </Field>
+            <Field className="md:col-span-2">
               <FieldLabel htmlFor="editor-follow-up">{messages.followUp}</FieldLabel>
               <Textarea id="editor-follow-up" onChange={event => updatePatient(current => ({
                 ...current,
@@ -1066,6 +1264,20 @@ function DatasetEditor({
                 ...current,
                 costBaseline: { ...current.costBaseline, overInvestigationThresholdFen: Number(event.target.value) },
               }))} type="number" value={patient.costBaseline.overInvestigationThresholdFen} />
+            </Field>
+            <Field className="md:col-span-2">
+              <FieldLabel htmlFor="editor-cost-reference">{messages.costReferencePath}</FieldLabel>
+              <Textarea id="editor-cost-reference" onChange={event => updatePatient(current => ({
+                ...current,
+                costBaseline: { ...current.costBaseline, referencePath: event.target.value },
+              }))} value={patient.costBaseline.referencePath} />
+            </Field>
+            <Field className="md:col-span-2">
+              <FieldLabel htmlFor="editor-cost-note">{messages.costNote}</FieldLabel>
+              <Textarea id="editor-cost-note" onChange={event => updatePatient(current => ({
+                ...current,
+                costBaseline: { ...current.costBaseline, note: event.target.value },
+              }))} value={patient.costBaseline.note} />
             </Field>
           </FieldGroup>
           <DiagnosisListEditor
@@ -1239,47 +1451,94 @@ function DatasetEditor({
 
         <TabsContent className="flex flex-col gap-6 pt-4" value="rules">
           <div className="flex flex-col gap-4">
-            <h3 className="text-sm font-semibold">{messages.hiddenFacts}</h3>
-            {draft.content.hiddenFacts.map((fact, factIndex) => (
-              <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-3" key={`hidden-fact-${factIndex}`}>
-                <legend className="sr-only">{fact.code}</legend>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold">{messages.hiddenFacts}</h3>
+              <Button onClick={() => setDraft(current => {
+                const code = nextScopedId('hidden-fact-new', current.content.hiddenFacts.map(fact => fact.code))
+                return { ...current, content: { ...current.content, hiddenFacts: [...current.content.hiddenFacts, { code, patientId: patient.id, value: '待编辑事实' }] } }
+              })} size="sm" type="button" variant="outline"><PlusIcon data-icon="inline-start" />{messages.addHiddenFact}</Button>
+            </div>
+            {draft.content.hiddenFacts.map((fact, factIndex) => {
+              const suffix = draft.content.hiddenFacts.length > 1 ? ` ${factIndex + 1}` : ''
+              return <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-3" key={`hidden-fact-${factIndex}`}>
+                <legend className="sr-only">{messages.factCode}{suffix}</legend>
                 <Field>
-                  <FieldLabel htmlFor={`editor-hidden-code-${factIndex}`}>{messages.factCode}</FieldLabel>
+                  <FieldLabel htmlFor={`editor-hidden-code-${factIndex}`}>{messages.factCode}{suffix}</FieldLabel>
                   <Input id={`editor-hidden-code-${factIndex}`} onChange={event => updateHiddenFact(factIndex, hiddenFact => ({ ...hiddenFact, code: event.target.value }))} value={fact.code} />
                 </Field>
-                <Field className="md:col-span-2">
-                  <FieldLabel htmlFor={`editor-hidden-value-${factIndex}`}>{messages.hiddenFactValue}</FieldLabel>
+                <Field>
+                  <FieldLabel htmlFor={`editor-hidden-patient-${factIndex}`}>{messages.hiddenFactPatient}{suffix}</FieldLabel>
+                  <select className="h-8 rounded-md border border-input bg-background px-2 text-sm" id={`editor-hidden-patient-${factIndex}`} onChange={event => updateHiddenFact(factIndex, hiddenFact => optionalString(hiddenFact, 'patientId', event.target.value))} value={fact.patientId ?? ''}>
+                    <option value="">{messages.allPatients}</option>
+                    {draft.content.patients.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}
+                  </select>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor={`editor-hidden-value-${factIndex}`}>{messages.hiddenFactValue}{suffix}</FieldLabel>
                   <Input disabled={typeof fact.value === 'object' && fact.value !== null} id={`editor-hidden-value-${factIndex}`} onChange={event => updateHiddenFact(factIndex, hiddenFact => ({ ...hiddenFact, value: event.target.value }))} value={scalarHiddenFactValue(fact.value)} />
                 </Field>
+                <div className="flex justify-end md:col-span-3"><Button aria-label={`${messages.removeHiddenFact}${suffix}`} onClick={() => setDraft(current => ({ ...current, content: { ...current.content, hiddenFacts: current.content.hiddenFacts.filter((_, index) => index !== factIndex) } }))} size="icon" title={`${messages.removeHiddenFact}${suffix}`} type="button" variant="ghost"><Trash2Icon /></Button></div>
               </fieldset>
-            ))}
+            })}
           </div>
           <div className="flex flex-col gap-4">
-            <h3 className="text-sm font-semibold">{messages.revealPolicies}</h3>
-            {draft.content.revealPolicies.map((policy, policyIndex) => (
-              <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-3" key={`reveal-policy-${policyIndex}`}>
-                <legend className="sr-only">{policy.code}</legend>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold">{messages.revealPolicies}</h3>
+              <Button disabled={draft.content.hiddenFacts.length === 0} onClick={() => setDraft(current => {
+                const code = nextScopedId('reveal-policy-new', current.content.revealPolicies.map(policy => policy.code))
+                return { ...current, content: { ...current.content, revealPolicies: [...current.content.revealPolicies, { code, factCode: current.content.hiddenFacts[0]!.code, patientId: patient.id, triggerCode: 'evaluator-only' }] } }
+              })} size="sm" type="button" variant="outline"><PlusIcon data-icon="inline-start" />{messages.addRevealPolicy}</Button>
+            </div>
+            {draft.content.revealPolicies.map((policy, policyIndex) => {
+              const suffix = draft.content.revealPolicies.length > 1 ? ` ${policyIndex + 1}` : ''
+              const policyPatient = draft.content.patients.find(candidate => candidate.id === policy.patientId)
+              return <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-2 xl:grid-cols-4" key={`reveal-policy-${policyIndex}`}>
+                <legend className="sr-only">{messages.policyCode}{suffix}</legend>
                 <Field>
-                  <FieldLabel htmlFor={`editor-policy-code-${policyIndex}`}>{messages.policyCode}</FieldLabel>
+                  <FieldLabel htmlFor={`editor-policy-code-${policyIndex}`}>{messages.policyCode}{suffix}</FieldLabel>
                   <Input id={`editor-policy-code-${policyIndex}`} onChange={event => updateRevealPolicy(policyIndex, revealPolicy => ({ ...revealPolicy, code: event.target.value }))} value={policy.code} />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor={`editor-policy-fact-${policyIndex}`}>{messages.factCode}</FieldLabel>
-                  <Input id={`editor-policy-fact-${policyIndex}`} onChange={event => updateRevealPolicy(policyIndex, revealPolicy => ({ ...revealPolicy, factCode: event.target.value }))} value={policy.factCode} />
+                  <FieldLabel htmlFor={`editor-policy-fact-${policyIndex}`}>{messages.policyFact}{suffix}</FieldLabel>
+                  <select className="h-8 rounded-md border border-input bg-background px-2 text-sm" id={`editor-policy-fact-${policyIndex}`} onChange={event => updateRevealPolicy(policyIndex, revealPolicy => ({ ...revealPolicy, factCode: event.target.value }))} value={policy.factCode}>
+                    {draft.content.hiddenFacts.map(fact => <option key={fact.code} value={fact.code}>{fact.code}</option>)}
+                  </select>
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor={`editor-policy-trigger-${policyIndex}`}>{messages.revealTrigger}</FieldLabel>
-                  <Select onValueChange={value => updateRevealPolicy(policyIndex, revealPolicy => ({ ...revealPolicy, triggerCode: value as typeof revealPolicy.triggerCode }))} value={policy.triggerCode}>
-                    <SelectTrigger className="w-full" id={`editor-policy-trigger-${policyIndex}`}><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectGroup>
-                      {(['initial', 'after-topic', 'after-examination', 'after-request', 'after-time', 'second-ask-concede', 'evaluator-only'] as const).map(trigger => (
-                        <SelectItem key={trigger} value={trigger}>{messages[`revealTrigger_${trigger.replaceAll('-', '_')}` as keyof typeof messages]}</SelectItem>
-                      ))}
-                    </SelectGroup></SelectContent>
-                  </Select>
+                  <FieldLabel htmlFor={`editor-policy-patient-${policyIndex}`}>{messages.policyPatient}{suffix}</FieldLabel>
+                  <select className="h-8 rounded-md border border-input bg-background px-2 text-sm" id={`editor-policy-patient-${policyIndex}`} onChange={event => updateRevealPolicy(policyIndex, (revealPolicy) => {
+                    const next = optionalString(revealPolicy, 'patientId', event.target.value)
+                    if (next.triggerCode !== 'after-topic') return next
+                    const nextPatient = draft.content.patients.find(candidate => candidate.id === next.patientId)
+                    return nextPatient?.symptomResponses.some(response => response.id === next.triggerId) === true
+                      ? next
+                      : optionalString(next, 'triggerId', '')
+                  })} value={policy.patientId ?? ''}>
+                    <option value="">{messages.allPatients}</option>
+                    {draft.content.patients.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}
+                  </select>
                 </Field>
+                <Field>
+                  <FieldLabel htmlFor={`editor-policy-trigger-${policyIndex}`}>{messages.revealTrigger}{suffix}</FieldLabel>
+                  <select className="h-8 rounded-md border border-input bg-background px-2 text-sm" id={`editor-policy-trigger-${policyIndex}`} onChange={event => updateRevealPolicy(policyIndex, (revealPolicy) => {
+                    const triggerCode = event.target.value as typeof revealPolicy.triggerCode
+                    const next = { ...revealPolicy, triggerCode }
+                    return triggerCode === 'after-topic' ? next : optionalString(next, 'triggerId', '')
+                  })} value={policy.triggerCode}>
+                    <option value="after-topic">{messages.revealTrigger_after_topic}</option>
+                    <option value="evaluator-only">{messages.revealTrigger_evaluator_only}</option>
+                  </select>
+                </Field>
+                {policy.triggerCode !== 'after-topic' ? null : <Field>
+                  <FieldLabel htmlFor={`editor-policy-topic-${policyIndex}`}>{messages.policyTopic}{suffix}</FieldLabel>
+                  <select className="h-8 rounded-md border border-input bg-background px-2 text-sm" id={`editor-policy-topic-${policyIndex}`} onChange={event => updateRevealPolicy(policyIndex, revealPolicy => optionalString(revealPolicy, 'triggerId', event.target.value))} value={policy.triggerId ?? ''}>
+                    <option value="">-</option>
+                    {policyPatient?.symptomResponses.map(response => <option key={response.id} value={response.id}>{response.name}</option>)}
+                  </select>
+                </Field>}
+                <div className="flex justify-end md:col-span-2 xl:col-span-4"><Button aria-label={`${messages.removeRevealPolicy}${suffix}`} onClick={() => setDraft(current => ({ ...current, content: { ...current.content, revealPolicies: current.content.revealPolicies.filter((_, index) => index !== policyIndex) } }))} size="icon" title={`${messages.removeRevealPolicy}${suffix}`} type="button" variant="ghost"><Trash2Icon /></Button></div>
               </fieldset>
-            ))}
+            })}
           </div>
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1335,6 +1594,12 @@ function DatasetEditor({
         </TabsContent>
       </Tabs>
 
+      {install.isSuccess ? (
+        <Alert>
+          <PlayIcon aria-hidden="true" />
+          <AlertTitle>{messages.datasetInstalled}</AlertTitle>
+        </Alert>
+      ) : null}
       {mutationError !== null ? (
         <Alert variant="destructive">
           <CircleAlertIcon aria-hidden="true" />

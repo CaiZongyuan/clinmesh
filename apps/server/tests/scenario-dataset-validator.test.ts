@@ -183,4 +183,67 @@ describe('Scenario Dataset diagnostics', () => {
       severity: 'error',
     }))
   })
+
+  it('rejects L1 fee, TAT and critical flags that disagree with the hospital catalog', async () => {
+    const provider = new BuiltInScenarioGenerationProvider()
+    const generated = await provider.generate(scenarioGenerationRequestSchema.parse({
+      modules: ['type-2-diabetes'],
+      name: '跨投影冲突病例',
+      population: { age: { maximum: 40, minimum: 40 }, count: 1, gender: 'female' },
+      providerId: 'builtin',
+      seeds: { clinical: 99, population: 90 },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    }))
+    const patient = generated.content.patients[0]!
+    const exactIndex = patient.investigations.findIndex(investigation => {
+      const catalogItem = generated.content.catalog.investigations.find(
+        item => item.id === investigation.catalogItemId,
+      )
+      return investigation.result.outcome === 'reported'
+        && typeof investigation.result.value === 'number'
+        && (catalogItem?.criticalMinimum !== undefined || catalogItem?.criticalMaximum !== undefined)
+    })
+    const exact = patient.investigations[exactIndex]!
+    const catalogItem = generated.content.catalog.investigations.find(
+      item => item.id === exact.catalogItemId,
+    )!
+    if (exact.result.outcome !== 'reported' || typeof exact.result.value !== 'number') {
+      throw new Error('Expected one numeric exact investigation with critical thresholds')
+    }
+    const shouldBeCritical = (
+      (catalogItem.criticalMinimum !== undefined && exact.result.value < catalogItem.criticalMinimum)
+      || (catalogItem.criticalMaximum !== undefined && exact.result.value > catalogItem.criticalMaximum)
+    )
+
+    const diagnostics = validateScenarioDataset({
+      ...generated.content,
+      patients: [{
+        ...patient,
+        investigations: patient.investigations.map((investigation, index) => index === exactIndex
+          ? {
+              ...investigation,
+              critical: !shouldBeCritical,
+              feeFen: catalogItem.priceFen + 1,
+              tatMinutes: catalogItem.tatMinutes + 1,
+            }
+          : investigation),
+      }],
+    })
+
+    expect(diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'INVESTIGATION_CRITICAL_THRESHOLD_CONFLICT',
+        path: `patients[0].investigations[${exactIndex}].critical`,
+      }),
+      expect.objectContaining({
+        code: 'INVESTIGATION_FEE_CONFLICT',
+        path: `patients[0].investigations[${exactIndex}].feeFen`,
+      }),
+      expect.objectContaining({
+        code: 'INVESTIGATION_TAT_CONFLICT',
+        path: `patients[0].investigations[${exactIndex}].tatMinutes`,
+      }),
+    ]))
+  })
 })

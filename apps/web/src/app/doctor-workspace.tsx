@@ -47,7 +47,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/component
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ActivityIcon, ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, FileTextIcon, FlaskConicalIcon, LibraryBigIcon, LockKeyholeIcon, MessagesSquareIcon, PanelRightCloseIcon, PanelRightOpenIcon, PillIcon, PlayIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, SendIcon, ShieldAlertIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
+import { ActivityIcon, ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, LibraryBigIcon, LockKeyholeIcon, MessagesSquareIcon, PanelRightCloseIcon, PanelRightOpenIcon, PillIcon, PlayIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, SendIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   ApiClientError,
@@ -1521,7 +1521,6 @@ function CaseDetail({
                   ) : (
                     <LaboratoryRequestEditor
                       actions={laboratoryRequestActions}
-                      caseId={detail.caseId}
                       catalog={laboratoryCatalog}
                       indicationCode={indicationCode}
                       indicationItems={indicationItems}
@@ -1727,7 +1726,6 @@ function EncounterCompletionPanel({ detail, messages, onCompleted, onNavigate, o
 
 function LaboratoryRequestEditor({
   actions,
-  caseId,
   catalog,
   indicationCode,
   indicationItems,
@@ -1742,7 +1740,6 @@ function LaboratoryRequestEditor({
   state,
 }: {
   actions: LaboratoryRequestActions
-  caseId: string
   catalog: ClinicalCatalog['laboratory']
   indicationCode: string
   indicationItems: Array<{ label: string; value: string }>

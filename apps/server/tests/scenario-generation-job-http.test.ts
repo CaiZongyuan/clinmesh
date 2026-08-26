@@ -9,7 +9,7 @@ import {
   type ScenarioGenerationRequest,
   type ScenarioProviderCapabilities,
 } from '@clinmesh/contracts/scenario'
-import { scenarioStateSchema } from '@clinmesh/contracts/his'
+import { apiErrorSchema, scenarioStateSchema } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
 import type {
   ScenarioGenerationProvider,
@@ -299,7 +299,7 @@ describe('persistent Scenario generation job HTTP contract', () => {
       },
     )
     expect(synchronousResponse.status).toBe(409)
-    await expect(synchronousResponse.json()).resolves.toMatchObject({
+    expect(apiErrorSchema.parse(await synchronousResponse.json())).toMatchObject({
       error: {
         code: 'DATASET_INVALID',
         message: 'External Scenario Providers must use persistent generation jobs',

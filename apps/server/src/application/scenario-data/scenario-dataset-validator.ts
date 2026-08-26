@@ -21,7 +21,9 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
   const investigationCatalog = new Map(content.catalog.investigations.map(item => [item.id, item]))
   const medicationIds = new Set(content.catalog.medications.map(item => item.id))
   const patientIds = new Set(content.patients.map(patient => patient.id))
+  const patientsById = new Map(content.patients.map(patient => [patient.id, patient]))
   const hiddenFactCodes = new Set(content.hiddenFacts.map(fact => fact.code))
+  const hiddenFactsByCode = new Map(content.hiddenFacts.map(fact => [fact.code, fact]))
   const vitalSignKeys = new Set([
     'diastolicMmHg',
     'heightCm',
@@ -143,6 +145,36 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
         path: `revealPolicies[${index}].patientId`,
         severity: 'error',
       })
+    }
+    if (policy.triggerCode === 'after-topic') {
+      const patient = policy.patientId === undefined ? undefined : patientsById.get(policy.patientId)
+      if (patient === undefined) {
+        add({
+          code: 'REVEAL_TOPIC_PATIENT_REQUIRED',
+          message: `Reveal Policy ${policy.code} must bind an existing patient for an after-topic trigger`,
+          path: `revealPolicies[${index}].patientId`,
+          severity: 'error',
+        })
+      }
+      if (
+        policy.triggerId === undefined
+        || patient?.symptomResponses.some(response => response.id === policy.triggerId) !== true
+      ) {
+        add({
+          code: 'REVEAL_TOPIC_REFERENCE_MISSING',
+          message: `Reveal Policy ${policy.code} must reference a symptom-response topic for its patient`,
+          path: `revealPolicies[${index}].triggerId`,
+          severity: 'error',
+        })
+      }
+      if (typeof hiddenFactsByCode.get(policy.factCode)?.value !== 'string') {
+        add({
+          code: 'REVEAL_TOPIC_VALUE_INVALID',
+          message: `Reveal Policy ${policy.code} requires a string Hidden Fact for a patient answer`,
+          path: `hiddenFacts[${content.hiddenFacts.findIndex(fact => fact.code === policy.factCode)}].value`,
+          severity: 'error',
+        })
+      }
     }
   }
 
@@ -289,6 +321,22 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
           severity: 'error',
         })
       }
+      if (investigation.feeFen !== catalogItem.priceFen) {
+        add({
+          code: 'INVESTIGATION_FEE_CONFLICT',
+          message: `Investigation ${investigation.id} fee differs from catalog item ${catalogItem.id}`,
+          path: `${investigationPath}.feeFen`,
+          severity: 'error',
+        })
+      }
+      if (investigation.tatMinutes !== catalogItem.tatMinutes) {
+        add({
+          code: 'INVESTIGATION_TAT_CONFLICT',
+          message: `Investigation ${investigation.id} TAT differs from catalog item ${catalogItem.id}`,
+          path: `${investigationPath}.tatMinutes`,
+          severity: 'error',
+        })
+      }
       if (investigation.result.outcome !== 'reported' && investigation.critical) {
         add({
           code: 'INVESTIGATION_CRITICAL_CONFLICT',
@@ -296,6 +344,21 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
           path: `${investigationPath}.critical`,
           severity: 'error',
         })
+      }
+      if (investigation.result.outcome === 'reported') {
+        const resultValue = investigation.result.value
+        const expectedCritical = typeof resultValue === 'number' && (
+          (catalogItem.criticalMinimum !== undefined && resultValue < catalogItem.criticalMinimum)
+          || (catalogItem.criticalMaximum !== undefined && resultValue > catalogItem.criticalMaximum)
+        )
+        if (investigation.critical !== expectedCritical) {
+          add({
+            code: 'INVESTIGATION_CRITICAL_THRESHOLD_CONFLICT',
+            message: `Investigation ${investigation.id} critical flag differs from catalog thresholds`,
+            path: `${investigationPath}.critical`,
+            severity: 'error',
+          })
+        }
       }
       if (investigation.sourceLevel !== 'L1') {
         add({

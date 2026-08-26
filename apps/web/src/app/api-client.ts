@@ -61,7 +61,7 @@ import {
   scenarioDatasetSchema,
   scenarioGenerationJobSchema,
   scenarioGenerationRequestSchema,
-  scenarioProviderCapabilitiesSchema,
+  scenarioProviderCapabilitiesListSchema,
   type ScenarioGenerationRequest,
   type ScenarioDataset,
 } from '@clinmesh/contracts/scenario'
@@ -187,7 +187,7 @@ export function resetScenario(scenarioRunId: string, idempotencyKey: string) {
 export function getScenarioProviders(signal?: AbortSignal) {
   return apiGet(
     '/api/sim/v1/scenario-providers',
-    z.object({ items: z.array(scenarioProviderCapabilitiesSchema) }).strict(),
+    scenarioProviderCapabilitiesListSchema,
     signal,
   )
 }

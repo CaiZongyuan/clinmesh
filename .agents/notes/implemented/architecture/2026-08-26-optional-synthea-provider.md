@@ -10,7 +10,7 @@ Synthea 能提供纵向合成病史，但需要 Java、美国地域输入和 FHI
 
 Synthea 固定在 commit `d9d07a6eef91ee5144293b42ab64224d84d124f8`，通过附加 Compose 文件构建独立的非 root Java 容器。源码归档在构建时校验 SHA-256，运行镜像保留上游 Apache LICENSE 和 NOTICE，使用只读文件系统且不访问 Docker socket。默认 Compose、ClinMesh 主镜像和 Server 启动不依赖该容器；`CLINMESH_SYNTHEA_PROVIDER_URL` 只启用生成能力，不执行启动健康门禁。
 
-管理员通过持久 `ScenarioGenerationJob` 提交外部生成。任务按 `queued -> running -> succeeded | failed` 推进，由独立于业务 outbox 的单并发 worker 执行；重启时 `running` 任务回到 `queued`。成功时 Scenario Dataset 与任务终态在同一 SQLite 事务提交，失败时不写 Dataset、Scenario Package 或活动 Epoch。内置 Provider 保留同步生成；外部 Provider 不能绕过持久任务接口。
+管理员通过持久 `ScenarioGenerationJob` 提交外部生成。任务入队时完成管理员授权、Origin、幂等和受信 Actor context 校验；后台完成是该已接受请求的系统续作，不是新的用户请求，因此不因后续角色或活动 Epoch 变化重新授权。任务按 `queued -> running -> succeeded | failed` 推进，由独立于业务 outbox 的单并发 worker 执行；重启时 `running` 任务回到 `queued`。worker 只能在原 Workspace 写入 Dataset 和任务终态，不能写 Scenario Package、活动 Epoch、FHIR Repository 或 HIS 运行事实。成功时 Scenario Dataset 与任务终态在同一 SQLite 事务提交，失败时不写 Dataset、Scenario Package 或活动 Epoch。内置 Provider 保留同步生成；外部 Provider 不能绕过持久任务接口。
 
 Provider HTTP 协议只接受已验证的人数、年龄、性别、模块、双 seed、时间范围和 `Asia/Shanghai` 时区，并固定调用 `/v1/generate`。Synthea 输出自包含的 FHIR R4 collection Bundle，使患者、美国机构和医务人员来源资源可在一个边界内完成白名单、大小、引用和单患者归属验证。Provider 响应必须匹配请求的 commit、配置哈希、模块、双 seed、时间范围和时区；未知资源、悬空引用、跨患者引用、越界响应和复现元数据漂移产生稳定错误。
 
@@ -27,6 +27,8 @@ Provider HTTP 协议只接受已验证的人数、年龄、性别、模块、双
 ## Consequences
 
 Synthea 未配置、未启动、不可达、超时或返回坏数据时，只影响对应生成能力和任务。已有 Dataset、Package、Scenario Run、reset、内置生成和普通岗位 HTTP 路径不调用该 Provider。
+
+撤销发起人的当前角色不会取消已经入队的工作，也不会把完成结果提升为活动业务事实。需要取消、审批或按执行时权限重验的生成模型属于新的任务协议，不能通过复用临床 Command 授权语义隐式加入。
 
 R4 Bundle 仍是来源材料，不是 ClinMesh FHIR R5 权威数据。美国地址、机构、付款方、标识和目录语义必须在编译阶段删除或替换后才能安装；相关转换由[Scenario 数据编译与参考数据接入](./2026-08-21-scenario-data-compilation.md)拥有。
 

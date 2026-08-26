@@ -12,6 +12,7 @@ import type {
 } from '@clinmesh/contracts/his'
 import {
   scenarioDatasetContentSchema,
+  type ScenarioDataset,
   type ScenarioGenerationRequest,
 } from '@clinmesh/contracts/scenario'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -317,14 +318,18 @@ function stubAdministratorWorkspace() {
 
 function stubScenarioDataWorkspace(options: {
   datasetTotal?: number | ((url: URL) => number)
+  invalidUpdate?: boolean
+  onDelete?: () => void
   onDatasetListRequest?: (url: URL) => void
   onGenerate?: (request: ScenarioGenerationRequest) => void
+  onInstall?: () => void
   onUpdate?: (content: unknown) => void
+  staleUpdate?: boolean
   syntheaAvailable?: boolean
 } = {}) {
   let generated = false
   let jobReads = 0
-  let dataset = {
+  let dataset: ScenarioDataset = {
     content: {
       catalog: {
         departments: [{
@@ -551,7 +556,10 @@ function stubScenarioDataWorkspace(options: {
           contentHash: dataset.contentHash,
           createdAt: dataset.createdAt,
           datasetId: dataset.datasetId,
-          diagnosticCounts: { error: 0, warning: 0 },
+          diagnosticCounts: {
+            error: dataset.diagnostics.filter(diagnostic => diagnostic.severity === 'error').length,
+            warning: dataset.diagnostics.filter(diagnostic => diagnostic.severity === 'warning').length,
+          },
           name: dataset.name,
           patientCount: 1,
           providerId: dataset.providerId,
@@ -617,6 +625,14 @@ function stubScenarioDataWorkspace(options: {
       })
     }
     if (url.pathname === `/api/sim/v1/scenario-datasets/${dataset.datasetId}` && init?.method === 'PUT') {
+      if (options.staleUpdate === true) {
+        return Response.json({
+          error: {
+            code: 'DATASET_VERSION_CONFLICT',
+            message: 'The Scenario Dataset version has changed',
+          },
+        }, { status: 409 })
+      }
       const body = JSON.parse(String(init.body)) as {
         expectedVersion: number
         input: { content: typeof dataset.content; name: string }
@@ -628,8 +644,42 @@ function stubScenarioDataWorkspace(options: {
         name: body.input.name,
         updatedAt: '2026-08-26T09:01:00+08:00',
         version: body.expectedVersion + 1,
+        ...(options.invalidUpdate === true ? {
+          diagnostics: [{
+            code: 'PATIENT_REFERENCE_MISSING',
+            message: 'Hidden Fact references an unknown patient',
+            path: 'hiddenFacts[0].patientId',
+            severity: 'error' as const,
+          }],
+        } : {}),
       }
       return Response.json(commandResponse(dataset))
+    }
+    if (
+      url.pathname === `/api/sim/v1/scenario-datasets/${dataset.datasetId}/actions/install`
+      && init?.method === 'POST'
+    ) {
+      options.onInstall?.()
+      return Response.json(commandResponse({
+        packageId: 'scenario-package-001',
+        scenario: {
+          clinicalReview: null,
+          epoch: 'epoch-2',
+          initialStateHash: '0123456789abcdef',
+          kind: 'candidate',
+          scenarioId: 'scenario-package-001',
+          scenarioRunId: 'scenario-run-2',
+          seed: 7331,
+          status: 'active',
+          virtualTime: '2026-08-26T09:00:00+08:00',
+          workspaceId: 'workspace-demo',
+        },
+      }))
+    }
+    if (url.pathname === `/api/sim/v1/scenario-datasets/${dataset.datasetId}` && init?.method === 'DELETE') {
+      options.onDelete?.()
+      generated = false
+      return Response.json(commandResponse({ datasetId: dataset.datasetId, deleted: true }))
     }
     if (url.pathname === `/api/sim/v1/scenario-datasets/${dataset.datasetId}`) {
       return Response.json(dataset)
@@ -1082,6 +1132,191 @@ describe('role workspaces', () => {
       }],
       simulatorRules: [{ code: 'lis-timeout-once', outcome: 'ambiguous', simulator: 'lis' }],
     })
+  })
+
+  it('edits the complete patient truth and topic reveal policy through structured fields', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    let savedContent: unknown
+    stubScenarioDataWorkspace({ onUpdate: content => { savedContent = content } })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('button', { name: '生成数据' }))
+    await user.click(await screen.findByRole('button', { name: '编辑 发热门诊样本' }))
+    const changeText = async (label: string, value: string): Promise<void> => {
+      const input = screen.getByLabelText(label)
+      await user.clear(input)
+      await user.type(input, value)
+    }
+
+    await changeText('就医经过记忆', '曾在社区就诊，但没有完成检查。')
+    await changeText('患者医学认知', '能理解常见检查名称。')
+    await changeText('性格特征', '谨慎，回答具体。')
+    await changeText('表达医学认知', '一般，避免使用专业术语。')
+    await changeText('说话方式', '简短自然口语。')
+    await changeText('就诊场景', '发热门诊')
+    fireEvent.change(screen.getByLabelText('患者不会知道的事实'), {
+      target: { value: '尚未检查的实验室数值\n医生未告知的诊断' },
+    })
+    fireEvent.change(screen.getByLabelText('已告知诊断'), {
+      target: { value: '上呼吸道感染' },
+    })
+
+    await user.click(screen.getByRole('button', { name: '新增生活方式' }))
+    await changeText('生活方式名称 1', '吸烟')
+    await changeText('实际情况 1', '从不吸烟')
+    await changeText('首次询问回答 1', '没有吸烟习惯。')
+    await user.click(screen.getByRole('checkbox', { name: '二次追问时承认 1' }))
+
+    await user.click(screen.getByRole('button', { name: '新增时间状态' }))
+    await changeText('状态变化 1', '体温升至 39.2 C。')
+    await changeText('触发分钟 1', '45')
+
+    await user.click(screen.getByRole('button', { name: '新增生理生成器' }))
+    await changeText('生成器 ID 1', 'baseline-glucose')
+    await changeText('生成器来源 1', '合成病例基线')
+    await changeText('生成器单位 1', 'mmol/L')
+    await changeText('常量值 1', '6.1')
+
+    await user.click(screen.getByRole('tab', { name: '诊断与处置' }))
+    fireEvent.change(screen.getByLabelText('必要处置要素'), {
+      target: { value: '评估危险征象\n交代复诊指征' },
+    })
+    await changeText('费用参考依据', '依据当前虚构医院目录计费。')
+
+    await user.click(screen.getByRole('tab', { name: '隐藏事实与揭示' }))
+    await user.click(screen.getByRole('button', { name: '新增 Hidden Fact' }))
+    await changeText('事实编码 2', 'topic-fever-detail')
+    await user.selectOptions(screen.getByLabelText('事实患者 2'), 'synthetic-patient-001')
+    await changeText('Hidden Fact 值 2', '昨夜开始高热，伴明显咽痛。')
+    await user.click(screen.getByRole('button', { name: '新增 Reveal Policy' }))
+    await changeText('策略编码 2', 'reveal-fever-detail')
+    await user.selectOptions(screen.getByLabelText('关联事实 2'), 'topic-fever-detail')
+    await user.selectOptions(screen.getByLabelText('策略患者 2'), 'synthetic-patient-001')
+    await user.selectOptions(screen.getByLabelText('揭示时机 2'), 'after-topic')
+    await user.selectOptions(screen.getByLabelText('问诊主题 2'), 'symptom-fever')
+    await user.click(screen.getByRole('button', { name: '保存修改' }))
+
+    await waitFor(() => expect(savedContent).not.toBeUndefined())
+    scenarioDatasetContentSchema.parse(savedContent)
+    expect(savedContent).toMatchObject({
+      hiddenFacts: [{}, {
+        code: 'topic-fever-detail',
+        patientId: 'synthetic-patient-001',
+        value: '昨夜开始高热，伴明显咽痛。',
+      }],
+      patients: [{
+        costBaseline: { referencePath: '依据当前虚构医院目录计费。' },
+        encounter: {
+          setting: '发热门诊',
+          timeStateItems: [{ change: '体温升至 39.2 C。', triggerAfterMinutes: 45 }],
+        },
+        managementSpace: { requiredElements: ['评估危险征象', '交代复诊指征'] },
+        patientKnowledge: {
+          careMemory: '曾在社区就诊，但没有完成检查。',
+          healthLiteracy: '能理解常见检查名称。',
+          lifestyle: [{
+            actual: '从不吸烟',
+            admittedOnFirstAsk: '没有吸烟习惯。',
+            concedeOnSecondAsk: true,
+            label: '吸烟',
+          }],
+          neverKnows: ['尚未检查的实验室数值', '医生未告知的诊断'],
+          toldDiagnoses: ['上呼吸道感染'],
+        },
+        persona: {
+          character: '谨慎，回答具体。',
+          healthLiteracy: '一般，避免使用专业术语。',
+          speechStyle: '简短自然口语。',
+        },
+        physiologyBaseline: {
+          generators: [{
+            id: 'baseline-glucose',
+            kind: 'constant',
+            source: '合成病例基线',
+            unit: 'mmol/L',
+            value: 6.1,
+          }],
+        },
+      }],
+      revealPolicies: [{}, {
+        code: 'reveal-fever-detail',
+        factCode: 'topic-fever-detail',
+        patientId: 'synthetic-patient-001',
+        triggerCode: 'after-topic',
+        triggerId: 'symptom-fever',
+      }],
+    })
+  })
+
+  it('shows Dataset validation and disables installation after saving an invalid draft', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ invalidUpdate: true })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('button', { name: '生成数据' }))
+    await user.click(await screen.findByRole('button', { name: '编辑 发热门诊样本' }))
+    await user.click(screen.getByRole('button', { name: '保存修改' }))
+
+    expect(await screen.findByText('hiddenFacts[0].patientId: Hidden Fact references an unknown patient')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '安装运行' }).hasAttribute('disabled')).toBe(true)
+  })
+
+  it('reports a stale Dataset version without replacing the administrator draft', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ staleUpdate: true })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('button', { name: '生成数据' }))
+    await user.click(await screen.findByRole('button', { name: '编辑 发热门诊样本' }))
+    await user.clear(screen.getByLabelText('患者姓名'))
+    await user.type(screen.getByLabelText('患者姓名'), '未保存的合成患者')
+    await user.click(screen.getByRole('button', { name: '保存修改' }))
+
+    expect(await screen.findByText('操作冲突')).toBeTruthy()
+    expect((screen.getByLabelText('患者姓名') as HTMLInputElement).value).toBe('未保存的合成患者')
+  })
+
+  it('confirms Dataset deletion and reports successful installation', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    let deleted = false
+    let installed = false
+    stubScenarioDataWorkspace({
+      onDelete: () => { deleted = true },
+      onInstall: () => { installed = true },
+    })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('button', { name: '生成数据' }))
+    await user.click(await screen.findByRole('button', { name: '编辑 发热门诊样本' }))
+    await user.click(screen.getByRole('button', { name: '安装运行' }))
+    expect(await screen.findByText('数据集已安装运行')).toBeTruthy()
+    expect(installed).toBe(true)
+
+    await user.click(screen.getByRole('button', { name: '删除数据集' }))
+    const dialog = await screen.findByRole('alertdialog', { name: '确认删除数据集' })
+    expect(deleted).toBe(false)
+    await user.click(within(dialog).getByRole('button', { name: '确认删除' }))
+    await waitFor(() => expect(deleted).toBe(true))
+    expect(screen.queryByRole('heading', { name: '数据集编辑' })).toBeNull()
+  })
+
+  it('does not expose synthetic data management to a non-administrator role', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubEmptyRegistrarWorkspace()
+
+    render(<WebApp />)
+
+    expect(await screen.findByText('当前暂无门诊挂号。')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: '模拟数据' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: '模拟数据' })).toBeNull()
   })
 
   it('selects Synthea and follows a persistent generation job to completion', async () => {

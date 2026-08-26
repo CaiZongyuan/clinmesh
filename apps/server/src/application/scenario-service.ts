@@ -393,15 +393,27 @@ interface ScenarioVirtualPatient {
 
 function scenarioPatientQuestions(
   patient: ScenarioDatasetContent['patients'][number],
+  hiddenFacts: ScenarioDatasetContent['hiddenFacts'],
+  revealPolicies: ScenarioDatasetContent['revealPolicies'],
 ): ScenarioVirtualPatient['questions'] {
   const questions = patient.symptomResponses.flatMap((response) => {
     const responseText = [...response.responsePoints, ...response.denies].join(' ')
       || patient.patientKnowledge.chiefComplaint
+    const topicPolicy = revealPolicies.find(policy => (
+      policy.patientId === patient.id
+      && policy.triggerCode === 'after-topic'
+      && policy.triggerId === response.id
+    ))
+    const topicFact = hiddenFacts.find(fact => (
+      fact.code === topicPolicy?.factCode
+      && (fact.patientId === undefined || fact.patientId === patient.id)
+    ))
+    const revealedAnswer = typeof topicFact?.value === 'string' ? topicFact.value : null
     return [{
       answer: response.secondAskConcede?.firstResponse ?? responseText,
       code: response.id,
-      factCode: null,
-      revealedAnswer: null,
+      factCode: revealedAnswer === null ? null : topicPolicy?.factCode ?? null,
+      revealedAnswer,
       ...(response.secondAskConcede === undefined
         ? {}
         : { secondAskAnswer: response.secondAskConcede.revealedResponse }),
@@ -435,12 +447,18 @@ function scenarioPatientQuestions(
 interface ScenarioBlueprint {
   catalog?: ScenarioDatasetContent['catalog']
   clinicalReview: null | Record<string, unknown>
-  hiddenFacts: ReadonlyArray<{ code: string; value: unknown }>
+  hiddenFacts: ReadonlyArray<{ code: string; patientId?: string; value: unknown }>
   hospital?: ScenarioDatasetContent['hospital']
   inventory?: ScenarioDatasetContent['inventory']
   kind: 'candidate' | 'density' | 'golden'
   medicationRulesVersion?: string
-  revealPolicies: ReadonlyArray<{ code: string; factCode: string; triggerCode: string }>
+  revealPolicies: ReadonlyArray<{
+    code: string
+    factCode: string
+    patientId?: string
+    triggerCode: string
+    triggerId?: string
+  }>
   scenarioId: string
   schemaVersion: string
   seed: number
@@ -748,7 +766,11 @@ export class ScenarioService {
   ): ScenarioBlueprint {
     return {
       clinicalReview: null,
-      hiddenFacts: content.hiddenFacts,
+      hiddenFacts: content.hiddenFacts.map(fact => ({
+        code: fact.code,
+        ...(fact.patientId === undefined ? {} : { patientId: fact.patientId }),
+        value: fact.value,
+      })),
       kind: 'candidate',
       medicationRulesVersion: 'prescription-conclusion-v1',
       catalog: content.catalog,
@@ -757,7 +779,11 @@ export class ScenarioService {
       revealPolicies: content.revealPolicies.map(policy => ({
         code: policy.code,
         factCode: policy.factCode,
-        triggerCode: policy.triggerCode,
+        ...(policy.patientId === undefined ? {} : { patientId: policy.patientId }),
+        triggerCode: policy.triggerCode === 'after-topic' && policy.triggerId !== undefined
+          ? `consultation-question:${policy.triggerId}`
+          : policy.triggerCode,
+        ...(policy.triggerId === undefined ? {} : { triggerId: policy.triggerId }),
       })),
       scenarioId: packageId,
       schemaVersion: content.schemaVersion,
@@ -787,7 +813,7 @@ export class ScenarioService {
               temperatureC: typeof physiology.temperatureC === 'number' ? physiology.temperatureC : 36.8,
             },
           },
-          questions: scenarioPatientQuestions(patient),
+          questions: scenarioPatientQuestions(patient, content.hiddenFacts, content.revealPolicies),
           fhirHistory: patient.fhirHistory,
           version: 1,
         }

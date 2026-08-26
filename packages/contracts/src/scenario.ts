@@ -421,14 +421,10 @@ export const scenarioDatasetContentSchema = z.object({
     code: z.string().min(1),
     factCode: z.string().min(1),
     patientId: z.string().min(1).optional(),
+    triggerId: z.string().min(1).optional(),
     triggerCode: z.enum([
-      'after-examination',
-      'after-request',
-      'after-time',
       'after-topic',
       'evaluator-only',
-      'initial',
-      'second-ask-concede',
     ]),
   }).strict()),
   schemaVersion: z.literal('1'),
@@ -486,6 +482,10 @@ export const scenarioProviderCapabilitiesSchema = z.object({
   providerId: z.enum(['builtin', 'synthea']),
   providerName: z.string().min(1),
   unavailableReason: z.string().min(1).optional(),
+}).strict()
+
+export const scenarioProviderCapabilitiesListSchema = z.object({
+  items: z.array(scenarioProviderCapabilitiesSchema),
 }).strict()
 
 export const scenarioGenerationJobSchema = z.object({

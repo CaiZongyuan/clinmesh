@@ -3,7 +3,11 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fhirBundleSchema, fhirResourceSchema } from '@clinmesh/contracts/fhir'
-import { scenarioDatasetListSchema, scenarioDatasetSchema } from '@clinmesh/contracts/scenario'
+import {
+  scenarioDatasetListSchema,
+  scenarioDatasetSchema,
+  scenarioProviderCapabilitiesListSchema,
+} from '@clinmesh/contracts/scenario'
 import {
   apiErrorSchema,
   clinicalCatalogSchema,
@@ -609,7 +613,7 @@ describe('trusted session and Scenario HTTP contract', () => {
     })
 
     expect(capabilitiesResponse.status).toBe(200)
-    expect(await capabilitiesResponse.json()).toEqual({
+    expect(scenarioProviderCapabilitiesListSchema.parse(await capabilitiesResponse.json())).toEqual({
       items: [{
         available: true,
         maxPopulation: 1_000,

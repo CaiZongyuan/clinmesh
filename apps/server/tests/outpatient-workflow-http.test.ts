@@ -3882,7 +3882,7 @@ describe('outpatient workflow HTTP contract', () => {
           },
           input: {
             expectedVersion: 1,
-            questionCode: 'infection-cause',
+            questionCode: 'relevant-history',
           },
         }),
         headers: commandHeaders(doctorCookie),
@@ -3890,12 +3890,13 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
 
-    expect(askResponse.status).toBe(200)
-    const answer = askConsultationQuestionResponseSchema.parse(await askResponse.json())
+    const askBody: unknown = await askResponse.json()
+    expect(askResponse.status, JSON.stringify(askBody)).toBe(200)
+    const answer = askConsultationQuestionResponseSchema.parse(askBody)
     expect(answer.data.record).toMatchObject({
-      answer: '目前还不知道，需要等检查结果。',
+      answer: '目前不清楚，需要等检查结果。',
       question: {
-        code: 'infection-cause',
+        code: 'relevant-history',
         text: '知道是什么感染引起的吗？',
       },
     })
@@ -3906,12 +3907,115 @@ describe('outpatient workflow HTTP contract', () => {
     const publicDetail = await detailResponse.json()
     expect(doctorCaseDetailSchema.parse(publicDetail)).toMatchObject({
       consultation: {
-        records: [expect.objectContaining({ answer: '目前还不知道，需要等检查结果。' })],
+        records: [expect.objectContaining({ answer: '目前不清楚，需要等检查结果。' })],
       },
     })
     expect(JSON.stringify({ answer, publicDetail })).not.toMatch(
       /influenza|respiratory-pathogen|paid-lis-report|hidden.?fact/i,
     )
+  })
+
+  it('reveals a Dataset Hidden Fact only through its installed patient topic policy', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-dataset-consultation-policy-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const adminCookie = await signIn(runtime, 'admin@demo.clinmesh.local', password)
+    const generateResponse = await runtime.app.request(
+      '/api/sim/v1/scenario-datasets/actions/generate',
+      {
+        body: JSON.stringify({
+          modules: ['fever'],
+          name: '问诊揭示样本',
+          population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
+          providerId: 'builtin',
+          seeds: { clinical: 71, population: 29 },
+          timeRange: { end: '2026-08-01', start: '2020-01-01' },
+          timeZone: 'Asia/Shanghai',
+        }),
+        headers: commandHeaders(adminCookie),
+        method: 'POST',
+      },
+    )
+    const generated = z.object({ data: scenarioDatasetSchema }).passthrough()
+      .parse(await generateResponse.json()).data
+    const patient = generated.content.patients[0]!
+    const topic = patient.symptomResponses[0]!
+    const factCode = `topic-fact-${patient.id}`
+    const updateResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}`,
+      {
+        body: JSON.stringify({
+          expectedVersion: 1,
+          input: {
+            content: {
+              ...generated.content,
+              hiddenFacts: [...generated.content.hiddenFacts, {
+                code: factCode,
+                patientId: patient.id,
+                value: '昨夜开始高热，伴明显咽痛。',
+              }],
+              revealPolicies: [...generated.content.revealPolicies, {
+                code: `after-topic-${patient.id}`,
+                factCode,
+                patientId: patient.id,
+                triggerCode: 'after-topic',
+                triggerId: topic.id,
+              }],
+            },
+            name: generated.name,
+          },
+        }),
+        headers: commandHeaders(adminCookie),
+        method: 'PUT',
+      },
+    )
+    expect(updateResponse.status).toBe(200)
+    const updated = z.object({ data: scenarioDatasetSchema }).passthrough()
+      .parse(await updateResponse.json()).data
+    const installResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}/actions/install`,
+      {
+        body: JSON.stringify({ expectedVersion: updated.version }),
+        headers: commandHeaders(adminCookie),
+        method: 'POST',
+      },
+    )
+    expect(installResponse.status).toBe(200)
+
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const askResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${started.encounterId}`]: '1',
+            [`Task/${started.queueTaskId}`]: '1',
+          },
+          input: { expectedVersion: 1, questionCode: topic.id },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+
+    expect(askResponse.status).toBe(200)
+    expect(askConsultationQuestionResponseSchema.parse(await askResponse.json())).toMatchObject({
+      data: {
+        record: {
+          answer: '昨夜开始高热，伴明显咽痛。',
+          question: { code: topic.id },
+        },
+      },
+    })
   })
 
   it('rejects a Consultation Record command from a non-doctor role', async () => {

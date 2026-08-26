@@ -10,7 +10,7 @@ ClinMesh 的 Scenario 初始事实原本由服务端内置蓝图直接拥有，�
 
 `ScenarioGenerationProvider` 是患者与场景来源的窄边界，只暴露能力查询和受控生成。Provider 返回经过运行时验证的 `ScenarioDatasetContent`，不直接写活动 Epoch、FHIR Repository 或 HIS 领域表。内置 Provider 始终可用；未配置的外部 Provider 通过能力结果报告不可用，不参与 Server 启动门禁。
 
-`scenario_dataset` 保存 Workspace 内管理员可编辑的生成结果。Dataset 使用 expected version 防止并发覆盖，并保存规范化内容哈希和稳定诊断；错误诊断不阻止继续编辑，但阻止安装。普通岗位不能读取或修改 Dataset。
+`scenario_dataset`、`scenario_package` 和 `scenario_generation_job` 是 Workspace 级 authoring 资产，不属于任何活动 Epoch。Dataset 使用 expected version 防止并发覆盖，并保存规范化内容哈希和稳定诊断；错误诊断不阻止继续编辑，但阻止安装。普通岗位不能读取或修改这些资产。生成任务对 Dataset 的复合外键只表达可删除来源，删除 Dataset 时置空；任务的 `result_dataset_id` 独立保留完成时的历史标识。
 
 安装操作把指定 Dataset 版本复制为不可变 `scenario_package`，再由共享 `ScenarioService` 创建新 Epoch。Scenario 定义使用 Package 标识，reset 从 Package 快照重建，而不是回读来源 Dataset。删除或继续编辑 Dataset 因此不会改变已安装运行的定义哈希和重置结果。
 
@@ -31,6 +31,8 @@ ClinMesh 的 Scenario 初始事实原本由服务端内置蓝图直接拥有，�
 新增生成器需要实现同一 Provider interface，并在内容进入 Dataset 前完成来源特有的验证和转换。Provider 不拥有 Dataset 生命周期、安装事务或运行时状态。
 
 Dataset schema 与 Package 快照格式是持久化合同。改变字段、规范化哈希或诊断语义时必须提供显式迁移，并验证旧 Package 的 reset；不能通过重新调用 Provider 恢复既有运行。
+
+Workspace 级 authoring 资产可以跨 reset 和 Epoch 切换继续管理。只有安装事务把 Package 内容投影到新的 Epoch；运行事实仍必须携带 Workspace/Epoch，并使用限制删除的引用完整性规则。
 
 安装事务同时创建不可变 Package、Scenario 定义和新 Epoch。该路径继续使用共享 Scenario 状态转换，因此 Web、HTTP 和未来 Agent adapter 不能各自复制安装状态机。
 

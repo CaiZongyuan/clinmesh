@@ -1237,7 +1237,7 @@ Repository 边界降低业务代码耦合，但不承诺直接复制 `.sqlite` �
 
 ### 10.1 Workspace 隔离
 
-每次人类演示或未来 Agent 运行创建 Scenario Run，并在 Workspace 内使用不可复用的 Epoch 标识一次具体数据世代。所有资源、索引、领域表、session context、approval、Command、outbox、callback 和 Action Trace 都绑定 `workspace_id + epoch`；审计保留域独立，不随 reset 删除。
+每次人类演示或未来 Agent 运行创建 Scenario Run，并在 Workspace 内使用不可复用的 Epoch 标识一次具体数据世代。所有运行资源、索引、领域表、session context、approval、Command、outbox、callback 和 Action Trace 都绑定 `workspace_id + epoch`；审计保留域独立，不随 reset 删除。`scenario_dataset`、`scenario_package` 和 `scenario_generation_job` 是安装前的 Workspace 级 authoring 资产，故意跨 Epoch 存续，不能被业务 API 当作当前 Epoch 事实读取。
 
 首期所有 Workspace 共用一个 SQLite 文件并按行隔离。数据库文件不是 Workspace 边界；任何查询和约束都必须显式携带 Workspace/Epoch。
 
@@ -1245,7 +1245,7 @@ Repository 边界降低业务代码耦合，但不承诺直接复制 `.sqlite` �
 
 - workspace/epoch 由认证上下文注入 repository，业务调用者不能选择；`X-Workspace-Id` 最多作为必须与 token 一致的断言，不能用于切换上下文。
 - 每次请求重验 active epoch、membership、delegation grant 和 policy version，不能只信 token 中可能陈旧的角色/location claims。
-- 所有表、唯一键、外键、索引和 SQL 都包含 workspace/epoch；schema/query lint 拒绝缺少隔离键的租户关系和查询。
+- 运行事实的表、唯一键、外键、索引和 SQL 都包含 Workspace/Epoch；schema/query lint 拒绝缺少隔离键的租户运行关系和查询。Workspace 级 authoring 资产只使用 Workspace 隔离，安装时才复制为绑定新 Epoch 的运行事实。
 - Search total、include/revinclude、cursor、history、outbox lease、Action Trace 和 FHIR 投影同样执行隔离。
 - FHIR Reference 写入解析目标并拒绝跨 workspace/epoch 引用。
 
@@ -1276,7 +1276,7 @@ clock_revision
 
 所有 seed、账户、患者、机构、目录、支付和检验内容都是合成数据。内置生成器始终可用；Synthea 固定版本并通过 `compose.synthea.yaml` 中的独立容器按需启用，未配置、不可达或失败只影响对应持久生成任务，不影响 Server 启动、既有 Dataset、Scenario Run 或内置生成。Synthea FHIR R4 Bundle 只作为编译输入，严格白名单转换为中国化 CaseTruth；美国机构、地址、付款方和标识不进入运行事实。LLM 不生成结构化真值，当前也不声明正式 FHIR Profile/IG 校验。
 
-Dataset 保存规范化内容哈希、expected version 和稳定诊断；错误诊断允许继续编辑但阻止安装。Package 与来源 Dataset 分离，安装后的 reset 只读取不可变 Package 快照，不重新调用 Provider 或当前编译器。CaseTruth 保存患者认知、纵向病史、本次就诊、生理生成器、三级检查来源、诊断与处置空间及费用基准；Hospital Baseline 保存虚构医院、科室、诊断、检查、药品和库存目录。OpenHIS 只用于校准中国医院字段、关系和状态语义，不复制其数据或物理模型。
+Dataset 保存规范化内容哈希、expected version 和稳定诊断；错误诊断允许继续编辑但阻止安装。Package 与来源 Dataset 分离，安装后的 reset 只读取不可变 Package 快照，不重新调用 Provider 或当前编译器。生成任务到 Dataset 的复合外键是可空来源链接：删除 Dataset 时使用 `ON DELETE SET NULL`，任务仍以独立 `result_dataset_id` 保留完成时的结果标识；该例外不用于 Package、Epoch 或 HIS 运行事实。CaseTruth 保存患者认知、纵向病史、本次就诊、生理生成器、三级检查来源、诊断与处置空间及费用基准；Hospital Baseline 保存虚构医院、科室、诊断、检查、药品和库存目录。OpenHIS 只用于校准中国医院字段、关系和状态语义，不复制其数据或物理模型。
 
 ### 10.4 确定性与故障注入
 
