@@ -34,7 +34,11 @@ import {
 } from '@tanstack/react-query'
 import { CircleAlertIcon, LogInIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { readWebPreferences, writeWebPreferences } from './preferences.ts'
+import {
+  applyResolvedWebTheme,
+  readWebPreferences,
+  writeWebPreferences,
+} from './preferences.ts'
 import {
   ApiClientError,
   getSession,
@@ -99,21 +103,13 @@ function WorkspacePage({ activeSection }: { activeSection: WorkspaceSection }): 
   }, [preferences])
 
   useEffect(() => {
-    const root = document.documentElement
-
-    const applyTheme = (theme: 'light' | 'dark'): void => {
-      root.classList.toggle('dark', theme === 'dark')
-      root.dataset.theme = theme
-      root.style.colorScheme = theme
-    }
-
     if (preferences.theme !== 'system') {
-      applyTheme(preferences.theme)
+      applyResolvedWebTheme(preferences.theme)
       return
     }
 
     const mediaQuery = window.matchMedia(DARK_MODE_QUERY)
-    const applySystemTheme = (): void => applyTheme(mediaQuery.matches ? 'dark' : 'light')
+    const applySystemTheme = (): void => applyResolvedWebTheme(mediaQuery.matches ? 'dark' : 'light')
 
     applySystemTheme()
     mediaQuery.addEventListener('change', applySystemTheme)

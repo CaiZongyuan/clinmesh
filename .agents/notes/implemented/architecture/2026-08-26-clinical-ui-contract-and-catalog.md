@@ -10,7 +10,7 @@ ClinMesh 的 Web/Desktop 需要稳定的高信息密度视觉合同，但静态�
 
 `packages/ui/src/styles.css` 拥有 Web/Desktop 的语义 token，`packages/ui/src/components` 拥有共享视觉 primitive，`docs/ui/design.md` 解释稳定的人机合同。Web 工作台组合这些入口，不复制颜色、状态机或 primitive 样式；Mobile 继续使用独立 React Native UI。
 
-Web 提供无需登录的 `/components` 路由。该路由不请求应用 API，直接静态导入真实 `@clinmesh/ui/components/*`，并通过三个可键盘操作的 Tabs 展示尺寸、variant、disabled、focus、loading、error、临床表格、语义状态、AlertDialog、Toast、亮暗主题、长中文和固定提交区。页面不成为第二个组件注册表，也不复制 shadcn 示例源码。
+Web 提供无需登录的 `/components` 路由。该路由不请求应用 API，直接静态导入真实 `@clinmesh/ui/components/*`，遵循现有中英文与主题偏好，并通过三个可键盘操作的 Tabs 展示尺寸、variant、disabled、focus、loading、error、临床表格、语义状态、AlertDialog、Toast、长中文和固定提交区。页面不成为第二个组件注册表，也不复制 shadcn 示例源码。
 
 `packages/ui` 运行自身的可访问性测试，固定 Spinner 的 status 名称、Tabs 的键盘激活和 AlertDialog 的命名及焦点恢复。Web 测试从 `/components` 公共路由验证零网络访问和目录交互。设计文档通过 `apps/docs/docs.ts` 投影到文档站。
 

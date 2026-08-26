@@ -91,7 +91,7 @@ AlertDialog 必须包含 Title 和 Description，打开后管理焦点，关闭�
 
 ## 真实组件目录
 
-Web 的公共 `/components` 路由不要求登录，也不请求应用 API。页面静态导入 `@clinmesh/ui/components/*`，因此展示、测试和业务页面消费同一份 primitive 源码。
+Web 的公共 `/components` 路由不要求登录，也不请求应用 API。页面静态导入 `@clinmesh/ui/components/*`，因此展示、测试和业务页面消费同一份 primitive 源码。目录读取现有 Web 偏好中的 locale 与主题，中文和英文使用同一布局与组件状态。
 
 目录分为“控件与表单”“临床数据与状态”“弹层与反馈”三个 Tabs，覆盖：
 
@@ -106,6 +106,6 @@ Web 的公共 `/components` 路由不要求登录，也不请求应用 API。页
 
 所有交互控件必须有可访问名称，图标装饰使用 `aria-hidden`，焦点使用 `ring` token 且不可被布局裁切。错误文本命名错误主体，Toast 使用礼貌 live region，确认弹层使用 `alertdialog`。长中文必须在 390px 移动宽度内保持可读，不遮挡相邻内容或固定提交区。
 
-包级契约位于 [`packages/ui/src/components/accessibility.test.tsx`](../../packages/ui/src/components/accessibility.test.tsx)，覆盖 Spinner、Tabs 和 AlertDialog。公共路由与目录工作流位于 [`apps/web/src/app/web-app.test.tsx`](../../apps/web/src/app/web-app.test.tsx)，覆盖零网络访问、键盘 Tabs、表单状态、临床数据、弹层、Toast 和主题持久化。
+包级契约位于 [`packages/ui/tests/accessibility.test.tsx`](../../packages/ui/tests/accessibility.test.tsx)，覆盖 Spinner、Tabs 和 AlertDialog。公共路由与目录工作流位于 [`apps/web/src/app/web-app.test.tsx`](../../apps/web/src/app/web-app.test.tsx)，覆盖零网络访问、中英文偏好、键盘 Tabs、表单状态、临床数据、弹层、Toast 和主题持久化。
 
 代码变更先运行受影响包的 typecheck 与测试。文档或公开投影变更运行 `pnpm doc-sync`。用户可见变更还需从真实 `/components` 入口在桌面和移动视口检查布局、焦点、弹层、Toast 和主题。

@@ -133,6 +133,22 @@ describe('Web application shell', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it('localizes the public component catalog from the saved Web preference', async () => {
+    localStorage.setItem('clinmesh.preferences:v1', JSON.stringify({
+      locale: 'en-US',
+      theme: 'system',
+    }))
+    window.history.replaceState(null, '', '/components')
+
+    await renderWebApp()
+
+    expect(document.documentElement.lang).toBe('en-US')
+    expect(screen.getByRole('heading', { level: 1, name: 'Component catalog' })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: 'Controls and forms' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Dark theme' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { level: 1, name: '组件目录' })).toBeNull()
+  })
+
   it('switches component catalog sections with the keyboard', async () => {
     window.history.replaceState(null, '', '/components')
     const user = userEvent.setup()
@@ -161,7 +177,7 @@ describe('Web application shell', () => {
     expect(screen.getByRole('textbox', { name: '患者姓名' })).toHaveProperty('disabled', true)
     expect(screen.getByRole('textbox', { name: '初步诊断' }).getAttribute('aria-invalid')).toBe('true')
     expect(screen.getByRole('alert', { name: '诊断不能为空' })).toBeTruthy()
-    expect(screen.getByRole('status', { name: '正在提交' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '正在提交' })).toHaveProperty('disabled', true)
     expect(screen.getByRole('region', { name: '固定提交区' })).toBeTruthy()
   })
 

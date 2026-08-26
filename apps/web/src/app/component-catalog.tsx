@@ -32,120 +32,126 @@ import {
   SunIcon,
   Trash2Icon,
 } from 'lucide-react'
-import { useState } from 'react'
-import { readWebPreferences, writeWebPreferences } from './preferences.ts'
+import { useEffect, useState } from 'react'
+import {
+  getComponentCatalogMessages,
+  type ComponentCatalogMessages,
+} from './component-catalog-i18n.ts'
+import {
+  applyResolvedWebTheme,
+  readWebPreferences,
+  type ResolvedWebTheme,
+  writeWebPreferences,
+} from './preferences.ts'
 
-type CatalogTheme = 'light' | 'dark'
-
-function currentDocumentTheme(): CatalogTheme {
+function currentDocumentTheme(): ResolvedWebTheme {
   return document.documentElement.classList.contains('dark') ? 'dark' : 'light'
 }
 
-function applyDocumentTheme(theme: CatalogTheme): void {
-  const root = document.documentElement
-  root.classList.toggle('dark', theme === 'dark')
-  root.dataset.theme = theme
-  root.style.colorScheme = theme
+function persistCatalogTheme(theme: ResolvedWebTheme): void {
+  applyResolvedWebTheme(theme)
   writeWebPreferences({ ...readWebPreferences(), theme })
 }
 
-function ThemeControl(): React.JSX.Element {
+function ThemeControl({ messages }: { messages: ComponentCatalogMessages }): React.JSX.Element {
   const [theme, setTheme] = useState(currentDocumentTheme)
 
   return (
     <ToggleGroup
-      aria-label="预览主题"
+      aria-label={messages.themePreview}
       onValueChange={values => {
-        const nextTheme = (values as CatalogTheme[])[0]
+        const nextTheme = (values as ResolvedWebTheme[])[0]
         if (nextTheme === undefined) return
         setTheme(nextTheme)
-        applyDocumentTheme(nextTheme)
+        persistCatalogTheme(nextTheme)
       }}
       size="sm"
       spacing={0}
       value={[theme]}
       variant="outline"
     >
-      <ToggleGroupItem aria-label="亮色主题" title="亮色主题" value="light">
+      <ToggleGroupItem aria-label={messages.lightTheme} title={messages.lightTheme} value="light">
         <SunIcon aria-hidden="true" />
       </ToggleGroupItem>
-      <ToggleGroupItem aria-label="暗色主题" title="暗色主题" value="dark">
+      <ToggleGroupItem aria-label={messages.darkTheme} title={messages.darkTheme} value="dark">
         <MoonIcon aria-hidden="true" />
       </ToggleGroupItem>
     </ToggleGroup>
   )
 }
 
-function ButtonShowcase(): React.JSX.Element {
+function ButtonShowcase({ messages }: { messages: ComponentCatalogMessages }): React.JSX.Element {
   return (
     <section aria-labelledby="catalog-buttons-heading" className="flex flex-col gap-4 border-b pb-8">
-      <h2 className="text-sm font-semibold" id="catalog-buttons-heading">按钮</h2>
+      <h2 className="text-sm font-semibold" id="catalog-buttons-heading">{messages.buttonsHeading}</h2>
       <div className="flex flex-wrap items-end gap-3">
         <Button size="xs" type="button">
           <FilePlus2Icon data-icon="inline-start" />
-          补录
+          {messages.addendum}
         </Button>
-        <Button size="sm" type="button">暂存</Button>
-        <Button type="button">保存病历</Button>
+        <Button size="sm" type="button">{messages.temporarySave}</Button>
+        <Button type="button">{messages.saveRecord}</Button>
         <Button size="lg" type="button">
           <CheckIcon data-icon="inline-start" />
-          提交签署
+          {messages.signAndSubmit}
         </Button>
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <Button variant="secondary" type="button">次要操作</Button>
-        <Button variant="outline" type="button">调整</Button>
-        <Button variant="ghost" type="button">取消</Button>
+        <Button variant="secondary" type="button">{messages.secondaryAction}</Button>
+        <Button variant="outline" type="button">{messages.adjust}</Button>
+        <Button variant="ghost" type="button">{messages.cancel}</Button>
         <Button variant="destructive" type="button">
           <Trash2Icon data-icon="inline-start" />
-          删除草稿
+          {messages.deleteDraft}
         </Button>
-        <Button disabled type="button">无权限</Button>
+        <Button disabled type="button">{messages.noPermission}</Button>
         <Button disabled type="button">
-          <Spinner aria-label="正在提交" data-icon="inline-start" />
-          提交中
+          <Spinner aria-hidden="true" data-icon="inline-start" />
+          {messages.submitting}
         </Button>
       </div>
     </section>
   )
 }
 
-function FormShowcase(): React.JSX.Element {
+function FormShowcase({ messages }: { messages: ComponentCatalogMessages }): React.JSX.Element {
   return (
     <section aria-labelledby="catalog-form-heading" className="flex flex-col gap-4">
-      <h2 className="text-sm font-semibold" id="catalog-form-heading">临床表单</h2>
+      <h2 className="text-sm font-semibold" id="catalog-form-heading">{messages.clinicalFormHeading}</h2>
       <form id="component-catalog-form" onSubmit={event => event.preventDefault()}>
         <FieldGroup className="md:grid md:grid-cols-2">
           <Field data-disabled>
-            <FieldLabel htmlFor="catalog-patient-name">患者姓名</FieldLabel>
-            <Input disabled id="catalog-patient-name" value="合成患者周敏" readOnly />
+            <FieldLabel htmlFor="catalog-patient-name">{messages.patientNameLabel}</FieldLabel>
+            <Input disabled id="catalog-patient-name" value={messages.syntheticPatientName} readOnly />
           </Field>
           <Field>
-            <FieldLabel htmlFor="catalog-chief-complaint">主诉</FieldLabel>
-            <Input defaultValue="发热伴咳嗽三天" id="catalog-chief-complaint" />
+            <FieldLabel htmlFor="catalog-chief-complaint">{messages.chiefComplaintLabel}</FieldLabel>
+            <Input defaultValue={messages.chiefComplaintValue} id="catalog-chief-complaint" />
           </Field>
           <Field data-invalid>
-            <FieldLabel htmlFor="catalog-diagnosis">初步诊断</FieldLabel>
+            <FieldLabel htmlFor="catalog-diagnosis">{messages.preliminaryDiagnosisLabel}</FieldLabel>
             <Input
               aria-describedby="catalog-diagnosis-error"
               aria-invalid="true"
               id="catalog-diagnosis"
-              placeholder="请选择或输入诊断"
+              placeholder={messages.diagnosisPlaceholder}
             />
-            <FieldError aria-label="诊断不能为空" id="catalog-diagnosis-error">诊断不能为空</FieldError>
+            <FieldError aria-label={messages.diagnosisRequired} id="catalog-diagnosis-error">
+              {messages.diagnosisRequired}
+            </FieldError>
           </Field>
           <Field>
-            <FieldLabel id="catalog-priority-label">处置优先级</FieldLabel>
+            <FieldLabel id="catalog-priority-label">{messages.priorityLabel}</FieldLabel>
             <ToggleGroup aria-labelledby="catalog-priority-label" defaultValue={['routine']} variant="outline">
-              <ToggleGroupItem value="routine">常规</ToggleGroupItem>
-              <ToggleGroupItem value="urgent">急查</ToggleGroupItem>
-              <ToggleGroupItem disabled value="critical">危急</ToggleGroupItem>
+              <ToggleGroupItem value="routine">{messages.routine}</ToggleGroupItem>
+              <ToggleGroupItem value="urgent">{messages.urgent}</ToggleGroupItem>
+              <ToggleGroupItem disabled value="critical">{messages.critical}</ToggleGroupItem>
             </ToggleGroup>
           </Field>
           <Field className="md:col-span-2">
-            <FieldLabel htmlFor="catalog-history">现病史</FieldLabel>
+            <FieldLabel htmlFor="catalog-history">{messages.presentIllnessLabel}</FieldLabel>
             <Textarea
-              defaultValue="患者三日前无明显诱因出现发热，最高体温三十八点六摄氏度，伴阵发性咳嗽、少量白痰，无胸痛、咯血及明显呼吸困难。"
+              defaultValue={messages.historyValue}
               id="catalog-history"
             />
           </Field>
@@ -155,67 +161,67 @@ function FormShowcase(): React.JSX.Element {
   )
 }
 
-function ClinicalShowcase(): React.JSX.Element {
+function ClinicalShowcase({ messages }: { messages: ComponentCatalogMessages }): React.JSX.Element {
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-8">
       <section aria-labelledby="catalog-status-heading" className="flex flex-col gap-4 border-b pb-8">
-        <h2 className="text-sm font-semibold" id="catalog-status-heading">语义状态</h2>
+        <h2 className="text-sm font-semibold" id="catalog-status-heading">{messages.semanticStatusHeading}</h2>
         <div className="flex flex-wrap gap-2">
-          <Badge>进行中</Badge>
-          <Badge variant="secondary">待接诊</Badge>
-          <Badge variant="success">已完成</Badge>
-          <Badge variant="warning">待复核</Badge>
-          <Badge variant="info">已同步</Badge>
-          <Badge variant="destructive">青霉素过敏</Badge>
-          <Badge variant="outline">已停用</Badge>
+          <Badge>{messages.inProgress}</Badge>
+          <Badge variant="secondary">{messages.awaitingConsultation}</Badge>
+          <Badge variant="success">{messages.completed}</Badge>
+          <Badge variant="warning">{messages.awaitingReview}</Badge>
+          <Badge variant="info">{messages.synced}</Badge>
+          <Badge variant="destructive">{messages.penicillinAllergy}</Badge>
+          <Badge variant="outline">{messages.discontinued}</Badge>
         </div>
       </section>
       <section aria-labelledby="catalog-table-heading" className="flex flex-col gap-4 border-b pb-8">
-        <h2 className="text-sm font-semibold" id="catalog-table-heading">临床表格</h2>
-        <Table aria-label="门诊检验结果">
+        <h2 className="text-sm font-semibold" id="catalog-table-heading">{messages.tableHeading}</h2>
+        <Table aria-label={messages.tableLabel}>
           <TableHeader>
             <TableRow>
-              <TableHead>采样时间</TableHead>
-              <TableHead>检验项目</TableHead>
-              <TableHead>结果</TableHead>
-              <TableHead>参考范围</TableHead>
-              <TableHead>状态</TableHead>
+              <TableHead>{messages.sampleTime}</TableHead>
+              <TableHead>{messages.testItem}</TableHead>
+              <TableHead>{messages.result}</TableHead>
+              <TableHead>{messages.referenceRange}</TableHead>
+              <TableHead>{messages.status}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             <TableRow>
               <TableCell className="tabular-nums">08:42</TableCell>
-              <TableCell>血常规·白细胞计数</TableCell>
+              <TableCell>{messages.cbc}</TableCell>
               <TableCell className="font-medium tabular-nums">12.6 × 10^9/L</TableCell>
               <TableCell className="tabular-nums">3.5–9.5</TableCell>
-              <TableCell><Badge variant="warning">偏高</Badge></TableCell>
+              <TableCell><Badge variant="warning">{messages.high}</Badge></TableCell>
             </TableRow>
             <TableRow>
               <TableCell className="tabular-nums">08:42</TableCell>
-              <TableCell>C 反应蛋白</TableCell>
+              <TableCell>{messages.crp}</TableCell>
               <TableCell className="font-medium tabular-nums">6.2 mg/L</TableCell>
               <TableCell className="tabular-nums">0–8</TableCell>
-              <TableCell><Badge variant="success">正常</Badge></TableCell>
+              <TableCell><Badge variant="success">{messages.normal}</Badge></TableCell>
             </TableRow>
           </TableBody>
         </Table>
       </section>
       <div className="grid gap-6 lg:grid-cols-2">
         <section aria-labelledby="catalog-loading-heading" className="flex flex-col gap-4">
-          <h2 className="text-sm font-semibold" id="catalog-loading-heading">加载状态</h2>
-          <div aria-label="正在加载病例" className="flex flex-col gap-3" role="status">
+          <h2 className="text-sm font-semibold" id="catalog-loading-heading">{messages.loadingHeading}</h2>
+          <div aria-label={messages.loadingCase} className="flex flex-col gap-3" role="status">
             <Skeleton className="h-5 w-40" />
             <Skeleton className="h-8 w-full" />
             <Skeleton className="h-8 w-4/5" />
           </div>
         </section>
         <section aria-labelledby="catalog-error-heading" className="flex flex-col gap-4">
-          <h2 className="text-sm font-semibold" id="catalog-error-heading">错误状态</h2>
-          <Alert aria-label="处方审查失败" variant="destructive">
+          <h2 className="text-sm font-semibold" id="catalog-error-heading">{messages.errorHeading}</h2>
+          <Alert aria-label={messages.prescriptionReviewFailed} variant="destructive">
             <CircleAlertIcon aria-hidden="true" />
-            <AlertTitle>处方审查失败</AlertTitle>
+            <AlertTitle>{messages.prescriptionReviewFailed}</AlertTitle>
             <AlertDescription>
-              请复核同一患者在本次就诊中已开具的全部药品、既往过敏记录与当前肾功能结果后再提交处方。
+              {messages.errorDescription}
             </AlertDescription>
           </Alert>
         </section>
@@ -224,68 +230,68 @@ function ClinicalShowcase(): React.JSX.Element {
   )
 }
 
-function FeedbackShowcase(): React.JSX.Element {
+function FeedbackShowcase({ messages }: { messages: ComponentCatalogMessages }): React.JSX.Element {
   return (
     <div className="mx-auto grid w-full max-w-7xl gap-8 lg:grid-cols-2">
       <section aria-labelledby="catalog-dialog-heading" className="flex flex-col items-start gap-4 border-b pb-8 lg:border-r lg:border-b-0 lg:pr-8">
-        <h2 className="text-sm font-semibold" id="catalog-dialog-heading">确认弹层</h2>
+        <h2 className="text-sm font-semibold" id="catalog-dialog-heading">{messages.dialogHeading}</h2>
         <AlertDialog>
           <AlertDialogTrigger render={<Button type="button" variant="destructive" />}>
             <Trash2Icon data-icon="inline-start" />
-            删除医嘱
+            {messages.deleteOrder}
           </AlertDialogTrigger>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogMedia><Trash2Icon aria-hidden="true" /></AlertDialogMedia>
-              <AlertDialogTitle>确认删除医嘱</AlertDialogTitle>
+              <AlertDialogTitle>{messages.confirmDeleteOrder}</AlertDialogTitle>
               <AlertDialogDescription>
-                删除后不会签发这条合成医嘱，当前病历中的其他内容不受影响。
+                {messages.dialogDescription}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>取消删除</AlertDialogCancel>
+              <AlertDialogCancel>{messages.cancelDeletion}</AlertDialogCancel>
               <AlertDialogAction variant="destructive">
                 <Trash2Icon data-icon="inline-start" />
-                确认删除
+                {messages.confirmDeletion}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
       </section>
       <section aria-labelledby="catalog-toast-heading" className="flex flex-col items-start gap-4">
-        <h2 className="text-sm font-semibold" id="catalog-toast-heading">操作反馈</h2>
+        <h2 className="text-sm font-semibold" id="catalog-toast-heading">{messages.operationFeedbackHeading}</h2>
         <div className="flex flex-wrap gap-3">
           <Button
             onClick={() => toast.add({
-              description: '合成患者的门诊病历草稿已更新。',
-              title: '病历已保存',
+              description: messages.successDescription,
+              title: messages.recordSaved,
               type: 'success',
             })}
             type="button"
           >
-            发送成功反馈
+            {messages.sendSuccessFeedback}
           </Button>
           <Button
             onClick={() => toast.add({
-              description: '当前病例版本已变化，请刷新后重试。',
-              title: '提交冲突',
+              description: messages.warningDescription,
+              title: messages.submissionConflict,
               type: 'warning',
             })}
             type="button"
             variant="outline"
           >
-            发送警告反馈
+            {messages.sendWarningFeedback}
           </Button>
           <Button
             onClick={() => toast.add({
-              description: '正在校验处方、检查申请和病历签署条件。',
-              title: '正在提交',
+              description: messages.loadingDescription,
+              title: messages.submitting,
               type: 'loading',
             })}
             type="button"
             variant="secondary"
           >
-            发送加载反馈
+            {messages.sendLoadingFeedback}
           </Button>
         </div>
       </section>
@@ -294,41 +300,48 @@ function FeedbackShowcase(): React.JSX.Element {
 }
 
 export function ComponentCatalog(): React.JSX.Element {
+  const locale = readWebPreferences().locale
+  const messages = getComponentCatalogMessages(locale)
+
+  useEffect(() => {
+    document.documentElement.lang = locale
+  }, [locale])
+
   return (
     <main className="flex min-h-svh flex-col bg-background text-foreground">
       <header className="sticky top-0 z-10 flex h-[3.375rem] shrink-0 items-center border-b bg-background px-4 sm:px-6">
-        <h1 className="text-base font-semibold">组件目录</h1>
-        <div className="ml-auto"><ThemeControl /></div>
+        <h1 className="text-base font-semibold">{messages.catalogTitle}</h1>
+        <div className="ml-auto"><ThemeControl messages={messages} /></div>
       </header>
       <Tabs className="min-h-0 flex-1 gap-0" defaultValue="controls">
         <div className="overflow-x-auto border-b px-4 sm:px-6">
-          <TabsList aria-label="组件分类" className="h-[2.875rem]" variant="line">
-            <TabsTrigger value="controls">控件与表单</TabsTrigger>
-            <TabsTrigger value="clinical">临床数据与状态</TabsTrigger>
-            <TabsTrigger value="feedback">弹层与反馈</TabsTrigger>
+          <TabsList aria-label={messages.categoryTabs} className="h-[2.875rem]" variant="line">
+            <TabsTrigger value="controls">{messages.controlsTab}</TabsTrigger>
+            <TabsTrigger value="clinical">{messages.clinicalTab}</TabsTrigger>
+            <TabsTrigger value="feedback">{messages.feedbackTab}</TabsTrigger>
           </TabsList>
         </div>
         <TabsContent className="p-4 sm:p-6" value="controls">
           <div className="mx-auto flex w-full max-w-7xl flex-col gap-8">
-            <ButtonShowcase />
-            <FormShowcase />
+            <ButtonShowcase messages={messages} />
+            <FormShowcase messages={messages} />
           </div>
         </TabsContent>
         <TabsContent className="p-4 sm:p-6" value="clinical">
-          <ClinicalShowcase />
+          <ClinicalShowcase messages={messages} />
         </TabsContent>
         <TabsContent className="p-4 sm:p-6" value="feedback">
-          <FeedbackShowcase />
+          <FeedbackShowcase messages={messages} />
         </TabsContent>
       </Tabs>
-      <section aria-label="固定提交区" className="sticky bottom-0 flex min-h-14 items-center justify-end gap-2 border-t bg-background px-4 py-3 sm:px-6">
+      <section aria-label={messages.submitRegion} className="sticky bottom-0 flex min-h-14 items-center justify-end gap-2 border-t bg-background px-4 py-3 sm:px-6">
         <Button form="component-catalog-form" type="button" variant="outline">
           <SaveIcon data-icon="inline-start" />
-          暂存
+          {messages.saveDraft}
         </Button>
         <Button form="component-catalog-form" type="submit">
           <SendIcon data-icon="inline-start" />
-          提交
+          {messages.submit}
         </Button>
       </section>
     </main>

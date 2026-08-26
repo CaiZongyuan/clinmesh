@@ -41,6 +41,7 @@ import {
   MessageScrollerViewport,
 } from '@clinmesh/ui/components/message-scroller'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
+import { Spinner } from '@clinmesh/ui/components/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
@@ -723,7 +724,7 @@ function ActiveDoctorWorkspace({
                   ) : null}
                   <Button disabled={startCandidate.isPending} onClick={() => startCandidate.mutate()} type="button">
                     {startCandidate.isPending
-                      ? <RefreshCwIcon aria-hidden="true" className="animate-spin" />
+                      ? <Spinner aria-hidden="true" />
                       : <PlayIcon aria-hidden="true" />}
                     {startCandidate.isPending ? messages.startingConsultation : messages.startConsultation}
                   </Button>

@@ -10,10 +10,10 @@ import {
   AlertDialogDescription,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from './alert-dialog.tsx'
-import { Button } from './button.tsx'
-import { Spinner } from './spinner.tsx'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './tabs.tsx'
+} from '../src/components/alert-dialog.tsx'
+import { Button } from '../src/components/button.tsx'
+import { Spinner } from '../src/components/spinner.tsx'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../src/components/tabs.tsx'
 
 describe('UI accessibility contracts', () => {
   afterEach(cleanup)
