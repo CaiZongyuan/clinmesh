@@ -311,6 +311,114 @@ function stubAdministratorWorkspace() {
   }))
 }
 
+function stubScenarioDataWorkspace() {
+  let generated = false
+  let dataset = {
+    content: {
+      catalog: { departments: [], investigations: [], medications: [] },
+      hiddenFacts: [],
+      hospital: { id: 'hospital-synthetic-renhe', locale: 'zh-CN', name: '仁和医院' },
+      inventory: [],
+      patients: [{
+        birthDate: '1988-03-16',
+        diagnosisSpace: {},
+        examinationFindings: {},
+        gender: 'female',
+        id: 'synthetic-patient-001',
+        investigations: [],
+        longitudinalHistory: [],
+        managementSpace: {},
+        name: '林晓',
+        patientKnowledge: { chiefComplaint: '发热、咽痛一天' },
+        physiologyBaseline: { temperatureC: 38.6 },
+        symptomResponses: [],
+      }],
+      reproduction: {
+        clinicalSeed: 7331,
+        generator: 'clinmesh-builtin-v1',
+        modules: ['fever'],
+        populationSeed: 4242,
+        timeRange: { end: '2026-08-01', start: '2020-01-01' },
+        timeZone: 'Asia/Shanghai',
+      },
+      revealPolicies: [],
+      schemaVersion: '1',
+      simulatorRules: [],
+    },
+    contentHash: 'a'.repeat(64),
+    createdAt: '2026-08-26T09:00:00+08:00',
+    datasetId: 'scenario-dataset-001',
+    diagnostics: [],
+    name: '发热门诊样本',
+    providerId: 'builtin',
+    updatedAt: '2026-08-26T09:00:00+08:00',
+    version: 1,
+    workspaceId: 'workspace-demo',
+  }
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname === '/api/auth/context') return Response.json(administratorSession)
+    if (url.pathname === '/api/sim/v1/scenario-providers') {
+      return Response.json({
+        items: [{
+          available: true,
+          maxPopulation: 1_000,
+          modules: ['fever', 'type-2-diabetes'],
+          providerId: 'builtin',
+          providerName: 'ClinMesh 内置生成器',
+        }, {
+          available: false,
+          maxPopulation: 500,
+          modules: ['fever', 'type-2-diabetes'],
+          providerId: 'synthea',
+          providerName: 'Synthea',
+          unavailableReason: '未配置 Synthea Provider',
+        }],
+      })
+    }
+    if (url.pathname === '/api/sim/v1/scenario-datasets' && init?.method !== 'POST') {
+      return Response.json({
+        items: generated ? [{
+          contentHash: dataset.contentHash,
+          createdAt: dataset.createdAt,
+          datasetId: dataset.datasetId,
+          diagnosticCounts: { error: 0, warning: 0 },
+          name: dataset.name,
+          patientCount: 1,
+          providerId: dataset.providerId,
+          updatedAt: dataset.updatedAt,
+          version: 1,
+        }] : [],
+        page: 1,
+        pageSize: 20,
+        total: generated ? 1 : 0,
+      })
+    }
+    if (url.pathname === '/api/sim/v1/scenario-datasets/actions/generate') {
+      generated = true
+      return Response.json(commandResponse(dataset))
+    }
+    if (url.pathname === `/api/sim/v1/scenario-datasets/${dataset.datasetId}` && init?.method === 'PUT') {
+      const body = JSON.parse(String(init.body)) as {
+        expectedVersion: number
+        input: { content: typeof dataset.content; name: string }
+      }
+      dataset = {
+        ...dataset,
+        content: body.input.content,
+        name: body.input.name,
+        updatedAt: '2026-08-26T09:01:00+08:00',
+        version: body.expectedVersion + 1,
+      }
+      return Response.json(commandResponse(dataset))
+    }
+    if (url.pathname === `/api/sim/v1/scenario-datasets/${dataset.datasetId}`) {
+      return Response.json(dataset)
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`)
+  }))
+}
+
 function stubEmptyRegistrarWorkspace() {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const path = new URL(String(input), 'http://localhost').pathname
@@ -560,6 +668,38 @@ describe('role workspaces', () => {
     expect(screen.getByRole('button', { name: 'Load high-volume data' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Reset current data' })).toBeTruthy()
     expect(document.body.textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
+  })
+
+  it('lets an administrator generate a Dataset while an optional Provider is unavailable', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace()
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    expect(await screen.findByRole('heading', { name: '模拟数据' })).toBeTruthy()
+    expect(await screen.findByText('Synthea')).toBeTruthy()
+    expect(screen.getByText('未配置 Synthea Provider')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '生成数据' }))
+    expect(await screen.findByText('发热门诊样本')).toBeTruthy()
+  })
+
+  it('edits a generated patient through structured Dataset fields', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace()
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('button', { name: '生成数据' }))
+    await user.click(await screen.findByRole('button', { name: '编辑 发热门诊样本' }))
+    const patientName = await screen.findByLabelText('患者姓名')
+    await user.clear(patientName)
+    await user.type(patientName, '合成患者李明')
+    await user.click(screen.getByRole('button', { name: '保存修改' }))
+
+    expect(await screen.findByText('版本 2')).toBeTruthy()
+    expect(screen.getByDisplayValue('合成患者李明')).toBeTruthy()
   })
 
   it('uses clinical operator language for the registrar empty state', async () => {

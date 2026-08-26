@@ -1,9 +1,17 @@
 import { createHash } from 'node:crypto'
 import { scenarioStateSchema } from '@clinmesh/contracts/his'
+import {
+  scenarioDatasetContentSchema,
+  type ScenarioDatasetContent,
+} from '@clinmesh/contracts/scenario'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import { z } from 'zod'
-import type { ActorContext, CommandResponse } from './command-executor.ts'
+import type {
+  ActorContext,
+  CommandHandlerResult,
+  CommandResponse,
+} from './command-executor.ts'
 import { CommandExecutor } from './command-executor.ts'
 import { syntheticAccounts } from './identity-service.ts'
 
@@ -351,7 +359,50 @@ const knownScenarioBlueprints = [
   ...Object.values(installableScenarioBlueprints),
 ] as const
 
-type ScenarioBlueprint = (typeof knownScenarioBlueprints)[number]
+interface ScenarioVirtualPatient {
+  birthDate: string
+  gender: 'female' | 'male' | 'other' | 'unknown'
+  id: string
+  name: string
+  patientId: string
+  presentation: {
+    chiefComplaint: string
+    summary: string
+    vitalSigns: {
+      bloodPressure: { diastolicMmHg: number; systolicMmHg: number }
+      oxygenSaturationPct: number
+      pulseBpm: number
+      respirationBpm: number
+      temperatureC: number
+    }
+  }
+  priorCondition?: { display: string; recordedDate: string }
+  questions: ReadonlyArray<{
+    answer: string
+    code: string
+    factCode: null | string
+    ordinal: number
+    revealedAnswer: null | string
+    text: string
+    version: number
+  }>
+  version: number
+}
+
+interface ScenarioBlueprint {
+  clinicalReview: null | Record<string, unknown>
+  hiddenFacts: ReadonlyArray<{ code: string; value: unknown }>
+  kind: 'candidate' | 'density' | 'golden'
+  medicationRulesVersion?: string
+  revealPolicies: ReadonlyArray<{ code: string; factCode: string; triggerCode: string }>
+  scenarioId: string
+  schemaVersion: string
+  seed: number
+  simulatorRules: ReadonlyArray<{ code: string; outcome: string; simulator: string }>
+  version: string
+  virtualPatients: readonly ScenarioVirtualPatient[]
+  virtualTime: string
+}
 
 export interface ScenarioState {
   clinicalReview: null | Record<string, unknown>
@@ -493,7 +544,8 @@ export class ScenarioService {
       const currentState = this.current(input.context)
       const blueprint = knownScenarioBlueprints.find(
         candidate => candidate.scenarioId === currentState.scenarioId,
-      ) ?? installableScenarioBlueprints.candidate
+      ) ?? this.#packageBlueprint(input.context.workspaceId, currentState.scenarioId)
+        ?? installableScenarioBlueprints.candidate
       return this.#transitionEpoch(input.context, blueprint)
     })
   }
@@ -518,6 +570,24 @@ export class ScenarioService {
       }
       return this.#transitionEpoch(input.context, installableScenarioBlueprints[input.kind])
     })
+  }
+
+  installPackage(input: {
+    content: ScenarioDatasetContent
+    context: ActorContext
+    packageId: string
+    version: number
+  }): CommandHandlerResult<ScenarioState> {
+    if (input.context.roleCode !== 'administrator') {
+      throw new ScenarioError('ROLE_NOT_ALLOWED', 'Only an administrator can install a Scenario Package')
+    }
+    const blueprint = this.#blueprintFromPackage(input.packageId, input.version, input.content)
+    this.#database.driver.prepare(`
+      INSERT INTO scenario_definition (
+        scenario_id, version, kind, schema_version, clinical_review_json
+      ) VALUES (?, ?, 'candidate', ?, NULL)
+    `).run(blueprint.scenarioId, blueprint.version, blueprint.schemaVersion)
+    return this.#transitionEpoch(input.context, blueprint)
   }
 
   #transitionEpoch(context: ActorContext, blueprint: ScenarioBlueprint) {
@@ -605,6 +675,82 @@ export class ScenarioService {
         blueprint.schemaVersion,
         blueprint.clinicalReview === null ? null : JSON.stringify(blueprint.clinicalReview),
       )
+    }
+  }
+
+  #packageBlueprint(workspaceId: string, packageId: string): ScenarioBlueprint | undefined {
+    const row = this.#database.driver.prepare(`
+      SELECT content_json, source_dataset_version
+      FROM scenario_package
+      WHERE workspace_id = ? AND package_id = ?
+    `).get(workspaceId, packageId) as {
+      content_json: string
+      source_dataset_version: number
+    } | undefined
+    if (row === undefined) return undefined
+    return this.#blueprintFromPackage(
+      packageId,
+      row.source_dataset_version,
+      scenarioDatasetContentSchema.parse(JSON.parse(row.content_json)),
+    )
+  }
+
+  #blueprintFromPackage(
+    packageId: string,
+    version: number,
+    content: ScenarioDatasetContent,
+  ): ScenarioBlueprint {
+    const policies = z.array(z.object({
+      code: z.string().min(1),
+      factCode: z.string().min(1),
+      triggerCode: z.string().min(1),
+    }).strict()).safeParse(content.revealPolicies)
+    const rules = z.array(z.object({
+      code: z.string().min(1),
+      outcome: z.string().min(1),
+      simulator: z.string().min(1),
+    }).strict()).safeParse(content.simulatorRules)
+    return {
+      clinicalReview: null,
+      hiddenFacts: content.hiddenFacts,
+      kind: 'candidate',
+      medicationRulesVersion: 'prescription-conclusion-v1',
+      revealPolicies: policies.success ? policies.data : [],
+      scenarioId: packageId,
+      schemaVersion: content.schemaVersion,
+      seed: content.reproduction.clinicalSeed,
+      simulatorRules: rules.success ? rules.data : installableScenarioBlueprints.candidate.simulatorRules,
+      version: `dataset-${version}`,
+      virtualPatients: content.patients.map((patient) => {
+        const chiefComplaint = typeof patient.patientKnowledge.chiefComplaint === 'string'
+          ? patient.patientKnowledge.chiefComplaint
+          : '门诊复诊'
+        const answers = patient.symptomResponses.map(response => (
+          typeof response.answer === 'string' ? response.answer : '患者无补充。'
+        ))
+        const physiology = patient.physiologyBaseline
+        return candidateVirtualPatient({
+          answers: [answers[0] ?? chiefComplaint, answers[1] ?? '无其他明显不适。', answers[2] ?? '无补充病史。'],
+          birthDate: patient.birthDate,
+          chiefComplaint,
+          gender: patient.gender === 'other' || patient.gender === 'unknown' ? 'female' : patient.gender,
+          id: `virtual-${patient.id}`,
+          name: patient.name,
+          patientId: patient.id,
+          summary: chiefComplaint,
+          vitalSigns: {
+            bloodPressure: {
+              diastolicMmHg: typeof physiology.diastolicMmHg === 'number' ? physiology.diastolicMmHg : 76,
+              systolicMmHg: typeof physiology.systolicMmHg === 'number' ? physiology.systolicMmHg : 118,
+            },
+            oxygenSaturationPct: typeof physiology.oxygenSaturationPct === 'number' ? physiology.oxygenSaturationPct : 98,
+            pulseBpm: typeof physiology.pulseBpm === 'number' ? physiology.pulseBpm : 88,
+            respirationBpm: typeof physiology.respirationBpm === 'number' ? physiology.respirationBpm : 18,
+            temperatureC: typeof physiology.temperatureC === 'number' ? physiology.temperatureC : 36.8,
+          },
+        })
+      }),
+      virtualTime: `${content.reproduction.timeRange.end}T09:00:00+08:00`,
     }
   }
 

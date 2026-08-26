@@ -6,7 +6,8 @@
   "exports": {
     "./fhir": "./src/fhir.ts",
     "./health": "./src/health.ts",
-    "./his": "./src/his.ts"
+    "./his": "./src/his.ts",
+    "./scenario": "./src/scenario.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

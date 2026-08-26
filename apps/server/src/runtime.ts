@@ -2,6 +2,8 @@ import { createApp } from './app.ts'
 import { IdentityService } from './application/identity-service.ts'
 import { CommandExecutor, type ActorContext } from './application/command-executor.ts'
 import { ScenarioService } from './application/scenario-service.ts'
+import { ScenarioDataService } from './application/scenario-data/scenario-data-service.ts'
+import { UnavailableScenarioGenerationProvider } from './application/scenario-data/provider.ts'
 import { WorkflowService } from './application/workflow-service.ts'
 import { OutboxDispatcher } from './application/outbox-dispatcher.ts'
 import { z } from 'zod'
@@ -12,6 +14,8 @@ import {
 } from './infrastructure/sqlite/database.ts'
 import { FhirRepository } from './infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceRepository } from './infrastructure/sqlite/workspace-repository.ts'
+import { ScenarioDatasetRepository } from './infrastructure/sqlite/scenario-dataset-repository.ts'
+import { BuiltInScenarioGenerationProvider } from './infrastructure/scenario-generation/builtin-provider.ts'
 
 function lisActorContext(event: {
   epoch: string
@@ -68,6 +72,22 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     })
     const commands = new CommandExecutor(database, fhir, clockOptions)
     const scenario = new ScenarioService(database, fhir, commands)
+    const scenarioData = new ScenarioDataService({
+      commands,
+      providers: new Map([
+        ['builtin', new BuiltInScenarioGenerationProvider()],
+        ['synthea', new UnavailableScenarioGenerationProvider({
+          available: false,
+          maxPopulation: 500,
+          modules: ['fever', 'type-2-diabetes'],
+          providerId: 'synthea',
+          providerName: 'Synthea',
+          unavailableReason: '未配置 Synthea Provider',
+        })],
+      ]),
+      repository: new ScenarioDatasetRepository(database),
+      scenario,
+    })
     scenario.ensureInitialEpoch({
       epoch: 'epoch-1',
       scenarioRunId: 'scenario-run-1',
@@ -176,6 +196,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       },
       identity,
       scenario,
+      scenarioData,
       workflow,
       ...(options.webRoot === undefined ? {} : { webRoot: options.webRoot }),
     })
@@ -197,6 +218,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       fhir,
       identity,
       scenario,
+      scenarioData,
       workflow,
     }
   } catch (error) {

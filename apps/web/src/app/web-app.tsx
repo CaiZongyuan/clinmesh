@@ -98,7 +98,7 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
     const roleSection = roleSections[roleCode]
     if (
       activeSection === roleSection
-      || (roleCode === 'administrator' && activeSection === 'overview')
+      || (roleCode === 'administrator' && (activeSection === 'overview' || activeSection === 'scenarioData'))
     ) return
     const roleRoute = workspaceRoutes.find(route => route.key === roleSection)
     void navigate({ replace: true, to: roleRoute?.path ?? '/' })
@@ -153,7 +153,9 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
   const effectiveSection = isSettingsSection(activeSection)
     ? activeSection
     : activeSection === roleSection
-      || (session.data.actor.roleCode === 'administrator' && activeSection === 'overview')
+      || (session.data.actor.roleCode === 'administrator' && (
+        activeSection === 'overview' || activeSection === 'scenarioData'
+      ))
       ? activeSection
       : roleSection
 

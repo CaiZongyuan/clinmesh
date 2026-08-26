@@ -10,6 +10,7 @@ import {
   clinicalDocumentSignResponseSchema,
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
+  commandResponseSchema,
   confirmNoMedicationResponseSchema,
   confirmDiagnosisResponseSchema,
   correctLaboratoryReportResponseSchema,
@@ -55,6 +56,14 @@ import {
   type ScenarioState,
   type SessionContext,
 } from '@clinmesh/contracts/his'
+import {
+  scenarioDatasetListSchema,
+  scenarioDatasetSchema,
+  scenarioGenerationRequestSchema,
+  scenarioProviderCapabilitiesSchema,
+  type ScenarioGenerationRequest,
+  type ScenarioDataset,
+} from '@clinmesh/contracts/scenario'
 import { z } from 'zod'
 
 export const sessionQueryKey = ['session-context'] as const
@@ -170,6 +179,83 @@ export function resetScenario(scenarioRunId: string, idempotencyKey: string) {
     `/api/sim/v1/scenario-runs/${encodeURIComponent(scenarioRunId)}/actions/reset`,
     scenarioCommandResponseSchema,
     {},
+    { idempotencyKey },
+  )
+}
+
+export function getScenarioProviders(signal?: AbortSignal) {
+  return apiGet(
+    '/api/sim/v1/scenario-providers',
+    z.object({ items: z.array(scenarioProviderCapabilitiesSchema) }).strict(),
+    signal,
+  )
+}
+
+export function getScenarioDatasets(signal?: AbortSignal, page = 1) {
+  const search = new URLSearchParams({ page: String(page), pageSize: '20' })
+  return apiGet(`/api/sim/v1/scenario-datasets?${search.toString()}`, scenarioDatasetListSchema, signal)
+}
+
+export function generateScenarioDataset(
+  request: ScenarioGenerationRequest,
+  idempotencyKey: string,
+) {
+  return apiMutation(
+    '/api/sim/v1/scenario-datasets/actions/generate',
+    commandResponseSchema(scenarioDatasetSchema),
+    scenarioGenerationRequestSchema.parse(request),
+    { idempotencyKey },
+  )
+}
+
+export function getScenarioDataset(datasetId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/sim/v1/scenario-datasets/${encodeURIComponent(datasetId)}`,
+    scenarioDatasetSchema,
+    signal,
+  )
+}
+
+export function updateScenarioDataset(dataset: ScenarioDataset, idempotencyKey: string) {
+  return apiMutation(
+    `/api/sim/v1/scenario-datasets/${encodeURIComponent(dataset.datasetId)}`,
+    commandResponseSchema(scenarioDatasetSchema),
+    {
+      expectedVersion: dataset.version,
+      input: { content: dataset.content, name: dataset.name },
+    },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function deleteScenarioDataset(
+  datasetId: string,
+  expectedVersion: number,
+  idempotencyKey: string,
+) {
+  return apiMutation(
+    `/api/sim/v1/scenario-datasets/${encodeURIComponent(datasetId)}`,
+    commandResponseSchema(z.object({
+      datasetId: z.string().min(1),
+      deleted: z.literal(true),
+    }).strict()),
+    { expectedVersion },
+    { idempotencyKey, method: 'DELETE' },
+  )
+}
+
+export function installScenarioDataset(
+  datasetId: string,
+  expectedVersion: number,
+  idempotencyKey: string,
+) {
+  return apiMutation(
+    `/api/sim/v1/scenario-datasets/${encodeURIComponent(datasetId)}/actions/install`,
+    commandResponseSchema(z.object({
+      packageId: z.string().min(1),
+      scenario: scenarioStateSchema,
+    }).strict()),
+    { expectedVersion },
     { idempotencyKey },
   )
 }

@@ -37,7 +37,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 20,
+      schemaVersion: 21,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -61,14 +61,15 @@ describe('SQLite lifecycle', () => {
         '0017_diagnosis-draft.sql',
         '0018_prescription-conclusion.sql',
         '0019_outpatient-case-responsibility.sql',
+        '0020_scenario-dataset.sql',
       ],
-      schemaVersion: 20,
+      schemaVersion: 21,
     })
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 20 })
-    expect(reopened.diagnostics().schemaVersion).toBe(20)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 21 })
+    expect(reopened.diagnostics().schemaVersion).toBe(21)
     reopened.close()
   })
 
@@ -1054,7 +1055,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(20)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(21)
     await runtime.close()
   })
 
@@ -1124,7 +1125,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 20,
+      schemaVersion: 21,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -1136,11 +1137,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 20,
+      expectedSchemaVersion: 21,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 20,
+      schemaVersion: 21,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -1324,7 +1325,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(20),
+      schemaVersion: z.literal(21),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -1344,26 +1345,27 @@ describe('SQLite lifecycle', () => {
       '0017_diagnosis-draft.sql',
       '0018_prescription-conclusion.sql',
       '0019_outpatient-case-responsibility.sql',
+      '0020_scenario-dataset.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 20 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 21 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 20 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 21 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 20 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 21 })
   })
 })

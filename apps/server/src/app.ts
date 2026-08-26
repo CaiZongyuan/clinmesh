@@ -23,6 +23,10 @@ import {
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
+import {
+  scenarioGenerationRequestSchema,
+  updateScenarioDatasetRequestSchema,
+} from '@clinmesh/contracts/scenario'
 import type { IdentityService } from './application/identity-service.ts'
 import { IdentityError } from './application/identity-service.ts'
 import {
@@ -31,6 +35,8 @@ import {
 } from './application/command-executor.ts'
 import type { ScenarioService } from './application/scenario-service.ts'
 import { ScenarioError } from './application/scenario-service.ts'
+import type { ScenarioDataService } from './application/scenario-data/scenario-data-service.ts'
+import { ScenarioDataError } from './application/scenario-data/scenario-data-service.ts'
 import type { WorkflowService } from './application/workflow-service.ts'
 import { WorkflowError } from './application/workflow-service.ts'
 import { createCapabilityStatement } from './fhir/capabilities.ts'
@@ -51,6 +57,7 @@ export interface CreateAppOptions {
   fhir?: FhirRuntime
   identity?: IdentityService
   scenario?: ScenarioService
+  scenarioData?: ScenarioDataService
   workflow?: WorkflowService
   webRoot?: string
 }
@@ -76,6 +83,7 @@ function apiErrorResponse(
   }
   if (
     error instanceof IdentityError
+    || error instanceof ScenarioDataError
     || error instanceof ScenarioError
     || error instanceof WorkflowError
   ) {
@@ -224,6 +232,114 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         }))
       } catch (error) {
         return apiErrorResponse(context, error, 'The Scenario installation request is invalid')
+      }
+    })
+  }
+
+  if (options.identity !== undefined && options.scenarioData !== undefined) {
+    const identity = options.identity
+    const scenarioData = options.scenarioData
+    app.get('/api/sim/v1/scenario-providers', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(await scenarioData.capabilities(session.actor))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/sim/v1/scenario-datasets', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const query = z.object({
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(20),
+        }).parse(context.req.query())
+        return context.json(scenarioData.list(session.actor, query))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/sim/v1/scenario-datasets/actions/generate', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const request = scenarioGenerationRequestSchema.parse(await context.req.json())
+        const idempotencyKey = z.string().min(8).max(128).parse(
+          context.req.header('idempotency-key'),
+        )
+        return context.json(await scenarioData.generate({
+          context: session.actor,
+          idempotencyKey,
+          request,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error, 'The Scenario Dataset generation request is invalid')
+      }
+    })
+    app.get('/api/sim/v1/scenario-datasets/:datasetId', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(scenarioData.get(session.actor, context.req.param('datasetId')))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.put('/api/sim/v1/scenario-datasets/:datasetId', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const body = updateScenarioDatasetRequestSchema.parse(await context.req.json())
+        const idempotencyKey = z.string().min(8).max(128).parse(
+          context.req.header('idempotency-key'),
+        )
+        return context.json(scenarioData.update({
+          content: body.input.content,
+          context: session.actor,
+          datasetId: context.req.param('datasetId'),
+          expectedVersion: body.expectedVersion,
+          idempotencyKey,
+          name: body.input.name,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error, 'The Scenario Dataset update request is invalid')
+      }
+    })
+    app.delete('/api/sim/v1/scenario-datasets/:datasetId', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const body = z.object({ expectedVersion: z.number().int().positive() }).strict()
+          .parse(await context.req.json())
+        const idempotencyKey = z.string().min(8).max(128).parse(
+          context.req.header('idempotency-key'),
+        )
+        return context.json(scenarioData.delete({
+          context: session.actor,
+          datasetId: context.req.param('datasetId'),
+          expectedVersion: body.expectedVersion,
+          idempotencyKey,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error, 'The Scenario Dataset deletion request is invalid')
+      }
+    })
+    app.post('/api/sim/v1/scenario-datasets/:datasetId/actions/install', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const body = z.object({ expectedVersion: z.number().int().positive() }).strict()
+          .parse(await context.req.json())
+        const idempotencyKey = z.string().min(8).max(128).parse(
+          context.req.header('idempotency-key'),
+        )
+        return context.json(scenarioData.install({
+          context: session.actor,
+          datasetId: context.req.param('datasetId'),
+          expectedVersion: body.expectedVersion,
+          idempotencyKey,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error, 'The Scenario Dataset installation request is invalid')
       }
     })
   }
