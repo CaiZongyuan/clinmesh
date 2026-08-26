@@ -16,6 +16,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DoctorWorkspace } from './doctor-workspace.tsx'
 import { WebApp } from './web-app.tsx'
 
+const forbiddenChineseClinicalUiTerms = /Agent|评分|仿真|Scenario|Epoch/i
+const forbiddenEnglishClinicalUiTerms = /Agent|scor(?:e|ing)|simulation|Scenario|Epoch/i
+
 const doctorTriage = {
   acuityCode: 'level-3',
   bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
@@ -468,7 +471,7 @@ describe('role workspaces', () => {
     vi.unstubAllGlobals()
   })
 
-  it('opens the administrator on the active Scenario controls', async () => {
+  it('uses clinical operator language for administrator data controls', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const path = new URL(String(input), 'http://localhost').pathname
       if (path === '/api/auth/context') return Response.json(administratorSession)
@@ -491,12 +494,51 @@ describe('role workspaces', () => {
 
     render(<WebApp />)
 
-    expect(await screen.findByRole('heading', { name: '场景运行' })).toBeTruthy()
-    expect(screen.getByText('candidate-fever-outpatient-v1')).toBeTruthy()
-    expect(screen.getByText('epoch-1')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '安装候选场景' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '安装密度场景' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '重置运行' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '演示数据' })).toBeTruthy()
+    expect(screen.getByText('标准门诊数据')).toBeTruthy()
+    expect(screen.queryByText('candidate-fever-outpatient-v1')).toBeNull()
+    expect(screen.queryByText('epoch-1')).toBeNull()
+    expect(screen.getByRole('button', { name: '载入标准数据' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '载入密集数据' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '重置当前数据' })).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(forbiddenChineseClinicalUiTerms)
+  })
+
+  it('uses clinical operator language for English administrator data controls', async () => {
+    localStorage.setItem('clinmesh.preferences:v1', JSON.stringify({
+      locale: 'en-US',
+      theme: 'light',
+    }))
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/auth/context') return Response.json(administratorSession)
+      if (path === '/api/sim/v1/scenario-runs/current') {
+        return Response.json({
+          clinicalReview: null,
+          epoch: 'epoch-1',
+          initialStateHash: '0123456789abcdef',
+          kind: 'candidate',
+          scenarioId: 'candidate-fever-outpatient-v1',
+          scenarioRunId: 'scenario-run-1',
+          seed: 20260824,
+          status: 'active',
+          virtualTime: '2026-08-24T09:00:00+08:00',
+          workspaceId: 'workspace-demo',
+        })
+      }
+      throw new Error(`Unexpected request: ${path}`)
+    }))
+
+    render(<WebApp />)
+
+    expect(await screen.findByRole('heading', { name: 'Demo data' })).toBeTruthy()
+    expect(screen.getByText('Standard outpatient data')).toBeTruthy()
+    expect(screen.queryByText('candidate-fever-outpatient-v1')).toBeNull()
+    expect(screen.queryByText('epoch-1')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Load standard data' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Load high-volume data' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Reset current data' })).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
   })
 
   it('creates a synthetic patient and registers the selected patient from server catalogs', async () => {
@@ -1299,7 +1341,39 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     expect(await screen.findByText('暂无可接诊候选患者')).toBeTruthy()
-    expect(screen.getByText('当前场景没有待建立接诊上下文的候选患者。')).toBeTruthy()
+    expect(screen.getByText('当前没有可接诊的候选患者。')).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(forbiddenChineseClinicalUiTerms)
+  })
+
+  it('uses clinical operator language for the English doctor empty state', async () => {
+    localStorage.setItem('clinmesh.preferences:v1', JSON.stringify({
+      locale: 'en-US',
+      theme: 'light',
+    }))
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({
+          laboratory: [],
+          medications: [],
+          prescriptionConclusionSupported: true,
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+
+    render(<WebApp />)
+
+    expect(await screen.findByText('No candidate patients available')).toBeTruthy()
+    expect(screen.getByText('No candidate patient is currently available for consultation.')).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
   })
 
   it('shows the operation-conflict alert when a Virtual Patient version is stale', async () => {
@@ -2165,7 +2239,7 @@ describe('role workspaces', () => {
     expect(screen.getByRole('tab', { name: '已缴' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '结果未知' })).toBeTruthy()
     expect(await screen.findByRole('listitem', { name: '选择费用 合成患者周明' })).toBeTruthy()
-    expect(screen.getByRole('combobox', { name: '模拟支付结果' }).textContent).toContain('成功')
+    expect(screen.getByRole('combobox', { name: '支付处理结果' }).textContent).toContain('成功')
 
     await user.click(screen.getByRole('button', { name: '预览支付' }))
     expect(await screen.findByRole('heading', { name: '支付预览' })).toBeTruthy()
@@ -2260,7 +2334,7 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    await user.click(await screen.findByRole('combobox', { name: '模拟支付结果' }))
+    await user.click(await screen.findByRole('combobox', { name: '支付处理结果' }))
     await user.click(await screen.findByRole('option', { name: '拒绝' }))
     await user.click(screen.getByRole('button', { name: '预览支付' }))
     expect(await screen.findByText('预计拒绝')).toBeTruthy()
@@ -5170,7 +5244,7 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: '确认发药' }))
 
     expect(await screen.findByText('部分发药完成')).toBeTruthy()
-    expect(screen.getByText('Scenario Run 仍在进行')).toBeTruthy()
+    expect(screen.getByText('业务流程仍在进行')).toBeTruthy()
     expect(await screen.findByText('部分已发')).toBeTruthy()
     const remainder = await screen.findByRole('spinbutton', {
       name: '本次发放数量 · 磷酸奥司他韦胶囊',
@@ -5178,7 +5252,8 @@ describe('role workspaces', () => {
     expect(remainder.value).toBe('6')
     await user.click(screen.getByRole('button', { name: '确认发药' }))
 
-    expect(await screen.findByText('Scenario Run 已完成')).toBeTruthy()
+    expect(await screen.findByText('业务流程已完成')).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(forbiddenChineseClinicalUiTerms)
     await user.click(screen.getByRole('tab', { name: '已发药' }))
     expect((await screen.findAllByText('CM-RX-20260824-0001')).length).toBeGreaterThan(0)
     expect(screen.getByText('库存 990')).toBeTruthy()

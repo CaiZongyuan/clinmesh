@@ -1,24 +1,24 @@
 # Agent Note: 医生核心临床业务流
 
-Status: proposed
+Status: implemented
 
 ## Problem
 
-当前首期闭环证明了多岗位认证、持久化、FHIR 读取和基本门诊交接，但医生必须来回切换多个普通账户才能获得患者，问诊、病历、检查、报告、诊断和处方仍被压缩在少量步骤中。页面状态和 Scenario 进度不足以表达每类临床事实的独立生命周期，医生也缺少可连续完成诊疗责任的工作台和已完诊病例入口。
+普通门诊中的问诊、正式病历、检查申请、诊断报告、诊断、处方和完诊条件分别拥有独立生命周期。若把这些事实压缩为页面状态或 Scenario 进度，医生无法连续承担同一 Encounter 的诊疗责任，正式事实、纠错窗口和审计关系也会相互混淆。
 
-继续扩展收费、药房、医保或 Agent 功能会放大这个缺口。下一阶段必须先建立可执行的医生核心临床基础设施，让同一个 Encounter 中的问诊过程、正式病历、检查申请、诊断报告、诊断、处方和完诊条件各自拥有清晰边界，同时保留可审计的关联和纠错路径。
+ClinMesh 同时保留既有多岗位发热闭环和医生直达核心临床链路。医生直达不能伪造分诊、收费或检验岗位行为，也不能破坏既有闭环资源和状态机，因此两类入口必须共享正式 FHIR 事实，并由各自领域 owner 管理草稿、命令和进度。
 
-## Proposal
+## Decision
 
-下一阶段聚焦普通门诊发热病例的医生核心链路：选择 Virtual Patient、开始接诊、记录 Consultation Record、编辑并签署结构化病历、开具检查、接收和查看报告、确认诊断、开具或明确无需处方、完成 Encounter，并在已完诊病例中查看只读详情和统一业务时间线。一个 Encounter 贯穿整条诊疗链，不因检查等待、报告返回或再次进入医生工作台而新建 Encounter。
+普通门诊发热病例由连续的医生核心链路处理：选择 Virtual Patient、开始接诊、记录 Consultation Record、编辑并签署结构化病历、开具检查、接收和查看报告、确认诊断、开具处方或明确无需用药、完成 Encounter，并在已完诊病例中查看只读详情和统一业务时间线。一个 Encounter 贯穿整条诊疗链，不因检查等待、报告返回或再次进入医生工作台而新建 Encounter。
 
-医生可以直接从 Virtual Patient 列表开始接诊。底层仍建立 Registration 和 Queue Task 以保持 HIS 业务事实完整，但首期医生体验不要求手工扮演挂号、分诊、收费、检验和药房岗位。Virtual Patient 使用版本固定的病例事实和确定性回答规则，不依赖 LLM；Consultation Record 与正式 Clinical Document 分别保存，医生必须手工整理结构化病历。
+医生可以直接从 Virtual Patient 列表开始接诊。底层仍建立 Registration 和 Queue Task 以保持 HIS 业务事实完整，但医生工作台不要求手工扮演挂号、分诊、收费、检验和药房岗位。Virtual Patient 使用版本固定的病例事实和确定性回答规则，不依赖 LLM；Consultation Record 与正式 Clinical Document 分别保存，医生必须手工整理结构化病历。
 
 Virtual Patient 是独立于 Patient Identity 和 Encounter 的候选病例事实。候选列表只暴露临床可见摘要和服务端认证加密的 opaque version；该 version 绑定当前上下文和可复用病例的资源版本，使浏览器无需读取 Encounter 或 Queue Task 技术状态。医生开始接诊时复用其绑定的合成 Patient，避免产生第二个活动 Encounter，同时不伪造分诊或费用事实。当前原子创建或复用、版本冲突、幂等回执和可见字段合同由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。
 
 开始 Virtual Patient 接诊时同时建立病例级 Consultation。医生只能选择 Scenario 提供的受控问题，每次回答作为有序、不可变、带版本的 Consultation Record 追加；重试、并发冲突、规则保密与读取合同由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。问答记录与 `clinical_draft` 分别持久化，刷新后可恢复，但不会自动成为医生负责的正式病历。
 
-临床文书支持草稿、版本、签署和签署后 Clinical Document Revision。检查请求支持草稿、开具、受理、执行中、已报告和医生已阅；首批交付血常规和 C 反应蛋白。Observation 保存结构化结果，DiagnosticReport 保存可读报告并引用结果；已签发报告不可删除，更正创建新版本和替代关系。诊断与 Prescription 分别支持草稿和正式状态，不把页面切换当作签发。
+临床文书支持草稿、版本、签署和签署后 Clinical Document Revision。检查请求支持草稿、开具、受理、执行中、已报告和医生已阅；当前独立检查目录包含血常规和 C 反应蛋白。Observation 保存结构化结果，DiagnosticReport 保存可读报告并引用结果；已签发报告不可删除，更正创建新版本和替代关系。诊断与 Prescription 分别支持草稿和正式状态，不把页面切换当作签发。
 
 带 Consultation 的医生病例由独立检查申请聚合拥有草稿版本和正式状态。草稿删除与开具都递增同一个单调版本，开具才创建 ServiceRequest 和以该请求为 `focus` 的执行 Task；同一病例中同项目只允许一个未取消申请。LIS 通过持久 outbox 推进受理与执行，只有尚未受理的 `issued` 申请可普通取消，晚到受理事件不能恢复已取消申请。详细生命周期和 FHIR 映射由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。
 
@@ -56,21 +56,13 @@ Web 使用高信息密度的临床工作台：204px 任务侧栏、54px 顶栏�
 
 **同时加入 AI Agent、自动病历和复盘评分。** 这些能力会在临床基础设施尚未可信时引入第二套交互和评价语义。本阶段不提供 Agent、自动生成或评分入口。
 
-## Acceptance criteria
+## Consequences
 
-- 医生可以在一个真实 Web 入口中选择发热 Virtual Patient，并在同一 Encounter 内连续完成问诊、病历、检查、报告已阅、诊断、处方和完诊。
-- Consultation Record、临床文书、检查请求、报告、诊断和处方分别具有持久状态、版本与受控纠错行为，刷新或重新登录不会丢失。
-- Encounter Completion Policy 对缺失的正式事实给出可操作阻塞原因，满足全部条件后只完成 Encounter，不混淆其他业务完成状态。
-- 已完诊病例以只读详情和业务时间线展示全部相关临床事实与修订链。
-- Super Administrator 可以选择任意合成 Practitioner Role 与 Practitioner 执行业务，界面持续显示操作身份，审计同时保留两层身份。
-- Web 采用 `docs/ui/design.md` 约束的高密度临床布局，`/components` 展示 `packages/ui` 的真实组件及关键状态。
-- FHIR R5 读取、history 和已声明 Search 能查询本阶段产生的正式资源，能力声明不包含未实现写入。
-- 自动化验收从公开的 Server/Web seam 驱动真实持久化流程，并覆盖完诊门禁、版本冲突、最小纠错、授权与审计，不以组件内部状态作为完成证据。
-
-## Risks
-
-- 当前首期实现把复诊草稿、处方和签署完诊紧密组合，拆分独立生命周期时容易破坏已经可执行的多岗位发热闭环；实施必须用兼容迁移和纵向切片保持每个 checkpoint 可运行。
-- Virtual Patient 的医生直达体验可能绕过必要的 Registration 和 Queue Task 事实；创建或选择病例时必须由共享 Command 原子建立底层业务上下文。
-- 组件目录若复制示例 markup 会与产品组件漂移；页面必须导入并渲染实际组件。
-- 报告和病历修订若允许普通覆盖会破坏审计链；持久化和 API 必须以新版本、替代关系和预期版本约束更正。
-- 独立检查申请与兼容收费检验都会创建 ServiceRequest；新增报告、取消或计费行为必须先解析其 owner，不能让一条路径的状态变化隐式推进另一条路径。
+- 医生可以在一个 Web 登录上下文中完成 Virtual Patient 接诊、问诊、病历签署、检查与报告已阅、诊断、用药结论、完诊和只读回看。临床岗位页面使用业务术语，不显示 Agent、评分、Scenario 或 Epoch 标识。
+- Consultation Record、临床文书、检查请求、报告、诊断和处方分别持久化状态与版本；刷新或重新登录可恢复，纠错只能通过各 owner 的受控命令产生新事实。
+- Encounter Completion Policy 只汇总正式事实。门禁满足后只完成 Encounter；检查、报告、文书、处方和 Scenario Run 保留各自状态。
+- Virtual Patient 直达接诊由共享 Command 原子建立 Registration、Queue Task 和病例责任，不记录未发生的分诊、收费或检验岗位行为。
+- 既有带收费检验与独立检查都产生 ServiceRequest。报告、取消和计费逻辑必须先解析 owner，不能依据资源类型隐式推进另一条业务路径。
+- Super Administrator 的 Acting Practitioner Context 同时保留真实 Actor 与所代表的 Practitioner Role；普通账户不能指定行动身份。
+- 正式资源通过 FHIR R5 current、history 和白名单 Search 读取；草稿与仿真私有事实不进入公开 FHIR API，CapabilityStatement 不声明未实现写入。
+- Web 产品页与 `/components` 共同使用 `packages/ui` 的实际组件。验证从公开 Server/Web seam 驱动真实持久化流程，不以组件内部状态作为完成证据。

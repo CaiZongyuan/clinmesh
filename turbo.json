@@ -7,7 +7,19 @@
     },
     "dev": {
       "cache": false,
-      "persistent": true
+      "persistent": true,
+      "passThroughEnv": [
+        "CLINMESH_AUTH_SECRET",
+        "CLINMESH_BUSY_TIMEOUT_MS",
+        "CLINMESH_CURSOR_SECRET",
+        "CLINMESH_DATABASE_PATH",
+        "CLINMESH_DEMO_PASSWORD",
+        "CLINMESH_HOST",
+        "CLINMESH_PORT",
+        "CLINMESH_PUBLIC_ORIGIN",
+        "CLINMESH_TRUSTED_ORIGINS",
+        "CLINMESH_WEB_ROOT"
+      ]
     },
     "typecheck": {
       "dependsOn": ["^typecheck"]
