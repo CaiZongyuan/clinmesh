@@ -59,6 +59,7 @@ import {
 import {
   scenarioDatasetListSchema,
   scenarioDatasetSchema,
+  scenarioGenerationJobSchema,
   scenarioGenerationRequestSchema,
   scenarioProviderCapabilitiesSchema,
   type ScenarioGenerationRequest,
@@ -205,6 +206,26 @@ export function generateScenarioDataset(
     commandResponseSchema(scenarioDatasetSchema),
     scenarioGenerationRequestSchema.parse(request),
     { idempotencyKey },
+  )
+}
+
+export function enqueueScenarioGenerationJob(
+  request: ScenarioGenerationRequest,
+  idempotencyKey: string,
+) {
+  return apiMutation(
+    '/api/sim/v1/scenario-generation-jobs',
+    commandResponseSchema(scenarioGenerationJobSchema),
+    scenarioGenerationRequestSchema.parse(request),
+    { idempotencyKey },
+  )
+}
+
+export function getScenarioGenerationJob(jobId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/sim/v1/scenario-generation-jobs/${encodeURIComponent(jobId)}`,
+    scenarioGenerationJobSchema,
+    signal,
   )
 }
 

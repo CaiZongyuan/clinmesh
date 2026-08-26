@@ -23,7 +23,7 @@ Reference Data Package 按使用条件分级：明确允许再分发的数据可
 
 编译顺序为 `acquire -> normalize -> map -> synthesize -> compile -> validate -> publish`。获取层不能成为应用运行依赖；规范化层必须验证外部结构并保留原始来源键；映射层显式记录源代码、目标代码、适用版本、映射关系和审核状态，不能依赖模糊字符串自动合并；合成层只产生虚构身份和业务事实；编译层从同一结构化真值派生 FHIR R5 资源、领域 fixture、费用、库存、事件和外部规则。
 
-Synthea 可以在后续成为可替换的患者历史适配器。该适配器必须读取版本固定的 R4 Bundle，转换到 ClinMesh 中间模型，丢弃美国机构、支付方和标识符语义，再由 Scenario compiler 生成满足项目 profile 的 R5 资源；首期只接受项目维护、可人工审阅的结构化合成输入，不建设 Synthea 导入路径。
+Synthea 已通过[可选生成 Provider](../../implemented/architecture/2026-08-26-optional-synthea-provider.md)提供版本固定、引用闭合且经过来源边界验证的 R4 Bundle。Scenario compiler 仍负责把这些来源材料转换到 ClinMesh 中间模型，丢弃美国机构、支付方和标识符语义，并生成满足项目 profile 的 R5 资源；安装和运行不在线调用 Synthea。
 
 首期维护两个发布档：`golden` 是规模小、字段完整、可人工审阅并覆盖普通门诊发热闭环的数据集；`density` 使用相同 schema 和业务规则扩大患者、队列、目录和历史事件数量，用于列表密度、分页和性能验证。二者共享同一套不变量，不能用另一个简化数据模型。
 

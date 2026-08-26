@@ -1,15 +1,21 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
+  scenarioGenerationJobSchema,
   scenarioDatasetContentSchema,
   scenarioDatasetSchema,
   type ScenarioDataset,
+  type ScenarioGenerationJob,
   type ScenarioGenerationRequest,
 } from '@clinmesh/contracts/scenario'
 import { scenarioStateSchema } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import type { ScenarioDatasetRepository } from '../../infrastructure/sqlite/scenario-dataset-repository.ts'
+import type { ScenarioGenerationJobRepository } from '../../infrastructure/sqlite/scenario-generation-job-repository.ts'
 import type { ActorContext, CommandExecutor, CommandResponse } from '../command-executor.ts'
-import type { ScenarioGenerationProvider } from './provider.ts'
+import {
+  ScenarioGenerationProviderError,
+  type ScenarioGenerationProvider,
+} from './provider.ts'
 import { validateScenarioDataset } from './scenario-dataset-validator.ts'
 import type { ScenarioService } from '../scenario-service.ts'
 
@@ -56,16 +62,19 @@ export class ScenarioDataError extends Error {
 export class ScenarioDataService {
   readonly #commands: CommandExecutor
   readonly #providers: ReadonlyMap<string, ScenarioGenerationProvider>
+  readonly #jobs: ScenarioGenerationJobRepository
   readonly #repository: ScenarioDatasetRepository
   readonly #scenario: ScenarioService
 
   constructor(input: {
     commands: CommandExecutor
+    jobs: ScenarioGenerationJobRepository
     providers: ReadonlyMap<string, ScenarioGenerationProvider>
     repository: ScenarioDatasetRepository
     scenario: ScenarioService
   }) {
     this.#commands = input.commands
+    this.#jobs = input.jobs
     this.#providers = input.providers
     this.#repository = input.repository
     this.#scenario = input.scenario
@@ -84,32 +93,15 @@ export class ScenarioDataService {
     request: ScenarioGenerationRequest
   }): Promise<CommandResponse<ScenarioDataset>> {
     this.#assertAdministrator(input.context)
-    const provider = this.#providers.get(input.request.providerId)
-    if (provider === undefined) {
-      throw new ScenarioDataError('PROVIDER_NOT_AVAILABLE', 'The requested Scenario Provider is not available')
-    }
-    const capabilities = await provider.capabilities()
-    if (!capabilities.available) {
+    if (input.request.providerId !== 'builtin') {
       throw new ScenarioDataError(
-        'PROVIDER_NOT_AVAILABLE',
-        capabilities.unavailableReason ?? 'The requested Scenario Provider is unavailable',
+        'DATASET_INVALID',
+        'External Scenario Providers must use persistent generation jobs',
       )
     }
+    const provider = await this.#providerFor(input.request)
     const corpus = await provider.generate(input.request)
-    const content = scenarioDatasetContentSchema.parse(corpus.content)
-    const now = new Date().toISOString()
-    const dataset: ScenarioDataset = {
-      content,
-      contentHash: contentHash(content),
-      createdAt: now,
-      datasetId: `scenario-dataset-${randomUUID()}`,
-      diagnostics: [],
-      name: input.request.name,
-      providerId: input.request.providerId,
-      updatedAt: now,
-      version: 1,
-      workspaceId: input.context.workspaceId,
-    }
+    const dataset = this.#dataset(input.context.workspaceId, input.request, corpus.content)
     return this.#commands.execute({
       context: input.context,
       contextRequirement: 'current',
@@ -130,6 +122,77 @@ export class ScenarioDataService {
         }],
       }
     })
+  }
+
+  async enqueueGeneration(input: {
+    context: ActorContext
+    idempotencyKey: string
+    request: ScenarioGenerationRequest
+  }): Promise<CommandResponse<ScenarioGenerationJob>> {
+    this.#assertAdministrator(input.context)
+    await this.#providerFor(input.request)
+    const now = new Date().toISOString()
+    const job: ScenarioGenerationJob = {
+      createdAt: now,
+      datasetId: null,
+      error: null,
+      finishedAt: null,
+      jobId: `scenario-generation-job-${randomUUID()}`,
+      request: input.request,
+      startedAt: null,
+      status: 'queued',
+      updatedAt: now,
+      workspaceId: input.context.workspaceId,
+    }
+    return this.#commands.execute({
+      context: input.context,
+      contextRequirement: 'current',
+      dataSchema: scenarioGenerationJobSchema,
+      expectedVersions: {},
+      idempotencyKey: input.idempotencyKey,
+      idempotencyScope: 'workspace',
+      input: input.request,
+      operation: 'scenario-generation-job.create',
+    }, () => {
+      this.#jobs.create(job, input.context.actorId)
+      return {
+        data: job,
+        effects: [{
+          kind: 'created',
+          reference: `ScenarioGenerationJob/${job.jobId}`,
+          versionId: '1',
+        }],
+      }
+    })
+  }
+
+  getGenerationJob(context: ActorContext, jobId: string): ScenarioGenerationJob {
+    this.#assertAdministrator(context)
+    const job = this.#jobs.get(context.workspaceId, jobId)
+    if (job === undefined) {
+      throw new ScenarioDataError('DATASET_NOT_FOUND', 'The Scenario generation job was not found')
+    }
+    return job
+  }
+
+  async processNextGenerationJob(signal?: AbortSignal): Promise<ScenarioGenerationJob | undefined> {
+    const claimed = this.#jobs.claimNext(new Date().toISOString())
+    if (claimed === undefined) return undefined
+    try {
+      const provider = await this.#providerFor(claimed.request)
+      const corpus = await provider.generate(claimed.request, signal)
+      const dataset = this.#dataset(claimed.workspaceId, claimed.request, corpus.content)
+      return this.#jobs.completeWithDataset(claimed, dataset, new Date().toISOString())
+    } catch (error) {
+      const now = new Date().toISOString()
+      if (signal?.aborted === true) return this.#jobs.requeue(claimed, now)
+      return this.#jobs.fail(claimed, {
+        code: error instanceof ScenarioGenerationProviderError ? error.code : 'GENERATION_FAILED',
+        message: error instanceof ScenarioGenerationProviderError
+          ? error.message
+          : 'Scenario generation failed',
+      }, now)
+    }
   }
 
   get(context: ActorContext, datasetId: string): ScenarioDataset {
@@ -296,6 +359,51 @@ export class ScenarioDataService {
     if (dataset.diagnostics.some(diagnostic => diagnostic.severity === 'error')) {
       throw new ScenarioDataError('DATASET_INVALID', 'The Scenario Dataset has errors and cannot be installed')
     }
+  }
+
+  #dataset(
+    workspaceId: string,
+    request: ScenarioGenerationRequest,
+    sourceContent: ScenarioDataset['content'],
+  ): ScenarioDataset {
+    const content = scenarioDatasetContentSchema.parse(sourceContent)
+    const now = new Date().toISOString()
+    return {
+      content,
+      contentHash: contentHash(content),
+      createdAt: now,
+      datasetId: `scenario-dataset-${randomUUID()}`,
+      diagnostics: validateScenarioDataset(content),
+      name: request.name,
+      providerId: request.providerId,
+      updatedAt: now,
+      version: 1,
+      workspaceId,
+    }
+  }
+
+  async #providerFor(request: ScenarioGenerationRequest): Promise<ScenarioGenerationProvider> {
+    const provider = this.#providers.get(request.providerId)
+    if (provider === undefined) {
+      throw new ScenarioDataError('PROVIDER_NOT_AVAILABLE', 'The requested Scenario Provider is not available')
+    }
+    const capabilities = await provider.capabilities()
+    if (!capabilities.available) {
+      throw new ScenarioDataError(
+        'PROVIDER_NOT_AVAILABLE',
+        capabilities.unavailableReason ?? 'The requested Scenario Provider is unavailable',
+      )
+    }
+    if (
+      request.population.count > capabilities.maxPopulation
+      || request.modules.some(module => !capabilities.modules.includes(module))
+    ) {
+      throw new ScenarioDataError(
+        'DATASET_INVALID',
+        'The generation request exceeds the Scenario Provider capabilities',
+      )
+    }
+    return provider
   }
 
   #getDataset(workspaceId: string, datasetId: string): ScenarioDataset {

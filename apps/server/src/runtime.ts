@@ -15,7 +15,10 @@ import {
 import { FhirRepository } from './infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceRepository } from './infrastructure/sqlite/workspace-repository.ts'
 import { ScenarioDatasetRepository } from './infrastructure/sqlite/scenario-dataset-repository.ts'
+import { ScenarioGenerationJobRepository } from './infrastructure/sqlite/scenario-generation-job-repository.ts'
 import { BuiltInScenarioGenerationProvider } from './infrastructure/scenario-generation/builtin-provider.ts'
+import { SyntheaScenarioGenerationProvider } from './infrastructure/scenario-generation/synthea-provider.ts'
+import type { ScenarioGenerationProvider } from './application/scenario-data/provider.ts'
 
 function lisActorContext(event: {
   epoch: string
@@ -41,6 +44,8 @@ export interface CreateClinMeshRuntimeOptions {
   demoPassword: string
   migrationMode: 'apply' | 'verify'
   now?: () => Date
+  syntheaProvider?: ScenarioGenerationProvider
+  syntheaProviderUrl?: string
   trustedOrigins: string[]
   webRoot?: string
 }
@@ -72,18 +77,25 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     })
     const commands = new CommandExecutor(database, fhir, clockOptions)
     const scenario = new ScenarioService(database, fhir, commands)
+    const syntheaProvider = options.syntheaProvider
+      ?? (options.syntheaProviderUrl === undefined
+        ? new UnavailableScenarioGenerationProvider({
+            available: false,
+            maxPopulation: 50,
+            modules: ['fever', 'type-2-diabetes'],
+            providerId: 'synthea',
+            providerName: 'Synthea',
+            unavailableReason: '未配置 Synthea Provider',
+          })
+        : new SyntheaScenarioGenerationProvider({ baseUrl: options.syntheaProviderUrl }))
+    const generationJobs = new ScenarioGenerationJobRepository(database)
+    generationJobs.requeueInterrupted(new Date().toISOString())
     const scenarioData = new ScenarioDataService({
       commands,
+      jobs: generationJobs,
       providers: new Map([
         ['builtin', new BuiltInScenarioGenerationProvider()],
-        ['synthea', new UnavailableScenarioGenerationProvider({
-          available: false,
-          maxPopulation: 500,
-          modules: ['fever', 'type-2-diabetes'],
-          providerId: 'synthea',
-          providerName: 'Synthea',
-          unavailableReason: '未配置 Synthea Provider',
-        })],
+        ['synthea', syntheaProvider],
       ]),
       repository: new ScenarioDatasetRepository(database),
       scenario,
@@ -169,7 +181,9 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     })
     let closed = false
     let dispatchCycle: Promise<void> | undefined
+    let generationCycle: Promise<void> | undefined
     let closePromise: Promise<void> | undefined
+    const generationAbort = new AbortController()
     const dispatchPending = (): Promise<void> => {
       if (closed) return Promise.resolve()
       if (dispatchCycle !== undefined) return dispatchCycle
@@ -182,11 +196,28 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       })
       return dispatchCycle
     }
+    const dispatchScenarioGenerationJobs = (): Promise<void> => {
+      if (closed) return Promise.resolve()
+      if (generationCycle !== undefined) return generationCycle
+      generationCycle = scenarioData.processNextGenerationJob(generationAbort.signal)
+        .then(() => undefined)
+        .finally(() => {
+          generationCycle = undefined
+        })
+      return generationCycle
+    }
     const dispatchTimer = options.autoDispatchIntervalMs === undefined
       ? undefined
       : setInterval(() => {
           void dispatchPending().catch(() => {
             console.error('ClinMesh outbox dispatch cycle failed')
+          })
+        }, options.autoDispatchIntervalMs)
+    const generationTimer = options.autoDispatchIntervalMs === undefined
+      ? undefined
+      : setInterval(() => {
+          void dispatchScenarioGenerationJobs().catch(() => {
+            console.error('ClinMesh Scenario generation dispatch cycle failed')
           })
         }, options.autoDispatchIntervalMs)
     const app = createApp({
@@ -206,14 +237,17 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         if (closePromise !== undefined) return closePromise
         closed = true
         if (dispatchTimer !== undefined) clearInterval(dispatchTimer)
+        if (generationTimer !== undefined) clearInterval(generationTimer)
+        generationAbort.abort()
         closePromise = (async () => {
-          await dispatchCycle
+          await Promise.all([dispatchCycle, generationCycle])
           database.close()
         })()
         return closePromise
       },
       database,
       dispatchPending,
+      dispatchScenarioGenerationJobs,
       dispatcher,
       fhir,
       identity,

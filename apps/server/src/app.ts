@@ -247,6 +247,31 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.post('/api/sim/v1/scenario-generation-jobs', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const request = scenarioGenerationRequestSchema.parse(await context.req.json())
+        const idempotencyKey = z.string().min(8).max(128).parse(
+          context.req.header('idempotency-key'),
+        )
+        return context.json(await scenarioData.enqueueGeneration({
+          context: session.actor,
+          idempotencyKey,
+          request,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error, 'The Scenario generation job request is invalid')
+      }
+    })
+    app.get('/api/sim/v1/scenario-generation-jobs/:jobId', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(scenarioData.getGenerationJob(session.actor, context.req.param('jobId')))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
     app.get('/api/sim/v1/scenario-datasets', async (context) => {
       try {
         const session = await identity.resolveSessionContext(context.req.raw.headers)

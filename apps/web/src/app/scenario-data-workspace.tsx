@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ScenarioDataset, ScenarioGenerationRequest } from '@clinmesh/contracts/scenario'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
@@ -38,9 +38,11 @@ import {
 } from 'lucide-react'
 import {
   deleteScenarioDataset,
+  enqueueScenarioGenerationJob,
   generateScenarioDataset,
   getScenarioDataset,
   getScenarioDatasets,
+  getScenarioGenerationJob,
   getScenarioProviders,
   installScenarioDataset,
   newIdempotencyKey,
@@ -55,6 +57,10 @@ const datasetsQueryKey = ['scenario-datasets'] as const
 
 function datasetQueryKey(datasetId: string) {
   return ['scenario-dataset', datasetId] as const
+}
+
+function generationJobQueryKey(jobId: string) {
+  return ['scenario-generation-job', jobId] as const
 }
 
 const initialRequest: ScenarioGenerationRequest = {
@@ -235,6 +241,7 @@ export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): 
   const messages = getWorkspaceMessages(locale)
   const queryClient = useQueryClient()
   const [request, setRequest] = useState(initialRequest)
+  const [generationJobId, setGenerationJobId] = useState<string>()
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>()
   const providers = useQuery({
     queryFn: ({ signal }) => getScenarioProviders(signal),
@@ -254,12 +261,47 @@ export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): 
       ? ['scenario-dataset', 'none']
       : datasetQueryKey(selectedDatasetId),
   })
+  const generationJob = useQuery({
+    enabled: generationJobId !== undefined,
+    queryFn: ({ signal }) => {
+      if (generationJobId === undefined) throw new Error('No Scenario generation job is selected')
+      return getScenarioGenerationJob(generationJobId, signal)
+    },
+    queryKey: generationJobId === undefined
+      ? ['scenario-generation-job', 'none']
+      : generationJobQueryKey(generationJobId),
+    refetchInterval: query => (
+      query.state.data?.status === 'queued' || query.state.data?.status === 'running'
+        ? 100
+        : false
+    ),
+  })
   const generate = useMutation({
-    mutationFn: () => generateScenarioDataset(request, newIdempotencyKey()),
-    onSuccess: async () => {
+    mutationFn: async () => request.providerId === 'synthea'
+      ? {
+          kind: 'job' as const,
+          response: await enqueueScenarioGenerationJob(request, newIdempotencyKey()),
+        }
+      : {
+          kind: 'dataset' as const,
+          response: await generateScenarioDataset(request, newIdempotencyKey()),
+        },
+    onSuccess: async result => {
+      if (result.kind === 'job') {
+        queryClient.setQueryData(
+          generationJobQueryKey(result.response.data.jobId),
+          result.response.data,
+        )
+        setGenerationJobId(result.response.data.jobId)
+        return
+      }
       await queryClient.invalidateQueries({ queryKey: datasetsQueryKey })
     },
   })
+  useEffect(() => {
+    if (generationJob.data?.status !== 'succeeded') return
+    void queryClient.invalidateQueries({ queryKey: datasetsQueryKey })
+  }, [generationJob.data?.status, queryClient])
   const updatePopulation = (next: Partial<ScenarioGenerationRequest['population']>): void => {
     setRequest(current => ({ ...current, population: { ...current.population, ...next } }))
   }
@@ -269,6 +311,10 @@ export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): 
       population: { ...current.population, age: { ...current.population.age, ...next } },
     }))
   }
+  const selectedProvider = providers.data?.items.find(
+    provider => provider.providerId === request.providerId,
+  )
+  const generationStatus = generationJob.data?.status
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
@@ -308,6 +354,24 @@ export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): 
         </div>
         <form className="flex flex-col gap-4" onSubmit={event => { event.preventDefault(); generate.mutate() }}>
           <FieldGroup className="grid gap-4 md:grid-cols-3">
+            <Field>
+              <FieldLabel htmlFor="scenario-provider">{messages.provider}</FieldLabel>
+              <select
+                className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                id="scenario-provider"
+                onChange={event => {
+                  const providerId = event.currentTarget.value as ScenarioGenerationRequest['providerId']
+                  setRequest(current => ({ ...current, providerId }))
+                }}
+                value={request.providerId}
+              >
+                {providers.data?.items.map(provider => (
+                  <option disabled={!provider.available} key={provider.providerId} value={provider.providerId}>
+                    {provider.providerName}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field className="md:col-span-2">
               <FieldLabel htmlFor="scenario-dataset-name">{messages.datasetName}</FieldLabel>
               <Input id="scenario-dataset-name" maxLength={120} onChange={event => setRequest(current => ({ ...current, name: event.currentTarget.value }))} required value={request.name} />
@@ -365,7 +429,7 @@ export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): 
             </label>
           </div>
           <div className="flex justify-end">
-            <Button disabled={generate.isPending || providers.data?.items[0]?.available !== true} type="submit">
+            <Button disabled={generate.isPending || selectedProvider?.available !== true} type="submit">
               <FlaskConicalIcon data-icon="inline-start" />
               {generate.isPending ? messages.generatingDataset : messages.generateData}
             </Button>
@@ -375,6 +439,26 @@ export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): 
               <CircleAlertIcon aria-hidden="true" />
               <AlertTitle>{getWorkspaceErrorTitle(generate.error, messages, messages.generationFailed)}</AlertTitle>
               <AlertDescription>{getWorkspaceErrorMessage(generate.error, messages)}</AlertDescription>
+            </Alert>
+          ) : null}
+          {generationJob.data !== undefined ? (
+            <Alert variant={generationStatus === 'failed' ? 'destructive' : 'default'}>
+              <FlaskConicalIcon aria-hidden="true" />
+              <AlertTitle>{messages.generationJob}</AlertTitle>
+              <AlertDescription>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={generationStatus === 'failed' ? 'destructive' : 'secondary'}>
+                    {generationStatus === 'queued'
+                      ? messages.generationQueued
+                      : generationStatus === 'running'
+                        ? messages.generationRunning
+                        : generationStatus === 'succeeded'
+                          ? messages.generationSucceeded
+                          : messages.generationFailed}
+                  </Badge>
+                  {generationJob.data.error?.message}
+                </div>
+              </AlertDescription>
             </Alert>
           ) : null}
         </form>

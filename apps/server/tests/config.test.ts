@@ -52,6 +52,23 @@ describe('Node.js server configuration', () => {
     })
   })
 
+  it('accepts only an explicit HTTP Synthea Provider URL', () => {
+    const requiredEnvironment = {
+      CLINMESH_AUTH_SECRET: 'auth-secret-with-at-least-32-characters',
+      CLINMESH_CURSOR_SECRET: 'cursor-secret-with-at-least-32-characters',
+      CLINMESH_DATABASE_PATH: '/var/lib/clinmesh/clinmesh.sqlite',
+      CLINMESH_DEMO_PASSWORD: 'Synthetic-password-2026!',
+    }
+    expect(readServerConfig({
+      ...requiredEnvironment,
+      CLINMESH_SYNTHEA_PROVIDER_URL: 'http://synthea-provider:8080',
+    })).toMatchObject({ syntheaProviderUrl: 'http://synthea-provider:8080' })
+    expect(() => readServerConfig({
+      ...requiredEnvironment,
+      CLINMESH_SYNTHEA_PROVIDER_URL: 'file:///tmp/provider',
+    })).toThrow()
+  })
+
   it('rejects an invalid listener port before startup', () => {
     expect(() => readServerConfig({ CLINMESH_PORT: 'invalid' })).toThrow()
   })

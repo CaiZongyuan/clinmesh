@@ -1,0 +1,380 @@
+import type {
+  ScenarioDatasetContent,
+  ScenarioGenerationRequest,
+  ScenarioProviderCapabilities,
+} from '@clinmesh/contracts/scenario'
+import { z } from 'zod'
+import {
+  ScenarioGenerationProviderError,
+  type ScenarioGenerationProvider,
+  type SourcePatientCorpus,
+} from '../../application/scenario-data/provider.ts'
+
+const SYNTHEA_COMMIT = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
+const allowedR4ResourceTypes = [
+  'AllergyIntolerance',
+  'CarePlan',
+  'CareTeam',
+  'Claim',
+  'Condition',
+  'Coverage',
+  'Device',
+  'DiagnosticReport',
+  'Encounter',
+  'ExplanationOfBenefit',
+  'Goal',
+  'ImagingStudy',
+  'Immunization',
+  'Location',
+  'Medication',
+  'MedicationRequest',
+  'Observation',
+  'Organization',
+  'Patient',
+  'Practitioner',
+  'Procedure',
+  'Provenance',
+  'SupplyDelivery',
+] as const
+
+const r4ResourceSchema = z.object({
+  id: z.string().min(1),
+  resourceType: z.enum(allowedR4ResourceTypes),
+}).passthrough()
+
+const r4BundleSchema = z.object({
+  entry: z.array(z.object({
+    fullUrl: z.string().min(1).optional(),
+    resource: r4ResourceSchema,
+  }).passthrough()).min(1).max(20_000),
+  resourceType: z.literal('Bundle'),
+  type: z.enum(['batch', 'collection', 'transaction']),
+}).passthrough()
+
+const providerResponseSchema = z.object({
+  bundles: z.array(r4BundleSchema).min(1).max(50),
+  metadata: z.object({
+    clinicalSeed: z.number().int(),
+    configHash: z.string().regex(/^[a-f0-9]{64}$/),
+    modules: z.array(z.enum(['fever', 'type-2-diabetes'])).min(1),
+    populationSeed: z.number().int(),
+    syntheaCommit: z.literal(SYNTHEA_COMMIT),
+    timeRange: z.object({ end: z.iso.date(), start: z.iso.date() }).strict(),
+    timeZone: z.literal('Asia/Shanghai'),
+  }).strict(),
+}).strict()
+
+const r4PatientSchema = r4ResourceSchema.extend({
+  birthDate: z.iso.date(),
+  gender: z.enum(['female', 'male', 'other', 'unknown']),
+  resourceType: z.literal('Patient'),
+})
+
+const patientOwnedReferenceFields: Partial<Record<
+  (typeof allowedR4ResourceTypes)[number],
+  'beneficiary' | 'patient' | 'subject'
+>> = {
+  AllergyIntolerance: 'patient',
+  CarePlan: 'subject',
+  CareTeam: 'subject',
+  Claim: 'patient',
+  Condition: 'subject',
+  Coverage: 'beneficiary',
+  Device: 'patient',
+  DiagnosticReport: 'subject',
+  Encounter: 'subject',
+  ExplanationOfBenefit: 'patient',
+  Goal: 'subject',
+  ImagingStudy: 'subject',
+  Immunization: 'patient',
+  MedicationRequest: 'subject',
+  Observation: 'subject',
+  Procedure: 'subject',
+  SupplyDelivery: 'patient',
+}
+
+export type SyntheaProviderErrorCode =
+  | 'FHIR_R4_BUNDLE_INVALID'
+  | 'FHIR_R4_PATIENT_OWNERSHIP_INVALID'
+  | 'FHIR_R4_REFERENCE_INVALID'
+  | 'FHIR_R4_RESOURCE_NOT_ALLOWED'
+  | 'PROVIDER_REQUEST_FAILED'
+  | 'PROVIDER_RESPONSE_TOO_LARGE'
+  | 'PROVIDER_TIMEOUT'
+  | 'REPRODUCTION_METADATA_MISMATCH'
+
+export class SyntheaProviderError extends ScenarioGenerationProviderError {
+  declare readonly code: SyntheaProviderErrorCode
+
+  constructor(code: SyntheaProviderErrorCode, message: string, options?: ErrorOptions) {
+    super(code, message, options)
+    this.name = 'SyntheaProviderError'
+  }
+}
+
+interface R4Reference {
+  path: string
+  value: string
+}
+
+function collectReferences(value: unknown, path = '$'): R4Reference[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry, index) => collectReferences(entry, `${path}[${index}]`))
+  }
+  if (typeof value !== 'object' || value === null) return []
+  return Object.entries(value).flatMap(([key, entry]) => {
+    const entryPath = `${path}.${key}`
+    if (key === 'reference' && typeof entry === 'string') {
+      return [{ path: entryPath, value: entry }]
+    }
+    return collectReferences(entry, entryPath)
+  })
+}
+
+function referenceValue(resource: z.infer<typeof r4ResourceSchema>, field: string): string | undefined {
+  const reference = resource[field]
+  if (typeof reference !== 'object' || reference === null) return undefined
+  const value = (reference as Record<string, unknown>).reference
+  return typeof value === 'string' ? value : undefined
+}
+
+function validateBundle(bundle: z.infer<typeof r4BundleSchema>): z.infer<typeof r4PatientSchema> {
+  const patients = bundle.entry
+    .filter(entry => entry.resource.resourceType === 'Patient')
+    .map(entry => r4PatientSchema.parse(entry.resource))
+  if (patients.length !== 1) {
+    throw new SyntheaProviderError(
+      'FHIR_R4_PATIENT_OWNERSHIP_INVALID',
+      'Each Synthea Bundle must contain exactly one Patient',
+    )
+  }
+  const patient = patients[0]!
+  const patientEntry = bundle.entry.find(entry => entry.resource === patient)
+    ?? bundle.entry.find(entry => entry.resource.resourceType === 'Patient')!
+  const patientReferences = new Set([
+    `Patient/${patient.id}`,
+    ...(patientEntry.fullUrl === undefined ? [] : [patientEntry.fullUrl]),
+  ])
+  for (const entry of bundle.entry) {
+    const ownershipField = patientOwnedReferenceFields[entry.resource.resourceType]
+    if (ownershipField !== undefined) {
+      const owner = referenceValue(entry.resource, ownershipField)
+      if (owner === undefined || !patientReferences.has(owner)) {
+        throw new SyntheaProviderError(
+          'FHIR_R4_PATIENT_OWNERSHIP_INVALID',
+          `${entry.resource.resourceType}/${entry.resource.id} is not owned by the Bundle Patient`,
+        )
+      }
+    }
+  }
+
+  const validReferences = new Set(bundle.entry.flatMap(entry => [
+    `${entry.resource.resourceType}/${entry.resource.id}`,
+    ...(entry.fullUrl === undefined ? [] : [entry.fullUrl]),
+  ]))
+  for (const reference of collectReferences(bundle)) {
+    if (!reference.value.startsWith('#') && !validReferences.has(reference.value)) {
+      throw new SyntheaProviderError(
+        'FHIR_R4_REFERENCE_INVALID',
+        `Unresolved R4 reference at ${reference.path}`,
+      )
+    }
+  }
+  return patient
+}
+
+async function readBoundedResponse(response: Response, maximumBytes: number): Promise<string> {
+  const declaredLength = response.headers.get('content-length')
+  if (declaredLength !== null && Number(declaredLength) > maximumBytes) {
+    throw new SyntheaProviderError(
+      'PROVIDER_RESPONSE_TOO_LARGE',
+      'The Synthea Provider response exceeds the configured size limit',
+    )
+  }
+  if (response.body === null) return ''
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  while (true) {
+    const next = await reader.read()
+    if (next.done) break
+    size += next.value.byteLength
+    if (size > maximumBytes) {
+      await reader.cancel()
+      throw new SyntheaProviderError(
+        'PROVIDER_RESPONSE_TOO_LARGE',
+        'The Synthea Provider response exceeds the configured size limit',
+      )
+    }
+    chunks.push(next.value)
+  }
+  const bytes = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder().decode(bytes)
+}
+
+function assertReproductionMetadata(
+  metadata: z.infer<typeof providerResponseSchema>['metadata'],
+  request: ScenarioGenerationRequest,
+): void {
+  if (
+    metadata.clinicalSeed !== request.seeds.clinical
+    || metadata.populationSeed !== request.seeds.population
+    || metadata.timeZone !== request.timeZone
+    || metadata.timeRange.start !== request.timeRange.start
+    || metadata.timeRange.end !== request.timeRange.end
+    || metadata.modules.length !== request.modules.length
+    || metadata.modules.some((module, index) => module !== request.modules[index])
+  ) {
+    throw new SyntheaProviderError(
+      'REPRODUCTION_METADATA_MISMATCH',
+      'The Synthea Provider response does not match the requested reproduction parameters',
+    )
+  }
+}
+
+export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProvider {
+  readonly #endpoint: URL
+  readonly #fetch: typeof fetch
+  readonly #maxResponseBytes: number
+  readonly #timeoutMs: number
+
+  constructor(options: {
+    baseUrl: string
+    fetch?: typeof fetch
+    maxResponseBytes?: number
+    timeoutMs?: number
+  }) {
+    const endpoint = new URL(options.baseUrl)
+    if (!['http:', 'https:'].includes(endpoint.protocol)) {
+      throw new Error('The Synthea Provider URL must use HTTP or HTTPS')
+    }
+    endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/v1/generate`
+    endpoint.search = ''
+    endpoint.hash = ''
+    this.#endpoint = endpoint
+    this.#fetch = options.fetch ?? globalThis.fetch
+    this.#maxResponseBytes = options.maxResponseBytes ?? 64 * 1024 * 1024
+    this.#timeoutMs = options.timeoutMs ?? 5 * 60 * 1_000
+  }
+
+  async capabilities(): Promise<ScenarioProviderCapabilities> {
+    return {
+      available: true,
+      maxPopulation: 50,
+      modules: ['fever', 'type-2-diabetes'],
+      providerId: 'synthea',
+      providerName: 'Synthea',
+    }
+  }
+
+  async generate(
+    request: ScenarioGenerationRequest,
+    signal?: AbortSignal,
+  ): Promise<SourcePatientCorpus> {
+    const timeoutSignal = AbortSignal.timeout(this.#timeoutMs)
+    const requestSignal = signal === undefined
+      ? timeoutSignal
+      : AbortSignal.any([signal, timeoutSignal])
+    let response: Response
+    try {
+      response = await this.#fetch(this.#endpoint, {
+        body: JSON.stringify(request),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+        signal: requestSignal,
+      })
+    } catch (error) {
+      if (requestSignal.aborted) {
+        throw new SyntheaProviderError('PROVIDER_TIMEOUT', 'The Synthea Provider request timed out', {
+          cause: error,
+        })
+      }
+      throw new SyntheaProviderError('PROVIDER_REQUEST_FAILED', 'The Synthea Provider request failed', {
+        cause: error,
+      })
+    }
+    if (!response.ok) {
+      throw new SyntheaProviderError(
+        'PROVIDER_REQUEST_FAILED',
+        `The Synthea Provider returned HTTP ${response.status}`,
+      )
+    }
+    let parsed: z.infer<typeof providerResponseSchema>
+    try {
+      parsed = providerResponseSchema.parse(JSON.parse(
+        await readBoundedResponse(response, this.#maxResponseBytes),
+      ))
+    } catch (error) {
+      if (error instanceof SyntheaProviderError) throw error
+      if (error instanceof z.ZodError && error.issues.some(issue => (
+        issue.code === 'invalid_value'
+        && issue.path.at(-1) === 'resourceType'
+      ))) {
+        throw new SyntheaProviderError(
+          'FHIR_R4_RESOURCE_NOT_ALLOWED',
+          'The Synthea Provider returned an unsupported R4 resource type',
+          { cause: error },
+        )
+      }
+      throw new SyntheaProviderError(
+        'FHIR_R4_BUNDLE_INVALID',
+        'The Synthea Provider returned invalid R4 data',
+        { cause: error },
+      )
+    }
+    assertReproductionMetadata(parsed.metadata, request)
+    if (parsed.bundles.length !== request.population.count) {
+      throw new SyntheaProviderError(
+        'FHIR_R4_PATIENT_OWNERSHIP_INVALID',
+        'The Synthea Provider returned an unexpected number of Patient Bundles',
+      )
+    }
+
+    const patients = parsed.bundles.map((bundle, index) => {
+      const patient = validateBundle(bundle)
+      return {
+        birthDate: patient.birthDate,
+        diagnosisSpace: {},
+        examinationFindings: {},
+        gender: patient.gender,
+        id: `synthea-patient-${patient.id}`,
+        investigations: [],
+        longitudinalHistory: bundle.entry.map(entry => ({
+          resource: entry.resource,
+          source: 'synthea-fhir-r4',
+        })),
+        managementSpace: {},
+        name: `合成患者 ${String(index + 1).padStart(3, '0')}`,
+        patientKnowledge: {},
+        physiologyBaseline: {},
+        symptomResponses: [],
+      }
+    })
+    const content: ScenarioDatasetContent = {
+      catalog: { departments: [], investigations: [], medications: [] },
+      hiddenFacts: [],
+      hospital: { id: 'hospital-synthetic-renhe', locale: 'zh-CN', name: '仁和医院' },
+      inventory: [],
+      patients,
+      reproduction: {
+        clinicalSeed: request.seeds.clinical,
+        configHash: parsed.metadata.configHash,
+        generator: 'synthea-fhir-r4',
+        generatorVersion: parsed.metadata.syntheaCommit,
+        modules: request.modules,
+        populationSeed: request.seeds.population,
+        timeRange: request.timeRange,
+        timeZone: request.timeZone,
+      },
+      revealPolicies: [],
+      schemaVersion: '1',
+      simulatorRules: [],
+    }
+    return { content, kind: 'case-truth' }
+  }
+}

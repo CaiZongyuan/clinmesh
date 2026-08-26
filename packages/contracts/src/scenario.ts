@@ -93,7 +93,9 @@ export const scenarioDatasetContentSchema = z.object({
   patients: z.array(scenarioPatientSchema).min(1),
   reproduction: z.object({
     clinicalSeed: z.number().int(),
+    configHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     generator: z.string().min(1),
+    generatorVersion: z.string().min(1).optional(),
     modules: z.array(z.string().min(1)),
     populationSeed: z.number().int(),
     timeRange: z.object({ end: localDateSchema, start: localDateSchema }).strict(),
@@ -153,9 +155,26 @@ export const scenarioProviderCapabilitiesSchema = z.object({
   unavailableReason: z.string().min(1).optional(),
 }).strict()
 
+export const scenarioGenerationJobSchema = z.object({
+  createdAt: z.iso.datetime({ offset: true }),
+  datasetId: z.string().min(1).nullable(),
+  error: z.object({
+    code: z.string().min(1).max(128),
+    message: z.string().min(1).max(1_000),
+  }).strict().nullable(),
+  finishedAt: z.iso.datetime({ offset: true }).nullable(),
+  jobId: z.string().min(1),
+  request: scenarioGenerationRequestSchema,
+  startedAt: z.iso.datetime({ offset: true }).nullable(),
+  status: z.enum(['queued', 'running', 'succeeded', 'failed']),
+  updatedAt: z.iso.datetime({ offset: true }),
+  workspaceId: z.string().min(1),
+}).strict()
+
 export type ScenarioDataset = z.infer<typeof scenarioDatasetSchema>
 export type ScenarioDatasetList = z.infer<typeof scenarioDatasetListSchema>
 export type ScenarioDatasetContent = z.infer<typeof scenarioDatasetContentSchema>
 export type ScenarioDiagnostic = z.infer<typeof scenarioDiagnosticSchema>
 export type ScenarioGenerationRequest = z.infer<typeof scenarioGenerationRequestSchema>
+export type ScenarioGenerationJob = z.infer<typeof scenarioGenerationJobSchema>
 export type ScenarioProviderCapabilities = z.infer<typeof scenarioProviderCapabilitiesSchema>

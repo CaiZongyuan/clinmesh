@@ -591,7 +591,7 @@ describe('trusted session and Scenario HTTP contract', () => {
         providerName: 'ClinMesh 内置生成器',
       }, {
         available: false,
-        maxPopulation: 500,
+        maxPopulation: 50,
         modules: ['fever', 'type-2-diabetes'],
         providerId: 'synthea',
         providerName: 'Synthea',

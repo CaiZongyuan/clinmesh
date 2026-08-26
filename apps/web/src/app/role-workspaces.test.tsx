@@ -311,8 +311,9 @@ function stubAdministratorWorkspace() {
   }))
 }
 
-function stubScenarioDataWorkspace() {
+function stubScenarioDataWorkspace(options: { syntheaAvailable?: boolean } = {}) {
   let generated = false
+  let jobReads = 0
   let dataset = {
     content: {
       catalog: { departments: [], investigations: [], medications: [] },
@@ -367,12 +368,14 @@ function stubScenarioDataWorkspace() {
           providerId: 'builtin',
           providerName: 'ClinMesh 内置生成器',
         }, {
-          available: false,
+          available: options.syntheaAvailable === true,
           maxPopulation: 500,
           modules: ['fever', 'type-2-diabetes'],
           providerId: 'synthea',
           providerName: 'Synthea',
-          unavailableReason: '未配置 Synthea Provider',
+          ...(options.syntheaAvailable === true
+            ? {}
+            : { unavailableReason: '未配置 Synthea Provider' }),
         }],
       })
     }
@@ -397,6 +400,53 @@ function stubScenarioDataWorkspace() {
     if (url.pathname === '/api/sim/v1/scenario-datasets/actions/generate') {
       generated = true
       return Response.json(commandResponse(dataset))
+    }
+    if (url.pathname === '/api/sim/v1/scenario-generation-jobs' && init?.method === 'POST') {
+      return Response.json(commandResponse({
+        createdAt: '2026-08-26T09:00:00+08:00',
+        datasetId: null,
+        error: null,
+        finishedAt: null,
+        jobId: 'scenario-generation-job-001',
+        request: {
+          modules: ['fever'],
+          name: '发热门诊样本',
+          population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
+          providerId: 'synthea',
+          seeds: { clinical: 7331, population: 4242 },
+          timeRange: { end: '2026-08-01', start: '2020-01-01' },
+          timeZone: 'Asia/Shanghai',
+        },
+        startedAt: null,
+        status: 'queued',
+        updatedAt: '2026-08-26T09:00:00+08:00',
+        workspaceId: 'workspace-demo',
+      }))
+    }
+    if (url.pathname === '/api/sim/v1/scenario-generation-jobs/scenario-generation-job-001') {
+      jobReads += 1
+      const succeeded = jobReads > 1
+      if (succeeded) generated = true
+      return Response.json({
+        createdAt: '2026-08-26T09:00:00+08:00',
+        datasetId: succeeded ? dataset.datasetId : null,
+        error: null,
+        finishedAt: succeeded ? '2026-08-26T09:00:02+08:00' : null,
+        jobId: 'scenario-generation-job-001',
+        request: {
+          modules: ['fever'],
+          name: '发热门诊样本',
+          population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
+          providerId: 'synthea',
+          seeds: { clinical: 7331, population: 4242 },
+          timeRange: { end: '2026-08-01', start: '2020-01-01' },
+          timeZone: 'Asia/Shanghai',
+        },
+        startedAt: '2026-08-26T09:00:01+08:00',
+        status: succeeded ? 'succeeded' : 'running',
+        updatedAt: succeeded ? '2026-08-26T09:00:02+08:00' : '2026-08-26T09:00:01+08:00',
+        workspaceId: 'workspace-demo',
+      })
     }
     if (url.pathname === `/api/sim/v1/scenario-datasets/${dataset.datasetId}` && init?.method === 'PUT') {
       const body = JSON.parse(String(init.body)) as {
@@ -678,7 +728,8 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     expect(await screen.findByRole('heading', { name: '模拟数据' })).toBeTruthy()
-    expect(await screen.findByText('Synthea')).toBeTruthy()
+    expect((await screen.findByRole('option', { name: 'Synthea' }))
+      .hasAttribute('disabled')).toBe(true)
     expect(screen.getByText('未配置 Synthea Provider')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '生成数据' }))
     expect(await screen.findByText('发热门诊样本')).toBeTruthy()
@@ -700,6 +751,22 @@ describe('role workspaces', () => {
 
     expect(await screen.findByText('版本 2')).toBeTruthy()
     expect(screen.getByDisplayValue('合成患者李明')).toBeTruthy()
+  })
+
+  it('selects Synthea and follows a persistent generation job to completion', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ syntheaAvailable: true })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await screen.findByRole('option', { name: 'Synthea' })
+    await user.selectOptions(screen.getByLabelText('生成服务'), 'synthea')
+    await user.click(screen.getByRole('button', { name: '生成数据' }))
+
+    expect(await screen.findByText('运行中')).toBeTruthy()
+    expect(await screen.findByText('已完成')).toBeTruthy()
+    expect(await screen.findByText('发热门诊样本')).toBeTruthy()
   })
 
   it('uses clinical operator language for the registrar empty state', async () => {
