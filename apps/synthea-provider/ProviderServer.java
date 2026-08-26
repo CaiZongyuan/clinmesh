@@ -18,9 +18,13 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
@@ -236,7 +240,9 @@ public final class ProviderServer {
       try (Stream<Path> paths = Files.list(fhirDirectory)) {
         for (Path path : paths.filter(Files::isRegularFile).sorted().toList()) {
           JsonElement value = JsonParser.parseString(Files.readString(path));
-          if (isPatientBundle(value)) bundles.add(value);
+          if (isPatientBundle(value)) {
+            bundles.add(trimBundleToTimeRange(value.getAsJsonObject(), request));
+          }
         }
       }
       if (bundles.size() != request.count) {
@@ -288,6 +294,112 @@ public final class ProviderServer {
       JsonObject resource = entry.getAsJsonObject("resource");
       if (resource.has("resourceType")
           && resource.get("resourceType").getAsString().equals("Patient")) return true;
+    }
+    return false;
+  }
+
+  private static JsonObject trimBundleToTimeRange(
+      JsonObject bundle, GenerationRequest request) throws IOException {
+    JsonArray retainedEntries = new JsonArray();
+    for (JsonElement entryValue : bundle.getAsJsonArray("entry")) {
+      JsonObject entry = entryValue.getAsJsonObject();
+      JsonObject resource = entry.getAsJsonObject("resource");
+      if (isWithinTimeRange(resource, request)) retainedEntries.add(entry);
+    }
+    bundle.add("entry", retainedEntries);
+    pruneDanglingReferences(bundle);
+    return bundle;
+  }
+
+  private static boolean isWithinTimeRange(
+      JsonObject resource, GenerationRequest request) throws IOException {
+    if (!resource.has("resourceType")) return true;
+    List<List<String>> datePaths = switch (resource.get("resourceType").getAsString()) {
+      case "AllergyIntolerance" -> List.of(List.of("recordedDate"));
+      case "Condition" -> List.of(List.of("onsetDateTime"), List.of("recordedDate"));
+      case "Encounter" -> List.of(List.of("period", "start"), List.of("period", "end"));
+      case "MedicationRequest" -> List.of(List.of("authoredOn"));
+      case "Observation" -> List.of(List.of("effectiveDateTime"));
+      default -> List.of();
+    };
+    for (List<String> path : datePaths) {
+      String value = nestedString(resource, path);
+      if (value == null) continue;
+      LocalDate date = clinicalDate(value, request.timeZone);
+      if (date.isBefore(request.start) || date.isAfter(request.end)) return false;
+    }
+    return true;
+  }
+
+  private static String nestedString(JsonObject root, List<String> path) {
+    JsonElement current = root;
+    for (String key : path) {
+      if (!current.isJsonObject() || !current.getAsJsonObject().has(key)) return null;
+      current = current.getAsJsonObject().get(key);
+    }
+    return current.isJsonPrimitive() && current.getAsJsonPrimitive().isString()
+        ? current.getAsString()
+        : null;
+  }
+
+  private static LocalDate clinicalDate(String value, String timeZone) throws IOException {
+    try {
+      return OffsetDateTime.parse(value)
+          .atZoneSameInstant(ZoneId.of(timeZone))
+          .toLocalDate();
+    } catch (DateTimeParseException error) {
+      try {
+        return LocalDate.parse(value);
+      } catch (DateTimeParseException nestedError) {
+        throw new IOException("Synthea returned an invalid clinical date", nestedError);
+      }
+    }
+  }
+
+  private static void pruneDanglingReferences(JsonObject bundle) {
+    boolean removed;
+    do {
+      JsonArray entries = bundle.getAsJsonArray("entry");
+      Set<String> identities = new HashSet<>();
+      for (JsonElement entryValue : entries) {
+        JsonObject entry = entryValue.getAsJsonObject();
+        if (entry.has("fullUrl")) identities.add(entry.get("fullUrl").getAsString());
+        JsonObject resource = entry.getAsJsonObject("resource");
+        identities.add(
+            resource.get("resourceType").getAsString() + "/" + resource.get("id").getAsString());
+      }
+
+      JsonArray retainedEntries = new JsonArray();
+      removed = false;
+      for (JsonElement entryValue : entries) {
+        JsonObject resource = entryValue.getAsJsonObject().getAsJsonObject("resource");
+        if (hasDanglingReference(resource, identities)) {
+          removed = true;
+        } else {
+          retainedEntries.add(entryValue);
+        }
+      }
+      bundle.add("entry", retainedEntries);
+    } while (removed);
+  }
+
+  private static boolean hasDanglingReference(JsonElement value, Set<String> identities) {
+    if (value.isJsonArray()) {
+      for (JsonElement item : value.getAsJsonArray()) {
+        if (hasDanglingReference(item, identities)) return true;
+      }
+      return false;
+    }
+    if (!value.isJsonObject()) return false;
+    for (String key : value.getAsJsonObject().keySet()) {
+      JsonElement child = value.getAsJsonObject().get(key);
+      if (key.equals("reference") && child.isJsonPrimitive()
+          && child.getAsJsonPrimitive().isString()) {
+        String reference = child.getAsString();
+        if (!reference.startsWith("#") && !identities.contains(reference)) return true;
+      } else if (hasDanglingReference(child, identities)) {
+        return true;
+      }
     }
     return false;
   }

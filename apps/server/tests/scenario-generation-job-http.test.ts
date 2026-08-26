@@ -164,6 +164,15 @@ describe('persistent Scenario generation job HTTP contract', () => {
       error: null,
       status: 'succeeded',
     })
+    expect(restartedRuntime.database.driver.prepare(`
+      SELECT actor_id, operation, outcome
+      FROM audit_log
+      WHERE workspace_id = ? AND operation = ?
+    `).get('workspace-demo', 'scenario-generation-job.complete')).toEqual({
+      actor_id: 'actor-administrator',
+      operation: 'scenario-generation-job.complete',
+      outcome: 'success',
+    })
     const datasetResponse = await restartedRuntime.app.request(
       `/api/sim/v1/scenario-datasets/${encodeURIComponent(succeeded.datasetId ?? '')}`,
       { headers: { cookie } },
@@ -229,6 +238,15 @@ describe('persistent Scenario generation job HTTP contract', () => {
         message: 'Synthea is unreachable',
       },
       status: 'failed',
+    })
+    expect(runtime.database.driver.prepare(`
+      SELECT actor_id, operation, outcome
+      FROM audit_log
+      WHERE workspace_id = ? AND operation = ?
+    `).get('workspace-demo', 'scenario-generation-job.fail')).toEqual({
+      actor_id: 'actor-administrator',
+      operation: 'scenario-generation-job.fail',
+      outcome: 'success',
     })
     const after = scenarioStateSchema.parse(await (await runtime.app.request(
       '/api/sim/v1/scenario-runs/current',

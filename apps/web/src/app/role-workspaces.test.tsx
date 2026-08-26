@@ -10,6 +10,10 @@ import type {
   LaboratoryRequest,
   SessionContext,
 } from '@clinmesh/contracts/his'
+import {
+  scenarioDatasetContentSchema,
+  type ScenarioGenerationRequest,
+} from '@clinmesh/contracts/scenario'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -314,6 +318,7 @@ function stubAdministratorWorkspace() {
 function stubScenarioDataWorkspace(options: {
   datasetTotal?: number | ((url: URL) => number)
   onDatasetListRequest?: (url: URL) => void
+  onGenerate?: (request: ScenarioGenerationRequest) => void
   onUpdate?: (content: unknown) => void
   syntheaAvailable?: boolean
 } = {}) {
@@ -559,10 +564,12 @@ function stubScenarioDataWorkspace(options: {
       })
     }
     if (url.pathname === '/api/sim/v1/scenario-datasets/actions/generate') {
+      options.onGenerate?.(JSON.parse(String(init?.body)) as ScenarioGenerationRequest)
       generated = true
       return Response.json(commandResponse(dataset))
     }
     if (url.pathname === '/api/sim/v1/scenario-generation-jobs' && init?.method === 'POST') {
+      options.onGenerate?.(JSON.parse(String(init.body)) as ScenarioGenerationRequest)
       return Response.json(commandResponse({
         createdAt: '2026-08-26T09:00:00+08:00',
         datasetId: null,
@@ -1016,6 +1023,67 @@ describe('role workspaces', () => {
     })
   })
 
+  it('edits history, diagnosis space and simulator rules through structured fields', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    let savedContent: unknown
+    stubScenarioDataWorkspace({ onUpdate: content => { savedContent = content } })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('button', { name: '生成数据' }))
+    await user.click(await screen.findByRole('button', { name: '编辑 发热门诊样本' }))
+    await user.click(screen.getByRole('tab', { name: '纵向病史' }))
+    await user.click(screen.getByRole('button', { name: '新增病史事件' }))
+    const historyDisplay = screen.getByLabelText('病史名称 1')
+    await user.clear(historyDisplay)
+    await user.type(historyDisplay, '既往高血压')
+    await user.click(screen.getByRole('button', { name: '新增 FHIR 病史' }))
+    const fhirDisplay = screen.getByLabelText('FHIR 诊断名称 1')
+    await user.clear(fhirDisplay)
+    await user.type(fhirDisplay, '高血压')
+
+    await user.click(screen.getByRole('tab', { name: '查体与检查' }))
+    expect(screen.queryByRole('combobox', { name: '结果来源级别' })).toBeNull()
+    expect(screen.getByLabelText('结果来源级别').textContent).toBe('L1')
+
+    await user.click(screen.getByRole('tab', { name: '诊断与处置' }))
+    await user.click(screen.getByRole('button', { name: '新增共病' }))
+    await user.clear(screen.getByLabelText('共病名称 1'))
+    await user.type(screen.getByLabelText('共病名称 1'), '原发性高血压')
+    await user.click(screen.getByRole('button', { name: '新增鉴别诊断' }))
+    await user.clear(screen.getByLabelText('鉴别诊断名称 1'))
+    await user.type(screen.getByLabelText('鉴别诊断名称 1'), '社区获得性肺炎')
+    fireEvent.change(screen.getByLabelText('诊断陷阱'), {
+      target: { value: '避免仅凭发热使用抗菌药物。\n排除重症感染。' },
+    })
+
+    await user.click(screen.getByRole('tab', { name: '隐藏事实与揭示' }))
+    await user.click(screen.getByRole('button', { name: '新增模拟器规则' }))
+    const ruleCode = screen.getByLabelText('规则编码 1')
+    await user.clear(ruleCode)
+    await user.type(ruleCode, 'lis-timeout-once')
+    await user.click(screen.getByLabelText('模拟结果 1'))
+    await user.click(await screen.findByRole('option', { name: '结果未知' }))
+    await user.click(screen.getByRole('button', { name: '保存修改' }))
+
+    await waitFor(() => expect(savedContent).not.toBeUndefined())
+    scenarioDatasetContentSchema.parse(savedContent)
+    expect(await screen.findByText('版本 2')).toBeTruthy()
+    expect(savedContent).toMatchObject({
+      patients: [{
+        diagnosisSpace: {
+          comorbidities: [{ display: '原发性高血压' }],
+          differentials: [{ display: '社区获得性肺炎' }],
+          traps: ['避免仅凭发热使用抗菌药物。', '排除重症感染。'],
+        },
+        fhirHistory: [{ code: { display: '高血压' }, resourceType: 'Condition' }],
+        longitudinalHistory: [{ display: '既往高血压' }],
+      }],
+      simulatorRules: [{ code: 'lis-timeout-once', outcome: 'ambiguous', simulator: 'lis' }],
+    })
+  })
+
   it('selects Synthea and follows a persistent generation job to completion', async () => {
     window.history.replaceState(null, '', '/scenario-data')
     stubScenarioDataWorkspace({ syntheaAvailable: true })
@@ -1030,6 +1098,30 @@ describe('role workspaces', () => {
     expect(await screen.findByText('运行中')).toBeTruthy()
     expect(await screen.findByText('已完成')).toBeTruthy()
     expect(await screen.findByText('发热门诊样本')).toBeTruthy()
+  })
+
+  it('submits a diabetes-only Synthea population while keeping one module selected', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    let submittedRequest: ScenarioGenerationRequest | undefined
+    stubScenarioDataWorkspace({
+      onGenerate: request => { submittedRequest = request },
+      syntheaAvailable: true,
+    })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await screen.findByRole('option', { name: 'Synthea' })
+    await user.selectOptions(screen.getByLabelText('生成服务'), 'synthea')
+    const fever = screen.getByRole('checkbox', { name: '发热门诊' })
+    await user.click(fever)
+    expect(fever.getAttribute('aria-checked')).toBe('true')
+    await user.click(screen.getByRole('checkbox', { name: '2 型糖尿病' }))
+    await user.click(fever)
+    expect(fever.getAttribute('aria-checked')).toBe('false')
+    await user.click(screen.getByRole('button', { name: '生成数据' }))
+
+    await waitFor(() => expect(submittedRequest?.modules).toEqual(['type-2-diabetes']))
   })
 
   it('uses clinical operator language for the registrar empty state', async () => {

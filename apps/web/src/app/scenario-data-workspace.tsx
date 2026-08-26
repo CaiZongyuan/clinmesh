@@ -43,6 +43,7 @@ import {
   FlaskConicalIcon,
   PencilIcon,
   PlayIcon,
+  PlusIcon,
   SaveIcon,
   SearchIcon,
   Trash2Icon,
@@ -85,6 +86,15 @@ const initialRequest: ScenarioGenerationRequest = {
   timeZone: 'Asia/Shanghai',
 }
 
+function updateModules(
+  modules: ScenarioGenerationRequest['modules'],
+  module: ScenarioGenerationRequest['modules'][number],
+  checked: boolean,
+): ScenarioGenerationRequest['modules'] {
+  if (checked) return [...new Set([...modules, module])]
+  return modules.length === 1 ? modules : modules.filter(candidate => candidate !== module)
+}
+
 function joinLines(values: readonly string[]): string {
   return values.join('\n')
 }
@@ -93,8 +103,17 @@ function splitLines(value: string): string[] {
   return value.split('\n').map(line => line.trim()).filter(line => line.length > 0)
 }
 
+function updateAt<T>(values: readonly T[], index: number, update: (value: T) => T): T[] {
+  return values.map((value, valueIndex) => valueIndex === index ? update(value) : value)
+}
+
 type InvestigationCatalogItem = ScenarioDataset['content']['catalog']['investigations'][number]
 type InvestigationReferenceRange = InvestigationCatalogItem['referenceRanges'][number]
+type ScenarioPatient = ScenarioDataset['content']['patients'][number]
+type ScenarioHistoryEvent = ScenarioPatient['longitudinalHistory'][number]
+type ScenarioFhirHistory = ScenarioPatient['fhirHistory'][number]
+type ScenarioDiagnosis = ScenarioPatient['diagnosisSpace']['primary']
+type UpdatePatient = (update: (patient: ScenarioPatient) => ScenarioPatient) => void
 
 function updateFirstReferenceRange(
   item: InvestigationCatalogItem,
@@ -125,6 +144,371 @@ function scalarHiddenFactValue(value: ScenarioDataset['content']['hiddenFacts'][
   return ''
 }
 
+function nextScopedId(prefix: string, ids: readonly string[]): string {
+  const existing = new Set(ids)
+  let sequence = 1
+  while (existing.has(`${prefix}-${sequence}`)) sequence += 1
+  return `${prefix}-${sequence}`
+}
+
+function optionalString<T extends object, Key extends keyof T>(
+  value: T,
+  key: Key,
+  next: string,
+): T {
+  if (next !== '') return Object.assign({}, value, { [key]: next })
+  const copy = { ...value }
+  Reflect.deleteProperty(copy, key)
+  return copy
+}
+
+const fhirHistoryTypes = [
+  'Condition',
+  'Encounter',
+  'Observation',
+  'MedicationRequest',
+  'AllergyIntolerance',
+] as const
+
+function createFhirHistoryResource(
+  resourceType: ScenarioFhirHistory['resourceType'],
+  id: string,
+  timestamp: string,
+): ScenarioFhirHistory {
+  if (resourceType === 'Encounter') {
+    return {
+      classCode: 'AMB',
+      id,
+      period: { start: timestamp },
+      resourceType,
+      status: 'finished',
+    }
+  }
+  if (resourceType === 'Observation') {
+    return {
+      code: { display: '待编辑观察' },
+      effectiveDateTime: timestamp,
+      id,
+      resourceType,
+      status: 'final',
+      value: { outcome: 'reported', value: '待编辑结果' },
+    }
+  }
+  if (resourceType === 'MedicationRequest') {
+    return {
+      authoredOn: timestamp,
+      id,
+      intent: 'order',
+      medication: { display: '待编辑药品' },
+      resourceType,
+      status: 'active',
+    }
+  }
+  if (resourceType === 'AllergyIntolerance') {
+    return {
+      clinicalStatus: 'active',
+      code: { display: '待编辑过敏原' },
+      id,
+      recordedDate: timestamp,
+      resourceType,
+    }
+  }
+  return {
+    clinicalStatus: 'active',
+    code: { display: '待编辑诊断' },
+    id,
+    recordedDate: timestamp,
+    resourceType,
+  }
+}
+
+function HistoryEditor({
+  locale,
+  patient,
+  timeRangeEnd,
+  updatePatient,
+}: {
+  locale: WorkspaceLocale
+  patient: ScenarioPatient
+  timeRangeEnd: string
+  updatePatient: UpdatePatient
+}): React.JSX.Element {
+  const messages = getWorkspaceMessages(locale)
+  const [newFhirResourceType, setNewFhirResourceType] = useState<ScenarioFhirHistory['resourceType']>('Condition')
+  const timestamp = `${timeRangeEnd}T09:00:00+08:00`
+  const updateHistoryEvent = (
+    index: number,
+    update: (event: ScenarioHistoryEvent) => ScenarioHistoryEvent,
+  ): void => updatePatient(current => ({
+    ...current,
+    longitudinalHistory: updateAt(current.longitudinalHistory, index, update),
+  }))
+  const updateFhirHistory = (
+    index: number,
+    update: (resource: ScenarioFhirHistory) => ScenarioFhirHistory,
+  ): void => updatePatient(current => ({
+    ...current,
+    fhirHistory: updateAt(current.fhirHistory, index, update),
+  }))
+
+  return (
+    <TabsContent className="flex flex-col gap-6 pt-4" value="history">
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold">{messages.longitudinalHistory}</h3>
+          <Button onClick={() => updatePatient(current => {
+            const id = nextScopedId(
+              'history-event-new',
+              current.longitudinalHistory.map(event => event.id),
+            )
+            return {
+              ...current,
+              longitudinalHistory: [...current.longitudinalHistory, {
+                code: 'unmapped',
+                display: '待编辑病史',
+                id,
+                kind: 'condition',
+                mappedCode: null,
+                occurredAt: timestamp,
+                sourceResourceId: id.replace('history-event-', ''),
+                sourceResourceType: 'Condition',
+                status: 'active',
+              }],
+            }
+          })} size="sm" type="button" variant="outline">
+            <PlusIcon data-icon="inline-start" />{messages.addHistoryEvent}
+          </Button>
+        </div>
+        {patient.longitudinalHistory.map((event, eventIndex) => {
+          const suffix = ` ${eventIndex + 1}`
+          return (
+            <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-2 xl:grid-cols-4" key={event.id}>
+              <legend className="sr-only">{messages.historyDisplay}{suffix}</legend>
+              <Field className="md:col-span-2">
+                <FieldLabel htmlFor={`editor-history-display-${eventIndex}`}>{messages.historyDisplay}{suffix}</FieldLabel>
+                <Input id={`editor-history-display-${eventIndex}`} onChange={change => updateHistoryEvent(eventIndex, current => ({ ...current, display: change.target.value }))} value={event.display} />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor={`editor-history-kind-${eventIndex}`}>{messages.historyKind}{suffix}</FieldLabel>
+                <Select onValueChange={value => updateHistoryEvent(eventIndex, current => ({ ...current, kind: value as ScenarioHistoryEvent['kind'] }))} value={event.kind}>
+                  <SelectTrigger className="w-full" id={`editor-history-kind-${eventIndex}`}><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectGroup>{(['allergy', 'condition', 'encounter', 'medication', 'observation'] as const).map(kind => <SelectItem key={kind} value={kind}>{kind}</SelectItem>)}</SelectGroup></SelectContent>
+                </Select>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor={`editor-history-status-${eventIndex}`}>{messages.historyStatus}{suffix}</FieldLabel>
+                <Input id={`editor-history-status-${eventIndex}`} onChange={change => updateHistoryEvent(eventIndex, current => ({ ...current, status: change.target.value }))} value={event.status} />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor={`editor-history-code-${eventIndex}`}>{messages.historyCode}{suffix}</FieldLabel>
+                <Input id={`editor-history-code-${eventIndex}`} onChange={change => updateHistoryEvent(eventIndex, current => ({ ...current, code: change.target.value }))} value={event.code} />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor={`editor-history-mapped-${eventIndex}`}>{messages.mappedCode}{suffix}</FieldLabel>
+                <Input id={`editor-history-mapped-${eventIndex}`} onChange={change => updateHistoryEvent(eventIndex, current => ({ ...current, mappedCode: change.target.value || null }))} value={event.mappedCode ?? ''} />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor={`editor-history-occurred-${eventIndex}`}>{messages.occurredAt}{suffix}</FieldLabel>
+                <Input id={`editor-history-occurred-${eventIndex}`} onChange={change => updateHistoryEvent(eventIndex, current => ({ ...current, occurredAt: change.target.value }))} value={event.occurredAt} />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor={`editor-history-ended-${eventIndex}`}>{messages.endedAt}{suffix}</FieldLabel>
+                <Input id={`editor-history-ended-${eventIndex}`} onChange={change => updateHistoryEvent(eventIndex, current => optionalString(current, 'endedAt', change.target.value))} value={event.endedAt ?? ''} />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor={`editor-history-source-type-${eventIndex}`}>{messages.sourceResourceType}{suffix}</FieldLabel>
+                <Select onValueChange={value => updateHistoryEvent(eventIndex, current => ({ ...current, sourceResourceType: value as ScenarioHistoryEvent['sourceResourceType'] }))} value={event.sourceResourceType}>
+                  <SelectTrigger className="w-full" id={`editor-history-source-type-${eventIndex}`}><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectGroup>{fhirHistoryTypes.map(type => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectGroup></SelectContent>
+                </Select>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor={`editor-history-source-id-${eventIndex}`}>{messages.sourceResourceId}{suffix}</FieldLabel>
+                <Input id={`editor-history-source-id-${eventIndex}`} onChange={change => updateHistoryEvent(eventIndex, current => ({ ...current, sourceResourceId: change.target.value }))} value={event.sourceResourceId} />
+              </Field>
+              <div className="flex items-end justify-end">
+                <Button aria-label={`${messages.removeHistoryEvent}${suffix}`} onClick={() => updatePatient(current => ({ ...current, longitudinalHistory: current.longitudinalHistory.filter((_, index) => index !== eventIndex) }))} size="icon" title={`${messages.removeHistoryEvent}${suffix}`} type="button" variant="ghost"><Trash2Icon /></Button>
+              </div>
+            </fieldset>
+          )
+        })}
+      </div>
+
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <h3 className="text-sm font-semibold">{messages.fhirHistory}</h3>
+          <div className="flex flex-wrap items-end gap-2">
+            <Field className="w-52">
+              <FieldLabel htmlFor="editor-new-fhir-resource-type">{messages.fhirResourceType}</FieldLabel>
+              <Select onValueChange={value => setNewFhirResourceType(value as ScenarioFhirHistory['resourceType'])} value={newFhirResourceType}>
+                <SelectTrigger className="w-full" id="editor-new-fhir-resource-type"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectGroup>{fhirHistoryTypes.map(type => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectGroup></SelectContent>
+              </Select>
+            </Field>
+            <Button onClick={() => updatePatient(current => {
+              const id = nextScopedId(
+                `history-${newFhirResourceType.toLowerCase()}`,
+                current.fhirHistory.map(resource => resource.id),
+              )
+              return {
+                ...current,
+                fhirHistory: [...current.fhirHistory, createFhirHistoryResource(
+                  newFhirResourceType,
+                  id,
+                  timestamp,
+                )],
+              }
+            })} size="sm" type="button" variant="outline">
+              <PlusIcon data-icon="inline-start" />{messages.addFhirHistory}
+            </Button>
+          </div>
+        </div>
+        {patient.fhirHistory.map((resource, resourceIndex) => {
+          const suffix = ` ${resourceIndex + 1}`
+          const removeButton = (
+            <div className="flex items-end justify-end">
+              <Button aria-label={`${messages.removeFhirHistory}${suffix}`} onClick={() => updatePatient(current => ({ ...current, fhirHistory: current.fhirHistory.filter((_, index) => index !== resourceIndex) }))} size="icon" title={`${messages.removeFhirHistory}${suffix}`} type="button" variant="ghost"><Trash2Icon /></Button>
+            </div>
+          )
+          if (resource.resourceType === 'Encounter') {
+            return <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-2 xl:grid-cols-4" key={resource.id}>
+              <legend className="pr-3 text-sm font-semibold">Encounter{suffix}</legend>
+              <Field><FieldLabel htmlFor={`editor-fhir-id-${resourceIndex}`}>{messages.fhirResourceId}{suffix}</FieldLabel><Input id={`editor-fhir-id-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'Encounter' ? { ...current, id: change.target.value } : current)} value={resource.id} /></Field>
+              <Field><FieldLabel htmlFor={`editor-fhir-class-${resourceIndex}`}>{messages.fhirEncounterClass}{suffix}</FieldLabel><Input id={`editor-fhir-class-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'Encounter' ? { ...current, classCode: change.target.value } : current)} value={resource.classCode} /></Field>
+              <Field><FieldLabel htmlFor={`editor-fhir-status-${resourceIndex}`}>{messages.fhirEncounterStatus}{suffix}</FieldLabel><Input id={`editor-fhir-status-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'Encounter' ? { ...current, status: change.target.value } : current)} value={resource.status} /></Field>
+              <Field><FieldLabel htmlFor={`editor-fhir-start-${resourceIndex}`}>{messages.fhirEncounterStart}{suffix}</FieldLabel><Input id={`editor-fhir-start-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'Encounter' ? { ...current, period: { ...current.period, start: change.target.value } } : current)} value={resource.period.start} /></Field>
+              <Field><FieldLabel htmlFor={`editor-fhir-end-${resourceIndex}`}>{messages.fhirEncounterEnd}{suffix}</FieldLabel><Input id={`editor-fhir-end-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'Encounter' ? { ...current, period: optionalString(current.period, 'end', change.target.value) } : current)} value={resource.period.end ?? ''} /></Field>
+              {removeButton}
+            </fieldset>
+          }
+          const isCondition = resource.resourceType === 'Condition'
+          const isAllergy = resource.resourceType === 'AllergyIntolerance'
+          if (isCondition || isAllergy) {
+            const nameLabel = isCondition ? messages.fhirDiagnosisName : messages.fhirAllergyName
+            const codeLabel = isCondition ? messages.fhirDiagnosisCode : messages.fhirAllergyCode
+            return <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-2 xl:grid-cols-4" key={resource.id}>
+              <legend className="pr-3 text-sm font-semibold">{resource.resourceType}{suffix}</legend>
+              <Field><FieldLabel htmlFor={`editor-fhir-id-${resourceIndex}`}>{messages.fhirResourceId}{suffix}</FieldLabel><Input id={`editor-fhir-id-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === resource.resourceType ? { ...current, id: change.target.value } : current)} value={resource.id} /></Field>
+              <Field><FieldLabel htmlFor={`editor-fhir-clinical-${resourceIndex}`}>{messages.fhirClinicalStatus}{suffix}</FieldLabel><Input id={`editor-fhir-clinical-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === resource.resourceType ? { ...current, clinicalStatus: change.target.value } : current)} value={resource.clinicalStatus} /></Field>
+              <Field><FieldLabel htmlFor={`editor-fhir-name-${resourceIndex}`}>{nameLabel}{suffix}</FieldLabel><Input id={`editor-fhir-name-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === resource.resourceType ? { ...current, code: { ...current.code, display: change.target.value } } : current)} value={resource.code.display} /></Field>
+              <Field><FieldLabel htmlFor={`editor-fhir-code-${resourceIndex}`}>{codeLabel}{suffix}</FieldLabel><Input id={`editor-fhir-code-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === resource.resourceType ? { ...current, code: optionalString(current.code, 'code', change.target.value) } : current)} value={resource.code.code ?? ''} /></Field>
+              {isCondition ? <>
+                <Field><FieldLabel htmlFor={`editor-fhir-encounter-${resourceIndex}`}>{messages.fhirEncounterId}{suffix}</FieldLabel><Input id={`editor-fhir-encounter-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'Condition' ? optionalString(current, 'encounterId', change.target.value) : current)} value={resource.encounterId ?? ''} /></Field>
+                <Field><FieldLabel htmlFor={`editor-fhir-onset-${resourceIndex}`}>{messages.fhirOnsetAt}{suffix}</FieldLabel><Input id={`editor-fhir-onset-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'Condition' ? optionalString(current, 'onsetDateTime', change.target.value) : current)} value={resource.onsetDateTime ?? ''} /></Field>
+              </> : null}
+              <Field><FieldLabel htmlFor={`editor-fhir-recorded-${resourceIndex}`}>{messages.fhirRecordedAt}{suffix}</FieldLabel><Input id={`editor-fhir-recorded-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === resource.resourceType ? optionalString(current, 'recordedDate', change.target.value) : current)} value={resource.recordedDate ?? ''} /></Field>
+              {removeButton}
+            </fieldset>
+          }
+          if (resource.resourceType === 'Observation') {
+            return <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-2 xl:grid-cols-4" key={resource.id}>
+              <legend className="pr-3 text-sm font-semibold">Observation{suffix}</legend>
+              <Field><FieldLabel htmlFor={`editor-fhir-id-${resourceIndex}`}>{messages.fhirResourceId}{suffix}</FieldLabel><Input id={`editor-fhir-id-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'Observation' ? { ...current, id: change.target.value } : current)} value={resource.id} /></Field>
+              <Field><FieldLabel htmlFor={`editor-fhir-status-${resourceIndex}`}>{messages.historyStatus}{suffix}</FieldLabel><Input id={`editor-fhir-status-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'Observation' ? { ...current, status: change.target.value } : current)} value={resource.status} /></Field>
+              <Field><FieldLabel htmlFor={`editor-fhir-name-${resourceIndex}`}>{messages.fhirObservationName}{suffix}</FieldLabel><Input id={`editor-fhir-name-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'Observation' ? { ...current, code: { ...current.code, display: change.target.value } } : current)} value={resource.code.display} /></Field>
+              <Field><FieldLabel htmlFor={`editor-fhir-code-${resourceIndex}`}>{messages.fhirObservationCode}{suffix}</FieldLabel><Input id={`editor-fhir-code-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'Observation' ? { ...current, code: optionalString(current.code, 'code', change.target.value) } : current)} value={resource.code.code ?? ''} /></Field>
+              <Field><FieldLabel htmlFor={`editor-fhir-effective-${resourceIndex}`}>{messages.fhirEffectiveAt}{suffix}</FieldLabel><Input id={`editor-fhir-effective-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'Observation' ? optionalString(current, 'effectiveDateTime', change.target.value) : current)} value={resource.effectiveDateTime ?? ''} /></Field>
+              <Field><FieldLabel htmlFor={`editor-fhir-encounter-${resourceIndex}`}>{messages.fhirEncounterId}{suffix}</FieldLabel><Input id={`editor-fhir-encounter-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'Observation' ? optionalString(current, 'encounterId', change.target.value) : current)} value={resource.encounterId ?? ''} /></Field>
+              <Field><FieldLabel htmlFor={`editor-fhir-value-${resourceIndex}`}>{messages.fhirObservationValue}{suffix}</FieldLabel><Input disabled={resource.value.outcome !== 'reported' || typeof resource.value.value === 'boolean'} id={`editor-fhir-value-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'Observation' && current.value.outcome === 'reported' && typeof current.value.value !== 'boolean' ? { ...current, value: { ...current.value, value: typeof current.value.value === 'number' ? Number(change.target.value) : change.target.value } } : current)} value={resource.value.outcome === 'reported' && typeof resource.value.value !== 'boolean' ? resource.value.value : ''} /></Field>
+              {removeButton}
+            </fieldset>
+          }
+          return <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-2 xl:grid-cols-4" key={resource.id}>
+            <legend className="pr-3 text-sm font-semibold">MedicationRequest{suffix}</legend>
+            <Field><FieldLabel htmlFor={`editor-fhir-id-${resourceIndex}`}>{messages.fhirResourceId}{suffix}</FieldLabel><Input id={`editor-fhir-id-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'MedicationRequest' ? { ...current, id: change.target.value } : current)} value={resource.id} /></Field>
+            <Field><FieldLabel htmlFor={`editor-fhir-status-${resourceIndex}`}>{messages.fhirMedicationStatus}{suffix}</FieldLabel><Input id={`editor-fhir-status-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'MedicationRequest' ? { ...current, status: change.target.value } : current)} value={resource.status} /></Field>
+            <Field><FieldLabel htmlFor={`editor-fhir-intent-${resourceIndex}`}>{messages.fhirMedicationIntent}{suffix}</FieldLabel><Input id={`editor-fhir-intent-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'MedicationRequest' ? { ...current, intent: change.target.value } : current)} value={resource.intent} /></Field>
+            <Field><FieldLabel htmlFor={`editor-fhir-name-${resourceIndex}`}>{messages.fhirMedicationName}{suffix}</FieldLabel><Input id={`editor-fhir-name-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'MedicationRequest' ? { ...current, medication: { ...current.medication, display: change.target.value } } : current)} value={resource.medication.display} /></Field>
+            <Field><FieldLabel htmlFor={`editor-fhir-code-${resourceIndex}`}>{messages.fhirMedicationCode}{suffix}</FieldLabel><Input id={`editor-fhir-code-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'MedicationRequest' ? { ...current, medication: optionalString(current.medication, 'code', change.target.value) } : current)} value={resource.medication.code ?? ''} /></Field>
+            <Field><FieldLabel htmlFor={`editor-fhir-authored-${resourceIndex}`}>{messages.fhirAuthoredAt}{suffix}</FieldLabel><Input id={`editor-fhir-authored-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'MedicationRequest' ? optionalString(current, 'authoredOn', change.target.value) : current)} value={resource.authoredOn ?? ''} /></Field>
+            <Field><FieldLabel htmlFor={`editor-fhir-encounter-${resourceIndex}`}>{messages.fhirEncounterId}{suffix}</FieldLabel><Input id={`editor-fhir-encounter-${resourceIndex}`} onChange={change => updateFhirHistory(resourceIndex, current => current.resourceType === 'MedicationRequest' ? optionalString(current, 'encounterId', change.target.value) : current)} value={resource.encounterId ?? ''} /></Field>
+            {removeButton}
+          </fieldset>
+        })}
+      </div>
+    </TabsContent>
+  )
+}
+
+function DiagnosisListEditor({
+  diagnoses,
+  kind,
+  locale,
+  updatePatient,
+}: {
+  diagnoses: readonly ScenarioDiagnosis[]
+  kind: 'comorbidities' | 'differentials'
+  locale: WorkspaceLocale
+  updatePatient: UpdatePatient
+}): React.JSX.Element {
+  const messages = getWorkspaceMessages(locale)
+  const isComorbidity = kind === 'comorbidities'
+  const heading = isComorbidity ? messages.comorbidities : messages.differentials
+  const addLabel = isComorbidity ? messages.addComorbidity : messages.addDifferential
+  const removeLabel = isComorbidity ? messages.removeComorbidity : messages.removeDifferential
+  const nameLabel = isComorbidity ? messages.comorbidityName : messages.differentialName
+  const codeLabel = isComorbidity ? messages.comorbidityCode : messages.differentialCode
+  const evidenceLabel = isComorbidity ? messages.comorbidityEvidence : messages.differentialEvidence
+
+  return <div className="flex flex-col gap-4">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h3 className="text-sm font-semibold">{heading}</h3>
+      <Button onClick={() => updatePatient(current => {
+        const values = current.diagnosisSpace[kind]
+        const id = nextScopedId(
+          isComorbidity ? 'diagnosis-comorbidity-new' : 'diagnosis-differential-new',
+          values.map(diagnosis => diagnosis.id),
+        )
+        return {
+          ...current,
+          diagnosisSpace: {
+            ...current.diagnosisSpace,
+            [kind]: [...values, {
+              code: null,
+              display: isComorbidity ? '待编辑共病' : '待编辑鉴别诊断',
+              evidence: ['待补充依据'],
+              id,
+            }],
+          },
+        }
+      })} size="sm" type="button" variant="outline"><PlusIcon data-icon="inline-start" />{addLabel}</Button>
+    </div>
+    {diagnoses.map((diagnosis, diagnosisIndex) => {
+      const suffix = ` ${diagnosisIndex + 1}`
+      const updateDiagnosis = (update: (value: ScenarioDiagnosis) => ScenarioDiagnosis): void => updatePatient(current => ({
+        ...current,
+        diagnosisSpace: {
+          ...current.diagnosisSpace,
+          [kind]: updateAt(current.diagnosisSpace[kind], diagnosisIndex, update),
+        },
+      }))
+      return <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-2 xl:grid-cols-4" key={diagnosis.id}>
+        <legend className="sr-only">{nameLabel}{suffix}</legend>
+        <Field className="md:col-span-2"><FieldLabel htmlFor={`editor-${kind}-name-${diagnosisIndex}`}>{nameLabel}{suffix}</FieldLabel><Input id={`editor-${kind}-name-${diagnosisIndex}`} onChange={change => updateDiagnosis(current => ({ ...current, display: change.target.value }))} value={diagnosis.display} /></Field>
+        <Field><FieldLabel htmlFor={`editor-${kind}-code-${diagnosisIndex}`}>{codeLabel}{suffix}</FieldLabel><Input id={`editor-${kind}-code-${diagnosisIndex}`} onChange={change => updateDiagnosis(current => ({ ...current, code: change.target.value || null }))} value={diagnosis.code ?? ''} /></Field>
+        <Field className="md:col-span-2"><FieldLabel htmlFor={`editor-${kind}-evidence-${diagnosisIndex}`}>{evidenceLabel}{suffix}</FieldLabel><Textarea id={`editor-${kind}-evidence-${diagnosisIndex}`} onChange={change => updateDiagnosis(current => ({ ...current, evidence: splitLines(change.target.value) }))} value={joinLines(diagnosis.evidence)} /></Field>
+        <div className="flex items-end justify-end"><Button aria-label={`${removeLabel}${suffix}`} onClick={() => updatePatient(current => ({ ...current, diagnosisSpace: { ...current.diagnosisSpace, [kind]: current.diagnosisSpace[kind].filter((_, index) => index !== diagnosisIndex) } }))} size="icon" title={`${removeLabel}${suffix}`} type="button" variant="ghost"><Trash2Icon /></Button></div>
+      </fieldset>
+    })}
+  </div>
+}
+
+function editableDataset(dataset: ScenarioDataset): ScenarioDataset {
+  return {
+    ...dataset,
+    content: {
+      ...dataset.content,
+      patients: dataset.content.patients.map(patient => ({
+        ...patient,
+        investigations: patient.investigations.map(investigation => ({
+          ...investigation,
+          sourceLevel: 'L1',
+        })),
+      })),
+    },
+  }
+}
+
 function DatasetEditor({
   dataset,
   locale,
@@ -136,7 +520,7 @@ function DatasetEditor({
 }): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
   const queryClient = useQueryClient()
-  const [draft, setDraft] = useState(dataset)
+  const [draft, setDraft] = useState(() => editableDataset(dataset))
   const [selectedPatientIndex, setSelectedPatientIndex] = useState(0)
   const save = useMutation({
     mutationFn: () => updateScenarioDataset(draft, newIdempotencyKey()),
@@ -170,9 +554,7 @@ function DatasetEditor({
       ...current,
       content: {
         ...current.content,
-        patients: current.content.patients.map((patient, patientIndex) => (
-          patientIndex === selectedPatientIndex ? update(patient) : patient
-        )),
+        patients: updateAt(current.content.patients, selectedPatientIndex, update),
       },
     }))
   }
@@ -186,9 +568,7 @@ function DatasetEditor({
         ...current.content,
         catalog: {
           ...current.content.catalog,
-          investigations: current.content.catalog.investigations.map((item, itemIndex) => (
-            itemIndex === index ? update(item) : item
-          )),
+          investigations: updateAt(current.content.catalog.investigations, index, update),
         },
       },
     }))
@@ -203,9 +583,7 @@ function DatasetEditor({
         ...current.content,
         catalog: {
           ...current.content.catalog,
-          medications: current.content.catalog.medications.map((item, itemIndex) => (
-            itemIndex === index ? update(item) : item
-          )),
+          medications: updateAt(current.content.catalog.medications, index, update),
         },
       },
     }))
@@ -218,9 +596,7 @@ function DatasetEditor({
       ...current,
       content: {
         ...current.content,
-        inventory: current.content.inventory.map((lot, lotIndex) => (
-          lotIndex === index ? update(lot) : lot
-        )),
+        inventory: updateAt(current.content.inventory, index, update),
       },
     }))
   }
@@ -232,9 +608,7 @@ function DatasetEditor({
       ...current,
       content: {
         ...current.content,
-        hiddenFacts: current.content.hiddenFacts.map((fact, factIndex) => (
-          factIndex === index ? update(fact) : fact
-        )),
+        hiddenFacts: updateAt(current.content.hiddenFacts, index, update),
       },
     }))
   }
@@ -246,9 +620,19 @@ function DatasetEditor({
       ...current,
       content: {
         ...current.content,
-        revealPolicies: current.content.revealPolicies.map((policy, policyIndex) => (
-          policyIndex === index ? update(policy) : policy
-        )),
+        revealPolicies: updateAt(current.content.revealPolicies, index, update),
+      },
+    }))
+  }
+  const updateSimulatorRule = (
+    index: number,
+    update: (rule: ScenarioDataset['content']['simulatorRules'][number]) => ScenarioDataset['content']['simulatorRules'][number],
+  ): void => {
+    setDraft(current => ({
+      ...current,
+      content: {
+        ...current.content,
+        simulatorRules: updateAt(current.content.simulatorRules, index, update),
       },
     }))
   }
@@ -348,6 +732,7 @@ function DatasetEditor({
       <Tabs defaultValue="patient" className="min-w-0">
         <TabsList className="max-w-full justify-start overflow-x-auto" variant="line">
           <TabsTrigger value="patient">{messages.casePatientTab}</TabsTrigger>
+          <TabsTrigger value="history">{messages.caseHistoryTab}</TabsTrigger>
           <TabsTrigger value="symptoms">{messages.caseSymptomsTab}</TabsTrigger>
           <TabsTrigger value="clinical">{messages.caseClinicalTab}</TabsTrigger>
           <TabsTrigger value="decision">{messages.caseDecisionTab}</TabsTrigger>
@@ -449,6 +834,13 @@ function DatasetEditor({
             </Field>
           </FieldGroup>
         </TabsContent>
+
+        <HistoryEditor
+          locale={locale}
+          patient={patient}
+          timeRangeEnd={draft.content.reproduction.timeRange.end}
+          updatePatient={updatePatient}
+        />
 
         <TabsContent className="flex flex-col gap-5 pt-4" value="symptoms">
           {patient.symptomResponses.map((response, responseIndex) => (
@@ -559,15 +951,7 @@ function DatasetEditor({
                 <legend className="pr-3 text-sm font-semibold">{investigation.name}</legend>
                 <Field>
                   <FieldLabel htmlFor={`editor-investigation-level-${investigationIndex}`}>{messages.sourceLevel}</FieldLabel>
-                  <Select onValueChange={value => updatePatient(current => ({
-                    ...current,
-                    investigations: current.investigations.map((item, index) => index === investigationIndex
-                      ? { ...item, sourceLevel: value as typeof item.sourceLevel }
-                      : item),
-                  }))} value={investigation.sourceLevel}>
-                    <SelectTrigger className="w-full" id={`editor-investigation-level-${investigationIndex}`}><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectGroup>{(['L1', 'L2', 'L3'] as const).map(level => <SelectItem key={level} value={level}>{level}</SelectItem>)}</SelectGroup></SelectContent>
-                  </Select>
+                  <Badge aria-label={messages.sourceLevel} id={`editor-investigation-level-${investigationIndex}`} variant="secondary">L1</Badge>
                 </Field>
                 <Field>
                   <FieldLabel htmlFor={`editor-investigation-value-${investigationIndex}`}>{messages.resultValue}</FieldLabel>
@@ -684,6 +1068,25 @@ function DatasetEditor({
               }))} type="number" value={patient.costBaseline.overInvestigationThresholdFen} />
             </Field>
           </FieldGroup>
+          <DiagnosisListEditor
+            diagnoses={patient.diagnosisSpace.comorbidities}
+            kind="comorbidities"
+            locale={locale}
+            updatePatient={updatePatient}
+          />
+          <DiagnosisListEditor
+            diagnoses={patient.diagnosisSpace.differentials}
+            kind="differentials"
+            locale={locale}
+            updatePatient={updatePatient}
+          />
+          <Field>
+            <FieldLabel htmlFor="editor-diagnosis-traps">{messages.diagnosisTraps}</FieldLabel>
+            <Textarea id="editor-diagnosis-traps" onChange={event => updatePatient(current => ({
+              ...current,
+              diagnosisSpace: { ...current.diagnosisSpace, traps: splitLines(event.target.value) },
+            }))} value={joinLines(patient.diagnosisSpace.traps)} />
+          </Field>
         </TabsContent>
 
         <TabsContent className="flex flex-col gap-6 pt-4" value="catalog">
@@ -838,7 +1241,7 @@ function DatasetEditor({
           <div className="flex flex-col gap-4">
             <h3 className="text-sm font-semibold">{messages.hiddenFacts}</h3>
             {draft.content.hiddenFacts.map((fact, factIndex) => (
-              <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-3" key={`${fact.code}:${factIndex}`}>
+              <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-3" key={`hidden-fact-${factIndex}`}>
                 <legend className="sr-only">{fact.code}</legend>
                 <Field>
                   <FieldLabel htmlFor={`editor-hidden-code-${factIndex}`}>{messages.factCode}</FieldLabel>
@@ -854,7 +1257,7 @@ function DatasetEditor({
           <div className="flex flex-col gap-4">
             <h3 className="text-sm font-semibold">{messages.revealPolicies}</h3>
             {draft.content.revealPolicies.map((policy, policyIndex) => (
-              <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-3" key={`${policy.code}:${policyIndex}`}>
+              <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-3" key={`reveal-policy-${policyIndex}`}>
                 <legend className="sr-only">{policy.code}</legend>
                 <Field>
                   <FieldLabel htmlFor={`editor-policy-code-${policyIndex}`}>{messages.policyCode}</FieldLabel>
@@ -877,6 +1280,57 @@ function DatasetEditor({
                 </Field>
               </fieldset>
             ))}
+          </div>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold">{messages.simulatorRules}</h3>
+              <Button onClick={() => setDraft(current => {
+                const code = nextScopedId(
+                  'simulator-rule-new',
+                  current.content.simulatorRules.map(rule => rule.code),
+                )
+                return {
+                  ...current,
+                  content: {
+                    ...current.content,
+                    simulatorRules: [...current.content.simulatorRules, {
+                      code,
+                      outcome: 'success',
+                      simulator: 'lis',
+                    }],
+                  },
+                }
+              })} size="sm" type="button" variant="outline"><PlusIcon data-icon="inline-start" />{messages.addSimulatorRule}</Button>
+            </div>
+            {draft.content.simulatorRules.map((rule, ruleIndex) => {
+              const suffix = ` ${ruleIndex + 1}`
+              return <fieldset className="grid gap-4 border-b pb-4 md:grid-cols-3" key={`simulator-rule-${ruleIndex}`}>
+                <legend className="sr-only">{messages.simulatorRuleCode}{suffix}</legend>
+                <Field>
+                  <FieldLabel htmlFor={`editor-simulator-code-${ruleIndex}`}>{messages.simulatorRuleCode}{suffix}</FieldLabel>
+                  <Input id={`editor-simulator-code-${ruleIndex}`} onChange={event => updateSimulatorRule(ruleIndex, current => ({ ...current, code: event.target.value }))} value={rule.code} />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor={`editor-simulator-${ruleIndex}`}>{messages.simulator}{suffix}</FieldLabel>
+                  <Select onValueChange={value => updateSimulatorRule(ruleIndex, current => ({ ...current, simulator: value ?? current.simulator }))} value={rule.simulator}>
+                    <SelectTrigger className="w-full" id={`editor-simulator-${ruleIndex}`}><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectGroup>{['lis', 'payment'].map(simulator => <SelectItem key={simulator} value={simulator}>{simulator.toUpperCase()}</SelectItem>)}</SelectGroup></SelectContent>
+                  </Select>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor={`editor-simulator-outcome-${ruleIndex}`}>{messages.simulatorOutcome}{suffix}</FieldLabel>
+                  <Select onValueChange={value => updateSimulatorRule(ruleIndex, current => ({ ...current, outcome: value ?? current.outcome }))} value={rule.outcome}>
+                    <SelectTrigger className="w-full" id={`editor-simulator-outcome-${ruleIndex}`}><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectGroup>
+                      <SelectItem value="success">{messages.simulatorSuccess}</SelectItem>
+                      <SelectItem value="declined">{messages.simulatorDecline}</SelectItem>
+                      <SelectItem value="ambiguous">{messages.simulatorAmbiguous}</SelectItem>
+                    </SelectGroup></SelectContent>
+                  </Select>
+                </Field>
+                <div className="flex items-end justify-end md:col-span-3"><Button aria-label={`${messages.removeSimulatorRule}${suffix}`} onClick={() => setDraft(current => ({ ...current, content: { ...current.content, simulatorRules: current.content.simulatorRules.filter((_, index) => index !== ruleIndex) } }))} size="icon" title={`${messages.removeSimulatorRule}${suffix}`} type="button" variant="ghost"><Trash2Icon /></Button></div>
+              </fieldset>
+            })}
           </div>
         </TabsContent>
       </Tabs>
@@ -1073,16 +1527,25 @@ export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): 
           </FieldGroup>
           <div className="flex flex-wrap items-center gap-4">
             <label className="flex items-center gap-2 text-sm">
-              <Checkbox checked={request.modules.includes('fever')} disabled />
+              <Checkbox
+                checked={request.modules.includes('fever')}
+                disabled={request.modules.length === 1 && request.modules.includes('fever')}
+                onCheckedChange={checked => setRequest(current => ({
+                  ...current,
+                  modules: updateModules(current.modules, 'fever', checked === true),
+                }))}
+              />
               {messages.moduleFever}
             </label>
             <label className="flex items-center gap-2 text-sm">
-              <Checkbox checked={request.modules.includes('type-2-diabetes')} onCheckedChange={checked => setRequest(current => ({
-                ...current,
-                modules: checked
-                  ? [...new Set([...current.modules, 'type-2-diabetes' as const])]
-                  : current.modules.filter(module => module !== 'type-2-diabetes'),
-              }))} />
+              <Checkbox
+                checked={request.modules.includes('type-2-diabetes')}
+                disabled={request.modules.length === 1 && request.modules.includes('type-2-diabetes')}
+                onCheckedChange={checked => setRequest(current => ({
+                  ...current,
+                  modules: updateModules(current.modules, 'type-2-diabetes', checked === true),
+                }))}
+              />
               {messages.moduleDiabetes}
             </label>
           </div>

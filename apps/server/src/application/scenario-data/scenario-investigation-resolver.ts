@@ -114,6 +114,7 @@ function generatorValue(
   if (generator.kind === 'trajectory') {
     return assayValue(generator.target, generator.assayCv, replayKey, generator.id)
   }
+  if (generator.kind === 'text') return generator.value
   if (generator.kind !== 'derived') return undefined
   if (resolving.has(generator.id)) throw new Error(`Physiology generator cycle at ${generator.id}`)
   const nextResolving = new Set(resolving).add(generator.id)
@@ -160,6 +161,27 @@ function generatorValue(
       * Math.max(ratio, 1) ** -1.2
       * 0.9938 ** age
       * (female ? 1.012 : 1)
+  }
+  if (generator.formula === 'friedewald-ldl') {
+    const [totalCholesterol, hdlCholesterol, triglycerides] = dependencies
+    const dependencyUnits = generator.dependencies.map((dependency) => {
+      if (dependency.startsWith('vital:')) return undefined
+      const source = patient.physiologyBaseline.generators.find(candidate => candidate.id === dependency)
+      return source !== undefined && 'unit' in source ? source.unit : undefined
+    })
+    if (
+      totalCholesterol === undefined
+      || hdlCholesterol === undefined
+      || triglycerides === undefined
+      || generator.dependencies.length !== 3
+      || generator.unit !== 'mmol/L'
+      || dependencyUnits.some(unit => unit !== 'mmol/L')
+      || triglycerides < 0
+      || triglycerides >= 4.5
+    ) {
+      throw new Error('Friedewald LDL requires total cholesterol, HDL and triglycerides below 4.5 mmol/L')
+    }
+    return totalCholesterol - hdlCholesterol - triglycerides / 2.2
   }
   if (generator.formula === 'hematocrit-from-rbc-mcv') {
     const [redBloodCells, meanCorpuscularVolume] = dependencies

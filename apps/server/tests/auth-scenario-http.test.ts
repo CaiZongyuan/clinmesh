@@ -3,10 +3,11 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fhirBundleSchema, fhirResourceSchema } from '@clinmesh/contracts/fhir'
-import { scenarioDatasetSchema } from '@clinmesh/contracts/scenario'
+import { scenarioDatasetListSchema, scenarioDatasetSchema } from '@clinmesh/contracts/scenario'
 import {
   apiErrorSchema,
   clinicalCatalogSchema,
+  commandResponseSchema,
   createPatientResponseSchema,
   patientSearchSchema,
   registrationCatalogSchema,
@@ -522,10 +523,7 @@ describe('trusted session and Scenario HTTP contract', () => {
     )
 
     expect(generateResponse.status).toBe(200)
-    const generated = z.object({
-      data: scenarioDatasetSchema,
-      effects: z.array(z.unknown()),
-    }).parse(await generateResponse.json())
+    const generated = commandResponseSchema(scenarioDatasetSchema).parse(await generateResponse.json())
     expect(generated.data).toMatchObject({
       content: { schemaVersion: '1' },
       diagnostics: [],
@@ -541,14 +539,14 @@ describe('trusted session and Scenario HTTP contract', () => {
       { headers: { cookie: adminCookie } },
     )
     expect(readResponse.status).toBe(200)
-    expect(await readResponse.json()).toEqual(generated.data)
+    expect(scenarioDatasetSchema.parse(await readResponse.json())).toEqual(generated.data)
 
     const listResponse = await runtime.app.request(
       '/api/sim/v1/scenario-datasets?page=1&pageSize=20',
       { headers: { cookie: adminCookie } },
     )
     expect(listResponse.status).toBe(200)
-    expect(await listResponse.json()).toEqual({
+    expect(scenarioDatasetListSchema.parse(await listResponse.json())).toEqual({
       items: [{
         contentHash: generated.data.contentHash,
         createdAt: generated.data.createdAt,
@@ -579,12 +577,13 @@ describe('trusted session and Scenario HTTP contract', () => {
       },
     )
     expect(secondGenerationResponse.status).toBe(200)
+    commandResponseSchema(scenarioDatasetSchema).parse(await secondGenerationResponse.json())
     const searchResponse = await runtime.app.request(
       `/api/sim/v1/scenario-datasets?page=1&pageSize=20&search=${encodeURIComponent('发热门诊')}`,
       { headers: { cookie: adminCookie } },
     )
     expect(searchResponse.status).toBe(200)
-    expect(await searchResponse.json()).toMatchObject({
+    expect(scenarioDatasetListSchema.parse(await searchResponse.json())).toMatchObject({
       items: [{ datasetId: generated.data.datasetId, name: generationRequest.name }],
       page: 1,
       pageSize: 20,
@@ -917,22 +916,40 @@ describe('trusted session and Scenario HTTP contract', () => {
     )
     expect(updateResponse.status).toBe(200)
 
+    const deleteIdempotencyKey = randomUUID()
     const deleteResponse = await runtime.app.request(
       `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}`,
       {
         body: JSON.stringify({ expectedVersion: 2 }),
-        headers: headers(),
+        headers: headers(deleteIdempotencyKey),
         method: 'DELETE',
       },
     )
     expect(deleteResponse.status).toBe(200)
-    expect(await deleteResponse.json()).toMatchObject({
+    const deleteResult = commandResponseSchema(z.object({
+      datasetId: z.string().min(1),
+      deleted: z.literal(true),
+    }).strict()).parse(await deleteResponse.json())
+    expect(deleteResult).toMatchObject({
       data: { datasetId: generated.datasetId, deleted: true },
     })
     expect((await runtime.app.request(
       `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}`,
       { headers: { cookie } },
     )).status).toBe(404)
+    const deleteReplayResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}`,
+      {
+        body: JSON.stringify({ expectedVersion: 2 }),
+        headers: headers(deleteIdempotencyKey),
+        method: 'DELETE',
+      },
+    )
+    expect(deleteReplayResponse.status).toBe(200)
+    expect(commandResponseSchema(z.object({
+      datasetId: z.string().min(1),
+      deleted: z.literal(true),
+    }).strict()).parse(await deleteReplayResponse.json())).toEqual(deleteResult)
 
     const resetResponse = await runtime.app.request(
       `/api/sim/v1/scenario-runs/${installed.scenario.scenarioRunId}/actions/reset`,
@@ -942,6 +959,73 @@ describe('trusted session and Scenario HTTP contract', () => {
     expect(scenarioCommandResponseSchema.parse(await resetResponse.json()).data).toMatchObject({
       initialStateHash: installed.scenario.initialStateHash,
       scenarioId: installed.packageId,
+    })
+  })
+
+  it('preserves a Dataset patient unknown gender through installation', async () => {
+    const { password, runtime } = await createTestRuntime('clinmesh-scenario-gender-http-')
+    const cookie = await signInSyntheticAccount(runtime, password, 'admin@demo.clinmesh.local')
+    const headers = () => ({
+      'content-type': 'application/json',
+      cookie,
+      'idempotency-key': randomUUID(),
+      origin: 'http://localhost',
+    })
+    const generatedResponse = await runtime.app.request(
+      '/api/sim/v1/scenario-datasets/actions/generate',
+      {
+        body: JSON.stringify({
+          modules: ['fever'],
+          name: '四态性别安装数据',
+          population: { age: { maximum: 40, minimum: 40 }, count: 1, gender: 'female' },
+          providerId: 'builtin',
+          seeds: { clinical: 7331, population: 4242 },
+          timeRange: { end: '2026-08-01', start: '2020-01-01' },
+          timeZone: 'Asia/Shanghai',
+        }),
+        headers: headers(),
+        method: 'POST',
+      },
+    )
+    const generated = z.object({ data: scenarioDatasetSchema }).passthrough()
+      .parse(await generatedResponse.json()).data
+    const patient = generated.content.patients[0]!
+    const updatedResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}`,
+      {
+        body: JSON.stringify({
+          expectedVersion: 1,
+          input: {
+            content: {
+              ...generated.content,
+              patients: [{ ...patient, gender: 'unknown' }],
+            },
+            name: generated.name,
+          },
+        }),
+        headers: headers(),
+        method: 'PUT',
+      },
+    )
+    expect(updatedResponse.status).toBe(200)
+    const installResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}/actions/install`,
+      {
+        body: JSON.stringify({ expectedVersion: 2 }),
+        headers: headers(),
+        method: 'POST',
+      },
+    )
+    expect(installResponse.status).toBe(200)
+
+    const patientResponse = await runtime.app.request(`/fhir/R5/Patient/${patient.id}`, {
+      headers: { cookie },
+    })
+    expect(patientResponse.status).toBe(200)
+    expect(fhirResourceSchema.parse(await patientResponse.json())).toMatchObject({
+      gender: 'unknown',
+      id: patient.id,
+      resourceType: 'Patient',
     })
   })
 

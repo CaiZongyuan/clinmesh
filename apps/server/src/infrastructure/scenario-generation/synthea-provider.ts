@@ -77,6 +77,7 @@ const patientOwnedReferenceFields: Partial<Record<
 
 export type SyntheaProviderErrorCode =
   | 'FHIR_R4_BUNDLE_INVALID'
+  | 'FHIR_R4_HISTORY_OUT_OF_RANGE'
   | 'FHIR_R4_PATIENT_OWNERSHIP_INVALID'
   | 'FHIR_R4_REFERENCE_INVALID'
   | 'FHIR_R4_RESOURCE_NOT_ALLOWED'
@@ -120,7 +121,55 @@ function referenceValue(resource: z.infer<typeof r4ResourceSchema>, field: strin
   return typeof value === 'string' ? value : undefined
 }
 
-function validateBundle(bundle: z.infer<typeof r4BundleSchema>): z.infer<typeof r4PatientSchema> {
+const clinicalDatePaths: Partial<Record<
+  (typeof allowedR4ResourceTypes)[number],
+  readonly (readonly string[])[]
+>> = {
+  AllergyIntolerance: [['recordedDate']],
+  Condition: [['onsetDateTime'], ['recordedDate']],
+  Encounter: [['period', 'start'], ['period', 'end']],
+  MedicationRequest: [['authoredOn']],
+  Observation: [['effectiveDateTime']],
+}
+
+function nestedString(value: unknown, path: readonly string[]): string | undefined {
+  let current = value
+  for (const key of path) {
+    if (typeof current !== 'object' || current === null || Array.isArray(current)) return undefined
+    current = (current as Record<string, unknown>)[key]
+  }
+  return typeof current === 'string' ? current : undefined
+}
+
+function validateClinicalDates(
+  resource: z.infer<typeof r4ResourceSchema>,
+  request: ScenarioGenerationRequest,
+): void {
+  const rangeStart = Date.parse(`${request.timeRange.start}T00:00:00+08:00`)
+  const rangeEnd = Date.parse(`${request.timeRange.end}T23:59:59.999+08:00`)
+  for (const path of clinicalDatePaths[resource.resourceType] ?? []) {
+    const value = nestedString(resource, path)
+    if (value === undefined) continue
+    const timestamp = Date.parse(value)
+    if (!Number.isFinite(timestamp)) {
+      throw new SyntheaProviderError(
+        'FHIR_R4_BUNDLE_INVALID',
+        `${resource.resourceType}/${resource.id} contains an invalid clinical date`,
+      )
+    }
+    if (timestamp < rangeStart || timestamp > rangeEnd) {
+      throw new SyntheaProviderError(
+        'FHIR_R4_HISTORY_OUT_OF_RANGE',
+        `${resource.resourceType}/${resource.id} falls outside the requested history range`,
+      )
+    }
+  }
+}
+
+function validateBundle(
+  bundle: z.infer<typeof r4BundleSchema>,
+  request: ScenarioGenerationRequest,
+): z.infer<typeof r4PatientSchema> {
   const patients = bundle.entry
     .filter(entry => entry.resource.resourceType === 'Patient')
     .map(entry => r4PatientSchema.parse(entry.resource))
@@ -138,6 +187,7 @@ function validateBundle(bundle: z.infer<typeof r4BundleSchema>): z.infer<typeof 
     ...(patientEntry.fullUrl === undefined ? [] : [patientEntry.fullUrl]),
   ])
   for (const entry of bundle.entry) {
+    validateClinicalDates(entry.resource, request)
     const ownershipField = patientOwnedReferenceFields[entry.resource.resourceType]
     if (ownershipField !== undefined) {
       const owner = referenceValue(entry.resource, ownershipField)
@@ -319,7 +369,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
     }
 
     const patients = parsed.bundles.map((bundle, index) => {
-      validateBundle(bundle)
+      validateBundle(bundle, request)
       return compileSyntheaR4Bundle({ bundle, ordinal: index, request })
     })
     const baseline = createHospitalBaseline()

@@ -85,7 +85,7 @@ export interface CommandResponse<Data> extends CommandHandlerResult<Data> {
 export interface CommandInvocation<Input, Data> {
   authorize?: () => void
   context: ActorContext
-  contextRequirement?: 'active' | 'current'
+  contextRequirement?: 'active' | 'current' | 'known'
   dataSchema: z.ZodType<Data>
   expectedVersions: Record<string, string>
   idempotencyScope?: 'epoch' | 'workspace'
@@ -290,6 +290,8 @@ export class CommandExecutor {
 
       if (invocation.contextRequirement === 'current') {
         this.#workspaces.assertCurrent(context, context.scenarioRunId)
+      } else if (invocation.contextRequirement === 'known') {
+        this.#workspaces.assertKnown(context, context.scenarioRunId)
       } else {
         this.#workspaces.assertActive(context, context.scenarioRunId)
       }

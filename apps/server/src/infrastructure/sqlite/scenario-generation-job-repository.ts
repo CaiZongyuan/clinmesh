@@ -6,8 +6,11 @@ import {
   type ScenarioGenerationJob,
 } from '@clinmesh/contracts/scenario'
 import type { ClinMeshDatabase } from './database.ts'
+import type { ActorContext } from '../../application/command-executor.ts'
+import { z } from 'zod'
 
 interface ScenarioGenerationJobRow {
+  actor_context_json: string
   created_at: string
   created_by_actor_id: string
   dataset_id: string | null
@@ -23,13 +26,44 @@ interface ScenarioGenerationJobRow {
 }
 
 const selectJob = `
-  SELECT workspace_id, job_id, request_json, status, dataset_id,
+  SELECT workspace_id, job_id, request_json, status,
+    result_dataset_id AS dataset_id, actor_context_json,
     error_code, error_message, created_by_actor_id, created_at, started_at,
     finished_at, updated_at
   FROM scenario_generation_job
 `
 
+const actorContextSchema = z.object({
+  actorId: z.string().min(1),
+  epoch: z.string().min(1),
+  locationId: z.string().min(1).optional(),
+  organizationId: z.string().min(1).optional(),
+  practitionerId: z.string().min(1).optional(),
+  practitionerRoleId: z.string().min(1).optional(),
+  roleCode: z.string().min(1),
+  scenarioRunId: z.string().min(1),
+  workspaceId: z.string().min(1),
+}).strict()
+
+function parseActorContext(value: unknown): ActorContext {
+  const context = actorContextSchema.parse(value)
+  return {
+    actorId: context.actorId,
+    epoch: context.epoch,
+    roleCode: context.roleCode,
+    scenarioRunId: context.scenarioRunId,
+    workspaceId: context.workspaceId,
+    ...(context.locationId === undefined ? {} : { locationId: context.locationId }),
+    ...(context.organizationId === undefined ? {} : { organizationId: context.organizationId }),
+    ...(context.practitionerId === undefined ? {} : { practitionerId: context.practitionerId }),
+    ...(context.practitionerRoleId === undefined
+      ? {}
+      : { practitionerRoleId: context.practitionerRoleId }),
+  }
+}
+
 export interface ClaimedScenarioGenerationJob extends ScenarioGenerationJob {
+  actorContext: ActorContext
   createdByActorId: string
   status: 'running'
 }
@@ -56,18 +90,24 @@ export class ScenarioGenerationJobRepository {
     this.#database = database
   }
 
-  create(job: ScenarioGenerationJob, actorId: string): void {
+  create(job: ScenarioGenerationJob, context: ActorContext): void {
+    const actorContext = parseActorContext(context)
+    if (actorContext.workspaceId !== job.workspaceId) {
+      throw new Error('Scenario generation job Actor Context belongs to another Workspace')
+    }
     this.#database.driver.prepare(`
       INSERT INTO scenario_generation_job (
         workspace_id, job_id, request_json, status,
-        dataset_id, error_code, error_message, created_by_actor_id, created_at,
-        started_at, finished_at, updated_at
-      ) VALUES (?, ?, ?, 'queued', NULL, NULL, NULL, ?, ?, NULL, NULL, ?)
+        result_dataset_id, dataset_workspace_id, dataset_id,
+        error_code, error_message, created_by_actor_id, actor_context_json,
+        created_at, started_at, finished_at, updated_at
+      ) VALUES (?, ?, ?, 'queued', NULL, NULL, NULL, NULL, NULL, ?, ?, ?, NULL, NULL, ?)
     `).run(
       job.workspaceId,
       job.jobId,
       JSON.stringify(job.request),
-      actorId,
+      context.actorId,
+      JSON.stringify(actorContext),
       job.createdAt,
       job.updatedAt,
     )
@@ -109,6 +149,7 @@ export class ScenarioGenerationJobRepository {
           status: 'running',
           updated_at: now,
         }),
+        actorContext: parseActorContext(JSON.parse(candidate.actor_context_json)),
         createdByActorId: candidate.created_by_actor_id,
         status: 'running' as const,
       }
@@ -151,9 +192,18 @@ export class ScenarioGenerationJobRepository {
       )
       const update = this.#database.driver.prepare(`
         UPDATE scenario_generation_job
-        SET status = 'succeeded', dataset_id = ?, finished_at = ?, updated_at = ?
+        SET status = 'succeeded', result_dataset_id = ?,
+          dataset_workspace_id = ?, dataset_id = ?, finished_at = ?, updated_at = ?
         WHERE workspace_id = ? AND job_id = ? AND status = 'running'
-      `).run(dataset.datasetId, now, now, job.workspaceId, job.jobId)
+      `).run(
+        dataset.datasetId,
+        dataset.workspaceId,
+        dataset.datasetId,
+        now,
+        now,
+        job.workspaceId,
+        job.jobId,
+      )
       if (update.changes !== 1) throw new Error('The Scenario generation job is no longer running')
     })
     complete()

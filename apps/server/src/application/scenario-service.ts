@@ -769,7 +769,7 @@ export class ScenarioService {
         const physiology = patient.physiologyBaseline.vitalSigns
         return {
           birthDate: patient.birthDate,
-          gender: patient.gender === 'other' || patient.gender === 'unknown' ? 'female' : patient.gender,
+          gender: patient.gender,
           id: `virtual-${patient.id}`,
           name: patient.name,
           patientId: patient.id,

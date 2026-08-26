@@ -19,4 +19,19 @@ describe('Synthea Docker Provider contract', () => {
     expect(dockerfile).toContain('USER 10001:10001')
     expect(dockerfile).toContain('HEALTHCHECK')
   })
+
+  it('generates enough history and trims every Bundle to the exact requested dates', async () => {
+    const providerSource = await readFile(
+      new URL('../../synthea-provider/ProviderServer.java', import.meta.url),
+      'utf8',
+    )
+
+    expect(providerSource).toContain(
+      'Math.max(1, (historyDays + 364) / 365)',
+    )
+    expect(providerSource).toContain(
+      'trimBundleToTimeRange(value.getAsJsonObject(), request)',
+    )
+    expect(providerSource).toContain('pruneDanglingReferences(bundle)')
+  })
 })

@@ -334,6 +334,108 @@ describe('Scenario investigation resolver', () => {
     })
   })
 
+  it('reports an L2 text generator as a qualitative result', async () => {
+    const content = await generatedContent('type-2-diabetes')
+    const patient = content.patients[0]!
+    content.catalog.investigations.push({
+      active: true,
+      allowedIndicationCodes: ['type-2-diabetes'],
+      available: true,
+      category: 'laboratory',
+      code: 'KETONE',
+      contraindicatedAllergyCodes: [],
+      id: 'lab-ketone-worked-example',
+      name: '血酮体',
+      organizationId: content.hospital.id,
+      physiologyGeneratorId: 'ketone-worked-example',
+      priceFen: 2_000,
+      referenceRanges: [{ appliesToGender: 'any', text: '阴性' }],
+      reportTemplate: '血酮体 {value}。',
+      status: 'active',
+      tatMinutes: 30,
+      valueType: 'codeable',
+    })
+    patient.physiologyBaseline.generators.push({
+      id: 'ketone-worked-example',
+      kind: 'text',
+      source: 'scenario:ketone-baseline',
+      value: '阴性',
+    })
+
+    expect(resolveScenarioInvestigation({
+      catalogItemId: 'lab-ketone-worked-example',
+      content,
+      indicationCode: 'type-2-diabetes',
+      patientId: patient.id,
+      repeatIndex: 0,
+      scenarioRunId: 'scenario-run-l2-text',
+    })).toMatchObject({
+      critical: false,
+      report: '血酮体 阴性。',
+      result: { flag: 'N', outcome: 'reported', value: '阴性' },
+      sourceLevel: 'L2',
+    })
+  })
+
+  it('derives LDL cholesterol with the Friedewald formula inside its valid domain', async () => {
+    const content = await generatedContent('type-2-diabetes')
+    const patient = content.patients[0]!
+    content.catalog.investigations.push({
+      active: true,
+      allowedIndicationCodes: ['type-2-diabetes'],
+      available: true,
+      category: 'laboratory',
+      code: 'LDL-C',
+      contraindicatedAllergyCodes: [],
+      id: 'lab-ldl-worked-example',
+      name: '低密度脂蛋白胆固醇',
+      organizationId: content.hospital.id,
+      physiologyGeneratorId: 'ldl-worked-example',
+      priceFen: 800,
+      referenceRanges: [{ appliesToGender: 'any', maximum: 3.4, text: '<=3.4 mmol/L' }],
+      reportTemplate: '低密度脂蛋白胆固醇 {value} mmol/L。',
+      status: 'active',
+      tatMinutes: 60,
+      unit: 'mmol/L',
+      valueType: 'quantity',
+    })
+    patient.physiologyBaseline.generators.push(...[
+      { id: 'total-cholesterol-worked-example', value: 6, unit: 'mmol/L' },
+      { id: 'hdl-worked-example', value: 1, unit: 'mmol/L' },
+      { id: 'triglycerides-worked-example', value: 2.2, unit: 'mmol/L' },
+    ].map(generator => ({
+      assayCv: 0,
+      ...generator,
+      kind: 'constant' as const,
+      source: 'scenario:lipid-baseline',
+    })), {
+      dependencies: [
+        'total-cholesterol-worked-example',
+        'hdl-worked-example',
+        'triglycerides-worked-example',
+      ],
+      formula: 'friedewald-ldl',
+      id: 'ldl-worked-example',
+      kind: 'derived',
+      source: 'scenario:friedewald',
+      unit: 'mmol/L',
+    })
+
+    expect(resolveScenarioInvestigation({
+      catalogItemId: 'lab-ldl-worked-example',
+      content,
+      indicationCode: 'type-2-diabetes',
+      patientId: patient.id,
+      repeatIndex: 0,
+      scenarioRunId: 'scenario-run-l2-friedewald',
+    })).toMatchObject({
+      critical: false,
+      report: '低密度脂蛋白胆固醇 4 mmol/L。',
+      result: { flag: 'H', outcome: 'reported', unit: 'mmol/L', value: 4 },
+      sourceLevel: 'L2',
+    })
+  })
+
   it('samples an unmodeled L3 item deterministically inside the normal reference domain', async () => {
     const content = await generatedContent('type-2-diabetes')
     const patient = content.patients[0]!

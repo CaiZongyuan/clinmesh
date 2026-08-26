@@ -68,6 +68,22 @@ describe('SQLite lifecycle', () => {
       ],
       schemaVersion: 24,
     })
+    expect(first.driver.prepare(`
+      SELECT "from", "table", "to", on_delete
+      FROM pragma_foreign_key_list('scenario_generation_job')
+      WHERE "table" = 'scenario_dataset'
+      ORDER BY seq
+    `).all()).toEqual([{
+      from: 'dataset_workspace_id',
+      on_delete: 'SET NULL',
+      table: 'scenario_dataset',
+      to: 'workspace_id',
+    }, {
+      from: 'dataset_id',
+      on_delete: 'SET NULL',
+      table: 'scenario_dataset',
+      to: 'dataset_id',
+    }])
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })

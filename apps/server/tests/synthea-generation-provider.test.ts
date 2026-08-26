@@ -161,6 +161,16 @@ describe('Synthea Scenario generation Provider contract', () => {
       name: 'transaction Bundle',
     },
     {
+      body: providerResponse([patientBundle([{
+        id: 'condition-before-range',
+        recordedDate: '2019-12-31T23:59:59+08:00',
+        resourceType: 'Condition',
+        subject: { reference: 'urn:uuid:patient-1' },
+      }])]),
+      code: 'FHIR_R4_HISTORY_OUT_OF_RANGE',
+      name: 'clinical history before the requested range',
+    },
+    {
       body: {
         ...providerResponse([patientBundle()]),
         metadata: {

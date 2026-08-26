@@ -37,6 +37,7 @@ describe('Scenario Dataset diagnostics', () => {
         investigations: [{
           ...patient.investigations[0]!,
           result: { message: '错误标记为本院未开展', outcome: 'catalog-boundary' as const },
+          sourceLevel: 'L2' as const,
         }],
         longitudinalHistory: [{
           ...patient.longitudinalHistory[0]!,
@@ -64,6 +65,7 @@ describe('Scenario Dataset diagnostics', () => {
       expect.objectContaining({ code: 'CLINICAL_TIME_INVERTED', path: 'patients[0].longitudinalHistory[0].endedAt' }),
       expect.objectContaining({ code: 'FHIR_HISTORY_REFERENCE_MISSING', path: 'patients[0].fhirHistory[3].encounterId' }),
       expect.objectContaining({ code: 'INVESTIGATION_CATALOG_CONFLICT', path: 'patients[0].investigations[0].result.outcome' }),
+      expect.objectContaining({ code: 'INVESTIGATION_EXACT_SOURCE_INVALID', path: 'patients[0].investigations[0].sourceLevel' }),
       expect.objectContaining({ code: 'INVESTIGATION_COMPONENT_REFERENCE_MISSING', path: 'catalog.investigations[0].componentItemIds[0]' }),
       expect.objectContaining({ code: 'PHYSIOLOGY_DEPENDENCY_MISSING', path: expect.stringContaining('dependencies[0]') }),
     ]))

@@ -154,7 +154,7 @@ export class ScenarioDataService {
       input: input.request,
       operation: 'scenario-generation-job.create',
     }, () => {
-      this.#jobs.create(job, input.context.actorId)
+      this.#jobs.create(job, input.context)
       return {
         data: job,
         effects: [{
@@ -182,16 +182,64 @@ export class ScenarioDataService {
       const provider = await this.#providerFor(claimed.request)
       const corpus = await provider.generate(claimed.request, signal)
       const dataset = this.#dataset(claimed.workspaceId, claimed.request, corpus.content)
-      return this.#jobs.completeWithDataset(claimed, dataset, new Date().toISOString())
+      return this.#commands.execute({
+        context: claimed.actorContext,
+        contextRequirement: 'known',
+        dataSchema: scenarioGenerationJobSchema,
+        expectedVersions: {},
+        idempotencyKey: `${claimed.jobId}:complete`,
+        idempotencyScope: 'workspace',
+        input: { contentHash: dataset.contentHash, jobId: claimed.jobId },
+        operation: 'scenario-generation-job.complete',
+      }, () => {
+        const completed = this.#jobs.completeWithDataset(
+          claimed,
+          dataset,
+          new Date().toISOString(),
+        )
+        return {
+          data: completed,
+          effects: [{
+            kind: 'created',
+            reference: `ScenarioDataset/${dataset.datasetId}`,
+            versionId: '1',
+          }, {
+            kind: 'updated',
+            reference: `ScenarioGenerationJob/${claimed.jobId}`,
+            versionId: completed.updatedAt,
+          }],
+        }
+      }).data
     } catch (error) {
       const now = new Date().toISOString()
-      if (signal?.aborted === true) return this.#jobs.requeue(claimed, now)
-      return this.#jobs.fail(claimed, {
-        code: error instanceof ScenarioGenerationProviderError ? error.code : 'GENERATION_FAILED',
-        message: error instanceof ScenarioGenerationProviderError
-          ? error.message
-          : 'Scenario generation failed',
-      }, now)
+      const transition = signal?.aborted === true ? 'requeue' : 'fail'
+      return this.#commands.execute({
+        context: claimed.actorContext,
+        contextRequirement: 'known',
+        dataSchema: scenarioGenerationJobSchema,
+        expectedVersions: {},
+        idempotencyKey: `${claimed.jobId}:${transition}:${claimed.startedAt ?? now}`,
+        idempotencyScope: 'workspace',
+        input: { jobId: claimed.jobId, transition },
+        operation: `scenario-generation-job.${transition}`,
+      }, () => {
+        const transitioned = transition === 'requeue'
+          ? this.#jobs.requeue(claimed, now)
+          : this.#jobs.fail(claimed, {
+              code: error instanceof ScenarioGenerationProviderError ? error.code : 'GENERATION_FAILED',
+              message: error instanceof ScenarioGenerationProviderError
+                ? error.message
+                : 'Scenario generation failed',
+            }, now)
+        return {
+          data: transitioned,
+          effects: [{
+            kind: 'updated',
+            reference: `ScenarioGenerationJob/${claimed.jobId}`,
+            versionId: transitioned.updatedAt,
+          }],
+        }
+      }).data
     }
   }
 
@@ -207,8 +255,6 @@ export class ScenarioDataService {
     idempotencyKey: string
   }) {
     this.#assertAdministrator(input.context)
-    const dataset = this.#getDataset(input.context.workspaceId, input.datasetId)
-    this.#assertExpectedVersion(dataset, input.expectedVersion)
     return this.#commands.execute({
       context: input.context,
       contextRequirement: 'current',
@@ -219,6 +265,8 @@ export class ScenarioDataService {
       input: { datasetId: input.datasetId, expectedVersion: input.expectedVersion },
       operation: 'scenario-dataset.delete',
     }, () => {
+      const dataset = this.#getDataset(input.context.workspaceId, input.datasetId)
+      this.#assertExpectedVersion(dataset, input.expectedVersion)
       if (!this.#repository.delete(
         input.context.workspaceId,
         input.datasetId,

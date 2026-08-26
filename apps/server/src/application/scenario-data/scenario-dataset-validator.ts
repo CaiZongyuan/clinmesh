@@ -297,6 +297,14 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
           severity: 'error',
         })
       }
+      if (investigation.sourceLevel !== 'L1') {
+        add({
+          code: 'INVESTIGATION_EXACT_SOURCE_INVALID',
+          message: `Exact investigation ${investigation.id} must use L1 source truth`,
+          path: `${investigationPath}.sourceLevel`,
+          severity: 'error',
+        })
+      }
       if (investigation.sourceLevel === 'L3' && investigation.critical) {
         add({
           code: 'INVESTIGATION_L3_CRITICAL',
