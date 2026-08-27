@@ -48,6 +48,7 @@ scripts/        文档投影、依赖边界和质量检查
 
 - Node.js `^22.19.0` 或 `>=24.0.0`
 - pnpm `11.17.0`
+- Docker Engine 与 `docker compose`（仅容器运行和 Synthea Provider 需要）
 - Xcode/Android Studio 仅在运行对应移动原生目标时需要
 
 ## 安装
@@ -108,7 +109,7 @@ pnpm dev:mobile
 pnpm docs:dev
 ```
 
-默认地址为 http://127.0.0.1:5174/。
+默认地址为 http://127.0.0.1:5174/
 
 ## 质量检查
 
@@ -154,6 +155,51 @@ pnpm --filter @clinmesh/server test
 影响架构、协议、持久化、工程流程或测试策略的非平凡决策使用 `.agents/notes/` 记录，格式见 [Agent Notes](.agents/notes/README.md)。
 
 ## 部署
+
+### Docker Compose
+
+首次运行先创建本地环境文件；已有 `.env` 时不要覆盖：
+
+```sh
+cp .env.example .env
+```
+
+默认 Compose 只启动 ClinMesh，不包含 Java 或 Synthea：
+
+```sh
+docker compose up -d --build
+```
+
+需要在管理员“模拟数据”页面使用 Synthea 时，叠加可选 Compose 文件：
+
+```sh
+docker compose -f compose.yaml -f compose.synthea.yaml up -d --build
+```
+
+检查 ClinMesh、Synthea Provider 和双模块生成能力：
+
+```sh
+docker compose -f compose.yaml -f compose.synthea.yaml ps
+curl --fail http://localhost:8787/api/health
+docker compose -f compose.yaml -f compose.synthea.yaml exec -T synthea-provider \
+  java -cp /opt/provider:/opt/synthea/synthea.jar ProviderServer --smoke
+```
+
+启动成功后访问：
+
+- Web：http://localhost:8787/
+- 模拟数据：http://localhost:8787/scenario-data
+- FHIR metadata：http://localhost:8787/fhir/R5/metadata
+
+停止 Synthea 部署但保留容器和命名卷：
+
+```sh
+docker compose -f compose.yaml -f compose.synthea.yaml stop
+```
+
+默认 Compose 不依赖 Synthea；可选 Provider 未启动、不可达或生成失败时，只影响对应生成任务，不影响 ClinMesh 启动、内置生成器和既有 HIS 流程。除非明确要删除本地合成数据，不要使用 `docker compose down -v`。
+
+### 直接运行 Node.js
 
 生产构建、显式迁移与启动：
 
