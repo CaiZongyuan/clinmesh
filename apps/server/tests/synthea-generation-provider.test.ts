@@ -5,7 +5,7 @@ import {
 } from '../src/infrastructure/scenario-generation/synthea-provider.ts'
 
 const syntheaCommit = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
-const configHash = '4587ecbfbb1cf0afa8e0ebb384f7e809c4977a7fc857783f859d28971261711c'
+const configHash = 'b26dd4f34bd75c5328892e382f57899221e2581f5a03902bde09f0ec05f57ef9'
 const request = scenarioGenerationRequestSchema.parse({
   modules: ['fever'],
   name: 'Synthea 发热病史',

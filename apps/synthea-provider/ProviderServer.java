@@ -27,6 +27,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -35,12 +36,19 @@ import java.util.stream.Stream;
 public final class ProviderServer {
   private static final String SYNTHEA_COMMIT =
       "d9d07a6eef91ee5144293b42ab64224d84d124f8";
+  private static final String GENERATION_CONFIG_HASH =
+      "b26dd4f34bd75c5328892e382f57899221e2581f5a03902bde09f0ec05f57ef9";
   private static final Path SYNTHEA_JAR = Path.of("/opt/synthea/synthea.jar");
   private static final Path SYNTHEA_CONFIG = Path.of("/opt/provider/synthea.properties");
   private static final int MAX_REQUEST_BYTES = 64 * 1024;
   private static final int MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
   private static final Gson GSON = new Gson();
-  private static final Set<String> MODULES = Set.of("fever", "type-2-diabetes");
+  private static final List<String> MODULE_ORDER = List.of("fever", "type-2-diabetes");
+  private static final Map<String, List<String>> MODULE_PATTERNS = Map.of(
+      "fever", List.of("sinusitis"),
+      "type-2-diabetes", List.of(
+          "metabolic_syndrome_disease", "metabolic_syndrome_care"));
+  private static final Set<String> MODULES = Set.copyOf(MODULE_ORDER);
 
   private record GenerationRequest(
       List<String> modules,
@@ -251,7 +259,7 @@ public final class ProviderServer {
 
       JsonObject metadata = new JsonObject();
       metadata.addProperty("clinicalSeed", request.clinicalSeed);
-      metadata.addProperty("configHash", sha256(SYNTHEA_CONFIG));
+      metadata.addProperty("configHash", generationConfigHash());
       metadata.add("modules", GSON.toJsonTree(request.modules));
       metadata.addProperty("populationSeed", request.populationSeed);
       metadata.addProperty("syntheaCommit", SYNTHEA_COMMIT);
@@ -270,13 +278,10 @@ public final class ProviderServer {
   }
 
   private static List<String> modulePatterns(List<String> modules) {
-    List<String> patterns = new ArrayList<>();
-    if (modules.contains("fever")) patterns.add("sinusitis");
-    if (modules.contains("type-2-diabetes")) {
-      patterns.add("metabolic_syndrome_disease");
-      patterns.add("metabolic_syndrome_care");
-    }
-    return patterns;
+    return MODULE_ORDER.stream()
+        .filter(modules::contains)
+        .flatMap(module -> MODULE_PATTERNS.get(module).stream())
+        .toList();
   }
 
   private static boolean isPatientBundle(JsonElement value) {
@@ -471,8 +476,17 @@ public final class ProviderServer {
     }
   }
 
-  private static String sha256(Path path) throws Exception {
-    return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path)));
+  private static String generationConfigHash() throws Exception {
+    MessageDigest digest = MessageDigest.getInstance("SHA-256");
+    digest.update(Files.readAllBytes(SYNTHEA_CONFIG));
+    digest.update((byte) 0);
+    for (String module : MODULE_ORDER) {
+      digest.update(module.getBytes(StandardCharsets.UTF_8));
+      digest.update((byte) '=');
+      digest.update(String.join(",", MODULE_PATTERNS.get(module)).getBytes(StandardCharsets.UTF_8));
+      digest.update((byte) '\n');
+    }
+    return HexFormat.of().formatHex(digest.digest());
   }
 
   private static void deleteRecursively(Path root) {
@@ -528,6 +542,8 @@ public final class ProviderServer {
         """.trim();
     JsonObject result = generateForSmoke(port, body, "Synthea Provider smoke request failed");
     if (result.getAsJsonArray("bundles").size() != 5
+        || !result.getAsJsonObject("metadata").get("configHash").getAsString()
+            .equals(GENERATION_CONFIG_HASH)
         || !result.getAsJsonObject("metadata").get("syntheaCommit").getAsString()
             .equals(SYNTHEA_COMMIT)
         || !containsCode(result.getAsJsonArray("bundles"),

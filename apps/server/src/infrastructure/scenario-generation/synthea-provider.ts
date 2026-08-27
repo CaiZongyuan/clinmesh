@@ -16,7 +16,7 @@ import {
 } from '../../application/scenario-data/synthea-case-truth-compiler.ts'
 
 const SYNTHEA_COMMIT = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
-const SYNTHEA_CONFIG_HASH = '4587ecbfbb1cf0afa8e0ebb384f7e809c4977a7fc857783f859d28971261711c'
+const SYNTHEA_CONFIG_HASH = 'b26dd4f34bd75c5328892e382f57899221e2581f5a03902bde09f0ec05f57ef9'
 const allowedR4ResourceTypes = syntheaR4ResourceTypes
 
 const r4ResourceSchema = z.object({
