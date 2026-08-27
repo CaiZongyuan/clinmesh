@@ -14,6 +14,7 @@ import type {
 } from './command-executor.ts'
 import { CommandExecutor } from './command-executor.ts'
 import { syntheticAccounts } from './identity-service.ts'
+import { materializeScenarioPatientFhirHistory } from './scenario-data/scenario-patient-fhir-history.ts'
 
 const clinicalReviewSchema = z.record(z.string(), z.unknown())
 const scenarioPackageRowSchema = z.object({
@@ -1203,7 +1204,12 @@ export class ScenarioService {
             valueBoolean: true,
           }],
         })
-        this.#seedPatientFhirHistory(context, patient)
+        materializeScenarioPatientFhirHistory({
+          context,
+          fhir: this.#fhir,
+          history: patient.fhirHistory ?? [],
+          patientId: patient.patientId,
+        })
         if (patient.priorCondition === undefined) continue
         this.#fhir.create(context, {
           resourceType: 'Condition',
@@ -1294,160 +1300,6 @@ export class ScenarioService {
           url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/synthetic-data',
           valueBoolean: true,
         }],
-      })
-    }
-  }
-
-  #seedPatientFhirHistory(
-    context: { epoch: string; workspaceId: string },
-    patient: ScenarioVirtualPatient,
-  ): void {
-    for (const resource of patient.fhirHistory ?? []) {
-      if (resource.resourceType === 'Encounter') {
-        this.#fhir.create(context, {
-          actualPeriod: resource.period,
-          class: [{
-            coding: [{
-              code: resource.classCode,
-              display: 'ambulatory',
-              system: 'http://terminology.hl7.org/CodeSystem/v3-ActCode',
-            }],
-          }],
-          id: resource.id,
-          resourceType: resource.resourceType,
-          serviceProvider: { reference: 'Organization/organization-clinmesh' },
-          status: resource.status,
-          subject: { reference: `Patient/${patient.patientId}` },
-        })
-        continue
-      }
-      const encounter = 'encounterId' in resource && resource.encounterId !== undefined
-        ? { encounter: { reference: `Encounter/${resource.encounterId}` } }
-        : {}
-      if (resource.resourceType === 'Condition') {
-        this.#fhir.create(context, {
-          clinicalStatus: {
-            coding: [{
-              code: resource.clinicalStatus,
-              system: 'http://terminology.hl7.org/CodeSystem/condition-clinical',
-            }],
-          },
-          code: {
-            ...(resource.code.code === undefined
-              ? {}
-              : {
-                  coding: [{
-                    code: resource.code.code,
-                    display: resource.code.display,
-                    ...(resource.code.system === undefined ? {} : { system: resource.code.system }),
-                  }],
-                }),
-            text: resource.code.display,
-          },
-          ...encounter,
-          id: resource.id,
-          ...(resource.onsetDateTime === undefined ? {} : { onsetDateTime: resource.onsetDateTime }),
-          ...(resource.recordedDate === undefined ? {} : { recordedDate: resource.recordedDate }),
-          resourceType: resource.resourceType,
-          subject: { reference: `Patient/${patient.patientId}` },
-        })
-        continue
-      }
-      if (resource.resourceType === 'Observation') {
-        const result = resource.value.outcome === 'reported'
-          ? typeof resource.value.value === 'number'
-            ? {
-                valueQuantity: {
-                  ...(resource.value.unit === undefined ? {} : { unit: resource.value.unit }),
-                  value: resource.value.value,
-                },
-              }
-            : typeof resource.value.value === 'boolean'
-              ? { valueBoolean: resource.value.value }
-              : { valueString: resource.value.value }
-          : { valueString: resource.value.message }
-        this.#fhir.create(context, {
-          code: {
-            ...(resource.code.code === undefined
-              ? {}
-              : {
-                  coding: [{
-                    code: resource.code.code,
-                    display: resource.code.display,
-                    ...(resource.code.system === undefined ? {} : { system: resource.code.system }),
-                  }],
-                }),
-            text: resource.code.display,
-          },
-          ...(resource.effectiveDateTime === undefined ? {} : { effectiveDateTime: resource.effectiveDateTime }),
-          ...encounter,
-          id: resource.id,
-          ...(resource.value.outcome !== 'reported' || resource.value.flag === undefined
-            ? {}
-            : {
-                interpretation: [{
-                  coding: [{
-                    code: resource.value.flag,
-                    system: 'http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation',
-                  }],
-                }],
-              }),
-          resourceType: resource.resourceType,
-          status: resource.status,
-          subject: { reference: `Patient/${patient.patientId}` },
-          ...result,
-        })
-        continue
-      }
-      if (resource.resourceType === 'MedicationRequest') {
-        this.#fhir.create(context, {
-          ...(resource.authoredOn === undefined ? {} : { authoredOn: resource.authoredOn }),
-          ...encounter,
-          id: resource.id,
-          intent: resource.intent,
-          medication: {
-            concept: {
-              ...(resource.medication.code === undefined
-                ? {}
-                : {
-                    coding: [{
-                      code: resource.medication.code,
-                      display: resource.medication.display,
-                      ...(resource.medication.system === undefined ? {} : { system: resource.medication.system }),
-                    }],
-                  }),
-              text: resource.medication.display,
-            },
-          },
-          resourceType: resource.resourceType,
-          status: resource.status,
-          subject: { reference: `Patient/${patient.patientId}` },
-        })
-        continue
-      }
-      this.#fhir.create(context, {
-        clinicalStatus: {
-          coding: [{
-            code: resource.clinicalStatus,
-            system: 'http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical',
-          }],
-        },
-        code: {
-          ...(resource.code.code === undefined
-            ? {}
-            : {
-                coding: [{
-                  code: resource.code.code,
-                  display: resource.code.display,
-                  ...(resource.code.system === undefined ? {} : { system: resource.code.system }),
-                }],
-              }),
-          text: resource.code.display,
-        },
-        id: resource.id,
-        patient: { reference: `Patient/${patient.patientId}` },
-        ...(resource.recordedDate === undefined ? {} : { recordedDate: resource.recordedDate }),
-        resourceType: resource.resourceType,
       })
     }
   }

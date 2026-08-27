@@ -9,6 +9,7 @@ import type {
   ScenarioGenerationProvider,
   SourcePatientCorpus,
 } from '../../application/scenario-data/provider.ts'
+import { sourceArtifactHash } from '../../application/scenario-data/provider.ts'
 import { createHospitalBaseline } from '../../application/scenario-data/hospital-baseline.ts'
 import { compileSyntheaR4Bundle } from '../../application/scenario-data/synthea-case-truth-compiler.ts'
 
@@ -119,7 +120,7 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
   async capabilities(): Promise<ScenarioProviderCapabilities> {
     return {
       available: true,
-      maxPopulation: 1_000,
+      maxPopulation: 10,
       modules: ['fever', 'type-2-diabetes'],
       providerId: 'builtin',
       providerName: 'ClinMesh 内置生成器',
@@ -156,6 +157,15 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
       schemaVersion: '1',
       simulatorRules: [{ code: 'default-success', outcome: 'success', simulator: 'lis' }],
     }
-    return { content, kind: 'case-truth' }
+    return {
+      content,
+      kind: 'case-truth',
+      sources: patients.map(compiledPatient => ({
+        format: 'clinmesh-template',
+        hash: sourceArtifactHash(compiledPatient),
+        patientId: compiledPatient.id,
+        raw: null,
+      })),
+    }
   }
 }

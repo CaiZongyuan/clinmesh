@@ -58,6 +58,7 @@ export function createLanDevelopmentPlan(
   const origins = [
     'http://127.0.0.1:51868',
     'http://127.0.0.1:51888',
+    'http://localhost:51888',
     ...addresses.map(address => `http://${address}:51888`),
   ]
 
@@ -82,9 +83,11 @@ export function createLanDevelopmentPlan(
 async function runDevelopmentProcesses(plan: LanDevelopmentPlan): Promise<number> {
   const packageManager = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
   const repositoryRoot = resolve(import.meta.dirname, '..')
+  const useProcessGroups = process.platform !== 'win32'
   const running: Array<{ child: ChildProcess, name: string }> = plan.processes.map(configuration => ({
     child: spawn(packageManager, configuration.args, {
       cwd: repositoryRoot,
+      detached: useProcessGroups,
       env: { ...process.env, ...configuration.environment },
       stdio: 'inherit',
     }),
@@ -101,7 +104,16 @@ async function runDevelopmentProcesses(plan: LanDevelopmentPlan): Promise<number
       stopping = true
       exitCode = code
       for (const { child } of running) {
-        if (child.exitCode === null && child.signalCode === null) child.kill(signal)
+        if (child.exitCode !== null || child.signalCode !== null) continue
+        if (!useProcessGroups || child.pid === undefined) {
+          child.kill(signal)
+          continue
+        }
+        try {
+          process.kill(-child.pid, signal)
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+        }
       }
     }
 

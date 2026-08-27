@@ -16,6 +16,7 @@ import { FhirRepository } from './infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceRepository } from './infrastructure/sqlite/workspace-repository.ts'
 import { ScenarioDatasetRepository } from './infrastructure/sqlite/scenario-dataset-repository.ts'
 import { ScenarioGenerationJobRepository } from './infrastructure/sqlite/scenario-generation-job-repository.ts'
+import { SyntheticPatientProfileRepository } from './infrastructure/sqlite/synthetic-patient-profile-repository.ts'
 import { BuiltInScenarioGenerationProvider } from './infrastructure/scenario-generation/builtin-provider.ts'
 import { SyntheaScenarioGenerationProvider } from './infrastructure/scenario-generation/synthea-provider.ts'
 import type { ScenarioGenerationProvider } from './application/scenario-data/provider.ts'
@@ -77,11 +78,15 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     })
     const commands = new CommandExecutor(database, fhir, clockOptions)
     const scenario = new ScenarioService(database, fhir, commands)
+    const workflow = new WorkflowService(database, fhir, commands, {
+      ...clockOptions,
+      tokenSecret: options.cursorSecret,
+    })
     const syntheaProvider = options.syntheaProvider
       ?? (options.syntheaProviderUrl === undefined
         ? new UnavailableScenarioGenerationProvider({
             available: false,
-            maxPopulation: 50,
+            maxPopulation: 10,
             modules: ['fever', 'type-2-diabetes'],
             providerId: 'synthea',
             providerName: 'Synthea',
@@ -89,6 +94,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           })
         : new SyntheaScenarioGenerationProvider({ baseUrl: options.syntheaProviderUrl }))
     const generationJobs = new ScenarioGenerationJobRepository(database)
+    const syntheticPatientProfiles = new SyntheticPatientProfileRepository(database)
     generationJobs.requeueInterrupted(new Date().toISOString())
     const scenarioData = new ScenarioDataService({
       commands,
@@ -97,8 +103,10 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         ['builtin', new BuiltInScenarioGenerationProvider()],
         ['synthea', syntheaProvider],
       ]),
+      profiles: syntheticPatientProfiles,
       repository: new ScenarioDatasetRepository(database),
       scenario,
+      workflow,
     })
     scenario.ensureInitialEpoch({
       epoch: 'epoch-1',
@@ -113,10 +121,6 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     await identity.seedSyntheticAccounts({
       password: options.demoPassword,
       workspaceId: 'workspace-demo',
-    })
-    const workflow = new WorkflowService(database, fhir, commands, {
-      ...clockOptions,
-      tokenSecret: options.cursorSecret,
     })
     const lisPayloadSchema = z.object({
       caseId: z.string().min(1),

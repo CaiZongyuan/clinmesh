@@ -6,6 +6,7 @@ import type {
 import { z } from 'zod'
 import {
   ScenarioGenerationProviderError,
+  sourceArtifactHash,
   type ScenarioGenerationProvider,
   type SourcePatientCorpus,
 } from '../../application/scenario-data/provider.ts'
@@ -34,7 +35,7 @@ const r4BundleSchema = z.object({
 }).passthrough()
 
 const providerResponseSchema = z.object({
-  bundles: z.array(r4BundleSchema).min(1).max(50),
+  bundles: z.array(r4BundleSchema).min(1).max(10),
   metadata: z.object({
     clinicalSeed: z.number().int(),
     configHash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -298,7 +299,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
   async capabilities(): Promise<ScenarioProviderCapabilities> {
     return {
       available: true,
-      maxPopulation: 50,
+      maxPopulation: 10,
       modules: ['fever', 'type-2-diabetes'],
       providerId: 'synthea',
       providerName: 'Synthea',
@@ -368,10 +369,20 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
       )
     }
 
-    const patients = parsed.bundles.map((bundle, index) => {
+    const compiled = parsed.bundles.map((bundle, index) => {
       validateBundle(bundle, request)
-      return compileSyntheaR4Bundle({ bundle, ordinal: index, request })
+      const patient = compileSyntheaR4Bundle({ bundle, ordinal: index, request })
+      return {
+        patient,
+        source: {
+          format: 'fhir-r4-bundle' as const,
+          hash: sourceArtifactHash(bundle),
+          patientId: patient.id,
+          raw: bundle,
+        },
+      }
     })
+    const patients = compiled.map(item => item.patient)
     const baseline = createHospitalBaseline()
     const content: ScenarioDatasetContent = {
       catalog: baseline.catalog,
@@ -402,6 +413,6 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
       schemaVersion: '1',
       simulatorRules: [{ code: 'default-success', outcome: 'success', simulator: 'lis' }],
     }
-    return { content, kind: 'case-truth' }
+    return { content, kind: 'case-truth', sources: compiled.map(item => item.source) }
   }
 }

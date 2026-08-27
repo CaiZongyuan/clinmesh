@@ -215,7 +215,7 @@ Web 页面调用共享 command handler。当前不发布 FHIR Operation；未来
 | --- | --- | --- |
 | `fhir-native` | Patient、AllergyIntolerance、Organization、Location、Practitioner、PractitionerRole、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、Condition、Medication、MedicationRequest、MedicationDispense | 只由 Scenario 安装或业务 Command 创建和更新；FHIR API 只读 |
 | `fhir-native-immutable` | 已签署的 Composition、document Bundle、Provenance | 业务 Command 只创建新资源；更正创建显式修订关系，不覆盖已签实例 |
-| `domain-native` | Virtual Patient 候选状态与接诊映射、Consultation 与 Consultation Record、Registration、Diagnosis Draft 与 Diagnosis Confirmation、Prescription、PaymentTransaction、库存账、临床草稿、Scenario Run、Action Trace、audit_log | 只通过 `/api/his/v1`、`/api/sim/v1` 或内部 Command 写入 |
+| `domain-native` | Synthetic Patient Profile 与 Profile Revision、Virtual Patient 候选状态与接诊映射、Consultation 与 Consultation Record、Registration、Diagnosis Draft 与 Diagnosis Confirmation、Prescription、PaymentTransaction、库存账、临床草稿、Scenario Run、Action Trace、audit_log | 只通过 `/api/his/v1`、`/api/sim/v1` 或内部 Command 写入 |
 | `domain-projection` | AuditEvent、InventoryItem | 从领域事实同事务生成；FHIR API 只读 |
 | `simulation-private` | Virtual Patient 问答规则、Hidden Fact、Reveal Policy 和故障规则 | 仅 Scenario Runtime 与受控场景维护入口可访问 |
 
@@ -1237,7 +1237,7 @@ Repository 边界降低业务代码耦合，但不承诺直接复制 `.sqlite` �
 
 ### 10.1 Workspace 隔离
 
-每次人类演示或未来 Agent 运行创建 Scenario Run，并在 Workspace 内使用不可复用的 Epoch 标识一次具体数据世代。所有运行资源、索引、领域表、session context、approval、Command、outbox、callback 和 Action Trace 都绑定 `workspace_id + epoch`；审计保留域独立，不随 reset 删除。`scenario_dataset`、`scenario_package` 和 `scenario_generation_job` 是安装前的 Workspace 级 authoring 资产，故意跨 Epoch 存续，不能被业务 API 当作当前 Epoch 事实读取。
+每次人类演示或未来 Agent 运行创建 Scenario Run，并在 Workspace 内使用不可复用的 Epoch 标识一次具体数据世代。所有运行资源、索引、领域表、session context、approval、Command、outbox、callback 和 Action Trace 都绑定 `workspace_id + epoch`；审计保留域独立，不随 reset 删除。`scenario_dataset`、`scenario_package`、`scenario_generation_job`、Synthetic Patient Profile、来源 artifact 和 Profile Revision 是 Workspace 级 authoring 资产，故意跨 Epoch 存续，不能被业务 API 当作当前 Epoch 事实读取。只有 materialization 把选定 Profile 投影为当前 Epoch 的 Patient、白名单临床历史、Registration、Encounter、Queue Task 和独立 Consultation owner。
 
 首期所有 Workspace 共用一个 SQLite 文件并按行隔离。数据库文件不是 Workspace 边界；任何查询和约束都必须显式携带 Workspace/Epoch。
 
@@ -1270,7 +1270,7 @@ clock_revision
 
 ### 10.3 场景定义
 
-内置 Scenario blueprint 由 `ScenarioService` 中的受版本控制 TypeScript 数据定义，包含 scenario ID/version、schema version、seed、固定虚拟时间、Virtual Patient 可见表现与 Patient 绑定、合成目录、Hidden Fact、Reveal Policy 和模拟器规则。管理员也可以通过内置生成器或可选 Synthea Provider 创建 `scenario_dataset`，结构化编辑 CaseTruth 与 Hospital Baseline，再把指定 Dataset 版本复制为不可变 `scenario_package` 并安装。安装过程在一个 Command 事务中创建新 Epoch；普通岗位 API 不暴露 Dataset、Hidden Fact 或 Reveal Policy。
+内置 Scenario blueprint 由 `ScenarioService` 中的受版本控制 TypeScript 数据定义，包含 scenario ID/version、schema version、seed、固定虚拟时间、Virtual Patient 可见表现与 Patient 绑定、合成目录、Hidden Fact、Reveal Policy 和模拟器规则。管理员也可以通过内置生成器或可选 Synthea Provider 创建每批最多 10 人的 Generation Batch；同一事务保存 `scenario_dataset`、Synthetic Patient Profile、编译病史、来源哈希和经过验证的原始 Synthea R4 Bundle。患者库默认按 Profile 浏览、编辑展示 overlay，并通过共享 Workflow Command 批量发起门诊就诊；物化 Command 同时建立独立 Consultation owner，使 Profile 患者与 Virtual Patient 使用同一套结构化病历、诊断、处方、检查与完诊状态，脚本问答仅对实际绑定 Virtual Patient 的病例可用。高级病例编排仍可编辑 CaseTruth 与 Hospital Baseline，再把指定 Dataset 版本复制为不可变 `scenario_package` 并安装。安装过程在一个 Command 事务中创建新 Epoch；普通岗位 API 不暴露 Dataset、Profile 来源、Hidden Fact 或 Reveal Policy。
 
 当前安装 API 提供 `candidate-fever-outpatient-v3` 与 `density-fever-outpatient-v3`，并只接受 `candidate` 或 `density`。v1 是基线定义，v2 增加确定性结构化检验结果，v3 再以进入初始定义 hash 的 `medicationRulesVersion` 增加独立用药结论目录规则。v1/v2 blueprint、Hidden Fact 和药品目录配置保持原定义，既有 Scenario Run 的 reset 继续按其固定 scenario ID seed，不由 migration 改写。两个当前 v3 定义的 `clinicalReview` 都是 `null`，因此没有任何场景标记为 `golden`；数据库约束要求未来 `golden` 定义必须同时具有临床审核元数据。`density` 使用同一业务 schema，并增加合成患者和队列数据以验证分页与界面密度。
 
@@ -1355,7 +1355,7 @@ AND field policy
 
 ### 11.3 字段级边界
 
-- 当前合成患者 API 不保存或返回身份证、联系方式或医保凭证。
+- Synthetic Patient Profile 保存明确标记为合成的身份证号、电话、邮箱、地址和保险展示文本；只有管理员详情接口返回完整 Profile，患者库列表不返回联系方式。Profile 物化后，普通岗位仍只通过岗位读模型或现有 FHIR Patient 权限读取完成业务所需字段，保险展示文本不是医保凭证且不参与结算。
 - 每个岗位使用独立的窄响应 schema，只返回完成当前工作所需字段；未来 Agent adapter 还要进一步窄化。
 - 普通岗位不能读取 session secret、外部原始凭证、Hidden Fact、Reveal Policy 或其他 Scenario 私有状态。
 - read-only/hidden 边界由服务端路由和 Repository 强制，不能只靠前端隐藏。
@@ -1525,7 +1525,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 ### 15.1 运行与持久化
 
 - Node.js Hono 同时提供 Web SPA、认证、HIS/Scenario API、FHIR R5 只读 API 和健康检查。
-- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；二十四个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、Virtual Patient 接诊与问诊、门诊事实、结构化病历、独立检查申请、检验报告关联、报告确认与修订、诊断草稿与确认、处方审核状态、处方草稿、无需用药结论与撤回事实、门诊病例责任、Scenario Dataset/Package、持久生成任务、已报告检查复测约束和结构化二次追问回答。
+- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；二十五个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、Virtual Patient 接诊与问诊、门诊事实、结构化病历、独立检查申请、检验报告关联、报告确认与修订、诊断草稿与确认、处方审核状态、处方草稿、无需用药结论与撤回事实、门诊病例责任、Scenario Dataset/Package、持久生成任务、已报告检查复测约束、结构化二次追问回答，以及 Synthetic Patient Profile、Profile Revision、原始来源和 Epoch materialization。
 - 数据库 CLI 提供 migrate、verify、reindex、backup 和 restore；已有旧版数据库执行 migrate 时先在同目录创建并验证升级前备份，Server 进程只验证 migration。
 - CommandExecutor 统一 `BEGIN IMMEDIATE`、expected versions、幂等 receipt、FHIR current/history/search、领域事实、AuditEvent、Action Trace 和 outbox 原子提交。
 - 同进程 dispatcher 持久化 claim/lease/attempt/correlation，支持失败重试、ambiguous、重复消费和旧 Epoch abandon。

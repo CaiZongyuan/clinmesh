@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import type { ScenarioDataset, ScenarioGenerationRequest } from '@clinmesh/contracts/scenario'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
@@ -67,6 +67,10 @@ import { PaginationControls } from './pagination-controls.tsx'
 
 const providersQueryKey = ['scenario-providers'] as const
 const datasetsQueryKey = ['scenario-datasets'] as const
+const SyntheticPatientLibrary = lazy(async () => {
+  const module = await import('./synthetic-patient-library.tsx')
+  return { default: module.SyntheticPatientLibrary }
+})
 
 function datasetQueryKey(datasetId: string) {
   return ['scenario-dataset', datasetId] as const
@@ -1742,7 +1746,7 @@ function DatasetEditor({
   )
 }
 
-export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): React.JSX.Element {
+function ScenarioDatasetStudio({ locale }: { locale: WorkspaceLocale }): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
   const queryClient = useQueryClient()
   const [request, setRequest] = useState(initialRequest)
@@ -1886,7 +1890,7 @@ export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): 
             </Field>
             <Field>
               <FieldLabel htmlFor="scenario-population-count">{messages.populationCount}</FieldLabel>
-              <Input id="scenario-population-count" max={1_000} min={1} onChange={event => updatePopulation({ count: Number(event.target.value) })} required type="number" value={request.population.count} />
+              <Input id="scenario-population-count" max={10} min={1} onChange={event => updatePopulation({ count: Number(event.target.value) })} required type="number" value={request.population.count} />
             </Field>
             <Field>
               <FieldLabel htmlFor="scenario-age-min">{messages.minimumAge}</FieldLabel>
@@ -2072,5 +2076,24 @@ export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): 
         ) : null}
       </section>
     </div>
+  )
+}
+
+export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): React.JSX.Element {
+  return (
+    <Tabs defaultValue="library">
+      <TabsList aria-label="模拟数据视图" variant="line">
+        <TabsTrigger value="library">{locale === 'zh-CN' ? '合成患者库' : 'Synthetic patient library'}</TabsTrigger>
+        <TabsTrigger value="studio">{locale === 'zh-CN' ? '高级病例编排' : 'Advanced case authoring'}</TabsTrigger>
+      </TabsList>
+      <TabsContent className="pt-4" value="library">
+        <Suspense fallback={<Skeleton className="h-[680px] w-full" />}>
+          <SyntheticPatientLibrary locale={locale} />
+        </Suspense>
+      </TabsContent>
+      <TabsContent className="pt-4" value="studio">
+        <ScenarioDatasetStudio locale={locale} />
+      </TabsContent>
+    </Tabs>
   )
 }

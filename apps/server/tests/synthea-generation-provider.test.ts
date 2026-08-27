@@ -74,7 +74,7 @@ function providerFor(body: unknown, options: { maxResponseBytes?: number } = {})
 
 describe('Synthea Scenario generation Provider contract', () => {
   it('accepts an owned R4 patient history and preserves complete reproduction metadata', async () => {
-    const provider = providerFor(providerResponse([patientBundle([{
+    const bundle = patientBundle([{
       code: { text: 'Viral sinusitis' },
       id: 'condition-1',
       resourceType: 'Condition',
@@ -85,7 +85,8 @@ describe('Synthea Scenario generation Provider contract', () => {
       lifecycleStatus: 'active',
       resourceType: 'Goal',
       subject: { reference: 'urn:uuid:patient-1' },
-    }])]))
+    }])
+    const provider = providerFor(providerResponse([bundle]))
 
     const corpus = await provider.generate(request)
 
@@ -112,6 +113,14 @@ describe('Synthea Scenario generation Provider contract', () => {
       timeRange: { end: '2026-08-01', start: '2020-01-01' },
       timeZone: 'Asia/Shanghai',
     })
+    expect(corpus).toMatchObject({
+      sources: [{
+        format: 'fhir-r4-bundle',
+        patientId: 'synthea-patient-patient-1',
+        raw: bundle,
+      }],
+    })
+    expect(corpus.sources[0]?.hash).toMatch(/^[a-f0-9]{64}$/)
   })
 
   it.each([

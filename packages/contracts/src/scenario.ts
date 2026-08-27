@@ -10,7 +10,7 @@ export const scenarioGenerationRequestSchema = z.object({
       maximum: z.number().int().min(0).max(120),
       minimum: z.number().int().min(0).max(120),
     }).strict(),
-    count: z.number().int().min(1).max(1_000),
+    count: z.number().int().min(1).max(10),
     gender: z.enum(['any', 'female', 'male']),
   }).strict(),
   providerId: z.enum(['builtin', 'synthea']),
@@ -504,6 +504,182 @@ export const scenarioGenerationJobSchema = z.object({
   workspaceId: z.string().min(1),
 }).strict()
 
+export const syntheticPatientIdentitySchema = z.object({
+  address: z.string().min(1).max(500),
+  displayName: z.string().min(1).max(100),
+  email: z.string().email().max(200),
+  insuranceDisplay: z.string().min(1).max(100),
+  mrn: z.string().min(1).max(64),
+  nationalId: z.string().regex(/^\d{17}[\dX]$/),
+  phone: z.string().regex(/^1\d{10}$/),
+}).strict()
+
+const syntheticPatientSourceSchema = z.object({
+  batchId: z.string().min(1),
+  batchName: z.string().min(1),
+  compilation: z.object({
+    modules: z.array(z.enum(['fever', 'type-2-diabetes'])).min(1),
+    ordinal: z.number().int().nonnegative(),
+    seeds: z.object({
+      clinical: z.number().int(),
+      population: z.number().int(),
+    }).strict(),
+    timeRange: z.object({ end: localDateSchema, start: localDateSchema }).strict(),
+    timeZone: z.literal('Asia/Shanghai'),
+  }).strict().nullable(),
+  format: z.enum(['clinmesh-template', 'fhir-r4-bundle', 'legacy-compiled-profile']),
+  hash: z.string().regex(/^[a-f0-9]{64}$/),
+  mappingVersion: z.string().min(1),
+  patientId: z.string().min(1),
+  providerId: z.enum(['builtin', 'synthea']),
+  raw: z.json().nullable(),
+}).strict()
+
+const syntheticPatientProfileMappingSchema = z.object({
+  sourceResourceId: z.string().min(1).max(128),
+  sourceResourceType: z.enum([
+    'Condition',
+    'Encounter',
+    'MedicationRequest',
+    'Observation',
+  ]),
+  target: z.object({
+    catalogItemId: z.string().min(1).max(128),
+    code: z.string().min(1).max(128),
+    system: z.string().url().optional(),
+    version: z.number().int().positive(),
+  }).strict(),
+}).strict()
+
+export const syntheticPatientProfileSchema = z.object({
+  createdAt: z.iso.datetime({ offset: true }),
+  identity: syntheticPatientIdentitySchema,
+  mappings: z.array(syntheticPatientProfileMappingSchema).max(100),
+  patient: scenarioPatientSchema,
+  profileId: z.string().min(1),
+  revision: z.number().int().positive(),
+  source: syntheticPatientSourceSchema,
+  updatedAt: z.iso.datetime({ offset: true }),
+  workspaceId: z.string().min(1),
+}).strict().superRefine((profile, context) => {
+  const sourceIds = new Set<string>()
+  profile.mappings.forEach((mapping, index) => {
+    if (sourceIds.has(mapping.sourceResourceId)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A source resource can have only one persisted mapping',
+        path: ['mappings', index, 'sourceResourceId'],
+      })
+    }
+    sourceIds.add(mapping.sourceResourceId)
+  })
+})
+
+export const syntheticPatientProfileSummarySchema = z.object({
+  activeVisit: z.boolean(),
+  allergyCount: z.number().int().nonnegative(),
+  batchId: z.string().min(1),
+  batchName: z.string().min(1),
+  birthDate: localDateSchema,
+  chronicConditions: z.array(z.string().min(1)),
+  createdAt: z.iso.datetime({ offset: true }),
+  gender: z.enum(['female', 'male', 'other', 'unknown']),
+  historyCount: z.number().int().nonnegative(),
+  mappingWarningCount: z.number().int().nonnegative(),
+  mrn: z.string().min(1),
+  name: z.string().min(1),
+  profileId: z.string().min(1),
+  providerId: z.enum(['builtin', 'synthea']),
+  revision: z.number().int().positive(),
+  updatedAt: z.iso.datetime({ offset: true }),
+}).strict()
+
+export const syntheticPatientProfileListSchema = z.object({
+  items: z.array(syntheticPatientProfileSummarySchema),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive().max(100),
+  total: z.number().int().nonnegative(),
+}).strict()
+
+export const syntheticPatientMappingCatalogSchema = z.object({
+  items: z.array(z.object({
+    catalogItemId: z.string().min(1).max(128),
+    code: z.string().min(1).max(128),
+    nameEn: z.string().min(1).max(200),
+    nameZh: z.string().min(1).max(200),
+    sourceResourceType: z.enum([
+      'Condition',
+      'Encounter',
+      'MedicationRequest',
+      'Observation',
+    ]),
+    system: z.string().url().optional(),
+    version: z.number().int().positive(),
+  }).strict()),
+}).strict()
+
+export const updateSyntheticPatientProfileRequestSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+  input: syntheticPatientIdentitySchema,
+}).strict()
+
+export const updateSyntheticPatientMappingsRequestSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+  input: z.array(z.object({
+    sourceResourceId: z.string().min(1).max(128),
+    target: z.object({
+      catalogItemId: z.string().min(1).max(128),
+      version: z.number().int().positive(),
+    }).strict().nullable(),
+  }).strict()).min(1).max(100),
+}).strict().superRefine((value, context) => {
+  const sourceIds = new Set<string>()
+  value.input.forEach((mapping, index) => {
+    if (sourceIds.has(mapping.sourceResourceId)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A source resource can be mapped only once',
+        path: ['input', index, 'sourceResourceId'],
+      })
+    }
+    sourceIds.add(mapping.sourceResourceId)
+  })
+})
+
+export const startSyntheticPatientVisitsRequestSchema = z.object({
+  departmentId: z.string().min(1),
+  locationId: z.string().min(1),
+  patients: z.array(z.object({
+    expectedRevision: z.number().int().positive(),
+    profileId: z.string().min(1),
+  }).strict()).min(1).max(10),
+  visitDate: localDateSchema,
+  visitTypeId: z.string().min(1),
+}).strict().superRefine((value, context) => {
+  const profileIds = new Set<string>()
+  value.patients.forEach((patient, index) => {
+    if (profileIds.has(patient.profileId)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A Synthetic Patient Profile can appear only once',
+        path: ['patients', index, 'profileId'],
+      })
+    }
+    profileIds.add(patient.profileId)
+  })
+})
+
+export const startSyntheticPatientVisitsResultSchema = z.object({
+  items: z.array(z.object({
+    encounterId: z.string().min(1),
+    patientId: z.string().min(1),
+    profileId: z.string().min(1),
+    queueTaskId: z.string().min(1),
+    registrationId: z.string().min(1),
+    status: z.literal('awaiting-triage'),
+  }).strict()).min(1).max(10),
+}).strict()
+
 export type ScenarioDataset = z.infer<typeof scenarioDatasetSchema>
 export type ScenarioDatasetList = z.infer<typeof scenarioDatasetListSchema>
 export type ScenarioDatasetContent = z.infer<typeof scenarioDatasetContentSchema>
@@ -513,3 +689,9 @@ export type ScenarioGenerationJob = z.infer<typeof scenarioGenerationJobSchema>
 export type ScenarioInvestigationResult = z.infer<typeof scenarioInvestigationResultSchema>
 export type ScenarioPatient = z.infer<typeof scenarioPatientSchema>
 export type ScenarioProviderCapabilities = z.infer<typeof scenarioProviderCapabilitiesSchema>
+export type SyntheticPatientIdentity = z.infer<typeof syntheticPatientIdentitySchema>
+export type SyntheticPatientMappingCatalog = z.infer<typeof syntheticPatientMappingCatalogSchema>
+export type SyntheticPatientMappingInput = z.infer<typeof updateSyntheticPatientMappingsRequestSchema>['input'][number]
+export type SyntheticPatientProfile = z.infer<typeof syntheticPatientProfileSchema>
+export type SyntheticPatientProfileList = z.infer<typeof syntheticPatientProfileListSchema>
+export type SyntheticPatientProfileSummary = z.infer<typeof syntheticPatientProfileSummarySchema>

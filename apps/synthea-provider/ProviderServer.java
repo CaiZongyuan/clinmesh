@@ -177,7 +177,7 @@ public final class ProviderServer {
 
     JsonObject population = requireObject(root, "population");
     requireKeys(population, Set.of("age", "count", "gender"), "population");
-    int count = requireInteger(population, "count", 1, 50);
+    int count = requireInteger(population, "count", 1, 10);
     String gender = requireString(population, "gender", 1, 10, null);
     if (!Set.of("any", "female", "male").contains(gender)) {
       throw new RequestException("REQUEST_INVALID", "gender is unsupported");

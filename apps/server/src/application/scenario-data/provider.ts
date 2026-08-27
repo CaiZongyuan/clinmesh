@@ -3,11 +3,22 @@ import type {
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
 } from '@clinmesh/contracts/scenario'
+import { canonicalJsonHash } from './canonical-json.ts'
+
+export interface SourcePatientArtifact {
+  format: 'clinmesh-template' | 'fhir-r4-bundle' | 'legacy-compiled-profile'
+  hash: string
+  patientId: string
+  raw: unknown | null
+}
 
 export interface SourcePatientCorpus {
   content: ScenarioDatasetContent
   kind: 'case-truth'
+  sources: SourcePatientArtifact[]
 }
+
+export const sourceArtifactHash = canonicalJsonHash
 
 export interface ScenarioGenerationProvider {
   capabilities(): Promise<ScenarioProviderCapabilities>

@@ -44,6 +44,22 @@ _Avoid_: Generic Chinese hospital, live policy
 构建 Scenario 时使用的版本固定术语、目录和映射集合，并保留来源、地域、有效期和使用条件。它不是运行中的医院事实，也不是完整 Scenario。
 _Avoid_: Seed, live catalog, Scenario
 
+**Generation Batch**:
+一次受控生成请求产生的一组合成患者及其共同来源参数。Generation Batch 只表达 provenance，不是患者生命周期，也不决定患者是否进入业务流程。
+_Avoid_: Patient library, review batch, lifecycle
+
+**Synthetic Patient Profile**:
+可复用的合成患者身份、来源病史和业务展示信息。它独立于活动 Epoch，尚未发起就诊时不等同于运行中的 Patient Identity 或 Virtual Patient。
+_Avoid_: Patient Identity, Virtual Patient, Scenario Dataset
+
+**Synthetic Patient Library**:
+一个 Workspace 中全部 Synthetic Patient Profile 的持久集合。患者未被选入就诊不会因此被丢弃，Generation Batch 仅作为其来源维度。
+_Avoid_: Generation Batch, Scenario Dataset list, queue
+
+**Profile Revision**:
+Synthetic Patient Profile 一次不可覆盖的修订。修订不改写已经创建的 Patient、Registration 或 Encounter 事实，只影响之后的业务物化。
+_Avoid_: FHIR resource version, Dataset version, overwrite
+
 ## 身份与参与
 
 **User Account**:

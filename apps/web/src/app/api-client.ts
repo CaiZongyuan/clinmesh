@@ -62,8 +62,14 @@ import {
   scenarioGenerationJobSchema,
   scenarioGenerationRequestSchema,
   scenarioProviderCapabilitiesListSchema,
+  startSyntheticPatientVisitsResultSchema,
+  syntheticPatientMappingCatalogSchema,
+  syntheticPatientProfileListSchema,
+  syntheticPatientProfileSchema,
   type ScenarioGenerationRequest,
   type ScenarioDataset,
+  type SyntheticPatientIdentity,
+  type SyntheticPatientMappingInput,
 } from '@clinmesh/contracts/scenario'
 import { z } from 'zod'
 
@@ -235,6 +241,73 @@ export function getScenarioDataset(datasetId: string, signal?: AbortSignal) {
     `/api/sim/v1/scenario-datasets/${encodeURIComponent(datasetId)}`,
     scenarioDatasetSchema,
     signal,
+  )
+}
+
+export function getSyntheticPatientProfiles(signal?: AbortSignal, page = 1, search?: string) {
+  const parameters = new URLSearchParams({ page: String(page), pageSize: '20' })
+  if (search !== undefined && search !== '') parameters.set('search', search)
+  return apiGet(
+    `/api/sim/v1/synthetic-patients?${parameters.toString()}`,
+    syntheticPatientProfileListSchema,
+    signal,
+  )
+}
+
+export function getSyntheticPatientProfile(profileId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/sim/v1/synthetic-patients/${encodeURIComponent(profileId)}`,
+    syntheticPatientProfileSchema,
+    signal,
+  )
+}
+
+export function getSyntheticPatientMappingCatalog(signal?: AbortSignal) {
+  return apiGet(
+    '/api/sim/v1/synthetic-patient-mapping-catalog',
+    syntheticPatientMappingCatalogSchema,
+    signal,
+  )
+}
+
+export function updateSyntheticPatientProfile(input: {
+  expectedRevision: number
+  identity: SyntheticPatientIdentity
+  profileId: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/sim/v1/synthetic-patients/${encodeURIComponent(input.profileId)}`,
+    commandResponseSchema(syntheticPatientProfileSchema),
+    { expectedRevision: input.expectedRevision, input: input.identity },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function updateSyntheticPatientMappings(input: {
+  expectedRevision: number
+  mappings: SyntheticPatientMappingInput[]
+  profileId: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/sim/v1/synthetic-patients/${encodeURIComponent(input.profileId)}/mappings`,
+    commandResponseSchema(syntheticPatientProfileSchema),
+    { expectedRevision: input.expectedRevision, input: input.mappings },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function startSyntheticPatientVisits(input: {
+  departmentId: string
+  locationId: string
+  patients: Array<{ expectedRevision: number; profileId: string }>
+  visitDate: string
+  visitTypeId: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    '/api/sim/v1/synthetic-patients/actions/start-outpatient-visits',
+    commandResponseSchema(startSyntheticPatientVisitsResultSchema),
+    input,
+    { idempotencyKey },
   )
 }
 

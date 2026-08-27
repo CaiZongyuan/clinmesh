@@ -1,16 +1,23 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import {
   scenarioGenerationJobSchema,
+  scenarioGenerationRequestSchema,
   scenarioDatasetContentSchema,
   scenarioDatasetSchema,
   type ScenarioDataset,
   type ScenarioGenerationJob,
   type ScenarioGenerationRequest,
+  syntheticPatientProfileListSchema,
+  syntheticPatientProfileSchema,
+  startSyntheticPatientVisitsRequestSchema,
+  type SyntheticPatientIdentity,
+  type SyntheticPatientMappingInput,
 } from '@clinmesh/contracts/scenario'
 import { scenarioStateSchema } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import type { ScenarioDatasetRepository } from '../../infrastructure/sqlite/scenario-dataset-repository.ts'
 import type { ScenarioGenerationJobRepository } from '../../infrastructure/sqlite/scenario-generation-job-repository.ts'
+import type { SyntheticPatientProfileRepository } from '../../infrastructure/sqlite/synthetic-patient-profile-repository.ts'
 import type { ActorContext, CommandExecutor, CommandResponse } from '../command-executor.ts'
 import {
   ScenarioGenerationProviderError,
@@ -18,6 +25,13 @@ import {
 } from './provider.ts'
 import { validateScenarioDataset } from './scenario-dataset-validator.ts'
 import type { ScenarioService } from '../scenario-service.ts'
+import type { WorkflowService } from '../workflow-service.ts'
+import { createSyntheticPatientProfiles } from './synthetic-patient-profile.ts'
+import { canonicalJsonHash } from './canonical-json.ts'
+import {
+  compileSyntheaR4Bundle,
+  stableHistoryId,
+} from './synthea-case-truth-compiler.ts'
 
 const scenarioDatasetInstallResultSchema = z.object({
   packageId: z.string().min(1),
@@ -29,31 +43,27 @@ const scenarioDatasetDeleteResultSchema = z.object({
   deleted: z.literal(true),
 }).strict()
 
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize)
-  if (typeof value !== 'object' || value === null) return value
-  return Object.fromEntries(Object.entries(value)
-    .toSorted(([left], [right]) => left.localeCompare(right))
-    .map(([key, entry]) => [key, canonicalize(entry)]))
-}
-
-function contentHash(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(canonicalize(value))).digest('hex')
+function mappingCatalogKey(
+  resourceType: string,
+  catalogItemId: string,
+  version: number,
+): string {
+  return `${resourceType}\u0000${catalogItemId}\u0000${version}`
 }
 
 export class ScenarioDataError extends Error {
-  readonly code: 'DATASET_INVALID' | 'DATASET_NOT_FOUND' | 'DATASET_VERSION_CONFLICT' | 'PROVIDER_NOT_AVAILABLE' | 'ROLE_NOT_ALLOWED'
+  readonly code: 'DATASET_INVALID' | 'DATASET_NOT_FOUND' | 'DATASET_VERSION_CONFLICT' | 'PROFILE_IDENTITY_CONFLICT' | 'PROFILE_MAPPING_INVALID' | 'PROFILE_NOT_FOUND' | 'PROFILE_VERSION_CONFLICT' | 'PROVIDER_NOT_AVAILABLE' | 'ROLE_NOT_ALLOWED'
   readonly status: 403 | 404 | 409 | 503
 
   constructor(
-    code: 'DATASET_INVALID' | 'DATASET_NOT_FOUND' | 'DATASET_VERSION_CONFLICT' | 'PROVIDER_NOT_AVAILABLE' | 'ROLE_NOT_ALLOWED',
+    code: 'DATASET_INVALID' | 'DATASET_NOT_FOUND' | 'DATASET_VERSION_CONFLICT' | 'PROFILE_IDENTITY_CONFLICT' | 'PROFILE_MAPPING_INVALID' | 'PROFILE_NOT_FOUND' | 'PROFILE_VERSION_CONFLICT' | 'PROVIDER_NOT_AVAILABLE' | 'ROLE_NOT_ALLOWED',
     message: string,
   ) {
     super(message)
     this.name = 'ScenarioDataError'
     this.code = code
     if (code === 'ROLE_NOT_ALLOWED') this.status = 403
-    else if (code === 'DATASET_NOT_FOUND') this.status = 404
+    else if (code === 'DATASET_NOT_FOUND' || code === 'PROFILE_NOT_FOUND') this.status = 404
     else if (code === 'PROVIDER_NOT_AVAILABLE') this.status = 503
     else this.status = 409
   }
@@ -62,22 +72,28 @@ export class ScenarioDataError extends Error {
 export class ScenarioDataService {
   readonly #commands: CommandExecutor
   readonly #providers: ReadonlyMap<string, ScenarioGenerationProvider>
+  readonly #profiles: SyntheticPatientProfileRepository
   readonly #jobs: ScenarioGenerationJobRepository
   readonly #repository: ScenarioDatasetRepository
   readonly #scenario: ScenarioService
+  readonly #workflow: WorkflowService
 
   constructor(input: {
     commands: CommandExecutor
     jobs: ScenarioGenerationJobRepository
     providers: ReadonlyMap<string, ScenarioGenerationProvider>
+    profiles: SyntheticPatientProfileRepository
     repository: ScenarioDatasetRepository
     scenario: ScenarioService
+    workflow: WorkflowService
   }) {
     this.#commands = input.commands
     this.#jobs = input.jobs
     this.#providers = input.providers
+    this.#profiles = input.profiles
     this.#repository = input.repository
     this.#scenario = input.scenario
+    this.#workflow = input.workflow
   }
 
   async capabilities(context: ActorContext) {
@@ -102,6 +118,10 @@ export class ScenarioDataService {
     const provider = await this.#providerFor(input.request)
     const corpus = await provider.generate(input.request)
     const dataset = this.#dataset(input.context.workspaceId, input.request, corpus.content)
+    const profiles = createSyntheticPatientProfiles({
+      dataset,
+      sources: corpus.sources,
+    })
     return this.#commands.execute({
       context: input.context,
       contextRequirement: 'current',
@@ -113,6 +133,7 @@ export class ScenarioDataService {
       operation: 'scenario-dataset.generate',
     }, () => {
       this.#repository.create(dataset, input.context.actorId)
+      this.#profiles.createBatch(profiles, input.context.actorId)
       return {
         data: dataset,
         effects: [{
@@ -182,6 +203,10 @@ export class ScenarioDataService {
       const provider = await this.#providerFor(claimed.request)
       const corpus = await provider.generate(claimed.request, signal)
       const dataset = this.#dataset(claimed.workspaceId, claimed.request, corpus.content)
+      const profiles = createSyntheticPatientProfiles({
+        dataset,
+        sources: corpus.sources,
+      })
       return this.#commands.execute({
         context: claimed.actorContext,
         contextRequirement: 'known',
@@ -197,6 +222,7 @@ export class ScenarioDataService {
           dataset,
           new Date().toISOString(),
         )
+        this.#profiles.createBatch(profiles, claimed.createdByActorId)
         return {
           data: completed,
           effects: [{
@@ -290,6 +316,294 @@ export class ScenarioDataService {
     return this.#repository.list({ ...input, workspaceId: context.workspaceId })
   }
 
+  listSyntheticPatients(
+    context: ActorContext,
+    input: { page: number; pageSize: number; search?: string },
+  ) {
+    this.#assertAdministrator(context)
+    return syntheticPatientProfileListSchema.parse(this.#profiles.list({
+      epoch: context.epoch,
+      ...input,
+      workspaceId: context.workspaceId,
+    }))
+  }
+
+  getSyntheticPatient(context: ActorContext, profileId: string) {
+    this.#assertAdministrator(context)
+    const profile = this.#profiles.get(context.workspaceId, profileId)
+    if (profile === undefined) {
+      throw new ScenarioDataError('PROFILE_NOT_FOUND', 'The Synthetic Patient Profile was not found')
+    }
+    return syntheticPatientProfileSchema.parse(profile)
+  }
+
+  updateSyntheticPatient(input: {
+    context: ActorContext
+    expectedRevision: number
+    idempotencyKey: string
+    identity: SyntheticPatientIdentity
+    profileId: string
+  }) {
+    this.#assertAdministrator(input.context)
+    return this.#commands.execute({
+      context: input.context,
+      contextRequirement: 'current',
+      dataSchema: syntheticPatientProfileSchema,
+      expectedVersions: {},
+      idempotencyKey: input.idempotencyKey,
+      idempotencyScope: 'workspace',
+      input: {
+        expectedRevision: input.expectedRevision,
+        identity: input.identity,
+        profileId: input.profileId,
+      },
+      operation: 'synthetic-patient-profile.update',
+    }, () => {
+      const current = this.#profiles.get(input.context.workspaceId, input.profileId)
+      if (current === undefined) {
+        throw new ScenarioDataError('PROFILE_NOT_FOUND', 'The Synthetic Patient Profile was not found')
+      }
+      if (current.revision !== input.expectedRevision) {
+        throw new ScenarioDataError(
+          'PROFILE_VERSION_CONFLICT',
+          'The Synthetic Patient Profile changed after it was loaded',
+        )
+      }
+      if (this.#profiles.mrnBelongsToOtherProfile(
+        input.context.workspaceId,
+        input.identity.mrn,
+        input.profileId,
+      )) {
+        throw new ScenarioDataError(
+          'PROFILE_IDENTITY_CONFLICT',
+          'The synthetic medical record number is already in use',
+        )
+      }
+      const updated = syntheticPatientProfileSchema.parse({
+        ...current,
+        identity: input.identity,
+        revision: input.expectedRevision + 1,
+        updatedAt: new Date().toISOString(),
+      })
+      if (!this.#profiles.update(updated, input.expectedRevision, input.context.actorId)) {
+        throw new ScenarioDataError(
+          'PROFILE_VERSION_CONFLICT',
+          'The Synthetic Patient Profile changed after it was loaded',
+        )
+      }
+      return {
+        data: updated,
+        effects: [{
+          kind: 'updated',
+          reference: `SyntheticPatientProfile/${updated.profileId}`,
+          versionId: String(updated.revision),
+        }],
+      }
+    })
+  }
+
+  updateSyntheticPatientMappings(input: {
+    context: ActorContext
+    expectedRevision: number
+    idempotencyKey: string
+    mappings: SyntheticPatientMappingInput[]
+    profileId: string
+  }) {
+    this.#assertAdministrator(input.context)
+    return this.#commands.execute({
+      context: input.context,
+      contextRequirement: 'current',
+      dataSchema: syntheticPatientProfileSchema,
+      expectedVersions: {},
+      idempotencyKey: input.idempotencyKey,
+      idempotencyScope: 'workspace',
+      input: {
+        expectedRevision: input.expectedRevision,
+        mappings: input.mappings,
+        profileId: input.profileId,
+      },
+      operation: 'synthetic-patient-profile.update-mappings',
+    }, () => {
+      const current = this.#profiles.get(input.context.workspaceId, input.profileId)
+      if (current === undefined) {
+        throw new ScenarioDataError('PROFILE_NOT_FOUND', 'The Synthetic Patient Profile was not found')
+      }
+      if (current.revision !== input.expectedRevision) {
+        throw new ScenarioDataError(
+          'PROFILE_VERSION_CONFLICT',
+          'The Synthetic Patient Profile changed after it was loaded',
+        )
+      }
+      const compilation = current.source.compilation
+      const recompiledPatient = current.source.format === 'fhir-r4-bundle'
+        && current.source.raw !== null
+        && compilation !== null
+        ? compileSyntheaR4Bundle({
+            bundle: current.source.raw,
+            ordinal: compilation.ordinal,
+            request: scenarioGenerationRequestSchema.parse({
+              modules: compilation.modules,
+              name: current.source.batchName,
+              population: {
+                age: { maximum: 120, minimum: 0 },
+                count: 1,
+                gender: 'any',
+              },
+              providerId: 'synthea',
+              seeds: compilation.seeds,
+              timeRange: compilation.timeRange,
+              timeZone: compilation.timeZone,
+            }),
+          })
+        : current.patient
+      const eventBySourceId = new Map(recompiledPatient.longitudinalHistory.map(event => (
+        [event.sourceResourceId, event] as const
+      )))
+      const catalog = this.#workflow.syntheticPatientMappingCatalog(input.context)
+      const mappingCatalog = new Map<string, (typeof catalog.items)[number]>(
+        catalog.items.map(item => (
+          [mappingCatalogKey(
+            item.sourceResourceType,
+            item.catalogItemId,
+            item.version,
+          ), item] as const
+        )),
+      )
+      const mappingBySourceId = new Map(current.mappings.map(mapping => (
+        [mapping.sourceResourceId, mapping] as const
+      )))
+      for (const mapping of input.mappings) {
+        const event = eventBySourceId.get(mapping.sourceResourceId)
+        if (event === undefined) {
+          throw new ScenarioDataError(
+            'PROFILE_MAPPING_INVALID',
+            `The source resource ${mapping.sourceResourceId} is not part of this profile`,
+          )
+        }
+        if (mapping.target === null) {
+          mappingBySourceId.delete(mapping.sourceResourceId)
+          continue
+        }
+        const target = mappingCatalog.get(mappingCatalogKey(
+          event.sourceResourceType,
+          mapping.target.catalogItemId,
+          mapping.target.version,
+        ))
+        if (target === undefined) {
+          throw new ScenarioDataError(
+            'PROFILE_MAPPING_INVALID',
+            `The selected catalog item is unavailable for ${event.sourceResourceType}`,
+          )
+        }
+        mappingBySourceId.set(mapping.sourceResourceId, {
+          sourceResourceId: mapping.sourceResourceId,
+          sourceResourceType: target.sourceResourceType,
+          target: {
+            catalogItemId: target.catalogItemId,
+            code: target.code,
+            ...(target.system === undefined ? {} : { system: target.system }),
+            version: target.version,
+          },
+        })
+      }
+      const mappings = [...mappingBySourceId.values()].toSorted((left, right) => (
+        left.sourceResourceType.localeCompare(right.sourceResourceType)
+          || left.sourceResourceId.localeCompare(right.sourceResourceId)
+      ))
+      const longitudinalHistory = recompiledPatient.longitudinalHistory.map(event => (
+        { ...event, mappedCode: mappingBySourceId.get(event.sourceResourceId)?.target.code ?? null }
+      ))
+      const targetMappingByHistoryId = new Map(mappings.map(mapping => (
+        [stableHistoryId(mapping.sourceResourceType, mapping.sourceResourceId), mapping.target] as const
+      )))
+      const fhirHistory = recompiledPatient.fhirHistory.map((resource) => {
+        const target = targetMappingByHistoryId.get(resource.id)
+        if (target === undefined) return resource
+        if (resource.resourceType === 'Encounter') {
+          return { ...resource, classCode: target.code }
+        }
+        if (resource.resourceType === 'MedicationRequest') {
+          return {
+            ...resource,
+            medication: {
+              code: target.code,
+              display: resource.medication.display,
+              ...(target.system === undefined ? {} : { system: target.system }),
+            },
+          }
+        }
+        return {
+          ...resource,
+          code: {
+            code: target.code,
+            display: resource.code.display,
+            ...(target.system === undefined ? {} : { system: target.system }),
+          },
+        }
+      })
+      const revision = input.expectedRevision + 1
+      const mappingVersion = current.source.mappingVersion.replace(/\+overlay-r\d+$/, '')
+      const updated = syntheticPatientProfileSchema.parse({
+        ...current,
+        mappings,
+        patient: {
+          ...recompiledPatient,
+          fhirHistory,
+          longitudinalHistory,
+        },
+        revision,
+        source: {
+          ...current.source,
+          mappingVersion: `${mappingVersion}+overlay-r${revision}`,
+        },
+        updatedAt: new Date().toISOString(),
+      })
+      if (!this.#profiles.update(updated, input.expectedRevision, input.context.actorId)) {
+        throw new ScenarioDataError(
+          'PROFILE_VERSION_CONFLICT',
+          'The Synthetic Patient Profile changed after it was loaded',
+        )
+      }
+      return {
+        data: updated,
+        effects: [{
+          kind: 'updated',
+          reference: `SyntheticPatientProfile/${updated.profileId}`,
+          versionId: String(updated.revision),
+        }],
+      }
+    })
+  }
+
+  startSyntheticPatientVisits(input: {
+    context: ActorContext
+    idempotencyKey: string
+    request: z.infer<typeof startSyntheticPatientVisitsRequestSchema>
+  }) {
+    this.#assertAdministrator(input.context)
+    const profiles = input.request.patients.map((selected) => {
+      const profile = this.#profiles.get(input.context.workspaceId, selected.profileId)
+      if (profile === undefined) {
+        throw new ScenarioDataError('PROFILE_NOT_FOUND', 'The Synthetic Patient Profile was not found')
+      }
+      return { expectedRevision: selected.expectedRevision, profile }
+    })
+    return this.#workflow.startSyntheticPatientVisits({
+      context: input.context,
+      departmentId: input.request.departmentId,
+      idempotencyKey: input.idempotencyKey,
+      locationId: input.request.locationId,
+      profiles,
+      visitDate: input.request.visitDate,
+      visitTypeId: input.request.visitTypeId,
+    })
+  }
+
+  syntheticPatientMappingCatalog(context: ActorContext) {
+    this.#assertAdministrator(context)
+    return this.#workflow.syntheticPatientMappingCatalog(context)
+  }
+
   install(input: {
     context: ActorContext
     datasetId: string
@@ -353,7 +667,7 @@ export class ScenarioDataService {
     const updated: ScenarioDataset = {
       ...current,
       content,
-      contentHash: contentHash(content),
+      contentHash: canonicalJsonHash(content),
       diagnostics: validateScenarioDataset(content),
       name: input.name,
       updatedAt: now,
@@ -418,7 +732,7 @@ export class ScenarioDataService {
     const now = new Date().toISOString()
     return {
       content,
-      contentHash: contentHash(content),
+      contentHash: canonicalJsonHash(content),
       createdAt: now,
       datasetId: `scenario-dataset-${randomUUID()}`,
       diagnostics: validateScenarioDataset(content),

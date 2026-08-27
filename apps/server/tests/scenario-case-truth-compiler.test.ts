@@ -30,6 +30,7 @@ describe('Synthea R4 CaseTruth compiler', () => {
       }, {
         fullUrl: 'urn:uuid:encounter-fever',
         resource: {
+          class: { code: 'EMER', system: 'http://terminology.hl7.org/CodeSystem/v3-ActCode' },
           id: 'encounter-fever',
           period: { end: '2026-08-01T08:30:00Z', start: '2026-08-01T08:00:00Z' },
           resourceType: 'Encounter',
@@ -124,6 +125,10 @@ describe('Synthea R4 CaseTruth compiler', () => {
       'Observation',
       'MedicationRequest',
     ])
+    expect(compiled.fhirHistory[0]).toMatchObject({ classCode: 'EMER', resourceType: 'Encounter' })
+    expect(compiled.longitudinalHistory.find(event => (
+      event.sourceResourceType === 'Encounter'
+    ))).toMatchObject({ code: 'EMER', mappedCode: null })
     expect(JSON.stringify(compiled)).not.toMatch(/Boston|Massachusetts|Alice|Synthetic|Coverage|999-99-9999/)
     expect(compileSyntheaR4Bundle({ bundle, ordinal: 0, request })).toEqual(compiled)
   })
@@ -256,6 +261,9 @@ describe('Synthea R4 CaseTruth compiler', () => {
       'Observation',
       'AllergyIntolerance',
     ])
+    expect(compiled.longitudinalHistory.find(event => (
+      event.sourceResourceType === 'AllergyIntolerance'
+    ))).toMatchObject({ mappedCode: null })
     expect(compiled.diagnosisSpace.primary.evidence).toEqual(expect.arrayContaining([
       '随机血糖 13.8 mmol/L',
       'HbA1c 9.2%',

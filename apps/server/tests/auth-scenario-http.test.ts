@@ -616,13 +616,13 @@ describe('trusted session and Scenario HTTP contract', () => {
     expect(scenarioProviderCapabilitiesListSchema.parse(await capabilitiesResponse.json())).toEqual({
       items: [{
         available: true,
-        maxPopulation: 1_000,
+        maxPopulation: 10,
         modules: ['fever', 'type-2-diabetes'],
         providerId: 'builtin',
         providerName: 'ClinMesh 内置生成器',
       }, {
         available: false,
-        maxPopulation: 50,
+        maxPopulation: 10,
         modules: ['fever', 'type-2-diabetes'],
         providerId: 'synthea',
         providerName: 'Synthea',

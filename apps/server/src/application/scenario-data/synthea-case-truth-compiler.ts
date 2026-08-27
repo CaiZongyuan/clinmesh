@@ -247,7 +247,7 @@ function localReferenceId(reference: string | undefined, bundle: R4Bundle): stri
   return referencedEntry?.resource.id
 }
 
-function stableHistoryId(resourceType: string, id: string): string {
+export function stableHistoryId(resourceType: string, id: string): string {
   const prefix = resourceType.toLowerCase().replace(/[^a-z0-9]/g, '-')
   const suffix = id.replace(/[^A-Za-z0-9.-]/g, '-').slice(0, 48)
   return `history-${prefix}-${suffix}`.slice(0, 64)
@@ -796,7 +796,7 @@ export function compileSyntheaR4Bundle(input: {
       ...(resource.period?.end === undefined ? {} : { endedAt: resource.period.end }),
       id: `history-event-${resource.id}`,
       kind: 'encounter' as const,
-      mappedCode: 'AMB',
+      mappedCode: resource.class?.code === 'AMB' ? 'AMB' : null,
       occurredAt: resource.period?.start ?? fallbackDateTime,
       sourceResourceId: resource.id,
       sourceResourceType: resource.resourceType,
@@ -843,7 +843,7 @@ export function compileSyntheaR4Bundle(input: {
       display: conceptDisplay(resource.code, '未说明过敏原'),
       id: `history-event-${resource.id}`,
       kind: 'allergy' as const,
-      mappedCode: conceptCode(resource.code) ?? null,
+      mappedCode: null,
       occurredAt: resource.recordedDate ?? fallbackDateTime,
       sourceResourceId: resource.id,
       sourceResourceType: resource.resourceType,
