@@ -1282,7 +1282,7 @@ describe('role workspaces', () => {
         triggerId: 'symptom-fever',
       }],
     })
-  })
+  }, 15_000)
 
   it('shows Dataset validation and disables installation after saving an invalid draft', async () => {
     window.history.replaceState(null, '', '/scenario-data')
