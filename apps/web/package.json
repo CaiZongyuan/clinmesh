@@ -18,13 +18,15 @@
   "dependencies": {
     "@clinmesh/contracts": "workspace:*",
     "@clinmesh/ui": "workspace:*",
+    "@dicebear/core": "9.4.2",
+    "@dicebear/lorelei": "9.4.2",
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
     "lucide-react": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "zustand": "catalog:",
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "zustand": "catalog:"
   },
   "devDependencies": {
     "@tailwindcss/vite": "catalog:",

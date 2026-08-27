@@ -19,7 +19,7 @@ FROM node:22.19.0-bookworm-slim AS runtime
 
 ENV CLINMESH_DATABASE_PATH=/var/lib/clinmesh/clinmesh.sqlite
 ENV CLINMESH_HOST=0.0.0.0
-ENV CLINMESH_PORT=8787
+ENV CLINMESH_PORT=51868
 ENV CLINMESH_WEB_ROOT=/opt/clinmesh/web
 WORKDIR /opt/clinmesh
 
@@ -30,5 +30,5 @@ RUN mkdir -p /var/lib/clinmesh && chown clinmesh:clinmesh /var/lib/clinmesh
 
 USER clinmesh
 VOLUME ["/var/lib/clinmesh"]
-EXPOSE 8787
+EXPOSE 51868
 ENTRYPOINT ["sh", "/opt/clinmesh/container-entrypoint.sh"]

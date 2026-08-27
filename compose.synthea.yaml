@@ -1,7 +1,7 @@
 services:
   clinmesh:
     environment:
-      CLINMESH_SYNTHEA_PROVIDER_URL: http://synthea-provider:8080
+      CLINMESH_SYNTHEA_PROVIDER_URL: http://synthea-provider:51878
 
   synthea-provider:
     extends:

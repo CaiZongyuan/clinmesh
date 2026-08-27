@@ -8,6 +8,7 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
+    "dev:lan": "tsx scripts/dev-lan.ts",
     "dev:web": "turbo run dev --filter=@clinmesh/web",
     "dev:server": "turbo run dev --filter=@clinmesh/server",
     "dev:desktop": "turbo run dev --filter=@clinmesh/desktop",
@@ -21,7 +22,7 @@
     "typecheck:mobile": "pnpm --filter @clinmesh/mobile typecheck",
     "check:mobile": "pnpm typecheck:mobile && tsx scripts/verify-expo-versions.ts",
     "lint": "oxlint apps packages scripts --deny-warnings",
-    "test": "turbo run test --filter=!@clinmesh/mobile",
+    "test": "turbo run test --filter=!@clinmesh/mobile && vitest run scripts/dev-lan.spec.ts",
     "verify:docs": "tsx scripts/verify-docs.ts",
     "verify:agent-notes": "tsx scripts/verify-agent-note-format.ts",
     "verify:boundaries": "tsx scripts/verify-package-boundaries.ts",

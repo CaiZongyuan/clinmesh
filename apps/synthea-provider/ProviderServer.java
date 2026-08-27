@@ -88,7 +88,7 @@ public final class ProviderServer {
     }
     if (args.length != 0) throw new IllegalArgumentException("Unsupported Provider argument");
 
-    int port = Integer.parseInt(System.getenv().getOrDefault("SYNTHEA_PROVIDER_PORT", "8080"));
+    int port = Integer.parseInt(System.getenv().getOrDefault("SYNTHEA_PROVIDER_PORT", "51878"));
     HttpServer server = HttpServer.create(new InetSocketAddress("0.0.0.0", port), 0);
     server.createContext("/health", ProviderServer::handleHealth);
     server.createContext("/v1/generate", ProviderServer::handleGenerate);
@@ -535,7 +535,7 @@ public final class ProviderServer {
   }
 
   private static void healthcheck() throws Exception {
-    int port = Integer.parseInt(System.getenv().getOrDefault("SYNTHEA_PROVIDER_PORT", "8080"));
+    int port = Integer.parseInt(System.getenv().getOrDefault("SYNTHEA_PROVIDER_PORT", "51878"));
     HttpRequest request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/health"))
         .timeout(Duration.ofSeconds(2))
         .GET()
@@ -548,7 +548,7 @@ public final class ProviderServer {
   }
 
   private static void smoke() throws Exception {
-    int port = Integer.parseInt(System.getenv().getOrDefault("SYNTHEA_PROVIDER_PORT", "8080"));
+    int port = Integer.parseInt(System.getenv().getOrDefault("SYNTHEA_PROVIDER_PORT", "51878"));
     String body = """
         {"modules":["fever"],"name":"Docker smoke","population":{"age":{"maximum":80,"minimum":20},"count":5,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1996-08-01"},"timeZone":"Asia/Shanghai"}
         """.trim();

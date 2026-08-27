@@ -7,7 +7,7 @@ services:
     init: true
     pids_limit: 256
     ports:
-      - "127.0.0.1:45873:8080"
+      - "127.0.0.1:51878:51878"
     read_only: true
     restart: unless-stopped
     security_opt:

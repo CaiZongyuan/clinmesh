@@ -31,7 +31,7 @@ FROM eclipse-temurin:17-jre-jammy AS runtime
 
 ENV SYNTHEA_CONFIG_PATH=/opt/provider/synthea.properties
 ENV SYNTHEA_JAR_PATH=/opt/synthea/synthea.jar
-ENV SYNTHEA_PROVIDER_PORT=8080
+ENV SYNTHEA_PROVIDER_PORT=51878
 WORKDIR /opt/provider
 
 RUN groupadd --gid 10001 synthea-provider \
@@ -45,7 +45,7 @@ COPY --from=build --chown=10001:10001 /src/synthea/LICENSE /opt/licenses/SYNTHEA
 COPY --from=build --chown=10001:10001 /src/synthea/NOTICE /opt/licenses/SYNTHEA-NOTICE
 
 USER 10001:10001
-EXPOSE 8080
+EXPOSE 51878
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
   CMD ["java", "-cp", "/opt/provider:/opt/synthea/synthea.jar", "ProviderServer", "--healthcheck"]
 ENTRYPOINT ["java", "-cp", "/opt/provider:/opt/synthea/synthea.jar", "ProviderServer"]

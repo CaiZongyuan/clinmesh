@@ -65,7 +65,7 @@ function providerResponse(bundles: unknown[]) {
 
 function providerFor(body: unknown, options: { maxResponseBytes?: number } = {}) {
   return new SyntheaScenarioGenerationProvider({
-    baseUrl: 'http://synthea.internal:8080',
+    baseUrl: 'http://synthea.internal:51878',
     fetch: async () => Response.json(body),
     maxResponseBytes: options.maxResponseBytes ?? 1_000_000,
     timeoutMs: 1_000,

@@ -109,7 +109,7 @@ pnpm dev:mobile
 pnpm docs:dev
 ```
 
-默认地址为 http://127.0.0.1:5174/
+默认地址为 http://127.0.0.1:51898/
 
 ## 质量检查
 
@@ -168,7 +168,7 @@ cp .env.example .env
 
 ```dotenv
 CLINMESH_PORT=51868
-CLINMESH_SYNTHEA_PROVIDER_URL=http://127.0.0.1:45873
+CLINMESH_SYNTHEA_PROVIDER_URL=http://127.0.0.1:51878
 ```
 
 如果 `.env` 显式设置了 `CLINMESH_PUBLIC_ORIGIN` 或 `CLINMESH_TRUSTED_ORIGINS`，对应 Server 和 Web 地址应分别使用 `51868` 与 `51888`。
@@ -189,10 +189,22 @@ pnpm dev:server
 pnpm dev:web
 ```
 
+#### 局域网访问 Web 开发入口
+
+`pnpm dev:web` 默认只监听 `127.0.0.1:51888`。如需让同一局域网内的设备访问，使用一个命令同时启动 Server 和 Web：
+
+```sh
+pnpm dev:lan
+```
+
+该命令自动识别私有 IPv4 地址、让 Vite 监听 `0.0.0.0:51888`，并将本机及识别到的 Web origins 注入 Server 的 `CLINMESH_TRUSTED_ORIGINS`。终端会打印可供其他设备访问的 URL；按 `Ctrl+C` 会同时停止 Server 和 Web。未识别到正确地址时可显式指定，例如 `CLINMESH_LAN_IP=192.168.1.23 pnpm dev:lan`。
+
+`0.0.0.0` 仅用于监听，不能作为浏览器访问地址。Vite 继续将 `/api` 和 `/fhir` 请求代理到本机 Server，因此只需允许防火墙的 TCP `51888` 入站，不需要向局域网开放 `51868`。开发入口不提供 HTTPS，只应暴露在可信局域网内。
+
 检查三个入口：
 
 ```sh
-curl --fail http://127.0.0.1:45873/health
+curl --fail http://127.0.0.1:51878/health
 curl --fail http://127.0.0.1:51868/api/health
 docker compose -f compose.synthea-provider.yaml exec -T synthea-provider \
   java -cp /opt/provider:/opt/synthea/synthea.jar ProviderServer --smoke
@@ -237,7 +249,7 @@ SYNTHEA_JAR="$(find "$SYNTHEA_DIR/build/libs" -name '*with-dependencies.jar' -pr
 PROVIDER_CLASSES="$PWD/.data/synthea-provider/classes"
 SYNTHEA_JAR_PATH="$SYNTHEA_JAR" \
 SYNTHEA_CONFIG_PATH="$PWD/apps/synthea-provider/synthea.properties" \
-SYNTHEA_PROVIDER_PORT=45873 \
+SYNTHEA_PROVIDER_PORT=51878 \
 java -cp "$PROVIDER_CLASSES:$SYNTHEA_JAR" ProviderServer
 ```
 

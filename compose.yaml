@@ -18,11 +18,11 @@ services:
         - CMD
         - node
         - -e
-        - fetch('http://127.0.0.1:8787/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+        - fetch('http://127.0.0.1:51868/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
       timeout: 3s
     init: true
     ports:
-      - "51868:8787"
+      - "51868:51868"
     restart: unless-stopped
     stop_grace_period: 20s
     volumes:

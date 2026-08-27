@@ -61,8 +61,8 @@ describe('Node.js server configuration', () => {
     }
     expect(readServerConfig({
       ...requiredEnvironment,
-      CLINMESH_SYNTHEA_PROVIDER_URL: 'http://synthea-provider:8080',
-    })).toMatchObject({ syntheaProviderUrl: 'http://synthea-provider:8080' })
+      CLINMESH_SYNTHEA_PROVIDER_URL: 'http://synthea-provider:51878',
+    })).toMatchObject({ syntheaProviderUrl: 'http://synthea-provider:51878' })
     expect(() => readServerConfig({
       ...requiredEnvironment,
       CLINMESH_SYNTHEA_PROVIDER_URL: 'file:///tmp/provider',
@@ -83,7 +83,7 @@ describe('Node.js server configuration', () => {
       'CLINMESH_CURSOR_SECRET=env-cursor-secret-with-at-least-32-characters',
       'CLINMESH_DATABASE_PATH=.data/clinmesh.sqlite',
       'CLINMESH_DEMO_PASSWORD=Env-demo-password-2026!',
-      'CLINMESH_PORT=8787',
+      'CLINMESH_PORT=51869',
       '',
     ].join('\n'), 'utf8')
     await writeFile(join(serverDirectory, '.env'), [
@@ -95,10 +95,10 @@ describe('Node.js server configuration', () => {
     ].join('\n'), 'utf8')
 
     try {
-      expect(readServerConfig(readServerEnvironment({ CLINMESH_PORT: '8790' }, serverDirectory)))
+      expect(readServerConfig(readServerEnvironment({ CLINMESH_PORT: '51867' }, serverDirectory)))
         .toMatchObject({
           databasePath: join(workspace, '.data/clinmesh.sqlite'),
-          port: 8790,
+          port: 51867,
         })
     } finally {
       await rm(workspace, { recursive: true })
