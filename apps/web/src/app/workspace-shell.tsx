@@ -35,6 +35,7 @@ import {
   ClipboardPlusIcon,
   ChevronDownIcon,
   ComponentIcon,
+  DatabaseIcon,
   HeartPulseIcon,
   HospitalIcon,
   LayoutDashboardIcon,
@@ -56,6 +57,7 @@ export type WorkspaceTheme = 'system' | 'light' | 'dark'
 
 export const workspaceRoutes = [
   { key: 'overview', path: '/', icon: LayoutDashboardIcon },
+  { key: 'scenarioData', path: '/scenario-data', icon: DatabaseIcon },
   { key: 'registration', path: '/registration', icon: ClipboardPlusIcon },
   { key: 'triage', path: '/triage', icon: HeartPulseIcon },
   { key: 'consultation', path: '/consultation', icon: StethoscopeIcon },
@@ -359,7 +361,10 @@ export function WorkspaceShell({
 }: WorkspaceShellProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
   const activeRoleSection = roleSections[session.actor.roleCode]
-  const visibleRoutes = workspaceRoutes.filter(route => route.key === activeRoleSection)
+  const visibleRoutes = workspaceRoutes.filter(route => (
+    route.key === activeRoleSection
+    || (session.actor.roleCode === 'administrator' && route.key === 'scenarioData')
+  ))
   const settingsMode = isSettingsSection(activeSection)
   const navigationLabel = settingsMode ? messages.settingsNavigation : messages.navigationLabel
   const mobileDescription = settingsMode

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type {
   DiagnosisDraftEntry,
   DiagnosisState,
@@ -10,6 +10,12 @@ import type {
   LaboratoryRequest,
   SessionContext,
 } from '@clinmesh/contracts/his'
+import {
+  scenarioDatasetContentSchema,
+  type ScenarioDataset,
+  type ScenarioGenerationRequest,
+  type SyntheticPatientProfile,
+} from '@clinmesh/contracts/scenario'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -311,6 +317,563 @@ function stubAdministratorWorkspace() {
   }))
 }
 
+function stubScenarioDataWorkspace(options: {
+  datasetTotal?: number | ((url: URL) => number)
+  invalidUpdate?: boolean
+  onDelete?: () => void
+  onDatasetListRequest?: (url: URL) => void
+  onGenerate?: (request: ScenarioGenerationRequest) => void
+  onInstall?: () => void
+  onUpdate?: (content: unknown) => void
+  profileAvailable?: boolean
+  profileUpdateConflict?: boolean
+  staleUpdate?: boolean
+  syntheaAvailable?: boolean
+} = {}) {
+  let generated = false
+  let activeVisit = false
+  let jobReads = 0
+  let dataset: ScenarioDataset = {
+    content: {
+      catalog: {
+        departments: [{
+          active: true,
+          code: 'GM',
+          displayOrder: 10,
+          id: 'department-general-medicine',
+          name: '全科医学科',
+          organizationId: 'hospital-synthetic-renhe',
+          parentId: 'hospital-synthetic-renhe',
+          priceFen: 0,
+          status: 'active',
+          type: 'department',
+        }],
+        diagnoses: [{
+          active: true,
+          code: 'R50.9',
+          codeSystem: 'http://hl7.org/fhir/sid/icd-10',
+          id: 'diagnosis-fever',
+          name: '发热，未特指',
+          organizationId: 'hospital-synthetic-renhe',
+          priceFen: 0,
+          status: 'active',
+        }],
+        investigations: [{
+          active: true,
+          allowedIndicationCodes: ['fever'],
+          available: true,
+          category: 'laboratory',
+          code: 'CBC',
+          contraindicatedAllergyCodes: [],
+          id: 'lab-cbc',
+          name: '血常规',
+          organizationId: 'hospital-synthetic-renhe',
+          priceFen: 2500,
+          referenceRanges: [{ appliesToGender: 'any', text: '按血细胞分类项目报告' }],
+          reportTemplate: '{value}',
+          status: 'active',
+          tatMinutes: 20,
+          valueType: 'panel',
+        }],
+        medications: [{
+          active: true,
+          category: '解热镇痛药',
+          code: 'ACETAMINOPHEN',
+          defaultDose: '0.5 g',
+          defaultFrequency: 'PRN',
+          defaultRoute: '口服',
+          dosageForm: '片剂',
+          id: 'medication-acetaminophen',
+          name: '对乙酰氨基酚片',
+          organizationId: 'hospital-synthetic-renhe',
+          priceFen: 120,
+          restriction: '注意总剂量。',
+          status: 'active',
+          unit: '片',
+          workflow: {
+            allowedCombinationIds: [],
+            allowedCourseDays: [3],
+            allowedDiagnosisCodes: ['R50.9'],
+            allowedDoseTexts: ['0.5 g'],
+            allowedFrequencyCodes: ['PRN'],
+            allowedQuantities: [6],
+            defaultCourseDays: 3,
+            defaultQuantity: 6,
+          },
+        }],
+      },
+      hiddenFacts: [{ code: 'objective-diagnosis', patientId: 'synthetic-patient-001', value: '发热' }],
+      hospital: {
+        active: true,
+        businessCode: 'CM-SYN-HOSPITAL-001',
+        displayOrder: 1,
+        id: 'hospital-synthetic-renhe',
+        locale: 'zh-CN',
+        name: '仁和医院',
+        status: 'active',
+        type: 'public-general-hospital',
+      },
+      inventory: [{
+        expiresOn: '2030-12-31',
+        itemId: 'medication-acetaminophen',
+        lotId: 'lot-acetaminophen-001',
+        quantity: 1000,
+      }],
+      patients: [{
+        birthDate: '1988-03-16',
+        costBaseline: {
+          note: '仅用于合成门诊场景。',
+          overInvestigationThresholdFen: 50000,
+          reasonableRangeFen: [2500, 15000],
+          referencePath: '按临床需要选择检查。',
+        },
+        diagnosisSpace: {
+          comorbidities: [],
+          differentials: [],
+          primary: {
+            code: 'R50.9',
+            display: '发热，原因待查',
+            evidence: ['体温升高'],
+            id: 'diagnosis-primary-fever',
+          },
+          traps: ['不能仅凭发热使用抗菌药物。'],
+        },
+        encounter: {
+          openingStatement: '昨天下午开始发热。',
+          setting: '全科医学科门诊',
+          timeStateItems: [],
+        },
+        examinationFindings: [{
+          abnormal: ['体温升高'],
+          finding: '神志清，咽部轻度充血。',
+          id: 'exam-vital-signs',
+          name: '生命体征',
+        }],
+        fhirHistory: [],
+        gender: 'female',
+        id: 'synthetic-patient-001',
+        investigations: [{
+          catalogItemId: 'lab-cbc',
+          critical: false,
+          feeFen: 2500,
+          id: 'investigation-cbc',
+          name: '血常规',
+          report: '白细胞计数升高。',
+          result: { flag: 'H', outcome: 'reported', value: '白细胞计数升高' },
+          sourceLevel: 'L1',
+          tatMinutes: 20,
+        }],
+        longitudinalHistory: [],
+        managementSpace: {
+          acceptableOptions: ['对症退热。'],
+          contraindications: ['无指征使用抗菌药物。'],
+          followUp: '高热不退时复诊。',
+          requiredElements: ['评估危险征象'],
+        },
+        name: '林晓',
+        patientKnowledge: {
+          careMemory: '没有接受相关检查。',
+          chiefComplaint: '发热、咽痛一天',
+          healthLiteracy: '一般',
+          lifestyle: [],
+          medicationMemory: '未规律用药。',
+          neverKnows: ['尚未告知的检查数值'],
+          toldDiagnoses: [],
+        },
+        persona: {
+          attitude: '希望尽快明确原因。',
+          character: '表达直接。',
+          healthLiteracy: '一般',
+          occupation: '教师',
+          speechStyle: '自然口语。',
+        },
+        physiologyBaseline: {
+          generators: [],
+          vitalSigns: { temperatureC: 38.6 },
+        },
+        symptomResponses: [{
+          avoids: [],
+          denies: ['没有气促。'],
+          id: 'symptom-fever',
+          name: '发热经过',
+          passive: false,
+          responsePoints: ['昨天下午开始发热。'],
+        }],
+      }],
+      reproduction: {
+        clinicalSeed: 7331,
+        generator: 'clinmesh-builtin-v1',
+        modules: ['fever'],
+        populationSeed: 4242,
+        timeRange: { end: '2026-08-01', start: '2020-01-01' },
+        timeZone: 'Asia/Shanghai',
+      },
+      revealPolicies: [{
+        code: 'policy-objective-diagnosis',
+        factCode: 'objective-diagnosis',
+        patientId: 'synthetic-patient-001',
+        triggerCode: 'evaluator-only',
+      }],
+      schemaVersion: '1',
+      simulatorRules: [],
+    },
+    contentHash: 'a'.repeat(64),
+    createdAt: '2026-08-26T09:00:00+08:00',
+    datasetId: 'scenario-dataset-001',
+    diagnostics: [],
+    name: '发热门诊样本',
+    providerId: 'builtin',
+    updatedAt: '2026-08-26T09:00:00+08:00',
+    version: 1,
+    workspaceId: 'workspace-demo',
+  }
+  const datasetPatient = dataset.content.patients[0]
+  if (datasetPatient === undefined) throw new Error('Scenario Dataset test fixture requires a patient')
+  let profile: SyntheticPatientProfile = {
+    createdAt: dataset.createdAt,
+    identity: {
+      address: '江苏省苏州市张家港市合成路 123 号（合成地址）',
+      displayName: datasetPatient.name,
+      email: 'cmsyn001@example.test',
+      insuranceDisplay: '模拟城镇职工医保',
+      mrn: 'CMSYN000001',
+      nationalId: '320582198803160028',
+      phone: '13800001234',
+    },
+    mappings: [],
+    patient: {
+      ...datasetPatient,
+      longitudinalHistory: [{
+        code: '386661006',
+        display: '发热',
+        id: 'history-event-fever',
+        kind: 'condition' as const,
+        mappedCode: null,
+        occurredAt: '2026-08-01T08:00:00+08:00',
+        sourceResourceId: 'condition-fever',
+        sourceResourceType: 'Condition' as const,
+        status: 'active',
+      }],
+    },
+    profileId: 'synthetic-patient-profile-001',
+    revision: 1,
+    source: {
+      batchId: dataset.datasetId,
+      batchName: dataset.name,
+      compilation: null,
+      format: 'clinmesh-template' as const,
+      hash: 'b'.repeat(64),
+      mappingVersion: 'builtin-case-truth-v1',
+      patientId: datasetPatient.id,
+      providerId: dataset.providerId,
+      raw: null,
+    },
+    updatedAt: dataset.updatedAt,
+    workspaceId: dataset.workspaceId,
+  }
+  generated = options.profileAvailable === true
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname === '/api/auth/context') return Response.json(administratorSession)
+    if (url.pathname === '/api/sim/v1/scenario-runs/current') {
+      return Response.json({
+        clinicalReview: null,
+        epoch: 'epoch-1',
+        initialStateHash: '0123456789abcdef',
+        kind: 'candidate',
+        scenarioId: 'candidate-fever-outpatient-v1',
+        scenarioRunId: 'scenario-run-1',
+        seed: 20260824,
+        status: 'active',
+        virtualTime: '2026-08-24T09:00:00+08:00',
+        workspaceId: 'workspace-demo',
+      })
+    }
+    if (url.pathname === '/api/sim/v1/scenario-providers') {
+      return Response.json({
+        items: [{
+          catalogItemId: 'diagnosis-acute-upper-respiratory-infection',
+          available: true,
+          maxPopulation: 10,
+          modules: ['fever', 'type-2-diabetes'],
+          providerId: 'builtin',
+          providerName: 'ClinMesh 内置生成器',
+        }, {
+          available: options.syntheaAvailable === true,
+          maxPopulation: 10,
+          modules: ['fever', 'type-2-diabetes'],
+          providerId: 'synthea',
+          providerName: 'Synthea',
+          ...(options.syntheaAvailable === true
+            ? {}
+            : { unavailableReason: '未配置 Synthea Provider' }),
+        }],
+      })
+    }
+    if (url.pathname === '/api/sim/v1/synthetic-patients') {
+      return Response.json({
+        items: generated ? [{
+          activeVisit,
+          allergyCount: 0,
+          batchId: profile.source.batchId,
+          batchName: profile.source.batchName,
+          birthDate: profile.patient.birthDate,
+          chronicConditions: [],
+          createdAt: profile.createdAt,
+          gender: profile.patient.gender,
+          historyCount: profile.patient.longitudinalHistory.length,
+          mappingWarningCount: 0,
+          mrn: profile.identity.mrn,
+          name: profile.identity.displayName,
+          profileId: profile.profileId,
+          providerId: profile.source.providerId,
+          revision: profile.revision,
+          updatedAt: profile.updatedAt,
+        }] : [],
+        page: 1,
+        pageSize: 20,
+        total: generated ? 1 : 0,
+      })
+    }
+    if (url.pathname === '/api/sim/v1/synthetic-patient-mapping-catalog') {
+      return Response.json({
+        items: [{
+          catalogItemId: 'diagnosis-acute-upper-respiratory-infection',
+          code: 'J06.9',
+          nameEn: 'Acute upper respiratory infection',
+          nameZh: '急性上呼吸道感染',
+          sourceResourceType: 'Condition',
+          system: 'http://hl7.org/fhir/sid/icd-10',
+          version: 1,
+        }, {
+          catalogItemId: 'encounter-class-ambulatory',
+          code: 'AMB',
+          nameEn: 'Ambulatory encounter',
+          nameZh: '门诊就诊',
+          sourceResourceType: 'Encounter',
+          system: 'http://terminology.hl7.org/CodeSystem/v3-ActCode',
+          version: 1,
+        }],
+      })
+    }
+    if (url.pathname === `/api/sim/v1/synthetic-patients/${profile.profileId}` && init?.method === 'PUT') {
+      if (options.profileUpdateConflict === true) {
+        return Response.json({
+          error: {
+            code: 'PROFILE_VERSION_CONFLICT',
+            message: '该合成患者档案已被其他管理员修改。',
+          },
+        }, { status: 409 })
+      }
+      const body = JSON.parse(String(init.body)) as { expectedRevision: number; input: typeof profile.identity }
+      profile = { ...profile, identity: body.input, revision: body.expectedRevision + 1 }
+      return Response.json(commandResponse(profile))
+    }
+    if (url.pathname === `/api/sim/v1/synthetic-patients/${profile.profileId}/mappings` && init?.method === 'PUT') {
+      const body = JSON.parse(String(init.body)) as {
+        expectedRevision: number
+        input: Array<{
+          sourceResourceId: string
+          target: { catalogItemId: string; version: number } | null
+        }>
+      }
+      const mappings = body.input.flatMap(item => (
+        item.target?.catalogItemId === 'diagnosis-acute-upper-respiratory-infection'
+          ? [{
+              sourceResourceId: item.sourceResourceId,
+              sourceResourceType: 'Condition' as const,
+              target: {
+                catalogItemId: item.target.catalogItemId,
+                code: 'J06.9',
+                system: 'http://hl7.org/fhir/sid/icd-10',
+                version: item.target.version,
+              },
+            }]
+          : []
+      ))
+      const mappingBySourceId = new Map(mappings.map(item => (
+        [item.sourceResourceId, item.target.code] as const
+      )))
+      profile = {
+        ...profile,
+        mappings,
+        patient: {
+          ...profile.patient,
+          longitudinalHistory: profile.patient.longitudinalHistory.map(item => ({
+            ...item,
+            mappedCode: mappingBySourceId.get(item.sourceResourceId) ?? null,
+          })),
+        },
+        revision: body.expectedRevision + 1,
+      }
+      return Response.json(commandResponse(profile))
+    }
+    if (url.pathname === `/api/sim/v1/synthetic-patients/${profile.profileId}`) {
+      return Response.json(profile)
+    }
+    if (url.pathname === '/api/his/v1/catalogs/registration') {
+      return Response.json({
+        departments: [{ id: 'department-general-medicine', nameEn: 'General Medicine', nameZh: '全科医学科', version: 1 }],
+        locations: [{ id: 'location-outpatient', nameEn: 'Outpatient', nameZh: '门诊一层', version: 1 }],
+        virtualDate: '2026-08-24',
+        visitTypes: [{ id: 'visit-type-general', nameEn: 'General', nameZh: '普通门诊', priceFen: 1000, version: 1 }],
+      })
+    }
+    if (url.pathname === '/api/sim/v1/synthetic-patients/actions/start-outpatient-visits') {
+      activeVisit = true
+      return Response.json(commandResponse({
+        items: [{
+          encounterId: 'encounter-profile-001',
+          patientId: 'patient-profile-001',
+          profileId: profile.profileId,
+          queueTaskId: 'task-profile-001',
+          registrationId: 'registration-profile-001',
+          status: 'awaiting-triage',
+        }],
+      }))
+    }
+    if (url.pathname === '/api/sim/v1/scenario-datasets' && init?.method !== 'POST') {
+      options.onDatasetListRequest?.(url)
+      const total = typeof options.datasetTotal === 'function'
+        ? options.datasetTotal(url)
+        : options.datasetTotal ?? (generated ? 1 : 0)
+      return Response.json({
+        items: total > 0 ? [{
+          contentHash: dataset.contentHash,
+          createdAt: dataset.createdAt,
+          datasetId: dataset.datasetId,
+          diagnosticCounts: {
+            error: dataset.diagnostics.filter(diagnostic => diagnostic.severity === 'error').length,
+            warning: dataset.diagnostics.filter(diagnostic => diagnostic.severity === 'warning').length,
+          },
+          name: dataset.name,
+          patientCount: 1,
+          providerId: dataset.providerId,
+          updatedAt: dataset.updatedAt,
+          version: 1,
+        }] : [],
+        page: Number(url.searchParams.get('page') ?? '1'),
+        pageSize: 20,
+        total,
+      })
+    }
+    if (url.pathname === '/api/sim/v1/scenario-datasets/actions/generate') {
+      options.onGenerate?.(JSON.parse(String(init?.body)) as ScenarioGenerationRequest)
+      generated = true
+      return Response.json(commandResponse(dataset))
+    }
+    if (url.pathname === '/api/sim/v1/scenario-generation-jobs' && init?.method === 'POST') {
+      options.onGenerate?.(JSON.parse(String(init.body)) as ScenarioGenerationRequest)
+      return Response.json(commandResponse({
+        createdAt: '2026-08-26T09:00:00+08:00',
+        datasetId: null,
+        error: null,
+        finishedAt: null,
+        jobId: 'scenario-generation-job-001',
+        request: {
+          modules: ['fever'],
+          name: '发热门诊样本',
+          population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
+          providerId: 'synthea',
+          seeds: { clinical: 7331, population: 4242 },
+          timeRange: { end: '2026-08-01', start: '2020-01-01' },
+          timeZone: 'Asia/Shanghai',
+        },
+        startedAt: null,
+        status: 'queued',
+        updatedAt: '2026-08-26T09:00:00+08:00',
+        workspaceId: 'workspace-demo',
+      }))
+    }
+    if (url.pathname === '/api/sim/v1/scenario-generation-jobs/scenario-generation-job-001') {
+      jobReads += 1
+      const succeeded = jobReads > 1
+      if (succeeded) generated = true
+      return Response.json({
+        createdAt: '2026-08-26T09:00:00+08:00',
+        datasetId: succeeded ? dataset.datasetId : null,
+        error: null,
+        finishedAt: succeeded ? '2026-08-26T09:00:02+08:00' : null,
+        jobId: 'scenario-generation-job-001',
+        request: {
+          modules: ['fever'],
+          name: '发热门诊样本',
+          population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
+          providerId: 'synthea',
+          seeds: { clinical: 7331, population: 4242 },
+          timeRange: { end: '2026-08-01', start: '2020-01-01' },
+          timeZone: 'Asia/Shanghai',
+        },
+        startedAt: '2026-08-26T09:00:01+08:00',
+        status: succeeded ? 'succeeded' : 'running',
+        updatedAt: succeeded ? '2026-08-26T09:00:02+08:00' : '2026-08-26T09:00:01+08:00',
+        workspaceId: 'workspace-demo',
+      })
+    }
+    if (url.pathname === `/api/sim/v1/scenario-datasets/${dataset.datasetId}` && init?.method === 'PUT') {
+      if (options.staleUpdate === true) {
+        return Response.json({
+          error: {
+            code: 'DATASET_VERSION_CONFLICT',
+            message: 'The Scenario Dataset version has changed',
+          },
+        }, { status: 409 })
+      }
+      const body = JSON.parse(String(init.body)) as {
+        expectedVersion: number
+        input: { content: typeof dataset.content; name: string }
+      }
+      options.onUpdate?.(body.input.content)
+      dataset = {
+        ...dataset,
+        content: body.input.content,
+        name: body.input.name,
+        updatedAt: '2026-08-26T09:01:00+08:00',
+        version: body.expectedVersion + 1,
+        ...(options.invalidUpdate === true ? {
+          diagnostics: [{
+            code: 'PATIENT_REFERENCE_MISSING',
+            message: 'Hidden Fact references an unknown patient',
+            path: 'hiddenFacts[0].patientId',
+            severity: 'error' as const,
+          }],
+        } : {}),
+      }
+      return Response.json(commandResponse(dataset))
+    }
+    if (
+      url.pathname === `/api/sim/v1/scenario-datasets/${dataset.datasetId}/actions/install`
+      && init?.method === 'POST'
+    ) {
+      options.onInstall?.()
+      return Response.json(commandResponse({
+        packageId: 'scenario-package-001',
+        scenario: {
+          clinicalReview: null,
+          epoch: 'epoch-2',
+          initialStateHash: '0123456789abcdef',
+          kind: 'candidate',
+          scenarioId: 'scenario-package-001',
+          scenarioRunId: 'scenario-run-2',
+          seed: 7331,
+          status: 'active',
+          virtualTime: '2026-08-26T09:00:00+08:00',
+          workspaceId: 'workspace-demo',
+        },
+      }))
+    }
+    if (url.pathname === `/api/sim/v1/scenario-datasets/${dataset.datasetId}` && init?.method === 'DELETE') {
+      options.onDelete?.()
+      generated = false
+      return Response.json(commandResponse({ datasetId: dataset.datasetId, deleted: true }))
+    }
+    if (url.pathname === `/api/sim/v1/scenario-datasets/${dataset.datasetId}`) {
+      return Response.json(dataset)
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`)
+  }))
+}
+
 function stubEmptyRegistrarWorkspace() {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const path = new URL(String(input), 'http://localhost').pathname
@@ -323,6 +886,10 @@ function stubEmptyRegistrarWorkspace() {
     }
     throw new Error(`Unexpected request: ${path}`)
   }))
+}
+
+async function openAdvancedCaseAuthoring(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(await screen.findByRole('tab', { name: '高级病例编排' }))
 }
 
 function stubEmptyDoctorWorkspace() {
@@ -560,6 +1127,556 @@ describe('role workspaces', () => {
     expect(screen.getByRole('button', { name: 'Load high-volume data' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Reset current data' })).toBeTruthy()
     expect(document.body.textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
+  })
+
+  it('lets an administrator generate a Dataset while an optional Provider is unavailable', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace()
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await openAdvancedCaseAuthoring(user)
+
+    expect(await screen.findByRole('heading', { name: '模拟数据' })).toBeTruthy()
+    expect((await screen.findByRole('option', { name: 'Synthea' }))
+      .hasAttribute('disabled')).toBe(true)
+    expect(screen.getByText('未配置 Synthea Provider')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '生成数据' }))
+    expect(await screen.findByText('发热门诊样本')).toBeTruthy()
+  })
+
+  it('searches and pages Scenario Datasets through the administrator Web seam', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    const listRequests: URL[] = []
+    stubScenarioDataWorkspace({
+      datasetTotal: url => url.searchParams.has('search') ? 1 : 21,
+      onDatasetListRequest: url => listRequests.push(new URL(url)),
+    })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await openAdvancedCaseAuthoring(user)
+
+    await screen.findByText('发热门诊样本')
+    const previousPage = screen.getByRole('button', { name: '上一页' })
+    const nextPage = screen.getByRole('button', { name: '下一页' })
+    expect(previousPage.hasAttribute('disabled')).toBe(true)
+    expect(nextPage.hasAttribute('disabled')).toBe(false)
+
+    await user.click(nextPage)
+    await waitFor(() => {
+      expect(listRequests.at(-1)?.searchParams.get('page')).toBe('2')
+    })
+    expect(screen.getByRole('button', { name: '上一页' }).hasAttribute('disabled')).toBe(false)
+    expect(screen.getByRole('button', { name: '下一页' }).hasAttribute('disabled')).toBe(true)
+
+    await user.type(screen.getByLabelText('搜索数据集'), '  糖尿病  ')
+    await user.click(screen.getByRole('button', { name: '搜索' }))
+    await waitFor(() => {
+      expect(Object.fromEntries(listRequests.at(-1)?.searchParams ?? [])).toEqual({
+        page: '1',
+        pageSize: '20',
+        search: '糖尿病',
+      })
+    })
+    expect(screen.queryByRole('button', { name: '上一页' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '下一页' })).toBeNull()
+  })
+
+  it('edits a generated patient through structured Dataset fields', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    let savedContent: unknown
+    stubScenarioDataWorkspace({ onUpdate: content => { savedContent = content } })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await openAdvancedCaseAuthoring(user)
+
+    await user.click(await screen.findByRole('button', { name: '生成数据' }))
+    await user.click(await screen.findByRole('button', { name: '编辑 发热门诊样本' }))
+    const patientName = await screen.findByLabelText('患者姓名')
+    await user.clear(patientName)
+    await user.type(patientName, '合成患者李明')
+
+    await user.click(screen.getByRole('tab', { name: '问诊应答' }))
+    const responsePoints = screen.getByLabelText('应答要点')
+    fireEvent.change(responsePoints, { target: { value: '昨夜开始高热。\n伴轻度咽痛。' } })
+
+    await user.click(screen.getByRole('tab', { name: '查体与检查' }))
+    const report = screen.getByLabelText('报告文本')
+    await user.clear(report)
+    await user.type(report, '白细胞计数 11.2 x10^9/L。')
+
+    await user.click(screen.getByRole('tab', { name: '诊断与处置' }))
+    const diagnosis = screen.getByLabelText('主诊断名称')
+    await user.clear(diagnosis)
+    await user.type(diagnosis, '急性发热待查')
+
+    await user.click(screen.getByRole('tab', { name: '目录与库存' }))
+    const referenceRange = screen.getByLabelText('参考范围文本')
+    await user.clear(referenceRange)
+    await user.type(referenceRange, '3.5-9.5 x10^9/L')
+    await user.type(screen.getByLabelText('参考下限'), '3.5')
+    await user.type(screen.getByLabelText('参考上限'), '9.5')
+    await user.type(screen.getByLabelText('生理生成器 ID'), 'hematology-panel')
+    fireEvent.change(screen.getByLabelText('组合项目 ID'), {
+      target: { value: 'lab-wbc\nlab-hemoglobin' },
+    })
+    await user.click(screen.getByRole('checkbox', { name: '启用 L3 正常参考采样' }))
+    await user.clear(screen.getByLabelText('L3 均值'))
+    await user.type(screen.getByLabelText('L3 均值'), '6.5')
+    await user.clear(screen.getByLabelText('L3 标准差'))
+    await user.type(screen.getByLabelText('L3 标准差'), '1.2')
+    await user.clear(screen.getByLabelText('测定变异系数'))
+    await user.type(screen.getByLabelText('测定变异系数'), '0.04')
+    const inventory = screen.getByLabelText('库存数量')
+    await user.clear(inventory)
+    await user.type(inventory, '800')
+
+    await user.click(screen.getByRole('tab', { name: '隐藏事实与揭示' }))
+    const hiddenFact = screen.getByLabelText('Hidden Fact 值')
+    await user.clear(hiddenFact)
+    await user.type(hiddenFact, '急性病毒性上呼吸道感染')
+    await user.click(screen.getByRole('button', { name: '保存修改' }))
+
+    expect(await screen.findByText('版本 2')).toBeTruthy()
+    expect(savedContent).toMatchObject({
+      catalog: {
+        investigations: [{
+          componentItemIds: ['lab-wbc', 'lab-hemoglobin'],
+          normalDistribution: {
+            assayCv: 0.04,
+            maximum: 9.5,
+            mean: 6.5,
+            minimum: 3.5,
+            standardDeviation: 1.2,
+          },
+          physiologyGeneratorId: 'hematology-panel',
+          referenceRanges: [{ maximum: 9.5, minimum: 3.5, text: '3.5-9.5 x10^9/L' }],
+        }],
+      },
+      hiddenFacts: [{ value: '急性病毒性上呼吸道感染' }],
+      inventory: [{ quantity: 800 }],
+      patients: [{
+        diagnosisSpace: { primary: { display: '急性发热待查' } },
+        investigations: [{ report: '白细胞计数 11.2 x10^9/L。' }],
+        name: '合成患者李明',
+        symptomResponses: [{ responsePoints: ['昨夜开始高热。', '伴轻度咽痛。'] }],
+      }],
+    })
+  })
+
+  it('edits history, diagnosis space and simulator rules through structured fields', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    let savedContent: unknown
+    stubScenarioDataWorkspace({ onUpdate: content => { savedContent = content } })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await openAdvancedCaseAuthoring(user)
+
+    await user.click(await screen.findByRole('button', { name: '生成数据' }))
+    await user.click(await screen.findByRole('button', { name: '编辑 发热门诊样本' }))
+    await user.click(screen.getByRole('tab', { name: '纵向病史' }))
+    await user.click(screen.getByRole('button', { name: '新增病史事件' }))
+    const historyDisplay = screen.getByLabelText('病史名称 1')
+    await user.clear(historyDisplay)
+    await user.type(historyDisplay, '既往高血压')
+    await user.click(screen.getByRole('button', { name: '新增 FHIR 病史' }))
+    const fhirDisplay = screen.getByLabelText('FHIR 诊断名称 1')
+    await user.clear(fhirDisplay)
+    await user.type(fhirDisplay, '高血压')
+
+    await user.click(screen.getByRole('tab', { name: '查体与检查' }))
+    expect(screen.queryByRole('combobox', { name: '结果来源级别' })).toBeNull()
+    expect(screen.getByLabelText('结果来源级别').textContent).toBe('L1')
+
+    await user.click(screen.getByRole('tab', { name: '诊断与处置' }))
+    await user.click(screen.getByRole('button', { name: '新增共病' }))
+    await user.clear(screen.getByLabelText('共病名称 1'))
+    await user.type(screen.getByLabelText('共病名称 1'), '原发性高血压')
+    await user.click(screen.getByRole('button', { name: '新增鉴别诊断' }))
+    await user.clear(screen.getByLabelText('鉴别诊断名称 1'))
+    await user.type(screen.getByLabelText('鉴别诊断名称 1'), '社区获得性肺炎')
+    fireEvent.change(screen.getByLabelText('诊断陷阱'), {
+      target: { value: '避免仅凭发热使用抗菌药物。\n排除重症感染。' },
+    })
+
+    await user.click(screen.getByRole('tab', { name: '隐藏事实与揭示' }))
+    await user.click(screen.getByRole('button', { name: '新增模拟器规则' }))
+    const ruleCode = screen.getByLabelText('规则编码 1')
+    await user.clear(ruleCode)
+    await user.type(ruleCode, 'lis-timeout-once')
+    await user.click(screen.getByLabelText('模拟结果 1'))
+    await user.click(await screen.findByRole('option', { name: '结果未知' }))
+    await user.click(screen.getByRole('button', { name: '保存修改' }))
+
+    await waitFor(() => expect(savedContent).not.toBeUndefined())
+    scenarioDatasetContentSchema.parse(savedContent)
+    expect(await screen.findByText('版本 2')).toBeTruthy()
+    expect(savedContent).toMatchObject({
+      patients: [{
+        diagnosisSpace: {
+          comorbidities: [{ display: '原发性高血压' }],
+          differentials: [{ display: '社区获得性肺炎' }],
+          traps: ['避免仅凭发热使用抗菌药物。', '排除重症感染。'],
+        },
+        fhirHistory: [{ code: { display: '高血压' }, resourceType: 'Condition' }],
+        longitudinalHistory: [{ display: '既往高血压' }],
+      }],
+      simulatorRules: [{ code: 'lis-timeout-once', outcome: 'ambiguous', simulator: 'lis' }],
+    })
+  })
+
+  it('edits the complete patient truth and topic reveal policy through structured fields', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    let savedContent: unknown
+    stubScenarioDataWorkspace({ onUpdate: content => { savedContent = content } })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await openAdvancedCaseAuthoring(user)
+
+    await user.click(await screen.findByRole('button', { name: '生成数据' }))
+    await user.click(await screen.findByRole('button', { name: '编辑 发热门诊样本' }))
+    const changeText = async (label: string, value: string): Promise<void> => {
+      const input = screen.getByLabelText(label)
+      await user.clear(input)
+      await user.type(input, value)
+    }
+
+    await changeText('就医经过记忆', '曾在社区就诊，但没有完成检查。')
+    await changeText('患者医学认知', '能理解常见检查名称。')
+    await changeText('性格特征', '谨慎，回答具体。')
+    await changeText('表达医学认知', '一般，避免使用专业术语。')
+    await changeText('说话方式', '简短自然口语。')
+    await changeText('就诊场景', '发热门诊')
+    fireEvent.change(screen.getByLabelText('患者不会知道的事实'), {
+      target: { value: '尚未检查的实验室数值\n医生未告知的诊断' },
+    })
+    fireEvent.change(screen.getByLabelText('已告知诊断'), {
+      target: { value: '上呼吸道感染' },
+    })
+    await changeText('身高（cm）', '168')
+    await changeText('体重（kg）', '62')
+    await changeText('脉搏（次/分）', '96')
+    await changeText('呼吸（次/分）', '19')
+    await changeText('血氧饱和度（%）', '97')
+
+    await user.click(screen.getByRole('button', { name: '新增生活方式' }))
+    await changeText('生活方式名称 1', '吸烟')
+    await changeText('实际情况 1', '从不吸烟')
+    await changeText('首次询问回答 1', '没有吸烟习惯。')
+    await user.click(screen.getByRole('checkbox', { name: '二次追问时承认 1' }))
+
+    await user.click(screen.getByRole('button', { name: '新增时间状态' }))
+    await changeText('状态变化 1', '体温升至 39.2 C。')
+    await changeText('触发分钟 1', '45')
+
+    await user.click(screen.getByRole('button', { name: '新增生理生成器' }))
+    await changeText('生成器 ID 1', 'baseline-glucose')
+    await changeText('生成器来源 1', '合成病例基线')
+    await changeText('生成器单位 1', 'mmol/L')
+    await changeText('常量值 1', '6.1')
+
+    await user.click(screen.getByRole('tab', { name: '问诊应答' }))
+    await user.click(screen.getByRole('button', { name: '新增回避回答 1' }))
+    await changeText('回避问题模式 1.1', '是否自行服用抗菌药物')
+    await changeText('回避回答 1.1', '先不想说这个。')
+
+    await user.click(screen.getByRole('tab', { name: '查体与检查' }))
+    await user.click(screen.getByRole('checkbox', { name: '危急结果 1' }))
+
+    await user.click(screen.getByRole('tab', { name: '目录与库存' }))
+    await changeText('危急值下限', '2')
+    await changeText('危急值上限', '10')
+
+    await user.click(screen.getByRole('tab', { name: '诊断与处置' }))
+    fireEvent.change(screen.getByLabelText('必要处置要素'), {
+      target: { value: '评估危险征象\n交代复诊指征' },
+    })
+    await changeText('费用参考依据', '依据当前虚构医院目录计费。')
+
+    await user.click(screen.getByRole('tab', { name: '隐藏事实与揭示' }))
+    await user.click(screen.getByRole('button', { name: '新增 Hidden Fact' }))
+    await changeText('事实编码 2', 'topic-fever-detail')
+    await user.selectOptions(screen.getByLabelText('事实患者 2'), 'synthetic-patient-001')
+    await changeText('Hidden Fact 值 2', '昨夜开始高热，伴明显咽痛。')
+    await user.click(screen.getByRole('button', { name: '新增 Reveal Policy' }))
+    await changeText('策略编码 2', 'reveal-fever-detail')
+    await user.selectOptions(screen.getByLabelText('关联事实 2'), 'topic-fever-detail')
+    await user.selectOptions(screen.getByLabelText('策略患者 2'), 'synthetic-patient-001')
+    await user.selectOptions(screen.getByLabelText('揭示时机 2'), 'after-topic')
+    await user.selectOptions(screen.getByLabelText('问诊主题 2'), 'symptom-fever')
+    await user.click(screen.getByRole('button', { name: '保存修改' }))
+
+    await waitFor(() => expect(savedContent).not.toBeUndefined())
+    scenarioDatasetContentSchema.parse(savedContent)
+    expect(savedContent).toMatchObject({
+      hiddenFacts: [{}, {
+        code: 'topic-fever-detail',
+        patientId: 'synthetic-patient-001',
+        value: '昨夜开始高热，伴明显咽痛。',
+      }],
+      patients: [{
+        costBaseline: { referencePath: '依据当前虚构医院目录计费。' },
+        encounter: {
+          setting: '发热门诊',
+          timeStateItems: [{ change: '体温升至 39.2 C。', triggerAfterMinutes: 45 }],
+        },
+        managementSpace: { requiredElements: ['评估危险征象', '交代复诊指征'] },
+        patientKnowledge: {
+          careMemory: '曾在社区就诊，但没有完成检查。',
+          healthLiteracy: '能理解常见检查名称。',
+          lifestyle: [{
+            actual: '从不吸烟',
+            admittedOnFirstAsk: '没有吸烟习惯。',
+            concedeOnSecondAsk: true,
+            label: '吸烟',
+          }],
+          neverKnows: ['尚未检查的实验室数值', '医生未告知的诊断'],
+          toldDiagnoses: ['上呼吸道感染'],
+        },
+        persona: {
+          character: '谨慎，回答具体。',
+          healthLiteracy: '一般，避免使用专业术语。',
+          speechStyle: '简短自然口语。',
+        },
+        physiologyBaseline: {
+          generators: [{
+            id: 'baseline-glucose',
+            kind: 'constant',
+            source: '合成病例基线',
+            unit: 'mmol/L',
+            value: 6.1,
+          }],
+          vitalSigns: {
+            heightCm: 168,
+            oxygenSaturationPct: 97,
+            pulseBpm: 96,
+            respirationBpm: 19,
+            weightKg: 62,
+          },
+        },
+        symptomResponses: [{
+          avoids: [{
+            questionPattern: '是否自行服用抗菌药物',
+            response: '先不想说这个。',
+          }],
+        }],
+        investigations: [{ critical: true }],
+      }],
+      catalog: {
+        investigations: [{ criticalMaximum: 10, criticalMinimum: 2 }],
+      },
+      revealPolicies: [{}, {
+        code: 'reveal-fever-detail',
+        factCode: 'topic-fever-detail',
+        patientId: 'synthetic-patient-001',
+        triggerCode: 'after-topic',
+        triggerId: 'symptom-fever',
+      }],
+    })
+  }, 15_000)
+
+  it('shows Dataset validation and disables installation after saving an invalid draft', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ invalidUpdate: true })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await openAdvancedCaseAuthoring(user)
+
+    await user.click(await screen.findByRole('button', { name: '生成数据' }))
+    await user.click(await screen.findByRole('button', { name: '编辑 发热门诊样本' }))
+    await user.click(screen.getByRole('button', { name: '保存修改' }))
+
+    expect(await screen.findByText('hiddenFacts[0].patientId: Hidden Fact references an unknown patient')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '安装运行' }).hasAttribute('disabled')).toBe(true)
+  })
+
+  it('reports a stale Dataset version without replacing the administrator draft', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ staleUpdate: true })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await openAdvancedCaseAuthoring(user)
+
+    await user.click(await screen.findByRole('button', { name: '生成数据' }))
+    await user.click(await screen.findByRole('button', { name: '编辑 发热门诊样本' }))
+    await user.clear(screen.getByLabelText('患者姓名'))
+    await user.type(screen.getByLabelText('患者姓名'), '未保存的合成患者')
+    await user.click(screen.getByRole('button', { name: '保存修改' }))
+
+    expect(await screen.findByText('操作冲突')).toBeTruthy()
+    expect((screen.getByLabelText('患者姓名') as HTMLInputElement).value).toBe('未保存的合成患者')
+  })
+
+  it('confirms Dataset deletion and reports successful installation', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    let deleted = false
+    let installed = false
+    stubScenarioDataWorkspace({
+      onDelete: () => { deleted = true },
+      onInstall: () => { installed = true },
+    })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await openAdvancedCaseAuthoring(user)
+
+    await user.click(await screen.findByRole('button', { name: '生成数据' }))
+    await user.click(await screen.findByRole('button', { name: '编辑 发热门诊样本' }))
+    await user.click(screen.getByRole('button', { name: '安装运行' }))
+    expect(await screen.findByText('数据集已安装运行')).toBeTruthy()
+    expect(installed).toBe(true)
+
+    await user.click(screen.getByRole('button', { name: '删除数据集' }))
+    const dialog = await screen.findByRole('alertdialog', { name: '确认删除数据集' })
+    expect(deleted).toBe(false)
+    await user.click(within(dialog).getByRole('button', { name: '确认删除' }))
+    await waitFor(() => expect(deleted).toBe(true))
+    expect(screen.queryByRole('heading', { name: '数据集编辑' })).toBeNull()
+  })
+
+  it('does not expose synthetic data management to a non-administrator role', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubEmptyRegistrarWorkspace()
+
+    render(<WebApp />)
+
+    expect(await screen.findByText('当前暂无门诊挂号。')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: '模拟数据' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: '模拟数据' })).toBeNull()
+  })
+
+  it('selects Synthea and follows a persistent generation job to completion', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ syntheaAvailable: true })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await openAdvancedCaseAuthoring(user)
+
+    await screen.findByRole('option', { name: 'Synthea' })
+    await user.selectOptions(screen.getByLabelText('生成服务'), 'synthea')
+    await user.click(screen.getByRole('button', { name: '生成数据' }))
+
+    expect(await screen.findByText('运行中')).toBeTruthy()
+    expect(await screen.findByText('已完成')).toBeTruthy()
+    expect(await screen.findByText('发热门诊样本')).toBeTruthy()
+  })
+
+  it('opens the persistent synthetic patient library before advanced case authoring', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ profileAvailable: true, syntheaAvailable: true })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    expect(await screen.findByRole('heading', { name: '合成患者库' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '生成患者' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: '数据生成服务' })).toBeNull()
+    expect(screen.getByRole('tab', { name: '高级病例编排' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '生成患者' }))
+    const generationSheet = await screen.findByRole('dialog', { name: '生成患者' })
+    expect(within(generationSheet).getByRole('button', { name: /Synthea/ }).getAttribute('aria-pressed')).toBe('true')
+    expect(within(generationSheet).getByRole('spinbutton', { name: '患者人数' }).getAttribute('max')).toBe('10')
+  })
+
+  it('edits a persistent profile and starts its outpatient visit', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ profileAvailable: true })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    expect(await screen.findByText('CMSYN000001')).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: '纵向健康记录' })).toBeNull()
+    await user.click(await screen.findByRole('button', { name: '编辑档案' }))
+    const editSheet = await screen.findByRole('dialog', { name: '编辑档案' })
+    const name = within(editSheet).getByRole('textbox', { name: '展示姓名' })
+    await user.clear(name)
+    await user.type(name, '合成患者新姓名')
+    await user.click(within(editSheet).getByRole('button', { name: '保存档案' }))
+    expect((await screen.findAllByText('合成患者新姓名')).length).toBeGreaterThan(0)
+
+    await user.click(screen.getByRole('button', { name: '发起门诊就诊' }))
+    const visitSheet = await screen.findByRole('dialog', { name: '发起门诊就诊' })
+    await user.click(within(visitSheet).getByRole('button', { name: '发起门诊就诊' }))
+
+    expect((await screen.findAllByText('已有活动就诊')).length).toBeGreaterThan(0)
+  })
+
+  it('keeps a profile edit conflict visible in the patient library', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ profileAvailable: true, profileUpdateConflict: true })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('button', { name: '编辑档案' }))
+    const editSheet = await screen.findByRole('dialog', { name: '编辑档案' })
+    await user.click(within(editSheet).getByRole('button', { name: '保存档案' }))
+
+    expect(await within(editSheet).findByText('保存失败')).toBeTruthy()
+    expect(within(editSheet).getByText('该合成患者档案已被其他管理员修改。')).toBeTruthy()
+  })
+
+  it('creates a profile revision when an administrator saves source mappings', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ profileAvailable: true })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('button', { name: '处理映射' }))
+    const mappingSheet = await screen.findByRole('dialog', { name: '处理映射' })
+    const mapping = within(mappingSheet).getByRole('combobox', {
+      name: '发热 · Condition/condition-fever',
+    })
+    await user.click(mapping)
+    await user.click(await screen.findByRole('option', { name: '急性上呼吸道感染 · J06.9' }))
+    await user.click(within(mappingSheet).getByRole('button', { name: '保存映射' }))
+
+    expect(await screen.findByText('Profile revision 2')).toBeTruthy()
+    expect(screen.getByText('映射完整')).toBeTruthy()
+  })
+
+  it('submits a diabetes-only Synthea population while keeping one module selected', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    let submittedRequest: ScenarioGenerationRequest | undefined
+    stubScenarioDataWorkspace({
+      onGenerate: request => { submittedRequest = request },
+      syntheaAvailable: true,
+    })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await openAdvancedCaseAuthoring(user)
+
+    await screen.findByRole('option', { name: 'Synthea' })
+    await user.selectOptions(screen.getByLabelText('生成服务'), 'synthea')
+    const fever = screen.getByRole('checkbox', { name: '发热门诊' })
+    await user.click(fever)
+    expect(fever.getAttribute('aria-checked')).toBe('true')
+    await user.click(screen.getByRole('checkbox', { name: '2 型糖尿病' }))
+    await user.click(fever)
+    expect(fever.getAttribute('aria-checked')).toBe('false')
+    await user.click(screen.getByRole('button', { name: '生成数据' }))
+
+    await waitFor(() => expect(submittedRequest?.modules).toEqual(['type-2-diabetes']))
   })
 
   it('uses clinical operator language for the registrar empty state', async () => {
@@ -2693,8 +3810,9 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    await user.click(await screen.findByRole('tab', { name: '健康记录' }))
-    expect(await screen.findByText(/既往咳嗽/)).toBeTruthy()
+    expect(await screen.findByRole('complementary', { name: '病情摘要' })).toBeTruthy()
+    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+    expect((await screen.findAllByText(/既往咳嗽/)).length).toBeGreaterThan(0)
     expect(screen.queryByRole('heading', { name: '用药结论' })).toBeNull()
     expect(screen.queryByLabelText('诊断编码')).toBeNull()
     await user.click(screen.getByRole('tab', { name: '诊断' }))
@@ -2709,11 +3827,11 @@ describe('role workspaces', () => {
     expect(await screen.findByText('诊断已确认')).toBeTruthy()
     expect(screen.getByText('J10.1 · 流感伴其他呼吸道表现')).toBeTruthy()
     expect(screen.getByText('J06.9 · 急性上呼吸道感染')).toBeTruthy()
-    await user.click(screen.getByRole('tab', { name: '健康记录' }))
-    expect(screen.getByText(/既往咳嗽/)).toBeTruthy()
+    await user.click(screen.getByRole('tab', { name: '检验检查' }))
+    expect(screen.getAllByText(/既往咳嗽/).length).toBeGreaterThan(0)
   })
 
-  it('keeps each patient clinical record in session state and collapses consultation on the right', async () => {
+  it('keeps each patient clinical record while aligning the consultation workbench', async () => {
     const questions = [{ code: 'symptom-onset', text: '什么时候开始不舒服？' }]
     const patients = [{
       birthDate: '1981-06-12',
@@ -2809,11 +3927,10 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     expect(await screen.findByRole('tab', { name: '病历记录' })).toBeTruthy()
+    expect(screen.getAllByRole('img', { name: '王晓明 患者' }).length).toBeGreaterThan(0)
     expect(screen.getByRole('complementary', { name: '诊疗对话' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '展开右侧边栏' }).getAttribute('aria-expanded')).toBe('false')
-    expect(screen.queryByRole('button', { name: '向患者提问' })).toBeNull()
-    await user.click(screen.getByRole('button', { name: '展开右侧边栏' }))
     expect(screen.getByRole('button', { name: '收起右侧边栏' }).getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('heading', { name: '过敏提示' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '向患者提问' })).toBeTruthy()
     const history = screen.getByLabelText('现病史') as HTMLTextAreaElement
     await user.clear(history)
@@ -3009,7 +4126,7 @@ describe('role workspaces', () => {
     expect(screen.getByRole('tab', { name: '病历记录' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '诊断' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '处方' })).toBeTruthy()
-    expect(screen.getByRole('tab', { name: '健康记录' })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '检验检查' })).toBeTruthy()
     await user.click(await screen.findByRole('button', { name: '完诊' }))
     expect(screen.getByRole('heading', { name: '确认完诊' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '确认完诊' }))
@@ -4673,11 +5790,13 @@ describe('role workspaces', () => {
       revisionNumber: 2,
       revisionOfDiagnosticReportId: report.diagnosticReportId,
       revisionReason: '复核仪器原始数据后更正。',
-      results: report.results.map(result => ({
-        ...result,
-        observationId: 'observation-correction-2',
-        value: 29.1,
-      })),
+      results: report.results.map(result => typeof result.value === 'number' && 'unit' in result
+        ? {
+            ...result,
+            observationId: 'observation-correction-2',
+            value: 29.1,
+          }
+        : result),
       specimenId: report.specimenId,
       status: 'final',
     }

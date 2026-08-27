@@ -25,6 +25,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@clinmesh/ui/components/alert-dialog'
+import { Avatar, AvatarFallback } from '@clinmesh/ui/components/avatar'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Bubble, BubbleContent } from '@clinmesh/ui/components/bubble'
@@ -47,7 +48,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/component
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ActivityIcon, ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, FileTextIcon, FlaskConicalIcon, LibraryBigIcon, LockKeyholeIcon, MessagesSquareIcon, PanelRightCloseIcon, PanelRightOpenIcon, PillIcon, PlayIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, SendIcon, ShieldAlertIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
+import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, LibraryBigIcon, LockKeyholeIcon, MessagesSquareIcon, PanelRightCloseIcon, PanelRightOpenIcon, PillIcon, PlayIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, SendIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   ApiClientError,
@@ -674,10 +675,10 @@ function ActiveDoctorWorkspace({
     onSuccess: refreshCase,
   })
   return (
-    <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-[minmax(15rem,16rem)_minmax(0,1fr)]">
+    <div className="grid min-h-[720px] min-w-0 grid-cols-1 border bg-background xl:grid-cols-[280px_minmax(0,1fr)]">
       <aside
         aria-label={messages.consultationQueue}
-        className="flex min-w-0 flex-col gap-5 border-b pb-5 xl:border-r xl:border-b-0 xl:pr-5"
+        className="flex min-w-0 flex-col gap-5 border-b p-3 xl:border-r xl:border-b-0"
       >
         <section aria-labelledby="virtual-patient-heading" className="flex min-w-0 flex-col gap-3 border-b pb-5">
           <div className="flex items-center justify-between gap-2">
@@ -695,7 +696,7 @@ function ActiveDoctorWorkspace({
               </EmptyHeader>
             </Empty>
           ) : (
-            <div className="flex flex-col gap-2">
+            <div className="flex max-h-64 flex-col gap-2 overflow-y-auto pr-1">
               {virtualPatients.data.items.map(item => (
                 <VirtualPatientRow
                   item={item}
@@ -797,7 +798,7 @@ function ActiveDoctorWorkspace({
         </section>
       </aside>
 
-      <section aria-labelledby="case-detail-heading" className="flex min-w-0 flex-col gap-5">
+      <section aria-labelledby="case-detail-heading" className="flex min-w-0 flex-col gap-3 p-3">
         <h2 className="sr-only" id="case-detail-heading">{messages.caseDetail}</h2>
         {issueOrder.isSuccess ? (
           <Alert>
@@ -1068,8 +1069,10 @@ function CaseDetail({
   const firstVisitDraft = detail.drafts?.firstVisit
   const presentation = detail.presentation
   const readOnly = detail.encounter.status !== 'in-progress'
+  const hasConsultationDialogue = detail.consultation !== undefined
+    && (detail.consultation.questions.length > 0 || detail.consultation.records.length > 0)
   const [activeSection, setActiveSection] = useState<CaseDetailSection>('record')
-  const [consultationSidebarOpen, setConsultationSidebarOpen] = useState(false)
+  const [consultationSidebarOpen, setConsultationSidebarOpen] = useState(true)
   const [pendingNavigation, setPendingNavigation] = useState<{
     source: 'checklist' | 'correction'
     target: EncounterCompletionTarget
@@ -1372,20 +1375,23 @@ function CaseDetail({
 
   return (
     <div className={consultationSidebarOpen
-      ? 'grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(16rem,18rem)]'
-      : 'grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_2.75rem]'}>
-      <div className="flex min-w-0 flex-col gap-4">
-        <section className="overflow-hidden rounded-md border bg-background" aria-label={messages.caseDetail}>
+      ? 'grid min-w-0 overflow-hidden border bg-background xl:grid-cols-[minmax(0,1fr)_300px]'
+      : 'grid min-w-0 overflow-hidden border bg-background xl:grid-cols-[minmax(0,1fr)_2.75rem]'}>
+      <div className="flex min-w-0 flex-col">
+        <section className="overflow-hidden border-b bg-background" aria-label={messages.caseDetail}>
           <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="truncate text-lg font-semibold">{detail.patient.name}</h2>
-                <Badge variant="outline">{messages[`gender_${detail.patient.gender}` as 'gender_male']}</Badge>
-                <span className="text-sm text-muted-foreground">{detail.patient.birthDate}</span>
-              </div>
-              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                <span>{messages.registrationNumber}：{detail.patient.identifier}</span>
-                <span>{messages.chiefComplaint}：{presentation.chiefComplaint}</span>
+            <div className="flex min-w-0 items-center gap-3">
+              <PatientAvatar label={`${detail.patient.name} ${messages.patient}`} name={detail.patient.name} />
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="truncate text-lg font-semibold">{detail.patient.name}</h2>
+                  <Badge variant="outline">{messages[`gender_${detail.patient.gender}` as 'gender_male']}</Badge>
+                  <span className="text-sm text-muted-foreground">{detail.patient.birthDate}</span>
+                </div>
+                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  <span>{messages.registrationNumber}：{detail.patient.identifier}</span>
+                  <span>{messages.chiefComplaint}：{presentation.chiefComplaint}</span>
+                </div>
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -1414,7 +1420,7 @@ function CaseDetail({
         </section>
 
         <Tabs
-          className="min-w-0 gap-0 rounded-md border bg-background"
+          className="min-w-0 gap-0 bg-background"
           onValueChange={value => {
             if (value === 'record' || value === 'diagnosis' || value === 'prescription' || value === 'examination') {
               setActiveSection(value)
@@ -1427,7 +1433,7 @@ function CaseDetail({
               <TabsTrigger value="record"><ClipboardListIcon aria-hidden="true" />{messages.medicalRecord}</TabsTrigger>
               <TabsTrigger value="diagnosis"><StethoscopeIcon aria-hidden="true" />{messages.diagnosis}</TabsTrigger>
               <TabsTrigger value="prescription"><PillIcon aria-hidden="true" />{messages.prescription}</TabsTrigger>
-              <TabsTrigger value="examination"><TestTubesIcon aria-hidden="true" />{messages.healthRecord}</TabsTrigger>
+              <TabsTrigger value="examination"><TestTubesIcon aria-hidden="true" />{messages.laboratoryAndExamination}</TabsTrigger>
             </TabsList>
           </div>
 
@@ -1499,7 +1505,6 @@ function CaseDetail({
 
           <TabsContent className="p-4" value="examination">
             <div className="flex flex-col gap-5">
-              <ClinicalBackgroundPanel detail={detail} messages={messages} />
               {detail.report === undefined ? null : (
                 <LaboratoryReport locale={locale} messages={messages} report={detail.report} />
               )}
@@ -1521,7 +1526,6 @@ function CaseDetail({
                   ) : (
                     <LaboratoryRequestEditor
                       actions={laboratoryRequestActions}
-                      caseId={detail.caseId}
                       catalog={laboratoryCatalog}
                       indicationCode={indicationCode}
                       indicationItems={indicationItems}
@@ -1544,8 +1548,8 @@ function CaseDetail({
       </div>
 
       <aside
-        aria-label={messages.consultationDialogue}
-        className="flex min-w-0 flex-col rounded-md border bg-background xl:sticky xl:top-4 xl:max-h-[calc(100svh-7rem)] xl:self-start"
+        aria-label={hasConsultationDialogue ? messages.consultationDialogue : messages.presentationSummary}
+        className="flex min-w-0 flex-col border-t bg-muted/15 xl:border-t-0 xl:border-l"
       >
         <div className="flex items-center gap-2 p-2">
           <Button
@@ -1564,15 +1568,50 @@ function CaseDetail({
           {consultationSidebarOpen ? (
             <div className="min-w-0">
               <div className="text-xs text-muted-foreground">{messages.rightSidebar}</div>
-              <h2 className="truncate text-sm font-semibold">{messages.consultationDialogue}</h2>
+              <h2 className="truncate text-sm font-semibold">
+                {hasConsultationDialogue ? messages.consultationDialogue : messages.presentationSummary}
+              </h2>
             </div>
           ) : null}
         </div>
         {!consultationSidebarOpen ? null : (
           <div className="flex min-h-0 flex-col gap-4 border-t p-4 pt-3">
-            {detail.consultation === undefined ? (
-              <p className="text-sm text-muted-foreground">{messages.noConsultationHistory}</p>
-            ) : (
+            <section aria-labelledby={`allergy-warning-heading-${detail.caseId}`} className="border-b pb-4">
+              <h3 className="text-sm font-semibold" id={`allergy-warning-heading-${detail.caseId}`}>
+                {messages.allergyWarnings}
+              </h3>
+              {detail.allergies.length === 0 ? (
+                <p className="mt-2 text-sm text-muted-foreground">{messages.noAllergyWarnings}</p>
+              ) : (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {detail.allergies.map(allergy => (
+                    <Badge key={`${allergy.code}:${allergy.display}`} variant="destructive">
+                      {allergy.display}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </section>
+            <section aria-labelledby={`presentation-summary-heading-${detail.caseId}`} className="border-b pb-4">
+              <h3 className="text-sm font-semibold" id={`presentation-summary-heading-${detail.caseId}`}>
+                {messages.presentationSummary}
+              </h3>
+              <dl className="mt-2 flex flex-col gap-2 text-sm">
+                <div>
+                  <dt className="text-xs text-muted-foreground">{messages.chiefComplaint}</dt>
+                  <dd>{presentation.chiefComplaint}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">{messages.status}</dt>
+                  <dd>{statusLabel(detail.status, messages)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">{messages.priorDiseases}</dt>
+                  <dd>{detail.priorFacts.map(fact => fact.display).join('、') || '-'}</dd>
+                </div>
+              </dl>
+            </section>
+            {detail.consultation !== undefined && hasConsultationDialogue ? (
               <ConsultationPanel
                 action={consultationAction}
                 consultation={detail.consultation}
@@ -1582,44 +1621,11 @@ function CaseDetail({
                 patientName={detail.patient.name}
                 readOnly={readOnly}
               />
-            )}
+            ) : null}
           </div>
         )}
       </aside>
     </div>
-  )
-}
-
-function ClinicalBackgroundPanel({ detail, messages }: {
-  detail: DoctorCaseDetail
-  messages: ReturnType<typeof getWorkspaceMessages>
-}): React.JSX.Element {
-  const headingId = `clinical-background-heading-${detail.caseId}`
-  return (
-    <section aria-labelledby={headingId} className="flex min-w-0 flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <ActivityIcon aria-hidden="true" className="size-4 text-muted-foreground" />
-        <h3 className="text-sm font-semibold" id={headingId}>{messages.priorDiseases}</h3>
-      </div>
-      <dl className="flex min-w-0 flex-col overflow-hidden rounded-md border">
-        <div className="flex flex-col gap-1 border-b px-3 py-2.5">
-          <dt className="text-xs text-muted-foreground">{messages.priorMedicalHistory}</dt>
-          <dd className="text-sm leading-relaxed">
-            {detail.priorFacts.length === 0 ? messages.noPriorDiseases : detail.priorFacts.map(fact => fact.display || fact.code).join('；')}
-          </dd>
-        </div>
-        <div className="flex min-w-0 flex-col gap-1 px-3 py-2.5">
-          <dt className="text-xs text-muted-foreground">{messages.allergySummary}</dt>
-          <dd className="flex flex-wrap gap-1.5">
-            {detail.allergies.length === 0 ? (
-              <span className="text-sm text-muted-foreground">{messages.noKnownAllergies}</span>
-            ) : detail.allergies.map(allergy => (
-              <Badge key={allergy.code} variant="destructive">{allergy.display}</Badge>
-            ))}
-          </dd>
-        </div>
-      </dl>
-    </section>
   )
 }
 
@@ -1727,7 +1733,6 @@ function EncounterCompletionPanel({ detail, messages, onCompleted, onNavigate, o
 
 function LaboratoryRequestEditor({
   actions,
-  caseId,
   catalog,
   indicationCode,
   indicationItems,
@@ -1742,7 +1747,6 @@ function LaboratoryRequestEditor({
   state,
 }: {
   actions: LaboratoryRequestActions
-  caseId: string
   catalog: ClinicalCatalog['laboratory']
   indicationCode: string
   indicationItems: Array<{ label: string; value: string }>
@@ -1929,6 +1933,7 @@ function LaboratoryRequestReport({ action, correctionAction, itemName, locale, m
   if (report === undefined) throw new Error('The laboratory report is required')
   const headingId = `laboratory-request-report-${request.id}`
   const pendingThisReport = action.pendingRequestId === request.id
+  const correctionSupported = report.results.every(isQuantitativeLaboratoryResult)
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3 border-t pt-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1956,7 +1961,7 @@ function LaboratoryRequestReport({ action, correctionAction, itemName, locale, m
         messages={messages}
         report={report}
       />
-      {correctionAction.allowed && showCorrection ? (
+      {correctionAction.allowed && showCorrection && correctionSupported ? (
         <LaboratoryReportCorrectionForm
           action={correctionAction}
           itemName={itemName}
@@ -1994,13 +1999,14 @@ function LaboratoryReportCorrectionForm({ action, itemName, messages, report, re
 }): React.JSX.Element {
   const [preview, setPreview] = useState<LaboratoryReportCorrectionInput>()
   const pendingThisRequest = action.pending && action.pendingRequestId === request.id
+  const quantitativeResults = report.results.filter(isQuantitativeLaboratoryResult)
   const submitPreview = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     setPreview({
       conclusion: String(form.get('conclusion') ?? ''),
       reason: String(form.get('reason') ?? ''),
-      results: report.results.map(result => ({
+      results: quantitativeResults.map(result => ({
         code: result.code,
         value: Number(form.get(`result:${result.code}`)),
       })),
@@ -2035,7 +2041,7 @@ function LaboratoryReportCorrectionForm({ action, itemName, messages, report, re
           <FieldSet>
             <FieldLegend variant="label">{messages.result}</FieldLegend>
             <FieldGroup className="grid gap-3 sm:grid-cols-2">
-              {report.results.map(result => (
+              {quantitativeResults.map(result => (
                 <Field key={result.code}>
                   <FieldLabel htmlFor={`laboratory-report-correction-${request.id}-${result.code}`}>
                     {result.display} · {messages.result}
@@ -2108,9 +2114,9 @@ function LaboratoryReportCorrectionForm({ action, itemName, messages, report, re
                     <ul className="space-y-1.5">
                       {preview.results.map((result, index) => (
                         <li className="flex flex-wrap justify-between gap-x-3 gap-y-1" key={result.code}>
-                          <span>{report.results[index]?.display ?? result.code}</span>
+                          <span>{quantitativeResults[index]?.display ?? result.code}</span>
                           <span className="font-medium">
-                            {result.value} {report.results[index]?.unit.display ?? ''}
+                            {result.value} {quantitativeResults[index]?.unit.display ?? ''}
                           </span>
                         </li>
                       ))}
@@ -2183,23 +2189,26 @@ function LaboratoryReportVersion({ current, locale, messages, report }: {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {report.results.map(result => (
-            <TableRow key={result.observationId}>
-              <TableCell className="font-medium">
-                {laboratoryResultName(result.code, messages, result.display)}
-              </TableCell>
-              <TableCell>
-                <span>{laboratoryResultValue(result.value, result.unit.display, locale, messages)}</span>
-                <Badge
-                  className="ml-2"
-                  variant={result.interpretation === 'normal' ? 'success' : 'destructive'}
-                >
-                  {interpretationLabel(result.interpretation, messages)}
-                </Badge>
-              </TableCell>
-              <TableCell>{result.referenceRange.text}</TableCell>
-            </TableRow>
-          ))}
+          {report.results.map((result) => {
+            const unit = 'unit' in result ? result.unit.display : undefined
+            return (
+              <TableRow key={result.observationId}>
+                <TableCell className="font-medium">
+                  {laboratoryResultName(result.code, messages, result.display)}
+                </TableCell>
+                <TableCell>
+                  <span>{laboratoryResultValue(result.value, unit, locale, messages)}</span>
+                  <Badge
+                    className="ml-2"
+                    variant={result.interpretation === 'normal' ? 'success' : 'destructive'}
+                  >
+                    {interpretationLabel(result.interpretation, messages)}
+                  </Badge>
+                </TableCell>
+                <TableCell>{result.referenceRange.text}</TableCell>
+              </TableRow>
+            )
+          })}
         </TableBody>
       </Table>
     </div>
@@ -3768,12 +3777,32 @@ function laboratoryResultValue(
   return unit === undefined ? formatted : `${formatted} ${unit}`
 }
 
+function isQuantitativeLaboratoryResult(
+  result: LaboratoryReport['results'][number],
+): result is Extract<LaboratoryReport['results'][number], { value: number }> {
+  return typeof result.value === 'number' && 'unit' in result
+}
+
 function interpretationLabel(code: string, messages: ReturnType<typeof getWorkspaceMessages>): string {
   if (code === 'H' || code === 'high') return messages.abnormalHigh
   if (code === 'L' || code === 'low') return messages.abnormalLow
   if (code === 'N' || code === 'normal') return messages.normal
   if (code === 'POS') return messages.positive
   return messages.abnormal
+}
+
+function PatientAvatar({ className = 'size-12', label, name }: {
+  className?: string
+  label: string
+  name: string
+}): React.JSX.Element {
+  return (
+    <Avatar aria-label={label} className={className} role="img">
+      <AvatarFallback className="bg-info/15 font-semibold text-info">
+        {name.slice(0, 1)}
+      </AvatarFallback>
+    </Avatar>
+  )
 }
 
 function VirtualPatientRow({ item, messages, onSelect, selected }: {
@@ -3786,11 +3815,14 @@ function VirtualPatientRow({ item, messages, onSelect, selected }: {
     <Button
       aria-label={`${messages.selectVirtualPatient} ${item.name}`}
       aria-pressed={selected}
-      className="h-auto min-h-16 w-full justify-start gap-3 px-3 py-2 text-left"
+      className={`h-auto min-h-16 w-full justify-start gap-3 px-2 py-2 text-left ${selected
+        ? 'rounded-md border border-primary/30 bg-primary/5'
+        : 'rounded-none border-b'}`}
       onClick={onSelect}
       type="button"
-      variant={selected ? 'secondary' : 'outline'}
+      variant="ghost"
     >
+      <PatientAvatar className="size-9" label={`${item.name} ${messages.patient}`} name={item.name} />
       <span className="min-w-0">
         <span className="block truncate font-medium">{item.name}</span>
         <span className="block truncate text-xs text-muted-foreground">{item.presentation.chiefComplaint}</span>
@@ -3815,8 +3847,8 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
   selected: boolean
 }): React.JSX.Element {
   return (
-    <Button aria-label={`${messages.selectCase} ${item.patient.name}`} className="h-auto min-h-16 w-full justify-between gap-3 px-3 py-2 text-left" onClick={onSelect} role="listitem" type="button" variant={selected ? 'secondary' : 'outline'}>
-      <span className="min-w-0"><span className="block truncate font-medium">{item.patient.name}</span><span className="block truncate text-xs text-muted-foreground">{item.presentation.chiefComplaint}</span></span>
+    <Button aria-label={`${messages.selectCase} ${item.patient.name}`} className={`h-auto min-h-16 w-full justify-between gap-3 px-2 py-2 text-left ${selected ? 'rounded-md border border-primary/30 bg-primary/5' : 'rounded-none border-b'}`} onClick={onSelect} role="listitem" type="button" variant="ghost">
+      <span className="flex min-w-0 items-center gap-3"><PatientAvatar className="size-9" label={`${item.patient.name} ${messages.patient}`} name={item.patient.name} /><span className="min-w-0"><span className="block truncate font-medium">{item.patient.name}</span><span className="block truncate text-xs text-muted-foreground">{item.presentation.chiefComplaint}</span></span></span>
       <Badge className="shrink-0" variant="outline">{statusLabel(item.status, messages)}</Badge>
     </Button>
   )

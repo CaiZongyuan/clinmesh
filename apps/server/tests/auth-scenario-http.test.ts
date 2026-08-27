@@ -4,9 +4,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fhirBundleSchema, fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import {
+  scenarioDatasetListSchema,
+  scenarioDatasetSchema,
+  scenarioProviderCapabilitiesListSchema,
+} from '@clinmesh/contracts/scenario'
+import {
   apiErrorSchema,
+  clinicalCatalogSchema,
+  commandResponseSchema,
   createPatientResponseSchema,
   patientSearchSchema,
+  registrationCatalogSchema,
   scenarioCommandResponseSchema,
   scenarioStateSchema,
   sessionContextSchema,
@@ -217,7 +225,7 @@ describe('trusted session and Scenario HTTP contract', () => {
       headers: {
         'content-type': 'application/json',
         cookie,
-        origin: 'http://127.0.0.1:5173',
+        origin: 'http://127.0.0.1:51888',
       },
       method: 'POST',
     })
@@ -485,6 +493,541 @@ describe('trusted session and Scenario HTTP contract', () => {
     expect(replayResponse.status).toBe(409)
     expect(apiErrorSchema.parse(await replayResponse.json())).toMatchObject({
       error: { code: 'IDEMPOTENCY_KEY_REUSED' },
+    })
+  })
+
+  it('lets only an administrator generate and read a persisted Scenario Dataset', async () => {
+    const { password, runtime } = await createTestRuntime('clinmesh-scenario-dataset-http-')
+    const adminCookie = await signInSyntheticAccount(runtime, password, 'admin@demo.clinmesh.local')
+    const generationRequest = {
+      modules: ['fever'],
+      name: '合成发热门诊数据',
+      population: {
+        age: { maximum: 65, minimum: 18 },
+        count: 1,
+        gender: 'any',
+      },
+      providerId: 'builtin',
+      seeds: { clinical: 7331, population: 4242 },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    }
+    const generateResponse = await runtime.app.request(
+      '/api/sim/v1/scenario-datasets/actions/generate',
+      {
+        body: JSON.stringify(generationRequest),
+        headers: {
+          'content-type': 'application/json',
+          cookie: adminCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+
+    expect(generateResponse.status).toBe(200)
+    const generated = commandResponseSchema(scenarioDatasetSchema).parse(await generateResponse.json())
+    expect(generated.data).toMatchObject({
+      content: { schemaVersion: '1' },
+      diagnostics: [],
+      name: generationRequest.name,
+      providerId: 'builtin',
+      version: 1,
+      workspaceId: 'workspace-demo',
+    })
+    expect(generated.data.content.patients).toHaveLength(1)
+
+    const readResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.data.datasetId)}`,
+      { headers: { cookie: adminCookie } },
+    )
+    expect(readResponse.status).toBe(200)
+    expect(scenarioDatasetSchema.parse(await readResponse.json())).toEqual(generated.data)
+
+    const listResponse = await runtime.app.request(
+      '/api/sim/v1/scenario-datasets?page=1&pageSize=20',
+      { headers: { cookie: adminCookie } },
+    )
+    expect(listResponse.status).toBe(200)
+    expect(scenarioDatasetListSchema.parse(await listResponse.json())).toEqual({
+      items: [{
+        contentHash: generated.data.contentHash,
+        createdAt: generated.data.createdAt,
+        datasetId: generated.data.datasetId,
+        diagnosticCounts: { error: 0, warning: 0 },
+        name: generationRequest.name,
+        patientCount: 1,
+        providerId: 'builtin',
+        updatedAt: generated.data.updatedAt,
+        version: 1,
+      }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    })
+
+    const secondGenerationResponse = await runtime.app.request(
+      '/api/sim/v1/scenario-datasets/actions/generate',
+      {
+        body: JSON.stringify({ ...generationRequest, name: '糖尿病随访数据' }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: adminCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(secondGenerationResponse.status).toBe(200)
+    commandResponseSchema(scenarioDatasetSchema).parse(await secondGenerationResponse.json())
+    const searchResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets?page=1&pageSize=20&search=${encodeURIComponent('发热门诊')}`,
+      { headers: { cookie: adminCookie } },
+    )
+    expect(searchResponse.status).toBe(200)
+    expect(scenarioDatasetListSchema.parse(await searchResponse.json())).toMatchObject({
+      items: [{ datasetId: generated.data.datasetId, name: generationRequest.name }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    })
+
+    const registrarCookie = await signInSyntheticAccount(runtime, password, 'registrar@demo.clinmesh.local')
+    const forbiddenResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.data.datasetId)}`,
+      { headers: { cookie: registrarCookie } },
+    )
+    expect(forbiddenResponse.status).toBe(403)
+    expect(apiErrorSchema.parse(await forbiddenResponse.json())).toMatchObject({
+      error: { code: 'ROLE_NOT_ALLOWED' },
+    })
+  })
+
+  it('reports optional Scenario Provider capabilities only to an administrator', async () => {
+    const { password, runtime } = await createTestRuntime('clinmesh-scenario-provider-http-')
+    const adminCookie = await signInSyntheticAccount(runtime, password, 'admin@demo.clinmesh.local')
+    const capabilitiesResponse = await runtime.app.request('/api/sim/v1/scenario-providers', {
+      headers: { cookie: adminCookie },
+    })
+
+    expect(capabilitiesResponse.status).toBe(200)
+    expect(scenarioProviderCapabilitiesListSchema.parse(await capabilitiesResponse.json())).toEqual({
+      items: [{
+        available: true,
+        maxPopulation: 10,
+        modules: ['fever', 'type-2-diabetes'],
+        providerId: 'builtin',
+        providerName: 'ClinMesh 内置生成器',
+      }, {
+        available: false,
+        maxPopulation: 10,
+        modules: ['fever', 'type-2-diabetes'],
+        providerId: 'synthea',
+        providerName: 'Synthea',
+        unavailableReason: '未配置 Synthea Provider',
+      }],
+    })
+
+    const registrarCookie = await signInSyntheticAccount(runtime, password, 'registrar@demo.clinmesh.local')
+    const forbiddenResponse = await runtime.app.request('/api/sim/v1/scenario-providers', {
+      headers: { cookie: registrarCookie },
+    })
+    expect(forbiddenResponse.status).toBe(403)
+  })
+
+  it('keeps an invalid Dataset editable and rejects stale expected versions', async () => {
+    const { password, runtime } = await createTestRuntime('clinmesh-scenario-edit-http-')
+    const cookie = await signInSyntheticAccount(runtime, password, 'admin@demo.clinmesh.local')
+    const generateResponse = await runtime.app.request(
+      '/api/sim/v1/scenario-datasets/actions/generate',
+      {
+        body: JSON.stringify({
+          modules: ['fever'],
+          name: '待编辑数据',
+          population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
+          providerId: 'builtin',
+          seeds: { clinical: 7, population: 11 },
+          timeRange: { end: '2026-08-01', start: '2020-01-01' },
+          timeZone: 'Asia/Shanghai',
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    const generated = commandResponseSchema(scenarioDatasetSchema)
+      .parse(await generateResponse.json()).data
+    const invalidContent = {
+      ...generated.content,
+      catalog: {
+        ...generated.content.catalog,
+        medications: [{
+          ...generated.content.catalog.medications[0]!,
+          workflow: {
+            ...generated.content.catalog.medications[0]!.workflow,
+            allowedCombinationIds: ['missing-combination-medication'],
+            allowedDiagnosisCodes: ['MISSING-DIAGNOSIS'],
+          },
+        }, ...generated.content.catalog.medications.slice(1)],
+      },
+      inventory: [{
+        ...generated.content.inventory[0]!,
+        itemId: 'missing-medication',
+      }],
+      patients: [{
+        ...generated.content.patients[0]!,
+        fhirHistory: [...generated.content.patients[0]!.fhirHistory, {
+          clinicalStatus: 'active',
+          code: { display: '悬空就诊诊断' },
+          encounterId: 'history-encounter-missing',
+          id: 'history-condition-dangling',
+          resourceType: 'Condition' as const,
+        }],
+        investigations: [{
+          ...generated.content.patients[0]!.investigations[0]!,
+          result: { message: '错误标记为本院未开展', outcome: 'catalog-boundary' as const },
+        }],
+        longitudinalHistory: [{
+          ...generated.content.patients[0]!.longitudinalHistory[0]!,
+          endedAt: '2025-01-01T00:00:00Z',
+          mappedCode: null,
+          occurredAt: '2026-01-01T00:00:00Z',
+        }, ...generated.content.patients[0]!.longitudinalHistory.slice(1)],
+      }],
+    }
+    const update = (expectedVersion: number, idempotencyKey: string) => runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}`,
+      {
+        body: JSON.stringify({
+          expectedVersion,
+          input: { content: invalidContent, name: '存在引用问题的数据' },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          'idempotency-key': idempotencyKey,
+          origin: 'http://localhost',
+        },
+        method: 'PUT',
+      },
+    )
+
+    const updateResponse = await update(1, randomUUID())
+    expect(updateResponse.status).toBe(200)
+    const updated = commandResponseSchema(scenarioDatasetSchema)
+      .parse(await updateResponse.json()).data
+    expect(updated).toMatchObject({
+      name: '存在引用问题的数据',
+      version: 2,
+    })
+    expect(updated.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'CATALOG_REFERENCE_MISSING', path: 'inventory[0].itemId' }),
+      expect.objectContaining({ code: 'CLINICAL_CODE_UNMAPPED', path: 'patients[0].longitudinalHistory[0].mappedCode' }),
+      expect.objectContaining({ code: 'CLINICAL_TIME_INVERTED', path: 'patients[0].longitudinalHistory[0].endedAt' }),
+      expect.objectContaining({ code: 'FHIR_HISTORY_REFERENCE_MISSING', path: 'patients[0].fhirHistory[3].encounterId' }),
+      expect.objectContaining({ code: 'INVESTIGATION_CATALOG_CONFLICT', path: 'patients[0].investigations[0].result.outcome' }),
+      expect.objectContaining({ code: 'MEDICATION_COMBINATION_REFERENCE_MISSING', path: 'catalog.medications[0].workflow.allowedCombinationIds[0]' }),
+      expect.objectContaining({ code: 'MEDICATION_DIAGNOSIS_REFERENCE_MISSING', path: 'catalog.medications[0].workflow.allowedDiagnosisCodes[0]' }),
+    ]))
+
+    const invalidInstallResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}/actions/install`,
+      {
+        body: JSON.stringify({ expectedVersion: 2 }),
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(invalidInstallResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await invalidInstallResponse.json())).toMatchObject({
+      error: { code: 'DATASET_INVALID' },
+    })
+
+    const staleResponse = await update(1, randomUUID())
+    expect(staleResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await staleResponse.json())).toMatchObject({
+      error: { code: 'DATASET_VERSION_CONFLICT' },
+    })
+  })
+
+  it('resets from an immutable package after its source Dataset is edited and deleted', async () => {
+    const { password, runtime } = await createTestRuntime('clinmesh-scenario-package-http-')
+    const cookie = await signInSyntheticAccount(runtime, password, 'admin@demo.clinmesh.local')
+    const headers = (idempotencyKey = randomUUID()) => ({
+      'content-type': 'application/json',
+      cookie,
+      'idempotency-key': idempotencyKey,
+      origin: 'http://localhost',
+    })
+    const generateResponse = await runtime.app.request(
+      '/api/sim/v1/scenario-datasets/actions/generate',
+      {
+        body: JSON.stringify({
+          modules: ['type-2-diabetes'],
+          name: '糖尿病门诊数据',
+          population: { age: { maximum: 70, minimum: 45 }, count: 1, gender: 'male' },
+          providerId: 'builtin',
+          seeds: { clinical: 101, population: 202 },
+          timeRange: { end: '2026-08-01', start: '2016-08-01' },
+          timeZone: 'Asia/Shanghai',
+        }),
+        headers: headers(),
+        method: 'POST',
+      },
+    )
+    const generated = commandResponseSchema(scenarioDatasetSchema)
+      .parse(await generateResponse.json()).data
+    const generatedPatient = generated.content.patients[0]!
+    expect(generatedPatient).toMatchObject({
+      diagnosisSpace: { primary: expect.objectContaining({ code: 'E11.65' }) },
+      encounter: { openingStatement: '这两个月总是口渴，水喝得很多，人也瘦了。' },
+      investigations: expect.arrayContaining([
+        expect.objectContaining({ catalogItemId: 'lab-hba1c', sourceLevel: 'L1' }),
+      ]),
+      patientKnowledge: expect.objectContaining({
+        chiefComplaint: '口渴、多饮两个月，体重下降。',
+      }),
+      symptomResponses: expect.arrayContaining([
+        expect.objectContaining({ id: 'symptom-foot-numbness', passive: true }),
+      ]),
+    })
+    const installResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}/actions/install`,
+      {
+        body: JSON.stringify({ expectedVersion: 1 }),
+        headers: headers(),
+        method: 'POST',
+      },
+    )
+    expect(installResponse.status).toBe(200)
+    const installed = commandResponseSchema(z.object({
+      packageId: z.string().min(1),
+      scenario: scenarioStateSchema,
+    }).strict()).parse(await installResponse.json()).data
+    expect(installed.scenario).toMatchObject({
+      epoch: 'epoch-2',
+      scenarioId: installed.packageId,
+      scenarioRunId: 'scenario-run-2',
+    })
+    expect(runtime.database.driver.prepare(`
+      SELECT policy_code, fact_code, trigger_code
+      FROM scenario_reveal_policy
+      WHERE workspace_id = ? AND epoch = ?
+    `).all('workspace-demo', installed.scenario.epoch)).toEqual([{
+      fact_code: `objective-primary-diagnosis-${generatedPatient.id}`,
+      policy_code: `policy-primary-diagnosis-${generatedPatient.id}`,
+      trigger_code: 'evaluator-only',
+    }])
+    const conditionResponse = await runtime.app.request(
+      `/fhir/R5/Condition?patient=Patient/${generatedPatient.id}&_total=accurate`,
+      { headers: { cookie } },
+    )
+    expect(conditionResponse.status).toBe(200)
+    expect(fhirBundleSchema.parse(await conditionResponse.json())).toMatchObject({
+      entry: expect.arrayContaining([
+        expect.objectContaining({
+          resource: expect.objectContaining({
+            code: expect.objectContaining({ text: '2型糖尿病伴高血糖' }),
+            resourceType: 'Condition',
+          }),
+        }),
+      ]),
+      total: 2,
+    })
+
+    const doctorCookie = await signInSyntheticAccount(
+      runtime,
+      password,
+      'doctor@demo.clinmesh.local',
+    )
+    const clinicalCatalogResponse = await runtime.app.request(
+      '/api/his/v1/catalogs/clinical',
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(clinicalCatalogResponse.status).toBe(200)
+    expect(clinicalCatalogSchema.parse(await clinicalCatalogResponse.json())).toMatchObject({
+      diagnoses: expect.arrayContaining([
+        expect.objectContaining({ code: 'E11.65', nameZh: '2型糖尿病伴高血糖' }),
+      ]),
+      laboratory: expect.arrayContaining([
+        expect.objectContaining({ id: 'lab-hba1c', nameZh: '糖化血红蛋白' }),
+      ]),
+      medications: expect.arrayContaining([
+        expect.objectContaining({ id: 'medication-metformin', nameZh: '盐酸二甲双胍片' }),
+      ]),
+    })
+
+    const registrarCookie = await signInSyntheticAccount(
+      runtime,
+      password,
+      'registrar@demo.clinmesh.local',
+    )
+    const registrationCatalogResponse = await runtime.app.request(
+      '/api/his/v1/catalogs/registration',
+      { headers: { cookie: registrarCookie } },
+    )
+    expect(registrationCatalogResponse.status).toBe(200)
+    expect(registrationCatalogSchema.parse(await registrationCatalogResponse.json())).toMatchObject({
+      departments: expect.arrayContaining([
+        expect.objectContaining({ id: 'department-general-medicine' }),
+      ]),
+      visitTypes: expect.arrayContaining([
+        expect.objectContaining({ id: 'visit-general' }),
+      ]),
+    })
+
+    for (const [resourceType, resourceId] of [
+      ['Medication', 'medication-metformin'],
+      ['InventoryItem', 'lot-metformin-synthetic-001'],
+    ] as const) {
+      const response = await runtime.app.request(`/fhir/R5/${resourceType}/${resourceId}`, {
+        headers: { cookie },
+      })
+      expect(response.status).toBe(200)
+      expect(fhirResourceSchema.parse(await response.json())).toMatchObject({
+        id: resourceId,
+        resourceType,
+      })
+    }
+
+    const editedContent = {
+      ...generated.content,
+      patients: [{ ...generated.content.patients[0]!, name: '已修改但不应进入快照' }],
+    }
+    const updateResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}`,
+      {
+        body: JSON.stringify({
+          expectedVersion: 1,
+          input: { content: editedContent, name: generated.name },
+        }),
+        headers: headers(),
+        method: 'PUT',
+      },
+    )
+    expect(updateResponse.status).toBe(200)
+
+    const deleteIdempotencyKey = randomUUID()
+    const deleteResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}`,
+      {
+        body: JSON.stringify({ expectedVersion: 2 }),
+        headers: headers(deleteIdempotencyKey),
+        method: 'DELETE',
+      },
+    )
+    expect(deleteResponse.status).toBe(200)
+    const deleteResult = commandResponseSchema(z.object({
+      datasetId: z.string().min(1),
+      deleted: z.literal(true),
+    }).strict()).parse(await deleteResponse.json())
+    expect(deleteResult).toMatchObject({
+      data: { datasetId: generated.datasetId, deleted: true },
+    })
+    expect((await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}`,
+      { headers: { cookie } },
+    )).status).toBe(404)
+    const deleteReplayResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}`,
+      {
+        body: JSON.stringify({ expectedVersion: 2 }),
+        headers: headers(deleteIdempotencyKey),
+        method: 'DELETE',
+      },
+    )
+    expect(deleteReplayResponse.status).toBe(200)
+    expect(commandResponseSchema(z.object({
+      datasetId: z.string().min(1),
+      deleted: z.literal(true),
+    }).strict()).parse(await deleteReplayResponse.json())).toEqual(deleteResult)
+
+    const resetResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-runs/${installed.scenario.scenarioRunId}/actions/reset`,
+      { body: '{}', headers: headers(), method: 'POST' },
+    )
+    expect(resetResponse.status).toBe(200)
+    expect(scenarioCommandResponseSchema.parse(await resetResponse.json()).data).toMatchObject({
+      initialStateHash: installed.scenario.initialStateHash,
+      scenarioId: installed.packageId,
+    })
+  })
+
+  it('preserves a Dataset patient unknown gender through installation', async () => {
+    const { password, runtime } = await createTestRuntime('clinmesh-scenario-gender-http-')
+    const cookie = await signInSyntheticAccount(runtime, password, 'admin@demo.clinmesh.local')
+    const headers = () => ({
+      'content-type': 'application/json',
+      cookie,
+      'idempotency-key': randomUUID(),
+      origin: 'http://localhost',
+    })
+    const generatedResponse = await runtime.app.request(
+      '/api/sim/v1/scenario-datasets/actions/generate',
+      {
+        body: JSON.stringify({
+          modules: ['fever'],
+          name: '四态性别安装数据',
+          population: { age: { maximum: 40, minimum: 40 }, count: 1, gender: 'female' },
+          providerId: 'builtin',
+          seeds: { clinical: 7331, population: 4242 },
+          timeRange: { end: '2026-08-01', start: '2020-01-01' },
+          timeZone: 'Asia/Shanghai',
+        }),
+        headers: headers(),
+        method: 'POST',
+      },
+    )
+    const generated = commandResponseSchema(scenarioDatasetSchema)
+      .parse(await generatedResponse.json()).data
+    const patient = generated.content.patients[0]!
+    const updatedResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}`,
+      {
+        body: JSON.stringify({
+          expectedVersion: 1,
+          input: {
+            content: {
+              ...generated.content,
+              patients: [{ ...patient, gender: 'unknown' }],
+            },
+            name: generated.name,
+          },
+        }),
+        headers: headers(),
+        method: 'PUT',
+      },
+    )
+    expect(updatedResponse.status).toBe(200)
+    const installResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}/actions/install`,
+      {
+        body: JSON.stringify({ expectedVersion: 2 }),
+        headers: headers(),
+        method: 'POST',
+      },
+    )
+    expect(installResponse.status).toBe(200)
+
+    const patientResponse = await runtime.app.request(`/fhir/R5/Patient/${patient.id}`, {
+      headers: { cookie },
+    })
+    expect(patientResponse.status).toBe(200)
+    expect(fhirResourceSchema.parse(await patientResponse.json())).toMatchObject({
+      gender: 'unknown',
+      id: patient.id,
+      resourceType: 'Patient',
     })
   })
 

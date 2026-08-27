@@ -3,6 +3,11 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { parseEnv } from 'node:util'
 import { z } from 'zod'
 
+const httpUrlSchema = z.url().refine((value) => {
+  const protocol = new URL(value).protocol
+  return protocol === 'http:' || protocol === 'https:'
+}, 'URL must use HTTP or HTTPS')
+
 const serverEnvironmentSchema = z.object({
   CLINMESH_AUTH_SECRET: z.string().min(32),
   CLINMESH_CURSOR_SECRET: z.string().min(32),
@@ -11,10 +16,11 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_HOST: z.string().trim().min(1).default('127.0.0.1'),
   CLINMESH_PORT: z.string()
     .regex(/^\d+$/)
-    .default('8787')
+    .default('51868')
     .transform(Number)
     .pipe(z.number().int().min(1).max(65_535)),
   CLINMESH_PUBLIC_ORIGIN: z.url().optional(),
+  CLINMESH_SYNTHEA_PROVIDER_URL: httpUrlSchema.optional(),
   CLINMESH_TRUSTED_ORIGINS: z.string().trim().min(1).optional(),
   CLINMESH_WEB_ROOT: z.string().trim().min(1).optional(),
 })
@@ -27,6 +33,7 @@ export interface ServerConfig {
   demoPassword: string
   hostname: string
   port: number
+  syntheaProviderUrl?: string
   trustedOrigins: string[]
   webRoot?: string
 }
@@ -70,7 +77,7 @@ export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
     ?? `http://${parsed.CLINMESH_HOST}:${parsed.CLINMESH_PORT}`
   const defaultTrustedOrigins = [authBaseUrl]
   if (parsed.CLINMESH_PUBLIC_ORIGIN === undefined && parsed.CLINMESH_HOST === '127.0.0.1') {
-    defaultTrustedOrigins.push('http://127.0.0.1:5173')
+    defaultTrustedOrigins.push('http://127.0.0.1:51888')
   }
   const trustedOrigins = parsed.CLINMESH_TRUSTED_ORIGINS === undefined
     ? defaultTrustedOrigins
@@ -84,6 +91,9 @@ export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
     demoPassword: parsed.CLINMESH_DEMO_PASSWORD,
     hostname: parsed.CLINMESH_HOST,
     port: parsed.CLINMESH_PORT,
+    ...(parsed.CLINMESH_SYNTHEA_PROVIDER_URL === undefined
+      ? {}
+      : { syntheaProviderUrl: parsed.CLINMESH_SYNTHEA_PROVIDER_URL }),
     trustedOrigins,
     ...(parsed.CLINMESH_WEB_ROOT === undefined ? {} : { webRoot: parsed.CLINMESH_WEB_ROOT }),
   }

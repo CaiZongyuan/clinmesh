@@ -12,14 +12,14 @@ describe('Node.js server configuration', () => {
       CLINMESH_DATABASE_PATH: '/var/lib/clinmesh/clinmesh.sqlite',
       CLINMESH_DEMO_PASSWORD: 'Synthetic-password-2026!',
     })).toEqual({
-      authBaseUrl: 'http://127.0.0.1:8787',
+      authBaseUrl: 'http://127.0.0.1:51868',
       authSecret: 'auth-secret-with-at-least-32-characters',
       cursorSecret: 'cursor-secret-with-at-least-32-characters',
       databasePath: '/var/lib/clinmesh/clinmesh.sqlite',
       demoPassword: 'Synthetic-password-2026!',
       hostname: '127.0.0.1',
-      port: 8787,
-      trustedOrigins: ['http://127.0.0.1:8787', 'http://127.0.0.1:5173'],
+      port: 51868,
+      trustedOrigins: ['http://127.0.0.1:51868', 'http://127.0.0.1:51888'],
     })
   })
 
@@ -47,9 +47,26 @@ describe('Node.js server configuration', () => {
       ...requiredEnvironment,
       CLINMESH_TRUSTED_ORIGINS: 'https://clinmesh.example,https://review.clinmesh.example',
     })).toMatchObject({
-      authBaseUrl: 'http://127.0.0.1:8787',
+      authBaseUrl: 'http://127.0.0.1:51868',
       trustedOrigins: ['https://clinmesh.example', 'https://review.clinmesh.example'],
     })
+  })
+
+  it('accepts only an explicit HTTP Synthea Provider URL', () => {
+    const requiredEnvironment = {
+      CLINMESH_AUTH_SECRET: 'auth-secret-with-at-least-32-characters',
+      CLINMESH_CURSOR_SECRET: 'cursor-secret-with-at-least-32-characters',
+      CLINMESH_DATABASE_PATH: '/var/lib/clinmesh/clinmesh.sqlite',
+      CLINMESH_DEMO_PASSWORD: 'Synthetic-password-2026!',
+    }
+    expect(readServerConfig({
+      ...requiredEnvironment,
+      CLINMESH_SYNTHEA_PROVIDER_URL: 'http://synthea-provider:51878',
+    })).toMatchObject({ syntheaProviderUrl: 'http://synthea-provider:51878' })
+    expect(() => readServerConfig({
+      ...requiredEnvironment,
+      CLINMESH_SYNTHEA_PROVIDER_URL: 'file:///tmp/provider',
+    })).toThrow()
   })
 
   it('rejects an invalid listener port before startup', () => {
@@ -66,7 +83,7 @@ describe('Node.js server configuration', () => {
       'CLINMESH_CURSOR_SECRET=env-cursor-secret-with-at-least-32-characters',
       'CLINMESH_DATABASE_PATH=.data/clinmesh.sqlite',
       'CLINMESH_DEMO_PASSWORD=Env-demo-password-2026!',
-      'CLINMESH_PORT=8787',
+      'CLINMESH_PORT=51869',
       '',
     ].join('\n'), 'utf8')
     await writeFile(join(serverDirectory, '.env'), [
@@ -78,10 +95,10 @@ describe('Node.js server configuration', () => {
     ].join('\n'), 'utf8')
 
     try {
-      expect(readServerConfig(readServerEnvironment({ CLINMESH_PORT: '8790' }, serverDirectory)))
+      expect(readServerConfig(readServerEnvironment({ CLINMESH_PORT: '51867' }, serverDirectory)))
         .toMatchObject({
           databasePath: join(workspace, '.data/clinmesh.sqlite'),
-          port: 8790,
+          port: 51867,
         })
     } finally {
       await rm(workspace, { recursive: true })

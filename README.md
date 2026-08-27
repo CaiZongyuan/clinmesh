@@ -48,6 +48,7 @@ scripts/        文档投影、依赖边界和质量检查
 
 - Node.js `^22.19.0` 或 `>=24.0.0`
 - pnpm `11.17.0`
+- Docker Engine 与 `docker compose`（仅容器运行和 Synthea Provider 需要）
 - Xcode/Android Studio 仅在运行对应移动原生目标时需要
 
 ## 安装
@@ -77,10 +78,10 @@ pnpm dev:server
 
 默认地址：
 
-- Web：http://127.0.0.1:5173/
-- Server：http://127.0.0.1:8787/
-- 健康检查：http://127.0.0.1:8787/api/health
-- FHIR metadata：http://127.0.0.1:8787/fhir/R5/metadata
+- Web：http://127.0.0.1:51888/
+- Server：http://127.0.0.1:51868/
+- 健康检查：http://127.0.0.1:51868/api/health
+- FHIR metadata：http://127.0.0.1:51868/fhir/R5/metadata
 
 合成演示账号：
 
@@ -108,7 +109,7 @@ pnpm dev:mobile
 pnpm docs:dev
 ```
 
-默认地址为 http://127.0.0.1:5174/。
+默认地址为 http://127.0.0.1:51898/
 
 ## 质量检查
 
@@ -153,7 +154,132 @@ pnpm --filter @clinmesh/server test
 
 影响架构、协议、持久化、工程流程或测试策略的非平凡决策使用 `.agents/notes/` 记录，格式见 [Agent Notes](.agents/notes/README.md)。
 
-## 部署
+## 运行方式
+
+### 推荐：本地 Web 与 Server，加 Docker Synthea
+
+这种方式只把需要 Java 环境的 Synthea Provider 放进 Docker，ClinMesh Web 与 Server 继续使用本地 Node.js 工具链，便于开发和调试。
+
+首次运行先创建环境文件；已有 `.env` 时不要覆盖，并确认端口与 Provider URL 使用以下值：
+
+```sh
+cp .env.example .env
+```
+
+```dotenv
+CLINMESH_PORT=51868
+CLINMESH_SYNTHEA_PROVIDER_URL=http://127.0.0.1:51878
+```
+
+如果 `.env` 显式设置了 `CLINMESH_PUBLIC_ORIGIN` 或 `CLINMESH_TRUSTED_ORIGINS`，对应 Server 和 Web 地址应分别使用 `51868` 与 `51888`。
+
+启动独立 Synthea Provider：
+
+```sh
+docker compose -f compose.synthea-provider.yaml up -d --build
+```
+
+另外打开两个终端启动 Server 和 Web：
+
+```sh
+pnpm dev:server
+```
+
+```sh
+pnpm dev:web
+```
+
+#### 局域网访问 Web 开发入口
+
+`pnpm dev:web` 默认只监听 `127.0.0.1:51888`。如需让同一局域网内的设备访问，使用一个命令同时启动 Server 和 Web：
+
+```sh
+pnpm dev:lan
+```
+
+该命令自动识别私有 IPv4 地址、让 Vite 监听 `0.0.0.0:51888`，并将本机及识别到的 Web origins 注入 Server 的 `CLINMESH_TRUSTED_ORIGINS`。终端会打印可供其他设备访问的 URL；按 `Ctrl+C` 会同时停止 Server 和 Web。未识别到正确地址时可显式指定，例如 `CLINMESH_LAN_IP=192.168.1.23 pnpm dev:lan`。
+
+`0.0.0.0` 仅用于监听，不能作为浏览器访问地址。Vite 继续将 `/api` 和 `/fhir` 请求代理到本机 Server，因此只需允许防火墙的 TCP `51888` 入站，不需要向局域网开放 `51868`。开发入口不提供 HTTPS，只应暴露在可信局域网内。
+
+检查三个入口：
+
+```sh
+curl --fail http://127.0.0.1:51878/health
+curl --fail http://127.0.0.1:51868/api/health
+docker compose -f compose.synthea-provider.yaml exec -T synthea-provider \
+  java -cp /opt/provider:/opt/synthea/synthea.jar ProviderServer --smoke
+```
+
+使用 Web 开发入口访问管理员模拟数据页面：http://127.0.0.1:51888/scenario-data
+
+停止 Docker 中的 Provider，但保留容器：
+
+```sh
+docker compose -f compose.synthea-provider.yaml stop
+```
+
+### 备选：本机 JDK 17 启动 Synthea
+
+不使用 Docker 时，需要本机安装 Git 和 JDK 17。以下命令从仓库根目录执行，将固定版本的 Synthea 和编译产物保存到已忽略的 `.data/`：
+
+```sh
+SYNTHEA_DIR="$PWD/.data/synthea"
+git clone https://github.com/synthetichealth/synthea.git "$SYNTHEA_DIR"
+git -C "$SYNTHEA_DIR" checkout d9d07a6eef91ee5144293b42ab64224d84d124f8
+test "$(git -C "$SYNTHEA_DIR" rev-parse HEAD)" = \
+  d9d07a6eef91ee5144293b42ab64224d84d124f8
+
+(
+  cd "$SYNTHEA_DIR"
+  ./gradlew --no-daemon shadowJar
+)
+
+SYNTHEA_JAR="$(find "$SYNTHEA_DIR/build/libs" -name '*with-dependencies.jar' -print -quit)"
+PROVIDER_CLASSES="$PWD/.data/synthea-provider/classes"
+mkdir -p "$PROVIDER_CLASSES"
+javac -cp "$SYNTHEA_JAR" -d "$PROVIDER_CLASSES" \
+  apps/synthea-provider/ProviderServer.java
+```
+
+启动 Provider；该进程在前台运行，停止时按 `Ctrl+C`：
+
+```sh
+SYNTHEA_DIR="$PWD/.data/synthea"
+SYNTHEA_JAR="$(find "$SYNTHEA_DIR/build/libs" -name '*with-dependencies.jar' -print -quit)"
+PROVIDER_CLASSES="$PWD/.data/synthea-provider/classes"
+SYNTHEA_JAR_PATH="$SYNTHEA_JAR" \
+SYNTHEA_CONFIG_PATH="$PWD/apps/synthea-provider/synthea.properties" \
+SYNTHEA_PROVIDER_PORT=51878 \
+java -cp "$PROVIDER_CLASSES:$SYNTHEA_JAR" ProviderServer
+```
+
+随后仍按推荐方式运行 `pnpm dev:server` 和 `pnpm dev:web`。本机 Java 路径与 Docker 路径使用同一 Provider HTTP 协议、固定 Synthea commit 和配置文件。
+
+### Docker 一键启动 ClinMesh 与 Synthea
+
+需要完整容器化运行时，叠加两个 Compose 文件：
+
+```sh
+docker compose -f compose.yaml -f compose.synthea.yaml up -d --build
+```
+
+启动成功后访问：
+
+- Web：http://localhost:51868/
+- 模拟数据：http://localhost:51868/scenario-data
+- FHIR metadata：http://localhost:51868/fhir/R5/metadata
+
+检查或停止完整部署：
+
+```sh
+docker compose -f compose.yaml -f compose.synthea.yaml ps
+curl --fail http://localhost:51868/api/health
+docker compose -f compose.yaml -f compose.synthea.yaml stop
+```
+
+只需要容器化 ClinMesh、但不需要 Synthea 时，可以单独运行 `docker compose up -d --build`。ClinMesh 不把 Synthea 作为启动门禁；Provider 未启动、不可达或生成失败时，只影响对应生成任务，不影响内置生成器和既有 HIS 流程。除非明确要删除本地合成数据，不要使用 `docker compose down -v`。
+
+### 直接运行 Node.js
 
 生产构建、显式迁移与启动：
 
@@ -163,7 +289,7 @@ pnpm --filter @clinmesh/server db:migrate
 pnpm --filter @clinmesh/server start
 ```
 
-Server 启动时只验证 migration 状态，不隐式修改 schema。数据库生命周期命令与单实例容器步骤见 [Web Demo 运行与部署架构](docs/demo-architecture.md#7-迁移备份与重置)。构建顺序由 workspace 依赖和 Turborepo 决定：先生成 Web assets，再生成 Server 的 Node.js bundle，同时构建 Desktop 和文档站。Server 默认监听 `127.0.0.1:8787`，并从 `apps/web/dist` 提供 Web；`CLINMESH_HOST`、`CLINMESH_PORT` 和 `CLINMESH_WEB_ROOT` 可覆盖这些运行配置。
+Server 启动时只验证 migration 状态，不隐式修改 schema。数据库生命周期命令与单实例容器步骤见 [Web Demo 运行与部署架构](docs/demo-architecture.md#7-迁移备份与重置)。构建顺序由 workspace 依赖和 Turborepo 决定：先生成 Web assets，再生成 Server 的 Node.js bundle，同时构建 Desktop 和文档站。Server 默认监听 `127.0.0.1:51868`，并从 `apps/web/dist` 提供 Web；`CLINMESH_HOST`、`CLINMESH_PORT` 和 `CLINMESH_WEB_ROOT` 可覆盖这些运行配置。
 
 容器入口使用 `compose.yaml` 和命名卷 `clinmesh-data`，在启动应用进程前执行幂等 migration。当前只支持本地、局域网或单实例产品验证；不承诺多实例、高可用、公开在线 SLA 或共享网络文件系统上的 SQLite 正确性。
 

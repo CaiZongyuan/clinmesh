@@ -10,6 +10,7 @@ import {
   clinicalDocumentSignResponseSchema,
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
+  commandResponseSchema,
   confirmNoMedicationResponseSchema,
   confirmDiagnosisResponseSchema,
   correctLaboratoryReportResponseSchema,
@@ -55,6 +56,21 @@ import {
   type ScenarioState,
   type SessionContext,
 } from '@clinmesh/contracts/his'
+import {
+  scenarioDatasetListSchema,
+  scenarioDatasetSchema,
+  scenarioGenerationJobSchema,
+  scenarioGenerationRequestSchema,
+  scenarioProviderCapabilitiesListSchema,
+  startSyntheticPatientVisitsResultSchema,
+  syntheticPatientMappingCatalogSchema,
+  syntheticPatientProfileListSchema,
+  syntheticPatientProfileSchema,
+  type ScenarioGenerationRequest,
+  type ScenarioDataset,
+  type SyntheticPatientIdentity,
+  type SyntheticPatientMappingInput,
+} from '@clinmesh/contracts/scenario'
 import { z } from 'zod'
 
 export const sessionQueryKey = ['session-context'] as const
@@ -170,6 +186,171 @@ export function resetScenario(scenarioRunId: string, idempotencyKey: string) {
     `/api/sim/v1/scenario-runs/${encodeURIComponent(scenarioRunId)}/actions/reset`,
     scenarioCommandResponseSchema,
     {},
+    { idempotencyKey },
+  )
+}
+
+export function getScenarioProviders(signal?: AbortSignal) {
+  return apiGet(
+    '/api/sim/v1/scenario-providers',
+    scenarioProviderCapabilitiesListSchema,
+    signal,
+  )
+}
+
+export function getScenarioDatasets(signal?: AbortSignal, page = 1, search?: string) {
+  const params = new URLSearchParams({ page: String(page), pageSize: '20' })
+  if (search !== undefined && search !== '') params.set('search', search)
+  return apiGet(`/api/sim/v1/scenario-datasets?${params.toString()}`, scenarioDatasetListSchema, signal)
+}
+
+export function generateScenarioDataset(
+  request: ScenarioGenerationRequest,
+  idempotencyKey: string,
+) {
+  return apiMutation(
+    '/api/sim/v1/scenario-datasets/actions/generate',
+    commandResponseSchema(scenarioDatasetSchema),
+    scenarioGenerationRequestSchema.parse(request),
+    { idempotencyKey },
+  )
+}
+
+export function enqueueScenarioGenerationJob(
+  request: ScenarioGenerationRequest,
+  idempotencyKey: string,
+) {
+  return apiMutation(
+    '/api/sim/v1/scenario-generation-jobs',
+    commandResponseSchema(scenarioGenerationJobSchema),
+    scenarioGenerationRequestSchema.parse(request),
+    { idempotencyKey },
+  )
+}
+
+export function getScenarioGenerationJob(jobId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/sim/v1/scenario-generation-jobs/${encodeURIComponent(jobId)}`,
+    scenarioGenerationJobSchema,
+    signal,
+  )
+}
+
+export function getScenarioDataset(datasetId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/sim/v1/scenario-datasets/${encodeURIComponent(datasetId)}`,
+    scenarioDatasetSchema,
+    signal,
+  )
+}
+
+export function getSyntheticPatientProfiles(signal?: AbortSignal, page = 1, search?: string) {
+  const parameters = new URLSearchParams({ page: String(page), pageSize: '20' })
+  if (search !== undefined && search !== '') parameters.set('search', search)
+  return apiGet(
+    `/api/sim/v1/synthetic-patients?${parameters.toString()}`,
+    syntheticPatientProfileListSchema,
+    signal,
+  )
+}
+
+export function getSyntheticPatientProfile(profileId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/sim/v1/synthetic-patients/${encodeURIComponent(profileId)}`,
+    syntheticPatientProfileSchema,
+    signal,
+  )
+}
+
+export function getSyntheticPatientMappingCatalog(signal?: AbortSignal) {
+  return apiGet(
+    '/api/sim/v1/synthetic-patient-mapping-catalog',
+    syntheticPatientMappingCatalogSchema,
+    signal,
+  )
+}
+
+export function updateSyntheticPatientProfile(input: {
+  expectedRevision: number
+  identity: SyntheticPatientIdentity
+  profileId: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/sim/v1/synthetic-patients/${encodeURIComponent(input.profileId)}`,
+    commandResponseSchema(syntheticPatientProfileSchema),
+    { expectedRevision: input.expectedRevision, input: input.identity },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function updateSyntheticPatientMappings(input: {
+  expectedRevision: number
+  mappings: SyntheticPatientMappingInput[]
+  profileId: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/sim/v1/synthetic-patients/${encodeURIComponent(input.profileId)}/mappings`,
+    commandResponseSchema(syntheticPatientProfileSchema),
+    { expectedRevision: input.expectedRevision, input: input.mappings },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function startSyntheticPatientVisits(input: {
+  departmentId: string
+  locationId: string
+  patients: Array<{ expectedRevision: number; profileId: string }>
+  visitDate: string
+  visitTypeId: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    '/api/sim/v1/synthetic-patients/actions/start-outpatient-visits',
+    commandResponseSchema(startSyntheticPatientVisitsResultSchema),
+    input,
+    { idempotencyKey },
+  )
+}
+
+export function updateScenarioDataset(dataset: ScenarioDataset, idempotencyKey: string) {
+  return apiMutation(
+    `/api/sim/v1/scenario-datasets/${encodeURIComponent(dataset.datasetId)}`,
+    commandResponseSchema(scenarioDatasetSchema),
+    {
+      expectedVersion: dataset.version,
+      input: { content: dataset.content, name: dataset.name },
+    },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function deleteScenarioDataset(
+  datasetId: string,
+  expectedVersion: number,
+  idempotencyKey: string,
+) {
+  return apiMutation(
+    `/api/sim/v1/scenario-datasets/${encodeURIComponent(datasetId)}`,
+    commandResponseSchema(z.object({
+      datasetId: z.string().min(1),
+      deleted: z.literal(true),
+    }).strict()),
+    { expectedVersion },
+    { idempotencyKey, method: 'DELETE' },
+  )
+}
+
+export function installScenarioDataset(
+  datasetId: string,
+  expectedVersion: number,
+  idempotencyKey: string,
+) {
+  return apiMutation(
+    `/api/sim/v1/scenario-datasets/${encodeURIComponent(datasetId)}/actions/install`,
+    commandResponseSchema(z.object({
+      packageId: z.string().min(1),
+      scenario: scenarioStateSchema,
+    }).strict()),
+    { expectedVersion },
     { idempotencyKey },
   )
 }

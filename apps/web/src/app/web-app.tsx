@@ -36,7 +36,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import { CircleAlertIcon, LogInIcon } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import {
   applyResolvedWebTheme,
   readWebPreferences,
@@ -98,7 +98,7 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
     const roleSection = roleSections[roleCode]
     if (
       activeSection === roleSection
-      || (roleCode === 'administrator' && activeSection === 'overview')
+      || (roleCode === 'administrator' && (activeSection === 'overview' || activeSection === 'scenarioData'))
     ) return
     const roleRoute = workspaceRoutes.find(route => route.key === roleSection)
     void navigate({ replace: true, to: roleRoute?.path ?? '/' })
@@ -153,7 +153,9 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
   const effectiveSection = isSettingsSection(activeSection)
     ? activeSection
     : activeSection === roleSection
-      || (session.data.actor.roleCode === 'administrator' && activeSection === 'overview')
+      || (session.data.actor.roleCode === 'administrator' && (
+        activeSection === 'overview' || activeSection === 'scenarioData'
+      ))
       ? activeSection
       : roleSection
 
@@ -300,7 +302,48 @@ const componentCatalogRoute = createRoute({
   path: '/components',
 })
 
-const routeTree = rootRoute.addChildren([...routes, ...settingsRouteTree, componentCatalogRoute])
+const UiDevPage = import.meta.env.DEV
+  ? lazy(async () => {
+      const module = await import('../ui-dev/ui-dev-page.tsx')
+      return { default: module.UiDevPage }
+    })
+  : () => null
+
+const DataGenerationLabPage = import.meta.env.DEV
+  ? lazy(async () => {
+      const module = await import('../ui-dev/data-generation-lab-page.tsx')
+      return { default: module.DataGenerationLabPage }
+    })
+  : () => null
+
+const developmentRoutes = import.meta.env.DEV
+  ? [
+      createRoute({
+        component: () => (
+          <Suspense fallback={<main aria-label="正在加载 UI Lab" className="min-h-svh bg-muted/30" />}>
+            <UiDevPage />
+          </Suspense>
+        ),
+        getParentRoute: () => rootRoute,
+        path: '/ui-dev',
+      }),
+      createRoute({
+        component: () => (
+          <Suspense fallback={<main aria-label="正在加载合成患者库 UI Lab" className="min-h-svh bg-muted/30" />}>
+            <DataGenerationLabPage />
+          </Suspense>
+        ),
+        getParentRoute: () => rootRoute,
+        path: '/ui-dev/data-generation',
+      }),
+    ]
+  : []
+const routeTree = rootRoute.addChildren([
+  ...routes,
+  ...settingsRouteTree,
+  componentCatalogRoute,
+  ...developmentRoutes,
+])
 
 export function createWebRouter(): ReturnType<typeof createRouter<typeof routeTree>> {
   return createRouter({ routeTree })

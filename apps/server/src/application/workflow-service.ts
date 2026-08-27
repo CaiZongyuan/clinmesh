@@ -2,6 +2,13 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes }
 import { v7 as uuidv7 } from 'uuid'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
 import {
+  scenarioDatasetContentSchema,
+  type ScenarioDatasetContent,
+  startSyntheticPatientVisitsResultSchema,
+  syntheticPatientMappingCatalogSchema,
+  type SyntheticPatientProfile,
+} from '@clinmesh/contracts/scenario'
+import {
   acknowledgeLaboratoryReportResponseSchema,
   type ApiConflict,
   askConsultationQuestionResponseSchema,
@@ -67,6 +74,14 @@ import {
   ExpectedVersionConflictError,
   provenanceAgents,
 } from './command-executor.ts'
+import {
+  resolveScenarioInvestigation,
+  type ScenarioInvestigationResolution,
+} from './scenario-data/scenario-investigation-resolver.ts'
+import {
+  materializeScenarioPatientFhirHistory,
+  namespacedHistoryResourceId,
+} from './scenario-data/scenario-patient-fhir-history.ts'
 
 export class WorkflowError extends Error {
   readonly code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
@@ -312,7 +327,7 @@ const triageRecordContentSchema = z.object({
   temperatureC: z.number(),
 })
 
-const countRowSchema = z.object({ count: z.number().int().nonnegative() })
+const countRowSchema = z.object({ count: z.number().int().nonnegative() }).strict()
 
 const virtualPatientRowSchema = z.object({
   available: z.union([z.literal(0), z.literal(1)]),
@@ -328,7 +343,7 @@ const virtualPatientListRowSchema = virtualPatientRowSchema.extend({
 
 const consultationStateRowSchema = z.object({
   version: z.number().int().positive(),
-  virtual_patient_id: z.string().min(1),
+  virtual_patient_id: z.string().min(1).nullable(),
 })
 
 const consultationQuestionRowSchema = z.object({
@@ -341,6 +356,7 @@ const consultationQuestionRuleRowSchema = consultationQuestionRowSchema.extend({
   fact_code: z.string().min(1).nullable(),
   revealed_answer_text: z.string().min(1).nullable(),
   rule_version: z.number().int().positive(),
+  second_ask_answer_text: z.string().min(1).nullable(),
 }).refine(
   row => (row.fact_code === null) === (row.revealed_answer_text === null),
   { message: 'Consultation question reveal fields must be present together' },
@@ -411,6 +427,53 @@ const laboratoryResultsFactSchema = z.object({
     results: z.array(laboratoryResultMeasurementSchema).min(1),
   }).strict(),
 }).strict()
+
+function ucumCode(unit: string): string {
+  return unit
+    .replace('10^9', '10*9')
+    .replace('10^12', '10*12')
+    .replace('μmol', 'umol')
+}
+
+function scenarioLaboratoryResultFact(
+  content: ScenarioDatasetContent,
+  resolution: ScenarioInvestigationResolution,
+) {
+  const results = (resolution.components ?? [resolution]).map((component) => {
+    if (component.result.outcome !== 'reported') {
+      throw new Error(`Investigation ${component.itemId} did not produce a laboratory result`)
+    }
+    const catalogItem = content.catalog.investigations.find(item => item.id === component.itemId)
+    if (catalogItem === undefined) throw new Error(`Investigation ${component.itemId} was not found`)
+    const referenceRange = catalogItem.referenceRanges.find(
+      range => range.appliesToGender === 'any',
+    ) ?? catalogItem.referenceRanges[0]
+    if (referenceRange === undefined) {
+      throw new Error(`Investigation ${component.itemId} has no reference range`)
+    }
+    return {
+      code: catalogItem.code,
+      display: catalogItem.name,
+      interpretation: component.result.flag === 'H'
+        ? 'high'
+        : component.result.flag === 'L' ? 'low' : 'normal',
+      referenceRange: {
+        ...(referenceRange.maximum === undefined ? {} : { high: referenceRange.maximum }),
+        ...(referenceRange.minimum === undefined ? {} : { low: referenceRange.minimum }),
+        text: referenceRange.text,
+      },
+      ...(catalogItem.unit === undefined ? {} : {
+        unit: {
+          code: ucumCode(catalogItem.unit),
+          display: catalogItem.unit,
+          system: 'http://unitsofmeasure.org' as const,
+        },
+      }),
+      value: component.result.value,
+    }
+  })
+  return { conclusion: resolution.report, results }
+}
 
 const laboratoryRequestStateRowSchema = z.object({
   draft_catalog_item_id: laboratoryRequestSchema.shape.catalogItemId.nullable(),
@@ -603,18 +666,24 @@ const laboratoryObservationContentSchema = z.object({
     coding: z.array(z.object({ code: z.enum(['N', 'H', 'L']) }).loose()).min(1),
   }).loose()).min(1),
   referenceRange: z.array(z.object({
-    high: z.object({ value: z.number().finite() }).loose(),
-    low: z.object({ value: z.number().finite() }).loose(),
+    high: z.object({ value: z.number().finite() }).loose().optional(),
+    low: z.object({ value: z.number().finite() }).loose().optional(),
     text: z.string().min(1),
   }).loose()).min(1),
   specimen: z.object({ reference: z.string().min(1) }).loose(),
+  valueBoolean: z.boolean().optional(),
   valueQuantity: z.object({
     code: z.string().min(1),
     system: z.literal('http://unitsofmeasure.org'),
     unit: z.string().min(1),
     value: z.number().finite(),
-  }).loose(),
-}).loose()
+  }).loose().optional(),
+  valueString: z.string().min(1).optional(),
+}).loose().refine(value => (
+  Number(value.valueBoolean !== undefined)
+  + Number(value.valueQuantity !== undefined)
+  + Number(value.valueString !== undefined)
+) === 1, { message: 'Laboratory Observation must contain exactly one supported value' })
 
 const lisOrderDataSchema = z.object({
   diagnosticReportId: z.string().min(1),
@@ -1046,7 +1115,7 @@ export class WorkflowService {
   }
 
   registrationCatalog(context: ActorContext) {
-    this.#assertRole(context, ['registrar'])
+    this.#assertRole(context, ['administrator', 'registrar'])
     const rows = this.#database.driver.prepare(`
       SELECT item_id, name_zh, name_en, price_fen, version, kind
       FROM outpatient_catalog
@@ -1170,6 +1239,65 @@ export class WorkflowService {
       }),
       prescriptionConclusionSupported: true as const,
     }
+  }
+
+  syntheticPatientMappingCatalog(context: ActorContext) {
+    this.#assertRole(context, ['administrator'])
+    const diagnosisItems = this.#database.driver.prepare(`
+        SELECT code, code_system, item_id, name_en, name_zh, version
+        FROM diagnosis_catalog
+        WHERE workspace_id = ? AND epoch = ? AND active = 1
+        ORDER BY item_id
+      `).all(context.workspaceId, context.epoch) as Array<{
+        code: string
+        code_system: string
+        item_id: string
+        name_en: string
+        name_zh: string
+        version: number
+      }>
+    const clinicalItems = this.#database.driver.prepare(`
+      SELECT code, item_id, kind, name_en, name_zh, version
+      FROM outpatient_catalog
+      WHERE workspace_id = ? AND epoch = ? AND active = 1
+        AND kind IN ('laboratory', 'medication')
+      ORDER BY kind, item_id
+    `).all(context.workspaceId, context.epoch) as Array<{
+      code: string
+      item_id: string
+      kind: 'laboratory' | 'medication'
+      name_en: string
+      name_zh: string
+      version: number
+    }>
+    return syntheticPatientMappingCatalogSchema.parse({
+      items: [{
+        catalogItemId: 'encounter-class-ambulatory',
+        code: 'AMB',
+        nameEn: 'Ambulatory encounter',
+        nameZh: '门诊就诊',
+        sourceResourceType: 'Encounter',
+        system: 'http://terminology.hl7.org/CodeSystem/v3-ActCode',
+        version: 1,
+      }, ...diagnosisItems.map(item => ({
+        catalogItemId: item.item_id,
+        code: item.code,
+        nameEn: item.name_en,
+        nameZh: item.name_zh,
+        sourceResourceType: 'Condition' as const,
+        system: item.code_system,
+        version: item.version,
+      })), ...clinicalItems.map(item => ({
+        catalogItemId: item.item_id,
+        code: item.code,
+        nameEn: item.name_en,
+        nameZh: item.name_zh,
+        sourceResourceType: item.kind === 'laboratory'
+          ? 'Observation' as const
+          : 'MedicationRequest' as const,
+        version: item.version,
+      }))],
+    })
   }
 
   registrationQueue(context: ActorContext, pageSize: number, page = 1) {
@@ -1398,154 +1526,346 @@ export class WorkflowService {
     }, transaction => {
       this.#assertRole(input.context, ['registrar'])
       this.#assertExpectedVersions(input.expectedVersions, [`Patient/${input.registration.patientId}`])
-      const patient = transaction.fhir.read(input.context, 'Patient', input.registration.patientId)
-      const department = this.#catalogItem(input.context, input.registration.departmentId, 'department')
-      const location = transaction.fhir.read(input.context, 'Location', input.registration.locationId)
-      if (!this.#isRegistrationLocation(location)) {
-        throw new WorkflowError('CATALOG_CONFLICT', 'The selected registration location is unavailable')
-      }
-      const visitType = this.#catalogItem(input.context, input.registration.visitTypeId, 'visit-type')
-      if (input.registration.visitDate !== this.#virtualTime(input.context).slice(0, 10)) {
-        throw new WorkflowError('CATALOG_CONFLICT', 'The visit date is outside the active virtual date')
-      }
-      if (this.#activeCaseByPatient(input.context, patient.id) !== undefined) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The patient already has an active outpatient case')
-      }
-      const caseId = uuidv7()
-      const registrationId = uuidv7()
-      const encounterId = uuidv7()
-      const queueTaskId = uuidv7()
-      const accountId = uuidv7()
-      const chargeItemId = uuidv7()
-      const chargeId = uuidv7()
-      const now = this.#virtualTime(input.context)
-      const count = (this.#database.driver.prepare(`
-        SELECT COUNT(*) AS count FROM registration
-        WHERE workspace_id = ? AND epoch = ?
-      `).get(input.context.workspaceId, input.context.epoch) as { count: number }).count + 1
-      const registrationNumber = `CM-OP-${input.registration.visitDate.replaceAll('-', '')}-${String(count).padStart(4, '0')}`
-      const encounter = transaction.fhir.create(input.context, {
-        resourceType: 'Encounter',
-        id: encounterId,
-        identifier: [{
-          system: 'https://caizongyuan.github.io/clinmesh/fhir/outpatient-encounter',
-          value: registrationNumber,
-        }],
-        status: 'planned',
-        class: [{
-          coding: [{ code: 'AMB', display: 'ambulatory', system: 'http://terminology.hl7.org/CodeSystem/v3-ActCode' }],
-        }],
-        subject: { reference: `Patient/${patient.id}` },
-        serviceProvider: { reference: 'Organization/organization-clinmesh' },
-        location: [{ location: { reference: `Location/${location.id}` }, status: 'active' }],
-        actualPeriod: { start: now },
+      return this.#registerPatient(transaction, input.context, input.registration)
+    })
+  }
+
+  startSyntheticPatientVisits(input: {
+    context: ActorContext
+    departmentId: string
+    idempotencyKey: string
+    locationId: string
+    profiles: Array<{ expectedRevision: number; profile: SyntheticPatientProfile }>
+    visitDate: string
+    visitTypeId: string
+  }) {
+    return this.#commands.execute({
+      context: input.context,
+      contextRequirement: 'current',
+      dataSchema: startSyntheticPatientVisitsResultSchema,
+      expectedVersions: {},
+      idempotencyKey: input.idempotencyKey,
+      input: {
+        departmentId: input.departmentId,
+        locationId: input.locationId,
+        patients: input.profiles.map(item => ({
+          expectedRevision: item.expectedRevision,
+          profileId: item.profile.profileId,
+        })),
+        visitDate: input.visitDate,
+        visitTypeId: input.visitTypeId,
+      },
+      operation: 'synthetic-patient-profile.start-outpatient-visits',
+    }, transaction => {
+      this.#assertRole(input.context, ['administrator'])
+      const effects: CommandEffect[] = []
+      const items = input.profiles.map(({ expectedRevision, profile }) => {
+        const current = this.#database.driver.prepare(`
+          SELECT revision
+          FROM synthetic_patient_profile
+          WHERE workspace_id = ? AND profile_id = ?
+        `).get(input.context.workspaceId, profile.profileId) as { revision: number } | undefined
+        if (current === undefined || current.revision !== expectedRevision) {
+          throw new WorkflowError(
+            'WORKFLOW_CONFLICT',
+            'The Synthetic Patient Profile changed after it was selected',
+          )
+        }
+        const activeVisit = this.#database.driver.prepare(`
+          SELECT 1
+          FROM synthetic_patient_materialization AS materialization
+          JOIN outpatient_case AS outpatient
+            ON outpatient.workspace_id = materialization.workspace_id
+           AND outpatient.epoch = materialization.epoch
+           AND outpatient.patient_id = materialization.patient_id
+          WHERE materialization.workspace_id = ?
+            AND materialization.epoch = ?
+            AND materialization.profile_id = ?
+            AND outpatient.status != 'completed'
+          LIMIT 1
+        `).get(
+          input.context.workspaceId,
+          input.context.epoch,
+          profile.profileId,
+        )
+        if (activeVisit !== undefined) {
+          throw new WorkflowError(
+            'WORKFLOW_CONFLICT',
+            'The Synthetic Patient Profile already has an active outpatient case',
+          )
+        }
+        const materialized = this.#database.driver.prepare(`
+          SELECT patient_id, profile_revision
+          FROM synthetic_patient_materialization
+          WHERE workspace_id = ? AND epoch = ? AND profile_id = ? AND profile_revision = ?
+        `).get(
+          input.context.workspaceId,
+          input.context.epoch,
+          profile.profileId,
+          profile.revision,
+        ) as { patient_id: string; profile_revision: number } | undefined
+        const previousMaterialization = this.#database.driver.prepare(`
+          SELECT patient_id
+          FROM synthetic_patient_materialization
+          WHERE workspace_id = ? AND epoch = ? AND profile_id = ?
+          ORDER BY profile_revision DESC
+          LIMIT 1
+        `).get(
+          input.context.workspaceId,
+          input.context.epoch,
+          profile.profileId,
+        ) as { patient_id: string } | undefined
+        let patientId: string
+        if (materialized === undefined) {
+          const patient = transaction.fhir.create(input.context, {
+            active: true,
+            address: [{ text: profile.identity.address }],
+            birthDate: profile.patient.birthDate,
+            extension: [{
+              url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/synthetic-data',
+              valueBoolean: true,
+            }, {
+              url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/synthetic-profile',
+              valueString: profile.profileId,
+            }],
+            gender: profile.patient.gender,
+            id: uuidv7(),
+            identifier: [{
+              system: 'https://caizongyuan.github.io/clinmesh/fhir/synthetic-patient-id',
+              value: profile.identity.mrn,
+            }, {
+              system: 'urn:oid:1.2.156.112605.1.1',
+              value: profile.identity.nationalId,
+            }],
+            name: [{ text: profile.identity.displayName }],
+            ...(previousMaterialization === undefined
+              ? {}
+              : {
+                  link: [{
+                    other: { reference: `Patient/${previousMaterialization.patient_id}` },
+                    type: 'seealso',
+                  }],
+                }),
+            resourceType: 'Patient',
+            telecom: [{ system: 'phone', value: profile.identity.phone }, {
+              system: 'email', value: profile.identity.email,
+            }],
+          })
+          patientId = patient.id
+          this.#database.driver.prepare(`
+            INSERT INTO synthetic_patient_materialization (
+              workspace_id, epoch, profile_id, patient_id, profile_revision, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+          `).run(
+            input.context.workspaceId,
+            input.context.epoch,
+            profile.profileId,
+            patientId,
+            profile.revision,
+            this.#virtualTime(input.context),
+          )
+          effects.push({
+            kind: 'created',
+            reference: `Patient/${patientId}`,
+            versionId: patient.meta?.versionId ?? '1',
+          })
+          effects.push(...materializeScenarioPatientFhirHistory({
+            context: input.context,
+            fhir: transaction.fhir,
+            history: profile.patient.fhirHistory,
+            patientId,
+            resourceId: sourceId => namespacedHistoryResourceId(patientId, sourceId),
+          }).map(resource => ({
+            kind: 'created' as const,
+            reference: `${resource.resourceType}/${resource.id}`,
+            versionId: resource.meta?.versionId ?? '1',
+          })))
+        } else {
+          patientId = materialized.patient_id
+          transaction.fhir.read(input.context, 'Patient', patientId)
+        }
+        const registered = this.#registerPatient(transaction, input.context, {
+          createConsultation: true,
+          departmentId: input.departmentId,
+          locationId: input.locationId,
+          patientId,
+          visitDate: input.visitDate,
+          visitTypeId: input.visitTypeId,
+        })
+        effects.push(...registered.effects)
+        return {
+          encounterId: registered.data.encounterId,
+          patientId,
+          profileId: profile.profileId,
+          queueTaskId: registered.data.queueTaskId,
+          registrationId: registered.data.registrationId,
+          status: 'awaiting-triage' as const,
+        }
       })
-      const task = transaction.fhir.create(input.context, {
-        resourceType: 'Task',
-        id: queueTaskId,
-        status: 'requested',
-        intent: 'order',
-        code: { text: 'Outpatient triage' },
-        for: { reference: `Patient/${patient.id}` },
-        focus: { reference: `Encounter/${encounterId}` },
-        owner: { reference: 'PractitionerRole/practitioner-role-triage-nurse' },
-        authoredOn: now,
-      })
-      const account = transaction.fhir.create(input.context, {
-        resourceType: 'Account',
-        id: accountId,
-        status: 'active',
-        subject: [{ reference: `Patient/${patient.id}` }],
-        servicePeriod: { start: now },
-      })
-      const chargeItem = transaction.fhir.create(input.context, {
-        resourceType: 'ChargeItem',
-        id: chargeItemId,
-        status: 'billable',
-        code: { text: visitType.name_zh },
-        subject: { reference: `Patient/${patient.id}` },
-        encounter: { reference: `Encounter/${encounterId}` },
-        account: [{ reference: `Account/${accountId}` }],
-        occurrenceDateTime: now,
-        quantity: { value: 1 },
-        unitPriceComponent: { amount: { currency: 'CNY', value: visitType.price_fen / 100 } },
-      })
-      this.#database.driver.prepare(`
-        INSERT INTO outpatient_case (
-          workspace_id, epoch, case_id, scenario_run_id, patient_id,
-          registration_id, encounter_id, account_id, department_id, location_id,
-          initial_task_id, status, arrived_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting-triage', ?, ?)
-      `).run(
-        input.context.workspaceId,
-        input.context.epoch,
-        caseId,
-        input.context.scenarioRunId,
-        patient.id,
-        registrationId,
-        encounterId,
-        accountId,
-        department.item_id,
-        location.id,
-        queueTaskId,
-        now,
-        now,
-      )
-      this.#database.driver.prepare(`
-        INSERT INTO registration (
-          workspace_id, epoch, registration_id, case_id, registration_number,
-          patient_id, encounter_id, visit_type_id, visit_date, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'registered', ?)
-      `).run(
-        input.context.workspaceId,
-        input.context.epoch,
-        registrationId,
-        caseId,
-        registrationNumber,
-        patient.id,
-        encounterId,
-        visitType.item_id,
-        input.registration.visitDate,
-        now,
-      )
-      this.#database.driver.prepare(`
-        INSERT INTO charge_record (
-          workspace_id, epoch, charge_id, case_id, account_id, charge_item_id,
-          category, source_reference, description_zh, description_en,
-          quantity, unit_price_fen, total_fen, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'registration', ?, ?, ?, 1, ?, ?, 'billable', ?)
-      `).run(
-        input.context.workspaceId,
-        input.context.epoch,
-        chargeId,
-        caseId,
+      return { data: { items }, effects }
+    })
+  }
+
+  #registerPatient(
+    transaction: CommandTransaction,
+    context: ActorContext,
+    registration: {
+      createConsultation?: boolean
+      departmentId: string
+      locationId: string
+      patientId: string
+      visitDate: string
+      visitTypeId: string
+    },
+  ) {
+    const patient = transaction.fhir.read(context, 'Patient', registration.patientId)
+    const department = this.#catalogItem(context, registration.departmentId, 'department')
+    const location = transaction.fhir.read(context, 'Location', registration.locationId)
+    if (!this.#isRegistrationLocation(location)) {
+      throw new WorkflowError('CATALOG_CONFLICT', 'The selected registration location is unavailable')
+    }
+    const visitType = this.#catalogItem(context, registration.visitTypeId, 'visit-type')
+    if (registration.visitDate !== this.#virtualTime(context).slice(0, 10)) {
+      throw new WorkflowError('CATALOG_CONFLICT', 'The visit date is outside the active virtual date')
+    }
+    if (this.#activeCaseByPatient(context, patient.id) !== undefined) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The patient already has an active outpatient case')
+    }
+    const caseId = uuidv7()
+    const registrationId = uuidv7()
+    const encounterId = uuidv7()
+    const queueTaskId = uuidv7()
+    const accountId = uuidv7()
+    const chargeItemId = uuidv7()
+    const chargeId = uuidv7()
+    const now = this.#virtualTime(context)
+    const count = (this.#database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM registration
+      WHERE workspace_id = ? AND epoch = ?
+    `).get(context.workspaceId, context.epoch) as { count: number }).count + 1
+    const registrationNumber = `CM-OP-${registration.visitDate.replaceAll('-', '')}-${String(count).padStart(4, '0')}`
+    const encounter = transaction.fhir.create(context, {
+      resourceType: 'Encounter',
+      id: encounterId,
+      identifier: [{
+        system: 'https://caizongyuan.github.io/clinmesh/fhir/outpatient-encounter',
+        value: registrationNumber,
+      }],
+      status: 'planned',
+      class: [{
+        coding: [{ code: 'AMB', display: 'ambulatory', system: 'http://terminology.hl7.org/CodeSystem/v3-ActCode' }],
+      }],
+      subject: { reference: `Patient/${patient.id}` },
+      serviceProvider: { reference: 'Organization/organization-clinmesh' },
+      location: [{ location: { reference: `Location/${location.id}` }, status: 'active' }],
+      actualPeriod: { start: now },
+    })
+    const task = transaction.fhir.create(context, {
+      resourceType: 'Task',
+      id: queueTaskId,
+      status: 'requested',
+      intent: 'order',
+      code: { text: 'Outpatient triage' },
+      for: { reference: `Patient/${patient.id}` },
+      focus: { reference: `Encounter/${encounterId}` },
+      owner: { reference: 'PractitionerRole/practitioner-role-triage-nurse' },
+      authoredOn: now,
+    })
+    const account = transaction.fhir.create(context, {
+      resourceType: 'Account',
+      id: accountId,
+      status: 'active',
+      subject: [{ reference: `Patient/${patient.id}` }],
+      servicePeriod: { start: now },
+    })
+    const chargeItem = transaction.fhir.create(context, {
+      resourceType: 'ChargeItem',
+      id: chargeItemId,
+      status: 'billable',
+      code: { text: visitType.name_zh },
+      subject: { reference: `Patient/${patient.id}` },
+      encounter: { reference: `Encounter/${encounterId}` },
+      account: [{ reference: `Account/${accountId}` }],
+      occurrenceDateTime: now,
+      quantity: { value: 1 },
+      unitPriceComponent: { amount: { currency: 'CNY', value: visitType.price_fen / 100 } },
+    })
+    this.#database.driver.prepare(`
+      INSERT INTO outpatient_case (
+        workspace_id, epoch, case_id, scenario_run_id, patient_id,
+        registration_id, encounter_id, account_id, department_id, location_id,
+        initial_task_id, status, arrived_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting-triage', ?, ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      caseId,
+      context.scenarioRunId,
+      patient.id,
+      registrationId,
+      encounterId,
+      accountId,
+      department.item_id,
+      location.id,
+      queueTaskId,
+      now,
+      now,
+    )
+    if (registration.createConsultation === true) this.#createConsultation(context, caseId)
+    this.#database.driver.prepare(`
+      INSERT INTO registration (
+        workspace_id, epoch, registration_id, case_id, registration_number,
+        patient_id, encounter_id, visit_type_id, visit_date, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'registered', ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      registrationId,
+      caseId,
+      registrationNumber,
+      patient.id,
+      encounterId,
+      visitType.item_id,
+      registration.visitDate,
+      now,
+    )
+    this.#database.driver.prepare(`
+      INSERT INTO charge_record (
+        workspace_id, epoch, charge_id, case_id, account_id, charge_item_id,
+        category, source_reference, description_zh, description_en,
+        quantity, unit_price_fen, total_fen, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'registration', ?, ?, ?, 1, ?, ?, 'billable', ?)
+    `).run(
+      context.workspaceId,
+      context.epoch,
+      chargeId,
+      caseId,
+      accountId,
+      chargeItemId,
+      `Registration/${registrationId}`,
+      visitType.name_zh,
+      visitType.name_en,
+      visitType.price_fen,
+      visitType.price_fen,
+      now,
+    )
+    return {
+      data: {
         accountId,
         chargeItemId,
-        `Registration/${registrationId}`,
-        visitType.name_zh,
-        visitType.name_en,
-        visitType.price_fen,
-        visitType.price_fen,
-        now,
-      )
-      return {
-        data: {
-          accountId,
-          chargeItemId,
-          encounterId,
-          patientId: patient.id,
-          queueTaskId,
-          registrationId,
-          status: 'awaiting-triage' as const,
-          totalFen: visitType.price_fen,
-        },
-        effects: [encounter, task, account, chargeItem].map(resource => ({
-          kind: 'created' as const,
-          reference: `${resource.resourceType}/${resource.id}`,
-          versionId: resource.meta?.versionId ?? '1',
-        })),
-      }
-    })
+        encounterId,
+        patientId: patient.id,
+        queueTaskId,
+        registrationId,
+        status: 'awaiting-triage' as const,
+        totalFen: visitType.price_fen,
+      },
+      effects: [encounter, task, account, chargeItem].map(resource => ({
+        kind: 'created' as const,
+        reference: `${resource.resourceType}/${resource.id}`,
+        versionId: resource.meta?.versionId ?? '1',
+      })),
+    }
   }
 
   triageQueue(
@@ -2327,10 +2647,7 @@ export class WorkflowService {
           workspace_id, epoch, virtual_patient_id, case_id
         ) VALUES (?, ?, ?, ?)
       `).run(input.context.workspaceId, input.context.epoch, virtualPatient.virtual_patient_id, intake.caseId)
-      this.#database.driver.prepare(`
-        INSERT INTO consultation (workspace_id, epoch, case_id, version)
-        VALUES (?, ?, ?, 1)
-      `).run(input.context.workspaceId, input.context.epoch, intake.caseId)
+      this.#createConsultation(input.context, intake.caseId)
       const update = this.#database.driver.prepare(`
         UPDATE virtual_patient
         SET available = 0, version = version + 1
@@ -2793,10 +3110,16 @@ export class WorkflowService {
       if (state.version !== input.expectedVersion) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Consultation Record version has changed')
       }
+      if (state.virtual_patient_id === null) {
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          'The Consultation has no scripted patient questions',
+        )
+      }
       const question = consultationQuestionRuleRowSchema.optional().parse(
         this.#database.driver.prepare(`
           SELECT question_code, question_text, answer_text, rule_version,
-            fact_code, revealed_answer_text
+            fact_code, revealed_answer_text, second_ask_answer_text
           FROM virtual_patient_question_rule
           WHERE workspace_id = ? AND epoch = ? AND virtual_patient_id = ?
             AND question_code = ?
@@ -2810,7 +3133,7 @@ export class WorkflowService {
       if (question === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The consultation question is unavailable')
       }
-      const answer = this.#consultationAnswer(input.context, question)
+      const answer = this.#consultationAnswer(input.context, outpatientCase.case_id, question)
       const recordId = uuidv7()
       const recordedAt = this.#virtualTime(input.context)
       const sequence = state.version
@@ -5919,7 +6242,7 @@ export class WorkflowService {
       const duplicate = this.#database.driver.prepare(`
         SELECT request_id FROM laboratory_request
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-          AND catalog_item_id = ? AND status <> 'cancelled'
+          AND catalog_item_id = ? AND status IN ('issued', 'accepted', 'in-progress')
       `).get(
         input.context.workspaceId,
         input.context.epoch,
@@ -6389,16 +6712,36 @@ export class WorkflowService {
           'Only an in-progress laboratory request can be reported',
         )
       }
-      const hiddenFact = this.#database.driver.prepare(`
-        SELECT value_json FROM scenario_hidden_fact
-        WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
-      `).get(input.context.workspaceId, input.context.epoch) as { value_json: string } | undefined
-      if (hiddenFact === undefined) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory result fact is unavailable')
-      }
-      const laboratoryResultFact = laboratoryResultsFactSchema.parse(JSON.parse(hiddenFact.value_json))[
-        request.catalog_item_id
-      ]
+      const scenarioContent = this.#activeScenarioDataset(input.context)
+      const repeatIndex = scenarioContent === undefined
+        ? 0
+        : countRowSchema.parse(this.#database.driver.prepare(`
+          SELECT COUNT(*) AS count FROM laboratory_request
+          WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+            AND catalog_item_id = ? AND reported_at IS NOT NULL
+        `).get(
+          input.context.workspaceId,
+          input.context.epoch,
+          request.case_id,
+          request.catalog_item_id,
+        )).count
+      const scenarioResult = scenarioContent === undefined
+        ? undefined
+        : {
+            content: scenarioContent,
+            resolution: resolveScenarioInvestigation({
+              catalogItemId: request.catalog_item_id,
+              content: scenarioContent,
+              indicationCode: request.indication_code,
+              patientId: request.patient_id,
+              repeatIndex,
+              scenarioRunId: input.context.scenarioRunId,
+            }),
+          }
+      const scenarioResolution = scenarioResult?.resolution
+      const laboratoryResultFact = scenarioResult === undefined
+        ? this.#legacyLaboratoryResultFact(input.context, request.catalog_item_id)
+        : scenarioLaboratoryResultFact(scenarioResult.content, scenarioResult.resolution)
       const serviceRequest = transaction.fhir.read(
         input.context,
         'ServiceRequest',
@@ -6437,6 +6780,20 @@ export class WorkflowService {
         const interpretationCode = result.interpretation === 'normal'
           ? 'N'
           : result.interpretation === 'high' ? 'H' : 'L'
+        const value = typeof result.value === 'number'
+          ? result.unit === undefined
+            ? { valueQuantity: { value: result.value } }
+            : {
+                valueQuantity: {
+                  code: result.unit.code,
+                  system: result.unit.system,
+                  unit: result.unit.display,
+                  value: result.value,
+                },
+              }
+          : typeof result.value === 'boolean'
+            ? { valueBoolean: result.value }
+            : { valueString: result.value }
         return transaction.fhir.create(input.context, {
           resourceType: 'Observation',
           id: observationId,
@@ -6457,25 +6814,28 @@ export class WorkflowService {
           specimen: { reference: `Specimen/${specimenId}` },
           effectiveDateTime: now,
           issued: now,
-          valueQuantity: {
-            code: result.unit.code,
-            system: result.unit.system,
-            unit: result.unit.display,
-            value: result.value,
-          },
+          ...value,
           referenceRange: [{
-            low: {
-              code: result.unit.code,
-              system: result.unit.system,
-              unit: result.unit.display,
-              value: result.referenceRange.low,
-            },
-            high: {
-              code: result.unit.code,
-              system: result.unit.system,
-              unit: result.unit.display,
-              value: result.referenceRange.high,
-            },
+            ...(result.referenceRange.low === undefined ? {} : {
+              low: {
+                ...(result.unit === undefined ? {} : {
+                  code: result.unit.code,
+                  system: result.unit.system,
+                  unit: result.unit.display,
+                }),
+                value: result.referenceRange.low,
+              },
+            }),
+            ...(result.referenceRange.high === undefined ? {} : {
+              high: {
+                ...(result.unit === undefined ? {} : {
+                  code: result.unit.code,
+                  system: result.unit.system,
+                  unit: result.unit.display,
+                }),
+                value: result.referenceRange.high,
+              },
+            }),
             text: result.referenceRange.text,
           }],
           interpretation: [{
@@ -6486,14 +6846,42 @@ export class WorkflowService {
           }],
         })
       })
-      const reportName = request.catalog_item_id === 'lab-cbc' ? '血常规报告' : 'C 反应蛋白报告'
+      const reportName = scenarioResolution === undefined
+        ? request.catalog_item_id === 'lab-cbc' ? '血常规报告' : 'C 反应蛋白报告'
+        : `${scenarioResolution.name}报告`
       const report = transaction.fhir.create(input.context, {
         resourceType: 'DiagnosticReport',
         id: diagnosticReportId,
         status: 'final',
+        ...(scenarioResolution === undefined ? {} : {
+          extension: [
+            {
+              url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/investigation-source-level',
+              valueCode: scenarioResolution.sourceLevel,
+            },
+            {
+              url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/investigation-tat-minutes',
+              valueInteger: scenarioResolution.tatMinutes,
+            },
+            {
+              url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/investigation-fee',
+              valueMoney: { currency: 'CNY', value: scenarioResolution.feeFen / 100 },
+            },
+            {
+              url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/investigation-critical',
+              valueBoolean: scenarioResolution.critical,
+            },
+            ...scenarioResolution.diagnostics.map(diagnostic => ({
+              url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/investigation-diagnostic',
+              valueCode: diagnostic,
+            })),
+          ],
+        }),
         code: {
           coding: [{
-            code: request.catalog_item_id === 'lab-cbc' ? 'CBC' : 'CRP',
+            code: scenarioContent?.catalog.investigations.find(
+              item => item.id === request.catalog_item_id,
+            )?.code ?? (request.catalog_item_id === 'lab-cbc' ? 'CBC' : 'CRP'),
             display: reportName,
             system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-service',
           }],
@@ -6870,16 +7258,21 @@ export class WorkflowService {
       const observations = sourceObservations.map((source) => {
         const code = source.content.code.coding[0]?.code
         const referenceRange = source.content.referenceRange[0]
-        if (code === undefined || referenceRange === undefined) {
+        if (
+          code === undefined
+          || referenceRange === undefined
+          || source.content.valueQuantity === undefined
+          || (referenceRange.low === undefined && referenceRange.high === undefined)
+        ) {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory result is incomplete')
         }
         const value = corrections.get(code)
         if (value === undefined) {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory result correction is incomplete')
         }
-        const interpretation = value < referenceRange.low.value
+        const interpretation = referenceRange.low !== undefined && value < referenceRange.low.value
           ? 'L'
-          : value > referenceRange.high.value ? 'H' : 'N'
+          : referenceRange.high !== undefined && value > referenceRange.high.value ? 'H' : 'N'
         const content = Object.fromEntries(Object.entries(source.resource).filter(
           ([key]) => key !== 'id' && key !== 'meta',
         ))
@@ -8740,14 +9133,16 @@ export class WorkflowService {
   #consultationDetail(context: ActorContext, caseId: string) {
     const state = this.#consultationState(context, caseId)
     if (state === undefined) return undefined
-    const questions = z.array(consultationQuestionRowSchema).parse(
-      this.#database.driver.prepare(`
-        SELECT question_code, question_text
-        FROM virtual_patient_question_rule
-        WHERE workspace_id = ? AND epoch = ? AND virtual_patient_id = ?
-        ORDER BY ordinal, question_code
-      `).all(context.workspaceId, context.epoch, state.virtual_patient_id),
-    )
+    const questions = state.virtual_patient_id === null
+      ? []
+      : z.array(consultationQuestionRowSchema).parse(
+          this.#database.driver.prepare(`
+            SELECT question_code, question_text
+            FROM virtual_patient_question_rule
+            WHERE workspace_id = ? AND epoch = ? AND virtual_patient_id = ?
+            ORDER BY ordinal, question_code
+          `).all(context.workspaceId, context.epoch, state.virtual_patient_id),
+        )
     const records = z.array(consultationRecordRowSchema).parse(
       this.#database.driver.prepare(`
         SELECT record_id, sequence, question_code, question_text, answer_text, recorded_at
@@ -8909,7 +9304,7 @@ export class WorkflowService {
       this.#database.driver.prepare(`
         SELECT consultation.version, virtual_patient_case.virtual_patient_id
         FROM consultation
-        JOIN virtual_patient_case
+        LEFT JOIN virtual_patient_case
           ON virtual_patient_case.workspace_id = consultation.workspace_id
          AND virtual_patient_case.epoch = consultation.epoch
          AND virtual_patient_case.case_id = consultation.case_id
@@ -8917,6 +9312,13 @@ export class WorkflowService {
           AND consultation.case_id = ?
       `).get(context.workspaceId, context.epoch, caseId),
     )
+  }
+
+  #createConsultation(context: ActorContext, caseId: string): void {
+    this.#database.driver.prepare(`
+      INSERT INTO consultation (workspace_id, epoch, case_id, version)
+      VALUES (?, ?, ?, 1)
+    `).run(context.workspaceId, context.epoch, caseId)
   }
 
   #encounterCompletionPolicy(context: ActorContext, encounterId: string) {
@@ -9540,10 +9942,42 @@ export class WorkflowService {
   }
 
   #supportsLaboratoryReports(context: ActorContext): boolean {
-    return this.#database.driver.prepare(`
+    return this.#activeScenarioDataset(context) !== undefined || this.#database.driver.prepare(`
       SELECT 1 AS present FROM scenario_hidden_fact
       WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
     `).get(context.workspaceId, context.epoch) !== undefined
+  }
+
+  #activeScenarioDataset(context: ActorContext): ScenarioDatasetContent | undefined {
+    const row = this.#database.driver.prepare(`
+      SELECT package.content_json
+      FROM scenario_run AS run
+      JOIN scenario_package AS package
+        ON package.workspace_id = run.workspace_id
+       AND package.package_id = run.scenario_id
+      WHERE run.workspace_id = ? AND run.epoch = ? AND run.scenario_run_id = ?
+    `).get(context.workspaceId, context.epoch, context.scenarioRunId) as {
+      content_json: string
+    } | undefined
+    return row === undefined
+      ? undefined
+      : scenarioDatasetContentSchema.parse(JSON.parse(row.content_json))
+  }
+
+  #legacyLaboratoryResultFact(
+    context: ActorContext,
+    catalogItemId: LaboratoryRequestCatalogItemId,
+  ) {
+    const hiddenFact = this.#database.driver.prepare(`
+      SELECT value_json FROM scenario_hidden_fact
+      WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
+    `).get(context.workspaceId, context.epoch) as { value_json: string } | undefined
+    if (hiddenFact === undefined) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory result fact is unavailable')
+    }
+    const facts = laboratoryResultsFactSchema.parse(JSON.parse(hiddenFact.value_json))
+    if (catalogItemId === 'lab-cbc' || catalogItemId === 'lab-crp') return facts[catalogItemId]
+    throw new WorkflowError('CATALOG_CONFLICT', 'The laboratory result fact is unavailable for this item')
   }
 
   #laboratoryReportVersions(
@@ -9669,24 +10103,43 @@ export class WorkflowService {
         if (coding === undefined || interpretationCode === undefined || referenceRange === undefined) {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory result is incomplete')
         }
-        return {
+        const base = {
           code: coding.code,
           display: coding.display,
           interpretation: interpretationCode === 'N'
             ? 'normal' as const
             : interpretationCode === 'H' ? 'high' as const : 'low' as const,
           observationId,
+        }
+        if (observation.valueQuantity !== undefined) {
+          if (referenceRange.high === undefined && referenceRange.low === undefined) {
+            throw new WorkflowError('WORKFLOW_CONFLICT', 'The quantitative laboratory result is incomplete')
+          }
+          return {
+            ...base,
+            referenceRange: {
+              ...(referenceRange.high === undefined ? {} : { high: referenceRange.high.value }),
+              ...(referenceRange.low === undefined ? {} : { low: referenceRange.low.value }),
+              text: referenceRange.text,
+            },
+            unit: {
+              code: observation.valueQuantity.code,
+              display: observation.valueQuantity.unit,
+              system: observation.valueQuantity.system,
+            },
+            value: observation.valueQuantity.value,
+          }
+        }
+        const qualitativeValue = observation.valueBoolean ?? observation.valueString
+        if (qualitativeValue === undefined) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'The qualitative laboratory result is incomplete')
+        }
+        return {
+          ...base,
           referenceRange: {
-            high: referenceRange.high.value,
-            low: referenceRange.low.value,
             text: referenceRange.text,
           },
-          unit: {
-            code: observation.valueQuantity.code,
-            display: observation.valueQuantity.unit,
-            system: observation.valueQuantity.system,
-          },
-          value: observation.valueQuantity.value,
+          value: qualitativeValue,
         }
       }),
       specimenId,
@@ -9716,8 +10169,17 @@ export class WorkflowService {
 
   #consultationAnswer(
     context: ActorContext,
+    caseId: string,
     question: z.infer<typeof consultationQuestionRuleRowSchema>,
   ): string {
+    if (question.second_ask_answer_text !== null) {
+      const previous = this.#database.driver.prepare(`
+        SELECT 1 AS present FROM consultation_record
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND question_code = ?
+        LIMIT 1
+      `).get(context.workspaceId, context.epoch, caseId, question.question_code)
+      if (previous !== undefined) return question.second_ask_answer_text
+    }
     if (question.fact_code === null || question.revealed_answer_text === null) {
       return question.answer_text
     }

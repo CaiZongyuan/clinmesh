@@ -20,6 +20,7 @@ import { TriageWorkspace } from './triage-workspace.tsx'
 import { DoctorWorkspace } from './doctor-workspace.tsx'
 import { BillingWorkspace } from './billing-workspace.tsx'
 import { PharmacyWorkspace } from './pharmacy-workspace.tsx'
+import { ScenarioDataWorkspace } from './scenario-data-workspace.tsx'
 
 interface RoleWorkspaceProps {
   activeSection: WorkspaceSection
@@ -126,6 +127,9 @@ function AdminWorkspace({ locale, session }: Omit<RoleWorkspaceProps, 'activeSec
 }
 
 export function RoleWorkspace({ activeSection, locale, session }: RoleWorkspaceProps): React.JSX.Element {
+  if (session.actor.roleCode === 'administrator' && activeSection === 'scenarioData') {
+    return <ScenarioDataWorkspace locale={locale} />
+  }
   if (session.actor.roleCode === 'administrator' && activeSection === 'overview') {
     return <AdminWorkspace locale={locale} session={session} />
   }
