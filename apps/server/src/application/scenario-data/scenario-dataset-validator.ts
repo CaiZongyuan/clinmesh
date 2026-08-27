@@ -340,6 +340,13 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
       path: (_, index) => `${patientPath}.investigations[${index}].id`,
     })
     diagnoseDuplicates({
+      code: 'DUPLICATE_INVESTIGATION_CATALOG_ITEM',
+      items: patient.investigations,
+      key: investigation => investigation.catalogItemId,
+      label: `Investigation catalog item for patient ${patient.id}`,
+      path: (_, index) => `${patientPath}.investigations[${index}].catalogItemId`,
+    })
+    diagnoseDuplicates({
       code: 'DUPLICATE_PHYSIOLOGY_GENERATOR_ID',
       items: patient.physiologyBaseline.generators,
       key: generator => generator.id,

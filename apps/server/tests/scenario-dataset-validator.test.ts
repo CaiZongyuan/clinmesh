@@ -283,6 +283,37 @@ describe('Scenario Dataset diagnostics', () => {
     ]))
   })
 
+  it('rejects multiple exact results for the same patient catalog item', async () => {
+    const provider = new BuiltInScenarioGenerationProvider()
+    const generated = await provider.generate(scenarioGenerationRequestSchema.parse({
+      modules: ['fever'],
+      name: '重复精确检查病例',
+      population: { age: { maximum: 40, minimum: 40 }, count: 1, gender: 'female' },
+      providerId: 'builtin',
+      seeds: { clinical: 188, population: 177 },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    }))
+    const patient = generated.content.patients[0]!
+    const duplicateIndex = patient.investigations.length
+    const duplicate = {
+      ...patient.investigations[0]!,
+      id: 'investigation-duplicate-catalog-item',
+    }
+
+    expect(validateScenarioDataset({
+      ...generated.content,
+      patients: [{
+        ...patient,
+        investigations: [...patient.investigations, duplicate],
+      }],
+    })).toContainEqual(expect.objectContaining({
+      code: 'DUPLICATE_INVESTIGATION_CATALOG_ITEM',
+      path: `patients[0].investigations[${duplicateIndex}].catalogItemId`,
+      severity: 'error',
+    }))
+  })
+
   it('rejects an after-topic policy bound to a different patient than its Hidden Fact', async () => {
     const provider = new BuiltInScenarioGenerationProvider()
     const generated = await provider.generate(scenarioGenerationRequestSchema.parse({

@@ -177,12 +177,28 @@ describe('Synthea R4 CaseTruth compiler', () => {
       })), ...[{
         code: '2339-0',
         display: 'Glucose [Mass/volume] in Blood',
+        effectiveDateTime: '2024-08-01T09:10:00Z',
+        id: 'observation-glucose-historical',
+        unit: 'mmol/L',
+        value: 7.4,
+      }, {
+        code: '4548-4',
+        display: 'Hemoglobin A1c/Hemoglobin.total in Blood',
+        effectiveDateTime: '2024-08-01T09:10:00Z',
+        id: 'observation-hba1c-historical',
+        unit: '%',
+        value: 7.1,
+      }, {
+        code: '2339-0',
+        display: 'Glucose [Mass/volume] in Blood',
+        effectiveDateTime: '2026-08-01T09:10:00Z',
         id: 'observation-glucose',
         unit: 'mmol/L',
         value: 13.8,
       }, {
         code: '4548-4',
         display: 'Hemoglobin A1c/Hemoglobin.total in Blood',
+        effectiveDateTime: '2026-08-01T09:10:00Z',
         id: 'observation-hba1c',
         unit: '%',
         value: 9.2,
@@ -190,7 +206,7 @@ describe('Synthea R4 CaseTruth compiler', () => {
         fullUrl: `urn:uuid:${resource.id}`,
         resource: {
           code: { coding: [{ code: resource.code, display: resource.display, system: 'http://loinc.org' }] },
-          effectiveDateTime: '2026-08-01T09:10:00Z',
+          effectiveDateTime: resource.effectiveDateTime,
           encounter: { reference: encounterReference },
           id: resource.id,
           resourceType: 'Observation',
@@ -223,6 +239,7 @@ describe('Synthea R4 CaseTruth compiler', () => {
       expect.objectContaining({ catalogItemId: 'lab-random-glucose', result: expect.objectContaining({ value: 13.8 }) }),
       expect.objectContaining({ catalogItemId: 'lab-hba1c', result: expect.objectContaining({ value: 9.2 }) }),
     ]))
+    expect(compiled.investigations).toHaveLength(2)
     expect(compiled.symptomResponses).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'symptom-foot-numbness', passive: true }),
       expect.objectContaining({ id: 'symptom-medication-adherence', secondAskConcede: expect.any(Object) }),
@@ -235,8 +252,14 @@ describe('Synthea R4 CaseTruth compiler', () => {
       'Condition',
       'Observation',
       'Observation',
+      'Observation',
+      'Observation',
       'AllergyIntolerance',
     ])
+    expect(compiled.diagnosisSpace.primary.evidence).toEqual(expect.arrayContaining([
+      '随机血糖 13.8 mmol/L',
+      'HbA1c 9.2%',
+    ]))
     expect(JSON.stringify(compiled)).not.toMatch(/Springfield|Smith|John/)
   })
 })

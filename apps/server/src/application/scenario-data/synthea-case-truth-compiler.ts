@@ -293,6 +293,34 @@ function observedResult(observation: R4Observation): ScenarioInvestigationResult
   return undefined
 }
 
+function currentMappedObservations(observations: R4Observation[]): R4Observation[] {
+  const currentByCatalogItem = new Map<string, R4Observation>()
+  for (const observation of observations) {
+    const sourceCode = conceptCode(observation.code)
+    const mapping = sourceCode === undefined ? undefined : observationMappings.get(sourceCode)
+    if (mapping === undefined || observedResult(observation) === undefined) continue
+
+    const current = currentByCatalogItem.get(mapping.catalogItemId)
+    const observationTime = observation.effectiveDateTime === undefined
+      ? Number.NEGATIVE_INFINITY
+      : Date.parse(observation.effectiveDateTime)
+    const currentTime = current?.effectiveDateTime === undefined
+      ? Number.NEGATIVE_INFINITY
+      : Date.parse(current.effectiveDateTime)
+    if (
+      current === undefined
+      || observationTime > currentTime
+      || (observationTime === currentTime && observation.id.localeCompare(current.id) < 0)
+    ) {
+      currentByCatalogItem.set(mapping.catalogItemId, observation)
+    }
+  }
+
+  return [...currentByCatalogItem.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, observation]) => observation)
+}
+
 function dateAtEnd(request: ScenarioGenerationRequest): string {
   return `${request.timeRange.end}T09:00:00+08:00`
 }
@@ -661,13 +689,14 @@ export function compileSyntheaR4Bundle(input: {
   const encounters = bundle.entry.flatMap(entry => entry.resource.resourceType === 'Encounter' ? [entry.resource] : [])
   const conditions = bundle.entry.flatMap(entry => entry.resource.resourceType === 'Condition' ? [entry.resource] : [])
   const observations = bundle.entry.flatMap(entry => entry.resource.resourceType === 'Observation' ? [entry.resource] : [])
+  const currentObservations = currentMappedObservations(observations)
   const medicationRequests = bundle.entry.flatMap(entry => entry.resource.resourceType === 'MedicationRequest' ? [entry.resource] : [])
   const allergies = bundle.entry.flatMap(entry => entry.resource.resourceType === 'AllergyIntolerance' ? [entry.resource] : [])
   const fallbackDateTime = dateAtEnd(input.request)
   const module = input.request.modules[input.ordinal % input.request.modules.length] ?? 'fever'
   const authored = module === 'type-2-diabetes'
-    ? diabetesCaseTruth({ conditions, observations })
-    : feverCaseTruth({ conditions, observations })
+    ? diabetesCaseTruth({ conditions, observations: currentObservations })
+    : feverCaseTruth({ conditions, observations: currentObservations })
 
   const fhirHistory = bundle.entry.flatMap((entry): ScenarioPatient['fhirHistory'] => {
     const resource = entry.resource
@@ -822,7 +851,7 @@ export function compileSyntheaR4Bundle(input: {
     })),
   ].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id))
 
-  const investigations: ScenarioPatient['investigations'] = observations.flatMap(resource => {
+  const investigations: ScenarioPatient['investigations'] = currentObservations.flatMap(resource => {
     const sourceCode = conceptCode(resource.code)
     const mapping = sourceCode === undefined ? undefined : observationMappings.get(sourceCode)
     const result = observedResult(resource)
