@@ -421,9 +421,11 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 
 医保投影必须遵守资源原义：Coverage 表达保障资格，不表示一次人员查询；Claim 表达向付款方提出的费用申报；ClaimResponse 表达付款方裁决；ExplanationOfBenefit 是面向受益人的裁决结果表达，不是接口调用日志。签到、查询、上传批次、游标、重试和原始报文不得机械转换为 Claim 系列资源。一次结算、多次申报、撤销和重结算之间使用稳定 identifier 和明确 replacement 关系。
 
-### 5.4 后续中国术语策略
+### 5.4 中国术语与参考数据策略
 
-当前只包含完成合成门诊闭环所需的最小虚构目录与 ICD-10 示例 code，不发布 CodeSystem、ValueSet、ConceptMap 或 terminology operation。后续术语是接口兼容性的核心，不是 UI 字典。
+当前 authoring 平面使用独立 Reference Data SQLite，可从固定 manifest 导入 LOINC 2.83 CSV 与 UCUM 2.2 XML，并保留来源、许可、checksum、记录数、诊断与 release content hash。Scenario Compiler 通过版本控制的审核映射，以 `system + version + code` 解析体温、HbA1c 和随机血糖；检验目录、病例结果和生理生成器保存 UCUM `code/system/display/version`，FHIR Quantity 投影使用 `code/system/unit`。旧 Package 的裸单位字符串只在读取时经固定兼容表规范化，不覆盖持久化 JSON 或 content hash。
+
+未实现的中国诊断、药品和医疗服务映射仍使用最小虚构目录与 ICD-10 示例 code。当前不发布 CodeSystem、ValueSet、ConceptMap 或 terminology operation；术语是接口兼容性的一部分，不是 UI 字典。
 
 至少维护：
 
@@ -437,6 +439,8 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 实现原则：
 
 - FHIR 绑定使用 canonical URL + version，不只保存 display；每个 coded 元素明确 `required`、`extensible`、`preferred` 或 `example` binding strength。
+- 外部编码映射键必须包含 `system + version + code`；相同 code 不得跨 system 碰撞，显示文本不得作为正式映射 fallback。
+- 数值单位转换由审核映射明确保存源 UCUM code、目标 UCUM code 与换算因子；不允许只替换单位标签而不转换数值。
 - 院内码、国家码、医保码只有在表达同一个语义概念时才可并列于同一个 `CodeableConcept.coding`；属性、分类和价格目录号不得混入同一概念。
 - 本地到国家/医保编码映射使用 `ConceptMap`，不在业务代码中写 switch；ConceptMap 不代表映射天然无损、双向或可自动应用。
 - 编码导入保留来源、版本、生效期和停用状态；运行时区分未知 code、inactive code、版本不匹配和 display 不一致。

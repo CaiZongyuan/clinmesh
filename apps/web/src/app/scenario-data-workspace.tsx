@@ -1,5 +1,9 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import type { ScenarioDataset, ScenarioGenerationRequest } from '@clinmesh/contracts/scenario'
+import {
+  scenarioUcumUnitSchema,
+  type ScenarioDataset,
+  type ScenarioGenerationRequest,
+} from '@clinmesh/contracts/scenario'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
   AlertDialog,
@@ -163,9 +167,16 @@ function createPhysiologyGenerator(
   id: string,
 ): ScenarioPhysiologyGenerator {
   const common = { id, source: '合成病例基线' }
+  const dimensionlessUnit = scenarioUcumUnitSchema.parse('1')
   if (kind === 'text') return { ...common, kind, value: '待编辑结果' }
   if (kind === 'derived') {
-    return { ...common, dependencies: ['baseline-weight'], formula: 'bmi', kind, unit: 'kg/m2' }
+    return {
+      ...common,
+      dependencies: ['baseline-weight'],
+      formula: 'bmi',
+      kind,
+      unit: scenarioUcumUnitSchema.parse('kg/m²'),
+    }
   }
   if (kind === 'normal') {
     return {
@@ -176,7 +187,7 @@ function createPhysiologyGenerator(
       mean: 0.5,
       minimum: 0,
       standardDeviation: 0.1,
-      unit: '1',
+      unit: dimensionlessUnit,
     }
   }
   if (kind === 'trajectory') {
@@ -187,11 +198,11 @@ function createPhysiologyGenerator(
       maximum: 1,
       minimum: 0,
       target: 0.5,
-      unit: '1',
+      unit: dimensionlessUnit,
       walkStep: 0.1,
     }
   }
-  return { ...common, kind, unit: '1', value: 0 }
+  return { ...common, kind, unit: dimensionlessUnit, value: 0 }
 }
 
 function optionalString<T extends object, Key extends keyof T>(
@@ -1059,7 +1070,7 @@ function DatasetEditor({
                 <Field><FieldLabel htmlFor={`editor-generator-id-${generatorIndex}`}>{messages.generatorId}{suffix}</FieldLabel><Input id={`editor-generator-id-${generatorIndex}`} onChange={event => updateGenerator(current => ({ ...current, id: event.target.value }))} value={generator.id} /></Field>
                 <Field><FieldLabel htmlFor={`editor-generator-kind-${generatorIndex}`}>{messages.generatorKind}{suffix}</FieldLabel><select className="h-8 rounded-md border border-input bg-background px-2 text-sm" id={`editor-generator-kind-${generatorIndex}`} onChange={event => updateGenerator(current => createPhysiologyGenerator(event.target.value as ScenarioPhysiologyGenerator['kind'], current.id))} value={generator.kind}>{(['constant', 'normal', 'trajectory', 'derived', 'text'] as const).map(kind => <option key={kind} value={kind}>{kind}</option>)}</select></Field>
                 <Field><FieldLabel htmlFor={`editor-generator-source-${generatorIndex}`}>{messages.generatorSource}{suffix}</FieldLabel><Input id={`editor-generator-source-${generatorIndex}`} onChange={event => updateGenerator(current => ({ ...current, source: event.target.value }))} value={generator.source} /></Field>
-                {generator.kind === 'text' ? null : <Field><FieldLabel htmlFor={`editor-generator-unit-${generatorIndex}`}>{messages.generatorUnit}{suffix}</FieldLabel><Input id={`editor-generator-unit-${generatorIndex}`} onChange={event => updateGenerator(current => ({ ...current, unit: event.target.value }))} value={generator.unit} /></Field>}
+                {generator.kind === 'text' ? null : <Field><FieldLabel htmlFor={`editor-generator-unit-${generatorIndex}`}>{messages.generatorUnit}{suffix}</FieldLabel><Input id={`editor-generator-unit-${generatorIndex}`} onChange={event => updateGenerator(current => current.kind === 'text' ? current : ({ ...current, unit: { ...current.unit, code: event.target.value, display: event.target.value } }))} value={generator.unit.code} /></Field>}
                 {generator.kind === 'constant' ? <>
                   <Field><FieldLabel htmlFor={`editor-generator-value-${generatorIndex}`}>{messages.generatorValue}{suffix}</FieldLabel><Input id={`editor-generator-value-${generatorIndex}`} onChange={event => updateGenerator(current => current.kind === 'constant' ? ({ ...current, value: Number(event.target.value) }) : current)} type="number" value={generator.value} /></Field>
                   <Field><FieldLabel htmlFor={`editor-generator-assay-cv-${generatorIndex}`}>{messages.generatorAssayCv}{suffix}</FieldLabel><Input id={`editor-generator-assay-cv-${generatorIndex}`} max={1} min={0} onChange={event => updateGenerator((current) => {

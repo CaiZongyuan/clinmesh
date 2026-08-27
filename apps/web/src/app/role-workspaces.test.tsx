@@ -1426,7 +1426,7 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: '新增生理生成器' }))
     await changeText('生成器 ID 1', 'baseline-glucose')
     await changeText('生成器来源 1', '合成病例基线')
-    await changeText('生成器单位 1', 'mmol/L')
+    await changeText('UCUM 单位编码 1', 'mmol/L')
     await changeText('常量值 1', '6.1')
 
     await user.click(screen.getByRole('tab', { name: '问诊应答' }))
@@ -1497,7 +1497,12 @@ describe('role workspaces', () => {
             id: 'baseline-glucose',
             kind: 'constant',
             source: '合成病例基线',
-            unit: 'mmol/L',
+            unit: {
+              code: 'mmol/L',
+              display: 'mmol/L',
+              system: 'http://unitsofmeasure.org',
+              version: '2.2',
+            },
             value: 6.1,
           }],
           vitalSigns: {

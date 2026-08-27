@@ -55,6 +55,7 @@ export function materializeScenarioPatientFhirHistory(input: {
                   code: resource.code.code,
                   display: resource.code.display,
                   ...(resource.code.system === undefined ? {} : { system: resource.code.system }),
+                  ...(resource.code.version === undefined ? {} : { version: resource.code.version }),
                 }],
               }),
           text: resource.code.display,
@@ -73,7 +74,11 @@ export function materializeScenarioPatientFhirHistory(input: {
         ? typeof resource.value.value === 'number'
           ? {
               valueQuantity: {
-                ...(resource.value.unit === undefined ? {} : { unit: resource.value.unit }),
+                ...(resource.value.unit === undefined ? {} : {
+                  code: resource.value.unit.code,
+                  system: resource.value.unit.system,
+                  unit: resource.value.unit.display,
+                }),
                 value: resource.value.value,
               },
             }
@@ -90,6 +95,7 @@ export function materializeScenarioPatientFhirHistory(input: {
                   code: resource.code.code,
                   display: resource.code.display,
                   ...(resource.code.system === undefined ? {} : { system: resource.code.system }),
+                  ...(resource.code.version === undefined ? {} : { version: resource.code.version }),
                 }],
               }),
           text: resource.code.display,

@@ -15,6 +15,7 @@ import { commandResponseSchema, scenarioStateSchema } from '@clinmesh/contracts/
 import { z } from 'zod'
 import { afterEach, describe, expect, it } from 'vitest'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
+import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 
 describe('Reference Data HTTP contract', () => {
@@ -245,6 +246,41 @@ describe('Reference Data HTTP contract', () => {
     )
     expect(generateResponse.status).toBe(200)
     const dataset = commandResponseSchema(scenarioDatasetSchema).parse(await generateResponse.json()).data
+    const legacyContent = JSON.parse(JSON.stringify(
+      dataset.content,
+      (key, value: unknown) => key === 'unit'
+        && typeof value === 'object'
+        && value !== null
+        && 'system' in value
+        && value.system === 'http://unitsofmeasure.org'
+        && 'display' in value
+        ? value.display
+        : value,
+    )) as unknown
+    const legacyDataset = {
+      content_hash: canonicalJsonHash(legacyContent),
+      content_json: JSON.stringify(legacyContent),
+    }
+    first.runtime.database.driver.prepare(`
+      UPDATE scenario_dataset SET content_json = ?, content_hash = ?
+      WHERE workspace_id = ? AND dataset_id = ?
+    `).run(
+      legacyDataset.content_json,
+      legacyDataset.content_hash,
+      'workspace-demo',
+      dataset.datasetId,
+    )
+    const readResponse = await first.runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(dataset.datasetId)}`,
+      { headers: { cookie } },
+    )
+    expect(readResponse.status).toBe(200)
+    const readDataset = scenarioDatasetSchema.parse(await readResponse.json())
+    expect(readDataset.contentHash).toBe(legacyDataset.content_hash)
+    expect(readDataset.content.catalog.investigations[0]?.unit).toMatchObject({
+      system: 'http://unitsofmeasure.org',
+      version: '2.2',
+    })
     const installResponse = await first.runtime.app.request(
       `/api/sim/v1/scenario-datasets/${encodeURIComponent(dataset.datasetId)}/actions/install`,
       {
@@ -263,12 +299,38 @@ describe('Reference Data HTTP contract', () => {
       data: z.object({ packageId: z.string(), scenario: scenarioStateSchema }).strict(),
     }).passthrough().parse(await installResponse.json()).data
     const packageRow = first.runtime.database.driver.prepare(`
-      SELECT content_json FROM scenario_package
+      SELECT content_json, content_hash FROM scenario_package
       WHERE workspace_id = ? AND package_id = ?
-    `).get('workspace-demo', installed.packageId) as { content_json: string } | undefined
+    `).get('workspace-demo', installed.packageId) as {
+      content_hash: string
+      content_json: string
+    } | undefined
     expect(packageRow).toBeDefined()
     expect(scenarioDatasetSchema.shape.content.parse(JSON.parse(packageRow?.content_json ?? '{}')).reproduction)
       .toHaveProperty('referenceData.releaseId', 'reference-http-test-v1')
+    expect(packageRow).toEqual(legacyDataset)
+
+    const updateResponse = await first.runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(dataset.datasetId)}`,
+      {
+        body: JSON.stringify({
+          expectedVersion: readDataset.version,
+          input: { content: readDataset.content, name: `${readDataset.name}已编辑` },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'PUT',
+      },
+    )
+    expect(updateResponse.status).toBe(200)
+    const updatedDataset = commandResponseSchema(scenarioDatasetSchema)
+      .parse(await updateResponse.json()).data
+    expect(updatedDataset.contentHash).toBe(canonicalJsonHash(updatedDataset.content))
+    expect(updatedDataset.contentHash).not.toBe(legacyDataset.content_hash)
 
     await first.runtime.close()
     runtimes.splice(runtimes.indexOf(first.runtime), 1)
@@ -296,5 +358,9 @@ describe('Reference Data HTTP contract', () => {
     expect(commandResponseSchema(scenarioStateSchema).parse(await resetResponse.json()).data).toMatchObject({
       scenarioId: installed.packageId,
     })
+    expect(restarted.runtime.database.driver.prepare(`
+      SELECT content_json, content_hash FROM scenario_package
+      WHERE workspace_id = ? AND package_id = ?
+    `).get('workspace-demo', installed.packageId)).toEqual(legacyDataset)
   })
 })

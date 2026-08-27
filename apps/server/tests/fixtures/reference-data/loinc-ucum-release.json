@@ -1,0 +1,29 @@
+{
+  "createdAt": "2026-08-28T00:00:00.000Z",
+  "releaseId": "clinmesh-loinc-ucum-parser-fixture-2026-08-28",
+  "schemaVersion": "1",
+  "sources": [
+    {
+      "acquisitionMethod": "generated",
+      "artifactFormat": "loinc-csv",
+      "artifactPath": "synthetic-loinc-2.83-shape.csv",
+      "checksum": "0407b87eac0ab3803496d600ae3317679e9415ea235fc78c26a76ec5925cf3e7",
+      "licenseId": "LicenseRef-ClinMesh-Proprietary",
+      "retrievedAt": "2026-08-28T00:00:00.000Z",
+      "sourceId": "clinmesh-synthetic-loinc-shape",
+      "sourceUrl": "https://github.com/CaiZongyuan/clinmesh/issues/44",
+      "upstreamVersion": "2.83"
+    },
+    {
+      "acquisitionMethod": "generated",
+      "artifactFormat": "ucum-xml",
+      "artifactPath": "synthetic-ucum-2.2-shape.xml",
+      "checksum": "cfa921da2257fcd485d9f18d1d807fb8d857b1635c9980a71134d053b835810e",
+      "licenseId": "LicenseRef-ClinMesh-Proprietary",
+      "retrievedAt": "2026-08-28T00:00:00.000Z",
+      "sourceId": "clinmesh-synthetic-ucum-shape",
+      "sourceUrl": "https://github.com/CaiZongyuan/clinmesh/issues/44",
+      "upstreamVersion": "2.2"
+    }
+  ]
+}

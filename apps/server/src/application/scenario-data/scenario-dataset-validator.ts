@@ -2,6 +2,7 @@ import type {
   ScenarioDatasetContent,
   ScenarioDiagnostic,
 } from '@clinmesh/contracts/scenario'
+import { isKnownLoincCoding, isKnownUcumUnit } from './reference-coding-package.ts'
 
 function graphReaches(
   currentId: string,
@@ -166,6 +167,22 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
 
   for (const [investigationIndex, investigation] of content.catalog.investigations.entries()) {
     const investigationPath = `catalog.investigations[${investigationIndex}]`
+    if (investigation.unit !== undefined && !isKnownUcumUnit(investigation.unit)) {
+      add({
+        code: 'UCUM_UNIT_UNKNOWN',
+        message: `Investigation ${investigation.id} uses an unknown UCUM 2.2 unit`,
+        path: `${investigationPath}.unit`,
+        severity: 'error',
+      })
+    }
+    if (investigation.coding !== undefined && !isKnownLoincCoding(investigation.coding)) {
+      add({
+        code: 'LOINC_CODING_UNKNOWN',
+        message: `Investigation ${investigation.id} uses an unknown LOINC 2.83 coding`,
+        path: `${investigationPath}.coding`,
+        severity: 'error',
+      })
+    }
     for (const [rangeIndex, range] of investigation.referenceRanges.entries()) {
       if (
         range.minimum !== undefined
@@ -447,6 +464,15 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
     }
 
     for (const [generatorIndex, generator] of patient.physiologyBaseline.generators.entries()) {
+      const generatorPath = `${patientPath}.physiologyBaseline.generators[${generatorIndex}]`
+      if (generator.kind !== 'text' && !isKnownUcumUnit(generator.unit)) {
+        add({
+          code: 'UCUM_UNIT_UNKNOWN',
+          message: `Physiology generator ${generator.id} uses an unknown UCUM 2.2 unit`,
+          path: `${generatorPath}.unit`,
+          severity: 'error',
+        })
+      }
       if (generator.kind !== 'derived') continue
       for (const [dependencyIndex, dependency] of generator.dependencies.entries()) {
         const missing = dependency.startsWith('vital:')
@@ -483,6 +509,18 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
 
     for (const [investigationIndex, investigation] of patient.investigations.entries()) {
       const investigationPath = `${patientPath}.investigations[${investigationIndex}]`
+      if (
+        investigation.result.outcome === 'reported'
+        && investigation.result.unit !== undefined
+        && !isKnownUcumUnit(investigation.result.unit)
+      ) {
+        add({
+          code: 'UCUM_UNIT_UNKNOWN',
+          message: `Investigation result ${investigation.id} uses an unknown UCUM 2.2 unit`,
+          path: `${investigationPath}.result.unit`,
+          severity: 'error',
+        })
+      }
       const catalogItem = investigationCatalog.get(investigation.catalogItemId)
       if (catalogItem === undefined) {
         add({

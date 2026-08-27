@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest'
 import { validateScenarioDataset } from '../src/application/scenario-data/scenario-dataset-validator.ts'
 import { BuiltInScenarioGenerationProvider } from '../src/infrastructure/scenario-generation/builtin-provider.ts'
 
+const bmiUnit = {
+  code: 'kg/m2',
+  display: 'kg/m²',
+  system: 'http://unitsofmeasure.org' as const,
+  version: '2.2' as const,
+}
+
 describe('Scenario Dataset diagnostics', () => {
   it('reports mapping, reference, chronology, catalog and business-rule errors with stable paths', async () => {
     const provider = new BuiltInScenarioGenerationProvider()
@@ -21,7 +28,13 @@ describe('Scenario Dataset diagnostics', () => {
       catalog: {
         ...generated.content.catalog,
         investigations: generated.content.catalog.investigations.map((item, index) => index === 0
-          ? { ...item, componentItemIds: ['missing-investigation'] }
+          ? {
+              ...item,
+              coding: item.coding === undefined
+                ? undefined
+                : { ...item.coding, code: '9999-9', display: 'Unknown observation' },
+              componentItemIds: ['missing-investigation'],
+            }
           : item),
       },
       inventory: [{ ...generated.content.inventory[0]!, itemId: 'missing-medication' }],
@@ -53,7 +66,7 @@ describe('Scenario Dataset diagnostics', () => {
             id: 'invalid-derived-generator',
             kind: 'derived' as const,
             source: 'scenario:invalid-test',
-            unit: 'kg/m²',
+            unit: { ...bmiUnit, code: 'made-up', display: 'made-up' },
           }],
         },
       }],
@@ -67,7 +80,12 @@ describe('Scenario Dataset diagnostics', () => {
       expect.objectContaining({ code: 'INVESTIGATION_CATALOG_CONFLICT', path: 'patients[0].investigations[0].result.outcome' }),
       expect.objectContaining({ code: 'INVESTIGATION_EXACT_SOURCE_INVALID', path: 'patients[0].investigations[0].sourceLevel' }),
       expect.objectContaining({ code: 'INVESTIGATION_COMPONENT_REFERENCE_MISSING', path: 'catalog.investigations[0].componentItemIds[0]' }),
+      expect.objectContaining({ code: 'LOINC_CODING_UNKNOWN', path: 'catalog.investigations[0].coding' }),
       expect.objectContaining({ code: 'PHYSIOLOGY_DEPENDENCY_MISSING', path: expect.stringContaining('dependencies[0]') }),
+      expect.objectContaining({
+        code: 'UCUM_UNIT_UNKNOWN',
+        path: expect.stringContaining('physiologyBaseline.generators'),
+      }),
     ]))
   })
 
@@ -92,14 +110,14 @@ describe('Scenario Dataset diagnostics', () => {
       id: 'derived-cycle-a',
       kind: 'derived' as const,
       source: 'scenario:cycle-test',
-      unit: 'kg/m²',
+      unit: bmiUnit,
     }, {
       dependencies: ['derived-cycle-a'],
       formula: 'bmi' as const,
       id: 'derived-cycle-b',
       kind: 'derived' as const,
       source: 'scenario:cycle-test',
-      unit: 'kg/m²',
+      unit: bmiUnit,
     }]
 
     expect(validateScenarioDataset({

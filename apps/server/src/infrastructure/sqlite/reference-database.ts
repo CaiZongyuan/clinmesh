@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import {
   referenceArtifactSchema,
+  referenceCodingIdentity,
   referenceDataReleaseListSchema,
   referenceDataReleaseSummarySchema,
   referenceImportDiagnosticsSchema,
@@ -15,6 +16,10 @@ import {
 } from '@clinmesh/contracts/reference-data'
 import Database from 'better-sqlite3'
 import { z } from 'zod'
+import {
+  parseLoincCsvReferenceArtifact,
+  parseUcumXmlReferenceArtifact,
+} from '../reference-data/reference-source-importers.ts'
 
 const MIGRATION_FILE_PATTERN = /^\d{4}_[a-z0-9-]+\.sql$/
 
@@ -68,6 +73,11 @@ function contentHash(input: {
   release: Pick<ReferenceImportManifest, 'createdAt' | 'releaseId' | 'schemaVersion'>
   sources: ReferenceSourceManifest[]
 }): string {
+  const hashSources = input.sources.map(({ artifactFormat, ...source }) => (
+    artifactFormat === 'clinmesh-reference-v1'
+      ? source
+      : { ...source, artifactFormat }
+  ))
   return checksum(JSON.stringify(canonicalize({
     concepts: input.concepts.toSorted((left, right) => (
       left.sourceId.localeCompare(right.sourceId) || left.id.localeCompare(right.id)
@@ -75,7 +85,7 @@ function contentHash(input: {
     createdAt: input.release.createdAt,
     releaseId: input.release.releaseId,
     schemaVersion: input.release.schemaVersion,
-    sources: input.sources.toSorted((left, right) => left.sourceId.localeCompare(right.sourceId)),
+    sources: hashSources.toSorted((left, right) => left.sourceId.localeCompare(right.sourceId)),
   })))
 }
 
@@ -174,6 +184,7 @@ export function verifyReferenceMigrations(
 function sourceRows(database: ReferenceDatabase, releaseId: string): ReferenceSourceManifest[] {
   return z.array(z.object({
     acquisition_method: z.string(),
+    artifact_format: z.string(),
     checksum: z.string(),
     license_id: z.string(),
     import_diagnostics_json: z.string(),
@@ -185,12 +196,14 @@ function sourceRows(database: ReferenceDatabase, releaseId: string): ReferenceSo
     upstream_version: z.string(),
   })).parse(database.driver.prepare(`
     SELECT source_id, upstream_version, published_at, retrieved_at, source_url,
-      checksum, license_id, acquisition_method, record_count, import_diagnostics_json
+      checksum, license_id, acquisition_method, artifact_format, record_count,
+      import_diagnostics_json
     FROM reference_source_manifest
     WHERE release_id = ?
     ORDER BY source_id
   `).all(releaseId)).map(row => ({
     acquisitionMethod: row.acquisition_method,
+    artifactFormat: row.artifact_format,
     checksum: row.checksum,
     licenseId: row.license_id,
     ...(row.published_at === null ? {} : { publishedAt: row.published_at }),
@@ -288,9 +301,21 @@ export function importReferenceDataRelease(
     if (actualChecksum !== source.checksum) {
       throw new Error(`Reference source checksum mismatch: ${source.sourceId}`)
     }
-    const artifact = referenceArtifactSchema.parse(JSON.parse(artifactBytes.toString('utf8')))
+    const artifactContent = artifactBytes.toString('utf8')
+    const artifact = source.artifactFormat === 'loinc-csv'
+      ? parseLoincCsvReferenceArtifact({
+          content: artifactContent,
+          version: source.upstreamVersion,
+        })
+      : source.artifactFormat === 'ucum-xml'
+        ? parseUcumXmlReferenceArtifact({
+            content: artifactContent,
+            version: source.upstreamVersion,
+          })
+        : referenceArtifactSchema.parse(JSON.parse(artifactContent))
     sources.push({
       acquisitionMethod: source.acquisitionMethod,
+      artifactFormat: source.artifactFormat,
       checksum: actualChecksum,
       licenseId: source.licenseId,
       ...(source.publishedAt === undefined ? {} : { publishedAt: source.publishedAt }),
@@ -312,7 +337,7 @@ export function importReferenceDataRelease(
   for (const concept of concepts) {
     if (seenIds.has(concept.id)) throw new Error(`Reference concept ID was repeated: ${concept.id}`)
     seenIds.add(concept.id)
-    const codingKey = `${concept.system}\u0000${concept.version}\u0000${concept.code}`
+    const codingKey = referenceCodingIdentity(concept)
     if (seenCodes.has(codingKey)) throw new Error(`Reference coding was repeated: ${concept.system}|${concept.version}|${concept.code}`)
     seenCodes.add(codingKey)
   }
@@ -343,9 +368,9 @@ export function importReferenceDataRelease(
     const insertSource = database.driver.prepare(`
       INSERT INTO reference_source_manifest (
         release_id, source_id, upstream_version, published_at, retrieved_at,
-        source_url, checksum, license_id, acquisition_method, record_count,
+        source_url, checksum, license_id, acquisition_method, artifact_format, record_count,
         import_diagnostics_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     for (const source of sources) {
       insertSource.run(
@@ -358,6 +383,7 @@ export function importReferenceDataRelease(
         source.checksum,
         source.licenseId,
         source.acquisitionMethod,
+        source.artifactFormat,
         source.recordCount,
         JSON.stringify(source.importDiagnostics),
       )

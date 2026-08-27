@@ -6,6 +6,12 @@ import {
   type ScenarioPatient,
 } from '@clinmesh/contracts/scenario'
 import { z } from 'zod'
+import {
+  isKnownObservationMappingCode,
+  resolveObservationMapping,
+  resolveUcumUnit,
+  ucumUnit,
+} from './reference-coding-package.ts'
 
 export const syntheaR4ResourceTypes = [
   'AllergyIntolerance',
@@ -38,6 +44,7 @@ const codingSchema = z.object({
   code: z.string().min(1).optional(),
   display: z.string().min(1).optional(),
   system: z.string().url().optional(),
+  version: z.string().min(1).optional(),
 }).passthrough()
 const conceptSchema = z.object({
   coding: z.array(codingSchema).optional(),
@@ -167,6 +174,26 @@ type Concept = z.infer<typeof conceptSchema>
 type R4Bundle = z.infer<typeof syntheaR4BundleSchema>
 type R4Observation = z.infer<typeof observationSchema>
 
+type SyntheaCaseTruthCompilerErrorCode =
+  | 'OBSERVATION_CODING_MISMATCH'
+  | 'OBSERVATION_UNIT_INVALID'
+
+export class SyntheaCaseTruthCompilerError extends Error {
+  readonly code: SyntheaCaseTruthCompilerErrorCode
+  readonly sourceResourceId: string
+
+  constructor(
+    code: SyntheaCaseTruthCompilerErrorCode,
+    sourceResourceId: string,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'SyntheaCaseTruthCompilerError'
+    this.code = code
+    this.sourceResourceId = sourceResourceId
+  }
+}
+
 const chineseNames = [
   '林安宁',
   '王嘉禾',
@@ -184,46 +211,26 @@ const codeMappings = new Map<string, { code: string; display: string }>([
   ['38341003', { code: 'I10', display: '高血压' }],
 ])
 
-const observationMappings = new Map<string, {
-  catalogItemId: string
-  code: string
-  feeFen: number
-  name: string
-  referenceRange: string
-  report: (value: string, unit: string) => string
-  tatMinutes: number
-}>([
-  ['8310-5', {
-    catalogItemId: 'lab-body-temperature',
-    code: 'BODY-TEMP',
-    feeFen: 0,
-    name: '体温',
-    referenceRange: '36.0-37.3 °C',
-    report: (value, unit) => `体温 ${value} ${unit}`,
-    tatMinutes: 0,
-  }],
-  ['4548-4', {
-    catalogItemId: 'lab-hba1c',
-    code: 'HBA1C',
-    feeFen: 4_500,
-    name: '糖化血红蛋白',
-    referenceRange: '4.0-6.0 %',
-    report: (value, unit) => `糖化血红蛋白 ${value} ${unit}`,
-    tatMinutes: 120,
-  }],
-  ['2339-0', {
-    catalogItemId: 'lab-random-glucose',
-    code: 'GLUCOSE',
-    feeFen: 500,
-    name: '随机血糖',
-    referenceRange: '3.9-11.1 mmol/L',
-    report: (value, unit) => `随机血糖 ${value} ${unit}`,
-    tatMinutes: 30,
-  }],
-])
-
 function firstCoding(concept: Concept | undefined): z.infer<typeof codingSchema> | undefined {
   return concept?.coding?.find(coding => coding.code !== undefined || coding.display !== undefined)
+}
+
+function observationMapping(observation: R4Observation) {
+  const coding = firstCoding(observation.code)
+  const mapping = resolveObservationMapping({
+    ...(coding?.code === undefined ? {} : { code: coding.code }),
+    ...(coding?.display === undefined ? {} : { display: coding.display }),
+    ...(coding?.system === undefined ? {} : { system: coding.system }),
+    ...(coding?.version === undefined ? {} : { version: coding.version }),
+  })
+  if (mapping === undefined && coding?.code !== undefined && isKnownObservationMappingCode(coding.code)) {
+    throw new SyntheaCaseTruthCompilerError(
+      'OBSERVATION_CODING_MISMATCH',
+      observation.id,
+      `Observation/${observation.id} has a mismatched reference coding`,
+    )
+  }
+  return mapping
 }
 
 function conceptDisplay(concept: Concept | undefined, fallback: string): string {
@@ -263,11 +270,16 @@ function observedResult(observation: R4Observation): ScenarioInvestigationResult
   const interpretation = conceptCode(observation.interpretation?.[0])
   const referenceRange = observation.referenceRange?.find(range => range.text !== undefined)?.text
   if (observation.valueQuantity !== undefined) {
+    const unit = resolveUcumUnit({
+      ...(observation.valueQuantity.code === undefined ? {} : { code: observation.valueQuantity.code }),
+      ...(observation.valueQuantity.system === undefined ? {} : { system: observation.valueQuantity.system }),
+      ...(observation.valueQuantity.unit === undefined ? {} : { display: observation.valueQuantity.unit }),
+    })
     return {
       ...(interpretation === undefined ? {} : { flag: interpretation }),
       outcome: 'reported',
       ...(referenceRange === undefined ? {} : { referenceRange }),
-      ...(observation.valueQuantity.unit === undefined ? {} : { unit: observation.valueQuantity.unit }),
+      ...(unit === undefined ? {} : { unit }),
       value: observation.valueQuantity.value,
     }
   }
@@ -293,12 +305,39 @@ function observedResult(observation: R4Observation): ScenarioInvestigationResult
   return undefined
 }
 
+function mappedObservedResult(observation: R4Observation) {
+  const mapping = observationMapping(observation)
+  const result = observedResult(observation)
+  if (mapping === undefined || result === undefined || result.outcome !== 'reported') return undefined
+  if (typeof result.value !== 'number') return { ...result, unit: mapping.unit }
+  const sourceUnitCode = result.unit?.code
+  if (sourceUnitCode === undefined) {
+    throw new SyntheaCaseTruthCompilerError(
+      'OBSERVATION_UNIT_INVALID',
+      observation.id,
+      `Observation/${observation.id} has a missing, unknown, or inconsistent UCUM unit`,
+    )
+  }
+  const conversion = mapping.sourceUnits.find(source => source.unitCode === sourceUnitCode)
+  if (conversion === undefined) {
+    throw new SyntheaCaseTruthCompilerError(
+      'OBSERVATION_UNIT_INVALID',
+      observation.id,
+      `Observation/${observation.id} uses an unsupported UCUM unit for its mapping`,
+    )
+  }
+  return {
+    ...result,
+    unit: mapping.unit,
+    value: Number((result.value * conversion.multiplier).toFixed(2)),
+  }
+}
+
 function currentMappedObservations(observations: R4Observation[]): R4Observation[] {
   const currentByCatalogItem = new Map<string, R4Observation>()
   for (const observation of observations) {
-    const sourceCode = conceptCode(observation.code)
-    const mapping = sourceCode === undefined ? undefined : observationMappings.get(sourceCode)
-    if (mapping === undefined || observedResult(observation) === undefined) continue
+    const mapping = observationMapping(observation)
+    if (mapping === undefined || mappedObservedResult(observation) === undefined) continue
 
     const current = currentByCatalogItem.get(mapping.catalogItemId)
     const observationTime = observation.effectiveDateTime === undefined
@@ -325,12 +364,8 @@ function dateAtEnd(request: ScenarioGenerationRequest): string {
   return `${request.timeRange.end}T09:00:00+08:00`
 }
 
-function formatResultValue(result: ScenarioInvestigationResult): { unit: string; value: string } {
-  if (result.outcome !== 'reported') return { unit: '', value: result.message }
-  return {
-    unit: result.unit ?? '',
-    value: typeof result.value === 'boolean' ? String(result.value) : String(result.value),
-  }
+function formatResultValue(result: ScenarioInvestigationResult): string {
+  return result.outcome === 'reported' ? String(result.value) : result.message
 }
 
 function mappedCondition(condition: z.infer<typeof conditionSchema>) {
@@ -372,7 +407,7 @@ function hematologyGenerators(): ScenarioPatient['physiologyBaseline']['generato
     minimum: 130,
     source: 'scenario:normal-routine-lab',
     standardDeviation: 4,
-    unit: 'g/L',
+    unit: ucumUnit('g/L'),
   }, {
     assayCv: 0.03,
     id: 'red-blood-cells',
@@ -382,7 +417,7 @@ function hematologyGenerators(): ScenarioPatient['physiologyBaseline']['generato
     minimum: 3.8,
     source: 'scenario:hematology-baseline',
     standardDeviation: 0.35,
-    unit: '10^12/L',
+    unit: ucumUnit('10*12/L'),
   }, {
     assayCv: 0.02,
     id: 'mean-corpuscular-volume',
@@ -392,14 +427,14 @@ function hematologyGenerators(): ScenarioPatient['physiologyBaseline']['generato
     minimum: 80,
     source: 'scenario:hematology-baseline',
     standardDeviation: 4,
-    unit: 'fL',
+    unit: ucumUnit('fL'),
   }, {
     dependencies: ['red-blood-cells', 'mean-corpuscular-volume'],
     formula: 'hematocrit-from-rbc-mcv',
     id: 'hematocrit',
     kind: 'derived',
     source: 'scenario:rbc-mcv',
-    unit: 'L/L',
+    unit: ucumUnit('L/L'),
   }]
 }
 
@@ -413,14 +448,14 @@ function renalGenerators(): ScenarioPatient['physiologyBaseline']['generators'] 
     minimum: 45,
     source: 'scenario:renal-baseline',
     standardDeviation: 12,
-    unit: 'μmol/L',
+    unit: ucumUnit('umol/L'),
   }, {
     dependencies: ['serum-creatinine'],
     formula: 'egfr-ckd-epi-2021',
     id: 'estimated-gfr',
     kind: 'derived',
     source: 'scenario:ckd-epi-2021',
-    unit: 'mL/min/1.73m²',
+    unit: ucumUnit('mL/min/{1.73_m2}'),
   }]
 }
 
@@ -431,7 +466,7 @@ function bodyMassIndexGenerator(): ScenarioPatient['physiologyBaseline']['genera
     id: 'body-mass-index',
     kind: 'derived',
     source: 'scenario:height-weight',
-    unit: 'kg/m²',
+    unit: ucumUnit('kg/m2'),
   }
 }
 
@@ -442,7 +477,7 @@ function urineGlucoseGenerator(): ScenarioPatient['physiologyBaseline']['generat
     id: 'urine-glucose',
     kind: 'derived',
     source: 'scenario:renal-glucose-threshold',
-    unit: 'qualitative',
+    unit: ucumUnit('{qualitative}'),
   }
 }
 
@@ -510,7 +545,7 @@ function feverCaseTruth(input: {
         id: 'body-temperature',
         kind: 'constant' as const,
         source: 'synthea-r4:Observation/8310-5',
-        unit: '°C',
+        unit: ucumUnit('Cel'),
         value: temperature,
       }, ...hematologyGenerators(), {
         assayCv: 0.02,
@@ -521,7 +556,7 @@ function feverCaseTruth(input: {
         minimum: 3.9,
         source: 'scenario:normal-glucose-baseline',
         standardDeviation: 0.7,
-        unit: 'mmol/L',
+        unit: ucumUnit('mmol/L'),
       }, ...renalGenerators(), bodyMassIndexGenerator(), urineGlucoseGenerator()],
       vitalSigns: {
         heightCm: 165,
@@ -547,10 +582,16 @@ function diabetesCaseTruth(input: {
   conditions: Array<z.infer<typeof conditionSchema>>
   observations: R4Observation[]
 }) {
-  const hba1c = input.observations.find(observation => conceptCode(observation.code) === '4548-4')
-    ?.valueQuantity?.value ?? 9.2
-  const glucose = input.observations.find(observation => conceptCode(observation.code) === '2339-0')
-    ?.valueQuantity?.value ?? 13.8
+  const hba1cObservation = input.observations.find(
+    observation => conceptCode(observation.code) === '4548-4',
+  )
+  const glucoseObservation = input.observations.find(
+    observation => conceptCode(observation.code) === '2339-0',
+  )
+  const hba1cResult = hba1cObservation === undefined ? undefined : mappedObservedResult(hba1cObservation)
+  const glucoseResult = glucoseObservation === undefined ? undefined : mappedObservedResult(glucoseObservation)
+  const hba1c = typeof hba1cResult?.value === 'number' ? hba1cResult.value : 9.2
+  const glucose = typeof glucoseResult?.value === 'number' ? glucoseResult.value : 13.8
   const primary = input.conditions.map(mappedCondition).find(condition => condition.code === 'E11.65')
     ?? { code: 'E11.65', display: '2型糖尿病伴高血糖' }
   return {
@@ -631,7 +672,7 @@ function diabetesCaseTruth(input: {
         id: 'body-temperature',
         kind: 'constant' as const,
         source: 'scenario:vital-signs',
-        unit: '°C',
+        unit: ucumUnit('Cel'),
         value: 36.5,
       }, {
         assayCv: 0.03,
@@ -641,7 +682,7 @@ function diabetesCaseTruth(input: {
         minimum: 9,
         source: 'synthea-r4:Observation/2339-0',
         target: glucose,
-        unit: 'mmol/L',
+        unit: ucumUnit('mmol/L'),
         walkStep: 0.8,
       }, ...hematologyGenerators(), ...renalGenerators(), bodyMassIndexGenerator(), urineGlucoseGenerator()],
       vitalSigns: { diastolicMmHg: 96, heightCm: 172, pulseBpm: 88, systolicMmHg: 162, temperatureC: 36.5, weightKg: 80.2 },
@@ -737,11 +778,17 @@ export function compileSyntheaR4Bundle(input: {
       const result = observedResult(resource)
       if (result === undefined) return []
       const coding = firstCoding(resource.code)
+      const mappedCoding = observationMapping(resource)?.coding
       return [{
         code: {
-          ...(coding?.code === undefined ? {} : { code: coding.code }),
-          display: conceptDisplay(resource.code, '未命名观察'),
-          ...(coding?.system === undefined ? {} : { system: coding.system }),
+          ...(mappedCoding?.code === undefined
+            ? (coding?.code === undefined ? {} : { code: coding.code })
+            : { code: mappedCoding.code }),
+          display: mappedCoding?.display ?? conceptDisplay(resource.code, '未命名观察'),
+          ...(mappedCoding?.system === undefined
+            ? (coding?.system === undefined ? {} : { system: coding.system })
+            : { system: mappedCoding.system }),
+          ...(mappedCoding?.version === undefined ? {} : { version: mappedCoding.version }),
         },
         ...(resource.effectiveDateTime === undefined ? {} : { effectiveDateTime: resource.effectiveDateTime }),
         ...(localReferenceId(resource.encounter?.reference, bundle) === undefined
@@ -821,7 +868,7 @@ export function compileSyntheaR4Bundle(input: {
       display: conceptDisplay(resource.code, '未命名观察'),
       id: `history-event-${resource.id}`,
       kind: 'observation' as const,
-      mappedCode: observationMappings.get(conceptCode(resource.code) ?? '')?.code ?? null,
+      mappedCode: observationMapping(resource)?.code ?? null,
       occurredAt: resource.effectiveDateTime ?? fallbackDateTime,
       sourceResourceId: resource.id,
       sourceResourceType: resource.resourceType,
@@ -852,17 +899,18 @@ export function compileSyntheaR4Bundle(input: {
   ].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id))
 
   const investigations: ScenarioPatient['investigations'] = currentObservations.flatMap(resource => {
-    const sourceCode = conceptCode(resource.code)
-    const mapping = sourceCode === undefined ? undefined : observationMappings.get(sourceCode)
-    const result = observedResult(resource)
+    const mapping = observationMapping(resource)
+    const result = mappedObservedResult(resource)
     if (mapping === undefined || result === undefined) return []
-    const formatted = formatResultValue(result)
+    const formattedValue = formatResultValue(result)
     const normalizedResult: ScenarioInvestigationResult = result.outcome === 'reported'
       ? {
           ...result,
-          flag: result.flag ?? (
-            sourceCode === '8310-5' && typeof result.value === 'number' && result.value > 37.3 ? 'H' : 'N'
-          ),
+          flag: result.flag ?? (typeof result.value !== 'number'
+            ? 'N'
+            : mapping.referenceMaximum !== undefined && result.value > mapping.referenceMaximum
+              ? 'H'
+              : mapping.referenceMinimum !== undefined && result.value < mapping.referenceMinimum ? 'L' : 'N'),
           referenceRange: result.referenceRange ?? mapping.referenceRange,
         }
       : result
@@ -872,7 +920,9 @@ export function compileSyntheaR4Bundle(input: {
       feeFen: mapping.feeFen,
       id: `investigation-${resource.id}`,
       name: mapping.name,
-      report: mapping.report(formatted.value, formatted.unit),
+      report: mapping.reportTemplate
+        .replace('{value}', formattedValue)
+        .replace('{unit}', mapping.unit.display),
       result: normalizedResult,
       sourceLevel: 'L1' as const,
       tatMinutes: mapping.tatMinutes,

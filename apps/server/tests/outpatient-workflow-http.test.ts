@@ -5570,6 +5570,98 @@ describe('outpatient workflow HTTP contract', () => {
     expect(repeatedHemoglobin).not.toBe(148)
     expect(Math.abs(Number(repeatedHemoglobin) - 148)).toBeLessThanOrEqual(8.88)
 
+    const issueMappedObservation = async (input: {
+      catalogItemId: 'lab-hba1c' | 'lab-random-glucose'
+      expectedDraftVersion: number | undefined
+      expectedCoding: { code: string; display: string }
+      expectedUnit: { code: string; display: string }
+      expectedValue: number
+    }) => {
+      const mappedDraftResponse = await runtime.app.request(
+        `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+        {
+          body: JSON.stringify({
+            expectedVersions,
+            input: {
+              catalogItemId: input.catalogItemId,
+              expectedDraftVersion: input.expectedDraftVersion,
+              indicationCode: 'type-2-diabetes',
+            },
+          }),
+          headers: commandHeaders(doctorCookie),
+          method: 'PUT',
+        },
+      )
+      const mappedDraft = laboratoryRequestDraftResponseSchema.parse(
+        await mappedDraftResponse.json(),
+      ).data
+      const mappedIssueResponse = await runtime.app.request(
+        `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
+        {
+          body: JSON.stringify({
+            expectedVersions,
+            input: { expectedDraftVersion: mappedDraft.draftVersion },
+          }),
+          headers: commandHeaders(doctorCookie),
+          method: 'POST',
+        },
+      )
+      const mapped = issueLaboratoryRequestResponseSchema.parse(
+        await mappedIssueResponse.json(),
+      ).data.request
+      expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({ kind: 'laboratory.accept-request', status: 'completed' })
+      expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({ kind: 'laboratory.start-request', status: 'completed' })
+      expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({ kind: 'laboratory.report-request', status: 'completed' })
+      const mappedDetailResponse = await runtime.app.request(
+        `/api/his/v1/doctor/cases/${started.caseId}`,
+        { headers: { cookie: doctorCookie } },
+      )
+      const mappedDetailBody: unknown = await mappedDetailResponse.json()
+      expect(mappedDetailResponse.status, JSON.stringify(mappedDetailBody)).toBe(200)
+      const mappedDetail = doctorCaseDetailSchema.parse(mappedDetailBody)
+      const mappedResult = mappedDetail.laboratoryRequests?.requests
+        .find(request => request.id === mapped.id)?.report?.results[0]
+      expect(mappedResult).toMatchObject({
+        code: input.expectedCoding.code,
+        unit: input.expectedUnit,
+        value: input.expectedValue,
+      })
+      const observationResponse = await runtime.app.request(
+        `/fhir/R5/Observation/${mappedResult?.observationId ?? ''}`,
+        { headers: { cookie: doctorCookie } },
+      )
+      expect(fhirResourceSchema.parse(await observationResponse.json())).toMatchObject({
+        code: {
+          coding: [{
+            ...input.expectedCoding,
+            system: 'http://loinc.org',
+            version: '2.83',
+          }],
+        },
+        valueQuantity: {
+          code: input.expectedUnit.code,
+          system: 'http://unitsofmeasure.org',
+          unit: input.expectedUnit.display,
+          value: input.expectedValue,
+        },
+      })
+      return mappedDetail
+    }
+    const afterGlucose = await issueMappedObservation({
+      catalogItemId: 'lab-random-glucose',
+      expectedCoding: { code: '2339-0', display: 'Glucose [Mass/volume] in Blood' },
+      expectedDraftVersion: afterRepeat.laboratoryRequests?.draftVersion,
+      expectedUnit: { code: 'mmol/L', display: 'mmol/L' },
+      expectedValue: 13.8,
+    })
+    const afterMappedObservations = await issueMappedObservation({
+      catalogItemId: 'lab-hba1c',
+      expectedCoding: { code: '4548-4', display: 'Hemoglobin A1c/Hemoglobin.total in Blood' },
+      expectedDraftVersion: afterGlucose.laboratoryRequests?.draftVersion,
+      expectedUnit: { code: '%', display: '%' },
+      expectedValue: 9.2,
+    })
+
     const urineDraftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
@@ -5577,7 +5669,7 @@ describe('outpatient workflow HTTP contract', () => {
           expectedVersions,
           input: {
             catalogItemId: 'lab-urine-glucose',
-            expectedDraftVersion: afterRepeat.laboratoryRequests?.draftVersion,
+            expectedDraftVersion: afterMappedObservations.laboratoryRequests?.draftVersion,
             indicationCode: 'type-2-diabetes',
           },
         }),

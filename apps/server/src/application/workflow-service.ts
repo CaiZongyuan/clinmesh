@@ -428,13 +428,6 @@ const laboratoryResultsFactSchema = z.object({
   }).strict(),
 }).strict()
 
-function ucumCode(unit: string): string {
-  return unit
-    .replace('10^9', '10*9')
-    .replace('10^12', '10*12')
-    .replace('μmol', 'umol')
-}
-
 function scenarioLaboratoryResultFact(
   content: ScenarioDatasetContent,
   resolution: ScenarioInvestigationResolution,
@@ -464,9 +457,9 @@ function scenarioLaboratoryResultFact(
       },
       ...(catalogItem.unit === undefined ? {} : {
         unit: {
-          code: ucumCode(catalogItem.unit),
-          display: catalogItem.unit,
-          system: 'http://unitsofmeasure.org' as const,
+          code: catalogItem.unit.code,
+          display: catalogItem.unit.display,
+          system: catalogItem.unit.system,
         },
       }),
       value: component.result.value,
@@ -6776,6 +6769,16 @@ export class WorkflowService {
         receivedTime: now,
       })
       const observations = laboratoryResultFact.results.map((result) => {
+        const scenarioCatalogItem = scenarioResult?.content.catalog.investigations.find(
+          item => item.code === result.code,
+        )
+        const resultCoding = scenarioCatalogItem?.coding ?? {
+          code: result.code,
+          display: result.display,
+          system: scenarioResult === undefined
+            ? 'http://loinc.org'
+            : 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/investigation',
+        }
         const observationId = `obs-${result.code}-${request.service_request_id}`
         const interpretationCode = result.interpretation === 'normal'
           ? 'N'
@@ -6805,7 +6808,7 @@ export class WorkflowService {
             }],
           }],
           code: {
-            coding: [{ code: result.code, display: result.display, system: 'http://loinc.org' }],
+            coding: [resultCoding],
             text: result.display,
           },
           subject: { reference: `Patient/${request.patient_id}` },

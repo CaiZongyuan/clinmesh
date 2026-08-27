@@ -1,10 +1,16 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
-import { openReferenceDatabase } from '../src/infrastructure/sqlite/reference-database.ts'
+import {
+  applyReferenceMigrations,
+  listReferenceDataReleases,
+  openReferenceDatabase,
+  verifyReferenceDatabase,
+} from '../src/infrastructure/sqlite/reference-database.ts'
 
 describe('Reference Data database CLI', () => {
   const temporaryDirectories: string[] = []
@@ -56,7 +62,10 @@ describe('Reference Data database CLI', () => {
 
     await expect(runReferenceDatabaseCli([
       'migrate', '--database', databasePath,
-    ])).resolves.toEqual({ applied: ['0001_reference-data.sql'], schemaVersion: 1 })
+    ])).resolves.toEqual({
+      applied: ['0001_reference-data.sql', '0002_reference-source-format.sql'],
+      schemaVersion: 2,
+    })
     const imported = await runReferenceDatabaseCli([
       'import', '--database', databasePath, '--manifest', manifestPath,
     ])
@@ -69,7 +78,7 @@ describe('Reference Data database CLI', () => {
     expect(imported).toHaveProperty('contentHash', expect.stringMatching(/^[a-f0-9]{64}$/))
     await expect(runReferenceDatabaseCli([
       'verify', '--database', databasePath,
-    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 1 })
+    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 2 })
     await expect(runReferenceDatabaseCli([
       'list', '--database', databasePath,
     ])).resolves.toEqual({ items: [expect.objectContaining({
@@ -119,5 +128,117 @@ describe('Reference Data database CLI', () => {
     await expect(runReferenceDatabaseCli([
       'verify', '--database', databasePath,
     ])).rejects.toThrow('content hash')
+  })
+
+  it('imports the synthetic LOINC 2.83 and UCUM 2.2 parser fixture into one release', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-loinc-ucum-reference-data-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'reference.sqlite')
+    const manifestPath = fileURLToPath(new URL(
+      './fixtures/reference-data/loinc-ucum-release.json',
+      import.meta.url,
+    ))
+
+    await runReferenceDatabaseCli(['migrate', '--database', databasePath])
+    await expect(runReferenceDatabaseCli([
+      'import', '--database', databasePath, '--manifest', manifestPath,
+    ])).resolves.toMatchObject({
+      conceptCount: 6,
+      created: true,
+      releaseId: 'clinmesh-loinc-ucum-parser-fixture-2026-08-28',
+      sourceCount: 2,
+    })
+    await expect(runReferenceDatabaseCli([
+      'list', '--database', databasePath,
+    ])).resolves.toEqual({
+      items: [expect.objectContaining({
+        conceptCount: 6,
+        sources: [
+          expect.objectContaining({ artifactFormat: 'loinc-csv', recordCount: 3 }),
+          expect.objectContaining({ artifactFormat: 'ucum-xml', recordCount: 3 }),
+        ],
+      })],
+    })
+  })
+
+  it('preserves a published release hash when the source format migration is applied', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-reference-data-legacy-release-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'reference.sqlite')
+    const migrationDirectory = join(directory, 'migrations')
+    const sourceMigrationDirectory = fileURLToPath(new URL('../reference-drizzle/', import.meta.url))
+    await mkdir(migrationDirectory)
+    await copyFile(
+      join(sourceMigrationDirectory, '0001_reference-data.sql'),
+      join(migrationDirectory, '0001_reference-data.sql'),
+    )
+    const database = openReferenceDatabase({ busyTimeoutMs: 5_000, databasePath })
+    expect(applyReferenceMigrations(database, migrationDirectory)).toEqual({
+      applied: ['0001_reference-data.sql'],
+      schemaVersion: 1,
+    })
+
+    const releaseId = 'reference-synthetic-2026-08-28'
+    const sourceId = 'synthetic-diagnosis'
+    const oldContentHash = '34805f47f23bc8e705006949b8fe446726eaa8f00516f150f4211b99f3855c90'
+    database.driver.prepare(`
+      INSERT INTO reference_release (
+        release_id, schema_version, status, created_at, content_hash, source_count, concept_count
+      ) VALUES (?, '1', 'published', ?, ?, 1, 1)
+    `).run(releaseId, '2026-08-28T00:00:00.000Z', oldContentHash)
+    database.driver.prepare(`
+      INSERT INTO reference_source_manifest (
+        release_id, source_id, upstream_version, published_at, retrieved_at,
+        source_url, checksum, license_id, acquisition_method, record_count,
+        import_diagnostics_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+    `).run(
+      releaseId,
+      sourceId,
+      'synthetic-2026',
+      '2026-08-28',
+      '2026-08-28T00:00:00.000Z',
+      'https://example.test/reference/synthetic-diagnosis',
+      'b1d09a8c7259bb3b882b18da7bbaeebc51ea06599ea9b19c32f830fac10e8db7',
+      'CC0-1.0',
+      'bundled-fixture',
+      JSON.stringify({ acceptedCount: 1, rejectedCount: 0, warnings: [] }),
+    )
+    database.driver.prepare(`
+      INSERT INTO reference_concept (
+        release_id, concept_id, domain, system, system_version, code, display,
+        status, source_id, source_locator
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      releaseId,
+      'diagnosis:fever',
+      'diagnosis',
+      'http://hl7.org/fhir/sid/icd-10',
+      'synthetic-2026',
+      'R50.9',
+      '发热，未特指',
+      'active',
+      sourceId,
+      'concepts[0]',
+    )
+
+    await copyFile(
+      join(sourceMigrationDirectory, '0002_reference-source-format.sql'),
+      join(migrationDirectory, '0002_reference-source-format.sql'),
+    )
+    expect(applyReferenceMigrations(database, migrationDirectory)).toEqual({
+      applied: ['0002_reference-source-format.sql'],
+      schemaVersion: 2,
+    })
+    expect(verifyReferenceDatabase(database)).toEqual({
+      integrity: 'ok',
+      releaseCount: 1,
+      schemaVersion: 2,
+    })
+    expect(listReferenceDataReleases(database).items[0]).toMatchObject({
+      contentHash: oldContentHash,
+      sources: [{ artifactFormat: 'clinmesh-reference-v1' }],
+    })
+    database.close()
   })
 })

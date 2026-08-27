@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { referenceImportManifestSchema } from '../src/reference-data.ts'
+import {
+  referenceCodingIdentity,
+  referenceImportManifestSchema,
+} from '../src/reference-data.ts'
 
 describe('Reference Data contracts', () => {
   it('requires every imported source to declare its license', () => {
@@ -17,5 +20,17 @@ describe('Reference Data contracts', () => {
         upstreamVersion: 'synthetic-v1',
       }],
     }).success).toBe(false)
+  })
+
+  it('keeps coding identities distinct when fields contain delimiters', () => {
+    expect(referenceCodingIdentity({
+      code: 'c\u0000d',
+      system: 'https://example.test/codes',
+      version: 'b',
+    })).not.toBe(referenceCodingIdentity({
+      code: 'd',
+      system: 'https://example.test/codes',
+      version: 'b\u0000c',
+    }))
   })
 })

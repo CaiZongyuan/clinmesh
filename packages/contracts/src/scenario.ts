@@ -3,6 +3,53 @@ import { referenceDataProvenanceSchema } from './reference-data.ts'
 
 const localDateSchema = z.iso.date()
 
+const legacyUcumUnitByDisplay = {
+  '%': '%',
+  '1': '1',
+  '10^12/L': '10*12/L',
+  '10^9/L': '10*9/L',
+  '10*3/uL': '10*3/uL',
+  '10*6/uL': '10*6/uL',
+  'L/L': 'L/L',
+  'fL': 'fL',
+  'g/L': 'g/L',
+  'g/dL': 'g/dL',
+  'kg/m²': 'kg/m2',
+  'mIU/L': 'm[IU]/L',
+  'mL/min/1.73m²': 'mL/min/{1.73_m2}',
+  'mg/L': 'mg/L',
+  'mmol/L': 'mmol/L',
+  'qualitative': '{qualitative}',
+  'pg': 'pg',
+  '°C': 'Cel',
+  'μmol/L': 'umol/L',
+} as const
+
+const canonicalUcumUnitSchema = z.object({
+  code: z.string().min(1),
+  display: z.string().min(1),
+  system: z.literal('http://unitsofmeasure.org'),
+  version: z.literal('2.2'),
+}).strict()
+
+export const scenarioUcumUnitSchema = z.preprocess((value) => {
+  if (typeof value !== 'string') return value
+  const code = legacyUcumUnitByDisplay[value as keyof typeof legacyUcumUnitByDisplay]
+  return code === undefined ? value : {
+    code,
+    display: value,
+    system: 'http://unitsofmeasure.org',
+    version: '2.2',
+  }
+}, canonicalUcumUnitSchema)
+
+export const scenarioLoincCodingSchema = z.object({
+  code: z.string().regex(/^\d{1,5}-\d$/),
+  display: z.string().min(1),
+  system: z.literal('http://loinc.org'),
+  version: z.literal('2.83'),
+}).strict()
+
 export const scenarioGenerationRequestSchema = z.object({
   modules: z.array(z.enum(['fever', 'type-2-diabetes'])).min(1).max(8),
   name: z.string().trim().min(1).max(120),
@@ -75,10 +122,11 @@ const scenarioReferenceRangeSchema = z.object({
   text: z.string().min(1),
 }).strict()
 
-const scenarioInvestigationCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
+export const scenarioInvestigationCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
   allowedIndicationCodes: z.array(z.string().min(1)).min(1),
   available: z.boolean(),
   category: z.enum(['examination', 'imaging', 'laboratory']),
+  coding: scenarioLoincCodingSchema.optional(),
   componentItemIds: z.array(z.string().min(1)).min(1).optional(),
   contraindicatedAllergyCodes: z.array(z.string().min(1)),
   criticalMaximum: z.number().optional(),
@@ -94,7 +142,7 @@ const scenarioInvestigationCatalogItemSchema = scenarioCatalogItemBaseSchema.ext
   referenceRanges: z.array(scenarioReferenceRangeSchema),
   reportTemplate: z.string().min(1),
   tatMinutes: z.number().int().nonnegative(),
-  unit: z.string().min(1).optional(),
+  unit: scenarioUcumUnitSchema.optional(),
   valueType: z.enum(['boolean', 'codeable', 'panel', 'quantity', 'string']),
 }).strict()
 
@@ -125,7 +173,7 @@ export const scenarioInvestigationResultSchema = z.discriminatedUnion('outcome',
     flag: z.string().min(1).optional(),
     outcome: z.literal('reported'),
     referenceRange: z.string().min(1).optional(),
-    unit: z.string().min(1).optional(),
+    unit: scenarioUcumUnitSchema.optional(),
     value: scenarioResultValueSchema,
   }).strict(),
   z.object({
@@ -161,6 +209,7 @@ const scenarioCodeSchema = z.object({
   code: z.string().min(1).optional(),
   display: z.string().min(1),
   system: z.string().url().optional(),
+  version: z.string().min(1).optional(),
 }).strict()
 
 const scenarioFhirHistorySchema = z.discriminatedUnion('resourceType', [
@@ -220,13 +269,13 @@ const scenarioDiagnosisSchema = z.object({
   truth: z.string().min(1).optional(),
 }).strict()
 
-const scenarioPhysiologyGeneratorSchema = z.discriminatedUnion('kind', [
+export const scenarioPhysiologyGeneratorSchema = z.discriminatedUnion('kind', [
   z.object({
     assayCv: z.number().nonnegative().max(1).optional(),
     id: z.string().min(1),
     kind: z.literal('constant'),
     source: z.string().min(1),
-    unit: z.string().min(1),
+    unit: scenarioUcumUnitSchema,
     value: z.number(),
   }).strict(),
   z.object({
@@ -238,7 +287,7 @@ const scenarioPhysiologyGeneratorSchema = z.discriminatedUnion('kind', [
     minimum: z.number(),
     source: z.string().min(1),
     standardDeviation: z.number().positive(),
-    unit: z.string().min(1),
+    unit: scenarioUcumUnitSchema,
   }).strict(),
   z.object({
     assayCv: z.number().nonnegative().max(1),
@@ -248,7 +297,7 @@ const scenarioPhysiologyGeneratorSchema = z.discriminatedUnion('kind', [
     minimum: z.number(),
     source: z.string().min(1),
     target: z.number(),
-    unit: z.string().min(1),
+    unit: scenarioUcumUnitSchema,
     walkStep: z.number().positive(),
   }).strict(),
   z.object({
@@ -263,7 +312,7 @@ const scenarioPhysiologyGeneratorSchema = z.discriminatedUnion('kind', [
     id: z.string().min(1),
     kind: z.literal('derived'),
     source: z.string().min(1),
-    unit: z.string().min(1),
+    unit: scenarioUcumUnitSchema,
   }).strict(),
   z.object({
     id: z.string().min(1),

@@ -1,4 +1,8 @@
 import type { ScenarioDatasetContent } from '@clinmesh/contracts/scenario'
+import {
+  investigationLoincCoding,
+  resolveUcumUnit,
+} from './reference-coding-package.ts'
 
 const hospitalId = 'hospital-synthetic-renhe'
 
@@ -50,6 +54,11 @@ function investigation(input: {
         standardDeviation: input.standardDeviation,
       }
     : undefined
+  const coding = investigationLoincCoding(input.id)
+  const unit = input.unit === undefined ? undefined : resolveUcumUnit({ display: input.unit })
+  if (input.unit !== undefined && unit === undefined) {
+    throw new Error(`Investigation ${input.id} has an unknown UCUM unit: ${input.unit}`)
+  }
   return {
     ...catalogBase(input),
     allowedIndicationCodes: input.allowedIndicationCodes ?? (input.category === 'examination'
@@ -57,6 +66,7 @@ function investigation(input: {
       : ['fever', 'type-2-diabetes']),
     available: input.available ?? true,
     category: input.category ?? 'laboratory',
+    ...(coding === undefined ? {} : { coding }),
     ...(input.componentItemIds === undefined ? {} : { componentItemIds: input.componentItemIds }),
     contraindicatedAllergyCodes: [],
     ...(input.criticalMaximum === undefined ? {} : { criticalMaximum: input.criticalMaximum }),
@@ -73,7 +83,7 @@ function investigation(input: {
     }],
     reportTemplate: input.reportTemplate,
     tatMinutes: input.tatMinutes,
-    ...(input.unit === undefined ? {} : { unit: input.unit }),
+    ...(unit === undefined ? {} : { unit }),
     valueType: input.valueType ?? 'quantity',
   }
 }

@@ -2,6 +2,14 @@ import { z } from 'zod'
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
 
+export function referenceCodingIdentity(input: {
+  code: string
+  system: string
+  version: string
+}): string {
+  return JSON.stringify([input.system, input.version, input.code])
+}
+
 export const referenceDataDomainSchema = z.enum([
   'diagnosis',
   'laboratory',
@@ -27,12 +35,19 @@ export const referenceArtifactSchema = z.object({
   schemaVersion: z.literal('1'),
 }).strict()
 
+export const referenceArtifactFormatSchema = z.enum([
+  'clinmesh-reference-v1',
+  'loinc-csv',
+  'ucum-xml',
+])
+
 export const referenceImportManifestSchema = z.object({
   createdAt: z.iso.datetime({ offset: true }),
   releaseId: z.string().min(1).max(256),
   schemaVersion: z.literal('1'),
   sources: z.array(z.object({
     acquisitionMethod: z.enum(['bundled-fixture', 'documented-api', 'generated', 'manual-download']),
+    artifactFormat: referenceArtifactFormatSchema.default('clinmesh-reference-v1'),
     artifactPath: z.string().min(1),
     checksum: sha256Schema,
     licenseId: z.string().min(1).max(256),
@@ -80,6 +95,7 @@ export const referenceDataProvenanceSchema = referenceDataReleaseSummarySchema.p
 })
 
 export type ReferenceArtifact = z.infer<typeof referenceArtifactSchema>
+export type ReferenceArtifactFormat = z.infer<typeof referenceArtifactFormatSchema>
 export type ReferenceConcept = z.infer<typeof referenceConceptSchema>
 export type ReferenceDataProvenance = z.infer<typeof referenceDataProvenanceSchema>
 export type ReferenceDataReleaseList = z.infer<typeof referenceDataReleaseListSchema>

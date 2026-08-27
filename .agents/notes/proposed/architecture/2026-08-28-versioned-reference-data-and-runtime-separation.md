@@ -14,6 +14,8 @@ Scenario Dataset、Synthetic Patient Profile Revision 和不可变 Scenario Pack
 
 Reference Data Release 是完整 authoring reference，Reference Data Package 是构建 Scenario 时选定的 Release 与审核映射集合，Hospital Baseline 是虚构医院从中启用并补齐运行属性的子集。三者不能共享一个可变当前状态。
 
+LOINC 与 UCUM 使用来源专用 parser 转为统一 reference concept；审核映射以 `system + version + code` 为源键，并保存本院项目、目标 UCUM coding 和必要的数值换算。读取旧 Package 时可以通过固定 normalizer 将已知裸单位转为当前结构，但不回写 Package 内容或 hash；未知单位和不匹配的 system/version 直接阻断编译。
+
 ## Alternatives considered
 
 **把完整参考数据加入 operational SQLite。** 单文件部署更直接，但全国目录会进入普通运行备份、查询和迁移，并使参考更新与 Workspace/Epoch 生命周期耦合。
@@ -33,5 +35,6 @@ Reference Data Release 是完整 authoring reference，Reference Data Package �
 ## Risks
 
 - Reference Data Package、Release 和 Hospital Baseline 的版本关系若没有集中 compiler，可能在调用方重新形成手工拼装。
-- 受限上游文件不能进入 Git 或普通 CI，完整 importer 仍需 opt-in artifact 验证，CI 只能保存合法最小 fixture。
+- 受限上游文件不能进入 Git 或普通 CI，完整 importer 仍需 opt-in artifact 验证；CI 只保存项目自有、不复制上游记录的同格式合成 fixture。
 - Package 持久合同增加 provenance 字段时必须兼容升级前数据，不能通过当前 importer 或 mapping 重建旧 Package。
+- 单位显示文本与 UCUM code 可能不同；只改标签会使数值语义错误，因此每个非 identity 换算都必须在 mapping data 中显式记录并由 worked example 验证。

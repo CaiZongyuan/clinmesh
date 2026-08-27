@@ -1,6 +1,9 @@
 import { scenarioGenerationRequestSchema } from '@clinmesh/contracts/scenario'
 import { describe, expect, it } from 'vitest'
-import { compileSyntheaR4Bundle } from '../src/application/scenario-data/synthea-case-truth-compiler.ts'
+import {
+  compileSyntheaR4Bundle,
+  syntheaR4BundleSchema,
+} from '../src/application/scenario-data/synthea-case-truth-compiler.ts'
 
 const request = scenarioGenerationRequestSchema.parse({
   modules: ['fever'],
@@ -11,6 +14,15 @@ const request = scenarioGenerationRequestSchema.parse({
   timeRange: { end: '2026-08-01', start: '2020-01-01' },
   timeZone: 'Asia/Shanghai',
 })
+
+function catchCompilerError(callback: () => unknown): unknown {
+  try {
+    callback()
+  } catch (error) {
+    return error
+  }
+  throw new Error('Expected CaseTruth compilation to fail')
+}
 
 describe('Synthea R4 CaseTruth compiler', () => {
   it('compiles a fever history into deterministic Chinese CaseTruth without US semantics', () => {
@@ -116,7 +128,16 @@ describe('Synthea R4 CaseTruth compiler', () => {
     })
     expect(compiled.investigations).toContainEqual(expect.objectContaining({
       catalogItemId: 'lab-body-temperature',
-      result: expect.objectContaining({ flag: 'H', unit: '°C', value: 38.6 }),
+      result: expect.objectContaining({
+        flag: 'H',
+        unit: {
+          code: 'Cel',
+          display: '°C',
+          system: 'http://unitsofmeasure.org',
+          version: '2.2',
+        },
+        value: 38.6,
+      }),
       sourceLevel: 'L1',
     }))
     expect(compiled.fhirHistory.map(resource => resource.resourceType)).toEqual([
@@ -126,11 +147,84 @@ describe('Synthea R4 CaseTruth compiler', () => {
       'MedicationRequest',
     ])
     expect(compiled.fhirHistory[0]).toMatchObject({ classCode: 'EMER', resourceType: 'Encounter' })
+    expect(compiled.fhirHistory.find(resource => resource.resourceType === 'Observation')).toMatchObject({
+      code: {
+        code: '8310-5',
+        display: 'Body temperature',
+        system: 'http://loinc.org',
+        version: '2.83',
+      },
+      value: {
+        unit: {
+          code: 'Cel',
+          display: '°C',
+          system: 'http://unitsofmeasure.org',
+          version: '2.2',
+        },
+      },
+    })
     expect(compiled.longitudinalHistory.find(event => (
       event.sourceResourceType === 'Encounter'
     ))).toMatchObject({ code: 'EMER', mappedCode: null })
     expect(JSON.stringify(compiled)).not.toMatch(/Boston|Massachusetts|Alice|Synthetic|Coverage|999-99-9999/)
     expect(compileSyntheaR4Bundle({ bundle, ordinal: 0, request })).toEqual(compiled)
+
+    const wrongSystemBundle = structuredClone(bundle)
+    const wrongSystemObservation = wrongSystemBundle.entry.find(entry => (
+      entry.resource.id === 'temperature-fever'
+    ))?.resource
+    if (wrongSystemObservation?.resourceType !== 'Observation') {
+      throw new Error('Temperature fixture was not found')
+    }
+    const wrongSystemCoding = wrongSystemObservation.code?.coding?.[0]
+    if (wrongSystemCoding === undefined) throw new Error('Temperature coding was not found')
+    wrongSystemCoding.system = 'https://example.test/not-loinc'
+    expect(catchCompilerError(() => compileSyntheaR4Bundle({
+      bundle: wrongSystemBundle,
+      ordinal: 0,
+      request,
+    }))).toMatchObject({
+      code: 'OBSERVATION_CODING_MISMATCH',
+      sourceResourceId: 'temperature-fever',
+    })
+
+    const wrongVersionBundle = structuredClone(bundle)
+    const wrongVersionObservation = wrongVersionBundle.entry.find(entry => (
+      entry.resource.id === 'temperature-fever'
+    ))?.resource
+    if (wrongVersionObservation?.resourceType !== 'Observation') {
+      throw new Error('Temperature fixture was not found')
+    }
+    const wrongVersionCoding = wrongVersionObservation.code?.coding?.[0]
+    if (wrongVersionCoding === undefined) throw new Error('Temperature coding was not found')
+    Object.assign(wrongVersionCoding, { version: '2.82' })
+    expect(catchCompilerError(() => compileSyntheaR4Bundle({
+      bundle: wrongVersionBundle,
+      ordinal: 0,
+      request,
+    }))).toMatchObject({
+      code: 'OBSERVATION_CODING_MISMATCH',
+      sourceResourceId: 'temperature-fever',
+    })
+
+    const wrongDisplayBundle = structuredClone(bundle)
+    const wrongDisplayObservation = wrongDisplayBundle.entry.find(entry => (
+      entry.resource.id === 'temperature-fever'
+    ))?.resource
+    if (wrongDisplayObservation?.resourceType !== 'Observation') {
+      throw new Error('Temperature fixture was not found')
+    }
+    const wrongDisplayCoding = wrongDisplayObservation.code?.coding?.[0]
+    if (wrongDisplayCoding === undefined) throw new Error('Temperature coding was not found')
+    wrongDisplayCoding.display = 'Blood glucose'
+    expect(catchCompilerError(() => compileSyntheaR4Bundle({
+      bundle: wrongDisplayBundle,
+      ordinal: 0,
+      request,
+    }))).toMatchObject({
+      code: 'OBSERVATION_CODING_MISMATCH',
+      sourceResourceId: 'temperature-fever',
+    })
   })
 
   it('keeps T2DM objective truth separate from patient knowledge in the same schema', () => {
@@ -198,8 +292,8 @@ describe('Synthea R4 CaseTruth compiler', () => {
         display: 'Glucose [Mass/volume] in Blood',
         effectiveDateTime: '2026-08-01T09:10:00Z',
         id: 'observation-glucose',
-        unit: 'mmol/L',
-        value: 13.8,
+        unit: 'mg/dL',
+        value: 248.65,
       }, {
         code: '4548-4',
         display: 'Hemoglobin A1c/Hemoglobin.total in Blood',
@@ -269,5 +363,44 @@ describe('Synthea R4 CaseTruth compiler', () => {
       'HbA1c 9.2%',
     ]))
     expect(JSON.stringify(compiled)).not.toMatch(/Springfield|Smith|John/)
+
+    const invalidQuantities = [{
+      value: 248.65,
+    }, {
+      unit: 'mg%',
+      value: 248.65,
+    }, {
+      code: 'mg/dL',
+      system: 'http://unitsofmeasure.org',
+      unit: 'mmol/L',
+      value: 248.65,
+    }, {
+      code: 'mg%',
+      system: 'http://unitsofmeasure.org',
+      unit: 'mg/dL',
+      value: 248.65,
+    }]
+    for (const valueQuantity of invalidQuantities) {
+      const invalidUnitBundle = syntheaR4BundleSchema.parse(structuredClone(bundle))
+      invalidUnitBundle.entry = invalidUnitBundle.entry.filter(entry => (
+        entry.resource.id !== 'observation-glucose-historical'
+      ))
+      const glucose = invalidUnitBundle.entry.find(entry => (
+        entry.resource.id === 'observation-glucose'
+      ))?.resource
+      if (glucose?.resourceType !== 'Observation' || glucose.valueQuantity === undefined) {
+        throw new Error('Glucose fixture was not found')
+      }
+      glucose.valueQuantity = valueQuantity
+
+      expect(catchCompilerError(() => compileSyntheaR4Bundle({
+        bundle: invalidUnitBundle,
+        ordinal: 0,
+        request: diabetesRequest,
+      }))).toMatchObject({
+        code: 'OBSERVATION_UNIT_INVALID',
+        sourceResourceId: 'observation-glucose',
+      })
+    }
   })
 })

@@ -24,7 +24,9 @@
     "@hono/node-server": "catalog:",
     "better-auth": "1.7.1",
     "better-sqlite3": "13.0.3",
+    "csv-parse": "6.1.0",
     "drizzle-orm": "0.45.2",
+    "fast-xml-parser": "5.3.6",
     "hono": "catalog:",
     "uuid": "13.0.0",
     "zod": "catalog:"
