@@ -271,11 +271,10 @@ public final class ProviderServer {
 
   private static List<String> modulePatterns(List<String> modules) {
     List<String> patterns = new ArrayList<>();
-    if (modules.contains("fever")) patterns.add("sinusitis.json");
+    if (modules.contains("fever")) patterns.add("sinusitis");
     if (modules.contains("type-2-diabetes")) {
-      patterns.add("metabolic_syndrome_disease.json");
-      patterns.add("metabolic_syndrome_care.json");
-      patterns.add("metabolic_syndrome/*.json");
+      patterns.add("metabolic_syndrome_disease");
+      patterns.add("metabolic_syndrome_care");
     }
     return patterns;
   }
@@ -525,8 +524,32 @@ public final class ProviderServer {
   private static void smoke() throws Exception {
     int port = Integer.parseInt(System.getenv().getOrDefault("SYNTHEA_PROVIDER_PORT", "8080"));
     String body = """
-        {"modules":["fever"],"name":"Docker smoke","population":{"age":{"maximum":40,"minimum":30},"count":1,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"2020-01-01"},"timeZone":"Asia/Shanghai"}
+        {"modules":["fever"],"name":"Docker smoke","population":{"age":{"maximum":80,"minimum":20},"count":5,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1996-08-01"},"timeZone":"Asia/Shanghai"}
         """.trim();
+    JsonObject result = generateForSmoke(port, body, "Synthea Provider smoke request failed");
+    if (result.getAsJsonArray("bundles").size() != 5
+        || !result.getAsJsonObject("metadata").get("syntheaCommit").getAsString()
+            .equals(SYNTHEA_COMMIT)
+        || !containsCode(result.getAsJsonArray("bundles"),
+            Set.of("444814009", "75498004", "36971009", "40055000"))) {
+      throw new IOException("Synthea Provider smoke response is invalid");
+    }
+
+    String diabetesBody = """
+        {"modules":["type-2-diabetes"],"name":"Docker diabetes smoke","population":{"age":{"maximum":80,"minimum":50},"count":10,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1986-08-01"},"timeZone":"Asia/Shanghai"}
+        """.trim();
+    JsonObject diabetesResult = generateForSmoke(
+        port, diabetesBody, "Synthea Provider diabetes smoke request failed");
+    if (diabetesResult.getAsJsonArray("bundles").size() != 10
+        || !containsCode(diabetesResult.getAsJsonArray("bundles"),
+            Set.of("44054006", "237602007"))) {
+      throw new IOException("Synthea Provider diabetes smoke response is invalid");
+    }
+    System.out.println("Synthea Provider smoke passed");
+  }
+
+  private static JsonObject generateForSmoke(int port, String body, String errorMessage)
+      throws Exception {
     HttpRequest request = HttpRequest.newBuilder(
             URI.create("http://127.0.0.1:" + port + "/v1/generate"))
         .timeout(Duration.ofMinutes(10))
@@ -535,13 +558,25 @@ public final class ProviderServer {
         .build();
     HttpResponse<String> response = HttpClient.newHttpClient()
         .send(request, HttpResponse.BodyHandlers.ofString());
-    if (response.statusCode() != 200) throw new IOException("Synthea Provider smoke request failed");
-    JsonObject result = JsonParser.parseString(response.body()).getAsJsonObject();
-    if (result.getAsJsonArray("bundles").size() != 1
-        || !result.getAsJsonObject("metadata").get("syntheaCommit").getAsString()
-            .equals(SYNTHEA_COMMIT)) {
-      throw new IOException("Synthea Provider smoke response is invalid");
+    if (response.statusCode() != 200) throw new IOException(errorMessage);
+    return JsonParser.parseString(response.body()).getAsJsonObject();
+  }
+
+  private static boolean containsCode(JsonElement value, Set<String> expectedCodes) {
+    if (value.isJsonArray()) {
+      for (JsonElement item : value.getAsJsonArray()) {
+        if (containsCode(item, expectedCodes)) return true;
+      }
+      return false;
     }
-    System.out.println("Synthea Provider smoke passed");
+    if (!value.isJsonObject()) return false;
+    JsonObject object = value.getAsJsonObject();
+    if (object.has("code") && object.get("code").isJsonPrimitive()
+        && object.getAsJsonPrimitive("code").isString()
+        && expectedCodes.contains(object.get("code").getAsString())) return true;
+    for (String key : object.keySet()) {
+      if (containsCode(object.get(key), expectedCodes)) return true;
+    }
+    return false;
   }
 }

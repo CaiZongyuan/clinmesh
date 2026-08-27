@@ -6,6 +6,9 @@ ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 WORKDIR /workspace
 
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends g++ make python3 \
+  && rm -rf /var/lib/apt/lists/*
 RUN corepack enable && corepack prepare pnpm@11.17.0 --activate
 COPY . .
 RUN pnpm install --frozen-lockfile
