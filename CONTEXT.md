@@ -41,8 +41,12 @@ Scenario 采用的虚构医院类型、所属地区和政策生效日期。它�
 _Avoid_: Generic Chinese hospital, live policy
 
 **Reference Data Package**:
-构建 Scenario 时使用的版本固定术语、目录和映射集合，并保留来源、地域、有效期和使用条件。它不是运行中的医院事实，也不是完整 Scenario。
+构建 Scenario 时使用的版本固定 Reference Data Release 与审核映射集合，并保留来源、地域、有效期和使用条件。它不是运行中的医院事实，也不是完整 Scenario。
 _Avoid_: Seed, live catalog, Scenario
+
+**Reference Data Release**:
+一次不可变发布的规范化参考术语或目录数据及其来源清单。它是 Scenario authoring 输入，不表示某所医院已经启用其中项目。
+_Avoid_: Hospital Baseline, live catalog, patient fact
 
 **Generation Batch**:
 一次受控生成请求产生的一组合成患者及其共同来源参数。Generation Batch 只表达 provenance，不是患者生命周期，也不决定患者是否进入业务流程。

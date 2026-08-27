@@ -56,6 +56,7 @@ import {
   getScenarioDatasets,
   getScenarioGenerationJob,
   getScenarioProviders,
+  getReferenceDataReleases,
   installScenarioDataset,
   newIdempotencyKey,
   sessionQueryKey,
@@ -67,6 +68,7 @@ import { PaginationControls } from './pagination-controls.tsx'
 
 const providersQueryKey = ['scenario-providers'] as const
 const datasetsQueryKey = ['scenario-datasets'] as const
+const referenceDataReleasesQueryKey = ['reference-data-releases'] as const
 const SyntheticPatientLibrary = lazy(async () => {
   const module = await import('./synthetic-patient-library.tsx')
   return { default: module.SyntheticPatientLibrary }
@@ -2079,21 +2081,82 @@ function ScenarioDatasetStudio({ locale }: { locale: WorkspaceLocale }): React.J
   )
 }
 
+function ReferenceDataReleaseSummary({ locale }: { locale: WorkspaceLocale }): React.JSX.Element {
+  const messages = getWorkspaceMessages(locale)
+  const releases = useQuery({
+    queryFn: ({ signal }) => getReferenceDataReleases(signal),
+    queryKey: referenceDataReleasesQueryKey,
+  })
+
+  return (
+    <section aria-labelledby="reference-data-releases-heading" className="flex min-w-0 flex-col gap-3 border-b pb-4">
+      <div className="flex items-center gap-2">
+        <DatabaseIcon aria-hidden="true" className="size-4" />
+        <h2 className="text-base font-semibold" id="reference-data-releases-heading">
+          {messages.referenceDataReleases}
+        </h2>
+      </div>
+      {releases.isPending ? <Skeleton className="h-20 w-full" /> : null}
+      {releases.isError ? (
+        <Alert variant="destructive">
+          <CircleAlertIcon aria-hidden="true" />
+          <AlertTitle>{getWorkspaceErrorTitle(releases.error, messages, messages.referenceDataUnavailable)}</AlertTitle>
+          <AlertDescription>{getWorkspaceErrorMessage(releases.error, messages)}</AlertDescription>
+        </Alert>
+      ) : null}
+      {releases.data?.items.map(release => (
+        <div className="min-w-0" key={release.releaseId}>
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm lg:grid-cols-4">
+            <div className="min-w-0">
+              <dt className="text-xs text-muted-foreground">{messages.referenceDataRelease}</dt>
+              <dd className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="break-all font-medium">{release.releaseId}</span>
+                <Badge variant="success">{messages.referenceDataPublished}</Badge>
+              </dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-xs text-muted-foreground">{messages.referenceDataHash}</dt>
+              <dd><code className="text-xs" title={release.contentHash}>{release.contentHash.slice(0, 12)}...</code></dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-xs text-muted-foreground">{messages.referenceDataSourceCount.replace('{count}', release.sourceCount.toLocaleString(locale))}</dt>
+              <dd className="flex flex-col gap-1 text-xs text-muted-foreground">
+                {release.sources.map(source => (
+                  <span className="break-words" key={source.sourceId}>
+                    {source.sourceId} · {source.upstreamVersion} · {source.licenseId}
+                  </span>
+                ))}
+              </dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-xs text-muted-foreground">{messages.referenceDataConceptCount.replace('{count}', release.conceptCount.toLocaleString(locale))}</dt>
+              <dd>{release.conceptCount.toLocaleString(locale)}</dd>
+            </div>
+          </dl>
+        </div>
+      ))}
+    </section>
+  )
+}
+
 export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): React.JSX.Element {
   return (
-    <Tabs defaultValue="library">
-      <TabsList aria-label="模拟数据视图" variant="line">
-        <TabsTrigger value="library">{locale === 'zh-CN' ? '合成患者库' : 'Synthetic patient library'}</TabsTrigger>
-        <TabsTrigger value="studio">{locale === 'zh-CN' ? '高级病例编排' : 'Advanced case authoring'}</TabsTrigger>
-      </TabsList>
-      <TabsContent className="pt-4" value="library">
-        <Suspense fallback={<Skeleton className="h-[680px] w-full" />}>
-          <SyntheticPatientLibrary locale={locale} />
-        </Suspense>
-      </TabsContent>
-      <TabsContent className="pt-4" value="studio">
-        <ScenarioDatasetStudio locale={locale} />
-      </TabsContent>
-    </Tabs>
+    <div className="flex min-w-0 flex-col gap-4">
+      <ReferenceDataReleaseSummary locale={locale} />
+      <Tabs defaultValue="library">
+        <TabsList aria-label="模拟数据视图" variant="line">
+          <TabsTrigger value="library">{locale === 'zh-CN' ? '合成患者库' : 'Synthetic patient library'}</TabsTrigger>
+          <TabsTrigger value="studio">{locale === 'zh-CN' ? '高级病例编排' : 'Advanced case authoring'}</TabsTrigger>
+        </TabsList>
+        <TabsContent className="pt-4" value="library">
+          <Suspense fallback={<Skeleton className="h-[680px] w-full" />}>
+            <SyntheticPatientLibrary locale={locale} />
+          </Suspense>
+        </TabsContent>
+        <TabsContent className="pt-4" value="studio">
+          <ScenarioDatasetStudio locale={locale} />
+        </TabsContent>
+      </Tabs>
+    </div>
   )
 }

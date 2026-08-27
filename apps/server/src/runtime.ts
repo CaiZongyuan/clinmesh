@@ -2,6 +2,7 @@ import { createApp } from './app.ts'
 import { IdentityService } from './application/identity-service.ts'
 import { CommandExecutor, type ActorContext } from './application/command-executor.ts'
 import { ScenarioService } from './application/scenario-service.ts'
+import { ReferenceDataService } from './application/reference-data-service.ts'
 import { ScenarioDataService } from './application/scenario-data/scenario-data-service.ts'
 import { UnavailableScenarioGenerationProvider } from './application/scenario-data/provider.ts'
 import { WorkflowService } from './application/workflow-service.ts'
@@ -17,6 +18,12 @@ import { WorkspaceRepository } from './infrastructure/sqlite/workspace-repositor
 import { ScenarioDatasetRepository } from './infrastructure/sqlite/scenario-dataset-repository.ts'
 import { ScenarioGenerationJobRepository } from './infrastructure/sqlite/scenario-generation-job-repository.ts'
 import { SyntheticPatientProfileRepository } from './infrastructure/sqlite/synthetic-patient-profile-repository.ts'
+import { SqliteReferenceDataRepository } from './infrastructure/sqlite/reference-data-repository.ts'
+import {
+  openReferenceDatabase,
+  verifyReferenceDatabase,
+  type ReferenceDatabase,
+} from './infrastructure/sqlite/reference-database.ts'
 import { BuiltInScenarioGenerationProvider } from './infrastructure/scenario-generation/builtin-provider.ts'
 import { SyntheaScenarioGenerationProvider } from './infrastructure/scenario-generation/synthea-provider.ts'
 import type { ScenarioGenerationProvider } from './application/scenario-data/provider.ts'
@@ -45,6 +52,7 @@ export interface CreateClinMeshRuntimeOptions {
   demoPassword: string
   migrationMode: 'apply' | 'verify'
   now?: () => Date
+  referenceDatabasePath?: string
   syntheaProvider?: ScenarioGenerationProvider
   syntheaProviderUrl?: string
   trustedOrigins: string[]
@@ -56,6 +64,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     busyTimeoutMs: 5_000,
     databasePath: options.databasePath,
   })
+  let referenceDatabase: ReferenceDatabase | undefined
   try {
     if (options.migrationMode === 'apply') applyMigrations(database)
     else verifyMigrations(database)
@@ -77,6 +86,17 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ...clockOptions,
     })
     const commands = new CommandExecutor(database, fhir, clockOptions)
+    if (options.referenceDatabasePath !== undefined) {
+      referenceDatabase = openReferenceDatabase({
+        busyTimeoutMs: 5_000,
+        databasePath: options.referenceDatabasePath,
+        readonly: true,
+      })
+      verifyReferenceDatabase(referenceDatabase)
+    }
+    const referenceData = new ReferenceDataService(
+      referenceDatabase === undefined ? undefined : new SqliteReferenceDataRepository(referenceDatabase),
+    )
     const scenario = new ScenarioService(database, fhir, commands)
     const workflow = new WorkflowService(database, fhir, commands, {
       ...clockOptions,
@@ -104,6 +124,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         ['synthea', syntheaProvider],
       ]),
       profiles: syntheticPatientProfiles,
+      referenceData,
       repository: new ScenarioDatasetRepository(database),
       scenario,
       workflow,
@@ -230,6 +251,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         resolveContext: async request => (await identity.resolveSessionContext(request.headers)).actor,
       },
       identity,
+      referenceData,
       scenario,
       scenarioData,
       workflow,
@@ -245,6 +267,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         generationAbort.abort()
         closePromise = (async () => {
           await Promise.all([dispatchCycle, generationCycle])
+          referenceDatabase?.close()
+          referenceDatabase = undefined
           database.close()
         })()
         return closePromise
@@ -255,11 +279,13 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       dispatcher,
       fhir,
       identity,
+      referenceData,
       scenario,
       scenarioData,
       workflow,
     }
   } catch (error) {
+    referenceDatabase?.close()
     database.close()
     throw error
   }

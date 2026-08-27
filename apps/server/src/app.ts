@@ -32,6 +32,8 @@ import {
 } from '@clinmesh/contracts/scenario'
 import type { IdentityService } from './application/identity-service.ts'
 import { IdentityError } from './application/identity-service.ts'
+import type { ReferenceDataService } from './application/reference-data-service.ts'
+import { ReferenceDataError } from './application/reference-data-service.ts'
 import {
   CommandConflictError,
   ExpectedVersionConflictError,
@@ -59,6 +61,7 @@ interface FhirRuntime {
 export interface CreateAppOptions {
   fhir?: FhirRuntime
   identity?: IdentityService
+  referenceData?: ReferenceDataService
   scenario?: ScenarioService
   scenarioData?: ScenarioDataService
   workflow?: WorkflowService
@@ -86,6 +89,7 @@ function apiErrorResponse(
   }
   if (
     error instanceof IdentityError
+    || error instanceof ReferenceDataError
     || error instanceof ScenarioDataError
     || error instanceof ScenarioError
     || error instanceof WorkflowError
@@ -235,6 +239,19 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         }))
       } catch (error) {
         return apiErrorResponse(context, error, 'The Scenario installation request is invalid')
+      }
+    })
+  }
+
+  if (options.identity !== undefined && options.referenceData !== undefined) {
+    const identity = options.identity
+    const referenceData = options.referenceData
+    app.get('/api/sim/v1/reference-data/releases', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(referenceData.list(session.actor))
+      } catch (error) {
+        return apiErrorResponse(context, error)
       }
     })
   }

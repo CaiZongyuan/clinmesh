@@ -589,10 +589,37 @@ function stubScenarioDataWorkspace(options: {
         workspaceId: 'workspace-demo',
       })
     }
+    if (url.pathname === '/api/sim/v1/reference-data/releases') {
+      return Response.json({
+        items: [{
+          conceptCount: 4,
+          contentHash: '0123456789abcdef'.repeat(4),
+          createdAt: '2026-08-27T00:00:00+08:00',
+          releaseId: 'clinmesh-builtin-reference-v1',
+          schemaVersion: '1',
+          sourceCount: 1,
+          sources: [{
+            acquisitionMethod: 'generated',
+            checksum: '0123456789abcdef'.repeat(4),
+            importDiagnostics: {
+              acceptedCount: 4,
+              rejectedCount: 0,
+              warnings: [],
+            },
+            licenseId: 'Apache-2.0',
+            recordCount: 4,
+            retrievedAt: '2026-08-27T00:00:00+08:00',
+            sourceId: 'clinmesh-builtin',
+            sourceUrl: 'https://github.com/CaiZongyuan/clinmesh/blob/main/apps/server/src/application/scenario-data/hospital-baseline.ts',
+            upstreamVersion: 'builtin-reference-v1',
+          }],
+          status: 'published',
+        }],
+      })
+    }
     if (url.pathname === '/api/sim/v1/scenario-providers') {
       return Response.json({
         items: [{
-          catalogItemId: 'diagnosis-acute-upper-respiratory-infection',
           available: true,
           maxPopulation: 10,
           modules: ['fever', 'type-2-diabetes'],
@@ -1144,6 +1171,20 @@ describe('role workspaces', () => {
     expect(screen.getByText('未配置 Synthea Provider')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '生成数据' }))
     expect(await screen.findByText('发热门诊样本')).toBeTruthy()
+  })
+
+  it('shows the published Reference Data release through the administrator Web seam', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace()
+
+    render(<WebApp />)
+
+    expect(await screen.findByRole('heading', { name: '参考数据版本' })).toBeTruthy()
+    expect(await screen.findByText('clinmesh-builtin-reference-v1')).toBeTruthy()
+    expect(screen.getByText('0123456789ab...')).toBeTruthy()
+    expect(screen.getByText('1 个来源')).toBeTruthy()
+    expect(screen.getByText('4 个概念')).toBeTruthy()
+    expect(screen.getByText('clinmesh-builtin · builtin-reference-v1 · Apache-2.0')).toBeTruthy()
   })
 
   it('searches and pages Scenario Datasets through the administrator Web seam', async () => {

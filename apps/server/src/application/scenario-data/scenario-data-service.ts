@@ -26,6 +26,7 @@ import {
 import { validateScenarioDataset } from './scenario-dataset-validator.ts'
 import type { ScenarioService } from '../scenario-service.ts'
 import type { WorkflowService } from '../workflow-service.ts'
+import type { ReferenceDataService } from '../reference-data-service.ts'
 import { createSyntheticPatientProfiles } from './synthetic-patient-profile.ts'
 import { canonicalJsonHash } from './canonical-json.ts'
 import {
@@ -75,6 +76,7 @@ export class ScenarioDataService {
   readonly #profiles: SyntheticPatientProfileRepository
   readonly #jobs: ScenarioGenerationJobRepository
   readonly #repository: ScenarioDatasetRepository
+  readonly #referenceData: ReferenceDataService
   readonly #scenario: ScenarioService
   readonly #workflow: WorkflowService
 
@@ -83,6 +85,7 @@ export class ScenarioDataService {
     jobs: ScenarioGenerationJobRepository
     providers: ReadonlyMap<string, ScenarioGenerationProvider>
     profiles: SyntheticPatientProfileRepository
+    referenceData: ReferenceDataService
     repository: ScenarioDatasetRepository
     scenario: ScenarioService
     workflow: WorkflowService
@@ -91,6 +94,7 @@ export class ScenarioDataService {
     this.#jobs = input.jobs
     this.#providers = input.providers
     this.#profiles = input.profiles
+    this.#referenceData = input.referenceData
     this.#repository = input.repository
     this.#scenario = input.scenario
     this.#workflow = input.workflow
@@ -117,7 +121,11 @@ export class ScenarioDataService {
     }
     const provider = await this.#providerFor(input.request)
     const corpus = await provider.generate(input.request)
-    const dataset = this.#dataset(input.context.workspaceId, input.request, corpus.content)
+    const dataset = this.#dataset(
+      input.context.workspaceId,
+      input.request,
+      this.#withReferenceData(corpus.content),
+    )
     const profiles = createSyntheticPatientProfiles({
       dataset,
       sources: corpus.sources,
@@ -202,7 +210,11 @@ export class ScenarioDataService {
     try {
       const provider = await this.#providerFor(claimed.request)
       const corpus = await provider.generate(claimed.request, signal)
-      const dataset = this.#dataset(claimed.workspaceId, claimed.request, corpus.content)
+      const dataset = this.#dataset(
+        claimed.workspaceId,
+        claimed.request,
+        this.#withReferenceData(corpus.content),
+      )
       const profiles = createSyntheticPatientProfiles({
         dataset,
         sources: corpus.sources,
@@ -663,7 +675,13 @@ export class ScenarioDataService {
     this.#assertAdministrator(input.context)
     const current = this.#getDataset(input.context.workspaceId, input.datasetId)
     const now = new Date().toISOString()
-    const content = scenarioDatasetContentSchema.parse(input.content)
+    const content = scenarioDatasetContentSchema.parse({
+      ...input.content,
+      reproduction: {
+        ...input.content.reproduction,
+        referenceData: current.content.reproduction.referenceData ?? this.#referenceData.provenance(),
+      },
+    })
     const updated: ScenarioDataset = {
       ...current,
       content,
@@ -709,6 +727,16 @@ export class ScenarioDataService {
     if (context.roleCode !== 'administrator') {
       throw new ScenarioDataError('ROLE_NOT_ALLOWED', 'Only an administrator can manage Scenario Datasets')
     }
+  }
+
+  #withReferenceData(content: ScenarioDataset['content']): ScenarioDataset['content'] {
+    return scenarioDatasetContentSchema.parse({
+      ...content,
+      reproduction: {
+        ...content.reproduction,
+        referenceData: this.#referenceData.provenance(),
+      },
+    })
   }
 
   #assertExpectedVersion(dataset: ScenarioDataset, expectedVersion: number): void {

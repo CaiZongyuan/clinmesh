@@ -1,0 +1,1473 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Synthea 数据如何进入 ClinMesh</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172326;
+      --ink-soft: #314347;
+      --paper: #f5f7f5;
+      --surface: #ffffff;
+      --surface-soft: #eef3f1;
+      --line: #cbd6d3;
+      --line-strong: #9fb1ac;
+      --muted: #5e6e71;
+      --teal: #0d6b62;
+      --teal-soft: #dcefeb;
+      --blue: #285f8f;
+      --blue-soft: #e4edf5;
+      --coral: #bd4935;
+      --coral-soft: #fae8e4;
+      --yellow: #a86d00;
+      --yellow-soft: #fff1c9;
+      --purple: #75518d;
+      --purple-soft: #efe7f4;
+      --code: #111a1c;
+      --code-text: #dce7e4;
+      --shadow: 0 12px 32px rgba(23, 35, 38, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 16px;
+      line-height: 1.65;
+      letter-spacing: 0;
+    }
+
+    button, input { font: inherit; }
+
+    button { letter-spacing: 0; }
+
+    .shell {
+      width: min(1240px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .top-band {
+      background: var(--ink);
+      color: white;
+      border-bottom: 5px solid var(--teal);
+    }
+
+    .top-band .shell {
+      min-height: 300px;
+      padding: 48px 0 42px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.6fr);
+      gap: 48px;
+      align-items: end;
+    }
+
+    .kicker {
+      margin: 0 0 14px;
+      color: #8ed2c7;
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+
+    h1 {
+      max-width: 800px;
+      margin-bottom: 18px;
+      font-size: clamp(32px, 5vw, 56px);
+      line-height: 1.08;
+      font-weight: 780;
+      letter-spacing: 0;
+    }
+
+    .lede {
+      max-width: 760px;
+      margin-bottom: 0;
+      color: #d4dfdc;
+      font-size: 18px;
+    }
+
+    .question-box {
+      padding: 22px;
+      border: 1px solid #4e6266;
+      border-left: 4px solid #e3b64c;
+      background: #203034;
+    }
+
+    .question-box strong {
+      display: block;
+      margin-bottom: 8px;
+      color: #ffd777;
+      font-size: 14px;
+    }
+
+    .question-box p { margin: 0; color: #e8efed; }
+
+    .answer-band {
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .answer-band .shell {
+      padding: 24px 0;
+      display: grid;
+      grid-template-columns: 170px minmax(0, 1fr);
+      gap: 24px;
+      align-items: start;
+    }
+
+    .answer-label {
+      color: var(--teal);
+      font-weight: 800;
+    }
+
+    .answer-copy { margin: 0; font-size: 17px; }
+
+    .section {
+      padding: 56px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .section.white { background: var(--surface); }
+
+    .section-heading {
+      display: grid;
+      grid-template-columns: minmax(0, 0.72fr) minmax(320px, 1.28fr);
+      gap: 44px;
+      margin-bottom: 30px;
+      align-items: start;
+    }
+
+    .section-heading h2 {
+      margin-bottom: 0;
+      font-size: 30px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .section-heading p { margin-bottom: 0; color: var(--muted); }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(138px, 1fr));
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 8px;
+    }
+
+    .flow-step {
+      min-width: 138px;
+      min-height: 118px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--surface);
+      color: var(--ink);
+      text-align: left;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .flow-step:hover { border-color: var(--teal); }
+
+    .flow-step[aria-current="step"] {
+      border-color: var(--teal);
+      box-shadow: inset 0 0 0 1px var(--teal);
+      background: var(--teal-soft);
+    }
+
+    .flow-step.done { background: #edf6f3; }
+
+    .flow-step.blocked {
+      border-color: var(--coral);
+      background: var(--coral-soft);
+    }
+
+    .step-number {
+      display: inline-grid;
+      width: 26px;
+      height: 26px;
+      place-items: center;
+      margin-bottom: 12px;
+      border-radius: 50%;
+      background: var(--ink);
+      color: white;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .flow-step strong { display: block; font-size: 14px; line-height: 1.3; }
+
+    .flow-step small {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
+    .workbench {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.55fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .stage-panel, .state-panel {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .stage-header {
+      padding: 22px 24px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .stage-header-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+    }
+
+    .stage-header h3 {
+      margin-bottom: 6px;
+      font-size: 22px;
+      line-height: 1.25;
+    }
+
+    .stage-header p { margin-bottom: 0; color: var(--muted); }
+
+    .status-badge {
+      flex: 0 0 auto;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: var(--surface-soft);
+      color: var(--ink-soft);
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .status-badge.ok { background: var(--teal-soft); color: var(--teal); }
+    .status-badge.bad { background: var(--coral-soft); color: var(--coral); }
+
+    .io-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      border-bottom: 1px solid var(--line);
+    }
+
+    .io-item {
+      padding: 18px 22px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .io-item:nth-child(2n) { border-right: 0; }
+    .io-item:nth-last-child(-n+2) { border-bottom: 0; }
+
+    .io-item dt {
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .io-item dd { margin: 0; font-size: 14px; }
+
+    .code-wrap { background: var(--code); }
+
+    .code-toolbar {
+      min-height: 44px;
+      padding: 11px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid #314144;
+      color: #9fb4b0;
+      font-size: 12px;
+    }
+
+    pre {
+      min-height: 360px;
+      max-height: 560px;
+      margin: 0;
+      padding: 20px;
+      overflow: auto;
+      color: var(--code-text);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+      line-height: 1.55;
+      white-space: pre;
+      tab-size: 2;
+    }
+
+    .state-panel { position: sticky; top: 16px; overflow: hidden; }
+
+    .state-title {
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--line);
+      background: var(--ink);
+      color: white;
+    }
+
+    .state-title h3 { margin: 0; font-size: 17px; }
+
+    .state-list { margin: 0; }
+
+    .state-row {
+      display: grid;
+      grid-template-columns: 130px minmax(0, 1fr);
+      gap: 12px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .state-row:last-child { border-bottom: 0; }
+    .state-row dt { color: var(--muted); font-size: 13px; }
+    .state-row dd { margin: 0; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+
+    .change-note {
+      padding: 16px 18px;
+      border-top: 1px solid var(--line);
+      background: var(--yellow-soft);
+      color: #5d430a;
+      font-size: 13px;
+    }
+
+    .control-band {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+
+    .toggles { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--ink-soft);
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .toggle input { width: 17px; height: 17px; accent-color: var(--teal); }
+
+    .commands { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+
+    .btn {
+      min-height: 40px;
+      padding: 9px 14px;
+      border: 1px solid var(--line-strong);
+      border-radius: 4px;
+      background: var(--surface);
+      color: var(--ink);
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    .btn:hover { border-color: var(--teal); color: var(--teal); }
+    .btn.primary { border-color: var(--teal); background: var(--teal); color: white; }
+    .btn.primary:hover { background: #095850; color: white; }
+    .btn.warn { border-color: #d4a23a; background: #fff7dd; color: #6f4b00; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .source-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .source-item {
+      min-height: 220px;
+      padding: 20px;
+      border-top: 4px solid var(--teal);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .source-item:nth-child(2) { border-color: var(--blue); }
+    .source-item:nth-child(3) { border-color: var(--coral); }
+    .source-item:nth-child(4) { border-color: var(--purple); }
+
+    .source-item .number {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .source-item h3 { margin: 8px 0 12px; font-size: 18px; }
+    .source-item p { margin-bottom: 12px; color: var(--muted); font-size: 14px; }
+    .source-item ul { margin: 0; padding-left: 18px; font-size: 13px; }
+
+    .walkthrough-tabs {
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .tab {
+      flex: 0 0 auto;
+      min-height: 44px;
+      padding: 10px 14px;
+      border: 0;
+      border-bottom: 3px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    .tab[aria-selected="true"] { border-color: var(--teal); color: var(--teal); }
+
+    .walkthrough-body {
+      display: grid;
+      grid-template-columns: minmax(260px, 0.65fr) minmax(0, 1.35fr);
+      gap: 28px;
+      padding-top: 24px;
+    }
+
+    .walkthrough-summary h3 { margin-bottom: 8px; font-size: 21px; }
+    .walkthrough-summary p { color: var(--muted); }
+
+    .watch-for {
+      padding: 14px 16px;
+      border-left: 4px solid var(--yellow);
+      background: var(--yellow-soft);
+      color: #60440a;
+      font-size: 14px;
+    }
+
+    .guided-steps { display: grid; gap: 8px; }
+
+    .guided-step {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      min-height: 58px;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--surface);
+    }
+
+    .guided-step.current { border-color: var(--teal); background: var(--teal-soft); }
+    .guided-step.complete { color: var(--muted); background: var(--surface-soft); }
+
+    .guided-index {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .guided-copy strong { display: block; font-size: 14px; }
+    .guided-copy small { color: var(--muted); }
+
+    .compare-table { width: 100%; border-collapse: collapse; background: var(--surface); }
+    .compare-table th, .compare-table td {
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+    .compare-table th { background: var(--ink); color: white; }
+    .compare-table td:first-child { width: 22%; font-weight: 750; }
+
+    .not-list {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .not-item {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--coral);
+      background: var(--surface);
+    }
+
+    .not-item strong { display: block; margin-bottom: 7px; }
+    .not-item p { margin: 0; color: var(--muted); font-size: 14px; }
+
+    .footer-band { padding: 34px 0; background: var(--ink); color: #d5e0de; }
+    .footer-band p { max-width: 820px; margin: 0; }
+
+    @media (max-width: 980px) {
+      .top-band .shell, .section-heading, .workbench, .walkthrough-body {
+        grid-template-columns: 1fr;
+      }
+      .source-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .state-panel { position: static; }
+      .answer-band .shell { grid-template-columns: 1fr; gap: 6px; }
+    }
+
+    @media (max-width: 680px) {
+      .shell { width: min(100% - 20px, 1240px); }
+      .top-band .shell { padding: 34px 0 30px; gap: 28px; }
+      h1 { font-size: 34px; }
+      .lede { font-size: 16px; }
+      .section { padding: 38px 0; }
+      .section-heading { gap: 14px; margin-bottom: 22px; }
+      .section-heading h2 { font-size: 25px; }
+      .source-grid, .not-list, .io-grid { grid-template-columns: 1fr; }
+      .io-item { border-right: 0; }
+      .io-item:nth-last-child(-n+2) { border-bottom: 1px solid var(--line); }
+      .io-item:last-child { border-bottom: 0; }
+      .control-band { grid-template-columns: 1fr; }
+      .commands { justify-content: stretch; }
+      .commands .btn { flex: 1 1 130px; }
+      .guided-step { grid-template-columns: 30px minmax(0, 1fr); }
+      .guided-step .btn { grid-column: 1 / -1; width: 100%; }
+      .compare-table { display: block; overflow-x: auto; }
+      pre { min-height: 320px; font-size: 12px; }
+      .state-row { grid-template-columns: 112px minmax(0, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <header class="top-band">
+    <div class="shell">
+      <div>
+        <p class="kicker">Throwaway logic prototype · 合成高血压病例</p>
+        <h1>一条 Synthea 数据，怎样变成可运行的中国医院病例？</h1>
+        <p class="lede">下面不用抽象架构词堆叠，而是追踪同一名合成患者：从 FHIR R4 原始 Bundle 开始，经过代码识别、显式映射、本院目录选择和病例真值补全，最终安装成可离线重置的 ClinMesh Scenario Package。</p>
+      </div>
+      <div class="question-box">
+        <strong>这个原型回答的问题</strong>
+        <p>Synthea 已经给了诊断、血压和历史用药，为什么不能直接装进 ClinMesh？中间每一步究竟增加了什么信息，哪一步失败会阻止病例运行？</p>
+      </div>
+    </div>
+  </header>
+
+  <div class="answer-band">
+    <div class="shell">
+      <div class="answer-label">先看一句话答案</div>
+      <p class="answer-copy">Synthea 只提供“患者发生过什么”的美国临床素材。ClinMesh 还必须回答“这些代码在中国是什么意思”“本院能不能执行”“这次病例要揭示什么真值”，然后把全部答案冻结，运行时才不需要 Synthea、完整国家目录或外网。</p>
+    </div>
+  </div>
+
+  <main>
+    <section class="section" id="overview">
+      <div class="shell">
+        <div class="section-heading">
+          <h2>七步转换总览</h2>
+          <p>点击任一步查看真实数据形状。上方是“当前流水线进度”，下方代码区是“这一阶段的数据”。它不是同一个 JSON 不断加字段，而是不同责任的数据经过验证后组合。</p>
+        </div>
+        <nav class="flow" id="flow" aria-label="数据转换步骤"></nav>
+      </div>
+    </section>
+
+    <section class="section white" id="demo">
+      <div class="shell">
+        <div class="workbench">
+          <article class="stage-panel">
+            <header class="stage-header">
+              <div class="stage-header-row">
+                <div>
+                  <h3 id="stage-title"></h3>
+                  <p id="stage-explanation"></p>
+                </div>
+                <span class="status-badge" id="stage-status"></span>
+              </div>
+            </header>
+            <dl class="io-grid" id="io-grid"></dl>
+            <div class="code-wrap">
+              <div class="code-toolbar">
+                <span id="code-label"></span>
+                <span>合成示例 · 非真实患者或官方产品编码</span>
+              </div>
+              <pre id="code-sample" tabindex="0"></pre>
+            </div>
+          </article>
+
+          <aside class="state-panel" aria-live="polite">
+            <div class="state-title"><h3>当前完整状态</h3></div>
+            <dl class="state-list" id="state-list"></dl>
+            <div class="change-note" id="change-note"></div>
+          </aside>
+        </div>
+
+        <div class="control-band">
+          <div class="toggles" aria-label="故障开关">
+            <label class="toggle"><input id="mapping-gap" type="checkbox"> 缺少高血压诊断映射</label>
+            <label class="toggle"><input id="formulary-off" type="checkbox"> 本院未启用氨氯地平</label>
+            <label class="toggle"><input id="network-off" type="checkbox"> 上游网站与 Synthea 离线</label>
+          </div>
+          <div class="commands">
+            <button class="btn" id="reset-btn" type="button">从头开始</button>
+            <button class="btn warn" id="publish-btn" type="button">发布参考库 v2</button>
+            <button class="btn" id="runtime-reset-btn" type="button">从已安装包重置</button>
+            <button class="btn primary" id="next-btn" type="button">执行下一步</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="sources">
+      <div class="shell">
+        <div class="section-heading">
+          <h2>最终病例来自四个不同来源</h2>
+          <p>最容易误解的地方，是把 Synthea、参考库、本院目录和病例真值当成同一份数据。它们各自拥有不同事实，任何一层都不能替另一层猜答案。</p>
+        </div>
+        <div class="source-grid">
+          <article class="source-item">
+            <span class="number">来源 01</span>
+            <h3>Synthea 患者素材</h3>
+            <p>描述患者过去发生的临床事件与时间。</p>
+            <ul>
+              <li>Condition: SNOMED 59621000</li>
+              <li>Observation: LOINC 血压</li>
+              <li>MedicationRequest: RxNorm 308136</li>
+              <li>Encounter 与日期关系</li>
+            </ul>
+          </article>
+          <article class="source-item">
+            <span class="number">来源 02</span>
+            <h3>参考库与审核映射</h3>
+            <p>解释外部代码，并连接中国标准语义。</p>
+            <ul>
+              <li>完整 LOINC、UCUM、NHSA 等版本</li>
+              <li>system + version + code 唯一定位</li>
+              <li>等价、近似、一对多和未映射</li>
+              <li>审核状态与内容 hash</li>
+            </ul>
+          </article>
+          <article class="source-item">
+            <span class="number">来源 03</span>
+            <h3>虚构医院启用目录</h3>
+            <p>回答本院是否能开、能做、能收费。</p>
+            <ul>
+              <li>本院代码与执行科室</li>
+              <li>可用状态、价格与报告时间</li>
+              <li>药品规格、剂量、频次与库存</li>
+              <li>全部数据为合成医院事实</li>
+            </ul>
+          </article>
+          <article class="source-item">
+            <span class="number">来源 04</span>
+            <h3>ClinMesh 病例定义</h3>
+            <p>描述这次就诊的教学与仿真真值。</p>
+            <ul>
+              <li>患者知道和不知道什么</li>
+              <li>本次血压、症状和依从性</li>
+              <li>哪些动作揭示哪些证据</li>
+              <li>诊断、处置和随访要求</li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section white" id="walkthroughs">
+      <div class="shell">
+        <div class="section-heading">
+          <h2>五个引导场景</h2>
+          <p>这些场景展示真正需要设计的边界：映射存在不代表医院可执行；新参考库发布不应改变旧 Package；上游离线也不应影响已安装病例。</p>
+        </div>
+        <div class="walkthrough-tabs" id="walkthrough-tabs" role="tablist"></div>
+        <div class="walkthrough-body">
+          <div class="walkthrough-summary">
+            <h3 id="walkthrough-title"></h3>
+            <p id="walkthrough-description"></p>
+            <div class="watch-for" id="walkthrough-watch"></div>
+          </div>
+          <div class="guided-steps" id="guided-steps"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="field-reasons">
+      <div class="shell">
+        <div class="section-heading">
+          <h2>同一个对象为什么有这么多层</h2>
+          <p>以氨氯地平为例，RxNorm 药物概念、中国产品、本院可开药品和库存批次不是四种写法，而是四个不同问题的答案。</p>
+        </div>
+        <table class="compare-table">
+          <thead>
+            <tr><th>层次</th><th>示例</th><th>它回答什么</th><th>为什么不能省略</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Synthea/RxNorm</td>
+              <td><code>RxNorm 308136</code><br>amlodipine 2.5 mg tablet</td>
+              <td>来源病史里记录的是什么药物概念？</td>
+              <td>保留来源语义和纵向病史，但不代表中国存在同一产品。</td>
+            </tr>
+            <tr>
+              <td>中国参考产品</td>
+              <td><code>drug-product:amlodipine-2p5-demo</code><br>页面使用合成演示 ID</td>
+              <td>中国目录中的剂型、规格、厂家和产品身份是什么？</td>
+              <td>一个通用成分可能对应多个规格和厂家，不能直接成为处方项目。</td>
+            </tr>
+            <tr>
+              <td>本院可开药品</td>
+              <td><code>PH-HTN-AML-001</code><br>内科可开，单价 8.60 元</td>
+              <td>本院是否启用，怎样开，多少钱？</td>
+              <td>国家存在的产品不等于本院采购或允许门诊开立。</td>
+            </tr>
+            <tr>
+              <td>合成库存批次</td>
+              <td><code>LOT-AML-SYN-001</code><br>数量 300，效期 2030-12-31</td>
+              <td>这次发药从哪个批次扣减？</td>
+              <td>库存是医院运行事实，不能从国家目录或真实医院复制。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section white" id="negative-boundaries">
+      <div class="shell">
+        <div class="section-heading">
+          <h2>这条流水线明确不做什么</h2>
+          <p>负面边界与正向流程同样重要。它们防止系统因为“看起来能匹配”而生成错误临床事实。</p>
+        </div>
+        <div class="not-list">
+          <article class="not-item">
+            <strong>不按显示名称静默映射</strong>
+            <p>看到 “hypertension” 不能直接写成 I10。必须命中固定来源体系、版本和 code 的已审核映射。</p>
+          </article>
+          <article class="not-item">
+            <strong>不把完整参考库装进运行医院</strong>
+            <p>完整 LOINC、药品和国家服务目录留在 authoring 侧；运行库只安装这家虚构医院实际启用的解析结果。</p>
+          </article>
+          <article class="not-item">
+            <strong>不让 LLM 编造检查结果</strong>
+            <p>病例未定义的检查只能返回未建模、不可用或正常域受控采样，不能让对话模型自由生成医学真值。</p>
+          </article>
+          <article class="not-item">
+            <strong>不把映射等同于可执行</strong>
+            <p>即使 RxNorm 已找到中国药物概念，只要本院未启用对应药品，这次处方仍必须失败。</p>
+          </article>
+          <article class="not-item">
+            <strong>不让新版本改写旧病例</strong>
+            <p>参考库、映射或医院目录发布 v2 后，已安装 Package 继续绑定 v1 hash，reset 仍还原原始世界。</p>
+          </article>
+          <article class="not-item">
+            <strong>不依赖运行时外网</strong>
+            <p>NHSA、NMPA、NHC、LOINC 和 Synthea 全部离线时，已安装病例仍能问诊、检查、开药、收费、发药和重置。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer-band">
+    <div class="shell">
+      <p>这是一个讲解用的临时原型。示例患者、医院代码、产品 ID、价格和库存全部为合成数据；页面中的具体数据形状用于帮助确定 #42 的设计，不代表 ClinMesh 当前已经实现这些能力。</p>
+    </div>
+  </footer>
+
+  <script>
+    const EXAMPLE = {
+      syntheaCommit: "d9d07a6eef91ee5144293b42ab64224d84d124f8",
+      sourceBundleHash: "sha256:5d2f...a817",
+      initialReferenceVersion: "cn-reference-2026.08",
+      initialReferenceHash: "sha256:7a3c...9e21",
+      mappingVersion: "mapping-htn-v1",
+      mappingHash: "sha256:c48a...1b70",
+      baselineVersion: "renhe-outpatient-v1",
+      baselineHash: "sha256:9ef0...44c1",
+      caseModuleVersion: "hypertension-outpatient-v1",
+      caseModuleHash: "sha256:40bd...011a",
+      packageId: "scenario-package-htn-demo-001",
+      packageHash: "sha256:1c6f...b992"
+    };
+
+    const rawBundle = {
+      resourceType: "Bundle",
+      type: "collection",
+      entry: [
+        {
+          resource: {
+            resourceType: "Patient",
+            id: "synthea-source-patient-01",
+            gender: "male",
+            birthDate: "1968-03-12"
+          }
+        },
+        {
+          resource: {
+            resourceType: "Condition",
+            id: "condition-htn-01",
+            subject: { reference: "Patient/synthea-source-patient-01" },
+            code: {
+              coding: [{
+                system: "http://snomed.info/sct",
+                code: "59621000",
+                display: "Essential hypertension (disorder)"
+              }]
+            },
+            onsetDateTime: "2022-04-17T09:00:00-04:00"
+          }
+        },
+        {
+          resource: {
+            resourceType: "Observation",
+            id: "bp-panel-01",
+            status: "final",
+            code: {
+              coding: [{
+                system: "http://loinc.org",
+                code: "85354-9",
+                display: "Blood pressure panel"
+              }]
+            },
+            component: [
+              {
+                code: { coding: [{ system: "http://loinc.org", code: "8480-6", display: "Systolic blood pressure" }] },
+                valueQuantity: { value: 162, system: "http://unitsofmeasure.org", code: "mm[Hg]", unit: "mmHg" }
+              },
+              {
+                code: { coding: [{ system: "http://loinc.org", code: "8462-4", display: "Diastolic blood pressure" }] },
+                valueQuantity: { value: 96, system: "http://unitsofmeasure.org", code: "mm[Hg]", unit: "mmHg" }
+              }
+            ]
+          }
+        },
+        {
+          resource: {
+            resourceType: "MedicationRequest",
+            id: "medication-amlodipine-01",
+            status: "active",
+            intent: "order",
+            medicationCodeableConcept: {
+              coding: [{
+                system: "http://www.nlm.nih.gov/research/umls/rxnorm",
+                code: "308136",
+                display: "amlodipine 2.5 MG Oral Tablet"
+              }]
+            }
+          }
+        }
+      ]
+    };
+
+    const codeInventory = {
+      module: "hypertension",
+      syntheaCommit: EXAMPLE.syntheaCommit,
+      scannedFiles: [
+        "modules/hypertension.json",
+        "modules/medications/hypertension_medication.json"
+      ],
+      codes: [
+        { kind: "Condition", system: "http://snomed.info/sct", code: "59621000", use: "关键诊断", occurrences: 1 },
+        { kind: "Observation", system: "http://loinc.org", code: "85354-9", use: "血压组合", occurrences: 3 },
+        { kind: "Observation", system: "http://loinc.org", code: "8480-6", use: "收缩压", occurrences: 3 },
+        { kind: "Observation", system: "http://loinc.org", code: "8462-4", use: "舒张压", occurrences: 3 },
+        { kind: "Medication", system: "http://www.nlm.nih.gov/research/umls/rxnorm", code: "308136", use: "历史/治疗药物", occurrences: 1 },
+        { kind: "Encounter", system: "http://terminology.hl7.org/CodeSystem/v3-ActCode", code: "AMB", use: "保留来源语义", occurrences: 4 }
+      ]
+    };
+
+    const approvedMappings = {
+      release: EXAMPLE.mappingVersion,
+      hash: EXAMPLE.mappingHash,
+      entries: [
+        {
+          source: { system: "http://snomed.info/sct", version: "synthea@d9d07a6", code: "59621000" },
+          targetConcept: "diag:essential-hypertension",
+          chineseCoding: { system: "urn:clinmesh:demo:nhsa-diagnosis", code: "I10", display: "原发性高血压" },
+          relationship: "equivalent",
+          review: "active"
+        },
+        {
+          source: { system: "http://loinc.org", version: "2.83", code: "85354-9" },
+          targetConcept: "observation:blood-pressure-panel",
+          relationship: "equivalent",
+          review: "active"
+        },
+        {
+          source: { system: "http://www.nlm.nih.gov/research/umls/rxnorm", version: "pinned-release", code: "308136" },
+          targetConcept: "medication:amlodipine-2p5-tablet",
+          relationship: "source-is-broader-than-target",
+          review: "active",
+          note: "还必须选择中国具体产品，不能直接成为本院处方项目"
+        }
+      ]
+    };
+
+    const hospitalCatalog = {
+      hospital: "仁和临床仿真医院",
+      version: EXAMPLE.baselineVersion,
+      selectedItems: {
+        diagnoses: [{
+          conceptId: "diag:essential-hypertension",
+          localCode: "IM-HTN-001",
+          name: "原发性高血压",
+          active: true,
+          department: "内科门诊"
+        }],
+        observations: [{
+          conceptId: "observation:blood-pressure-panel",
+          localCode: "VS-BP-001",
+          name: "无创血压测量",
+          active: true,
+          department: "门诊诊室",
+          unit: { system: "http://unitsofmeasure.org", code: "mm[Hg]", display: "mmHg" },
+          priceFen: 0
+        }],
+        formulary: [{
+          conceptId: "medication:amlodipine-2p5-tablet",
+          productId: "drug-product:amlodipine-2p5-demo",
+          localCode: "PH-HTN-AML-001",
+          name: "苯磺酸氨氯地平片（合成示例）",
+          active: true,
+          outpatient: true,
+          defaultDose: "2.5 mg",
+          route: "口服",
+          frequency: "每日一次",
+          priceFen: 860,
+          syntheticInventory: [{ lot: "LOT-AML-SYN-001", quantity: 300, expiresOn: "2030-12-31" }]
+        }]
+      }
+    };
+
+    const caseTruth = {
+      module: EXAMPLE.caseModuleVersion,
+      patientKnowledge: {
+        chiefComplaint: "最近总觉得头晕，社区说血压有点高。",
+        knows: ["以前被告知血压偏高", "吃过一种每天一次的降压药"],
+        neverKnowsUntilTold: ["本次准确血压数值", "医生最终诊断", "检查报告中的专业结论"]
+      },
+      currentEncounter: {
+        setting: "综合医院内科门诊",
+        vitalSigns: { systolicMmHg: 162, diastolicMmHg: 96, pulseBpm: 84 },
+        adherenceFact: "近两周漏服氨氯地平约 5 次",
+        reveal: "只有医生追问服药频率后才显示依从性事实"
+      },
+      diagnosisSpace: {
+        primary: "diag:essential-hypertension",
+        differentials: ["继发性高血压", "白大衣性高血压"],
+        requiredEvidence: ["重复血压测量", "用药依从性", "危险征象筛查"]
+      },
+      management: {
+        allowedMedicationConcepts: ["medication:amlodipine-2p5-tablet"],
+        requiredFollowUp: "家庭血压监测，2 至 4 周复诊",
+        trap: "不能因为一次血压升高直接无条件叠加多种降压药"
+      }
+    };
+
+    const packageSnapshot = {
+      packageId: EXAMPLE.packageId,
+      packageHash: EXAMPLE.packageHash,
+      dependencies: {
+        syntheaCommit: EXAMPLE.syntheaCommit,
+        sourceBundleHash: EXAMPLE.sourceBundleHash,
+        referenceRelease: EXAMPLE.initialReferenceVersion,
+        referenceHash: EXAMPLE.initialReferenceHash,
+        mappingRelease: EXAMPLE.mappingVersion,
+        mappingHash: EXAMPLE.mappingHash,
+        hospitalBaseline: EXAMPLE.baselineVersion,
+        hospitalBaselineHash: EXAMPLE.baselineHash,
+        caseModule: EXAMPLE.caseModuleVersion,
+        caseModuleHash: EXAMPLE.caseModuleHash,
+        compiler: "clinmesh-scenario-compiler-v2"
+      },
+      frozen: {
+        sourceHistory: "经过白名单转换的最小 R5 历史",
+        resolvedHospitalCatalog: ["IM-HTN-001", "VS-BP-001", "PH-HTN-AML-001"],
+        caseTruth: "患者知识、血压真值、依从性、诊断和处置规则",
+        syntheticInventory: ["LOT-AML-SYN-001"]
+      },
+      runtimeDependencies: ["ClinMesh Runtime", "Operational SQLite"],
+      notRequiredAtRuntime: ["Synthea", "完整参考数据库", "NHSA/NMPA/NHC/LOINC 网站", "外网"]
+    };
+
+    const runtimeState = {
+      workspace: "demo-workspace",
+      epoch: "epoch-htn-001",
+      installedFrom: EXAMPLE.packageId,
+      operationalDbContains: {
+        patientFacts: 1,
+        diagnosisCatalogItems: 1,
+        observationCatalogItems: 1,
+        formularyItems: 1,
+        inventoryLots: 1
+      },
+      fhirR5Projection: ["Patient", "Encounter", "Condition", "Observation", "Medication", "MedicationRequest"],
+      availableCommands: ["问诊", "记录查体", "确认诊断", "开具处方", "收费", "发药", "重置场景"]
+    };
+
+    const STAGES = [
+      {
+        short: "Synthea R4",
+        subtitle: "美国来源素材",
+        title: "第 1 步：接收 Synthea FHIR R4 Bundle",
+        explanation: "Synthea 输出一个患者的纵向临床事件。这里已经有 Patient、Condition、血压 Observation 和历史 MedicationRequest，但还没有中国编码、本院目录、价格、库存或这次门诊的患者回答。",
+        input: "固定 Synthea commit、模块、双 seed、日期范围和时区",
+        action: "校验 Bundle 类型、资源白名单、患者归属、引用闭合和日期范围",
+        output: "可追溯的来源 Bundle 与 SHA-256",
+        reject: "未知资源、跨患者引用、悬空引用、日期越界或元数据漂移",
+        codeLabel: "synthea-patient-bundle.r4.json",
+        code: () => JSON.stringify(rawBundle, null, 2)
+      },
+      {
+        short: "代码清单",
+        subtitle: "病种依赖扫描",
+        title: "第 2 步：列出高血压模块实际使用的代码",
+        explanation: "Scanner 递归读取 hypertension 模块及其 medication 子模块。它只回答“这个病种可能或实际出现哪些代码”，不负责决定中国映射。静态扫描看可能集合，生成语料扫描看实际频率。",
+        input: "固定 commit 下的模块 JSON、子模块调用图和生成后的患者 corpus",
+        action: "按资源类型收集 system、version、code、display、使用位置和出现次数",
+        output: "病种代码清单与关键性分类",
+        reject: "子模块缺失、同一 code system 身份不清或关键事件没有编码",
+        codeLabel: "hypertension-code-inventory.json",
+        code: () => JSON.stringify(codeInventory, null, 2)
+      },
+      {
+        short: "显式映射",
+        subtitle: "标准语义转换",
+        title: "第 3 步：把来源代码连接到中国参考语义",
+        explanation: "正式映射按 system + version + code 精确定位。SNOMED 诊断、LOINC 观察和 RxNorm 药物走不同映射链；名称相似只能产生候选，不能自动成为 active mapping。",
+        input: "代码清单、固定参考库 release、经过审核的 mapping release",
+        action: "解析唯一目标、关系类型、版本、审核状态和证据",
+        output: "ClinMesh 稳定概念 ID 与外部 Coding 集合",
+        reject: "关键代码无映射、多个目标未裁决、只命中文本或映射已失效",
+        codeLabel: "approved-mapping-release.json",
+        code: state => state.missingMapping
+          ? JSON.stringify({
+              ...approvedMappings,
+              entries: approvedMappings.entries.filter(entry => entry.source.code !== "59621000"),
+              diagnostic: {
+                severity: "error",
+                code: "TRUTH_CRITICAL_MAPPING_MISSING",
+                source: "http://snomed.info/sct|59621000",
+                message: "高血压主诊断没有已审核中国映射，病种不能进入 supported 状态"
+              }
+            }, null, 2)
+          : JSON.stringify(approvedMappings, null, 2)
+      },
+      {
+        short: "本院目录",
+        subtitle: "可执行能力选择",
+        title: "第 4 步：确认仁和仿真医院真正启用了什么",
+        explanation: "映射成功只证明“知道这是什么”，不证明本院能执行。本院需要选择诊断、观察和药品，并补本院代码、科室、价格、剂量、频次与合成库存。",
+        input: "已解析的稳定概念、本院类型与政策日期、合成医院配置",
+        action: "选择启用子集并补齐运行属性，递归检查组合项目与库存依赖",
+        output: "小型但可执行的 Hospital Baseline",
+        reject: "关键概念未启用、执行科室不存在、单位/价格/规则缺失或库存引用悬空",
+        codeLabel: "renhe-hospital-enabled-catalog.json",
+        code: state => {
+          const catalog = structuredClone(hospitalCatalog);
+          if (state.formularyUnavailable) {
+            catalog.selectedItems.formulary[0].active = false;
+            catalog.selectedItems.formulary[0].diagnostic = "MAPPED_BUT_NOT_ENABLED";
+          }
+          return JSON.stringify(catalog, null, 2);
+        }
+      },
+      {
+        short: "病例真值",
+        subtitle: "本次门诊语义",
+        title: "第 5 步：补全 Synthea 没有提供的本次病例",
+        explanation: "ClinMesh 病例定义补患者可知信息、准确查体、隐藏事实、揭示规则、诊断空间和处置要求。这些不能从国家目录或 Synthea 的 display 文本推断。",
+        input: "患者纵向素材、已解析医院目录、版本化高血压病例定义",
+        action: "把来源历史与本次就诊真值组合，并验证医学与引用一致性",
+        output: "可编辑但结构化的 CaseTruth",
+        reject: "病例引用未启用项目、患者知道隐藏结果、检查真值冲突或处置规则悬空",
+        codeLabel: "hypertension-case-truth.json",
+        code: () => JSON.stringify(caseTruth, null, 2)
+      },
+      {
+        short: "冻结 Package",
+        subtitle: "固定全部依赖",
+        title: "第 6 步：生成不可变 Scenario Package",
+        explanation: "Package 不只记录 ID，而是冻结运行所需的解析结果，并记录每个输入的版本与 hash。以后参考库、映射或医院目录发布新版本，旧 Package 仍保持原含义。",
+        input: "来源 Bundle、参考库、mapping、本院目录、病例定义和 compiler",
+        action: "规范化内容、计算 hash、复制已解析目录与病例事实、运行完整 validator",
+        output: "自包含、不可变、可安装和可重置的 Scenario Package",
+        reject: "任何 error diagnostic、依赖 hash 漂移或 resolved snapshot 不完整",
+        codeLabel: "scenario-package-manifest.json",
+        code: state => JSON.stringify({
+          ...packageSnapshot,
+          currentAuthoringReference: state.availableReferenceVersion,
+          note: state.availableReferenceVersion === EXAMPLE.initialReferenceVersion
+            ? "Package 与当前 authoring reference 一致"
+            : "当前已发布新 reference，但本 Package 仍固定 v1 与原 hash"
+        }, null, 2)
+      },
+      {
+        short: "运行时",
+        subtitle: "轻量医院世界",
+        title: "第 7 步：安装进新的 Epoch 并执行真实 HIS 流程",
+        explanation: "安装时只把 Package 内的小型本院目录和患者事实写入 operational SQLite。医生查询的不是完整国家目录，而是当前医院已启用子集；reset 继续读取同一个 Package。",
+        input: "不可变 Scenario Package 与管理员安装命令",
+        action: "创建新 Epoch，投影 FHIR R5 与领域事实，激活新医院世界",
+        output: "可问诊、检查、诊断、开药、收费、发药和重置的运行状态",
+        reject: "Package hash 不一致、安装事务失败、旧 Epoch 回调或跨 Workspace 引用",
+        codeLabel: "operational-runtime-state.json",
+        code: state => JSON.stringify({
+          ...runtimeState,
+          network: state.networkOffline ? "offline：运行不受影响" : "online：运行仍不访问上游",
+          resetCount: state.runtimeResetCount,
+          packageReferenceVersion: EXAMPLE.initialReferenceVersion,
+          currentlyAvailableReferenceVersion: state.availableReferenceVersion
+        }, null, 2)
+      }
+    ];
+
+    function createInitialState(options = {}) {
+      return {
+        stage: 0,
+        selectedStage: 0,
+        blockedAt: null,
+        missingMapping: Boolean(options.missingMapping),
+        formularyUnavailable: Boolean(options.formularyUnavailable),
+        networkOffline: Boolean(options.networkOffline),
+        availableReferenceVersion: EXAMPLE.initialReferenceVersion,
+        packageCreated: false,
+        installed: false,
+        runtimeResetCount: 0,
+        diagnosticCount: 0,
+        lastChange: "已载入固定 Synthea 高血压来源 Bundle。",
+        walkthroughId: options.walkthroughId ?? "happy",
+        walkthroughStep: 0
+      };
+    }
+
+    function advance(state) {
+      if (state.blockedAt !== null) {
+        return { ...state, lastChange: "流水线仍被阻止。先修复当前 error 或重新开始。" };
+      }
+
+      if (state.stage === 2 && state.missingMapping) {
+        return {
+          ...state,
+          selectedStage: 2,
+          blockedAt: 2,
+          diagnosticCount: state.diagnosticCount + 1,
+          lastChange: "编译停止：SNOMED 59621000 没有已审核中国映射。"
+        };
+      }
+
+      if (state.stage === 3 && state.formularyUnavailable) {
+        return {
+          ...state,
+          selectedStage: 3,
+          blockedAt: 3,
+          diagnosticCount: state.diagnosticCount + 1,
+          lastChange: "编译停止：药物概念已映射，但本院没有启用对应药品。"
+        };
+      }
+
+      if (state.stage >= STAGES.length - 1) {
+        return { ...state, lastChange: "病例已经安装。后续业务动作只读取 Package 和 operational SQLite。" };
+      }
+
+      const nextStage = state.stage + 1;
+      return {
+        ...state,
+        stage: nextStage,
+        selectedStage: nextStage,
+        packageCreated: nextStage >= 5,
+        installed: nextStage >= 6,
+        walkthroughStep: state.walkthroughStep + 1,
+        lastChange: [
+          "完成来源 Bundle 验证，开始扫描病种代码。",
+          "完成模块依赖扫描，开始解析正式映射。",
+          "关键来源代码全部映射，开始检查本院启用能力。",
+          "本院所需项目可执行，开始组合本次病例真值。",
+          "病例引用与医学约束通过，Package 已冻结。",
+          "Package 已安装到新 Epoch，运行时不再读取完整参考库。"
+        ][state.stage]
+      };
+    }
+
+    function reducer(state, action) {
+      switch (action.type) {
+        case "RESET":
+          return createInitialState({
+            missingMapping: state.missingMapping,
+            formularyUnavailable: state.formularyUnavailable,
+            networkOffline: state.networkOffline,
+            walkthroughId: state.walkthroughId
+          });
+        case "RESET_ALL":
+          return createInitialState({ walkthroughId: state.walkthroughId });
+        case "ADVANCE":
+          return advance(state);
+        case "SELECT_STAGE":
+          return { ...state, selectedStage: action.stage };
+        case "SET_OPTION":
+          return createInitialState({
+            missingMapping: action.name === "missingMapping" ? action.value : state.missingMapping,
+            formularyUnavailable: action.name === "formularyUnavailable" ? action.value : state.formularyUnavailable,
+            networkOffline: action.name === "networkOffline" ? action.value : state.networkOffline,
+            walkthroughId: state.walkthroughId
+          });
+        case "PUBLISH_REFERENCE":
+          return {
+            ...state,
+            availableReferenceVersion: "cn-reference-2026.11",
+            lastChange: state.packageCreated
+              ? "authoring 侧已发布参考库 v2；已冻结 Package 仍绑定 2026.08 与原 hash。"
+              : "authoring 侧已发布参考库 v2；尚未创建 Package，下一次编译可显式选择版本。"
+          };
+        case "RUNTIME_RESET":
+          if (!state.installed) {
+            return { ...state, lastChange: "尚未安装 Package，运行时没有可用于 reset 的冻结快照。" };
+          }
+          return {
+            ...state,
+            runtimeResetCount: state.runtimeResetCount + 1,
+            lastChange: state.networkOffline
+              ? "上游与 Synthea 离线，reset 仍从已安装 Package 成功重建新 Epoch。"
+              : "reset 从已安装 Package 成功重建新 Epoch，没有调用当前 reference 或 compiler。"
+          };
+        case "START_WALKTHROUGH":
+          return createInitialState({ ...action.options, walkthroughId: action.id });
+        case "GUIDED_ACTION": {
+          const next = reducer(state, action.action);
+          return { ...next, walkthroughStep: state.walkthroughStep + 1 };
+        }
+        default:
+          return state;
+      }
+    }
+
+    const WALKTHROUGHS = [
+      {
+        id: "happy",
+        title: "正常编译与安装",
+        tab: "正常路径",
+        description: "所有关键代码都有已审核映射，本院也启用了相应项目。完整走到新 Epoch。",
+        watch: "观察每一步只增加自己负责的信息。Synthea 不会突然拥有本院价格，参考库也不会突然拥有患者回答。",
+        options: {},
+        steps: STAGES.slice(1).map((stage, index) => ({
+          label: stage.title.replace(/^第 \d 步：/, ""),
+          detail: index === 5 ? "安装后只依赖 Package 与 operational SQLite" : "执行并查看下一阶段数据",
+          action: { type: "ADVANCE" }
+        }))
+      },
+      {
+        id: "mapping-gap",
+        title: "关键诊断没有映射",
+        tab: "缺少映射",
+        description: "高血压 Condition 已经存在于来源 Bundle，但 SNOMED 59621000 没有 active 中国映射。",
+        watch: "系统保留来源 code 与 display，并产生稳定 error；它不会因为文本包含 hypertension 就自动写 I10。",
+        options: { missingMapping: true },
+        steps: [
+          { label: "扫描高血压模块", detail: "发现主诊断、血压和历史用药代码", action: { type: "ADVANCE" } },
+          { label: "进入映射解析", detail: "准备查询固定 mapping release", action: { type: "ADVANCE" } },
+          { label: "尝试通过映射 gate", detail: "预期停止在 SNOMED 59621000", action: { type: "ADVANCE" } }
+        ]
+      },
+      {
+        id: "catalog-gap",
+        title: "有中国映射，但本院未启用",
+        tab: "医院未启用",
+        description: "RxNorm 药物已经解析到氨氯地平概念，但仁和仿真医院没有启用具体可开药品。",
+        watch: "“知道是什么”与“本院可以开”是两条不同检查。编译诊断应明确显示 MAPPED_BUT_NOT_ENABLED。",
+        options: { formularyUnavailable: true },
+        steps: [
+          { label: "扫描模块代码", detail: "得到诊断、观察和药品依赖", action: { type: "ADVANCE" } },
+          { label: "解析中国标准语义", detail: "三类代码均已找到正式映射", action: { type: "ADVANCE" } },
+          { label: "进入医院目录选择", detail: "准备检查本院可执行性", action: { type: "ADVANCE" } },
+          { label: "尝试通过医院 gate", detail: "预期因为药品停用而停止", action: { type: "ADVANCE" } }
+        ]
+      },
+      {
+        id: "offline",
+        title: "上游全部离线后重置",
+        tab: "离线运行",
+        description: "先完成安装，再切断 Synthea 和所有外部目录网站，最后执行 reset。",
+        watch: "只要 Package 已冻结，runtime 不需要完整 reference DB。离线不应改变问诊、检查、处方、收费或库存语义。",
+        options: {},
+        steps: [
+          ...STAGES.slice(1).map(stage => ({ label: stage.short, detail: "完成构建与安装阶段", action: { type: "ADVANCE" } })),
+          { label: "切断所有上游", detail: "模拟 Synthea、NHSA、NMPA、NHC、LOINC 离线", action: { type: "SET_OPTION", name: "networkOffline", value: true } },
+          { label: "从 Package 重置", detail: "预期仍能创建新 Epoch", action: { type: "RUNTIME_RESET" } }
+        ]
+      },
+      {
+        id: "version-update",
+        title: "参考库升级不改写旧 Package",
+        tab: "版本升级",
+        description: "先冻结并安装 v1，再发布新的 authoring reference v2，然后从旧 Package reset。",
+        watch: "当前 authoring 版本会变化，但 Package manifest 内的 reference version 与 hash 不变。旧病例不能读取 latest。",
+        options: {},
+        steps: [
+          ...STAGES.slice(1).map(stage => ({ label: stage.short, detail: "完成构建与安装阶段", action: { type: "ADVANCE" } })),
+          { label: "发布参考库 v2", detail: "模拟国家目录或映射更新", action: { type: "PUBLISH_REFERENCE" } },
+          { label: "从旧 Package 重置", detail: "预期仍绑定 reference 2026.08", action: { type: "RUNTIME_RESET" } }
+        ]
+      }
+    ];
+
+    let state = createInitialState();
+
+    function dispatch(action) {
+      state = reducer(state, action);
+      render();
+    }
+
+    function stageStatus(index) {
+      if (state.blockedAt === index) return { label: "被阻止", className: "bad" };
+      if (index < state.stage || (index === state.stage && state.installed)) return { label: "已完成", className: "ok" };
+      if (index === state.stage) return { label: "当前阶段", className: "" };
+      return { label: "未执行", className: "" };
+    }
+
+    function renderFlow() {
+      const flow = document.getElementById("flow");
+      flow.replaceChildren(...STAGES.map((stage, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "flow-step";
+        if (index < state.stage) button.classList.add("done");
+        if (state.blockedAt === index) button.classList.add("blocked");
+        if (index === state.selectedStage) button.setAttribute("aria-current", "step");
+        button.innerHTML = `<span class="step-number">${index + 1}</span><strong>${stage.short}</strong><small>${stage.subtitle}</small>`;
+        button.addEventListener("click", () => dispatch({ type: "SELECT_STAGE", stage: index }));
+        return button;
+      }));
+    }
+
+    function renderStage() {
+      const stage = STAGES[state.selectedStage];
+      const status = stageStatus(state.selectedStage);
+      document.getElementById("stage-title").textContent = stage.title;
+      document.getElementById("stage-explanation").textContent = stage.explanation;
+      const badge = document.getElementById("stage-status");
+      badge.textContent = status.label;
+      badge.className = `status-badge ${status.className}`;
+      document.getElementById("code-label").textContent = stage.codeLabel;
+      document.getElementById("code-sample").textContent = stage.code(state);
+
+      const fields = [
+        ["输入", stage.input],
+        ["转换动作", stage.action],
+        ["输出", stage.output],
+        ["失败条件", stage.reject]
+      ];
+      const grid = document.getElementById("io-grid");
+      grid.replaceChildren(...fields.map(([label, value]) => {
+        const wrapper = document.createElement("div");
+        wrapper.className = "io-item";
+        wrapper.innerHTML = `<dt>${label}</dt><dd>${value}</dd>`;
+        return wrapper;
+      }));
+    }
+
+    function renderState() {
+      const values = [
+        ["流水线", state.blockedAt === null ? `${state.stage + 1} / ${STAGES.length}` : `阻止于第 ${state.blockedAt + 1} 步`],
+        ["Synthea", `固定 ${EXAMPLE.syntheaCommit.slice(0, 8)}`],
+        ["可用参考库", state.availableReferenceVersion],
+        ["Package 参考库", state.packageCreated ? EXAMPLE.initialReferenceVersion : "尚未冻结"],
+        ["正式映射", state.missingMapping ? "存在关键缺口" : EXAMPLE.mappingVersion],
+        ["本院药品", state.formularyUnavailable ? "氨氯地平未启用" : "氨氯地平已启用"],
+        ["Package", state.packageCreated ? EXAMPLE.packageHash : "尚未生成"],
+        ["Runtime", state.installed ? "已安装到新 Epoch" : "未安装"],
+        ["上游网络", state.networkOffline ? "离线" : "在线"],
+        ["Reset 次数", String(state.runtimeResetCount)],
+        ["Error diagnostics", String(state.diagnosticCount)]
+      ];
+      const list = document.getElementById("state-list");
+      list.replaceChildren(...values.map(([label, value]) => {
+        const row = document.createElement("div");
+        row.className = "state-row";
+        row.innerHTML = `<dt>${label}</dt><dd>${value}</dd>`;
+        return row;
+      }));
+      document.getElementById("change-note").textContent = `刚刚发生：${state.lastChange}`;
+    }
+
+    function renderControls() {
+      document.getElementById("mapping-gap").checked = state.missingMapping;
+      document.getElementById("formulary-off").checked = state.formularyUnavailable;
+      document.getElementById("network-off").checked = state.networkOffline;
+      document.getElementById("next-btn").disabled = state.blockedAt !== null || state.stage >= STAGES.length - 1;
+      document.getElementById("runtime-reset-btn").disabled = !state.installed;
+    }
+
+    function activeWalkthrough() {
+      return WALKTHROUGHS.find(item => item.id === state.walkthroughId) ?? WALKTHROUGHS[0];
+    }
+
+    function renderWalkthroughs() {
+      const tabs = document.getElementById("walkthrough-tabs");
+      tabs.replaceChildren(...WALKTHROUGHS.map(item => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "tab";
+        button.role = "tab";
+        button.setAttribute("aria-selected", String(item.id === state.walkthroughId));
+        button.textContent = item.tab;
+        button.addEventListener("click", () => dispatch({ type: "START_WALKTHROUGH", id: item.id, options: item.options }));
+        return button;
+      }));
+
+      const walkthrough = activeWalkthrough();
+      document.getElementById("walkthrough-title").textContent = walkthrough.title;
+      document.getElementById("walkthrough-description").textContent = walkthrough.description;
+      document.getElementById("walkthrough-watch").textContent = `重点观察：${walkthrough.watch}`;
+
+      const steps = document.getElementById("guided-steps");
+      steps.replaceChildren(...walkthrough.steps.map((step, index) => {
+        const row = document.createElement("div");
+        row.className = "guided-step";
+        if (index < state.walkthroughStep) row.classList.add("complete");
+        if (index === state.walkthroughStep) row.classList.add("current");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = index === state.walkthroughStep ? "btn primary" : "btn";
+        button.textContent = index < state.walkthroughStep ? "已执行" : "执行此步";
+        button.disabled = index !== state.walkthroughStep;
+        button.addEventListener("click", () => dispatch({ type: "GUIDED_ACTION", action: step.action }));
+        row.innerHTML = `<span class="guided-index">${index + 1}</span><span class="guided-copy"><strong>${step.label}</strong><small>${step.detail}</small></span>`;
+        row.appendChild(button);
+        return row;
+      }));
+    }
+
+    function render() {
+      renderFlow();
+      renderStage();
+      renderState();
+      renderControls();
+      renderWalkthroughs();
+    }
+
+    document.getElementById("mapping-gap").addEventListener("change", event => {
+      dispatch({ type: "SET_OPTION", name: "missingMapping", value: event.target.checked });
+    });
+    document.getElementById("formulary-off").addEventListener("change", event => {
+      dispatch({ type: "SET_OPTION", name: "formularyUnavailable", value: event.target.checked });
+    });
+    document.getElementById("network-off").addEventListener("change", event => {
+      dispatch({ type: "SET_OPTION", name: "networkOffline", value: event.target.checked });
+    });
+    document.getElementById("reset-btn").addEventListener("click", () => dispatch({ type: "RESET_ALL" }));
+    document.getElementById("publish-btn").addEventListener("click", () => dispatch({ type: "PUBLISH_REFERENCE" }));
+    document.getElementById("runtime-reset-btn").addEventListener("click", () => dispatch({ type: "RUNTIME_RESET" }));
+    document.getElementById("next-btn").addEventListener("click", () => dispatch({ type: "ADVANCE" }));
+
+    render();
+  </script>
+</body>
+</html>

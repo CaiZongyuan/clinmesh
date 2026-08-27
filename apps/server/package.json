@@ -12,6 +12,7 @@
     "db:reindex": "tsx src/database-cli.ts reindex",
     "db:restore": "tsx src/database-cli.ts restore",
     "db:verify": "tsx src/database-cli.ts verify",
+    "reference-db": "tsx src/reference-database-cli.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

@@ -20,6 +20,7 @@ const serverEnvironmentSchema = z.object({
     .transform(Number)
     .pipe(z.number().int().min(1).max(65_535)),
   CLINMESH_PUBLIC_ORIGIN: z.url().optional(),
+  CLINMESH_REFERENCE_DATABASE_PATH: z.string().trim().min(1).optional(),
   CLINMESH_SYNTHEA_PROVIDER_URL: httpUrlSchema.optional(),
   CLINMESH_TRUSTED_ORIGINS: z.string().trim().min(1).optional(),
   CLINMESH_WEB_ROOT: z.string().trim().min(1).optional(),
@@ -33,6 +34,7 @@ export interface ServerConfig {
   demoPassword: string
   hostname: string
   port: number
+  referenceDatabasePath?: string
   syntheaProviderUrl?: string
   trustedOrigins: string[]
   webRoot?: string
@@ -61,7 +63,11 @@ export function readServerEnvironment(
 
   const fromFile: NodeJS.ProcessEnv = parseEnv(readFileSync(environmentFile, 'utf8'))
   const environmentDirectory = dirname(environmentFile)
-  for (const name of ['CLINMESH_DATABASE_PATH', 'CLINMESH_WEB_ROOT'] as const) {
+  for (const name of [
+    'CLINMESH_DATABASE_PATH',
+    'CLINMESH_REFERENCE_DATABASE_PATH',
+    'CLINMESH_WEB_ROOT',
+  ] as const) {
     const value = fromFile[name]
     if (value !== undefined && !isAbsolute(value)) fromFile[name] = resolve(environmentDirectory, value)
   }
@@ -91,6 +97,9 @@ export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
     demoPassword: parsed.CLINMESH_DEMO_PASSWORD,
     hostname: parsed.CLINMESH_HOST,
     port: parsed.CLINMESH_PORT,
+    ...(parsed.CLINMESH_REFERENCE_DATABASE_PATH === undefined
+      ? {}
+      : { referenceDatabasePath: parsed.CLINMESH_REFERENCE_DATABASE_PATH }),
     ...(parsed.CLINMESH_SYNTHEA_PROVIDER_URL === undefined
       ? {}
       : { syntheaProviderUrl: parsed.CLINMESH_SYNTHEA_PROVIDER_URL }),

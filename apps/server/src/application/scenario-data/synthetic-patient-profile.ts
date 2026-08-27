@@ -111,6 +111,9 @@ export function createSyntheticPatientProfiles(input: {
             : 'builtin-case-truth-v1',
         patientId: source.patientId,
         providerId: input.dataset.providerId,
+        ...(input.dataset.content.reproduction.referenceData === undefined
+          ? {}
+          : { referenceData: input.dataset.content.reproduction.referenceData }),
         raw: source.raw,
       },
       updatedAt: input.dataset.updatedAt,

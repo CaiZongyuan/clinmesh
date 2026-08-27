@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { referenceDataProvenanceSchema } from './reference-data.ts'
 
 const localDateSchema = z.iso.date()
 
@@ -414,6 +415,7 @@ export const scenarioDatasetContentSchema = z.object({
     generatorVersion: z.string().min(1).optional(),
     modules: z.array(z.string().min(1)),
     populationSeed: z.number().int(),
+    referenceData: referenceDataProvenanceSchema.optional(),
     timeRange: z.object({ end: localDateSchema, start: localDateSchema }).strict(),
     timeZone: z.string().min(1),
   }).strict(),
@@ -532,6 +534,7 @@ const syntheticPatientSourceSchema = z.object({
   mappingVersion: z.string().min(1),
   patientId: z.string().min(1),
   providerId: z.enum(['builtin', 'synthea']),
+  referenceData: referenceDataProvenanceSchema.optional(),
   raw: z.json().nullable(),
 }).strict()
 

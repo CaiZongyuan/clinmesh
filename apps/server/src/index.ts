@@ -19,6 +19,9 @@ const runtime = await createClinMeshRuntime({
   databasePath,
   demoPassword: config.demoPassword,
   migrationMode: 'verify',
+  ...(config.referenceDatabasePath === undefined
+    ? {}
+    : { referenceDatabasePath: config.referenceDatabasePath }),
   ...(config.syntheaProviderUrl === undefined
     ? {}
     : { syntheaProviderUrl: config.syntheaProviderUrl }),

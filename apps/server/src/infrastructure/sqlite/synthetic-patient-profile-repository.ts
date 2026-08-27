@@ -21,6 +21,7 @@ const rowSchema = z.object({
   profile_id: z.string().min(1),
   provider_id: z.enum(['builtin', 'synthea']),
   raw_source_json: z.string().nullable(),
+  reference_data_json: z.string().nullable(),
   revision: z.number().int().positive(),
   source_format: z.enum(['clinmesh-template', 'fhir-r4-bundle', 'legacy-compiled-profile']),
   source_hash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -44,8 +45,8 @@ export class SyntheticPatientProfileRepository {
         workspace_id, profile_id, batch_id, batch_name, provider_id,
         source_patient_id, revision, display_name, mrn, identity_json, mappings_json,
         patient_json, source_format, source_hash, raw_source_json, compilation_json,
-        mapping_version, created_by_actor_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        mapping_version, reference_data_json, created_by_actor_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (workspace_id, profile_id) DO NOTHING
     `)
     for (const profile of profiles) {
@@ -68,6 +69,7 @@ export class SyntheticPatientProfileRepository {
         parsed.source.raw === null ? null : JSON.stringify(parsed.source.raw),
         parsed.source.compilation === null ? null : JSON.stringify(parsed.source.compilation),
         parsed.source.mappingVersion,
+        parsed.source.referenceData === undefined ? null : JSON.stringify(parsed.source.referenceData),
         actorId,
         parsed.createdAt,
         parsed.updatedAt,
@@ -94,7 +96,7 @@ export class SyntheticPatientProfileRepository {
       SELECT workspace_id, profile_id, batch_id, batch_name, provider_id,
         source_patient_id, revision, display_name, mrn, identity_json, mappings_json,
         patient_json, source_format, source_hash, raw_source_json, compilation_json,
-        mapping_version, created_at, updated_at
+        mapping_version, reference_data_json, created_at, updated_at
       FROM synthetic_patient_profile
       WHERE workspace_id = ? AND profile_id = ?
     `).get(workspaceId, profileId)
@@ -137,7 +139,7 @@ export class SyntheticPatientProfileRepository {
           profile.revision, profile.display_name, profile.mrn,
           profile.identity_json, profile.mappings_json, profile.patient_json, profile.source_format,
           profile.source_hash, profile.raw_source_json, profile.compilation_json,
-          profile.mapping_version,
+          profile.mapping_version, profile.reference_data_json,
           profile.created_at, profile.updated_at,
           EXISTS (
             SELECT 1
@@ -213,7 +215,7 @@ export class SyntheticPatientProfileRepository {
     const result = this.#database.driver.prepare(`
       UPDATE synthetic_patient_profile
       SET revision = ?, display_name = ?, mrn = ?, identity_json = ?,
-        mappings_json = ?, patient_json = ?, mapping_version = ?, updated_at = ?
+        mappings_json = ?, patient_json = ?, mapping_version = ?, reference_data_json = ?, updated_at = ?
       WHERE workspace_id = ? AND profile_id = ? AND revision = ?
     `).run(
       parsed.revision,
@@ -223,6 +225,7 @@ export class SyntheticPatientProfileRepository {
       JSON.stringify(parsed.mappings),
       JSON.stringify(parsed.patient),
       parsed.source.mappingVersion,
+      parsed.source.referenceData === undefined ? null : JSON.stringify(parsed.source.referenceData),
       parsed.updatedAt,
       parsed.workspaceId,
       parsed.profileId,
@@ -237,8 +240,8 @@ export class SyntheticPatientProfileRepository {
     this.#database.driver.prepare(`
       INSERT INTO synthetic_patient_profile_revision (
         workspace_id, profile_id, revision, identity_json, mappings_json, patient_json, mapping_version,
-        created_by_actor_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        reference_data_json, created_by_actor_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       profile.workspaceId,
       profile.profileId,
@@ -247,6 +250,7 @@ export class SyntheticPatientProfileRepository {
       JSON.stringify(profile.mappings),
       JSON.stringify(profile.patient),
       profile.source.mappingVersion,
+      profile.source.referenceData === undefined ? null : JSON.stringify(profile.source.referenceData),
       actorId,
       profile.updatedAt,
     )
@@ -269,6 +273,9 @@ export class SyntheticPatientProfileRepository {
         mappingVersion: row.mapping_version,
         patientId: row.source_patient_id,
         providerId: row.provider_id,
+        ...(row.reference_data_json === null
+          ? {}
+          : { referenceData: JSON.parse(row.reference_data_json) }),
         raw: row.raw_source_json === null ? null : JSON.parse(row.raw_source_json),
       },
       updatedAt: row.updated_at,

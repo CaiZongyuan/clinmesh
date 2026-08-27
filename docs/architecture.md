@@ -1276,6 +1276,8 @@ clock_revision
 
 所有 seed、账户、患者、机构、目录、支付和检验内容都是合成数据。内置生成器始终可用；Synthea 固定版本并可由 standalone `compose.synthea-provider.yaml`、本机 JDK 17 或完整容器 overlay `compose.synthea.yaml` 按需启用，未配置、不可达或失败只影响对应持久生成任务，不影响 Server 启动、既有 Dataset、Scenario Run 或内置生成。Synthea FHIR R4 Bundle 只作为编译输入，严格白名单转换为中国化 CaseTruth；美国机构、地址、付款方和标识不进入运行事实。LLM 不生成结构化真值，当前也不声明正式 FHIR Profile/IG 校验。
 
+完整 Reference Data Release 保存在可选的独立 SQLite 文件中，通过显式 CLI 执行 migration、import、list 和 verify；每个成功发布的 Release 固定来源版本、获取方式、许可、实际 artifact checksum、记录数、导入诊断与 content hash，失败导入不改变已有 Release。Server 只读打开该文件；未配置时使用稳定的内置 Release，仍可启动和 reset 已安装 Package。管理员 API 和 Web 只读取 Release 摘要，普通岗位不能读取完整参考内容。生成 Dataset 时固定 release ID/hash，并把同一 provenance 保存到 Profile Revision 和不可变 Package；operational SQLite 不保存完整全国参考目录，Package 安装和 reset 只读取已经解析的 Hospital Baseline 与患者事实。
+
 Dataset 保存规范化内容哈希、expected version 和稳定诊断；错误诊断允许继续编辑但阻止安装。Package 与来源 Dataset 分离，安装后的 reset 只读取不可变 Package 快照，不重新调用 Provider 或当前编译器。生成任务到 Dataset 的复合外键是可空来源链接：删除 Dataset 时使用 `ON DELETE SET NULL`，任务仍以独立 `result_dataset_id` 保留完成时的结果标识；该例外不用于 Package、Epoch 或 HIS 运行事实。CaseTruth 保存患者认知、纵向病史、本次就诊、生理生成器、三级检查来源、诊断与处置空间及费用基准；Hospital Baseline 保存虚构医院、科室、诊断、检查、药品和库存目录。OpenHIS 只用于校准中国医院字段、关系和状态语义，不复制其数据或物理模型。
 
 ### 10.4 确定性与故障注入
@@ -1525,7 +1527,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 ### 15.1 运行与持久化
 
 - Node.js Hono 同时提供 Web SPA、认证、HIS/Scenario API、FHIR R5 只读 API 和健康检查。
-- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；二十五个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、Virtual Patient 接诊与问诊、门诊事实、结构化病历、独立检查申请、检验报告关联、报告确认与修订、诊断草稿与确认、处方审核状态、处方草稿、无需用药结论与撤回事实、门诊病例责任、Scenario Dataset/Package、持久生成任务、已报告检查复测约束、结构化二次追问回答，以及 Synthetic Patient Profile、Profile Revision、原始来源和 Epoch materialization。
+- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；二十六个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、Virtual Patient 接诊与问诊、门诊事实、结构化病历、独立检查申请、检验报告关联、报告确认与修订、诊断草稿与确认、处方审核状态、处方草稿、无需用药结论与撤回事实、门诊病例责任、Scenario Dataset/Package、持久生成任务、已报告检查复测约束、结构化二次追问回答，以及 Synthetic Patient Profile、Profile Revision、参考数据 provenance、原始来源和 Epoch materialization。
 - 数据库 CLI 提供 migrate、verify、reindex、backup 和 restore；已有旧版数据库执行 migrate 时先在同目录创建并验证升级前备份，Server 进程只验证 migration。
 - CommandExecutor 统一 `BEGIN IMMEDIATE`、expected versions、幂等 receipt、FHIR current/history/search、领域事实、AuditEvent、Action Trace 和 outbox 原子提交。
 - 同进程 dispatcher 持久化 claim/lease/attempt/correlation，支持失败重试、ambiguous、重复消费和旧 Epoch abandon。
