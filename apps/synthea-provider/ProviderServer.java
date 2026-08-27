@@ -43,12 +43,11 @@ public final class ProviderServer {
   private static final int MAX_REQUEST_BYTES = 64 * 1024;
   private static final int MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
   private static final Gson GSON = new Gson();
-  private static final List<String> MODULE_ORDER = List.of("fever", "type-2-diabetes");
   private static final Map<String, List<String>> MODULE_PATTERNS = Map.of(
       "fever", List.of("sinusitis"),
       "type-2-diabetes", List.of(
           "metabolic_syndrome_disease", "metabolic_syndrome_care"));
-  private static final Set<String> MODULES = Set.copyOf(MODULE_ORDER);
+  private static final List<String> MODULES = MODULE_PATTERNS.keySet().stream().sorted().toList();
 
   private record GenerationRequest(
       List<String> modules,
@@ -278,7 +277,7 @@ public final class ProviderServer {
   }
 
   private static List<String> modulePatterns(List<String> modules) {
-    return MODULE_ORDER.stream()
+    return MODULES.stream()
         .filter(modules::contains)
         .flatMap(module -> MODULE_PATTERNS.get(module).stream())
         .toList();
@@ -480,7 +479,7 @@ public final class ProviderServer {
     MessageDigest digest = MessageDigest.getInstance("SHA-256");
     digest.update(Files.readAllBytes(SYNTHEA_CONFIG));
     digest.update((byte) 0);
-    for (String module : MODULE_ORDER) {
+    for (String module : MODULES) {
       digest.update(module.getBytes(StandardCharsets.UTF_8));
       digest.update((byte) '=');
       digest.update(String.join(",", MODULE_PATTERNS.get(module)).getBytes(StandardCharsets.UTF_8));
