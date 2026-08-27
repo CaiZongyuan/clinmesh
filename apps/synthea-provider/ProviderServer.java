@@ -38,8 +38,11 @@ public final class ProviderServer {
       "d9d07a6eef91ee5144293b42ab64224d84d124f8";
   private static final String GENERATION_CONFIG_HASH =
       "b26dd4f34bd75c5328892e382f57899221e2581f5a03902bde09f0ec05f57ef9";
-  private static final Path SYNTHEA_JAR = Path.of("/opt/synthea/synthea.jar");
-  private static final Path SYNTHEA_CONFIG = Path.of("/opt/provider/synthea.properties");
+  private static final Path SYNTHEA_JAR = Path.of(
+      System.getenv().getOrDefault("SYNTHEA_JAR_PATH", "/opt/synthea/synthea.jar"));
+  private static final Path SYNTHEA_CONFIG = Path.of(
+      System.getenv().getOrDefault(
+          "SYNTHEA_CONFIG_PATH", "/opt/provider/synthea.properties"));
   private static final int MAX_REQUEST_BYTES = 64 * 1024;
   private static final int MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
   private static final Gson GSON = new Gson();
@@ -74,6 +77,7 @@ public final class ProviderServer {
   private ProviderServer() {}
 
   public static void main(String[] args) throws Exception {
+    validateRuntimeInputs();
     if (args.length == 1 && args[0].equals("--healthcheck")) {
       healthcheck();
       return;
@@ -91,6 +95,15 @@ public final class ProviderServer {
     server.setExecutor(Executors.newSingleThreadExecutor());
     server.start();
     System.out.printf("Synthea Provider %s listening on port %d%n", SYNTHEA_COMMIT, port);
+  }
+
+  private static void validateRuntimeInputs() throws IOException {
+    if (!Files.isRegularFile(SYNTHEA_JAR) || !Files.isReadable(SYNTHEA_JAR)) {
+      throw new IOException("SYNTHEA_JAR_PATH must reference a readable regular file");
+    }
+    if (!Files.isRegularFile(SYNTHEA_CONFIG) || !Files.isReadable(SYNTHEA_CONFIG)) {
+      throw new IOException("SYNTHEA_CONFIG_PATH must reference a readable regular file");
+    }
   }
 
   private static void handleHealth(HttpExchange exchange) throws IOException {

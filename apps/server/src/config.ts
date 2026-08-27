@@ -16,7 +16,7 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_HOST: z.string().trim().min(1).default('127.0.0.1'),
   CLINMESH_PORT: z.string()
     .regex(/^\d+$/)
-    .default('8787')
+    .default('51868')
     .transform(Number)
     .pipe(z.number().int().min(1).max(65_535)),
   CLINMESH_PUBLIC_ORIGIN: z.url().optional(),
@@ -77,7 +77,7 @@ export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
     ?? `http://${parsed.CLINMESH_HOST}:${parsed.CLINMESH_PORT}`
   const defaultTrustedOrigins = [authBaseUrl]
   if (parsed.CLINMESH_PUBLIC_ORIGIN === undefined && parsed.CLINMESH_HOST === '127.0.0.1') {
-    defaultTrustedOrigins.push('http://127.0.0.1:5173')
+    defaultTrustedOrigins.push('http://127.0.0.1:51888')
   }
   const trustedOrigins = parsed.CLINMESH_TRUSTED_ORIGINS === undefined
     ? defaultTrustedOrigins

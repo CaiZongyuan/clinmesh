@@ -12,14 +12,14 @@ describe('Node.js server configuration', () => {
       CLINMESH_DATABASE_PATH: '/var/lib/clinmesh/clinmesh.sqlite',
       CLINMESH_DEMO_PASSWORD: 'Synthetic-password-2026!',
     })).toEqual({
-      authBaseUrl: 'http://127.0.0.1:8787',
+      authBaseUrl: 'http://127.0.0.1:51868',
       authSecret: 'auth-secret-with-at-least-32-characters',
       cursorSecret: 'cursor-secret-with-at-least-32-characters',
       databasePath: '/var/lib/clinmesh/clinmesh.sqlite',
       demoPassword: 'Synthetic-password-2026!',
       hostname: '127.0.0.1',
-      port: 8787,
-      trustedOrigins: ['http://127.0.0.1:8787', 'http://127.0.0.1:5173'],
+      port: 51868,
+      trustedOrigins: ['http://127.0.0.1:51868', 'http://127.0.0.1:51888'],
     })
   })
 
@@ -47,7 +47,7 @@ describe('Node.js server configuration', () => {
       ...requiredEnvironment,
       CLINMESH_TRUSTED_ORIGINS: 'https://clinmesh.example,https://review.clinmesh.example',
     })).toMatchObject({
-      authBaseUrl: 'http://127.0.0.1:8787',
+      authBaseUrl: 'http://127.0.0.1:51868',
       trustedOrigins: ['https://clinmesh.example', 'https://review.clinmesh.example'],
     })
   })

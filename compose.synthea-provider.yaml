@@ -1,0 +1,17 @@
+services:
+  synthea-provider:
+    build:
+      context: apps/synthea-provider
+    cap_drop:
+      - ALL
+    init: true
+    pids_limit: 256
+    ports:
+      - "127.0.0.1:45873:8080"
+    read_only: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 20s
+    tmpfs:
+      - /tmp:size=1g,mode=1777

@@ -29,6 +29,8 @@ RUN javac -cp /tmp/synthea.jar -d /tmp/provider-classes ProviderServer.java
 
 FROM eclipse-temurin:17-jre-jammy AS runtime
 
+ENV SYNTHEA_CONFIG_PATH=/opt/provider/synthea.properties
+ENV SYNTHEA_JAR_PATH=/opt/synthea/synthea.jar
 ENV SYNTHEA_PROVIDER_PORT=8080
 WORKDIR /opt/provider
 

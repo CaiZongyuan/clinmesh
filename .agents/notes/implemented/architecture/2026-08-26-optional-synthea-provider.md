@@ -8,7 +8,7 @@ Synthea 能提供纵向合成病史，但需要 Java、美国地域输入和 FHI
 
 ## Decision
 
-Synthea 固定在 commit `d9d07a6eef91ee5144293b42ab64224d84d124f8`，通过附加 Compose 文件构建独立的非 root Java 容器。源码归档在构建时校验 SHA-256，运行镜像保留上游 Apache LICENSE 和 NOTICE，使用只读文件系统且不访问 Docker socket。默认 Compose、ClinMesh 主镜像和 Server 启动不依赖该容器；`CLINMESH_SYNTHEA_PROVIDER_URL` 只启用生成能力，不执行启动健康门禁。
+Synthea 固定在 commit `d9d07a6eef91ee5144293b42ab64224d84d124f8`。推荐开发拓扑通过 standalone `compose.synthea-provider.yaml` 只启动非 root Java 容器，本地 Web 与 Server 分别运行在 `51888` 和 `51868`；Provider 仅在宿主回环地址发布 `45873`。不使用 Docker 时，同一 Provider 接受显式 JAR、配置和监听端口路径，可由本机 JDK 17 启动。完整容器部署使用 `compose.synthea.yaml` 复用 standalone 服务，并把 Server 指向容器内 URL。源码归档在 Docker 构建时校验 SHA-256，运行镜像保留上游 Apache LICENSE 和 NOTICE，使用只读文件系统且不访问 Docker socket。默认 Compose、ClinMesh 主镜像和 Server 启动不依赖该容器；`CLINMESH_SYNTHEA_PROVIDER_URL` 只启用生成能力，不执行启动健康门禁。
 
 管理员通过持久 `ScenarioGenerationJob` 提交外部生成。任务入队时完成管理员授权、Origin、幂等和受信 Actor context 校验；后台完成是该已接受请求的系统续作，不是新的用户请求，因此不因后续角色或活动 Epoch 变化重新授权。任务按 `queued -> running -> succeeded | failed` 推进，由独立于业务 outbox 的单并发 worker 执行；重启时 `running` 任务回到 `queued`。worker 只能在原 Workspace 写入 Dataset 和任务终态，不能写 Scenario Package、活动 Epoch、FHIR Repository 或 HIS 运行事实。成功时 Scenario Dataset 与任务终态在同一 SQLite 事务提交，失败时不写 Dataset、Scenario Package 或活动 Epoch。内置 Provider 保留同步生成；外部 Provider 不能绕过持久任务接口。
 

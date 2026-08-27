@@ -225,7 +225,7 @@ describe('trusted session and Scenario HTTP contract', () => {
       headers: {
         'content-type': 'application/json',
         cookie,
-        origin: 'http://127.0.0.1:5173',
+        origin: 'http://127.0.0.1:51888',
       },
       method: 'POST',
     })

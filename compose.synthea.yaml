@@ -4,18 +4,6 @@ services:
       CLINMESH_SYNTHEA_PROVIDER_URL: http://synthea-provider:8080
 
   synthea-provider:
-    build:
-      context: apps/synthea-provider
-    cap_drop:
-      - ALL
-    expose:
-      - "8080"
-    init: true
-    pids_limit: 256
-    read_only: true
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    stop_grace_period: 20s
-    tmpfs:
-      - /tmp:size=1g,mode=1777
+    extends:
+      file: compose.synthea-provider.yaml
+      service: synthea-provider
