@@ -16,10 +16,7 @@ import {
 } from '@clinmesh/contracts/reference-data'
 import Database from 'better-sqlite3'
 import { z } from 'zod'
-import {
-  parseLoincCsvReferenceArtifact,
-  parseUcumXmlReferenceArtifact,
-} from '../reference-data/reference-source-importers.ts'
+import { parseReferenceSourceArtifact } from '../reference-data/reference-source-importers.ts'
 
 const MIGRATION_FILE_PATTERN = /^\d{4}_[a-z0-9-]+\.sql$/
 
@@ -302,17 +299,11 @@ export function importReferenceDataRelease(
       throw new Error(`Reference source checksum mismatch: ${source.sourceId}`)
     }
     const artifactContent = artifactBytes.toString('utf8')
-    const artifact = source.artifactFormat === 'loinc-csv'
-      ? parseLoincCsvReferenceArtifact({
-          content: artifactContent,
-          version: source.upstreamVersion,
-        })
-      : source.artifactFormat === 'ucum-xml'
-        ? parseUcumXmlReferenceArtifact({
-            content: artifactContent,
-            version: source.upstreamVersion,
-          })
-        : referenceArtifactSchema.parse(JSON.parse(artifactContent))
+    const artifact = parseReferenceSourceArtifact({
+      content: artifactContent,
+      format: source.artifactFormat,
+      version: source.upstreamVersion,
+    })
     sources.push({
       acquisitionMethod: source.acquisitionMethod,
       artifactFormat: source.artifactFormat,

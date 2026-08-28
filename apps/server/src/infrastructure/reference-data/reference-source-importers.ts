@@ -2,12 +2,14 @@ import {
   referenceArtifactSchema,
   referenceCodingIdentity,
   type ReferenceArtifact,
+  type ReferenceArtifactFormat,
 } from '@clinmesh/contracts/reference-data'
 import { parse } from 'csv-parse/sync'
 import { XMLParser } from 'fast-xml-parser'
 import { z } from 'zod'
 
 const loincVersionSchema = z.literal('2.83')
+const nhsaDiagnosisVersionSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/)
 const ucumVersionSchema = z.literal('2.2')
 
 const loincRecordSchema = z.object({
@@ -28,6 +30,15 @@ const ucumDocumentSchema = z.object({
     }).passthrough()),
     version: ucumVersionSchema,
   }).passthrough(),
+}).passthrough()
+
+const nhsaDiagnosisRecordSchema = z.object({
+  record: z.object({
+    NHSA_DIAGNOSIS_CODE: z.string().trim().min(1).max(64),
+    NHSA_DIAGNOSIS_NAME: z.string().trim().min(1).max(500),
+    STATUS: z.enum(['ACTIVE', 'INACTIVE']),
+  }).passthrough(),
+  info: z.object({ lines: z.number().int().positive() }).passthrough(),
 }).passthrough()
 
 function assertUniqueCodes(artifact: ReferenceArtifact): ReferenceArtifact {
@@ -66,6 +77,32 @@ export function parseLoincCsvReferenceArtifact(input: {
   }))
 }
 
+export function parseNhsaDiagnosisCsvReferenceArtifact(input: {
+  content: string
+  version: string
+}): ReferenceArtifact {
+  const version = nhsaDiagnosisVersionSchema.parse(input.version)
+  const rows = z.array(nhsaDiagnosisRecordSchema).parse(parse(input.content, {
+    bom: true,
+    columns: true,
+    info: true,
+    skip_empty_lines: true,
+  }))
+  return assertUniqueCodes(referenceArtifactSchema.parse({
+    concepts: rows.map(({ info, record }) => ({
+      code: record.NHSA_DIAGNOSIS_CODE,
+      display: record.NHSA_DIAGNOSIS_NAME,
+      domain: 'diagnosis',
+      id: `nhsa-diagnosis:${version}:${record.NHSA_DIAGNOSIS_CODE}`,
+      sourceLocator: `nhsa-diagnosis.csv:${info.lines}`,
+      status: record.STATUS === 'ACTIVE' ? 'active' : 'inactive',
+      system: 'urn:clinmesh:reference:nhsa-diagnosis',
+      version,
+    })),
+    schemaVersion: '1',
+  }))
+}
+
 export function parseUcumXmlReferenceArtifact(input: {
   content: string
   version: string
@@ -91,4 +128,21 @@ export function parseUcumXmlReferenceArtifact(input: {
     })),
     schemaVersion: '1',
   }))
+}
+
+export function parseReferenceSourceArtifact(input: {
+  content: string
+  format: ReferenceArtifactFormat
+  version: string
+}): ReferenceArtifact {
+  switch (input.format) {
+    case 'clinmesh-reference-v1':
+      return referenceArtifactSchema.parse(JSON.parse(input.content))
+    case 'loinc-csv':
+      return parseLoincCsvReferenceArtifact(input)
+    case 'nhsa-diagnosis-csv':
+      return parseNhsaDiagnosisCsvReferenceArtifact(input)
+    case 'ucum-xml':
+      return parseUcumXmlReferenceArtifact(input)
+  }
 }

@@ -23,6 +23,7 @@ import {
   scenarioStateSchema,
   triageResponseSchema,
 } from '@clinmesh/contracts/his'
+import { z } from 'zod'
 import { afterEach, describe, expect, it } from 'vitest'
 import type {
   ScenarioGenerationProvider,
@@ -329,9 +330,54 @@ describe('persistent Scenario generation job HTTP contract', () => {
     expect(detailResponse.status).toBe(200)
     const detail = syntheticPatientProfileSchema.parse(await detailResponse.json())
     expect(detail).toMatchObject({
+      mappings: [expect.objectContaining({
+        sourceResourceId: 'source-condition-1',
+        sourceResourceType: 'Condition',
+        target: {
+          catalogItemId: 'diagnosis-fever',
+          code: 'R50.9',
+          system: 'http://hl7.org/fhir/sid/icd-10',
+          version: 1,
+        },
+      })],
+      patient: {
+        longitudinalHistory: expect.arrayContaining([
+          expect.objectContaining({ mappedCode: 'R50.9', sourceResourceId: 'source-condition-1' }),
+          expect.objectContaining({
+            sourceResourceId: 'source-condition-1',
+            sourceVersion: 'http://snomed.info/sct/900000000000207008/version/20250201',
+          }),
+        ]),
+      },
       profileId,
-      source: { format: 'fhir-r4-bundle', hash: 'a'.repeat(64), raw: rawBundle },
+      source: {
+        format: 'fhir-r4-bundle',
+        hash: 'a'.repeat(64),
+        mappingProvenance: {
+          compiler: { id: 'synthea-case-truth', version: '2' },
+          packages: [{
+            contentHash: '5e9b7faabae742a83d527d0756b9d8bff73dc0ac8a9968e68da06f01652efb87',
+            mappingSetId: 'clinmesh-synthea-nhsa-diagnosis',
+            version: '2026-08-28',
+          }],
+        },
+        mappingVersion: 'synthea-case-truth-v2',
+        raw: rawBundle,
+      },
     })
+    const revisionOneMappingSnapshot = z.object({
+      mapping_provenance_json: z.string(),
+      mapping_version: z.string(),
+      mappings_json: z.string(),
+    }).parse(firstRuntime.database.driver.prepare(`
+      SELECT mappings_json, mapping_version, mapping_provenance_json
+      FROM synthetic_patient_profile_revision
+      WHERE workspace_id = ? AND profile_id = ? AND revision = 1
+    `).get('workspace-demo', profileId))
+    expect(JSON.parse(revisionOneMappingSnapshot.mappings_json)).toEqual(detail.mappings)
+    expect(revisionOneMappingSnapshot.mapping_version).toBe(detail.source.mappingVersion)
+    expect(JSON.parse(revisionOneMappingSnapshot.mapping_provenance_json))
+      .toEqual(detail.source.mappingProvenance)
     const updatedIdentity = {
       ...detail.identity,
       address: '江苏省苏州市张家港市合成路 888 号（合成地址）',
@@ -488,11 +534,19 @@ describe('persistent Scenario generation job HTTP contract', () => {
         ]),
         patient: {
           longitudinalHistory: expect.arrayContaining([
-            expect.objectContaining({ mappedCode: 'J06.9', sourceResourceId }),
+            expect.objectContaining({
+              mappedCode: 'J06.9',
+              sourceResourceId,
+              sourceVersion: 'http://snomed.info/sct/900000000000207008/version/20250201',
+            }),
           ]),
         },
         revision: 3,
-        source: { raw: rawBundle },
+        source: {
+          mappingProvenance: expect.objectContaining({ overlayRevision: 3 }),
+          mappingVersion: 'synthea-case-truth-v2',
+          raw: rawBundle,
+        },
       },
     })
     expect(firstRuntime.database.driver.prepare(`
@@ -500,6 +554,11 @@ describe('persistent Scenario generation job HTTP contract', () => {
       FROM synthetic_patient_profile_revision
       WHERE workspace_id = ? AND profile_id = ?
     `).get('workspace-demo', profileId)).toEqual({ count: 3 })
+    expect(firstRuntime.database.driver.prepare(`
+      SELECT mappings_json, mapping_version, mapping_provenance_json
+      FROM synthetic_patient_profile_revision
+      WHERE workspace_id = ? AND profile_id = ? AND revision = 1
+    `).get('workspace-demo', profileId)).toEqual(revisionOneMappingSnapshot)
     expect(await getJob(firstRuntime, firstCookie, queued.jobId)).toMatchObject({ status: 'succeeded' })
     await firstRuntime.close()
     runtimes.splice(runtimes.indexOf(firstRuntime), 1)
@@ -992,8 +1051,12 @@ describe('persistent Scenario generation job HTTP contract', () => {
     firstRuntime.database.driver.exec('DROP TABLE synthetic_patient_profile_batch')
     firstRuntime.database.driver.exec('DROP TABLE synthetic_patient_profile')
     firstRuntime.database.driver.prepare(
-      'DELETE FROM schema_migration WHERE migration_id IN (?, ?)',
-    ).run('0024_synthetic-patient-profile.sql', '0025_reference-data-provenance.sql')
+      'DELETE FROM schema_migration WHERE migration_id IN (?, ?, ?)',
+    ).run(
+      '0024_synthetic-patient-profile.sql',
+      '0025_reference-data-provenance.sql',
+      '0026_profile-mapping-provenance.sql',
+    )
     await firstRuntime.close()
     runtimes.splice(runtimes.indexOf(firstRuntime), 1)
 

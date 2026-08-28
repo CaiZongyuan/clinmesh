@@ -6,6 +6,11 @@ import {
   type SyntheticPatientProfile,
 } from '@clinmesh/contracts/scenario'
 import type { SourcePatientArtifact } from './provider.ts'
+import {
+  diagnosisMappingPackageProvenance,
+  resolveDiagnosisMapping,
+} from './diagnosis-coding-package.ts'
+import { stableHistoryId } from './synthea-case-truth-compiler.ts'
 
 const idCardWeights = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2] as const
 const idCardChecks = ['1', '0', 'X', '9', '8', '7', '6', '5', '4', '3', '2'] as const
@@ -16,6 +21,7 @@ const syntheticAddresses = [
   '湖北省武汉市江岸区测试路',
 ] as const
 const syntheticInsurance = ['模拟城镇职工医保', '模拟城乡居民医保', '模拟自费'] as const
+const initialCatalogVersion = 1
 
 function digestNumber(input: string): number {
   return Number.parseInt(createHash('sha256').update(input).digest('hex').slice(0, 8), 16)
@@ -55,6 +61,110 @@ function syntheticIdentity(
   }
 }
 
+export function applySyntheticPatientProfileMappings(
+  patient: SyntheticPatientProfile['patient'],
+  mappings: SyntheticPatientProfile['mappings'],
+): SyntheticPatientProfile['patient'] {
+  const mappingBySourceId = new Map(mappings.map(mapping => (
+    [mapping.sourceResourceId, mapping] as const
+  )))
+  const targetByHistoryId = new Map(mappings.map(mapping => (
+    [stableHistoryId(mapping.sourceResourceType, mapping.sourceResourceId), mapping.target] as const
+  )))
+  return {
+    ...patient,
+    fhirHistory: patient.fhirHistory.map((resource) => {
+      const target = targetByHistoryId.get(resource.id)
+      if (target === undefined) return resource
+      if (resource.resourceType === 'Encounter') {
+        return { ...resource, classCode: target.code }
+      }
+      if (resource.resourceType === 'MedicationRequest') {
+        return {
+          ...resource,
+          medication: {
+            code: target.code,
+            display: resource.medication.display,
+            ...(target.system === undefined ? {} : { system: target.system }),
+          },
+        }
+      }
+      return {
+        ...resource,
+        code: {
+          code: target.code,
+          display: resource.code.display,
+          ...(target.system === undefined ? {} : { system: target.system }),
+        },
+      }
+    }),
+    longitudinalHistory: patient.longitudinalHistory.map(event => ({
+      ...event,
+      mappedCode: mappingBySourceId.get(event.sourceResourceId)?.target.code ?? null,
+    })),
+  }
+}
+
+function reviewedDiagnosisMappings(
+  dataset: ScenarioDataset,
+  patient: SyntheticPatientProfile['patient'],
+): SyntheticPatientProfile['mappings'] {
+  const diagnosisById = new Map(dataset.content.catalog.diagnoses
+    .filter(diagnosis => diagnosis.active && diagnosis.status === 'active')
+    .map(diagnosis => [diagnosis.id, diagnosis]))
+  const conditionByHistoryId = new Map(patient.fhirHistory.flatMap(resource => (
+    resource.resourceType === 'Condition' ? [[resource.id, resource] as const] : []
+  )))
+  return patient.longitudinalHistory.flatMap((event) => {
+    if (event.sourceResourceType !== 'Condition' || event.mappedCode === null) return []
+    const condition = conditionByHistoryId.get(stableHistoryId('Condition', event.sourceResourceId))
+    const resolution = resolveDiagnosisMapping({
+      code: event.code,
+      ...(event.sourceDisplay === undefined ? {} : { display: event.sourceDisplay }),
+      ...(event.sourceSystem === undefined ? {} : { system: event.sourceSystem }),
+      ...(event.sourceVersion === undefined ? {} : { version: event.sourceVersion }),
+    })
+    if (resolution.status !== 'mapped' || resolution.mapping.target.code !== event.mappedCode) {
+      throw new Error(`Condition/${event.sourceResourceId} has no reviewed diagnosis mapping`)
+    }
+    const mappingTarget = resolution.mapping.target
+    if (
+      condition?.code.code !== mappingTarget.code
+      || condition.code.display !== mappingTarget.display
+      || condition.code.system !== mappingTarget.system
+      || condition.code.version !== mappingTarget.version
+    ) {
+      throw new Error(`Condition/${event.sourceResourceId} does not match its diagnosis mapping target`)
+    }
+    const diagnosis = diagnosisById.get(mappingTarget.catalogItemId)
+    if (
+      diagnosis === undefined
+      || diagnosis.code !== mappingTarget.code
+      || diagnosis.name !== mappingTarget.display
+    ) {
+      throw new Error(`Diagnosis mapping target ${mappingTarget.catalogItemId} is unavailable`)
+    }
+    return [{
+      sourceResourceId: event.sourceResourceId,
+      sourceResourceType: event.sourceResourceType,
+      target: {
+        catalogItemId: diagnosis.id,
+        code: diagnosis.code,
+        system: diagnosis.codeSystem,
+        version: initialCatalogVersion,
+      },
+    }]
+  })
+}
+
+function compiledMappingProvenance(providerId: ScenarioDataset['providerId']) {
+  const compilerId = providerId === 'synthea' ? 'synthea-case-truth' : 'builtin-case-truth'
+  return {
+    compiler: { id: compilerId, version: '2' },
+    packages: [diagnosisMappingPackageProvenance()],
+  }
+}
+
 export function createSyntheticPatientProfiles(input: {
   dataset: ScenarioDataset
   sources: readonly SourcePatientArtifact[]
@@ -74,17 +184,13 @@ export function createSyntheticPatientProfiles(input: {
       .update(`${input.dataset.workspaceId}:${identitySeed}`)
       .digest('hex')
       .slice(0, 32)}`
+    const mappings = reviewedDiagnosisMappings(input.dataset, patient)
+    const mappingProvenance = compiledMappingProvenance(input.dataset.providerId)
     return syntheticPatientProfileSchema.parse({
       createdAt: input.dataset.createdAt,
       identity: syntheticIdentity(identitySeed, patient),
-      mappings: [],
-      patient: {
-        ...patient,
-        longitudinalHistory: patient.longitudinalHistory.map(event => ({
-          ...event,
-          mappedCode: null,
-        })),
-      },
+      mappings,
+      patient: applySyntheticPatientProfileMappings(patient, mappings),
       profileId,
       revision: 1,
       source: {
@@ -104,11 +210,10 @@ export function createSyntheticPatientProfiles(input: {
             },
         format: source.format,
         hash: source.hash,
+        ...(source.format === 'legacy-compiled-profile' ? {} : { mappingProvenance }),
         mappingVersion: source.format === 'legacy-compiled-profile'
           ? 'legacy-case-truth-v1'
-          : input.dataset.providerId === 'synthea'
-            ? 'synthea-case-truth-v1'
-            : 'builtin-case-truth-v1',
+          : `${mappingProvenance.compiler.id}-v${mappingProvenance.compiler.version}`,
         patientId: source.patientId,
         providerId: input.dataset.providerId,
         ...(input.dataset.content.reproduction.referenceData === undefined

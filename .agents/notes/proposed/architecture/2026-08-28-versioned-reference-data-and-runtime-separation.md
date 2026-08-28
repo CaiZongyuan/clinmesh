@@ -16,6 +16,8 @@ Reference Data Release 是完整 authoring reference，Reference Data Package �
 
 LOINC 与 UCUM 使用来源专用 parser 转为统一 reference concept；审核映射以 `system + version + code` 为源键，并保存本院项目、目标 UCUM coding 和必要的数值换算。读取旧 Package 时可以通过固定 normalizer 将已知裸单位转为当前结构，但不回写 Package 内容或 hash；未知单位和不匹配的 system/version 直接阻断编译。
 
+Synthea 诊断映射将 SNOMED CT 来源、版本固定的 NHSA 诊断目标和本院诊断项分别保存。Mapping package 固定方向、关系、审核状态、证据和内容哈希；只有唯一的 active 等价关系可自动应用。应用结果以 source resource ID 和本院 catalog item 身份保存在 Synthetic Patient Profile 及每个不可覆盖 Revision；原始 coding 缺失的 version 在编译时固定为当次 package source version，后续 overlay 使用该已固定 identity 重放。结构化 mapping provenance 分别固定 compiler、package version/hash 和人工 overlay revision，不从拼接字符串解析这些事实。Profile 不读取当前 Epoch 的活动目录重建旧 Revision。
+
 ## Alternatives considered
 
 **把完整参考数据加入 operational SQLite。** 单文件部署更直接，但全国目录会进入普通运行备份、查询和迁移，并使参考更新与 Workspace/Epoch 生命周期耦合。
@@ -38,3 +40,4 @@ LOINC 与 UCUM 使用来源专用 parser 转为统一 reference concept；审核
 - 受限上游文件不能进入 Git 或普通 CI，完整 importer 仍需 opt-in artifact 验证；CI 只保存项目自有、不复制上游记录的同格式合成 fixture。
 - Package 持久合同增加 provenance 字段时必须兼容升级前数据，不能通过当前 importer 或 mapping 重建旧 Package。
 - 单位显示文本与 UCUM code 可能不同；只改标签会使数值语义错误，因此每个非 identity 换算都必须在 mapping data 中显式记录并由 worked example 验证。
+- 自有 Provider 同样经过参考编码边界；其固定 fixture 必须使用 mapping package 审核的 system、version、code 和 display，不得用缩写 display 规避不一致检查。

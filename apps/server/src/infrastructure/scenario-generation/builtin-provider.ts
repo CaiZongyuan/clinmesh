@@ -45,8 +45,8 @@ function patient(request: ScenarioGenerationRequest, ordinal: number) {
   const encounterId = `builtin-encounter-${idSuffix}`
   const encounterReference = `Encounter/${encounterId}`
   const observationInputs = isDiabetes
-    ? [{ code: '2339-0', display: 'Glucose', id: `glucose-${idSuffix}`, unit: 'mmol/L', value: 13.8 },
-        { code: '4548-4', display: 'Hemoglobin A1c', id: `hba1c-${idSuffix}`, unit: '%', value: 9.2 }]
+    ? [{ code: '2339-0', display: 'Glucose [Mass/volume] in Blood', id: `glucose-${idSuffix}`, unit: 'mmol/L', value: 13.8 },
+        { code: '4548-4', display: 'Hemoglobin A1c/Hemoglobin.total in Blood', id: `hba1c-${idSuffix}`, unit: '%', value: 9.2 }]
     : [{ code: '8310-5', display: 'Body temperature', id: `temperature-${idSuffix}`, unit: '°C', value: 38.6 }]
   const conditionInputs = isDiabetes
     ? [{ code: '44054006', display: 'Diabetes mellitus type 2', id: `diabetes-${idSuffix}` },

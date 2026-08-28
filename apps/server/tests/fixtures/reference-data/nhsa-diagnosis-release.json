@@ -1,0 +1,18 @@
+{
+  "createdAt": "2026-08-28T00:00:00.000Z",
+  "releaseId": "clinmesh-nhsa-diagnosis-parser-fixture-2026-08-28",
+  "schemaVersion": "1",
+  "sources": [
+    {
+      "acquisitionMethod": "generated",
+      "artifactFormat": "nhsa-diagnosis-csv",
+      "artifactPath": "synthetic-nhsa-diagnosis-shape.csv",
+      "checksum": "b1ecc189337f5c341005c014e87218489b540206993f331a4f9bb20d151c35ce",
+      "licenseId": "LicenseRef-ClinMesh-Proprietary",
+      "retrievedAt": "2026-08-28T00:00:00.000Z",
+      "sourceId": "clinmesh-synthetic-nhsa-diagnosis-shape",
+      "sourceUrl": "https://github.com/CaiZongyuan/clinmesh/issues/45",
+      "upstreamVersion": "nhsa-diagnosis-2026-08-07"
+    }
+  ]
+}

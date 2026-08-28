@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   parseLoincCsvReferenceArtifact,
+  parseNhsaDiagnosisCsvReferenceArtifact,
   parseUcumXmlReferenceArtifact,
 } from '../src/infrastructure/reference-data/reference-source-importers.ts'
 
@@ -10,7 +11,7 @@ const fixture = (name: string) => fileURLToPath(
   new URL(`./fixtures/reference-data/${name}`, import.meta.url),
 )
 
-describe('LOINC and UCUM source importers', () => {
+describe('Reference Data source importers', () => {
   it('converts the synthetic LOINC 2.83 CSV shape into strict reference concepts', async () => {
     const artifact = parseLoincCsvReferenceArtifact({
       content: await readFile(fixture('synthetic-loinc-2.83-shape.csv'), 'utf8'),
@@ -55,6 +56,33 @@ describe('LOINC and UCUM source importers', () => {
       expect.objectContaining({ code: '{clinmesh_synthetic_c}', display: 'synthetic-c' }),
     ]))
     expect(artifact.concepts).toHaveLength(3)
+  })
+
+  it('converts the synthetic NHSA diagnosis CSV shape with version, status and source rows', async () => {
+    const artifact = parseNhsaDiagnosisCsvReferenceArtifact({
+      content: await readFile(fixture('synthetic-nhsa-diagnosis-shape.csv'), 'utf8'),
+      version: 'nhsa-diagnosis-2026-08-07',
+    })
+
+    expect(artifact.concepts).toEqual([{
+      code: 'CM-DX-A',
+      display: 'Synthetic diagnosis alpha',
+      domain: 'diagnosis',
+      id: 'nhsa-diagnosis:nhsa-diagnosis-2026-08-07:CM-DX-A',
+      sourceLocator: 'nhsa-diagnosis.csv:2',
+      status: 'active',
+      system: 'urn:clinmesh:reference:nhsa-diagnosis',
+      version: 'nhsa-diagnosis-2026-08-07',
+    }, {
+      code: 'CM-DX-B',
+      display: 'Synthetic diagnosis beta',
+      domain: 'diagnosis',
+      id: 'nhsa-diagnosis:nhsa-diagnosis-2026-08-07:CM-DX-B',
+      sourceLocator: 'nhsa-diagnosis.csv:3',
+      status: 'inactive',
+      system: 'urn:clinmesh:reference:nhsa-diagnosis',
+      version: 'nhsa-diagnosis-2026-08-07',
+    }])
   })
 
   it('rejects malformed rows and duplicate source coding', () => {

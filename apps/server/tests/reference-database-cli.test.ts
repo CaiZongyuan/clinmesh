@@ -63,8 +63,12 @@ describe('Reference Data database CLI', () => {
     await expect(runReferenceDatabaseCli([
       'migrate', '--database', databasePath,
     ])).resolves.toEqual({
-      applied: ['0001_reference-data.sql', '0002_reference-source-format.sql'],
-      schemaVersion: 2,
+      applied: [
+        '0001_reference-data.sql',
+        '0002_reference-source-format.sql',
+        '0003_reference-diagnosis-format.sql',
+      ],
+      schemaVersion: 3,
     })
     const imported = await runReferenceDatabaseCli([
       'import', '--database', databasePath, '--manifest', manifestPath,
@@ -78,7 +82,7 @@ describe('Reference Data database CLI', () => {
     expect(imported).toHaveProperty('contentHash', expect.stringMatching(/^[a-f0-9]{64}$/))
     await expect(runReferenceDatabaseCli([
       'verify', '--database', databasePath,
-    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 2 })
+    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 3 })
     await expect(runReferenceDatabaseCli([
       'list', '--database', databasePath,
     ])).resolves.toEqual({ items: [expect.objectContaining({
@@ -161,6 +165,29 @@ describe('Reference Data database CLI', () => {
     })
   })
 
+  it('imports the complete NHSA diagnosis CSV selected by a fixed manifest', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-nhsa-diagnosis-reference-data-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'reference.sqlite')
+    const manifestPath = fileURLToPath(new URL(
+      './fixtures/reference-data/nhsa-diagnosis-release.json',
+      import.meta.url,
+    ))
+
+    await runReferenceDatabaseCli(['migrate', '--database', databasePath])
+    await expect(runReferenceDatabaseCli([
+      'import', '--database', databasePath, '--manifest', manifestPath,
+    ])).resolves.toMatchObject({
+      conceptCount: 2,
+      created: true,
+      releaseId: 'clinmesh-nhsa-diagnosis-parser-fixture-2026-08-28',
+      sourceCount: 1,
+    })
+    await expect(runReferenceDatabaseCli([
+      'verify', '--database', databasePath,
+    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1 })
+  })
+
   it('preserves a published release hash when the source format migration is applied', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-reference-data-legacy-release-'))
     temporaryDirectories.push(directory)
@@ -230,10 +257,18 @@ describe('Reference Data database CLI', () => {
       applied: ['0002_reference-source-format.sql'],
       schemaVersion: 2,
     })
+    await copyFile(
+      join(sourceMigrationDirectory, '0003_reference-diagnosis-format.sql'),
+      join(migrationDirectory, '0003_reference-diagnosis-format.sql'),
+    )
+    expect(applyReferenceMigrations(database, migrationDirectory)).toEqual({
+      applied: ['0003_reference-diagnosis-format.sql'],
+      schemaVersion: 3,
+    })
     expect(verifyReferenceDatabase(database)).toEqual({
       integrity: 'ok',
       releaseCount: 1,
-      schemaVersion: 2,
+      schemaVersion: 3,
     })
     expect(listReferenceDataReleases(database).items[0]).toMatchObject({
       contentHash: oldContentHash,

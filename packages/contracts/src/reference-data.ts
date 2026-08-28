@@ -38,6 +38,7 @@ export const referenceArtifactSchema = z.object({
 export const referenceArtifactFormatSchema = z.enum([
   'clinmesh-reference-v1',
   'loinc-csv',
+  'nhsa-diagnosis-csv',
   'ucum-xml',
 ])
 
@@ -94,6 +95,12 @@ export const referenceDataProvenanceSchema = referenceDataReleaseSummarySchema.p
   releaseId: true,
 })
 
+export const referenceMappingPackageProvenanceSchema = z.object({
+  contentHash: sha256Schema,
+  mappingSetId: z.string().min(1).max(256),
+  version: z.string().min(1).max(256),
+}).strict()
+
 export type ReferenceArtifact = z.infer<typeof referenceArtifactSchema>
 export type ReferenceArtifactFormat = z.infer<typeof referenceArtifactFormatSchema>
 export type ReferenceConcept = z.infer<typeof referenceConceptSchema>
@@ -102,4 +109,5 @@ export type ReferenceDataReleaseList = z.infer<typeof referenceDataReleaseListSc
 export type ReferenceDataReleaseSummary = z.infer<typeof referenceDataReleaseSummarySchema>
 export type ReferenceImportManifest = z.infer<typeof referenceImportManifestSchema>
 export type ReferenceImportDiagnostics = z.infer<typeof referenceImportDiagnosticsSchema>
+export type ReferenceMappingPackageProvenance = z.infer<typeof referenceMappingPackageProvenanceSchema>
 export type ReferenceSourceManifest = z.infer<typeof referenceSourceManifestSchema>

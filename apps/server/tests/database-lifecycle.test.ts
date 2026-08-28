@@ -1,10 +1,13 @@
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
+import { scenarioGenerationRequestSchema, type ScenarioDataset } from '@clinmesh/contracts/scenario'
 import { runDatabaseCli } from '../src/database-cli.ts'
+import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
+import { createSyntheticPatientProfiles } from '../src/application/scenario-data/synthetic-patient-profile.ts'
 import {
   applyMigrations,
   backupDatabase,
@@ -14,7 +17,9 @@ import {
   restoreDatabase,
 } from '../src/infrastructure/sqlite/database.ts'
 import { FhirRepository } from '../src/infrastructure/sqlite/fhir-repository.ts'
+import { SyntheticPatientProfileRepository } from '../src/infrastructure/sqlite/synthetic-patient-profile-repository.ts'
 import { WorkspaceRepository } from '../src/infrastructure/sqlite/workspace-repository.ts'
+import { BuiltInScenarioGenerationProvider } from '../src/infrastructure/scenario-generation/builtin-provider.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 
 describe('SQLite lifecycle', () => {
@@ -37,7 +42,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 26,
+      schemaVersion: 27,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -67,8 +72,9 @@ describe('SQLite lifecycle', () => {
         '0023_consultation-second-ask.sql',
         '0024_synthetic-patient-profile.sql',
         '0025_reference-data-provenance.sql',
+        '0026_profile-mapping-provenance.sql',
       ],
-      schemaVersion: 26,
+      schemaVersion: 27,
     })
     expect(first.driver.prepare(`
       SELECT "from", "table", "to", on_delete
@@ -89,9 +95,141 @@ describe('SQLite lifecycle', () => {
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 26 })
-    expect(reopened.diagnostics().schemaVersion).toBe(26)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 27 })
+    expect(reopened.diagnostics().schemaVersion).toBe(27)
     reopened.close()
+  })
+
+  it('preserves existing Profile revisions when structured mapping provenance is added', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-profile-mapping-provenance-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'clinmesh.sqlite')
+    const migrationDirectory = join(directory, 'migrations')
+    const sourceMigrationDirectory = join(process.cwd(), 'drizzle')
+    await mkdir(migrationDirectory)
+    const migrationFiles = (await readdir(sourceMigrationDirectory))
+      .filter(file => /^\d{4}_[a-z0-9-]+\.sql$/.test(file) && file <= '0025_reference-data-provenance.sql')
+      .toSorted()
+    for (const migration of migrationFiles) {
+      await copyFile(join(sourceMigrationDirectory, migration), join(migrationDirectory, migration))
+    }
+
+    const database = openClinMeshDatabase({ busyTimeoutMs: 5_000, databasePath })
+    expect(applyMigrations(database, migrationDirectory).schemaVersion).toBe(26)
+    new WorkspaceRepository(database).install({
+      epoch: 'epoch-profile-mapping',
+      scenarioId: 'scenario-profile-mapping',
+      scenarioRunId: 'run-profile-mapping',
+      workspaceId: 'workspace-profile-mapping',
+      workspaceName: 'Profile mapping migration',
+    })
+    const request = scenarioGenerationRequestSchema.parse({
+      modules: ['fever'],
+      name: 'Profile mapping migration',
+      population: { age: { maximum: 50, minimum: 30 }, count: 1, gender: 'any' },
+      providerId: 'builtin',
+      seeds: { clinical: 7331, population: 4242 },
+      timeRange: { end: '2026-08-01', start: '2016-08-01' },
+      timeZone: 'Asia/Shanghai',
+    })
+    const corpus = await new BuiltInScenarioGenerationProvider().generate(request)
+    const dataset: ScenarioDataset = {
+      content: corpus.content,
+      contentHash: canonicalJsonHash(corpus.content),
+      createdAt: '2026-08-28T00:00:00.000Z',
+      datasetId: 'dataset-profile-mapping',
+      diagnostics: [],
+      name: request.name,
+      providerId: request.providerId,
+      updatedAt: '2026-08-28T00:00:00.000Z',
+      version: 1,
+      workspaceId: 'workspace-profile-mapping',
+    }
+    const generated = createSyntheticPatientProfiles({ dataset, sources: corpus.sources })[0]!
+    const legacyMappingVersion = 'builtin-case-truth-v1+overlay-r2'
+    database.driver.prepare(`
+      INSERT INTO synthetic_patient_profile (
+        workspace_id, profile_id, batch_id, batch_name, provider_id,
+        source_patient_id, revision, display_name, mrn, identity_json, mappings_json,
+        patient_json, source_format, source_hash, raw_source_json, compilation_json,
+        mapping_version, reference_data_json, created_by_actor_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+    `).run(
+      generated.workspaceId,
+      generated.profileId,
+      generated.source.batchId,
+      generated.source.batchName,
+      generated.source.providerId,
+      generated.source.patientId,
+      generated.revision,
+      generated.identity.displayName,
+      generated.identity.mrn,
+      JSON.stringify(generated.identity),
+      JSON.stringify(generated.mappings),
+      JSON.stringify(generated.patient),
+      generated.source.format,
+      generated.source.hash,
+      generated.source.raw === null ? null : JSON.stringify(generated.source.raw),
+      generated.source.compilation === null ? null : JSON.stringify(generated.source.compilation),
+      legacyMappingVersion,
+      'actor-profile-mapping',
+      generated.createdAt,
+      generated.updatedAt,
+    )
+    database.driver.prepare(`
+      INSERT INTO synthetic_patient_profile_revision (
+        workspace_id, profile_id, revision, identity_json, mappings_json, patient_json,
+        mapping_version, reference_data_json, created_by_actor_id, created_at
+      ) VALUES (?, ?, 1, ?, ?, ?, ?, NULL, ?, ?)
+    `).run(
+      generated.workspaceId,
+      generated.profileId,
+      JSON.stringify(generated.identity),
+      JSON.stringify(generated.mappings),
+      JSON.stringify(generated.patient),
+      legacyMappingVersion,
+      'actor-profile-mapping',
+      generated.createdAt,
+    )
+    const revisionBefore = database.driver.prepare(`
+      SELECT mappings_json, patient_json, mapping_version
+      FROM synthetic_patient_profile_revision
+      WHERE workspace_id = ? AND profile_id = ? AND revision = 1
+    `).get(generated.workspaceId, generated.profileId)
+
+    await copyFile(
+      join(sourceMigrationDirectory, '0026_profile-mapping-provenance.sql'),
+      join(migrationDirectory, '0026_profile-mapping-provenance.sql'),
+    )
+    expect(applyMigrations(database, migrationDirectory)).toEqual({
+      applied: ['0026_profile-mapping-provenance.sql'],
+      schemaVersion: 27,
+    })
+    const repository = new SyntheticPatientProfileRepository(database)
+    const migrated = repository.get(generated.workspaceId, generated.profileId)
+    expect(migrated).toBeDefined()
+    expect(migrated?.source).toMatchObject({ mappingVersion: legacyMappingVersion })
+    expect(migrated?.source).not.toHaveProperty('mappingProvenance')
+    expect(repository.update({
+      ...migrated!,
+      identity: { ...migrated!.identity, displayName: 'Migrated profile' },
+      revision: 2,
+      updatedAt: '2026-08-28T01:00:00.000Z',
+    }, 1, 'actor-profile-mapping')).toBe(true)
+    expect(database.driver.prepare(`
+      SELECT mappings_json, patient_json, mapping_version
+      FROM synthetic_patient_profile_revision
+      WHERE workspace_id = ? AND profile_id = ? AND revision = 1
+    `).get(generated.workspaceId, generated.profileId)).toEqual(revisionBefore)
+    expect(database.driver.prepare(`
+      SELECT mapping_provenance_json, mapping_version
+      FROM synthetic_patient_profile_revision
+      WHERE workspace_id = ? AND profile_id = ? AND revision = 2
+    `).get(generated.workspaceId, generated.profileId)).toEqual({
+      mapping_provenance_json: null,
+      mapping_version: legacyMappingVersion,
+    })
+    database.close()
   })
 
   it('preserves existing outpatient cases while adding Virtual Patient consultation state', async () => {
@@ -1076,7 +1214,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(26)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(27)
     await runtime.close()
   })
 
@@ -1146,7 +1284,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 26,
+      schemaVersion: 27,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -1158,11 +1296,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 26,
+      expectedSchemaVersion: 27,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 26,
+      schemaVersion: 27,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -1346,7 +1484,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(26),
+      schemaVersion: z.literal(27),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -1372,26 +1510,27 @@ describe('SQLite lifecycle', () => {
       '0023_consultation-second-ask.sql',
       '0024_synthetic-patient-profile.sql',
       '0025_reference-data-provenance.sql',
+      '0026_profile-mapping-provenance.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 26 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 27 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 26 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 27 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 26 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 27 })
   })
 })

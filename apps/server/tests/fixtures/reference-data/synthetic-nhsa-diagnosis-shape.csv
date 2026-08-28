@@ -1,0 +1,3 @@
+NHSA_DIAGNOSIS_CODE,NHSA_DIAGNOSIS_NAME,STATUS,CLINMESH_FIXTURE_NOTICE
+CM-DX-A,Synthetic diagnosis alpha,ACTIVE,Self-authored synthetic parser fixture; not NHSA content
+CM-DX-B,Synthetic diagnosis beta,INACTIVE,Self-authored synthetic parser fixture; not NHSA content

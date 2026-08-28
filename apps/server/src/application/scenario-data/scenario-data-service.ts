@@ -7,6 +7,7 @@ import {
   type ScenarioDataset,
   type ScenarioGenerationJob,
   type ScenarioGenerationRequest,
+  type ScenarioPatient,
   syntheticPatientProfileListSchema,
   syntheticPatientProfileSchema,
   startSyntheticPatientVisitsRequestSchema,
@@ -27,11 +28,14 @@ import { validateScenarioDataset } from './scenario-dataset-validator.ts'
 import type { ScenarioService } from '../scenario-service.ts'
 import type { WorkflowService } from '../workflow-service.ts'
 import type { ReferenceDataService } from '../reference-data-service.ts'
-import { createSyntheticPatientProfiles } from './synthetic-patient-profile.ts'
+import {
+  applySyntheticPatientProfileMappings,
+  createSyntheticPatientProfiles,
+} from './synthetic-patient-profile.ts'
 import { canonicalJsonHash } from './canonical-json.ts'
 import {
   compileSyntheaR4Bundle,
-  stableHistoryId,
+  syntheaR4BundleSchema,
 } from './synthea-case-truth-compiler.ts'
 
 const scenarioDatasetInstallResultSchema = z.object({
@@ -50,6 +54,24 @@ function mappingCatalogKey(
   version: number,
 ): string {
   return `${resourceType}\u0000${catalogItemId}\u0000${version}`
+}
+
+function pinDiagnosisSourceVersions(rawBundle: unknown, patient: ScenarioPatient) {
+  const bundle = syntheaR4BundleSchema.parse(structuredClone(rawBundle))
+  const eventBySourceId = new Map(patient.longitudinalHistory.flatMap(event => (
+    event.sourceResourceType === 'Condition' ? [[event.sourceResourceId, event] as const] : []
+  )))
+  for (const entry of bundle.entry) {
+    if (entry.resource.resourceType !== 'Condition') continue
+    const event = eventBySourceId.get(entry.resource.id)
+    if (event?.sourceVersion === undefined) continue
+    const coding = entry.resource.code?.coding?.find(candidate => (
+      candidate.code === event.code
+      && (event.sourceSystem === undefined || candidate.system === event.sourceSystem)
+    ))
+    if (coding !== undefined && coding.version === undefined) coding.version = event.sourceVersion
+  }
+  return bundle
 }
 
 export class ScenarioDataError extends Error {
@@ -451,7 +473,7 @@ export class ScenarioDataService {
         && current.source.raw !== null
         && compilation !== null
         ? compileSyntheaR4Bundle({
-            bundle: current.source.raw,
+            bundle: pinDiagnosisSourceVersions(current.source.raw, current.patient),
             ordinal: compilation.ordinal,
             request: scenarioGenerationRequestSchema.parse({
               modules: compilation.modules,
@@ -522,51 +544,26 @@ export class ScenarioDataService {
         left.sourceResourceType.localeCompare(right.sourceResourceType)
           || left.sourceResourceId.localeCompare(right.sourceResourceId)
       ))
-      const longitudinalHistory = recompiledPatient.longitudinalHistory.map(event => (
-        { ...event, mappedCode: mappingBySourceId.get(event.sourceResourceId)?.target.code ?? null }
-      ))
-      const targetMappingByHistoryId = new Map(mappings.map(mapping => (
-        [stableHistoryId(mapping.sourceResourceType, mapping.sourceResourceId), mapping.target] as const
-      )))
-      const fhirHistory = recompiledPatient.fhirHistory.map((resource) => {
-        const target = targetMappingByHistoryId.get(resource.id)
-        if (target === undefined) return resource
-        if (resource.resourceType === 'Encounter') {
-          return { ...resource, classCode: target.code }
-        }
-        if (resource.resourceType === 'MedicationRequest') {
-          return {
-            ...resource,
-            medication: {
-              code: target.code,
-              display: resource.medication.display,
-              ...(target.system === undefined ? {} : { system: target.system }),
-            },
-          }
-        }
-        return {
-          ...resource,
-          code: {
-            code: target.code,
-            display: resource.code.display,
-            ...(target.system === undefined ? {} : { system: target.system }),
-          },
-        }
-      })
       const revision = input.expectedRevision + 1
-      const mappingVersion = current.source.mappingVersion.replace(/\+overlay-r\d+$/, '')
+      const mappingSource = current.source.mappingProvenance === undefined
+        ? {
+            mappingVersion: `${current.source.mappingVersion.replace(/\+overlay-r\d+$/, '')}+overlay-r${revision}`,
+          }
+        : {
+            mappingProvenance: {
+              ...current.source.mappingProvenance,
+              overlayRevision: revision,
+            },
+            mappingVersion: current.source.mappingVersion,
+          }
       const updated = syntheticPatientProfileSchema.parse({
         ...current,
         mappings,
-        patient: {
-          ...recompiledPatient,
-          fhirHistory,
-          longitudinalHistory,
-        },
+        patient: applySyntheticPatientProfileMappings(recompiledPatient, mappings),
         revision,
         source: {
           ...current.source,
-          mappingVersion: `${mappingVersion}+overlay-r${revision}`,
+          ...mappingSource,
         },
         updatedAt: new Date().toISOString(),
       })

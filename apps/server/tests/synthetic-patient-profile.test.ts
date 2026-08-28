@@ -35,10 +35,36 @@ describe('Synthetic Patient Profile compilation', () => {
     expect(second[0]).toMatchObject({
       identity: first[0]?.identity,
       profileId: first[0]?.profileId,
+      source: {
+        mappingProvenance: {
+          compiler: { id: 'builtin-case-truth', version: '2' },
+          packages: [{
+            contentHash: '5e9b7faabae742a83d527d0756b9d8bff73dc0ac8a9968e68da06f01652efb87',
+            mappingSetId: 'clinmesh-synthea-nhsa-diagnosis',
+            version: '2026-08-28',
+          }],
+        },
+        mappingVersion: 'builtin-case-truth-v2',
+      },
     })
     expect(() => createSyntheticPatientProfiles({
       dataset: dataset('batch-invalid'),
       sources: [...corpus.sources, ...corpus.sources],
     })).toThrow('exactly one source artifact')
+
+    const mismatchedTarget = dataset('batch-mismatched-target')
+    mismatchedTarget.content = {
+      ...mismatchedTarget.content,
+      catalog: {
+        ...mismatchedTarget.content.catalog,
+        diagnoses: mismatchedTarget.content.catalog.diagnoses.map(diagnosis => (
+          diagnosis.code === 'R50.9' ? { ...diagnosis, id: 'diagnosis-wrong-fever' } : diagnosis
+        )),
+      },
+    }
+    expect(() => createSyntheticPatientProfiles({
+      dataset: mismatchedTarget,
+      sources: corpus.sources,
+    })).toThrow('Diagnosis mapping target diagnosis-fever is unavailable')
   })
 })

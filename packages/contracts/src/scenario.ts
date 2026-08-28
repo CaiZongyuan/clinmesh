@@ -1,5 +1,8 @@
 import { z } from 'zod'
-import { referenceDataProvenanceSchema } from './reference-data.ts'
+import {
+  referenceDataProvenanceSchema,
+  referenceMappingPackageProvenanceSchema,
+} from './reference-data.ts'
 
 const localDateSchema = z.iso.date()
 
@@ -202,6 +205,9 @@ const scenarioHistoryEventSchema = z.object({
     'MedicationRequest',
     'Observation',
   ]),
+  sourceDisplay: z.string().min(1).optional(),
+  sourceSystem: z.string().url().optional(),
+  sourceVersion: z.string().min(1).optional(),
   status: z.string().min(1),
 }).strict()
 
@@ -580,6 +586,14 @@ const syntheticPatientSourceSchema = z.object({
   }).strict().nullable(),
   format: z.enum(['clinmesh-template', 'fhir-r4-bundle', 'legacy-compiled-profile']),
   hash: z.string().regex(/^[a-f0-9]{64}$/),
+  mappingProvenance: z.object({
+    compiler: z.object({
+      id: z.string().min(1).max(128),
+      version: z.string().min(1).max(128),
+    }).strict(),
+    overlayRevision: z.number().int().positive().optional(),
+    packages: z.array(referenceMappingPackageProvenanceSchema).min(1).max(20),
+  }).strict().optional(),
   mappingVersion: z.string().min(1),
   patientId: z.string().min(1),
   providerId: z.enum(['builtin', 'synthea']),

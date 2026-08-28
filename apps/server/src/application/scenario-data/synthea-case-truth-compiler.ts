@@ -6,6 +6,7 @@ import {
   type ScenarioPatient,
 } from '@clinmesh/contracts/scenario'
 import { z } from 'zod'
+import { resolveDiagnosisMapping } from './diagnosis-coding-package.ts'
 import {
   isKnownObservationMappingCode,
   resolveObservationMapping,
@@ -205,12 +206,6 @@ const chineseNames = [
   '周允康',
 ] as const
 
-const codeMappings = new Map<string, { code: string; display: string }>([
-  ['386661006', { code: 'R50.9', display: '发热，原因待查' }],
-  ['44054006', { code: 'E11.65', display: '2型糖尿病伴高血糖' }],
-  ['38341003', { code: 'I10', display: '高血压' }],
-])
-
 function firstCoding(concept: Concept | undefined): z.infer<typeof codingSchema> | undefined {
   return concept?.coding?.find(coding => coding.code !== undefined || coding.display !== undefined)
 }
@@ -369,19 +364,19 @@ function formatResultValue(result: ScenarioInvestigationResult): string {
 }
 
 function mappedCondition(condition: z.infer<typeof conditionSchema>) {
-  const sourceCode = conceptCode(condition.code)
+  const source = firstCoding(condition.code)
   const sourceDisplay = conceptDisplay(condition.code, '未命名临床问题')
-  const normalized = sourceDisplay.toLowerCase()
-  const mapped = sourceCode === undefined ? undefined : codeMappings.get(sourceCode)
-  if (mapped !== undefined) return mapped
-  if (normalized.includes('type 2 diabetes') || normalized.includes('2型糖尿病')) {
-    return { code: 'E11.65', display: '2型糖尿病伴高血糖' }
-  }
-  if (normalized.includes('fever') || normalized.includes('发热')) {
-    return { code: 'R50.9', display: '发热，原因待查' }
-  }
-  if (normalized.includes('hypertension') || normalized.includes('高血压')) {
-    return { code: 'I10', display: '高血压' }
+  const resolution = resolveDiagnosisMapping({
+    ...(source?.code === undefined ? {} : { code: source.code }),
+    ...(source?.display === undefined ? {} : { display: source.display }),
+    ...(source?.system === undefined ? {} : { system: source.system }),
+    ...(source?.version === undefined ? {} : { version: source.version }),
+  })
+  if (resolution.status === 'mapped') {
+    return {
+      ...resolution.mapping.target,
+      sourceVersion: resolution.mapping.source.version,
+    }
   }
   return { code: null, display: sourceDisplay }
 }
@@ -759,11 +754,16 @@ export function compileSyntheaR4Bundle(input: {
       return [{
         clinicalStatus: clinicalStatus(resource.clinicalStatus, 'active'),
         code: {
-          ...(mapped.code === null ? {} : { code: mapped.code }),
+          ...(mapped.code === null
+            ? (coding?.code === undefined ? {} : { code: coding.code })
+            : { code: mapped.code }),
           display: mapped.display,
           ...(mapped.code === null
             ? (coding?.system === undefined ? {} : { system: coding.system })
-            : { system: 'http://hl7.org/fhir/sid/icd-10' }),
+            : { system: mapped.system }),
+          ...(mapped.code === null
+            ? (coding?.version === undefined ? {} : { version: coding.version })
+            : { version: mapped.version }),
         },
         ...(localReferenceId(resource.encounter?.reference, bundle) === undefined
           ? {}
@@ -850,7 +850,9 @@ export function compileSyntheaR4Bundle(input: {
       status: resource.status ?? 'finished',
     })),
     ...conditions.map(resource => {
+      const source = firstCoding(resource.code)
       const mapped = mappedCondition(resource)
+      const sourceVersion = source?.version ?? (mapped.code === null ? undefined : mapped.sourceVersion)
       return {
         code: conceptCode(resource.code) ?? 'unmapped',
         display: mapped.display,
@@ -860,6 +862,9 @@ export function compileSyntheaR4Bundle(input: {
         occurredAt: resource.onsetDateTime ?? resource.recordedDate ?? fallbackDateTime,
         sourceResourceId: resource.id,
         sourceResourceType: resource.resourceType,
+        ...(source?.display === undefined ? {} : { sourceDisplay: source.display }),
+        ...(source?.system === undefined ? {} : { sourceSystem: source.system }),
+        ...(sourceVersion === undefined ? {} : { sourceVersion }),
         status: clinicalStatus(resource.clinicalStatus, 'active'),
       }
     }),

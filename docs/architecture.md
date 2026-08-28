@@ -423,7 +423,7 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 
 ### 5.4 中国术语与参考数据策略
 
-当前 authoring 平面使用独立 Reference Data SQLite，可从固定 manifest 导入 LOINC 2.83 CSV 与 UCUM 2.2 XML，并保留来源、许可、checksum、记录数、诊断与 release content hash。Scenario Compiler 通过版本控制的审核映射，以 `system + version + code` 解析体温、HbA1c 和随机血糖；检验目录、病例结果和生理生成器保存 UCUM `code/system/display/version`，FHIR Quantity 投影使用 `code/system/unit`。旧 Package 的裸单位字符串只在读取时经固定兼容表规范化，不覆盖持久化 JSON 或 content hash。
+当前 authoring 平面使用独立 Reference Data SQLite，可从固定 manifest 导入 LOINC 2.83 CSV、UCUM 2.2 XML 和版本固定的 NHSA 诊断 CSV，并保留来源、许可、checksum、记录数、诊断与 release content hash。Scenario Compiler 通过版本控制的审核映射，以 `system + version + code` 解析体温、HbA1c、随机血糖和 truth-critical Synthea 诊断；诊断映射固定方向、关系、状态、证据和内容哈希，只有唯一的 active 等价关系可自动应用。未知、歧义和非等价诊断保留来源 coding 并生成稳定的未映射诊断；缺失的 source version 在编译时固定为 mapping package 版本并供后续 overlay 重放。自动应用的诊断到本院目录映射连同结构化 compiler、mapping package version/hash 和 overlay revision 固定在 Profile Revision。检验目录、病例结果和生理生成器保存 UCUM `code/system/display/version`，FHIR Quantity 投影使用 `code/system/unit`。旧 Package 的裸单位字符串只在读取时经固定兼容表规范化，不覆盖持久化 JSON 或 content hash。
 
 未实现的中国诊断、药品和医疗服务映射仍使用最小虚构目录与 ICD-10 示例 code。当前不发布 CodeSystem、ValueSet、ConceptMap 或 terminology operation；术语是接口兼容性的一部分，不是 UI 字典。
 
@@ -1531,7 +1531,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 ### 15.1 运行与持久化
 
 - Node.js Hono 同时提供 Web SPA、认证、HIS/Scenario API、FHIR R5 只读 API 和健康检查。
-- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；二十六个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、Virtual Patient 接诊与问诊、门诊事实、结构化病历、独立检查申请、检验报告关联、报告确认与修订、诊断草稿与确认、处方审核状态、处方草稿、无需用药结论与撤回事实、门诊病例责任、Scenario Dataset/Package、持久生成任务、已报告检查复测约束、结构化二次追问回答，以及 Synthetic Patient Profile、Profile Revision、参考数据 provenance、原始来源和 Epoch materialization。
+- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；二十七个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、Virtual Patient 接诊与问诊、门诊事实、结构化病历、独立检查申请、检验报告关联、报告确认与修订、诊断草稿与确认、处方审核状态、处方草稿、无需用药结论与撤回事实、门诊病例责任、Scenario Dataset/Package、持久生成任务、已报告检查复测约束、结构化二次追问回答，以及 Synthetic Patient Profile、Profile Revision、参考数据与 mapping provenance、原始来源和 Epoch materialization。
 - 数据库 CLI 提供 migrate、verify、reindex、backup 和 restore；已有旧版数据库执行 migrate 时先在同目录创建并验证升级前备份，Server 进程只验证 migration。
 - CommandExecutor 统一 `BEGIN IMMEDIATE`、expected versions、幂等 receipt、FHIR current/history/search、领域事实、AuditEvent、Action Trace 和 outbox 原子提交。
 - 同进程 dispatcher 持久化 claim/lease/attempt/correlation，支持失败重试、ambiguous、重复消费和旧 Epoch abandon。

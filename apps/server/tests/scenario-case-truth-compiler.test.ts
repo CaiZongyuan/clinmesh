@@ -1,9 +1,14 @@
-import { scenarioGenerationRequestSchema } from '@clinmesh/contracts/scenario'
+import {
+  scenarioDatasetContentSchema,
+  scenarioGenerationRequestSchema,
+} from '@clinmesh/contracts/scenario'
 import { describe, expect, it } from 'vitest'
 import {
   compileSyntheaR4Bundle,
   syntheaR4BundleSchema,
 } from '../src/application/scenario-data/synthea-case-truth-compiler.ts'
+import { createHospitalBaseline } from '../src/application/scenario-data/hospital-baseline.ts'
+import { validateScenarioDataset } from '../src/application/scenario-data/scenario-dataset-validator.ts'
 
 const request = scenarioGenerationRequestSchema.parse({
   modules: ['fever'],
@@ -147,6 +152,14 @@ describe('Synthea R4 CaseTruth compiler', () => {
       'MedicationRequest',
     ])
     expect(compiled.fhirHistory[0]).toMatchObject({ classCode: 'EMER', resourceType: 'Encounter' })
+    expect(compiled.fhirHistory.find(resource => resource.resourceType === 'Condition')).toMatchObject({
+      code: {
+        code: 'R50.9',
+        display: '发热，未特指',
+        system: 'urn:clinmesh:reference:nhsa-diagnosis',
+        version: 'nhsa-diagnosis-2026-08-07',
+      },
+    })
     expect(compiled.fhirHistory.find(resource => resource.resourceType === 'Observation')).toMatchObject({
       code: {
         code: '8310-5',
@@ -166,6 +179,13 @@ describe('Synthea R4 CaseTruth compiler', () => {
     expect(compiled.longitudinalHistory.find(event => (
       event.sourceResourceType === 'Encounter'
     ))).toMatchObject({ code: 'EMER', mappedCode: null })
+    expect(compiled.longitudinalHistory.find(event => (
+      event.sourceResourceId === 'condition-fever'
+    ))).toMatchObject({
+      sourceDisplay: 'Fever',
+      sourceSystem: 'http://snomed.info/sct',
+      sourceVersion: 'http://snomed.info/sct/900000000000207008/version/20250201',
+    })
     expect(JSON.stringify(compiled)).not.toMatch(/Boston|Massachusetts|Alice|Synthetic|Coverage|999-99-9999/)
     expect(compileSyntheaR4Bundle({ bundle, ordinal: 0, request })).toEqual(compiled)
 
@@ -225,6 +245,75 @@ describe('Synthea R4 CaseTruth compiler', () => {
       code: 'OBSERVATION_CODING_MISMATCH',
       sourceResourceId: 'temperature-fever',
     })
+
+    const wrongConditionSystemBundle = syntheaR4BundleSchema.parse(structuredClone(bundle))
+    const wrongSystemCondition = wrongConditionSystemBundle.entry.find(entry => (
+      entry.resource.id === 'condition-fever'
+    ))?.resource
+    if (wrongSystemCondition?.resourceType !== 'Condition') {
+      throw new Error('Fever condition fixture was not found')
+    }
+    const wrongConditionCoding = wrongSystemCondition.code?.coding?.[0]
+    if (wrongConditionCoding === undefined) throw new Error('Fever condition coding was not found')
+    wrongConditionCoding.system = 'https://example.test/not-snomed'
+    const wrongSystemConditionPatient = compileSyntheaR4Bundle({
+      bundle: wrongConditionSystemBundle,
+      ordinal: 0,
+      request,
+    })
+    expect(wrongSystemConditionPatient.fhirHistory.find(resource => (
+      resource.resourceType === 'Condition'
+    ))).toMatchObject({
+      code: {
+        code: '386661006',
+        display: 'Fever',
+        system: 'https://example.test/not-snomed',
+      },
+    })
+    expect(wrongSystemConditionPatient.longitudinalHistory).toContainEqual(expect.objectContaining({
+      mappedCode: null,
+      sourceResourceId: 'condition-fever',
+    }))
+    const baseline = createHospitalBaseline()
+    const diagnostics = validateScenarioDataset(scenarioDatasetContentSchema.parse({
+      ...baseline,
+      hiddenFacts: [],
+      patients: [wrongSystemConditionPatient],
+      reproduction: {
+        clinicalSeed: request.seeds.clinical,
+        generator: 'synthea-fhir-r4',
+        modules: request.modules,
+        populationSeed: request.seeds.population,
+        timeRange: request.timeRange,
+        timeZone: request.timeZone,
+      },
+      revealPolicies: [],
+      schemaVersion: '1',
+      simulatorRules: [],
+    }))
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      code: 'CLINICAL_CODE_UNMAPPED',
+      message: 'Condition/condition-fever has no ClinMesh mapping',
+      severity: 'warning',
+    }))
+
+    const displayOnlyConditionBundle = syntheaR4BundleSchema.parse(structuredClone(bundle))
+    const displayOnlyCondition = displayOnlyConditionBundle.entry.find(entry => (
+      entry.resource.id === 'condition-fever'
+    ))?.resource
+    if (displayOnlyCondition?.resourceType !== 'Condition' || displayOnlyCondition.code === undefined) {
+      throw new Error('Fever condition fixture was not found')
+    }
+    displayOnlyCondition.code.coding = [{ display: 'Fever' }]
+    const displayOnlyConditionPatient = compileSyntheaR4Bundle({
+      bundle: displayOnlyConditionBundle,
+      ordinal: 0,
+      request,
+    })
+    expect(displayOnlyConditionPatient.longitudinalHistory).toContainEqual(expect.objectContaining({
+      mappedCode: null,
+      sourceResourceId: 'condition-fever',
+    }))
   })
 
   it('keeps T2DM objective truth separate from patient knowledge in the same schema', () => {
@@ -355,6 +444,23 @@ describe('Synthea R4 CaseTruth compiler', () => {
       'Observation',
       'AllergyIntolerance',
     ])
+    expect(compiled.fhirHistory.filter(resource => resource.resourceType === 'Condition'))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          code: expect.objectContaining({
+            code: 'E11.65',
+            system: 'urn:clinmesh:reference:nhsa-diagnosis',
+            version: 'nhsa-diagnosis-2026-08-07',
+          }),
+        }),
+        expect.objectContaining({
+          code: expect.objectContaining({
+            code: 'I10',
+            system: 'urn:clinmesh:reference:nhsa-diagnosis',
+            version: 'nhsa-diagnosis-2026-08-07',
+          }),
+        }),
+      ]))
     expect(compiled.longitudinalHistory.find(event => (
       event.sourceResourceType === 'AllergyIntolerance'
     ))).toMatchObject({ mappedCode: null })
