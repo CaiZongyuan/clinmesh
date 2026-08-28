@@ -811,6 +811,8 @@ function startSaturationWorker(workerData: {
   let resultReceived = false
   const ready = createDeferred<void>()
   const result = createDeferred<SaturationWorkerResult>()
+  // Worker failures can arrive before the aggregate waits are attached.
+  void ready.promise.catch(() => undefined)
   void result.promise.catch(() => undefined)
   const worker = new Worker(saturationWorkerSource, { eval: true, workerData })
   worker.on('message', (value: unknown) => {
