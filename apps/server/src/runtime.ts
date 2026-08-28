@@ -97,8 +97,15 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const referenceData = new ReferenceDataService(
       referenceDatabase === undefined ? undefined : new SqliteReferenceDataRepository(referenceDatabase),
     )
-    const medicationProducts = referenceData.medicationProductSelection().products
-    const scenario = new ScenarioService(database, fhir, commands, medicationProducts)
+    const hospitalReference = referenceData.hospitalReferenceSelection()
+    const scenario = new ScenarioService(
+      database,
+      fhir,
+      commands,
+      hospitalReference.products,
+      hospitalReference.services,
+      hospitalReference.valueSetEntries,
+    )
     const workflow = new WorkflowService(database, fhir, commands, {
       ...clockOptions,
       tokenSecret: options.cursorSecret,
@@ -115,7 +122,9 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           })
         : new SyntheaScenarioGenerationProvider({
             baseUrl: options.syntheaProviderUrl,
-            medicationProducts,
+            medicalServices: hospitalReference.services,
+            medicationProducts: hospitalReference.products,
+            valueSetEntries: hospitalReference.valueSetEntries,
           }))
     const generationJobs = new ScenarioGenerationJobRepository(database)
     const syntheticPatientProfiles = new SyntheticPatientProfileRepository(database)
@@ -124,7 +133,11 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       commands,
       jobs: generationJobs,
       providers: new Map([
-        ['builtin', new BuiltInScenarioGenerationProvider(medicationProducts)],
+        ['builtin', new BuiltInScenarioGenerationProvider(
+          hospitalReference.products,
+          hospitalReference.services,
+          hospitalReference.valueSetEntries,
+        )],
         ['synthea', syntheaProvider],
       ]),
       profiles: syntheticPatientProfiles,

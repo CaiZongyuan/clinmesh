@@ -509,6 +509,22 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.get('/api/his/v1/catalogs/services', async (context) => {
+      try {
+        const query = z.object({
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(20),
+          query: z.string().trim().min(1).max(200).optional(),
+        }).parse(context.req.query())
+        return context.json(workflow.serviceCatalog(await actor(context), {
+          page: query.page,
+          pageSize: query.pageSize,
+          ...(query.query === undefined ? {} : { query: query.query }),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
     app.get('/api/his/v1/patients', async (context) => {
       try {
         const query = z.object({

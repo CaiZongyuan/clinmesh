@@ -56,6 +56,28 @@ const nhsaMedicationProductRecordSchema = z.object({
   info: z.object({ lines: z.number().int().positive() }).passthrough(),
 }).passthrough()
 
+const nhcMedicalServiceRecordSchema = z.object({
+  record: z.object({
+    BILLING_UNIT_CODE: z.string().trim().min(1).max(128),
+    CATEGORY_CODE: z.string().trim().min(1).max(128),
+    SERVICE_CODE: z.string().trim().min(1).max(256),
+    SERVICE_NAME: z.string().trim().min(1).max(1_000),
+    STATUS: z.enum(['ACTIVE', 'INACTIVE']),
+  }).passthrough(),
+  info: z.object({ lines: z.number().int().positive() }).passthrough(),
+}).passthrough()
+
+const wstValueSetRecordSchema = z.object({
+  record: z.object({
+    CODE: z.string().trim().min(1).max(128),
+    DISPLAY: z.string().trim().min(1).max(500),
+    STATUS: z.enum(['ACTIVE', 'INACTIVE']),
+    SYSTEM: z.string().url(),
+    VALUE_SET_URI: z.string().url(),
+  }).passthrough(),
+  info: z.object({ lines: z.number().int().positive() }).passthrough(),
+}).passthrough()
+
 function assertUniqueCodes(artifact: ReferenceArtifact): ReferenceArtifact {
   const codes = new Set<string>()
   for (const concept of artifact.concepts) {
@@ -150,6 +172,61 @@ export function parseNhsaMedicationProductCsvArtifact(input: {
   })
 }
 
+export function parseNhcMedicalServiceCsvArtifact(input: {
+  content: string
+  version: string
+}): ReferenceArtifact {
+  const version = nhsaDiagnosisVersionSchema.parse(input.version)
+  const rows = z.array(nhcMedicalServiceRecordSchema).parse(parse(input.content, {
+    bom: true,
+    columns: true,
+    info: true,
+    skip_empty_lines: true,
+  }))
+  return referenceArtifactSchema.parse({
+    concepts: [],
+    schemaVersion: '1',
+    services: rows.map(({ info, record }) => ({
+      billingUnitCode: record.BILLING_UNIT_CODE,
+      categoryCode: record.CATEGORY_CODE,
+      code: record.SERVICE_CODE,
+      display: record.SERVICE_NAME,
+      id: `nhc-medical-service:${version}:${record.SERVICE_CODE}`,
+      sourceLocator: `nhc-medical-services.csv:${info.lines}`,
+      status: record.STATUS === 'ACTIVE' ? 'active' : 'inactive',
+      system: 'urn:clinmesh:reference:nhc-medical-service',
+      version,
+    })),
+  })
+}
+
+export function parseWstValueSetCsvArtifact(input: {
+  content: string
+  version: string
+}): ReferenceArtifact {
+  const version = nhsaDiagnosisVersionSchema.parse(input.version)
+  const rows = z.array(wstValueSetRecordSchema).parse(parse(input.content, {
+    bom: true,
+    columns: true,
+    info: true,
+    skip_empty_lines: true,
+  }))
+  return referenceArtifactSchema.parse({
+    concepts: [],
+    schemaVersion: '1',
+    valueSetEntries: rows.map(({ info, record }) => ({
+      code: record.CODE,
+      display: record.DISPLAY,
+      id: `wst-value-set:${version}:${record.VALUE_SET_URI}:${record.CODE}`,
+      sourceLocator: `wst-value-set.csv:${info.lines}`,
+      status: record.STATUS === 'ACTIVE' ? 'active' : 'inactive',
+      system: record.SYSTEM,
+      valueSet: record.VALUE_SET_URI,
+      version,
+    })),
+  })
+}
+
 export function parseUcumXmlReferenceArtifact(input: {
   content: string
   version: string
@@ -191,7 +268,11 @@ export function parseReferenceSourceArtifact(input: {
       return parseNhsaDiagnosisCsvReferenceArtifact(input)
     case 'nhsa-medication-product-csv':
       return parseNhsaMedicationProductCsvArtifact(input)
+    case 'nhc-medical-service-csv':
+      return parseNhcMedicalServiceCsvArtifact(input)
     case 'ucum-xml':
       return parseUcumXmlReferenceArtifact(input)
+    case 'wst-value-set-csv':
+      return parseWstValueSetCsvArtifact(input)
   }
 }

@@ -72,6 +72,21 @@ describe('Scenario generation Provider contract', () => {
       { code: 'ambiguous', outcome: 'ambiguous', simulator: 'payment' },
       { code: 'default-success', outcome: 'success', simulator: 'lis' },
     ])
+    expect(first.content.catalog.services).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        chargeDefinition: {
+          currency: 'CNY',
+          effectiveOn: '2026-08-28',
+          id: 'charge-definition-hospital-service-cbc',
+          priceFen: 2_500,
+        },
+        executingDepartmentId: 'department-laboratory',
+        id: 'hospital-service-cbc',
+        nationalService: expect.objectContaining({ code: 'CM-NHC-SERVICE-CBC' }),
+        requestCatalogItemIds: ['lab-cbc'],
+      }),
+      expect.objectContaining({ id: 'hospital-service-hba1c' }),
+    ]))
     expect(first.content.reproduction).toEqual({
       clinicalSeed: 7331,
       generator: 'clinmesh-builtin-v1',

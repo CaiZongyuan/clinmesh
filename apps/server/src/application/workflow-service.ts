@@ -3,6 +3,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
 import {
   scenarioDatasetContentSchema,
+  scenarioHospitalServiceCatalogItemSchema,
   type ScenarioDatasetContent,
   startSyntheticPatientVisitsResultSchema,
   syntheticPatientMappingCatalogSchema,
@@ -56,6 +57,7 @@ import {
   type PrescriptionDraftItem,
   prescriptionWithdrawalSchema,
   prescriptionReviewResponseSchema,
+  serviceCatalogSearchSchema,
   registrationStatusSchema,
   registrationResponseSchema,
   revisitDraftResponseSchema,
@@ -110,6 +112,16 @@ interface CatalogRow {
   price_fen: number
   version: number
 }
+
+const serviceCatalogConfigSchema = scenarioHospitalServiceCatalogItemSchema.omit({
+  active: true,
+  code: true,
+  id: true,
+  name: true,
+  organizationId: true,
+  priceFen: true,
+  status: true,
+})
 
 const diagnosisCatalogRowSchema = z.object({
   code: z.string().min(1),
@@ -1114,6 +1126,10 @@ export class WorkflowService {
       FROM outpatient_catalog
       WHERE workspace_id = ? AND epoch = ?
         AND kind IN ('department', 'visit-type') AND active = 1
+        AND (
+          kind <> 'department'
+          OR coalesce(json_extract(config_json, '$.registrationAvailable'), 1) = 1
+        )
       ORDER BY kind, item_id
     `).all(context.workspaceId, context.epoch) as Array<CatalogRow & { kind: string }>
     const virtualTime = this.#virtualTime(context)
@@ -1232,6 +1248,69 @@ export class WorkflowService {
       }),
       prescriptionConclusionSupported: true as const,
     }
+  }
+
+  serviceCatalog(context: ActorContext, input: {
+    page: number
+    pageSize: number
+    query?: string
+  }) {
+    this.#assertRole(context, ['administrator', 'outpatient-doctor'])
+    const query = input.query ?? null
+    const bindings = [
+      context.workspaceId,
+      context.epoch,
+      query,
+      query,
+      query,
+      query,
+    ]
+    const total = z.object({ count: z.number().int().nonnegative() }).parse(
+      this.#database.driver.prepare(`
+        SELECT COUNT(*) AS count
+        FROM hospital_service_catalog
+        WHERE workspace_id = ? AND epoch = ? AND active = 1
+          AND (
+            ? IS NULL
+            OR instr(lower(code), lower(?)) > 0
+            OR instr(lower(name_zh), lower(?)) > 0
+            OR instr(lower(name_en), lower(?)) > 0
+          )
+      `).get(...bindings),
+    ).count
+    const rows = this.#database.driver.prepare(`
+      SELECT service_id, code, name_zh, name_en, version, config_json
+      FROM hospital_service_catalog
+      WHERE workspace_id = ? AND epoch = ? AND active = 1
+        AND (
+          ? IS NULL
+          OR instr(lower(code), lower(?)) > 0
+          OR instr(lower(name_zh), lower(?)) > 0
+          OR instr(lower(name_en), lower(?)) > 0
+        )
+      ORDER BY service_id
+      LIMIT ? OFFSET ?
+    `).all(...bindings, input.pageSize, (input.page - 1) * input.pageSize) as Array<{
+      code: string
+      config_json: string
+      service_id: string
+      name_en: string
+      name_zh: string
+      version: number
+    }>
+    return serviceCatalogSearchSchema.parse({
+      items: rows.map(row => ({
+        ...serviceCatalogConfigSchema.parse(JSON.parse(row.config_json) as unknown),
+        code: row.code,
+        id: row.service_id,
+        nameEn: row.name_en,
+        nameZh: row.name_zh,
+        version: row.version,
+      })),
+      page: input.page,
+      pageSize: input.pageSize,
+      total,
+    })
   }
 
   syntheticPatientMappingCatalog(context: ActorContext) {

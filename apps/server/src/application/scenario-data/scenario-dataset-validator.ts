@@ -22,6 +22,8 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
   const diagnosisCodes = new Set(content.catalog.diagnoses.map(item => item.code))
   const investigationCatalog = new Map(content.catalog.investigations.map(item => [item.id, item]))
   const medicationIds = new Set(content.catalog.medications.map(item => item.id))
+  const serviceIds = new Set((content.catalog.services ?? []).map(item => item.id))
+  const departmentIds = new Set(content.catalog.departments.map(item => item.id))
   const productMedications = content.catalog.medications.flatMap((medication, index) => (
     'product' in medication ? [{ index, medication }] : []
   ))
@@ -107,6 +109,10 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
       ...content.catalog.diagnoses.map((item, index) => ({ item, path: `catalog.diagnoses[${index}].id` })),
       ...content.catalog.investigations.map((item, index) => ({ item, path: `catalog.investigations[${index}].id` })),
       ...content.catalog.medications.map((item, index) => ({ item, path: `catalog.medications[${index}].id` })),
+      ...(content.catalog.services ?? []).map((item, index) => ({
+        item,
+        path: `catalog.services[${index}].id`,
+      })),
     ],
     key: entry => entry.item.id,
     label: 'Catalog item ID',
@@ -119,6 +125,66 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
     label: 'Diagnosis code',
     path: (_, index) => `catalog.diagnoses[${index}].code`,
   })
+  if (content.catalog.services === undefined || content.catalog.services.length === 0) {
+    add({
+      code: 'SERVICE_CATALOG_MISSING',
+      message: 'The Hospital Baseline has no compiled service catalog',
+      path: 'catalog.services',
+      severity: 'error',
+    })
+  }
+
+  for (const [serviceIndex, service] of (content.catalog.services ?? []).entries()) {
+    const path = `catalog.services[${serviceIndex}]`
+    if (
+      service.id === service.nationalService.id
+      || service.id === service.chargeDefinition.id
+      || service.nationalService.id === service.chargeDefinition.id
+    ) {
+      add({
+        code: 'SERVICE_IDENTITY_COLLISION',
+        message: `Service ${service.id} reuses a national or charge identity`,
+        path: `${path}.id`,
+        severity: 'error',
+      })
+    }
+    if (!departmentIds.has(service.executingDepartmentId)) {
+      add({
+        code: 'SERVICE_DEPARTMENT_REFERENCE_MISSING',
+        message: `Service ${service.id} references an unknown executing department`,
+        path: `${path}.executingDepartmentId`,
+        severity: 'error',
+      })
+    }
+    if (service.priceFen !== service.chargeDefinition.priceFen) {
+      add({
+        code: 'SERVICE_CHARGE_PRICE_MISMATCH',
+        message: `Service ${service.id} price differs from its Charge Definition`,
+        path: `${path}.chargeDefinition.priceFen`,
+        severity: 'error',
+      })
+    }
+    for (const [requestIndex, requestCatalogItemId] of service.requestCatalogItemIds.entries()) {
+      if (!investigationCatalog.has(requestCatalogItemId)) {
+        add({
+          code: 'SERVICE_REQUEST_REFERENCE_MISSING',
+          message: `Service ${service.id} references an unknown request catalog item`,
+          path: `${path}.requestCatalogItemIds[${requestIndex}]`,
+          severity: 'error',
+        })
+      }
+    }
+    for (const [componentIndex, componentId] of service.componentServiceIds.entries()) {
+      if (!serviceIds.has(componentId)) {
+        add({
+          code: 'SERVICE_COMPONENT_REFERENCE_MISSING',
+          message: `Service ${service.id} references an unknown component service`,
+          path: `${path}.componentServiceIds[${componentIndex}]`,
+          severity: 'error',
+        })
+      }
+    }
+  }
   diagnoseDuplicates({
     code: 'DUPLICATE_INVENTORY_LOT_ID',
     items: content.inventory,

@@ -68,8 +68,9 @@ describe('Reference Data database CLI', () => {
         '0002_reference-source-format.sql',
         '0003_reference-diagnosis-format.sql',
         '0004_reference-medication-products.sql',
+        '0005_reference-services.sql',
       ],
-      schemaVersion: 4,
+      schemaVersion: 5,
     })
     const imported = await runReferenceDatabaseCli([
       'import', '--database', databasePath, '--manifest', manifestPath,
@@ -83,7 +84,7 @@ describe('Reference Data database CLI', () => {
     expect(imported).toHaveProperty('contentHash', expect.stringMatching(/^[a-f0-9]{64}$/))
     await expect(runReferenceDatabaseCli([
       'verify', '--database', databasePath,
-    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 4 })
+    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 5 })
     await expect(runReferenceDatabaseCli([
       'list', '--database', databasePath,
     ])).resolves.toEqual({ items: [expect.objectContaining({
@@ -225,6 +226,44 @@ describe('Reference Data database CLI', () => {
     ])).rejects.toThrow('content hash')
   })
 
+  it('imports NHC services and WS/T values into independent reference tables', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-nhc-services-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'reference.sqlite')
+    const manifestPath = fileURLToPath(new URL(
+      './fixtures/reference-data/nhc-services-release.json',
+      import.meta.url,
+    ))
+
+    await runReferenceDatabaseCli(['migrate', '--database', databasePath])
+    await expect(runReferenceDatabaseCli([
+      'import', '--database', databasePath, '--manifest', manifestPath,
+    ])).resolves.toMatchObject({
+      conceptCount: 0,
+      releaseId: 'clinmesh-nhc-services-parser-fixture-2026-08-28',
+      serviceCount: 9,
+      sourceCount: 2,
+      valueSetEntryCount: 6,
+    })
+    await expect(runReferenceDatabaseCli([
+      'list', '--database', databasePath,
+    ])).resolves.toMatchObject({
+      items: [{ serviceCount: 9, valueSetEntryCount: 6 }],
+    })
+    await expect(runReferenceDatabaseCli([
+      'verify', '--database', databasePath,
+    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 5 })
+
+    const tampered = openReferenceDatabase({ busyTimeoutMs: 5_000, databasePath })
+    tampered.driver.prepare(`
+      UPDATE reference_medical_service SET billing_unit_code = ? WHERE code = ?
+    `).run('SESSION', 'CM-NHC-SERVICE-CBC')
+    tampered.close()
+    await expect(runReferenceDatabaseCli([
+      'verify', '--database', databasePath,
+    ])).rejects.toThrow('content hash')
+  })
+
   it('preserves a published release hash when the source format migration is applied', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-reference-data-legacy-release-'))
     temporaryDirectories.push(directory)
@@ -310,10 +349,18 @@ describe('Reference Data database CLI', () => {
       applied: ['0004_reference-medication-products.sql'],
       schemaVersion: 4,
     })
+    await copyFile(
+      join(sourceMigrationDirectory, '0005_reference-services.sql'),
+      join(migrationDirectory, '0005_reference-services.sql'),
+    )
+    expect(applyReferenceMigrations(database, migrationDirectory)).toEqual({
+      applied: ['0005_reference-services.sql'],
+      schemaVersion: 5,
+    })
     expect(verifyReferenceDatabase(database)).toEqual({
       integrity: 'ok',
       releaseCount: 1,
-      schemaVersion: 4,
+      schemaVersion: 5,
     })
     expect(listReferenceDataReleases(database).items[0]).toMatchObject({
       contentHash: oldContentHash,

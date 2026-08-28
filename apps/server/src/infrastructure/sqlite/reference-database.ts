@@ -12,8 +12,10 @@ import {
   type ReferenceDataReleaseList,
   type ReferenceDataReleaseSummary,
   type ReferenceImportManifest,
+  type ReferenceMedicalService,
   type ReferenceMedicationProduct,
   type ReferenceSourceManifest,
+  type ReferenceValueSetEntry,
 } from '@clinmesh/contracts/reference-data'
 import Database from 'better-sqlite3'
 import { z } from 'zod'
@@ -70,7 +72,9 @@ function contentHash(input: {
   concepts: Array<ReferenceConcept & { sourceId: string }>
   medicationProducts: Array<ReferenceMedicationProduct & { sourceId: string }>
   release: Pick<ReferenceImportManifest, 'createdAt' | 'releaseId' | 'schemaVersion'>
+  services: Array<ReferenceMedicalService & { sourceId: string }>
   sources: ReferenceSourceManifest[]
+  valueSetEntries: Array<ReferenceValueSetEntry & { sourceId: string }>
 }): string {
   const hashSources = input.sources.map(({ artifactFormat, ...source }) => (
     artifactFormat === 'clinmesh-reference-v1'
@@ -87,6 +91,16 @@ function contentHash(input: {
     sources: hashSources.toSorted((left, right) => left.sourceId.localeCompare(right.sourceId)),
     ...(input.medicationProducts.length === 0 ? {} : {
       medicationProducts: input.medicationProducts.toSorted((left, right) => (
+        left.sourceId.localeCompare(right.sourceId) || left.id.localeCompare(right.id)
+      )),
+    }),
+    ...(input.services.length === 0 ? {} : {
+      services: input.services.toSorted((left, right) => (
+        left.sourceId.localeCompare(right.sourceId) || left.id.localeCompare(right.id)
+      )),
+    }),
+    ...(input.valueSetEntries.length === 0 ? {} : {
+      valueSetEntries: input.valueSetEntries.toSorted((left, right) => (
         left.sourceId.localeCompare(right.sourceId) || left.id.localeCompare(right.id)
       )),
     }),
@@ -299,6 +313,74 @@ function medicationProductRows(
   })) as Array<ReferenceMedicationProduct & { sourceId: string }>
 }
 
+function medicalServiceRows(
+  database: ReferenceDatabase,
+  releaseId: string,
+): Array<ReferenceMedicalService & { sourceId: string }> {
+  return z.array(z.object({
+    billing_unit_code: z.string(),
+    category_code: z.string(),
+    code: z.string(),
+    display: z.string(),
+    service_id: z.string(),
+    source_id: z.string(),
+    source_locator: z.string(),
+    status: z.string(),
+    system: z.string(),
+    system_version: z.string(),
+  })).parse(database.driver.prepare(`
+    SELECT service_id, system, system_version, code, display, category_code,
+      billing_unit_code, status, source_id, source_locator
+    FROM reference_medical_service
+    WHERE release_id = ?
+    ORDER BY source_id, service_id
+  `).all(releaseId)).map(row => ({
+    billingUnitCode: row.billing_unit_code,
+    categoryCode: row.category_code,
+    code: row.code,
+    display: row.display,
+    id: row.service_id,
+    sourceId: row.source_id,
+    sourceLocator: row.source_locator,
+    status: row.status,
+    system: row.system,
+    version: row.system_version,
+  })) as Array<ReferenceMedicalService & { sourceId: string }>
+}
+
+function valueSetEntryRows(
+  database: ReferenceDatabase,
+  releaseId: string,
+): Array<ReferenceValueSetEntry & { sourceId: string }> {
+  return z.array(z.object({
+    code: z.string(),
+    display: z.string(),
+    entry_id: z.string(),
+    source_id: z.string(),
+    source_locator: z.string(),
+    status: z.string(),
+    system: z.string(),
+    system_version: z.string(),
+    value_set: z.string(),
+  })).parse(database.driver.prepare(`
+    SELECT entry_id, value_set, system, system_version, code, display,
+      status, source_id, source_locator
+    FROM reference_value_set_entry
+    WHERE release_id = ?
+    ORDER BY source_id, entry_id
+  `).all(releaseId)).map(row => ({
+    code: row.code,
+    display: row.display,
+    id: row.entry_id,
+    sourceId: row.source_id,
+    sourceLocator: row.source_locator,
+    status: row.status,
+    system: row.system,
+    valueSet: row.value_set,
+    version: row.system_version,
+  })) as Array<ReferenceValueSetEntry & { sourceId: string }>
+}
+
 export function listReferenceMedicationProducts(
   database: ReferenceDatabase,
   releaseId: string,
@@ -309,6 +391,22 @@ export function listReferenceMedicationProducts(
   ))
 }
 
+export function listReferenceMedicalServices(
+  database: ReferenceDatabase,
+  releaseId: string,
+): ReferenceMedicalService[] {
+  verifyReferenceMigrations(database)
+  return medicalServiceRows(database, releaseId).map(({ sourceId: _sourceId, ...service }) => service)
+}
+
+export function listReferenceValueSetEntries(
+  database: ReferenceDatabase,
+  releaseId: string,
+): ReferenceValueSetEntry[] {
+  verifyReferenceMigrations(database)
+  return valueSetEntryRows(database, releaseId).map(({ sourceId: _sourceId, ...entry }) => entry)
+}
+
 function readReferenceDataReleases(database: ReferenceDatabase): ReferenceDataReleaseList {
   const rows = z.array(z.object({
     concept_count: z.number().int(),
@@ -316,12 +414,15 @@ function readReferenceDataReleases(database: ReferenceDatabase): ReferenceDataRe
     created_at: z.string(),
     release_id: z.string(),
     medication_product_count: z.number().int(),
+    service_count: z.number().int(),
     schema_version: z.string(),
     source_count: z.number().int(),
     status: z.string(),
+    value_set_entry_count: z.number().int(),
   })).parse(database.driver.prepare(`
     SELECT release_id, schema_version, status, created_at, content_hash,
-      source_count, concept_count, medication_product_count
+      source_count, concept_count, medication_product_count, service_count,
+      value_set_entry_count
     FROM reference_release
     ORDER BY created_at DESC, release_id
   `).all())
@@ -332,10 +433,12 @@ function readReferenceDataReleases(database: ReferenceDatabase): ReferenceDataRe
       createdAt: row.created_at,
       medicationProductCount: row.medication_product_count,
       releaseId: row.release_id,
+      serviceCount: row.service_count,
       schemaVersion: row.schema_version,
       sourceCount: row.source_count,
       sources: sourceRows(database, row.release_id),
       status: row.status,
+      valueSetEntryCount: row.value_set_entry_count,
     })),
   })
 }
@@ -355,6 +458,8 @@ export function importReferenceDataRelease(
   const sources: ReferenceSourceManifest[] = []
   const concepts: Array<ReferenceConcept & { sourceId: string }> = []
   const medicationProducts: Array<ReferenceMedicationProduct & { sourceId: string }> = []
+  const services: Array<ReferenceMedicalService & { sourceId: string }> = []
+  const valueSetEntries: Array<ReferenceValueSetEntry & { sourceId: string }> = []
   for (const source of manifest.sources) {
     const artifactPath = resolve(manifestDirectory, source.artifactPath)
     const artifactBytes = readFileSync(artifactPath)
@@ -375,11 +480,17 @@ export function importReferenceDataRelease(
       licenseId: source.licenseId,
       ...(source.publishedAt === undefined ? {} : { publishedAt: source.publishedAt }),
       importDiagnostics: {
-        acceptedCount: artifact.concepts.length + artifact.medicationProducts.length,
+        acceptedCount: artifact.concepts.length
+          + artifact.medicationProducts.length
+          + artifact.services.length
+          + artifact.valueSetEntries.length,
         rejectedCount: 0,
         warnings: [],
       },
-      recordCount: artifact.concepts.length + artifact.medicationProducts.length,
+      recordCount: artifact.concepts.length
+        + artifact.medicationProducts.length
+        + artifact.services.length
+        + artifact.valueSetEntries.length,
       retrievedAt: source.retrievedAt,
       sourceId: source.sourceId,
       sourceUrl: source.sourceUrl,
@@ -388,6 +499,11 @@ export function importReferenceDataRelease(
     concepts.push(...artifact.concepts.map(concept => ({ ...concept, sourceId: source.sourceId })))
     medicationProducts.push(...artifact.medicationProducts.map(product => ({
       ...product,
+      sourceId: source.sourceId,
+    })))
+    services.push(...artifact.services.map(service => ({ ...service, sourceId: source.sourceId })))
+    valueSetEntries.push(...artifact.valueSetEntries.map(entry => ({
+      ...entry,
       sourceId: source.sourceId,
     })))
   }
@@ -411,7 +527,30 @@ export function importReferenceDataRelease(
     }
     seenProductCodes.add(codingKey)
   }
-  const hash = contentHash({ concepts, medicationProducts, release: manifest, sources })
+  for (const [label, entries] of [
+    ['medical service', services],
+    ['value set entry', valueSetEntries],
+  ] as const) {
+    const ids = new Set<string>()
+    const codes = new Set<string>()
+    for (const entry of entries) {
+      if (ids.has(entry.id)) throw new Error(`Reference ${label} ID was repeated: ${entry.id}`)
+      ids.add(entry.id)
+      const codingKey = referenceCodingIdentity(entry)
+      if (codes.has(codingKey)) {
+        throw new Error(`Reference ${label} coding was repeated: ${entry.system}|${entry.version}|${entry.code}`)
+      }
+      codes.add(codingKey)
+    }
+  }
+  const hash = contentHash({
+    concepts,
+    medicationProducts,
+    release: manifest,
+    services,
+    sources,
+    valueSetEntries,
+  })
   const existing = database.driver.prepare(
     'SELECT content_hash FROM reference_release WHERE release_id = ?',
   ).get(manifest.releaseId) as { content_hash: string } | undefined
@@ -425,7 +564,9 @@ export function importReferenceDataRelease(
       created: false,
       medicationProductCount: medicationProducts.length,
       releaseId: manifest.releaseId,
+      serviceCount: services.length,
       sourceCount: sources.length,
+      valueSetEntryCount: valueSetEntries.length,
     }
   }
 
@@ -434,8 +575,8 @@ export function importReferenceDataRelease(
     database.driver.prepare(`
       INSERT INTO reference_release (
         release_id, schema_version, status, created_at, content_hash, source_count,
-        concept_count, medication_product_count
-      ) VALUES (?, '1', 'published', ?, ?, ?, ?, ?)
+        concept_count, medication_product_count, service_count, value_set_entry_count
+      ) VALUES (?, '1', 'published', ?, ?, ?, ?, ?, ?, ?)
     `).run(
       manifest.releaseId,
       manifest.createdAt,
@@ -443,6 +584,8 @@ export function importReferenceDataRelease(
       sources.length,
       concepts.length,
       medicationProducts.length,
+      services.length,
+      valueSetEntries.length,
     )
     const insertSource = database.driver.prepare(`
       INSERT INTO reference_source_manifest (
@@ -513,6 +656,47 @@ export function importReferenceDataRelease(
         product.sourceLocator,
       )
     }
+    const insertService = database.driver.prepare(`
+      INSERT INTO reference_medical_service (
+        release_id, service_id, system, system_version, code, display,
+        category_code, billing_unit_code, status, source_id, source_locator
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    for (const service of services) {
+      insertService.run(
+        manifest.releaseId,
+        service.id,
+        service.system,
+        service.version,
+        service.code,
+        service.display,
+        service.categoryCode,
+        service.billingUnitCode,
+        service.status,
+        service.sourceId,
+        service.sourceLocator,
+      )
+    }
+    const insertValueSetEntry = database.driver.prepare(`
+      INSERT INTO reference_value_set_entry (
+        release_id, entry_id, value_set, system, system_version, code,
+        display, status, source_id, source_locator
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    for (const entry of valueSetEntries) {
+      insertValueSetEntry.run(
+        manifest.releaseId,
+        entry.id,
+        entry.valueSet,
+        entry.system,
+        entry.version,
+        entry.code,
+        entry.display,
+        entry.status,
+        entry.sourceId,
+        entry.sourceLocator,
+      )
+    }
     database.driver.exec('COMMIT')
   } catch (error) {
     if (database.driver.inTransaction) database.driver.exec('ROLLBACK')
@@ -524,7 +708,9 @@ export function importReferenceDataRelease(
     created: true,
     medicationProductCount: medicationProducts.length,
     releaseId: manifest.releaseId,
+    serviceCount: services.length,
     sourceCount: sources.length,
+    valueSetEntryCount: valueSetEntries.length,
   }
 }
 
@@ -537,6 +723,8 @@ export function verifyReferenceDatabase(database: ReferenceDatabase): ReferenceD
     referenceDataReleaseSummarySchema.parse(release)
     const concepts = conceptRows(database, release.releaseId)
     const medicationProducts = medicationProductRows(database, release.releaseId)
+    const services = medicalServiceRows(database, release.releaseId)
+    const valueSetEntries = valueSetEntryRows(database, release.releaseId)
     if (release.sourceCount !== release.sources.length) {
       throw new Error(`Reference Data Release source count mismatch: ${release.releaseId}`)
     }
@@ -546,12 +734,24 @@ export function verifyReferenceDatabase(database: ReferenceDatabase): ReferenceD
     if (release.medicationProductCount !== medicationProducts.length) {
       throw new Error(`Reference Data Release medication product count mismatch: ${release.releaseId}`)
     }
+    if (release.serviceCount !== services.length) {
+      throw new Error(`Reference Data Release service count mismatch: ${release.releaseId}`)
+    }
+    if (release.valueSetEntryCount !== valueSetEntries.length) {
+      throw new Error(`Reference Data Release value set entry count mismatch: ${release.releaseId}`)
+    }
     const acceptedCountBySource = new Map<string, number>()
     for (const concept of concepts) {
       acceptedCountBySource.set(concept.sourceId, (acceptedCountBySource.get(concept.sourceId) ?? 0) + 1)
     }
     for (const product of medicationProducts) {
       acceptedCountBySource.set(product.sourceId, (acceptedCountBySource.get(product.sourceId) ?? 0) + 1)
+    }
+    for (const service of services) {
+      acceptedCountBySource.set(service.sourceId, (acceptedCountBySource.get(service.sourceId) ?? 0) + 1)
+    }
+    for (const entry of valueSetEntries) {
+      acceptedCountBySource.set(entry.sourceId, (acceptedCountBySource.get(entry.sourceId) ?? 0) + 1)
     }
     for (const source of release.sources) {
       if ((acceptedCountBySource.get(source.sourceId) ?? 0) !== source.importDiagnostics.acceptedCount) {
@@ -562,7 +762,9 @@ export function verifyReferenceDatabase(database: ReferenceDatabase): ReferenceD
       concepts,
       medicationProducts,
       release,
+      services,
       sources: release.sources,
+      valueSetEntries,
     })
     if (actualHash !== release.contentHash) {
       throw new Error(`Reference Data Release content hash mismatch: ${release.releaseId}`)

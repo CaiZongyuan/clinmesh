@@ -54,6 +54,7 @@ import {
   revisitDraftResponseSchema,
   scenarioCommandResponseSchema,
   scenarioStateSchema,
+  serviceCatalogSearchSchema,
   sessionContextSchema,
   startVirtualPatientResponseSchema,
   startVisitResponseSchema,
@@ -4376,6 +4377,18 @@ describe('outpatient workflow HTTP contract', () => {
         { kind: 'created', reference: `Task/${issued.data.request.taskId}` },
       ],
     })
+    const serviceCatalogResponse = await runtime.app.request(
+      `/api/his/v1/catalogs/services?query=${encodeURIComponent('HOSP-SVC-CBC')}&pageSize=20`,
+      { headers: { cookie: doctorCookie } },
+    )
+    const service = serviceCatalogSearchSchema.parse(await serviceCatalogResponse.json()).items[0]
+    if (service === undefined) throw new Error('Hospital CBC service was not searchable')
+    expect(new Set([
+      service.nationalService.id,
+      service.id,
+      service.chargeDefinition.id,
+      issued.data.request.serviceRequestId,
+    ]).size).toBe(4)
     const { previousReports, ...legacyRequest } = issued.data.request
     expect(previousReports).toEqual([])
     const receiptUpdate = runtime.database.driver.prepare(`

@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto'
 import { scenarioStateSchema } from '@clinmesh/contracts/his'
-import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
+import type {
+  ReferenceMedicalService,
+  ReferenceMedicationProduct,
+  ReferenceValueSetEntry,
+} from '@clinmesh/contracts/reference-data'
 import {
   scenarioDatasetContentSchema,
   type ScenarioDatasetContent,
@@ -52,6 +56,23 @@ function installedMedicationConfigJson(
           regulatoryVerification: medication.regulatoryVerification,
         }
       : {}),
+  })
+}
+
+function installedServiceConfigJson(
+  service: NonNullable<ScenarioDatasetContent['catalog']['services']>[number],
+) {
+  return JSON.stringify({
+    availableScopes: service.availableScopes,
+    billingUnit: service.billingUnit,
+    category: service.category,
+    chargeDefinition: service.chargeDefinition,
+    componentServiceIds: service.componentServiceIds,
+    executingDepartmentId: service.executingDepartmentId,
+    nationalService: service.nationalService,
+    reportTemplate: service.reportTemplate,
+    requestCatalogItemIds: service.requestCatalogItemIds,
+    tatMinutes: service.tatMinutes,
   })
 }
 
@@ -562,11 +583,17 @@ export class ScenarioService {
     fhir: FhirRepository,
     commands: CommandExecutor,
     medicationProducts: readonly ReferenceMedicationProduct[],
+    medicalServices: readonly ReferenceMedicalService[],
+    valueSetEntries: readonly ReferenceValueSetEntry[],
   ) {
     this.#commands = commands
     this.#database = database
     this.#fhir = fhir
-    this.#hospitalBaseline = createHospitalBaseline(medicationProducts)
+    this.#hospitalBaseline = createHospitalBaseline(
+      medicationProducts,
+      medicalServices,
+      valueSetEntries,
+    )
   }
 
   ensureInitialEpoch(input: {
@@ -956,9 +983,29 @@ export class ScenarioService {
     const diagnosisIdByCode = new Map(
       packageDiagnosisCatalog?.map(diagnosis => [diagnosis.code, diagnosis.id]),
     )
+    const legacyDepartmentCatalog = [
+      'department-general-medicine', 'department', 'GM', '全科医学科', 'General Medicine', 0, '{}',
+    ] as const
+    const legacyVisitCatalog = [
+      'visit-general', 'visit-type', 'GENERAL', '普通门诊挂号费',
+      'General outpatient registration', 2000, '{}',
+    ] as const
     const legacyCatalog = [
-      ['department-general-medicine', 'department', 'GM', '全科医学科', 'General Medicine', 0, '{}'],
-      ['visit-general', 'visit-type', 'GENERAL', '普通门诊挂号费', 'General outpatient registration', 2000, '{}'],
+      legacyDepartmentCatalog,
+      ...(supportsPrescriptionConclusion
+        ? hospitalBaseline.catalog.departments
+            .filter(department => department.id !== 'department-general-medicine')
+            .map(department => [
+              department.id,
+              'department',
+              department.code,
+              department.name,
+              department.name,
+              department.priceFen,
+              JSON.stringify({ registrationAvailable: department.registrationAvailable ?? true }),
+            ] as const)
+        : []),
+      legacyVisitCatalog,
       ['lab-fever-panel', 'laboratory', 'FEVER-PANEL', '发热检验组合', 'Fever laboratory panel', 6800, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[]}'],
       ['lab-cbc', 'laboratory', 'CBC', '血常规', 'Complete blood count', 2500, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[]}'],
       ['lab-crp', 'laboratory', 'CRP', 'C 反应蛋白', 'C-reactive protein', 4300, '{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[]}'],
@@ -989,8 +1036,8 @@ export class ScenarioService {
     const catalog = blueprint.catalog === undefined
       ? legacyCatalog
       : [
-          legacyCatalog[0],
-          legacyCatalog[1],
+          legacyDepartmentCatalog,
+          legacyVisitCatalog,
           ...blueprint.catalog.departments
             .filter(item => item.active && item.status === 'active')
             .map(item => [
@@ -1000,7 +1047,7 @@ export class ScenarioService {
               item.name,
               item.name,
               item.priceFen,
-              '{}',
+              JSON.stringify({ registrationAvailable: item.registrationAvailable ?? true }),
             ] as const),
           ...blueprint.catalog.investigations
             .filter(item => item.active && item.available && item.status === 'active'
@@ -1032,6 +1079,26 @@ export class ScenarioService {
     const installedCatalog = new Map(catalog.map(item => [item[0], item])).values()
     for (const item of installedCatalog) {
       insertCatalog.run(input.workspaceId, input.epoch, ...item)
+    }
+    const insertService = this.#database.driver.prepare(`
+      INSERT INTO hospital_service_catalog (
+        workspace_id, epoch, service_id, code, name_zh, name_en,
+        version, active, config_json
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?)
+    `)
+    const installedServices = blueprint.catalog === undefined
+      ? (supportsPrescriptionConclusion ? hospitalBaseline.catalog.services : [])
+      : (blueprint.catalog.services ?? []).filter(item => item.active && item.status === 'active')
+    for (const service of installedServices) {
+      insertService.run(
+        input.workspaceId,
+        input.epoch,
+        service.id,
+        service.code,
+        service.name,
+        service.name,
+        installedServiceConfigJson(service),
+      )
     }
     const insertDiagnosisCatalog = this.#database.driver.prepare(`
       INSERT INTO diagnosis_catalog (

@@ -3,7 +3,11 @@ import type {
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
 } from '@clinmesh/contracts/scenario'
-import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
+import type {
+  ReferenceMedicalService,
+  ReferenceMedicationProduct,
+  ReferenceValueSetEntry,
+} from '@clinmesh/contracts/reference-data'
 import { z } from 'zod'
 import {
   generatedScenarioSimulatorRules,
@@ -14,6 +18,10 @@ import {
 } from '../../application/scenario-data/provider.ts'
 import { createHospitalBaseline } from '../../application/scenario-data/hospital-baseline.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../../application/scenario-data/medication-product-snapshot.ts'
+import {
+  syntheticNhcMedicalServiceSnapshot,
+  syntheticWstValueSetSnapshot,
+} from '../../application/scenario-data/medical-service-snapshot.ts'
 import {
   compileSyntheaR4Bundle,
   syntheaR4ResourceTypes,
@@ -278,15 +286,19 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
   readonly #endpoint: URL
   readonly #fetch: typeof fetch
   readonly #maxResponseBytes: number
+  readonly #medicalServices: readonly ReferenceMedicalService[]
   readonly #medicationProducts: readonly ReferenceMedicationProduct[]
   readonly #timeoutMs: number
+  readonly #valueSetEntries: readonly ReferenceValueSetEntry[]
 
   constructor(options: {
     baseUrl: string
     fetch?: typeof fetch
     maxResponseBytes?: number
+    medicalServices?: readonly ReferenceMedicalService[]
     medicationProducts?: readonly ReferenceMedicationProduct[]
     timeoutMs?: number
+    valueSetEntries?: readonly ReferenceValueSetEntry[]
   }) {
     const endpoint = new URL(options.baseUrl)
     if (!['http:', 'https:'].includes(endpoint.protocol)) {
@@ -298,8 +310,10 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
     this.#endpoint = endpoint
     this.#fetch = options.fetch ?? globalThis.fetch
     this.#maxResponseBytes = options.maxResponseBytes ?? 64 * 1024 * 1024
+    this.#medicalServices = options.medicalServices ?? syntheticNhcMedicalServiceSnapshot
     this.#medicationProducts = options.medicationProducts ?? syntheticNhsaMedicationProductSnapshot
     this.#timeoutMs = options.timeoutMs ?? 5 * 60 * 1_000
+    this.#valueSetEntries = options.valueSetEntries ?? syntheticWstValueSetSnapshot
   }
 
   async capabilities(): Promise<ScenarioProviderCapabilities> {
@@ -389,7 +403,11 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
       }
     })
     const patients = compiled.map(item => item.patient)
-    const baseline = createHospitalBaseline(this.#medicationProducts)
+    const baseline = createHospitalBaseline(
+      this.#medicationProducts,
+      this.#medicalServices,
+      this.#valueSetEntries,
+    )
     const content: ScenarioDatasetContent = {
       catalog: baseline.catalog,
       hiddenFacts: patients.map(patient => ({

@@ -1,0 +1,29 @@
+{
+  "createdAt": "2026-08-28T00:00:00.000Z",
+  "releaseId": "clinmesh-nhc-services-parser-fixture-2026-08-28",
+  "schemaVersion": "1",
+  "sources": [
+    {
+      "acquisitionMethod": "generated",
+      "artifactFormat": "nhc-medical-service-csv",
+      "artifactPath": "synthetic-nhc-medical-services.csv",
+      "checksum": "8ed125b9d880f39ff0e7a503229e4bd1d69772ec86ee6c19808d6c68eca3954b",
+      "licenseId": "LicenseRef-ClinMesh-Proprietary",
+      "retrievedAt": "2026-08-28T00:00:00.000Z",
+      "sourceId": "clinmesh-synthetic-nhc-medical-services",
+      "sourceUrl": "https://github.com/CaiZongyuan/clinmesh/issues/48",
+      "upstreamVersion": "nhc-medical-services-2026-08-28"
+    },
+    {
+      "acquisitionMethod": "generated",
+      "artifactFormat": "wst-value-set-csv",
+      "artifactPath": "synthetic-wst-value-set.csv",
+      "checksum": "36fc6be3ab504b8f48f1cacedaac2aaae42c648ee8cd2bb6cded99a130b05a13",
+      "licenseId": "LicenseRef-ClinMesh-Proprietary",
+      "retrievedAt": "2026-08-28T00:00:00.000Z",
+      "sourceId": "clinmesh-synthetic-wst-value-set",
+      "sourceUrl": "https://github.com/CaiZongyuan/clinmesh/issues/48",
+      "upstreamVersion": "WS-T-CM-2026"
+    }
+  ]
+}

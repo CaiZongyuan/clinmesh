@@ -164,6 +164,18 @@ _Avoid_: Drug Concept, Hospital Medication, Inventory Lot
 某所医院已启用的 Medication Product，拥有本院代码、可用范围、价格和处方规则，但不表示某个具体库存批次。
 _Avoid_: Drug Concept, Medication Product, Inventory Lot
 
+**National Medical Service**:
+国家层面对检查、检验或治疗项目边界及计价单位的规范定义，不表示某所医院已经开展，也不拥有本院价格。
+_Avoid_: Hospital Service, Charge Definition, Clinical Request
+
+**Hospital Service**:
+某所医院从 National Medical Service 选择并启用的服务项目，拥有本院代码、执行科室、可用范围、TAT、组合成员和报告模板。
+_Avoid_: National Medical Service, Charge Definition, Clinical Request
+
+**Charge Definition**:
+医院对一个可收费项目固定的计价单位、币种、价格和生效日期定义；它不是患者已经发生的费用事实。
+_Avoid_: National Medical Service, Hospital Service, Charge Item
+
 **Clinical Request**:
 临床人员对药品、检查、检验、治疗或耗材提出的单项意图。
 _Avoid_: Prescription, template, execution record

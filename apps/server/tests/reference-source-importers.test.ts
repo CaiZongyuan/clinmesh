@@ -5,10 +5,16 @@ import {
   parseLoincCsvReferenceArtifact,
   parseNhsaDiagnosisCsvReferenceArtifact,
   parseNhsaMedicationProductCsvArtifact,
+  parseNhcMedicalServiceCsvArtifact,
   parseUcumXmlReferenceArtifact,
+  parseWstValueSetCsvArtifact,
 } from '../src/infrastructure/reference-data/reference-source-importers.ts'
 import { createHospitalBaseline } from '../src/application/scenario-data/hospital-baseline.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
+import {
+  syntheticNhcMedicalServiceSnapshot,
+  syntheticWstValueSetSnapshot,
+} from '../src/application/scenario-data/medical-service-snapshot.ts'
 
 const fixture = (name: string) => fileURLToPath(
   new URL(`./fixtures/reference-data/${name}`, import.meta.url),
@@ -115,15 +121,67 @@ describe('Reference Data source importers', () => {
       status: 'active',
     }), expect.objectContaining({ code: 'CM-NHSA-PRODUCT-AMLODIPINE' })])
     expect(artifact.medicationProducts).toEqual(syntheticNhsaMedicationProductSnapshot)
-    const hospitalBaseline = createHospitalBaseline(artifact.medicationProducts)
+    const hospitalBaseline = createHospitalBaseline(
+      artifact.medicationProducts,
+      syntheticNhcMedicalServiceSnapshot,
+      syntheticWstValueSetSnapshot,
+    )
     expect(hospitalBaseline.catalog.medications.map(medication => medication.product.id)).toEqual(
       artifact.medicationProducts.map(product => product.id),
     )
-    expect(() => createHospitalBaseline(artifact.medicationProducts.map(product => (
-      product.code === 'CM-NHSA-PRODUCT-METFORMIN'
-        ? { ...product, status: 'inactive' as const }
-        : product
-    )))).toThrow('is not active')
+    expect(() => createHospitalBaseline(
+      artifact.medicationProducts.map(product => (
+        product.code === 'CM-NHSA-PRODUCT-METFORMIN'
+          ? { ...product, status: 'inactive' as const }
+          : product
+      )),
+      syntheticNhcMedicalServiceSnapshot,
+      syntheticWstValueSetSnapshot,
+    )).toThrow('is not active')
+  })
+
+  it('compiles synthetic NHC services and WS/T value sets as separate reference facts', async () => {
+    const services = parseNhcMedicalServiceCsvArtifact({
+      content: await readFile(fixture('synthetic-nhc-medical-services.csv'), 'utf8'),
+      version: 'nhc-medical-services-2026-08-28',
+    })
+    const values = parseWstValueSetCsvArtifact({
+      content: await readFile(fixture('synthetic-wst-value-set.csv'), 'utf8'),
+      version: 'WS-T-CM-2026',
+    })
+
+    expect(services.concepts).toEqual([])
+    expect(services.services).toEqual(expect.arrayContaining([{
+      billingUnitCode: 'ITEM',
+      categoryCode: 'LABORATORY',
+      code: 'CM-NHC-SERVICE-CBC',
+      display: '合成血常规服务',
+      id: 'nhc-medical-service:nhc-medical-services-2026-08-28:CM-NHC-SERVICE-CBC',
+      sourceLocator: 'nhc-medical-services.csv:2',
+      status: 'active',
+      system: 'urn:clinmesh:reference:nhc-medical-service',
+      version: 'nhc-medical-services-2026-08-28',
+    }]))
+    expect(values.valueSetEntries).toEqual(expect.arrayContaining([{
+      code: 'LABORATORY',
+      display: '检验服务',
+      id: 'wst-value-set:WS-T-CM-2026:urn:clinmesh:wst:ValueSet:service-category:LABORATORY',
+      sourceLocator: 'wst-value-set.csv:2',
+      status: 'active',
+      system: 'urn:clinmesh:wst:service-category',
+      valueSet: 'urn:clinmesh:wst:ValueSet:service-category',
+      version: 'WS-T-CM-2026',
+    }]))
+    expect(services.services).toEqual(syntheticNhcMedicalServiceSnapshot)
+    expect(values.valueSetEntries).toEqual(syntheticWstValueSetSnapshot)
+    const hospitalBaseline = createHospitalBaseline(
+      syntheticNhsaMedicationProductSnapshot,
+      services.services,
+      values.valueSetEntries,
+    )
+    expect(hospitalBaseline.catalog.services.map(service => service.nationalService.id)).toEqual(
+      services.services.slice(0, 7).map(service => service.id),
+    )
   })
 
   it('rejects malformed rows and duplicate source coding', () => {

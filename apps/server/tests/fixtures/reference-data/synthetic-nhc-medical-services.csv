@@ -1,0 +1,10 @@
+SERVICE_CODE,SERVICE_NAME,CATEGORY_CODE,BILLING_UNIT_CODE,STATUS,SYNTHETIC_NOTE
+CM-NHC-SERVICE-CBC,合成血常规服务,LABORATORY,ITEM,ACTIVE,Self-authored synthetic fixture; not NHC content
+CM-NHC-SERVICE-WBC,合成白细胞计数服务,LABORATORY,ITEM,ACTIVE,Self-authored synthetic fixture; not NHC content
+CM-NHC-SERVICE-HGB,合成血红蛋白服务,LABORATORY,ITEM,ACTIVE,Self-authored synthetic fixture; not NHC content
+CM-NHC-SERVICE-RBC,合成红细胞计数服务,LABORATORY,ITEM,ACTIVE,Self-authored synthetic fixture; not NHC content
+CM-NHC-SERVICE-MCV,合成平均红细胞体积服务,LABORATORY,ITEM,ACTIVE,Self-authored synthetic fixture; not NHC content
+CM-NHC-SERVICE-HCT,合成红细胞压积服务,LABORATORY,ITEM,ACTIVE,Self-authored synthetic fixture; not NHC content
+CM-NHC-SERVICE-HBA1C,合成糖化血红蛋白服务,LABORATORY,ITEM,ACTIVE,Self-authored synthetic fixture; not NHC content
+CM-NHC-SERVICE-FUNDUS,合成眼底检查服务,IMAGING,ITEM,ACTIVE,Self-authored synthetic fixture; not NHC content
+CM-NHC-SERVICE-DIABETES-EDUCATION,合成糖尿病健康教育,TREATMENT,SESSION,ACTIVE,Self-authored synthetic fixture; not NHC content

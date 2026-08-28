@@ -213,6 +213,48 @@ export const clinicalCatalogSchema = z.discriminatedUnion('prescriptionConclusio
   }),
 ])
 
+const serviceCatalogValueCodingSchema = z.object({
+  code: z.string().min(1),
+  display: z.string().min(1),
+  system: z.string().url(),
+  valueSet: z.string().url(),
+  version: z.string().min(1),
+}).strict()
+
+export const serviceCatalogSearchSchema = z.object({
+  items: z.array(z.object({
+    availableScopes: z.array(z.enum(['outpatient', 'inpatient'])).min(1),
+    billingUnit: serviceCatalogValueCodingSchema,
+    category: serviceCatalogValueCodingSchema,
+    chargeDefinition: z.object({
+      currency: z.literal('CNY'),
+      effectiveOn: z.iso.date(),
+      id: z.string().min(1),
+      priceFen: z.number().int().nonnegative(),
+    }).strict(),
+    code: z.string().min(1),
+    componentServiceIds: z.array(z.string().min(1)),
+    executingDepartmentId: z.string().min(1),
+    id: z.string().min(1),
+    nameEn: z.string().min(1),
+    nameZh: z.string().min(1),
+    nationalService: z.object({
+      code: z.string().min(1),
+      display: z.string().min(1),
+      id: z.string().min(1),
+      system: z.literal('urn:clinmesh:reference:nhc-medical-service'),
+      version: z.string().min(1),
+    }).strict(),
+    reportTemplate: z.string().min(1),
+    requestCatalogItemIds: z.array(z.string().min(1)).min(1),
+    tatMinutes: z.number().int().nonnegative(),
+    version: z.number().int().positive(),
+  }).strict()),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive().max(100),
+  total: z.number().int().nonnegative(),
+}).strict()
+
 export const diagnosisRoleSchema = z.enum(['primary', 'secondary'])
 
 export const diagnosisDraftEntrySchema = z.object({

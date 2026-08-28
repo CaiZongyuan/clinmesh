@@ -46,10 +46,35 @@ export const referenceMedicationProductSchema = z.object({
   version: z.string().min(1).max(256),
 }).strict()
 
+export const referenceMedicalServiceSchema = z.object({
+  billingUnitCode: z.string().min(1).max(128),
+  categoryCode: z.string().min(1).max(128),
+  code: z.string().min(1).max(256),
+  display: z.string().min(1).max(1_000),
+  id: z.string().min(1).max(512),
+  sourceLocator: z.string().min(1).max(1_000),
+  status: z.enum(['active', 'inactive']),
+  system: z.string().url(),
+  version: z.string().min(1).max(256),
+}).strict()
+
+export const referenceValueSetEntrySchema = z.object({
+  code: z.string().min(1).max(128),
+  display: z.string().min(1).max(500),
+  id: z.string().min(1).max(512),
+  sourceLocator: z.string().min(1).max(1_000),
+  status: z.enum(['active', 'inactive']),
+  system: z.string().url(),
+  valueSet: z.string().url(),
+  version: z.string().min(1).max(256),
+}).strict()
+
 export const referenceArtifactSchema = z.object({
   concepts: z.array(referenceConceptSchema),
   medicationProducts: z.array(referenceMedicationProductSchema).default([]),
   schemaVersion: z.literal('1'),
+  services: z.array(referenceMedicalServiceSchema).default([]),
+  valueSetEntries: z.array(referenceValueSetEntrySchema).default([]),
 }).strict()
 
 export const referenceArtifactFormatSchema = z.enum([
@@ -57,7 +82,9 @@ export const referenceArtifactFormatSchema = z.enum([
   'loinc-csv',
   'nhsa-diagnosis-csv',
   'nhsa-medication-product-csv',
+  'nhc-medical-service-csv',
   'ucum-xml',
+  'wst-value-set-csv',
 ])
 
 export const referenceImportManifestSchema = z.object({
@@ -99,10 +126,12 @@ export const referenceDataReleaseSummarySchema = z.object({
   createdAt: z.iso.datetime({ offset: true }),
   releaseId: z.string().min(1).max(256),
   medicationProductCount: z.number().int().nonnegative().default(0),
+  serviceCount: z.number().int().nonnegative().default(0),
   schemaVersion: z.literal('1'),
   sourceCount: z.number().int().positive(),
   sources: z.array(referenceSourceManifestSchema).min(1),
   status: z.literal('published'),
+  valueSetEntryCount: z.number().int().nonnegative().default(0),
 }).strict()
 
 export const referenceDataReleaseListSchema = z.object({
@@ -130,4 +159,6 @@ export type ReferenceImportManifest = z.infer<typeof referenceImportManifestSche
 export type ReferenceImportDiagnostics = z.infer<typeof referenceImportDiagnosticsSchema>
 export type ReferenceMedicationProduct = z.infer<typeof referenceMedicationProductSchema>
 export type ReferenceMappingPackageProvenance = z.infer<typeof referenceMappingPackageProvenanceSchema>
+export type ReferenceMedicalService = z.infer<typeof referenceMedicalServiceSchema>
 export type ReferenceSourceManifest = z.infer<typeof referenceSourceManifestSchema>
+export type ReferenceValueSetEntry = z.infer<typeof referenceValueSetEntrySchema>

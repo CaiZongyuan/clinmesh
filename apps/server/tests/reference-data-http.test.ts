@@ -11,12 +11,20 @@ import {
   syntheticPatientProfileListSchema,
   syntheticPatientProfileSchema,
 } from '@clinmesh/contracts/scenario'
-import { commandResponseSchema, scenarioStateSchema } from '@clinmesh/contracts/his'
+import {
+  commandResponseSchema,
+  scenarioStateSchema,
+  serviceCatalogSearchSchema,
+} from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import { afterEach, describe, expect, it } from 'vitest'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
+import {
+  syntheticNhcMedicalServiceSnapshot,
+  syntheticWstValueSetSnapshot,
+} from '../src/application/scenario-data/medical-service-snapshot.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 
 describe('Reference Data HTTP contract', () => {
@@ -82,6 +90,8 @@ describe('Reference Data HTTP contract', () => {
       }],
       medicationProducts: syntheticNhsaMedicationProductSnapshot,
       schemaVersion: '1',
+      services: syntheticNhcMedicalServiceSnapshot,
+      valueSetEntries: syntheticWstValueSetSnapshot,
     })}\n`
     const checksum = createHash('sha256').update(artifactJson).digest('hex')
     await writeFile(join(directory, 'concepts.json'), artifactJson)
@@ -138,22 +148,24 @@ describe('Reference Data HTTP contract', () => {
       headers: { cookie },
     })
     expect(response.status).toBe(200)
-    expect(referenceDataReleaseListSchema.parse(await response.json())).toMatchObject({
-      items: [{
+    const release = referenceDataReleaseListSchema.parse(await response.json()).items[0]
+    expect(release).toMatchObject({
         conceptCount: 0,
-        contentHash: 'c200392183640c4893dfbfbe048a7c74dcfcf54babca8b136571ad6540719195',
+        contentHash: 'bc1e7ca7e11e31851acd651705ab627b45ff459c79dcca3aa1ebb32c81ae0b5e',
         medicationProductCount: 3,
-        releaseId: 'clinmesh-nhsa-medication-products-parser-fixture-2026-08-28',
-        sources: [{
-          checksum: 'b72aa94f14b640dc9bc2952d687728995cc06a137da734b2b74bbffb64256c93',
-          licenseId: 'LicenseRef-ClinMesh-Proprietary',
-        }],
+        releaseId: 'clinmesh-hospital-reference-fixture-2026-08-28',
+        serviceCount: 9,
         status: 'published',
-      }],
+        valueSetEntryCount: 6,
     })
+    expect(release?.sources.map(source => source.checksum)).toEqual([
+      'b72aa94f14b640dc9bc2952d687728995cc06a137da734b2b74bbffb64256c93',
+      '8ed125b9d880f39ff0e7a503229e4bd1d69772ec86ee6c19808d6c68eca3954b',
+      '36fc6be3ab504b8f48f1cacedaac2aaae42c648ee8cd2bb6cded99a130b05a13',
+    ])
   })
 
-  it('compiles the Hospital Baseline from the configured Medication Product release', async () => {
+  it('compiles the Hospital Baseline from one complete configured reference release', async () => {
     const referenceDirectory = await mkdtemp(join(tmpdir(), 'clinmesh-reference-products-'))
     temporaryDirectories.push(referenceDirectory)
     const referenceDatabasePath = await createReferenceDatabase(referenceDirectory)
@@ -225,6 +237,9 @@ describe('Reference Data HTTP contract', () => {
       'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-METFORMIN',
       'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-AMLODIPINE',
     ])
+    expect(dataset.content.catalog.services?.map(service => service.nationalService.id)).toEqual(
+      syntheticNhcMedicalServiceSnapshot.slice(0, 7).map(service => service.id),
+    )
   })
 
   it('fixes the configured release identity in generated Dataset and Profile facts', async () => {
@@ -434,6 +449,17 @@ describe('Reference Data HTTP contract', () => {
     expect(resetResponse.status).toBe(200)
     expect(commandResponseSchema(scenarioStateSchema).parse(await resetResponse.json()).data).toMatchObject({
       scenarioId: installed.packageId,
+    })
+    const serviceCatalogResponse = await restarted.runtime.app.request(
+      '/api/his/v1/catalogs/services?page=1&pageSize=20',
+      { headers: { cookie: restartedCookie } },
+    )
+    expect(serviceCatalogSearchSchema.parse(await serviceCatalogResponse.json())).toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({ id: 'hospital-service-cbc' }),
+        expect.objectContaining({ id: 'hospital-service-hba1c' }),
+      ]),
+      total: 7,
     })
     expect(restarted.runtime.database.driver.prepare(`
       SELECT content_json, content_hash FROM scenario_package

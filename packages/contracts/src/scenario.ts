@@ -111,6 +111,7 @@ const scenarioCatalogItemBaseSchema = z.object({
 const scenarioDepartmentCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
   displayOrder: z.number().int().nonnegative(),
   parentId: z.string().min(1).nullable(),
+  registrationAvailable: z.boolean().optional(),
   type: z.enum(['hospital', 'department']),
 }).strict()
 
@@ -207,6 +208,38 @@ export const scenarioMedicationCatalogItemSchema = z.union([
   scenarioProductMedicationCatalogItemSchema,
   scenarioLegacyMedicationCatalogItemSchema,
 ])
+
+const scenarioServiceValueCodingSchema = z.object({
+  code: z.string().min(1),
+  display: z.string().min(1),
+  system: z.string().url(),
+  valueSet: z.string().url(),
+  version: z.string().min(1),
+}).strict()
+
+export const scenarioHospitalServiceCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
+  availableScopes: z.array(z.enum(['outpatient', 'inpatient'])).min(1),
+  billingUnit: scenarioServiceValueCodingSchema,
+  category: scenarioServiceValueCodingSchema,
+  chargeDefinition: z.object({
+    currency: z.literal('CNY'),
+    effectiveOn: localDateSchema,
+    id: z.string().min(1),
+    priceFen: z.number().int().nonnegative(),
+  }).strict(),
+  componentServiceIds: z.array(z.string().min(1)),
+  executingDepartmentId: z.string().min(1),
+  nationalService: z.object({
+    code: z.string().min(1),
+    display: z.string().min(1),
+    id: z.string().min(1),
+    system: z.literal('urn:clinmesh:reference:nhc-medical-service'),
+    version: z.string().min(1),
+  }).strict(),
+  reportTemplate: z.string().min(1),
+  requestCatalogItemIds: z.array(z.string().min(1)).min(1),
+  tatMinutes: z.number().int().nonnegative(),
+}).strict()
 
 const scenarioResultValueSchema = z.union([z.boolean(), z.number(), z.string().min(1)])
 
@@ -490,6 +523,7 @@ export const scenarioDatasetContentSchema = z.object({
     diagnoses: z.array(scenarioDiagnosisCatalogItemSchema),
     investigations: z.array(scenarioInvestigationCatalogItemSchema),
     medications: z.array(scenarioMedicationCatalogItemSchema),
+    services: z.array(scenarioHospitalServiceCatalogItemSchema).optional(),
   }).strict(),
   hiddenFacts: z.array(z.object({
     code: z.string().min(1),
@@ -801,6 +835,9 @@ export type ScenarioDatasetList = z.infer<typeof scenarioDatasetListSchema>
 export type ScenarioDatasetContent = z.infer<typeof scenarioDatasetContentSchema>
 export type ScenarioProductMedicationCatalogItem = z.infer<
   typeof scenarioProductMedicationCatalogItemSchema
+>
+export type ScenarioHospitalServiceCatalogItem = z.infer<
+  typeof scenarioHospitalServiceCatalogItemSchema
 >
 export type ScenarioDiagnostic = z.infer<typeof scenarioDiagnosticSchema>
 export type ScenarioGenerationRequest = z.infer<typeof scenarioGenerationRequestSchema>

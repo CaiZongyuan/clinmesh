@@ -4,7 +4,11 @@ import type {
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
 } from '@clinmesh/contracts/scenario'
-import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
+import type {
+  ReferenceMedicalService,
+  ReferenceMedicationProduct,
+  ReferenceValueSetEntry,
+} from '@clinmesh/contracts/reference-data'
 import { scenarioPatientSchema } from '@clinmesh/contracts/scenario'
 import type {
   ScenarioGenerationProvider,
@@ -16,6 +20,10 @@ import {
 } from '../../application/scenario-data/provider.ts'
 import { createHospitalBaseline } from '../../application/scenario-data/hospital-baseline.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../../application/scenario-data/medication-product-snapshot.ts'
+import {
+  syntheticNhcMedicalServiceSnapshot,
+  syntheticWstValueSetSnapshot,
+} from '../../application/scenario-data/medical-service-snapshot.ts'
 import { compileSyntheaR4Bundle } from '../../application/scenario-data/synthea-case-truth-compiler.ts'
 
 const syntheticNames = ['林晓', '王晓明', '李静', '张伟', '刘洋', '陈勇'] as const
@@ -122,10 +130,18 @@ function patient(request: ScenarioGenerationRequest, ordinal: number) {
 }
 
 export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProvider {
+  readonly #medicalServices: readonly ReferenceMedicalService[]
   readonly #medicationProducts: readonly ReferenceMedicationProduct[]
+  readonly #valueSetEntries: readonly ReferenceValueSetEntry[]
 
-  constructor(medicationProducts = syntheticNhsaMedicationProductSnapshot) {
+  constructor(
+    medicationProducts = syntheticNhsaMedicationProductSnapshot,
+    medicalServices = syntheticNhcMedicalServiceSnapshot,
+    valueSetEntries = syntheticWstValueSetSnapshot,
+  ) {
+    this.#medicalServices = medicalServices
     this.#medicationProducts = medicationProducts
+    this.#valueSetEntries = valueSetEntries
   }
 
   async capabilities(): Promise<ScenarioProviderCapabilities> {
@@ -140,7 +156,11 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
 
   async generate(request: ScenarioGenerationRequest): Promise<SourcePatientCorpus> {
     const patients = Array.from({ length: request.population.count }, (_, index) => patient(request, index))
-    const baseline = createHospitalBaseline(this.#medicationProducts)
+    const baseline = createHospitalBaseline(
+      this.#medicationProducts,
+      this.#medicalServices,
+      this.#valueSetEntries,
+    )
     const content: ScenarioDatasetContent = {
       catalog: baseline.catalog,
       hiddenFacts: patients.map(patient => ({

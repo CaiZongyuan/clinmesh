@@ -11,6 +11,10 @@ import {
 } from '../src/application/scenario-data/synthea-case-truth-compiler.ts'
 import { createHospitalBaseline } from '../src/application/scenario-data/hospital-baseline.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
+import {
+  syntheticNhcMedicalServiceSnapshot,
+  syntheticWstValueSetSnapshot,
+} from '../src/application/scenario-data/medical-service-snapshot.ts'
 import { validateScenarioDataset } from '../src/application/scenario-data/scenario-dataset-validator.ts'
 
 const request = scenarioGenerationRequestSchema.parse({
@@ -33,7 +37,11 @@ function catchCompilerError(callback: () => unknown): unknown {
 }
 
 function datasetDiagnostics(patient: ScenarioPatient) {
-  const baseline = createHospitalBaseline(syntheticNhsaMedicationProductSnapshot)
+  const baseline = createHospitalBaseline(
+    syntheticNhsaMedicationProductSnapshot,
+    syntheticNhcMedicalServiceSnapshot,
+    syntheticWstValueSetSnapshot,
+  )
   return validateScenarioDataset(scenarioDatasetContentSchema.parse({
     ...baseline,
     hiddenFacts: [],

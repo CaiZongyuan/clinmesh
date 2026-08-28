@@ -182,6 +182,38 @@ describe('Scenario Dataset diagnostics', () => {
     ]))
   })
 
+  it('rejects service identity, charge, department, and request reference conflicts', async () => {
+    const generated = await new BuiltInScenarioGenerationProvider().generate(
+      scenarioGenerationRequestSchema.parse({
+        modules: ['type-2-diabetes'],
+        name: '服务目录引用冲突',
+        population: { age: { maximum: 40, minimum: 40 }, count: 1, gender: 'female' },
+        providerId: 'builtin',
+        seeds: { clinical: 48, population: 49 },
+        timeRange: { end: '2026-08-01', start: '2020-01-01' },
+        timeZone: 'Asia/Shanghai',
+      }),
+    )
+    const service = generated.content.catalog.services?.[0]
+    if (service === undefined) throw new Error('Built-in generation did not compile services')
+    const services = [{
+      ...service,
+      chargeDefinition: { ...service.chargeDefinition, id: service.id, priceFen: 999 },
+      executingDepartmentId: 'department-missing',
+      requestCatalogItemIds: ['laboratory-missing'],
+    }]
+
+    expect(validateScenarioDataset({
+      ...generated.content,
+      catalog: { ...generated.content.catalog, services },
+    })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'SERVICE_CHARGE_PRICE_MISMATCH' }),
+      expect.objectContaining({ code: 'SERVICE_DEPARTMENT_REFERENCE_MISSING' }),
+      expect.objectContaining({ code: 'SERVICE_IDENTITY_COLLISION' }),
+      expect.objectContaining({ code: 'SERVICE_REQUEST_REFERENCE_MISSING' }),
+    ]))
+  })
+
   it('rejects an L3 sampling domain outside its numeric reference range', async () => {
     const provider = new BuiltInScenarioGenerationProvider()
     const generated = await provider.generate(scenarioGenerationRequestSchema.parse({

@@ -20,7 +20,9 @@ Synthea 诊断映射将 SNOMED CT 来源、版本固定的 NHSA 诊断目标和�
 
 RxNorm 历史用药使用同一映射发布机制，但目标只是 Drug Concept，不携带 Medication Product 或本院 catalog item 身份。CodeableConcept 与引用型 Medication 先归一为同一 source coding 再映射；自动概念映射保存在 patient snapshot，本院药品 overlay 仍作为独立 Profile Revision，不改写 raw Bundle。
 
-NHSA Medication Product 使用独立 product 表保存注册/目录属性，不装入 concept 表。Reference Data Service 将实际提供 Product rows 的 Release provenance 与 rows 作为一个 selection 返回，不把更新的非 Product Release 与旧产品静默拼装。Hospital Baseline compiler 接收该固定 product snapshot，只选择病例和基础流程需要的产品，补齐本院代码、范围、价格、处方规则和合成库存。NMPA 人工核验仅对已选产品固定必要字段 hash、时间和来源入口，不引入全量爬取或运行时依赖。升级前 Package 的药品项通过不补字段的 legacy union 原样读取；新建或更新 Dataset 缺少 Product metadata 时产生阻断安装的诊断，读取兼容不回写旧内容或 hash。
+NHSA Medication Product 使用独立 product 表保存注册/目录属性，不装入 concept 表。Reference Data Service 将实际同时提供 Product、Medical Service 与辅助值域 rows 的 Release provenance 和 rows 作为一个 selection 返回，不跨 Release 静默拼装。Hospital Baseline compiler 接收该固定 snapshot，只选择病例和基础流程需要的产品，补齐本院代码、范围、价格、处方规则和合成库存。NMPA 人工核验仅对已选产品固定必要字段 hash、时间和来源入口，不引入全量爬取或运行时依赖。升级前 Package 的药品项通过不补字段的 legacy union 原样读取；新建或更新 Dataset 缺少 Product metadata 时产生阻断安装的诊断，读取兼容不回写旧内容或 hash。
+
+NHC Medical Service 与 WS/T 辅助值域通过同一 Release selection 进入 Hospital Baseline compiler。国家服务只拥有项目语义、类别和计价单位；本院 Service 另有本院代码、执行科室、可用范围、TAT、组合成员和报告模板，Charge Definition 单独拥有合成价格与生效日期。Operational SQLite 只安装本院 Service/Charge snapshot，并通过有界索引查询，不复制国家服务表。升级前 Package 可缺少 service catalog；读取和 reset 不补写，新建或更新 Dataset 缺少 service catalog 时阻止安装。
 
 ## Alternatives considered
 

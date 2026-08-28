@@ -1108,12 +1108,14 @@ describe('persistent Scenario generation job HTTP contract', () => {
     firstRuntime.database.driver.exec('DROP TABLE synthetic_patient_profile_revision')
     firstRuntime.database.driver.exec('DROP TABLE synthetic_patient_profile_batch')
     firstRuntime.database.driver.exec('DROP TABLE synthetic_patient_profile')
+    firstRuntime.database.driver.exec('DROP TABLE hospital_service_catalog')
     firstRuntime.database.driver.prepare(
-      'DELETE FROM schema_migration WHERE migration_id IN (?, ?, ?)',
+      'DELETE FROM schema_migration WHERE migration_id IN (?, ?, ?, ?)',
     ).run(
       '0024_synthetic-patient-profile.sql',
       '0025_reference-data-provenance.sql',
       '0026_profile-mapping-provenance.sql',
+      '0027_service-catalog-search.sql',
     )
     await firstRuntime.close()
     runtimes.splice(runtimes.indexOf(firstRuntime), 1)

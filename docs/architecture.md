@@ -427,9 +427,11 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 
 Synthea `MedicationRequest.medicationCodeableConcept` 与引用型 Medication 共用一个 RxNorm 来源解析边界。唯一的 active 等价映射可转为版本固定 Drug Concept；未映射来源保留完整 coding 并生成稳定诊断。Drug Concept 不包含 Medication Product、本院药品、价格或 Inventory Lot 身份，药物 mapping package version/hash 与诊断 package 一起固定在 Profile Revision。
 
-Reference Data Service 将实际提供 Product rows 的 Release provenance 与 rows 原子选择，不会把更新的非 Product Release 与旧产品静默拼装；没有外部 Product Release 时使用同样具有固定 checksum 和 content hash 的内置合成 Release。Hospital Baseline compiler 接收选定的 Product snapshot，选择对乙酰氨基酚、二甲双胍和氨氯地平三项 Hospital Medication，补齐本院代码、门诊范围、合成价格、处方规则和合成 Inventory Lot。NMPA 核验只保存这三项的批准文号、通用名和企业字段 hash、人工核对时间与来源入口；不连接运行时网络，也不导入全量 NMPA 数据。Package 安装只把选中的 Hospital Medication snapshot 写入 Operational SQLite；当前 `candidate`/`density` v3 兼容流程另保留一项合成奥司他韦目录，不创建全国 Medication Product 表。升级前 Package 的药品项可通过 legacy contract 原样读取、安装和 reset，但不会补写 Product 字段或改变 content hash；新建或更新 Dataset 缺少 Product metadata 时由 validator 阻止安装。
+Reference Data Service 将实际同时提供 Product、Medical Service 与辅助值域 rows 的 Release provenance 和 rows 原子选择，不会跨 Release 静默拼装；没有完整外部 Release 时使用同样具有固定 source checksum 和 content hash 的内置合成 Release。Hospital Baseline compiler 从中选择对乙酰氨基酚、二甲双胍和氨氯地平三项 Hospital Medication，补齐本院代码、门诊范围、合成价格、处方规则和合成 Inventory Lot。NMPA 核验只保存这三项的批准文号、通用名和企业字段 hash、人工核对时间与来源入口；不连接运行时网络，也不导入全量 NMPA 数据。Package 安装只把选中的 Hospital Medication snapshot 写入 Operational SQLite；当前 `candidate`/`density` v3 兼容流程另保留一项合成奥司他韦目录，不创建全国 Medication Product 表。升级前 Package 的药品项可通过 legacy contract 原样读取、安装和 reset，但不会补写 Product 字段或改变 content hash；新建或更新 Dataset 缺少 Product metadata 时由 validator 阻止安装。
 
-未实现的中国诊断、药品和医疗服务映射仍使用最小虚构目录与 ICD-10 示例 code。当前不发布 CodeSystem、ValueSet、ConceptMap 或 terminology operation；术语是接口兼容性的一部分，不是 UI 字典。
+同一 Reference Data Release 可从固定 NHC Medical Service CSV 与适用 WS/T 值域 CSV 导入国家服务、服务类别和计价单位；国家服务不保存医院价格。Hospital Baseline 当前从 9 项合成国家参考中启用血常规组合、5 个血常规成员和 HbA1c 共 7 项 Hospital Service，并分别固定本院代码、执行科室、门诊范围、TAT、组合关系、报告模板和独立 Charge Definition；眼底检查和糖尿病健康教育只保留为未启用参考。Operational SQLite 的 `hospital_service_catalog` 只保存已选 snapshot，普通查询使用本院局部索引和最大 100 项分页，不连接 Reference SQLite。升级前 Package 可缺少 service catalog 并原样 reset；新建或更新 Dataset 缺少 service catalog 时由 validator 阻止安装。
+
+未实现的中国诊断和药品映射仍使用最小虚构目录与 ICD-10 示例 code；医疗服务只实现当前固定 NHC/WS/T 合成参考到本院执行目录的显式编译。当前不发布 CodeSystem、ValueSet、ConceptMap 或 terminology operation；术语是接口兼容性的一部分，不是 UI 字典。
 
 至少维护：
 

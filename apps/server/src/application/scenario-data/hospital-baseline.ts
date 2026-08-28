@@ -1,8 +1,13 @@
 import type {
   ScenarioDatasetContent,
+  ScenarioHospitalServiceCatalogItem,
   ScenarioProductMedicationCatalogItem,
 } from '@clinmesh/contracts/scenario'
-import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
+import type {
+  ReferenceMedicalService,
+  ReferenceMedicationProduct,
+  ReferenceValueSetEntry,
+} from '@clinmesh/contracts/reference-data'
 import {
   investigationLoincCoding,
   resolveUcumUnit,
@@ -15,8 +20,9 @@ type HospitalBaseline = Omit<
   Pick<ScenarioDatasetContent, 'catalog' | 'hospital' | 'inventory'>,
   'catalog'
 > & {
-  catalog: Omit<ScenarioDatasetContent['catalog'], 'medications'> & {
+  catalog: Omit<ScenarioDatasetContent['catalog'], 'medications' | 'services'> & {
     medications: ScenarioProductMedicationCatalogItem[]
+    services: ScenarioHospitalServiceCatalogItem[]
   }
 }
 
@@ -67,6 +73,91 @@ function selectedProductSnapshot(product: ReferenceMedicationProduct) {
     strength: product.strength,
     system: 'urn:clinmesh:reference:nhsa-medication-product' as const,
     version: product.version,
+  }
+}
+
+function selectedMedicalService(
+  services: readonly ReferenceMedicalService[],
+  code: string,
+): ReferenceMedicalService {
+  const matches = services.filter(service => (
+    service.code === code
+    && service.system === 'urn:clinmesh:reference:nhc-medical-service'
+  ))
+  if (matches.length !== 1) {
+    throw new Error(`Medical Service snapshot must contain exactly one ${code}`)
+  }
+  const service = matches[0]!
+  if (service.status !== 'active') throw new Error(`Medical Service ${code} is not active`)
+  return service
+}
+
+function selectedValueSetEntry(
+  entries: readonly ReferenceValueSetEntry[],
+  system: string,
+  code: string,
+) {
+  const matches = entries.filter(entry => entry.system === system && entry.code === code)
+  if (matches.length !== 1) throw new Error(`WS/T snapshot must contain exactly one ${system}|${code}`)
+  const entry = matches[0]!
+  if (entry.status !== 'active') throw new Error(`WS/T value ${system}|${code} is not active`)
+  return {
+    code: entry.code,
+    display: entry.display,
+    system: entry.system,
+    valueSet: entry.valueSet,
+    version: entry.version,
+  }
+}
+
+function hospitalService(input: {
+  itemId: string
+  localCode: string
+  name: string
+  nationalService: ReferenceMedicalService
+  componentServiceIds?: string[]
+  priceFen: number
+  reportTemplate: string
+  requestCatalogItemIds: string[]
+  tatMinutes: number
+  valueSetEntries: readonly ReferenceValueSetEntry[]
+}): ScenarioHospitalServiceCatalogItem {
+  return {
+    ...catalogBase({
+      code: input.localCode,
+      id: input.itemId,
+      name: input.name,
+      priceFen: input.priceFen,
+    }),
+    availableScopes: ['outpatient'],
+    billingUnit: selectedValueSetEntry(
+      input.valueSetEntries,
+      'urn:clinmesh:wst:billing-unit',
+      input.nationalService.billingUnitCode,
+    ),
+    category: selectedValueSetEntry(
+      input.valueSetEntries,
+      'urn:clinmesh:wst:service-category',
+      input.nationalService.categoryCode,
+    ),
+    chargeDefinition: {
+      currency: 'CNY',
+      effectiveOn: '2026-08-28',
+      id: `charge-definition-${input.itemId}`,
+      priceFen: input.priceFen,
+    },
+    componentServiceIds: input.componentServiceIds ?? [],
+    executingDepartmentId: 'department-laboratory',
+    nationalService: {
+      code: input.nationalService.code,
+      display: input.nationalService.display,
+      id: input.nationalService.id,
+      system: 'urn:clinmesh:reference:nhc-medical-service',
+      version: input.nationalService.version,
+    },
+    reportTemplate: input.reportTemplate,
+    requestCatalogItemIds: input.requestCatalogItemIds,
+    tatMinutes: input.tatMinutes,
   }
 }
 
@@ -154,6 +245,8 @@ function investigation(input: {
 
 export function createHospitalBaseline(
   medicationProducts: readonly ReferenceMedicationProduct[],
+  medicalServices: readonly ReferenceMedicalService[],
+  valueSetEntries: readonly ReferenceValueSetEntry[],
 ): HospitalBaseline {
   const acetaminophenProduct = selectedMedicationProduct(
     medicationProducts,
@@ -167,12 +260,38 @@ export function createHospitalBaseline(
     medicationProducts,
     'CM-NHSA-PRODUCT-AMLODIPINE',
   )
+  const cbcService = selectedMedicalService(medicalServices, 'CM-NHC-SERVICE-CBC')
+  const hba1cService = selectedMedicalService(medicalServices, 'CM-NHC-SERVICE-HBA1C')
+  const cbcComponentServices = ([
+    ['WBC', '白细胞计数服务', 'lab-wbc', '白细胞计数 {value} x10^9/L。'],
+    ['HGB', '血红蛋白服务', 'lab-hemoglobin', '血红蛋白 {value} g/L。'],
+    ['RBC', '红细胞计数服务', 'lab-rbc', '红细胞计数 {value} x10^12/L。'],
+    ['MCV', '平均红细胞体积服务', 'lab-mcv', '平均红细胞体积 {value} fL。'],
+    ['HCT', '红细胞压积服务', 'lab-hematocrit', '红细胞压积 {value} L/L。'],
+  ] as const).map(([code, name, requestCatalogItemId, reportTemplate]) => hospitalService({
+    itemId: `hospital-service-${code.toLowerCase()}`,
+    localCode: `HOSP-SVC-${code}`,
+    name,
+    nationalService: selectedMedicalService(medicalServices, `CM-NHC-SERVICE-${code}`),
+    priceFen: 800,
+    reportTemplate,
+    requestCatalogItemIds: [requestCatalogItemId],
+    tatMinutes: 20,
+    valueSetEntries,
+  }))
   return {
     catalog: {
       departments: [{
         ...catalogBase({ code: 'GM', id: 'department-general-medicine', name: '全科医学科', priceFen: 0 }),
         displayOrder: 10,
         parentId: hospitalId,
+        registrationAvailable: true,
+        type: 'department',
+      }, {
+        ...catalogBase({ code: 'LAB', id: 'department-laboratory', name: '检验科', priceFen: 0 }),
+        displayOrder: 20,
+        parentId: hospitalId,
+        registrationAvailable: false,
         type: 'department',
       }],
       diagnoses: [{
@@ -538,6 +657,28 @@ export function createHospitalBaseline(
           defaultQuantity: 30,
         },
       }],
+      services: [hospitalService({
+        componentServiceIds: cbcComponentServices.map(service => service.id),
+        itemId: 'hospital-service-cbc',
+        localCode: 'HOSP-SVC-CBC',
+        name: '血常规服务',
+        nationalService: cbcService,
+        priceFen: 2_500,
+        reportTemplate: '{value}',
+        requestCatalogItemIds: ['lab-cbc'],
+        tatMinutes: 20,
+        valueSetEntries,
+      }), ...cbcComponentServices, hospitalService({
+        itemId: 'hospital-service-hba1c',
+        localCode: 'HOSP-SVC-HBA1C',
+        name: '糖化血红蛋白服务',
+        nationalService: hba1cService,
+        priceFen: 4_500,
+        reportTemplate: '糖化血红蛋白 {value}%。',
+        requestCatalogItemIds: ['lab-hba1c'],
+        tatMinutes: 120,
+        valueSetEntries,
+      })],
     },
     hospital: {
       active: true,

@@ -17,6 +17,7 @@ import {
   registrationCatalogSchema,
   scenarioCommandResponseSchema,
   scenarioStateSchema,
+  serviceCatalogSearchSchema,
   sessionContextSchema,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -151,6 +152,68 @@ describe('trusted session and Scenario HTTP contract', () => {
         id: 'practitioner-role-registrar',
       }],
     })
+  })
+
+  it('searches only the indexed Hospital Service catalog with bounded pagination', async () => {
+    const { password, runtime } = await createTestRuntime('clinmesh-service-catalog-http-')
+    const cookie = await signInSyntheticAccount(runtime, password, 'doctor@demo.clinmesh.local')
+    const firstResponse = await runtime.app.request(
+      `/api/his/v1/catalogs/services?query=${encodeURIComponent('血')}&page=1&pageSize=1`,
+      { headers: { cookie } },
+    )
+    expect(firstResponse.status).toBe(200)
+    const first = serviceCatalogSearchSchema.parse(await firstResponse.json())
+    expect(first).toMatchObject({
+      items: [{
+        availableScopes: ['outpatient'],
+        billingUnit: { code: 'ITEM', display: '项目' },
+        category: { code: 'LABORATORY', display: '检验服务' },
+        chargeDefinition: { currency: 'CNY', id: 'charge-definition-hospital-service-cbc' },
+        componentServiceIds: [
+          'hospital-service-wbc',
+          'hospital-service-hgb',
+          'hospital-service-rbc',
+          'hospital-service-mcv',
+          'hospital-service-hct',
+        ],
+        executingDepartmentId: 'department-laboratory',
+        id: 'hospital-service-cbc',
+        nationalService: {
+          code: 'CM-NHC-SERVICE-CBC',
+          id: 'nhc-medical-service:nhc-medical-services-2026-08-28:CM-NHC-SERVICE-CBC',
+        },
+        requestCatalogItemIds: ['lab-cbc'],
+        reportTemplate: '{value}',
+        tatMinutes: 20,
+      }],
+      page: 1,
+      pageSize: 1,
+      total: 3,
+    })
+    const secondResponse = await runtime.app.request(
+      `/api/his/v1/catalogs/services?query=${encodeURIComponent('血')}&page=2&pageSize=1`,
+      { headers: { cookie } },
+    )
+    expect(serviceCatalogSearchSchema.parse(await secondResponse.json())).toMatchObject({
+      items: [{ id: 'hospital-service-hba1c' }],
+      page: 2,
+      total: 3,
+    })
+    expect((await runtime.app.request(
+      '/api/his/v1/catalogs/services?page=1&pageSize=101',
+      { headers: { cookie } },
+    )).status).toBe(400)
+    const plan = runtime.database.driver.prepare(`
+      EXPLAIN QUERY PLAN
+      SELECT service_id FROM hospital_service_catalog
+      WHERE workspace_id = ? AND epoch = ? AND active = 1
+      ORDER BY service_id LIMIT 20
+    `).all('workspace-demo', 'epoch-1') as Array<{ detail: string }>
+    expect(plan.map(row => row.detail).join('\n')).toContain('hospital_service_catalog_search_idx')
+    expect(runtime.database.driver.prepare(`
+      SELECT 1 FROM sqlite_schema
+      WHERE type = 'table' AND name = 'reference_medical_service'
+    `).get()).toBeUndefined()
   })
 
   it('rejects an untrusted origin without ending the authenticated session', async () => {
@@ -913,6 +976,31 @@ describe('trusted session and Scenario HTTP contract', () => {
         id: 'medication-amlodipine',
       }),
     ]))
+    const installedServiceSnapshots = runtime.database.driver.prepare(`
+      SELECT service_id, config_json FROM hospital_service_catalog
+      WHERE workspace_id = ? AND epoch = ?
+      ORDER BY service_id
+    `).all('workspace-demo', installed.scenario.epoch) as Array<{
+      config_json: string
+      service_id: string
+    }>
+    expect(installedServiceSnapshots).toHaveLength(7)
+    expect(installedServiceSnapshots.map(row => ({
+      config: JSON.parse(row.config_json) as unknown,
+      id: row.service_id,
+    }))).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        config: expect.objectContaining({
+          chargeDefinition: expect.objectContaining({
+            id: 'charge-definition-hospital-service-cbc',
+            priceFen: 2_500,
+          }),
+          executingDepartmentId: 'department-laboratory',
+          requestCatalogItemIds: ['lab-cbc'],
+        }),
+        id: 'hospital-service-cbc',
+      }),
+    ]))
     expect(runtime.database.driver.prepare(`
       SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'reference_medication_product'
     `).get()).toBeUndefined()
@@ -1063,7 +1151,9 @@ describe('trusted session and Scenario HTTP contract', () => {
     const legacyContent = {
       ...generated.content,
       catalog: {
-        ...generated.content.catalog,
+        departments: generated.content.catalog.departments,
+        diagnoses: generated.content.catalog.diagnoses,
+        investigations: generated.content.catalog.investigations,
         medications: generated.content.catalog.medications.map(medication => ({
           active: medication.active,
           category: medication.category,
@@ -1134,6 +1224,7 @@ describe('trusted session and Scenario HTTP contract', () => {
     expect(updated.data).toMatchObject({ contentHash: legacyHash, version: 2 })
     expect(updated.data.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'MEDICATION_PRODUCT_METADATA_MISSING' }),
+      expect.objectContaining({ code: 'SERVICE_CATALOG_MISSING' }),
     ]))
 
     runtime.database.driver.prepare(`
