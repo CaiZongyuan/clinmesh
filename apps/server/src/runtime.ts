@@ -8,6 +8,7 @@ import { UnavailableScenarioGenerationProvider } from './application/scenario-da
 import { WorkflowService } from './application/workflow-service.ts'
 import { OutboxDispatcher } from './application/outbox-dispatcher.ts'
 import { z } from 'zod'
+import { scenarioModules } from '@clinmesh/contracts/scenario'
 import {
   applyMigrations,
   openClinMeshDatabase,
@@ -115,7 +116,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         ? new UnavailableScenarioGenerationProvider({
             available: false,
             maxPopulation: 10,
-            modules: ['fever', 'type-2-diabetes', 'hypertension'],
+            modules: [...scenarioModules],
             providerId: 'synthea',
             providerName: 'Synthea',
             unavailableReason: '未配置 Synthea Provider',

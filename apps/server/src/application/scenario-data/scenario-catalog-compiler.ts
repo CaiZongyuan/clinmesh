@@ -124,20 +124,50 @@ export function compileScenarioCatalog(input: {
   baseline: HospitalBaseline
   modules: readonly ScenarioModule[]
 }) {
+  const modules = [...new Set(input.modules)]
   const selected = {
     diagnoses: new Set<string>(),
     investigations: new Set<string>(),
     medications: new Set<string>(),
     services: new Set<string>(),
   }
+  const origins = {
+    diagnoses: new Map<string, Set<ScenarioModule>>(),
+    investigations: new Map<string, Set<ScenarioModule>>(),
+    medications: new Map<string, Set<ScenarioModule>>(),
+    services: new Map<string, Set<ScenarioModule>>(),
+  }
+  let closureRevision = 0
   const entries: CoverageEntry[] = []
   const blockers: Array<{
     code: BlockerCode
     module: ScenarioModule
     targetId: string
   }> = []
+  const mergeOrigins = (
+    collection: ScenarioCatalogCollection,
+    targetId: string,
+    requiredBy: ReadonlySet<ScenarioModule>,
+  ): void => {
+    const current = origins[collection].get(targetId) ?? new Set<ScenarioModule>()
+    for (const module of requiredBy) {
+      if (current.has(module)) continue
+      current.add(module)
+      closureRevision += 1
+    }
+    origins[collection].set(targetId, current)
+  }
+  const addMissingWorkflowBlockers = (
+    requiredBy: ReadonlySet<ScenarioModule>,
+    targetId: string,
+  ): void => {
+    for (const module of requiredBy) {
+      if (blockers.some(blocker => blocker.module === module && blocker.targetId === targetId)) continue
+      blockers.push({ code: 'WORKFLOW_DEPENDENCY_MISSING', module, targetId })
+    }
+  }
 
-  for (const module of [...new Set(input.modules)]) {
+  for (const module of modules) {
     const definition = scenarioCaseDefinitions[module]
     for (const dependencyValue of definition.catalogDependencies) {
       const dependency: ScenarioCatalogDependency = dependencyValue
@@ -149,7 +179,10 @@ export function compileScenarioCatalog(input: {
         ...(dependency.source === undefined ? {} : { source: dependency.source }),
         targetId: dependency.targetId,
       })
-      if (resolution === 'mapped') selected[dependency.collection].add(dependency.targetId)
+      if (resolution === 'mapped') {
+        selected[dependency.collection].add(dependency.targetId)
+        mergeOrigins(dependency.collection, dependency.targetId, new Set([module]))
+      }
       if (resolution !== 'mapped') {
         blockers.push({
           code: blockerCode(dependency.requirement, resolution),
@@ -167,39 +200,53 @@ export function compileScenarioCatalog(input: {
   const addWorkflowDependency = (
     collection: ScenarioCatalogCollection,
     targetId: string,
+    requiredBy: ReadonlySet<ScenarioModule>,
   ): void => {
-    if (selected[collection].has(targetId)) return
+    if (selected[collection].has(targetId)) {
+      mergeOrigins(collection, targetId, requiredBy)
+      return
+    }
     const present = collectionHas(input.baseline, collection, targetId)
     entries.push({
-      module: 'baseline-workflow',
+      module: requiredBy.values().next().value ?? 'baseline-workflow',
       requirement: 'workflow-required',
       resolution: present ? 'mapped' : 'hospital-not-enabled',
       targetId,
     })
-    if (present) selected[collection].add(targetId)
+    if (present) {
+      selected[collection].add(targetId)
+      closureRevision += 1
+      mergeOrigins(collection, targetId, requiredBy)
+    } else {
+      addMissingWorkflowBlockers(requiredBy, targetId)
+    }
   }
 
   let changed = true
   while (changed) {
-    const sizes = Object.values(selected).map(items => items.size).join(':')
+    const previousRevision = closureRevision
     for (const investigation of input.baseline.catalog.investigations) {
       if (!selected.investigations.has(investigation.id)) continue
+      const requiredBy = origins.investigations.get(investigation.id) ?? new Set()
       for (const componentId of investigation.componentItemIds ?? []) {
-        addWorkflowDependency('investigations', componentId)
+        addWorkflowDependency('investigations', componentId, requiredBy)
       }
     }
     for (const service of input.baseline.catalog.services ?? []) {
-      if (
-        selected.services.has(service.id)
-        || service.requestCatalogItemIds.some(id => selected.investigations.has(id))
-      ) {
-        addWorkflowDependency('services', service.id)
-        for (const componentId of service.componentServiceIds ?? []) {
-          addWorkflowDependency('services', componentId)
+      const requiredBy = new Set(origins.services.get(service.id) ?? [])
+      for (const requestCatalogItemId of service.requestCatalogItemIds) {
+        for (const module of origins.investigations.get(requestCatalogItemId) ?? []) {
+          requiredBy.add(module)
         }
       }
+      if (requiredBy.size === 0) continue
+      addWorkflowDependency('services', service.id, requiredBy)
+      const serviceOrigins = origins.services.get(service.id) ?? requiredBy
+      for (const componentId of service.componentServiceIds ?? []) {
+        addWorkflowDependency('services', componentId, serviceOrigins)
+      }
     }
-    changed = sizes !== Object.values(selected).map(items => items.size).join(':')
+    changed = previousRevision !== closureRevision
   }
 
   const services = (input.baseline.catalog.services ?? []).filter(item => selected.services.has(item.id))
@@ -231,6 +278,18 @@ export function compileScenarioCatalog(input: {
         )),
       },
     }))
+  const inventory = input.baseline.inventory.filter(lot => selected.medications.has(lot.itemId))
+  for (const medication of medications) {
+    if (inventory.some(lot => lot.itemId === medication.id)) continue
+    const requiredBy = origins.medications.get(medication.id) ?? new Set()
+    entries.push({
+      module: requiredBy.values().next().value ?? 'baseline-workflow',
+      requirement: 'workflow-required',
+      resolution: 'hospital-not-enabled',
+      targetId: `inventory:${medication.id}`,
+    })
+    addMissingWorkflowBlockers(requiredBy, `inventory:${medication.id}`)
+  }
   const compiled = {
     catalog: {
       departments: input.baseline.catalog.departments.filter(item => (
@@ -242,12 +301,18 @@ export function compileScenarioCatalog(input: {
       services,
     },
     hospital: input.baseline.hospital,
-    inventory: input.baseline.inventory.filter(lot => selected.medications.has(lot.itemId)),
+    inventory,
   }
+  const selectedGeneratedInventories = modules.map(module => ({
+    module,
+    ...inventoryArtifact.generated.inventories[module],
+  }))
   const generatedOccurrences = new Map<string, number>()
-  for (const concept of inventoryArtifact.generated.inventory.concepts) {
-    const key = sourceCodingKey(concept)
-    generatedOccurrences.set(key, (generatedOccurrences.get(key) ?? 0) + concept.occurrences)
+  for (const generated of selectedGeneratedInventories) {
+    for (const concept of generated.inventory.concepts) {
+      const key = sourceCodingKey(concept)
+      generatedOccurrences.set(key, (generatedOccurrences.get(key) ?? 0) + concept.occurrences)
+    }
   }
   const staticOccurrences = new Map<string, number>()
   for (const concept of inventoryArtifact.static.inventory.concepts) {
@@ -261,8 +326,10 @@ export function compileScenarioCatalog(input: {
       const resourceType = entry.source.resourceType
       return {
         ...entry,
-        generatedOccurrences: inventoryArtifact.generated.inventory.resourceTypes
-          .find(item => item.resourceType === resourceType)?.occurrences ?? 0,
+        generatedOccurrences: selectedGeneratedInventories.reduce((sum, generated) => (
+          sum + (generated.inventory.resourceTypes
+            .find(item => item.resourceType === resourceType)?.occurrences ?? 0)
+        ), 0),
         staticOccurrences: 0,
       }
     }
@@ -274,11 +341,11 @@ export function compileScenarioCatalog(input: {
       staticOccurrences: staticOccurrences.get(key) ?? 0,
     }
   })
-  const selectedModuleClosures = new Map(input.modules.map(module => (
+  const selectedModuleClosures = new Map(modules.map(module => (
     [module, new Set(inventoryArtifact.static.inventory.rootClosures[module] ?? [])] as const
   )))
   for (const concept of inventoryArtifact.static.inventory.concepts) {
-    const module = input.modules.find(candidate => concept.modules.some(sourceModule => (
+    const module = modules.find(candidate => concept.modules.some(sourceModule => (
       selectedModuleClosures.get(candidate)?.has(sourceModule) === true
     )))
     if (module === undefined) continue
@@ -298,37 +365,50 @@ export function compileScenarioCatalog(input: {
       staticOccurrences: staticOccurrences.get(key) ?? 0,
     })
   }
-  for (const concept of inventoryArtifact.generated.inventory.concepts) {
-    const key = sourceCodingKey(concept)
-    if (classifiedCodingKeys.has(key)) continue
-    classifiedCodingKeys.add(key)
-    coverageEntries.push({
-      generatedOccurrences: generatedOccurrences.get(key) ?? 0,
-      module: 'baseline-workflow',
-      requirement: 'history-only',
-      resolution: 'hospital-not-enabled',
-      source: {
-        code: concept.code,
-        display: concept.display,
-        system: concept.system,
-      },
-      staticOccurrences: staticOccurrences.get(key) ?? 0,
-    })
+  for (const generated of selectedGeneratedInventories) {
+    for (const concept of generated.inventory.concepts) {
+      const key = sourceCodingKey(concept)
+      if (classifiedCodingKeys.has(key)) continue
+      classifiedCodingKeys.add(key)
+      coverageEntries.push({
+        generatedOccurrences: generatedOccurrences.get(key) ?? 0,
+        module: generated.module,
+        requirement: 'history-only',
+        resolution: 'hospital-not-enabled',
+        source: {
+          code: concept.code,
+          display: concept.display,
+          system: concept.system,
+        },
+        staticOccurrences: staticOccurrences.get(key) ?? 0,
+      })
+    }
   }
-  for (const unit of inventoryArtifact.generated.inventory.units) {
-    const key = `unit\u0000${sourceCodingKey(unit)}`
+  const generatedUnits = new Map<string, {
+    module: ScenarioModule
+    occurrences: number
+    source: { code: string; display: string; system: string }
+  }>()
+  for (const generated of selectedGeneratedInventories) {
+    for (const unit of generated.inventory.units) {
+      const key = `unit\u0000${sourceCodingKey(unit)}`
+      const current = generatedUnits.get(key)
+      generatedUnits.set(key, {
+        module: current?.module ?? generated.module,
+        occurrences: (current?.occurrences ?? 0) + unit.occurrences,
+        source: { code: unit.code, display: unit.display, system: unit.system },
+      })
+    }
+  }
+  for (const [key, unit] of generatedUnits) {
     if (classifiedCodingKeys.has(key)) continue
     classifiedCodingKeys.add(key)
     coverageEntries.push({
       generatedOccurrences: unit.occurrences,
-      module: 'baseline-workflow',
+      module: unit.module,
       requirement: 'history-only',
       resolution: 'hospital-not-enabled',
-      source: {
-        code: unit.code,
-        display: unit.display,
-        system: unit.system,
-      },
+      source: unit.source,
       staticOccurrences: 0,
     })
   }
@@ -353,7 +433,7 @@ export function compileScenarioCatalog(input: {
     ...compiled,
     report: {
       blockers,
-      caseDefinitions: input.modules.map((module) => {
+      caseDefinitions: modules.map((module) => {
         const definition = scenarioCaseDefinitions[module]
         const { buildCaseTruth, ...definitionData } = definition
         return {
@@ -374,9 +454,12 @@ export function compileScenarioCatalog(input: {
       entries: coverageEntries,
       hospitalBaselineHash: canonicalJsonHash(input.baseline),
       sourceInventory: {
-        generatedContentHash: inventoryArtifact.generated.contentHash,
-        generatedCorpusHash: inventoryArtifact.generated.corpusHash,
-        generatedPatientCount: inventoryArtifact.generated.inventory.patientCount,
+        generated: selectedGeneratedInventories.map(generated => ({
+          contentHash: generated.contentHash,
+          corpusHash: generated.corpusHash,
+          module: generated.module,
+          patientCount: generated.inventory.patientCount,
+        })),
         staticContentHash: inventoryArtifact.static.contentHash,
         syntheaCommit: inventoryArtifact.syntheaCommit,
       },

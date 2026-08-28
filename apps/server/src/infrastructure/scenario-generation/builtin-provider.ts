@@ -4,6 +4,7 @@ import type {
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
 } from '@clinmesh/contracts/scenario'
+import { scenarioModules } from '@clinmesh/contracts/scenario'
 import type {
   ReferenceMedicalService,
   ReferenceMedicationProduct,
@@ -167,7 +168,7 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
     return {
       available: true,
       maxPopulation: 10,
-      modules: ['fever', 'type-2-diabetes', 'hypertension'],
+      modules: [...scenarioModules],
       providerId: 'builtin',
       providerName: 'ClinMesh 内置生成器',
     }

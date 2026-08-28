@@ -1288,7 +1288,7 @@ clock_revision
 
 完整 Reference Data Release 保存在可选的独立 SQLite 文件中，通过显式 CLI 执行 migration、import、list 和 verify；每个成功发布的 Release 固定来源版本、获取方式、许可、实际 artifact checksum、记录数、导入诊断与 content hash，失败导入不改变已有 Release。Server 只读打开该文件；未配置时使用稳定的内置 Release，仍可启动和 reset 已安装 Package。管理员 API 和 Web 只读取 Release 摘要，普通岗位不能读取完整参考内容。生成 Dataset 时固定 release ID/hash，并把同一 provenance 保存到 Profile Revision 和不可变 Package；operational SQLite 不保存完整全国参考目录，Package 安装和 reset 只读取已经解析的 Hospital Baseline 与患者事实。
 
-Dataset 保存规范化内容哈希、expected version 和稳定诊断；新生成内容同时保存病例定义、完整 Hospital Baseline、编译后目录、固定 Synthea static/generated inventory 的 hash，以及区分关键真值、工作流必需、历史保留、明确忽略、歧义和本院未启用的覆盖报告。关键依赖缺失或歧义会产生阻断安装的诊断。Package 与来源 Dataset 分离，安装后的 reset 只读取不可变 Package 快照，不重新调用 Provider 或当前编译器。生成任务到 Dataset 的复合外键是可空来源链接：删除 Dataset 时使用 `ON DELETE SET NULL`，任务仍以独立 `result_dataset_id` 保留完成时的结果标识；该例外不用于 Package、Epoch 或 HIS 运行事实。CaseTruth 保存患者认知、纵向病史、本次就诊、生理生成器、三级检查来源、诊断与处置空间及费用基准；Hospital Baseline 保存虚构医院、科室、诊断、检查、药品和库存目录。OpenHIS 只用于校准中国医院字段、关系和状态语义，不复制其数据或物理模型。
+Dataset 保存规范化内容哈希、expected version 和稳定诊断；新生成内容同时保存病例定义 hash、完整 Hospital Baseline hash、编译后目录 snapshot、固定 Synthea static inventory hash 和所选病种 generated inventory hash，以及区分关键真值、工作流必需、历史保留、明确忽略、歧义和本院未启用的覆盖报告。关键依赖缺失或歧义会产生阻断安装的诊断。Package 与来源 Dataset 分离，安装后的 reset 只读取不可变 Package 快照，不重新调用 Provider 或当前编译器。生成任务到 Dataset 的复合外键是可空来源链接：删除 Dataset 时使用 `ON DELETE SET NULL`，任务仍以独立 `result_dataset_id` 保留完成时的结果标识；该例外不用于 Package、Epoch 或 HIS 运行事实。CaseTruth 保存患者认知、纵向病史、本次就诊、生理生成器、三级检查来源、诊断与处置空间及费用基准；Hospital Baseline 保存虚构医院、科室、诊断、检查、药品和库存目录。OpenHIS 只用于校准中国医院字段、关系和状态语义，不复制其数据或物理模型。
 
 ### 10.4 确定性与故障注入
 

@@ -402,7 +402,7 @@ describe('persistent Scenario generation job HTTP contract', () => {
             mappingSetId: 'clinmesh-synthea-nhsa-diagnosis',
             version: '2026-08-28',
           }, {
-            contentHash: '5bb02fdda48776766d781966e810c1e4870c9ebeb5c7fe8af61910841a5f2451',
+            contentHash: '6d2a98850fb9d3cf96be1cd40d9de7058201f9190f10acb77ca838f7e25a100d',
             mappingSetId: 'clinmesh-rxnorm-drug-concepts',
             version: '2026-08-28',
           }],
@@ -937,7 +937,7 @@ describe('persistent Scenario generation job HTTP contract', () => {
     const dataset = commandResponseSchema(scenarioDatasetSchema)
       .parse(await generateResponse.json()).data
     expect(dataset.diagnostics).toEqual([])
-    expect(dataset.contentHash).toBe('7c2dae5a0e51e62c9fa37f7a95e1649e40c04dcbfcf7afdc32f01bfbae8fa2f8')
+    expect(dataset.contentHash).toBe('e4a800179d00d39e9f9cce9d04c9e0d3d53034f0536e6216298fae40a4493f95')
     expect(dataset.content.reproduction.catalogCompilation).toMatchObject({
       blockers: [],
       supported: true,

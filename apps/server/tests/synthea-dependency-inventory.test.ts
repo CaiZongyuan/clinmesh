@@ -48,7 +48,7 @@ describe('Synthea dependency inventory', () => {
       name: 'hypertension_medication',
       states: {
         Amlodipine: {
-          codes: [{ code: '308136', display: 'Amlodipine 5 MG Oral Tablet', system: 'RxNorm' }],
+          codes: [{ code: '308136', display: 'amLODIPine 2.5 MG Oral Tablet', system: 'RxNorm' }],
           direct_transition: 'Monitoring',
           type: 'MedicationOrder',
         },
@@ -180,6 +180,12 @@ describe('Synthea dependency inventory', () => {
         { occurrences: 2, resourceType: 'Observation' },
       ],
       reproduction: corpus.metadata,
+      units: [{
+        code: 'mm[Hg]',
+        display: 'mmHg',
+        occurrences: 2,
+        system: 'http://unitsofmeasure.org',
+      }],
     })
   })
 })

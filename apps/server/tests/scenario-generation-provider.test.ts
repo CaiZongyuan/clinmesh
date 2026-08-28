@@ -141,6 +141,23 @@ describe('Scenario generation Provider contract', () => {
     expect(generated.content.catalog.medications.map(item => item.id)).toEqual([
       'medication-amlodipine',
     ])
+    const localAmlodipine = generated.content.catalog.medications[0]
+    if (localAmlodipine === undefined || !('drugConcept' in localAmlodipine)) {
+      throw new Error('Expected the local amlodipine catalog item')
+    }
+    const historicalAmlodipine = generated.content.patients[0]?.fhirHistory.find(resource => (
+      resource.resourceType === 'MedicationRequest'
+    ))
+    if (historicalAmlodipine?.resourceType !== 'MedicationRequest') {
+      throw new Error('Expected the historical amlodipine request')
+    }
+    expect(historicalAmlodipine.medication).toMatchObject({
+      code: 'CM-DRUG-AMLODIPINE-2.5MG-ORAL-TABLET',
+    })
+    expect(localAmlodipine.drugConcept).toMatchObject({
+      code: 'CM-DRUG-AMLODIPINE-5MG-ORAL-TABLET',
+    })
+    expect(historicalAmlodipine.medication.code).not.toBe(localAmlodipine.drugConcept.code)
     expect(generated.content.inventory.map(lot => lot.itemId)).toEqual([
       'medication-amlodipine',
     ])
@@ -148,9 +165,12 @@ describe('Scenario generation Provider contract', () => {
       blockers: [],
       compiler: { id: 'clinmesh-scenario-catalog-compiler', version: '1' },
       sourceInventory: {
-        generatedContentHash: '7bb212ca0a5104165414117e55e82a3c9fdcced9a395a774af9dbfcb3fd15c51',
-        generatedCorpusHash: '6f65143c3ee51bb247cd98014fdd3a77da52bb80abccfefa3dcc365053e20a81',
-        generatedPatientCount: 10,
+        generated: [{
+          contentHash: 'ead14d30eddc01700956fbb6533ff23bb60724140b9a41512b6ea76e2d342b79',
+          corpusHash: '83452554594f8be7199745e45cbec845c1c886447827d7b0b225f165416fda7b',
+          module: 'hypertension',
+          patientCount: 10,
+        }],
         staticContentHash: 'cef9e9c11d7819bb72114afa91977e916e1bae089cbeeb1c7cf3860e322fee08',
         syntheaCommit: 'd9d07a6eef91ee5144293b42ab64224d84d124f8',
       },

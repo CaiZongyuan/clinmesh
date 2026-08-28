@@ -810,7 +810,7 @@ describe('Synthea R4 CaseTruth compiler', () => {
           medicationCodeableConcept: {
             coding: [{
               code: '308136',
-              display: 'Amlodipine 5 MG Oral Tablet',
+              display: 'amLODIPine 2.5 MG Oral Tablet',
               system: 'http://www.nlm.nih.gov/research/umls/rxnorm',
             }],
           },
@@ -851,8 +851,8 @@ describe('Synthea R4 CaseTruth compiler', () => {
     expect(compiled.fhirHistory.find(resource => resource.resourceType === 'MedicationRequest'))
       .toMatchObject({
         medication: {
-          code: 'CM-DRUG-AMLODIPINE-5MG-ORAL-TABLET',
-          display: '氨氯地平 5 mg 口服片剂',
+          code: 'CM-DRUG-AMLODIPINE-2.5MG-ORAL-TABLET',
+          display: '氨氯地平 2.5 mg 口服片剂',
           system: 'urn:clinmesh:reference:drug-concept',
         },
       })

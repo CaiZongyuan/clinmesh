@@ -67,6 +67,7 @@ import {
   updateScenarioDataset,
 } from './api-client.ts'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
+import { scenarioModuleOptions } from './scenario-module-options.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 
@@ -1962,39 +1963,19 @@ function ScenarioDatasetStudio({ locale }: { locale: WorkspaceLocale }): React.J
             </Field>
           </FieldGroup>
           <div className="flex flex-wrap items-center gap-4">
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={request.modules.includes('fever')}
-                disabled={request.modules.length === 1 && request.modules.includes('fever')}
-                onCheckedChange={checked => setRequest(current => ({
-                  ...current,
-                  modules: updateModules(current.modules, 'fever', checked === true),
-                }))}
-              />
-              {messages.moduleFever}
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={request.modules.includes('type-2-diabetes')}
-                disabled={request.modules.length === 1 && request.modules.includes('type-2-diabetes')}
-                onCheckedChange={checked => setRequest(current => ({
-                  ...current,
-                  modules: updateModules(current.modules, 'type-2-diabetes', checked === true),
-                }))}
-              />
-              {messages.moduleDiabetes}
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={request.modules.includes('hypertension')}
-                disabled={request.modules.length === 1 && request.modules.includes('hypertension')}
-                onCheckedChange={checked => setRequest(current => ({
-                  ...current,
-                  modules: updateModules(current.modules, 'hypertension', checked === true),
-                }))}
-              />
-              {messages.moduleHypertension}
-            </label>
+            {scenarioModuleOptions.map(option => (
+              <label className="flex items-center gap-2 text-sm" key={option.value}>
+                <Checkbox
+                  checked={request.modules.includes(option.value)}
+                  disabled={request.modules.length === 1 && request.modules.includes(option.value)}
+                  onCheckedChange={checked => setRequest(current => ({
+                    ...current,
+                    modules: updateModules(current.modules, option.value, checked === true),
+                  }))}
+                />
+                {option.label[locale]}
+              </label>
+            ))}
           </div>
           <div className="flex justify-end">
             <Button disabled={generate.isPending || selectedProvider?.available !== true} type="submit">

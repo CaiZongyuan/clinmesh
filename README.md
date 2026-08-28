@@ -257,18 +257,18 @@ java -cp "$PROVIDER_CLASSES:$SYNTHEA_JAR" ProviderServer
 
 ### 更新 Synthea 依赖清单
 
-`apps/server/reference-data/synthea-dependency-inventory.json` 保存递归 static inventory 和固定 generated corpus 的频次与 hash，不保存原始患者 Bundle。先从固定 Synthea checkout 准备 module 目录，并用 Provider 的三病种固定请求生成 10 人 JSON 响应，再从仓库根目录运行：
+`apps/server/reference-data/synthea-dependency-inventory.json` 保存递归 static inventory 和固定 generated corpus 的频次与 hash，不保存原始患者 Bundle。先从固定 Synthea checkout 准备 module 目录，并用 Provider 分别生成三个病种各 10 人的 `fever.json`、`type-2-diabetes.json` 和 `hypertension.json`，再从仓库根目录运行：
 
 ```sh
 SYNTHEA_DIR="$PWD/.data/synthea"
-CORPUS_PATH="$PWD/.data/synthea-provider/dependency-corpus.json"
+CORPUS_DIRECTORY="$PWD/.data/synthea-provider/dependency-corpora"
 pnpm --filter @clinmesh/server synthea-inventory \
   --module-directory "$SYNTHEA_DIR/src/main/resources/modules" \
-  --corpus "$CORPUS_PATH" \
+  --corpus-directory "$CORPUS_DIRECTORY" \
   --output "$PWD/apps/server/reference-data/synthea-dependency-inventory.json"
 ```
 
-CLI 固定校验 Synthea commit、`populationSeed=4242`、`clinicalSeed=7331`、三病种、10 人、`1986-08-01` 至 `2026-08-01` 和 `Asia/Shanghai`；参数不符时不覆盖清单。
+CLI 分别固定校验三份 corpus 的 Synthea commit、`populationSeed=4242`、`clinicalSeed=7331`、单病种、10 人、`1986-08-01` 至 `2026-08-01` 和 `Asia/Shanghai`；参数不符时不覆盖清单。
 
 ### Docker 一键启动 ClinMesh 与 Synthea
 

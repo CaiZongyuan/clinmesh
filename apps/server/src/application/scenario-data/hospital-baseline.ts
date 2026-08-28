@@ -1,7 +1,8 @@
-import type {
-  ScenarioDatasetContent,
-  ScenarioHospitalServiceCatalogItem,
-  ScenarioProductMedicationCatalogItem,
+import {
+  scenarioModules,
+  type ScenarioDatasetContent,
+  type ScenarioHospitalServiceCatalogItem,
+  type ScenarioProductMedicationCatalogItem,
 } from '@clinmesh/contracts/scenario'
 import type {
   ReferenceMedicalService,
@@ -219,7 +220,7 @@ function investigation(input: {
     ...catalogBase(input),
     allowedIndicationCodes: input.allowedIndicationCodes ?? (input.category === 'examination'
       ? ['clinical-assessment']
-      : ['fever', 'type-2-diabetes', 'hypertension']),
+      : [...scenarioModules]),
     available: input.available ?? true,
     category: input.category ?? 'laboratory',
     ...(coding === undefined ? {} : { coding }),

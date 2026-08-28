@@ -1,5 +1,5 @@
 {
-  "contentHash": "5bb02fdda48776766d781966e810c1e4870c9ebeb5c7fe8af61910841a5f2451",
+  "contentHash": "6d2a98850fb9d3cf96be1cd40d9de7058201f9190f10acb77ca838f7e25a100d",
   "mappingSetId": "clinmesh-rxnorm-drug-concepts",
   "mappings": [
     {
@@ -51,15 +51,15 @@
       "relationship": "equivalent",
       "source": {
         "code": "308136",
-        "display": "Amlodipine 5 MG Oral Tablet",
+        "display": "amLODIPine 2.5 MG Oral Tablet",
         "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
         "version": "rxnorm-2026-08-03"
       },
       "status": "active",
       "target": {
-        "code": "CM-DRUG-AMLODIPINE-5MG-ORAL-TABLET",
-        "conceptId": "drug-concept-amlodipine-5mg-oral-tablet",
-        "display": "氨氯地平 5 mg 口服片剂",
+        "code": "CM-DRUG-AMLODIPINE-2.5MG-ORAL-TABLET",
+        "conceptId": "drug-concept-amlodipine-2.5mg-oral-tablet",
+        "display": "氨氯地平 2.5 mg 口服片剂",
         "kind": "drug-concept",
         "system": "urn:clinmesh:reference:drug-concept",
         "version": "clinmesh-drug-concepts-2026-08-28"

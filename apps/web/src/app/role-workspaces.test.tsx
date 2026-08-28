@@ -561,9 +561,12 @@ function stubScenarioDataWorkspace(options: {
           entries: [],
           hospitalBaselineHash: 'e'.repeat(64),
           sourceInventory: {
-            generatedContentHash: 'f'.repeat(64),
-            generatedCorpusHash: '1'.repeat(64),
-            generatedPatientCount: 10,
+            generated: [{
+              contentHash: 'f'.repeat(64),
+              corpusHash: '1'.repeat(64),
+              module: 'fever',
+              patientCount: 10,
+            }],
             staticContentHash: '2'.repeat(64),
             syntheaCommit: '3'.repeat(40),
           },

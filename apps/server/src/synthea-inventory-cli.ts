@@ -1,5 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { scenarioModuleSchema } from '@clinmesh/contracts/scenario'
 import { scenarioCaseDefinitions } from './application/scenario-data/scenario-case-definitions.ts'
 import { canonicalJsonHash } from './application/scenario-data/canonical-json.ts'
 import {
@@ -20,7 +21,7 @@ function option(name: string): string {
 
 async function main(): Promise<void> {
   const moduleDirectory = option('--module-directory')
-  const corpusPath = option('--corpus')
+  const corpusDirectory = option('--corpus-directory')
   const outputPath = option('--output')
   const staticInventory = await scanSyntheaStaticInventory({
     moduleDirectory,
@@ -29,35 +30,42 @@ async function main(): Promise<void> {
     ))),
     syntheaCommit,
   })
-  const corpus = JSON.parse(await readFile(corpusPath, 'utf8')) as unknown
-  const generatedInventory = inventoryGeneratedSyntheaCorpus(corpus)
-  if (generatedInventory.reproduction.syntheaCommit !== syntheaCommit) {
-    throw new Error('Generated corpus Synthea commit does not match the fixed source commit')
-  }
-  const fixedCorpusIdentity = {
-    clinicalSeed: 7331,
-    modules: ['fever', 'type-2-diabetes', 'hypertension'],
-    patientCount: 10,
-    populationSeed: 4242,
-    timeRange: { end: '2026-08-01', start: '1986-08-01' },
-    timeZone: 'Asia/Shanghai',
-  }
-  const actualCorpusIdentity = {
-    clinicalSeed: generatedInventory.reproduction.clinicalSeed,
-    modules: generatedInventory.reproduction.modules,
-    patientCount: generatedInventory.patientCount,
-    populationSeed: generatedInventory.reproduction.populationSeed,
-    timeRange: generatedInventory.reproduction.timeRange,
-    timeZone: generatedInventory.reproduction.timeZone,
-  }
-  if (canonicalJsonHash(actualCorpusIdentity) !== canonicalJsonHash(fixedCorpusIdentity)) {
-    throw new Error('Generated corpus does not match the fixed inventory parameters')
-  }
+  const generatedInventories = Object.fromEntries(await Promise.all(
+    scenarioModuleSchema.options.map(async (module) => {
+      const corpus = JSON.parse(await readFile(resolve(corpusDirectory, `${module}.json`), 'utf8')) as unknown
+      const inventory = inventoryGeneratedSyntheaCorpus(corpus)
+      const fixedCorpusIdentity = {
+        clinicalSeed: 7331,
+        modules: [module],
+        patientCount: 10,
+        populationSeed: 4242,
+        syntheaCommit,
+        timeRange: { end: '2026-08-01', start: '1986-08-01' },
+        timeZone: 'Asia/Shanghai',
+      }
+      const actualCorpusIdentity = {
+        clinicalSeed: inventory.reproduction.clinicalSeed,
+        modules: inventory.reproduction.modules,
+        patientCount: inventory.patientCount,
+        populationSeed: inventory.reproduction.populationSeed,
+        syntheaCommit: inventory.reproduction.syntheaCommit,
+        timeRange: inventory.reproduction.timeRange,
+        timeZone: inventory.reproduction.timeZone,
+      }
+      if (canonicalJsonHash(actualCorpusIdentity) !== canonicalJsonHash(fixedCorpusIdentity)) {
+        throw new Error(`Generated ${module} corpus does not match the fixed inventory parameters`)
+      }
+      return [module, {
+        contentHash: canonicalJsonHash(inventory),
+        corpusHash: canonicalJsonHash(corpus),
+        inventory,
+      }] as const
+    }),
+  ))
   const artifact = {
     generated: {
-      contentHash: canonicalJsonHash(generatedInventory),
-      corpusHash: canonicalJsonHash(corpus),
-      inventory: generatedInventory,
+      contentHash: canonicalJsonHash(generatedInventories),
+      inventories: generatedInventories,
     },
     schemaVersion: '1',
     static: {
@@ -66,12 +74,14 @@ async function main(): Promise<void> {
     },
     syntheaCommit,
   }
+  const generated = Object.values(generatedInventories)
   await writeFile(outputPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8')
   process.stdout.write(`${JSON.stringify({
-    generatedConcepts: generatedInventory.concepts.length,
-    generatedResources: generatedInventory.resourceTypes.reduce((sum, item) => sum + item.occurrences, 0),
+    generatedConcepts: generated.reduce((sum, item) => sum + item.inventory.concepts.length, 0),
+    generatedResources: generated.reduce((sum, item) => sum + item.inventory.resourceTypes
+      .reduce((resourceSum, resource) => resourceSum + resource.occurrences, 0), 0),
     output: outputPath,
-    patients: generatedInventory.patientCount,
+    patients: generated.reduce((sum, item) => sum + item.inventory.patientCount, 0),
     staticConcepts: staticInventory.concepts.length,
     staticModules: staticInventory.modules.length,
   })}\n`)

@@ -79,6 +79,11 @@ describe('Scenario catalog compiler', () => {
       staticOccurrences: expect.any(Number),
       targetId: 'diagnosis-hypertension',
     }))
+    const coveredSourceCodes = new Set(compiled.report.entries.flatMap(entry => (
+      entry.source !== undefined && 'code' in entry.source ? [entry.source.code] : []
+    )))
+    expect(coveredSourceCodes.has('44054006')).toBe(false)
+    expect(coveredSourceCodes.has('386661006')).toBe(false)
   })
 
   it('blocks supported promotion when a critical dependency is absent', () => {
@@ -131,6 +136,25 @@ describe('Scenario catalog compiler', () => {
         module: 'hypertension',
         targetId: 'lab-cbc',
       }],
+      supported: false,
+    })
+
+    const missingComponent = compileScenarioCatalog({
+      baseline: {
+        ...baseline,
+        catalog: {
+          ...baseline.catalog,
+          investigations: baseline.catalog.investigations.filter(item => item.id !== 'lab-wbc'),
+        },
+      },
+      modules: ['hypertension'],
+    })
+    expect(missingComponent.report).toMatchObject({
+      blockers: expect.arrayContaining([{
+        code: 'WORKFLOW_DEPENDENCY_MISSING',
+        module: 'hypertension',
+        targetId: 'lab-wbc',
+      }]),
       supported: false,
     })
   })

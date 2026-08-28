@@ -29,8 +29,9 @@ export interface ScenarioCatalogDependency {
 
 export interface ScenarioCoverageOnlyDependency {
   requirement: 'explicitly-ignored' | 'history-only'
-  resolution: 'hospital-not-enabled' | 'not-applicable'
+  resolution: 'hospital-not-enabled' | 'mapped' | 'not-applicable'
   source: SourceCoding | { resourceType: string }
+  targetId?: string
 }
 
 export interface ScenarioCaseDefinition {
@@ -718,7 +719,7 @@ export const scenarioCaseDefinitions = {
     buildCaseTruth: hypertensionCaseTruth,
     builtInSource: {
       conditions: [{ code: '59621000', display: 'Essential hypertension (disorder)' }],
-      medications: [{ code: '308136', display: 'Amlodipine 5 MG Oral Tablet' }],
+      medications: [{ code: '308136', display: 'amLODIPine 2.5 MG Oral Tablet' }],
       observations: [],
     },
     catalogDependencies: [{
@@ -733,13 +734,7 @@ export const scenarioCaseDefinitions = {
       targetId: 'diagnosis-hypertension',
     }, {
       collection: 'medications',
-      mappingKind: 'medication',
       requirement: 'critical-truth',
-      source: {
-        code: '308136',
-        display: 'Amlodipine 5 MG Oral Tablet',
-        system: 'http://www.nlm.nih.gov/research/umls/rxnorm',
-      },
       targetId: 'medication-amlodipine',
     }, ...['lab-cbc', 'lab-creatinine', 'lab-egfr'].map(targetId => ({
       collection: 'investigations' as const,
@@ -747,6 +742,15 @@ export const scenarioCaseDefinitions = {
       targetId,
     }))],
     coverageOnlyDependencies: [{
+      requirement: 'history-only',
+      resolution: 'mapped',
+      source: {
+        code: '308136',
+        display: 'amLODIPine 2.5 MG Oral Tablet',
+        system: 'http://www.nlm.nih.gov/research/umls/rxnorm',
+      },
+      targetId: 'drug-concept-amlodipine-2.5mg-oral-tablet',
+    }, {
       requirement: 'history-only',
       resolution: 'hospital-not-enabled',
       source: {

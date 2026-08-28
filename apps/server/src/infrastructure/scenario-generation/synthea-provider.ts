@@ -3,7 +3,7 @@ import type {
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
 } from '@clinmesh/contracts/scenario'
-import { scenarioModuleSchema } from '@clinmesh/contracts/scenario'
+import { scenarioModuleSchema, scenarioModules } from '@clinmesh/contracts/scenario'
 import type {
   ReferenceMedicalService,
   ReferenceMedicationProduct,
@@ -322,7 +322,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
     return {
       available: true,
       maxPopulation: 10,
-      modules: ['fever', 'type-2-diabetes', 'hypertension'],
+      modules: [...scenarioModules],
       providerId: 'synthea',
       providerName: 'Synthea',
     }

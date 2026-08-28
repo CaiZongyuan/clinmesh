@@ -53,11 +53,13 @@ export const scenarioLoincCodingSchema = z.object({
   version: z.literal('2.83'),
 }).strict()
 
-export const scenarioModuleSchema = z.enum([
+export const scenarioModules = [
   'fever',
   'type-2-diabetes',
   'hypertension',
-])
+] as const
+
+export const scenarioModuleSchema = z.enum(scenarioModules)
 
 export const scenarioGenerationRequestSchema = z.object({
   modules: z.array(scenarioModuleSchema).min(1).max(8),
@@ -170,9 +172,12 @@ export const scenarioCatalogCompilationReportSchema = z.object({
   }).strict()),
   hospitalBaselineHash: z.string().regex(/^[a-f0-9]{64}$/),
   sourceInventory: z.object({
-    generatedContentHash: z.string().regex(/^[a-f0-9]{64}$/),
-    generatedCorpusHash: z.string().regex(/^[a-f0-9]{64}$/),
-    generatedPatientCount: z.number().int().positive(),
+    generated: z.array(z.object({
+      contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+      corpusHash: z.string().regex(/^[a-f0-9]{64}$/),
+      module: scenarioModuleSchema,
+      patientCount: z.number().int().positive(),
+    }).strict()).min(1),
     staticContentHash: z.string().regex(/^[a-f0-9]{64}$/),
     syntheaCommit: z.string().regex(/^[a-f0-9]{40}$/),
   }).strict(),

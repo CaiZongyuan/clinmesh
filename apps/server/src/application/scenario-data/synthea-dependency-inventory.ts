@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { scenarioModuleSchema } from '@clinmesh/contracts/scenario'
 import { z } from 'zod'
 import { canonicalJsonHash } from './canonical-json.ts'
 
@@ -8,6 +9,16 @@ const syntheaCodingSchema = z.object({
   display: z.string().min(1),
   system: z.string().min(1),
 }).passthrough()
+
+const syntheaQuantityUnitSchema = z.object({
+  code: z.string().min(1),
+  system: z.string().min(1),
+  unit: z.string().min(1),
+}).passthrough().transform(value => ({
+  code: value.code,
+  display: value.unit,
+  system: value.system,
+}))
 
 const syntheaStateSchema = z.record(z.string(), z.unknown())
 
@@ -48,21 +59,25 @@ const inventoryConceptSchema = z.object({
 }).strict()
 
 const inventoryReproductionSchema = generatedCorpusSchema.shape.metadata
+const generatedInventorySchema = z.object({
+  concepts: z.array(inventoryConceptSchema),
+  patientCount: z.number().int().positive(),
+  reproduction: inventoryReproductionSchema,
+  resourceTypes: z.array(z.object({
+    occurrences: z.number().int().positive(),
+    resourceType: z.string().min(1),
+  }).strict()),
+  units: z.array(inventoryConceptSchema),
+}).strict()
 
 export const syntheaDependencyInventoryArtifactSchema = z.object({
   generated: z.object({
     contentHash: z.string().regex(/^[a-f0-9]{64}$/),
-    corpusHash: z.string().regex(/^[a-f0-9]{64}$/),
-    inventory: z.object({
-      concepts: z.array(inventoryConceptSchema),
-      patientCount: z.number().int().positive(),
-      reproduction: inventoryReproductionSchema,
-      resourceTypes: z.array(z.object({
-        occurrences: z.number().int().positive(),
-        resourceType: z.string().min(1),
-      }).strict()),
-      units: z.array(inventoryConceptSchema),
-    }).strict(),
+    inventories: z.record(scenarioModuleSchema, z.object({
+      contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+      corpusHash: z.string().regex(/^[a-f0-9]{64}$/),
+      inventory: generatedInventorySchema,
+    }).strict()),
   }).strict(),
   schemaVersion: z.literal('1'),
   static: z.object({
@@ -80,7 +95,9 @@ export const syntheaDependencyInventoryArtifactSchema = z.object({
   syntheaCommit: z.string().regex(/^[a-f0-9]{40}$/),
 }).strict().superRefine((value, context) => {
   if (value.static.inventory.syntheaCommit !== value.syntheaCommit
-    || value.generated.inventory.reproduction.syntheaCommit !== value.syntheaCommit) {
+    || Object.values(value.generated.inventories).some(item => (
+      item.inventory.reproduction.syntheaCommit !== value.syntheaCommit
+    ))) {
     context.addIssue({
       code: 'custom',
       message: 'Synthea inventory source commits do not match',
@@ -94,7 +111,25 @@ export const syntheaDependencyInventoryArtifactSchema = z.object({
       path: ['static', 'contentHash'],
     })
   }
-  if (canonicalJsonHash(value.generated.inventory) !== value.generated.contentHash) {
+  for (const module of scenarioModuleSchema.options) {
+    const generated = value.generated.inventories[module]
+    if (generated.inventory.reproduction.modules.length !== 1
+      || generated.inventory.reproduction.modules[0] !== module) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Generated Synthea inventory module does not match its key',
+        path: ['generated', 'inventories', module, 'inventory', 'reproduction', 'modules'],
+      })
+    }
+    if (canonicalJsonHash(generated.inventory) !== generated.contentHash) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Generated Synthea inventory content hash does not match',
+        path: ['generated', 'inventories', module, 'contentHash'],
+      })
+    }
+  }
+  if (canonicalJsonHash(value.generated.inventories) !== value.generated.contentHash) {
     context.addIssue({
       code: 'custom',
       message: 'Generated Synthea inventory content hash does not match',
@@ -247,7 +282,7 @@ function collectGeneratedCodings(
       continue
     }
     if (key === 'valueQuantity') {
-      const unit = syntheaCodingSchema.safeParse(entry)
+      const unit = syntheaQuantityUnitSchema.safeParse(entry)
       if (unit.success) addGeneratedConcept(units, unit.data)
     }
     collectGeneratedCodings(entry, concepts, units)
