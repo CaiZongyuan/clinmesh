@@ -1,4 +1,8 @@
-import type { ScenarioDatasetContent } from '@clinmesh/contracts/scenario'
+import type {
+  ScenarioDatasetContent,
+  ScenarioProductMedicationCatalogItem,
+} from '@clinmesh/contracts/scenario'
+import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
 import {
   investigationLoincCoding,
   resolveUcumUnit,
@@ -6,6 +10,15 @@ import {
 import { canonicalJsonHash } from './canonical-json.ts'
 
 const hospitalId = 'hospital-synthetic-renhe'
+
+type HospitalBaseline = Omit<
+  Pick<ScenarioDatasetContent, 'catalog' | 'hospital' | 'inventory'>,
+  'catalog'
+> & {
+  catalog: Omit<ScenarioDatasetContent['catalog'], 'medications'> & {
+    medications: ScenarioProductMedicationCatalogItem[]
+  }
+}
 
 function regulatoryVerification(product: {
   approvalNumber: string
@@ -17,7 +30,43 @@ function regulatoryVerification(product: {
     result: 'synthetic-match' as const,
     source: 'nmpa-manual-check' as const,
     verifiedAt: '2026-08-28T00:00:00+08:00',
-    verifiedFieldsHash: canonicalJsonHash(product),
+    verifiedFieldsHash: canonicalJsonHash({
+      approvalNumber: product.approvalNumber,
+      genericName: product.genericName,
+      manufacturer: product.manufacturer,
+    }),
+  }
+}
+
+function selectedMedicationProduct(
+  products: readonly ReferenceMedicationProduct[],
+  code: string,
+): ReferenceMedicationProduct {
+  const matches = products.filter(product => (
+    product.code === code
+    && product.system === 'urn:clinmesh:reference:nhsa-medication-product'
+  ))
+  if (matches.length !== 1) {
+    throw new Error(`Medication Product snapshot must contain exactly one ${code}`)
+  }
+  const product = matches[0]!
+  if (product.status !== 'active') throw new Error(`Medication Product ${code} is not active`)
+  return product
+}
+
+function selectedProductSnapshot(product: ReferenceMedicationProduct) {
+  return {
+    approvalNumber: product.approvalNumber,
+    brandName: product.brandName,
+    code: product.code,
+    dosageForm: product.dosageForm,
+    genericName: product.genericName,
+    id: product.id,
+    manufacturer: product.manufacturer,
+    packageDescription: product.packageDescription,
+    strength: product.strength,
+    system: 'urn:clinmesh:reference:nhsa-medication-product' as const,
+    version: product.version,
   }
 }
 
@@ -103,10 +152,21 @@ function investigation(input: {
   }
 }
 
-export function createHospitalBaseline(): Pick<
-  ScenarioDatasetContent,
-  'catalog' | 'hospital' | 'inventory'
-> {
+export function createHospitalBaseline(
+  medicationProducts: readonly ReferenceMedicationProduct[],
+): HospitalBaseline {
+  const acetaminophenProduct = selectedMedicationProduct(
+    medicationProducts,
+    'CM-NHSA-PRODUCT-ACETAMINOPHEN',
+  )
+  const metforminProduct = selectedMedicationProduct(
+    medicationProducts,
+    'CM-NHSA-PRODUCT-METFORMIN',
+  )
+  const amlodipineProduct = selectedMedicationProduct(
+    medicationProducts,
+    'CM-NHSA-PRODUCT-AMLODIPINE',
+  )
   return {
     catalog: {
       departments: [{
@@ -403,24 +463,8 @@ export function createHospitalBaseline(): Pick<
           system: 'urn:clinmesh:reference:drug-concept' as const,
           version: 'clinmesh-drug-concepts-2026-08-28',
         },
-        product: {
-          approvalNumber: 'CM-APPROVAL-ACETAMINOPHEN',
-          brandName: null,
-          code: 'CM-NHSA-PRODUCT-ACETAMINOPHEN',
-          dosageForm: '片剂',
-          genericName: '对乙酰氨基酚片',
-          id: 'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-ACETAMINOPHEN',
-          manufacturer: '仁和仿真制药一厂',
-          packageDescription: '20片/盒',
-          strength: '500 mg',
-          system: 'urn:clinmesh:reference:nhsa-medication-product' as const,
-          version: 'nhsa-medication-products-2026-08-07',
-        },
-        regulatoryVerification: regulatoryVerification({
-          approvalNumber: 'CM-APPROVAL-ACETAMINOPHEN',
-          genericName: '对乙酰氨基酚片',
-          manufacturer: '仁和仿真制药一厂',
-        }),
+        product: selectedProductSnapshot(acetaminophenProduct),
+        regulatoryVerification: regulatoryVerification(acetaminophenProduct),
         restriction: '注意总剂量及肝功能风险。',
         unit: '片',
         workflow: {
@@ -449,24 +493,8 @@ export function createHospitalBaseline(): Pick<
           system: 'urn:clinmesh:reference:drug-concept' as const,
           version: 'clinmesh-drug-concepts-2026-08-28',
         },
-        product: {
-          approvalNumber: 'CM-APPROVAL-METFORMIN',
-          brandName: null,
-          code: 'CM-NHSA-PRODUCT-METFORMIN',
-          dosageForm: '片剂',
-          genericName: '盐酸二甲双胍片',
-          id: 'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-METFORMIN',
-          manufacturer: '仁和仿真制药二厂',
-          packageDescription: '60片/盒',
-          strength: '500 mg',
-          system: 'urn:clinmesh:reference:nhsa-medication-product' as const,
-          version: 'nhsa-medication-products-2026-08-07',
-        },
-        regulatoryVerification: regulatoryVerification({
-          approvalNumber: 'CM-APPROVAL-METFORMIN',
-          genericName: '盐酸二甲双胍片',
-          manufacturer: '仁和仿真制药二厂',
-        }),
+        product: selectedProductSnapshot(metforminProduct),
+        regulatoryVerification: regulatoryVerification(metforminProduct),
         restriction: '调整方案前评估肾功能。',
         unit: '片',
         workflow: {
@@ -495,24 +523,8 @@ export function createHospitalBaseline(): Pick<
           system: 'urn:clinmesh:reference:drug-concept' as const,
           version: 'clinmesh-drug-concepts-2026-08-28',
         },
-        product: {
-          approvalNumber: 'CM-APPROVAL-AMLODIPINE',
-          brandName: null,
-          code: 'CM-NHSA-PRODUCT-AMLODIPINE',
-          dosageForm: '片剂',
-          genericName: '苯磺酸氨氯地平片',
-          id: 'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-AMLODIPINE',
-          manufacturer: '仁和仿真制药三厂',
-          packageDescription: '30片/盒',
-          strength: '5 mg',
-          system: 'urn:clinmesh:reference:nhsa-medication-product' as const,
-          version: 'nhsa-medication-products-2026-08-07',
-        },
-        regulatoryVerification: regulatoryVerification({
-          approvalNumber: 'CM-APPROVAL-AMLODIPINE',
-          genericName: '苯磺酸氨氯地平片',
-          manufacturer: '仁和仿真制药三厂',
-        }),
+        product: selectedProductSnapshot(amlodipineProduct),
+        regulatoryVerification: regulatoryVerification(amlodipineProduct),
         restriction: '开始或调整方案前评估血压和外周水肿。',
         unit: '片',
         workflow: {

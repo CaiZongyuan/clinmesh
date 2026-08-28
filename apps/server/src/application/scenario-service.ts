@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { scenarioStateSchema } from '@clinmesh/contracts/his'
+import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
 import {
   scenarioDatasetContentSchema,
   type ScenarioDatasetContent,
@@ -23,17 +24,6 @@ const scenarioPackageRowSchema = z.object({
   source_dataset_version: z.number().int().positive(),
 }).strict()
 const countRowSchema = z.object({ count: z.number().int().nonnegative() }).strict()
-const hospitalBaseline = createHospitalBaseline()
-const hospitalDiagnosisIdByCode = new Map(
-  hospitalBaseline.catalog.diagnoses.map(diagnosis => [diagnosis.code, diagnosis.id]),
-)
-
-function requiredHospitalMedication(id: string) {
-  const medication = hospitalBaseline.catalog.medications.find(item => item.id === id)
-  if (medication === undefined) throw new Error(`The hospital baseline is missing ${id}`)
-  return medication
-}
-const hospitalAcetaminophen = requiredHospitalMedication('medication-acetaminophen')
 
 function installedMedicationConfigJson(
   medication: ScenarioDatasetContent['catalog']['medications'][number],
@@ -41,7 +31,6 @@ function installedMedicationConfigJson(
   allowedCombinationIds = medication.workflow.allowedCombinationIds,
 ) {
   return JSON.stringify({
-    availableScopes: medication.availableScopes,
     allowedCombinationIds,
     allowedCourseDays: medication.workflow.allowedCourseDays,
     allowedDiagnosisCatalogItemIds: medication.workflow.allowedDiagnosisCodes.flatMap((code) => {
@@ -54,10 +43,15 @@ function installedMedicationConfigJson(
     defaultCourseDays: medication.workflow.defaultCourseDays,
     defaultQuantity: medication.workflow.defaultQuantity,
     dose: medication.defaultDose,
-    drugConcept: medication.drugConcept,
     frequency: medication.defaultFrequency,
-    product: medication.product,
-    regulatoryVerification: medication.regulatoryVerification,
+    ...('product' in medication
+      ? {
+          availableScopes: medication.availableScopes,
+          drugConcept: medication.drugConcept,
+          product: medication.product,
+          regulatoryVerification: medication.regulatoryVerification,
+        }
+      : {}),
   })
 }
 
@@ -561,11 +555,18 @@ export class ScenarioService {
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
   readonly #fhir: FhirRepository
+  readonly #hospitalBaseline: ReturnType<typeof createHospitalBaseline>
 
-  constructor(database: ClinMeshDatabase, fhir: FhirRepository, commands: CommandExecutor) {
+  constructor(
+    database: ClinMeshDatabase,
+    fhir: FhirRepository,
+    commands: CommandExecutor,
+    medicationProducts: readonly ReferenceMedicationProduct[],
+  ) {
     this.#commands = commands
     this.#database = database
     this.#fhir = fhir
+    this.#hospitalBaseline = createHospitalBaseline(medicationProducts)
   }
 
   ensureInitialEpoch(input: {
@@ -939,6 +940,16 @@ export class ScenarioService {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)
     `)
     const supportsPrescriptionConclusion = blueprint.medicationRulesVersion === 'prescription-conclusion-v1'
+    const hospitalBaseline = this.#hospitalBaseline
+    const hospitalDiagnosisIdByCode = new Map(
+      hospitalBaseline.catalog.diagnoses.map(diagnosis => [diagnosis.code, diagnosis.id]),
+    )
+    const hospitalAcetaminophen = hospitalBaseline.catalog.medications.find(
+      medication => medication.id === 'medication-acetaminophen',
+    )
+    if (hospitalAcetaminophen === undefined) {
+      throw new Error('The Hospital Baseline is missing medication-acetaminophen')
+    }
     const packageDiagnosisCatalog = blueprint.catalog?.diagnoses.filter(
       diagnosis => diagnosis.active && diagnosis.status === 'active',
     )
@@ -1153,6 +1164,7 @@ export class ScenarioService {
     workspaceId: string
   }): void {
     const context = { epoch: input.epoch, workspaceId: input.workspaceId }
+    const hospitalBaseline = this.#hospitalBaseline
     const hospital = input.blueprint.hospital
     this.#fhir.create(context, {
       resourceType: 'Organization',
@@ -1234,7 +1246,7 @@ export class ScenarioService {
         code: medication.code,
         id: medication.id,
         name: medication.name,
-        product: medication.product,
+        product: 'product' in medication ? medication.product : undefined,
       })) ?? [{
         id: 'medication-oseltamivir',
         code: 'OSELTAMIVIR',

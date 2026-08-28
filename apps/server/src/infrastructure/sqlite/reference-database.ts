@@ -299,6 +299,16 @@ function medicationProductRows(
   })) as Array<ReferenceMedicationProduct & { sourceId: string }>
 }
 
+export function listReferenceMedicationProducts(
+  database: ReferenceDatabase,
+  releaseId: string,
+): ReferenceMedicationProduct[] {
+  verifyReferenceMigrations(database)
+  return medicationProductRows(database, releaseId).map(({ sourceId: _sourceId, ...product }) => (
+    product
+  ))
+}
+
 function readReferenceDataReleases(database: ReferenceDatabase): ReferenceDataReleaseList {
   const rows = z.array(z.object({
     concept_count: z.number().int(),

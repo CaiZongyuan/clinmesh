@@ -153,6 +153,9 @@ describe('Scenario Dataset diagnostics', () => {
     )
     const first = generated.content.catalog.medications[0]!
     const second = generated.content.catalog.medications[1]!
+    if (!('product' in first) || !('product' in second)) {
+      throw new Error('Built-in generation did not compile Product-backed medications')
+    }
     const medications = [{
       ...first,
       regulatoryVerification: {

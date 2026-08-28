@@ -3,6 +3,7 @@ import type {
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
 } from '@clinmesh/contracts/scenario'
+import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
 import { z } from 'zod'
 import {
   generatedScenarioSimulatorRules,
@@ -12,6 +13,7 @@ import {
   type SourcePatientCorpus,
 } from '../../application/scenario-data/provider.ts'
 import { createHospitalBaseline } from '../../application/scenario-data/hospital-baseline.ts'
+import { syntheticNhsaMedicationProductSnapshot } from '../../application/scenario-data/medication-product-snapshot.ts'
 import {
   compileSyntheaR4Bundle,
   syntheaR4ResourceTypes,
@@ -276,12 +278,14 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
   readonly #endpoint: URL
   readonly #fetch: typeof fetch
   readonly #maxResponseBytes: number
+  readonly #medicationProducts: readonly ReferenceMedicationProduct[]
   readonly #timeoutMs: number
 
   constructor(options: {
     baseUrl: string
     fetch?: typeof fetch
     maxResponseBytes?: number
+    medicationProducts?: readonly ReferenceMedicationProduct[]
     timeoutMs?: number
   }) {
     const endpoint = new URL(options.baseUrl)
@@ -294,6 +298,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
     this.#endpoint = endpoint
     this.#fetch = options.fetch ?? globalThis.fetch
     this.#maxResponseBytes = options.maxResponseBytes ?? 64 * 1024 * 1024
+    this.#medicationProducts = options.medicationProducts ?? syntheticNhsaMedicationProductSnapshot
     this.#timeoutMs = options.timeoutMs ?? 5 * 60 * 1_000
   }
 
@@ -384,7 +389,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
       }
     })
     const patients = compiled.map(item => item.patient)
-    const baseline = createHospitalBaseline()
+    const baseline = createHospitalBaseline(this.#medicationProducts)
     const content: ScenarioDatasetContent = {
       catalog: baseline.catalog,
       hiddenFacts: patients.map(patient => ({

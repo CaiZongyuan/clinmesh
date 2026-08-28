@@ -2,6 +2,7 @@ import {
   referenceDataProvenanceSchema,
   referenceDataReleaseListSchema,
   type ReferenceDataReleaseList,
+  type ReferenceMedicationProduct,
 } from '@clinmesh/contracts/reference-data'
 import type { ActorContext } from './command-executor.ts'
 
@@ -10,6 +11,7 @@ const BUILTIN_RELEASE_CONTENT_HASH = 'c4f3db18716deead08d407dec4473d2fb30cf4d098
 
 export interface ReferenceDataReader {
   list(): ReferenceDataReleaseList
+  medicationProducts(releaseId: string): ReferenceMedicationProduct[]
 }
 
 export class ReferenceDataError extends Error {
@@ -76,6 +78,11 @@ export class ReferenceDataService {
       contentHash: release.contentHash,
       releaseId: release.releaseId,
     })
+  }
+
+  medicationProducts(): ReferenceMedicationProduct[] {
+    const release = this.#releases().items.find(item => item.medicationProductCount > 0)
+    return release === undefined ? [] : (this.#reader?.medicationProducts(release.releaseId) ?? [])
   }
 
   #releases(): ReferenceDataReleaseList {

@@ -3,6 +3,7 @@ import {
   scenarioGenerationRequestSchema,
   scenarioInvestigationCatalogItemSchema,
   scenarioInvestigationResultSchema,
+  scenarioMedicationCatalogItemSchema,
   scenarioPhysiologyGeneratorSchema,
   scenarioUcumUnitSchema,
   syntheticPatientMappingCatalogSchema,
@@ -109,6 +110,39 @@ describe('Scenario UCUM units', () => {
     })).toMatchObject({
       unit: { code: 'Cel', system: 'http://unitsofmeasure.org', version: '2.2' },
     })
+  })
+})
+
+describe('Scenario medication compatibility', () => {
+  it('reads a pre-product medication without rewriting its persisted shape', () => {
+    const legacyMedication = {
+      active: true,
+      category: '解热镇痛药',
+      code: 'ACETAMINOPHEN',
+      defaultDose: '0.5 g',
+      defaultFrequency: 'PRN',
+      defaultRoute: '口服',
+      dosageForm: '片剂',
+      id: 'medication-acetaminophen',
+      name: '对乙酰氨基酚片',
+      organizationId: 'hospital-synthetic-renhe',
+      priceFen: 120,
+      restriction: '注意总剂量。',
+      status: 'active',
+      unit: '片',
+      workflow: {
+        allowedCombinationIds: [],
+        allowedCourseDays: [3],
+        allowedDiagnosisCodes: ['R50.9'],
+        allowedDoseTexts: ['0.5 g'],
+        allowedFrequencyCodes: ['PRN'],
+        allowedQuantities: [6],
+        defaultCourseDays: 3,
+        defaultQuantity: 6,
+      },
+    }
+
+    expect(scenarioMedicationCatalogItemSchema.parse(legacyMedication)).toEqual(legacyMedication)
   })
 })
 

@@ -7,6 +7,8 @@ import {
   parseNhsaMedicationProductCsvArtifact,
   parseUcumXmlReferenceArtifact,
 } from '../src/infrastructure/reference-data/reference-source-importers.ts'
+import { createHospitalBaseline } from '../src/application/scenario-data/hospital-baseline.ts'
+import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
 
 const fixture = (name: string) => fileURLToPath(
   new URL(`./fixtures/reference-data/${name}`, import.meta.url),
@@ -112,6 +114,16 @@ describe('Reference Data source importers', () => {
       code: 'CM-NHSA-PRODUCT-METFORMIN',
       status: 'active',
     }), expect.objectContaining({ code: 'CM-NHSA-PRODUCT-AMLODIPINE' })])
+    expect(artifact.medicationProducts).toEqual(syntheticNhsaMedicationProductSnapshot)
+    const hospitalBaseline = createHospitalBaseline(artifact.medicationProducts)
+    expect(hospitalBaseline.catalog.medications.map(medication => medication.product.id)).toEqual(
+      artifact.medicationProducts.map(product => product.id),
+    )
+    expect(() => createHospitalBaseline(artifact.medicationProducts.map(product => (
+      product.code === 'CM-NHSA-PRODUCT-METFORMIN'
+        ? { ...product, status: 'inactive' as const }
+        : product
+    )))).toThrow('is not active')
   })
 
   it('rejects malformed rows and duplicate source coding', () => {

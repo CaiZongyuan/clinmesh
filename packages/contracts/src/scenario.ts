@@ -149,13 +149,30 @@ export const scenarioInvestigationCatalogItemSchema = scenarioCatalogItemBaseSch
   valueType: z.enum(['boolean', 'codeable', 'panel', 'quantity', 'string']),
 }).strict()
 
-const scenarioMedicationCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
-  availableScopes: z.array(z.enum(['outpatient', 'inpatient'])).min(1),
+const scenarioMedicationWorkflowSchema = z.object({
+  allowedCombinationIds: z.array(z.string().min(1)),
+  allowedCourseDays: z.array(z.number().int().positive()).min(1),
+  allowedDiagnosisCodes: z.array(z.string().min(1)).min(1),
+  allowedDoseTexts: z.array(z.string().min(1)).min(1),
+  allowedFrequencyCodes: z.array(z.string().min(1)).min(1),
+  allowedQuantities: z.array(z.number().int().positive()).min(1),
+  defaultCourseDays: z.number().int().positive(),
+  defaultQuantity: z.number().int().positive(),
+}).strict()
+
+const scenarioLegacyMedicationCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
   category: z.string().min(1),
   defaultDose: z.string().min(1),
   defaultFrequency: z.string().min(1),
   defaultRoute: z.string().min(1),
   dosageForm: z.string().min(1),
+  restriction: z.string().min(1).nullable(),
+  unit: z.string().min(1),
+  workflow: scenarioMedicationWorkflowSchema,
+}).strict()
+
+export const scenarioProductMedicationCatalogItemSchema = scenarioLegacyMedicationCatalogItemSchema.extend({
+  availableScopes: z.array(z.enum(['outpatient', 'inpatient'])).min(1),
   drugConcept: z.object({
     code: z.string().min(1),
     conceptId: z.string().min(1),
@@ -184,19 +201,12 @@ const scenarioMedicationCatalogItemSchema = scenarioCatalogItemBaseSchema.extend
     verifiedAt: z.iso.datetime({ offset: true }),
     verifiedFieldsHash: z.string().regex(/^[a-f0-9]{64}$/),
   }).strict(),
-  restriction: z.string().min(1).nullable(),
-  workflow: z.object({
-    allowedCombinationIds: z.array(z.string().min(1)),
-    allowedCourseDays: z.array(z.number().int().positive()).min(1),
-    allowedDiagnosisCodes: z.array(z.string().min(1)).min(1),
-    allowedDoseTexts: z.array(z.string().min(1)).min(1),
-    allowedFrequencyCodes: z.array(z.string().min(1)).min(1),
-    allowedQuantities: z.array(z.number().int().positive()).min(1),
-    defaultCourseDays: z.number().int().positive(),
-    defaultQuantity: z.number().int().positive(),
-  }).strict(),
-  unit: z.string().min(1),
 }).strict()
+
+export const scenarioMedicationCatalogItemSchema = z.union([
+  scenarioProductMedicationCatalogItemSchema,
+  scenarioLegacyMedicationCatalogItemSchema,
+])
 
 const scenarioResultValueSchema = z.union([z.boolean(), z.number(), z.string().min(1)])
 
@@ -789,6 +799,9 @@ export const startSyntheticPatientVisitsResultSchema = z.object({
 export type ScenarioDataset = z.infer<typeof scenarioDatasetSchema>
 export type ScenarioDatasetList = z.infer<typeof scenarioDatasetListSchema>
 export type ScenarioDatasetContent = z.infer<typeof scenarioDatasetContentSchema>
+export type ScenarioProductMedicationCatalogItem = z.infer<
+  typeof scenarioProductMedicationCatalogItemSchema
+>
 export type ScenarioDiagnostic = z.infer<typeof scenarioDiagnosticSchema>
 export type ScenarioGenerationRequest = z.infer<typeof scenarioGenerationRequestSchema>
 export type ScenarioGenerationJob = z.infer<typeof scenarioGenerationJobSchema>

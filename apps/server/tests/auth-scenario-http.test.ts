@@ -22,6 +22,7 @@ import {
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { readServerConfig } from '../src/config.ts'
+import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 
 const betterAuthErrorSchema = z.object({
@@ -1027,6 +1028,161 @@ describe('trusted session and Scenario HTTP contract', () => {
       initialStateHash: installed.scenario.initialStateHash,
       scenarioId: installed.packageId,
     })
+  })
+
+  it('reads, replays, installs, and resets a pre-product Dataset without rewriting its hash', async () => {
+    const { password, runtime } = await createTestRuntime('clinmesh-legacy-product-package-http-')
+    const cookie = await signInSyntheticAccount(runtime, password, 'admin@demo.clinmesh.local')
+    const headers = (idempotencyKey = randomUUID()) => ({
+      'content-type': 'application/json',
+      cookie,
+      'idempotency-key': idempotencyKey,
+      origin: 'http://localhost',
+    })
+    const generateBody = JSON.stringify({
+      modules: ['fever'],
+      name: '升级前药品目录数据',
+      population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
+      providerId: 'builtin',
+      seeds: { clinical: 17, population: 23 },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    })
+    const generateIdempotencyKey = randomUUID()
+    const generate = () => runtime.app.request(
+      '/api/sim/v1/scenario-datasets/actions/generate',
+      {
+        body: generateBody,
+        headers: headers(generateIdempotencyKey),
+        method: 'POST',
+      },
+    )
+    const generatedResponse = commandResponseSchema(scenarioDatasetSchema)
+      .parse(await (await generate()).json())
+    const generated = generatedResponse.data
+    const legacyContent = {
+      ...generated.content,
+      catalog: {
+        ...generated.content.catalog,
+        medications: generated.content.catalog.medications.map(medication => ({
+          active: medication.active,
+          category: medication.category,
+          code: medication.code,
+          defaultDose: medication.defaultDose,
+          defaultFrequency: medication.defaultFrequency,
+          defaultRoute: medication.defaultRoute,
+          dosageForm: medication.dosageForm,
+          id: medication.id,
+          name: medication.name,
+          organizationId: medication.organizationId,
+          priceFen: medication.priceFen,
+          restriction: medication.restriction,
+          status: medication.status,
+          unit: medication.unit,
+          workflow: medication.workflow,
+        })),
+      },
+    }
+    const legacyHash = canonicalJsonHash(legacyContent)
+    const legacyReceipt = {
+      ...generatedResponse,
+      data: {
+        ...generated,
+        content: legacyContent,
+        contentHash: legacyHash,
+      },
+    }
+    runtime.database.driver.prepare(`
+      UPDATE command_receipt SET response_json = ?
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND operation = 'scenario-dataset.generate' AND idempotency_key = ?
+    `).run(JSON.stringify(legacyReceipt), generateIdempotencyKey)
+    const replayResponse = await generate()
+    expect(replayResponse.status).toBe(200)
+    expect(commandResponseSchema(scenarioDatasetSchema).parse(
+      await replayResponse.json(),
+    )).toEqual(legacyReceipt)
+    runtime.database.driver.prepare(`
+      UPDATE scenario_dataset
+      SET content_json = ?, content_hash = ?, diagnostics_json = '[]'
+      WHERE workspace_id = 'workspace-demo' AND dataset_id = ?
+    `).run(JSON.stringify(legacyContent), legacyHash, generated.datasetId)
+
+    const readResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}`,
+      { headers: { cookie } },
+    )
+    expect(readResponse.status).toBe(200)
+    const legacyDataset = scenarioDatasetSchema.parse(await readResponse.json())
+    expect(legacyDataset.contentHash).toBe(legacyHash)
+    expect(legacyDataset.content.catalog.medications).toEqual(legacyContent.catalog.medications)
+    expect(legacyDataset.content.catalog.medications[0]).not.toHaveProperty('product')
+
+    const updateResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}`,
+      {
+        body: JSON.stringify({
+          expectedVersion: 1,
+          input: { content: legacyContent, name: '升级前药品目录数据' },
+        }),
+        headers: headers(),
+        method: 'PUT',
+      },
+    )
+    expect(updateResponse.status).toBe(200)
+    const updated = commandResponseSchema(scenarioDatasetSchema).parse(await updateResponse.json())
+    expect(updated.data).toMatchObject({ contentHash: legacyHash, version: 2 })
+    expect(updated.data.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'MEDICATION_PRODUCT_METADATA_MISSING' }),
+    ]))
+
+    runtime.database.driver.prepare(`
+      UPDATE scenario_dataset SET diagnostics_json = '[]'
+      WHERE workspace_id = 'workspace-demo' AND dataset_id = ? AND version = 2
+    `).run(generated.datasetId)
+    const installResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}/actions/install`,
+      {
+        body: JSON.stringify({ expectedVersion: 2 }),
+        headers: headers(),
+        method: 'POST',
+      },
+    )
+    expect(installResponse.status).toBe(200)
+    const installed = commandResponseSchema(z.object({
+      packageId: z.string().min(1),
+      scenario: scenarioStateSchema,
+    }).strict()).parse(await installResponse.json()).data
+    const packageRow = runtime.database.driver.prepare(`
+      SELECT content_json, content_hash FROM scenario_package
+      WHERE workspace_id = 'workspace-demo' AND package_id = ?
+    `).get(installed.packageId) as { content_hash: string; content_json: string } | undefined
+    expect(packageRow?.content_hash).toBe(legacyHash)
+    expect(JSON.parse(packageRow?.content_json ?? '{}')).toEqual(legacyContent)
+    const installedMedicationConfig = runtime.database.driver.prepare(`
+      SELECT config_json FROM outpatient_catalog
+      WHERE workspace_id = 'workspace-demo' AND epoch = ?
+        AND kind = 'medication' AND item_id = 'medication-acetaminophen'
+    `).get(installed.scenario.epoch) as { config_json: string } | undefined
+    expect(JSON.parse(installedMedicationConfig?.config_json ?? '{}')).not.toHaveProperty('product')
+
+    runtime.database.driver.prepare(`
+      DELETE FROM scenario_dataset
+      WHERE workspace_id = 'workspace-demo' AND dataset_id = ?
+    `).run(generated.datasetId)
+    const resetResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-runs/${installed.scenario.scenarioRunId}/actions/reset`,
+      { body: '{}', headers: headers(), method: 'POST' },
+    )
+    expect(resetResponse.status).toBe(200)
+    expect(scenarioCommandResponseSchema.parse(await resetResponse.json()).data).toMatchObject({
+      initialStateHash: installed.scenario.initialStateHash,
+      scenarioId: installed.packageId,
+    })
+    expect(runtime.database.driver.prepare(`
+      SELECT content_hash FROM scenario_package
+      WHERE workspace_id = 'workspace-demo' AND package_id = ?
+    `).get(installed.packageId)).toEqual({ content_hash: legacyHash })
   })
 
   it('preserves a Dataset patient unknown gender through installation', async () => {

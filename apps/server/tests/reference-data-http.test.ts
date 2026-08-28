@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   referenceDataProvenanceSchema,
   referenceDataReleaseListSchema,
@@ -148,6 +149,55 @@ describe('Reference Data HTTP contract', () => {
         status: 'published',
       }],
     })
+  })
+
+  it('compiles the Hospital Baseline from the configured Medication Product release', async () => {
+    const referenceDirectory = await mkdtemp(join(tmpdir(), 'clinmesh-reference-products-'))
+    temporaryDirectories.push(referenceDirectory)
+    const referenceDatabasePath = join(referenceDirectory, 'reference.sqlite')
+    const manifestPath = fileURLToPath(new URL(
+      './fixtures/reference-data/nhsa-medication-products-release.json',
+      import.meta.url,
+    ))
+    await runReferenceDatabaseCli(['migrate', '--database', referenceDatabasePath])
+    await runReferenceDatabaseCli([
+      'import', '--database', referenceDatabasePath, '--manifest', manifestPath,
+    ])
+    const { password, runtime } = await createRuntime({ referenceDatabasePath })
+    const cookie = await signIn(runtime, password, 'admin@demo.clinmesh.local')
+
+    const generateResponse = await runtime.app.request('/api/sim/v1/scenario-datasets/actions/generate', {
+      body: JSON.stringify({
+        modules: ['type-2-diabetes'],
+        name: '药品产品来源编译测试',
+        population: { age: { maximum: 70, minimum: 45 }, count: 1, gender: 'male' },
+        providerId: 'builtin',
+        seeds: { clinical: 101, population: 202 },
+        timeRange: { end: '2026-08-01', start: '2016-08-01' },
+        timeZone: 'Asia/Shanghai',
+      }),
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        'idempotency-key': randomUUID(),
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect(generateResponse.status).toBe(200)
+    const dataset = commandResponseSchema(scenarioDatasetSchema)
+      .parse(await generateResponse.json()).data
+    expect(dataset.content.reproduction).toHaveProperty(
+      'referenceData.releaseId',
+      'clinmesh-nhsa-medication-products-parser-fixture-2026-08-28',
+    )
+    expect(dataset.content.catalog.medications.map(medication => (
+      'product' in medication ? medication.product.id : null
+    ))).toEqual([
+      'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-ACETAMINOPHEN',
+      'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-METFORMIN',
+      'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-AMLODIPINE',
+    ])
   })
 
   it('fixes the configured release identity in generated Dataset and Profile facts', async () => {

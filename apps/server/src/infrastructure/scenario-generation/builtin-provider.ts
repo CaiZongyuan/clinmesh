@@ -4,6 +4,7 @@ import type {
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
 } from '@clinmesh/contracts/scenario'
+import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
 import { scenarioPatientSchema } from '@clinmesh/contracts/scenario'
 import type {
   ScenarioGenerationProvider,
@@ -14,6 +15,7 @@ import {
   sourceArtifactHash,
 } from '../../application/scenario-data/provider.ts'
 import { createHospitalBaseline } from '../../application/scenario-data/hospital-baseline.ts'
+import { syntheticNhsaMedicationProductSnapshot } from '../../application/scenario-data/medication-product-snapshot.ts'
 import { compileSyntheaR4Bundle } from '../../application/scenario-data/synthea-case-truth-compiler.ts'
 
 const syntheticNames = ['林晓', '王晓明', '李静', '张伟', '刘洋', '陈勇'] as const
@@ -120,6 +122,12 @@ function patient(request: ScenarioGenerationRequest, ordinal: number) {
 }
 
 export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProvider {
+  readonly #medicationProducts: readonly ReferenceMedicationProduct[]
+
+  constructor(medicationProducts = syntheticNhsaMedicationProductSnapshot) {
+    this.#medicationProducts = medicationProducts
+  }
+
   async capabilities(): Promise<ScenarioProviderCapabilities> {
     return {
       available: true,
@@ -132,7 +140,7 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
 
   async generate(request: ScenarioGenerationRequest): Promise<SourcePatientCorpus> {
     const patients = Array.from({ length: request.population.count }, (_, index) => patient(request, index))
-    const baseline = createHospitalBaseline()
+    const baseline = createHospitalBaseline(this.#medicationProducts)
     const content: ScenarioDatasetContent = {
       catalog: baseline.catalog,
       hiddenFacts: patients.map(patient => ({

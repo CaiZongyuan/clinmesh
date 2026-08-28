@@ -22,6 +22,9 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
   const diagnosisCodes = new Set(content.catalog.diagnoses.map(item => item.code))
   const investigationCatalog = new Map(content.catalog.investigations.map(item => [item.id, item]))
   const medicationIds = new Set(content.catalog.medications.map(item => item.id))
+  const productMedications = content.catalog.medications.flatMap((medication, index) => (
+    'product' in medication ? [{ index, medication }] : []
+  ))
   const patientIds = new Set(content.patients.map(patient => patient.id))
   const patientsById = new Map(content.patients.map(patient => [patient.id, patient]))
   const hiddenFactCodes = new Set(content.hiddenFacts.map(fact => fact.code))
@@ -125,10 +128,10 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
   })
   diagnoseDuplicates({
     code: 'DUPLICATE_MEDICATION_PRODUCT_ID',
-    items: content.catalog.medications,
-    key: medication => medication.product.id,
+    items: productMedications,
+    key: entry => entry.medication.product.id,
     label: 'Medication Product ID',
-    path: (_, index) => `catalog.medications[${index}].product.id`,
+    path: entry => `catalog.medications[${entry.index}].product.id`,
   })
   diagnoseDuplicates({
     code: 'DUPLICATE_SIMULATOR_RULE_CODE',
@@ -152,6 +155,15 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
   for (const [medicationIndex, medication] of content.catalog.medications.entries()) {
     const workflowPath = `catalog.medications[${medicationIndex}].workflow`
     const medicationPath = `catalog.medications[${medicationIndex}]`
+    if (!('product' in medication)) {
+      add({
+        code: 'MEDICATION_PRODUCT_METADATA_MISSING',
+        message: `Medication ${medication.id} does not select a versioned product`,
+        path: medicationPath,
+        severity: 'error',
+      })
+      continue
+    }
     const verifiedFieldsHash = canonicalJsonHash({
       approvalNumber: medication.product.approvalNumber,
       genericName: medication.product.genericName,

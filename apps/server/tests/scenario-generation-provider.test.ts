@@ -57,11 +57,14 @@ describe('Scenario generation Provider contract', () => {
         verifiedFieldsHash: expect.stringMatching(/^[a-f0-9]{64}$/),
       },
     })
+    if (acetaminophen === undefined || !('product' in acetaminophen)) {
+      throw new Error('Built-in generation did not compile acetaminophen from a Product snapshot')
+    }
     expect(new Set([
-      acetaminophen?.drugConcept.conceptId,
-      acetaminophen?.product.id,
-      acetaminophen?.id,
-      first.content.inventory.find(lot => lot.itemId === acetaminophen?.id)?.lotId,
+      acetaminophen.drugConcept.conceptId,
+      acetaminophen.product.id,
+      acetaminophen.id,
+      first.content.inventory.find(lot => lot.itemId === acetaminophen.id)?.lotId,
     ]).size).toBe(4)
     expect(first.content.simulatorRules).toEqual([
       { code: 'success', outcome: 'success', simulator: 'payment' },

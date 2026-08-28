@@ -1,7 +1,11 @@
-import type { ReferenceDataReleaseList } from '@clinmesh/contracts/reference-data'
+import type {
+  ReferenceDataReleaseList,
+  ReferenceMedicationProduct,
+} from '@clinmesh/contracts/reference-data'
 import type { ReferenceDataReader } from '../../application/reference-data-service.ts'
 import {
   listReferenceDataReleases,
+  listReferenceMedicationProducts,
   type ReferenceDatabase,
 } from './reference-database.ts'
 
@@ -14,5 +18,9 @@ export class SqliteReferenceDataRepository implements ReferenceDataReader {
 
   list(): ReferenceDataReleaseList {
     return listReferenceDataReleases(this.#database)
+  }
+
+  medicationProducts(releaseId: string): ReferenceMedicationProduct[] {
+    return listReferenceMedicationProducts(this.#database, releaseId)
   }
 }
