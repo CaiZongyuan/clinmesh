@@ -42,6 +42,10 @@ describe('Synthetic Patient Profile compilation', () => {
             contentHash: '5e9b7faabae742a83d527d0756b9d8bff73dc0ac8a9968e68da06f01652efb87',
             mappingSetId: 'clinmesh-synthea-nhsa-diagnosis',
             version: '2026-08-28',
+          }, {
+            contentHash: '49091e048017024da99a59e3cd5af625fcca6540525bd2655d1989c8898ee89d',
+            mappingSetId: 'clinmesh-rxnorm-drug-concepts',
+            version: '2026-08-28',
           }],
         },
         mappingVersion: 'builtin-case-truth-v2',

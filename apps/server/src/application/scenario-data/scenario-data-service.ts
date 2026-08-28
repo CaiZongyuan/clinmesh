@@ -7,7 +7,6 @@ import {
   type ScenarioDataset,
   type ScenarioGenerationJob,
   type ScenarioGenerationRequest,
-  type ScenarioPatient,
   syntheticPatientProfileListSchema,
   syntheticPatientProfileSchema,
   startSyntheticPatientVisitsRequestSchema,
@@ -35,7 +34,7 @@ import {
 import { canonicalJsonHash } from './canonical-json.ts'
 import {
   compileSyntheaR4Bundle,
-  syntheaR4BundleSchema,
+  pinSyntheaSourceVersions,
 } from './synthea-case-truth-compiler.ts'
 
 const scenarioDatasetInstallResultSchema = z.object({
@@ -54,24 +53,6 @@ function mappingCatalogKey(
   version: number,
 ): string {
   return `${resourceType}\u0000${catalogItemId}\u0000${version}`
-}
-
-function pinDiagnosisSourceVersions(rawBundle: unknown, patient: ScenarioPatient) {
-  const bundle = syntheaR4BundleSchema.parse(structuredClone(rawBundle))
-  const eventBySourceId = new Map(patient.longitudinalHistory.flatMap(event => (
-    event.sourceResourceType === 'Condition' ? [[event.sourceResourceId, event] as const] : []
-  )))
-  for (const entry of bundle.entry) {
-    if (entry.resource.resourceType !== 'Condition') continue
-    const event = eventBySourceId.get(entry.resource.id)
-    if (event?.sourceVersion === undefined) continue
-    const coding = entry.resource.code?.coding?.find(candidate => (
-      candidate.code === event.code
-      && (event.sourceSystem === undefined || candidate.system === event.sourceSystem)
-    ))
-    if (coding !== undefined && coding.version === undefined) coding.version = event.sourceVersion
-  }
-  return bundle
 }
 
 export class ScenarioDataError extends Error {
@@ -473,7 +454,7 @@ export class ScenarioDataService {
         && current.source.raw !== null
         && compilation !== null
         ? compileSyntheaR4Bundle({
-            bundle: pinDiagnosisSourceVersions(current.source.raw, current.patient),
+            bundle: pinSyntheaSourceVersions(current.source.raw, current.patient),
             ordinal: compilation.ordinal,
             request: scenarioGenerationRequestSchema.parse({
               modules: compilation.modules,

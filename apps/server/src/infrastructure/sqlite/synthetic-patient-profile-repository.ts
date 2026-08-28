@@ -186,9 +186,8 @@ export class SyntheticPatientProfileRepository {
         const allergyCount = profile.patient.fhirHistory.filter(resource => (
           resource.resourceType === 'AllergyIntolerance'
         )).length
-        const mappedSourceIds = new Set(profile.mappings.map(mapping => mapping.sourceResourceId))
         const mappingWarningCount = profile.patient.longitudinalHistory.filter(event => (
-          !mappedSourceIds.has(event.sourceResourceId)
+          event.mappedCode === null
         )).length
         return {
           activeVisit: row.active_visit === 1,

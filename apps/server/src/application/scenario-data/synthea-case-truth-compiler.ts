@@ -8,6 +8,11 @@ import {
 import { z } from 'zod'
 import { resolveDiagnosisMapping } from './diagnosis-coding-package.ts'
 import {
+  isMedicationMappingSourceSystem,
+  medicationMappingSourceVersion,
+  resolveMedicationMapping,
+} from './medication-coding-package.ts'
+import {
   isKnownObservationMappingCode,
   resolveObservationMapping,
   resolveUcumUnit,
@@ -107,6 +112,12 @@ const observationSchema = z.object({
   valueString: z.string().min(1).optional(),
 }).passthrough()
 
+const medicationSchema = z.object({
+  code: conceptSchema.optional(),
+  id: z.string().min(1),
+  resourceType: z.literal('Medication'),
+}).passthrough()
+
 const medicationRequestSchema = z.object({
   authoredOn: z.iso.datetime({ offset: true }).optional(),
   encounter: referenceSchema.optional(),
@@ -140,7 +151,6 @@ const ignoredResourceTypes = [
   'ImagingStudy',
   'Immunization',
   'Location',
-  'Medication',
   'Organization',
   'Practitioner',
   'Procedure',
@@ -157,6 +167,7 @@ const compileableResourceSchema = z.discriminatedUnion('resourceType', [
   allergySchema,
   conditionSchema,
   encounterSchema,
+  medicationSchema,
   medicationRequestSchema,
   observationSchema,
   patientSchema,
@@ -174,8 +185,10 @@ export const syntheaR4BundleSchema = z.object({
 type Concept = z.infer<typeof conceptSchema>
 type R4Bundle = z.infer<typeof syntheaR4BundleSchema>
 type R4Observation = z.infer<typeof observationSchema>
+type R4MedicationRequest = z.infer<typeof medicationRequestSchema>
 
 type SyntheaCaseTruthCompilerErrorCode =
+  | 'MEDICATION_SOURCE_INVALID'
   | 'OBSERVATION_CODING_MISMATCH'
   | 'OBSERVATION_UNIT_INVALID'
 
@@ -247,6 +260,158 @@ function localReferenceId(reference: string | undefined, bundle: R4Bundle): stri
     || `${entry.resource.resourceType}/${entry.resource.id}` === reference
   ))
   return referencedEntry?.resource.id
+}
+
+function medicationSourceConcept(
+  request: R4MedicationRequest,
+  bundle: R4Bundle,
+): Concept | undefined {
+  if (
+    (request.medicationCodeableConcept === undefined)
+    === (request.medicationReference === undefined)
+  ) {
+    throw new SyntheaCaseTruthCompilerError(
+      'MEDICATION_SOURCE_INVALID',
+      request.id,
+      `MedicationRequest/${request.id} must provide exactly one medication source`,
+    )
+  }
+  if (request.medicationCodeableConcept !== undefined) return request.medicationCodeableConcept
+  const reference = request.medicationReference?.reference
+  const exactEntry = bundle.entry.find(entry => entry.fullUrl === reference)
+  if (exactEntry !== undefined) {
+    if (exactEntry.resource.resourceType === 'Medication') return exactEntry.resource.code
+    throw new SyntheaCaseTruthCompilerError(
+      'MEDICATION_SOURCE_INVALID',
+      request.id,
+      `MedicationRequest/${request.id} references a non-Medication resource`,
+    )
+  }
+  const relativeMatch = /^Medication\/([^/]+)$/.exec(reference ?? '')
+  const medication = relativeMatch === null
+    ? undefined
+    : bundle.entry.map(entry => entry.resource).find(resource => (
+        resource.resourceType === 'Medication' && resource.id === relativeMatch[1]
+      ))
+  if (medication?.resourceType === 'Medication') return medication.code
+  throw new SyntheaCaseTruthCompilerError(
+    'MEDICATION_SOURCE_INVALID',
+    request.id,
+    `MedicationRequest/${request.id} references an unavailable Medication`,
+  )
+}
+
+function medicationSourceCodings(concept: Concept | undefined) {
+  const rxNormCodings = concept?.coding?.filter(coding => (
+    coding.code !== undefined && isMedicationMappingSourceSystem(coding.system)
+  )) ?? []
+  if (rxNormCodings.length > 0) return rxNormCodings
+  const fallback = firstCoding(concept)
+  return fallback === undefined ? [] : [fallback]
+}
+
+export function pinSyntheaSourceVersions(rawBundle: unknown, patient: ScenarioPatient) {
+  const bundle = syntheaR4BundleSchema.parse(structuredClone(rawBundle))
+  const eventBySourceId = new Map(patient.longitudinalHistory.flatMap(event => (
+    event.sourceResourceType === 'Condition' || event.sourceResourceType === 'MedicationRequest'
+      ? [[event.sourceResourceId, event] as const]
+      : []
+  )))
+  const medicationHistoryById = new Map(patient.fhirHistory.flatMap(resource => (
+    resource.resourceType === 'MedicationRequest' ? [[resource.id, resource] as const] : []
+  )))
+  for (const entry of bundle.entry) {
+    const resource = entry.resource
+    const event = eventBySourceId.get(resource.id)
+    if (event === undefined) continue
+    const concept = resource.resourceType === 'Condition'
+      ? resource.code
+      : resource.resourceType === 'MedicationRequest'
+        ? medicationSourceConcept(resource, bundle)
+        : undefined
+    const medicationHistory = medicationHistoryById.get(stableHistoryId(
+      'MedicationRequest',
+      event.sourceResourceId,
+    ))
+    const pinnedSources = medicationHistory !== undefined
+      && 'sourceCodings' in medicationHistory.medication
+      ? medicationHistory.medication.sourceCodings
+      : [{
+          code: event.code,
+          display: event.sourceDisplay ?? event.display,
+          ...(event.sourceSystem === undefined ? {} : { system: event.sourceSystem }),
+          ...(event.sourceVersion === undefined ? {} : { version: event.sourceVersion }),
+        }]
+    for (const source of pinnedSources) {
+      if (source.version === undefined) continue
+      const coding = concept?.coding?.find(candidate => (
+        candidate.code === source.code
+        && (source.system === undefined || candidate.system === source.system)
+      ))
+      if (coding !== undefined && coding.version === undefined) coding.version = source.version
+    }
+  }
+  return bundle
+}
+
+function mappedMedication(request: R4MedicationRequest, bundle: R4Bundle) {
+  const sourceConcept = medicationSourceConcept(request, bundle)
+  const sourceDisplay = conceptDisplay(sourceConcept, '历史用药')
+  const sources = medicationSourceCodings(sourceConcept).map((source) => {
+    const sourceVersion = medicationMappingSourceVersion({
+      ...(source.system === undefined ? {} : { system: source.system }),
+      ...(source.version === undefined ? {} : { version: source.version }),
+    })
+    return {
+      resolution: resolveMedicationMapping({
+        ...(source.code === undefined ? {} : { code: source.code }),
+        ...(source.display === undefined ? {} : { display: source.display }),
+        ...(source.system === undefined ? {} : { system: source.system }),
+        ...(source.version === undefined ? {} : { version: source.version }),
+      }),
+      source,
+      sourceVersion,
+    }
+  })
+  const applicable = sources.flatMap(item => (
+    item.resolution.status === 'mapped'
+      ? [{ ...item, mapping: item.resolution.mapping }]
+      : []
+  ))
+  if (applicable.length === 1) {
+    const selected = applicable[0]!
+    return {
+      mappedCode: selected.mapping.target.code,
+      medication: selected.mapping.target,
+      source: selected.source,
+      sourceDisplay,
+      sourceVersion: selected.sourceVersion,
+    }
+  }
+  const primary = sources[0]
+  const sourceCodings = sources.flatMap(({ source, sourceVersion }) => (
+    source.code === undefined
+      ? []
+      : [{
+          code: source.code,
+          display: source.display ?? sourceDisplay,
+          ...(source.system === undefined ? {} : { system: source.system }),
+          ...(sourceVersion === undefined ? {} : { version: sourceVersion }),
+        }]
+  ))
+  return {
+    mappedCode: null,
+    medication: {
+      ...(primary?.source.code === undefined ? {} : { code: primary.source.code }),
+      display: primary?.source.display ?? sourceDisplay,
+      ...(primary?.source.system === undefined ? {} : { system: primary.source.system }),
+      ...(primary?.sourceVersion === undefined ? {} : { version: primary.sourceVersion }),
+      ...(sourceCodings.length < 2 ? {} : { sourceCodings }),
+    },
+    source: primary?.source,
+    sourceDisplay,
+    sourceVersion: primary?.sourceVersion,
+  }
 }
 
 export function stableHistoryId(resourceType: string, id: string): string {
@@ -727,6 +892,9 @@ export function compileSyntheaR4Bundle(input: {
   const observations = bundle.entry.flatMap(entry => entry.resource.resourceType === 'Observation' ? [entry.resource] : [])
   const currentObservations = currentMappedObservations(observations)
   const medicationRequests = bundle.entry.flatMap(entry => entry.resource.resourceType === 'MedicationRequest' ? [entry.resource] : [])
+  const medicationByRequestId = new Map(medicationRequests.map(request => (
+    [request.id, mappedMedication(request, bundle)] as const
+  )))
   const allergies = bundle.entry.flatMap(entry => entry.resource.resourceType === 'AllergyIntolerance' ? [entry.resource] : [])
   const fallbackDateTime = dateAtEnd(input.request)
   const module = input.request.modules[input.ordinal % input.request.modules.length] ?? 'fever'
@@ -801,8 +969,7 @@ export function compileSyntheaR4Bundle(input: {
       }]
     }
     if (resource.resourceType === 'MedicationRequest') {
-      const medication = resource.medicationCodeableConcept
-      const coding = firstCoding(medication)
+      const mapped = medicationByRequestId.get(resource.id)!
       return [{
         ...(resource.authoredOn === undefined ? {} : { authoredOn: resource.authoredOn }),
         ...(localReferenceId(resource.encounter?.reference, bundle) === undefined
@@ -810,11 +977,7 @@ export function compileSyntheaR4Bundle(input: {
           : { encounterId: stableHistoryId('Encounter', localReferenceId(resource.encounter?.reference, bundle)!) }),
         id: stableHistoryId(resource.resourceType, resource.id),
         intent: resource.intent,
-        medication: {
-          ...(coding?.code === undefined ? {} : { code: coding.code }),
-          display: conceptDisplay(medication, '历史用药'),
-          ...(coding?.system === undefined ? {} : { system: coding.system }),
-        },
+        medication: mapped.medication,
         resourceType: resource.resourceType,
         status: resource.status,
       }]
@@ -879,17 +1042,23 @@ export function compileSyntheaR4Bundle(input: {
       sourceResourceType: resource.resourceType,
       status: resource.status,
     })),
-    ...medicationRequests.map(resource => ({
-      code: conceptCode(resource.medicationCodeableConcept) ?? 'unmapped',
-      display: conceptDisplay(resource.medicationCodeableConcept, '历史用药'),
-      id: `history-event-${resource.id}`,
-      kind: 'medication' as const,
-      mappedCode: null,
-      occurredAt: resource.authoredOn ?? fallbackDateTime,
-      sourceResourceId: resource.id,
-      sourceResourceType: resource.resourceType,
-      status: resource.status,
-    })),
+    ...medicationRequests.map((resource) => {
+      const mapped = medicationByRequestId.get(resource.id)!
+      return {
+        code: mapped.source?.code ?? 'unmapped',
+        display: mapped.medication.display,
+        id: `history-event-${resource.id}`,
+        kind: 'medication' as const,
+        mappedCode: mapped.mappedCode,
+        occurredAt: resource.authoredOn ?? fallbackDateTime,
+        sourceResourceId: resource.id,
+        sourceResourceType: resource.resourceType,
+        ...(mapped.source?.display === undefined ? {} : { sourceDisplay: mapped.source.display }),
+        ...(mapped.source?.system === undefined ? {} : { sourceSystem: mapped.source.system }),
+        ...(mapped.sourceVersion === undefined ? {} : { sourceVersion: mapped.sourceVersion }),
+        status: resource.status,
+      }
+    }),
     ...allergies.map(resource => ({
       code: conceptCode(resource.code) ?? 'unmapped',
       display: conceptDisplay(resource.code, '未说明过敏原'),

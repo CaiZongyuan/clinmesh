@@ -218,6 +218,17 @@ const scenarioCodeSchema = z.object({
   version: z.string().min(1).optional(),
 }).strict()
 
+const scenarioMedicationHistoryCodingSchema = z.union([
+  scenarioCodeSchema.extend({
+    conceptId: z.string().min(1),
+    kind: z.literal('drug-concept'),
+  }).strict(),
+  scenarioCodeSchema.extend({
+    sourceCodings: z.array(scenarioCodeSchema).min(2),
+  }).strict(),
+  scenarioCodeSchema,
+])
+
 const scenarioFhirHistorySchema = z.discriminatedUnion('resourceType', [
   z.object({
     classCode: z.string().min(1),
@@ -252,7 +263,7 @@ const scenarioFhirHistorySchema = z.discriminatedUnion('resourceType', [
     encounterId: z.string().min(1).optional(),
     id: z.string().min(1),
     intent: z.string().min(1),
-    medication: scenarioCodeSchema,
+    medication: scenarioMedicationHistoryCodingSchema,
     resourceType: z.literal('MedicationRequest'),
     status: z.string().min(1),
   }).strict(),

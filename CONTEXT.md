@@ -152,6 +152,14 @@ _Avoid_: Encounter location, bed status text
 
 ## 临床请求与执行
 
+**Drug Concept**:
+不绑定生产企业、批准文号、产品包装或医院可用性的药物语义概念，可表达成分以及临床必要的强度和剂型。
+_Avoid_: Medication Product, hospital medication catalog item, Inventory Lot
+
+**Medication Product**:
+由注册或产品目录识别的具体药品呈现，包含剂型、规格、包装、企业和监管标识等产品属性。
+_Avoid_: Drug Concept, hospital medication catalog item, Inventory Lot
+
 **Clinical Request**:
 临床人员对药品、检查、检验、治疗或耗材提出的单项意图。
 _Avoid_: Prescription, template, execution record

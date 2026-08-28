@@ -18,6 +18,8 @@ LOINC 与 UCUM 使用来源专用 parser 转为统一 reference concept；审核
 
 Synthea 诊断映射将 SNOMED CT 来源、版本固定的 NHSA 诊断目标和本院诊断项分别保存。Mapping package 固定方向、关系、审核状态、证据和内容哈希；只有唯一的 active 等价关系可自动应用。应用结果以 source resource ID 和本院 catalog item 身份保存在 Synthetic Patient Profile 及每个不可覆盖 Revision；原始 coding 缺失的 version 在编译时固定为当次 package source version，后续 overlay 使用该已固定 identity 重放。结构化 mapping provenance 分别固定 compiler、package version/hash 和人工 overlay revision，不从拼接字符串解析这些事实。Profile 不读取当前 Epoch 的活动目录重建旧 Revision。
 
+RxNorm 历史用药使用同一映射发布机制，但目标只是 Drug Concept，不携带 Medication Product 或本院 catalog item 身份。CodeableConcept 与引用型 Medication 先归一为同一 source coding 再映射；自动概念映射保存在 patient snapshot，本院药品 overlay 仍作为独立 Profile Revision，不改写 raw Bundle。
+
 ## Alternatives considered
 
 **把完整参考数据加入 operational SQLite。** 单文件部署更直接，但全国目录会进入普通运行备份、查询和迁移，并使参考更新与 Workspace/Epoch 生命周期耦合。

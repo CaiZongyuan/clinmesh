@@ -1,10 +1,12 @@
 import {
   scenarioDatasetContentSchema,
   scenarioGenerationRequestSchema,
+  type ScenarioPatient,
 } from '@clinmesh/contracts/scenario'
 import { describe, expect, it } from 'vitest'
 import {
   compileSyntheaR4Bundle,
+  pinSyntheaSourceVersions,
   syntheaR4BundleSchema,
 } from '../src/application/scenario-data/synthea-case-truth-compiler.ts'
 import { createHospitalBaseline } from '../src/application/scenario-data/hospital-baseline.ts'
@@ -27,6 +29,26 @@ function catchCompilerError(callback: () => unknown): unknown {
     return error
   }
   throw new Error('Expected CaseTruth compilation to fail')
+}
+
+function datasetDiagnostics(patient: ScenarioPatient) {
+  const baseline = createHospitalBaseline()
+  return validateScenarioDataset(scenarioDatasetContentSchema.parse({
+    ...baseline,
+    hiddenFacts: [],
+    patients: [patient],
+    reproduction: {
+      clinicalSeed: request.seeds.clinical,
+      generator: 'synthea-fhir-r4',
+      modules: request.modules,
+      populationSeed: request.seeds.population,
+      timeRange: request.timeRange,
+      timeZone: request.timeZone,
+    },
+    revealPolicies: [],
+    schemaVersion: '1',
+    simulatorRules: [],
+  }))
 }
 
 describe('Synthea R4 CaseTruth compiler', () => {
@@ -85,7 +107,13 @@ describe('Synthea R4 CaseTruth compiler', () => {
           authoredOn: '2026-08-01T08:20:00Z',
           id: 'medication-request-fever',
           intent: 'order',
-          medicationCodeableConcept: { text: 'Acetaminophen 500 MG Oral Tablet' },
+          medicationCodeableConcept: {
+            coding: [{
+              code: '198440',
+              display: 'Acetaminophen 500 MG Oral Tablet',
+              system: 'http://www.nlm.nih.gov/research/umls/rxnorm',
+            }],
+          },
           resourceType: 'MedicationRequest',
           status: 'completed',
           subject: { reference: patientReference },
@@ -176,6 +204,15 @@ describe('Synthea R4 CaseTruth compiler', () => {
         },
       },
     })
+    expect(compiled.fhirHistory.find(resource => resource.resourceType === 'MedicationRequest'))
+      .toMatchObject({
+        medication: {
+          code: 'CM-DRUG-ACETAMINOPHEN-500MG-ORAL-TABLET',
+          display: '对乙酰氨基酚 500 mg 口服片剂',
+          system: 'urn:clinmesh:reference:drug-concept',
+          version: 'clinmesh-drug-concepts-2026-08-28',
+        },
+      })
     expect(compiled.longitudinalHistory.find(event => (
       event.sourceResourceType === 'Encounter'
     ))).toMatchObject({ code: 'EMER', mappedCode: null })
@@ -185,6 +222,14 @@ describe('Synthea R4 CaseTruth compiler', () => {
       sourceDisplay: 'Fever',
       sourceSystem: 'http://snomed.info/sct',
       sourceVersion: 'http://snomed.info/sct/900000000000207008/version/20250201',
+    })
+    expect(compiled.longitudinalHistory.find(event => (
+      event.sourceResourceId === 'medication-request-fever'
+    ))).toMatchObject({
+      mappedCode: 'CM-DRUG-ACETAMINOPHEN-500MG-ORAL-TABLET',
+      sourceDisplay: 'Acetaminophen 500 MG Oral Tablet',
+      sourceSystem: 'http://www.nlm.nih.gov/research/umls/rxnorm',
+      sourceVersion: 'rxnorm-2026-08-03',
     })
     expect(JSON.stringify(compiled)).not.toMatch(/Boston|Massachusetts|Alice|Synthetic|Coverage|999-99-9999/)
     expect(compileSyntheaR4Bundle({ bundle, ordinal: 0, request })).toEqual(compiled)
@@ -274,23 +319,7 @@ describe('Synthea R4 CaseTruth compiler', () => {
       mappedCode: null,
       sourceResourceId: 'condition-fever',
     }))
-    const baseline = createHospitalBaseline()
-    const diagnostics = validateScenarioDataset(scenarioDatasetContentSchema.parse({
-      ...baseline,
-      hiddenFacts: [],
-      patients: [wrongSystemConditionPatient],
-      reproduction: {
-        clinicalSeed: request.seeds.clinical,
-        generator: 'synthea-fhir-r4',
-        modules: request.modules,
-        populationSeed: request.seeds.population,
-        timeRange: request.timeRange,
-        timeZone: request.timeZone,
-      },
-      revealPolicies: [],
-      schemaVersion: '1',
-      simulatorRules: [],
-    }))
+    const diagnostics = datasetDiagnostics(wrongSystemConditionPatient)
     expect(diagnostics).toContainEqual(expect.objectContaining({
       code: 'CLINICAL_CODE_UNMAPPED',
       message: 'Condition/condition-fever has no ClinMesh mapping',
@@ -314,6 +343,213 @@ describe('Synthea R4 CaseTruth compiler', () => {
       mappedCode: null,
       sourceResourceId: 'condition-fever',
     }))
+
+    const multipleCodingBundle = syntheaR4BundleSchema.parse(structuredClone(bundle))
+    const multipleCodingRequest = multipleCodingBundle.entry.find(entry => (
+      entry.resource.id === 'medication-request-fever'
+    ))?.resource
+    if (
+      multipleCodingRequest?.resourceType !== 'MedicationRequest'
+      || multipleCodingRequest.medicationCodeableConcept?.coding === undefined
+    ) {
+      throw new Error('MedicationRequest fixture was not found')
+    }
+    multipleCodingRequest.medicationCodeableConcept.coding.unshift({
+      code: 'LOCAL-ACETAMINOPHEN',
+      display: 'Local acetaminophen product',
+      system: 'https://example.test/local-medications',
+    }, {
+      code: '999998',
+      display: 'Unknown RxNorm drug before active coding',
+      system: 'http://www.nlm.nih.gov/research/umls/rxnorm',
+    })
+    expect(compileSyntheaR4Bundle({
+      bundle: multipleCodingBundle,
+      ordinal: 0,
+      request,
+    }).longitudinalHistory).toContainEqual(expect.objectContaining({
+      mappedCode: 'CM-DRUG-ACETAMINOPHEN-500MG-ORAL-TABLET',
+      sourceResourceId: 'medication-request-fever',
+      sourceSystem: 'http://www.nlm.nih.gov/research/umls/rxnorm',
+    }))
+
+    const ambiguousMedicationBundle = syntheaR4BundleSchema.parse(structuredClone(bundle))
+    const ambiguousMedicationRequest = ambiguousMedicationBundle.entry.find(entry => (
+      entry.resource.id === 'medication-request-fever'
+    ))?.resource
+    if (
+      ambiguousMedicationRequest?.resourceType !== 'MedicationRequest'
+      || ambiguousMedicationRequest.medicationCodeableConcept?.coding === undefined
+    ) {
+      throw new Error('MedicationRequest fixture was not found')
+    }
+    ambiguousMedicationRequest.medicationCodeableConcept.coding.push({
+      code: '860975',
+      display: 'Metformin hydrochloride 500 MG Oral Tablet',
+      system: 'http://www.nlm.nih.gov/research/umls/rxnorm',
+    })
+    const ambiguousMedicationPatient = compileSyntheaR4Bundle({
+      bundle: ambiguousMedicationBundle,
+      ordinal: 0,
+      request,
+    })
+    expect(ambiguousMedicationPatient.fhirHistory.find(resource => (
+      resource.resourceType === 'MedicationRequest'
+    ))).toMatchObject({
+      medication: {
+        sourceCodings: [
+          expect.objectContaining({ code: '198440', version: 'rxnorm-2026-08-03' }),
+          expect.objectContaining({ code: '860975', version: 'rxnorm-2026-08-03' }),
+        ],
+      },
+    })
+    expect(ambiguousMedicationPatient.longitudinalHistory).toContainEqual(expect.objectContaining({
+      mappedCode: null,
+      sourceResourceId: 'medication-request-fever',
+    }))
+    expect(datasetDiagnostics(ambiguousMedicationPatient)).toContainEqual(expect.objectContaining({
+      code: 'CLINICAL_CODE_UNMAPPED',
+      message: 'MedicationRequest/medication-request-fever has no ClinMesh mapping',
+    }))
+    const pinnedAmbiguousBundle = pinSyntheaSourceVersions(
+      ambiguousMedicationBundle,
+      ambiguousMedicationPatient,
+    )
+    const pinnedAmbiguousRequest = pinnedAmbiguousBundle.entry.find(entry => (
+      entry.resource.id === 'medication-request-fever'
+    ))?.resource
+    if (
+      pinnedAmbiguousRequest?.resourceType !== 'MedicationRequest'
+      || pinnedAmbiguousRequest.medicationCodeableConcept?.coding === undefined
+    ) {
+      throw new Error('MedicationRequest fixture was not found')
+    }
+    expect(pinnedAmbiguousRequest.medicationCodeableConcept.coding.filter(coding => (
+      coding.system === 'http://www.nlm.nih.gov/research/umls/rxnorm'
+    )).map(coding => coding.version)).toEqual([
+      'rxnorm-2026-08-03',
+      'rxnorm-2026-08-03',
+    ])
+    expect(ambiguousMedicationRequest.medicationCodeableConcept.coding.some(coding => (
+      coding.version !== undefined
+    ))).toBe(false)
+
+    const withMedicationReference = (
+      reference: string,
+      medicationId: string,
+      fullUrl = `Medication/${medicationId}`,
+    ) => ({
+      ...bundle,
+      entry: [...bundle.entry.map((entry) => {
+        if (entry.resource.id !== 'medication-request-fever') return entry
+        const { medicationCodeableConcept: _medication, ...resource } = entry.resource
+        return {
+          ...entry,
+          resource: { ...resource, medicationReference: { reference } },
+        }
+      }), {
+        fullUrl,
+        resource: {
+          code: {
+            coding: [{
+              code: '198440',
+              display: 'Acetaminophen 500 MG Oral Tablet',
+              system: 'http://www.nlm.nih.gov/research/umls/rxnorm',
+            }],
+          },
+          id: medicationId,
+          resourceType: 'Medication',
+        },
+      }],
+    })
+    const referencedMedicationPatient = compileSyntheaR4Bundle({
+      bundle: withMedicationReference(
+        'urn:uuid:medication-acetaminophen-source',
+        'medication-acetaminophen-source',
+        'urn:uuid:medication-acetaminophen-source',
+      ),
+      ordinal: 0,
+      request,
+    })
+    expect(referencedMedicationPatient.fhirHistory.find(resource => (
+      resource.resourceType === 'MedicationRequest'
+    ))?.medication).toEqual(compiled.fhirHistory.find(resource => (
+      resource.resourceType === 'MedicationRequest'
+    ))?.medication)
+
+    for (const invalidReferenceBundle of [
+      withMedicationReference('Medication/missing-medication', 'other-medication'),
+      withMedicationReference('Condition/condition-fever', 'condition-fever'),
+    ]) {
+      expect(catchCompilerError(() => compileSyntheaR4Bundle({
+        bundle: invalidReferenceBundle,
+        ordinal: 0,
+        request,
+      }))).toMatchObject({
+        code: 'MEDICATION_SOURCE_INVALID',
+        sourceResourceId: 'medication-request-fever',
+      })
+    }
+
+    const unknownMedicationBundle = syntheaR4BundleSchema.parse(structuredClone(bundle))
+    const unknownMedicationRequest = unknownMedicationBundle.entry.find(entry => (
+      entry.resource.id === 'medication-request-fever'
+    ))?.resource
+    if (unknownMedicationRequest?.resourceType !== 'MedicationRequest') {
+      throw new Error('MedicationRequest fixture was not found')
+    }
+    unknownMedicationRequest.medicationCodeableConcept = {
+      coding: [{
+        code: '999999',
+        display: 'Unknown synthetic RxNorm drug',
+        system: 'http://www.nlm.nih.gov/research/umls/rxnorm',
+        version: 'rxnorm-2026-08-03',
+      }],
+    }
+    const unknownMedicationPatient = compileSyntheaR4Bundle({
+      bundle: unknownMedicationBundle,
+      ordinal: 0,
+      request,
+    })
+    expect(unknownMedicationPatient.fhirHistory.find(resource => (
+      resource.resourceType === 'MedicationRequest'
+    ))).toMatchObject({
+      medication: {
+        code: '999999',
+        display: 'Unknown synthetic RxNorm drug',
+        system: 'http://www.nlm.nih.gov/research/umls/rxnorm',
+        version: 'rxnorm-2026-08-03',
+      },
+    })
+    expect(unknownMedicationPatient.longitudinalHistory).toContainEqual(expect.objectContaining({
+      mappedCode: null,
+      sourceResourceId: 'medication-request-fever',
+      sourceVersion: 'rxnorm-2026-08-03',
+    }))
+    expect(datasetDiagnostics(unknownMedicationPatient)).toContainEqual(expect.objectContaining({
+      code: 'CLINICAL_CODE_UNMAPPED',
+      message: 'MedicationRequest/medication-request-fever has no ClinMesh mapping',
+      severity: 'warning',
+    }))
+
+    const conflictingMedicationBundle = syntheaR4BundleSchema.parse(structuredClone(bundle))
+    const conflictingMedicationRequest = conflictingMedicationBundle.entry.find(entry => (
+      entry.resource.id === 'medication-request-fever'
+    ))?.resource
+    if (conflictingMedicationRequest?.resourceType !== 'MedicationRequest') {
+      throw new Error('MedicationRequest fixture was not found')
+    }
+    conflictingMedicationRequest.medicationReference = {
+      reference: 'Medication/medication-acetaminophen-source',
+    }
+    expect(catchCompilerError(() => compileSyntheaR4Bundle({
+      bundle: conflictingMedicationBundle,
+      ordinal: 0,
+      request,
+    }))).toMatchObject({
+      code: 'MEDICATION_SOURCE_INVALID',
+      sourceResourceId: 'medication-request-fever',
+    })
   })
 
   it('keeps T2DM objective truth separate from patient knowledge in the same schema', () => {

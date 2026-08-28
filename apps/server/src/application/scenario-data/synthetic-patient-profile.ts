@@ -10,6 +10,7 @@ import {
   diagnosisMappingPackageProvenance,
   resolveDiagnosisMapping,
 } from './diagnosis-coding-package.ts'
+import { medicationMappingPackageProvenance } from './medication-coding-package.ts'
 import { stableHistoryId } from './synthea-case-truth-compiler.ts'
 
 const idCardWeights = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2] as const
@@ -100,7 +101,7 @@ export function applySyntheticPatientProfileMappings(
     }),
     longitudinalHistory: patient.longitudinalHistory.map(event => ({
       ...event,
-      mappedCode: mappingBySourceId.get(event.sourceResourceId)?.target.code ?? null,
+      mappedCode: mappingBySourceId.get(event.sourceResourceId)?.target.code ?? event.mappedCode,
     })),
   }
 }
@@ -161,7 +162,10 @@ function compiledMappingProvenance(providerId: ScenarioDataset['providerId']) {
   const compilerId = providerId === 'synthea' ? 'synthea-case-truth' : 'builtin-case-truth'
   return {
     compiler: { id: compilerId, version: '2' },
-    packages: [diagnosisMappingPackageProvenance()],
+    packages: [
+      diagnosisMappingPackageProvenance(),
+      medicationMappingPackageProvenance(),
+    ],
   }
 }
 

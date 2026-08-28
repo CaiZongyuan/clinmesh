@@ -79,6 +79,22 @@ const syntheaR4Bundle = {
       resourceType: 'Condition',
       subject: { reference: 'urn:uuid:source-patient-1' },
     },
+  }, {
+    resource: {
+      authoredOn: '2026-08-01T08:20:00+08:00',
+      id: 'source-medication-request-1',
+      intent: 'order',
+      medicationCodeableConcept: {
+        coding: [{
+          code: '198440',
+          display: 'Acetaminophen 500 MG Oral Tablet',
+          system: 'http://www.nlm.nih.gov/research/umls/rxnorm',
+        }],
+      },
+      resourceType: 'MedicationRequest',
+      status: 'completed',
+      subject: { reference: 'urn:uuid:source-patient-1' },
+    },
   }],
   resourceType: 'Bundle',
   type: 'collection',
@@ -319,7 +335,12 @@ describe('persistent Scenario generation job HTTP contract', () => {
     expect(listResponse.status).toBe(200)
     const list = syntheticPatientProfileListSchema.parse(await listResponse.json())
     expect(list).toMatchObject({
-      items: [{ batchName: generationRequest.name, name: expect.any(String), providerId: 'synthea' }],
+      items: [{
+        batchName: generationRequest.name,
+        mappingWarningCount: 1,
+        name: expect.any(String),
+        providerId: 'synthea',
+      }],
       total: 1,
     })
     const profileId = list.items[0]?.profileId ?? ''
@@ -347,6 +368,12 @@ describe('persistent Scenario generation job HTTP contract', () => {
             sourceResourceId: 'source-condition-1',
             sourceVersion: 'http://snomed.info/sct/900000000000207008/version/20250201',
           }),
+          expect.objectContaining({
+            mappedCode: 'CM-DRUG-ACETAMINOPHEN-500MG-ORAL-TABLET',
+            sourceResourceId: 'source-medication-request-1',
+            sourceSystem: 'http://www.nlm.nih.gov/research/umls/rxnorm',
+            sourceVersion: 'rxnorm-2026-08-03',
+          }),
         ]),
       },
       profileId,
@@ -358,6 +385,10 @@ describe('persistent Scenario generation job HTTP contract', () => {
           packages: [{
             contentHash: '5e9b7faabae742a83d527d0756b9d8bff73dc0ac8a9968e68da06f01652efb87',
             mappingSetId: 'clinmesh-synthea-nhsa-diagnosis',
+            version: '2026-08-28',
+          }, {
+            contentHash: '49091e048017024da99a59e3cd5af625fcca6540525bd2655d1989c8898ee89d',
+            mappingSetId: 'clinmesh-rxnorm-drug-concepts',
             version: '2026-08-28',
           }],
         },
@@ -538,6 +569,11 @@ describe('persistent Scenario generation job HTTP contract', () => {
               mappedCode: 'J06.9',
               sourceResourceId,
               sourceVersion: 'http://snomed.info/sct/900000000000207008/version/20250201',
+            }),
+            expect.objectContaining({
+              mappedCode: 'CM-DRUG-ACETAMINOPHEN-500MG-ORAL-TABLET',
+              sourceResourceId: 'source-medication-request-1',
+              sourceVersion: 'rxnorm-2026-08-03',
             }),
           ]),
         },
@@ -778,6 +814,28 @@ describe('persistent Scenario generation job HTTP contract', () => {
     const visit = commandResponseSchema(startSyntheticPatientVisitsResultSchema)
       .parse(await startResponse.json()).data.items[0]
     if (visit === undefined) throw new Error('Expected a started Synthea Profile visit')
+    const medicationHistoryResponse = await runtime.app.request(
+      `/fhir/R5/MedicationRequest?patient=${encodeURIComponent(`Patient/${visit.patientId}`)}`,
+      { headers: { cookie: administratorCookie } },
+    )
+    expect(medicationHistoryResponse.status).toBe(200)
+    const medicationHistory = fhirBundleSchema.parse(await medicationHistoryResponse.json())
+    expect(medicationHistory.entry).toEqual([expect.objectContaining({
+      resource: expect.objectContaining({
+        medication: {
+          concept: expect.objectContaining({
+            coding: [expect.objectContaining({
+              code: 'CM-DRUG-ACETAMINOPHEN-500MG-ORAL-TABLET',
+              display: '对乙酰氨基酚 500 mg 口服片剂',
+              system: 'urn:clinmesh:reference:drug-concept',
+              version: 'clinmesh-drug-concepts-2026-08-28',
+            })],
+          }),
+        },
+        resourceType: 'MedicationRequest',
+      }),
+    })])
+    expect(JSON.stringify(medicationHistory)).not.toMatch(/medication-acetaminophen|lot-acetaminophen/)
     const triageCookie = await signIn(runtime, 'triage@demo.clinmesh.local')
     const triageResponse = await runtime.app.request(
       `/api/his/v1/encounters/${visit.encounterId}/actions/record-triage`,

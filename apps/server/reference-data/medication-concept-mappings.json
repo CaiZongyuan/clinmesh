@@ -1,0 +1,54 @@
+{
+  "contentHash": "49091e048017024da99a59e3cd5af625fcca6540525bd2655d1989c8898ee89d",
+  "mappingSetId": "clinmesh-rxnorm-drug-concepts",
+  "mappings": [
+    {
+      "direction": "source-to-target",
+      "evidence": ["ClinMesh #46 synthetic medication history review"],
+      "mappingId": "rxnorm-acetaminophen-tablet-to-drug-concept",
+      "relationship": "equivalent",
+      "source": {
+        "code": "198440",
+        "display": "Acetaminophen 500 MG Oral Tablet",
+        "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+        "version": "rxnorm-2026-08-03"
+      },
+      "status": "active",
+      "target": {
+        "code": "CM-DRUG-ACETAMINOPHEN-500MG-ORAL-TABLET",
+        "conceptId": "drug-concept-acetaminophen-500mg-oral-tablet",
+        "display": "对乙酰氨基酚 500 mg 口服片剂",
+        "kind": "drug-concept",
+        "system": "urn:clinmesh:reference:drug-concept",
+        "version": "clinmesh-drug-concepts-2026-08-28"
+      }
+    },
+    {
+      "direction": "source-to-target",
+      "evidence": ["ClinMesh #46 synthetic medication history review"],
+      "mappingId": "rxnorm-metformin-tablet-to-drug-concept",
+      "relationship": "equivalent",
+      "source": {
+        "code": "860975",
+        "display": "Metformin hydrochloride 500 MG Oral Tablet",
+        "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+        "version": "rxnorm-2026-08-03"
+      },
+      "status": "active",
+      "target": {
+        "code": "CM-DRUG-METFORMIN-HCL-500MG-ORAL-TABLET",
+        "conceptId": "drug-concept-metformin-hcl-500mg-oral-tablet",
+        "display": "盐酸二甲双胍 500 mg 口服片剂",
+        "kind": "drug-concept",
+        "system": "urn:clinmesh:reference:drug-concept",
+        "version": "clinmesh-drug-concepts-2026-08-28"
+      }
+    }
+  ],
+  "schemaVersion": "1",
+  "sourceSystem": "http://www.nlm.nih.gov/research/umls/rxnorm",
+  "sourceVersion": "rxnorm-2026-08-03",
+  "targetSystem": "urn:clinmesh:reference:drug-concept",
+  "targetVersion": "clinmesh-drug-concepts-2026-08-28",
+  "version": "2026-08-28"
+}
