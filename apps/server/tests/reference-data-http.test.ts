@@ -237,6 +237,12 @@ describe('Reference Data HTTP contract', () => {
     ])
     expect(dataset.content.catalog.services?.map(service => service.nationalService.id)).toEqual(
       syntheticNhcMedicalServiceSnapshot.filter(service => [
+        'CM-NHC-SERVICE-CBC',
+        'CM-NHC-SERVICE-WBC',
+        'CM-NHC-SERVICE-HGB',
+        'CM-NHC-SERVICE-RBC',
+        'CM-NHC-SERVICE-MCV',
+        'CM-NHC-SERVICE-HCT',
         'CM-NHC-SERVICE-HBA1C',
         'CM-NHC-SERVICE-FUNDUS',
         'CM-NHC-SERVICE-DIABETES-EDUCATION',

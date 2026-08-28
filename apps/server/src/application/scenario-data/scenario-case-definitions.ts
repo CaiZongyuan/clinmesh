@@ -655,9 +655,11 @@ export const scenarioCaseDefinitions = {
       targetId: 'medication-metformin',
     }, ...[
       'exam-bmi',
+      'lab-cbc',
       'lab-urine-glucose',
       'lab-creatinine',
       'lab-egfr',
+      'lab-ogtt',
       'lab-tsh',
       'exam-fundus-screening',
     ].map(targetId => ({

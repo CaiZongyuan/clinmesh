@@ -973,7 +973,7 @@ describe('trusted session and Scenario HTTP contract', () => {
       config_json: string
       service_id: string
     }>
-    expect(installedServiceSnapshots).toHaveLength(3)
+    expect(installedServiceSnapshots).toHaveLength(9)
     expect(installedServiceSnapshots.map(row => ({
       config: JSON.parse(row.config_json) as unknown,
       id: row.service_id,
