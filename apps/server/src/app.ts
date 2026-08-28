@@ -529,6 +529,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
     app.post('/api/his/v1/encounters/:encounterId/services/:serviceId/actions/order', async (context) => {
       try {
+        identity.assertTrustedMutation(context.req.raw.headers)
         const request = orderHospitalServiceRequestSchema.parse(await context.req.json())
         return context.json(workflow.orderHospitalService({
           context: await actor(context),
@@ -543,6 +544,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
     app.post('/api/his/v1/service-requests/:serviceRequestId/actions/complete', async (context) => {
       try {
+        identity.assertTrustedMutation(context.req.raw.headers)
         const request = completeHospitalServiceRequestSchema.parse(await context.req.json())
         return context.json(workflow.completeHospitalService({
           context: await actor(context),

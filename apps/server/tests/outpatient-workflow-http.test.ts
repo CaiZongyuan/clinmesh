@@ -4495,13 +4495,32 @@ describe('outpatient workflow HTTP contract', () => {
     })
     runtimes.push(runtime)
     const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const orderBody = JSON.stringify({
+      expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+      input: {},
+    })
+    const untrustedOrderResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/services/${hospitalServiceId}/actions/order`,
+      {
+        body: orderBody,
+        headers: {
+          ...commandHeaders(doctorCookie),
+          origin: 'https://untrusted.example',
+        },
+        method: 'POST',
+      },
+    )
+    expect(untrustedOrderResponse.status).toBe(403)
+    for (const resourceType of ['ServiceRequest', 'ChargeItem'] as const) {
+      expect(fhirBundleSchema.parse(await (await runtime.app.request(
+        `/fhir/R5/${resourceType}?_total=accurate`,
+        { headers: { cookie: doctorCookie } },
+      )).json()).total).toBe(0)
+    }
     const orderResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/services/${hospitalServiceId}/actions/order`,
       {
-        body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
-          input: {},
-        }),
+        body: orderBody,
         headers: commandHeaders(doctorCookie),
         method: 'POST',
       },
@@ -4530,16 +4549,34 @@ describe('outpatient workflow HTTP contract', () => {
       unitPriceComponent: { amount: { currency: 'CNY', value: totalFen / 100 } },
     })
 
+    const completeBody = JSON.stringify({
+      expectedVersions: {
+        [`ServiceRequest/${ordered.serviceRequestId}`]: ordered.serviceRequestVersion,
+        [`Task/${ordered.taskId}`]: ordered.taskVersion,
+      },
+      input: {},
+    })
+    const untrustedCompleteResponse = await runtime.app.request(
+      `/api/his/v1/service-requests/${ordered.serviceRequestId}/actions/complete`,
+      {
+        body: completeBody,
+        headers: {
+          ...commandHeaders(doctorCookie),
+          origin: 'https://untrusted.example',
+        },
+        method: 'POST',
+      },
+    )
+    expect(untrustedCompleteResponse.status).toBe(403)
+    expect(fhirResourceSchema.parse(await (await runtime.app.request(
+      `/fhir/R5/ServiceRequest/${ordered.serviceRequestId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())).toMatchObject({ meta: { versionId: '1' }, status: 'active' })
+
     const completeResponse = await runtime.app.request(
       `/api/his/v1/service-requests/${ordered.serviceRequestId}/actions/complete`,
       {
-        body: JSON.stringify({
-          expectedVersions: {
-            [`ServiceRequest/${ordered.serviceRequestId}`]: ordered.serviceRequestVersion,
-            [`Task/${ordered.taskId}`]: ordered.taskVersion,
-          },
-          input: {},
-        }),
+        body: completeBody,
         headers: commandHeaders(doctorCookie),
         method: 'POST',
       },
