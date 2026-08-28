@@ -23,6 +23,7 @@ import {
   clinicalDocumentRevisionResponseSchema,
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
+  completeHospitalServiceResponseSchema,
   confirmDiagnosisResponseSchema,
   confirmNoMedicationResponseSchema,
   correctLaboratoryReportResponseSchema,
@@ -52,6 +53,7 @@ import {
   paymentResponseSchema,
   type PatientSummary,
   noMedicationConclusionSchema,
+  orderHospitalServiceResponseSchema,
   prescriptionDraftContentSchema,
   prescriptionDraftResponseSchema,
   type PrescriptionDraftItem,
@@ -1310,6 +1312,196 @@ export class WorkflowService {
       page: input.page,
       pageSize: input.pageSize,
       total,
+    })
+  }
+
+  orderHospitalService(input: {
+    context: ActorContext
+    encounterId: string
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+    serviceId: string
+  }) {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: orderHospitalServiceResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: { encounterId: input.encounterId, serviceId: input.serviceId },
+      operation: 'hospital-service.order',
+    }, transaction => {
+      this.#assertRole(input.context, ['outpatient-doctor'])
+      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+      this.#assertCaseResponsibility(input.context, outpatientCase.case_id)
+      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+      const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
+      if (encounter.status !== 'in-progress') {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter cannot order a Hospital Service')
+      }
+      const service = z.object({
+        code: z.string(),
+        config_json: z.string(),
+        name_zh: z.string(),
+        service_id: z.string(),
+      }).optional().parse(this.#database.driver.prepare(`
+        SELECT service_id, code, name_zh, config_json
+        FROM hospital_service_catalog
+        WHERE workspace_id = ? AND epoch = ? AND service_id = ? AND active = 1
+      `).get(input.context.workspaceId, input.context.epoch, input.serviceId))
+      if (service === undefined) throw new WorkflowError('CATALOG_CONFLICT', 'The Hospital Service is unavailable')
+      const config = serviceCatalogConfigSchema.parse(JSON.parse(service.config_json) as unknown)
+      if (!config.availableScopes.includes('outpatient')) {
+        throw new WorkflowError('CATALOG_CONFLICT', 'The Hospital Service is unavailable for outpatient care')
+      }
+      const serviceRequestId = uuidv7()
+      const taskId = `task-hospital-service-${serviceRequestId}`
+      const chargeItemId = `charge-hospital-service-${serviceRequestId}`
+      const now = this.#virtualTime(input.context)
+      const serviceRequest = transaction.fhir.create(input.context, {
+        resourceType: 'ServiceRequest',
+        id: serviceRequestId,
+        status: 'active',
+        intent: 'order',
+        code: {
+          concept: {
+            coding: [{
+              code: service.code,
+              display: service.name_zh,
+              system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/hospital-service',
+            }, {
+              code: config.nationalService.code,
+              display: config.nationalService.display,
+              system: config.nationalService.system,
+              version: config.nationalService.version,
+            }],
+            text: service.name_zh,
+          },
+        },
+        subject: { reference: `Patient/${outpatientCase.patient_id}` },
+        encounter: { reference: `Encounter/${input.encounterId}` },
+        authoredOn: now,
+        requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
+        performer: [{ reference: 'Organization/organization-clinmesh' }],
+      })
+      const task = transaction.fhir.create(input.context, {
+        resourceType: 'Task',
+        id: taskId,
+        status: 'requested',
+        intent: 'order',
+        code: { text: `${service.name_zh}执行` },
+        focus: { reference: `ServiceRequest/${serviceRequestId}` },
+        for: { reference: `Patient/${outpatientCase.patient_id}` },
+        encounter: { reference: `Encounter/${input.encounterId}` },
+        authoredOn: now,
+        requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
+        owner: { reference: 'Organization/organization-clinmesh' },
+      })
+      const chargeItem = transaction.fhir.create(input.context, {
+        resourceType: 'ChargeItem',
+        id: chargeItemId,
+        status: 'billable',
+        identifier: [{
+          system: 'https://caizongyuan.github.io/clinmesh/fhir/sid/charge-definition',
+          value: config.chargeDefinition.id,
+        }],
+        code: { text: service.name_zh },
+        subject: { reference: `Patient/${outpatientCase.patient_id}` },
+        encounter: { reference: `Encounter/${input.encounterId}` },
+        account: [{ reference: `Account/${outpatientCase.account_id}` }],
+        occurrenceDateTime: now,
+        quantity: { value: 1 },
+        unitPriceComponent: {
+          amount: {
+            currency: config.chargeDefinition.currency,
+            value: config.chargeDefinition.priceFen / 100,
+          },
+        },
+      })
+      return {
+        data: {
+          chargeDefinitionId: config.chargeDefinition.id,
+          chargeItemId,
+          hospitalServiceId: service.service_id,
+          nationalServiceId: config.nationalService.id,
+          serviceRequestId,
+          serviceRequestVersion: serviceRequest.meta?.versionId ?? '1',
+          status: 'requested' as const,
+          taskId,
+          taskVersion: task.meta?.versionId ?? '1',
+          totalFen: config.chargeDefinition.priceFen,
+        },
+        effects: [serviceRequest, task, chargeItem].map(resource => ({
+          kind: 'created' as const,
+          reference: `${resource.resourceType}/${resource.id}`,
+          versionId: resource.meta?.versionId ?? '1',
+        })),
+      }
+    })
+  }
+
+  completeHospitalService(input: {
+    context: ActorContext
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+    serviceRequestId: string
+  }) {
+    const taskId = `task-hospital-service-${input.serviceRequestId}`
+    const chargeItemId = `charge-hospital-service-${input.serviceRequestId}`
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: completeHospitalServiceResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: { serviceRequestId: input.serviceRequestId },
+      operation: 'hospital-service.complete',
+    }, transaction => {
+      this.#assertRole(input.context, ['outpatient-doctor'])
+      this.#assertExpectedVersions(input.expectedVersions, [
+        `ServiceRequest/${input.serviceRequestId}`,
+        `Task/${taskId}`,
+      ])
+      const serviceRequest = transaction.fhir.read(
+        input.context,
+        'ServiceRequest',
+        input.serviceRequestId,
+      )
+      const task = transaction.fhir.read(input.context, 'Task', taskId)
+      const encounterReference = z.object({
+        encounter: z.object({ reference: z.string().regex(/^Encounter\/[A-Za-z0-9.-]+$/) }),
+      }).passthrough().parse(serviceRequest).encounter.reference
+      const outpatientCase = this.#caseByEncounter(
+        input.context,
+        encounterReference.slice('Encounter/'.length),
+      )
+      this.#assertCaseResponsibility(input.context, outpatientCase.case_id)
+      if (serviceRequest.status !== 'active' || task.status !== 'requested') {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Hospital Service is not awaiting execution')
+      }
+      const now = this.#virtualTime(input.context)
+      const completedRequest = transaction.fhir.update(input.context, {
+        ...serviceRequest,
+        status: 'completed',
+      }, serviceRequest.meta?.versionId ?? '1')
+      const completedTask = transaction.fhir.update(input.context, {
+        ...task,
+        status: 'completed',
+        executionPeriod: { end: now },
+      }, task.meta?.versionId ?? '1')
+      return {
+        data: {
+          chargeItemId,
+          serviceRequestId: input.serviceRequestId,
+          serviceRequestVersion: completedRequest.meta?.versionId ?? '2',
+          status: 'completed' as const,
+          taskId,
+          taskVersion: completedTask.meta?.versionId ?? '2',
+        },
+        effects: [completedRequest, completedTask].map(resource => ({
+          kind: 'updated' as const,
+          reference: `${resource.resourceType}/${resource.id}`,
+          versionId: resource.meta?.versionId ?? '2',
+        })),
+      }
     })
   }
 

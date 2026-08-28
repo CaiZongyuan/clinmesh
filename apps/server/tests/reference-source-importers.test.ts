@@ -180,7 +180,7 @@ describe('Reference Data source importers', () => {
       values.valueSetEntries,
     )
     expect(hospitalBaseline.catalog.services.map(service => service.nationalService.id)).toEqual(
-      services.services.slice(0, 7).map(service => service.id),
+      services.services.map(service => service.id),
     )
   })
 

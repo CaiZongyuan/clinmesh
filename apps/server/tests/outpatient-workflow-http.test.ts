@@ -21,6 +21,7 @@ import {
   clinicalDocumentSignResponseSchema,
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
+  completeHospitalServiceResponseSchema,
   commandResponseSchema,
   confirmDiagnosisResponseSchema,
   confirmNoMedicationResponseSchema,
@@ -39,6 +40,7 @@ import {
   firstVisitDraftResponseSchema,
   issueLaboratoryRequestResponseSchema,
   issuePrescriptionResponseSchema,
+  orderHospitalServiceResponseSchema,
   laboratoryRequestActionResponseSchema,
   laboratoryOrderResponseSchema,
   laboratoryRequestDraftResponseSchema,
@@ -4461,6 +4463,105 @@ describe('outpatient workflow HTTP contract', () => {
       headers: { cookie: doctorCookie },
     })
     expect(fhirBundleSchema.parse(await chargeSearch.json())).toMatchObject({ total: 0 })
+  })
+
+  it.each([
+    {
+      hospitalServiceId: 'hospital-service-fundus',
+      nationalServiceId: 'nhc-medical-service:nhc-medical-services-2026-08-28:CM-NHC-SERVICE-FUNDUS',
+      totalFen: 8_000,
+    },
+    {
+      hospitalServiceId: 'hospital-service-diabetes-education',
+      nationalServiceId: 'nhc-medical-service:nhc-medical-services-2026-08-28:CM-NHC-SERVICE-DIABETES-EDUCATION',
+      totalFen: 3_000,
+    },
+  ])('orders, charges, and completes $hospitalServiceId', async ({
+    hospitalServiceId,
+    nationalServiceId,
+    totalFen,
+  }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-hospital-service-command-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const orderResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/services/${hospitalServiceId}/actions/order`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          input: {},
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(orderResponse.status).toBe(200)
+    const ordered = orderHospitalServiceResponseSchema.parse(await orderResponse.json()).data
+    expect(ordered).toMatchObject({
+      hospitalServiceId,
+      nationalServiceId,
+      status: 'requested',
+      totalFen,
+    })
+    expect(new Set([
+      ordered.nationalServiceId,
+      ordered.hospitalServiceId,
+      ordered.chargeDefinitionId,
+      ordered.serviceRequestId,
+    ]).size).toBe(4)
+    const chargeResponse = await runtime.app.request(
+      `/fhir/R5/ChargeItem/${ordered.chargeItemId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await chargeResponse.json())).toMatchObject({
+      encounter: { reference: `Encounter/${started.encounterId}` },
+      status: 'billable',
+      unitPriceComponent: { amount: { currency: 'CNY', value: totalFen / 100 } },
+    })
+
+    const completeResponse = await runtime.app.request(
+      `/api/his/v1/service-requests/${ordered.serviceRequestId}/actions/complete`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`ServiceRequest/${ordered.serviceRequestId}`]: ordered.serviceRequestVersion,
+            [`Task/${ordered.taskId}`]: ordered.taskVersion,
+          },
+          input: {},
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(completeResponse.status).toBe(200)
+    const completed = completeHospitalServiceResponseSchema.parse(
+      await completeResponse.json(),
+    ).data
+    expect(completed).toMatchObject({
+      chargeItemId: ordered.chargeItemId,
+      serviceRequestVersion: '2',
+      status: 'completed',
+      taskVersion: '2',
+    })
+    expect(fhirResourceSchema.parse(await (await runtime.app.request(
+      `/fhir/R5/ServiceRequest/${ordered.serviceRequestId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())).toMatchObject({ meta: { versionId: '2' }, status: 'completed' })
+    expect(fhirResourceSchema.parse(await (await runtime.app.request(
+      `/fhir/R5/Task/${ordered.taskId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())).toMatchObject({ meta: { versionId: '2' }, status: 'completed' })
   })
 
   it('rejects stale, duplicate, and unknown-catalog independent laboratory requests', async () => {

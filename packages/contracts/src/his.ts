@@ -246,7 +246,7 @@ export const serviceCatalogSearchSchema = z.object({
       version: z.string().min(1),
     }).strict(),
     reportTemplate: z.string().min(1),
-    requestCatalogItemIds: z.array(z.string().min(1)).min(1),
+    requestCatalogItemIds: z.array(z.string().min(1)),
     tatMinutes: z.number().int().nonnegative(),
     version: z.number().int().positive(),
   }).strict()),
@@ -254,6 +254,38 @@ export const serviceCatalogSearchSchema = z.object({
   pageSize: z.number().int().positive().max(100),
   total: z.number().int().nonnegative(),
 }).strict()
+
+export const orderHospitalServiceRequestSchema = z.object({
+  expectedVersions: fhirExpectedVersionsSchema,
+  input: z.object({}).strict(),
+}).strict()
+
+export const orderHospitalServiceResponseSchema = commandResponseSchema(z.object({
+  chargeDefinitionId: z.string().min(1),
+  chargeItemId: z.string().min(1),
+  hospitalServiceId: z.string().min(1),
+  nationalServiceId: z.string().min(1),
+  serviceRequestId: z.string().min(1),
+  serviceRequestVersion: z.string().regex(/^\d+$/),
+  status: z.literal('requested'),
+  taskId: z.string().min(1),
+  taskVersion: z.string().regex(/^\d+$/),
+  totalFen: z.number().int().nonnegative(),
+}).strict())
+
+export const completeHospitalServiceRequestSchema = z.object({
+  expectedVersions: fhirExpectedVersionsSchema,
+  input: z.object({}).strict(),
+}).strict()
+
+export const completeHospitalServiceResponseSchema = commandResponseSchema(z.object({
+  chargeItemId: z.string().min(1),
+  serviceRequestId: z.string().min(1),
+  serviceRequestVersion: z.string().regex(/^\d+$/),
+  status: z.literal('completed'),
+  taskId: z.string().min(1),
+  taskVersion: z.string().regex(/^\d+$/),
+}).strict())
 
 export const diagnosisRoleSchema = z.enum(['primary', 'secondary'])
 

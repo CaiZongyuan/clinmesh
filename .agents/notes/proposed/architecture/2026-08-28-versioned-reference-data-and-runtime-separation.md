@@ -22,7 +22,7 @@ RxNorm 历史用药使用同一映射发布机制，但目标只是 Drug Concept
 
 NHSA Medication Product 使用独立 product 表保存注册/目录属性，不装入 concept 表。Reference Data Service 将实际同时提供 Product、Medical Service 与辅助值域 rows 的 Release provenance 和 rows 作为一个 selection 返回，不跨 Release 静默拼装。Hospital Baseline compiler 接收该固定 snapshot，只选择病例和基础流程需要的产品，补齐本院代码、范围、价格、处方规则和合成库存。NMPA 人工核验仅对已选产品固定必要字段 hash、时间和来源入口，不引入全量爬取或运行时依赖。升级前 Package 的药品项通过不补字段的 legacy union 原样读取；新建或更新 Dataset 缺少 Product metadata 时产生阻断安装的诊断，读取兼容不回写旧内容或 hash。
 
-NHC Medical Service 与 WS/T 辅助值域通过同一 Release selection 进入 Hospital Baseline compiler。国家服务只拥有项目语义、类别和计价单位；本院 Service 另有本院代码、执行科室、可用范围、TAT、组合成员和报告模板，Charge Definition 单独拥有合成价格与生效日期。Operational SQLite 只安装本院 Service/Charge snapshot，并通过有界索引查询，不复制国家服务表。升级前 Package 可缺少 service catalog；读取和 reset 不补写，新建或更新 Dataset 缺少 service catalog 时阻止安装。
+NHC Medical Service 与 WS/T 辅助值域通过同一 Release selection 进入 Hospital Baseline compiler。国家服务只拥有项目语义、类别和计价单位；本院 Service 另有本院代码、执行科室、可用范围、TAT、组合成员和报告模板，Charge Definition 单独拥有合成价格与生效日期。Operational SQLite 只安装本院 Service/Charge snapshot，并通过有界索引查询，不复制国家服务表。检查与治疗的受控 Command 创建 ServiceRequest、执行 Task 和 billable ChargeItem，再通过 expected version 完成执行；它不复用检验报告状态机。升级前 Package 可缺少 service catalog；读取和 reset 不补写，新建或更新 Dataset 缺少 service catalog 时阻止安装。
 
 ## Alternatives considered
 

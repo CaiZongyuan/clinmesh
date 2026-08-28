@@ -3,6 +3,7 @@ import type { HealthResponse } from '@clinmesh/contracts/health'
 import {
   acknowledgeLaboratoryReportRequestSchema,
   cancelLaboratoryRequestRequestSchema,
+  completeHospitalServiceRequestSchema,
   completeEncounterRequestSchema,
   confirmDiagnosisRequestSchema,
   confirmNoMedicationRequestSchema,
@@ -11,6 +12,7 @@ import {
   deletePrescriptionDraftRequestSchema,
   issueLaboratoryRequestRequestSchema,
   issuePrescriptionRequestSchema,
+  orderHospitalServiceRequestSchema,
   previewClinicalDocumentSignRequestSchema,
   reviseClinicalDocumentRequestSchema,
   saveClinicalDocumentDraftRequestSchema,
@@ -523,6 +525,33 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         }))
       } catch (error) {
         return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/services/:serviceId/actions/order', async (context) => {
+      try {
+        const request = orderHospitalServiceRequestSchema.parse(await context.req.json())
+        return context.json(workflow.orderHospitalService({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedVersions: request.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          serviceId: context.req.param('serviceId'),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error, 'The Hospital Service order request is invalid')
+      }
+    })
+    app.post('/api/his/v1/service-requests/:serviceRequestId/actions/complete', async (context) => {
+      try {
+        const request = completeHospitalServiceRequestSchema.parse(await context.req.json())
+        return context.json(workflow.completeHospitalService({
+          context: await actor(context),
+          expectedVersions: request.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          serviceRequestId: context.req.param('serviceRequestId'),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error, 'The Hospital Service completion request is invalid')
       }
     })
     app.get('/api/his/v1/patients', async (context) => {

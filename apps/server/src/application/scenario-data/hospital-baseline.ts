@@ -116,6 +116,7 @@ function hospitalService(input: {
   name: string
   nationalService: ReferenceMedicalService
   componentServiceIds?: string[]
+  executingDepartmentId?: string
   priceFen: number
   reportTemplate: string
   requestCatalogItemIds: string[]
@@ -147,7 +148,7 @@ function hospitalService(input: {
       priceFen: input.priceFen,
     },
     componentServiceIds: input.componentServiceIds ?? [],
-    executingDepartmentId: 'department-laboratory',
+    executingDepartmentId: input.executingDepartmentId ?? 'department-laboratory',
     nationalService: {
       code: input.nationalService.code,
       display: input.nationalService.display,
@@ -262,6 +263,11 @@ export function createHospitalBaseline(
   )
   const cbcService = selectedMedicalService(medicalServices, 'CM-NHC-SERVICE-CBC')
   const hba1cService = selectedMedicalService(medicalServices, 'CM-NHC-SERVICE-HBA1C')
+  const fundusService = selectedMedicalService(medicalServices, 'CM-NHC-SERVICE-FUNDUS')
+  const educationService = selectedMedicalService(
+    medicalServices,
+    'CM-NHC-SERVICE-DIABETES-EDUCATION',
+  )
   const cbcComponentServices = ([
     ['WBC', '白细胞计数服务', 'lab-wbc', '白细胞计数 {value} x10^9/L。'],
     ['HGB', '血红蛋白服务', 'lab-hemoglobin', '血红蛋白 {value} g/L。'],
@@ -677,6 +683,28 @@ export function createHospitalBaseline(
         reportTemplate: '糖化血红蛋白 {value}%。',
         requestCatalogItemIds: ['lab-hba1c'],
         tatMinutes: 120,
+        valueSetEntries,
+      }), hospitalService({
+        executingDepartmentId: 'department-general-medicine',
+        itemId: 'hospital-service-fundus',
+        localCode: 'HOSP-SVC-FUNDUS',
+        name: '眼底检查服务',
+        nationalService: fundusService,
+        priceFen: 8_000,
+        reportTemplate: '眼底检查结果：{value}。',
+        requestCatalogItemIds: [],
+        tatMinutes: 60,
+        valueSetEntries,
+      }), hospitalService({
+        executingDepartmentId: 'department-general-medicine',
+        itemId: 'hospital-service-diabetes-education',
+        localCode: 'HOSP-SVC-DIABETES-EDUCATION',
+        name: '糖尿病健康教育',
+        nationalService: educationService,
+        priceFen: 3_000,
+        reportTemplate: '完成糖尿病饮食、运动和用药教育。',
+        requestCatalogItemIds: [],
+        tatMinutes: 30,
         valueSetEntries,
       })],
     },

@@ -238,7 +238,7 @@ describe('Reference Data HTTP contract', () => {
       'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-AMLODIPINE',
     ])
     expect(dataset.content.catalog.services?.map(service => service.nationalService.id)).toEqual(
-      syntheticNhcMedicalServiceSnapshot.slice(0, 7).map(service => service.id),
+      syntheticNhcMedicalServiceSnapshot.map(service => service.id),
     )
   })
 
@@ -459,7 +459,7 @@ describe('Reference Data HTTP contract', () => {
         expect.objectContaining({ id: 'hospital-service-cbc' }),
         expect.objectContaining({ id: 'hospital-service-hba1c' }),
       ]),
-      total: 7,
+      total: 9,
     })
     expect(restarted.runtime.database.driver.prepare(`
       SELECT content_json, content_hash FROM scenario_package

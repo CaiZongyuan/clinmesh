@@ -357,6 +357,20 @@ describe('Reference Data database CLI', () => {
       applied: ['0005_reference-services.sql'],
       schemaVersion: 5,
     })
+    expect(database.driver.pragma('foreign_key_check')).toEqual([])
+    for (const table of [
+      'reference_concept',
+      'reference_medication_product',
+      'reference_medical_service',
+      'reference_value_set_entry',
+    ]) {
+      const foreignKeys = database.driver.pragma(`foreign_key_list(${table})`) as Array<{
+        table: string
+      }>
+      expect(foreignKeys.map(foreignKey => foreignKey.table)).toContain(
+        'reference_source_manifest',
+      )
+    }
     expect(verifyReferenceDatabase(database)).toEqual({
       integrity: 'ok',
       releaseCount: 1,
@@ -366,6 +380,12 @@ describe('Reference Data database CLI', () => {
       contentHash: oldContentHash,
       sources: [{ artifactFormat: 'clinmesh-reference-v1' }],
     })
+    database.driver.pragma('foreign_keys = OFF')
+    database.driver.prepare(`
+      DELETE FROM reference_source_manifest WHERE release_id = ? AND source_id = ?
+    `).run(releaseId, sourceId)
+    database.driver.pragma('foreign_keys = ON')
+    expect(() => verifyReferenceDatabase(database)).toThrow('foreign key check failed')
     database.close()
   })
 })

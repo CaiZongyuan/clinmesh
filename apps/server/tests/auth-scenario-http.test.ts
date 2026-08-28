@@ -984,7 +984,7 @@ describe('trusted session and Scenario HTTP contract', () => {
       config_json: string
       service_id: string
     }>
-    expect(installedServiceSnapshots).toHaveLength(7)
+    expect(installedServiceSnapshots).toHaveLength(9)
     expect(installedServiceSnapshots.map(row => ({
       config: JSON.parse(row.config_json) as unknown,
       id: row.service_id,
@@ -1015,7 +1015,8 @@ describe('trusted session and Scenario HTTP contract', () => {
       { headers: { cookie: registrarCookie } },
     )
     expect(registrationCatalogResponse.status).toBe(200)
-    expect(registrationCatalogSchema.parse(await registrationCatalogResponse.json())).toMatchObject({
+    const registrationCatalog = registrationCatalogSchema.parse(await registrationCatalogResponse.json())
+    expect(registrationCatalog).toMatchObject({
       departments: expect.arrayContaining([
         expect.objectContaining({ id: 'department-general-medicine' }),
       ]),
@@ -1023,6 +1024,9 @@ describe('trusted session and Scenario HTTP contract', () => {
         expect.objectContaining({ id: 'visit-general' }),
       ]),
     })
+    expect(registrationCatalog.departments).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'department-laboratory' }),
+    ]))
 
     for (const [resourceType, resourceId] of [
       ['Medication', 'medication-metformin'],

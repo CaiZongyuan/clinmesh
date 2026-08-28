@@ -237,7 +237,7 @@ export const scenarioHospitalServiceCatalogItemSchema = scenarioCatalogItemBaseS
     version: z.string().min(1),
   }).strict(),
   reportTemplate: z.string().min(1),
-  requestCatalogItemIds: z.array(z.string().min(1)).min(1),
+  requestCatalogItemIds: z.array(z.string().min(1)),
   tatMinutes: z.number().int().nonnegative(),
 }).strict()
 

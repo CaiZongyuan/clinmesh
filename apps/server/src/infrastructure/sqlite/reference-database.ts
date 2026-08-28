@@ -718,6 +718,18 @@ export function verifyReferenceDatabase(database: ReferenceDatabase): ReferenceD
   const migration = verifyReferenceMigrations(database)
   const integrity = String(database.driver.pragma('integrity_check', { simple: true }))
   if (integrity !== 'ok') throw new Error(`Reference database integrity check failed: ${integrity}`)
+  const foreignKeyViolations = z.array(z.object({
+    fkid: z.number().int().nonnegative(),
+    parent: z.string(),
+    rowid: z.number().int().nullable(),
+    table: z.string(),
+  })).parse(database.driver.pragma('foreign_key_check'))
+  if (foreignKeyViolations.length > 0) {
+    const violation = foreignKeyViolations[0]!
+    throw new Error(
+      `Reference database foreign key check failed: ${violation.table}->${violation.parent}`,
+    )
+  }
   const releases = readReferenceDataReleases(database)
   for (const release of releases.items) {
     referenceDataReleaseSummarySchema.parse(release)
