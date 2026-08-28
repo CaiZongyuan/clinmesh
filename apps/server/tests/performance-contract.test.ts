@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   assertPerformanceBaseline,
@@ -8,8 +9,15 @@ import {
   performanceWorkloadResultSchema,
   summarizeDurations,
 } from '../src/performance/performance-contract.ts'
-import { SqlitePerformanceProbe } from '../src/performance/sqlite-performance-probe.ts'
-import { applyMigrations, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
+import {
+  readActionTraceMetrics,
+  SqlitePerformanceProbe,
+} from '../src/performance/sqlite-performance-probe.ts'
+import {
+  applyMigrations,
+  ClinMeshDatabase,
+  openClinMeshDatabase,
+} from '../src/infrastructure/sqlite/database.ts'
 
 const temporaryDirectories: string[] = []
 
@@ -102,6 +110,52 @@ describe('Performance contract', () => {
       workload,
       { ...workload, name: 'unbudgeted-workload' },
     ], baseline)).toThrow('Performance baseline is missing: unbudgeted-workload')
+    expect(() => assertPerformanceBaseline([{
+      ...workload,
+      queryPlan: [...workload.queryPlan, 'SCAN hospital_service_catalog'],
+    }], baseline)).toThrow('required query plan')
+  })
+
+  it('counts every persisted Action Trace text field as UTF-8 bytes', () => {
+    const driver = new Database(':memory:')
+    driver.exec(`
+      CREATE TABLE action_trace (
+        workspace_id TEXT NOT NULL,
+        epoch TEXT NOT NULL,
+        scenario_run_id TEXT NOT NULL,
+        trace_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL,
+        actor_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        effect_json TEXT NOT NULL,
+        virtual_timestamp TEXT NOT NULL
+      ) STRICT
+    `)
+    const textFields = [
+      'workspace-demo',
+      'epoch-1',
+      'scenario-run-1',
+      'trace-1',
+      'actor-doctor',
+      'performance.合成操作',
+      'success',
+      '[]',
+      '2026-08-28T00:00:00.000Z',
+    ]
+    driver.prepare(`
+      INSERT INTO action_trace (
+        workspace_id, epoch, scenario_run_id, trace_id, sequence,
+        actor_id, operation, outcome, effect_json, virtual_timestamp
+      ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+    `).run(...textFields)
+    const database = new ClinMeshDatabase(driver)
+
+    expect(readActionTraceMetrics(database)).toEqual({
+      bytes: textFields.reduce((sum, value) => sum + Buffer.byteLength(value), 0),
+      rows: 1,
+    })
+    database.close()
   })
 
   it('observes real SQLite query, write, row, and transaction metrics', async () => {

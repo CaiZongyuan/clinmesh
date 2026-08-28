@@ -8,7 +8,7 @@ Status: implemented
 
 ## Decision
 
-Performance runner 使用固定 `performanceResultSchema` 输出每个 workload 的 P50/P95/P99、transaction time、statement/query/write counts、rows written、数据库增长、Trace rows/bytes、吞吐和 busy/error/retry。可选 `SqlitePerformanceObserver` 只在 runner 显式创建的 Database adapter 上记录 statement 执行；默认 Server 不启用 observer，不改变 SQL、事务、审计或 Trace 行为。
+Performance runner 使用固定 `performanceResultSchema` 输出每个 workload 的 P50/P95/P99、transaction time、statement/query/write counts、rows written、数据库增长、Trace rows/bytes、吞吐和 busy/error/retry。Trace bytes 是 `action_trace` 全部持久化 TEXT 字段的 UTF-8 字节数，不是字符数或 SQLite page allocation。可选 `SqlitePerformanceObserver` 只在 runner 显式创建的 Database adapter 上记录 statement 执行；默认 Server 不启用 observer，不改变 SQL、事务、审计或 Trace 行为。
 
 `ci` profile 在隔离 file-backed SQLite 上运行合成参考导入、本院服务 HTTP 查询、普通 Command、25 行重 Command、同写入量的测试专用 SQL control，以及 Scenario install/reset。PR gate 只约束稳定的 count、query plan、Trace 和 storage 指标，延迟分位数始终报告但不作跨机器 hard gate。本院服务 workload 同时拒绝 `pageSize=101` 并要求 `hospital_service_catalog_search_idx`；结果 schema 不接受 rows-read 字段。
 

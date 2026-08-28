@@ -95,7 +95,7 @@ Mobile 功能先列出与 Web/Desktop 必须一致的语义，再验证移动端
 
 ## 性能合同
 
-短性能门禁属于 `pnpm check`。它在隔离的 file-backed SQLite 上运行参考导入、本院目录 HTTP 查询、普通与重 Command、测试专用 Trace 对照和 Scenario install/reset；只 gate statement/query/write、rows written、数据库增长、Trace rows/bytes、错误和索引计划。P50/P95/P99、transaction time 和吞吐始终进入结果，但不作为跨机器 PR hard gate。SQLite 当前不提供可靠 rows-read，因此结果 schema 明确不声明该指标。
+短性能门禁属于 `pnpm check`。它在隔离的 file-backed SQLite 上运行参考导入、本院目录 HTTP 查询、普通与重 Command、测试专用 Trace 对照和 Scenario install/reset；只 gate statement/query/write、rows written、数据库增长、Trace rows/bytes、错误和索引计划。Trace bytes 是 `action_trace` 全部持久化 TEXT 字段的 UTF-8 字节数，不代表 SQLite page allocation。P50/P95/P99、transaction time 和吞吐始终进入结果，但不作为跨机器 PR hard gate。SQLite 当前不提供可靠 rows-read，因此结果 schema 明确不声明该指标。
 
 ```sh
 pnpm perf:ci

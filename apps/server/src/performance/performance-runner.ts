@@ -13,14 +13,17 @@ import {
   importReferenceDataRelease,
   openReferenceDatabase,
 } from '../infrastructure/sqlite/reference-database.ts'
-import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import { createClinMeshRuntime } from '../runtime.ts'
 import {
   performanceResultSchema,
   summarizeDurations,
   type PerformanceWorkloadResult,
 } from './performance-contract.ts'
-import { SqlitePerformanceProbe, type SqlitePerformanceSnapshot } from './sqlite-performance-probe.ts'
+import {
+  readActionTraceMetrics,
+  SqlitePerformanceProbe,
+  type SqlitePerformanceSnapshot,
+} from './sqlite-performance-probe.ts'
 
 const performancePassword = 'Synthetic-performance-password-2026!'
 const performanceOrigin = 'http://localhost'
@@ -35,17 +38,6 @@ async function databaseBytes(databasePath: string): Promise<number> {
     }
   }
   return total
-}
-
-function traceMetrics(database: ClinMeshDatabase): { bytes: number; rows: number } {
-  return database.driver.prepare(`
-    SELECT COUNT(*) AS rows,
-      COALESCE(SUM(
-        length(trace_id) + length(actor_id) + length(operation) + length(outcome)
-        + length(effect_json) + length(virtual_timestamp)
-      ), 0) AS bytes
-    FROM action_trace
-  `).get() as { bytes: number; rows: number }
 }
 
 function workloadResult(input: {
@@ -142,12 +134,6 @@ async function runCatalogSearch(directory: string): Promise<PerformanceWorkloadR
       { headers: { cookie } },
     )
     if (unbounded.status !== 400) throw new Error('Catalog performance workload accepted an unbounded page')
-    const queryPlan = (runtime.database.driver.prepare(`
-      EXPLAIN QUERY PLAN
-      SELECT service_id FROM hospital_service_catalog
-      WHERE workspace_id = ? AND epoch = ? AND active = 1
-      ORDER BY service_id LIMIT 20
-    `).all('workspace-demo', 'epoch-1') as Array<{ detail: string }>).map(row => row.detail)
     probe.reset()
     const beforeBytes = await databaseBytes(databasePath)
     const latenciesMs: number[] = []
@@ -169,6 +155,18 @@ async function runCatalogSearch(directory: string): Promise<PerformanceWorkloadR
     }
     const elapsedMs = performance.now() - startedAt
     const snapshot = probe.snapshot()
+    const catalogQuerySources = [...new Set(snapshot.statementSources.filter(source => (
+      /\bFROM hospital_service_catalog\b/u.test(source)
+    )))]
+    const searchBindings: unknown[] = ['workspace-demo', 'epoch-1', null, null, null, null]
+    const queryPlan = catalogQuerySources.map((source) => {
+      const bindings = /\bLIMIT \? OFFSET \?\s*$/u.test(source.trim())
+        ? [...searchBindings, 2, 0]
+        : searchBindings
+      return (runtime.database.driver.prepare(
+        `EXPLAIN QUERY PLAN ${source}`,
+      ).all(...bindings) as Array<{ detail: string }>).map(row => row.detail).join('\n')
+    })
     return workloadResult({
       afterBytes: await databaseBytes(databasePath),
       beforeBytes,
@@ -180,7 +178,7 @@ async function runCatalogSearch(directory: string): Promise<PerformanceWorkloadR
       path: 'http',
       probe: snapshot,
       queryPlan,
-      trace: traceMetrics(runtime.database),
+      trace: readActionTraceMetrics(runtime.database),
     })
   } finally {
     await runtime.close()
@@ -258,7 +256,7 @@ async function runCommandWorkload(
       name: `command-${kind}-application`,
       path: 'application',
       probe: snapshot,
-      trace: traceMetrics(runtime.database),
+      trace: readActionTraceMetrics(runtime.database),
     })
   } finally {
     await runtime.close()
@@ -312,7 +310,7 @@ async function runTraceControl(directory: string): Promise<PerformanceWorkloadRe
       name: 'trace-control-sqlite',
       path: 'sqlite',
       probe: snapshot,
-      trace: traceMetrics(runtime.database),
+      trace: readActionTraceMetrics(runtime.database),
     })
   } finally {
     await runtime.close()
@@ -364,7 +362,7 @@ async function runScenarioLifecycle(directory: string): Promise<PerformanceWorkl
       name: 'scenario-install-reset-application',
       path: 'application',
       probe: snapshot,
-      trace: traceMetrics(runtime.database),
+      trace: readActionTraceMetrics(runtime.database),
     })
   } finally {
     await runtime.close()
@@ -672,7 +670,7 @@ export async function runTrajectoryPerformanceProfile() {
       name: 'hypertension-trajectory-application',
       path: 'application',
       probe: snapshot,
-      trace: traceMetrics(runtime.database),
+      trace: readActionTraceMetrics(runtime.database),
     })
     return performanceResultSchema.parse({
       environment: { node: process.version, platform: process.platform, sqlite: sqliteVersion() },
@@ -712,6 +710,7 @@ const saturationWorkerSource = `
   const sleeper = new Int32Array(workerData.sleeper);
   Atomics.add(barrier, 0, 1);
   Atomics.notify(barrier, 0);
+  parentPort.postMessage({ type: 'ready' });
   Atomics.wait(barrier, 1, 0);
   let busyCount = 0;
   let errorCount = 0;
@@ -762,16 +761,76 @@ const saturationWorkerSource = `
   }
   database.close();
   parentPort.postMessage({
-    busyCount,
-    errorCount,
-    latenciesMs,
-    retryCount,
-    rowsWritten,
-    statementCount,
-    transactionDurationsMs,
-    writeCount,
+    result: {
+      busyCount,
+      errorCount,
+      latenciesMs,
+      retryCount,
+      rowsWritten,
+      statementCount,
+      transactionDurationsMs,
+      writeCount,
+    },
+    type: 'result',
   });
 `
+
+interface SaturationWorkerHandle {
+  ready: Promise<void>
+  result: Promise<SaturationWorkerResult>
+  worker: Worker
+}
+
+function createDeferred<Result>() {
+  let reject!: (reason?: unknown) => void
+  let resolve!: (value: Result | PromiseLike<Result>) => void
+  const promise = new Promise<Result>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, reject, resolve }
+}
+
+function startSaturationWorker(workerData: {
+  actorId: number
+  barrier: SharedArrayBuffer
+  databasePath: string
+  iterations: number
+  sleeper: SharedArrayBuffer
+}): SaturationWorkerHandle {
+  let resultReceived = false
+  const ready = createDeferred<void>()
+  const result = createDeferred<SaturationWorkerResult>()
+  void result.promise.catch(() => undefined)
+  const worker = new Worker(saturationWorkerSource, { eval: true, workerData })
+  worker.on('message', (message: { result?: SaturationWorkerResult; type: 'ready' | 'result' }) => {
+    if (message.type === 'ready') {
+      ready.resolve()
+      return
+    }
+    if (message.result === undefined) {
+      result.reject(new Error('Saturation worker returned no result'))
+      return
+    }
+    resultReceived = true
+    result.resolve(message.result)
+  })
+  worker.once('error', (error) => {
+    const workerError = error instanceof Error ? error : new Error(String(error))
+    ready.reject(workerError)
+    result.reject(workerError)
+  })
+  worker.once('exit', (code) => {
+    if (code !== 0) {
+      const error = new Error(`Saturation worker exited with code ${code}`)
+      ready.reject(error)
+      result.reject(error)
+    } else if (!resultReceived) {
+      result.reject(new Error('Saturation worker exited without a result'))
+    }
+  })
+  return { ready: ready.promise, result: result.promise, worker }
+}
 
 async function runSaturationLevel(
   directory: string,
@@ -794,32 +853,29 @@ async function runSaturationLevel(
   const sleeper = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)
   const barrierView = new Int32Array(barrier)
   const iterationsPerActor = 20
-  const workerPromises = Array.from({ length: actors }, (_, actorId) => (
-    new Promise<SaturationWorkerResult>((resolveWorker, rejectWorker) => {
-      const worker = new Worker(saturationWorkerSource, {
-        eval: true,
-        workerData: {
-          actorId,
-          barrier,
-          databasePath,
-          iterations: iterationsPerActor,
-          sleeper,
-        },
-      })
-      worker.once('message', value => resolveWorker(value as SaturationWorkerResult))
-      worker.once('error', rejectWorker)
-      worker.once('exit', (code) => {
-        if (code !== 0) rejectWorker(new Error(`Saturation worker exited with code ${code}`))
-      })
-    })
-  ))
-  while (Atomics.load(barrierView, 0) < actors) {
-    await new Promise(resolveWait => setTimeout(resolveWait, 1))
+  const workers = Array.from({ length: actors }, (_, actorId) => startSaturationWorker({
+    actorId,
+    barrier,
+    databasePath,
+    iterations: iterationsPerActor,
+    sleeper,
+  }))
+  try {
+    await Promise.all(workers.map(worker => worker.ready))
+  } catch (error) {
+    await Promise.all(workers.map(worker => worker.worker.terminate()))
+    throw error
   }
   const startedAt = performance.now()
   Atomics.store(barrierView, 1, 1)
   Atomics.notify(barrierView, 1, actors)
-  const workerResults = await Promise.all(workerPromises)
+  let workerResults: SaturationWorkerResult[]
+  try {
+    workerResults = await Promise.all(workers.map(worker => worker.result))
+  } catch (error) {
+    await Promise.all(workers.map(worker => worker.worker.terminate()))
+    throw error
+  }
   const elapsedMs = performance.now() - startedAt
   const latenciesMs = workerResults.flatMap(result => result.latenciesMs)
   const probe: SqlitePerformanceSnapshot = {
@@ -827,6 +883,7 @@ async function runSaturationLevel(
     rowsWritten: workerResults.reduce((sum, result) => sum + result.rowsWritten, 0),
     statementCount: workerResults.reduce((sum, result) => sum + result.statementCount, 0),
     statementDurationsMs: [],
+    statementSources: [],
     transactionDurationsMs: workerResults.flatMap(result => result.transactionDurationsMs),
     writeCount: workerResults.reduce((sum, result) => sum + result.writeCount, 0),
   }

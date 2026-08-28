@@ -3,10 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import baselineData from '../performance-baselines.json' with { type: 'json' }
-import { assertPerformanceBaseline } from '../src/performance/performance-contract.ts'
 import {
-  runCiPerformanceProfile,
   runFullImportPerformanceProfile,
   runTrajectoryPerformanceProfile,
 } from '../src/performance/performance-runner.ts'
@@ -20,21 +17,6 @@ afterEach(async () => {
 })
 
 describe('Performance runner', () => {
-  it('runs the stable CI count/storage gates on isolated SQLite databases', async () => {
-    const result = await runCiPerformanceProfile()
-
-    expect(() => assertPerformanceBaseline(result.workloads, baselineData)).not.toThrow()
-    expect(result.workloads.map(workload => workload.name)).toEqual([
-      'reference-import-application',
-      'catalog-search-http',
-      'command-ordinary-application',
-      'trace-control-sqlite',
-      'command-heavy-application',
-      'scenario-install-reset-application',
-    ])
-    expect(result.workloads.every(workload => workload.errorCount === 0)).toBe(true)
-  })
-
   it('runs the fixed hypertension clinical trajectory through completion', async () => {
     const result = await runTrajectoryPerformanceProfile()
 

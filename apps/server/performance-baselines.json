@@ -36,7 +36,7 @@
       "maximumRetryCount": 0,
       "maximumRowsWrittenPerIteration": 7,
       "maximumStatementsPerIteration": 16,
-      "maximumTraceBytesPerIteration": 128,
+      "maximumTraceBytesPerIteration": 192,
       "maximumTraceRowsPerIteration": 1,
       "maximumWritesPerIteration": 8,
       "minimumRowsWrittenPerIteration": 7

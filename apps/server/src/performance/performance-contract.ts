@@ -147,7 +147,8 @@ export function assertPerformanceBaseline(
       throw new Error(`${name} exceeded its retry budget`)
     }
     if (budget.requiredQueryPlan !== undefined
-      && !workload.queryPlan.some(detail => detail.includes(budget.requiredQueryPlan!))) {
+      && (workload.queryPlan.length === 0
+        || workload.queryPlan.some(detail => !detail.includes(budget.requiredQueryPlan!)))) {
       throw new Error(`${name} did not use its required query plan`)
     }
   }
