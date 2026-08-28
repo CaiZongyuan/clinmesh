@@ -4,7 +4,7 @@ import type {
 } from '@clinmesh/contracts/scenario'
 import { resolveDiagnosisMapping } from './diagnosis-coding-package.ts'
 import { resolveMedicationMapping } from './medication-coding-package.ts'
-import { resolveObservationMapping } from './reference-coding-package.ts'
+import { resolveObservationMapping, resolveUcumUnit } from './reference-coding-package.ts'
 import {
   scenarioCaseDefinitions,
   type ScenarioCatalogCollection,
@@ -207,12 +207,16 @@ export function compileScenarioCatalog(input: {
       return
     }
     const present = collectionHas(input.baseline, collection, targetId)
-    entries.push({
-      module: requiredBy.values().next().value ?? 'baseline-workflow',
-      requirement: 'workflow-required',
-      resolution: present ? 'mapped' : 'hospital-not-enabled',
-      targetId,
-    })
+    if (!entries.some(entry => (
+      entry.requirement === 'workflow-required' && entry.targetId === targetId
+    ))) {
+      entries.push({
+        module: requiredBy.values().next().value ?? 'baseline-workflow',
+        requirement: 'workflow-required',
+        resolution: present ? 'mapped' : 'hospital-not-enabled',
+        targetId,
+      })
+    }
     if (present) {
       selected[collection].add(targetId)
       closureRevision += 1
@@ -407,7 +411,7 @@ export function compileScenarioCatalog(input: {
       generatedOccurrences: unit.occurrences,
       module: unit.module,
       requirement: 'history-only',
-      resolution: 'hospital-not-enabled',
+      resolution: resolveUcumUnit(unit.source) === undefined ? 'hospital-not-enabled' : 'mapped',
       source: unit.source,
       staticOccurrences: 0,
     })

@@ -157,5 +157,25 @@ describe('Scenario catalog compiler', () => {
       }]),
       supported: false,
     })
+    expect(missingComponent.report.entries.filter(entry => entry.targetId === 'lab-wbc'))
+      .toHaveLength(1)
+  })
+
+  it('classifies generated UCUM units against the enabled unit package', () => {
+    const compiled = compileScenarioCatalog({
+      baseline: fullBaseline(),
+      modules: ['type-2-diabetes'],
+    })
+
+    expect(compiled.report.entries).toContainEqual(expect.objectContaining({
+      generatedOccurrences: expect.any(Number),
+      requirement: 'history-only',
+      resolution: 'mapped',
+      source: {
+        code: '%',
+        display: '%',
+        system: 'http://unitsofmeasure.org',
+      },
+    }))
   })
 })

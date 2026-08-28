@@ -14,7 +14,7 @@ Synthea 病种模块、病例作者真值和本院可执行目录解决不同问
 
 `compileScenarioCatalog` 从所选病例定义与基础门诊工作流求并集。检查组合递归加入成员，本院服务递归加入组合服务和执行科室，药品加入对应合成库存；药品的可选组合与诊断允许列表裁剪到当前闭包，不通过可选引用带入无关目录。诊断、观察和历史用药仍通过版本化 mapping package 解析，不使用名称匹配；RxNorm `308136` 的 2.5 mg 历史 Drug Concept 与本次可处方的本院 5 mg Medication Product 保持不同身份。
 
-每个新 Dataset 和 Package 保存病例定义 hash、完整 Hospital Baseline hash、编译后目录 snapshot 及所选病种 static/generated inventory 的内容 hash，并保存覆盖条目和频次。覆盖报告分别统计关键真值、工作流必需、仅保留历史、明确忽略、歧义、本院未启用和缺失；关键真值或工作流必需项存在缺失或歧义时 `supported=false`，Dataset validator 产生安装级错误。升级前 Package 没有该可选报告时仍按原 JSON 和 hash 读取、安装和 reset。
+每个新 Dataset 和 Package 保存病例定义 hash、完整 Hospital Baseline hash、编译后目录 snapshot、全量 static inventory hash 和所选病种 generated inventory hash，并保存覆盖条目和频次。覆盖报告分别统计关键真值、工作流必需、仅保留历史、明确忽略、歧义、本院未启用和缺失；关键真值或工作流必需项存在缺失或歧义时 `supported=false`，Dataset validator 产生安装级错误。升级前 Package 没有该可选报告时仍按原 JSON 和 hash 读取、安装和 reset。
 
 ## Alternatives considered
 
