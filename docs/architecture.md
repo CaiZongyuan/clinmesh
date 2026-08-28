@@ -1430,7 +1430,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 
 当前成功 Command 响应返回 `requestId` 和 `auditId`，持久表通过 Workspace/Epoch、Scenario Run、idempotency key、Audit ID、Action Trace ID 和 outbox event ID 建立关联。`/api/health` 只报告服务状态与 FHIR 版本。
 
-首期没有 metrics exporter、分布式 trace、request log 或管理仪表盘，因此不宣称已经采集 API latency、SQLite busy/transaction duration、Search 规模或 outbox backlog 指标。诊断依赖数据库 CLI、结构化 API 错误和持久审计/outbox 状态；任何后续日志或指标都不得把患者姓名、身份信息、完整临床正文、token 或自由文本作为标签。
+首期没有生产 metrics exporter、分布式 trace、request log 或管理仪表盘，因此不宣称在线采集 API latency、SQLite busy/transaction duration、Search 规模或 outbox backlog 指标。独立 performance runner 可以在临时 sandbox 重复执行固定工作负载并输出分位数、SQL/存储和 Trace 指标，但不改变生产请求或持久化路径。运行诊断仍依赖数据库 CLI、结构化 API 错误和持久审计/outbox 状态；任何后续日志或指标都不得把患者姓名、身份信息、完整临床正文、token 或自由文本作为标签。
 
 ## 13. 代码结构
 

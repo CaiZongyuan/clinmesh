@@ -20,6 +20,10 @@ import {
 import Database from 'better-sqlite3'
 import { z } from 'zod'
 import { parseReferenceSourceArtifact } from '../reference-data/reference-source-importers.ts'
+import {
+  instrumentSqliteDriver,
+  type SqlitePerformanceObserver,
+} from './performance-observer.ts'
 
 const MIGRATION_FILE_PATTERN = /^\d{4}_[a-z0-9-]+\.sql$/
 
@@ -110,6 +114,7 @@ function contentHash(input: {
 export function openReferenceDatabase(options: {
   busyTimeoutMs: number
   databasePath: string
+  performanceObserver?: SqlitePerformanceObserver
   readonly?: boolean
 }): ReferenceDatabase {
   if (options.readonly !== true) mkdirSync(dirname(resolve(options.databasePath)), { recursive: true })
@@ -119,7 +124,9 @@ export function openReferenceDatabase(options: {
   driver.pragma('foreign_keys = ON')
   driver.pragma(`busy_timeout = ${options.busyTimeoutMs}`)
   if (options.readonly !== true) driver.pragma('journal_mode = WAL')
-  return new ReferenceDatabase(driver)
+  return new ReferenceDatabase(options.performanceObserver === undefined
+    ? driver
+    : instrumentSqliteDriver(driver, options.performanceObserver))
 }
 
 export function applyReferenceMigrations(

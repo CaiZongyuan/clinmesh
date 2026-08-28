@@ -92,3 +92,16 @@ pnpm docs:check
 录制只使用合成医院场景和隔离的 workspace、epoch 与客户端状态。画面不得包含真实患者信息、医保或支付凭证、平台密钥、无关浏览器标签或通知。
 
 Mobile 功能先列出与 Web/Desktop 必须一致的语义，再验证移动端允许不同的导航和控件。运行 `pnpm check:mobile` 和相关移动测试，并报告真实设备或模拟器证据缺口；不能用一张 Web 截图证明移动端正确。
+
+## 性能合同
+
+短性能门禁属于 `pnpm check`。它在隔离的 file-backed SQLite 上运行参考导入、本院目录 HTTP 查询、普通与重 Command、测试专用 Trace 对照和 Scenario install/reset；只 gate statement/query/write、rows written、数据库增长、Trace rows/bytes、错误和索引计划。P50/P95/P99、transaction time 和吞吐始终进入结果，但不作为跨机器 PR hard gate。SQLite 当前不提供可靠 rows-read，因此结果 schema 明确不声明该指标。
+
+```sh
+pnpm perf:ci
+pnpm perf:trajectory
+pnpm perf:saturation
+pnpm perf:full-import -- --manifest /absolute/path/to/release.json
+```
+
+`trajectory` 使用共享 application interfaces 完成固定高血压临床轨迹；`saturation` 以独立 Worker/SQLite sandbox 覆盖 1、5、10、25 actors，并报告 load runner 自身的 busy/retry；`full-import` 只读取调用者已合法取得的 manifest 和 artifact。所有 profile 只使用合成运行状态，不提供关闭 Audit Event 或 Action Trace 的运行开关。详细取舍见 [SQLite 性能工作负载与稳定门禁分离](../.agents/notes/implemented/testing/2026-08-28-sqlite-performance-contract.md)。

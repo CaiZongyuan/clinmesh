@@ -28,6 +28,7 @@ import {
 import { BuiltInScenarioGenerationProvider } from './infrastructure/scenario-generation/builtin-provider.ts'
 import { SyntheaScenarioGenerationProvider } from './infrastructure/scenario-generation/synthea-provider.ts'
 import type { ScenarioGenerationProvider } from './application/scenario-data/provider.ts'
+import type { SqlitePerformanceObserver } from './infrastructure/sqlite/performance-observer.ts'
 
 function lisActorContext(event: {
   epoch: string
@@ -53,6 +54,7 @@ export interface CreateClinMeshRuntimeOptions {
   demoPassword: string
   migrationMode: 'apply' | 'verify'
   now?: () => Date
+  performanceObserver?: SqlitePerformanceObserver
   referenceDatabasePath?: string
   syntheaProvider?: ScenarioGenerationProvider
   syntheaProviderUrl?: string
@@ -64,6 +66,9 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
   const database = openClinMeshDatabase({
     busyTimeoutMs: 5_000,
     databasePath: options.databasePath,
+    ...(options.performanceObserver === undefined
+      ? {}
+      : { performanceObserver: options.performanceObserver }),
   })
   let referenceDatabase: ReferenceDatabase | undefined
   try {
