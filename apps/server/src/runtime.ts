@@ -5,7 +5,6 @@ import { ScenarioService } from './application/scenario-service.ts'
 import { ReferenceDataService } from './application/reference-data-service.ts'
 import { ScenarioDataService } from './application/scenario-data/scenario-data-service.ts'
 import { UnavailableScenarioGenerationProvider } from './application/scenario-data/provider.ts'
-import { syntheticNhsaMedicationProductSnapshot } from './application/scenario-data/medication-product-snapshot.ts'
 import { WorkflowService } from './application/workflow-service.ts'
 import { OutboxDispatcher } from './application/outbox-dispatcher.ts'
 import { z } from 'zod'
@@ -98,10 +97,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const referenceData = new ReferenceDataService(
       referenceDatabase === undefined ? undefined : new SqliteReferenceDataRepository(referenceDatabase),
     )
-    const referenceMedicationProducts = referenceData.medicationProducts()
-    const medicationProducts = referenceMedicationProducts.length === 0
-      ? syntheticNhsaMedicationProductSnapshot
-      : referenceMedicationProducts
+    const medicationProducts = referenceData.medicationProductSelection().products
     const scenario = new ScenarioService(database, fhir, commands, medicationProducts)
     const workflow = new WorkflowService(database, fhir, commands, {
       ...clockOptions,

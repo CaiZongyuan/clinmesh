@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import {
   referenceDataProvenanceSchema,
   referenceDataReleaseListSchema,
@@ -17,6 +16,7 @@ import { z } from 'zod'
 import { afterEach, describe, expect, it } from 'vitest'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
+import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 
 describe('Reference Data HTTP contract', () => {
@@ -80,6 +80,7 @@ describe('Reference Data HTTP contract', () => {
         system: 'http://hl7.org/fhir/sid/icd-10',
         version: 'synthetic-2026',
       }],
+      medicationProducts: syntheticNhsaMedicationProductSnapshot,
       schemaVersion: '1',
     })}\n`
     const checksum = createHash('sha256').update(artifactJson).digest('hex')
@@ -140,10 +141,11 @@ describe('Reference Data HTTP contract', () => {
     expect(referenceDataReleaseListSchema.parse(await response.json())).toMatchObject({
       items: [{
         conceptCount: 0,
-        contentHash: 'c4f3db18716deead08d407dec4473d2fb30cf4d098fb8cad6cc04ef9fc7384a5',
-        releaseId: 'clinmesh-builtin-reference-v1',
+        contentHash: 'c200392183640c4893dfbfbe048a7c74dcfcf54babca8b136571ad6540719195',
+        medicationProductCount: 3,
+        releaseId: 'clinmesh-nhsa-medication-products-parser-fixture-2026-08-28',
         sources: [{
-          checksum: 'c2b6041f9f43187433f89ccfbc646d0d6a484afe228ae834e20348cd606874d2',
+          checksum: 'b72aa94f14b640dc9bc2952d687728995cc06a137da734b2b74bbffb64256c93',
           licenseId: 'LicenseRef-ClinMesh-Proprietary',
         }],
         status: 'published',
@@ -154,14 +156,39 @@ describe('Reference Data HTTP contract', () => {
   it('compiles the Hospital Baseline from the configured Medication Product release', async () => {
     const referenceDirectory = await mkdtemp(join(tmpdir(), 'clinmesh-reference-products-'))
     temporaryDirectories.push(referenceDirectory)
-    const referenceDatabasePath = join(referenceDirectory, 'reference.sqlite')
-    const manifestPath = fileURLToPath(new URL(
-      './fixtures/reference-data/nhsa-medication-products-release.json',
-      import.meta.url,
-    ))
-    await runReferenceDatabaseCli(['migrate', '--database', referenceDatabasePath])
+    const referenceDatabasePath = await createReferenceDatabase(referenceDirectory)
+    const diagnosisArtifact = `${JSON.stringify({
+      concepts: [{
+        code: 'I10',
+        display: 'Synthetic newer diagnosis',
+        domain: 'diagnosis',
+        id: 'diagnosis:newer',
+        sourceLocator: 'concepts[0]',
+        status: 'active',
+        system: 'http://hl7.org/fhir/sid/icd-10',
+        version: 'synthetic-2026-08-29',
+      }],
+      schemaVersion: '1',
+    })}\n`
+    await writeFile(join(referenceDirectory, 'newer-diagnosis.json'), diagnosisArtifact)
+    await writeFile(join(referenceDirectory, 'newer-release.json'), `${JSON.stringify({
+      createdAt: '2026-08-29T00:00:00.000Z',
+      releaseId: 'reference-newer-diagnosis-only-v1',
+      schemaVersion: '1',
+      sources: [{
+        acquisitionMethod: 'generated',
+        artifactPath: 'newer-diagnosis.json',
+        checksum: createHash('sha256').update(diagnosisArtifact).digest('hex'),
+        licenseId: 'LicenseRef-ClinMesh-Proprietary',
+        retrievedAt: '2026-08-29T00:00:00.000Z',
+        sourceId: 'newer-diagnosis-only',
+        sourceUrl: 'https://example.test/reference/newer-diagnosis-only',
+        upstreamVersion: 'synthetic-2026-08-29',
+      }],
+    })}\n`)
     await runReferenceDatabaseCli([
-      'import', '--database', referenceDatabasePath, '--manifest', manifestPath,
+      'import', '--database', referenceDatabasePath,
+      '--manifest', join(referenceDirectory, 'newer-release.json'),
     ])
     const { password, runtime } = await createRuntime({ referenceDatabasePath })
     const cookie = await signIn(runtime, password, 'admin@demo.clinmesh.local')
@@ -189,7 +216,7 @@ describe('Reference Data HTTP contract', () => {
       .parse(await generateResponse.json()).data
     expect(dataset.content.reproduction).toHaveProperty(
       'referenceData.releaseId',
-      'clinmesh-nhsa-medication-products-parser-fixture-2026-08-28',
+      'reference-http-test-v1',
     )
     expect(dataset.content.catalog.medications.map(medication => (
       'product' in medication ? medication.product.id : null

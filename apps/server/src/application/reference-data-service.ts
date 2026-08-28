@@ -2,12 +2,15 @@ import {
   referenceDataProvenanceSchema,
   referenceDataReleaseListSchema,
   type ReferenceDataReleaseList,
+  type ReferenceDataReleaseSummary,
   type ReferenceMedicationProduct,
 } from '@clinmesh/contracts/reference-data'
 import type { ActorContext } from './command-executor.ts'
+import { syntheticNhsaMedicationProductSnapshot } from './scenario-data/medication-product-snapshot.ts'
 
-const BUILTIN_ARTIFACT_CHECKSUM = 'c2b6041f9f43187433f89ccfbc646d0d6a484afe228ae834e20348cd606874d2'
-const BUILTIN_RELEASE_CONTENT_HASH = 'c4f3db18716deead08d407dec4473d2fb30cf4d098fb8cad6cc04ef9fc7384a5'
+const BUILTIN_ARTIFACT_CHECKSUM = 'b72aa94f14b640dc9bc2952d687728995cc06a137da734b2b74bbffb64256c93'
+const BUILTIN_RELEASE_CONTENT_HASH = 'c200392183640c4893dfbfbe048a7c74dcfcf54babca8b136571ad6540719195'
+const BUILTIN_RELEASE_ID = 'clinmesh-nhsa-medication-products-parser-fixture-2026-08-28'
 
 export interface ReferenceDataReader {
   list(): ReferenceDataReleaseList
@@ -25,29 +28,31 @@ export class ReferenceDataError extends Error {
 }
 
 function builtinReferenceData(): ReferenceDataReleaseList {
-  // These hashes pin the empty fallback artifact and manifest; changing either requires a new release ID.
+  // These hashes pin the synthetic Product artifact and manifest; changing either requires a new release ID.
   return referenceDataReleaseListSchema.parse({
     items: [{
       conceptCount: 0,
       contentHash: BUILTIN_RELEASE_CONTENT_HASH,
-      createdAt: '2026-08-27T00:00:00+08:00',
-      releaseId: 'clinmesh-builtin-reference-v1',
+      createdAt: '2026-08-28T00:00:00.000Z',
+      medicationProductCount: syntheticNhsaMedicationProductSnapshot.length,
+      releaseId: BUILTIN_RELEASE_ID,
       schemaVersion: '1',
       sourceCount: 1,
       sources: [{
+        artifactFormat: 'nhsa-medication-product-csv',
         acquisitionMethod: 'generated',
         checksum: BUILTIN_ARTIFACT_CHECKSUM,
         importDiagnostics: {
-          acceptedCount: 0,
+          acceptedCount: syntheticNhsaMedicationProductSnapshot.length,
           rejectedCount: 0,
           warnings: [],
         },
         licenseId: 'LicenseRef-ClinMesh-Proprietary',
-        recordCount: 0,
-        retrievedAt: '2026-08-27T00:00:00+08:00',
-        sourceId: 'clinmesh-builtin',
-        sourceUrl: 'https://github.com/CaiZongyuan/clinmesh/issues/43',
-        upstreamVersion: 'builtin-reference-v1',
+        recordCount: syntheticNhsaMedicationProductSnapshot.length,
+        retrievedAt: '2026-08-28T00:00:00.000Z',
+        sourceId: 'clinmesh-synthetic-nhsa-medication-products',
+        sourceUrl: 'https://github.com/CaiZongyuan/clinmesh/issues/47',
+        upstreamVersion: 'nhsa-medication-products-2026-08-07',
       }],
       status: 'published',
     }],
@@ -69,7 +74,7 @@ export class ReferenceDataService {
   }
 
   current(): ReferenceDataReleaseList['items'][number] {
-    return this.#releases().items[0]!
+    return this.medicationProductSelection().release
   }
 
   provenance() {
@@ -80,13 +85,36 @@ export class ReferenceDataService {
     })
   }
 
-  medicationProducts(): ReferenceMedicationProduct[] {
+  medicationProductSelection(): {
+    products: ReferenceMedicationProduct[]
+    release: ReferenceDataReleaseSummary
+  } {
     const release = this.#releases().items.find(item => item.medicationProductCount > 0)
-    return release === undefined ? [] : (this.#reader?.medicationProducts(release.releaseId) ?? [])
+    const builtin = builtinReferenceData().items[0]!
+    if (release === undefined) return { products: syntheticNhsaMedicationProductSnapshot, release: builtin }
+    if (release.releaseId === BUILTIN_RELEASE_ID) {
+      if (release.contentHash !== builtin.contentHash) {
+        throw new Error(`Built-in Reference Data Release hash mismatch: ${release.releaseId}`)
+      }
+      return { products: syntheticNhsaMedicationProductSnapshot, release: builtin }
+    }
+    const products = this.#reader?.medicationProducts(release.releaseId) ?? []
+    if (products.length !== release.medicationProductCount) {
+      throw new Error(`Reference Data Release Product count mismatch: ${release.releaseId}`)
+    }
+    return { products, release }
   }
 
   #releases(): ReferenceDataReleaseList {
     const releases = this.#reader?.list()
-    return releases === undefined || releases.items.length === 0 ? builtinReferenceData() : releases
+    if (releases === undefined || releases.items.length === 0) return builtinReferenceData()
+    if (releases.items.some(release => release.medicationProductCount > 0)) return releases
+    const builtin = builtinReferenceData().items[0]!
+    return referenceDataReleaseListSchema.parse({
+      items: [
+        ...releases.items,
+        ...(releases.items.some(release => release.releaseId === builtin.releaseId) ? [] : [builtin]),
+      ],
+    })
   }
 }
