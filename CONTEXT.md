@@ -158,7 +158,11 @@ _Avoid_: Medication Product, hospital medication catalog item, Inventory Lot
 
 **Medication Product**:
 由注册或产品目录识别的具体药品呈现，包含剂型、规格、包装、企业和监管标识等产品属性。
-_Avoid_: Drug Concept, hospital medication catalog item, Inventory Lot
+_Avoid_: Drug Concept, Hospital Medication, Inventory Lot
+
+**Hospital Medication**:
+某所医院已启用的 Medication Product，拥有本院代码、可用范围、价格和处方规则，但不表示某个具体库存批次。
+_Avoid_: Drug Concept, Medication Product, Inventory Lot
 
 **Clinical Request**:
 临床人员对药品、检查、检验、治疗或耗材提出的单项意图。

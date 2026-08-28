@@ -74,6 +74,13 @@ type RevisitMedicationDraft = {
   frequencyCode: string
   quantity: number
 }
+type RevisitDraftOptions = {
+  diagnosis?: {
+    code: string
+    display: string
+  }
+  medications?: RevisitMedicationDraft[]
+}
 
 const structuredClinicalDocument = {
   assessment: '考虑急性上呼吸道感染，需结合检验结果进一步判断。',
@@ -831,13 +838,18 @@ async function createReportedCase(runtime: TestRuntime, password: string) {
 async function createRevisitDraftCase(
   runtime: TestRuntime,
   password: string,
-  medications: RevisitMedicationDraft[] = [{
+  options: RevisitDraftOptions = {},
+) {
+  const diagnosis = options.diagnosis ?? {
+    code: 'J10.1',
+    display: '流感伴其他呼吸道表现，季节性流感病毒已标明',
+  }
+  const medications = options.medications ?? [{
     catalogItemId: 'medication-oseltamivir',
     doseText: '75 mg',
     frequencyCode: 'BID',
     quantity: 10,
-  }],
-) {
+  }]
   const testCase = await createReportedCase(runtime, password)
   await runtime.app.request(
     `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/start-revisit`,
@@ -859,10 +871,7 @@ async function createRevisitDraftCase(
       body: JSON.stringify({
         expectedVersions: { [`Encounter/${testCase.registration.encounterId}`]: '6' },
         input: {
-          diagnosis: {
-            code: 'J10.1',
-            display: '流感伴其他呼吸道表现，季节性流感病毒已标明',
-          },
+          diagnosis,
           document: {
             assessment: '甲型流感，生命体征稳定。',
             plan: '口服抗病毒药物，对症处理，必要时复诊。',
@@ -886,9 +895,9 @@ async function createRevisitDraftCase(
 async function createSignedCase(
   runtime: TestRuntime,
   password: string,
-  medications?: RevisitMedicationDraft[],
+  options?: RevisitDraftOptions,
 ) {
-  const testCase = await createRevisitDraftCase(runtime, password, medications)
+  const testCase = await createRevisitDraftCase(runtime, password, options)
   const expectedVersions = {
     [`Condition/${testCase.draft.conditionId}`]: '1',
     [`Encounter/${testCase.registration.encounterId}`]: '6',
@@ -933,9 +942,9 @@ async function createSignedCase(
 async function createPaidMedicationCase(
   runtime: TestRuntime,
   password: string,
-  medications?: RevisitMedicationDraft[],
+  options?: RevisitDraftOptions,
 ) {
-  const testCase = await createSignedCase(runtime, password, medications)
+  const testCase = await createSignedCase(runtime, password, options)
   const cashierCookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
   const previewResponse = await runtime.app.request('/api/his/v1/payments/actions/preview', {
     body: JSON.stringify({
@@ -983,8 +992,8 @@ async function createPaidMedicationCase(
     },
   )
   if (!reviewResponse.ok) throw new Error('Test prescription review did not complete')
-  prescriptionReviewResponseSchema.parse(await reviewResponse.json())
-  return { ...testCase, cashierCookie, payment, pharmacistCookie }
+  const review = prescriptionReviewResponseSchema.parse(await reviewResponse.json()).data
+  return { ...testCase, cashierCookie, payment, pharmacistCookie, review }
 }
 
 const completionBlockerCases: Array<{
@@ -6901,7 +6910,8 @@ describe('outpatient workflow HTTP contract', () => {
       headers: { cookie: testCase.doctorCookie },
     })
     expect(catalogResponse.status).toBe(200)
-    expect(clinicalCatalogSchema.parse(await catalogResponse.json())).toMatchObject({
+    const clinicalCatalog = clinicalCatalogSchema.parse(await catalogResponse.json())
+    expect(clinicalCatalog).toMatchObject({
       laboratory: [{
         allowedIndicationCodes: ['fever'],
         contraindicatedAllergyCodes: [],
@@ -6927,7 +6937,7 @@ describe('outpatient workflow HTTP contract', () => {
         priceFen: 6800,
         version: 1,
       }],
-      medications: [
+      medications: expect.arrayContaining([
         expect.objectContaining({
           allowedDoseTexts: ['0.5 g'],
           allowedFrequencyCodes: ['PRN'],
@@ -6942,9 +6952,12 @@ describe('outpatient workflow HTTP contract', () => {
           defaultFrequencyCode: 'BID',
           id: 'medication-oseltamivir',
         }),
-      ],
+        expect.objectContaining({ id: 'medication-metformin' }),
+        expect.objectContaining({ id: 'medication-amlodipine' }),
+      ]),
       prescriptionConclusionSupported: true,
     })
+    expect(clinicalCatalog.medications).toHaveLength(4)
 
     const detailResponse = await runtime.app.request(
       `/api/his/v1/doctor/cases/${testCase.caseId}`,
@@ -10671,6 +10684,137 @@ describe('outpatient workflow HTTP contract', () => {
     expect(readInitialRun()).toEqual(completedRun)
   })
 
+  it.each([
+    {
+      diagnosis: { code: 'E11.65', display: '2型糖尿病伴高血糖' },
+      label: 'type 2 diabetes with metformin',
+      lotId: 'lot-metformin-synthetic-001',
+      medication: {
+        catalogItemId: 'medication-metformin',
+        doseText: '0.5 g',
+        frequencyCode: 'BID',
+        quantity: 60,
+      },
+      nameZh: '盐酸二甲双胍片',
+      productCode: 'CM-NHSA-PRODUCT-METFORMIN',
+    },
+    {
+      diagnosis: { code: 'I10', display: '高血压' },
+      label: 'hypertension with amlodipine',
+      lotId: 'lot-amlodipine-synthetic-001',
+      medication: {
+        catalogItemId: 'medication-amlodipine',
+        doseText: '5 mg',
+        frequencyCode: 'QD',
+        quantity: 30,
+      },
+      nameZh: '苯磺酸氨氯地平片',
+      productCode: 'CM-NHSA-PRODUCT-AMLODIPINE',
+    },
+  ])('takes $label through prescribing, charging, review, and dispensing', async ({
+    diagnosis,
+    lotId,
+    medication: medicationDraft,
+    nameZh,
+    productCode,
+  }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-catalog-medication-trajectory-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createPaidMedicationCase(runtime, password, {
+      diagnosis,
+      medications: [medicationDraft],
+    })
+    expect(testCase.payment).toMatchObject({ outcome: 'success', status: 'awaiting-dispense' })
+    expect(testCase.review).toMatchObject({
+      prescriptionId: testCase.draft.prescriptionId,
+      status: 'awaiting-dispense',
+    })
+
+    const medicationResponse = await runtime.app.request(
+      `/fhir/R5/Medication/${medicationDraft.catalogItemId}`,
+      { headers: { cookie: testCase.pharmacistCookie } },
+    )
+    expect(fhirResourceSchema.parse(await medicationResponse.json())).toMatchObject({
+      code: {
+        coding: expect.arrayContaining([expect.objectContaining({
+          code: productCode,
+          system: 'urn:clinmesh:reference:nhsa-medication-product',
+        })]),
+      },
+    })
+    const queueResponse = await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
+      headers: { cookie: testCase.pharmacistCookie },
+    })
+    const prescription = pharmacyQueueSchema.parse(await queueResponse.json()).items[0]
+    const medication = prescription?.medications[0]
+    const lot = medication?.lots[0]
+    expect({ lot, medication, prescription }).toMatchObject({
+      lot: { id: lotId, quantityOnHand: 1_000, version: 1 },
+      medication: {
+        medicationId: medicationDraft.catalogItemId,
+        nameZh,
+        quantity: medicationDraft.quantity,
+      },
+      prescription: {
+        prescriptionId: testCase.draft.prescriptionId,
+        status: 'awaiting-dispense',
+      },
+    })
+    if (prescription === undefined || medication === undefined || lot === undefined) {
+      throw new Error('Reviewed catalog medication did not expose its selected inventory lot')
+    }
+
+    const dispenseResponse = await runtime.app.request(
+      `/api/his/v1/prescriptions/${prescription.prescriptionId}/actions/dispense`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${prescription.encounterId}`]: prescription.encounterVersion,
+            [`MedicationRequest/${medication.medicationRequestId}`]
+              : medication.medicationRequestVersion,
+          },
+          input: {
+            expectedPrescriptionVersion: prescription.prescriptionVersion,
+            lotSelections: [{
+              expectedVersion: lot.version,
+              lotId: lot.id,
+              quantity: medication.remainingQuantity,
+            }],
+          },
+        }),
+        headers: commandHeaders(testCase.pharmacistCookie),
+        method: 'POST',
+      },
+    )
+    expect(dispenseResponse.status).toBe(200)
+    const dispensed = dispenseResponseSchema.parse(await dispenseResponse.json()).data
+    expect(dispensed).toMatchObject({
+      prescriptionId: prescription.prescriptionId,
+      scenarioStatus: 'completed',
+      status: 'completed',
+    })
+    const medicationDispenseResponse = await runtime.app.request(
+      `/fhir/R5/MedicationDispense/${dispensed.medicationDispenseIds[0]}`,
+      { headers: { cookie: testCase.pharmacistCookie } },
+    )
+    expect(fhirResourceSchema.parse(await medicationDispenseResponse.json())).toMatchObject({
+      medication: { reference: { reference: `Medication/${medicationDraft.catalogItemId}` } },
+      quantity: { value: medicationDraft.quantity },
+      status: 'completed',
+    })
+  })
+
   it('creates one accurately referenced MedicationDispense for each dispensed prescription line', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-multi-medication-dispense-http-'))
     temporaryDirectories.push(directory)
@@ -10685,8 +10829,8 @@ describe('outpatient workflow HTTP contract', () => {
       trustedOrigins: ['http://localhost'],
     })
     runtimes.push(runtime)
-    const testCase = await createPaidMedicationCase(runtime, password, [
-      {
+    const testCase = await createPaidMedicationCase(runtime, password, {
+      medications: [{
         catalogItemId: 'medication-oseltamivir',
         doseText: '75 mg',
         frequencyCode: 'BID',
@@ -10698,7 +10842,8 @@ describe('outpatient workflow HTTP contract', () => {
         frequencyCode: 'PRN',
         quantity: 6,
       },
-    ])
+      ],
+    })
     const queueResponse = await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
       headers: { cookie: testCase.pharmacistCookie },
     })

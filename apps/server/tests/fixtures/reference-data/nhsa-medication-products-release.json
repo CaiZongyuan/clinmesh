@@ -1,0 +1,18 @@
+{
+  "createdAt": "2026-08-28T00:00:00.000Z",
+  "releaseId": "clinmesh-nhsa-medication-products-parser-fixture-2026-08-28",
+  "schemaVersion": "1",
+  "sources": [
+    {
+      "acquisitionMethod": "generated",
+      "artifactFormat": "nhsa-medication-product-csv",
+      "artifactPath": "synthetic-nhsa-medication-products.csv",
+      "checksum": "b72aa94f14b640dc9bc2952d687728995cc06a137da734b2b74bbffb64256c93",
+      "licenseId": "LicenseRef-ClinMesh-Proprietary",
+      "retrievedAt": "2026-08-28T00:00:00.000Z",
+      "sourceId": "clinmesh-synthetic-nhsa-medication-products",
+      "sourceUrl": "https://github.com/CaiZongyuan/clinmesh/issues/47",
+      "upstreamVersion": "nhsa-medication-products-2026-08-07"
+    }
+  ]
+}

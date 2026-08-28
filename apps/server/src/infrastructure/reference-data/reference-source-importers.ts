@@ -41,6 +41,21 @@ const nhsaDiagnosisRecordSchema = z.object({
   info: z.object({ lines: z.number().int().positive() }).passthrough(),
 }).passthrough()
 
+const nhsaMedicationProductRecordSchema = z.object({
+  record: z.object({
+    APPROVAL_NUMBER: z.string().trim().min(1).max(256),
+    BRAND_NAME: z.string().transform(value => value.trim() === '' ? null : value.trim()),
+    DOSAGE_FORM: z.string().trim().min(1).max(256),
+    GENERIC_NAME: z.string().trim().min(1).max(500),
+    MANUFACTURER: z.string().trim().min(1).max(500),
+    NHSA_PRODUCT_CODE: z.string().trim().min(1).max(256),
+    PACKAGE_DESCRIPTION: z.string().trim().min(1).max(500),
+    STATUS: z.enum(['ACTIVE', 'INACTIVE']),
+    STRENGTH: z.string().trim().min(1).max(256),
+  }).passthrough(),
+  info: z.object({ lines: z.number().int().positive() }).passthrough(),
+}).passthrough()
+
 function assertUniqueCodes(artifact: ReferenceArtifact): ReferenceArtifact {
   const codes = new Set<string>()
   for (const concept of artifact.concepts) {
@@ -103,6 +118,38 @@ export function parseNhsaDiagnosisCsvReferenceArtifact(input: {
   }))
 }
 
+export function parseNhsaMedicationProductCsvArtifact(input: {
+  content: string
+  version: string
+}): ReferenceArtifact {
+  const version = nhsaDiagnosisVersionSchema.parse(input.version)
+  const rows = z.array(nhsaMedicationProductRecordSchema).parse(parse(input.content, {
+    bom: true,
+    columns: true,
+    info: true,
+    skip_empty_lines: true,
+  }))
+  return referenceArtifactSchema.parse({
+    concepts: [],
+    medicationProducts: rows.map(({ info, record }) => ({
+      approvalNumber: record.APPROVAL_NUMBER,
+      brandName: record.BRAND_NAME,
+      code: record.NHSA_PRODUCT_CODE,
+      dosageForm: record.DOSAGE_FORM,
+      genericName: record.GENERIC_NAME,
+      id: `nhsa-medication-product:${version}:${record.NHSA_PRODUCT_CODE}`,
+      manufacturer: record.MANUFACTURER,
+      packageDescription: record.PACKAGE_DESCRIPTION,
+      sourceLocator: `nhsa-medication-products.csv:${info.lines}`,
+      status: record.STATUS === 'ACTIVE' ? 'active' : 'inactive',
+      strength: record.STRENGTH,
+      system: 'urn:clinmesh:reference:nhsa-medication-product',
+      version,
+    })),
+    schemaVersion: '1',
+  })
+}
+
 export function parseUcumXmlReferenceArtifact(input: {
   content: string
   version: string
@@ -142,6 +189,8 @@ export function parseReferenceSourceArtifact(input: {
       return parseLoincCsvReferenceArtifact(input)
     case 'nhsa-diagnosis-csv':
       return parseNhsaDiagnosisCsvReferenceArtifact(input)
+    case 'nhsa-medication-product-csv':
+      return parseNhsaMedicationProductCsvArtifact(input)
     case 'ucum-xml':
       return parseUcumXmlReferenceArtifact(input)
   }

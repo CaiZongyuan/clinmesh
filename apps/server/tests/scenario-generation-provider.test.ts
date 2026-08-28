@@ -35,6 +35,40 @@ describe('Scenario generation Provider contract', () => {
         },
       },
     })
+    const acetaminophen = first.content.catalog.medications.find(item => (
+      item.id === 'medication-acetaminophen'
+    ))
+    expect(acetaminophen).toMatchObject({
+      availableScopes: ['outpatient'],
+      code: 'ACETAMINOPHEN',
+      drugConcept: {
+        conceptId: 'drug-concept-acetaminophen-500mg-oral-tablet',
+        kind: 'drug-concept',
+      },
+      id: 'medication-acetaminophen',
+      product: {
+        approvalNumber: 'CM-APPROVAL-ACETAMINOPHEN',
+        code: 'CM-NHSA-PRODUCT-ACETAMINOPHEN',
+        id: 'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-ACETAMINOPHEN',
+      },
+      regulatoryVerification: {
+        result: 'synthetic-match',
+        source: 'nmpa-manual-check',
+        verifiedFieldsHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    })
+    expect(new Set([
+      acetaminophen?.drugConcept.conceptId,
+      acetaminophen?.product.id,
+      acetaminophen?.id,
+      first.content.inventory.find(lot => lot.itemId === acetaminophen?.id)?.lotId,
+    ]).size).toBe(4)
+    expect(first.content.simulatorRules).toEqual([
+      { code: 'success', outcome: 'success', simulator: 'payment' },
+      { code: 'decline', outcome: 'declined', simulator: 'payment' },
+      { code: 'ambiguous', outcome: 'ambiguous', simulator: 'payment' },
+      { code: 'default-success', outcome: 'success', simulator: 'lis' },
+    ])
     expect(first.content.reproduction).toEqual({
       clinicalSeed: 7331,
       generator: 'clinmesh-builtin-v1',

@@ -5,6 +5,7 @@ import type {
 } from '@clinmesh/contracts/scenario'
 import { z } from 'zod'
 import {
+  generatedScenarioSimulatorRules,
   ScenarioGenerationProviderError,
   sourceArtifactHash,
   type ScenarioGenerationProvider,
@@ -411,7 +412,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
         triggerCode: 'evaluator-only',
       })),
       schemaVersion: '1',
-      simulatorRules: [{ code: 'default-success', outcome: 'success', simulator: 'lis' }],
+      simulatorRules: generatedScenarioSimulatorRules,
     }
     return { content, kind: 'case-truth', sources: compiled.map(item => item.source) }
   }

@@ -139,6 +139,46 @@ describe('Scenario Dataset diagnostics', () => {
     ]))
   })
 
+  it('rejects tampered selected-product verification and duplicate product identity', async () => {
+    const generated = await new BuiltInScenarioGenerationProvider().generate(
+      scenarioGenerationRequestSchema.parse({
+        modules: ['fever'],
+        name: '药品产品校验冲突',
+        population: { age: { maximum: 40, minimum: 40 }, count: 1, gender: 'female' },
+        providerId: 'builtin',
+        seeds: { clinical: 46, population: 47 },
+        timeRange: { end: '2026-08-01', start: '2020-01-01' },
+        timeZone: 'Asia/Shanghai',
+      }),
+    )
+    const first = generated.content.catalog.medications[0]!
+    const second = generated.content.catalog.medications[1]!
+    const medications = [{
+      ...first,
+      regulatoryVerification: {
+        ...first.regulatoryVerification,
+        verifiedFieldsHash: '0'.repeat(64),
+      },
+    }, {
+      ...second,
+      product: { ...second.product, id: first.product.id },
+    }]
+
+    expect(validateScenarioDataset({
+      ...generated.content,
+      catalog: { ...generated.content.catalog, medications },
+    })).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'DUPLICATE_MEDICATION_PRODUCT_ID',
+        path: 'catalog.medications[1].product.id',
+      }),
+      expect.objectContaining({
+        code: 'MEDICATION_REGULATORY_VERIFICATION_MISMATCH',
+        path: 'catalog.medications[0].regulatoryVerification.verifiedFieldsHash',
+      }),
+    ]))
+  })
+
   it('rejects an L3 sampling domain outside its numeric reference range', async () => {
     const provider = new BuiltInScenarioGenerationProvider()
     const generated = await provider.generate(scenarioGenerationRequestSchema.parse({

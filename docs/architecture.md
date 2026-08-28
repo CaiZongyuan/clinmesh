@@ -423,9 +423,11 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 
 ### 5.4 中国术语与参考数据策略
 
-当前 authoring 平面使用独立 Reference Data SQLite，可从固定 manifest 导入 LOINC 2.83 CSV、UCUM 2.2 XML 和版本固定的 NHSA 诊断 CSV，并保留来源、许可、checksum、记录数、诊断与 release content hash。Scenario Compiler 通过版本控制的审核映射，以 `system + version + code` 解析体温、HbA1c、随机血糖和 truth-critical Synthea 诊断；诊断映射固定方向、关系、状态、证据和内容哈希，只有唯一的 active 等价关系可自动应用。未知、歧义和非等价诊断保留来源 coding 并生成稳定的未映射诊断；缺失的 source version 在编译时固定为 mapping package 版本并供后续 overlay 重放。自动应用的诊断到本院目录映射连同结构化 compiler、mapping package version/hash 和 overlay revision 固定在 Profile Revision。检验目录、病例结果和生理生成器保存 UCUM `code/system/display/version`，FHIR Quantity 投影使用 `code/system/unit`。旧 Package 的裸单位字符串只在读取时经固定兼容表规范化，不覆盖持久化 JSON 或 content hash。
+当前 authoring 平面使用独立 Reference Data SQLite，可从固定 manifest 导入 LOINC 2.83 CSV、UCUM 2.2 XML、版本固定的 NHSA 诊断 CSV 和 NHSA Medication Product CSV，并保留来源、许可、checksum、记录数、诊断与 release content hash。Medication Product 保存产品代码、通用/商品名、剂型、规格、包装、企业、批准文号、状态和来源定位，不进入 generic concept 表。Scenario Compiler 通过版本控制的审核映射，以 `system + version + code` 解析体温、HbA1c、随机血糖和 truth-critical Synthea 诊断；诊断映射固定方向、关系、状态、证据和内容哈希，只有唯一的 active 等价关系可自动应用。未知、歧义和非等价诊断保留来源 coding 并生成稳定的未映射诊断；缺失的 source version 在编译时固定为 mapping package 版本并供后续 overlay 重放。自动应用的诊断到本院目录映射连同结构化 compiler、mapping package version/hash 和 overlay revision 固定在 Profile Revision。检验目录、病例结果和生理生成器保存 UCUM `code/system/display/version`，FHIR Quantity 投影使用 `code/system/unit`。旧 Package 的裸单位字符串只在读取时经固定兼容表规范化，不覆盖持久化 JSON 或 content hash。
 
 Synthea `MedicationRequest.medicationCodeableConcept` 与引用型 Medication 共用一个 RxNorm 来源解析边界。唯一的 active 等价映射可转为版本固定 Drug Concept；未映射来源保留完整 coding 并生成稳定诊断。Drug Concept 不包含 Medication Product、本院药品、价格或 Inventory Lot 身份，药物 mapping package version/hash 与诊断 package 一起固定在 Profile Revision。
+
+当前 Hospital Baseline 从固定 Product snapshot 选择对乙酰氨基酚、二甲双胍和氨氯地平三项 Hospital Medication，补齐本院代码、门诊范围、合成价格、处方规则和合成 Inventory Lot。NMPA 核验只保存这三项的批准文号、通用名和企业字段 hash、人工核对时间与来源入口；不连接运行时网络，也不导入全量 NMPA 数据。Package 安装只把选中的 Hospital Medication snapshot 写入 Operational SQLite；当前 `candidate`/`density` v3 兼容流程另保留一项合成奥司他韦目录，不创建全国 Medication Product 表。
 
 未实现的中国诊断、药品和医疗服务映射仍使用最小虚构目录与 ICD-10 示例 code。当前不发布 CodeSystem、ValueSet、ConceptMap 或 terminology operation；术语是接口兼容性的一部分，不是 UI 字典。
 

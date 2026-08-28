@@ -150,11 +150,40 @@ export const scenarioInvestigationCatalogItemSchema = scenarioCatalogItemBaseSch
 }).strict()
 
 const scenarioMedicationCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
+  availableScopes: z.array(z.enum(['outpatient', 'inpatient'])).min(1),
   category: z.string().min(1),
   defaultDose: z.string().min(1),
   defaultFrequency: z.string().min(1),
   defaultRoute: z.string().min(1),
   dosageForm: z.string().min(1),
+  drugConcept: z.object({
+    code: z.string().min(1),
+    conceptId: z.string().min(1),
+    display: z.string().min(1),
+    kind: z.literal('drug-concept'),
+    system: z.literal('urn:clinmesh:reference:drug-concept'),
+    version: z.string().min(1),
+  }).strict(),
+  product: z.object({
+    approvalNumber: z.string().min(1),
+    brandName: z.string().min(1).nullable(),
+    code: z.string().min(1),
+    dosageForm: z.string().min(1),
+    genericName: z.string().min(1),
+    id: z.string().min(1),
+    manufacturer: z.string().min(1),
+    packageDescription: z.string().min(1),
+    strength: z.string().min(1),
+    system: z.literal('urn:clinmesh:reference:nhsa-medication-product'),
+    version: z.string().min(1),
+  }).strict(),
+  regulatoryVerification: z.object({
+    evidenceUrl: z.string().url(),
+    result: z.literal('synthetic-match'),
+    source: z.literal('nmpa-manual-check'),
+    verifiedAt: z.iso.datetime({ offset: true }),
+    verifiedFieldsHash: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict(),
   restriction: z.string().min(1).nullable(),
   workflow: z.object({
     allowedCombinationIds: z.array(z.string().min(1)),

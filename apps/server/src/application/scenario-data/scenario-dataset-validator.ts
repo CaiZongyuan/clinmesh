@@ -3,6 +3,7 @@ import type {
   ScenarioDiagnostic,
 } from '@clinmesh/contracts/scenario'
 import { isKnownLoincCoding, isKnownUcumUnit } from './reference-coding-package.ts'
+import { canonicalJsonHash } from './canonical-json.ts'
 
 function graphReaches(
   currentId: string,
@@ -123,6 +124,13 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
     path: (_, index) => `inventory[${index}].lotId`,
   })
   diagnoseDuplicates({
+    code: 'DUPLICATE_MEDICATION_PRODUCT_ID',
+    items: content.catalog.medications,
+    key: medication => medication.product.id,
+    label: 'Medication Product ID',
+    path: (_, index) => `catalog.medications[${index}].product.id`,
+  })
+  diagnoseDuplicates({
     code: 'DUPLICATE_SIMULATOR_RULE_CODE',
     items: content.simulatorRules,
     key: rule => `${rule.simulator}\u0000${rule.code}`,
@@ -143,6 +151,40 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
 
   for (const [medicationIndex, medication] of content.catalog.medications.entries()) {
     const workflowPath = `catalog.medications[${medicationIndex}].workflow`
+    const medicationPath = `catalog.medications[${medicationIndex}]`
+    const verifiedFieldsHash = canonicalJsonHash({
+      approvalNumber: medication.product.approvalNumber,
+      genericName: medication.product.genericName,
+      manufacturer: medication.product.manufacturer,
+    })
+    if (verifiedFieldsHash !== medication.regulatoryVerification.verifiedFieldsHash) {
+      add({
+        code: 'MEDICATION_REGULATORY_VERIFICATION_MISMATCH',
+        message: `Medication ${medication.id} regulatory verification does not match its selected product`,
+        path: `${medicationPath}.regulatoryVerification.verifiedFieldsHash`,
+        severity: 'error',
+      })
+    }
+    if (
+      medication.id === medication.product.id
+      || medication.id === medication.drugConcept.conceptId
+      || medication.product.id === medication.drugConcept.conceptId
+    ) {
+      add({
+        code: 'MEDICATION_IDENTITY_COLLISION',
+        message: `Medication ${medication.id} reuses a concept or product identity`,
+        path: `${medicationPath}.id`,
+        severity: 'error',
+      })
+    }
+    if (medication.dosageForm !== medication.product.dosageForm) {
+      add({
+        code: 'MEDICATION_PRODUCT_DOSAGE_FORM_MISMATCH',
+        message: `Medication ${medication.id} dosage form differs from its selected product`,
+        path: `${medicationPath}.dosageForm`,
+        severity: 'error',
+      })
+    }
     for (const [combinationIndex, combinationId] of medication.workflow.allowedCombinationIds.entries()) {
       if (!medicationIds.has(combinationId)) {
         add({

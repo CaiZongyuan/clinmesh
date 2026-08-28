@@ -67,8 +67,9 @@ describe('Reference Data database CLI', () => {
         '0001_reference-data.sql',
         '0002_reference-source-format.sql',
         '0003_reference-diagnosis-format.sql',
+        '0004_reference-medication-products.sql',
       ],
-      schemaVersion: 3,
+      schemaVersion: 4,
     })
     const imported = await runReferenceDatabaseCli([
       'import', '--database', databasePath, '--manifest', manifestPath,
@@ -82,7 +83,7 @@ describe('Reference Data database CLI', () => {
     expect(imported).toHaveProperty('contentHash', expect.stringMatching(/^[a-f0-9]{64}$/))
     await expect(runReferenceDatabaseCli([
       'verify', '--database', databasePath,
-    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 3 })
+    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 4 })
     await expect(runReferenceDatabaseCli([
       'list', '--database', databasePath,
     ])).resolves.toEqual({ items: [expect.objectContaining({
@@ -188,6 +189,42 @@ describe('Reference Data database CLI', () => {
     ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1 })
   })
 
+  it('imports NHSA medication products as products rather than reference concepts', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-nhsa-medication-products-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'reference.sqlite')
+    const manifestPath = fileURLToPath(new URL(
+      './fixtures/reference-data/nhsa-medication-products-release.json',
+      import.meta.url,
+    ))
+
+    await runReferenceDatabaseCli(['migrate', '--database', databasePath])
+    await expect(runReferenceDatabaseCli([
+      'import', '--database', databasePath, '--manifest', manifestPath,
+    ])).resolves.toMatchObject({
+      conceptCount: 0,
+      medicationProductCount: 3,
+      releaseId: 'clinmesh-nhsa-medication-products-parser-fixture-2026-08-28',
+    })
+    await expect(runReferenceDatabaseCli([
+      'list', '--database', databasePath,
+    ])).resolves.toMatchObject({
+      items: [{ conceptCount: 0, medicationProductCount: 3 }],
+    })
+    await expect(runReferenceDatabaseCli([
+      'verify', '--database', databasePath,
+    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1 })
+
+    const tampered = openReferenceDatabase({ busyTimeoutMs: 5_000, databasePath })
+    tampered.driver.prepare(`
+      UPDATE reference_medication_product SET manufacturer = ? WHERE code = ?
+    `).run('Tampered manufacturer', 'CM-NHSA-PRODUCT-ACETAMINOPHEN')
+    tampered.close()
+    await expect(runReferenceDatabaseCli([
+      'verify', '--database', databasePath,
+    ])).rejects.toThrow('content hash')
+  })
+
   it('preserves a published release hash when the source format migration is applied', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-reference-data-legacy-release-'))
     temporaryDirectories.push(directory)
@@ -265,10 +302,18 @@ describe('Reference Data database CLI', () => {
       applied: ['0003_reference-diagnosis-format.sql'],
       schemaVersion: 3,
     })
+    await copyFile(
+      join(sourceMigrationDirectory, '0004_reference-medication-products.sql'),
+      join(migrationDirectory, '0004_reference-medication-products.sql'),
+    )
+    expect(applyReferenceMigrations(database, migrationDirectory)).toEqual({
+      applied: ['0004_reference-medication-products.sql'],
+      schemaVersion: 4,
+    })
     expect(verifyReferenceDatabase(database)).toEqual({
       integrity: 'ok',
       releaseCount: 1,
-      schemaVersion: 3,
+      schemaVersion: 4,
     })
     expect(listReferenceDataReleases(database).items[0]).toMatchObject({
       contentHash: oldContentHash,

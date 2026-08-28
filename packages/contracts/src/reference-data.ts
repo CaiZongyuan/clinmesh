@@ -30,8 +30,25 @@ export const referenceConceptSchema = z.object({
   version: z.string().min(1).max(256),
 }).strict()
 
+export const referenceMedicationProductSchema = z.object({
+  approvalNumber: z.string().min(1).max(256),
+  brandName: z.string().min(1).max(500).nullable(),
+  code: z.string().min(1).max(256),
+  dosageForm: z.string().min(1).max(256),
+  genericName: z.string().min(1).max(500),
+  id: z.string().min(1).max(256),
+  manufacturer: z.string().min(1).max(500),
+  packageDescription: z.string().min(1).max(500),
+  sourceLocator: z.string().min(1).max(1_000),
+  status: z.enum(['active', 'inactive']),
+  strength: z.string().min(1).max(256),
+  system: z.string().url(),
+  version: z.string().min(1).max(256),
+}).strict()
+
 export const referenceArtifactSchema = z.object({
   concepts: z.array(referenceConceptSchema),
+  medicationProducts: z.array(referenceMedicationProductSchema).default([]),
   schemaVersion: z.literal('1'),
 }).strict()
 
@@ -39,6 +56,7 @@ export const referenceArtifactFormatSchema = z.enum([
   'clinmesh-reference-v1',
   'loinc-csv',
   'nhsa-diagnosis-csv',
+  'nhsa-medication-product-csv',
   'ucum-xml',
 ])
 
@@ -80,6 +98,7 @@ export const referenceDataReleaseSummarySchema = z.object({
   contentHash: sha256Schema,
   createdAt: z.iso.datetime({ offset: true }),
   releaseId: z.string().min(1).max(256),
+  medicationProductCount: z.number().int().nonnegative().default(0),
   schemaVersion: z.literal('1'),
   sourceCount: z.number().int().positive(),
   sources: z.array(referenceSourceManifestSchema).min(1),
@@ -109,5 +128,6 @@ export type ReferenceDataReleaseList = z.infer<typeof referenceDataReleaseListSc
 export type ReferenceDataReleaseSummary = z.infer<typeof referenceDataReleaseSummarySchema>
 export type ReferenceImportManifest = z.infer<typeof referenceImportManifestSchema>
 export type ReferenceImportDiagnostics = z.infer<typeof referenceImportDiagnosticsSchema>
+export type ReferenceMedicationProduct = z.infer<typeof referenceMedicationProductSchema>
 export type ReferenceMappingPackageProvenance = z.infer<typeof referenceMappingPackageProvenanceSchema>
 export type ReferenceSourceManifest = z.infer<typeof referenceSourceManifestSchema>

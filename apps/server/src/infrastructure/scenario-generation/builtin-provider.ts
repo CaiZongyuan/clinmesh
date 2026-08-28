@@ -9,7 +9,10 @@ import type {
   ScenarioGenerationProvider,
   SourcePatientCorpus,
 } from '../../application/scenario-data/provider.ts'
-import { sourceArtifactHash } from '../../application/scenario-data/provider.ts'
+import {
+  generatedScenarioSimulatorRules,
+  sourceArtifactHash,
+} from '../../application/scenario-data/provider.ts'
 import { createHospitalBaseline } from '../../application/scenario-data/hospital-baseline.ts'
 import { compileSyntheaR4Bundle } from '../../application/scenario-data/synthea-case-truth-compiler.ts'
 
@@ -155,7 +158,7 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
         triggerCode: 'evaluator-only',
       })),
       schemaVersion: '1',
-      simulatorRules: [{ code: 'default-success', outcome: 'success', simulator: 'lis' }],
+      simulatorRules: generatedScenarioSimulatorRules,
     }
     return {
       content,

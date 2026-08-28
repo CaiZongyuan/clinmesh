@@ -12,6 +12,7 @@ import {
   type ReferenceDataReleaseList,
   type ReferenceDataReleaseSummary,
   type ReferenceImportManifest,
+  type ReferenceMedicationProduct,
   type ReferenceSourceManifest,
 } from '@clinmesh/contracts/reference-data'
 import Database from 'better-sqlite3'
@@ -67,6 +68,7 @@ function canonicalize(value: unknown): unknown {
 
 function contentHash(input: {
   concepts: Array<ReferenceConcept & { sourceId: string }>
+  medicationProducts: Array<ReferenceMedicationProduct & { sourceId: string }>
   release: Pick<ReferenceImportManifest, 'createdAt' | 'releaseId' | 'schemaVersion'>
   sources: ReferenceSourceManifest[]
 }): string {
@@ -83,6 +85,11 @@ function contentHash(input: {
     releaseId: input.release.releaseId,
     schemaVersion: input.release.schemaVersion,
     sources: hashSources.toSorted((left, right) => left.sourceId.localeCompare(right.sourceId)),
+    ...(input.medicationProducts.length === 0 ? {} : {
+      medicationProducts: input.medicationProducts.toSorted((left, right) => (
+        left.sourceId.localeCompare(right.sourceId) || left.id.localeCompare(right.id)
+      )),
+    }),
   })))
 }
 
@@ -248,18 +255,63 @@ function conceptRows(
   }))
 }
 
+function medicationProductRows(
+  database: ReferenceDatabase,
+  releaseId: string,
+): Array<ReferenceMedicationProduct & { sourceId: string }> {
+  return z.array(z.object({
+    approval_number: z.string(),
+    brand_name: z.string().nullable(),
+    code: z.string(),
+    dosage_form: z.string(),
+    generic_name: z.string(),
+    manufacturer: z.string(),
+    package_description: z.string(),
+    product_id: z.string(),
+    source_id: z.string(),
+    source_locator: z.string(),
+    status: z.string(),
+    strength: z.string(),
+    system: z.string(),
+    system_version: z.string(),
+  })).parse(database.driver.prepare(`
+    SELECT product_id, system, system_version, code, generic_name, brand_name,
+      dosage_form, strength, package_description, manufacturer, approval_number,
+      status, source_id, source_locator
+    FROM reference_medication_product
+    WHERE release_id = ?
+    ORDER BY source_id, product_id
+  `).all(releaseId)).map(row => ({
+    approvalNumber: row.approval_number,
+    brandName: row.brand_name,
+    code: row.code,
+    dosageForm: row.dosage_form,
+    genericName: row.generic_name,
+    id: row.product_id,
+    manufacturer: row.manufacturer,
+    packageDescription: row.package_description,
+    sourceId: row.source_id,
+    sourceLocator: row.source_locator,
+    status: row.status,
+    strength: row.strength,
+    system: row.system,
+    version: row.system_version,
+  })) as Array<ReferenceMedicationProduct & { sourceId: string }>
+}
+
 function readReferenceDataReleases(database: ReferenceDatabase): ReferenceDataReleaseList {
   const rows = z.array(z.object({
     concept_count: z.number().int(),
     content_hash: z.string(),
     created_at: z.string(),
     release_id: z.string(),
+    medication_product_count: z.number().int(),
     schema_version: z.string(),
     source_count: z.number().int(),
     status: z.string(),
   })).parse(database.driver.prepare(`
     SELECT release_id, schema_version, status, created_at, content_hash,
-      source_count, concept_count
+      source_count, concept_count, medication_product_count
     FROM reference_release
     ORDER BY created_at DESC, release_id
   `).all())
@@ -268,6 +320,7 @@ function readReferenceDataReleases(database: ReferenceDatabase): ReferenceDataRe
       conceptCount: row.concept_count,
       contentHash: row.content_hash,
       createdAt: row.created_at,
+      medicationProductCount: row.medication_product_count,
       releaseId: row.release_id,
       schemaVersion: row.schema_version,
       sourceCount: row.source_count,
@@ -291,6 +344,7 @@ export function importReferenceDataRelease(
   const manifestDirectory = dirname(resolve(manifestPath))
   const sources: ReferenceSourceManifest[] = []
   const concepts: Array<ReferenceConcept & { sourceId: string }> = []
+  const medicationProducts: Array<ReferenceMedicationProduct & { sourceId: string }> = []
   for (const source of manifest.sources) {
     const artifactPath = resolve(manifestDirectory, source.artifactPath)
     const artifactBytes = readFileSync(artifactPath)
@@ -311,17 +365,21 @@ export function importReferenceDataRelease(
       licenseId: source.licenseId,
       ...(source.publishedAt === undefined ? {} : { publishedAt: source.publishedAt }),
       importDiagnostics: {
-        acceptedCount: artifact.concepts.length,
+        acceptedCount: artifact.concepts.length + artifact.medicationProducts.length,
         rejectedCount: 0,
         warnings: [],
       },
-      recordCount: artifact.concepts.length,
+      recordCount: artifact.concepts.length + artifact.medicationProducts.length,
       retrievedAt: source.retrievedAt,
       sourceId: source.sourceId,
       sourceUrl: source.sourceUrl,
       upstreamVersion: source.upstreamVersion,
     })
     concepts.push(...artifact.concepts.map(concept => ({ ...concept, sourceId: source.sourceId })))
+    medicationProducts.push(...artifact.medicationProducts.map(product => ({
+      ...product,
+      sourceId: source.sourceId,
+    })))
   }
   const seenIds = new Set<string>()
   const seenCodes = new Set<string>()
@@ -332,7 +390,18 @@ export function importReferenceDataRelease(
     if (seenCodes.has(codingKey)) throw new Error(`Reference coding was repeated: ${concept.system}|${concept.version}|${concept.code}`)
     seenCodes.add(codingKey)
   }
-  const hash = contentHash({ concepts, release: manifest, sources })
+  const seenProductIds = new Set<string>()
+  const seenProductCodes = new Set<string>()
+  for (const product of medicationProducts) {
+    if (seenProductIds.has(product.id)) throw new Error(`Reference medication product ID was repeated: ${product.id}`)
+    seenProductIds.add(product.id)
+    const codingKey = referenceCodingIdentity(product)
+    if (seenProductCodes.has(codingKey)) {
+      throw new Error(`Reference medication product coding was repeated: ${product.system}|${product.version}|${product.code}`)
+    }
+    seenProductCodes.add(codingKey)
+  }
+  const hash = contentHash({ concepts, medicationProducts, release: manifest, sources })
   const existing = database.driver.prepare(
     'SELECT content_hash FROM reference_release WHERE release_id = ?',
   ).get(manifest.releaseId) as { content_hash: string } | undefined
@@ -344,6 +413,7 @@ export function importReferenceDataRelease(
       conceptCount: concepts.length,
       contentHash: hash,
       created: false,
+      medicationProductCount: medicationProducts.length,
       releaseId: manifest.releaseId,
       sourceCount: sources.length,
     }
@@ -353,9 +423,17 @@ export function importReferenceDataRelease(
   try {
     database.driver.prepare(`
       INSERT INTO reference_release (
-        release_id, schema_version, status, created_at, content_hash, source_count, concept_count
-      ) VALUES (?, '1', 'published', ?, ?, ?, ?)
-    `).run(manifest.releaseId, manifest.createdAt, hash, sources.length, concepts.length)
+        release_id, schema_version, status, created_at, content_hash, source_count,
+        concept_count, medication_product_count
+      ) VALUES (?, '1', 'published', ?, ?, ?, ?, ?)
+    `).run(
+      manifest.releaseId,
+      manifest.createdAt,
+      hash,
+      sources.length,
+      concepts.length,
+      medicationProducts.length,
+    )
     const insertSource = database.driver.prepare(`
       INSERT INTO reference_source_manifest (
         release_id, source_id, upstream_version, published_at, retrieved_at,
@@ -399,6 +477,32 @@ export function importReferenceDataRelease(
         concept.sourceLocator,
       )
     }
+    const insertMedicationProduct = database.driver.prepare(`
+      INSERT INTO reference_medication_product (
+        release_id, product_id, system, system_version, code, generic_name,
+        brand_name, dosage_form, strength, package_description, manufacturer,
+        approval_number, status, source_id, source_locator
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    for (const product of medicationProducts) {
+      insertMedicationProduct.run(
+        manifest.releaseId,
+        product.id,
+        product.system,
+        product.version,
+        product.code,
+        product.genericName,
+        product.brandName,
+        product.dosageForm,
+        product.strength,
+        product.packageDescription,
+        product.manufacturer,
+        product.approvalNumber,
+        product.status,
+        product.sourceId,
+        product.sourceLocator,
+      )
+    }
     database.driver.exec('COMMIT')
   } catch (error) {
     if (database.driver.inTransaction) database.driver.exec('ROLLBACK')
@@ -408,6 +512,7 @@ export function importReferenceDataRelease(
     conceptCount: concepts.length,
     contentHash: hash,
     created: true,
+    medicationProductCount: medicationProducts.length,
     releaseId: manifest.releaseId,
     sourceCount: sources.length,
   }
@@ -421,22 +526,34 @@ export function verifyReferenceDatabase(database: ReferenceDatabase): ReferenceD
   for (const release of releases.items) {
     referenceDataReleaseSummarySchema.parse(release)
     const concepts = conceptRows(database, release.releaseId)
+    const medicationProducts = medicationProductRows(database, release.releaseId)
     if (release.sourceCount !== release.sources.length) {
       throw new Error(`Reference Data Release source count mismatch: ${release.releaseId}`)
     }
     if (release.conceptCount !== concepts.length) {
       throw new Error(`Reference Data Release concept count mismatch: ${release.releaseId}`)
     }
-    const conceptCountBySource = new Map<string, number>()
+    if (release.medicationProductCount !== medicationProducts.length) {
+      throw new Error(`Reference Data Release medication product count mismatch: ${release.releaseId}`)
+    }
+    const acceptedCountBySource = new Map<string, number>()
     for (const concept of concepts) {
-      conceptCountBySource.set(concept.sourceId, (conceptCountBySource.get(concept.sourceId) ?? 0) + 1)
+      acceptedCountBySource.set(concept.sourceId, (acceptedCountBySource.get(concept.sourceId) ?? 0) + 1)
+    }
+    for (const product of medicationProducts) {
+      acceptedCountBySource.set(product.sourceId, (acceptedCountBySource.get(product.sourceId) ?? 0) + 1)
     }
     for (const source of release.sources) {
-      if ((conceptCountBySource.get(source.sourceId) ?? 0) !== source.importDiagnostics.acceptedCount) {
+      if ((acceptedCountBySource.get(source.sourceId) ?? 0) !== source.importDiagnostics.acceptedCount) {
         throw new Error(`Reference source accepted count mismatch: ${release.releaseId}/${source.sourceId}`)
       }
     }
-    const actualHash = contentHash({ concepts, release, sources: release.sources })
+    const actualHash = contentHash({
+      concepts,
+      medicationProducts,
+      release,
+      sources: release.sources,
+    })
     if (actualHash !== release.contentHash) {
       throw new Error(`Reference Data Release content hash mismatch: ${release.releaseId}`)
     }

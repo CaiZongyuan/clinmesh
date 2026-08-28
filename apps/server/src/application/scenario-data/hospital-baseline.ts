@@ -3,8 +3,23 @@ import {
   investigationLoincCoding,
   resolveUcumUnit,
 } from './reference-coding-package.ts'
+import { canonicalJsonHash } from './canonical-json.ts'
 
 const hospitalId = 'hospital-synthetic-renhe'
+
+function regulatoryVerification(product: {
+  approvalNumber: string
+  genericName: string
+  manufacturer: string
+}) {
+  return {
+    evidenceUrl: 'https://www.nmpa.gov.cn/datasearch/home-index.html',
+    result: 'synthetic-match' as const,
+    source: 'nmpa-manual-check' as const,
+    verifiedAt: '2026-08-28T00:00:00+08:00',
+    verifiedFieldsHash: canonicalJsonHash(product),
+  }
+}
 
 function catalogBase(input: { code: string; id: string; name: string; priceFen: number }) {
   return {
@@ -374,11 +389,38 @@ export function createHospitalBaseline(): Pick<
       ],
       medications: [{
         ...catalogBase({ code: 'ACETAMINOPHEN', id: 'medication-acetaminophen', name: '对乙酰氨基酚片', priceFen: 120 }),
+        availableScopes: ['outpatient'] as const,
         category: '解热镇痛药',
         defaultDose: '0.5 g',
         defaultFrequency: 'PRN',
         defaultRoute: '口服',
         dosageForm: '片剂',
+        drugConcept: {
+          code: 'CM-DRUG-ACETAMINOPHEN-500MG-ORAL-TABLET',
+          conceptId: 'drug-concept-acetaminophen-500mg-oral-tablet',
+          display: '对乙酰氨基酚 500 mg 口服片剂',
+          kind: 'drug-concept' as const,
+          system: 'urn:clinmesh:reference:drug-concept' as const,
+          version: 'clinmesh-drug-concepts-2026-08-28',
+        },
+        product: {
+          approvalNumber: 'CM-APPROVAL-ACETAMINOPHEN',
+          brandName: null,
+          code: 'CM-NHSA-PRODUCT-ACETAMINOPHEN',
+          dosageForm: '片剂',
+          genericName: '对乙酰氨基酚片',
+          id: 'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-ACETAMINOPHEN',
+          manufacturer: '仁和仿真制药一厂',
+          packageDescription: '20片/盒',
+          strength: '500 mg',
+          system: 'urn:clinmesh:reference:nhsa-medication-product' as const,
+          version: 'nhsa-medication-products-2026-08-07',
+        },
+        regulatoryVerification: regulatoryVerification({
+          approvalNumber: 'CM-APPROVAL-ACETAMINOPHEN',
+          genericName: '对乙酰氨基酚片',
+          manufacturer: '仁和仿真制药一厂',
+        }),
         restriction: '注意总剂量及肝功能风险。',
         unit: '片',
         workflow: {
@@ -393,11 +435,38 @@ export function createHospitalBaseline(): Pick<
         },
       }, {
         ...catalogBase({ code: 'METFORMIN', id: 'medication-metformin', name: '盐酸二甲双胍片', priceFen: 1_200 }),
+        availableScopes: ['outpatient'] as const,
         category: '双胍类降糖药',
         defaultDose: '0.5 g',
         defaultFrequency: 'BID',
         defaultRoute: '口服',
         dosageForm: '片剂',
+        drugConcept: {
+          code: 'CM-DRUG-METFORMIN-HCL-500MG-ORAL-TABLET',
+          conceptId: 'drug-concept-metformin-hcl-500mg-oral-tablet',
+          display: '盐酸二甲双胍 500 mg 口服片剂',
+          kind: 'drug-concept' as const,
+          system: 'urn:clinmesh:reference:drug-concept' as const,
+          version: 'clinmesh-drug-concepts-2026-08-28',
+        },
+        product: {
+          approvalNumber: 'CM-APPROVAL-METFORMIN',
+          brandName: null,
+          code: 'CM-NHSA-PRODUCT-METFORMIN',
+          dosageForm: '片剂',
+          genericName: '盐酸二甲双胍片',
+          id: 'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-METFORMIN',
+          manufacturer: '仁和仿真制药二厂',
+          packageDescription: '60片/盒',
+          strength: '500 mg',
+          system: 'urn:clinmesh:reference:nhsa-medication-product' as const,
+          version: 'nhsa-medication-products-2026-08-07',
+        },
+        regulatoryVerification: regulatoryVerification({
+          approvalNumber: 'CM-APPROVAL-METFORMIN',
+          genericName: '盐酸二甲双胍片',
+          manufacturer: '仁和仿真制药二厂',
+        }),
         restriction: '调整方案前评估肾功能。',
         unit: '片',
         workflow: {
@@ -409,6 +478,52 @@ export function createHospitalBaseline(): Pick<
           allowedQuantities: [60],
           defaultCourseDays: 30,
           defaultQuantity: 60,
+        },
+      }, {
+        ...catalogBase({ code: 'AMLODIPINE', id: 'medication-amlodipine', name: '苯磺酸氨氯地平片', priceFen: 1_500 }),
+        availableScopes: ['outpatient'] as const,
+        category: '钙通道阻滞剂',
+        defaultDose: '5 mg',
+        defaultFrequency: 'QD',
+        defaultRoute: '口服',
+        dosageForm: '片剂',
+        drugConcept: {
+          code: 'CM-DRUG-AMLODIPINE-5MG-ORAL-TABLET',
+          conceptId: 'drug-concept-amlodipine-5mg-oral-tablet',
+          display: '氨氯地平 5 mg 口服片剂',
+          kind: 'drug-concept' as const,
+          system: 'urn:clinmesh:reference:drug-concept' as const,
+          version: 'clinmesh-drug-concepts-2026-08-28',
+        },
+        product: {
+          approvalNumber: 'CM-APPROVAL-AMLODIPINE',
+          brandName: null,
+          code: 'CM-NHSA-PRODUCT-AMLODIPINE',
+          dosageForm: '片剂',
+          genericName: '苯磺酸氨氯地平片',
+          id: 'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-AMLODIPINE',
+          manufacturer: '仁和仿真制药三厂',
+          packageDescription: '30片/盒',
+          strength: '5 mg',
+          system: 'urn:clinmesh:reference:nhsa-medication-product' as const,
+          version: 'nhsa-medication-products-2026-08-07',
+        },
+        regulatoryVerification: regulatoryVerification({
+          approvalNumber: 'CM-APPROVAL-AMLODIPINE',
+          genericName: '苯磺酸氨氯地平片',
+          manufacturer: '仁和仿真制药三厂',
+        }),
+        restriction: '开始或调整方案前评估血压和外周水肿。',
+        unit: '片',
+        workflow: {
+          allowedCombinationIds: [],
+          allowedCourseDays: [30],
+          allowedDiagnosisCodes: ['I10'],
+          allowedDoseTexts: ['5 mg'],
+          allowedFrequencyCodes: ['QD'],
+          allowedQuantities: [30],
+          defaultCourseDays: 30,
+          defaultQuantity: 30,
         },
       }],
     },
@@ -431,6 +546,11 @@ export function createHospitalBaseline(): Pick<
       expiresOn: '2030-12-31',
       itemId: 'medication-metformin',
       lotId: 'lot-metformin-synthetic-001',
+      quantity: 1_000,
+    }, {
+      expiresOn: '2030-12-31',
+      itemId: 'medication-amlodipine',
+      lotId: 'lot-amlodipine-synthetic-001',
       quantity: 1_000,
     }],
   }

@@ -14,6 +14,7 @@ import type {
 } from './command-executor.ts'
 import { CommandExecutor } from './command-executor.ts'
 import { syntheticAccounts } from './identity-service.ts'
+import { createHospitalBaseline } from './scenario-data/hospital-baseline.ts'
 import { materializeScenarioPatientFhirHistory } from './scenario-data/scenario-patient-fhir-history.ts'
 
 const clinicalReviewSchema = z.record(z.string(), z.unknown())
@@ -22,6 +23,43 @@ const scenarioPackageRowSchema = z.object({
   source_dataset_version: z.number().int().positive(),
 }).strict()
 const countRowSchema = z.object({ count: z.number().int().nonnegative() }).strict()
+const hospitalBaseline = createHospitalBaseline()
+const hospitalDiagnosisIdByCode = new Map(
+  hospitalBaseline.catalog.diagnoses.map(diagnosis => [diagnosis.code, diagnosis.id]),
+)
+
+function requiredHospitalMedication(id: string) {
+  const medication = hospitalBaseline.catalog.medications.find(item => item.id === id)
+  if (medication === undefined) throw new Error(`The hospital baseline is missing ${id}`)
+  return medication
+}
+const hospitalAcetaminophen = requiredHospitalMedication('medication-acetaminophen')
+
+function installedMedicationConfigJson(
+  medication: ScenarioDatasetContent['catalog']['medications'][number],
+  diagnosisIdByCode: ReadonlyMap<string, string>,
+  allowedCombinationIds = medication.workflow.allowedCombinationIds,
+) {
+  return JSON.stringify({
+    availableScopes: medication.availableScopes,
+    allowedCombinationIds,
+    allowedCourseDays: medication.workflow.allowedCourseDays,
+    allowedDiagnosisCatalogItemIds: medication.workflow.allowedDiagnosisCodes.flatMap((code) => {
+      const diagnosisId = diagnosisIdByCode.get(code)
+      return diagnosisId === undefined ? [] : [diagnosisId]
+    }),
+    allowedDoseTexts: medication.workflow.allowedDoseTexts,
+    allowedFrequencyCodes: medication.workflow.allowedFrequencyCodes,
+    allowedQuantities: medication.workflow.allowedQuantities,
+    defaultCourseDays: medication.workflow.defaultCourseDays,
+    defaultQuantity: medication.workflow.defaultQuantity,
+    dose: medication.defaultDose,
+    drugConcept: medication.drugConcept,
+    frequency: medication.defaultFrequency,
+    product: medication.product,
+    regulatoryVerification: medication.regulatoryVerification,
+  })
+}
 
 const laboratoryResultsHiddenFact = {
   code: 'laboratory-results',
@@ -917,8 +955,25 @@ export class ScenarioService {
         ? '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"],"allowedCourseDays":[5],"allowedDiagnosisCatalogItemIds":["diagnosis-influenza"],"allowedQuantities":[10],"defaultCourseDays":5,"defaultQuantity":10}'
         : '{"dose":"75 mg","frequency":"BID","allowedDoseTexts":["75 mg"],"allowedFrequencyCodes":["BID"],"allowedCombinationIds":["medication-acetaminophen"]}'],
       ['medication-acetaminophen', 'medication', 'ACETAMINOPHEN', '对乙酰氨基酚片', 'Acetaminophen tablets', 120, supportsPrescriptionConclusion
-        ? '{"dose":"0.5 g","frequency":"PRN","allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"],"allowedCourseDays":[3],"allowedDiagnosisCatalogItemIds":["diagnosis-influenza","diagnosis-acute-upper-respiratory-infection","diagnosis-fever"],"allowedQuantities":[6],"defaultCourseDays":3,"defaultQuantity":6}'
+        ? installedMedicationConfigJson(
+            hospitalAcetaminophen,
+            hospitalDiagnosisIdByCode,
+            ['medication-oseltamivir'],
+          )
         : '{"dose":"0.5 g","frequency":"PRN","allowedDoseTexts":["0.5 g"],"allowedFrequencyCodes":["PRN"],"allowedCombinationIds":["medication-oseltamivir"]}'],
+      ...(supportsPrescriptionConclusion
+        ? hospitalBaseline.catalog.medications
+            .filter(medication => medication.id !== 'medication-acetaminophen')
+            .map(medication => [
+              medication.id,
+              'medication',
+              medication.code,
+              medication.name,
+              medication.name,
+              medication.priceFen,
+              installedMedicationConfigJson(medication, hospitalDiagnosisIdByCode),
+            ] as const)
+        : []),
     ] as const
     const catalog = blueprint.catalog === undefined
       ? legacyCatalog
@@ -960,21 +1015,7 @@ export class ScenarioService {
               item.name,
               item.name,
               item.priceFen,
-              JSON.stringify({
-                allowedCombinationIds: item.workflow.allowedCombinationIds,
-                allowedCourseDays: item.workflow.allowedCourseDays,
-                allowedDiagnosisCatalogItemIds: item.workflow.allowedDiagnosisCodes.flatMap((code) => {
-                  const diagnosisId = diagnosisIdByCode.get(code)
-                  return diagnosisId === undefined ? [] : [diagnosisId]
-                }),
-                allowedDoseTexts: item.workflow.allowedDoseTexts,
-                allowedFrequencyCodes: item.workflow.allowedFrequencyCodes,
-                allowedQuantities: item.workflow.allowedQuantities,
-                defaultCourseDays: item.workflow.defaultCourseDays,
-                defaultQuantity: item.workflow.defaultQuantity,
-                dose: item.defaultDose,
-                frequency: item.defaultFrequency,
-              }),
+              installedMedicationConfigJson(item, diagnosisIdByCode),
             ] as const),
         ]
     const installedCatalog = new Map(catalog.map(item => [item[0], item])).values()
@@ -1003,6 +1044,21 @@ export class ScenarioService {
         'Acute upper respiratory infection, unspecified',
       ],
       ['diagnosis-fever', 'http://hl7.org/fhir/sid/icd-10', 'R50.9', '发热，未特指', 'Fever, unspecified'],
+      ...(supportsPrescriptionConclusion
+        ? hospitalBaseline.catalog.diagnoses
+            .filter(diagnosis => ![
+              'diagnosis-acute-upper-respiratory-infection',
+              'diagnosis-fever',
+              'diagnosis-influenza',
+            ].includes(diagnosis.id))
+            .map(diagnosis => [
+              diagnosis.id,
+              diagnosis.codeSystem,
+              diagnosis.code,
+              diagnosis.name,
+              diagnosis.name,
+            ] as const)
+        : []),
     ] as const
     const diagnosisCatalog = packageDiagnosisCatalog === undefined
       ? legacyDiagnosisCatalog
@@ -1034,7 +1090,11 @@ export class ScenarioService {
       lotId: 'lot-acetaminophen-202608',
       lotNumber: 'SYN-ACE-202608',
       quantity: 1_000,
-    }]
+    }, ...(supportsPrescriptionConclusion
+      ? hospitalBaseline.inventory
+          .filter(lot => lot.itemId !== 'medication-acetaminophen')
+          .map(lot => ({ ...lot, lotNumber: lot.lotId }))
+      : [])]
     for (const lot of inventory) {
       insertLot.run(
         input.workspaceId,
@@ -1155,21 +1215,32 @@ export class ScenarioService {
         location: [{ reference: `Location/location-${account.roleCode}` }],
       })
     }
+    const legacyMedications = input.blueprint.medicationRulesVersion === 'prescription-conclusion-v1'
+      ? hospitalBaseline.catalog.medications.map(medication => ({
+          code: medication.code,
+          id: medication.id,
+          name: medication.name,
+          product: medication.product,
+        }))
+      : [{
+          code: 'ACETAMINOPHEN',
+          id: 'medication-acetaminophen',
+          name: '对乙酰氨基酚片',
+          product: undefined,
+        }]
     const medications = input.blueprint.catalog?.medications
       .filter(medication => medication.active && medication.status === 'active')
       .map(medication => ({
         code: medication.code,
         id: medication.id,
         name: medication.name,
+        product: medication.product,
       })) ?? [{
         id: 'medication-oseltamivir',
         code: 'OSELTAMIVIR',
         name: '磷酸奥司他韦胶囊',
-      }, {
-        id: 'medication-acetaminophen',
-        code: 'ACETAMINOPHEN',
-        name: '对乙酰氨基酚片',
-      }]
+        product: undefined,
+      }, ...legacyMedications]
     for (const medication of medications) {
       this.#fhir.create(context, {
         resourceType: 'Medication',
@@ -1180,7 +1251,12 @@ export class ScenarioService {
             system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/synthetic-medication',
             code: medication.code,
             display: medication.name,
-          }],
+          }, ...(medication.product === undefined ? [] : [{
+            code: medication.product.code,
+            display: medication.product.genericName,
+            system: medication.product.system,
+            version: medication.product.version,
+          }])],
           text: medication.name,
         },
       })

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   parseLoincCsvReferenceArtifact,
   parseNhsaDiagnosisCsvReferenceArtifact,
+  parseNhsaMedicationProductCsvArtifact,
   parseUcumXmlReferenceArtifact,
 } from '../src/infrastructure/reference-data/reference-source-importers.ts'
 
@@ -83,6 +84,34 @@ describe('Reference Data source importers', () => {
       system: 'urn:clinmesh:reference:nhsa-diagnosis',
       version: 'nhsa-diagnosis-2026-08-07',
     }])
+  })
+
+  it('preserves every NHSA medication product field without turning a product into a concept', async () => {
+    const artifact = parseNhsaMedicationProductCsvArtifact({
+      content: await readFile(fixture('synthetic-nhsa-medication-products.csv'), 'utf8'),
+      version: 'nhsa-medication-products-2026-08-07',
+    })
+
+    expect(artifact.concepts).toEqual([])
+    expect(artifact.medicationProducts).toEqual([{
+      approvalNumber: 'CM-APPROVAL-ACETAMINOPHEN',
+      brandName: null,
+      code: 'CM-NHSA-PRODUCT-ACETAMINOPHEN',
+      dosageForm: '片剂',
+      genericName: '对乙酰氨基酚片',
+      id: 'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-ACETAMINOPHEN',
+      manufacturer: '仁和仿真制药一厂',
+      packageDescription: '20片/盒',
+      sourceLocator: 'nhsa-medication-products.csv:2',
+      status: 'active',
+      strength: '500 mg',
+      system: 'urn:clinmesh:reference:nhsa-medication-product',
+      version: 'nhsa-medication-products-2026-08-07',
+    }, expect.objectContaining({
+      brandName: null,
+      code: 'CM-NHSA-PRODUCT-METFORMIN',
+      status: 'active',
+    }), expect.objectContaining({ code: 'CM-NHSA-PRODUCT-AMLODIPINE' })])
   })
 
   it('rejects malformed rows and duplicate source coding', () => {

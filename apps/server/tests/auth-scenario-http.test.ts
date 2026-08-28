@@ -802,6 +802,16 @@ describe('trusted session and Scenario HTTP contract', () => {
         expect.objectContaining({ id: 'symptom-foot-numbness', passive: true }),
       ]),
     })
+    expect(generated.content.catalog.medications.find(item => (
+      item.id === 'medication-metformin'
+    ))).toMatchObject({
+      drugConcept: { conceptId: 'drug-concept-metformin-hcl-500mg-oral-tablet' },
+      product: {
+        code: 'CM-NHSA-PRODUCT-METFORMIN',
+        id: 'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-METFORMIN',
+      },
+      regulatoryVerification: { result: 'synthetic-match' },
+    })
     const installResponse = await runtime.app.request(
       `/api/sim/v1/scenario-datasets/${encodeURIComponent(generated.datasetId)}/actions/install`,
       {
@@ -865,8 +875,46 @@ describe('trusted session and Scenario HTTP contract', () => {
       ]),
       medications: expect.arrayContaining([
         expect.objectContaining({ id: 'medication-metformin', nameZh: '盐酸二甲双胍片' }),
+        expect.objectContaining({ id: 'medication-amlodipine', nameZh: '苯磺酸氨氯地平片' }),
       ]),
     })
+    const installedMedicationSnapshots = runtime.database.driver.prepare(`
+      SELECT item_id, config_json FROM outpatient_catalog
+      WHERE workspace_id = ? AND epoch = ? AND kind = 'medication'
+      ORDER BY item_id
+    `).all('workspace-demo', installed.scenario.epoch) as Array<{
+      config_json: string
+      item_id: string
+    }>
+    expect(installedMedicationSnapshots).toHaveLength(3)
+    expect(installedMedicationSnapshots.map(row => ({
+      config: JSON.parse(row.config_json) as unknown,
+      id: row.item_id,
+    }))).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        config: expect.objectContaining({
+          allowedDiagnosisCatalogItemIds: ['diagnosis-type-2-diabetes-hyperglycemia'],
+          product: expect.objectContaining({
+            id: 'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-METFORMIN',
+          }),
+          regulatoryVerification: expect.objectContaining({ result: 'synthetic-match' }),
+        }),
+        id: 'medication-metformin',
+      }),
+      expect.objectContaining({
+        config: expect.objectContaining({
+          allowedDiagnosisCatalogItemIds: ['diagnosis-hypertension'],
+          product: expect.objectContaining({
+            id: 'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-AMLODIPINE',
+          }),
+          regulatoryVerification: expect.objectContaining({ result: 'synthetic-match' }),
+        }),
+        id: 'medication-amlodipine',
+      }),
+    ]))
+    expect(runtime.database.driver.prepare(`
+      SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'reference_medication_product'
+    `).get()).toBeUndefined()
 
     const registrarCookie = await signInSyntheticAccount(
       runtime,
@@ -895,10 +943,27 @@ describe('trusted session and Scenario HTTP contract', () => {
         headers: { cookie },
       })
       expect(response.status).toBe(200)
-      expect(fhirResourceSchema.parse(await response.json())).toMatchObject({
+      const resource = fhirResourceSchema.parse(await response.json())
+      expect(resource).toMatchObject({
         id: resourceId,
         resourceType,
       })
+      if (resourceType === 'Medication') {
+        expect(resource).toMatchObject({
+          code: {
+            coding: expect.arrayContaining([
+              expect.objectContaining({
+                code: 'METFORMIN',
+                system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/synthetic-medication',
+              }),
+              expect.objectContaining({
+                code: 'CM-NHSA-PRODUCT-METFORMIN',
+                system: 'urn:clinmesh:reference:nhsa-medication-product',
+              }),
+            ]),
+          },
+        })
+      }
     }
 
     const editedContent = {
@@ -1250,7 +1315,7 @@ describe('trusted session and Scenario HTTP contract', () => {
       ['Location', 8],
       ['Practitioner', 6],
       ['PractitionerRole', 6],
-      ['Medication', 2],
+      ['Medication', 4],
     ] as const) {
       const response = await runtime.app.request(
         `/fhir/R5/${resourceType}?_count=20&_total=accurate`,

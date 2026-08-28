@@ -120,6 +120,12 @@ describe('Synthea Scenario generation Provider contract', () => {
         raw: bundle,
       }],
     })
+    expect(corpus.content.simulatorRules).toEqual([
+      { code: 'success', outcome: 'success', simulator: 'payment' },
+      { code: 'decline', outcome: 'declined', simulator: 'payment' },
+      { code: 'ambiguous', outcome: 'ambiguous', simulator: 'payment' },
+      { code: 'default-success', outcome: 'success', simulator: 'lis' },
+    ])
     expect(corpus.sources[0]?.hash).toMatch(/^[a-f0-9]{64}$/)
   })
 
