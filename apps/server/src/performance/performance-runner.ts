@@ -686,16 +686,26 @@ export async function runTrajectoryPerformanceProfile() {
   }
 }
 
-interface SaturationWorkerResult {
-  busyCount: number
-  errorCount: number
-  latenciesMs: number[]
-  retryCount: number
-  rowsWritten: number
-  statementCount: number
-  transactionDurationsMs: number[]
-  writeCount: number
-}
+const saturationWorkerResultSchema = z.object({
+  busyCount: z.number().int().nonnegative(),
+  errorCount: z.number().int().nonnegative(),
+  latenciesMs: z.array(z.number().nonnegative()),
+  retryCount: z.number().int().nonnegative(),
+  rowsWritten: z.number().int().nonnegative(),
+  statementCount: z.number().int().nonnegative(),
+  transactionDurationsMs: z.array(z.number().nonnegative()),
+  writeCount: z.number().int().nonnegative(),
+}).strict()
+
+const saturationWorkerMessageSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('ready') }).strict(),
+  z.object({
+    result: saturationWorkerResultSchema,
+    type: z.literal('result'),
+  }).strict(),
+])
+
+type SaturationWorkerResult = z.infer<typeof saturationWorkerResultSchema>
 
 const saturationWorkerSource = `
   const { parentPort, workerData } = require('node:worker_threads');
@@ -803,13 +813,16 @@ function startSaturationWorker(workerData: {
   const result = createDeferred<SaturationWorkerResult>()
   void result.promise.catch(() => undefined)
   const worker = new Worker(saturationWorkerSource, { eval: true, workerData })
-  worker.on('message', (message: { result?: SaturationWorkerResult; type: 'ready' | 'result' }) => {
-    if (message.type === 'ready') {
-      ready.resolve()
+  worker.on('message', (value: unknown) => {
+    const parsed = saturationWorkerMessageSchema.safeParse(value)
+    if (!parsed.success) {
+      ready.reject(parsed.error)
+      result.reject(parsed.error)
       return
     }
-    if (message.result === undefined) {
-      result.reject(new Error('Saturation worker returned no result'))
+    const message = parsed.data
+    if (message.type === 'ready') {
+      ready.resolve()
       return
     }
     resultReceived = true
@@ -830,6 +843,12 @@ function startSaturationWorker(workerData: {
     }
   })
   return { ready: ready.promise, result: result.promise, worker }
+}
+
+async function terminateSaturationWorkers(
+  workers: readonly SaturationWorkerHandle[],
+): Promise<void> {
+  await Promise.all(workers.map(worker => worker.worker.terminate()))
 }
 
 async function runSaturationLevel(
@@ -853,17 +872,25 @@ async function runSaturationLevel(
   const sleeper = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)
   const barrierView = new Int32Array(barrier)
   const iterationsPerActor = 20
-  const workers = Array.from({ length: actors }, (_, actorId) => startSaturationWorker({
-    actorId,
-    barrier,
-    databasePath,
-    iterations: iterationsPerActor,
-    sleeper,
-  }))
+  const workers: SaturationWorkerHandle[] = []
+  try {
+    for (let actorId = 0; actorId < actors; actorId += 1) {
+      workers.push(startSaturationWorker({
+        actorId,
+        barrier,
+        databasePath,
+        iterations: iterationsPerActor,
+        sleeper,
+      }))
+    }
+  } catch (error) {
+    await terminateSaturationWorkers(workers)
+    throw error
+  }
   try {
     await Promise.all(workers.map(worker => worker.ready))
   } catch (error) {
-    await Promise.all(workers.map(worker => worker.worker.terminate()))
+    await terminateSaturationWorkers(workers)
     throw error
   }
   const startedAt = performance.now()
@@ -873,7 +900,7 @@ async function runSaturationLevel(
   try {
     workerResults = await Promise.all(workers.map(worker => worker.result))
   } catch (error) {
-    await Promise.all(workers.map(worker => worker.worker.terminate()))
+    await terminateSaturationWorkers(workers)
     throw error
   }
   const elapsedMs = performance.now() - startedAt
