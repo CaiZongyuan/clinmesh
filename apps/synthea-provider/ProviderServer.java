@@ -37,7 +37,7 @@ public final class ProviderServer {
   private static final String SYNTHEA_COMMIT =
       "d9d07a6eef91ee5144293b42ab64224d84d124f8";
   private static final String GENERATION_CONFIG_HASH =
-      "b26dd4f34bd75c5328892e382f57899221e2581f5a03902bde09f0ec05f57ef9";
+      "a08483ffe6aca8c2ab6fc058a24297842cb9e37b755a83c2fdda18330dff9343";
   private static final Path SYNTHEA_JAR = Path.of(
       System.getenv().getOrDefault("SYNTHEA_JAR_PATH", "/opt/synthea/synthea.jar"));
   private static final Path SYNTHEA_CONFIG = Path.of(
@@ -48,6 +48,7 @@ public final class ProviderServer {
   private static final Gson GSON = new Gson();
   private static final Map<String, List<String>> MODULE_PATTERNS = Map.of(
       "fever", List.of("sinusitis"),
+      "hypertension", List.of("hypertension"),
       "type-2-diabetes", List.of(
           "metabolic_syndrome_disease", "metabolic_syndrome_care"));
   private static final List<String> MODULES = MODULE_PATTERNS.keySet().stream().sorted().toList();
@@ -162,7 +163,7 @@ public final class ProviderServer {
     String name = requireString(root, "name", 1, 120, null);
     String timeZone = requireString(root, "timeZone", 1, 40, "Asia/Shanghai");
 
-    JsonArray moduleValues = requireArray(root, "modules", 1, 2);
+    JsonArray moduleValues = requireArray(root, "modules", 1, 3);
     List<String> modules = new ArrayList<>();
     for (JsonElement value : moduleValues) {
       if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
@@ -572,6 +573,17 @@ public final class ProviderServer {
         || !containsCode(diabetesResult.getAsJsonArray("bundles"),
             Set.of("44054006", "237602007"))) {
       throw new IOException("Synthea Provider diabetes smoke response is invalid");
+    }
+
+    String hypertensionBody = """
+        {"modules":["hypertension"],"name":"Docker hypertension smoke","population":{"age":{"maximum":80,"minimum":50},"count":10,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1986-08-01"},"timeZone":"Asia/Shanghai"}
+        """.trim();
+    JsonObject hypertensionResult = generateForSmoke(
+        port, hypertensionBody, "Synthea Provider hypertension smoke request failed");
+    if (hypertensionResult.getAsJsonArray("bundles").size() != 10
+        || !containsCode(hypertensionResult.getAsJsonArray("bundles"),
+            Set.of("59621000"))) {
+      throw new IOException("Synthea Provider hypertension smoke response is invalid");
     }
     System.out.println("Synthea Provider smoke passed");
   }

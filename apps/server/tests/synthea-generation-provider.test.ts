@@ -5,7 +5,7 @@ import {
 } from '../src/infrastructure/scenario-generation/synthea-provider.ts'
 
 const syntheaCommit = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
-const configHash = 'b26dd4f34bd75c5328892e382f57899221e2581f5a03902bde09f0ec05f57ef9'
+const configHash = 'a08483ffe6aca8c2ab6fc058a24297842cb9e37b755a83c2fdda18330dff9343'
 const request = scenarioGenerationRequestSchema.parse({
   modules: ['fever'],
   name: 'Synthea 发热病史',
@@ -88,6 +88,10 @@ describe('Synthea Scenario generation Provider contract', () => {
     }])
     const provider = providerFor(providerResponse([bundle]))
 
+    expect(await provider.capabilities()).toMatchObject({
+      modules: ['fever', 'type-2-diabetes', 'hypertension'],
+    })
+
     const corpus = await provider.generate(request)
 
     expect(corpus.content.patients[0]).toMatchObject({
@@ -103,7 +107,8 @@ describe('Synthea Scenario generation Provider contract', () => {
       ]),
       name: '林安宁',
     })
-    expect(corpus.content.reproduction).toEqual({
+    expect(corpus.content.reproduction).toMatchObject({
+      catalogCompilation: { blockers: [], supported: true },
       clinicalSeed: 7331,
       configHash,
       generator: 'synthea-fhir-r4',

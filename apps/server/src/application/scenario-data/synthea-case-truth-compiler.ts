@@ -16,8 +16,8 @@ import {
   isKnownObservationMappingCode,
   resolveObservationMapping,
   resolveUcumUnit,
-  ucumUnit,
 } from './reference-coding-package.ts'
+import { scenarioCaseDefinitions } from './scenario-case-definitions.ts'
 
 export const syntheaR4ResourceTypes = [
   'AllergyIntolerance',
@@ -528,6 +528,39 @@ function formatResultValue(result: ScenarioInvestigationResult): string {
   return result.outcome === 'reported' ? String(result.value) : result.message
 }
 
+function compileCurrentInvestigation(
+  resource: R4Observation,
+): ScenarioPatient['investigations'][number] | undefined {
+  const mapping = observationMapping(resource)
+  const result = mappedObservedResult(resource)
+  if (mapping === undefined || result === undefined) return undefined
+  const formattedValue = formatResultValue(result)
+  const normalizedResult: ScenarioInvestigationResult = result.outcome === 'reported'
+    ? {
+        ...result,
+        flag: result.flag ?? (typeof result.value !== 'number'
+          ? 'N'
+          : mapping.referenceMaximum !== undefined && result.value > mapping.referenceMaximum
+            ? 'H'
+            : mapping.referenceMinimum !== undefined && result.value < mapping.referenceMinimum ? 'L' : 'N'),
+        referenceRange: result.referenceRange ?? mapping.referenceRange,
+      }
+    : result
+  return {
+    catalogItemId: mapping.catalogItemId,
+    critical: false,
+    feeFen: mapping.feeFen,
+    id: `investigation-${resource.id}`,
+    name: mapping.name,
+    report: mapping.reportTemplate
+      .replace('{value}', formattedValue)
+      .replace('{unit}', mapping.unit.display),
+    result: normalizedResult,
+    sourceLevel: 'L1',
+    tatMinutes: mapping.tatMinutes,
+  }
+}
+
 function mappedCondition(condition: z.infer<typeof conditionSchema>) {
   const source = firstCoding(condition.code)
   const sourceDisplay = conceptDisplay(condition.code, '未命名临床问题')
@@ -557,325 +590,6 @@ function deterministicPersona(ordinal: number) {
   }
 }
 
-function hematologyGenerators(): ScenarioPatient['physiologyBaseline']['generators'] {
-  return [{
-    assayCv: 0.02,
-    id: 'hemoglobin',
-    kind: 'normal',
-    maximum: 165,
-    mean: 148,
-    minimum: 130,
-    source: 'scenario:normal-routine-lab',
-    standardDeviation: 4,
-    unit: ucumUnit('g/L'),
-  }, {
-    assayCv: 0.03,
-    id: 'red-blood-cells',
-    kind: 'normal',
-    maximum: 5.8,
-    mean: 4.7,
-    minimum: 3.8,
-    source: 'scenario:hematology-baseline',
-    standardDeviation: 0.35,
-    unit: ucumUnit('10*12/L'),
-  }, {
-    assayCv: 0.02,
-    id: 'mean-corpuscular-volume',
-    kind: 'normal',
-    maximum: 100,
-    mean: 90,
-    minimum: 80,
-    source: 'scenario:hematology-baseline',
-    standardDeviation: 4,
-    unit: ucumUnit('fL'),
-  }, {
-    dependencies: ['red-blood-cells', 'mean-corpuscular-volume'],
-    formula: 'hematocrit-from-rbc-mcv',
-    id: 'hematocrit',
-    kind: 'derived',
-    source: 'scenario:rbc-mcv',
-    unit: ucumUnit('L/L'),
-  }]
-}
-
-function renalGenerators(): ScenarioPatient['physiologyBaseline']['generators'] {
-  return [{
-    assayCv: 0.03,
-    id: 'serum-creatinine',
-    kind: 'normal',
-    maximum: 104,
-    mean: 75,
-    minimum: 45,
-    source: 'scenario:renal-baseline',
-    standardDeviation: 12,
-    unit: ucumUnit('umol/L'),
-  }, {
-    dependencies: ['serum-creatinine'],
-    formula: 'egfr-ckd-epi-2021',
-    id: 'estimated-gfr',
-    kind: 'derived',
-    source: 'scenario:ckd-epi-2021',
-    unit: ucumUnit('mL/min/{1.73_m2}'),
-  }]
-}
-
-function bodyMassIndexGenerator(): ScenarioPatient['physiologyBaseline']['generators'][number] {
-  return {
-    dependencies: ['vital:weightKg', 'vital:heightCm'],
-    formula: 'bmi',
-    id: 'body-mass-index',
-    kind: 'derived',
-    source: 'scenario:height-weight',
-    unit: ucumUnit('kg/m2'),
-  }
-}
-
-function urineGlucoseGenerator(): ScenarioPatient['physiologyBaseline']['generators'][number] {
-  return {
-    dependencies: ['random-glucose'],
-    formula: 'urine-glucose-from-blood-glucose',
-    id: 'urine-glucose',
-    kind: 'derived',
-    source: 'scenario:renal-glucose-threshold',
-    unit: ucumUnit('{qualitative}'),
-  }
-}
-
-function feverCaseTruth(input: {
-  conditions: Array<z.infer<typeof conditionSchema>>
-  observations: R4Observation[]
-}) {
-  const temperature = input.observations.find(observation => conceptCode(observation.code) === '8310-5')
-    ?.valueQuantity?.value ?? 38.6
-  const primary = input.conditions.map(mappedCondition).find(condition => condition.code === 'R50.9')
-    ?? { code: 'R50.9', display: '发热，原因待查' }
-  return {
-    costBaseline: {
-      note: '费用仅用于合成门诊场景，不代表真实医院价格。',
-      overInvestigationThresholdFen: 50_000,
-      reasonableRangeFen: [2_500, 15_000] as [number, number],
-      referencePath: '血常规、C 反应蛋白等按临床需要选择。',
-    },
-    diagnosisSpace: {
-      comorbidities: [],
-      differentials: [{
-        code: 'J10.1',
-        display: '流感伴呼吸道表现',
-        evidence: ['流行病学接触史、急性高热或全身症状'],
-        expectedAction: '结合流行季节和必要的病原学检查鉴别。',
-        id: 'diagnosis-differential-influenza',
-      }],
-      primary: {
-        code: primary.code,
-        display: primary.display,
-        evidence: [`体温 ${temperature} °C`, '急性起病'],
-        id: 'diagnosis-primary-fever',
-      },
-      traps: ['不能仅凭发热直接使用抗菌药物。'],
-    },
-    encounter: {
-      openingStatement: '发热一天，伴咽部不适。',
-      setting: '综合医院全科医学科门诊',
-      timeStateItems: [],
-    },
-    examinationFindings: [{
-      abnormal: [`体温 ${temperature} °C，升高`],
-      finding: `神志清，体温 ${temperature} °C，咽部轻度充血。`,
-      id: 'exam-vital-signs',
-      name: '生命体征',
-    }],
-    managementSpace: {
-      acceptableOptions: ['对症退热、补液和门诊随访。'],
-      contraindications: ['无明确细菌感染证据时常规使用抗菌药物。'],
-      followUp: '症状持续或出现呼吸困难、高热不退时及时复诊。',
-      requiredElements: ['评估危险征象', '说明退热与复诊条件'],
-    },
-    patientKnowledge: {
-      careMemory: '记得本次发热前没有接受相关检查。',
-      chiefComplaint: '发热一天，伴咽部不适。',
-      healthLiteracy: '知道自己发热，但不知道具体病因。',
-      lifestyle: [],
-      medicationMemory: '只记得曾用过普通退热药，具体名称不确定。',
-      neverKnows: ['本次尚未告知的检查数值', '尚未由医生告知的诊断结论'],
-      toldDiagnoses: [],
-    },
-    physiologyBaseline: {
-      generators: [{
-        assayCv: 0.005,
-        id: 'body-temperature',
-        kind: 'constant' as const,
-        source: 'synthea-r4:Observation/8310-5',
-        unit: ucumUnit('Cel'),
-        value: temperature,
-      }, ...hematologyGenerators(), {
-        assayCv: 0.02,
-        id: 'random-glucose',
-        kind: 'normal',
-        maximum: 7.8,
-        mean: 5.4,
-        minimum: 3.9,
-        source: 'scenario:normal-glucose-baseline',
-        standardDeviation: 0.7,
-        unit: ucumUnit('mmol/L'),
-      }, ...renalGenerators(), bodyMassIndexGenerator(), urineGlucoseGenerator()],
-      vitalSigns: {
-        heightCm: 165,
-        oxygenSaturationPct: 98,
-        pulseBpm: 92,
-        respirationBpm: 18,
-        temperatureC: temperature,
-        weightKg: 60,
-      },
-    },
-    symptomResponses: [{
-      avoids: [],
-      denies: ['没有明显胸痛或呼吸困难。'],
-      id: 'symptom-fever',
-      name: '发热与起病经过',
-      passive: false,
-      responsePoints: ['昨天下午开始觉得发热，咽部有些不舒服。'],
-    }],
-  }
-}
-
-function diabetesCaseTruth(input: {
-  conditions: Array<z.infer<typeof conditionSchema>>
-  observations: R4Observation[]
-}) {
-  const hba1cObservation = input.observations.find(
-    observation => conceptCode(observation.code) === '4548-4',
-  )
-  const glucoseObservation = input.observations.find(
-    observation => conceptCode(observation.code) === '2339-0',
-  )
-  const hba1cResult = hba1cObservation === undefined ? undefined : mappedObservedResult(hba1cObservation)
-  const glucoseResult = glucoseObservation === undefined ? undefined : mappedObservedResult(glucoseObservation)
-  const hba1c = typeof hba1cResult?.value === 'number' ? hba1cResult.value : 9.2
-  const glucose = typeof glucoseResult?.value === 'number' ? glucoseResult.value : 13.8
-  const primary = input.conditions.map(mappedCondition).find(condition => condition.code === 'E11.65')
-    ?? { code: 'E11.65', display: '2型糖尿病伴高血糖' }
-  return {
-    costBaseline: {
-      note: '合理费用需与并发症筛查和鉴别诊断需求共同判断。',
-      overInvestigationThresholdFen: 100_000,
-      reasonableRangeFen: [20_000, 60_000] as [number, number],
-      referencePath: '随机血糖、HbA1c、尿常规、肝肾功能、血脂和心电图。',
-    },
-    diagnosisSpace: {
-      comorbidities: [{
-        code: 'I10',
-        display: '高血压',
-        evidence: ['门诊血压达到高血压范围'],
-        id: 'diagnosis-comorbidity-hypertension',
-        route: '需要通过查体测量，不能只依赖患者自述。',
-      }],
-      differentials: [{
-        code: 'E05.90',
-        display: '甲状腺功能亢进',
-        evidence: ['近期体重下降'],
-        expectedAction: '必要时检查 TSH 或在病历中解释体重下降原因。',
-        id: 'diagnosis-differential-hyperthyroidism',
-        truth: 'TSH 正常时排除。',
-      }],
-      primary: {
-        code: primary.code,
-        display: primary.display,
-        evidence: [`随机血糖 ${glucose} mmol/L`, `HbA1c ${hba1c}%`, '多饮多尿和体重下降'],
-        id: 'diagnosis-primary-type-2-diabetes',
-      },
-      traps: ['患者没有主动说足麻时仍需筛查并发症。', '不能只加药而忽略依从性。'],
-    },
-    encounter: {
-      openingStatement: '这两个月总是口渴，水喝得很多，人也瘦了。',
-      setting: '综合医院内科门诊',
-      timeStateItems: [{
-        change: '患者开始催促，希望尽快完成本次就诊。',
-        id: 'time-state-visit-pressure',
-        triggerAfterMinutes: 20,
-      }],
-    },
-    examinationFindings: [{
-      abnormal: ['血压 162/96 mmHg，升高'],
-      finding: 'T 36.5 °C，P 88 次/分，R 16 次/分，BP 162/96 mmHg。',
-      id: 'exam-vital-signs',
-      name: '生命体征',
-    }, {
-      abnormal: ['双足远端感觉减退'],
-      finding: '双足皮肤完整，足背动脉搏动存在，双足远端感觉减退。',
-      id: 'exam-diabetic-foot',
-      name: '糖尿病足筛查',
-    }],
-    managementSpace: {
-      acceptableOptions: ['核对肝肾功能后优化二甲双胍方案。', '根据个体情况加用第二种降糖药。'],
-      contraindications: ['在未核对肾功能前盲目强化二甲双胍。', '已确诊糖尿病时常规开 OGTT。'],
-      followUp: '3 个月复查 HbA1c 和血压，并完成眼底及足部筛查。',
-      requiredElements: ['核实服药依从性', '停止含糖饮料并规律进餐', '评估血压和微血管并发症'],
-    },
-    patientKnowledge: {
-      careMemory: '记得去年社区检查说血糖控制不好，没有保存报告。',
-      chiefComplaint: '口渴、多饮两个月，体重下降。',
-      healthLiteracy: '只会说血糖高，不理解 HbA1c 和并发症术语。',
-      lifestyle: [{
-        actual: '长期饮用含糖饮料。',
-        admittedOnFirstAsk: '口渴时会喝饮料。',
-        concedeOnSecondAsk: true,
-        id: 'sugary-drinks',
-        label: '含糖饮料',
-      }],
-      medicationMemory: '知道服用二甲双胍，但常因跑车和进餐不规律漏服。',
-      neverKnows: ['本次尚未告知的检查数值', '自己的血压值', '周围神经病变这个诊断术语'],
-      toldDiagnoses: ['2型糖尿病', '血糖控制不好'],
-    },
-    physiologyBaseline: {
-      generators: [{
-        assayCv: 0.005,
-        id: 'body-temperature',
-        kind: 'constant' as const,
-        source: 'scenario:vital-signs',
-        unit: ucumUnit('Cel'),
-        value: 36.5,
-      }, {
-        assayCv: 0.03,
-        id: 'random-glucose',
-        kind: 'trajectory' as const,
-        maximum: 18,
-        minimum: 9,
-        source: 'synthea-r4:Observation/2339-0',
-        target: glucose,
-        unit: ucumUnit('mmol/L'),
-        walkStep: 0.8,
-      }, ...hematologyGenerators(), ...renalGenerators(), bodyMassIndexGenerator(), urineGlucoseGenerator()],
-      vitalSigns: { diastolicMmHg: 96, heightCm: 172, pulseBpm: 88, systolicMmHg: 162, temperatureC: 36.5, weightKg: 80.2 },
-    },
-    symptomResponses: [{
-      avoids: [],
-      denies: [],
-      id: 'symptom-polydipsia-polyuria',
-      name: '多饮多尿',
-      passive: false,
-      responsePoints: ['这两个月渴得厉害，喝水多，夜里也要起来两三次。'],
-    }, {
-      avoids: [],
-      denies: ['双足没有破溃。'],
-      id: 'symptom-foot-numbness',
-      name: '足部感觉异常',
-      passive: true,
-      responsePoints: ['脚底有些发木，像穿了厚袜子，已经大半年。'],
-    }, {
-      avoids: [],
-      denies: [],
-      id: 'symptom-medication-adherence',
-      name: '用药依从性',
-      passive: false,
-      responsePoints: ['吃的是二甲双胍，但跑车时经常忘记。'],
-      secondAskConcede: {
-        firstResponse: '基本都按时吃。',
-        revealedResponse: '说实话经常漏服，有时一天只吃一次。',
-      },
-    }],
-  }
-}
-
 export function compileSyntheaR4Bundle(input: {
   bundle: unknown
   ordinal: number
@@ -898,9 +612,17 @@ export function compileSyntheaR4Bundle(input: {
   const allergies = bundle.entry.flatMap(entry => entry.resource.resourceType === 'AllergyIntolerance' ? [entry.resource] : [])
   const fallbackDateTime = dateAtEnd(input.request)
   const module = input.request.modules[input.ordinal % input.request.modules.length] ?? 'fever'
-  const authored = module === 'type-2-diabetes'
-    ? diabetesCaseTruth({ conditions, observations: currentObservations })
-    : feverCaseTruth({ conditions, observations: currentObservations })
+  const definition = scenarioCaseDefinitions[module]
+  const currentInvestigations = currentObservations.flatMap((resource) => {
+    const investigation = compileCurrentInvestigation(resource)
+    return investigation === undefined ? [] : [investigation]
+  })
+  const authored = definition.buildCaseTruth({
+    conditions: conditions.map(mappedCondition),
+    observations: new Map(currentInvestigations.map(investigation => (
+      [investigation.catalogItemId, investigation.result] as const
+    ))),
+  })
 
   const fhirHistory = bundle.entry.flatMap((entry): ScenarioPatient['fhirHistory'] => {
     const resource = entry.resource
@@ -1072,36 +794,12 @@ export function compileSyntheaR4Bundle(input: {
     })),
   ].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id))
 
-  const investigations: ScenarioPatient['investigations'] = currentObservations.flatMap(resource => {
-    const mapping = observationMapping(resource)
-    const result = mappedObservedResult(resource)
-    if (mapping === undefined || result === undefined) return []
-    const formattedValue = formatResultValue(result)
-    const normalizedResult: ScenarioInvestigationResult = result.outcome === 'reported'
-      ? {
-          ...result,
-          flag: result.flag ?? (typeof result.value !== 'number'
-            ? 'N'
-            : mapping.referenceMaximum !== undefined && result.value > mapping.referenceMaximum
-              ? 'H'
-              : mapping.referenceMinimum !== undefined && result.value < mapping.referenceMinimum ? 'L' : 'N'),
-          referenceRange: result.referenceRange ?? mapping.referenceRange,
-        }
-      : result
-    return [{
-      catalogItemId: mapping.catalogItemId,
-      critical: false,
-      feeFen: mapping.feeFen,
-      id: `investigation-${resource.id}`,
-      name: mapping.name,
-      report: mapping.reportTemplate
-        .replace('{value}', formattedValue)
-        .replace('{unit}', mapping.unit.display),
-      result: normalizedResult,
-      sourceLevel: 'L1' as const,
-      tatMinutes: mapping.tatMinutes,
-    }]
-  })
+  const currentInvestigationByCatalog = new Map(currentInvestigations.map(investigation => (
+    [investigation.catalogItemId, investigation] as const
+  )))
+  const investigations: ScenarioPatient['investigations'] = definition.investigationTruth.map((fallback) => (
+    currentInvestigationByCatalog.get(fallback.catalogItemId) ?? fallback
+  ))
 
   const fingerprint = createHash('sha256')
     .update(`${input.request.seeds.population}:${patient.id}:${input.ordinal}`)

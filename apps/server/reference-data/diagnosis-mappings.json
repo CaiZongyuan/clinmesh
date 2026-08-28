@@ -1,5 +1,5 @@
 {
-  "contentHash": "5e9b7faabae742a83d527d0756b9d8bff73dc0ac8a9968e68da06f01652efb87",
+  "contentHash": "f57a624291b46caa7cb5d83f7686cb0040a417f8f592119889ea751f4c2a74e1",
   "mappingSetId": "clinmesh-synthea-nhsa-diagnosis",
   "mappings": [
     {
@@ -50,6 +50,26 @@
       "source": {
         "code": "38341003",
         "display": "Hypertension",
+        "system": "http://snomed.info/sct",
+        "version": "http://snomed.info/sct/900000000000207008/version/20250201"
+      },
+      "status": "active",
+      "target": {
+        "catalogItemId": "diagnosis-hypertension",
+        "code": "I10",
+        "display": "高血压",
+        "system": "urn:clinmesh:reference:nhsa-diagnosis",
+        "version": "nhsa-diagnosis-2026-08-07"
+      }
+    },
+    {
+      "direction": "source-to-target",
+      "evidence": ["ClinMesh #49 synthetic hypertension case review"],
+      "mappingId": "snomed-essential-hypertension-to-nhsa-i10",
+      "relationship": "equivalent",
+      "source": {
+        "code": "59621000",
+        "display": "Essential hypertension (disorder)",
         "system": "http://snomed.info/sct",
         "version": "http://snomed.info/sct/900000000000207008/version/20250201"
       },

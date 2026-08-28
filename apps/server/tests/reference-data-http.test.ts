@@ -165,7 +165,7 @@ describe('Reference Data HTTP contract', () => {
     ])
   })
 
-  it('compiles the Hospital Baseline from one complete configured reference release', async () => {
+  it('compiles the disease catalog closure from one complete configured reference release', async () => {
     const referenceDirectory = await mkdtemp(join(tmpdir(), 'clinmesh-reference-products-'))
     temporaryDirectories.push(referenceDirectory)
     const referenceDatabasePath = await createReferenceDatabase(referenceDirectory)
@@ -233,12 +233,14 @@ describe('Reference Data HTTP contract', () => {
     expect(dataset.content.catalog.medications.map(medication => (
       'product' in medication ? medication.product.id : null
     ))).toEqual([
-      'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-ACETAMINOPHEN',
       'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-METFORMIN',
-      'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-AMLODIPINE',
     ])
     expect(dataset.content.catalog.services?.map(service => service.nationalService.id)).toEqual(
-      syntheticNhcMedicalServiceSnapshot.map(service => service.id),
+      syntheticNhcMedicalServiceSnapshot.filter(service => [
+        'CM-NHC-SERVICE-HBA1C',
+        'CM-NHC-SERVICE-FUNDUS',
+        'CM-NHC-SERVICE-DIABETES-EDUCATION',
+      ].includes(service.code)).map(service => service.id),
     )
   })
 
@@ -373,6 +375,7 @@ describe('Reference Data HTTP contract', () => {
       system: 'http://unitsofmeasure.org',
       version: '2.2',
     })
+    expect(readDataset.diagnostics).toEqual([])
     const installResponse = await first.runtime.app.request(
       `/api/sim/v1/scenario-datasets/${encodeURIComponent(dataset.datasetId)}/actions/install`,
       {
@@ -386,10 +389,11 @@ describe('Reference Data HTTP contract', () => {
         method: 'POST',
       },
     )
-    expect(installResponse.status).toBe(200)
+    const installBody = await installResponse.json()
+    expect({ body: installBody, status: installResponse.status }).toMatchObject({ status: 200 })
     const installed = z.object({
       data: z.object({ packageId: z.string(), scenario: scenarioStateSchema }).strict(),
-    }).passthrough().parse(await installResponse.json()).data
+    }).passthrough().parse(installBody).data
     const packageRow = first.runtime.database.driver.prepare(`
       SELECT content_json, content_hash FROM scenario_package
       WHERE workspace_id = ? AND package_id = ?
@@ -457,9 +461,8 @@ describe('Reference Data HTTP contract', () => {
     expect(serviceCatalogSearchSchema.parse(await serviceCatalogResponse.json())).toMatchObject({
       items: expect.arrayContaining([
         expect.objectContaining({ id: 'hospital-service-cbc' }),
-        expect.objectContaining({ id: 'hospital-service-hba1c' }),
       ]),
-      total: 9,
+      total: 6,
     })
     expect(restarted.runtime.database.driver.prepare(`
       SELECT content_json, content_hash FROM scenario_package

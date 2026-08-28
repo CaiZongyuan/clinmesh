@@ -534,6 +534,41 @@ function stubScenarioDataWorkspace(options: {
         }],
       }],
       reproduction: {
+        catalogCompilation: {
+          blockers: [],
+          caseDefinitions: [{
+            contentHash: 'c'.repeat(64),
+            module: 'fever',
+            version: '1',
+          }],
+          catalogHash: 'd'.repeat(64),
+          compiler: { id: 'clinmesh-scenario-catalog-compiler', version: '1' },
+          counts: {
+            requirements: {
+              criticalTruth: 3,
+              explicitlyIgnored: 5,
+              historyOnly: 12,
+              workflowRequired: 9,
+            },
+            resolutions: {
+              ambiguous: 0,
+              hospitalNotEnabled: 7,
+              mapped: 17,
+              missing: 0,
+              notApplicable: 5,
+            },
+          },
+          entries: [],
+          hospitalBaselineHash: 'e'.repeat(64),
+          sourceInventory: {
+            generatedContentHash: 'f'.repeat(64),
+            generatedCorpusHash: '1'.repeat(64),
+            generatedPatientCount: 10,
+            staticContentHash: '2'.repeat(64),
+            syntheaCommit: '3'.repeat(40),
+          },
+          supported: true,
+        },
         clinicalSeed: 7331,
         generator: 'clinmesh-builtin-v1',
         modules: ['fever'],
@@ -655,13 +690,13 @@ function stubScenarioDataWorkspace(options: {
         items: [{
           available: true,
           maxPopulation: 10,
-          modules: ['fever', 'type-2-diabetes'],
+          modules: ['fever', 'type-2-diabetes', 'hypertension'],
           providerId: 'builtin',
           providerName: 'ClinMesh 内置生成器',
         }, {
           available: options.syntheaAvailable === true,
           maxPopulation: 10,
-          modules: ['fever', 'type-2-diabetes'],
+          modules: ['fever', 'type-2-diabetes', 'hypertension'],
           providerId: 'synthea',
           providerName: 'Synthea',
           ...(options.syntheaAvailable === true
@@ -1580,6 +1615,24 @@ describe('role workspaces', () => {
     expect(screen.getByRole('button', { name: '安装运行' }).hasAttribute('disabled')).toBe(true)
   })
 
+  it('shows compiled catalog coverage in the Dataset editor', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace()
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await openAdvancedCaseAuthoring(user)
+    await user.click(await screen.findByRole('button', { name: '生成数据' }))
+    await user.click(await screen.findByRole('button', { name: '编辑 发热门诊样本' }))
+
+    expect(await screen.findByRole('heading', { name: '目录覆盖' })).toBeTruthy()
+    expect(screen.getByText('可安装')).toBeTruthy()
+    expect(screen.getByText('关键真值').nextElementSibling?.textContent).toBe('3')
+    expect(screen.getByText('本院未启用').nextElementSibling?.textContent).toBe('7')
+    expect(screen.getByText('2'.repeat(64))).toBeTruthy()
+  })
+
   it('reports a stale Dataset version without replacing the administrator draft', async () => {
     window.history.replaceState(null, '', '/scenario-data')
     stubScenarioDataWorkspace({ staleUpdate: true })
@@ -1671,6 +1724,7 @@ describe('role workspaces', () => {
     const generationSheet = await screen.findByRole('dialog', { name: '生成患者' })
     expect(within(generationSheet).getByRole('button', { name: /Synthea/ }).getAttribute('aria-pressed')).toBe('true')
     expect(within(generationSheet).getByRole('spinbutton', { name: '患者人数' }).getAttribute('max')).toBe('10')
+    expect(within(generationSheet).getByRole('checkbox', { name: '高血压' })).toBeTruthy()
   })
 
   it('edits a persistent profile and starts its outpatient visit', async () => {
@@ -1732,7 +1786,7 @@ describe('role workspaces', () => {
     expect(screen.getByText('映射完整')).toBeTruthy()
   })
 
-  it('submits a diabetes-only Synthea population while keeping one module selected', async () => {
+  it('submits a hypertension-only Synthea population while keeping one module selected', async () => {
     window.history.replaceState(null, '', '/scenario-data')
     let submittedRequest: ScenarioGenerationRequest | undefined
     stubScenarioDataWorkspace({
@@ -1750,12 +1804,19 @@ describe('role workspaces', () => {
     const fever = screen.getByRole('checkbox', { name: '发热门诊' })
     await user.click(fever)
     expect(fever.getAttribute('aria-checked')).toBe('true')
-    await user.click(screen.getByRole('checkbox', { name: '2 型糖尿病' }))
+    const diabetes = screen.getByRole('checkbox', { name: '2 型糖尿病' })
+    await user.click(diabetes)
+    const hypertension = screen.getByRole('checkbox', { name: '高血压' })
+    await user.click(hypertension)
     await user.click(fever)
     expect(fever.getAttribute('aria-checked')).toBe('false')
+    await user.click(diabetes)
+    expect(hypertension.getAttribute('aria-checked')).toBe('true')
+    await user.click(hypertension)
+    expect(hypertension.getAttribute('aria-checked')).toBe('true')
     await user.click(screen.getByRole('button', { name: '生成数据' }))
 
-    await waitFor(() => expect(submittedRequest?.modules).toEqual(['type-2-diabetes']))
+    await waitFor(() => expect(submittedRequest?.modules).toEqual(['hypertension']))
   })
 
   it('uses clinical operator language for the registrar empty state', async () => {

@@ -1,5 +1,5 @@
 {
-  "contentHash": "49091e048017024da99a59e3cd5af625fcca6540525bd2655d1989c8898ee89d",
+  "contentHash": "5bb02fdda48776766d781966e810c1e4870c9ebeb5c7fe8af61910841a5f2451",
   "mappingSetId": "clinmesh-rxnorm-drug-concepts",
   "mappings": [
     {
@@ -39,6 +39,27 @@
         "code": "CM-DRUG-METFORMIN-HCL-500MG-ORAL-TABLET",
         "conceptId": "drug-concept-metformin-hcl-500mg-oral-tablet",
         "display": "盐酸二甲双胍 500 mg 口服片剂",
+        "kind": "drug-concept",
+        "system": "urn:clinmesh:reference:drug-concept",
+        "version": "clinmesh-drug-concepts-2026-08-28"
+      }
+    },
+    {
+      "direction": "source-to-target",
+      "evidence": ["ClinMesh #49 synthetic hypertension case review"],
+      "mappingId": "rxnorm-amlodipine-tablet-to-drug-concept",
+      "relationship": "equivalent",
+      "source": {
+        "code": "308136",
+        "display": "Amlodipine 5 MG Oral Tablet",
+        "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+        "version": "rxnorm-2026-08-03"
+      },
+      "status": "active",
+      "target": {
+        "code": "CM-DRUG-AMLODIPINE-5MG-ORAL-TABLET",
+        "conceptId": "drug-concept-amlodipine-5mg-oral-tablet",
+        "display": "氨氯地平 5 mg 口服片剂",
         "kind": "drug-concept",
         "system": "urn:clinmesh:reference:drug-concept",
         "version": "clinmesh-drug-concepts-2026-08-28"

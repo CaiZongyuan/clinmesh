@@ -681,13 +681,13 @@ describe('trusted session and Scenario HTTP contract', () => {
       items: [{
         available: true,
         maxPopulation: 10,
-        modules: ['fever', 'type-2-diabetes'],
+        modules: ['fever', 'type-2-diabetes', 'hypertension'],
         providerId: 'builtin',
         providerName: 'ClinMesh 内置生成器',
       }, {
         available: false,
         maxPopulation: 10,
-        modules: ['fever', 'type-2-diabetes'],
+        modules: ['fever', 'type-2-diabetes', 'hypertension'],
         providerId: 'synthea',
         providerName: 'Synthea',
         unavailableReason: '未配置 Synthea Provider',
@@ -939,7 +939,6 @@ describe('trusted session and Scenario HTTP contract', () => {
       ]),
       medications: expect.arrayContaining([
         expect.objectContaining({ id: 'medication-metformin', nameZh: '盐酸二甲双胍片' }),
-        expect.objectContaining({ id: 'medication-amlodipine', nameZh: '苯磺酸氨氯地平片' }),
       ]),
     })
     const installedMedicationSnapshots = runtime.database.driver.prepare(`
@@ -950,7 +949,7 @@ describe('trusted session and Scenario HTTP contract', () => {
       config_json: string
       item_id: string
     }>
-    expect(installedMedicationSnapshots).toHaveLength(3)
+    expect(installedMedicationSnapshots).toHaveLength(1)
     expect(installedMedicationSnapshots.map(row => ({
       config: JSON.parse(row.config_json) as unknown,
       id: row.item_id,
@@ -965,16 +964,6 @@ describe('trusted session and Scenario HTTP contract', () => {
         }),
         id: 'medication-metformin',
       }),
-      expect.objectContaining({
-        config: expect.objectContaining({
-          allowedDiagnosisCatalogItemIds: ['diagnosis-hypertension'],
-          product: expect.objectContaining({
-            id: 'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-AMLODIPINE',
-          }),
-          regulatoryVerification: expect.objectContaining({ result: 'synthetic-match' }),
-        }),
-        id: 'medication-amlodipine',
-      }),
     ]))
     const installedServiceSnapshots = runtime.database.driver.prepare(`
       SELECT service_id, config_json FROM hospital_service_catalog
@@ -984,7 +973,7 @@ describe('trusted session and Scenario HTTP contract', () => {
       config_json: string
       service_id: string
     }>
-    expect(installedServiceSnapshots).toHaveLength(9)
+    expect(installedServiceSnapshots).toHaveLength(3)
     expect(installedServiceSnapshots.map(row => ({
       config: JSON.parse(row.config_json) as unknown,
       id: row.service_id,
@@ -992,13 +981,13 @@ describe('trusted session and Scenario HTTP contract', () => {
       expect.objectContaining({
         config: expect.objectContaining({
           chargeDefinition: expect.objectContaining({
-            id: 'charge-definition-hospital-service-cbc',
-            priceFen: 2_500,
+            id: 'charge-definition-hospital-service-hba1c',
+            priceFen: 4_500,
           }),
           executingDepartmentId: 'department-laboratory',
-          requestCatalogItemIds: ['lab-cbc'],
+          requestCatalogItemIds: ['lab-hba1c'],
         }),
-        id: 'hospital-service-cbc',
+        id: 'hospital-service-hba1c',
       }),
     ]))
     expect(runtime.database.driver.prepare(`

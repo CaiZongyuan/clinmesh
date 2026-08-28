@@ -219,7 +219,7 @@ function investigation(input: {
     ...catalogBase(input),
     allowedIndicationCodes: input.allowedIndicationCodes ?? (input.category === 'examination'
       ? ['clinical-assessment']
-      : ['fever', 'type-2-diabetes']),
+      : ['fever', 'type-2-diabetes', 'hypertension']),
     available: input.available ?? true,
     category: input.category ?? 'laboratory',
     ...(coding === undefined ? {} : { coding }),

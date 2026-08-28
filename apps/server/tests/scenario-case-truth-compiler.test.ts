@@ -754,4 +754,110 @@ describe('Synthea R4 CaseTruth compiler', () => {
       })
     }
   })
+
+  it('compiles hypertension through the shared case-definition registry', () => {
+    const hypertensionRequest = scenarioGenerationRequestSchema.parse({
+      ...request,
+      modules: ['hypertension'],
+      name: 'Synthea 高血压病例',
+    })
+    const patientReference = 'urn:uuid:patient-hypertension'
+    const encounterReference = 'urn:uuid:encounter-hypertension'
+    const bundle = {
+      entry: [{
+        fullUrl: patientReference,
+        resource: {
+          birthDate: '1965-11-03',
+          gender: 'female',
+          id: 'patient-hypertension',
+          resourceType: 'Patient',
+        },
+      }, {
+        fullUrl: encounterReference,
+        resource: {
+          class: { code: 'AMB' },
+          id: 'encounter-hypertension',
+          period: { end: '2026-08-01T09:40:00Z', start: '2026-08-01T09:00:00Z' },
+          resourceType: 'Encounter',
+          status: 'finished',
+          subject: { reference: patientReference },
+        },
+      }, {
+        fullUrl: 'urn:uuid:condition-hypertension',
+        resource: {
+          clinicalStatus: { coding: [{ code: 'active' }] },
+          code: {
+            coding: [{
+              code: '59621000',
+              display: 'Essential hypertension (disorder)',
+              system: 'http://snomed.info/sct',
+            }],
+          },
+          encounter: { reference: encounterReference },
+          id: 'condition-hypertension',
+          onsetDateTime: '2024-08-01T09:00:00Z',
+          recordedDate: '2024-08-01T09:05:00Z',
+          resourceType: 'Condition',
+          subject: { reference: patientReference },
+        },
+      }, {
+        fullUrl: 'urn:uuid:medication-request-amlodipine',
+        resource: {
+          authoredOn: '2025-08-01T09:20:00Z',
+          encounter: { reference: encounterReference },
+          id: 'medication-request-amlodipine',
+          intent: 'order',
+          medicationCodeableConcept: {
+            coding: [{
+              code: '308136',
+              display: 'Amlodipine 5 MG Oral Tablet',
+              system: 'http://www.nlm.nih.gov/research/umls/rxnorm',
+            }],
+          },
+          resourceType: 'MedicationRequest',
+          status: 'completed',
+          subject: { reference: patientReference },
+        },
+      }],
+      resourceType: 'Bundle',
+      type: 'collection',
+    }
+
+    const compiled = compileSyntheaR4Bundle({ bundle, ordinal: 0, request: hypertensionRequest })
+
+    expect(compiled.diagnosisSpace).toMatchObject({
+      primary: { code: 'I10', display: '高血压' },
+    })
+    expect(compiled.investigations).toEqual([
+      expect.objectContaining({
+        catalogItemId: 'lab-creatinine',
+        result: expect.objectContaining({ value: 78 }),
+        sourceLevel: 'L1',
+      }),
+      expect.objectContaining({
+        catalogItemId: 'lab-egfr',
+        result: expect.objectContaining({ value: 92 }),
+        sourceLevel: 'L1',
+      }),
+    ])
+    expect(compiled.physiologyBaseline.vitalSigns).toMatchObject({
+      diastolicMmHg: 96,
+      systolicMmHg: 162,
+    })
+    expect(compiled.patientKnowledge).toMatchObject({
+      chiefComplaint: '最近量血压总是偏高，偶尔头晕。',
+      toldDiagnoses: ['高血压'],
+    })
+    expect(compiled.fhirHistory.find(resource => resource.resourceType === 'MedicationRequest'))
+      .toMatchObject({
+        medication: {
+          code: 'CM-DRUG-AMLODIPINE-5MG-ORAL-TABLET',
+          display: '氨氯地平 5 mg 口服片剂',
+          system: 'urn:clinmesh:reference:drug-concept',
+        },
+      })
+    expect(datasetDiagnostics(compiled)).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ severity: 'error' }),
+    ]))
+  })
 })

@@ -39,11 +39,11 @@ describe('Synthetic Patient Profile compilation', () => {
         mappingProvenance: {
           compiler: { id: 'builtin-case-truth', version: '2' },
           packages: [{
-            contentHash: '5e9b7faabae742a83d527d0756b9d8bff73dc0ac8a9968e68da06f01652efb87',
+            contentHash: 'f57a624291b46caa7cb5d83f7686cb0040a417f8f592119889ea751f4c2a74e1',
             mappingSetId: 'clinmesh-synthea-nhsa-diagnosis',
             version: '2026-08-28',
           }, {
-            contentHash: '49091e048017024da99a59e3cd5af625fcca6540525bd2655d1989c8898ee89d',
+            contentHash: '5bb02fdda48776766d781966e810c1e4870c9ebeb5c7fe8af61910841a5f2451',
             mappingSetId: 'clinmesh-rxnorm-drug-concepts',
             version: '2026-08-28',
           }],

@@ -702,6 +702,7 @@ function DatasetEditor({
     }))
   }
   const patient = draft.content.patients[selectedPatientIndex] ?? draft.content.patients[0]!
+  const catalogCompilation = draft.content.reproduction.catalogCompilation
   const mutationError = save.error ?? install.error ?? remove.error
 
   return (
@@ -756,6 +757,28 @@ function DatasetEditor({
           </AlertDescription>
         </Alert>
       ) : null}
+
+      {catalogCompilation === undefined ? null : (
+        <section aria-labelledby="catalog-coverage-heading" className="border-y py-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold" id="catalog-coverage-heading">{messages.catalogCoverage}</h3>
+            <Badge variant={catalogCompilation.supported ? 'success' : 'destructive'}>
+              {catalogCompilation.supported
+                ? messages.catalogCoverageSupported
+                : messages.catalogCoverageBlocked}
+            </Badge>
+          </div>
+          <dl className="mt-3 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2 xl:grid-cols-4">
+            <div><dt className="text-muted-foreground">{messages.criticalTruthCoverage}</dt><dd className="font-medium">{catalogCompilation.counts.requirements.criticalTruth}</dd></div>
+            <div><dt className="text-muted-foreground">{messages.workflowCoverage}</dt><dd className="font-medium">{catalogCompilation.counts.requirements.workflowRequired}</dd></div>
+            <div><dt className="text-muted-foreground">{messages.historyCoverage}</dt><dd className="font-medium">{catalogCompilation.counts.requirements.historyOnly}</dd></div>
+            <div><dt className="text-muted-foreground">{messages.ignoredCoverage}</dt><dd className="font-medium">{catalogCompilation.counts.requirements.explicitlyIgnored}</dd></div>
+            <div><dt className="text-muted-foreground">{messages.ambiguousCoverage}</dt><dd className="font-medium">{catalogCompilation.counts.resolutions.ambiguous}</dd></div>
+            <div><dt className="text-muted-foreground">{messages.hospitalNotEnabledCoverage}</dt><dd className="font-medium">{catalogCompilation.counts.resolutions.hospitalNotEnabled}</dd></div>
+            <div className="sm:col-span-2"><dt className="text-muted-foreground">{messages.sourceInventoryHash}</dt><dd className="break-all font-mono text-xs">{catalogCompilation.sourceInventory.staticContentHash}</dd></div>
+          </dl>
+        </section>
+      )}
 
       <FieldGroup className="grid gap-4 md:grid-cols-2">
         <Field>
@@ -1960,6 +1983,17 @@ function ScenarioDatasetStudio({ locale }: { locale: WorkspaceLocale }): React.J
                 }))}
               />
               {messages.moduleDiabetes}
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={request.modules.includes('hypertension')}
+                disabled={request.modules.length === 1 && request.modules.includes('hypertension')}
+                onCheckedChange={checked => setRequest(current => ({
+                  ...current,
+                  modules: updateModules(current.modules, 'hypertension', checked === true),
+                }))}
+              />
+              {messages.moduleHypertension}
             </label>
           </div>
           <div className="flex justify-end">

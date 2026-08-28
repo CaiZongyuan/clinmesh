@@ -46,6 +46,42 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
     diagnostics.push(diagnostic)
   }
 
+  const catalogCompilation = content.reproduction.catalogCompilation
+  const unresolvedRequiredDependency = catalogCompilation?.entries.some(entry => (
+    (entry.requirement === 'critical-truth' || entry.requirement === 'workflow-required')
+    && entry.resolution !== 'mapped'
+  )) === true
+  if (
+    catalogCompilation !== undefined
+    && (
+      !catalogCompilation.supported
+      || catalogCompilation.blockers.length > 0
+      || unresolvedRequiredDependency
+    )
+  ) {
+    add({
+      code: 'CATALOG_COMPILATION_BLOCKED',
+      message: 'Scenario catalog compilation has unresolved critical dependencies',
+      path: 'reproduction.catalogCompilation.blockers',
+      severity: 'error',
+    })
+  }
+  if (
+    catalogCompilation !== undefined
+    && catalogCompilation.catalogHash !== canonicalJsonHash({
+      catalog: content.catalog,
+      hospital: content.hospital,
+      inventory: content.inventory,
+    })
+  ) {
+    add({
+      code: 'CATALOG_COMPILATION_HASH_MISMATCH',
+      message: 'Scenario catalog content does not match its compilation hash',
+      path: 'reproduction.catalogCompilation.catalogHash',
+      severity: 'error',
+    })
+  }
+
   const diagnoseDuplicates = <Item>(input: {
     code: string
     items: readonly Item[]

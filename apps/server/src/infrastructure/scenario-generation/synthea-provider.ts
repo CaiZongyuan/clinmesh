@@ -3,6 +3,7 @@ import type {
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
 } from '@clinmesh/contracts/scenario'
+import { scenarioModuleSchema } from '@clinmesh/contracts/scenario'
 import type {
   ReferenceMedicalService,
   ReferenceMedicationProduct,
@@ -17,6 +18,7 @@ import {
   type SourcePatientCorpus,
 } from '../../application/scenario-data/provider.ts'
 import { createHospitalBaseline } from '../../application/scenario-data/hospital-baseline.ts'
+import { compileScenarioCatalog } from '../../application/scenario-data/scenario-catalog-compiler.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../../application/scenario-data/medication-product-snapshot.ts'
 import {
   syntheticNhcMedicalServiceSnapshot,
@@ -28,7 +30,7 @@ import {
 } from '../../application/scenario-data/synthea-case-truth-compiler.ts'
 
 const SYNTHEA_COMMIT = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
-const SYNTHEA_CONFIG_HASH = 'b26dd4f34bd75c5328892e382f57899221e2581f5a03902bde09f0ec05f57ef9'
+const SYNTHEA_CONFIG_HASH = 'a08483ffe6aca8c2ab6fc058a24297842cb9e37b755a83c2fdda18330dff9343'
 const allowedR4ResourceTypes = syntheaR4ResourceTypes
 
 const r4ResourceSchema = z.object({
@@ -50,7 +52,7 @@ const providerResponseSchema = z.object({
   metadata: z.object({
     clinicalSeed: z.number().int(),
     configHash: z.string().regex(/^[a-f0-9]{64}$/),
-    modules: z.array(z.enum(['fever', 'type-2-diabetes'])).min(1),
+    modules: z.array(scenarioModuleSchema).min(1),
     populationSeed: z.number().int(),
     syntheaCommit: z.literal(SYNTHEA_COMMIT),
     timeRange: z.object({ end: z.iso.date(), start: z.iso.date() }).strict(),
@@ -320,7 +322,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
     return {
       available: true,
       maxPopulation: 10,
-      modules: ['fever', 'type-2-diabetes'],
+      modules: ['fever', 'type-2-diabetes', 'hypertension'],
       providerId: 'synthea',
       providerName: 'Synthea',
     }
@@ -403,11 +405,14 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
       }
     })
     const patients = compiled.map(item => item.patient)
-    const baseline = createHospitalBaseline(
-      this.#medicationProducts,
-      this.#medicalServices,
-      this.#valueSetEntries,
-    )
+    const baseline = compileScenarioCatalog({
+      baseline: createHospitalBaseline(
+        this.#medicationProducts,
+        this.#medicalServices,
+        this.#valueSetEntries,
+      ),
+      modules: request.modules,
+    })
     const content: ScenarioDatasetContent = {
       catalog: baseline.catalog,
       hiddenFacts: patients.map(patient => ({
@@ -419,6 +424,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
       inventory: baseline.inventory,
       patients,
       reproduction: {
+        catalogCompilation: baseline.report,
         clinicalSeed: request.seeds.clinical,
         configHash: parsed.metadata.configHash,
         generator: 'synthea-fhir-r4',

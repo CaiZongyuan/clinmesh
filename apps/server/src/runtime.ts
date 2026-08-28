@@ -115,7 +115,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         ? new UnavailableScenarioGenerationProvider({
             available: false,
             maxPopulation: 10,
-            modules: ['fever', 'type-2-diabetes'],
+            modules: ['fever', 'type-2-diabetes', 'hypertension'],
             providerId: 'synthea',
             providerName: 'Synthea',
             unavailableReason: '未配置 Synthea Provider',

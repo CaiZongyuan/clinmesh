@@ -142,7 +142,7 @@ describe('Scenario Dataset diagnostics', () => {
   it('rejects tampered selected-product verification and duplicate product identity', async () => {
     const generated = await new BuiltInScenarioGenerationProvider().generate(
       scenarioGenerationRequestSchema.parse({
-        modules: ['fever'],
+        modules: ['fever', 'type-2-diabetes'],
         name: '药品产品校验冲突',
         population: { age: { maximum: 40, minimum: 40 }, count: 1, gender: 'female' },
         providerId: 'builtin',
@@ -548,5 +548,78 @@ describe('Scenario Dataset diagnostics', () => {
         path: `catalog.investigations[${investigationIndex}].referenceRanges[0].minimum`,
       }),
     ]))
+  })
+
+  it('blocks installation when catalog compilation has a critical dependency gap', async () => {
+    const provider = new BuiltInScenarioGenerationProvider()
+    const generated = await provider.generate(scenarioGenerationRequestSchema.parse({
+      modules: ['hypertension'],
+      name: '高血压目录缺口病例',
+      population: { age: { maximum: 60, minimum: 60 }, count: 1, gender: 'female' },
+      providerId: 'builtin',
+      seeds: { clinical: 288, population: 277 },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    }))
+    const report = generated.content.reproduction.catalogCompilation
+    if (report === undefined) throw new Error('Expected catalog compilation provenance')
+
+    expect(validateScenarioDataset({
+      ...generated.content,
+      reproduction: {
+        ...generated.content.reproduction,
+        catalogCompilation: {
+          ...report,
+          blockers: [{
+            code: 'CRITICAL_DEPENDENCY_MISSING',
+            module: 'hypertension',
+            targetId: 'medication-amlodipine',
+          }],
+          supported: false,
+        },
+      },
+    })).toContainEqual({
+      code: 'CATALOG_COMPILATION_BLOCKED',
+      message: 'Scenario catalog compilation has unresolved critical dependencies',
+      path: 'reproduction.catalogCompilation.blockers',
+      severity: 'error',
+    })
+
+    const hiddenGapEntries = report.entries.map(entry => (
+      entry.requirement === 'critical-truth' && entry.targetId === 'medication-amlodipine'
+        ? { ...entry, resolution: 'missing' as const }
+        : entry
+    ))
+    expect(validateScenarioDataset({
+      ...generated.content,
+      reproduction: {
+        ...generated.content.reproduction,
+        catalogCompilation: {
+          ...report,
+          blockers: [],
+          entries: hiddenGapEntries,
+          supported: true,
+        },
+      },
+    })).toContainEqual(expect.objectContaining({
+      code: 'CATALOG_COMPILATION_BLOCKED',
+      severity: 'error',
+    }))
+
+    expect(validateScenarioDataset({
+      ...generated.content,
+      catalog: {
+        ...generated.content.catalog,
+        medications: generated.content.catalog.medications.map(item => ({
+          ...item,
+          priceFen: item.priceFen + 1,
+        })),
+      },
+    })).toContainEqual({
+      code: 'CATALOG_COMPILATION_HASH_MISMATCH',
+      message: 'Scenario catalog content does not match its compilation hash',
+      path: 'reproduction.catalogCompilation.catalogHash',
+      severity: 'error',
+    })
   })
 })

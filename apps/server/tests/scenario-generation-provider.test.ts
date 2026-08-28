@@ -72,8 +72,15 @@ describe('Scenario generation Provider contract', () => {
       { code: 'ambiguous', outcome: 'ambiguous', simulator: 'payment' },
       { code: 'default-success', outcome: 'success', simulator: 'lis' },
     ])
-    expect(first.content.catalog.services).toEqual(expect.arrayContaining([
-      expect.objectContaining({
+    expect(first.content.catalog.services?.map(item => item.id)).toEqual([
+      'hospital-service-cbc',
+      'hospital-service-wbc',
+      'hospital-service-hgb',
+      'hospital-service-rbc',
+      'hospital-service-mcv',
+      'hospital-service-hct',
+    ])
+    expect(first.content.catalog.services?.[0]).toEqual(expect.objectContaining({
         chargeDefinition: {
           currency: 'CNY',
           effectiveOn: '2026-08-28',
@@ -84,16 +91,70 @@ describe('Scenario generation Provider contract', () => {
         id: 'hospital-service-cbc',
         nationalService: expect.objectContaining({ code: 'CM-NHC-SERVICE-CBC' }),
         requestCatalogItemIds: ['lab-cbc'],
-      }),
-      expect.objectContaining({ id: 'hospital-service-hba1c' }),
-    ]))
-    expect(first.content.reproduction).toEqual({
+      }))
+    expect(first.content.reproduction).toMatchObject({
+      catalogCompilation: {
+        blockers: [],
+        supported: true,
+      },
       clinicalSeed: 7331,
       generator: 'clinmesh-builtin-v1',
       modules: ['fever'],
       populationSeed: 4242,
       timeRange: { end: '2026-08-01', start: '2020-01-01' },
       timeZone: 'Asia/Shanghai',
+    })
+  })
+
+  it('generates hypertension with its compiled catalog and coverage report', async () => {
+    const provider = new BuiltInScenarioGenerationProvider()
+    const request = scenarioGenerationRequestSchema.parse({
+      modules: ['hypertension'],
+      name: '合成高血压门诊数据',
+      population: {
+        age: { maximum: 65, minimum: 65 },
+        count: 1,
+        gender: 'female',
+      },
+      providerId: 'builtin',
+      seeds: { clinical: 7331, population: 4242 },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    })
+
+    expect(await provider.capabilities()).toMatchObject({
+      modules: ['fever', 'type-2-diabetes', 'hypertension'],
+    })
+    const generated = await provider.generate(request)
+
+    expect(generated.content.patients[0]).toMatchObject({
+      diagnosisSpace: { primary: { code: 'I10' } },
+      investigations: [
+        expect.objectContaining({ catalogItemId: 'lab-creatinine' }),
+        expect.objectContaining({ catalogItemId: 'lab-egfr' }),
+      ],
+      physiologyBaseline: { vitalSigns: { diastolicMmHg: 96, systolicMmHg: 162 } },
+    })
+    expect(generated.content.catalog.diagnoses.map(item => item.id)).toEqual([
+      'diagnosis-hypertension',
+    ])
+    expect(generated.content.catalog.medications.map(item => item.id)).toEqual([
+      'medication-amlodipine',
+    ])
+    expect(generated.content.inventory.map(lot => lot.itemId)).toEqual([
+      'medication-amlodipine',
+    ])
+    expect(generated.content.reproduction.catalogCompilation).toMatchObject({
+      blockers: [],
+      compiler: { id: 'clinmesh-scenario-catalog-compiler', version: '1' },
+      sourceInventory: {
+        generatedContentHash: '7bb212ca0a5104165414117e55e82a3c9fdcced9a395a774af9dbfcb3fd15c51',
+        generatedCorpusHash: '6f65143c3ee51bb247cd98014fdd3a77da52bb80abccfefa3dcc365053e20a81',
+        generatedPatientCount: 10,
+        staticContentHash: 'cef9e9c11d7819bb72114afa91977e916e1bae089cbeeb1c7cf3860e322fee08',
+        syntheaCommit: 'd9d07a6eef91ee5144293b42ab64224d84d124f8',
+      },
+      supported: true,
     })
   })
 })

@@ -53,8 +53,14 @@ export const scenarioLoincCodingSchema = z.object({
   version: z.literal('2.83'),
 }).strict()
 
+export const scenarioModuleSchema = z.enum([
+  'fever',
+  'type-2-diabetes',
+  'hypertension',
+])
+
 export const scenarioGenerationRequestSchema = z.object({
-  modules: z.array(z.enum(['fever', 'type-2-diabetes'])).min(1).max(8),
+  modules: z.array(scenarioModuleSchema).min(1).max(8),
   name: z.string().trim().min(1).max(120),
   population: z.object({
     age: z.object({
@@ -96,6 +102,81 @@ export const scenarioDiagnosticSchema = z.object({
   message: z.string().min(1).max(1_000),
   path: z.string().min(1).max(512),
   severity: z.enum(['error', 'warning']),
+}).strict()
+
+export const scenarioCatalogCompilationReportSchema = z.object({
+  blockers: z.array(z.object({
+    code: z.enum([
+      'CRITICAL_DEPENDENCY_AMBIGUOUS',
+      'CRITICAL_DEPENDENCY_MISSING',
+      'WORKFLOW_DEPENDENCY_AMBIGUOUS',
+      'WORKFLOW_DEPENDENCY_MISSING',
+    ]),
+    module: scenarioModuleSchema,
+    targetId: z.string().min(1),
+  }).strict()),
+  caseDefinitions: z.array(z.object({
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    module: scenarioModuleSchema,
+    version: z.string().min(1),
+  }).strict()).min(1),
+  catalogHash: z.string().regex(/^[a-f0-9]{64}$/),
+  compiler: z.object({
+    id: z.literal('clinmesh-scenario-catalog-compiler'),
+    version: z.string().min(1),
+  }).strict(),
+  counts: z.object({
+    requirements: z.object({
+      criticalTruth: z.number().int().nonnegative(),
+      explicitlyIgnored: z.number().int().nonnegative(),
+      historyOnly: z.number().int().nonnegative(),
+      workflowRequired: z.number().int().nonnegative(),
+    }).strict(),
+    resolutions: z.object({
+      ambiguous: z.number().int().nonnegative(),
+      hospitalNotEnabled: z.number().int().nonnegative(),
+      mapped: z.number().int().nonnegative(),
+      missing: z.number().int().nonnegative(),
+      notApplicable: z.number().int().nonnegative(),
+    }).strict(),
+  }).strict(),
+  entries: z.array(z.object({
+    generatedOccurrences: z.number().int().nonnegative().optional(),
+    module: z.union([scenarioModuleSchema, z.literal('baseline-workflow')]),
+    requirement: z.enum([
+      'critical-truth',
+      'workflow-required',
+      'history-only',
+      'explicitly-ignored',
+    ]),
+    resolution: z.enum([
+      'ambiguous',
+      'hospital-not-enabled',
+      'mapped',
+      'missing',
+      'not-applicable',
+    ]),
+    source: z.union([
+      z.object({
+        code: z.string().min(1),
+        display: z.string().min(1),
+        system: z.string().min(1),
+        version: z.string().min(1).optional(),
+      }).strict(),
+      z.object({ resourceType: z.string().min(1) }).strict(),
+    ]).optional(),
+    staticOccurrences: z.number().int().nonnegative().optional(),
+    targetId: z.string().min(1).optional(),
+  }).strict()),
+  hospitalBaselineHash: z.string().regex(/^[a-f0-9]{64}$/),
+  sourceInventory: z.object({
+    generatedContentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    generatedCorpusHash: z.string().regex(/^[a-f0-9]{64}$/),
+    generatedPatientCount: z.number().int().positive(),
+    staticContentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    syntheaCommit: z.string().regex(/^[a-f0-9]{40}$/),
+  }).strict(),
+  supported: z.boolean(),
 }).strict()
 
 const scenarioCatalogItemBaseSchema = z.object({
@@ -548,6 +629,7 @@ export const scenarioDatasetContentSchema = z.object({
   }).strict()),
   patients: z.array(scenarioPatientSchema).min(1),
   reproduction: z.object({
+    catalogCompilation: scenarioCatalogCompilationReportSchema.optional(),
     clinicalSeed: z.number().int(),
     configHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     generator: z.string().min(1),
@@ -619,7 +701,7 @@ export const updateScenarioDatasetRequestSchema = z.object({
 export const scenarioProviderCapabilitiesSchema = z.object({
   available: z.boolean(),
   maxPopulation: z.number().int().positive(),
-  modules: z.array(z.enum(['fever', 'type-2-diabetes'])),
+  modules: z.array(scenarioModuleSchema),
   providerId: z.enum(['builtin', 'synthea']),
   providerName: z.string().min(1),
   unavailableReason: z.string().min(1).optional(),
@@ -659,7 +741,7 @@ const syntheticPatientSourceSchema = z.object({
   batchId: z.string().min(1),
   batchName: z.string().min(1),
   compilation: z.object({
-    modules: z.array(z.enum(['fever', 'type-2-diabetes'])).min(1),
+    modules: z.array(scenarioModuleSchema).min(1),
     ordinal: z.number().int().nonnegative(),
     seeds: z.object({
       clinical: z.number().int(),
@@ -833,6 +915,9 @@ export const startSyntheticPatientVisitsResultSchema = z.object({
 export type ScenarioDataset = z.infer<typeof scenarioDatasetSchema>
 export type ScenarioDatasetList = z.infer<typeof scenarioDatasetListSchema>
 export type ScenarioDatasetContent = z.infer<typeof scenarioDatasetContentSchema>
+export type ScenarioCatalogCompilationReport = z.infer<
+  typeof scenarioCatalogCompilationReportSchema
+>
 export type ScenarioProductMedicationCatalogItem = z.infer<
   typeof scenarioProductMedicationCatalogItemSchema
 >
@@ -841,6 +926,7 @@ export type ScenarioHospitalServiceCatalogItem = z.infer<
 >
 export type ScenarioDiagnostic = z.infer<typeof scenarioDiagnosticSchema>
 export type ScenarioGenerationRequest = z.infer<typeof scenarioGenerationRequestSchema>
+export type ScenarioModule = z.infer<typeof scenarioModuleSchema>
 export type ScenarioGenerationJob = z.infer<typeof scenarioGenerationJobSchema>
 export type ScenarioInvestigationResult = z.infer<typeof scenarioInvestigationResultSchema>
 export type ScenarioPatient = z.infer<typeof scenarioPatientSchema>

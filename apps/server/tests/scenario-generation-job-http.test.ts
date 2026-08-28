@@ -15,13 +15,28 @@ import {
   type ScenarioProviderCapabilities,
 } from '@clinmesh/contracts/scenario'
 import {
+  acknowledgeLaboratoryReportResponseSchema,
+  askConsultationQuestionResponseSchema,
   apiErrorSchema,
+  clinicalDocumentDraftResponseSchema,
+  clinicalDocumentSignPreviewResponseSchema,
+  clinicalDocumentSignResponseSchema,
   commandResponseSchema,
+  confirmDiagnosisResponseSchema,
+  diagnosisDraftResponseSchema,
+  doctorCompletedCaseDetailSchema,
   doctorCaseDetailSchema,
   doctorQueueSchema,
+  encounterCompletionResponseSchema,
+  issueLaboratoryRequestResponseSchema,
+  issuePrescriptionResponseSchema,
+  laboratoryRequestDraftResponseSchema,
+  prescriptionDraftResponseSchema,
   registrationCatalogSchema,
   scenarioStateSchema,
+  startVirtualPatientResponseSchema,
   triageResponseSchema,
+  virtualPatientListSchema,
 } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -146,7 +161,7 @@ class ControlledSyntheaProvider implements ScenarioGenerationProvider {
     return {
       available: true as const,
       maxPopulation: 10,
-      modules: ['fever', 'type-2-diabetes'],
+      modules: ['fever', 'type-2-diabetes', 'hypertension'],
       providerId: 'synthea' as const,
       providerName: 'Synthea',
     }
@@ -383,11 +398,11 @@ describe('persistent Scenario generation job HTTP contract', () => {
         mappingProvenance: {
           compiler: { id: 'synthea-case-truth', version: '2' },
           packages: [{
-            contentHash: '5e9b7faabae742a83d527d0756b9d8bff73dc0ac8a9968e68da06f01652efb87',
+            contentHash: 'f57a624291b46caa7cb5d83f7686cb0040a417f8f592119889ea751f4c2a74e1',
             mappingSetId: 'clinmesh-synthea-nhsa-diagnosis',
             version: '2026-08-28',
           }, {
-            contentHash: '49091e048017024da99a59e3cd5af625fcca6540525bd2655d1989c8898ee89d',
+            contentHash: '5bb02fdda48776766d781966e810c1e4870c9ebeb5c7fe8af61910841a5f2451',
             mappingSetId: 'clinmesh-rxnorm-drug-concepts',
             version: '2026-08-28',
           }],
@@ -884,6 +899,321 @@ describe('persistent Scenario generation job HTTP contract', () => {
       encounter: { id: visit.encounterId },
       patient: { id: visit.patientId },
       status: 'awaiting-doctor',
+    })
+  })
+
+  it('runs an installed hypertension Package through consultation, investigation, diagnosis, prescription, and completion', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-hypertension-trajectory-http-'))
+    temporaryDirectories.push(directory)
+    const runtime = await createClinMeshRuntime(runtimeOptions(
+      join(directory, 'clinmesh.sqlite'),
+      new ControlledSyntheaProvider(generateSyntheaCorpus),
+    ))
+    runtimes.push(runtime)
+    const headers = (cookie: string) => ({
+      'content-type': 'application/json',
+      cookie,
+      'idempotency-key': randomUUID(),
+      origin: 'http://localhost',
+    })
+    const administratorCookie = await signIn(runtime)
+    const generateResponse = await runtime.app.request(
+      '/api/sim/v1/scenario-datasets/actions/generate',
+      {
+        body: JSON.stringify({
+          modules: ['hypertension'],
+          name: '高血压门诊固定病例',
+          population: { age: { maximum: 60, minimum: 60 }, count: 1, gender: 'female' },
+          providerId: 'builtin',
+          seeds: { clinical: 7331, population: 4242 },
+          timeRange: { end: '2026-08-01', start: '2020-01-01' },
+          timeZone: 'Asia/Shanghai',
+        }),
+        headers: headers(administratorCookie),
+        method: 'POST',
+      },
+    )
+    expect(generateResponse.status).toBe(200)
+    const dataset = commandResponseSchema(scenarioDatasetSchema)
+      .parse(await generateResponse.json()).data
+    expect(dataset.diagnostics).toEqual([])
+    expect(dataset.contentHash).toBe('7c2dae5a0e51e62c9fa37f7a95e1649e40c04dcbfcf7afdc32f01bfbae8fa2f8')
+    expect(dataset.content.reproduction.catalogCompilation).toMatchObject({
+      blockers: [],
+      supported: true,
+    })
+    const installResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(dataset.datasetId)}/actions/install`,
+      {
+        body: JSON.stringify({ expectedVersion: dataset.version }),
+        headers: headers(administratorCookie),
+        method: 'POST',
+      },
+    )
+    expect(installResponse.status).toBe(200)
+    const installed = commandResponseSchema(z.object({
+      packageId: z.string().min(1),
+      scenario: scenarioStateSchema,
+    }).strict()).parse(await installResponse.json()).data
+    expect(runtime.database.driver.prepare(`
+      SELECT content_hash FROM scenario_package
+      WHERE workspace_id = ? AND package_id = ?
+    `).get('workspace-demo', installed.packageId)).toEqual({ content_hash: dataset.contentHash })
+
+    const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
+    const candidatesResponse = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
+      headers: { cookie: doctorCookie },
+    })
+    expect(candidatesResponse.status).toBe(200)
+    const candidate = virtualPatientListSchema.parse(await candidatesResponse.json()).items[0]
+    if (candidate === undefined) throw new Error('Expected an installed hypertension patient')
+    const startResponse = await runtime.app.request(
+      `/api/his/v1/doctor/virtual-patients/${candidate.id}/actions/start`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {},
+          input: { expectedVersion: candidate.version },
+        }),
+        headers: headers(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(startResponse.status).toBe(200)
+    const started = startVirtualPatientResponseSchema.parse(await startResponse.json()).data
+    const encounterReference = `Encounter/${started.encounterId}`
+
+    const questionResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [encounterReference]: '1',
+            [`Task/${started.queueTaskId}`]: '1',
+          },
+          input: { expectedVersion: 1, questionCode: 'symptom-dizziness' },
+        }),
+        headers: headers(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(questionResponse.status).toBe(200)
+    expect(askConsultationQuestionResponseSchema.parse(await questionResponse.json()).data.record)
+      .toMatchObject({ answer: '最近一周偶尔头晕，没有晕倒。 没有胸痛、气促或肢体无力。' })
+
+    const laboratoryDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: '1' },
+          input: {
+            catalogItemId: 'lab-cbc',
+            expectedDraftVersion: 0,
+            indicationCode: 'hypertension',
+          },
+        }),
+        headers: headers(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(laboratoryDraftResponse.status).toBe(200)
+    const laboratoryDraft = laboratoryRequestDraftResponseSchema
+      .parse(await laboratoryDraftResponse.json()).data
+    const laboratoryIssueResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: '1' },
+          input: { expectedDraftVersion: laboratoryDraft.draftVersion },
+        }),
+        headers: headers(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(laboratoryIssueResponse.status).toBe(200)
+    const issuedLaboratory = issueLaboratoryRequestResponseSchema
+      .parse(await laboratoryIssueResponse.json()).data.request
+    for (const kind of [
+      'laboratory.accept-request',
+      'laboratory.start-request',
+      'laboratory.report-request',
+    ]) {
+      expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({ kind, status: 'completed' })
+    }
+    const reportedDetailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    const reportedRequest = doctorCaseDetailSchema.parse(
+      await reportedDetailResponse.json(),
+    ).laboratoryRequests?.requests.find(request => request.id === issuedLaboratory.id)
+    if (reportedRequest?.report === undefined) throw new Error('Expected a hypertension CBC report')
+    const acknowledgeResponse = await runtime.app.request(
+      `/api/his/v1/laboratory-requests/${reportedRequest.id}/reports/${reportedRequest.report.diagnosticReportId}/actions/acknowledge`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`DiagnosticReport/${reportedRequest.report.diagnosticReportId}`]: reportedRequest.report.diagnosticReportVersion,
+          },
+          input: { expectedRequestVersion: reportedRequest.version },
+        }),
+        headers: headers(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(acknowledgeResponse.status).toBe(200)
+    acknowledgeLaboratoryReportResponseSchema.parse(await acknowledgeResponse.json())
+
+    const diagnosisDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: '1' },
+          input: {
+            entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary' }],
+            expectedDraftVersion: 0,
+          },
+        }),
+        headers: headers(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(diagnosisDraftResponse.status).toBe(200)
+    const diagnosisDraft = diagnosisDraftResponseSchema.parse(await diagnosisDraftResponse.json()).data
+    const diagnosisResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/diagnosis/actions/confirm`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: '1' },
+          input: { expectedDraftVersion: diagnosisDraft.draftVersion },
+        }),
+        headers: headers(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(diagnosisResponse.status).toBe(200)
+    const diagnosis = confirmDiagnosisResponseSchema.parse(await diagnosisResponse.json()).data
+    expect(diagnosis.confirmation.entries).toEqual([
+      expect.objectContaining({ catalogItemId: 'diagnosis-hypertension', code: 'I10' }),
+    ])
+
+    const prescriptionDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: diagnosis.encounterVersion },
+          input: {
+            expectedDraftVersion: 0,
+            items: [{
+              catalogItemId: 'medication-amlodipine',
+              courseDays: 30,
+              doseText: '5 mg',
+              frequencyCode: 'QD',
+              quantity: 30,
+            }],
+          },
+        }),
+        headers: headers(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(prescriptionDraftResponse.status).toBe(200)
+    const prescriptionDraft = prescriptionDraftResponseSchema
+      .parse(await prescriptionDraftResponse.json()).data
+    const prescriptionResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/prescription/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: diagnosis.encounterVersion },
+          input: { expectedDraftVersion: prescriptionDraft.draftVersion },
+        }),
+        headers: headers(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(prescriptionResponse.status).toBe(200)
+    expect(issuePrescriptionResponseSchema.parse(await prescriptionResponse.json()).data.prescription)
+      .toMatchObject({ items: [{ catalogItemId: 'medication-amlodipine' }], status: 'signed' })
+
+    const document = {
+      assessment: '多次血压升高，结合既往史诊断为高血压。',
+      auxiliaryExamination: '血常规已报告并确认，病例固定肾功能真值无明显异常。',
+      chiefComplaint: '发现血压升高，偶有头晕。',
+      disposition: '门诊启动氨氯地平治疗。',
+      followUp: '两至四周复查血压、依从性和外周水肿。',
+      historyOfPresentIllness: '近期多次测得血压偏高，偶有头晕，无胸痛、气促或肢体无力。',
+      physicalExamination: '血压 162/96 mmHg，心肺查体未见明显异常，双下肢无水肿。',
+      priorMedicalHistory: '两年前曾被告知高血压，近半年未规律服药。',
+    }
+    const documentDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: diagnosis.encounterVersion },
+          input: { document, expectedDraftVersion: 0 },
+        }),
+        headers: headers(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(documentDraftResponse.status).toBe(200)
+    const documentDraft = clinicalDocumentDraftResponseSchema.parse(
+      await documentDraftResponse.json(),
+    ).data
+    const previewResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/clinical-document/actions/preview-sign`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: diagnosis.encounterVersion },
+          input: { expectedDraftVersion: documentDraft.draftVersion },
+        }),
+        headers: headers(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(previewResponse.status).toBe(200)
+    const preview = clinicalDocumentSignPreviewResponseSchema.parse(await previewResponse.json()).data
+    const signResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/clinical-document/actions/sign`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: diagnosis.encounterVersion },
+          input: { commitToken: preview.commitToken, previewId: preview.previewId },
+        }),
+        headers: headers(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(signResponse.status).toBe(200)
+    clinicalDocumentSignResponseSchema.parse(await signResponse.json())
+
+    const completionResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/actions/complete`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: diagnosis.encounterVersion },
+          input: {},
+        }),
+        headers: headers(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(completionResponse.status).toBe(200)
+    encounterCompletionResponseSchema.parse(await completionResponse.json())
+    const completedResponse = await runtime.app.request(
+      `/api/his/v1/doctor/completed-cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(completedResponse.status).toBe(200)
+    expect(doctorCompletedCaseDetailSchema.parse(await completedResponse.json())).toMatchObject({
+      consultation: { records: [expect.objectContaining({
+        answer: '最近一周偶尔头晕，没有晕倒。 没有胸痛、气促或肢体无力。',
+      })] },
+      diagnosis: { entries: [{ catalogItemId: 'diagnosis-hypertension', code: 'I10' }] },
+      encounter: { status: 'completed' },
+      laboratoryRequests: [{ catalogItemId: 'lab-cbc', status: 'acknowledged' }],
+      medicationConclusion: {
+        prescription: { items: [{ catalogItemId: 'medication-amlodipine' }] },
+      },
     })
   })
 
