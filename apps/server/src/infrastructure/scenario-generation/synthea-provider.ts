@@ -22,6 +22,7 @@ import {
   type SourcePatientCorpus,
 } from '../../application/scenario-data/provider.ts'
 import { createHospitalBaseline } from '../../application/scenario-data/hospital-baseline.ts'
+import type { ReferenceHospitalSelection } from '../../application/reference-hospital-selection.ts'
 import { compileScenarioCatalog } from '../../application/scenario-data/scenario-catalog-compiler.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../../application/scenario-data/medication-product-snapshot.ts'
 import {
@@ -301,6 +302,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
   readonly #maxResponseBytes: number
   readonly #medicalServices: readonly ReferenceMedicalService[]
   readonly #medicationProducts: readonly ReferenceMedicationProduct[]
+  readonly #referenceSelection: ReferenceHospitalSelection | undefined
   readonly #timeoutMs: number
   readonly #valueSetEntries: readonly ReferenceValueSetEntry[]
 
@@ -310,6 +312,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
     maxResponseBytes?: number
     medicalServices?: readonly ReferenceMedicalService[]
     medicationProducts?: readonly ReferenceMedicationProduct[]
+    referenceSelection?: ReferenceHospitalSelection
     timeoutMs?: number
     valueSetEntries?: readonly ReferenceValueSetEntry[]
   }) {
@@ -325,6 +328,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
     this.#maxResponseBytes = options.maxResponseBytes ?? 64 * 1024 * 1024
     this.#medicalServices = options.medicalServices ?? syntheticNhcMedicalServiceSnapshot
     this.#medicationProducts = options.medicationProducts ?? syntheticNhsaMedicationProductSnapshot
+    this.#referenceSelection = options.referenceSelection
     this.#timeoutMs = options.timeoutMs ?? 5 * 60 * 1_000
     this.#valueSetEntries = options.valueSetEntries ?? syntheticWstValueSetSnapshot
   }
@@ -445,6 +449,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
         this.#medicationProducts,
         this.#medicalServices,
         this.#valueSetEntries,
+        this.#referenceSelection,
       ),
       modules: request.modules,
     })

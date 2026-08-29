@@ -303,13 +303,26 @@ export const scenarioProductMedicationCatalogItemSchema = scenarioLegacyMedicati
     system: z.literal('urn:clinmesh:reference:nhsa-medication-product'),
     version: z.string().min(1),
   }).strict(),
-  regulatoryVerification: z.object({
-    evidenceUrl: z.string().url(),
-    result: z.literal('synthetic-match'),
-    source: z.literal('nmpa-manual-check'),
-    verifiedAt: z.iso.datetime({ offset: true }),
-    verifiedFieldsHash: z.string().regex(/^[a-f0-9]{64}$/),
-  }).strict(),
+  regulatoryVerification: z.discriminatedUnion('source', [
+    z.object({
+      evidenceUrl: z.string().url(),
+      result: z.literal('synthetic-match'),
+      source: z.literal('nmpa-manual-check'),
+      verifiedAt: z.iso.datetime({ offset: true }),
+      verifiedFieldsHash: z.string().regex(/^[a-f0-9]{64}$/),
+    }).strict(),
+    z.object({
+      evidenceUrl: z.string().url(),
+      result: z.literal('source-record'),
+      selection: z.object({
+        contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+        selectionId: z.string().min(1).max(256),
+        version: z.string().min(1).max(256),
+      }).strict(),
+      source: z.literal('cn-health-candidate'),
+      verifiedFieldsHash: z.string().regex(/^[a-f0-9]{64}$/),
+    }).strict(),
+  ]),
 }).strict()
 
 export const scenarioMedicationCatalogItemSchema = z.union([

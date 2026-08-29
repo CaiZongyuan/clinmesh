@@ -352,6 +352,46 @@ pnpm --filter @clinmesh/server reference-db list \
 
 Importer 会验证外层 checksum、Candidate schema/Dataset/Release、`data.sqlite` SHA-256 与大小、SQLite integrity/application ID、主表列和 canonical record count，再在一个事务中发布 ClinMesh Reference Release。发布摘要保存 Candidate Release ID、source version、canonical hash、SQLite hash/size 和记录数；任一来源失败时不留下部分 Release。当前真实疾病和药品 Candidate 可以直接使用；LOINC 适配器遵循同一合同，在提供相应来源构建的 Candidate 后加入外层 manifest。
 
+Reference Release 不会按中文名自动选择本院产品。运行时使用单独的 Hospital Reference Selection，以 `system + version + code` 绑定本院目录 ID；药品至少需要 `medication-acetaminophen`、`medication-metformin` 和 `medication-amlodipine` 三项，疾病和 LOINC binding 用于证明对应目录目标真实存在。配置文件可以省略 `contentHash`，Server 会从其余字段确定性派生；显式提供时必须匹配：
+
+```json
+{
+  "bindings": [
+    {
+      "catalogItemId": "diagnosis-fever",
+      "coding": {
+        "code": "<exact-diagnosis-code>",
+        "system": "urn:clinmesh:reference:nhsa-diagnosis",
+        "version": "<source-version>"
+      },
+      "kind": "diagnosis"
+    },
+    {
+      "catalogItemId": "medication-acetaminophen",
+      "coding": {
+        "code": "<exact-product-code>",
+        "system": "urn:clinmesh:reference:nhsa-medication-product",
+        "version": "<source-version>"
+      },
+      "kind": "medication-product"
+    }
+  ],
+  "referenceReleaseId": "clinmesh-cn-health-2026-08-30.r1",
+  "schemaVersion": "1",
+  "selectionId": "cn-health-hospital-baseline",
+  "version": "2026-08-30.r1"
+}
+```
+
+在 `.env` 中同时启用只读作者库和选择文件：
+
+```dotenv
+CLINMESH_REFERENCE_DATABASE_PATH=.data/clinmesh-reference.sqlite
+CLINMESH_REFERENCE_SELECTION_PATH=.data/reference-hospital-selection.json
+```
+
+Server 只查询 selection 声明的精确概念与产品。若外部 Release 没有本院服务和值域，组合投影会显式使用内置合成服务支撑，并把外部 Release hash、selection hash 和支撑 Release hash 合成新的 provenance；不会把不同 Release 静默表示为同一个来源。Candidate 产品在新 Package 中标记为 `cn-health-candidate / source-record`，内置合成产品继续保留原有 `nmpa-manual-check / synthetic-match` 兼容记录。
+
 完整全国参考行只存在于作者数据库。Scenario Compiler 选择当前病种所需的诊断、检验和药品闭包写入不可变 Package，普通运行与 reset 不读取 Candidate。挂载数据的来源条款不因 ClinMesh 软件许可证而改变。
 
 ### Docker 一键启动 ClinMesh 与 Synthea

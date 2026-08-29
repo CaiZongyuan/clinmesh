@@ -14,6 +14,7 @@ import {
   resolveUcumUnit,
 } from './reference-coding-package.ts'
 import { canonicalJsonHash } from './canonical-json.ts'
+import type { ReferenceHospitalSelection } from '../reference-hospital-selection.ts'
 
 const hospitalId = 'hospital-synthetic-renhe'
 
@@ -31,33 +32,55 @@ function regulatoryVerification(product: {
   approvalNumber: string
   genericName: string
   manufacturer: string
-}) {
-  return {
+}, selection?: ReferenceHospitalSelection) {
+  const verifiedFieldsHash = canonicalJsonHash({
+    approvalNumber: product.approvalNumber,
+    genericName: product.genericName,
+    manufacturer: product.manufacturer,
+  })
+  return selection === undefined ? {
     evidenceUrl: 'https://www.nmpa.gov.cn/datasearch/home-index.html',
     result: 'synthetic-match' as const,
     source: 'nmpa-manual-check' as const,
     verifiedAt: '2026-08-28T00:00:00+08:00',
-    verifiedFieldsHash: canonicalJsonHash({
-      approvalNumber: product.approvalNumber,
-      genericName: product.genericName,
-      manufacturer: product.manufacturer,
-    }),
+    verifiedFieldsHash,
+  } : {
+    evidenceUrl: 'https://github.com/CaiZongyuan/cn-health-data',
+    result: 'source-record' as const,
+    selection: {
+      contentHash: selection.contentHash,
+      selectionId: selection.selectionId,
+      version: selection.version,
+    },
+    source: 'cn-health-candidate' as const,
+    verifiedFieldsHash,
   }
 }
 
 function selectedMedicationProduct(
   products: readonly ReferenceMedicationProduct[],
-  code: string,
+  catalogItemId: string,
+  defaultCode: string,
+  selection?: ReferenceHospitalSelection,
 ): ReferenceMedicationProduct {
+  const binding = selection?.bindings.find(candidate => (
+    candidate.kind === 'medication-product' && candidate.catalogItemId === catalogItemId
+  ))
+  if (selection !== undefined && binding === undefined) {
+    throw new Error(`Hospital Reference selection has no binding for ${catalogItemId}`)
+  }
   const matches = products.filter(product => (
-    product.code === code
-    && product.system === 'urn:clinmesh:reference:nhsa-medication-product'
+    product.code === (binding?.coding.code ?? defaultCode)
+    && product.system === (
+      binding?.coding.system ?? 'urn:clinmesh:reference:nhsa-medication-product'
+    )
+    && (binding === undefined || product.version === binding.coding.version)
   ))
   if (matches.length !== 1) {
-    throw new Error(`Medication Product snapshot must contain exactly one ${code}`)
+    throw new Error(`Medication Product snapshot must contain exactly one ${catalogItemId}`)
   }
   const product = matches[0]!
-  if (product.status !== 'active') throw new Error(`Medication Product ${code} is not active`)
+  if (product.status !== 'active') throw new Error(`Medication Product ${catalogItemId} is not active`)
   return product
 }
 
@@ -249,18 +272,25 @@ export function createHospitalBaseline(
   medicationProducts: readonly ReferenceMedicationProduct[],
   medicalServices: readonly ReferenceMedicalService[],
   valueSetEntries: readonly ReferenceValueSetEntry[],
+  selection?: ReferenceHospitalSelection,
 ): HospitalBaseline {
   const acetaminophenProduct = selectedMedicationProduct(
     medicationProducts,
+    'medication-acetaminophen',
     'CM-NHSA-PRODUCT-ACETAMINOPHEN',
+    selection,
   )
   const metforminProduct = selectedMedicationProduct(
     medicationProducts,
+    'medication-metformin',
     'CM-NHSA-PRODUCT-METFORMIN',
+    selection,
   )
   const amlodipineProduct = selectedMedicationProduct(
     medicationProducts,
+    'medication-amlodipine',
     'CM-NHSA-PRODUCT-AMLODIPINE',
+    selection,
   )
   const cbcService = selectedMedicalService(medicalServices, 'CM-NHC-SERVICE-CBC')
   const hba1cService = selectedMedicalService(medicalServices, 'CM-NHC-SERVICE-HBA1C')
@@ -590,7 +620,7 @@ export function createHospitalBaseline(
           version: 'clinmesh-drug-concepts-2026-08-28',
         },
         product: selectedProductSnapshot(acetaminophenProduct),
-        regulatoryVerification: regulatoryVerification(acetaminophenProduct),
+        regulatoryVerification: regulatoryVerification(acetaminophenProduct, selection),
         restriction: '注意总剂量及肝功能风险。',
         unit: '片',
         workflow: {
@@ -620,7 +650,7 @@ export function createHospitalBaseline(
           version: 'clinmesh-drug-concepts-2026-08-28',
         },
         product: selectedProductSnapshot(metforminProduct),
-        regulatoryVerification: regulatoryVerification(metforminProduct),
+        regulatoryVerification: regulatoryVerification(metforminProduct, selection),
         restriction: '调整方案前评估肾功能。',
         unit: '片',
         workflow: {
@@ -650,7 +680,7 @@ export function createHospitalBaseline(
           version: 'clinmesh-drug-concepts-2026-08-28',
         },
         product: selectedProductSnapshot(amlodipineProduct),
-        regulatoryVerification: regulatoryVerification(amlodipineProduct),
+        regulatoryVerification: regulatoryVerification(amlodipineProduct, selection),
         restriction: '开始或调整方案前评估血压和外周水肿。',
         unit: '片',
         workflow: {

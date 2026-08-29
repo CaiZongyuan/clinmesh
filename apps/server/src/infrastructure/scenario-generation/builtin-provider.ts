@@ -28,6 +28,7 @@ import {
   syntheticWstValueSetSnapshot,
 } from '../../application/scenario-data/medical-service-snapshot.ts'
 import { compileSyntheaR4Bundle } from '../../application/scenario-data/synthea-case-truth-compiler.ts'
+import type { ReferenceHospitalSelection } from '../../application/reference-hospital-selection.ts'
 
 function deterministicNumber(input: unknown): number {
   return Number.parseInt(createHash('sha256').update(JSON.stringify(input)).digest('hex').slice(0, 8), 16)
@@ -149,15 +150,18 @@ function patient(request: ScenarioGenerationRequest, ordinal: number) {
 export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProvider {
   readonly #medicalServices: readonly ReferenceMedicalService[]
   readonly #medicationProducts: readonly ReferenceMedicationProduct[]
+  readonly #referenceSelection: ReferenceHospitalSelection | undefined
   readonly #valueSetEntries: readonly ReferenceValueSetEntry[]
 
   constructor(
     medicationProducts = syntheticNhsaMedicationProductSnapshot,
     medicalServices = syntheticNhcMedicalServiceSnapshot,
     valueSetEntries = syntheticWstValueSetSnapshot,
+    referenceSelection?: ReferenceHospitalSelection,
   ) {
     this.#medicalServices = medicalServices
     this.#medicationProducts = medicationProducts
+    this.#referenceSelection = referenceSelection
     this.#valueSetEntries = valueSetEntries
   }
 
@@ -178,6 +182,7 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
         this.#medicationProducts,
         this.#medicalServices,
         this.#valueSetEntries,
+        this.#referenceSelection,
       ),
       modules: request.modules,
     })

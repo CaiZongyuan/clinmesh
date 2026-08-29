@@ -1,4 +1,5 @@
 import type {
+  ReferenceConcept,
   ReferenceDataReleaseList,
   ReferenceMedicalService,
   ReferenceMedicationProduct,
@@ -7,6 +8,7 @@ import type {
 import type { ReferenceDataReader } from '../../application/reference-data-service.ts'
 import {
   listReferenceDataReleases,
+  listReferenceConcepts,
   listReferenceMedicalServices,
   listReferenceMedicationProducts,
   listReferenceValueSetEntries,
@@ -24,8 +26,18 @@ export class SqliteReferenceDataRepository implements ReferenceDataReader {
     return listReferenceDataReleases(this.#database)
   }
 
-  medicationProducts(releaseId: string): ReferenceMedicationProduct[] {
-    return listReferenceMedicationProducts(this.#database, releaseId)
+  concepts(
+    releaseId: string,
+    codings: readonly { code: string; system: string; version: string }[],
+  ): ReferenceConcept[] {
+    return listReferenceConcepts(this.#database, releaseId, codings)
+  }
+
+  medicationProducts(
+    releaseId: string,
+    codings?: readonly { code: string; system: string; version: string }[],
+  ): ReferenceMedicationProduct[] {
+    return listReferenceMedicationProducts(this.#database, releaseId, codings)
   }
 
   medicalServices(releaseId: string): ReferenceMedicalService[] {

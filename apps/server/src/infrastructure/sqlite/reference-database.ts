@@ -8,6 +8,7 @@ import {
   referenceDataReleaseSummarySchema,
   referenceImportDiagnosticsSchema,
   referenceImportManifestSchema,
+  referenceMedicationProductSchema,
   type ReferenceArtifact,
   type ReferenceConcept,
   type ReferenceDataReleaseList,
@@ -249,27 +250,20 @@ function sourceRows(database: ReferenceDatabase, releaseId: string): ReferenceSo
   })) as ReferenceSourceManifest[]
 }
 
-function conceptRows(
-  database: ReferenceDatabase,
-  releaseId: string,
-): Array<ReferenceConcept & { sourceId: string }> {
-  return z.array(z.object({
-    code: z.string(),
-    concept_id: z.string(),
-    display: z.string(),
-    domain: z.string(),
-    source_id: z.string(),
-    source_locator: z.string(),
-    status: z.string(),
-    system: z.string(),
-    system_version: z.string(),
-  })).parse(database.driver.prepare(`
-    SELECT concept_id, domain, system, system_version, code, display, status,
-      source_id, source_locator
-    FROM reference_concept
-    WHERE release_id = ?
-    ORDER BY source_id, concept_id
-  `).all(releaseId)).map(row => ({
+const conceptDatabaseRowSchema = z.object({
+  code: z.string(),
+  concept_id: z.string(),
+  display: z.string(),
+  domain: z.string(),
+  source_id: z.string(),
+  source_locator: z.string(),
+  status: z.string(),
+  system: z.string(),
+  system_version: z.string(),
+})
+
+function mapConceptRow(row: z.infer<typeof conceptDatabaseRowSchema>) {
+  return {
     ...referenceArtifactSchema.shape.concepts.element.parse({
       code: row.code,
       display: row.display,
@@ -281,51 +275,74 @@ function conceptRows(
       version: row.system_version,
     }),
     sourceId: row.source_id,
-  }))
+  }
+}
+
+function conceptRows(
+  database: ReferenceDatabase,
+  releaseId: string,
+): Array<ReferenceConcept & { sourceId: string }> {
+  return z.array(conceptDatabaseRowSchema).parse(database.driver.prepare(`
+    SELECT concept_id, domain, system, system_version, code, display, status,
+      source_id, source_locator
+    FROM reference_concept
+    WHERE release_id = ?
+    ORDER BY source_id, concept_id
+  `).all(releaseId)).map(mapConceptRow)
+}
+
+const medicationProductDatabaseRowSchema = z.object({
+  approval_number: z.string(),
+  brand_name: z.string().nullable(),
+  code: z.string(),
+  dosage_form: z.string(),
+  generic_name: z.string(),
+  manufacturer: z.string(),
+  package_description: z.string(),
+  product_id: z.string(),
+  source_id: z.string(),
+  source_locator: z.string(),
+  status: z.string(),
+  strength: z.string(),
+  system: z.string(),
+  system_version: z.string(),
+})
+
+function mapMedicationProductRow(row: z.infer<typeof medicationProductDatabaseRowSchema>) {
+  return {
+    ...referenceMedicationProductSchema.parse({
+      approvalNumber: row.approval_number,
+      brandName: row.brand_name,
+      code: row.code,
+      dosageForm: row.dosage_form,
+      genericName: row.generic_name,
+      id: row.product_id,
+      manufacturer: row.manufacturer,
+      packageDescription: row.package_description,
+      sourceLocator: row.source_locator,
+      status: row.status,
+      strength: row.strength,
+      system: row.system,
+      version: row.system_version,
+    }),
+    sourceId: row.source_id,
+  }
 }
 
 function medicationProductRows(
   database: ReferenceDatabase,
   releaseId: string,
 ): Array<ReferenceMedicationProduct & { sourceId: string }> {
-  return z.array(z.object({
-    approval_number: z.string(),
-    brand_name: z.string().nullable(),
-    code: z.string(),
-    dosage_form: z.string(),
-    generic_name: z.string(),
-    manufacturer: z.string(),
-    package_description: z.string(),
-    product_id: z.string(),
-    source_id: z.string(),
-    source_locator: z.string(),
-    status: z.string(),
-    strength: z.string(),
-    system: z.string(),
-    system_version: z.string(),
-  })).parse(database.driver.prepare(`
+  return z.array(medicationProductDatabaseRowSchema).parse(database.driver.prepare(`
     SELECT product_id, system, system_version, code, generic_name, brand_name,
       dosage_form, strength, package_description, manufacturer, approval_number,
       status, source_id, source_locator
     FROM reference_medication_product
     WHERE release_id = ?
     ORDER BY source_id, product_id
-  `).all(releaseId)).map(row => ({
-    approvalNumber: row.approval_number,
-    brandName: row.brand_name,
-    code: row.code,
-    dosageForm: row.dosage_form,
-    genericName: row.generic_name,
-    id: row.product_id,
-    manufacturer: row.manufacturer,
-    packageDescription: row.package_description,
-    sourceId: row.source_id,
-    sourceLocator: row.source_locator,
-    status: row.status,
-    strength: row.strength,
-    system: row.system,
-    version: row.system_version,
-  })) as Array<ReferenceMedicationProduct & { sourceId: string }>
+  `).all(releaseId)).map(mapMedicationProductRow) as Array<
+    ReferenceMedicationProduct & { sourceId: string }
+  >
 }
 
 function medicalServiceRows(
@@ -399,11 +416,45 @@ function valueSetEntryRows(
 export function listReferenceMedicationProducts(
   database: ReferenceDatabase,
   releaseId: string,
+  codings?: readonly { code: string; system: string; version: string }[],
 ): ReferenceMedicationProduct[] {
   verifyReferenceMigrations(database)
+  if (codings !== undefined) {
+    const lookup = database.driver.prepare(`
+      SELECT product_id, system, system_version, code, generic_name, brand_name,
+        dosage_form, strength, package_description, manufacturer, approval_number,
+        status, source_id, source_locator
+      FROM reference_medication_product
+      WHERE release_id = ? AND system = ? AND system_version = ? AND code = ?
+    `)
+    return codings.flatMap((coding) => {
+      const row = lookup.get(releaseId, coding.system, coding.version, coding.code)
+      return row === undefined
+        ? []
+        : [mapMedicationProductRow(medicationProductDatabaseRowSchema.parse(row))]
+    }).map(({ sourceId: _sourceId, ...product }) => product)
+  }
   return medicationProductRows(database, releaseId).map(({ sourceId: _sourceId, ...product }) => (
     product
   ))
+}
+
+export function listReferenceConcepts(
+  database: ReferenceDatabase,
+  releaseId: string,
+  codings: readonly { code: string; system: string; version: string }[],
+): ReferenceConcept[] {
+  verifyReferenceMigrations(database)
+  const lookup = database.driver.prepare(`
+    SELECT concept_id, domain, system, system_version, code, display, status,
+      source_id, source_locator
+    FROM reference_concept
+    WHERE release_id = ? AND system = ? AND system_version = ? AND code = ?
+  `)
+  return codings.flatMap((coding) => {
+    const row = lookup.get(releaseId, coding.system, coding.version, coding.code)
+    return row === undefined ? [] : [mapConceptRow(conceptDatabaseRowSchema.parse(row))]
+  }).map(({ sourceId: _sourceId, ...concept }) => concept)
 }
 
 export function listReferenceMedicalServices(
