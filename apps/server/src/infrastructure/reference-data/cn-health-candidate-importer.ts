@@ -12,7 +12,12 @@ import { z } from 'zod'
 
 const applicationId = 0x434E4844
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
-const datasetIdSchema = z.enum(['loinc-zh-cn', 'nhc-icd10-clinical', 'nhsa-drugs'])
+const datasetIdSchema = z.enum([
+  'laboratory-cn',
+  'loinc-zh-cn',
+  'nhc-icd10-clinical',
+  'nhsa-drugs',
+])
 
 const candidateManifestSchema = z.object({
   artifacts: z.array(z.object({
@@ -102,6 +107,21 @@ const loincColumns = [
   'source_version',
   'source_sha256',
 ] as const
+const laboratoryColumns = [
+  'code',
+  'system',
+  'terminology_version',
+  'display_zh',
+  'category',
+  'specimen',
+  'result_type',
+  'ucum_unit',
+  'status',
+  'source_note',
+  'source_row',
+  'source_version',
+  'source_sha256',
+] as const
 
 const diagnosisRowSchema = z.object({
   code: z.string().min(1).max(256),
@@ -133,6 +153,16 @@ const loincRowSchema = z.object({
   source_version: z.string().min(1).max(256),
   status: z.string().nullable(),
   zh_display: z.string().nullable(),
+}).passthrough()
+
+const laboratoryRowSchema = z.object({
+  code: z.string().regex(/^\d{1,5}-\d$/),
+  display_zh: z.string().min(1).max(1_000),
+  source_row: z.number().int().positive(),
+  source_version: z.string().min(1).max(256),
+  status: z.enum(['active', 'inactive']),
+  system: z.literal('http://loinc.org'),
+  terminology_version: z.string().min(1).max(256),
 }).passthrough()
 
 function hashFile(path: string): { sha256: string; sizeBytes: number } {
@@ -254,6 +284,34 @@ function loincArtifact(
   return referenceArtifactSchema.parse({ concepts, schemaVersion: '1' })
 }
 
+function laboratoryArtifact(
+  database: Database.Database,
+  releaseId: string,
+  sourceVersion: string,
+): ReferenceArtifact {
+  assertTableShape(database, 'laboratory_concept', laboratoryColumns)
+  const concepts = []
+  for (const value of database.prepare(`
+    SELECT code, system, terminology_version, display_zh, status,
+      source_row, source_version
+    FROM laboratory_concept ORDER BY code
+  `).iterate()) {
+    const row = laboratoryRowSchema.parse(value)
+    if (row.source_version !== sourceVersion) throw new Error('Candidate source version mismatch')
+    concepts.push({
+      code: row.code,
+      display: row.display_zh,
+      domain: 'laboratory' as const,
+      id: `laboratory-cn:${releaseId}:${row.code}`,
+      sourceLocator: `cn-health:${releaseId}:laboratory:${row.source_row}`,
+      status: row.status,
+      system: row.system,
+      version: row.terminology_version,
+    })
+  }
+  return referenceArtifactSchema.parse({ concepts, schemaVersion: '1' })
+}
+
 export function parseCnHealthCandidateReferenceArtifact(manifestPath: string): {
   artifact: ReferenceArtifact
   provenance: CnHealthCandidateProvenance
@@ -289,7 +347,9 @@ export function parseCnHealthCandidateReferenceArtifact(manifestPath: string): {
       ? diagnosisArtifact(database, manifest.release.id, manifest.dataset.sourceVersion)
       : datasetId === 'nhsa-drugs'
         ? medicationArtifact(database, manifest.release.id, manifest.dataset.sourceVersion)
-        : loincArtifact(database, manifest.release.id, manifest.dataset.sourceVersion)
+        : datasetId === 'laboratory-cn'
+          ? laboratoryArtifact(database, manifest.release.id, manifest.dataset.sourceVersion)
+          : loincArtifact(database, manifest.release.id, manifest.dataset.sourceVersion)
     const recordCount = artifact.concepts.length + artifact.medicationProducts.length
     if (recordCount !== manifest.canonical.recordCount) {
       throw new Error('cn-health Candidate canonical record count does not match SQLite')

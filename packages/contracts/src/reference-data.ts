@@ -30,6 +30,15 @@ export const referenceConceptSchema = z.object({
   version: z.string().min(1).max(256),
 }).strict()
 
+export const referenceConceptSnapshotSchema = referenceConceptSchema.pick({
+  code: true,
+  display: true,
+  id: true,
+  sourceLocator: true,
+  system: true,
+  version: true,
+}).strict()
+
 export const referenceMedicationProductSchema = z.object({
   approvalNumber: z.string().min(1).max(256),
   brandName: z.string().min(1).max(500).nullable(),
@@ -90,7 +99,12 @@ export const referenceArtifactFormatSchema = z.enum([
 
 export const cnHealthCandidateProvenanceSchema = z.object({
   canonicalSha256: sha256Schema,
-  datasetId: z.enum(['loinc-zh-cn', 'nhc-icd10-clinical', 'nhsa-drugs']),
+  datasetId: z.enum([
+    'laboratory-cn',
+    'loinc-zh-cn',
+    'nhc-icd10-clinical',
+    'nhsa-drugs',
+  ]),
   datasetSchemaVersion: z.literal(1),
   recordCount: z.number().int().nonnegative(),
   releaseId: z.string().min(1).max(256),

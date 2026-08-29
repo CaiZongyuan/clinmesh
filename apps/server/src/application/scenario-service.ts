@@ -59,6 +59,19 @@ function installedMedicationConfigJson(
   })
 }
 
+function installedDiagnosisCatalogRow(
+  diagnosis: ScenarioDatasetContent['catalog']['diagnoses'][number],
+) {
+  const coding = diagnosis.referenceConcept
+  return [
+    diagnosis.id,
+    coding?.system ?? diagnosis.codeSystem,
+    coding?.code ?? diagnosis.code,
+    coding?.display ?? diagnosis.name,
+    coding?.display ?? diagnosis.name,
+  ] as const
+}
+
 function installedServiceConfigJson(
   service: NonNullable<ScenarioDatasetContent['catalog']['services']>[number],
 ) {
@@ -1062,6 +1075,9 @@ export class ScenarioService {
               JSON.stringify({
                 allowedIndicationCodes: item.allowedIndicationCodes,
                 contraindicatedAllergyCodes: item.contraindicatedAllergyCodes,
+                ...(item.referenceConcept === undefined
+                  ? {}
+                  : { referenceConcept: item.referenceConcept }),
               }),
             ] as const),
           ...blueprint.catalog.medications
@@ -1129,24 +1145,12 @@ export class ScenarioService {
               'diagnosis-fever',
               'diagnosis-influenza',
             ].includes(diagnosis.id))
-            .map(diagnosis => [
-              diagnosis.id,
-              diagnosis.codeSystem,
-              diagnosis.code,
-              diagnosis.name,
-              diagnosis.name,
-            ] as const)
+            .map(installedDiagnosisCatalogRow)
         : []),
     ] as const
     const diagnosisCatalog = packageDiagnosisCatalog === undefined
       ? legacyDiagnosisCatalog
-      : packageDiagnosisCatalog.map(diagnosis => [
-          diagnosis.id,
-          diagnosis.codeSystem,
-          diagnosis.code,
-          diagnosis.name,
-          diagnosis.name,
-        ] as const)
+      : packageDiagnosisCatalog.map(installedDiagnosisCatalogRow)
     for (const diagnosis of diagnosisCatalog) {
       insertDiagnosisCatalog.run(input.workspaceId, input.epoch, ...diagnosis)
     }

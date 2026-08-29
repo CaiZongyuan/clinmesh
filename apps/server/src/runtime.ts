@@ -149,6 +149,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             ...(hospitalReference.bindings === undefined
               ? {}
               : { referenceSelection: hospitalReference.bindings }),
+            referenceConcepts: hospitalReference.concepts,
           }))
     const generationJobs = new ScenarioGenerationJobRepository(database)
     const syntheticPatientProfiles = new SyntheticPatientProfileRepository(database)
@@ -162,6 +163,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           hospitalReference.services,
           hospitalReference.valueSetEntries,
           hospitalReference.bindings,
+          hospitalReference.concepts,
         )],
         ['synthea', syntheaProvider],
       ]),

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  referenceConceptSnapshotSchema,
   referenceDataProvenanceSchema,
   referenceMappingPackageProvenanceSchema,
 } from './reference-data.ts'
@@ -225,6 +226,7 @@ const scenarioDepartmentCatalogItemSchema = scenarioCatalogItemBaseSchema.extend
 
 const scenarioDiagnosisCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
   codeSystem: z.string().url(),
+  referenceConcept: referenceConceptSnapshotSchema.optional(),
 }).strict()
 
 const scenarioReferenceRangeSchema = z.object({
@@ -253,6 +255,7 @@ export const scenarioInvestigationCatalogItemSchema = scenarioCatalogItemBaseSch
   physiologyGeneratorId: z.string().min(1).optional(),
   referenceRanges: z.array(scenarioReferenceRangeSchema),
   reportTemplate: z.string().min(1),
+  referenceConcept: referenceConceptSnapshotSchema.optional(),
   tatMinutes: z.number().int().nonnegative(),
   unit: scenarioUcumUnitSchema.optional(),
   valueType: z.enum(['boolean', 'codeable', 'panel', 'quantity', 'string']),

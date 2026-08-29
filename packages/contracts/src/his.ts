@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { fhirResourceSchema } from './fhir.ts'
+import { referenceConceptSnapshotSchema } from './reference-data.ts'
 
 export const roleCodeSchema = z.enum([
   'administrator',
@@ -177,11 +178,13 @@ const catalogItemSchema = z.object({
 const clinicalCatalogBaseShape = {
   diagnoses: z.array(catalogItemSchema.extend({
     code: z.string().min(1),
+    referenceConcept: referenceConceptSnapshotSchema.optional(),
     system: z.url(),
   })).default([]),
   laboratory: z.array(catalogItemSchema.extend({
     allowedIndicationCodes: z.array(z.string().min(1)).min(1),
     contraindicatedAllergyCodes: z.array(z.string().min(1)),
+    referenceConcept: referenceConceptSnapshotSchema.optional(),
   })),
 }
 

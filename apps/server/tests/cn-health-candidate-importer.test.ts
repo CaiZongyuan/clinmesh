@@ -9,7 +9,11 @@ import {
   parseCnHealthCandidateReferenceArtifact,
 } from '../src/infrastructure/reference-data/cn-health-candidate-importer.ts'
 
-type CandidateDataset = 'loinc-zh-cn' | 'nhc-icd10-clinical' | 'nhsa-drugs'
+type CandidateDataset =
+  | 'laboratory-cn'
+  | 'loinc-zh-cn'
+  | 'nhc-icd10-clinical'
+  | 'nhsa-drugs'
 
 const temporaryDirectories: string[] = []
 
@@ -23,6 +27,31 @@ async function sha256(path: string): Promise<string> {
 
 function populateCandidate(database: Database.Database, datasetId: CandidateDataset): void {
   database.pragma('application_id = 0x434e4844')
+  if (datasetId === 'laboratory-cn') {
+    database.exec(`
+      CREATE TABLE laboratory_concept (
+        code TEXT PRIMARY KEY,
+        system TEXT NOT NULL,
+        terminology_version TEXT NOT NULL,
+        display_zh TEXT NOT NULL,
+        category TEXT NOT NULL,
+        specimen TEXT NOT NULL,
+        result_type TEXT NOT NULL,
+        ucum_unit TEXT,
+        status TEXT NOT NULL,
+        source_note TEXT NOT NULL,
+        source_row INTEGER NOT NULL UNIQUE,
+        source_version TEXT NOT NULL,
+        source_sha256 TEXT NOT NULL
+      ) STRICT;
+      INSERT INTO laboratory_concept VALUES (
+        '8310-5', 'http://loinc.org', '2.83', '体温', 'vital-sign', 'body',
+        'quantity', 'Cel', 'active', 'project-authored fixture', 2,
+        '2026-08-30', '${'4'.repeat(64)}'
+      );
+    `)
+    return
+  }
   if (datasetId === 'nhc-icd10-clinical') {
     database.exec(`
       CREATE TABLE diagnosis (
@@ -112,7 +141,9 @@ async function createCandidate(
     ? '2022.r1'
     : datasetId === 'nhsa-drugs'
       ? '2026-01-09.r1'
-      : '2.83.r1'
+      : datasetId === 'laboratory-cn'
+        ? '2026-08-30.r1'
+        : '2.83.r1'
   const sourceVersion = releaseVersion.replace(/\.r1$/, '')
   const releaseId = `${datasetId}@${releaseVersion}`
   const directory = join(root, datasetId)
@@ -165,6 +196,7 @@ describe('cn-health Candidate importer', () => {
     const diagnosis = await createCandidate(directory, 'nhc-icd10-clinical')
     const medication = await createCandidate(directory, 'nhsa-drugs')
     const loinc = await createCandidate(directory, 'loinc-zh-cn')
+    const laboratory = await createCandidate(directory, 'laboratory-cn')
 
     const diagnosisResult = parseCnHealthCandidateReferenceArtifact(diagnosis.manifestPath)
     expect(diagnosisResult).toMatchObject({
@@ -216,6 +248,23 @@ describe('cn-health Candidate importer', () => {
       },
       provenance: { datasetId: 'loinc-zh-cn', releaseId: loinc.releaseId },
     })
+    expect(parseCnHealthCandidateReferenceArtifact(laboratory.manifestPath)).toMatchObject({
+      artifact: {
+        concepts: [{
+          code: '8310-5',
+          display: '体温',
+          domain: 'laboratory',
+          status: 'active',
+          system: 'http://loinc.org',
+          version: '2.83',
+        }],
+      },
+      provenance: {
+        datasetId: 'laboratory-cn',
+        releaseId: laboratory.releaseId,
+        sourceVersion: '2026-08-30',
+      },
+    })
 
     const invalidRoot = join(directory, 'invalid-application-id')
     await mkdir(invalidRoot)
@@ -242,6 +291,7 @@ describe('cn-health Candidate importer', () => {
       'nhc-icd10-clinical',
       'nhsa-drugs',
       'loinc-zh-cn',
+      'laboratory-cn',
     ] as const).map(datasetId => createCandidate(directory, datasetId)))
     const manifestPath = join(directory, 'reference-release.json')
     const referenceManifest = {
@@ -267,14 +317,14 @@ describe('cn-health Candidate importer', () => {
     await expect(runReferenceDatabaseCli([
       'import', '--database', databasePath, '--manifest', manifestPath,
     ])).resolves.toMatchObject({
-      conceptCount: 2,
+      conceptCount: 3,
       created: true,
       medicationProductCount: 1,
-      sourceCount: 3,
+      sourceCount: 4,
     })
     await expect(runReferenceDatabaseCli(['list', '--database', databasePath])).resolves.toMatchObject({
       items: [{
-        conceptCount: 2,
+        conceptCount: 3,
         medicationProductCount: 1,
         sources: expect.arrayContaining([
           expect.objectContaining({

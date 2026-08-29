@@ -20,6 +20,7 @@ import { z } from 'zod'
 import { afterEach, describe, expect, it } from 'vitest'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
+import { createReferenceHospitalSelection } from '../src/application/reference-hospital-selection.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
 import {
   syntheticNhcMedicalServiceSnapshot,
@@ -55,6 +56,7 @@ describe('Reference Data HTTP contract', () => {
     migrationMode?: 'apply' | 'verify'
     password?: string
     referenceDatabasePath?: string
+    referenceSelection?: ReturnType<typeof createReferenceHospitalSelection>
   } = {}) {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-reference-http-'))
     temporaryDirectories.push(directory)
@@ -69,6 +71,9 @@ describe('Reference Data HTTP contract', () => {
       ...(input.referenceDatabasePath === undefined
         ? {}
         : { referenceDatabasePath: input.referenceDatabasePath }),
+      ...(input.referenceSelection === undefined
+        ? {}
+        : { referenceSelection: input.referenceSelection }),
       trustedOrigins: ['http://localhost'],
     })
     runtimes.push(runtime)
@@ -79,14 +84,32 @@ describe('Reference Data HTTP contract', () => {
     const databasePath = join(directory, 'reference.sqlite')
     const artifactJson = `${JSON.stringify({
       concepts: [{
-        code: 'R50.9',
-        display: '发热，未特指',
+        code: 'R50.900',
+        display: '发热',
         domain: 'diagnosis',
         id: 'diagnosis:fever',
         sourceLocator: 'concepts[0]',
         status: 'active',
-        system: 'http://hl7.org/fhir/sid/icd-10',
-        version: 'synthetic-2026',
+        system: 'urn:clinmesh:reference:nhsa-diagnosis',
+        version: '2022',
+      }, {
+        code: '8310-5',
+        display: '体温',
+        domain: 'laboratory',
+        id: 'laboratory:body-temperature',
+        sourceLocator: 'concepts[1]',
+        status: 'active',
+        system: 'http://loinc.org',
+        version: '2.83',
+      }, {
+        code: '58410-2',
+        display: '血常规组合',
+        domain: 'laboratory',
+        id: 'laboratory:cbc-panel',
+        sourceLocator: 'concepts[2]',
+        status: 'active',
+        system: 'http://loinc.org',
+        version: '2.83',
       }],
       medicationProducts: syntheticNhsaMedicationProductSnapshot,
       schemaVersion: '1',
@@ -131,7 +154,7 @@ describe('Reference Data HTTP contract', () => {
     })
     expect(administratorResponse.status).toBe(200)
     expect(referenceDataReleaseListSchema.parse(await administratorResponse.json())).toMatchObject({
-      items: [{ conceptCount: 1, releaseId: 'reference-http-test-v1', sourceCount: 1 }],
+      items: [{ conceptCount: 3, releaseId: 'reference-http-test-v1', sourceCount: 1 }],
     })
 
     const doctorResponse = await runtime.app.request('/api/sim/v1/reference-data/releases', {
@@ -163,6 +186,116 @@ describe('Reference Data HTTP contract', () => {
       '8ed125b9d880f39ff0e7a503229e4bd1d69772ec86ee6c19808d6c68eca3954b',
       '36fc6be3ab504b8f48f1cacedaac2aaae42c648ee8cd2bb6cded99a130b05a13',
     ])
+  })
+
+  it('materializes exact diagnosis and laboratory reference concepts from a selection', async () => {
+    const referenceDirectory = await mkdtemp(join(tmpdir(), 'clinmesh-reference-selection-'))
+    temporaryDirectories.push(referenceDirectory)
+    const referenceDatabasePath = await createReferenceDatabase(referenceDirectory)
+    const productBindings = ([
+      ['medication-acetaminophen', 'CM-NHSA-PRODUCT-ACETAMINOPHEN'],
+      ['medication-metformin', 'CM-NHSA-PRODUCT-METFORMIN'],
+      ['medication-amlodipine', 'CM-NHSA-PRODUCT-AMLODIPINE'],
+    ] as const).map(([catalogItemId, code]) => ({
+      catalogItemId,
+      coding: {
+        code,
+        system: 'urn:clinmesh:reference:nhsa-medication-product',
+        version: 'nhsa-medication-products-2026-08-07',
+      },
+      kind: 'medication-product' as const,
+    }))
+    const selection = createReferenceHospitalSelection({
+      bindings: [{
+        catalogItemId: 'diagnosis-fever',
+        coding: {
+          code: 'R50.900',
+          system: 'urn:clinmesh:reference:nhsa-diagnosis',
+          version: '2022',
+        },
+        kind: 'diagnosis',
+      }, {
+        catalogItemId: 'lab-cbc',
+        coding: { code: '58410-2', system: 'http://loinc.org', version: '2.83' },
+        kind: 'laboratory',
+      }, ...productBindings],
+      referenceReleaseId: 'reference-http-test-v1',
+      schemaVersion: '1',
+      selectionId: 'reference-http-selection',
+      version: '1',
+    })
+    const { password, runtime } = await createRuntime({
+      referenceDatabasePath,
+      referenceSelection: selection,
+    })
+    const cookie = await signIn(runtime, password, 'admin@demo.clinmesh.local')
+    const generateResponse = await runtime.app.request('/api/sim/v1/scenario-datasets/actions/generate', {
+      body: JSON.stringify({
+        modules: ['fever'],
+        name: '参考概念物化测试',
+        population: { age: { maximum: 50, minimum: 30 }, count: 1, gender: 'female' },
+        providerId: 'builtin',
+        seeds: { clinical: 7331, population: 4242 },
+        timeRange: { end: '2026-08-01', start: '2016-08-01' },
+        timeZone: 'Asia/Shanghai',
+      }),
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        'idempotency-key': randomUUID(),
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect(generateResponse.status).toBe(200)
+    const dataset = commandResponseSchema(scenarioDatasetSchema)
+      .parse(await generateResponse.json()).data
+    expect(dataset.content.catalog.diagnoses.find(item => item.id === 'diagnosis-fever'))
+      .toHaveProperty('referenceConcept.code', 'R50.900')
+    expect(dataset.content.catalog.investigations.find(item => item.id === 'lab-cbc'))
+      .toHaveProperty('referenceConcept.display', '血常规组合')
+
+    const installResponse = await runtime.app.request(
+      `/api/sim/v1/scenario-datasets/${encodeURIComponent(dataset.datasetId)}/actions/install`,
+      {
+        body: JSON.stringify({ expectedVersion: dataset.version }),
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(installResponse.status).toBe(200)
+    const activeEpoch = z.object({ active_epoch: z.string() }).parse(
+      runtime.database.driver.prepare(
+        'SELECT active_epoch FROM workspace WHERE workspace_id = ?',
+      ).get('workspace-demo'),
+    ).active_epoch
+    expect(runtime.database.driver.prepare(`
+      SELECT code_system, code, name_zh FROM diagnosis_catalog
+      WHERE workspace_id = ? AND epoch = ? AND item_id = 'diagnosis-fever'
+    `).get('workspace-demo', activeEpoch)).toEqual({
+      code: 'R50.900',
+      code_system: 'urn:clinmesh:reference:nhsa-diagnosis',
+      name_zh: '发热',
+    })
+    const laboratoryRow = z.object({ config_json: z.string() }).parse(
+      runtime.database.driver.prepare(`
+        SELECT config_json FROM outpatient_catalog
+        WHERE workspace_id = ? AND epoch = ? AND item_id = 'lab-cbc'
+      `).get('workspace-demo', activeEpoch),
+    )
+    expect(JSON.parse(laboratoryRow.config_json)).toMatchObject({
+      referenceConcept: {
+        code: '58410-2',
+        display: '血常规组合',
+        system: 'http://loinc.org',
+        version: '2.83',
+      },
+    })
   })
 
   it('compiles the disease catalog closure from one complete configured reference release', async () => {

@@ -17,6 +17,7 @@ import {
   type ReferenceDataReader,
 } from '../src/application/reference-data-service.ts'
 import { createHospitalBaseline } from '../src/application/scenario-data/hospital-baseline.ts'
+import { laboratoryServiceCodings } from '../src/application/workflow-service.ts'
 
 const releaseId = 'clinmesh-cn-health-synthetic-selection-source'
 const productSystem = 'urn:clinmesh:reference:nhsa-medication-product'
@@ -202,6 +203,7 @@ describe('Hospital Reference selection', () => {
       selected.services,
       selected.valueSetEntries,
       selected.bindings,
+      selected.concepts,
     )
 
     expect(reader.requestedConcepts).toEqual(['R50.900', '8310-5'])
@@ -225,6 +227,43 @@ describe('Hospital Reference selection', () => {
       'X-METFORMIN',
       'X-AMLODIPINE',
     ])
+    expect(baseline.catalog.diagnoses.find(item => item.id === 'diagnosis-fever'))
+      .toMatchObject({
+        referenceConcept: {
+          code: 'R50.900',
+          display: '发热',
+          system: diagnosisSystem,
+          version: '2022',
+        },
+      })
+    expect(baseline.catalog.investigations.find(item => item.id === 'lab-body-temperature'))
+      .toMatchObject({
+        referenceConcept: {
+          code: '8310-5',
+          display: '体温',
+          system: 'http://loinc.org',
+          version: '2.83',
+        },
+      })
+    expect(laboratoryServiceCodings(
+      { code: 'BODY-TEMP', name_zh: '体温' },
+      {
+        allowedIndicationCodes: ['fever'],
+        contraindicatedAllergyCodes: [],
+        referenceConcept: baseline.catalog.investigations.find(
+          item => item.id === 'lab-body-temperature',
+        )?.referenceConcept,
+      },
+    )).toEqual([{
+      code: 'BODY-TEMP',
+      display: '体温',
+      system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-service',
+    }, {
+      code: '8310-5',
+      display: '体温',
+      system: 'http://loinc.org',
+      version: '2.83',
+    }])
     expect(baseline.catalog.medications.map(item => item.regulatoryVerification)).toEqual(
       Array.from({ length: 3 }, () => expect.objectContaining({
         result: 'source-record',

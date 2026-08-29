@@ -6,6 +6,7 @@ import type {
 } from '@clinmesh/contracts/scenario'
 import { scenarioModules } from '@clinmesh/contracts/scenario'
 import type {
+  ReferenceConcept,
   ReferenceMedicalService,
   ReferenceMedicationProduct,
   ReferenceValueSetEntry,
@@ -151,6 +152,7 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
   readonly #medicalServices: readonly ReferenceMedicalService[]
   readonly #medicationProducts: readonly ReferenceMedicationProduct[]
   readonly #referenceSelection: ReferenceHospitalSelection | undefined
+  readonly #referenceConcepts: readonly ReferenceConcept[]
   readonly #valueSetEntries: readonly ReferenceValueSetEntry[]
 
   constructor(
@@ -158,10 +160,12 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
     medicalServices = syntheticNhcMedicalServiceSnapshot,
     valueSetEntries = syntheticWstValueSetSnapshot,
     referenceSelection?: ReferenceHospitalSelection,
+    referenceConcepts: readonly ReferenceConcept[] = [],
   ) {
     this.#medicalServices = medicalServices
     this.#medicationProducts = medicationProducts
     this.#referenceSelection = referenceSelection
+    this.#referenceConcepts = referenceConcepts
     this.#valueSetEntries = valueSetEntries
   }
 
@@ -183,6 +187,7 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
         this.#medicalServices,
         this.#valueSetEntries,
         this.#referenceSelection,
+        this.#referenceConcepts,
       ),
       modules: request.modules,
     })

@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto'
 import { v7 as uuidv7 } from 'uuid'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
+import { referenceConceptSnapshotSchema } from '@clinmesh/contracts/reference-data'
 import {
   scenarioDatasetContentSchema,
   scenarioHospitalServiceCatalogItemSchema,
@@ -326,7 +327,24 @@ const medicationCatalogConfigRowSchema = z.object({
 const laboratoryCatalogConfigSchema = z.object({
   allowedIndicationCodes: z.array(z.string().min(1)).min(1),
   contraindicatedAllergyCodes: z.array(z.string().min(1)),
+  referenceConcept: referenceConceptSnapshotSchema.optional(),
 })
+
+export function laboratoryServiceCodings(
+  catalog: { code: string; name_zh: string },
+  config: z.infer<typeof laboratoryCatalogConfigSchema>,
+) {
+  return [{
+    code: catalog.code,
+    display: catalog.name_zh,
+    system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-service',
+  }, ...(config.referenceConcept === undefined ? [] : [{
+    code: config.referenceConcept.code,
+    display: config.referenceConcept.display,
+    system: config.referenceConcept.system,
+    version: config.referenceConcept.version,
+  }])]
+}
 
 const triageRecordContentSchema = z.object({
   acuityCode: z.enum(['level-1', 'level-2', 'level-3', 'level-4']),
@@ -6541,11 +6559,7 @@ export class WorkflowService {
         intent: 'order',
         code: {
           concept: {
-            coding: [{
-              code: catalog.code,
-              display: catalog.name_zh,
-              system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-service',
-            }],
+            coding: laboratoryServiceCodings(catalog, catalogConfig),
             text: catalog.name_zh,
           },
         },
@@ -7738,7 +7752,12 @@ export class WorkflowService {
         id: serviceRequestId,
         status: 'active',
         intent: 'order',
-        code: { concept: { text: catalog.name_zh } },
+        code: {
+          concept: {
+            coding: laboratoryServiceCodings(catalog, catalogConfig),
+            text: catalog.name_zh,
+          },
+        },
         subject: { reference: `Patient/${outpatientCase.patient_id}` },
         encounter: { reference: `Encounter/${input.encounterId}` },
         authoredOn: now,

@@ -9,6 +9,7 @@ import {
   syntheaCnLocalizationProvenanceSchema,
 } from '@clinmesh/contracts/scenario'
 import type {
+  ReferenceConcept,
   ReferenceMedicalService,
   ReferenceMedicationProduct,
   ReferenceValueSetEntry,
@@ -303,6 +304,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
   readonly #medicalServices: readonly ReferenceMedicalService[]
   readonly #medicationProducts: readonly ReferenceMedicationProduct[]
   readonly #referenceSelection: ReferenceHospitalSelection | undefined
+  readonly #referenceConcepts: readonly ReferenceConcept[]
   readonly #timeoutMs: number
   readonly #valueSetEntries: readonly ReferenceValueSetEntry[]
 
@@ -313,6 +315,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
     medicalServices?: readonly ReferenceMedicalService[]
     medicationProducts?: readonly ReferenceMedicationProduct[]
     referenceSelection?: ReferenceHospitalSelection
+    referenceConcepts?: readonly ReferenceConcept[]
     timeoutMs?: number
     valueSetEntries?: readonly ReferenceValueSetEntry[]
   }) {
@@ -329,6 +332,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
     this.#medicalServices = options.medicalServices ?? syntheticNhcMedicalServiceSnapshot
     this.#medicationProducts = options.medicationProducts ?? syntheticNhsaMedicationProductSnapshot
     this.#referenceSelection = options.referenceSelection
+    this.#referenceConcepts = options.referenceConcepts ?? []
     this.#timeoutMs = options.timeoutMs ?? 5 * 60 * 1_000
     this.#valueSetEntries = options.valueSetEntries ?? syntheticWstValueSetSnapshot
   }
@@ -450,6 +454,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
         this.#medicalServices,
         this.#valueSetEntries,
         this.#referenceSelection,
+        this.#referenceConcepts,
       ),
       modules: request.modules,
     })

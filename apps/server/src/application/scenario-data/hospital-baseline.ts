@@ -5,10 +5,12 @@ import {
   type ScenarioProductMedicationCatalogItem,
 } from '@clinmesh/contracts/scenario'
 import type {
+  ReferenceConcept,
   ReferenceMedicalService,
   ReferenceMedicationProduct,
   ReferenceValueSetEntry,
 } from '@clinmesh/contracts/reference-data'
+import { referenceCodingIdentity } from '@clinmesh/contracts/reference-data'
 import {
   investigationLoincCoding,
   resolveUcumUnit,
@@ -97,6 +99,38 @@ function selectedProductSnapshot(product: ReferenceMedicationProduct) {
     strength: product.strength,
     system: 'urn:clinmesh:reference:nhsa-medication-product' as const,
     version: product.version,
+  }
+}
+
+function withSelectedReferenceConcept<Item extends { id: string }>(
+  item: Item,
+  kind: 'diagnosis' | 'laboratory',
+  selection: ReferenceHospitalSelection | undefined,
+  concepts: readonly ReferenceConcept[],
+) {
+  const binding = selection?.bindings.find(candidate => (
+    candidate.kind === kind && candidate.catalogItemId === item.id
+  ))
+  if (binding === undefined) return item
+  const matches = concepts.filter(concept => (
+    concept.domain === kind
+    && concept.status === 'active'
+    && referenceCodingIdentity(concept) === referenceCodingIdentity(binding.coding)
+  ))
+  if (matches.length !== 1) {
+    throw new Error(`Hospital Reference selection target is unavailable: ${item.id}`)
+  }
+  const concept = matches[0]!
+  return {
+    ...item,
+    referenceConcept: {
+      code: concept.code,
+      display: concept.display,
+      id: concept.id,
+      sourceLocator: concept.sourceLocator,
+      system: concept.system,
+      version: concept.version,
+    },
   }
 }
 
@@ -273,6 +307,7 @@ export function createHospitalBaseline(
   medicalServices: readonly ReferenceMedicalService[],
   valueSetEntries: readonly ReferenceValueSetEntry[],
   selection?: ReferenceHospitalSelection,
+  referenceConcepts: readonly ReferenceConcept[] = [],
 ): HospitalBaseline {
   const acetaminophenProduct = selectedMedicationProduct(
     medicationProducts,
@@ -331,7 +366,7 @@ export function createHospitalBaseline(
         registrationAvailable: false,
         type: 'department',
       }],
-      diagnoses: [{
+      diagnoses: ([{
         ...catalogBase({ code: 'J10.1', id: 'diagnosis-influenza', name: '流感伴呼吸道表现', priceFen: 0 }),
         codeSystem: 'http://hl7.org/fhir/sid/icd-10',
       }, {
@@ -349,8 +384,13 @@ export function createHospitalBaseline(
       }, {
         ...catalogBase({ code: 'E05.90', id: 'diagnosis-hyperthyroidism', name: '甲状腺功能亢进', priceFen: 0 }),
         codeSystem: 'http://hl7.org/fhir/sid/icd-10',
-      }],
-      investigations: [
+      }] as const).map(item => withSelectedReferenceConcept(
+        item,
+        'diagnosis',
+        selection,
+        referenceConcepts,
+      )),
+      investigations: ([
         investigation({
           category: 'examination',
           code: 'BODY-TEMP',
@@ -602,7 +642,12 @@ export function createHospitalBaseline(
           tatMinutes: 180,
           valueType: 'panel',
         }),
-      ],
+      ]).map(item => withSelectedReferenceConcept(
+        item,
+        'laboratory',
+        selection,
+        referenceConcepts,
+      )),
       medications: [{
         ...catalogBase({ code: 'ACETAMINOPHEN', id: 'medication-acetaminophen', name: '对乙酰氨基酚片', priceFen: 120 }),
         availableScopes: ['outpatient'] as const,
