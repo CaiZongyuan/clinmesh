@@ -310,7 +310,7 @@ CLI 分别固定校验三份 corpus 的 Synthea commit、`populationSeed=4242`�
 
 ### 导入 cn-health Candidate 到作者参考库
 
-ClinMesh 的作者参考库是独立 SQLite，不是 HIS operational SQLite。它可以直接读取 `cn-health-data` 的疾病、药品和 LOINC Candidate，无需先导出中间 CSV。外层 Reference Release manifest 选择一组固定来源；每个 Candidate source 指向自己的 `manifest.json`，`checksum` 是该 Manifest 文件的 SHA-256，`upstreamVersion` 必须等于 Candidate Release ID：
+ClinMesh 的作者参考库是独立 SQLite，不是 HIS operational SQLite。它可以直接读取 `cn-health-data` 的疾病、药品和检验 Candidate，无需先导出中间 CSV。外层 Reference Release manifest 选择一组固定来源；每个 Candidate source 指向自己的 `manifest.json`，`checksum` 是该 Manifest 文件的 SHA-256，`upstreamVersion` 必须等于 Candidate Release ID：
 
 ```json
 {
@@ -350,9 +350,9 @@ pnpm --filter @clinmesh/server reference-db list \
   --database "$REFERENCE_DATABASE"
 ```
 
-Importer 会验证外层 checksum、Candidate schema/Dataset/Release、`data.sqlite` SHA-256 与大小、SQLite integrity/application ID、主表列和 canonical record count，再在一个事务中发布 ClinMesh Reference Release。发布摘要保存 Candidate Release ID、source version、canonical hash、SQLite hash/size 和记录数；任一来源失败时不留下部分 Release。当前真实疾病和药品 Candidate 可以直接使用；LOINC 适配器遵循同一合同，在提供相应来源构建的 Candidate 后加入外层 manifest。
+Importer 会验证外层 checksum、Candidate schema/Dataset/Release、`data.sqlite` SHA-256 与大小、SQLite integrity/application ID、主表列和 canonical record count，再在一个事务中发布 ClinMesh Reference Release。发布摘要保存 Candidate Release ID、source version、canonical hash、SQLite hash/size 和记录数；任一来源失败时不留下部分 Release。当前疾病、药品和项目自有 `laboratory-cn` Candidate 均可直接使用。`laboratory-cn` 是当前病例所需概念的精选中文目录，不是官方完整 LOINC 中文语言包；调用方提供 `loinc-zh-cn` Candidate 时仍通过同一 reference concept 边界导入。
 
-Reference Release 不会按中文名自动选择本院产品。运行时使用单独的 Hospital Reference Selection，以 `system + version + code` 绑定本院目录 ID；药品至少需要 `medication-acetaminophen`、`medication-metformin` 和 `medication-amlodipine` 三项，疾病和 LOINC binding 用于证明对应目录目标真实存在。配置文件可以省略 `contentHash`，Server 会从其余字段确定性派生；显式提供时必须匹配：
+Reference Release 不会按中文名自动选择本院产品或概念。运行时使用单独的 Hospital Reference Selection，以 `system + version + code` 绑定本院目录 ID；药品至少需要 `medication-acetaminophen`、`medication-metformin` 和 `medication-amlodipine` 三项，疾病和检验 binding 用于选择 Package 中实际物化的本院目标。配置文件可以省略 `contentHash`，Server 会从其余字段确定性派生；显式提供时必须匹配：
 
 ```json
 {
@@ -374,6 +374,15 @@ Reference Release 不会按中文名自动选择本院产品。运行时使用�
         "version": "<source-version>"
       },
       "kind": "medication-product"
+    },
+    {
+      "catalogItemId": "lab-cbc",
+      "coding": {
+        "code": "58410-2",
+        "system": "http://loinc.org",
+        "version": "2.83"
+      },
+      "kind": "laboratory"
     }
   ],
   "referenceReleaseId": "clinmesh-cn-health-2026-08-30.r1",
