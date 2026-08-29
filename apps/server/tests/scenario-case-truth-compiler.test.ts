@@ -158,7 +158,7 @@ describe('Synthea R4 CaseTruth compiler', () => {
       examinationFindings: [expect.objectContaining({ id: 'exam-vital-signs', name: '生命体征' })],
       gender: 'female',
       id: 'synthea-patient-patient-fever',
-      name: '林安宁',
+      name: '合成患者 7d422791',
       patientKnowledge: expect.objectContaining({
         chiefComplaint: '发热一天，伴咽部不适。',
         neverKnows: expect.arrayContaining(['本次尚未告知的检查数值']),

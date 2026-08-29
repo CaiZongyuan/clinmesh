@@ -937,7 +937,7 @@ describe('persistent Scenario generation job HTTP contract', () => {
     const dataset = commandResponseSchema(scenarioDatasetSchema)
       .parse(await generateResponse.json()).data
     expect(dataset.diagnostics).toEqual([])
-    expect(dataset.contentHash).toBe('e4a800179d00d39e9f9cce9d04c9e0d3d53034f0536e6216298fae40a4493f95')
+    expect(dataset.contentHash).toBe('c83b1b5d907575f7a5af76f81489bda3cae9d5889f704b125b8ace0e426196fa')
     expect(dataset.content.reproduction.catalogCompilation).toMatchObject({
       blockers: [],
       supported: true,
@@ -1440,12 +1440,13 @@ describe('persistent Scenario generation job HTTP contract', () => {
     firstRuntime.database.driver.exec('DROP TABLE synthetic_patient_profile')
     firstRuntime.database.driver.exec('DROP TABLE hospital_service_catalog')
     firstRuntime.database.driver.prepare(
-      'DELETE FROM schema_migration WHERE migration_id IN (?, ?, ?, ?)',
+      'DELETE FROM schema_migration WHERE migration_id IN (?, ?, ?, ?, ?)',
     ).run(
       '0024_synthetic-patient-profile.sql',
       '0025_reference-data-provenance.sql',
       '0026_profile-mapping-provenance.sql',
       '0027_service-catalog-search.sql',
+      '0028_synthea-localization-provenance.sql',
     )
     await firstRuntime.close()
     runtimes.splice(runtimes.indexOf(firstRuntime), 1)

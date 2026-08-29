@@ -2,6 +2,7 @@ import type {
   ScenarioDatasetContent,
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
+  SyntheaCnLocalizationProvenance,
 } from '@clinmesh/contracts/scenario'
 import { canonicalJsonHash } from './canonical-json.ts'
 
@@ -15,6 +16,7 @@ export const generatedScenarioSimulatorRules = [
 export interface SourcePatientArtifact {
   format: 'clinmesh-template' | 'fhir-r4-bundle' | 'legacy-compiled-profile'
   hash: string
+  localization?: SyntheaCnLocalizationProvenance
   patientId: string
   raw: unknown | null
 }

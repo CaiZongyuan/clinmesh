@@ -29,8 +29,6 @@ import {
 } from '../../application/scenario-data/medical-service-snapshot.ts'
 import { compileSyntheaR4Bundle } from '../../application/scenario-data/synthea-case-truth-compiler.ts'
 
-const syntheticNames = ['林晓', '王晓明', '李静', '张伟', '刘洋', '陈勇'] as const
-
 function deterministicNumber(input: unknown): number {
   return Number.parseInt(createHash('sha256').update(JSON.stringify(input)).digest('hex').slice(0, 8), 16)
 }
@@ -138,7 +136,6 @@ function patient(request: ScenarioGenerationRequest, ordinal: number) {
   return scenarioPatientSchema.parse({
     ...compiled,
     id: `synthetic-patient-${idSuffix}`,
-    name: syntheticNames[deterministicNumber([request.seeds.population, ordinal, 'name']) % syntheticNames.length]!,
     physiologyBaseline: {
       ...compiled.physiologyBaseline,
       generators: compiled.physiologyBaseline.generators.map(generator => ({

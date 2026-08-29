@@ -27,7 +27,7 @@ describe('Scenario generation Provider contract', () => {
       birthDate: '1962-01-01',
       gender: 'male',
       id: 'synthetic-patient-5eb27dffe7f2',
-      name: '王晓明',
+      name: '合成患者 8570e5ac',
       physiologyBaseline: {
         vitalSigns: {
           oxygenSaturationPct: 98,

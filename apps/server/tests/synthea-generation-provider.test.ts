@@ -1,4 +1,7 @@
-import { scenarioGenerationRequestSchema } from '@clinmesh/contracts/scenario'
+import {
+  scenarioGenerationRequestSchema,
+  syntheaCnLocalizationProvenanceSchema,
+} from '@clinmesh/contracts/scenario'
 import { describe, expect, it } from 'vitest'
 import {
   SyntheaScenarioGenerationProvider,
@@ -6,6 +9,29 @@ import {
 
 const syntheaCommit = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
 const configHash = 'a08483ffe6aca8c2ab6fc058a24297842cb9e37b755a83c2fdda18330dff9343'
+const profileContentHash = 'd8a4ef19561434cb66c8a391aebfcf6a4dc5f14baf4d4171eac3b8c340b5dd12'
+const localization = syntheaCnLocalizationProvenanceSchema.parse({
+  dependencies: [{
+    canonicalSha256: '3c632be160c5a3d6e3196b8e95a0b33a25e9f35bcee506b25d7305345c50957a',
+    datasetId: 'geography-cn',
+    releaseId: 'geography-cn@2026-08-29.r1',
+    sqliteSha256: '5ca7121046d49a80b0da38e2b3413a1bc1a7b1040382903ba1d516793e5c5bc7',
+  }, {
+    canonicalSha256: '4f66c18be0ab19e515927953bd741a1476584f2bdac3d8e6d67221232a31468d',
+    datasetId: 'names-cn',
+    releaseId: 'names-cn@40.37.0.r1',
+    sqliteSha256: '20fc1bc0a0c38b7122635d00aecb710a0ecf1892d91d3c3c190cc9213c2bb0ae',
+  }, {
+    canonicalSha256: '371dde5944505c426a8ad39be21f647921e754366cb410c0529176d2b6ebfb8a',
+    datasetId: 'population-cn',
+    releaseId: 'population-cn@WPP2024.r1',
+    sqliteSha256: '89858f25d5e898df32f896e8f12b7daf2bc569abb55f8bf69b3f21e988a50a05',
+  }],
+  identityAlgorithm: 'synthetic-identity-v1',
+  profileContentHash,
+  profileId: 'synthea-cn@2026-08-29.r3',
+  syntheaCommit,
+})
 const request = scenarioGenerationRequestSchema.parse({
   modules: ['fever'],
   name: 'Synthea 发热病史',
@@ -26,11 +52,36 @@ function patientBundle(extraResources: unknown[] = []) {
     entry: [{
       fullUrl: patientReference,
       resource: {
+        address: [{
+          city: '渭南市',
+          country: 'CN',
+          line: ['陕西省渭南市合成路178号'],
+          postalCode: '715300',
+          state: '陕西省',
+        }],
         birthDate: '1988-03-16',
         gender: 'female',
         id: 'patient-1',
-        name: [{ given: ['Alice'], family: 'Synthetic' }],
+        identifier: [{
+          system: 'https://github.com/synthetichealth/synthea',
+          value: 'patient-1',
+        }, {
+          system: 'urn:cn-health-data:synthetic-person',
+          value: 'urn:uuid:13b0d528-f28a-5bef-a5ad-1a3bdb700d9a',
+        }, {
+          system: 'urn:cn-health-data:synthetic-mrn',
+          value: 'CNH030092236323',
+        }, {
+          extension: [{ url: 'urn:cn-health-data:synthetic', valueBoolean: true }],
+          system: 'urn:cn-health-data:simulated-resident-id',
+          value: '990000198803168903',
+        }],
+        name: [{ family: '杨', given: ['秀珍'], text: '杨秀珍', use: 'official' }],
         resourceType: 'Patient',
+        telecom: [{ system: 'phone', value: '10093284819' }, {
+          system: 'email',
+          value: 'cnh030092236323@example.test',
+        }],
       },
     }, {
       fullUrl: 'urn:uuid:encounter-1',
@@ -43,8 +94,40 @@ function patientBundle(extraResources: unknown[] = []) {
       fullUrl: `urn:uuid:extra-${index + 1}`,
       resource,
     }))],
+    meta: {
+      tag: [{
+        code: localization.profileId,
+        display: localization.profileContentHash,
+        system: 'urn:cn-health-data:synthea-profile',
+      }],
+    },
     resourceType: 'Bundle',
     type: 'collection',
+  }
+}
+
+function patientBundleWithRealMobileNumber() {
+  const bundle = structuredClone(patientBundle())
+  const patient = bundle.entry.find(entry => (
+    typeof entry.resource === 'object'
+    && entry.resource !== null
+    && 'resourceType' in entry.resource
+    && entry.resource.resourceType === 'Patient'
+  ))?.resource
+  if (typeof patient !== 'object' || patient === null) throw new Error('Patient fixture is missing')
+  const patientRecord = patient as Record<string, unknown>
+  patientRecord.telecom = [{ system: 'phone', value: '13800000000' }]
+  return bundle
+}
+
+function patientBundleWithWrongProfileTag() {
+  const bundle = structuredClone(patientBundle())
+  return {
+    ...bundle,
+    meta: {
+      ...bundle.meta,
+      tag: [{ ...bundle.meta.tag[0]!, display: 'f'.repeat(64) }],
+    },
   }
 }
 
@@ -54,6 +137,7 @@ function providerResponse(bundles: unknown[]) {
     metadata: {
       clinicalSeed: request.seeds.clinical,
       configHash,
+      localization,
       modules: request.modules,
       populationSeed: request.seeds.population,
       syntheaCommit,
@@ -105,7 +189,7 @@ describe('Synthea Scenario generation Provider contract', () => {
       longitudinalHistory: expect.arrayContaining([
         expect.objectContaining({ kind: 'condition', mappedCode: null }),
       ]),
-      name: '林安宁',
+      name: '合成患者 be1c7ce7',
     })
     expect(corpus.content.reproduction).toMatchObject({
       catalogCompilation: { blockers: [], supported: true },
@@ -121,6 +205,7 @@ describe('Synthea Scenario generation Provider contract', () => {
     expect(corpus).toMatchObject({
       sources: [{
         format: 'fhir-r4-bundle',
+        localization,
         patientId: 'synthea-patient-patient-1',
         raw: bundle,
       }],
@@ -135,6 +220,27 @@ describe('Synthea Scenario generation Provider contract', () => {
   })
 
   it.each([
+    {
+      body: {
+        ...providerResponse([patientBundle()]),
+        metadata: {
+          ...providerResponse([]).metadata,
+          localization: undefined,
+        },
+      },
+      code: 'FHIR_R4_LOCALIZATION_INVALID',
+      name: 'missing localization metadata',
+    },
+    {
+      body: providerResponse([patientBundleWithWrongProfileTag()]),
+      code: 'FHIR_R4_LOCALIZATION_INVALID',
+      name: 'mismatched localization tag',
+    },
+    {
+      body: providerResponse([patientBundleWithRealMobileNumber()]),
+      code: 'FHIR_R4_LOCALIZATION_INVALID',
+      name: 'real mobile-looking Patient identity',
+    },
     {
       body: providerResponse([patientBundle([{
         id: 'questionnaire-1',

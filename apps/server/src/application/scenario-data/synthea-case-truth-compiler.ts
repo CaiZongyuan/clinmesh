@@ -208,17 +208,6 @@ export class SyntheaCaseTruthCompilerError extends Error {
   }
 }
 
-const chineseNames = [
-  '林安宁',
-  '王嘉禾',
-  '李思远',
-  '张清和',
-  '刘知夏',
-  '陈景明',
-  '赵文舒',
-  '周允康',
-] as const
-
 function firstCoding(concept: Concept | undefined): z.infer<typeof codingSchema> | undefined {
   return concept?.coding?.find(coding => coding.code !== undefined || coding.display !== undefined)
 }
@@ -814,7 +803,7 @@ export function compileSyntheaR4Bundle(input: {
     id: `synthea-patient-${patient.id}`,
     investigations,
     longitudinalHistory,
-    name: chineseNames[input.ordinal % chineseNames.length]!,
+    name: `合成患者 ${fingerprint}`,
     persona: {
       ...deterministicPersona(input.ordinal),
       attitude: `${deterministicPersona(input.ordinal).attitude}（合成档案 ${fingerprint}）`,

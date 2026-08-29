@@ -12,16 +12,9 @@ import {
 } from './diagnosis-coding-package.ts'
 import { medicationMappingPackageProvenance } from './medication-coding-package.ts'
 import { stableHistoryId } from './synthea-case-truth-compiler.ts'
+import { localizedSyntheaPatientIdentity } from './synthea-localized-identity.ts'
+import { withResidentIdChecksum } from './synthetic-resident-id.ts'
 
-const idCardWeights = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2] as const
-const idCardChecks = ['1', '0', 'X', '9', '8', '7', '6', '5', '4', '3', '2'] as const
-const syntheticAddresses = [
-  '江苏省苏州市张家港市合成路',
-  '浙江省杭州市拱墅区仿真路',
-  '四川省成都市武侯区模拟路',
-  '湖北省武汉市江岸区测试路',
-] as const
-const syntheticInsurance = ['模拟城镇职工医保', '模拟城乡居民医保', '模拟自费'] as const
 const initialCatalogVersion = 1
 
 function digestNumber(input: string): number {
@@ -36,11 +29,8 @@ function syntheticNationalId(
   let sequence = digestNumber(`${seed}:national-id`) % 1_000
   if (gender === 'male' && sequence % 2 === 0) sequence = (sequence + 1) % 1_000
   if (gender === 'female' && sequence % 2 === 1) sequence = (sequence + 1) % 1_000
-  const body = `320582${birthDate.replaceAll('-', '')}${String(sequence).padStart(3, '0')}`
-  const checksum = body.split('').reduce((sum, digit, index) => (
-    sum + Number(digit) * (idCardWeights[index] ?? 0)
-  ), 0) % 11
-  return `${body}${idCardChecks[checksum]}`
+  const body = `990000${birthDate.replaceAll('-', '')}${String(sequence).padStart(3, '0')}`
+  return withResidentIdChecksum(body)
 }
 
 function syntheticIdentity(
@@ -50,15 +40,14 @@ function syntheticIdentity(
   const number = digestNumber(seed)
   const mrn = `CMSYN${createHash('sha256').update(seed).digest('hex').slice(0, 10).toUpperCase()}`
   const phoneSuffix = String(number % 100_000_000).padStart(8, '0')
-  const address = syntheticAddresses[number % syntheticAddresses.length] ?? syntheticAddresses[0]
   return {
-    address: `${address} ${number % 900 + 100} 号（合成地址）`,
+    address: `虚构测试地址 ${phoneSuffix} 号`,
     displayName: patient.name,
     email: `${mrn.toLowerCase()}@example.test`,
-    insuranceDisplay: syntheticInsurance[number % syntheticInsurance.length] ?? syntheticInsurance[0],
+    insuranceDisplay: '合成医疗保障',
     mrn,
     nationalId: syntheticNationalId(patient.birthDate, patient.gender, seed),
-    phone: `13${phoneSuffix.slice(0, 1)}${phoneSuffix}`,
+    phone: `100${phoneSuffix}`,
   }
 }
 
@@ -184,6 +173,14 @@ export function createSyntheticPatientProfiles(input: {
     const source = sourceByPatientId.get(patient.id)
     if (source === undefined) throw new Error(`Generated patient ${patient.id} has no source artifact`)
     const identitySeed = `${input.dataset.contentHash}:${patient.id}`
+    const localization = source.localization === undefined
+      ? undefined
+      : localizedSyntheaPatientIdentity({
+          bundle: source.raw,
+          expectedPatientId: source.patientId,
+          provenance: source.localization,
+        })
+    const identity = localization?.identity ?? syntheticIdentity(identitySeed, patient)
     const profileId = `synthetic-patient-profile-${createHash('sha256')
       .update(`${input.dataset.workspaceId}:${identitySeed}`)
       .digest('hex')
@@ -192,9 +189,12 @@ export function createSyntheticPatientProfiles(input: {
     const mappingProvenance = compiledMappingProvenance(input.dataset.providerId)
     return syntheticPatientProfileSchema.parse({
       createdAt: input.dataset.createdAt,
-      identity: syntheticIdentity(identitySeed, patient),
+      identity,
       mappings,
-      patient: applySyntheticPatientProfileMappings(patient, mappings),
+      patient: {
+        ...applySyntheticPatientProfileMappings(patient, mappings),
+        name: identity.displayName,
+      },
       profileId,
       revision: 1,
       source: {
@@ -220,6 +220,7 @@ export function createSyntheticPatientProfiles(input: {
           : `${mappingProvenance.compiler.id}-v${mappingProvenance.compiler.version}`,
         patientId: source.patientId,
         providerId: input.dataset.providerId,
+        ...(localization === undefined ? {} : { localization: localization.provenance }),
         ...(input.dataset.content.reproduction.referenceData === undefined
           ? {}
           : { referenceData: input.dataset.content.reproduction.referenceData }),

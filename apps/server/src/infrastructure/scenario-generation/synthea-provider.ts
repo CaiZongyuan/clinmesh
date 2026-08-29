@@ -3,7 +3,11 @@ import type {
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
 } from '@clinmesh/contracts/scenario'
-import { scenarioModuleSchema, scenarioModules } from '@clinmesh/contracts/scenario'
+import {
+  scenarioModuleSchema,
+  scenarioModules,
+  syntheaCnLocalizationProvenanceSchema,
+} from '@clinmesh/contracts/scenario'
 import type {
   ReferenceMedicalService,
   ReferenceMedicationProduct,
@@ -28,6 +32,10 @@ import {
   compileSyntheaR4Bundle,
   syntheaR4ResourceTypes,
 } from '../../application/scenario-data/synthea-case-truth-compiler.ts'
+import {
+  localizedSyntheaPatientIdentity,
+  SyntheaLocalizationValidationError,
+} from '../../application/scenario-data/synthea-localized-identity.ts'
 
 const SYNTHEA_COMMIT = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
 const SYNTHEA_CONFIG_HASH = 'a08483ffe6aca8c2ab6fc058a24297842cb9e37b755a83c2fdda18330dff9343'
@@ -52,6 +60,7 @@ const providerResponseSchema = z.object({
   metadata: z.object({
     clinicalSeed: z.number().int(),
     configHash: z.string().regex(/^[a-f0-9]{64}$/),
+    localization: syntheaCnLocalizationProvenanceSchema,
     modules: z.array(scenarioModuleSchema).min(1),
     populationSeed: z.number().int(),
     syntheaCommit: z.literal(SYNTHEA_COMMIT),
@@ -92,6 +101,7 @@ const patientOwnedReferenceFields: Partial<Record<
 export type SyntheaProviderErrorCode =
   | 'FHIR_R4_BUNDLE_INVALID'
   | 'FHIR_R4_HISTORY_OUT_OF_RANGE'
+  | 'FHIR_R4_LOCALIZATION_INVALID'
   | 'FHIR_R4_PATIENT_OWNERSHIP_INVALID'
   | 'FHIR_R4_REFERENCE_INVALID'
   | 'FHIR_R4_RESOURCE_NOT_ALLOWED'
@@ -270,6 +280,7 @@ function assertReproductionMetadata(
   if (
     metadata.clinicalSeed !== request.seeds.clinical
     || metadata.configHash !== SYNTHEA_CONFIG_HASH
+    || metadata.localization.syntheaCommit !== metadata.syntheaCommit
     || metadata.populationSeed !== request.seeds.population
     || metadata.timeZone !== request.timeZone
     || metadata.timeRange.start !== request.timeRange.start
@@ -368,6 +379,15 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
     } catch (error) {
       if (error instanceof SyntheaProviderError) throw error
       if (error instanceof z.ZodError && error.issues.some(issue => (
+        issue.path[0] === 'metadata' && issue.path[1] === 'localization'
+      ))) {
+        throw new SyntheaProviderError(
+          'FHIR_R4_LOCALIZATION_INVALID',
+          'The Synthea Provider returned invalid localization metadata',
+          { cause: error },
+        )
+      }
+      if (error instanceof z.ZodError && error.issues.some(issue => (
         issue.code === 'invalid_value'
         && issue.path.at(-1) === 'resourceType'
       ))) {
@@ -394,11 +414,26 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
     const compiled = parsed.bundles.map((bundle, index) => {
       validateBundle(bundle, request)
       const patient = compileSyntheaR4Bundle({ bundle, ordinal: index, request })
+      try {
+        localizedSyntheaPatientIdentity({
+          bundle,
+          expectedPatientId: patient.id,
+          provenance: parsed.metadata.localization,
+        })
+      } catch (error) {
+        if (!(error instanceof SyntheaLocalizationValidationError)) throw error
+        throw new SyntheaProviderError(
+          'FHIR_R4_LOCALIZATION_INVALID',
+          'The Synthea Provider returned an invalid localized Patient',
+          { cause: error },
+        )
+      }
       return {
         patient,
         source: {
           format: 'fhir-r4-bundle' as const,
           hash: sourceArtifactHash(bundle),
+          localization: parsed.metadata.localization,
           patientId: patient.id,
           raw: bundle,
         },
@@ -429,6 +464,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
         configHash: parsed.metadata.configHash,
         generator: 'synthea-fhir-r4',
         generatorVersion: parsed.metadata.syntheaCommit,
+        localization: parsed.metadata.localization,
         modules: request.modules,
         populationSeed: request.seeds.population,
         timeRange: request.timeRange,

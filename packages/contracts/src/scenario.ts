@@ -5,6 +5,28 @@ import {
 } from './reference-data.ts'
 
 const localDateSchema = z.iso.date()
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
+
+function cnHealthDependencySchema(datasetId: 'geography-cn' | 'names-cn' | 'population-cn') {
+  return z.object({
+    canonicalSha256: sha256Schema,
+    datasetId: z.literal(datasetId),
+    releaseId: z.string().regex(new RegExp(`^${datasetId}@[A-Za-z0-9][A-Za-z0-9._-]*$`)),
+    sqliteSha256: sha256Schema,
+  }).strict()
+}
+
+export const syntheaCnLocalizationProvenanceSchema = z.object({
+  dependencies: z.tuple([
+    cnHealthDependencySchema('geography-cn'),
+    cnHealthDependencySchema('names-cn'),
+    cnHealthDependencySchema('population-cn'),
+  ]),
+  identityAlgorithm: z.literal('synthetic-identity-v1'),
+  profileContentHash: sha256Schema,
+  profileId: z.string().regex(/^synthea-cn@[A-Za-z0-9][A-Za-z0-9._-]*$/),
+  syntheaCommit: z.string().regex(/^[a-f0-9]{40}$/),
+}).strict()
 
 const legacyUcumUnitByDisplay = {
   '%': '%',
@@ -639,6 +661,7 @@ export const scenarioDatasetContentSchema = z.object({
     configHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     generator: z.string().min(1),
     generatorVersion: z.string().min(1).optional(),
+    localization: syntheaCnLocalizationProvenanceSchema.optional(),
     modules: z.array(z.string().min(1)),
     populationSeed: z.number().int(),
     referenceData: referenceDataProvenanceSchema.optional(),
@@ -769,6 +792,7 @@ const syntheticPatientSourceSchema = z.object({
   patientId: z.string().min(1),
   providerId: z.enum(['builtin', 'synthea']),
   referenceData: referenceDataProvenanceSchema.optional(),
+  localization: syntheaCnLocalizationProvenanceSchema.optional(),
   raw: z.json().nullable(),
 }).strict()
 
@@ -937,6 +961,9 @@ export type ScenarioInvestigationResult = z.infer<typeof scenarioInvestigationRe
 export type ScenarioPatient = z.infer<typeof scenarioPatientSchema>
 export type ScenarioProviderCapabilities = z.infer<typeof scenarioProviderCapabilitiesSchema>
 export type SyntheticPatientIdentity = z.infer<typeof syntheticPatientIdentitySchema>
+export type SyntheaCnLocalizationProvenance = z.infer<
+  typeof syntheaCnLocalizationProvenanceSchema
+>
 export type SyntheticPatientMappingCatalog = z.infer<typeof syntheticPatientMappingCatalogSchema>
 export type SyntheticPatientMappingInput = z.infer<typeof updateSyntheticPatientMappingsRequestSchema>['input'][number]
 export type SyntheticPatientProfile = z.infer<typeof syntheticPatientProfileSchema>
