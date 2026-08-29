@@ -6,7 +6,7 @@ Status: proposed
 
 `importReferenceDataRelease` 当前把每个 source artifact 转成完整 `ReferenceArtifact` 数组，再复制为带 `sourceId` 的第二组数组；`contentHash` 对所有对象递归 canonicalize 并一次性 `JSON.stringify`。`verifyReferenceDatabase` 又通过 `conceptRows`、`medicationProductRows`、`medicalServiceRows` 和 `valueSetEntryRows` 把整个 Release 读回内存后重复同一 hash。
 
-真实 `nhc-icd10-clinical@2022.r3` 与 `nhsa-drugs@2026-01-09.r3` 共 306,404 行。实测首次 import 用时 8.16 秒、峰值 RSS 1,129,996 KiB；verify 用时 3.99 秒、峰值 RSS 1,210,472 KiB；幂等重导入仍需要 1,130,900 KiB。导入结果和校验都正确，瓶颈来自同时保留源对象、带 source ID 对象和完整 canonical JSON，而不是 SQLite 写入本身。
+真实 r2 Release 包含 `nhc-icd10-clinical@2022.r3`、`nhsa-drugs@2026-01-09.r3` 和 `laboratory-cn@2026-08-30.r1`，共 306,422 行。早期两来源 r1 的首次 import 用时 8.16 秒、峰值 RSS 1,129,996 KiB，verify 用时 3.99 秒、峰值 RSS 1,210,472 KiB。加入检验 Candidate 后，r2 幂等重导入用时 5.30 秒、峰值 RSS 1,133,572 KiB；包含 r1/r2 的作者库 verify 用时 7.83 秒、峰值 RSS 1,610,128 KiB。导入结果和校验都正确，瓶颈来自同时保留源对象、带 source ID 对象和完整 canonical JSON，而不是 SQLite 写入本身。
 
 ## Proposal
 
@@ -26,8 +26,8 @@ Status: proposed
 
 ## Acceptance criteria
 
-- 合成 CSV/XML/JSON source、三种 cn-health Candidate 及多 source 原子失败测试继续通过。
-- 真实 306,404 行输入仍得到 `5ffa89597f50ff1b931e57aaef685f715c1e772729dea14ba14846d458233b9e`。
+- 合成 CSV/XML/JSON source、疾病/药品/`laboratory-cn`/`loinc-zh-cn` 四种 cn-health Candidate 及多 source 原子失败测试继续通过。
+- 真实 r1 仍得到 `5ffa89597f50ff1b931e57aaef685f715c1e772729dea14ba14846d458233b9e`，r2 仍得到 `fefd3638d67ce2c5005798b98aab3f0ca857c823fce0b64a21872f027df55def`。
 - 已发布旧 fixture Release 的 content hash 与 migration 校验保持不变。
 - import、幂等重导入和 verify 的峰值 RSS 各低于 384 MiB，且不通过关闭 Zod、SQLite integrity/application ID、FK、唯一性或 provenance 校验实现。
 - 任一 source、staging insert 或 hash 失败时，`reference_release` 和正式子表不出现部分新 Release。
