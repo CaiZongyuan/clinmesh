@@ -55,6 +55,15 @@ const selectedDiagnoses: ReferenceConcept[] = [{
   status: 'active',
   system: diagnosisSystem,
   version: '2022',
+}, {
+  code: '8310-5',
+  display: '体温',
+  domain: 'laboratory',
+  id: 'loinc:2.83:8310-5',
+  sourceLocator: 'cn-health:loinc:8310-5',
+  status: 'active',
+  system: 'http://loinc.org',
+  version: '2.83',
 }]
 
 const releases = referenceDataReleaseListSchema.parse({
@@ -151,6 +160,10 @@ const selection = createReferenceHospitalSelection({
     coding: { code: 'R50.900', system: diagnosisSystem, version: '2022' },
     kind: 'diagnosis',
   }, {
+    catalogItemId: 'lab-body-temperature',
+    coding: { code: '8310-5', system: 'http://loinc.org', version: '2.83' },
+    kind: 'laboratory',
+  }, {
     catalogItemId: 'medication-acetaminophen',
     coding: { code: 'X-ACETAMINOPHEN', system: productSystem, version: '2026-01-09' },
     kind: 'medication-product',
@@ -191,7 +204,7 @@ describe('Hospital Reference selection', () => {
       selected.bindings,
     )
 
-    expect(reader.requestedConcepts).toEqual(['R50.900'])
+    expect(reader.requestedConcepts).toEqual(['R50.900', '8310-5'])
     expect(reader.requestedProducts).toEqual([
       'X-ACETAMINOPHEN',
       'X-METFORMIN',

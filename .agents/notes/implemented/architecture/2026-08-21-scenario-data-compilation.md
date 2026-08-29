@@ -8,7 +8,7 @@ Synthea 能提供纵向合成病史，但其 FHIR R4 产物包含美国地址、
 
 ## Decision
 
-`compileSyntheaR4Bundle` 是来源病史进入 Scenario Dataset 的编译边界。它先以严格运行时 schema 验证单患者 R4 collection Bundle，只转换 Patient、Encounter、Condition、Observation、MedicationRequest 和 AllergyIntolerance 白名单事实。Organization、Coverage 和其他美国运行语义不进入 CaseTruth；患者姓名、标识、医院和目录由固定 seed 下的 ClinMesh 合成规则重建。未映射代码保留来源键并产生诊断，不能通过模糊文本匹配静默伪造目标编码。病种真值与本院目录由[病例定义驱动本院目录闭包](./2026-08-28-disease-case-definitions-and-catalog-closure.md)拥有，Compiler 不按病种分支。
+`compileSyntheaR4Bundle` 是来源病史进入 Scenario Dataset 的编译边界。它先以严格运行时 schema 验证单患者 R4 collection Bundle，只转换 Patient、Encounter、Condition、Observation、MedicationRequest 和 AllergyIntolerance 白名单事实。Organization、Coverage 和其他来源运行语义不进入 CaseTruth；患者身份由[cn-health 数据与 Synthea 中国本地化接入](./2026-08-30-cn-health-synthea-localization.md)验证并保存，医院和本院目录仍由 ClinMesh 编译。未映射代码保留来源键并产生诊断，不能通过模糊文本匹配静默伪造目标编码。病种真值与本院目录由[病例定义驱动本院目录闭包](./2026-08-28-disease-case-definitions-and-catalog-closure.md)拥有，Compiler 不按病种分支。
 
 CaseTruth 使用 `scenarioDatasetContentSchema` 作为持久合同。每名患者包含复现元数据、虚构身份、纵向病史、最小 R5 历史表示、本次就诊、人设、患者认知、症状应答、查体、生理生成器、三级检查来源、诊断空间、处置空间和费用基准。患者认知与客观真值分开保存；`passive`、否认项、回避项和第二次追问后让步是结构化字段，不依赖 prompt 约定。检查行保存结果、报告、TAT、费用和危急值标记；Hospital Baseline 保存虚构医院、科室、诊断、检查、药品和库存目录。
 
