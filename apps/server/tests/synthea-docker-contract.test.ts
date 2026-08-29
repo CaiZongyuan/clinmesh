@@ -34,4 +34,32 @@ describe('Synthea Docker Provider contract', () => {
     )
     expect(providerSource).toContain('pruneDanglingReferences(bundle)')
   })
+
+  it('runs the mounted cn-health profile and localizes every Bundle before returning it', async () => {
+    const [dockerfile, providerSource, compose] = await Promise.all([
+      readFile(new URL('../../synthea-provider/Dockerfile', import.meta.url), 'utf8'),
+      readFile(new URL('../../synthea-provider/ProviderServer.java', import.meta.url), 'utf8'),
+      readFile(new URL('../../../compose.synthea-provider.yaml', import.meta.url), 'utf8'),
+    ])
+
+    expect(providerSource).toContain('SYNTHEA_CLASSPATH')
+    expect(providerSource).toContain('CN_HEALTH_LOCALIZER_ENDPOINT')
+    expect(providerSource).toContain('command.add("-cp")')
+    expect(providerSource).toContain('command.add("App")')
+    expect(providerSource).toContain('command.add("中国")')
+    expect(providerSource).toContain('localizeBundle(')
+    expect(providerSource).toContain('metadata.add("localization"')
+    expect(providerSource).not.toContain('command.add("Massachusetts")')
+    expect(dockerfile).toContain('SYNTHEA_CLASSPATH_PATH=/opt/cn-health/synthea-profile/classpath')
+    expect(dockerfile).toContain('SYNTHEA_CONFIG_PATH=/opt/cn-health/synthea-profile/synthea.properties')
+    expect(dockerfile).not.toContain('COPY --from=build --chown=10001:10001 /src/provider/synthea.properties')
+    expect(compose).toContain('cn-health-localizer:')
+    expect(compose).toContain('Dockerfile.synthea-localizer')
+    expect(compose).toContain('CN_HEALTH_DATA_RUN_AS')
+    expect(compose).toContain('/data/profile:ro')
+    expect(compose).toContain('/data/names:ro')
+    expect(compose).toContain('/data/geography:ro')
+    expect(compose).toContain('/data/population:ro')
+    expect(compose).toContain('condition: service_healthy')
+  })
 })

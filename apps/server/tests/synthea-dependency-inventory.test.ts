@@ -160,7 +160,29 @@ describe('Synthea dependency inventory', () => {
       }],
       metadata: {
         clinicalSeed: 7331,
-        configHash: 'a08483ffe6aca8c2ab6fc058a24297842cb9e37b755a83c2fdda18330dff9343',
+        configHash: '81c9b79f5426b85244f42275f98d2f9e161a4c502980d9cde8d027cdda6ef103',
+        localization: {
+          dependencies: [{
+            canonicalSha256: 'a'.repeat(64),
+            datasetId: 'geography-cn',
+            releaseId: 'geography-cn@test.r1',
+            sqliteSha256: 'b'.repeat(64),
+          }, {
+            canonicalSha256: 'c'.repeat(64),
+            datasetId: 'names-cn',
+            releaseId: 'names-cn@test.r1',
+            sqliteSha256: 'd'.repeat(64),
+          }, {
+            canonicalSha256: 'e'.repeat(64),
+            datasetId: 'population-cn',
+            releaseId: 'population-cn@test.r1',
+            sqliteSha256: 'f'.repeat(64),
+          }],
+          identityAlgorithm: 'synthetic-identity-v1',
+          profileContentHash: '1'.repeat(64),
+          profileId: 'synthea-cn@test.r1',
+          syntheaCommit: 'd9d07a6eef91ee5144293b42ab64224d84d124f8',
+        },
         modules: ['hypertension'],
         populationSeed: 4242,
         syntheaCommit: 'd9d07a6eef91ee5144293b42ab64224d84d124f8',
@@ -169,7 +191,8 @@ describe('Synthea dependency inventory', () => {
       },
     }
 
-    expect(inventoryGeneratedSyntheaCorpus(corpus)).toMatchObject({
+    const inventory = inventoryGeneratedSyntheaCorpus(corpus)
+    expect(inventory).toMatchObject({
       concepts: [
         { code: '8480-6', display: 'Systolic blood pressure', occurrences: 2, system: 'http://loinc.org' },
         { code: '59621000', display: 'Essential hypertension', occurrences: 1, system: 'http://snomed.info/sct' },
@@ -186,6 +209,9 @@ describe('Synthea dependency inventory', () => {
         occurrences: 2,
         system: 'http://unitsofmeasure.org',
       }],
+    })
+    expect(inventory.reproduction.localization).toMatchObject({
+      profileId: 'synthea-cn@test.r1',
     })
   })
 })

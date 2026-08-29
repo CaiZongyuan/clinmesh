@@ -1,6 +1,9 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { scenarioModuleSchema } from '@clinmesh/contracts/scenario'
+import {
+  scenarioModuleSchema,
+  syntheaCnLocalizationProvenanceSchema,
+} from '@clinmesh/contracts/scenario'
 import { z } from 'zod'
 import { canonicalJsonHash } from './canonical-json.ts'
 
@@ -40,6 +43,7 @@ const generatedCorpusSchema = z.object({
   metadata: z.object({
     clinicalSeed: z.number().int(),
     configHash: z.string().min(1),
+    localization: syntheaCnLocalizationProvenanceSchema.optional(),
     modules: z.array(z.string().min(1)).min(1),
     populationSeed: z.number().int(),
     syntheaCommit: z.string().regex(/^[a-f0-9]{40}$/),

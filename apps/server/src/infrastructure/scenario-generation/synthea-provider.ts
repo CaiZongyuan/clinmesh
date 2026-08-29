@@ -38,7 +38,7 @@ import {
 } from '../../application/scenario-data/synthea-localized-identity.ts'
 
 const SYNTHEA_COMMIT = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
-const SYNTHEA_CONFIG_HASH = 'a08483ffe6aca8c2ab6fc058a24297842cb9e37b755a83c2fdda18330dff9343'
+const SYNTHEA_CONFIG_HASH = '81c9b79f5426b85244f42275f98d2f9e161a4c502980d9cde8d027cdda6ef103'
 const allowedR4ResourceTypes = syntheaR4ResourceTypes
 
 const r4ResourceSchema = z.object({

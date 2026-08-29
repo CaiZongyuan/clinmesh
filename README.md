@@ -158,7 +158,26 @@ pnpm --filter @clinmesh/server test
 
 ### 推荐：本地 Web 与 Server，加 Docker Synthea
 
-这种方式只把需要 Java 环境的 Synthea Provider 放进 Docker，ClinMesh Web 与 Server 继续使用本地 Node.js 工具链，便于开发和调试。
+这种方式把需要 Java 环境的 Synthea Provider 和 `cn-health-data` 本地化服务放进 Docker，ClinMesh Web 与 Server 继续使用本地 Node.js 工具链，便于开发和调试。`cn-health-data` 保持通用中国健康数据基础设施的定位；ClinMesh 只消费其固定版本的 Synthea profile、姓名、地理和人口 Candidate。
+
+默认目录结构要求两个仓库同级：
+
+```text
+backend/
+  clinmesh/
+  cn-health-data/
+```
+
+启动前，`cn-health-data/dist/` 应存在以下已构建目录：
+
+```text
+synthea-cn-profile/releases/2026-08-29.r3
+names-cn/releases/40.37.0.r1
+geography-cn/releases/2026-08-29.r1
+population-cn/releases/WPP2024.r1
+```
+
+如目录不在默认位置，通过 `CN_HEALTH_DATA_CONTEXT` 和 `CN_HEALTH_DATA_DIST` 指向仓库与 Candidate 根目录。Candidate 默认使用仅所有者可读权限；宿主账户不是 `1000:1000` 时，启动前设置 `export CN_HEALTH_DATA_RUN_AS="$(id -u):$(id -g)"`，容器仍以非 root 身份运行。
 
 首次运行先创建环境文件；已有 `.env` 时不要覆盖，并确认端口与 Provider URL 使用以下值：
 
@@ -178,6 +197,8 @@ CLINMESH_SYNTHEA_PROVIDER_URL=http://127.0.0.1:51878
 ```sh
 docker compose -f compose.synthea-provider.yaml up -d --build
 ```
+
+Compose 会启动两个内部服务：`cn-health-localizer` 在启动时验证 profile Manifest、文件哈希、SQLite integrity/application ID 和三个 Candidate 依赖；`synthea-provider` 使用 profile classpath 与外部配置运行固定 Synthea commit，并在返回前把每个 Bundle 交给 localizer。两者都使用只读文件系统，Candidate 只读挂载，不复制进 ClinMesh 仓库或镜像。
 
 另外打开两个终端启动 Server 和 Web：
 
@@ -210,6 +231,8 @@ docker compose -f compose.synthea-provider.yaml exec -T synthea-provider \
   java -cp /opt/provider:/opt/synthea/synthea.jar ProviderServer --smoke
 ```
 
+`/health` 会返回 profile ID、内容哈希、身份算法、固定 Synthea commit 以及姓名、地理和人口 Release provenance。`--smoke` 对 fever、type-2-diabetes 和 hypertension 各生成 10 人，并验证临床关键编码仍存在。
+
 使用 Web 开发入口访问管理员模拟数据页面：http://127.0.0.1:51888/scenario-data
 
 停止 Docker 中的 Provider，但保留容器：
@@ -220,7 +243,7 @@ docker compose -f compose.synthea-provider.yaml stop
 
 ### 备选：本机 JDK 17 启动 Synthea
 
-不使用 Docker 时，需要本机安装 Git 和 JDK 17。以下命令从仓库根目录执行，将固定版本的 Synthea 和编译产物保存到已忽略的 `.data/`：
+不使用 Docker 时，需要本机安装 Git、JDK 17，并在同级 `cn-health-data` 仓库运行本地化服务。以下命令从 ClinMesh 仓库根目录执行，将固定版本的 Synthea 和编译产物保存到已忽略的 `.data/`：
 
 ```sh
 SYNTHEA_DIR="$PWD/.data/synthea"
@@ -241,19 +264,34 @@ javac -cp "$SYNTHEA_JAR" -d "$PROVIDER_CLASSES" \
   apps/synthea-provider/ProviderServer.java
 ```
 
-启动 Provider；该进程在前台运行，停止时按 `Ctrl+C`：
+先在另一个终端从 `cn-health-data` 仓库启动 localizer；该进程会在监听前完成 profile 与 Candidate 验证：
+
+```sh
+CN_HEALTH_DATA_ROOT="$(cd ../cn-health-data && pwd)"
+cd "$CN_HEALTH_DATA_ROOT"
+CN_HEALTH_SYNTHEA_PROFILE_PATH="$PWD/dist/synthea-cn-profile/releases/2026-08-29.r3" \
+CN_HEALTH_NAMES_RELEASE_PATH="$PWD/dist/names-cn/releases/40.37.0.r1" \
+CN_HEALTH_GEOGRAPHY_RELEASE_PATH="$PWD/dist/geography-cn/releases/2026-08-29.r1" \
+CN_HEALTH_POPULATION_RELEASE_PATH="$PWD/dist/population-cn/releases/WPP2024.r1" \
+uv run cn-health-synthea-service --host 127.0.0.1
+```
+
+再启动 Provider；该进程在前台运行，停止时按 `Ctrl+C`：
 
 ```sh
 SYNTHEA_DIR="$PWD/.data/synthea"
 SYNTHEA_JAR="$(find "$SYNTHEA_DIR/build/libs" -name '*with-dependencies.jar' -print -quit)"
 PROVIDER_CLASSES="$PWD/.data/synthea-provider/classes"
+CN_HEALTH_DATA_ROOT="$(cd ../cn-health-data && pwd)"
+CN_HEALTH_LOCALIZER_URL=http://127.0.0.1:51879/v1/localize \
 SYNTHEA_JAR_PATH="$SYNTHEA_JAR" \
-SYNTHEA_CONFIG_PATH="$PWD/apps/synthea-provider/synthea.properties" \
+SYNTHEA_CLASSPATH_PATH="$CN_HEALTH_DATA_ROOT/dist/synthea-cn-profile/releases/2026-08-29.r3/classpath" \
+SYNTHEA_CONFIG_PATH="$CN_HEALTH_DATA_ROOT/dist/synthea-cn-profile/releases/2026-08-29.r3/synthea.properties" \
 SYNTHEA_PROVIDER_PORT=51878 \
 java -cp "$PROVIDER_CLASSES:$SYNTHEA_JAR" ProviderServer
 ```
 
-随后仍按推荐方式运行 `pnpm dev:server` 和 `pnpm dev:web`。本机 Java 路径与 Docker 路径使用同一 Provider HTTP 协议、固定 Synthea commit 和配置文件。
+随后仍按推荐方式运行 `pnpm dev:server` 和 `pnpm dev:web`。本机 Java 路径与 Docker 路径使用同一 Provider HTTP 协议、固定 Synthea commit、profile 和 localizer 合同。
 
 ### 更新 Synthea 依赖清单
 
@@ -293,6 +331,8 @@ docker compose -f compose.yaml -f compose.synthea.yaml stop
 ```
 
 只需要容器化 ClinMesh、但不需要 Synthea 时，可以单独运行 `docker compose up -d --build`。ClinMesh 不把 Synthea 作为启动门禁；Provider 未启动、不可达或生成失败时，只影响对应生成任务，不影响内置生成器和既有 HIS 流程。除非明确要删除本地合成数据，不要使用 `docker compose down -v`。
+
+ClinMesh 与 `cn-health-data` 自行创作的软件代码采用各仓库声明的 MIT License。Compose 挂载的第三方来源数据及其规范化产物不因软件许可证而改变权属或使用条件，具体 provenance 和条款记录由对应 Candidate Manifest、`cn-health-data/DATA-NOTICE.md` 与来源说明提供。
 
 ### 直接运行 Node.js
 

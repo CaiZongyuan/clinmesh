@@ -142,7 +142,7 @@ export function localizedSyntheaPatientIdentity(input: {
   if (
     !/^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
       .test(syntheticPerson.value)
-    || !/^CNH\d{12}$/.test(mrn.value)
+    || !/^CNH[0-9A-F]{12}$/.test(mrn.value)
     || !validResidentId(residentId.value, patient.birthDate)
     || !residentId.extension?.some(extension => (
       extension.url === 'urn:cn-health-data:synthetic' && extension.valueBoolean === true

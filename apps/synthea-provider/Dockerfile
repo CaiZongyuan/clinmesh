@@ -24,12 +24,14 @@ RUN ./gradlew --no-daemon shadowJar \
   && cp "${synthea_jar}" /tmp/synthea.jar
 
 WORKDIR /src/provider
-COPY ProviderServer.java synthea.properties ./
+COPY ProviderServer.java ./
 RUN javac -cp /tmp/synthea.jar -d /tmp/provider-classes ProviderServer.java
 
 FROM eclipse-temurin:17-jre-jammy AS runtime
 
-ENV SYNTHEA_CONFIG_PATH=/opt/provider/synthea.properties
+ENV CN_HEALTH_LOCALIZER_URL=http://cn-health-localizer:51879/v1/localize
+ENV SYNTHEA_CLASSPATH_PATH=/opt/cn-health/synthea-profile/classpath
+ENV SYNTHEA_CONFIG_PATH=/opt/cn-health/synthea-profile/synthea.properties
 ENV SYNTHEA_JAR_PATH=/opt/synthea/synthea.jar
 ENV SYNTHEA_PROVIDER_PORT=51878
 WORKDIR /opt/provider
@@ -40,7 +42,6 @@ RUN groupadd --gid 10001 synthea-provider \
   && chown -R 10001:10001 /opt/provider /opt/synthea /opt/licenses
 COPY --from=build --chown=10001:10001 /tmp/provider-classes/ ./
 COPY --from=build --chown=10001:10001 /tmp/synthea.jar /opt/synthea/synthea.jar
-COPY --from=build --chown=10001:10001 /src/provider/synthea.properties ./synthea.properties
 COPY --from=build --chown=10001:10001 /src/synthea/LICENSE /opt/licenses/SYNTHEA-LICENSE
 COPY --from=build --chown=10001:10001 /src/synthea/NOTICE /opt/licenses/SYNTHEA-NOTICE
 

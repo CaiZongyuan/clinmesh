@@ -150,7 +150,7 @@ describe('Synthetic Patient Profile compilation', () => {
             value: 'urn:uuid:13b0d528-f28a-5bef-a5ad-1a3bdb700d9a',
           }, {
             system: 'urn:cn-health-data:synthetic-mrn',
-            value: 'CNH030092236323',
+            value: 'CNH4E13CCB7CC71',
           }, {
             extension: [{ url: 'urn:cn-health-data:synthetic', valueBoolean: true }],
             system: 'urn:cn-health-data:simulated-resident-id',
@@ -161,7 +161,7 @@ describe('Synthetic Patient Profile compilation', () => {
           telecom: [{ system: 'phone', use: 'home', value: '10093284819' }, {
             system: 'email',
             use: 'home',
-            value: 'cnh030092236323@example.test',
+            value: 'cnh4e13ccb7cc71@example.test',
           }],
         },
       }],
@@ -189,8 +189,8 @@ describe('Synthetic Patient Profile compilation', () => {
       identity: {
         address: '陕西省渭南市合成路178号',
         displayName: '杨秀珍',
-        email: 'cnh030092236323@example.test',
-        mrn: 'CNH030092236323',
+        email: 'cnh4e13ccb7cc71@example.test',
+        mrn: 'CNH4E13CCB7CC71',
         nationalId: '990000198001010637',
         phone: '10093284819',
       },

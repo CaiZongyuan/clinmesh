@@ -1284,7 +1284,7 @@ clock_revision
 
 当前安装 API 提供 `candidate-fever-outpatient-v3` 与 `density-fever-outpatient-v3`，并只接受 `candidate` 或 `density`。v1 是基线定义，v2 增加确定性结构化检验结果，v3 再以进入初始定义 hash 的 `medicationRulesVersion` 增加独立用药结论目录规则。v1/v2 blueprint、Hidden Fact 和药品目录配置保持原定义，既有 Scenario Run 的 reset 继续按其固定 scenario ID seed，不由 migration 改写。两个当前 v3 定义的 `clinicalReview` 都是 `null`，因此没有任何场景标记为 `golden`；数据库约束要求未来 `golden` 定义必须同时具有临床审核元数据。`density` 使用同一业务 schema，并增加合成患者和队列数据以验证分页与界面密度。
 
-所有 seed、账户、患者、机构、目录、支付和检验内容都是合成数据。内置生成器始终可用；Synthea 固定版本并可由 standalone `compose.synthea-provider.yaml`、本机 JDK 17 或完整容器 overlay `compose.synthea.yaml` 按需启用，未配置、不可达或失败只影响对应持久生成任务，不影响 Server 启动、既有 Dataset、Scenario Run 或内置生成。Synthea FHIR R4 Bundle 只作为编译输入，严格白名单转换为中国化 CaseTruth；美国机构、地址、付款方和标识不进入运行事实。LLM 不生成结构化真值，当前也不声明正式 FHIR Profile/IG 校验。
+所有 seed、账户、患者、机构、目录、支付和检验内容都是合成数据。内置生成器始终可用；Synthea 固定版本并可由 standalone `compose.synthea-provider.yaml`、本机 JDK 17 或完整容器 overlay `compose.synthea.yaml` 按需启用，未配置、不可达或失败只影响对应持久生成任务，不影响 Server 启动、既有 Dataset、Scenario Run 或内置生成。Provider 使用 `cn-health-data` profile classpath 和外部配置运行“中国”地域，原始自包含 FHIR R4 Bundle 在返回前经过独立 localizer；localizer 启动时验证 profile 内容哈希和姓名、地理、人口 Candidate，并为 Bundle 与响应写入同一 localization provenance。ClinMesh 只在 provenance、Bundle tag、中国地址、安全 synthetic 电话和 identifier namespace 全部一致时复用 Patient 身份，随后严格白名单转换临床 CaseTruth；来源机构和付款方不进入运行事实。LLM 不生成结构化真值，当前也不声明正式 FHIR Profile/IG 校验。
 
 完整 Reference Data Release 保存在可选的独立 SQLite 文件中，通过显式 CLI 执行 migration、import、list 和 verify；每个成功发布的 Release 固定来源版本、获取方式、许可、实际 artifact checksum、记录数、导入诊断与 content hash，失败导入不改变已有 Release。Server 只读打开该文件；未配置时使用稳定的内置 Release，仍可启动和 reset 已安装 Package。管理员 API 和 Web 只读取 Release 摘要，普通岗位不能读取完整参考内容。生成 Dataset 时固定 release ID/hash，并把同一 provenance 保存到 Profile Revision 和不可变 Package；operational SQLite 不保存完整全国参考目录，Package 安装和 reset 只读取已经解析的 Hospital Baseline 与患者事实。
 
@@ -1537,11 +1537,11 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 ### 15.1 运行与持久化
 
 - Node.js Hono 同时提供 Web SPA、认证、HIS/Scenario API、FHIR R5 只读 API 和健康检查。
-- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；二十七个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、Virtual Patient 接诊与问诊、门诊事实、结构化病历、独立检查申请、检验报告关联、报告确认与修订、诊断草稿与确认、处方审核状态、处方草稿、无需用药结论与撤回事实、门诊病例责任、Scenario Dataset/Package、持久生成任务、已报告检查复测约束、结构化二次追问回答，以及 Synthetic Patient Profile、Profile Revision、参考数据与 mapping provenance、原始来源和 Epoch materialization。
+- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；二十九个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、Virtual Patient 接诊与问诊、门诊事实、结构化病历、独立检查申请、检验报告关联、报告确认与修订、诊断草稿与确认、处方审核状态、处方草稿、无需用药结论与撤回事实、门诊病例责任、Scenario Dataset/Package、持久生成任务、已报告检查复测约束、结构化二次追问回答，以及 Synthetic Patient Profile、Profile Revision、参考数据、mapping/localization provenance、原始来源、服务目录检索和 Epoch materialization。
 - 数据库 CLI 提供 migrate、verify、reindex、backup 和 restore；已有旧版数据库执行 migrate 时先在同目录创建并验证升级前备份，Server 进程只验证 migration。
 - CommandExecutor 统一 `BEGIN IMMEDIATE`、expected versions、幂等 receipt、FHIR current/history/search、领域事实、AuditEvent、Action Trace 和 outbox 原子提交。
 - 同进程 dispatcher 持久化 claim/lease/attempt/correlation，支持失败重试、ambiguous、重复消费和旧 Epoch abandon。
-- Docs 开发与预览入口使用 `51898/51899`，Web 开发入口使用 `51888`，Synthea Provider 在宿主与容器内统一使用 `51878`，Server 本地、宿主与容器内统一使用 `51868`。standalone Provider 仅绑定宿主回环地址。默认 Dockerfile 与 Compose 固定单实例和命名持久卷，不包含 Java 或 Synthea；`compose.synthea-provider.yaml` 只启动非 root Provider，`compose.synthea.yaml` 复用该服务并为一键部署注入容器内 URL。Server 通过可选 URL adapter 调用固定协议，不把 Provider 健康状态作为启动门禁。
+- Docs 开发与预览入口使用 `51898/51899`，Web 开发入口使用 `51888`，Synthea Provider 默认在宿主与容器内使用 `51878`，内部 cn-health localizer 使用 `51879`，Server 本地、宿主与容器内统一使用 `51868`。standalone Provider 仅绑定宿主回环地址，宿主端口可覆盖；localizer 不发布宿主端口。默认 Dockerfile 与 Compose 固定单实例和命名持久卷，不包含 Java 或 Synthea；`compose.synthea-provider.yaml` 启动两个非 root、只读服务并只读挂载版本化 Candidate，`compose.synthea.yaml` 复用它们并为一键部署注入容器内 URL。Server 通过可选 URL adapter 调用固定协议，不把 Provider 健康状态作为启动门禁。
 
 ### 15.2 协议与业务
 

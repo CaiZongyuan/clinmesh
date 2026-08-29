@@ -8,7 +8,7 @@ import {
 } from '../src/infrastructure/scenario-generation/synthea-provider.ts'
 
 const syntheaCommit = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
-const configHash = 'a08483ffe6aca8c2ab6fc058a24297842cb9e37b755a83c2fdda18330dff9343'
+const configHash = '81c9b79f5426b85244f42275f98d2f9e161a4c502980d9cde8d027cdda6ef103'
 const profileContentHash = 'd8a4ef19561434cb66c8a391aebfcf6a4dc5f14baf4d4171eac3b8c340b5dd12'
 const localization = syntheaCnLocalizationProvenanceSchema.parse({
   dependencies: [{
@@ -70,7 +70,7 @@ function patientBundle(extraResources: unknown[] = []) {
           value: 'urn:uuid:13b0d528-f28a-5bef-a5ad-1a3bdb700d9a',
         }, {
           system: 'urn:cn-health-data:synthetic-mrn',
-          value: 'CNH030092236323',
+          value: 'CNH4E13CCB7CC71',
         }, {
           extension: [{ url: 'urn:cn-health-data:synthetic', valueBoolean: true }],
           system: 'urn:cn-health-data:simulated-resident-id',
@@ -80,7 +80,7 @@ function patientBundle(extraResources: unknown[] = []) {
         resourceType: 'Patient',
         telecom: [{ system: 'phone', value: '10093284819' }, {
           system: 'email',
-          value: 'cnh030092236323@example.test',
+          value: 'cnh4e13ccb7cc71@example.test',
         }],
       },
     }, {
