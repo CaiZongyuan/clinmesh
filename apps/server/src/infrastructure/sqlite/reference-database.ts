@@ -21,6 +21,9 @@ import Database from 'better-sqlite3'
 import { z } from 'zod'
 import { parseReferenceSourceArtifact } from '../reference-data/reference-source-importers.ts'
 import {
+  parseCnHealthCandidateReferenceArtifact,
+} from '../reference-data/cn-health-candidate-importer.ts'
+import {
   instrumentSqliteDriver,
   type SqlitePerformanceObserver,
 } from './performance-observer.ts'
@@ -210,6 +213,7 @@ function sourceRows(database: ReferenceDatabase, releaseId: string): ReferenceSo
   return z.array(z.object({
     acquisition_method: z.string(),
     artifact_format: z.string(),
+    candidate_provenance_json: z.string().nullable(),
     checksum: z.string(),
     license_id: z.string(),
     import_diagnostics_json: z.string(),
@@ -222,13 +226,16 @@ function sourceRows(database: ReferenceDatabase, releaseId: string): ReferenceSo
   })).parse(database.driver.prepare(`
     SELECT source_id, upstream_version, published_at, retrieved_at, source_url,
       checksum, license_id, acquisition_method, artifact_format, record_count,
-      import_diagnostics_json
+      import_diagnostics_json, candidate_provenance_json
     FROM reference_source_manifest
     WHERE release_id = ?
     ORDER BY source_id
   `).all(releaseId)).map(row => ({
     acquisitionMethod: row.acquisition_method,
     artifactFormat: row.artifact_format,
+    ...(row.candidate_provenance_json === null
+      ? {}
+      : { candidate: JSON.parse(row.candidate_provenance_json) }),
     checksum: row.checksum,
     licenseId: row.license_id,
     ...(row.published_at === null ? {} : { publishedAt: row.published_at }),
@@ -474,15 +481,21 @@ export function importReferenceDataRelease(
     if (actualChecksum !== source.checksum) {
       throw new Error(`Reference source checksum mismatch: ${source.sourceId}`)
     }
-    const artifactContent = artifactBytes.toString('utf8')
-    const artifact = parseReferenceSourceArtifact({
-      content: artifactContent,
+    const candidate = source.artifactFormat === 'cn-health-candidate'
+      ? parseCnHealthCandidateReferenceArtifact(artifactPath)
+      : undefined
+    if (candidate !== undefined && candidate.provenance.releaseId !== source.upstreamVersion) {
+      throw new Error(`Reference source version does not match Candidate: ${source.sourceId}`)
+    }
+    const artifact = candidate?.artifact ?? parseReferenceSourceArtifact({
+      content: artifactBytes.toString('utf8'),
       format: source.artifactFormat,
       version: source.upstreamVersion,
     })
     sources.push({
       acquisitionMethod: source.acquisitionMethod,
       artifactFormat: source.artifactFormat,
+      ...(candidate === undefined ? {} : { candidate: candidate.provenance }),
       checksum: actualChecksum,
       licenseId: source.licenseId,
       ...(source.publishedAt === undefined ? {} : { publishedAt: source.publishedAt }),
@@ -503,16 +516,18 @@ export function importReferenceDataRelease(
       sourceUrl: source.sourceUrl,
       upstreamVersion: source.upstreamVersion,
     })
-    concepts.push(...artifact.concepts.map(concept => ({ ...concept, sourceId: source.sourceId })))
-    medicationProducts.push(...artifact.medicationProducts.map(product => ({
-      ...product,
-      sourceId: source.sourceId,
-    })))
-    services.push(...artifact.services.map(service => ({ ...service, sourceId: source.sourceId })))
-    valueSetEntries.push(...artifact.valueSetEntries.map(entry => ({
-      ...entry,
-      sourceId: source.sourceId,
-    })))
+    for (const concept of artifact.concepts) {
+      concepts.push({ ...concept, sourceId: source.sourceId })
+    }
+    for (const product of artifact.medicationProducts) {
+      medicationProducts.push({ ...product, sourceId: source.sourceId })
+    }
+    for (const service of artifact.services) {
+      services.push({ ...service, sourceId: source.sourceId })
+    }
+    for (const entry of artifact.valueSetEntries) {
+      valueSetEntries.push({ ...entry, sourceId: source.sourceId })
+    }
   }
   const seenIds = new Set<string>()
   const seenCodes = new Set<string>()
@@ -598,8 +613,8 @@ export function importReferenceDataRelease(
       INSERT INTO reference_source_manifest (
         release_id, source_id, upstream_version, published_at, retrieved_at,
         source_url, checksum, license_id, acquisition_method, artifact_format, record_count,
-        import_diagnostics_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        import_diagnostics_json, candidate_provenance_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     for (const source of sources) {
       insertSource.run(
@@ -615,6 +630,7 @@ export function importReferenceDataRelease(
         source.artifactFormat,
         source.recordCount,
         JSON.stringify(source.importDiagnostics),
+        source.candidate === undefined ? null : JSON.stringify(source.candidate),
       )
     }
     const insertConcept = database.driver.prepare(`

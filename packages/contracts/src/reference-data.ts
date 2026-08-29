@@ -78,6 +78,7 @@ export const referenceArtifactSchema = z.object({
 }).strict()
 
 export const referenceArtifactFormatSchema = z.enum([
+  'cn-health-candidate',
   'clinmesh-reference-v1',
   'loinc-csv',
   'nhsa-diagnosis-csv',
@@ -86,6 +87,17 @@ export const referenceArtifactFormatSchema = z.enum([
   'ucum-xml',
   'wst-value-set-csv',
 ])
+
+export const cnHealthCandidateProvenanceSchema = z.object({
+  canonicalSha256: sha256Schema,
+  datasetId: z.enum(['loinc-zh-cn', 'nhc-icd10-clinical', 'nhsa-drugs']),
+  datasetSchemaVersion: z.literal(1),
+  recordCount: z.number().int().nonnegative(),
+  releaseId: z.string().min(1).max(256),
+  sourceVersion: z.string().min(1).max(256),
+  sqliteSha256: sha256Schema,
+  sqliteSizeBytes: z.number().int().nonnegative(),
+}).strict()
 
 export const referenceImportManifestSchema = z.object({
   createdAt: z.iso.datetime({ offset: true }),
@@ -114,11 +126,20 @@ export const referenceImportDiagnosticsSchema = z.object({
 export const referenceSourceManifestSchema = referenceImportManifestSchema.shape.sources.element.omit({
   artifactPath: true,
 }).extend({
+  candidate: cnHealthCandidateProvenanceSchema.optional(),
   importDiagnostics: referenceImportDiagnosticsSchema,
   recordCount: z.number().int().nonnegative(),
 }).strict().refine(source => (
   source.importDiagnostics.acceptedCount + source.importDiagnostics.rejectedCount === source.recordCount
-), { message: 'Import diagnostic counts must equal the source record count' })
+), { message: 'Import diagnostic counts must equal the source record count' }).superRefine((source, context) => {
+  if ((source.artifactFormat === 'cn-health-candidate') !== (source.candidate !== undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'cn-health Candidate format and provenance must be present together',
+      path: ['candidate'],
+    })
+  }
+})
 
 export const referenceDataReleaseSummarySchema = z.object({
   conceptCount: z.number().int().nonnegative(),
@@ -151,6 +172,7 @@ export const referenceMappingPackageProvenanceSchema = z.object({
 
 export type ReferenceArtifact = z.infer<typeof referenceArtifactSchema>
 export type ReferenceArtifactFormat = z.infer<typeof referenceArtifactFormatSchema>
+export type CnHealthCandidateProvenance = z.infer<typeof cnHealthCandidateProvenanceSchema>
 export type ReferenceConcept = z.infer<typeof referenceConceptSchema>
 export type ReferenceDataProvenance = z.infer<typeof referenceDataProvenanceSchema>
 export type ReferenceDataReleaseList = z.infer<typeof referenceDataReleaseListSchema>

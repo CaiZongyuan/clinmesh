@@ -308,6 +308,52 @@ pnpm --filter @clinmesh/server synthea-inventory \
 
 CLI 分别固定校验三份 corpus 的 Synthea commit、`populationSeed=4242`、`clinicalSeed=7331`、单病种、10 人、`1986-08-01` 至 `2026-08-01` 和 `Asia/Shanghai`；参数不符时不覆盖清单。
 
+### 导入 cn-health Candidate 到作者参考库
+
+ClinMesh 的作者参考库是独立 SQLite，不是 HIS operational SQLite。它可以直接读取 `cn-health-data` 的疾病、药品和 LOINC Candidate，无需先导出中间 CSV。外层 Reference Release manifest 选择一组固定来源；每个 Candidate source 指向自己的 `manifest.json`，`checksum` 是该 Manifest 文件的 SHA-256，`upstreamVersion` 必须等于 Candidate Release ID：
+
+```json
+{
+  "createdAt": "2026-08-30T00:00:00.000+08:00",
+  "releaseId": "clinmesh-cn-health-2026-08-30.r1",
+  "schemaVersion": "1",
+  "sources": [
+    {
+      "acquisitionMethod": "manual-download",
+      "artifactFormat": "cn-health-candidate",
+      "artifactPath": "/absolute/path/to/nhc-icd10-clinical/release/manifest.json",
+      "checksum": "<candidate-manifest-sha256>",
+      "licenseId": "LicenseRef-cn-health-source-terms",
+      "retrievedAt": "2026-08-30T00:00:00.000+08:00",
+      "sourceId": "cn-health-nhc-icd10-clinical",
+      "sourceUrl": "https://github.com/CaiZongyuan/cn-health-data",
+      "upstreamVersion": "nhc-icd10-clinical@2022.r3"
+    }
+  ]
+}
+```
+
+从仓库根目录执行 migration、import、verify 和 list：
+
+```sh
+REFERENCE_DATABASE="$PWD/.data/clinmesh-reference.sqlite"
+REFERENCE_MANIFEST="$PWD/.data/cn-health-reference-release.json"
+
+pnpm --filter @clinmesh/server reference-db migrate \
+  --database "$REFERENCE_DATABASE"
+pnpm --filter @clinmesh/server reference-db import \
+  --database "$REFERENCE_DATABASE" \
+  --manifest "$REFERENCE_MANIFEST"
+pnpm --filter @clinmesh/server reference-db verify \
+  --database "$REFERENCE_DATABASE"
+pnpm --filter @clinmesh/server reference-db list \
+  --database "$REFERENCE_DATABASE"
+```
+
+Importer 会验证外层 checksum、Candidate schema/Dataset/Release、`data.sqlite` SHA-256 与大小、SQLite integrity/application ID、主表列和 canonical record count，再在一个事务中发布 ClinMesh Reference Release。发布摘要保存 Candidate Release ID、source version、canonical hash、SQLite hash/size 和记录数；任一来源失败时不留下部分 Release。当前真实疾病和药品 Candidate 可以直接使用；LOINC 适配器遵循同一合同，在提供相应来源构建的 Candidate 后加入外层 manifest。
+
+完整全国参考行只存在于作者数据库。Scenario Compiler 选择当前病种所需的诊断、检验和药品闭包写入不可变 Package，普通运行与 reset 不读取 Candidate。挂载数据的来源条款不因 ClinMesh 软件许可证而改变。
+
 ### Docker 一键启动 ClinMesh 与 Synthea
 
 需要完整容器化运行时，叠加两个 Compose 文件：

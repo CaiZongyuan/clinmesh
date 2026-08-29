@@ -260,6 +260,8 @@ export function parseReferenceSourceArtifact(input: {
   version: string
 }): ReferenceArtifact {
   switch (input.format) {
+    case 'cn-health-candidate':
+      throw new Error('cn-health Candidate sources require a Manifest path')
     case 'clinmesh-reference-v1':
       return referenceArtifactSchema.parse(JSON.parse(input.content))
     case 'loinc-csv':
