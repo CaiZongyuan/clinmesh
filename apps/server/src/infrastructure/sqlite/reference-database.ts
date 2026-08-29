@@ -8,6 +8,7 @@ import {
   referenceDataReleaseSummarySchema,
   referenceImportDiagnosticsSchema,
   referenceImportManifestSchema,
+  type ReferenceArtifact,
   type ReferenceConcept,
   type ReferenceDataReleaseList,
   type ReferenceDataReleaseSummary,
@@ -481,17 +482,21 @@ export function importReferenceDataRelease(
     if (actualChecksum !== source.checksum) {
       throw new Error(`Reference source checksum mismatch: ${source.sourceId}`)
     }
-    const candidate = source.artifactFormat === 'cn-health-candidate'
-      ? parseCnHealthCandidateReferenceArtifact(artifactPath)
-      : undefined
-    if (candidate !== undefined && candidate.provenance.releaseId !== source.upstreamVersion) {
-      throw new Error(`Reference source version does not match Candidate: ${source.sourceId}`)
+    let candidate: ReturnType<typeof parseCnHealthCandidateReferenceArtifact> | undefined
+    let artifact: ReferenceArtifact
+    if (source.artifactFormat === 'cn-health-candidate') {
+      candidate = parseCnHealthCandidateReferenceArtifact(artifactPath)
+      if (candidate.provenance.releaseId !== source.upstreamVersion) {
+        throw new Error(`Reference source version does not match Candidate: ${source.sourceId}`)
+      }
+      artifact = candidate.artifact
+    } else {
+      artifact = parseReferenceSourceArtifact({
+        content: artifactBytes.toString('utf8'),
+        format: source.artifactFormat,
+        version: source.upstreamVersion,
+      })
     }
-    const artifact = candidate?.artifact ?? parseReferenceSourceArtifact({
-      content: artifactBytes.toString('utf8'),
-      format: source.artifactFormat,
-      version: source.upstreamVersion,
-    })
     sources.push({
       acquisitionMethod: source.acquisitionMethod,
       artifactFormat: source.artifactFormat,

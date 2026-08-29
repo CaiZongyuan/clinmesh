@@ -11,6 +11,7 @@ import { z } from 'zod'
 const loincVersionSchema = z.literal('2.83')
 const nhsaDiagnosisVersionSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/)
 const ucumVersionSchema = z.literal('2.2')
+type TextReferenceArtifactFormat = Exclude<ReferenceArtifactFormat, 'cn-health-candidate'>
 
 const loincRecordSchema = z.object({
   record: z.object({
@@ -256,12 +257,10 @@ export function parseUcumXmlReferenceArtifact(input: {
 
 export function parseReferenceSourceArtifact(input: {
   content: string
-  format: ReferenceArtifactFormat
+  format: TextReferenceArtifactFormat
   version: string
 }): ReferenceArtifact {
   switch (input.format) {
-    case 'cn-health-candidate':
-      throw new Error('cn-health Candidate sources require a Manifest path')
     case 'clinmesh-reference-v1':
       return referenceArtifactSchema.parse(JSON.parse(input.content))
     case 'loinc-csv':
