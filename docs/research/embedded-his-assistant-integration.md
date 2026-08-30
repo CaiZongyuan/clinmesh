@@ -257,7 +257,7 @@ Turn accepted with PageContextSnapshot C7
 
 ### 一个定义源，多个窄 adapter
 
-用户希望的“CLI 风格 HIS 操作”应表现为稳定、可发现、可组合的命令语义，而不是让临床 Agent 获得 shell。建议建立 `HisOperationCatalog`，每个定义至少声明：
+“CLI 风格 HIS 操作”应表现为稳定、可发现、可组合的命令语义。任务 Agent 通过当前 `clinmesh` CLI 执行这些操作；未来嵌入式临床助手可直接投影同一 `hisOperationCatalog`，无需获得通用 shell。每个定义至少声明：
 
 - 稳定 `operationId` 和 schema version；
 - `query / draft / preview / command` mode；

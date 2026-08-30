@@ -218,6 +218,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const identity = new IdentityService(database, {
       authBaseUrl: options.authBaseUrl,
       authSecret: options.authSecret,
+      commands,
       ...clockOptions,
       trustedOrigins: options.trustedOrigins,
     })

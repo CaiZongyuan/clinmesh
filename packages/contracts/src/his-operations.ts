@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  capabilityStatementSchema,
   fhirResourceSchema,
   isSupportedFhirSearchParameter,
   supportedFhirResourceTypeSchema,
@@ -76,6 +77,14 @@ import {
 
 export const hisOperationModeSchema = z.enum(['query', 'draft', 'preview', 'command'])
 export const hisOperationRiskSchema = z.enum(['read', 'write', 'high-risk-write'])
+export const hisOperationIdentitySchema = z.enum(['agent', 'human'])
+export const hisOperationHandlerOwnerSchema = z.enum([
+  'FhirCapabilities',
+  'FhirRepository',
+  'ReferenceDataService',
+  'SyntheticCaseVisitService',
+  'WorkflowService',
+])
 export const hisOperationSkillSchema = z.enum([
   'clinmesh-billing',
   'clinmesh-doctor',
@@ -86,9 +95,23 @@ export const hisOperationSkillSchema = z.enum([
   'clinmesh-triage',
 ])
 
+export const hisOperationErrorSchema = z.object({
+  code: z.string().min(1),
+  conflict: z.unknown().optional(),
+  idempotencyKey: z.string().min(1).optional(),
+  message: z.string().min(1),
+  operationId: z.string().min(1).optional(),
+  outcome: z.enum(['ambiguous', 'definitely_not_sent']),
+  param: z.string().min(1).optional(),
+  retryable: z.boolean(),
+  type: z.string().min(1),
+}).strict()
+
 export interface HisOperationDefinition {
   cliPath: readonly [string, ...string[]]
   commandOperation?: string
+  error: typeof hisOperationErrorSchema
+  handlerOwner: z.infer<typeof hisOperationHandlerOwnerSchema>
   http: {
     encodeBody?: (input: unknown) => unknown
     encodeQuery?: (input: unknown) => Record<string, string | string[]>
@@ -96,9 +119,11 @@ export interface HisOperationDefinition {
     path: string
   }
   id: string
+  identities: ReadonlyArray<z.infer<typeof hisOperationIdentitySchema>>
   input: z.ZodType
   mode: z.infer<typeof hisOperationModeSchema>
   output: z.ZodType
+  previewToken: 'none' | 'required'
   requirements: {
     expectedVersions: boolean
     idempotency: 'none' | 'required'
@@ -110,7 +135,10 @@ export interface HisOperationDefinition {
   version: number
 }
 
-type HisOperationDeclaration = Omit<HisOperationDefinition, 'commandOperation' | 'skill'>
+type HisOperationDeclaration = Omit<
+  HisOperationDefinition,
+  'commandOperation' | 'error' | 'handlerOwner' | 'identities' | 'previewToken' | 'skill'
+>
 
 const clinicalDocumentOperationIds = {
   draftSet: `encounter.clinical-${'document'}.draft.set`,
@@ -1229,7 +1257,7 @@ const operationDefinitions = [
     version: 1,
   },
   {
-    cliPath: ['encounter', 'clinical-document', 'sign'],
+    cliPath: ['encounter', 'clinical-document', 'sign', 'commit'],
     http: {
       method: 'POST',
       path: '/api/his/v1/encounters/:encounterId/clinical-document/actions/sign',
@@ -1579,7 +1607,7 @@ const operationDefinitions = [
     id: 'fhir.metadata.read',
     input: emptyInputSchema,
     mode: 'query',
-    output: fhirResourceSchema,
+    output: capabilityStatementSchema,
     requirements: {
       expectedVersions: false,
       idempotency: 'none',
@@ -1745,24 +1773,46 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'triage.record': 'clinmesh-triage',
 }
 
-const hisOperations: readonly HisOperationDefinition[] = operationDefinitions.map((operation) => {
+function handlerOwnerFor(
+  operation: HisOperationDeclaration,
+): z.infer<typeof hisOperationHandlerOwnerSchema> {
+  if (operation.http.path === '/fhir/R5/metadata') return 'FhirCapabilities'
+  if (operation.http.path.startsWith('/fhir/R5/')) return 'FhirRepository'
+  if (operation.http.path.startsWith('/api/his/v1/reference-catalogs/')) {
+    return 'ReferenceDataService'
+  }
+  if (operation.id === 'registration.synthetic-case.start') return 'SyntheticCaseVisitService'
+  return 'WorkflowService'
+}
+
+export const hisOperationCatalog: readonly HisOperationDefinition[] = operationDefinitions.map((operation) => {
   const commandOperation = operation.requirements.idempotency === 'required'
     ? commandOperationAliases[operation.id] ?? operation.id
     : undefined
   const skill = operationSkills[operation.id]
   if (skill === undefined) throw new Error(`HIS operation has no Agent Skill: ${operation.id}`)
+  const metadata = {
+    error: hisOperationErrorSchema,
+    handlerOwner: handlerOwnerFor(operation),
+    identities: hisOperationIdentitySchema.options,
+    previewToken: operation.id === clinicalDocumentOperationIds.sign
+      || operation.id === 'payment.confirm'
+      ? 'required' as const
+      : 'none' as const,
+    skill,
+  }
   if (operation.http.method === 'GET' || 'encodeBody' in operation.http) {
     return {
       ...operation,
       ...(commandOperation === undefined ? {} : { commandOperation }),
-      skill,
+      ...metadata,
     }
   }
   const encodeBody = bodyEncoders[operation.id as keyof typeof bodyEncoders]
   return {
     ...operation,
     ...(commandOperation === undefined ? {} : { commandOperation }),
-    skill,
+    ...metadata,
     http: {
       ...operation.http,
       ...(encodeBody === undefined ? {} : { encodeBody }),
@@ -1824,8 +1874,8 @@ export const excludedHisRoutes = [
   },
 ] as const satisfies readonly ExcludedHisRoute[]
 
-const operationsById = new Map(hisOperations.map(operation => [operation.id, operation]))
-const operationRoutes = hisOperations.map(operation => ({
+const operationsById = new Map(hisOperationCatalog.map(operation => [operation.id, operation]))
+const operationRoutes = hisOperationCatalog.map(operation => ({
   method: operation.http.method,
   operation,
   pattern: new RegExp(`^${operation.http.path
@@ -1843,7 +1893,7 @@ export function getHisOperation(id: string): HisOperationDefinition {
 }
 
 export function listHisOperations(): readonly HisOperationDefinition[] {
-  return hisOperations
+  return hisOperationCatalog
 }
 
 export function matchHisOperation(

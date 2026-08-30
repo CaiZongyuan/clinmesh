@@ -35,8 +35,11 @@ describe('clinmesh operations', () => {
     expect(envelope.data.operations).toHaveLength(listHisOperations().length)
     expect(envelope.data.operations[0]).toEqual({
       cliPath: ['reference', 'diagnoses', 'search'],
+      handlerOwner: 'ReferenceDataService',
       id: 'reference.diagnoses.search',
+      identities: ['agent', 'human'],
       mode: 'query',
+      previewToken: 'none',
       risk: 'read',
       roles: ['administrator', 'outpatient-doctor'],
       skill: 'clinmesh-doctor',

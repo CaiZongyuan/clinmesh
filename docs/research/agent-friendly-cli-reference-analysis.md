@@ -9,7 +9,7 @@
 
 一个后端业务成为 Agent 容易理解且可靠调用的 CLI，不是把 HTTP endpoint 逐个改成子命令。有效的 CLI 需要同时提供三层信息：用业务意图命名的窄操作、可机器读取的精确合同，以及解释“何时用、前置条件、状态副作用和失败后如何恢复”的 affordance。三个参考分别在这三层表现出不同优势：CLI-Anything 擅长从真实后端和数据模型建立操作面与端到端验证，lark-cli 提供最完整的机器合同与统一执行管线，Multica 则把复杂业务副作用和受信 Agent 上下文写进平台 skill 与服务端授权边界。
 
-ClinMesh 已将 `HisOperationCatalog`、`clinmesh` CLI、Agent Capability Grant 和七个领域 Skills 落地；当前字段、授权、恢复和边界由[系统架构](../architecture.md#7-agent-cli-与-skills)拥有。未来嵌入式助手或 Cordis adapter 可以投影同一 Catalog，但不改变 CLI 已经是任务 Agent 正式操作面的事实。本文只解释参考机制与 ClinMesh 取舍。
+ClinMesh 已将 `hisOperationCatalog`、`clinmesh` CLI、Agent Capability Grant 和七个领域 Skills 落地；当前字段、授权、恢复和边界由[系统架构](../architecture.md#7-agent-cli-与-skills)拥有。未来嵌入式助手或 Cordis adapter 可以投影同一 Catalog，但不改变 CLI 已经是任务 Agent 正式操作面的事实。本文只解释参考机制与 ClinMesh 取舍。
 
 ## 对照结论
 
@@ -56,7 +56,7 @@ CLI-Anything 的测试方法是上限而非所有 harness 的自动保证。[HAR
 
 [schema command][lark-schema]不需要认证即可从同一 API catalog 输出参数、类型、scope，并用同一 catalog 提供 completion；错误会返回候选项和修复 hint。[Affordance format][lark-affordance]给 schema 和 help 叠加 `use when`、`avoid when`、prerequisites、tips、examples 与关联 skill，同时要求不复述 schema 已表达的字段。[Task skill][lark-task-skill]再负责自然语言意图消歧、跨 domain 边界和多步工作流。三者分别回答“有哪些精确字段”“什么时候用”“如何完成任务”，避免把所有信息塞进一个巨大 help 或 skill。
 
-ClinMesh 采用同样的 progressive disclosure：`clinmesh operations list` 发现 operation，`clinmesh operations schema` 返回精确合同，命令 `--help` 显示局部参数，Skill 只保留医院业务语义、前置状态、禁止路径和恢复策略。schema、help 与命令树从 `HisOperationCatalog` 投影；Skill 不手抄字段表。
+ClinMesh 采用同样的 progressive disclosure：`clinmesh operations list` 发现 operation，`clinmesh operations schema` 返回精确合同，命令 `--help` 显示局部参数，Skill 只保留医院业务语义、前置状态、禁止路径和恢复策略。schema、help 与命令树从 `hisOperationCatalog` 投影；Skill 不手抄字段表。
 
 ### Wire、错误和执行安全
 
@@ -94,7 +94,7 @@ ClinMesh 保留这个方向并使用自身 IdentityService、Workspace/Epoch、S
 
 ### 合同分层
 
-1. `HisOperationCatalog` 拥有稳定 operation ID、显式 `cliPath`、mode、输入输出 schema、岗位、风险、HTTP adapter、幂等、expected version、receipt adapter 和所属 Skill。CLI 注册、服务端 Agent route matching、Grant Catalog hash 与测试读取同一合同。
+1. `hisOperationCatalog` 拥有稳定 operation ID、显式 `cliPath`、mode、输入输出 schema、岗位、风险、HTTP adapter、幂等、expected version、receipt adapter 和所属 Skill。CLI 注册、服务端 Agent route matching、Grant Catalog hash 与测试读取同一合同。
 2. `clinmesh operations list/schema` 是机器发现面，Commander help 是局部人类视图，七个 `clinmesh-*` Skills 解释业务意图、前置状态、岗位交接、反例和恢复。三层不复制彼此的 owner 信息。
 3. Canonical HIS route 全量分类；兼容组合 route 保留在 Server 但有明确排除理由。FHIR 只投影 metadata、read、vread、history 和能力注册表允许的 search。
 4. CLI 没有 raw URL、任意 method/path/body、SQL、JSON Patch、FHIR write、Bundle write或通用 invoke。

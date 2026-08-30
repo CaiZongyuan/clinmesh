@@ -412,4 +412,29 @@ describe('HIS operation catalog', () => {
       'clinmesh-triage': 2,
     })
   })
+
+  it('publishes identity, error, preview, and server handler ownership metadata', () => {
+    expect(listHisOperations().every(operation => (
+      operation.identities.join(',') === 'agent,human'
+      && operation.error.safeParse({
+        code: 'example',
+        message: 'Example error',
+        outcome: 'definitely_not_sent',
+        retryable: false,
+        type: 'validation',
+      }).success
+    ))).toBe(true)
+    expect(listHisOperations()
+      .filter(operation => operation.previewToken === 'required')
+      .map(operation => operation.id)).toEqual([
+      clinicalDocumentOperationIds.sign,
+      'payment.confirm',
+    ])
+    expect(getHisOperation('reference.diagnoses.search').handlerOwner).toBe('ReferenceDataService')
+    expect(getHisOperation('registration.synthetic-case.start').handlerOwner)
+      .toBe('SyntheticCaseVisitService')
+    expect(getHisOperation('fhir.metadata.read').handlerOwner).toBe('FhirCapabilities')
+    expect(getHisOperation('fhir.resource.search').handlerOwner).toBe('FhirRepository')
+    expect(getHisOperation('patient.create').handlerOwner).toBe('WorkflowService')
+  })
 })

@@ -93,6 +93,8 @@ export interface CommandInvocation<Input, Data> {
   input: Input
   mapExpectedVersionConflict?: (error: ExpectedVersionConflictError) => Error
   operation: string
+  replay?: 'reject' | 'return'
+  storedResponse?: (response: CommandResponse<Data>) => unknown
 }
 
 interface EnqueueInput {
@@ -286,6 +288,9 @@ export class CommandExecutor {
         if (existing.status !== 'completed' || existing.response_json === null) {
           throw new CommandConflictError('The idempotent command has not reached a replayable result')
         }
+        if (invocation.replay === 'reject') {
+          throw new CommandConflictError('The one-time command result cannot be replayed')
+        }
         const response = storedCommandResponseSchema.extend({
           data: invocation.dataSchema,
         }).parse(JSON.parse(existing.response_json))
@@ -343,7 +348,7 @@ export class CommandExecutor {
         SET status = 'completed', response_json = ?, updated_at = ?
         WHERE workspace_id = ? AND epoch = ? AND actor_id = ?
           AND operation = ? AND idempotency_key = ?
-      `).run(JSON.stringify(response), now, ...receiptKey)
+      `).run(JSON.stringify(invocation.storedResponse?.(response) ?? response), now, ...receiptKey)
       this.#database.driver.exec('COMMIT')
       return response
     } catch (error) {

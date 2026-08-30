@@ -160,6 +160,65 @@ describe('CommandExecutor', () => {
     database.close()
   })
 
+  it('redacts a one-time credential receipt and rejects replay without reissuing it', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-command-one-time-'))
+    temporaryDirectories.push(directory)
+    const database = openClinMeshDatabase({
+      busyTimeoutMs: 5_000,
+      databasePath: join(directory, 'clinmesh.sqlite'),
+    })
+    applyMigrations(database)
+    const repositoryContext = { epoch: 'epoch-001', workspaceId: 'workspace-001' }
+    new WorkspaceRepository(database).install({
+      ...repositoryContext,
+      scenarioId: 'command-one-time-credential',
+      scenarioRunId: 'run-001',
+      workspaceName: '合成一次性凭据工作区',
+    })
+    const executor = new CommandExecutor(database, new FhirRepository(database))
+    const invocation = {
+      context: {
+        ...repositoryContext,
+        actorId: 'actor-administrator',
+        roleCode: 'administrator',
+        scenarioRunId: 'run-001',
+      },
+      dataSchema: z.object({ credentialId: z.string(), token: z.string() }),
+      expectedVersions: {},
+      idempotencyKey: 'one-time-credential-001',
+      input: { name: 'Synthetic task credential' },
+      operation: 'agent-grant.create',
+      replay: 'reject' as const,
+      storedResponse: (response: { data: { credentialId: string; token: string } }) => ({
+        ...response,
+        data: { credentialId: response.data.credentialId },
+      }),
+    }
+    let executions = 0
+    const execute = () => executor.execute(invocation, () => {
+      executions += 1
+      return {
+        data: { credentialId: 'credential-001', token: 'raw-task-token' },
+        effects: [],
+      }
+    })
+
+    expect(execute().data.token).toBe('raw-task-token')
+    const persisted = database.driver.prepare(`
+      SELECT response_json FROM command_receipt
+      WHERE workspace_id = ? AND epoch = ? AND operation = ? AND idempotency_key = ?
+    `).get(
+      'workspace-001',
+      'epoch-001',
+      'agent-grant.create',
+      'one-time-credential-001',
+    ) as { response_json: string }
+    expect(persisted.response_json).not.toContain('raw-task-token')
+    expect(() => execute()).toThrow(CommandConflictError)
+    expect(executions).toBe(1)
+    database.close()
+  })
+
   it('rolls back every business effect while retaining a failed audit attempt', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-command-rollback-'))
     temporaryDirectories.push(directory)

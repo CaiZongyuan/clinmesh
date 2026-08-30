@@ -8,8 +8,10 @@ import {
 } from '@clinmesh/contracts/reference-data'
 import {
   scenarioHospitalServiceCatalogItemSchema,
+  patientBriefContentSchema,
   startSyntheticCaseResultSchema,
   type InvestigationResultContent,
+  type PatientBriefContent,
   type PatientBriefRevision,
   type SyntheticCaseInstance,
   syntheticPatientProfileSchema,
@@ -276,6 +278,7 @@ const paymentWorkflowRowSchema = activePrescriptionRowSchema.extend({
 const paymentChargeRowSchema = paymentWorkflowRowSchema.extend({
   charge_id: z.string().min(1),
   charge_item_id: z.string().min(1),
+  encounter_id: z.string().min(1),
   status: chargeStatusRowSchema,
   total_fen: z.number().int().nonnegative(),
   version: z.number().int().positive(),
@@ -381,6 +384,7 @@ const triageRecordContentSchema = z.object({
 const countRowSchema = z.object({ count: z.number().int().nonnegative() }).strict()
 const hiddenFactValueRowSchema = z.object({ value_json: z.string() }).strict()
 const syntheticCaseReplayRowSchema = z.object({
+  brief_content_json: z.string().min(1),
   brief_revision: z.number().int().positive(),
   case_id: z.string().min(1),
   case_revision: z.number().int().positive(),
@@ -1799,6 +1803,7 @@ export class WorkflowService {
         materialization.profile_id,
         materialization.profile_revision,
         materialization.brief_revision,
+        brief.content_json AS brief_content_json,
         profile.identity_json,
         profile.demographics_json,
         outpatient.department_id,
@@ -1809,6 +1814,10 @@ export class WorkflowService {
         ON profile.workspace_id = materialization.workspace_id
        AND profile.profile_id = materialization.profile_id
        AND profile.revision = materialization.profile_revision
+      JOIN patient_brief_revision AS brief
+        ON brief.workspace_id = materialization.workspace_id
+       AND brief.case_id = materialization.case_id
+       AND brief.revision = materialization.brief_revision
       JOIN outpatient_case AS outpatient
         ON outpatient.workspace_id = materialization.workspace_id
        AND outpatient.epoch = materialization.epoch
@@ -1823,7 +1832,10 @@ export class WorkflowService {
 
     for (const row of rows) {
       this.#materializeSyntheticCaseVisit({
-        briefRevision: row.brief_revision,
+        brief: {
+          content: patientBriefContentSchema.parse(JSON.parse(row.brief_content_json) as unknown),
+          revision: row.brief_revision,
+        },
         caseId: row.case_id,
         caseRevision: row.case_revision,
         context: input.toContext,
@@ -1909,7 +1921,7 @@ export class WorkflowService {
       }
       const now = this.#virtualTime(input.context)
       const materialized = this.#materializeSyntheticCaseVisit({
-        briefRevision: input.brief.revision,
+        brief: input.brief,
         caseId: input.syntheticCase.caseId,
         caseRevision: input.expectedCaseRevision,
         context: input.context,
@@ -1955,7 +1967,7 @@ export class WorkflowService {
   }
 
   #materializeSyntheticCaseVisit(input: {
-    briefRevision: number
+    brief: Pick<PatientBriefRevision, 'content' | 'revision'>
     caseId: string
     caseRevision: number
     context: ActorContext
@@ -2016,6 +2028,11 @@ export class WorkflowService {
       visitDate: input.visitDate,
       visitTypeId: input.visitTypeId,
     })
+    this.#createBriefConsultationQuestions(
+      input.context,
+      registered.outpatientCaseId,
+      input.brief.content,
+    )
     this.#database.driver.prepare(`
       INSERT INTO synthetic_case_materialization (
         workspace_id, epoch, case_id, case_revision, profile_id,
@@ -2029,7 +2046,7 @@ export class WorkflowService {
       input.caseRevision,
       input.profile.profileId,
       input.profile.revision,
-      input.briefRevision,
+      input.brief.revision,
       patient.id,
       registered.outpatientCaseId,
       registered.data.registrationId,
@@ -3442,7 +3459,7 @@ export class WorkflowService {
         questionCode: input.questionCode,
       },
       operation: 'consultation.ask-question',
-    }, () => {
+    }, transaction => {
       this.#assertRole(input.context, ['outpatient-doctor'])
       const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
       if (outpatientCase.doctor_task_id === null || outpatientCase.status === 'completed') {
@@ -3452,6 +3469,15 @@ export class WorkflowService {
       if (encounter.status !== 'in-progress') {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for consultation')
       }
+      const firstVisitTransition = outpatientCase.status === 'awaiting-doctor'
+        ? this.#transitionToFirstVisit(input.context, transaction, {
+            caseId: outpatientCase.case_id,
+            encounterId: input.encounterId,
+            expectedVersions: input.expectedVersions,
+            previousStatus: 'awaiting-doctor',
+            queueTaskId: outpatientCase.doctor_task_id,
+          })
+        : undefined
       this.#assertExpectedVersions(input.expectedVersions, [
         `Encounter/${input.encounterId}`,
         `Task/${outpatientCase.doctor_task_id}`,
@@ -3463,26 +3489,36 @@ export class WorkflowService {
       if (state.version !== input.expectedVersion) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Consultation Record version has changed')
       }
-      if (state.virtual_patient_id === null) {
-        throw new WorkflowError(
-          'WORKFLOW_CONFLICT',
-          'The Consultation has no scripted patient questions',
-        )
-      }
-      const question = consultationQuestionRuleRowSchema.optional().parse(
-        this.#database.driver.prepare(`
-          SELECT question_code, question_text, answer_text, rule_version,
-            fact_code, revealed_answer_text, second_ask_answer_text
-          FROM virtual_patient_question_rule
-          WHERE workspace_id = ? AND epoch = ? AND virtual_patient_id = ?
-            AND question_code = ?
-        `).get(
-          input.context.workspaceId,
-          input.context.epoch,
-          state.virtual_patient_id,
-          input.questionCode,
-        ),
-      )
+      const question = state.virtual_patient_id === null
+        ? consultationQuestionRuleRowSchema.optional().parse(
+            this.#database.driver.prepare(`
+              SELECT question_code, question_text, answer_text, rule_version,
+                NULL AS fact_code, NULL AS revealed_answer_text,
+                NULL AS second_ask_answer_text
+              FROM consultation_question_rule
+              WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+                AND question_code = ?
+            `).get(
+              input.context.workspaceId,
+              input.context.epoch,
+              outpatientCase.case_id,
+              input.questionCode,
+            ),
+          )
+        : consultationQuestionRuleRowSchema.optional().parse(
+            this.#database.driver.prepare(`
+              SELECT question_code, question_text, answer_text, rule_version,
+                fact_code, revealed_answer_text, second_ask_answer_text
+              FROM virtual_patient_question_rule
+              WHERE workspace_id = ? AND epoch = ? AND virtual_patient_id = ?
+                AND question_code = ?
+            `).get(
+              input.context.workspaceId,
+              input.context.epoch,
+              state.virtual_patient_id,
+              input.questionCode,
+            ),
+          )
       if (question === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The consultation question is unavailable')
       }
@@ -3540,7 +3576,7 @@ export class WorkflowService {
           consultationVersion,
           record,
         },
-        effects: [{
+        effects: [...(firstVisitTransition?.effects ?? []), {
           kind: 'created' as const,
           reference: `ConsultationRecord/${recordId}`,
           versionId: '1',
@@ -4395,6 +4431,51 @@ export class WorkflowService {
           quantity: medication.quantity,
         }
       })
+      const medicationTotalFen = medications.reduce(
+        (total, medication) => total + medication.catalog.price_fen * medication.quantity,
+        0,
+      )
+      const chargeItemId = uuidv7()
+      const chargeId = uuidv7()
+      const chargeItem = transaction.fhir.create(input.context, {
+        resourceType: 'ChargeItem',
+        id: chargeItemId,
+        status: 'billable',
+        code: { text: `Prescription ${prescriptionNumber}` },
+        subject: { reference: `Patient/${outpatientCase.patient_id}` },
+        encounter: { reference: `Encounter/${input.encounterId}` },
+        account: [{ reference: `Account/${outpatientCase.account_id}` }],
+        occurrenceDateTime: authoredAt,
+        quantity: { value: medications.reduce((total, medication) => total + medication.quantity, 0) },
+        ...(new Set(medications.map(medication => medication.catalog.price_fen)).size === 1
+          ? {
+              unitPriceComponent: {
+                amount: { currency: 'CNY', value: (medications[0]?.catalog.price_fen ?? 0) / 100 },
+              },
+            }
+          : {}),
+        totalPriceComponent: { amount: { currency: 'CNY', value: medicationTotalFen / 100 } },
+      })
+      this.#database.driver.prepare(`
+        INSERT INTO charge_record (
+          workspace_id, epoch, charge_id, case_id, account_id, charge_item_id,
+          category, source_reference, description_zh, description_en,
+          quantity, unit_price_fen, total_fen, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'medication', ?, '门诊药品', 'Outpatient medication',
+          ?, ?, ?, 'billable', ?)
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        chargeId,
+        outpatientCase.case_id,
+        outpatientCase.account_id,
+        chargeItemId,
+        `Prescription/${prescriptionId}`,
+        medications.reduce((total, medication) => total + medication.quantity, 0),
+        medications.length === 1 ? medications[0]?.catalog.price_fen ?? 0 : medicationTotalFen,
+        medicationTotalFen,
+        authoredAt,
+      )
       const updateCase = this.#database.driver.prepare(`
         UPDATE outpatient_case
         SET prescription_id = ?, version = version + 1, updated_at = ?
@@ -4449,6 +4530,11 @@ export class WorkflowService {
             reference: `MedicationRequest/${item.medicationRequestId}`,
             versionId: item.medicationRequestVersion,
           })),
+          {
+            kind: 'created' as const,
+            reference: `ChargeItem/${chargeItem.id}`,
+            versionId: chargeItem.meta?.versionId ?? '1',
+          },
           {
             kind: 'updated' as const,
             reference: `PrescriptionDraft/${outpatientCase.case_id}`,
@@ -9000,6 +9086,7 @@ export class WorkflowService {
         this.#database.driver.prepare(`
           SELECT charge.charge_id, charge.charge_item_id, charge.total_fen,
             charge.version, charge.status, outpatient_case.status AS case_status,
+            outpatient_case.encounter_id,
             prescription.status AS prescription_status,
             withdrawal.withdrawal_id
           FROM charge_record AS charge
@@ -9023,10 +9110,11 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The charge is not available for payment')
       }
       this.#assertExpectedVersions(input.expectedVersions, [`ChargeItem/${charge.charge_item_id}`])
+      const encounter = this.#fhir.read(input.context, 'Encounter', charge.encounter_id)
       if (
         (input.category === 'laboratory' && charge.case_status !== 'awaiting-lab-payment')
         || (input.category === 'medication'
-          && (charge.case_status !== 'awaiting-medication-payment'
+          && (encounter.status !== 'completed'
             || charge.prescription_status !== 'signed'
             || charge.withdrawal_id !== null))
       ) {
@@ -9157,7 +9245,7 @@ export class WorkflowService {
       if (
         (preview.category === 'laboratory' && preview.case_status !== 'awaiting-lab-payment')
         || (preview.category === 'medication'
-          && (preview.case_status !== 'awaiting-medication-payment'
+          && (transaction.fhir.read(input.context, 'Encounter', preview.encounter_id).status !== 'completed'
             || preview.prescription_status !== 'signed'
             || preview.withdrawal_id !== null))
       ) {
@@ -9770,7 +9858,14 @@ export class WorkflowService {
     const state = this.#consultationState(context, caseId)
     if (state === undefined) return undefined
     const questions = state.virtual_patient_id === null
-      ? []
+      ? z.array(consultationQuestionRowSchema).parse(
+          this.#database.driver.prepare(`
+            SELECT question_code, question_text
+            FROM consultation_question_rule
+            WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+            ORDER BY ordinal, question_code
+          `).all(context.workspaceId, context.epoch, caseId),
+        )
       : z.array(consultationQuestionRowSchema).parse(
           this.#database.driver.prepare(`
             SELECT question_code, question_text
@@ -9955,6 +10050,30 @@ export class WorkflowService {
       INSERT INTO consultation (workspace_id, epoch, case_id, version)
       VALUES (?, ?, ?, 1)
     `).run(context.workspaceId, context.epoch, caseId)
+  }
+
+  #createBriefConsultationQuestions(
+    context: ActorContext,
+    caseId: string,
+    brief: PatientBriefContent,
+  ): void {
+    const insert = this.#database.driver.prepare(`
+      INSERT INTO consultation_question_rule (
+        workspace_id, epoch, case_id, question_code, rule_version,
+        ordinal, question_text, answer_text
+      ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+    `)
+    brief.symptomTopics.forEach((topic, index) => {
+      insert.run(
+        context.workspaceId,
+        context.epoch,
+        caseId,
+        topic.id,
+        index + 1,
+        topic.name,
+        topic.answerPoints.join('；'),
+      )
+    })
   }
 
   #encounterCompletionPolicy(context: ActorContext, encounterId: string) {

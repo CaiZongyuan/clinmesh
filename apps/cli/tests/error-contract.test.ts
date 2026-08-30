@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -113,6 +113,71 @@ describe('clinmesh error contract', () => {
     expect(JSON.parse(stderr.value())).toMatchObject({
       error: {
         code: 'invalid_input_source',
+        outcome: 'definitely_not_sent',
+        retryable: false,
+        type: 'validation',
+      },
+      ok: false,
+    })
+  })
+
+  it('rejects a workspace symlink that resolves to an external input file', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'clinmesh-input-workspace-'))
+    const outside = await mkdtemp(join(tmpdir(), 'clinmesh-input-outside-'))
+    try {
+      const outsidePath = join(outside, 'patient.json')
+      await writeFile(outsidePath, JSON.stringify({
+        birthDate: '1992-05-06',
+        gender: 'female',
+        identifier: 'SYN-SYMLINK-1',
+        name: '合成患者',
+      }))
+      await symlink(outsidePath, join(workspace, 'patient.json'))
+      const stdout = captureStream()
+      const stderr = captureStream()
+      const execute = vi.fn()
+
+      const exitCode = await runCli([
+        'patient', 'create',
+        '--input', '@patient.json',
+        '--idempotency-key', 'patient-symlink-input-1',
+      ], { stderr: stderr.stream, stdout: stdout.stream }, { cwd: workspace, execute })
+
+      expect(exitCode).toBe(2)
+      expect(stdout.value()).toBe('')
+      expect(execute).not.toHaveBeenCalled()
+      expect(JSON.parse(stderr.value())).toMatchObject({
+        error: { code: 'invalid_input_source', type: 'validation' },
+        ok: false,
+      })
+    } finally {
+      await Promise.all([
+        rm(workspace, { force: true, recursive: true }),
+        rm(outside, { force: true, recursive: true }),
+      ])
+    }
+  })
+
+  it('classifies conflicting structured and typed input as validation before execution', async () => {
+    const stdout = captureStream()
+    const stderr = captureStream()
+    const execute = vi.fn()
+
+    const exitCode = await runCli([
+      'reference', 'diagnoses', 'search',
+      '--query', '糖尿病',
+      '--input', '-',
+    ], { stderr: stderr.stream, stdout: stdout.stream }, {
+      execute,
+      readStdin: async () => '{}',
+    })
+
+    expect(exitCode).toBe(2)
+    expect(stdout.value()).toBe('')
+    expect(execute).not.toHaveBeenCalled()
+    expect(JSON.parse(stderr.value())).toMatchObject({
+      error: {
+        code: 'input_source_conflict',
         outcome: 'definitely_not_sent',
         retryable: false,
         type: 'validation',

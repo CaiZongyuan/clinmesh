@@ -219,7 +219,7 @@ Web 页面和 CLI 最终调用相同的 Query 与 Command handler。当前不发
 | --- | --- | --- |
 | `fhir-native` | Patient、AllergyIntolerance、Organization、Location、Practitioner、PractitionerRole、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、Condition、Medication、MedicationRequest、MedicationDispense | 只由 Case 开始或业务 Command 创建和更新；FHIR API 只读 |
 | `fhir-native-immutable` | 已签署的 Composition、document Bundle、Provenance | 业务 Command 只创建新资源；更正创建显式修订关系，不覆盖已签实例 |
-| `domain-native` | Synthetic Patient Profile 与 Profile Revision、Synthetic Case Instance、Patient Brief Revision、Investigation Result Snapshot、Consultation 与 Consultation Record、Registration、Diagnosis Draft 与 Diagnosis Confirmation、Prescription、PaymentTransaction、库存账、临床草稿、Scenario Run、Action Trace、audit_log | 只通过 `/api/his/v1`、`/api/sim/v1` 或内部 Command 写入 |
+| `domain-native` | Workspace Actor、Agent Client/Grant、Synthetic Patient Profile 与 Profile Revision、Synthetic Case Instance、Patient Brief Revision、Investigation Result Snapshot、Consultation 与 Consultation Record、Registration、Diagnosis Draft 与 Diagnosis Confirmation、Prescription、PaymentTransaction、库存账、临床草稿、Scenario Run、Action Trace、audit_log | 只通过 `/api/agent/v1`、`/api/his/v1`、`/api/sim/v1` 或内部 Command 写入 |
 | `domain-projection` | AuditEvent、InventoryItem | 从领域事实同事务生成；FHIR API 只读 |
 | `simulation-private` | Index Encounter、Case Truth、隐藏来源资源和生成模型输入 | 仅 Simulator 内部解析器可访问；普通 HIS、FHIR、来源历史详情和角色 Agent 均不可读取 |
 
@@ -681,7 +681,7 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 ### 7.1 HIS Operation Catalog
 
-`packages/contracts/src/his-operations.ts` 中的 `HisOperationCatalog` 是 Agent 操作面的唯一合同 owner。每项 operation 显式声明稳定 ID、版本、`cliPath`、`query/draft/preview/command` mode、输入输出 Zod schema、HTTP method/path adapter、岗位 allowlist、风险、幂等与 expected version 要求；既有 Command 的持久 operation 名称不同时，Catalog 还保存 receipt adapter 名称。Catalog 不依赖 Hono、Node.js、环境变量或 handler。
+`packages/contracts/src/his-operations.ts` 导出的 `hisOperationCatalog` 是 Agent 操作面的唯一合同 owner。每项 operation 显式声明稳定 ID、版本、`cliPath`、`query/draft/preview/command` mode、输入/输出/错误 Zod schema、HTTP method/path adapter、唯一 handler owner、human/agent identity、岗位 allowlist、风险、幂等、expected version 与 preview token 要求；既有 Command 的持久 operation 名称不同时，Catalog 还保存 receipt adapter 名称。Catalog 不依赖 Hono、Node.js、环境变量或 handler。
 
 CLI 命令树、`operations list/schema`、服务端 Agent route matching、Grant 的 Catalog hash 和 Skill 命令示例测试都读取同一 Catalog。HIS route coverage test 要求每条 `/api/his/v1` route 恰好属于 canonical operation 或带原因的兼容排除项。FHIR 部分只投影 metadata、read、vread、instance history 和资源能力注册表允许的 search；资源类型与 SearchParameter 白名单和 CapabilityStatement 共用一份注册表。
 
@@ -699,9 +699,9 @@ CLI 没有通用 invoke、任意 URL、method/path/body、SQL、JSON Patch、FHI
 
 Human mode 使用 Better Auth profile。登录密码只从 stdin 读取，不进入 argv 或 profile；profile 只保存 Server origin 和 session cookie，配置目录使用 `0700`，文件通过同目录原子替换并保持 `0600`。human write 发送同源 `Origin`，高风险命令还要求本地显式 `--yes`；服务端仍重新执行岗位、状态与版本授权。
 
-Human administrator 通过 `/api/agent/v1` 和对应 CLI 命令创建、查看、禁用 Agent Client，创建、查看和撤销 Agent Capability Grant。Grant 创建时只返回一次随机 `cma_` token，SQLite 只保存 SHA-256。每个 Grant 绑定一个 Agent Client、Workspace、Epoch、Scenario Run、一个 Practitioner Role、operation allowlist、Catalog hash、Workspace policy version 和真实过期时间；write allowlist 自动加入 receipt 查询。
+Human administrator 通过 `/api/agent/v1` 和对应 CLI 命令创建、查看、禁用 Agent Client，创建、查看和撤销 Agent Capability Grant。每个控制面 mutation 使用幂等键并通过共享 CommandExecutor 原子写 receipt、AuditEvent 和 Action Trace；Grant 创建的原 token 只返回一次，持久 receipt 脱敏且重放被拒绝。SQLite 只保存 token SHA-256。每个 Grant 绑定一个 Agent Client、Workspace、Epoch、Scenario Run、一个 Practitioner Role、operation allowlist、Catalog hash、Workspace policy version 和真实过期时间；write allowlist 自动加入 receipt 查询。
 
-Agent task 由 runner 注入 `CLINMESH_SERVER_URL`、`CLINMESH_TOKEN` 和 task 标识。CLI 只接受完整短期 token，缺失或格式错误时在发网前失败；Agent context 不能读取、创建或选择 human profile。服务端从 token hash 重新解析 Actor context并忽略客户端自报的 Actor、Workspace、Epoch、Scenario Run 或岗位。撤销、过期、Client 禁用、Epoch reset、Scenario Run 关闭、岗位停用、Catalog hash 或 policy version 变化都会使 token 失效。
+Agent task 由 runner 注入 `CLINMESH_SERVER_URL`、`CLINMESH_TOKEN` 和 task 标识。CLI 只接受完整短期 token，缺失或格式错误时在发网前失败；Agent context 不能读取、创建或选择 human profile。服务端从 token hash 重新解析 Actor context并忽略客户端自报的 Actor、Workspace、Epoch、Scenario Run 或岗位。Agent Client 与 Human Membership 都投影到 `workspace_actor`，领域事实因此保留真实 Agent Actor，而不伪造 User Account。撤销、过期、Client 禁用、Epoch reset、Scenario Run 关闭、岗位停用、Catalog hash 或 policy version 变化都会使 token 失效。
 
 Agent 高风险 command 不使用 `--yes` 作为授权；operation 必须在单岗位 Grant allowlist 中，Command handler 仍重新验证业务状态和 expected versions。跨岗位流程由 runner 签发多个不同 Grant，不能在一个 token 内切换 Practitioner Role。
 
@@ -741,7 +741,7 @@ Registration + Encounter + Account + 挂号 Charge Item
 
 Patient 没有活动门诊病例时，Command 在同一事务中创建 Registration、进行中 Encounter、Account、医生 Queue Task、`first-visit` outpatient case 和版本为 `1` 的 Consultation；Patient 已有 `awaiting-triage`、`awaiting-doctor` 或 `first-visit` 病例时，Command 复用该病例的 Registration、Encounter、Account 和可用 Queue Task，并把尚未开始的 Task 转入医生首诊，同时为病例建立 Consultation。成功后 Virtual Patient 不可再次接诊；这条入口不伪造分诊 Observation、分诊级别或费用事实，相同幂等键重放第一次回执，其他活动状态或已消费候选患者返回稳定冲突。
 
-Consultation 是病例级领域聚合，Consultation Record 是按序号追加的不可变问答事实；每次追加以旧聚合版本作为记录序号，通过 SQL expected-version 条件更新递增版本，并保存当时的问题文本、回答、Brief Revision、提问 Actor、Acting Practitioner 和虚拟业务时间。它与 `clinical_draft` 分别持久化，重新进入病例只恢复记录，不自动生成或改写正式病历。问答只按活动 Patient Brief 的受控主题和 answer points 解析，公开响应不暴露 Case Truth 或内部答案规则。
+Consultation 是病例级领域聚合，Consultation Record 是按序号追加的不可变问答事实；Synthetic Case 开始或 replay 时把活动 Patient Brief 的 `symptomTopics` 确定性物化为 case-scoped question rules，旧 Virtual Patient 继续使用自己的 reveal rules。首次问诊可在同一 Command 中把 `awaiting-doctor` Task 转入 first visit、绑定负责 Practitioner Role 并追加回答；后续问诊只追加记录。每次追加以旧聚合版本作为记录序号，通过 SQL expected-version 条件更新递增版本，并保存当时的问题文本、回答、提问 Actor、Acting Practitioner 和虚拟业务时间。公开响应不暴露 Case Truth 或内部答案规则。
 
 结构化 Clinical Document 草稿包含主诉、现病史、查体、评估、处置和随访六个共享必填字段，按病例保存在 `clinical_document_draft`，以 `expectedDraftVersion` 和 Encounter expected version 做 CAS 更新。签署预览固定 Actor context、Encounter 版本、草稿正文和草稿版本；提交重新校验这些依赖与 token 后创建不可变 FHIR R5 Composition、带稳定 identifier 且首 entry 为该 Composition 的自包含 document Bundle，以及同时引用二者的 Provenance，但不改变 Encounter 或病例状态。`signed_clinical_document` 只保存 FHIR 资源关联、签署者、时间和修订父链；每个病例只允许一个根文书，修订只接受最新 Composition 并创建线性替代版本。首期复诊 `sign-and-complete` 是兼容入口，只能用于尚无结构化签署根文书的病例；已有根文书时预览和提交都返回稳定业务冲突。
 
@@ -749,7 +749,7 @@ Consultation 是病例级领域聚合，Consultation Record 是按序号追加�
 
 确认诊断要求草稿恰有一个主诊断。Command 为每条主诊断或次诊断创建关联当前 Patient 与 Encounter 的 FHIR R5 Condition，以标准 `encounter-diagnosis` category 标识本次就诊诊断，把主次角色写入 `Encounter.diagnosis.use`，并创建同时覆盖全部 Condition 与更新后 Encounter 的 Provenance。`diagnosis_confirmation.revision_number` 与 `supersedes_confirmation_id` 形成不可覆盖的线性确认历史；再次确认把上一 revision 的 Condition 标记为 `verificationStatus=entered-in-error`，Encounter 当前诊断引用只保留新 Condition。领域事实、Condition、Encounter、Provenance、草稿清除、Command receipt、审计和 Action Trace 在同一事务提交。病例详情返回最新确认和可选的新草稿，并与既往 Condition 分区；病例库筛选、处方适应规则和完诊门禁只读取最新 confirmation revision。
 
-处方草稿是病例级 domain-native 聚合，保存一至八条受控药品、剂量、频次、疗程和数量，并以 Encounter expected version 与单调 `expectedDraftVersion` 做 CAS。保存或删除草稿不创建 MedicationRequest；正式开具时重新读取目录和已确认诊断，校验药品组合、诊断适应规则、患者过敏、剂量、频次、疗程和数量，然后创建带稳定处方号的 Prescription 及每种药一个的 active FHIR R5 MedicationRequest。`prescription_authorship` 以 workspace 级复合外键保存负责 Actor 与 Practitioner Role，MedicationRequest 关联当前 Patient、Encounter 和该 Practitioner Role，草稿正文同时清除且版本递增。独立处方入口与首期复诊组合草稿互斥，已存在正式用药结论时不能继续普通编辑。
+处方草稿是病例级 domain-native 聚合，保存一至八条受控药品、剂量、频次、疗程和数量，并以 Encounter expected version 与单调 `expectedDraftVersion` 做 CAS。保存或删除草稿不创建 MedicationRequest；正式开具时重新读取目录和已确认诊断，校验药品组合、诊断适应规则、患者过敏、剂量、频次、疗程和数量，然后在同一 Command 创建稳定处方号、Prescription、每种药一个的 active FHIR R5 MedicationRequest、Medication ChargeItem 和 Charge Record。`prescription_authorship` 通过 `workspace_actor` 与 Practitioner Role 复合外键保存负责身份，草稿正文同时清除且版本递增。收费预览只有在 Encounter 已完诊、处方仍 signed 且未撤回时可用；支付成功把病例移交药房。独立处方入口与首期复诊组合草稿互斥，已存在正式用药结论时不能继续普通编辑。
 
 临床目录响应以 `prescriptionConclusionSupported` 显式声明当前 Epoch 是否具有独立用药结论能力。v3 药品目录同时提供疗程、数量和诊断适应规则并返回 `true`；保留的 v1/v2 目录只提供组合、剂量和频次规则并返回 `false`，其组合复诊流程保持可用，独立处方与无需用药 Command 返回稳定目录冲突，Web 不显示独立用药结论面板。
 
@@ -988,13 +988,13 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 
 它承载当前注册的 Patient `name`、Patient `identifier` 和 5.5 节列出的 reference SearchParameter；reference 与 string/token 参数复用同一张表，不另建 reference index。每次资源变更在同一事务删除该资源旧索引并插入完整新索引；数据库 CLI 的 `reindex` 重建索引并验证完整性。运行时不执行任意 FHIRPath，也没有尚未使用的 date/quantity 或 compartment 索引表。
 
-当前 FHIR 授权上下文由已认证 session 解析出的 Workspace/Epoch 隔离。标准 Patient compartment、Encounter care-team 和字段级策略尚未发布为 FHIR 能力；增加这些能力时必须在 SQL 查询中应用，不能查询后过滤。
+当前 FHIR 授权上下文由已认证 session 或 Agent Capability Grant 解析出的 Workspace/Epoch 隔离。标准 Patient compartment、Encounter care-team 和字段级策略尚未发布为 FHIR 能力；增加这些能力时必须在 SQL 查询中应用，不能查询后过滤。
 
 ### 9.2 领域表
 
 当前领域表只覆盖首期闭环：
 
-- 身份与岗位：Better Auth 的 user/session/account，加 Workspace Membership、Practitioner Role binding 和当前 session context。
+- 身份与岗位：Better Auth 的 user/session/account，加 Workspace Actor、Human Membership、Agent Client/Capability Grant、Practitioner Role binding 和当前 session context。
 - 门诊：Virtual Patient 候选状态与接诊映射、Consultation、append-only Consultation Record、目录、outpatient case、Registration、分诊记录、临床草稿、诊断草稿状态与确认分组、检查申请草稿状态、正式检查申请、处方草稿状态、Prescription 与处方项目、无需用药结论和处方撤回事实。
 - 账务：Charge Record、Payment Preview 和 Payment Transaction。金额以整数分保存；当前没有退款、医保或收费员交账表。
 - 库存与发药：Inventory Lot、append-only Inventory Movement 和 Dispense。当前不实现预占、追溯码、盘点或调拨。
@@ -1431,14 +1431,14 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 
 以下边界已经确认，需求变化必须重新经过 design gate 并更新 canonical spec：
 
-1. 首个发布是 Web-only 的普通门诊发热闭环，不开发 Desktop 或 React Native Mobile。
+1. 产品界面是 Web-only 的普通门诊发热闭环，同时提供 Agent CLI；不开发 Desktop 或 React Native Mobile 产品行为。
 2. 人类岗位为挂号员、分诊护士、门诊医生、收费员和药师；LIS 是系统 Actor，只有管理员能 reset Scenario。
 3. 一个 Encounter 贯穿挂号、分诊、首诊、检验和复诊；独立结构化病历签署不改变 Encounter，带 Consultation 的病例通过正式临床事实门禁完诊，首期复诊兼容流只在没有结构化签署根文书时组合签署与完诊；发药完成 Scenario Run。
 4. 首期使用单 Node.js 进程和 file-backed SQLite；D1、PostgreSQL 与 Supabase 只保留未来 adapter 迁移方向。
 5. FHIR R5 版本固定为 `5.0.0`，项目 canonical base 固定为 `https://caizongyuan.github.io/clinmesh/fhir`。
 6. Registration 与 Prescription 是持久领域事实；挂号同事务创建 Account 和挂号 Charge Item。
 7. Synthetic Case Instance 固定 Case Truth、活动 Brief 和 Investigation snapshots；reset 在新 Epoch replay 同一 revision，Action Trace 与 Audit Event、Provenance 分开。
-8. 首期不实现 Agent、AG-UI、Evaluation Spec、评分、附件、真实外部系统或真实患者数据。
+8. 首期不实现模型 runner、AG-UI、Evaluation Spec、评分、附件、真实外部系统或真实患者数据；任务 Agent 只通过受控 CLI 行动。
 
 ## 18. 当前架构保证
 
@@ -1456,9 +1456,9 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 - 一个 Encounter 贯穿首期门诊；独立结构化病历签署与 Encounter 完成是不同事实，首期复诊兼容流仍可组合处理，发药只完成 Scenario Run。
 - 挂号原子创建 Registration、Encounter、Queue Task、Account 和挂号 Charge Item；Prescription 稳定关联 MedicationRequest、费用、支付和发药。
 - Virtual Patient 直接接诊原子复用其合成 Patient；没有活动病例时建立 Registration、Encounter、Account 和医生 Queue Task，可进入首诊的活动病例则复用同一组事实，不伪造分诊或费用事实。
-- 五个人类岗位可以通过 Web/API 完成由 Synthetic Case 直接开始的 Scenario；生成库、来源历史和全局目录查询满足分页与交互基线。
+- 五个人类岗位可以通过 Web/API、单岗位任务 Agent 可以通过 CLI 完成由 Synthetic Case 直接开始的 Scenario；生成库、来源历史和全局目录查询满足分页与交互基线。
 - Node.js 服务重启后从同一 SQLite 文件恢复；备份/恢复验证 schema、integrity 与 canonical state hash。
-- 首期没有 Desktop、Mobile、Agent、AG-UI、评分或附件入口，也不声明对应能力。
+- 首期没有 Desktop、Mobile、模型 runner、AG-UI、评分或附件入口；Agent 能力只声明当前 CLI、Capability Grant 和 Skills。
 - 所有演示数据都有合成数据标记，不包含真实敏感信息或真实平台凭证。
 
 ## 19. 参考资料

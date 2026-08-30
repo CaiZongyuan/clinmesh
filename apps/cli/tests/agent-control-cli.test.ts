@@ -120,6 +120,7 @@ describe('clinmesh Agent control commands', () => {
         'agent', 'client', 'disable',
         '--profile', 'admin',
         '--agent-client-id', response.agentClientId,
+        '--idempotency-key', 'agent-client-disable-1',
       ], { stderr: stderr.stream, stdout: stdout.stream }, { fetch, profiles })
 
       expect(exitCode).toBe(0)
@@ -157,6 +158,7 @@ describe('clinmesh Agent control commands', () => {
         'agent', 'client', 'create',
         '--profile', 'admin',
         '--name', 'Synthetic whole-HIS agent',
+        '--idempotency-key', 'agent-client-create-1',
       ], { stderr: stderr.stream, stdout: stdout.stream }, { fetch, profiles })
 
       expect(exitCode).toBe(0)
@@ -169,6 +171,7 @@ describe('clinmesh Agent control commands', () => {
             accept: 'application/json',
             'content-type': 'application/json',
             cookie: 'better-auth.session_token=administrator',
+            'idempotency-key': 'agent-client-create-1',
             origin: 'http://127.0.0.1:51868',
           },
           method: 'POST',
@@ -207,6 +210,7 @@ describe('clinmesh Agent control commands', () => {
         '--practitioner-role-id', response.practitionerRoleId,
         '--operation', 'encounter.diagnosis.draft.set',
         '--ttl-seconds', '3600',
+        '--idempotency-key', 'agent-grant-create-1',
       ], { stderr: stderr.stream, stdout: stdout.stream }, { fetch, profiles })
 
       expect(exitCode).toBe(0)
@@ -255,6 +259,7 @@ describe('clinmesh Agent control commands', () => {
         'agent', 'grant', 'revoke',
         '--profile', 'admin',
         '--grant-id', grantId,
+        '--idempotency-key', 'agent-grant-revoke-1',
       ], { stderr: stderr.stream, stdout: stdout.stream }, { fetch, profiles })
 
       expect(exitCode).toBe(0)

@@ -16,7 +16,7 @@ import {
   revokedAgentCapabilityGrantSchema,
 } from '@clinmesh/contracts/agent'
 import { Command, CommanderError, Option } from 'commander'
-import { readFile } from 'node:fs/promises'
+import { readFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { z } from 'zod'
 import type { ProfileStore } from './profile-store.ts'
@@ -123,6 +123,7 @@ interface JsonObjectSchema {
 }
 
 type SuccessWriter = (data: unknown, metadata?: Record<string, unknown>) => void
+const maximumInputBytes = 1_048_576
 
 function writeJson(stream: WritableStream, value: unknown): void {
   stream.write(`${JSON.stringify(value, null, 2)}\n`)
@@ -200,8 +201,11 @@ function writeError(
 function serializableOperation(operation: ReturnType<typeof listHisOperations>[number]) {
   return {
     cliPath: operation.cliPath,
+    handlerOwner: operation.handlerOwner,
     id: operation.id,
+    identities: operation.identities,
     mode: operation.mode,
+    previewToken: operation.previewToken,
     risk: operation.risk,
     roles: operation.roles,
     skill: operation.skill,
@@ -213,6 +217,7 @@ function serializableOperation(operation: ReturnType<typeof listHisOperations>[n
 function operationSchema(operation: ReturnType<typeof getHisOperation>) {
   return {
     ...serializableOperation(operation),
+    errorSchema: z.toJSONSchema(operation.error),
     inputSchema: z.toJSONSchema(operation.input),
     outputSchema: z.toJSONSchema(operation.output),
     requirements: operation.requirements,
@@ -269,7 +274,13 @@ function commandForPath(program: Command, path: readonly string[]): Command {
 
 async function readStdin(): Promise<string> {
   let content = ''
-  for await (const chunk of process.stdin) content += String(chunk)
+  let bytes = 0
+  for await (const chunk of process.stdin) {
+    const text = String(chunk)
+    bytes += Buffer.byteLength(text, 'utf8')
+    if (bytes > maximumInputBytes) throw inputSourceProblem('--input exceeds the 1 MiB limit')
+    content += text
+  }
   return content
 }
 
@@ -286,13 +297,27 @@ async function readStructuredInput(source: string, dependencies: CliDependencies
       if (fromWorkspace === '' || fromWorkspace.startsWith('..') || isAbsolute(fromWorkspace)) {
         throw inputSourceProblem('--input path must resolve to a file inside the current workspace')
       }
-      content = await readFile(path, 'utf8')
+      const [realWorkspace, realPath] = await Promise.all([realpath(cwd), realpath(path)])
+      const fromRealWorkspace = relative(realWorkspace, realPath)
+      if (
+        fromRealWorkspace === ''
+        || fromRealWorkspace.startsWith('..')
+        || isAbsolute(fromRealWorkspace)
+      ) {
+        throw inputSourceProblem('--input path must resolve to a file inside the current workspace')
+      }
+      const metadata = await stat(realPath)
+      if (!metadata.isFile()) throw inputSourceProblem('--input must resolve to a regular file')
+      if (metadata.size > maximumInputBytes) {
+        throw inputSourceProblem('--input exceeds the 1 MiB limit')
+      }
+      content = await readFile(realPath, 'utf8')
     }
   } catch (error) {
     if (error instanceof CliProblem) throw error
     throw inputSourceProblem('The structured input could not be read')
   }
-  if (Buffer.byteLength(content, 'utf8') > 1_048_576) {
+  if (Buffer.byteLength(content, 'utf8') > maximumInputBytes) {
     throw inputSourceProblem('--input exceeds the 1 MiB limit')
   }
   try {
@@ -320,7 +345,7 @@ async function humanRequest<Schema extends z.ZodType>(
   path: string,
   schema: Schema,
   dependencies: CliDependencies | undefined,
-  options: { body?: unknown; method: 'GET' | 'POST' },
+  options: { body?: unknown; idempotencyKey?: string; method: 'GET' | 'POST' },
 ): Promise<z.infer<Schema>> {
   assertHumanMode(dependencies)
   const profile = await profileStore(dependencies).load(profileName)
@@ -335,6 +360,9 @@ async function humanRequest<Schema extends z.ZodType>(
       accept: 'application/json',
       ...(mutation ? { 'content-type': 'application/json' } : {}),
       cookie: profile.cookie,
+      ...(options.idempotencyKey === undefined
+        ? {}
+        : { 'idempotency-key': options.idempotencyKey }),
       ...(mutation ? { origin: new URL(profile.serverUrl).origin } : {}),
     },
     method: options.method,
@@ -349,8 +377,13 @@ async function humanMutation<Schema extends z.ZodType>(
   body: unknown,
   schema: Schema,
   dependencies: CliDependencies | undefined,
+  idempotencyKey?: string,
 ): Promise<z.infer<Schema>> {
-  return humanRequest(profileName, path, schema, dependencies, { body, method: 'POST' })
+  return humanRequest(profileName, path, schema, dependencies, {
+    body,
+    ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+    method: 'POST',
+  })
 }
 
 async function humanQuery<Schema extends z.ZodType>(
@@ -407,7 +440,13 @@ function registerOperation(
       .filter(key => options[key] !== undefined)
       .map(key => [key, options[key]]))
     if (inputSource !== undefined && Object.keys(typedInput).length > 0) {
-      throw new Error('--input cannot be combined with typed operation flags')
+      throw new CliProblem(2, {
+        code: 'input_source_conflict',
+        message: '--input cannot be combined with typed operation flags',
+        outcome: 'definitely_not_sent',
+        retryable: false,
+        type: 'validation',
+      })
     }
     const input = operation.input.parse(inputSource === undefined
       ? typedInput
@@ -437,11 +476,10 @@ function registerOperation(
   })
 }
 
-export async function runCli(
-  argv: readonly string[],
+export function createCliProgram(
   io: CliIO,
   dependencies?: CliDependencies,
-): Promise<number> {
+): Command {
   const program = new Command()
     .name('clinmesh')
     .description('Agent-native command line interface for ClinMesh')
@@ -680,9 +718,11 @@ export async function runCli(
     .description('Create an Agent Client as a human administrator')
     .requiredOption('--profile <name>', 'Human administrator profile')
     .requiredOption('--name <name>', 'Agent Client name')
+    .requiredOption('--idempotency-key <key>', 'Stable key for this control-plane intent')
     .action(async (...args: unknown[]) => {
       const invoked = actionCommand(args, 'Agent Client create')
       const options = z.object({
+        idempotencyKey: z.string().min(8).max(128),
         name: z.string(),
         profile: z.string().min(1),
       }).parse(invoked.opts())
@@ -693,6 +733,7 @@ export async function runCli(
         input,
         agentClientSchema,
         dependencies,
+        options.idempotencyKey,
       )
       writeSuccess(data)
     })
@@ -701,10 +742,12 @@ export async function runCli(
     .description('Disable an Agent Client as a human administrator')
     .requiredOption('--profile <name>', 'Human administrator profile')
     .requiredOption('--agent-client-id <id>', 'Agent Client ID')
+    .requiredOption('--idempotency-key <key>', 'Stable key for this control-plane intent')
     .action(async (...args: unknown[]) => {
       const invoked = actionCommand(args, 'Agent Client disable')
       const options = z.object({
         agentClientId: z.uuid(),
+        idempotencyKey: z.string().min(8).max(128),
         profile: z.string().min(1),
       }).parse(invoked.opts())
       const data = await humanMutation(
@@ -713,6 +756,7 @@ export async function runCli(
         {},
         agentClientSchema,
         dependencies,
+        options.idempotencyKey,
       )
       writeSuccess(data)
     })
@@ -757,6 +801,7 @@ export async function runCli(
     .requiredOption('--profile <name>', 'Human administrator profile')
     .requiredOption('--agent-client-id <id>', 'Agent Client ID')
     .requiredOption('--practitioner-role-id <id>', 'Practitioner Role ID')
+    .requiredOption('--idempotency-key <key>', 'Stable key for this control-plane intent')
     .addOption(
       new Option('--operation <id>', 'Allowed HIS operation (repeatable)')
         .argParser(collect)
@@ -772,6 +817,7 @@ export async function runCli(
       const invoked = actionCommand(args, 'Agent Grant create')
       const options = z.object({
         agentClientId: z.string(),
+        idempotencyKey: z.string().min(8).max(128),
         operation: z.array(z.string()),
         practitionerRoleId: z.string(),
         profile: z.string().min(1),
@@ -790,6 +836,7 @@ export async function runCli(
         input,
         agentCapabilityGrantSchema,
         dependencies,
+        options.idempotencyKey,
       )
       writeSuccess(data)
     })
@@ -798,10 +845,12 @@ export async function runCli(
     .description('Revoke an Agent Capability Grant as a human administrator')
     .requiredOption('--profile <name>', 'Human administrator profile')
     .requiredOption('--grant-id <id>', 'Agent Capability Grant ID')
+    .requiredOption('--idempotency-key <key>', 'Stable key for this control-plane intent')
     .action(async (...args: unknown[]) => {
       const invoked = actionCommand(args, 'Agent Grant revoke')
       const options = z.object({
         grantId: z.uuid(),
+        idempotencyKey: z.string().min(8).max(128),
         profile: z.string().min(1),
       }).parse(invoked.opts())
       const data = await humanMutation(
@@ -810,6 +859,7 @@ export async function runCli(
         {},
         revokedAgentCapabilityGrantSchema,
         dependencies,
+        options.idempotencyKey,
       )
       writeSuccess(data)
     })
@@ -825,6 +875,15 @@ export async function runCli(
     registerOperation(program, operation, writeSuccess, dependencies)
   }
 
+  return program
+}
+
+export async function runCli(
+  argv: readonly string[],
+  io: CliIO,
+  dependencies?: CliDependencies,
+): Promise<number> {
+  const program = createCliProgram(io, dependencies)
   try {
     await program.parseAsync([...argv], { from: 'user' })
     return 0

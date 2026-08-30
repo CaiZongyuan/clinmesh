@@ -37,6 +37,48 @@ export class HttpOperationError extends Error {
   }
 }
 
+function transportError(
+  operationId: string,
+  write: boolean,
+  execution: { idempotencyKey?: string } | undefined,
+  cause: unknown,
+): HttpOperationError {
+  return new HttpOperationError(write ? 7 : 4, {
+    code: write ? 'ambiguous_outcome' : 'transport_error',
+    ...(execution?.idempotencyKey === undefined
+      ? {}
+      : { idempotencyKey: execution.idempotencyKey }),
+    message: write
+      ? 'The request may have reached ClinMesh; query the Command receipt before retrying'
+      : 'The ClinMesh request failed before a complete response was received',
+    operationId,
+    outcome: write ? 'ambiguous' : 'definitely_not_sent',
+    retryable: !write,
+    type: 'network',
+  }, { cause })
+}
+
+function invalidResponseError(
+  operationId: string,
+  write: boolean,
+  execution: { idempotencyKey?: string } | undefined,
+  cause: unknown,
+): HttpOperationError {
+  return new HttpOperationError(write ? 7 : 8, {
+    code: 'invalid_response',
+    ...(execution?.idempotencyKey === undefined
+      ? {}
+      : { idempotencyKey: execution.idempotencyKey }),
+    message: write
+      ? 'ClinMesh may have committed the request but returned an invalid response; query the Command receipt'
+      : 'ClinMesh returned a response that does not match the operation contract',
+    operationId,
+    outcome: write ? 'ambiguous' : 'definitely_not_sent',
+    retryable: false,
+    type: 'protocol',
+  }, { cause })
+}
+
 function encodePath(
   template: string,
   input: Record<string, unknown>,
@@ -80,6 +122,7 @@ export function createHttpExecutor(options: HttpExecutorOptions) {
   ): Promise<unknown> => {
     const operation = getHisOperation(operationId)
     const input = operation.input.parse(rawInput) as Record<string, unknown>
+    const write = operation.http.method !== 'GET'
     const { path, remaining } = encodePath(operation.http.path, input)
     const url = new URL(path, baseUrl)
     if (operation.http.method === 'GET') {
@@ -116,22 +159,14 @@ export function createHttpExecutor(options: HttpExecutorOptions) {
         method: operation.http.method,
       })
     } catch (cause) {
-      const write = operation.http.method !== 'GET'
-      throw new HttpOperationError(write ? 7 : 4, {
-        code: write ? 'ambiguous_outcome' : 'transport_error',
-        ...(execution?.idempotencyKey === undefined
-          ? {}
-          : { idempotencyKey: execution.idempotencyKey }),
-        message: write
-          ? 'The request may have reached ClinMesh; query the Command receipt before retrying'
-          : 'The ClinMesh request failed before a response was received',
-        operationId,
-        outcome: write ? 'ambiguous' : 'definitely_not_sent',
-        retryable: !write,
-        type: 'network',
-      }, { cause })
+      throw transportError(operationId, write, execution, cause)
     }
-    const payload = await response.json() as unknown
+    let payload: unknown
+    try {
+      payload = await response.json() as unknown
+    } catch (cause) {
+      throw transportError(operationId, write, execution, cause)
+    }
     if (!response.ok) {
       const parsed = apiErrorSchema.safeParse(payload)
       const operationOutcome = operationOutcomeSchema.safeParse(payload)
@@ -171,6 +206,10 @@ export function createHttpExecutor(options: HttpExecutorOptions) {
         type: classification.type,
       })
     }
-    return operation.output.parse(payload)
+    const parsed = operation.output.safeParse(payload)
+    if (!parsed.success) {
+      throw invalidResponseError(operationId, write, execution, parsed.error)
+    }
+    return parsed.data
   }
 }

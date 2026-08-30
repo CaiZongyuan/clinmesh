@@ -2,7 +2,18 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import {
+  agentCapabilityContextSchema,
+  agentCapabilityGrantListSchema,
+  agentCapabilityGrantSchema,
+  agentCapabilityGrantViewSchema,
+  agentClientListSchema,
+  agentClientSchema,
+  revokedAgentCapabilityGrantSchema,
+} from '@clinmesh/contracts/agent'
+import { apiErrorSchema } from '@clinmesh/contracts/his'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+import { AuditQuery } from '../src/application/audit-query.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 
@@ -40,6 +51,10 @@ async function signIn(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>
   return response.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
 }
 
+async function parseApiError(response: Response) {
+  return apiErrorSchema.parse(await response.json())
+}
+
 describe('Agent Capability Grant HTTP authentication', () => {
   it('lets a human administrator inspect and disable Agent credentials without returning token material', async () => {
     const { password, runtime } = await createRuntime()
@@ -47,6 +62,7 @@ describe('Agent Capability Grant HTTP authentication', () => {
     const mutationHeaders = {
       'content-type': 'application/json',
       cookie,
+      'idempotency-key': 'agent-inspect-control-1',
       origin: 'http://localhost',
     }
     const clientResponse = await runtime.app.request('/api/agent/v1/clients', {
@@ -54,7 +70,13 @@ describe('Agent Capability Grant HTTP authentication', () => {
       headers: mutationHeaders,
       method: 'POST',
     })
-    const client = await clientResponse.json() as { agentClientId: string }
+    const client = agentClientSchema.parse(await clientResponse.json())
+    const replayedClientResponse = await runtime.app.request('/api/agent/v1/clients', {
+      body: JSON.stringify({ name: 'Inspectable synthetic agent' }),
+      headers: mutationHeaders,
+      method: 'POST',
+    })
+    expect(agentClientSchema.parse(await replayedClientResponse.json())).toEqual(client)
     const grantResponse = await runtime.app.request('/api/agent/v1/grants', {
       body: JSON.stringify({
         agentClientId: client.agentClientId,
@@ -65,7 +87,7 @@ describe('Agent Capability Grant HTTP authentication', () => {
       headers: mutationHeaders,
       method: 'POST',
     })
-    const grant = await grantResponse.json() as { grantId: string; token: string }
+    const grant = agentCapabilityGrantSchema.parse(await grantResponse.json())
 
     const [clientsResponse, clientDetailResponse, grantsResponse, grantDetailResponse] = await Promise.all([
       runtime.app.request('/api/agent/v1/clients', { headers: { cookie } }),
@@ -79,10 +101,10 @@ describe('Agent Capability Grant HTTP authentication', () => {
       grantsResponse.status,
       grantDetailResponse.status,
     ]).toEqual([200, 200, 200, 200])
-    const clients = await clientsResponse.json() as { items: unknown[] }
-    const clientDetail = await clientDetailResponse.json()
-    const grants = await grantsResponse.json() as { items: unknown[] }
-    const grantDetail = await grantDetailResponse.json()
+    const clients = agentClientListSchema.parse(await clientsResponse.json())
+    const clientDetail = agentClientSchema.parse(await clientDetailResponse.json())
+    const grants = agentCapabilityGrantListSchema.parse(await grantsResponse.json())
+    const grantDetail = agentCapabilityGrantViewSchema.parse(await grantDetailResponse.json())
     expect(clients.items).toContainEqual(expect.objectContaining({
       agentClientId: client.agentClientId,
       name: 'Inspectable synthetic agent',
@@ -107,7 +129,7 @@ describe('Agent Capability Grant HTTP authentication', () => {
       },
     )
     expect(disabledResponse.status).toBe(200)
-    await expect(disabledResponse.json()).resolves.toMatchObject({
+    expect(agentClientSchema.parse(await disabledResponse.json())).toMatchObject({
       agentClientId: client.agentClientId,
       status: 'disabled',
     })
@@ -116,9 +138,17 @@ describe('Agent Capability Grant HTTP authentication', () => {
       { headers: { authorization: `Bearer ${grant.token}` } },
     )
     expect(denied.status).toBe(401)
-    await expect(denied.json()).resolves.toMatchObject({
+    expect(await parseApiError(denied)).toMatchObject({
       error: { code: 'AGENT_TOKEN_INVALID' },
     })
+    expect(new AuditQuery(runtime.database).list({
+      epoch: 'epoch-1',
+      workspaceId: 'workspace-demo',
+    }).filter(event => event.operation.startsWith('agent-')).map(event => event.operation)).toEqual([
+      'agent-client.create',
+      'agent-grant.create',
+      'agent-client.disable',
+    ])
   })
 
   it('stores only the token hash and enforces its role-bound operation allowlist', async () => {
@@ -127,6 +157,7 @@ describe('Agent Capability Grant HTTP authentication', () => {
     const mutationHeaders = {
       'content-type': 'application/json',
       cookie,
+      'idempotency-key': 'agent-allowlist-control-1',
       origin: 'http://localhost',
     }
 
@@ -136,7 +167,7 @@ describe('Agent Capability Grant HTTP authentication', () => {
       method: 'POST',
     })
     expect(clientResponse.status).toBe(200)
-    const client = await clientResponse.json() as { agentClientId: string }
+    const client = agentClientSchema.parse(await clientResponse.json())
 
     const grantResponse = await runtime.app.request('/api/agent/v1/grants', {
       body: JSON.stringify({
@@ -149,7 +180,7 @@ describe('Agent Capability Grant HTTP authentication', () => {
       method: 'POST',
     })
     expect(grantResponse.status).toBe(200)
-    const grant = await grantResponse.json() as { grantId: string; token: string }
+    const grant = agentCapabilityGrantSchema.parse(await grantResponse.json())
     expect(grant.token).toMatch(/^cma_[a-f0-9]{40}$/)
 
     const persisted = runtime.database.driver.prepare(
@@ -157,12 +188,31 @@ describe('Agent Capability Grant HTTP authentication', () => {
     ).get(grant.grantId) as { token_hash: string }
     expect(persisted.token_hash).toMatch(/^[a-f0-9]{64}$/)
     expect(persisted.token_hash).not.toContain(grant.token)
+    const persistedReceipt = runtime.database.driver.prepare(`
+      SELECT response_json FROM command_receipt
+      WHERE operation = 'agent-grant.create' AND idempotency_key = ?
+    `).get('agent-allowlist-control-1') as { response_json: string }
+    expect(persistedReceipt.response_json).not.toContain(grant.token)
+    const replayedGrant = await runtime.app.request('/api/agent/v1/grants', {
+      body: JSON.stringify({
+        agentClientId: client.agentClientId,
+        operationIds: ['reference.diagnoses.search'],
+        practitionerRoleId: 'practitioner-role-outpatient-doctor',
+        ttlSeconds: 3600,
+      }),
+      headers: mutationHeaders,
+      method: 'POST',
+    })
+    expect(replayedGrant.status).toBe(409)
+    expect(await parseApiError(replayedGrant)).toMatchObject({
+      error: { code: 'IDEMPOTENCY_KEY_REUSED' },
+    })
 
     const contextResponse = await runtime.app.request('/api/agent/v1/context', {
       headers: { authorization: `Bearer ${grant.token}` },
     })
     expect(contextResponse.status).toBe(200)
-    const contextBody = JSON.stringify(await contextResponse.json())
+    const contextBody = JSON.stringify(agentCapabilityContextSchema.parse(await contextResponse.json()))
     expect(contextBody).not.toContain(grant.token)
     expect(JSON.parse(contextBody)).toMatchObject({
       actor: {
@@ -187,7 +237,7 @@ describe('Agent Capability Grant HTTP authentication', () => {
       { headers: { authorization: `Bearer ${grant.token}` } },
     )
     expect(denied.status).toBe(403)
-    await expect(denied.json()).resolves.toMatchObject({
+    expect(await parseApiError(denied)).toMatchObject({
       error: { code: 'OPERATION_NOT_ALLOWED' },
     })
 
@@ -200,12 +250,13 @@ describe('Agent Capability Grant HTTP authentication', () => {
       },
     )
     expect(revoked.status).toBe(200)
+    revokedAgentCapabilityGrantSchema.parse(await revoked.json())
     const afterRevocation = await runtime.app.request(
       '/api/his/v1/reference-catalogs/diagnoses?page=1&pageSize=20&query=diabetes',
       { headers: { authorization: `Bearer ${grant.token}` } },
     )
     expect(afterRevocation.status).toBe(401)
-    await expect(afterRevocation.json()).resolves.toMatchObject({
+    expect(await parseApiError(afterRevocation)).toMatchObject({
       error: { code: 'AGENT_TOKEN_INVALID' },
     })
   })
@@ -224,8 +275,28 @@ describe('Agent Capability Grant HTTP authentication', () => {
     )
 
     expect(response.status).toBe(401)
-    await expect(response.json()).resolves.toMatchObject({
+    expect(await parseApiError(response)).toMatchObject({
       error: { code: 'AGENT_TOKEN_INVALID' },
+    })
+  })
+
+  it('does not let a token-shaped Authorization header bypass human control-plane CSRF', async () => {
+    const { password, runtime } = await createRuntime()
+    const cookie = await signIn(runtime, password)
+    const response = await runtime.app.request('/api/agent/v1/clients', {
+      body: JSON.stringify({ name: 'CSRF bypass attempt' }),
+      headers: {
+        authorization: `Bearer cma_${'0'.repeat(40)}`,
+        'content-type': 'application/json',
+        cookie,
+        'idempotency-key': 'csrf-bypass-attempt-1',
+      },
+      method: 'POST',
+    })
+
+    expect(response.status).toBe(403)
+    expect(await parseApiError(response)).toMatchObject({
+      error: { code: 'CSRF_REJECTED' },
     })
   })
 
@@ -236,6 +307,7 @@ describe('Agent Capability Grant HTTP authentication', () => {
     const headers = {
       'content-type': 'application/json',
       cookie,
+      'idempotency-key': 'agent-expiry-control-1',
       origin: 'http://localhost',
     }
     const clientResponse = await runtime.app.request('/api/agent/v1/clients', {
@@ -243,7 +315,7 @@ describe('Agent Capability Grant HTTP authentication', () => {
       headers,
       method: 'POST',
     })
-    const client = await clientResponse.json() as { agentClientId: string }
+    const client = agentClientSchema.parse(await clientResponse.json())
     const grantResponse = await runtime.app.request('/api/agent/v1/grants', {
       body: JSON.stringify({
         agentClientId: client.agentClientId,
@@ -254,7 +326,7 @@ describe('Agent Capability Grant HTTP authentication', () => {
       headers,
       method: 'POST',
     })
-    const grant = await grantResponse.json() as { token: string }
+    const grant = agentCapabilityGrantSchema.parse(await grantResponse.json())
     const path = '/api/his/v1/reference-catalogs/diagnoses?page=1&pageSize=20&query=diabetes'
 
     expect((await runtime.app.request(path, {
@@ -265,7 +337,7 @@ describe('Agent Capability Grant HTTP authentication', () => {
       headers: { authorization: `Bearer ${grant.token}` },
     })
     expect(expired.status).toBe(401)
-    await expect(expired.json()).resolves.toMatchObject({
+    expect(await parseApiError(expired)).toMatchObject({
       error: { code: 'AGENT_TOKEN_INVALID' },
     })
   })
@@ -276,6 +348,7 @@ describe('Agent Capability Grant HTTP authentication', () => {
     const mutationHeaders = {
       'content-type': 'application/json',
       cookie,
+      'idempotency-key': 'agent-epoch-control-1',
       origin: 'http://localhost',
     }
     const clientResponse = await runtime.app.request('/api/agent/v1/clients', {
@@ -283,7 +356,7 @@ describe('Agent Capability Grant HTTP authentication', () => {
       headers: mutationHeaders,
       method: 'POST',
     })
-    const client = await clientResponse.json() as { agentClientId: string }
+    const client = agentClientSchema.parse(await clientResponse.json())
     const grantResponse = await runtime.app.request('/api/agent/v1/grants', {
       body: JSON.stringify({
         agentClientId: client.agentClientId,
@@ -294,7 +367,7 @@ describe('Agent Capability Grant HTTP authentication', () => {
       headers: mutationHeaders,
       method: 'POST',
     })
-    const grant = await grantResponse.json() as { token: string }
+    const grant = agentCapabilityGrantSchema.parse(await grantResponse.json())
     const agentHeaders = {
       authorization: `Bearer ${grant.token}`,
       'x-clinmesh-epoch': 'epoch-forged',
@@ -306,7 +379,7 @@ describe('Agent Capability Grant HTTP authentication', () => {
       headers: agentHeaders,
     })
     expect(contextResponse.status).toBe(200)
-    await expect(contextResponse.json()).resolves.toMatchObject({
+    expect(agentCapabilityContextSchema.parse(await contextResponse.json())).toMatchObject({
       actor: {
         epoch: 'epoch-1',
         practitionerRoleId: 'practitioner-role-outpatient-doctor',
@@ -332,7 +405,7 @@ describe('Agent Capability Grant HTTP authentication', () => {
       { headers: agentHeaders },
     )
     expect(afterReset.status).toBe(401)
-    await expect(afterReset.json()).resolves.toMatchObject({
+    expect(await parseApiError(afterReset)).toMatchObject({
       error: { code: 'AGENT_TOKEN_INVALID' },
     })
   })
@@ -343,6 +416,7 @@ describe('Agent Capability Grant HTTP authentication', () => {
     const headers = {
       'content-type': 'application/json',
       cookie,
+      'idempotency-key': 'agent-version-client-1',
       origin: 'http://localhost',
     }
     const clientResponse = await runtime.app.request('/api/agent/v1/clients', {
@@ -350,8 +424,10 @@ describe('Agent Capability Grant HTTP authentication', () => {
       headers,
       method: 'POST',
     })
-    const client = await clientResponse.json() as { agentClientId: string }
+    const client = agentClientSchema.parse(await clientResponse.json())
+    let grantSequence = 0
     const createGrant = async () => {
+      grantSequence += 1
       const response = await runtime.app.request('/api/agent/v1/grants', {
         body: JSON.stringify({
           agentClientId: client.agentClientId,
@@ -359,10 +435,10 @@ describe('Agent Capability Grant HTTP authentication', () => {
           practitionerRoleId: 'practitioner-role-outpatient-doctor',
           ttlSeconds: 3600,
         }),
-        headers,
+        headers: { ...headers, 'idempotency-key': `agent-version-grant-${grantSequence}` },
         method: 'POST',
       })
-      return await response.json() as { grantId: string; token: string }
+      return agentCapabilityGrantSchema.parse(await response.json())
     }
     const requestWith = (token: string) => runtime.app.request(
       '/api/his/v1/reference-catalogs/diagnoses?page=1&pageSize=20&query=diabetes',

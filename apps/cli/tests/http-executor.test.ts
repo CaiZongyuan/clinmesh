@@ -139,4 +139,57 @@ describe('HIS HTTP operation executor', () => {
       },
     })
   })
+
+  it('treats an interrupted successful write response body as ambiguous', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error('response body lost'))
+      },
+    })
+    const execute = createHttpExecutor({
+      baseUrl: 'http://127.0.0.1:51868',
+      credential: { kind: 'agent', token: 'cma_synthetic_task_token' },
+      fetch: vi.fn().mockResolvedValue(new Response(body, { status: 200 })),
+    })
+
+    await expect(execute('patient.create', {
+      birthDate: '1992-05-06',
+      gender: 'female',
+      identifier: 'SYN-RESPONSE-LOST',
+      name: '合成患者',
+    }, { idempotencyKey: 'patient-response-lost-1' })).rejects.toMatchObject({
+      exitCode: 7,
+      problem: {
+        code: 'ambiguous_outcome',
+        idempotencyKey: 'patient-response-lost-1',
+        operationId: 'patient.create',
+        outcome: 'ambiguous',
+        type: 'network',
+      },
+    })
+  })
+
+  it('treats an invalid successful write response schema as ambiguous', async () => {
+    const execute = createHttpExecutor({
+      baseUrl: 'http://127.0.0.1:51868',
+      credential: { kind: 'agent', token: 'cma_synthetic_task_token' },
+      fetch: vi.fn().mockResolvedValue(Response.json({ unexpected: true })),
+    })
+
+    await expect(execute('patient.create', {
+      birthDate: '1992-05-06',
+      gender: 'female',
+      identifier: 'SYN-INVALID-RESPONSE',
+      name: '合成患者',
+    }, { idempotencyKey: 'patient-invalid-response-1' })).rejects.toMatchObject({
+      exitCode: 7,
+      problem: {
+        code: 'invalid_response',
+        idempotencyKey: 'patient-invalid-response-1',
+        operationId: 'patient.create',
+        outcome: 'ambiguous',
+        type: 'protocol',
+      },
+    })
+  })
 })

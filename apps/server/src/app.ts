@@ -189,6 +189,10 @@ function referenceCatalogQuery(context: Context): {
   }
 }
 
+function requestIdempotencyKey(context: Context): string {
+  return z.string().min(8).max(128).parse(context.req.header('idempotency-key'))
+}
+
 export function createApp(options: CreateAppOptions = {}): Hono {
   const app = new Hono()
 
@@ -247,7 +251,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.post('/api/agent/v1/clients', async (context) => {
       try {
         const input = createAgentClientInputSchema.parse(await context.req.json())
-        return context.json(await identity.createAgentClient(context.req.raw.headers, input))
+        return context.json(await identity.createAgentClient(
+          context.req.raw.headers,
+          input,
+          requestIdempotencyKey(context),
+        ))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
@@ -259,6 +267,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(await identity.disableAgentClient(
           context.req.raw.headers,
           agentClientId,
+          requestIdempotencyKey(context),
         ))
       } catch (error) {
         return apiErrorResponse(context, error)
@@ -282,7 +291,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.post('/api/agent/v1/grants', async (context) => {
       try {
         const input = createAgentCapabilityGrantInputSchema.parse(await context.req.json())
-        return context.json(await identity.createAgentGrant(context.req.raw.headers, input))
+        return context.json(await identity.createAgentGrant(
+          context.req.raw.headers,
+          input,
+          requestIdempotencyKey(context),
+        ))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
@@ -291,7 +304,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try {
         z.object({}).strict().parse(await context.req.json())
         const grantId = z.string().uuid().parse(context.req.param('grantId'))
-        return context.json(await identity.revokeAgentGrant(context.req.raw.headers, grantId))
+        return context.json(await identity.revokeAgentGrant(
+          context.req.raw.headers,
+          grantId,
+          requestIdempotencyKey(context),
+        ))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
@@ -646,7 +663,12 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           operationId: z.string().min(1).max(128),
         }).strict().parse(context.req.query())
         return context.json(workflow.commandReceipt(
-          await actor(context),
+          await identity.resolveReceiptActor(
+            context.req.raw.headers,
+            context.req.raw.method,
+            context.req.path,
+            query.operationId,
+          ),
           query.operationId,
           query.idempotencyKey,
         ))

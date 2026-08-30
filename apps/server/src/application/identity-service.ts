@@ -4,7 +4,7 @@ import { drizzleAdapter } from '@better-auth/drizzle-adapter'
 import { roleCodeSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
-import type { ActorContext } from './command-executor.ts'
+import { CommandExecutor, type ActorContext } from './command-executor.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import * as authSchema from '../infrastructure/auth/schema.ts'
 import {
@@ -14,10 +14,12 @@ import {
 } from '@clinmesh/contracts/his-operations'
 import {
   agentCapabilityContextSchema,
+  agentCapabilityGrantSchema,
   agentCapabilityGrantListSchema,
   agentCapabilityGrantViewSchema,
   agentClientListSchema,
   agentClientSchema,
+  revokedAgentCapabilityGrantSchema,
 } from '@clinmesh/contracts/agent'
 
 export const syntheticAccounts = [
@@ -68,6 +70,7 @@ export const syntheticAccounts = [
 interface IdentityServiceOptions {
   authBaseUrl: string
   authSecret: string
+  commands: CommandExecutor
   now?: () => Date
   trustedOrigins: string[]
 }
@@ -181,6 +184,7 @@ function createAuth(database: ClinMeshDatabase, options: IdentityServiceOptions)
 export class IdentityService {
   readonly auth: ReturnType<typeof createAuth>
   readonly #catalogHash: string
+  readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
   readonly #now: () => Date
   readonly #trustedOrigin: string
@@ -188,15 +192,20 @@ export class IdentityService {
 
   constructor(database: ClinMeshDatabase, options: IdentityServiceOptions) {
     this.#database = database
+    this.#commands = options.commands
     this.#catalogHash = createHash('sha256').update(JSON.stringify(
       listHisOperations().map(operation => ({
         cliPath: operation.cliPath,
         commandOperation: operation.commandOperation,
+        error: z.toJSONSchema(operation.error),
         http: { method: operation.http.method, path: operation.http.path },
+        handlerOwner: operation.handlerOwner,
         id: operation.id,
+        identities: operation.identities,
         input: z.toJSONSchema(operation.input),
         mode: operation.mode,
         output: z.toJSONSchema(operation.output),
+        previewToken: operation.previewToken,
         requirements: operation.requirements,
         risk: operation.risk,
         roles: operation.roles,
@@ -215,32 +224,44 @@ export class IdentityService {
   }
 
   assertTrustedMutation(headers: Headers): void {
-    if (this.#agentToken(headers) !== undefined) return
+    if (this.#agentToken(headers) !== undefined && headers.get('cookie') === null) return
     const origin = headers.get('origin')
     if (origin === null || !this.#trustedOrigins.has(origin)) {
       throw new IdentityError('CSRF_REJECTED', 'The request origin is not trusted')
     }
   }
 
-  async createAgentClient(headers: Headers, input: { name: string }) {
+  async createAgentClient(headers: Headers, input: { name: string }, idempotencyKey: string) {
     const session = await this.#administratorSession(headers)
-    const agentClientId = randomUUID()
-    const actorId = `agent-${randomUUID()}`
-    const createdAt = this.#now().toISOString()
-    this.#database.driver.prepare(`
-      INSERT INTO agent_client (
-        agent_client_id, workspace_id, actor_id, name, status,
-        created_by_actor_id, created_at
-      ) VALUES (?, ?, ?, ?, 'active', ?, ?)
-    `).run(
-      agentClientId,
-      session.actor.workspaceId,
-      actorId,
-      input.name,
-      session.actor.actorId,
-      createdAt,
-    )
-    return { actorId, agentClientId, createdAt, name: input.name, status: 'active' as const }
+    return this.#commands.execute({
+      context: session.actor,
+      dataSchema: agentClientSchema,
+      expectedVersions: {},
+      idempotencyKey,
+      input,
+      operation: 'agent-client.create',
+    }, () => {
+      const agentClientId = randomUUID()
+      const actorId = `agent-${randomUUID()}`
+      const createdAt = this.#now().toISOString()
+      this.#database.driver.prepare(`
+        INSERT INTO agent_client (
+          agent_client_id, workspace_id, actor_id, name, status,
+          created_by_actor_id, created_at
+        ) VALUES (?, ?, ?, ?, 'active', ?, ?)
+      `).run(
+        agentClientId,
+        session.actor.workspaceId,
+        actorId,
+        input.name,
+        session.actor.actorId,
+        createdAt,
+      )
+      return {
+        data: { actorId, agentClientId, createdAt, name: input.name, status: 'active' as const },
+        effects: [{ kind: 'created' as const, reference: `AgentClient/${agentClientId}`, versionId: '1' }],
+      }
+    }).data
   }
 
   async listAgentClients(headers: Headers) {
@@ -267,22 +288,34 @@ export class IdentityService {
     return this.#agentClient(row)
   }
 
-  async disableAgentClient(headers: Headers, agentClientId: string) {
+  async disableAgentClient(headers: Headers, agentClientId: string, idempotencyKey: string) {
     const session = await this.#administratorSession(headers)
-    const result = this.#database.driver.prepare(`
-      UPDATE agent_client
-      SET status = 'disabled'
-      WHERE workspace_id = ? AND agent_client_id = ?
-    `).run(session.actor.workspaceId, agentClientId)
-    if (result.changes !== 1) {
-      throw new IdentityError('AGENT_CLIENT_NOT_FOUND', 'The Agent Client was not found')
-    }
-    const row = agentClientRowSchema.parse(this.#database.driver.prepare(`
-      SELECT actor_id, agent_client_id, created_at, name, status
-      FROM agent_client
-      WHERE workspace_id = ? AND agent_client_id = ?
-    `).get(session.actor.workspaceId, agentClientId))
-    return this.#agentClient(row)
+    return this.#commands.execute({
+      context: session.actor,
+      dataSchema: agentClientSchema,
+      expectedVersions: {},
+      idempotencyKey,
+      input: { agentClientId },
+      operation: 'agent-client.disable',
+    }, () => {
+      const result = this.#database.driver.prepare(`
+        UPDATE agent_client
+        SET status = 'disabled'
+        WHERE workspace_id = ? AND agent_client_id = ?
+      `).run(session.actor.workspaceId, agentClientId)
+      if (result.changes !== 1) {
+        throw new IdentityError('AGENT_CLIENT_NOT_FOUND', 'The Agent Client was not found')
+      }
+      const row = agentClientRowSchema.parse(this.#database.driver.prepare(`
+        SELECT actor_id, agent_client_id, created_at, name, status
+        FROM agent_client
+        WHERE workspace_id = ? AND agent_client_id = ?
+      `).get(session.actor.workspaceId, agentClientId))
+      return {
+        data: this.#agentClient(row),
+        effects: [{ kind: 'updated' as const, reference: `AgentClient/${agentClientId}`, versionId: '2' }],
+      }
+    }).data
   }
 
   async createAgentGrant(headers: Headers, input: {
@@ -290,7 +323,7 @@ export class IdentityService {
     operationIds: string[]
     practitionerRoleId: string
     ttlSeconds: number
-  }) {
+  }, idempotencyKey: string) {
     const session = await this.#administratorSession(headers)
     const client = z.object({ status: z.literal('active') }).optional().parse(
       this.#database.driver.prepare(`
@@ -326,39 +359,62 @@ export class IdentityService {
         'SELECT policy_version FROM workspace WHERE workspace_id = ?',
       ).get(session.actor.workspaceId),
     )
-    const token = `cma_${randomBytes(20).toString('hex')}`
-    const grantId = randomUUID()
-    const createdAt = this.#now().toISOString()
-    const expiresAt = new Date(this.#now().getTime() + input.ttlSeconds * 1_000).toISOString()
-    this.#database.driver.prepare(`
-      INSERT INTO agent_capability_grant (
-        grant_id, token_hash, agent_client_id, workspace_id, epoch,
-        scenario_run_id, practitioner_role_id, operation_ids_json,
-        catalog_hash, policy_version, expires_at, created_by_actor_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      grantId,
-      createHash('sha256').update(token).digest('hex'),
-      input.agentClientId,
-      session.actor.workspaceId,
-      session.actor.epoch,
-      session.actor.scenarioRunId,
-      input.practitionerRoleId,
-      JSON.stringify(operationIds),
-      this.#catalogHash,
-      workspace.policy_version,
-      expiresAt,
-      session.actor.actorId,
-      createdAt,
-    )
-    return {
-      agentClientId: input.agentClientId,
-      expiresAt,
-      grantId,
-      operationIds,
-      practitionerRoleId: input.practitionerRoleId,
-      token,
-    }
+    return this.#commands.execute({
+      context: session.actor,
+      dataSchema: agentCapabilityGrantSchema,
+      expectedVersions: {},
+      idempotencyKey,
+      input: { ...input, operationIds },
+      operation: 'agent-grant.create',
+      replay: 'reject',
+      storedResponse: response => ({
+        ...response,
+        data: {
+          agentClientId: response.data.agentClientId,
+          expiresAt: response.data.expiresAt,
+          grantId: response.data.grantId,
+          operationIds: response.data.operationIds,
+          practitionerRoleId: response.data.practitionerRoleId,
+        },
+      }),
+    }, () => {
+      const token = `cma_${randomBytes(20).toString('hex')}`
+      const grantId = randomUUID()
+      const createdAt = this.#now().toISOString()
+      const expiresAt = new Date(this.#now().getTime() + input.ttlSeconds * 1_000).toISOString()
+      this.#database.driver.prepare(`
+        INSERT INTO agent_capability_grant (
+          grant_id, token_hash, agent_client_id, workspace_id, epoch,
+          scenario_run_id, practitioner_role_id, operation_ids_json,
+          catalog_hash, policy_version, expires_at, created_by_actor_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        grantId,
+        createHash('sha256').update(token).digest('hex'),
+        input.agentClientId,
+        session.actor.workspaceId,
+        session.actor.epoch,
+        session.actor.scenarioRunId,
+        input.practitionerRoleId,
+        JSON.stringify(operationIds),
+        this.#catalogHash,
+        workspace.policy_version,
+        expiresAt,
+        session.actor.actorId,
+        createdAt,
+      )
+      return {
+        data: {
+          agentClientId: input.agentClientId,
+          expiresAt,
+          grantId,
+          operationIds,
+          practitionerRoleId: input.practitionerRoleId,
+          token,
+        },
+        effects: [{ kind: 'created' as const, reference: `AgentGrant/${grantId}`, versionId: '1' }],
+      }
+    }).data
   }
 
   async listAgentGrants(headers: Headers) {
@@ -501,6 +557,19 @@ export class IdentityService {
     return this.resolveActorContext(headers, operation.id)
   }
 
+  async resolveReceiptActor(
+    headers: Headers,
+    method: string,
+    pathname: string,
+    targetOperationId: string,
+  ): Promise<ActorContext> {
+    const actor = await this.resolveRequestActor(headers, method, pathname)
+    if (this.#agentToken(headers) !== undefined) {
+      await this.resolveActorContext(headers, targetOperationId)
+    }
+    return actor
+  }
+
   async resolveAdministratorActor(
     headers: Headers,
     method: string,
@@ -563,18 +632,30 @@ export class IdentityService {
     })
   }
 
-  async revokeAgentGrant(headers: Headers, grantId: string) {
+  async revokeAgentGrant(headers: Headers, grantId: string, idempotencyKey: string) {
     const session = await this.#administratorSession(headers)
-    const revokedAt = this.#now().toISOString()
-    const result = this.#database.driver.prepare(`
-      UPDATE agent_capability_grant
-      SET revoked_at = ?
-      WHERE grant_id = ? AND workspace_id = ? AND revoked_at IS NULL
-    `).run(revokedAt, grantId, session.actor.workspaceId)
-    if (result.changes !== 1) {
-      throw new IdentityError('AGENT_TOKEN_INVALID', 'The Agent Capability Grant is not active')
-    }
-    return { grantId, revokedAt, status: 'revoked' as const }
+    return this.#commands.execute({
+      context: session.actor,
+      dataSchema: revokedAgentCapabilityGrantSchema,
+      expectedVersions: {},
+      idempotencyKey,
+      input: { grantId },
+      operation: 'agent-grant.revoke',
+    }, () => {
+      const revokedAt = this.#now().toISOString()
+      const result = this.#database.driver.prepare(`
+        UPDATE agent_capability_grant
+        SET revoked_at = ?
+        WHERE grant_id = ? AND workspace_id = ? AND revoked_at IS NULL
+      `).run(revokedAt, grantId, session.actor.workspaceId)
+      if (result.changes !== 1) {
+        throw new IdentityError('AGENT_TOKEN_INVALID', 'The Agent Capability Grant is not active')
+      }
+      return {
+        data: { grantId, revokedAt, status: 'revoked' as const },
+        effects: [{ kind: 'updated' as const, reference: `AgentGrant/${grantId}`, versionId: '2' }],
+      }
+    }).data
   }
 
   async seedSyntheticAccounts(input: SeedSyntheticAccountsInput): Promise<void> {

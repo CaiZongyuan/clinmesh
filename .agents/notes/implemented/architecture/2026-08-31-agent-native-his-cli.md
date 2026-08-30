@@ -8,11 +8,13 @@ ClinMesh 的 HIS 与 FHIR 接口已经拥有多岗位业务能力，但直接调
 
 ## Decision
 
-`packages/contracts` 中的 `HisOperationCatalog` 是 Agent 操作面的唯一合同 owner。每项 operation 显式拥有稳定 ID、版本、`cliPath`、mode、输入输出 schema、HTTP adapter metadata、岗位、风险、幂等与 expected version 要求；CLI 命令树、离线 discovery、服务端 Agent route matching、Grant Catalog hash 和 Skill 示例验证都投影这份合同。既有 Command receipt 使用不同持久 operation 名称时，Catalog 保存 adapter 名称，使 Agent 始终用公开 operation ID 恢复而不改写历史 receipt。
+`packages/contracts` 中导出的 `hisOperationCatalog` 是 Agent 操作面的唯一合同 owner。每项 operation 显式拥有稳定 ID、版本、`cliPath`、mode、输入/输出/错误 schema、HTTP adapter、handler owner、identity、岗位、风险、幂等、expected version 与 preview token 要求；CLI 命令树、离线 discovery、服务端 Agent route matching、Grant Catalog hash 和 Skill 示例验证都投影这份合同。既有 Command receipt 使用不同持久 operation 名称时，Catalog 保存 adapter 名称，使 Agent 始终用公开 operation ID 恢复而不改写历史 receipt。
 
-`apps/cli` 发布 `clinmesh` 可执行入口。Human mode 使用本地 Better Auth profile，高风险 write 需要 `--yes`；Agent mode 只接受 runner 注入的短期 `cma_` token，不回退到 human profile。Agent Client 是稳定非人类 Actor，Agent Capability Grant 把它绑定到一个 Workspace、Epoch、Scenario Run、单一 Practitioner Role、operation allowlist、Catalog hash、policy version 和期限。服务端只保存 token SHA-256；撤销、过期、Client 禁用、Epoch reset、Scenario Run 关闭、岗位停用或版本变化都会使 Grant 失效。
+`apps/cli` 发布 `clinmesh` 可执行入口。Human mode 使用本地 Better Auth profile，高风险 write 需要 `--yes`；Agent mode 只接受 runner 注入的短期 `cma_` token，不回退到 human profile。Agent Client 是稳定非人类 Actor，并与 Human Membership 一样投影到 `workspace_actor`；Agent Capability Grant 把它绑定到一个 Workspace、Epoch、Scenario Run、单一 Practitioner Role、operation allowlist、Catalog hash、policy version 和期限。控制面 mutation 复用 CommandExecutor 的幂等、审计和 Action Trace；Grant 原 token 只返回一次，receipt 脱敏且不能重放。服务端只保存 token SHA-256；撤销、过期、Client 禁用、Epoch reset、Scenario Run 关闭、岗位停用或版本变化都会使 Grant 失效。
 
 CLI 默认输出版本化 JSON，human mode 可选择 table。所有 write 显式携带 idempotency key，连接丢失不自动重试，而是返回 ambiguous 并通过 Command receipt 对账。复杂输入只从 workspace 内文件或 stdin 进入窄 schema。CLI 不提供通用 invoke、任意 URL、method/path/body、SQL、JSON Patch、FHIR write 或 Bundle write。
+
+生成 Synthetic Case 开始或 replay 时，活动 Patient Brief 的问诊主题被确定性物化为 case-scoped Consultation Question Rules；首次问诊同时接管医生责任。独立处方开具原子创建 MedicationRequest 与药品 ChargeItem/Charge Record，只有 Encounter 完成后才能支付并移交药房。这两条桥接保证同一病例不依赖 legacy first-visit 或组合签署入口即可完成 CLI 跨岗位闭环。
 
 七个 model-invoked `clinmesh-*` Skills 按共享恢复、挂号、分诊、医生、收费、药房和 FHIR 拆分。Skills 解释业务意图、状态前置、岗位交接和反例，精确 flags 与 schema 仍由 Catalog discovery 拥有；临床 Skills 不包含 Agent Client/Grant 管理命令。
 
