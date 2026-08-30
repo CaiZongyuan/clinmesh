@@ -583,8 +583,8 @@ export class IdentityService {
       return actor
     }
     const session = await this.resolveSessionContext(headers)
-    if (session.actor.roleCode !== 'administrator') {
-      throw new IdentityError('ROLE_NOT_ALLOWED', 'The selected Practitioner Role must be administrator')
+    if (!session.availableRoles.some(role => role.code === 'administrator')) {
+      throw new IdentityError('ROLE_NOT_ALLOWED', 'An administrator account is required')
     }
     return session.actor
   }
