@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -171,7 +171,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 42,
+      schemaVersion: 43,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -217,8 +217,9 @@ describe('SQLite lifecycle', () => {
         '0039_agent-capability-grant.sql',
         '0040_synthetic-case-consultation.sql',
         '0041_workspace-actor.sql',
+        '0042_command-receipt-role.sql',
       ],
-      schemaVersion: 42,
+      schemaVersion: 43,
     })
     expect(first.driver.prepare(`
       SELECT name FROM sqlite_schema
@@ -234,9 +235,86 @@ describe('SQLite lifecycle', () => {
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 42 })
-    expect(reopened.diagnostics().schemaVersion).toBe(42)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 43 })
+    expect(reopened.diagnostics().schemaVersion).toBe(43)
     reopened.close()
+  })
+
+  it('backfills the Acting Practitioner Role when upgrading persisted Command receipts', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-command-receipt-role-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'clinmesh.sqlite')
+    const previousMigrationDirectory = join(directory, 'previous-migrations')
+    await mkdir(previousMigrationDirectory)
+    const migrationFiles = (await readdir(join(process.cwd(), 'drizzle')))
+      .filter(file => /^\d{4}_.+\.sql$/.test(file) && file !== '0042_command-receipt-role.sql')
+    await Promise.all(migrationFiles.map(file => copyFile(
+      join(process.cwd(), 'drizzle', file),
+      join(previousMigrationDirectory, file),
+    )))
+    const database = openClinMeshDatabase({ busyTimeoutMs: 5_000, databasePath })
+    expect(applyMigrations(database, previousMigrationDirectory).schemaVersion).toBe(42)
+    new WorkspaceRepository(database).install({
+      epoch: 'epoch-command-receipt-role',
+      scenarioId: 'scenario-command-receipt-role',
+      scenarioRunId: 'run-command-receipt-role',
+      workspaceId: 'workspace-command-receipt-role',
+      workspaceName: 'Command receipt role migration',
+    })
+    database.driver.prepare(`
+      INSERT INTO audit_log (
+        workspace_id, epoch, audit_id, sequence, previous_hash, current_hash,
+        real_timestamp, actor_id, practitioner_id, practitioner_role_id,
+        role_code, scenario_run_id, operation, outcome, request_hash
+      ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'success', ?)
+    `).run(
+      'workspace-command-receipt-role',
+      'epoch-command-receipt-role',
+      'audit-command-receipt-role',
+      '0'.repeat(64),
+      '1'.repeat(64),
+      '2026-08-31T00:00:00.000Z',
+      'actor-command-receipt-role',
+      'practitioner-command-receipt-role',
+      'practitioner-role-outpatient-doctor',
+      'outpatient-doctor',
+      'run-command-receipt-role',
+      'patient.create',
+      '2'.repeat(64),
+    )
+    database.driver.prepare(`
+      INSERT INTO command_receipt (
+        workspace_id, epoch, actor_id, operation, idempotency_key,
+        request_hash, status, response_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?)
+    `).run(
+      'workspace-command-receipt-role',
+      'epoch-command-receipt-role',
+      'actor-command-receipt-role',
+      'patient.create',
+      'patient-create-before-role-binding',
+      '2'.repeat(64),
+      JSON.stringify({ auditId: 'audit-command-receipt-role' }),
+      '2026-08-31T00:00:00.000Z',
+      '2026-08-31T00:00:00.000Z',
+    )
+
+    expect(applyMigrations(database)).toEqual({
+      applied: ['0042_command-receipt-role.sql'],
+      schemaVersion: 43,
+    })
+    expect(database.driver.prepare(`
+      SELECT practitioner_role_id FROM command_receipt
+      WHERE workspace_id = ? AND epoch = ? AND actor_id = ?
+        AND operation = ? AND idempotency_key = ?
+    `).get(
+      'workspace-command-receipt-role',
+      'epoch-command-receipt-role',
+      'actor-command-receipt-role',
+      'patient.create',
+      'patient-create-before-role-binding',
+    )).toEqual({ practitioner_role_id: 'practitioner-role-outpatient-doctor' })
+    database.close()
   })
 
   it('persists Synthea localization provenance and warnings in the Profile', async () => {
@@ -1367,7 +1445,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(42)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(43)
     await runtime.close()
   })
 
@@ -1437,7 +1515,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 42,
+      schemaVersion: 43,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -1449,11 +1527,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 42,
+      expectedSchemaVersion: 43,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 42,
+      schemaVersion: 43,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -1637,7 +1715,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(42),
+      schemaVersion: z.literal(43),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -1679,26 +1757,27 @@ describe('SQLite lifecycle', () => {
       '0039_agent-capability-grant.sql',
       '0040_synthetic-case-consultation.sql',
       '0041_workspace-actor.sql',
+      '0042_command-receipt-role.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 42 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 43 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 42 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 43 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 42 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 43 })
   })
 })

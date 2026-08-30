@@ -20,7 +20,12 @@ import { readFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { z } from 'zod'
 import type { ProfileStore } from './profile-store.ts'
-import { HttpOperationError } from './http-executor.ts'
+import {
+  HttpOperationError,
+  invalidResponseError,
+  parseHttpResponse,
+  transportError,
+} from './http-executor.ts'
 
 interface WritableStream {
   write(chunk: string): unknown
@@ -334,6 +339,7 @@ async function showHumanContext(
 ): Promise<void> {
   writeSuccess(await humanQuery(
     profileName,
+    'auth.context.read',
     '/api/auth/context',
     sessionContextSchema,
     dependencies,
@@ -342,6 +348,7 @@ async function showHumanContext(
 
 async function humanRequest<Schema extends z.ZodType>(
   profileName: string,
+  operationId: string,
   path: string,
   schema: Schema,
   dependencies: CliDependencies | undefined,
@@ -354,32 +361,40 @@ async function humanRequest<Schema extends z.ZodType>(
   }
   const request = dependencies?.fetch ?? globalThis.fetch
   const mutation = options.method === 'POST'
-  const response = await request(new URL(path, profile.serverUrl), {
-    ...(mutation ? { body: JSON.stringify(options.body) } : {}),
-    headers: {
-      accept: 'application/json',
-      ...(mutation ? { 'content-type': 'application/json' } : {}),
-      cookie: profile.cookie,
-      ...(options.idempotencyKey === undefined
-        ? {}
-        : { 'idempotency-key': options.idempotencyKey }),
-      ...(mutation ? { origin: new URL(profile.serverUrl).origin } : {}),
-    },
-    method: options.method,
-  })
-  if (!response.ok) throw new Error(`ClinMesh control request failed with HTTP ${response.status}`)
-  return schema.parse(await response.json())
+  const execution = options.idempotencyKey === undefined
+    ? undefined
+    : { idempotencyKey: options.idempotencyKey }
+  let response: Response
+  try {
+    response = await request(new URL(path, profile.serverUrl), {
+      ...(mutation ? { body: JSON.stringify(options.body) } : {}),
+      headers: {
+        accept: 'application/json',
+        ...(mutation ? { 'content-type': 'application/json' } : {}),
+        cookie: profile.cookie,
+        ...(options.idempotencyKey === undefined
+          ? {}
+          : { 'idempotency-key': options.idempotencyKey }),
+        ...(mutation ? { origin: new URL(profile.serverUrl).origin } : {}),
+      },
+      method: options.method,
+    })
+  } catch (cause) {
+    throw transportError(operationId, mutation, execution, cause)
+  }
+  return parseHttpResponse(response, schema, operationId, mutation, execution)
 }
 
 async function humanMutation<Schema extends z.ZodType>(
   profileName: string,
+  operationId: string,
   path: string,
   body: unknown,
   schema: Schema,
   dependencies: CliDependencies | undefined,
   idempotencyKey?: string,
 ): Promise<z.infer<Schema>> {
-  return humanRequest(profileName, path, schema, dependencies, {
+  return humanRequest(profileName, operationId, path, schema, dependencies, {
     body,
     ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
     method: 'POST',
@@ -388,11 +403,12 @@ async function humanMutation<Schema extends z.ZodType>(
 
 async function humanQuery<Schema extends z.ZodType>(
   profileName: string,
+  operationId: string,
   path: string,
   schema: Schema,
   dependencies: CliDependencies | undefined,
 ): Promise<z.infer<Schema>> {
-  return humanRequest(profileName, path, schema, dependencies, { method: 'GET' })
+  return humanRequest(profileName, operationId, path, schema, dependencies, { method: 'GET' })
 }
 
 function registerOperation(
@@ -573,18 +589,30 @@ export function createCliProgram(
         })
       }
       const request = dependencies?.fetch ?? globalThis.fetch
-      const response = await request(new URL('/api/auth/sign-in/email', baseUrl), {
-        body: JSON.stringify({ email: options.email, password: normalizedPassword }),
-        headers: {
-          accept: 'application/json',
-          'content-type': 'application/json',
-          origin: baseUrl.origin,
-        },
-        method: 'POST',
-      })
-      if (!response.ok) throw new Error(`ClinMesh login failed with HTTP ${response.status}`)
+      let response: Response
+      try {
+        response = await request(new URL('/api/auth/sign-in/email', baseUrl), {
+          body: JSON.stringify({ email: options.email, password: normalizedPassword }),
+          headers: {
+            accept: 'application/json',
+            'content-type': 'application/json',
+            origin: baseUrl.origin,
+          },
+          method: 'POST',
+        })
+      } catch (cause) {
+        throw transportError('auth.login', true, undefined, cause)
+      }
+      await parseHttpResponse(response, z.unknown(), 'auth.login', true)
       const cookie = response.headers.get('set-cookie')?.split(';', 1)[0]
-      if (cookie === undefined || cookie === '') throw new Error('ClinMesh login returned no session cookie')
+      if (cookie === undefined || cookie === '') {
+        throw invalidResponseError(
+          'auth.login',
+          true,
+          undefined,
+          new Error('ClinMesh login returned no session cookie'),
+        )
+      }
       await profiles.save(options.profile, {
         cookie,
         serverUrl: baseUrl.origin,
@@ -612,6 +640,7 @@ export function createCliProgram(
       const profile = z.string().min(1).parse(invoked.opts().profile)
       await humanMutation(
         profile,
+        'auth.logout',
         '/api/auth/sign-out',
         {},
         z.object({}).loose(),
@@ -634,6 +663,7 @@ export function createCliProgram(
       }).parse(invoked.opts())
       const data = await humanMutation(
         options.profile,
+        'auth.role.use',
         '/api/auth/role',
         { practitionerRoleId: options.practitionerRoleId },
         sessionContextSchema,
@@ -688,6 +718,7 @@ export function createCliProgram(
       const profile = z.string().min(1).parse(invoked.opts().profile)
       const data = await humanQuery(
         profile,
+        'agent.client.list',
         '/api/agent/v1/clients',
         agentClientListSchema,
         dependencies,
@@ -707,6 +738,7 @@ export function createCliProgram(
       }).parse(invoked.opts())
       const data = await humanQuery(
         options.profile,
+        'agent.client.get',
         `/api/agent/v1/clients/${encodeURIComponent(options.agentClientId)}`,
         agentClientSchema,
         dependencies,
@@ -729,6 +761,7 @@ export function createCliProgram(
       const input = createAgentClientInputSchema.parse({ name: options.name })
       const data = await humanMutation(
         options.profile,
+        'agent.client.create',
         '/api/agent/v1/clients',
         input,
         agentClientSchema,
@@ -752,6 +785,7 @@ export function createCliProgram(
       }).parse(invoked.opts())
       const data = await humanMutation(
         options.profile,
+        'agent.client.disable',
         `/api/agent/v1/clients/${encodeURIComponent(options.agentClientId)}/actions/disable`,
         {},
         agentClientSchema,
@@ -770,6 +804,7 @@ export function createCliProgram(
       const profile = z.string().min(1).parse(invoked.opts().profile)
       const data = await humanQuery(
         profile,
+        'agent.grant.list',
         '/api/agent/v1/grants',
         agentCapabilityGrantListSchema,
         dependencies,
@@ -789,6 +824,7 @@ export function createCliProgram(
       }).parse(invoked.opts())
       const data = await humanQuery(
         options.profile,
+        'agent.grant.get',
         `/api/agent/v1/grants/${encodeURIComponent(options.grantId)}`,
         agentCapabilityGrantViewSchema,
         dependencies,
@@ -832,6 +868,7 @@ export function createCliProgram(
       })
       const data = await humanMutation(
         options.profile,
+        'agent.grant.create',
         '/api/agent/v1/grants',
         input,
         agentCapabilityGrantSchema,
@@ -855,6 +892,7 @@ export function createCliProgram(
       }).parse(invoked.opts())
       const data = await humanMutation(
         options.profile,
+        'agent.grant.revoke',
         `/api/agent/v1/grants/${encodeURIComponent(options.grantId)}/actions/revoke`,
         {},
         revokedAgentCapabilityGrantSchema,

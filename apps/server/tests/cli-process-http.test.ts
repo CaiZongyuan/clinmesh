@@ -621,6 +621,19 @@ describe('clinmesh CLI process over real HTTP', () => {
       'registration.synthetic-case.start',
       commandResponseSchema(startSyntheticCaseResultSchema),
     ).data
+    const administratorToken = await mintGrant('administrator', [
+      'registration.synthetic-case.start',
+    ], 'cli-cross-role-administrator-grant-1')
+    const crossRoleReceipt = await execute(administratorToken, [
+      'command', 'receipt', 'get',
+      '--operation-id', 'registration.synthetic-case.start',
+      '--idempotency-key', 'cli-cross-role-start-1',
+    ])
+    expect(crossRoleReceipt).toMatchObject({ code: 1, stdout: '' })
+    expect(JSON.parse(crossRoleReceipt.stderr)).toMatchObject({
+      error: { code: 'COMMAND_RECEIPT_NOT_FOUND' },
+      ok: false,
+    })
 
     const triageToken = await mintGrant('triage-nurse', [
       'triage.queue.list',

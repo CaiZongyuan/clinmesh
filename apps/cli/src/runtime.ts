@@ -1,7 +1,11 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { CliDependencies } from './cli.ts'
-import { createHttpExecutor } from './http-executor.ts'
+import {
+  createHttpExecutor,
+  parseHttpResponse,
+  transportError,
+} from './http-executor.ts'
 import { createProfileStore, type ProfileStore } from './profile-store.ts'
 import { agentCapabilityContextSchema } from '@clinmesh/contracts/agent'
 
@@ -49,15 +53,24 @@ export function createRuntimeDependencies(options: RuntimeOptions = {}): CliDepe
     async readContext() {
       if (!agentContext) throw new Error('Agent context is not active')
       const { serverUrl, token } = agentCredential()
-      const response = await fetch(new URL('/api/agent/v1/context', serverUrl), {
-        headers: {
-          accept: 'application/json',
-          authorization: `Bearer ${token}`,
-        },
-        method: 'GET',
-      })
-      if (!response.ok) throw new Error(`ClinMesh Agent context failed with HTTP ${response.status}`)
-      return agentCapabilityContextSchema.parse(await response.json())
+      let response: Response
+      try {
+        response = await fetch(new URL('/api/agent/v1/context', serverUrl), {
+          headers: {
+            accept: 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          method: 'GET',
+        })
+      } catch (cause) {
+        throw transportError('agent.context.read', false, undefined, cause)
+      }
+      return parseHttpResponse(
+        response,
+        agentCapabilityContextSchema,
+        'agent.context.read',
+        false,
+      )
     },
     async execute(operationId, input, execution) {
       if (agentContext) {

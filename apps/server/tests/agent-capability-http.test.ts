@@ -12,6 +12,7 @@ import {
   revokedAgentCapabilityGrantSchema,
 } from '@clinmesh/contracts/agent'
 import { apiErrorSchema } from '@clinmesh/contracts/his'
+import { operationOutcomeSchema } from '@clinmesh/contracts/fhir'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { AuditQuery } from '../src/application/audit-query.ts'
 
@@ -56,6 +57,55 @@ async function parseApiError(response: Response) {
 }
 
 describe('Agent Capability Grant HTTP authentication', () => {
+  it('protects FHIR metadata with authentication and the Grant operation allowlist', async () => {
+    const { password, runtime } = await createRuntime()
+    const cookie = await signIn(runtime, password)
+    const mutationHeaders = {
+      'content-type': 'application/json',
+      cookie,
+      origin: 'http://localhost',
+    }
+    const clientResponse = await runtime.app.request('/api/agent/v1/clients', {
+      body: JSON.stringify({ name: 'Synthetic FHIR metadata agent' }),
+      headers: { ...mutationHeaders, 'idempotency-key': 'fhir-metadata-client-1' },
+      method: 'POST',
+    })
+    const client = agentClientSchema.parse(await clientResponse.json())
+    const mintGrant = async (operationIds: string[], key: string) => {
+      const response = await runtime.app.request('/api/agent/v1/grants', {
+        body: JSON.stringify({
+          agentClientId: client.agentClientId,
+          operationIds,
+          practitionerRoleId: 'practitioner-role-outpatient-doctor',
+          ttlSeconds: 3600,
+        }),
+        headers: { ...mutationHeaders, 'idempotency-key': key },
+        method: 'POST',
+      })
+      return agentCapabilityGrantSchema.parse(await response.json())
+    }
+    const deniedGrant = await mintGrant(['patient.search'], 'fhir-metadata-denied-grant-1')
+    const allowedGrant = await mintGrant(['fhir.metadata.read'], 'fhir-metadata-allowed-grant-1')
+
+    const [missing, invalid, denied, allowed] = await Promise.all([
+      runtime.app.request('/fhir/R5/metadata'),
+      runtime.app.request('/fhir/R5/metadata', {
+        headers: { authorization: `Bearer cma_${'0'.repeat(40)}` },
+      }),
+      runtime.app.request('/fhir/R5/metadata', {
+        headers: { authorization: `Bearer ${deniedGrant.token}` },
+      }),
+      runtime.app.request('/fhir/R5/metadata', {
+        headers: { authorization: `Bearer ${allowedGrant.token}` },
+      }),
+    ])
+
+    expect([missing.status, invalid.status, denied.status, allowed.status]).toEqual([401, 401, 403, 200])
+    expect(operationOutcomeSchema.parse(await missing.json()).issue[0]?.code).toBe('login')
+    expect(operationOutcomeSchema.parse(await invalid.json()).issue[0]?.code).toBe('login')
+    expect(operationOutcomeSchema.parse(await denied.json()).issue[0]?.code).toBe('forbidden')
+  })
+
   it('lets a human administrator inspect and disable Agent credentials without returning token material', async () => {
     const { password, runtime } = await createRuntime()
     const cookie = await signIn(runtime, password)

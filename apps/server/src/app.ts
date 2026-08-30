@@ -149,7 +149,7 @@ function fhirIssueCode(error: FhirRepositoryError): string {
 
 function fhirErrorResponse(context: Context, error: unknown) {
   if (error instanceof IdentityError) {
-    const code = error.code === 'AUTHENTICATION_REQUIRED' ? 'login' : 'forbidden'
+    const code = error.status === 401 ? 'login' : 'forbidden'
     return context.json(operationOutcome(code, error.message), error.status, {
       'Content-Type': 'application/fhir+json',
     })
@@ -1623,11 +1623,18 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
   }
 
-  app.get('/fhir/R5/metadata', (context) => context.json(
-    createCapabilityStatement({ includeResources: options.fhir !== undefined }),
-    200,
-    { 'Content-Type': 'application/fhir+json' },
-  ))
+  app.get('/fhir/R5/metadata', async (context) => {
+    try {
+      await options.fhir?.resolveContext(context.req.raw)
+      return context.json(
+        createCapabilityStatement({ includeResources: options.fhir !== undefined }),
+        200,
+        { 'Content-Type': 'application/fhir+json' },
+      )
+    } catch (error) {
+      return fhirErrorResponse(context, error)
+    }
+  })
 
   if (options.fhir !== undefined) {
     const fhirRuntime = options.fhir

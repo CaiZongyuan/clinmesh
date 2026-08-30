@@ -1,6 +1,7 @@
 import { getHisOperation } from '@clinmesh/contracts/his-operations'
 import { apiErrorSchema } from '@clinmesh/contracts/his'
 import { operationOutcomeSchema } from '@clinmesh/contracts/fhir'
+import { z } from 'zod'
 
 export type HttpCredential =
   | { cookie: string; kind: 'human' }
@@ -10,6 +11,15 @@ interface HttpExecutorOptions {
   baseUrl: string
   credential: HttpCredential
   fetch?: typeof globalThis.fetch
+}
+
+const plainHttpErrorSchema = z.object({
+  code: z.string().min(1),
+  message: z.string().min(1),
+}).loose()
+
+export interface HttpExecutionContext {
+  idempotencyKey?: string
 }
 
 export class HttpOperationError extends Error {
@@ -37,10 +47,23 @@ export class HttpOperationError extends Error {
   }
 }
 
-function transportError(
+function ambiguousRecoveryMessage(operationId: string): string {
+  if (operationId === 'agent.grant.create') {
+    return 'The Grant may have been created without returning its token; inspect and revoke it, then mint a new Grant with a new idempotency key'
+  }
+  if (operationId.startsWith('agent.')) {
+    return 'The control-plane mutation may have reached ClinMesh; inspect current state before retrying with the same idempotency key'
+  }
+  if (operationId.startsWith('auth.')) {
+    return 'The authentication change may have reached ClinMesh; inspect the current authentication context before retrying'
+  }
+  return 'The request may have reached ClinMesh; query the Command receipt before retrying'
+}
+
+export function transportError(
   operationId: string,
   write: boolean,
-  execution: { idempotencyKey?: string } | undefined,
+  execution: HttpExecutionContext | undefined,
   cause: unknown,
 ): HttpOperationError {
   return new HttpOperationError(write ? 7 : 4, {
@@ -49,7 +72,7 @@ function transportError(
       ? {}
       : { idempotencyKey: execution.idempotencyKey }),
     message: write
-      ? 'The request may have reached ClinMesh; query the Command receipt before retrying'
+      ? ambiguousRecoveryMessage(operationId)
       : 'The ClinMesh request failed before a complete response was received',
     operationId,
     outcome: write ? 'ambiguous' : 'definitely_not_sent',
@@ -58,10 +81,10 @@ function transportError(
   }, { cause })
 }
 
-function invalidResponseError(
+export function invalidResponseError(
   operationId: string,
   write: boolean,
-  execution: { idempotencyKey?: string } | undefined,
+  execution: HttpExecutionContext | undefined,
   cause: unknown,
 ): HttpOperationError {
   return new HttpOperationError(write ? 7 : 8, {
@@ -70,13 +93,98 @@ function invalidResponseError(
       ? {}
       : { idempotencyKey: execution.idempotencyKey }),
     message: write
-      ? 'ClinMesh may have committed the request but returned an invalid response; query the Command receipt'
+      ? ambiguousRecoveryMessage(operationId)
       : 'ClinMesh returned a response that does not match the operation contract',
     operationId,
     outcome: write ? 'ambiguous' : 'definitely_not_sent',
     retryable: false,
     type: 'protocol',
   }, { cause })
+}
+
+function httpResponseError(
+  response: Response,
+  payload: unknown,
+  operationId: string,
+  write: boolean,
+  execution?: HttpExecutionContext,
+): HttpOperationError {
+  if (write && response.status >= 500) {
+    return new HttpOperationError(7, {
+      code: 'ambiguous_outcome',
+      ...(execution?.idempotencyKey === undefined
+        ? {}
+        : { idempotencyKey: execution.idempotencyKey }),
+      message: ambiguousRecoveryMessage(operationId),
+      operationId,
+      outcome: 'ambiguous',
+      retryable: false,
+      type: 'api',
+    })
+  }
+  const parsed = apiErrorSchema.safeParse(payload)
+  const plainError = plainHttpErrorSchema.safeParse(payload)
+  const operationOutcome = operationOutcomeSchema.safeParse(payload)
+  const fhirIssue = operationOutcome.success ? operationOutcome.data.issue[0] : undefined
+  const serverError = parsed.success
+    ? parsed.data.error
+    : plainError.success
+      ? plainError.data
+      : fhirIssue === undefined
+        ? {
+            code: `HTTP_${response.status}`,
+            message: `ClinMesh operation failed with HTTP ${response.status}`,
+          }
+        : {
+            code: fhirIssue.code,
+            message: fhirIssue.diagnostics ?? 'The FHIR operation failed',
+          }
+  const classification = response.status === 400 || response.status === 422
+    ? { exitCode: 2, type: 'validation' }
+    : response.status === 401
+      ? { exitCode: 3, type: 'authentication' }
+      : response.status === 403
+        ? { exitCode: 3, type: 'authorization' }
+        : response.status === 409
+          ? { exitCode: 5, type: 'conflict' }
+          : { exitCode: 1, type: 'api' }
+  return new HttpOperationError(classification.exitCode, {
+    code: serverError.code,
+    ...('conflict' in serverError && serverError.conflict !== undefined
+      ? { conflict: serverError.conflict }
+      : {}),
+    ...(execution?.idempotencyKey === undefined
+      ? {}
+      : { idempotencyKey: execution.idempotencyKey }),
+    message: serverError.message,
+    operationId,
+    outcome: 'definitely_not_sent',
+    retryable: response.status === 429,
+    type: classification.type,
+  })
+}
+
+export async function parseHttpResponse<Schema extends z.ZodType>(
+  response: Response,
+  schema: Schema,
+  operationId: string,
+  write: boolean,
+  execution?: HttpExecutionContext,
+): Promise<z.infer<Schema>> {
+  let payload: unknown
+  try {
+    payload = await response.json() as unknown
+  } catch (cause) {
+    throw invalidResponseError(operationId, write, execution, cause)
+  }
+  if (!response.ok) {
+    throw httpResponseError(response, payload, operationId, write, execution)
+  }
+  const parsed = schema.safeParse(payload)
+  if (!parsed.success) {
+    throw invalidResponseError(operationId, write, execution, parsed.error)
+  }
+  return parsed.data
 }
 
 function encodePath(
@@ -118,7 +226,7 @@ export function createHttpExecutor(options: HttpExecutorOptions) {
   return async (
     operationId: string,
     rawInput: unknown,
-    execution?: { idempotencyKey?: string },
+    execution?: HttpExecutionContext,
   ): Promise<unknown> => {
     const operation = getHisOperation(operationId)
     const input = operation.input.parse(rawInput) as Record<string, unknown>
@@ -168,43 +276,7 @@ export function createHttpExecutor(options: HttpExecutorOptions) {
       throw transportError(operationId, write, execution, cause)
     }
     if (!response.ok) {
-      const parsed = apiErrorSchema.safeParse(payload)
-      const operationOutcome = operationOutcomeSchema.safeParse(payload)
-      const fhirIssue = operationOutcome.success ? operationOutcome.data.issue[0] : undefined
-      const serverError = parsed.success
-        ? parsed.data.error
-        : fhirIssue === undefined
-          ? {
-            code: `HTTP_${response.status}`,
-            message: `ClinMesh operation failed with HTTP ${response.status}`,
-          }
-          : {
-              code: fhirIssue.code,
-              message: fhirIssue.diagnostics ?? 'The FHIR operation failed',
-            }
-      const classification = response.status === 400 || response.status === 422
-        ? { exitCode: 2, type: 'validation' }
-        : response.status === 401
-          ? { exitCode: 3, type: 'authentication' }
-          : response.status === 403
-            ? { exitCode: 3, type: 'authorization' }
-            : response.status === 409
-              ? { exitCode: 5, type: 'conflict' }
-              : { exitCode: 1, type: 'api' }
-      throw new HttpOperationError(classification.exitCode, {
-        code: serverError.code,
-        ...('conflict' in serverError && serverError.conflict !== undefined
-          ? { conflict: serverError.conflict }
-          : {}),
-        ...(execution?.idempotencyKey === undefined
-          ? {}
-          : { idempotencyKey: execution.idempotencyKey }),
-        message: serverError.message,
-        operationId,
-        outcome: 'definitely_not_sent',
-        retryable: response.status === 429 || response.status >= 500,
-        type: classification.type,
-      })
+      throw httpResponseError(response, payload, operationId, write, execution)
     }
     const parsed = operation.output.safeParse(payload)
     if (!parsed.success) {

@@ -14,6 +14,94 @@ function captureStream() {
 }
 
 describe('clinmesh Agent control commands', () => {
+  it.each([
+    { expectedType: 'authentication', status: 401 },
+    { expectedType: 'authorization', status: 403 },
+  ])('classifies a human control HTTP $status response as $expectedType', async ({
+    expectedType,
+    status,
+  }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-agent-control-error-'))
+    try {
+      const profiles = createProfileStore({ directory })
+      await profiles.save('admin', {
+        cookie: 'better-auth.session_token=administrator',
+        serverUrl: 'http://127.0.0.1:51868',
+      })
+      const fetch = vi.fn().mockResolvedValue(Response.json({
+        error: {
+          code: status === 401 ? 'AUTHENTICATION_REQUIRED' : 'ROLE_NOT_ALLOWED',
+          message: status === 401
+            ? 'A valid session is required'
+            : 'An administrator role is required',
+        },
+      }, { status }))
+      const stdout = captureStream()
+      const stderr = captureStream()
+
+      const exitCode = await runCli(
+        ['agent', 'client', 'list', '--profile', 'admin'],
+        { stderr: stderr.stream, stdout: stdout.stream },
+        { fetch, profiles },
+      )
+
+      expect(exitCode).toBe(3)
+      expect(stdout.value()).toBe('')
+      expect(JSON.parse(stderr.value())).toMatchObject({
+        error: {
+          code: status === 401 ? 'AUTHENTICATION_REQUIRED' : 'ROLE_NOT_ALLOWED',
+          outcome: 'definitely_not_sent',
+          retryable: false,
+          type: expectedType,
+        },
+        ok: false,
+      })
+    } finally {
+      await rm(directory, { force: true, recursive: true })
+    }
+  })
+
+  it('reports a lost Grant creation response as ambiguous with one-time token recovery guidance', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-agent-grant-loss-'))
+    try {
+      const profiles = createProfileStore({ directory })
+      await profiles.save('admin', {
+        cookie: 'better-auth.session_token=administrator',
+        serverUrl: 'http://127.0.0.1:51868',
+      })
+      const fetch = vi.fn().mockRejectedValue(new TypeError('response lost'))
+      const stdout = captureStream()
+      const stderr = captureStream()
+
+      const exitCode = await runCli([
+        'agent', 'grant', 'create',
+        '--profile', 'admin',
+        '--agent-client-id', '11111111-1111-4111-8111-111111111111',
+        '--practitioner-role-id', 'practitioner-role-outpatient-doctor',
+        '--operation', 'patient.search',
+        '--ttl-seconds', '3600',
+        '--idempotency-key', 'agent-grant-response-lost-1',
+      ], { stderr: stderr.stream, stdout: stdout.stream }, { fetch, profiles })
+
+      expect(exitCode).toBe(7)
+      expect(fetch).toHaveBeenCalledOnce()
+      expect(stdout.value()).toBe('')
+      expect(JSON.parse(stderr.value())).toMatchObject({
+        error: {
+          code: 'ambiguous_outcome',
+          idempotencyKey: 'agent-grant-response-lost-1',
+          message: expect.stringMatching(/inspect.*revoke.*new Grant/i),
+          operationId: 'agent.grant.create',
+          outcome: 'ambiguous',
+          retryable: false,
+        },
+        ok: false,
+      })
+    } finally {
+      await rm(directory, { force: true, recursive: true })
+    }
+  })
+
   it('lists and views Agent Clients and Capability Grants through a human administrator profile', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-agent-inspect-'))
     try {

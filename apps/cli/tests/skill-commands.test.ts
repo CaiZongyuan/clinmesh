@@ -83,7 +83,12 @@ function inspectExample(program: Command, line: string) {
   }
   const operationIdIndex = words.indexOf('--operation-id')
   const operationId = operationIdIndex === -1 ? undefined : words[operationIdIndex + 1]
-  if (operationId !== undefined && !operationId.startsWith('<')) getHisOperation(operationId)
+  if (operationId !== undefined && !operationId.startsWith('<')) {
+    const receiptTarget = getHisOperation(operationId)
+    if (receiptTarget.requirements.idempotency !== 'required') {
+      throw new Error(`Operation does not create a Command receipt: ${operationId}`)
+    }
+  }
   return {
     commandPath: path.join(' '),
     operation: listHisOperations().find(operation => operation.cliPath.join(' ') === path.join(' ')),
@@ -124,5 +129,9 @@ describe('ClinMesh CLI Agent Skills', () => {
       program,
       'clinmesh command receipt get --operation-id missing.operation --idempotency-key example-key',
     )).toThrow('Unknown HIS operation: missing.operation')
+    expect(() => inspectExample(
+      program,
+      'clinmesh command receipt get --operation-id patient.search --idempotency-key example-key',
+    )).toThrow('Operation does not create a Command receipt: patient.search')
   })
 })

@@ -663,7 +663,7 @@ Workspace、Epoch、Scenario Run、Actor 和 Acting Practitioner Context 只从�
 
 ### 6.5 Idempotency
 
-Web mutation、outbox dispatcher 和模拟器处理都可能重试。CommandExecutor 以 `(workspace_id, epoch, actor_id, operation, idempotency_key)` 唯一识别业务请求，并保存规范化请求 hash、完整响应与 Effect 引用。请求 hash 同时绑定 expected versions、业务输入以及服务端解析的 Practitioner、Practitioner Role、role code、Organization 和 Location；相同 Actor 切换 Acting Practitioner Context 后重用 key 会得到稳定冲突，不能读取上一身份的回执。
+Web mutation、outbox dispatcher 和模拟器处理都可能重试。CommandExecutor 以 `(workspace_id, epoch, actor_id, operation, idempotency_key)` 唯一识别业务请求，并保存规范化请求 hash、Acting Practitioner Role、完整响应与 Effect 引用。请求 hash 同时绑定 expected versions、业务输入以及服务端解析的 Practitioner、Practitioner Role、role code、Organization 和 Location；相同 Actor 切换 Acting Practitioner Context 后重用 key 会得到稳定冲突，公开 receipt 查询也要求当前 Practitioner Role 与原 Command 一致，不能读取上一岗位的回执。升级前 receipt 从对应成功 Audit Event 回填岗位，无法可靠解析的旧记录保持不可由有岗位 context 查询。
 
 Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIATE` 事务，成功时在提交前变为 `completed`。相同 key 和相同 hash 读取并返回第一次完整响应；相同 key 和不同 hash 返回稳定冲突。事务失败时业务事实、FHIR、receipt、审计、Action Trace 和 outbox 一起回滚，失败尝试另写不包含请求正文的审计记录。
 
@@ -683,7 +683,7 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 `packages/contracts/src/his-operations.ts` 导出的 `hisOperationCatalog` 是 Agent 操作面的唯一合同 owner。每项 operation 显式声明稳定 ID、版本、`cliPath`、`query/draft/preview/command` mode、输入/输出/错误 Zod schema、HTTP method/path adapter、唯一 handler owner、human/agent identity、岗位 allowlist、风险、幂等、expected version 与 preview token 要求；既有 Command 的持久 operation 名称不同时，Catalog 还保存 receipt adapter 名称。Catalog 不依赖 Hono、Node.js、环境变量或 handler。
 
-CLI 命令树、`operations list/schema`、服务端 Agent route matching、Grant 的 Catalog hash 和 Skill 命令示例测试都读取同一 Catalog。HIS route coverage test 要求每条 `/api/his/v1` route 恰好属于 canonical operation 或带原因的兼容排除项。FHIR 部分只投影 metadata、read、vread、instance history 和资源能力注册表允许的 search；资源类型与 SearchParameter 白名单和 CapabilityStatement 共用一份注册表。
+CLI 命令树、`operations list/schema`、服务端 Agent route matching、Grant 的 Catalog hash 和 Skill 命令示例测试都读取同一 Catalog。HIS route coverage test 要求每条 `/api/his/v1` route 恰好属于 canonical operation 或带原因的兼容排除项。FHIR 部分只投影 metadata、read、vread、instance history 和资源能力注册表允许的 search；资源类型与 SearchParameter 白名单和 CapabilityStatement 共用一份注册表。包括 metadata 在内的每个 FHIR 入口都先解析受信身份，Agent 还必须在 Grant allowlist 中拥有对应 operation。
 
 CLI 没有通用 invoke、任意 URL、method/path/body、SQL、JSON Patch、FHIR write 或 Bundle write。兼容组合 route 不进入命令树，Agent 使用独立 diagnosis、prescription、laboratory request、clinical document 和 Encounter Completion 生命周期。
 
@@ -693,13 +693,13 @@ CLI 没有通用 invoke、任意 URL、method/path/body、SQL、JSON Patch、FHI
 
 成功默认向 stdout 写版本化 JSON envelope；`--output table` 只为 human mode 渲染成功结果。错误只向 stderr 写版本化 JSON，调用者按稳定 `type/code/outcome` 分支。FHIR `OperationOutcome` 映射到同一错误合同。Commander、配置、文件和 schema 错误不混入非结构化诊断文本。
 
-每个 write 要求调用者提供同一业务意图稳定复用的 idempotency key；修改既有事实还要提供 Catalog 声明的 expected versions。CLI 不自动重发 write。连接在结果返回前中断时返回 `ambiguous_outcome`，调用者用公开 operation ID 和原 key 执行 `command receipt get`；服务端把公开 ID 映射到既有持久 Command receipt 名称，并保持 Actor、Workspace 和 Epoch 隔离。
+每个 write 要求调用者提供同一业务意图稳定复用的 idempotency key；修改既有事实还要提供 Catalog 声明的 expected versions。CLI 不自动重发 write。连接在结果返回前中断或 write 收到 5xx 时返回 `ambiguous_outcome`，调用者用公开 operation ID 和原 key 执行 `command receipt get`；服务端把公开 ID 映射到既有持久 Command receipt 名称，并保持 Actor、Acting Practitioner Role、Workspace 和 Epoch 隔离。receipt 示例只能指向实际产生 Command receipt 的 write operation。
 
 ### 7.3 Human 与 Agent 身份
 
 Human mode 使用 Better Auth profile。登录密码只从 stdin 读取，不进入 argv 或 profile；profile 只保存 Server origin 和 session cookie，配置目录使用 `0700`，文件通过同目录原子替换并保持 `0600`。human write 发送同源 `Origin`，高风险命令还要求本地显式 `--yes`；服务端仍重新执行岗位、状态与版本授权。
 
-Human administrator 通过 `/api/agent/v1` 和对应 CLI 命令创建、查看、禁用 Agent Client，创建、查看和撤销 Agent Capability Grant。每个控制面 mutation 使用幂等键并通过共享 CommandExecutor 原子写 receipt、AuditEvent 和 Action Trace；Grant 创建的原 token 只返回一次，持久 receipt 脱敏且重放被拒绝。SQLite 只保存 token SHA-256。每个 Grant 绑定一个 Agent Client、Workspace、Epoch、Scenario Run、一个 Practitioner Role、operation allowlist、Catalog hash、Workspace policy version 和真实过期时间；write allowlist 自动加入 receipt 查询。
+Human administrator 通过 `/api/agent/v1` 和对应 CLI 命令创建、查看、禁用 Agent Client，创建、查看和撤销 Agent Capability Grant。每个控制面 mutation 使用幂等键并通过共享 CommandExecutor 原子写 receipt、AuditEvent 和 Action Trace；控制面响应丢失或返回 5xx 时 CLI 返回 ambiguous 并要求先检查当前状态。Grant 创建的原 token 只返回一次，持久 receipt 脱敏且重放被拒绝；若创建结果未知，管理员必须检查并撤销可能已经创建的 Grant，再用新幂等键签发替代 Grant。SQLite 只保存 token SHA-256。每个 Grant 绑定一个 Agent Client、Workspace、Epoch、Scenario Run、一个 Practitioner Role、operation allowlist、Catalog hash、Workspace policy version 和真实过期时间；write allowlist 自动加入 receipt 查询。
 
 Agent task 由 runner 注入 `CLINMESH_SERVER_URL`、`CLINMESH_TOKEN` 和 task 标识。CLI 只接受完整短期 token，缺失或格式错误时在发网前失败；Agent context 不能读取、创建或选择 human profile。服务端从 token hash 重新解析 Actor context并忽略客户端自报的 Actor、Workspace、Epoch、Scenario Run 或岗位。Agent Client 与 Human Membership 都投影到 `workspace_actor`，领域事实因此保留真实 Agent Actor，而不伪造 User Account。撤销、过期、Client 禁用、Epoch reset、Scenario Run 关闭、岗位停用、Catalog hash 或 policy version 变化都会使 token 失效。
 

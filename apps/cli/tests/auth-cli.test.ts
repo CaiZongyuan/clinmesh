@@ -14,6 +14,45 @@ function captureStream() {
 }
 
 describe('clinmesh auth', () => {
+  it('classifies a rejected Better Auth login as authentication failure', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-auth-rejected-'))
+    try {
+      const profiles = createProfileStore({ directory })
+      const fetch = vi.fn().mockResolvedValue(Response.json({
+        code: 'INVALID_EMAIL_OR_PASSWORD',
+        message: 'Invalid email or password',
+      }, { status: 401 }))
+      const stdout = captureStream()
+      const stderr = captureStream()
+
+      const exitCode = await runCli([
+        'auth', 'login',
+        '--profile', 'doctor',
+        '--server-url', 'http://127.0.0.1:51868',
+        '--email', 'doctor@demo.clinmesh.local',
+        '--password-stdin',
+      ], { stderr: stderr.stream, stdout: stdout.stream }, {
+        fetch,
+        profiles,
+        readStdin: async () => 'wrong-password\n',
+      })
+
+      expect(exitCode).toBe(3)
+      expect(stdout.value()).toBe('')
+      expect(JSON.parse(stderr.value())).toMatchObject({
+        error: {
+          outcome: 'definitely_not_sent',
+          retryable: false,
+          type: 'authentication',
+        },
+        ok: false,
+      })
+      await expect(profiles.load('doctor')).resolves.toBeUndefined()
+    } finally {
+      await rm(directory, { force: true, recursive: true })
+    }
+  })
+
   it('logs a human profile in with a stdin password without echoing credentials', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-auth-'))
     try {

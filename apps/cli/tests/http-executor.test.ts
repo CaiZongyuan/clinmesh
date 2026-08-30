@@ -192,4 +192,34 @@ describe('HIS HTTP operation executor', () => {
       },
     })
   })
+
+  it('treats a write HTTP 5xx response as ambiguous', async () => {
+    const execute = createHttpExecutor({
+      baseUrl: 'http://127.0.0.1:51868',
+      credential: { kind: 'agent', token: 'cma_synthetic_task_token' },
+      fetch: vi.fn().mockResolvedValue(Response.json({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'The Server failed after accepting the request',
+        },
+      }, { status: 503 })),
+    })
+
+    await expect(execute('patient.create', {
+      birthDate: '1992-05-06',
+      gender: 'female',
+      identifier: 'SYN-WRITE-5XX',
+      name: 'Synthetic Patient',
+    }, { idempotencyKey: 'patient-write-5xx-1' })).rejects.toMatchObject({
+      exitCode: 7,
+      problem: {
+        code: 'ambiguous_outcome',
+        idempotencyKey: 'patient-write-5xx-1',
+        operationId: 'patient.create',
+        outcome: 'ambiguous',
+        retryable: false,
+        type: 'api',
+      },
+    })
+  })
 })

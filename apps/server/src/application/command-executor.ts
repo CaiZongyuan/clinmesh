@@ -310,10 +310,20 @@ export class CommandExecutor {
       this.#checkExpectedVersions(context, invocation.expectedVersions)
       this.#database.driver.prepare(`
         INSERT INTO command_receipt (
-          workspace_id, epoch, actor_id, operation, idempotency_key,
+          workspace_id, epoch, actor_id, practitioner_role_id, operation, idempotency_key,
           request_hash, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'executing', ?, ?)
-      `).run(...receiptKey, requestHash, now, now)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'executing', ?, ?)
+      `).run(
+        context.workspaceId,
+        context.epoch,
+        context.actorId,
+        context.practitionerRoleId ?? null,
+        invocation.operation,
+        invocation.idempotencyKey,
+        requestHash,
+        now,
+        now,
+      )
 
       const result = handler(new CommandTransaction(this.#database, this.#fhir, context, this.#now))
       const auditId = uuidv7()
@@ -373,11 +383,12 @@ export class CommandExecutor {
       SELECT response_json, status
       FROM command_receipt
       WHERE workspace_id = ? AND epoch = ? AND actor_id = ?
-        AND operation = ? AND idempotency_key = ?
+        AND practitioner_role_id IS ? AND operation = ? AND idempotency_key = ?
     `).get(
       context.workspaceId,
       context.epoch,
       context.actorId,
+      context.practitionerRoleId ?? null,
       operationId,
       idempotencyKey,
     ) as Pick<ReceiptRow, 'response_json' | 'status'> | undefined

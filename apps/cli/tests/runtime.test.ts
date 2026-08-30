@@ -1,7 +1,53 @@
 import { describe, expect, it, vi } from 'vitest'
+import { runCli } from '../src/cli.ts'
 import { createRuntimeDependencies } from '../src/runtime.ts'
 
+function captureStream() {
+  let value = ''
+  return {
+    stream: { write: (chunk: string) => { value += chunk } },
+    value: () => value,
+  }
+}
+
 describe('CLI runtime credential resolution', () => {
+  it('classifies an expired Agent context token as authentication failure', async () => {
+    const dependencies = createRuntimeDependencies({
+      env: {
+        CLINMESH_AGENT_TASK_ID: 'task-1',
+        CLINMESH_SERVER_URL: 'http://127.0.0.1:51868',
+        CLINMESH_TOKEN: `cma_${'a'.repeat(40)}`,
+      },
+      fetch: vi.fn().mockResolvedValue(Response.json({
+        error: {
+          code: 'AGENT_TOKEN_INVALID',
+          message: 'The Agent Capability Grant is invalid',
+        },
+      }, { status: 401 })),
+    })
+    const stdout = captureStream()
+    const stderr = captureStream()
+
+    const exitCode = await runCli(
+      ['context', 'show'],
+      { stderr: stderr.stream, stdout: stdout.stream },
+      dependencies,
+    )
+
+    expect(exitCode).toBe(3)
+    expect(stdout.value()).toBe('')
+    expect(JSON.parse(stderr.value())).toMatchObject({
+      error: {
+        code: 'AGENT_TOKEN_INVALID',
+        operationId: 'agent.context.read',
+        outcome: 'definitely_not_sent',
+        retryable: false,
+        type: 'authentication',
+      },
+      ok: false,
+    })
+  })
+
   it('fails closed in Agent context instead of reading a human profile', async () => {
     const profiles = {
       load: vi.fn().mockResolvedValue({
