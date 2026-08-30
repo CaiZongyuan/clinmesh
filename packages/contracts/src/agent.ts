@@ -113,6 +113,7 @@ export const agentPageContextBindingSchema = z.object({
 
 export const agentExecutionProofPayloadSchema = z.object({
   callId: z.string().trim().min(1).max(256),
+  contextId: z.string().trim().min(1).max(128),
   dshSessionId: z.string().trim().min(1).max(256),
   expiresAt: z.iso.datetime({ offset: true }),
   issuedAt: z.iso.datetime({ offset: true }),

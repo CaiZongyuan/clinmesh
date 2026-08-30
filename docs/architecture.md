@@ -532,8 +532,9 @@ Scenario 创建的 Patient 使用固定 `synthetic-data` extension 标记合成�
 | `/api/his/v1/*` | 非 FHIR 领域命令和查询 |
 | `/api/sim/v1/*` | Scenario Run 查询、candidate/density 安装和管理员 reset |
 | `/api/auth/*` | Web 登录、注销、会话和岗位上下文 |
-| `/api/agent/v1/page-contexts` | 从浏览器白名单 claim 签发短期受信 Page Context |
+| `/api/agent/v1/page-contexts` | 从白名单 claim、DSH Session 和 client revision 签发短期受信 Page Context |
 | `/api/agent/v1/tool-calls` | 用 DSH execution proof 与 context token 授权一次 Tool call |
+| `/api/agent/v1/tool-calls/review` | 在正式 Command 前记录并线性化当前人类的 proposal 决定 |
 | `/api/agent/v1/tool-calls/result` | 完成 Tool call，并关联 proposal、review、Command、Audit 与 Trace |
 
 当前路由表不包含通用 `/api/tools/v1`、`/mcp`、SMART discovery 或 Agent OAuth 端点。`/api/agent/v1` 只服务同源 DSH Surface 的 Page Context 与调用关联，不是开放 Tool Gateway；未来协议按实际实现另行扩展，不能发布空路由或虚假元数据。
@@ -718,7 +719,7 @@ Claim 和 snapshot 不包含 DOM、Query cache、浏览器存储、任意页面 
 
 ### 7.4 Execution proof 与调用记录
 
-DSH Host 监听真实 `tools/pre-execute` 事件，为一个 pending call 签发一次性 execution proof。proof 绑定 DSH Session、call ID、Tool 名、page scope、签发时间和过期时间；浏览器不能自行签名。Hono 同时验证 proof、当前 context token、Tool catalog、岗位/view 允许 operation、防重放和当前人类 session，再创建 `agent_tool_call` 与可选 `agent_proposal`。
+DSH Host 监听真实 `tools/pre-execute` 事件，为一个 pending call 签发一次性 execution proof。proof 绑定 DSH Session、call ID、Tool 名、Page Context ID、page scope、签发时间和过期时间；浏览器不能自行签名。Hono 要求 proof 的 Context ID 与当前 token 精确一致，并同时验证 Tool catalog、岗位/view 允许 operation、防重放和当前人类 session，再创建 `agent_tool_call` 与可选 `agent_proposal`。
 
 读取、UI 和草稿动作完成后写入结构化 Tool result。proposal Tool 在打开审阅框后立即向 DSH 返回 `awaiting-human-review`，不让人工等待占用 browser lease；Hono 中的 Tool call 与 proposal 保持 pending。人类点击决定时，浏览器先用原 receipt 调用 decision gate；Hono 只在 context、DSH Session、当前资源和 Tool 仍有效时原子记录 `approved` 或 `rejected`，随后 Web 才能调用既有 Command。
 
@@ -728,7 +729,7 @@ DSH Host 监听真实 `tools/pre-execute` 事件，为一个 pending call 签发
 
 正式挂号、分诊、临床、支付、药房和 Scenario Command 始终由 ClinMesh 原生审阅框提交，最终 Actor 是登录人类，Agent 只记录为 proposal 来源。明确点击取消写入人类 `rejected` decision；批准执行既有 Command，并保留其 idempotency、expected version、preview token、审计和状态机语义。
 
-Surface 隐藏、DSH Session/lease 失效、page scope、selection、资源版本、页面 revision 或 context ID 改变，以及 context/receipt 过期或 action 错误，都会关闭尚未决定的 review，并把 proposal 标记为 `stale`，不伪造人类拒绝。decision gate 是批准的线性化点；gate 失败时不会调用 Command。Agent call 已失败或 stale 时不能留下仍可提交的孤立审阅框。拒绝、stale、冲突和取消都不自动重放，也不产生正式业务 Effect。
+Surface 隐藏、DSH Session/lease 失效、page scope、selection、资源版本、页面 revision 或 context ID 改变，以及 context/receipt 过期或 action 错误，都会关闭尚未决定的 review，并把 proposal 标记为 `stale`，不伪造人类拒绝。签名有效且明确 `ok:false` 的 completion 可以越过 receipt 到期或旧 Epoch 只执行这项清理；它不能关联 Command 或产生 Effect。decision gate 是批准的线性化点；gate 失败时不会调用 Command。Agent call 已失败或 stale 时不能留下仍可提交的孤立审阅框。拒绝、stale、冲突和取消都不自动重放，也不产生正式业务 Effect。
 
 ### 7.6 内容与能力边界
 

@@ -24,9 +24,9 @@
     "cordis.patch.yml"
   ],
   "scripts": {
-    "build:styles": "bun src/build-styles.ts",
-    "build": "bun run build:styles && bun node_modules/dsh-react-surface-build/src/cli.ts . && bun src/verify-artifact.ts",
-    "typecheck": "bun run build:styles && tsc --noEmit",
+    "build:styles": "tsx src/build-styles.ts",
+    "build": "pnpm run build:styles && bun node_modules/dsh-react-surface-build/src/cli.ts . && bun src/verify-artifact.ts",
+    "typecheck": "pnpm run build:styles && tsc --noEmit",
     "test": "vitest run",
     "clean": "rm -rf lib coverage"
   },
@@ -83,6 +83,7 @@
     "postcss": "8.5.6",
     "postcss-selector-parser": "7.1.0",
     "react-dom": "catalog:",
+    "tsx": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
     "vitest": "catalog:"

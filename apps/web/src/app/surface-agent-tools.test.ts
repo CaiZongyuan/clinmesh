@@ -109,7 +109,9 @@ describe('ClinMesh Surface Agent tools', () => {
     ])
     expect(tools[1]?.parameters).toMatchObject({
       properties: {
+        contextId: { enum: ['context-1'] },
         query: { type: 'string' },
+        scopeKey: { enum: ['clinmesh:registrar:registration'] },
         scores: { type: 'array', items: { type: 'number' } },
       },
     })
@@ -117,12 +119,17 @@ describe('ClinMesh Surface Agent tools', () => {
       /format|maxLength|minItems|minimum/,
     )
     const result = JSON.parse(await tools[1]!.execute({
+      contextId: 'context-1',
       scopeKey: 'clinmesh:registrar:registration',
       query: '张',
     }, new AbortController().signal)) as Record<string, unknown>
     expect(result).toMatchObject({ data: { matches: 1 }, ok: true })
     expect(search).toHaveBeenCalledOnce()
     expect(authorize).toHaveBeenCalledOnce()
+    expect(authorize).toHaveBeenCalledWith(
+      expect.objectContaining({ input: { query: '张' } }),
+      expect.any(AbortSignal),
+    )
     expect(complete).toHaveBeenCalledWith(
       expect.objectContaining({ ok: true }),
       expect.any(AbortSignal),
@@ -150,7 +157,7 @@ describe('ClinMesh Surface Agent tools', () => {
     })
     const read = tools.find(tool => tool.name === 'clinmesh_read_current_context')!
     const value = JSON.parse(await read.execute(
-      { scopeKey: 'clinmesh:registrar:registration' },
+      { contextId: 'context-1', scopeKey: 'clinmesh:registrar:registration' },
       new AbortController().signal,
     )) as Record<string, unknown>
     expect(value).toMatchObject({
@@ -162,7 +169,7 @@ describe('ClinMesh Surface Agent tools', () => {
     })
     expect(JSON.stringify(value)).not.toContain('hiddenFacts')
     await expect(read.execute(
-      { scopeKey: 'clinmesh:forged' },
+      { contextId: 'context-1', scopeKey: 'clinmesh:forged' },
       new AbortController().signal,
     )).rejects.toThrow('scope')
   })
@@ -205,7 +212,7 @@ describe('ClinMesh Surface Agent tools', () => {
     const prepare = tools.find(tool => tool.name === 'clinmesh_prepare_create_patient')!
 
     await expect(prepare.execute(
-      { scopeKey: binding.snapshot.scopeKey },
+      { contextId: 'context-1', scopeKey: binding.snapshot.scopeKey },
       new AbortController().signal,
     )).resolves.toContain('awaiting-human-review')
     expect(complete).not.toHaveBeenCalled()

@@ -245,7 +245,8 @@ export function useSurfaceAgentPublisher(input: {
       binding: publishedBinding,
       complete: (request, signal) => completeAgentToolCall(request, signal),
       definitions,
-      issueProof: ({ scopeKey, signal, toolName }) => issueAgentExecutionProof({
+      issueProof: ({ contextId, scopeKey, signal, toolName }) => issueAgentExecutionProof({
+        contextId,
         signal,
         scopeKey,
         toolName,

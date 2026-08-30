@@ -163,6 +163,7 @@ describe('ClinMesh DSH Agent contracts', () => {
     const proof = agentExecutionProofPayloadSchema.parse({
       version: 1,
       callId: 'call-17',
+      contextId: 'context-17',
       dshSessionId: 'session-1',
       scopeKey: 'clinmesh:registrar:registration',
       toolName: 'clinmesh_read_current_context',

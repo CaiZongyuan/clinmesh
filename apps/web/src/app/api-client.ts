@@ -238,12 +238,17 @@ export function completeAgentToolCall(request: AgentToolResultRequest, signal?: 
 }
 
 export async function issueAgentExecutionProof(input: {
+  contextId: string
   scopeKey: string
   signal?: AbortSignal
   toolName: string
 }): Promise<string> {
   const response = await fetch('/clinmesh-agent-proof', {
-    body: JSON.stringify({ scopeKey: input.scopeKey, toolName: input.toolName }),
+    body: JSON.stringify({
+      contextId: input.contextId,
+      scopeKey: input.scopeKey,
+      toolName: input.toolName,
+    }),
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     method: 'POST',
     ...(input.signal === undefined ? {} : { signal: input.signal }),

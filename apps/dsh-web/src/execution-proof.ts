@@ -12,14 +12,15 @@ interface ProofOptions {
 
 interface PendingExecution {
   callId: string
+  contextId: string
   dshSessionId: string
   issued: boolean
   scopeKey: string
   toolName: string
 }
 
-function pendingKey(input: { scopeKey: string; toolName: string }): string {
-  return `${input.scopeKey}\u0000${input.toolName}`
+function pendingKey(input: { contextId: string; scopeKey: string; toolName: string }): string {
+  return `${input.contextId}\u0000${input.scopeKey}\u0000${input.toolName}`
 }
 
 export class AgentExecutionProofIssuer {
@@ -47,7 +48,7 @@ export class AgentExecutionProofIssuer {
     }
   }
 
-  issue(input: { scopeKey: string; toolName: string }): string {
+  issue(input: { contextId: string; scopeKey: string; toolName: string }): string {
     const pending = this.#pending.get(pendingKey(input))
     if (pending === undefined) throw new Error('No pending ClinMesh Tool call matches this context')
     if (pending.issued) throw new Error('The pending ClinMesh Tool proof was already issued')
@@ -55,6 +56,7 @@ export class AgentExecutionProofIssuer {
     const now = this.#now()
     return signAgentExecutionProof({
       callId: pending.callId,
+      contextId: pending.contextId,
       dshSessionId: pending.dshSessionId,
       expiresAt: new Date(now.getTime() + PROOF_TTL_MS).toISOString(),
       issuedAt: now.toISOString(),

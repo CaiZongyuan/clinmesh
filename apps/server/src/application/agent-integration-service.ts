@@ -43,9 +43,11 @@ const receiptPayloadSchema = z.object({
   callId: z.string().min(1),
   contextId: z.string().min(1),
   dshSessionId: z.string().min(1),
+  epoch: z.string().min(1),
   expiresAt: z.iso.datetime({ offset: true }),
   operationId: z.string().min(1),
   version: z.literal(1),
+  workspaceId: z.string().min(1),
 }).strict()
 
 const commandLinkResponseSchema = z.object({
@@ -288,8 +290,9 @@ export class AgentIntegrationService {
     if (Date.parse(row.expires_at) <= this.#now().getTime()) {
       this.#database.driver.prepare(`
         UPDATE agent_page_context SET status = 'expired'
-        WHERE context_id = ? AND status = 'active'
-      `).run(payload.contextId)
+        WHERE workspace_id = ? AND epoch = ? AND context_id = ?
+          AND status = 'active'
+      `).run(payload.workspaceId, payload.epoch, payload.contextId)
       throw new AgentIntegrationError(
         'AGENT_CONTEXT_EXPIRED',
         'The DSH Agent Page Context has expired',
@@ -331,6 +334,7 @@ export class AgentIntegrationService {
     if (
       definition === undefined
       || definition.toolName !== proof.toolName
+      || proof.contextId !== context.id
       || proof.scopeKey !== context.scopeKey
       || proof.dshSessionId !== context.dshSessionId
       || !context.allowedOperationIds.includes(definition.operationId)
@@ -418,9 +422,11 @@ export class AgentIntegrationService {
         callId: proof.callId,
         contextId: context.id,
         dshSessionId: proof.dshSessionId,
+        epoch: context.workspace.epoch,
         expiresAt,
         operationId: definition.operationId,
         version: 1,
+        workspaceId: context.workspace.id,
       }),
       status: 'authorized',
     })
@@ -435,7 +441,12 @@ export class AgentIntegrationService {
     const receipt = this.#parseReceipt(request.receiptToken)
     let context: AgentPageContextSnapshot
     try {
-      context = this.#contextById(receipt.contextId, { requireActive: true })
+      context = this.#contextById(
+        receipt.workspaceId,
+        receipt.epoch,
+        receipt.contextId,
+        { requireActive: true, requireCurrentEpoch: true },
+      )
     } catch {
       throw this.#callNotPending()
     }
@@ -514,7 +525,9 @@ export class AgentIntegrationService {
     traceId?: string
   } {
     const request = agentToolResultRequestSchema.parse(input.request)
-    const receipt = this.#parseReceipt(request.receiptToken)
+    const receipt = this.#parseReceipt(request.receiptToken, {
+      allowExpired: !request.ok,
+    })
     const row = this.#database.driver.prepare(`
       SELECT tool.workspace_id, tool.epoch, tool.context_id, tool.proposal_id,
         tool.status, proposal.status AS proposal_status,
@@ -524,9 +537,12 @@ export class AgentIntegrationService {
         ON proposal.workspace_id = tool.workspace_id
        AND proposal.epoch = tool.epoch
        AND proposal.proposal_id = tool.proposal_id
-      WHERE tool.dsh_session_id = ? AND tool.call_id = ?
+      WHERE tool.workspace_id = ? AND tool.epoch = ?
+        AND tool.dsh_session_id = ? AND tool.call_id = ?
         AND tool.operation_id = ? AND tool.context_id = ?
     `).get(
+      receipt.workspaceId,
+      receipt.epoch,
       receipt.dshSessionId,
       receipt.callId,
       receipt.operationId,
@@ -543,13 +559,21 @@ export class AgentIntegrationService {
     if (row === undefined || row.status !== 'pending') {
       throw this.#callNotPending()
     }
-    const context = this.#contextById(receipt.contextId, { requireActive: false })
+    const context = this.#contextById(
+      receipt.workspaceId,
+      receipt.epoch,
+      receipt.contextId,
+      { requireActive: false, requireCurrentEpoch: request.ok },
+    )
     if (
       row.workspace_id !== context.workspace.id
       || row.epoch !== context.workspace.epoch
       || context.dshSessionId !== receipt.dshSessionId
     ) throw this.#callNotPending()
-    this.#assertCurrentCaller(context, input.actor, input.userAccountId)
+    this.#assertCurrentCaller(context, input.actor, input.userAccountId, {
+      requireCurrentEpoch: request.ok,
+      requirePractitionerRole: request.ok,
+    })
     const resultJson = JSON.stringify(request.ok
       ? { result: request.result ?? null }
       : { error: request.error ?? 'Tool execution failed' })
@@ -662,9 +686,15 @@ export class AgentIntegrationService {
     return `${encoded}.${this.#signature(encoded).toString('base64url')}`
   }
 
-  #parseReceipt(token: string): z.infer<typeof receiptPayloadSchema> {
+  #parseReceipt(
+    token: string,
+    options: { allowExpired?: boolean } = {},
+  ): z.infer<typeof receiptPayloadSchema> {
     const payload = this.#verifySignedToken(token, receiptPayloadSchema)
-    if (Date.parse(payload.expiresAt) <= this.#now().getTime()) throw this.#callNotPending()
+    if (
+      options.allowExpired !== true
+      && Date.parse(payload.expiresAt) <= this.#now().getTime()
+    ) throw this.#callNotPending()
     return payload
   }
 
@@ -689,8 +719,10 @@ export class AgentIntegrationService {
   }
 
   #contextById(
+    workspaceId: string,
+    epoch: string,
     contextId: string,
-    options: { requireActive: boolean },
+    options: { requireActive: boolean; requireCurrentEpoch: boolean },
   ): AgentPageContextSnapshot {
     const row = this.#database.driver.prepare(`
       SELECT claim_json, allowed_operation_ids_json, actor_id, practitioner_role_id,
@@ -699,8 +731,10 @@ export class AgentIntegrationService {
         agent_page_context.status, workspace.active_epoch
       FROM agent_page_context
       JOIN workspace ON workspace.workspace_id = agent_page_context.workspace_id
-      WHERE context_id = ?
-    `).get(contextId) as {
+      WHERE agent_page_context.workspace_id = ?
+        AND agent_page_context.epoch = ?
+        AND agent_page_context.context_id = ?
+    `).get(workspaceId, epoch, contextId) as {
       active_epoch: string
       actor_id: string
       allowed_operation_ids_json: string
@@ -718,7 +752,7 @@ export class AgentIntegrationService {
     } | undefined
     if (
       row === undefined
-      || row.active_epoch !== row.epoch
+      || (options.requireCurrentEpoch && row.active_epoch !== row.epoch)
       || (options.requireActive && (
         row.status !== 'active' || Date.parse(row.expires_at) <= this.#now().getTime()
       ))
@@ -749,6 +783,10 @@ export class AgentIntegrationService {
     context: AgentPageContextSnapshot,
     actor: ActorContext,
     userAccountId: string,
+    options: {
+      requireCurrentEpoch?: boolean
+      requirePractitionerRole?: boolean
+    } = {},
   ): void {
     const row = this.#database.driver.prepare(`
       SELECT user_account_id FROM agent_page_context
@@ -759,9 +797,12 @@ export class AgentIntegrationService {
     if (
       row?.user_account_id !== userAccountId
       || context.actor.actorId !== actor.actorId
-      || context.actor.practitionerRoleId !== actor.practitionerRoleId
+      || (
+        options.requirePractitionerRole !== false
+        && context.actor.practitionerRoleId !== actor.practitionerRoleId
+      )
       || context.workspace.id !== actor.workspaceId
-      || context.workspace.epoch !== actor.epoch
+      || (options.requireCurrentEpoch !== false && context.workspace.epoch !== actor.epoch)
     ) throw this.#invalidToken()
   }
 

@@ -8,6 +8,7 @@ export const CLINMESH_AGENT_PROOF_PATH = '/clinmesh-agent-proof'
 const MAX_PROOF_REQUEST_BYTES = 4096
 
 const proofRequestSchema = z.object({
+  contextId: z.string().min(1).max(128),
   scopeKey: z.string().min(1).max(128),
   toolName: z.string().regex(/^clinmesh_[a-z0-9_]+$/).max(64),
 }).strict()
@@ -24,16 +25,17 @@ export function installAgentProofBridge(ctx: Context, secret: string): void {
 
   ctx.on('tools/pre-execute', async (execution, next) => {
     if (!execution.name.startsWith('clinmesh_')) return next()
-    const scopeKey = scopeKeyFromArguments(execution.arguments)
+    const binding = bindingFromArguments(execution.arguments)
     const dshSessionId = execution.agent?.session.id
-    if (scopeKey === undefined || dshSessionId === undefined) {
+    if (binding === undefined || dshSessionId === undefined) {
       return { kind: 'deny', reason: 'ClinMesh Tools require an active Page Context binding' }
     }
     try {
       const dispose = issuer.begin({
         callId: String(execution.callId),
+        contextId: binding.contextId,
         dshSessionId: String(dshSessionId),
-        scopeKey,
+        scopeKey: binding.scopeKey,
         toolName: execution.name,
       })
       pending.set(executionKey(execution), dispose)
@@ -89,10 +91,19 @@ export function installAgentProofBridge(ctx: Context, secret: string): void {
   }, 'clinmesh-dsh-web: release Tool execution proofs')
 }
 
-function scopeKeyFromArguments(value: unknown): string | undefined {
+function bindingFromArguments(value: unknown): {
+  contextId: string
+  scopeKey: string
+} | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
-  const scopeKey = (value as Record<string, unknown>).scopeKey
-  return typeof scopeKey === 'string' && scopeKey.length > 0 ? scopeKey : undefined
+  const input = value as Record<string, unknown>
+  if (
+    typeof input.contextId !== 'string'
+    || input.contextId.length === 0
+    || typeof input.scopeKey !== 'string'
+    || input.scopeKey.length === 0
+  ) return undefined
+  return { contextId: input.contextId, scopeKey: input.scopeKey }
 }
 
 function executionKey(execution: Pick<ToolExecution, 'agent' | 'callId'>): string {

@@ -6,7 +6,7 @@ import { createMemoryHistory, type RouterHistory } from '@tanstack/react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebApp, type WebRuntimeOptions } from './web-app.tsx'
 import { agentToolsForContext } from '@clinmesh/contracts/agent'
-import type { WebSurfaceAgentController } from './web-runtime.tsx'
+import type { WebSurfaceAgentController, WebSurfaceAgentTool } from './web-runtime.tsx'
 
 const registrarSession = {
   actor: {
@@ -46,6 +46,13 @@ let testCallSequence = 0
 function randomTestId(): string {
   testCallSequence += 1
   return `call-${String(testCallSequence)}`
+}
+
+function boundToolValue(tool: WebSurfaceAgentTool, key: 'contextId' | 'scopeKey'): string {
+  const properties = tool.parameters.properties as Record<string, { enum?: unknown[] }> | undefined
+  const value = properties?.[key]?.enum?.[0]
+  if (typeof value !== 'string') throw new Error(`Tool ${tool.name} has no bound ${key}`)
+  return value
 }
 
 function createMediaQueryList(media: string, matches = false): MediaQueryList {
@@ -365,12 +372,16 @@ describe('Web application shell', () => {
     const stableScopeKey = activeRegistration.scopeKey
     const focus = activeRegistration.tools.find(tool => tool.name === 'clinmesh_focus_panel')!
     await act(async () => {
-      await focus.execute({ scopeKey: activeRegistration.scopeKey }, new AbortController().signal)
+      await focus.execute({
+        contextId: boundToolValue(focus, 'contextId'),
+        scopeKey: activeRegistration.scopeKey,
+      }, new AbortController().signal)
     })
     expect(document.activeElement).toBe(document.querySelector('[data-clinmesh-workspace-panel]'))
     const fill = activeRegistration.tools.find(tool => tool.name === 'clinmesh_fill_patient_draft')!
     await act(async () => {
       await fill.execute({
+        contextId: boundToolValue(fill, 'contextId'),
         scopeKey: activeRegistration.scopeKey,
         birthDate: '1990-01-01',
         gender: 'male',
@@ -390,7 +401,10 @@ describe('Web application shell', () => {
     let proposalResult = ''
     await act(async () => {
       proposalResult = await prepare.execute(
-        { scopeKey: activeRegistration.scopeKey },
+        {
+          contextId: boundToolValue(prepare, 'contextId'),
+          scopeKey: activeRegistration.scopeKey,
+        },
         new AbortController().signal,
       )
     })

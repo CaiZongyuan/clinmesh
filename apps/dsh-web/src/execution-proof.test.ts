@@ -12,12 +12,20 @@ describe('DSH Agent execution proof issuer', () => {
     })
     const finish = issuer.begin({
       callId: 'call-1',
+      contextId: 'context-1',
       dshSessionId: 'session-1',
       scopeKey: 'clinmesh:registrar:registration',
       toolName: 'clinmesh_read_current_context',
     })
 
+    expect(() => issuer.issue({
+      contextId: 'context-2',
+      scopeKey: 'clinmesh:registrar:registration',
+      toolName: 'clinmesh_read_current_context',
+    })).toThrow('pending')
+
     const token = issuer.issue({
+      contextId: 'context-1',
       scopeKey: 'clinmesh:registrar:registration',
       toolName: 'clinmesh_read_current_context',
     })
@@ -26,15 +34,18 @@ describe('DSH Agent execution proof issuer', () => {
       secret: 'test-dsh-bridge-secret-with-at-least-32-characters',
     })).toMatchObject({
       callId: 'call-1',
+      contextId: 'context-1',
       dshSessionId: 'session-1',
       scopeKey: 'clinmesh:registrar:registration',
     })
     expect(() => issuer.issue({
+      contextId: 'context-1',
       scopeKey: 'clinmesh:registrar:registration',
       toolName: 'clinmesh_read_current_context',
     })).toThrow('already issued')
     finish()
     expect(() => issuer.issue({
+      contextId: 'context-1',
       scopeKey: 'clinmesh:registrar:registration',
       toolName: 'clinmesh_read_current_context',
     })).toThrow('pending')
@@ -48,17 +59,20 @@ describe('DSH Agent execution proof issuer', () => {
     })
     issuer.begin({
       callId: 'call-1',
+      contextId: 'context-1',
       dshSessionId: 'session-1',
       scopeKey: 'clinmesh:registrar:registration',
       toolName: 'clinmesh_read_current_context',
     })
     expect(() => issuer.begin({
       callId: 'call-2',
+      contextId: 'context-1',
       dshSessionId: 'session-1',
       scopeKey: 'clinmesh:registrar:registration',
       toolName: 'clinmesh_read_current_context',
     })).toThrow('already pending')
     const token = issuer.issue({
+      contextId: 'context-1',
       scopeKey: 'clinmesh:registrar:registration',
       toolName: 'clinmesh_read_current_context',
     })

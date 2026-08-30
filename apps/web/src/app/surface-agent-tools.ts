@@ -30,6 +30,7 @@ interface BuildSurfaceAgentToolsInput {
   complete(request: AgentToolResultRequest, signal: AbortSignal): Promise<unknown>
   definitions: readonly AgentToolDefinition[]
   issueProof(input: {
+    contextId: string
     scopeKey: string
     signal: AbortSignal
     toolName: string
@@ -64,16 +65,27 @@ export function buildSurfaceAgentTools(
     return [{
       description: action.description,
       name: definition.toolName,
-      parameters: bindContextParameter(action.parameters, input.binding.snapshot.scopeKey),
+      parameters: bindContextParameters(
+        action.parameters,
+        input.binding.snapshot.id,
+        input.binding.snapshot.scopeKey,
+      ),
       execute: async (raw, signal) => {
         input.onExecutionStart?.()
         try {
-          const values = requireBoundInput(raw, input.binding.snapshot.scopeKey)
+          const values = requireBoundInput(
+            raw,
+            input.binding.snapshot.id,
+            input.binding.snapshot.scopeKey,
+          )
           const actionInput = z.json().parse(parseAgentToolInput(
             definition.operationId,
-            Object.fromEntries(Object.entries(values).filter(([key]) => key !== 'scopeKey')),
+            Object.fromEntries(Object.entries(values).filter(([key]) => (
+              key !== 'contextId' && key !== 'scopeKey'
+            ))),
           ))
           const executionProof = await input.issueProof({
+            contextId: input.binding.snapshot.id,
             signal,
             scopeKey: input.binding.snapshot.scopeKey,
             toolName: definition.toolName,
@@ -163,17 +175,19 @@ function contextReadAction(input: BuildSurfaceAgentToolsInput): SurfaceAgentPage
   }
 }
 
-function bindContextParameter(
+function bindContextParameters(
   parameters: SurfaceAgentPageAction['parameters'],
+  contextId: string,
   scopeKey: string,
 ): Record<string, unknown> {
   return projectDshToolSchema({
     type: 'object',
     properties: {
+      contextId: { type: 'string', enum: [contextId] },
       scopeKey: { type: 'string', enum: [scopeKey] },
       ...parameters.properties,
     },
-    required: ['scopeKey', ...(parameters.required ?? [])],
+    required: ['contextId', 'scopeKey', ...(parameters.required ?? [])],
     additionalProperties: false,
   })
 }
@@ -206,12 +220,16 @@ function projectDshToolSchema(value: unknown): Record<string, unknown> {
   return projected
 }
 
-function requireBoundInput(value: unknown, scopeKey: string): Record<string, unknown> {
+function requireBoundInput(
+  value: unknown,
+  contextId: string,
+  scopeKey: string,
+): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new TypeError('ClinMesh Tool input must be an object')
   }
   const input = value as Record<string, unknown>
-  if (input.scopeKey !== scopeKey) {
+  if (input.contextId !== contextId || input.scopeKey !== scopeKey) {
     throw new TypeError('ClinMesh Tool input does not match the active page scope')
   }
   return input

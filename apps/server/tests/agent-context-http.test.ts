@@ -337,6 +337,7 @@ describe('DSH Agent Page Context HTTP contract', () => {
         contextToken: latest.token,
         executionProof: executionProof({
           callId: 'call-after-late-context',
+          contextId: latest.snapshot.id,
           dshSessionId: 'dsh-session-1',
           scopeKey: latest.snapshot.scopeKey,
           toolName: 'clinmesh_read_current_context',
@@ -348,6 +349,45 @@ describe('DSH Agent Page Context HTTP contract', () => {
       method: 'POST',
     })
     expect(authorized.status).toBe(201)
+  })
+
+  it('rejects an execution proof issued for a previous Page Context binding', async () => {
+    const { cookie, runtime } = await setup()
+    const firstResponse = await createContext(runtime, cookie, {
+      version: 1,
+      viewId: 'registration',
+      viewRevision: 'registration-binding-1',
+      ui: { status: 'ready' },
+    })
+    const first = agentPageContextBindingSchema.parse(await firstResponse.json())
+    const proof = executionProof({
+      callId: 'call-old-binding-1',
+      contextId: first.snapshot.id,
+      dshSessionId: 'dsh-session-1',
+      scopeKey: first.snapshot.scopeKey,
+      toolName: 'clinmesh_search_patients',
+    })
+    const secondResponse = await createContext(runtime, cookie, {
+      version: 1,
+      viewId: 'registration',
+      viewRevision: 'registration-binding-2',
+      ui: { status: 'ready' },
+    })
+    const second = agentPageContextBindingSchema.parse(await secondResponse.json())
+    expect(second.snapshot.scopeKey).toBe(first.snapshot.scopeKey)
+
+    const response = await runtime.app.request('/api/agent/v1/tool-calls', {
+      body: JSON.stringify({
+        contextToken: second.token,
+        executionProof: proof,
+        input: { query: '合成患者' },
+        operationId: 'registration.patient.search',
+      }),
+      headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' },
+      method: 'POST',
+    })
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchObject({ error: { code: 'AGENT_OPERATION_NOT_ALLOWED' } })
   })
 
   it('rejects a role/view mismatch and arbitrary hidden state', async () => {
@@ -401,6 +441,7 @@ describe('DSH Agent Page Context HTTP contract', () => {
     const binding = agentPageContextBindingSchema.parse(await contextResponse.json())
     const proof = executionProof({
       callId: 'call-bounded-input-1',
+      contextId: binding.snapshot.id,
       dshSessionId: 'dsh-session-1',
       scopeKey: binding.snapshot.scopeKey,
       toolName: 'clinmesh_search_patients',
@@ -433,6 +474,7 @@ describe('DSH Agent Page Context HTTP contract', () => {
     const binding = agentPageContextBindingSchema.parse(await contextResponse.json())
     const proof = executionProof({
       callId: 'call-1',
+      contextId: binding.snapshot.id,
       dshSessionId: 'dsh-session-1',
       scopeKey: binding.snapshot.scopeKey,
       toolName: 'clinmesh_search_patients',
@@ -503,6 +545,7 @@ describe('DSH Agent Page Context HTTP contract', () => {
     const binding = agentPageContextBindingSchema.parse(await contextResponse.json())
     const proof = executionProof({
       callId: 'call-2',
+      contextId: binding.snapshot.id,
       dshSessionId: 'dsh-session-1',
       scopeKey: binding.snapshot.scopeKey,
       toolName: 'clinmesh_search_patients',
@@ -541,6 +584,7 @@ describe('DSH Agent Page Context HTTP contract', () => {
         contextToken: binding.token,
         executionProof: executionProof({
           callId: 'call-expired-1',
+          contextId: binding.snapshot.id,
           dshSessionId: 'dsh-session-1',
           scopeKey: binding.snapshot.scopeKey,
           toolName: 'clinmesh_read_current_context',
@@ -556,15 +600,79 @@ describe('DSH Agent Page Context HTTP contract', () => {
     expect(await response.json()).toMatchObject({ error: { code: 'AGENT_CONTEXT_EXPIRED' } })
   })
 
+  it('marks an undecided proposal stale when its receipt expires', async () => {
+    let now = new Date('2026-08-31T00:00:00.000Z')
+    const { cookie, runtime } = await setup('registrar@demo.clinmesh.local', () => now)
+    const contextResponse = await createContext(runtime, cookie, {
+      version: 1,
+      viewId: 'registration',
+      viewRevision: 'registration-expired-review-1',
+      draft: { dirty: true, id: 'new-patient', kind: 'patient', revision: 'draft-1' },
+      ui: { status: 'ready' },
+    })
+    const binding = agentPageContextBindingSchema.parse(await contextResponse.json())
+    const authorize = await runtime.app.request('/api/agent/v1/tool-calls', {
+      body: JSON.stringify({
+        contextToken: binding.token,
+        executionProof: executionProof({
+          callId: 'call-expired-review-1',
+          contextId: binding.snapshot.id,
+          dshSessionId: 'dsh-session-1',
+          scopeKey: binding.snapshot.scopeKey,
+          toolName: 'clinmesh_prepare_create_patient',
+        }, now),
+        input: {},
+        operationId: 'registration.patient.create.propose',
+      }),
+      headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' },
+      method: 'POST',
+    })
+    const authorized = agentToolAuthorizationResponseSchema.parse(await authorize.json())
+    now = new Date('2026-08-31T00:05:00.000Z')
+
+    const completion = await runtime.app.request('/api/agent/v1/tool-calls/result', {
+      body: JSON.stringify({
+        error: 'The ClinMesh Agent Page Context expired',
+        ok: false,
+        receiptToken: authorized.receiptToken,
+      }),
+      headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' },
+      method: 'POST',
+    })
+    expect(completion.status).toBe(200)
+    expect(runtime.database.driver.prepare(`
+      SELECT status FROM agent_proposal
+      WHERE workspace_id = ? AND epoch = ? AND proposal_id = ?
+    `).get('workspace-demo', 'epoch-1', authorized.proposalId)).toEqual({ status: 'stale' })
+  })
+
   it('rejects a Page Context from the previous Epoch after Scenario reset', async () => {
     const { cookie, password, runtime } = await setup()
     const contextResponse = await createContext(runtime, cookie, {
       version: 1,
       viewId: 'registration',
       viewRevision: 'registration-epoch-1',
+      draft: { dirty: true, id: 'new-patient', kind: 'patient', revision: 'draft-1' },
       ui: { status: 'ready' },
     })
     const binding = agentPageContextBindingSchema.parse(await contextResponse.json())
+    const proposalResponse = await runtime.app.request('/api/agent/v1/tool-calls', {
+      body: JSON.stringify({
+        contextToken: binding.token,
+        executionProof: executionProof({
+          callId: 'call-old-epoch-proposal-1',
+          contextId: binding.snapshot.id,
+          dshSessionId: 'dsh-session-1',
+          scopeKey: binding.snapshot.scopeKey,
+          toolName: 'clinmesh_prepare_create_patient',
+        }),
+        input: {},
+        operationId: 'registration.patient.create.propose',
+      }),
+      headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' },
+      method: 'POST',
+    })
+    const proposal = agentToolAuthorizationResponseSchema.parse(await proposalResponse.json())
     const adminSignIn = await runtime.app.request('/api/auth/sign-in/email', {
       body: JSON.stringify({ email: 'admin@demo.clinmesh.local', password }),
       headers: { 'content-type': 'application/json', origin: 'http://localhost' },
@@ -591,6 +699,7 @@ describe('DSH Agent Page Context HTTP contract', () => {
         contextToken: binding.token,
         executionProof: executionProof({
           callId: 'call-old-epoch-1',
+          contextId: binding.snapshot.id,
           dshSessionId: 'dsh-session-1',
           scopeKey: binding.snapshot.scopeKey,
           toolName: 'clinmesh_read_current_context',
@@ -604,6 +713,21 @@ describe('DSH Agent Page Context HTTP contract', () => {
 
     expect(response.status).toBe(401)
     expect(await response.json()).toMatchObject({ error: { code: 'AGENT_CONTEXT_INVALID' } })
+
+    const completion = await runtime.app.request('/api/agent/v1/tool-calls/result', {
+      body: JSON.stringify({
+        error: 'The Scenario Epoch changed',
+        ok: false,
+        receiptToken: proposal.receiptToken,
+      }),
+      headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' },
+      method: 'POST',
+    })
+    expect(completion.status).toBe(200)
+    expect(runtime.database.driver.prepare(`
+      SELECT status FROM agent_proposal
+      WHERE workspace_id = ? AND epoch = ? AND proposal_id = ?
+    `).get('workspace-demo', 'epoch-1', proposal.proposalId)).toEqual({ status: 'stale' })
   })
 
   it('marks a cancelled proposal stale without recording a human review decision', async () => {
@@ -626,6 +750,7 @@ describe('DSH Agent Page Context HTTP contract', () => {
         contextToken: binding.token,
         executionProof: executionProof({
           callId: 'call-cancelled-proposal-1',
+          contextId: binding.snapshot.id,
           dshSessionId: 'dsh-session-1',
           scopeKey: binding.snapshot.scopeKey,
           toolName: 'clinmesh_prepare_create_patient',
@@ -679,6 +804,7 @@ describe('DSH Agent Page Context HTTP contract', () => {
         contextToken: binding.token,
         executionProof: executionProof({
           callId: 'call-proposal-1',
+          contextId: binding.snapshot.id,
           dshSessionId: 'dsh-session-1',
           scopeKey: binding.snapshot.scopeKey,
           toolName: 'clinmesh_prepare_create_patient',
@@ -761,6 +887,7 @@ describe('DSH Agent Page Context HTTP contract', () => {
         contextToken: binding.token,
         executionProof: executionProof({
           callId: 'call-session-replaced-1',
+          contextId: binding.snapshot.id,
           dshSessionId: 'dsh-session-1',
           scopeKey: binding.snapshot.scopeKey,
           toolName: 'clinmesh_prepare_create_patient',
@@ -806,6 +933,7 @@ describe('DSH Agent Page Context HTTP contract', () => {
         contextToken: binding.token,
         executionProof: executionProof({
           callId: 'call-command-link-1',
+          contextId: binding.snapshot.id,
           dshSessionId: 'dsh-session-1',
           scopeKey: binding.snapshot.scopeKey,
           toolName: 'clinmesh_prepare_create_patient',
@@ -907,11 +1035,11 @@ describe('DSH Agent Page Context HTTP contract', () => {
 
 function executionProof(input: {
   callId: string
+  contextId: string
   dshSessionId: string
   scopeKey: string
   toolName: string
-}): string {
-  const now = new Date()
+}, now = new Date()): string {
   const payload = {
     ...input,
     expiresAt: new Date(now.getTime() + 60_000).toISOString(),
