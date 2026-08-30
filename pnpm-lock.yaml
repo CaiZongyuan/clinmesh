@@ -256,6 +256,9 @@ importers:
       '@types/react-dom':
         specifier: 'catalog:'
         version: 19.2.4(@types/react@19.2.18)
+      dsh-react-surface:
+        specifier: file:../../vendor/dsh-react-surface/packages/runtime
+        version: file:vendor/dsh-react-surface/packages/runtime(8014ed25864d4b063cdba58506702ad7)
       dsh-react-surface-build:
         specifier: file:../../vendor/dsh-react-surface/packages/build
         version: file:vendor/dsh-react-surface/packages/build
@@ -4603,6 +4606,21 @@ packages:
   dsh-react-surface-build@file:vendor/dsh-react-surface/packages/build:
     resolution: {directory: vendor/dsh-react-surface/packages/build, type: directory}
     hasBin: true
+
+  dsh-react-surface@file:vendor/dsh-react-surface/packages/runtime:
+    resolution: {directory: vendor/dsh-react-surface/packages/runtime, type: directory}
+    peerDependencies:
+      '@deepseek-ai/cordis': ^4.0.1
+      '@deepseek-ai/dsh-agent': 0.1.1-rc.2
+      '@deepseek-ai/dsh-client-runtime': 0.1.1-rc.2
+      '@deepseek-ai/dsh-client-ui-layout': 0.1.1-rc.2
+      '@deepseek-ai/dsh-client-ui-sidebar': 0.1.1-rc.2
+      '@deepseek-ai/dsh-client-ui-slots': 0.1.1-rc.2
+      '@deepseek-ai/dsh-host-webserver': 0.1.1-rc.2
+      '@deepseek-ai/dsh-session': 0.1.1-rc.2
+      '@deepseek-ai/dsh-tools': 0.1.1-rc.2
+      react: ^18.2.0 || ^19.0.0
+      react-dom: ^18.2.0 || ^19.0.0
 
   dunder-proto@1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
@@ -11301,6 +11319,20 @@ snapshots:
     dependencies:
       postcss: 8.5.26
       postcss-url: 10.1.4(postcss@8.5.26)
+
+  dsh-react-surface@file:vendor/dsh-react-surface/packages/runtime(8014ed25864d4b063cdba58506702ad7):
+    dependencies:
+      '@deepseek-ai/cordis': 4.0.1(@deepseek-ai/cordis-plugin-include@1.0.6)(@deepseek-ai/cordis-plugin-loader@1.0.2)
+      '@deepseek-ai/dsh-agent': 0.1.1-rc.2(c1537a8836b04097f168b024f1e38d85)
+      '@deepseek-ai/dsh-client-runtime': 0.1.1-rc.2(dcb5bd30e6aaf463013a171632a7980f)
+      '@deepseek-ai/dsh-client-ui-layout': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-client-runtime@0.1.1-rc.2(dcb5bd30e6aaf463013a171632a7980f))(@deepseek-ai/dsh-client-ui-theme@0.1.1-rc.2(b62c3a467d6abd7fa9cb8a19942cef41))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))
+      '@deepseek-ai/dsh-client-ui-sidebar': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-client-locale@0.1.1-rc.2(be634a04dbf29a4d19bb1dd3a6806b31))(@deepseek-ai/dsh-client-runtime@0.1.1-rc.2(dcb5bd30e6aaf463013a171632a7980f))(@deepseek-ai/dsh-client-ui-layout@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-client-runtime@0.1.1-rc.2(dcb5bd30e6aaf463013a171632a7980f))(@deepseek-ai/dsh-client-ui-theme@0.1.1-rc.2(b62c3a467d6abd7fa9cb8a19942cef41))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))
+      '@deepseek-ai/dsh-client-ui-slots': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))
+      '@deepseek-ai/dsh-host-webserver': 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))
+      '@deepseek-ai/dsh-session': 0.1.1-rc.2(a4e4bb24a1f3580ac25e11cfa3c6b8cc)
+      '@deepseek-ai/dsh-tools': 0.1.1-rc.2(119bc70f73f8eddebfaa6b47561adeb3)
+      react: 19.2.3
+      react-dom: 19.2.3(react@19.2.3)
 
   dunder-proto@1.0.1:
     dependencies:

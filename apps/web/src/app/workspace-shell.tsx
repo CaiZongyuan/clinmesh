@@ -489,9 +489,13 @@ export function WorkspaceShell({
               />
             </div>
           </header>
-          <div className="flex flex-1 flex-col gap-5 bg-muted/40 p-4 sm:p-5">
+          <main
+            className="flex flex-1 flex-col gap-5 bg-muted/40 p-4 outline-none sm:p-5"
+            data-clinmesh-workspace-panel=""
+            tabIndex={-1}
+          >
             {children}
-          </div>
+          </main>
         </SidebarInset>
       </SidebarProvider>
     </TooltipProvider>

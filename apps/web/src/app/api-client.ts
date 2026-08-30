@@ -74,12 +74,15 @@ import {
 import { referenceDataReleaseListSchema } from '@clinmesh/contracts/reference-data'
 import {
   agentPageContextBindingSchema,
-  agentPageContextClaimSchema,
+  agentPageContextRequestSchema,
+  agentReviewDecisionRequestSchema,
+  agentReviewDecisionResponseSchema,
   agentToolAuthorizationRequestSchema,
   agentToolAuthorizationResponseSchema,
   agentToolCompletionResponseSchema,
   agentToolResultRequestSchema,
-  type AgentPageContextClaim,
+  type AgentPageContextRequest,
+  type AgentReviewDecisionRequest,
   type AgentToolAuthorizationRequest,
   type AgentToolResultRequest,
 } from '@clinmesh/contracts/agent'
@@ -198,11 +201,21 @@ export function selectRole(practitionerRoleId: string): Promise<SessionContext> 
   )
 }
 
-export function createAgentPageContext(claim: AgentPageContextClaim) {
+export function createAgentPageContext(request: AgentPageContextRequest, signal?: AbortSignal) {
   return apiMutation(
     '/api/agent/v1/page-contexts',
     agentPageContextBindingSchema,
-    agentPageContextClaimSchema.parse(claim),
+    agentPageContextRequestSchema.parse(request),
+    signal === undefined ? {} : { signal },
+  )
+}
+
+export function reviewAgentToolCall(request: AgentReviewDecisionRequest, signal?: AbortSignal) {
+  return apiMutation(
+    '/api/agent/v1/tool-calls/review',
+    agentReviewDecisionResponseSchema,
+    agentReviewDecisionRequestSchema.parse(request),
+    signal === undefined ? {} : { signal },
   )
 }
 

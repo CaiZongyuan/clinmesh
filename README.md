@@ -165,9 +165,10 @@ dsh plugin --profile web add "$PWD/apps/dsh-web"
 
 `dsh-ag-ui` 的 always-on `browser-tools` row 无须配置 AG-UI Gateway。`dsh-react-surface` 固定为 submodule commit `e7b17dfd566f4a395027bc8ce1fd368b9fea1707`；CI 会递归 checkout 并固定 Bun `1.4.0`。
 
-在 `.env` 中为 Hono 配置至少 32 bytes 的 `CLINMESH_DSH_BRIDGE_SECRET`，然后启动 Server：
+在 `.env` 中为 Hono 配置至少 32 bytes 的 `CLINMESH_DSH_BRIDGE_SECRET`，并把实际 DSH Web origin 加入 `CLINMESH_TRUSTED_ORIGINS`。以下示例使用 DSH 默认开发端口 `3080`；使用 `--port` 时必须同步替换该 origin，否则 Hono 会拒绝登录和 mutation 的 CSRF 校验：
 
 ```sh
+export CLINMESH_TRUSTED_ORIGINS=http://127.0.0.1:51868,http://127.0.0.1:51888,http://127.0.0.1:3080
 pnpm dev:server
 ```
 

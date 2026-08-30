@@ -59,6 +59,7 @@
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-client-runtime": "0.1.1-rc.2",
     "@deepseek-ai/dsh-host-webserver": "0.1.1-rc.2",
+    "dsh-react-surface": "0.0.1",
     "react": "^18.2.0 || ^19.0.0",
     "react-dom": "^18.2.0 || ^19.0.0"
   },
@@ -77,6 +78,7 @@
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "dsh-react-surface": "file:../../vendor/dsh-react-surface/packages/runtime",
     "dsh-react-surface-build": "file:../../vendor/dsh-react-surface/packages/build",
     "postcss": "8.5.6",
     "postcss-selector-parser": "7.1.0",

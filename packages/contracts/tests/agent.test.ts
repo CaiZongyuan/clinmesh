@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   agentPageContextClaimSchema,
+  agentPageContextRequestSchema,
   agentPageContextSnapshotSchema,
   agentExecutionProofPayloadSchema,
   agentToolAuthorizationRequestSchema,
@@ -65,6 +66,7 @@ describe('ClinMesh DSH Agent contracts', () => {
         scenarioRunId: 'scenario-run-1',
       },
       allowedOperationIds: ['registration.patient.search'],
+      dshSessionId: 'dsh-session-1',
       scopeKey: 'clinmesh:registrar:registration',
       issuedAt: '2026-08-31T00:00:00.000Z',
       expiresAt: '2026-08-31T00:05:00.000Z',
@@ -72,6 +74,32 @@ describe('ClinMesh DSH Agent contracts', () => {
 
     expect(snapshot.actor.roleCode).toBe('registrar')
     expect(snapshot.allowedOperationIds).toEqual(['registration.patient.search'])
+  })
+
+  it('binds Page Context issuance to one DSH Session and monotonic browser revision', () => {
+    expect(agentPageContextRequestSchema.parse({
+      claim: {
+        version: 1,
+        viewId: 'registration',
+        viewRevision: 'view-1',
+        ui: { status: 'ready' },
+      },
+      client: { id: 'surface-client-1', revision: 2 },
+      dshSessionId: 'dsh-session-1',
+    })).toMatchObject({
+      client: { id: 'surface-client-1', revision: 2 },
+      dshSessionId: 'dsh-session-1',
+    })
+    expect(agentPageContextRequestSchema.safeParse({
+      claim: {
+        version: 1,
+        viewId: 'registration',
+        viewRevision: 'view-1',
+        ui: { status: 'ready' },
+      },
+      client: { id: 'surface-client-1', revision: 0 },
+      dshSessionId: 'dsh-session-1',
+    }).success).toBe(false)
   })
 
   it('publishes only narrow, role-scoped tools within the broker limit', () => {
@@ -120,12 +148,14 @@ describe('ClinMesh DSH Agent contracts', () => {
     expect(agentToolCatalog.map(tool => tool.mode)).not.toContain('command')
   })
 
-  it('does not expose Scenario authoring truth to the administrator Agent', () => {
+  it('exposes only Provider and generation status from Scenario authoring', () => {
     const adminTools = agentToolsForContext('administrator', 'scenarioData')
     expect(adminTools.map(tool => tool.operationId)).toEqual([
       'ui.context.read',
       'ui.navigate',
       'ui.panel.focus',
+      'scenario.providers.read',
+      'scenario.generation.status.read',
     ])
   })
 
@@ -146,6 +176,27 @@ describe('ClinMesh DSH Agent contracts', () => {
       operationId: 'ui.context.read',
       input: {},
     }).operationId).toBe('ui.context.read')
+    expect(agentToolAuthorizationRequestSchema.safeParse({
+      contextToken: 'c'.repeat(32),
+      executionProof: 'p'.repeat(32),
+      operationId: 'registration.patient.search',
+      input: { query: 'x'.repeat(101) },
+    }).success).toBe(false)
+    expect(agentToolAuthorizationRequestSchema.safeParse({
+      contextToken: 'c'.repeat(32),
+      executionProof: 'p'.repeat(32),
+      operationId: 'triage.draft.set',
+      input: {
+        acuityCode: 'level-2',
+        chiefComplaint: '发热',
+        diastolicMmHg: 80,
+        oxygenSaturationPct: 101,
+        pulseBpm: 90,
+        respirationBpm: 18,
+        systolicMmHg: 120,
+        temperatureC: 38.5,
+      },
+    }).success).toBe(false)
     expect(agentExecutionProofPayloadSchema.safeParse({
       ...proof,
       runAs: 'actor-administrator',

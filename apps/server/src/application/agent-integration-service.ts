@@ -2,22 +2,29 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import {
   agentExecutionProofPayloadSchema,
   agentHumanRoleCodeSchema,
-  agentPageContextClaimSchema,
+  agentPageContextRequestSchema,
   agentPageContextSnapshotSchema,
-  agentToolsForContext,
   agentViewsForRole,
+  agentReviewDecisionRequestSchema,
+  agentReviewDecisionResponseSchema,
+  isAgentOperationId,
   agentToolAuthorizationRequestSchema,
   agentToolAuthorizationResponseSchema,
   agentToolResultRequestSchema,
   agentToolCatalog,
   agentViewIdSchema,
-  type AgentPageContextClaim,
+  type AgentPageContextRequest,
   type AgentPageContextSnapshot,
 } from '@clinmesh/contracts/agent'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import type { ActorContext } from './command-executor.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
+import {
+  proposalCommandOperations,
+  resolveAgentPageContext,
+  validateAgentToolInputForContext,
+} from './agent-context-policy.ts'
 
 const PAGE_CONTEXT_TTL_MS = 5 * 60_000
 
@@ -26,6 +33,7 @@ const tokenPayloadSchema = z.object({
   contextId: z.string().min(1),
   epoch: z.string().min(1),
   expiresAt: z.iso.datetime({ offset: true }),
+  dshSessionId: z.string().min(1),
   roleCode: agentHumanRoleCodeSchema,
   version: z.literal(1),
   workspaceId: z.string().min(1),
@@ -40,9 +48,21 @@ const receiptPayloadSchema = z.object({
   version: z.literal(1),
 }).strict()
 
+const commandLinkResponseSchema = z.object({
+  auditId: z.string().min(1),
+  data: z.json(),
+  effects: z.array(z.object({
+    kind: z.enum(['created', 'updated']),
+    reference: z.string().min(1),
+    versionId: z.string().min(1),
+  }).strict()),
+  requestId: z.string().min(1),
+  warnings: z.array(z.string()),
+}).strict()
+
 interface CreatePageContextInput {
   actor: ActorContext
-  claim: AgentPageContextClaim
+  request: AgentPageContextRequest
   userAccountId: string
 }
 
@@ -58,6 +78,8 @@ export class AgentIntegrationError extends Error {
       | 'AGENT_CALL_REPLAYED'
       | 'AGENT_CONTEXT_EXPIRED'
       | 'AGENT_CONTEXT_INVALID'
+      | 'AGENT_CONTEXT_STALE'
+      | 'AGENT_CONTEXT_SUPERSEDED'
       | 'AGENT_OPERATION_NOT_ALLOWED'
       | 'AGENT_PROOF_INVALID'
       | 'AGENT_VIEW_NOT_ALLOWED',
@@ -84,7 +106,8 @@ export class AgentIntegrationService {
     snapshot: AgentPageContextSnapshot
     token: string
   } {
-    const claim = agentPageContextClaimSchema.parse(input.claim)
+    const request = agentPageContextRequestSchema.parse(input.request)
+    const claim = request.claim
     const roleCode = agentHumanRoleCodeSchema.parse(input.actor.roleCode)
     const viewId = agentViewIdSchema.parse(claim.viewId)
     if (!agentViewsForRole(roleCode).includes(viewId)) {
@@ -107,29 +130,28 @@ export class AgentIntegrationService {
     const expiresAt = new Date(now.getTime() + PAGE_CONTEXT_TTL_MS).toISOString()
     const contextId = uuidv7()
     const scopeKey = pageScopeKey(input)
-    const allowedOperationIds = agentToolsForContext(roleCode, viewId)
-      .map(definition => definition.operationId)
-    const snapshot = agentPageContextSnapshotSchema.parse({
-      actor: {
-        actorId: input.actor.actorId,
-        practitionerRoleId: input.actor.practitionerRoleId,
-        roleCode,
-      },
-      allowedOperationIds,
-      claim,
-      expiresAt,
-      id: contextId,
-      issuedAt,
-      scopeKey,
-      version: 1,
-      workspace: {
-        epoch: input.actor.epoch,
-        id: input.actor.workspaceId,
-        scenarioRunId: input.actor.scenarioRunId,
-      },
-    })
-
-    this.#database.driver.transaction(() => {
+    const snapshot = this.#database.driver.transaction(() => {
+      const resolved = resolveAgentPageContext(this.#database, input.actor, claim)
+      if (resolved === undefined) throw this.#staleContext()
+      const latest = this.#database.driver.prepare(`
+        SELECT MAX(client_revision) AS revision
+        FROM agent_page_context
+        WHERE workspace_id = ? AND epoch = ? AND user_account_id = ?
+          AND practitioner_role_id = ? AND client_id = ?
+      `).get(
+        input.actor.workspaceId,
+        input.actor.epoch,
+        input.userAccountId,
+        input.actor.practitionerRoleId,
+        request.client.id,
+      ) as { revision: number | null }
+      if (latest.revision !== null && latest.revision >= request.client.revision) {
+        throw new AgentIntegrationError(
+          'AGENT_CONTEXT_SUPERSEDED',
+          'A newer ClinMesh Agent Page Context revision already exists',
+          409,
+        )
+      }
       this.#database.driver.prepare(`
         UPDATE agent_page_context
         SET status = 'revoked'
@@ -143,32 +165,57 @@ export class AgentIntegrationService {
       )
       this.#database.driver.prepare(`
         INSERT INTO agent_page_context (
-          context_id, scope_key, workspace_id, epoch, scenario_run_id, user_account_id,
-          actor_id, practitioner_role_id, role_code, view_id, view_revision,
+          workspace_id, epoch, context_id, scope_key, scenario_run_id, user_account_id,
+          actor_id, practitioner_role_id, role_code, dsh_session_id, client_id,
+          client_revision, view_id, view_revision,
           claim_json, allowed_operation_ids_json, status, issued_at, expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
       `).run(
-        contextId,
-        scopeKey,
         input.actor.workspaceId,
         input.actor.epoch,
+        contextId,
+        scopeKey,
         input.actor.scenarioRunId,
         input.userAccountId,
         input.actor.actorId,
         input.actor.practitionerRoleId,
         roleCode,
+        request.dshSessionId,
+        request.client.id,
+        request.client.revision,
         viewId,
         claim.viewRevision,
         JSON.stringify(claim),
-        JSON.stringify(allowedOperationIds),
+        JSON.stringify(resolved.allowedOperationIds),
         issuedAt,
         expiresAt,
       )
+      return agentPageContextSnapshotSchema.parse({
+        actor: {
+          actorId: input.actor.actorId,
+          practitionerRoleId: input.actor.practitionerRoleId,
+          roleCode,
+        },
+        allowedOperationIds: resolved.allowedOperationIds,
+        claim,
+        dshSessionId: request.dshSessionId,
+        expiresAt,
+        id: contextId,
+        issuedAt,
+        scopeKey,
+        version: 1,
+        workspace: {
+          epoch: input.actor.epoch,
+          id: input.actor.workspaceId,
+          scenarioRunId: input.actor.scenarioRunId,
+        },
+      })
     })()
 
     return { snapshot, token: this.#sign({
       actorId: input.actor.actorId,
       contextId,
+      dshSessionId: request.dshSessionId,
       epoch: input.actor.epoch,
       expiresAt,
       roleCode,
@@ -200,6 +247,7 @@ export class AgentIntegrationService {
         agent_page_context.actor_id,
         agent_page_context.practitioner_role_id,
         agent_page_context.role_code,
+        agent_page_context.dsh_session_id,
         agent_page_context.workspace_id,
         agent_page_context.epoch,
         agent_page_context.scenario_run_id,
@@ -209,11 +257,14 @@ export class AgentIntegrationService {
       FROM agent_page_context
       JOIN workspace ON workspace.workspace_id = agent_page_context.workspace_id
       WHERE agent_page_context.context_id = ?
+        AND agent_page_context.workspace_id = ?
+        AND agent_page_context.epoch = ?
         AND workspace.active_epoch = agent_page_context.epoch
-    `).get(payload.contextId) as {
+    `).get(payload.contextId, payload.workspaceId, payload.epoch) as {
       actor_id: string
       allowed_operation_ids_json: string
       claim_json: string
+      dsh_session_id: string
       epoch: string
       expires_at: string
       issued_at: string
@@ -231,6 +282,8 @@ export class AgentIntegrationService {
       || row.workspace_id !== payload.workspaceId
       || row.epoch !== payload.epoch
       || row.role_code !== payload.roleCode
+      || row.dsh_session_id !== payload.dshSessionId
+      || row.expires_at !== payload.expiresAt
     ) throw this.#invalidToken()
     if (Date.parse(row.expires_at) <= this.#now().getTime()) {
       this.#database.driver.prepare(`
@@ -251,6 +304,7 @@ export class AgentIntegrationService {
       },
       allowedOperationIds: JSON.parse(row.allowed_operation_ids_json),
       claim: JSON.parse(row.claim_json),
+      dshSessionId: row.dsh_session_id,
       expiresAt: row.expires_at,
       id: payload.contextId,
       issuedAt: row.issued_at,
@@ -278,6 +332,7 @@ export class AgentIntegrationService {
       definition === undefined
       || definition.toolName !== proof.toolName
       || proof.scopeKey !== context.scopeKey
+      || proof.dshSessionId !== context.dshSessionId
       || !context.allowedOperationIds.includes(definition.operationId)
     ) {
       throw new AgentIntegrationError(
@@ -286,22 +341,32 @@ export class AgentIntegrationService {
         403,
       )
     }
+    const parsedInput = validateAgentToolInputForContext(
+      this.#database,
+      context,
+      definition.operationId,
+      request.input,
+    )
+    if (parsedInput === undefined) throw this.#staleContext()
 
     const startedAt = this.#now().toISOString()
     const proposalId = definition.mode === 'proposal' ? uuidv7() : undefined
     this.#database.driver.transaction(() => {
       const inserted = this.#database.driver.prepare(`
         INSERT OR IGNORE INTO agent_tool_call (
-          dsh_session_id, call_id, context_id, operation_id, proposal_id,
-          status, input_hash, started_at
-        ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+          workspace_id, epoch, dsh_session_id, call_id, context_id,
+          scenario_run_id, operation_id, proposal_id, status, input_hash, started_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
       `).run(
+        context.workspace.id,
+        context.workspace.epoch,
         proof.dshSessionId,
         proof.callId,
         context.id,
+        context.workspace.scenarioRunId,
         definition.operationId,
         proposalId ?? null,
-        hashJson(request.input),
+        hashJson(parsedInput),
         startedAt,
       )
       if (inserted.changes !== 1) {
@@ -314,17 +379,27 @@ export class AgentIntegrationService {
       if (proposalId !== undefined) {
         this.#database.driver.prepare(`
           INSERT INTO agent_proposal (
-            proposal_id, context_id, dsh_session_id, call_id, operation_id,
-            plan_hash, proposal_json, status, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+            workspace_id, epoch, proposal_id, context_id, dsh_session_id,
+            call_id, operation_id, plan_hash, proposal_json, status, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
         `).run(
+          context.workspace.id,
+          context.workspace.epoch,
           proposalId,
           context.id,
           proof.dshSessionId,
           proof.callId,
           definition.operationId,
-          hashJson({ operationId: definition.operationId, input: request.input }),
-          JSON.stringify({ input: request.input }),
+          hashJson({
+            claim: context.claim,
+            input: parsedInput,
+            operationId: definition.operationId,
+          }),
+          JSON.stringify({
+            claim: context.claim,
+            input: parsedInput,
+            operationId: definition.operationId,
+          }),
           startedAt,
         )
       }
@@ -351,6 +426,82 @@ export class AgentIntegrationService {
     })
   }
 
+  reviewToolCall(input: {
+    actor: ActorContext
+    request: z.infer<typeof agentReviewDecisionRequestSchema>
+    userAccountId: string
+  }): z.infer<typeof agentReviewDecisionResponseSchema> {
+    const request = agentReviewDecisionRequestSchema.parse(input.request)
+    const receipt = this.#parseReceipt(request.receiptToken)
+    let context: AgentPageContextSnapshot
+    try {
+      context = this.#contextById(receipt.contextId, { requireActive: true })
+    } catch {
+      throw this.#callNotPending()
+    }
+    this.#assertCurrentCaller(context, input.actor, input.userAccountId)
+    if (context.dshSessionId !== receipt.dshSessionId) throw this.#callNotPending()
+    const resolved = resolveAgentPageContext(this.#database, input.actor, context.claim)
+    if (
+      resolved === undefined
+      || !isAgentOperationId(receipt.operationId)
+      || !resolved.allowedOperationIds.includes(receipt.operationId)
+    ) throw this.#callNotPending()
+    const row = this.#database.driver.prepare(`
+      SELECT tool.proposal_id
+      FROM agent_tool_call AS tool
+      JOIN agent_proposal AS proposal
+        ON proposal.workspace_id = tool.workspace_id
+       AND proposal.epoch = tool.epoch
+       AND proposal.proposal_id = tool.proposal_id
+      WHERE tool.workspace_id = ? AND tool.epoch = ?
+        AND tool.dsh_session_id = ? AND tool.call_id = ?
+        AND tool.context_id = ? AND tool.operation_id = ?
+        AND tool.status = 'pending' AND proposal.status = 'pending'
+    `).get(
+      context.workspace.id,
+      context.workspace.epoch,
+      receipt.dshSessionId,
+      receipt.callId,
+      receipt.contextId,
+      receipt.operationId,
+    ) as { proposal_id: string } | undefined
+    if (row === undefined) throw this.#callNotPending()
+
+    const decidedAt = this.#now().toISOString()
+    this.#database.driver.transaction(() => {
+      const updated = this.#database.driver.prepare(`
+        UPDATE agent_proposal SET status = ?
+        WHERE workspace_id = ? AND epoch = ? AND proposal_id = ? AND status = 'pending'
+      `).run(
+        request.decision,
+        context.workspace.id,
+        context.workspace.epoch,
+        row.proposal_id,
+      )
+      if (updated.changes !== 1) throw this.#callNotPending()
+      this.#database.driver.prepare(`
+        INSERT INTO agent_review_decision (
+          workspace_id, epoch, decision_id, proposal_id, human_actor_id,
+          decision, decided_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        context.workspace.id,
+        context.workspace.epoch,
+        uuidv7(),
+        row.proposal_id,
+        input.actor.actorId,
+        request.decision,
+        decidedAt,
+      )
+    })()
+    return agentReviewDecisionResponseSchema.parse({
+      decidedAt,
+      decision: request.decision,
+      proposalId: row.proposal_id,
+    })
+  }
+
   completeToolCall(input: {
     actor: ActorContext
     request: z.infer<typeof agentToolResultRequestSchema>
@@ -365,16 +516,39 @@ export class AgentIntegrationService {
     const request = agentToolResultRequestSchema.parse(input.request)
     const receipt = this.#parseReceipt(request.receiptToken)
     const row = this.#database.driver.prepare(`
-      SELECT context_id, proposal_id FROM agent_tool_call
-      WHERE dsh_session_id = ? AND call_id = ? AND operation_id = ?
-    `).get(receipt.dshSessionId, receipt.callId, receipt.operationId) as {
+      SELECT tool.workspace_id, tool.epoch, tool.context_id, tool.proposal_id,
+        tool.status, proposal.status AS proposal_status,
+        proposal.operation_id AS proposal_operation_id
+      FROM agent_tool_call AS tool
+      LEFT JOIN agent_proposal AS proposal
+        ON proposal.workspace_id = tool.workspace_id
+       AND proposal.epoch = tool.epoch
+       AND proposal.proposal_id = tool.proposal_id
+      WHERE tool.dsh_session_id = ? AND tool.call_id = ?
+        AND tool.operation_id = ? AND tool.context_id = ?
+    `).get(
+      receipt.dshSessionId,
+      receipt.callId,
+      receipt.operationId,
+      receipt.contextId,
+    ) as {
       context_id: string
+      epoch: string
       proposal_id: string | null
+      proposal_operation_id: string | null
+      proposal_status: string | null
+      status: string
+      workspace_id: string
     } | undefined
-    if (row === undefined || row.context_id !== receipt.contextId) {
+    if (row === undefined || row.status !== 'pending') {
       throw this.#callNotPending()
     }
-    const context = this.#contextById(receipt.contextId)
+    const context = this.#contextById(receipt.contextId, { requireActive: false })
+    if (
+      row.workspace_id !== context.workspace.id
+      || row.epoch !== context.workspace.epoch
+      || context.dshSessionId !== receipt.dshSessionId
+    ) throw this.#callNotPending()
     this.#assertCurrentCaller(context, input.actor, input.userAccountId)
     const resultJson = JSON.stringify(request.ok
       ? { result: request.result ?? null }
@@ -391,16 +565,33 @@ export class AgentIntegrationService {
     const review = row.proposal_id === null || !request.ok
       ? undefined
       : reviewResult(request.result)
-    const commandLink = review?.approved === true
-      ? this.#verifiedCommandLink(context, input.actor, review.command)
+    if (
+      review !== undefined
+      && row.proposal_status !== (review.approved ? 'approved' : 'rejected')
+    ) {
+      throw new AgentIntegrationError(
+        'AGENT_OPERATION_NOT_ALLOWED',
+        'The Tool result does not match the recorded human review decision',
+        403,
+      )
+    }
+    const commandLink = review?.approved === true && row.proposal_id !== null
+      ? this.#verifiedCommandLink(
+          context,
+          input.actor,
+          row.proposal_id,
+          row.proposal_operation_id ?? '',
+          review.command,
+        )
       : undefined
     this.#database.driver.transaction(() => {
       const updated = this.#database.driver.prepare(`
         UPDATE agent_tool_call
         SET status = ?, result_json = ?, completed_at = ?, request_id = ?,
           audit_id = ?, trace_id = ?
-        WHERE dsh_session_id = ? AND call_id = ? AND operation_id = ?
-          AND context_id = ? AND status = 'pending'
+        WHERE workspace_id = ? AND epoch = ? AND dsh_session_id = ?
+          AND call_id = ? AND operation_id = ? AND context_id = ?
+          AND status = 'pending'
       `).run(
         status,
         resultJson,
@@ -408,6 +599,8 @@ export class AgentIntegrationService {
         commandLink?.requestId ?? null,
         commandLink?.auditId ?? null,
         commandLink?.traceId ?? null,
+        context.workspace.id,
+        context.workspace.epoch,
         receipt.dshSessionId,
         receipt.callId,
         receipt.operationId,
@@ -417,26 +610,20 @@ export class AgentIntegrationService {
       if (row.proposal_id !== null && !request.ok) {
         this.#database.driver.prepare(`
           UPDATE agent_proposal SET status = 'stale'
-          WHERE proposal_id = ? AND status = 'pending'
-        `).run(row.proposal_id)
-      } else if (row.proposal_id !== null && review !== undefined) {
-        const proposalStatus = review.approved ? 'approved' : 'rejected'
+          WHERE workspace_id = ? AND epoch = ? AND proposal_id = ?
+            AND status = 'pending'
+        `).run(context.workspace.id, context.workspace.epoch, row.proposal_id)
+      }
+      if (row.proposal_id !== null && commandLink !== undefined) {
         this.#database.driver.prepare(`
-          UPDATE agent_proposal SET status = ?
-          WHERE proposal_id = ? AND status = 'pending'
-        `).run(proposalStatus, row.proposal_id)
-        this.#database.driver.prepare(`
-          INSERT INTO agent_review_decision (
-            decision_id, proposal_id, human_actor_id, decision,
-            command_request_id, decided_at
-          ) VALUES (?, ?, ?, ?, ?, ?)
+          UPDATE agent_review_decision SET command_request_id = ?
+          WHERE workspace_id = ? AND epoch = ? AND proposal_id = ?
+            AND decision = 'approved' AND command_request_id IS NULL
         `).run(
-          uuidv7(),
+          commandLink.requestId,
+          context.workspace.id,
+          context.workspace.epoch,
           row.proposal_id,
-          input.actor.actorId,
-          proposalStatus,
-          commandLink?.requestId ?? null,
-          completedAt,
         )
       }
     })()
@@ -501,15 +688,24 @@ export class AgentIntegrationService {
     }
   }
 
-  #contextById(contextId: string): AgentPageContextSnapshot {
+  #contextById(
+    contextId: string,
+    options: { requireActive: boolean },
+  ): AgentPageContextSnapshot {
     const row = this.#database.driver.prepare(`
       SELECT claim_json, allowed_operation_ids_json, actor_id, practitioner_role_id,
-        role_code, scope_key, workspace_id, epoch, scenario_run_id, issued_at, expires_at
-      FROM agent_page_context WHERE context_id = ?
+        role_code, dsh_session_id, scope_key, agent_page_context.workspace_id,
+        agent_page_context.epoch, scenario_run_id, issued_at, expires_at,
+        agent_page_context.status, workspace.active_epoch
+      FROM agent_page_context
+      JOIN workspace ON workspace.workspace_id = agent_page_context.workspace_id
+      WHERE context_id = ?
     `).get(contextId) as {
+      active_epoch: string
       actor_id: string
       allowed_operation_ids_json: string
       claim_json: string
+      dsh_session_id: string
       epoch: string
       expires_at: string
       issued_at: string
@@ -517,9 +713,16 @@ export class AgentIntegrationService {
       role_code: string
       scenario_run_id: string
       scope_key: string
+      status: string
       workspace_id: string
     } | undefined
-    if (row === undefined) throw this.#invalidToken()
+    if (
+      row === undefined
+      || row.active_epoch !== row.epoch
+      || (options.requireActive && (
+        row.status !== 'active' || Date.parse(row.expires_at) <= this.#now().getTime()
+      ))
+    ) throw this.#invalidToken()
     return agentPageContextSnapshotSchema.parse({
       actor: {
         actorId: row.actor_id,
@@ -528,6 +731,7 @@ export class AgentIntegrationService {
       },
       allowedOperationIds: JSON.parse(row.allowed_operation_ids_json),
       claim: JSON.parse(row.claim_json),
+      dshSessionId: row.dsh_session_id,
       expiresAt: row.expires_at,
       id: contextId,
       issuedAt: row.issued_at,
@@ -547,8 +751,11 @@ export class AgentIntegrationService {
     userAccountId: string,
   ): void {
     const row = this.#database.driver.prepare(`
-      SELECT user_account_id FROM agent_page_context WHERE context_id = ?
-    `).get(context.id) as { user_account_id: string } | undefined
+      SELECT user_account_id FROM agent_page_context
+      WHERE workspace_id = ? AND epoch = ? AND context_id = ?
+    `).get(context.workspace.id, context.workspace.epoch, context.id) as {
+      user_account_id: string
+    } | undefined
     if (
       row?.user_account_id !== userAccountId
       || context.actor.actorId !== actor.actorId
@@ -561,6 +768,8 @@ export class AgentIntegrationService {
   #verifiedCommandLink(
     context: AgentPageContextSnapshot,
     actor: ActorContext,
+    proposalId: string,
+    proposalOperationId: string,
     command: { auditId: string; requestId: string } | undefined,
   ): { auditId: string; requestId: string; traceId: string } {
     if (command === undefined) {
@@ -570,34 +779,70 @@ export class AgentIntegrationService {
         403,
       )
     }
-    const audit = this.#database.driver.prepare(`
-      SELECT audit_id FROM audit_log
-      WHERE workspace_id = ? AND epoch = ? AND audit_id = ?
-        AND actor_id = ? AND outcome = 'success'
-    `).get(
-      context.workspace.id,
-      context.workspace.epoch,
-      command.auditId,
-      actor.actorId,
-    )
-    const trace = this.#database.driver.prepare(`
-      SELECT trace_id FROM action_trace
-      WHERE workspace_id = ? AND epoch = ? AND request_id = ?
-        AND actor_id = ? AND outcome = 'success'
-    `).get(
-      context.workspace.id,
-      context.workspace.epoch,
-      command.requestId,
-      actor.actorId,
-    ) as { trace_id: string } | undefined
-    if (audit === undefined || trace === undefined) {
+    const expectedOperations = proposalCommandOperations[proposalOperationId]
+    if (expectedOperations === undefined) {
       throw new AgentIntegrationError(
         'AGENT_OPERATION_NOT_ALLOWED',
-        'The reviewed Command receipt is not owned by the current human Actor',
+        'The Agent proposal has no corresponding ClinMesh Command',
         403,
       )
     }
-    return { auditId: command.auditId, requestId: command.requestId, traceId: trace.trace_id }
+    const link = this.#database.driver.prepare(`
+      SELECT receipt.operation, receipt.response_json, receipt.trace_id
+      FROM command_receipt AS receipt
+      JOIN audit_log AS audit
+        ON audit.workspace_id = receipt.workspace_id
+       AND audit.epoch = receipt.epoch
+       AND audit.audit_id = receipt.audit_id
+      JOIN action_trace AS trace
+        ON trace.workspace_id = receipt.workspace_id
+       AND trace.epoch = receipt.epoch
+       AND trace.scenario_run_id = ?
+       AND trace.trace_id = receipt.trace_id
+       AND trace.request_id = receipt.request_id
+      JOIN agent_review_decision AS decision
+        ON decision.workspace_id = receipt.workspace_id
+       AND decision.epoch = receipt.epoch
+       AND decision.proposal_id = ?
+      WHERE receipt.workspace_id = ? AND receipt.epoch = ?
+        AND receipt.actor_id = ? AND receipt.status = 'completed'
+        AND receipt.audit_id = ? AND receipt.request_id = ?
+        AND audit.actor_id = receipt.actor_id
+        AND audit.operation = receipt.operation AND audit.outcome = 'success'
+        AND trace.actor_id = receipt.actor_id
+        AND trace.operation = receipt.operation AND trace.outcome = 'success'
+        AND decision.human_actor_id = receipt.actor_id
+        AND decision.decision = 'approved'
+        AND audit.real_timestamp >= decision.decided_at
+    `).get(
+      context.workspace.scenarioRunId,
+      proposalId,
+      context.workspace.id,
+      context.workspace.epoch,
+      actor.actorId,
+      command.auditId,
+      command.requestId,
+    ) as {
+      operation: string
+      response_json: string
+      trace_id: string
+    } | undefined
+    if (link === undefined || !expectedOperations.includes(link.operation)) {
+      throw new AgentIntegrationError(
+        'AGENT_OPERATION_NOT_ALLOWED',
+        'The reviewed Command is not the one approved for this Agent proposal',
+        403,
+      )
+    }
+    const response = commandLinkResponseSchema.parse(JSON.parse(link.response_json))
+    if (response.auditId !== command.auditId || response.requestId !== command.requestId) {
+      throw new AgentIntegrationError(
+        'AGENT_OPERATION_NOT_ALLOWED',
+        'The reviewed Command receipt identifiers do not match',
+        403,
+      )
+    }
+    return { auditId: command.auditId, requestId: command.requestId, traceId: link.trace_id }
   }
 
   #invalidProof(): AgentIntegrationError {
@@ -623,17 +868,29 @@ export class AgentIntegrationService {
       401,
     )
   }
+
+  #staleContext(): AgentIntegrationError {
+    return new AgentIntegrationError(
+      'AGENT_CONTEXT_STALE',
+      'The ClinMesh resources bound to this Agent Page Context have changed',
+      409,
+    )
+  }
 }
 
 function pageScopeKey(input: CreatePageContextInput): string {
+  const claim = input.request.claim
   return `clinmesh:${hashJson({
+    activeSection: claim.activeSection,
     actorId: input.actor.actorId,
+    dshSessionId: input.request.dshSessionId,
     epoch: input.actor.epoch,
     practitionerRoleId: input.actor.practitionerRoleId,
     roleCode: input.actor.roleCode,
     scenarioRunId: input.actor.scenarioRunId,
     userAccountId: input.userAccountId,
-    viewId: input.claim.viewId,
+    selection: claim.selection,
+    viewId: claim.viewId,
     workspaceId: input.actor.workspaceId,
   }).slice(0, 32)}`
 }

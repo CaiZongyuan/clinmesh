@@ -25,6 +25,7 @@ export interface WebRuntimeOptions {
   surfaceActive?: boolean
   surfaceAgent?: WebSurfaceAgentController
   surfaceAgentStatus?: WebSurfaceAgentStatus
+  surfaceSessionId?: string
 }
 
 interface WebRuntimeValue {
@@ -34,6 +35,7 @@ interface WebRuntimeValue {
   surfaceActive?: boolean
   surfaceAgent?: WebSurfaceAgentController
   surfaceAgentStatus?: WebSurfaceAgentStatus
+  surfaceSessionId?: string
 }
 
 const WebRuntimeContext = createContext<WebRuntimeValue | null>(null)

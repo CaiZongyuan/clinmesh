@@ -323,7 +323,14 @@ export class CommandExecutor {
         'success',
         result.effects,
       )
-      this.#appendTrace(context, invocation.operation, result.effects, now, 'success', requestId)
+      const traceId = this.#appendTrace(
+        context,
+        invocation.operation,
+        result.effects,
+        now,
+        'success',
+        requestId,
+      )
       const insertEffect = this.#database.driver.prepare(`
         INSERT INTO command_effect (
           workspace_id, epoch, actor_id, operation, idempotency_key,
@@ -335,10 +342,11 @@ export class CommandExecutor {
       })
       this.#database.driver.prepare(`
         UPDATE command_receipt
-        SET status = 'completed', response_json = ?, updated_at = ?
+        SET status = 'completed', response_json = ?, request_id = ?, audit_id = ?,
+          trace_id = ?, updated_at = ?
         WHERE workspace_id = ? AND epoch = ? AND actor_id = ?
           AND operation = ? AND idempotency_key = ?
-      `).run(JSON.stringify(response), now, ...receiptKey)
+      `).run(JSON.stringify(response), requestId, auditId, traceId, now, ...receiptKey)
       this.#database.driver.exec('COMMIT')
       return response
     } catch (error) {
@@ -509,7 +517,7 @@ export class CommandExecutor {
     timestamp: string,
     outcome: 'failed' | 'success',
     requestId?: string,
-  ): void {
+  ): string {
     const virtualTime = virtualTimeRowSchema.optional().parse(
       this.#database.driver.prepare(`
         SELECT virtual_time FROM scenario_epoch_state
@@ -522,6 +530,7 @@ export class CommandExecutor {
       FROM action_trace
       WHERE workspace_id = ? AND epoch = ? AND scenario_run_id = ?
     `).get(context.workspaceId, context.epoch, context.scenarioRunId) as { sequence: number }
+    const traceId = uuidv7()
     this.#database.driver.prepare(`
       INSERT INTO action_trace (
         workspace_id, epoch, scenario_run_id, trace_id, sequence,
@@ -531,7 +540,7 @@ export class CommandExecutor {
       context.workspaceId,
       context.epoch,
       context.scenarioRunId,
-      uuidv7(),
+      traceId,
       row.sequence + 1,
       context.actorId,
       operation,
@@ -540,6 +549,7 @@ export class CommandExecutor {
       virtualTimestamp,
       requestId ?? null,
     )
+    return traceId
   }
 
   #recordFailedAttempt(

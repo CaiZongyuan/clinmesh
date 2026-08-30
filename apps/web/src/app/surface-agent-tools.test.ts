@@ -27,6 +27,7 @@ const binding = {
       'registration.patient.search',
       'registration.patient.create.propose',
     ],
+    dshSessionId: 'dsh-session-1',
     scopeKey: 'clinmesh:registrar:registration',
     issuedAt: '2026-08-31T00:00:00.000Z',
     expiresAt: '2026-08-31T00:05:00.000Z',
@@ -99,6 +100,7 @@ describe('ClinMesh Surface Agent tools', () => {
       definitions,
       issueProof: vi.fn(async () => 'proof-with-at-least-32-characters'),
       readState: () => ({ queueStatus: 'empty' }),
+      review: vi.fn(async () => ({ decision: 'approved' })),
     })
 
     expect(tools.map(tool => tool.name)).toEqual([
@@ -144,6 +146,7 @@ describe('ClinMesh Surface Agent tools', () => {
       definitions,
       issueProof: vi.fn(async () => 'proof-with-at-least-32-characters'),
       readState: () => ({ selectedPatientId: 'patient-1' }),
+      review: vi.fn(async () => ({ decision: 'approved' })),
     })
     const read = tools.find(tool => tool.name === 'clinmesh_read_current_context')!
     const value = JSON.parse(await read.execute(
@@ -169,12 +172,13 @@ describe('ClinMesh Surface Agent tools', () => {
     const decision = new Promise<{ approved: boolean }>(resolve => {
       resolveDecision = resolve
     })
+    const bindDecisionGate = vi.fn()
     const complete = vi.fn(async () => ({ status: 'completed' as const }))
     const tools = buildSurfaceAgentTools({
       actions: {
         'registration.patient.create.propose': {
           description: 'Open human review for the current patient draft.',
-          execute: () => ({ kind: 'clinmesh-agent-review', decision }),
+          execute: () => ({ bindDecisionGate, kind: 'clinmesh-agent-review', decision }),
           parameters: { type: 'object', properties: {}, additionalProperties: false },
         },
       },
@@ -192,6 +196,11 @@ describe('ClinMesh Surface Agent tools', () => {
       definitions,
       issueProof: vi.fn(async () => 'proof-with-at-least-32-characters'),
       readState: () => ({}),
+      review: vi.fn(async () => ({
+        decidedAt: '2026-08-31T00:00:01.000Z',
+        decision: 'rejected' as const,
+        proposalId: 'proposal-1',
+      })),
     })
     const prepare = tools.find(tool => tool.name === 'clinmesh_prepare_create_patient')!
 
@@ -200,6 +209,7 @@ describe('ClinMesh Surface Agent tools', () => {
       new AbortController().signal,
     )).resolves.toContain('awaiting-human-review')
     expect(complete).not.toHaveBeenCalled()
+    expect(bindDecisionGate).toHaveBeenCalledOnce()
 
     resolveDecision({ approved: false })
     await vi.waitFor(() => expect(complete).toHaveBeenCalledWith(

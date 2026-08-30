@@ -31,7 +31,7 @@ Web application 接受可注入的 API base、Router history、Portal container�
 
 `apps/dsh-web` 是 DSH Host/Client adapter，不拥有医院状态或第二套页面。Host 注册固定 loopback `/clinmesh-api` proxy 与 execution-proof route；Client 把 `apps/web` 挂载为 `dsh-react-surface`，使用 DSH 共享 React runtime、Memory Router、独立 QueryClient 和 ShadowRoot 样式/Portal。
 
-Surface Agent controller 把当前页面注册投影成 DSH Session-scoped browser Tools。Page Context、Tool catalog、proposal 和 review contract 位于 `packages/contracts` 与 Server；DSH adapter 不导入 Repository、Workflow 状态机或 Hidden Fact。默认布局是 `workspace`，空间不足时由 Surface runtime 退化为 `full-frame`，隐藏时 keep-alive 保留客户端草稿。
+Surface Agent controller 把当前页面注册投影成 DSH Session-scoped browser Tools。Client adapter 订阅 DSH 唯一的 current-session store，并把当前 Session ID 作为 Web runtime 输入；切换 Session 会立即撤下旧 Page Context 与 review。Page Context、Tool catalog、proposal 和 review contract 位于 `packages/contracts` 与 Server；DSH adapter 不导入 Repository、Workflow 状态机或 Hidden Fact。默认布局是 `workspace`，空间不足时由 Surface runtime 退化为 `full-frame`，隐藏时 keep-alive 保留客户端草稿。
 
 DSH Client artifact 是一个 lazy-CJS 文件，React、ReactDOM 和 Surface runtime 保持 external，不生成动态 chunk 或第二份 React。`vendor/dsh-react-surface` 以 submodule 固定；pnpm 仍拥有 workspace，Bun 只执行 Surface builder、样式生成和 artifact verifier。
 
@@ -100,7 +100,7 @@ interface NavigationAdapter {
 - TanStack Query 是服务端状态唯一客户端缓存。
 - Zustand 只保存筛选、工作台布局、未提交草稿、弹窗和临时选择。
 - 当前 Patient/Encounter context 由路由或服务端 Actor context binding 驱动，store 只能镜像平台 plumbing 所需的稳定标识。
-- DSH Page Context 是短期授权快照，不进入 TanStack Query 或 Zustand；页面状态变化重新签发 context，稳定 page scope 只用于 DSH lease，不成为医院状态 owner。
+- DSH Page Context 是短期授权快照，不进入 TanStack Query 或 Zustand；DSH Session、页面 scope、selection 或资源版本变化会替换 lease，其他可见页面状态只重新签发 context，二者都不成为医院状态 owner。
 - 首期在 Command 成功后精确失效 Query，并通过聚焦刷新和短间隔轮询同步岗位状态；未来的推送仍只更新 Query cache，不把服务端 payload 镜像进 Zustand。
 - 会导航、支付、发药、退费或确认的流程等待服务端成功后再清理本地状态。
 

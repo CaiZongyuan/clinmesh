@@ -436,12 +436,16 @@ export function WebApp({
     ...(runtimeOptions.surfaceAgentStatus === undefined
       ? {}
       : { surfaceAgentStatus: runtimeOptions.surfaceAgentStatus }),
+    ...(runtimeOptions.surfaceSessionId === undefined
+      ? {}
+      : { surfaceSessionId: runtimeOptions.surfaceSessionId }),
   }), [
     runtimeOptions.mode,
     runtimeOptions.onExit,
     runtimeOptions.surfaceActive,
     runtimeOptions.surfaceAgent,
     runtimeOptions.surfaceAgentStatus,
+    runtimeOptions.surfaceSessionId,
   ])
 
   return (

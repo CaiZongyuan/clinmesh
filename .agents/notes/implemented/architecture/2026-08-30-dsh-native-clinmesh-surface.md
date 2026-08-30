@@ -16,11 +16,11 @@ Canonical implementation contract 是 [GitHub issue #60](https://github.com/CaiZ
 
 DSH 拥有模型 Session、transcript、Tool 调度和 Surface 宿主。ClinMesh 拥有页面上下文、前端 action、proposal、人工审阅、Command receipt、Audit Event 和 Action Trace 关联。Surface 复用 `apps/web` 的 application/runtime seam，使用 Memory Router、独立 QueryClient、作用域主题、ShadowRoot Portal 和 `/clinmesh-api` 同源代理；standalone Web 保持 Browser History 与原有 API base。
 
-浏览器只发送严格的 `PageContextClaim`。Hono 根据当前 Better Auth session、Membership、Practitioner Role、Workspace/Epoch 和岗位允许页面签发五分钟 `PageContextSnapshot`。snapshot 包含受信 Actor、页面 claim、允许 operation、短期 context ID 和稳定 page scope；scope 只在登录 Actor、岗位、Workspace/Epoch 或 view 改变时变化，页面状态和 TTL 续签只替换 context。旧 context token 在替换时服务端撤销，续签失败则前端在到期时移除 Tools。Hidden Fact、Case Truth、Reveal Policy、作者数据、DOM、缓存和其他患者标签页不进入 claim 或 snapshot。
+浏览器发送严格的 `PageContextClaim`、当前 DSH Session 和 Surface client 单调 revision。Hono 根据当前 Better Auth session、Membership、Practitioner Role、Workspace/Epoch、岗位允许页面和权威资源重新签发五分钟 `PageContextSnapshot`；selection、Patient/Encounter 版本和资源状态不直接信任浏览器。snapshot 包含受信 Actor、DSH Session、页面 claim、当前允许 operation、短期 context ID 和 page scope。Actor、岗位、Workspace/Epoch、DSH Session、view、active section、selection 或资源版本变化会替换 lease；页面 revision 或 TTL 替换 context 并关闭旧 review。事务内 revision 仲裁防止晚到的旧请求撤销新 context，续签失败则前端在到期时移除 Tools。Hidden Fact、Case Truth、Reveal Policy、作者数据、DOM、缓存和其他患者标签页不进入 claim 或 snapshot。
 
-每个岗位、页面和 operation 使用独立 Tool 名称与窄 object schema。DSH `browser-tools` broker 把稳定 page scope 绑定到当前原生 Session；Host 从真实 `tools/pre-execute` 事件签发一次性 execution proof，绑定 Session、call ID、Tool、scope 和真实时间过期。浏览器再用当前 context token 与 proof 向 Hono 授权，不能自报 Actor、岗位、Workspace、Epoch 或任意资源路径。DSH 支持的 JSON Schema 是强制子集；Surface adapter 只向 broker 投影受支持关键词，页面 action 仍执行完整长度、格式、数值范围和目录校验。
+每个岗位、页面和 operation 使用独立 Tool 名称与窄 object schema。DSH `browser-tools` broker 把 page scope 绑定到当前原生 Session；Host 从真实 `tools/pre-execute` 事件签发一次性 execution proof，绑定 Session、call ID、Tool、scope 和真实时间过期。浏览器再用当前 context token 与 proof 向 Hono 授权，不能自报 Actor、岗位、Workspace、Epoch 或任意资源路径。DSH 支持的 JSON Schema 是强制子集；Surface adapter 只向 broker 投影受支持关键词，Web action 和 Hono authorization 在执行或持久化前都使用共享 Zod schema 恢复完整长度、格式、数组和数值范围校验。
 
-读取、导航、选择、表单填写、受控问诊、草稿保存和 preview 可以由 Agent 直接执行。正式医院状态变化只创建 proposal 并打开 ClinMesh 原生审阅框。proposal Tool 立即向 DSH 返回 `awaiting-human-review`，不占用 browser lease；Hono 保持 Tool call 与 proposal pending。人类批准后以当前登录人类为最终 Actor 执行既有 Command，后台 completion 把 proposal、review、request、audit 和 trace 关联起来。明确拒绝记录人类 `rejected` decision；Surface 隐藏、Session/lease 失效、page scope 改变、超时或执行错误把 proposal 标记为 `stale`，不伪造人类拒绝，也不产生业务 Effect。
+读取、导航、选择、表单填写、受控问诊、草稿保存和 preview 可以由 Agent 直接执行。正式医院状态变化只创建 proposal 并打开 ClinMesh 原生审阅框。proposal Tool 立即向 DSH 返回 `awaiting-human-review`，不占用 browser lease；Hono 保持 Tool call 与 proposal pending。人类点击决定时，Web 先调用 decision gate；Hono 重新验证 active context、DSH Session、当前资源和 Tool 后原子记录决定，成功后才允许 Web 以当前登录人类为最终 Actor 执行既有 Command。后台 completion 只接受同一个 Command receipt 中显式一致的 request、audit、trace 和允许 operation。明确拒绝记录人类 `rejected` decision；Surface 隐藏、Session/lease 失效、page scope、selection、资源版本、页面 revision 或 context 改变，以及超时或执行错误，会把尚未决定的 proposal 标记为 `stale`，不伪造人类拒绝，也不产生业务 Effect。
 
 Host 代理只接受固定 loopback Hono origin，并限制路径、方法、请求体、响应体和超时；Cookie 与 Origin 语义保持同源。共享 bridge secret 只存在于 DSH Host 与 Hono 环境，不进入浏览器、日志、Tool result 或版本库。当前信任边界只覆盖安装在同一 DSH Web Profile 的受信插件和全合成 ClinMesh 数据。
 
@@ -44,7 +44,7 @@ Host 代理只接受固定 loopback Hono origin，并限制路径、方法、请
 
 Web 的服务端状态仍由 TanStack Query 拥有，Surface 隐藏时保留客户端草稿；Memory Router 不修改 DSH document pathname。Dialog、Menu、Select、Sheet、Tooltip 和 Toast 通过注入的 Portal 留在 ShadowRoot。`workspace` 是默认布局，宽度不足时退化到 `full-frame`。
 
-Agent integration 增加 Page Context、Tool call、proposal 和 review decision 持久表，并用 `action_trace.request_id` 建立精确 Command 关联。DSH transcript 不进入 SQLite；普通读取和草稿 Tool 记录调用结果，但不伪装成 Command、Audit Event 或 Provenance。
+Agent integration 增加 Page Context、Tool call、proposal 和 review decision 持久表，所有运行事实使用 Workspace/Epoch 复合隔离键。Command receipt 显式保存 request、audit 和 trace 标识，completion 与 Audit、Action Trace、review decision 做同 operation、Actor、outcome 和时序联结。DSH transcript 不进入 SQLite；普通读取和草稿 Tool 记录调用结果，但不伪装成 Command、Audit Event 或 Provenance。
 
 React Surface artifact 是一个 lazy-CJS 文件，React 与 DSH runtime 保持 external；构建验证拒绝动态 chunk、第二份 React、未服务资产和残留 `import.meta`。CI 递归 checkout submodule，并固定 Bun `1.4.0`。Desktop、Mobile、MCP、Agent OAuth/SMART、自治 Agent Run、Evaluation Spec 和评分不因该 Surface 存在而成为当前能力。
 

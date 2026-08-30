@@ -1,4 +1,18 @@
 import { z } from 'zod'
+import {
+  agentToolInputSchemas,
+  agentViewIdSchema,
+  isAgentOperationId,
+  type AgentOperationId,
+} from './agent-tool-input.ts'
+
+export {
+  agentToolInputSchemas,
+  agentViewIdSchema,
+  isAgentOperationId,
+  parseAgentToolInput,
+  type AgentOperationId,
+} from './agent-tool-input.ts'
 
 export const agentHumanRoleCodeSchema = z.enum([
   'administrator',
@@ -7,18 +21,6 @@ export const agentHumanRoleCodeSchema = z.enum([
   'pharmacist',
   'registrar',
   'triage-nurse',
-])
-
-export const agentViewIdSchema = z.enum([
-  'overview',
-  'scenarioData',
-  'registration',
-  'triage',
-  'consultation',
-  'billing',
-  'pharmacy',
-  'settingsGeneral',
-  'uiComponents',
 ])
 
 export const agentSelectionKindSchema = z.enum([
@@ -82,6 +84,7 @@ export const agentPageContextSnapshotSchema = z.object({
   }).strict(),
   allowedOperationIds: z.array(z.string().min(1)).max(32),
   claim: agentPageContextClaimSchema,
+  dshSessionId: z.string().trim().min(1).max(256),
   expiresAt: z.iso.datetime({ offset: true }),
   id: z.string().min(1),
   issuedAt: z.iso.datetime({ offset: true }),
@@ -92,6 +95,15 @@ export const agentPageContextSnapshotSchema = z.object({
     id: z.string().min(1),
     scenarioRunId: z.string().min(1),
   }).strict(),
+}).strict()
+
+export const agentPageContextRequestSchema = z.object({
+  claim: agentPageContextClaimSchema,
+  client: z.object({
+    id: z.string().trim().min(1).max(128),
+    revision: z.number().int().positive(),
+  }).strict(),
+  dshSessionId: z.string().trim().min(1).max(256),
 }).strict()
 
 export const agentPageContextBindingSchema = z.object({
@@ -112,9 +124,19 @@ export const agentExecutionProofPayloadSchema = z.object({
 export const agentToolAuthorizationRequestSchema = z.object({
   contextToken: z.string().min(32),
   executionProof: z.string().min(32),
-  input: z.unknown(),
+  input: z.json(),
   operationId: z.string().trim().min(1).max(128),
-}).strict()
+}).strict().superRefine((value, context) => {
+  if (!isAgentOperationId(value.operationId)) {
+    context.addIssue({ code: 'custom', message: 'The Agent operation is not registered', path: ['operationId'] })
+    return
+  }
+  const parsed = agentToolInputSchemas[value.operationId].safeParse(value.input)
+  if (parsed.success) return
+  for (const issue of parsed.error.issues) {
+    context.addIssue({ ...issue, path: ['input', ...issue.path] })
+  }
+})
 
 export const agentToolAuthorizationResponseSchema = z.object({
   callId: z.string().min(1),
@@ -130,12 +152,23 @@ export const agentToolResultRequestSchema = z.object({
   error: z.string().max(2048).optional(),
   ok: z.boolean(),
   receiptToken: z.string().min(32),
-  result: z.unknown().optional(),
+  result: z.json().optional(),
 }).strict().superRefine((value, context) => {
   if (value.ok && value.error !== undefined) {
     context.addIssue({ code: 'custom', message: 'A successful Tool result cannot include an error' })
   }
 })
+
+export const agentReviewDecisionRequestSchema = z.object({
+  decision: z.enum(['approved', 'rejected']),
+  receiptToken: z.string().min(32),
+}).strict()
+
+export const agentReviewDecisionResponseSchema = z.object({
+  decidedAt: z.iso.datetime({ offset: true }),
+  decision: z.enum(['approved', 'rejected']),
+  proposalId: z.string().min(1),
+}).strict()
 
 export const agentToolCompletionResponseSchema = z.object({
   auditId: z.string().min(1).optional(),
@@ -148,11 +181,14 @@ export const agentToolCompletionResponseSchema = z.object({
 export type AgentHumanRoleCode = z.infer<typeof agentHumanRoleCodeSchema>
 export type AgentViewId = z.infer<typeof agentViewIdSchema>
 export type AgentPageContextClaim = z.infer<typeof agentPageContextClaimSchema>
+export type AgentPageContextRequest = z.infer<typeof agentPageContextRequestSchema>
 export type AgentPageContextSnapshot = z.infer<typeof agentPageContextSnapshotSchema>
 export type AgentPageContextBinding = z.infer<typeof agentPageContextBindingSchema>
 export type AgentToolAuthorizationRequest = z.infer<typeof agentToolAuthorizationRequestSchema>
 export type AgentToolAuthorizationResponse = z.infer<typeof agentToolAuthorizationResponseSchema>
 export type AgentToolResultRequest = z.infer<typeof agentToolResultRequestSchema>
+export type AgentReviewDecisionRequest = z.infer<typeof agentReviewDecisionRequestSchema>
+export type AgentReviewDecisionResponse = z.infer<typeof agentReviewDecisionResponseSchema>
 export type AgentToolCompletionResponse = z.infer<typeof agentToolCompletionResponseSchema>
 
 export type AgentOperationMode = 'draft' | 'preview' | 'proposal' | 'query' | 'ui'
@@ -160,7 +196,7 @@ export type AgentOperationRisk = 'draft-only' | 'human-review' | 'read-only' | '
 
 export interface AgentToolDefinition {
   mode: AgentOperationMode
-  operationId: string
+  operationId: AgentOperationId
   risk: AgentOperationRisk
   roleCodes: readonly AgentHumanRoleCode[]
   toolName: string
@@ -179,7 +215,7 @@ function defineAgentTool(definition: AgentToolDefinition): AgentToolDefinition {
 }
 
 function tool(
-  operationId: string,
+  operationId: AgentOperationId,
   toolName: string,
   mode: AgentOperationMode,
   risk: AgentOperationRisk,
@@ -216,6 +252,8 @@ export const agentToolCatalog: readonly AgentToolDefinition[] = Object.freeze([
   tool('ui.panel.focus', 'clinmesh_focus_panel', 'ui', 'ui-only', allRoles, allViews),
 
   tool('scenario.status.read', 'clinmesh_read_scenario_status', 'query', 'read-only', administrator, ['overview']),
+  tool('scenario.providers.read', 'clinmesh_read_scenario_providers', 'query', 'read-only', administrator, ['scenarioData']),
+  tool('scenario.generation.status.read', 'clinmesh_read_generation_status', 'query', 'read-only', administrator, ['scenarioData']),
   tool('scenario.install.propose', 'clinmesh_prepare_scenario_install', 'proposal', 'human-review', administrator, ['overview']),
   tool('scenario.reset.propose', 'clinmesh_prepare_scenario_reset', 'proposal', 'human-review', administrator, ['overview']),
 

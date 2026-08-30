@@ -1,10 +1,13 @@
-import type {
-  AgentPageContextBinding,
-  AgentToolAuthorizationRequest,
-  AgentToolAuthorizationResponse,
-  AgentToolDefinition,
-  AgentToolResultRequest,
+import {
+  parseAgentToolInput,
+  type AgentPageContextBinding,
+  type AgentReviewDecisionRequest,
+  type AgentToolAuthorizationRequest,
+  type AgentToolAuthorizationResponse,
+  type AgentToolDefinition,
+  type AgentToolResultRequest,
 } from '@clinmesh/contracts/agent'
+import { z } from 'zod'
 import type { WebSurfaceAgentTool } from './web-runtime.tsx'
 import { isAgentReviewTask, type AgentReviewTask } from './agent-review.tsx'
 
@@ -34,6 +37,7 @@ interface BuildSurfaceAgentToolsInput {
   onExecutionSettled?(): void
   onExecutionStart?(): void
   readState(): unknown
+  review(request: AgentReviewDecisionRequest, signal: AbortSignal): Promise<unknown>
   strictDefinitions?: boolean
 }
 
@@ -65,9 +69,10 @@ export function buildSurfaceAgentTools(
         input.onExecutionStart?.()
         try {
           const values = requireBoundInput(raw, input.binding.snapshot.scopeKey)
-          const actionInput = Object.fromEntries(
-            Object.entries(values).filter(([key]) => key !== 'scopeKey'),
-          )
+          const actionInput = z.json().parse(parseAgentToolInput(
+            definition.operationId,
+            Object.fromEntries(Object.entries(values).filter(([key]) => key !== 'scopeKey')),
+          ))
           const executionProof = await input.issueProof({
             signal,
             scopeKey: input.binding.snapshot.scopeKey,
@@ -85,7 +90,12 @@ export function buildSurfaceAgentTools(
               if (definition.mode !== 'proposal' || authorization.proposalId === undefined) {
                 throw new Error('ClinMesh review requires an authorized Agent proposal')
               }
-              settleAgentReview(data, authorization.receiptToken, input.complete)
+              settleAgentReview(
+                data,
+                authorization.receiptToken,
+                input.review,
+                input.complete,
+              )
               return JSON.stringify({
                 data: {
                   proposalId: authorization.proposalId,
@@ -94,12 +104,13 @@ export function buildSurfaceAgentTools(
                 ok: true,
               })
             }
+            const result = z.json().parse(data)
             await input.complete({
               ok: true,
               receiptToken: authorization.receiptToken,
-              result: data,
+              result,
             }, signal)
-            return JSON.stringify({ data, ok: true })
+            return JSON.stringify({ data: result, ok: true })
           } catch (error) {
             const message = error instanceof Error ? error.message : 'ClinMesh page action failed'
             await input.complete({
@@ -120,11 +131,19 @@ export function buildSurfaceAgentTools(
 function settleAgentReview(
   task: AgentReviewTask,
   receiptToken: string,
+  review: BuildSurfaceAgentToolsInput['review'],
   complete: BuildSurfaceAgentToolsInput['complete'],
 ): void {
   const completionSignal = new AbortController().signal
+  task.bindDecisionGate(async decision => {
+    await review({ decision, receiptToken }, completionSignal)
+  })
   void task.decision.then(
-    result => complete({ ok: true, receiptToken, result }, completionSignal),
+    result => complete({
+      ok: true,
+      receiptToken,
+      result: z.json().parse(result),
+    }, completionSignal),
     error => complete({
       error: error instanceof Error ? error.message : 'ClinMesh Agent review was cancelled',
       ok: false,

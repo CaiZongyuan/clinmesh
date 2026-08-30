@@ -13,6 +13,7 @@ import {
   completeAgentToolCall,
   createAgentPageContext,
   issueAgentExecutionProof,
+  reviewAgentToolCall,
 } from './api-client.ts'
 import {
   createDefaultAgentPageRegistration,
@@ -69,12 +70,17 @@ export function useSurfaceAgentPublisher(input: {
     input.session.actor.workspaceId,
   ])
   const page = registeredPage?.claim.viewId === input.activeSection ? registeredPage : defaultPage
+  const [pageContextClientId] = useState(() => `clinmesh-surface-${crypto.randomUUID()}`)
+  const pageContextRevision = useRef(0)
   const [binding, setBinding] = useState<AgentPageContextBinding>()
   const activeBinding = binding !== undefined
     && runtime.surfaceActive !== false
+    && runtime.surfaceAgentStatus === 'active'
+    && runtime.surfaceSessionId !== undefined
     && binding.snapshot.actor.actorId === input.session.actor.actorId
     && binding.snapshot.actor.practitionerRoleId === input.session.actor.practitionerRoleId
     && binding.snapshot.claim.viewId === page.claim.viewId
+    && binding.snapshot.dshSessionId === runtime.surfaceSessionId
     && binding.snapshot.workspace.epoch === input.session.actor.epoch
     && binding.snapshot.workspace.id === input.session.actor.workspaceId
     ? binding
@@ -104,10 +110,13 @@ export function useSurfaceAgentPublisher(input: {
   }, [publish])
 
   useEffect(() => {
+    const dshSessionId = runtime.surfaceSessionId
     if (
       runtime.mode !== 'surface'
       || runtime.surfaceActive === false
       || runtime.surfaceAgent === undefined
+      || runtime.surfaceAgentStatus !== 'active'
+      || dshSessionId === undefined
     ) {
       setBinding(undefined)
       return
@@ -118,7 +127,12 @@ export function useSurfaceAgentPublisher(input: {
     const refresh = async (): Promise<void> => {
       if (controller.signal.aborted) return
       try {
-        const value = await createAgentPageContext(page.claim)
+        pageContextRevision.current += 1
+        const value = await createAgentPageContext({
+          claim: page.claim,
+          client: { id: pageContextClientId, revision: pageContextRevision.current },
+          dshSessionId,
+        }, controller.signal)
         if (controller.signal.aborted) return
         setBinding(value)
         const renewalDelay = Math.max(
@@ -138,7 +152,15 @@ export function useSurfaceAgentPublisher(input: {
       controller.abort()
       if (renewalTimer !== undefined) clearTimeout(renewalTimer)
     }
-  }, [page, runtime.mode, runtime.surfaceActive, runtime.surfaceAgent])
+  }, [
+    page,
+    pageContextClientId,
+    runtime.mode,
+    runtime.surfaceActive,
+    runtime.surfaceAgent,
+    runtime.surfaceAgentStatus,
+    runtime.surfaceSessionId,
+  ])
 
   useEffect(() => {
     if (
@@ -152,11 +174,23 @@ export function useSurfaceAgentPublisher(input: {
     }
   }, [agentReview, runtime.mode, runtime.surfaceActive, runtime.surfaceAgentStatus])
 
-  const pageScopeKey = activeBinding?.snapshot.scopeKey
+  const reviewPageKey = [
+    runtime.surfaceSessionId,
+    page.claim.viewId,
+    page.claim.viewRevision,
+    page.claim.draft?.revision,
+    page.claim.selection?.id,
+    page.claim.selection?.version,
+  ].join(':')
   useEffect(() => {
-    if (pageScopeKey === undefined) return
-    return () => agentReview.cancel('The ClinMesh Agent page scope changed')
-  }, [agentReview, pageScopeKey])
+    return () => agentReview.cancel('The ClinMesh Agent page state changed')
+  }, [agentReview, reviewPageKey])
+
+  const reviewBindingId = activeBinding?.snapshot.id
+  useEffect(() => {
+    if (reviewBindingId === undefined) return
+    return () => agentReview.cancel('The ClinMesh Agent Page Context changed')
+  }, [agentReview, reviewBindingId])
 
   useEffect(() => {
     if (binding === undefined) return
@@ -201,6 +235,7 @@ export function useSurfaceAgentPublisher(input: {
         input.navigate,
         publishedBinding.snapshot.claim.viewId,
         publishedBinding.snapshot.actor.roleCode,
+        () => runtime.appearanceRoot.current,
       ),
       ...publishedPage.actions,
     }
@@ -218,6 +253,7 @@ export function useSurfaceAgentPublisher(input: {
       onExecutionSettled,
       onExecutionStart,
       readState: publishedPage.readState,
+      review: (request, signal) => reviewAgentToolCall(request, signal),
       strictDefinitions: publishedPage === registeredPage,
     })
     return runtime.surfaceAgent.register({
@@ -232,6 +268,7 @@ function commonActions(
   navigate: NavigateFn,
   currentView: AgentViewId,
   roleCode: AgentHumanRoleCode,
+  applicationRoot: () => HTMLElement | null,
 ): Record<string, SurfaceAgentPageAction> {
   const destinations = agentViewsForRole(roleCode)
   return {
@@ -256,7 +293,16 @@ function commonActions(
     },
     'ui.panel.focus': {
       description: 'Keep focus on the current ClinMesh workspace panel.',
-      execute: () => ({ focused: currentView }),
+      execute: () => {
+        const panel = applicationRoot()?.querySelector<HTMLElement>(
+          '[data-clinmesh-workspace-panel]',
+        )
+        if (panel === undefined || panel === null) {
+          throw new Error('The current ClinMesh workspace panel is unavailable')
+        }
+        panel.focus()
+        return { focused: currentView }
+      },
       parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   }

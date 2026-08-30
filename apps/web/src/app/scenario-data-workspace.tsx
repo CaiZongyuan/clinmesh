@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import {
   scenarioUcumUnitSchema,
   type ScenarioDataset,
@@ -70,6 +70,7 @@ import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-er
 import { scenarioModuleOptions } from './scenario-module-options.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
+import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 
 const providersQueryKey = ['scenario-providers'] as const
 const datasetsQueryKey = ['scenario-datasets'] as const
@@ -1783,14 +1784,105 @@ function DatasetEditor({
   )
 }
 
-function ScenarioDatasetStudio({ locale }: { locale: WorkspaceLocale }): React.JSX.Element {
+function ScenarioDataAgentPublisher({ generationJobId }: {
+  generationJobId: string | undefined
+}): null {
+  const providers = useQuery({
+    queryFn: ({ signal }) => getScenarioProviders(signal),
+    queryKey: providersQueryKey,
+  })
+  const generationJob = useQuery({
+    enabled: generationJobId !== undefined,
+    queryFn: ({ signal }) => {
+      if (generationJobId === undefined) throw new Error('No Scenario generation job is selected')
+      return getScenarioGenerationJob(generationJobId, signal)
+    },
+    queryKey: generationJobId === undefined
+      ? ['scenario-generation-job', 'none']
+      : generationJobQueryKey(generationJobId),
+  })
+  const agentPage = useMemo(() => ({
+    actions: {
+      'scenario.providers.read': {
+        description: 'Read configured Scenario generation Provider availability.',
+        execute: (_raw: unknown, signal: AbortSignal) => getScenarioProviders(signal),
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+      },
+      'scenario.generation.status.read': {
+        description: 'Read the current Scenario generation job status when one is selected.',
+        execute: (_raw: unknown, signal: AbortSignal) => generationJobId === undefined
+          ? { status: 'idle' as const }
+          : getScenarioGenerationJob(generationJobId, signal),
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+      },
+    },
+    claim: {
+      version: 1 as const,
+      viewId: 'scenarioData' as const,
+      viewRevision: agentViewRevision({
+        generationJobId,
+        generationStatus: generationJob.data?.status,
+        generationUpdatedAt: generationJob.data?.updatedAt,
+        providers: providers.data?.items.map(provider => ({
+          available: provider.available,
+          providerId: provider.providerId,
+        })),
+      }),
+      ...(generationJob.data === undefined ? {} : {
+        selection: {
+          id: generationJob.data.jobId,
+          kind: 'generation-job' as const,
+          version: generationJob.data.updatedAt,
+        },
+      }),
+      ui: {
+        status: providers.isPending || generationJob.isPending ? 'loading' as const
+          : providers.isError || generationJob.isError ? 'error' as const : 'ready' as const,
+      },
+    },
+    label: 'ClinMesh · 模拟数据',
+    readState: () => ({
+      generation: generationJob.data === undefined ? null : {
+        error: generationJob.data.error,
+        jobId: generationJob.data.jobId,
+        status: generationJob.data.status,
+        updatedAt: generationJob.data.updatedAt,
+      },
+      providers: providers.data?.items.map(provider => ({
+        available: provider.available,
+        providerId: provider.providerId,
+        providerName: provider.providerName,
+        unavailableReason: provider.unavailableReason,
+      })) ?? [],
+    }),
+  }), [
+    generationJob.data,
+    generationJob.isError,
+    generationJob.isPending,
+    generationJobId,
+    providers.data,
+    providers.isError,
+    providers.isPending,
+  ])
+  useRegisterAgentPage(agentPage)
+  return null
+}
+
+function ScenarioDatasetStudio({
+  generationJobId,
+  locale,
+  onGenerationJobIdChange,
+}: {
+  generationJobId: string | undefined
+  locale: WorkspaceLocale
+  onGenerationJobIdChange(jobId: string): void
+}): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
   const queryClient = useQueryClient()
   const [request, setRequest] = useState(initialRequest)
   const [datasetPage, setDatasetPage] = useState(1)
   const [datasetSearch, setDatasetSearch] = useState('')
   const [submittedDatasetSearch, setSubmittedDatasetSearch] = useState('')
-  const [generationJobId, setGenerationJobId] = useState<string>()
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>()
   const providers = useQuery({
     queryFn: ({ signal }) => getScenarioProviders(signal),
@@ -1841,7 +1933,7 @@ function ScenarioDatasetStudio({ locale }: { locale: WorkspaceLocale }): React.J
           generationJobQueryKey(result.response.data.jobId),
           result.response.data,
         )
-        setGenerationJobId(result.response.data.jobId)
+        onGenerationJobIdChange(result.response.data.jobId)
         return
       }
       await queryClient.invalidateQueries({ queryKey: datasetsQueryKey })
@@ -2166,8 +2258,10 @@ function ReferenceDataReleaseSummary({ locale }: { locale: WorkspaceLocale }): R
 }
 
 export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): React.JSX.Element {
+  const [generationJobId, setGenerationJobId] = useState<string>()
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      <ScenarioDataAgentPublisher generationJobId={generationJobId} />
       <ReferenceDataReleaseSummary locale={locale} />
       <Tabs defaultValue="library">
         <TabsList aria-label="模拟数据视图" variant="line">
@@ -2180,7 +2274,11 @@ export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): 
           </Suspense>
         </TabsContent>
         <TabsContent className="pt-4" value="studio">
-          <ScenarioDatasetStudio locale={locale} />
+          <ScenarioDatasetStudio
+            generationJobId={generationJobId}
+            locale={locale}
+            onGenerationJobIdChange={setGenerationJobId}
+          />
         </TabsContent>
       </Tabs>
     </div>

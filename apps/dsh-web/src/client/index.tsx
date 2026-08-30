@@ -1,12 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { WebApp } from '@clinmesh/web/application'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import { createMemoryHistory } from '@tanstack/react-router'
 import {
   defineReactSurface,
+  type ReactSurfaceDefinition,
   type ReactSurfaceProps,
 } from 'dsh-react-surface/client'
 import { clinMeshStyles } from './styles.generated.ts'
+
+interface ClientSessionsPort {
+  list: {
+    getSnapshot(): { current: string | undefined }
+    subscribe(listener: () => void): () => void
+  }
+}
 
 function ClinMeshSurface({
   active,
@@ -15,7 +23,8 @@ function ClinMeshSurface({
   close,
   location,
   navigate,
-}: ReactSurfaceProps): React.JSX.Element {
+  surfaceSessionId,
+}: ReactSurfaceProps & { surfaceSessionId?: string }): React.JSX.Element {
   const locationRef = useRef(location)
   const navigateRef = useRef(navigate)
   const closeRef = useRef(close)
@@ -50,6 +59,7 @@ function ClinMeshSurface({
         surfaceActive: active,
         surfaceAgent: agent,
         surfaceAgentStatus: capabilities.agent.status,
+        ...(surfaceSessionId === undefined ? {} : { surfaceSessionId }),
       }}
     />
   )
@@ -59,7 +69,23 @@ function normalizeLocation(location: string): string {
   return location === '' ? '/' : location
 }
 
-const definition = defineReactSurface({
+function createDefinition(ctx: ClientContext): Readonly<ReactSurfaceDefinition> {
+  const sessions = ctx.get('sessions') as unknown as ClientSessionsPort
+  const subscribe = (listener: () => void): (() => void) => sessions.list.subscribe(listener)
+  const getSnapshot = (): string | undefined => {
+    const current = sessions.list.getSnapshot().current
+    return current === undefined ? undefined : String(current)
+  }
+  function SessionBoundClinMeshSurface(props: ReactSurfaceProps): React.JSX.Element {
+    const surfaceSessionId = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+    return (
+      <ClinMeshSurface
+        {...props}
+        {...(surfaceSessionId === undefined ? {} : { surfaceSessionId })}
+      />
+    )
+  }
+  return defineReactSurface({
   branding: {
     colorScheme: 'system',
     identity: { mark: 'CM', name: 'ClinMesh' },
@@ -76,7 +102,7 @@ const definition = defineReactSurface({
       surface: '#ffffff',
     },
   },
-  component: ClinMeshSurface,
+  component: SessionBoundClinMeshSurface,
   description: '中国公立医院仿真 HIS 工作台',
   id: 'clinmesh.his',
   initialLocation: '/',
@@ -92,11 +118,13 @@ const definition = defineReactSurface({
   order: 10,
   styles: clinMeshStyles,
   title: 'ClinMesh',
-})
+  })
+}
 
-export const inject = ['reactSurfaces']
+export const inject = ['reactSurfaces', 'sessions']
 
 export function apply(ctx: ClientContext): void {
+  const definition = createDefinition(ctx)
   const reactSurfaces = (ctx as ClientContext & {
     reactSurfaces: {
       register(value: typeof definition): () => void

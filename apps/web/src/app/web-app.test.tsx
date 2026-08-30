@@ -233,12 +233,16 @@ describe('Web application shell', () => {
         return registrationQueue
       }
       if (path === '/clinmesh-api/agent/v1/page-contexts') {
-        const claim = JSON.parse(String(init?.body)) as {
-          viewId: 'registration'
-          viewRevision: string
-          version: 1
-          ui: { status: 'ready' | 'empty' | 'loading' | 'error' }
+        const request = JSON.parse(String(init?.body)) as {
+          claim: {
+            viewId: 'registration'
+            viewRevision: string
+            version: 1
+            ui: { status: 'ready' | 'empty' | 'loading' | 'error' }
+          }
+          dshSessionId: string
         }
+        const claim = request.claim
         pageClaims.push(claim)
         return Response.json({
           snapshot: {
@@ -253,6 +257,7 @@ describe('Web application shell', () => {
             },
             allowedOperationIds: agentToolsForContext('registrar', 'registration')
               .map(tool => tool.operationId),
+            dshSessionId: request.dshSessionId,
             scopeKey: 'clinmesh:registrar:registration',
             issuedAt: '2026-08-31T00:00:00.000Z',
             expiresAt: '2026-08-31T00:05:00.000Z',
@@ -283,6 +288,7 @@ describe('Web application shell', () => {
               scenarioRunId: registrarSession.actor.scenarioRunId,
             },
             allowedOperationIds: [request.operationId],
+            dshSessionId: 'dsh-session-1',
             scopeKey: 'clinmesh:registrar:registration',
             issuedAt: '2026-08-31T00:00:00.000Z',
             expiresAt: '2026-08-31T00:05:00.000Z',
@@ -297,6 +303,14 @@ describe('Web application shell', () => {
       if (path === '/clinmesh-api/agent/v1/tool-calls/result') {
         toolResults.push(JSON.parse(String(init?.body)))
         return Response.json({ status: 'completed' })
+      }
+      if (path === '/clinmesh-api/agent/v1/tool-calls/review') {
+        const request = JSON.parse(String(init?.body)) as { decision: 'approved' | 'rejected' }
+        return Response.json({
+          decidedAt: '2026-08-31T00:00:01.000Z',
+          decision: request.decision,
+          proposalId: 'proposal-1',
+        })
       }
       if (path === '/clinmesh-api/his/v1/patients' && init?.method === 'POST') {
         patientCreated = true
@@ -321,7 +335,16 @@ describe('Web application shell', () => {
       throw new Error(`Unexpected request: ${path}`)
     })
 
-    await renderWebApp({ history, runtime: { apiBasePath: '/clinmesh-api', mode: 'surface', surfaceAgent } })
+    await renderWebApp({
+      history,
+      runtime: {
+        apiBasePath: '/clinmesh-api',
+        mode: 'surface',
+        surfaceAgent,
+        surfaceAgentStatus: 'active',
+        surfaceSessionId: 'dsh-session-1',
+      },
+    })
     await waitFor(() => expect(pageClaims.at(-1)?.ui.status).toBe('loading'))
     resolveRegistrationQueue(Response.json({ items: [], page: 1, pageSize: 20, total: 0 }))
     await waitFor(() => expect(registration?.tools.some(tool => (
@@ -340,6 +363,11 @@ describe('Web application shell', () => {
       .toBe(false)
     let activeRegistration = registration!
     const stableScopeKey = activeRegistration.scopeKey
+    const focus = activeRegistration.tools.find(tool => tool.name === 'clinmesh_focus_panel')!
+    await act(async () => {
+      await focus.execute({ scopeKey: activeRegistration.scopeKey }, new AbortController().signal)
+    })
+    expect(document.activeElement).toBe(document.querySelector('[data-clinmesh-workspace-panel]'))
     const fill = activeRegistration.tools.find(tool => tool.name === 'clinmesh_fill_patient_draft')!
     await act(async () => {
       await fill.execute({
@@ -384,6 +412,11 @@ describe('Web application shell', () => {
     const registeredScopes: string[] = []
     let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
     let contextRequests = 0
+    const contextBindings: Array<{
+      client: { id: string; revision: number }
+      dshSessionId: string
+      signalBound: boolean
+    }> = []
     const surfaceAgent: WebSurfaceAgentController = {
       register(value) {
         registeredScopes.push(value.scopeKey)
@@ -398,7 +431,17 @@ describe('Web application shell', () => {
       if (path === '/clinmesh-api/auth/context') return Response.json(registrarSession)
       if (path === '/clinmesh-api/agent/v1/page-contexts') {
         contextRequests += 1
-        const claim = JSON.parse(String(init?.body))
+        const request = JSON.parse(String(init?.body)) as {
+          claim: Record<string, unknown>
+          client: { id: string; revision: number }
+          dshSessionId: string
+        }
+        contextBindings.push({
+          client: request.client,
+          dshSessionId: request.dshSessionId,
+          signalBound: init?.signal instanceof AbortSignal,
+        })
+        const claim = request.claim
         const issuedAt = new Date()
         return Response.json({
           snapshot: {
@@ -413,6 +456,7 @@ describe('Web application shell', () => {
             },
             allowedOperationIds: agentToolsForContext('registrar', 'settingsGeneral')
               .map(tool => tool.operationId),
+            dshSessionId: request.dshSessionId,
             scopeKey: 'clinmesh:registrar:settings',
             issuedAt: issuedAt.toISOString(),
             expiresAt: new Date(issuedAt.getTime() + 5 * 60_000).toISOString(),
@@ -425,7 +469,13 @@ describe('Web application shell', () => {
 
     await renderWebApp({
       history,
-      runtime: { apiBasePath: '/clinmesh-api', mode: 'surface', surfaceAgent },
+      runtime: {
+        apiBasePath: '/clinmesh-api',
+        mode: 'surface',
+        surfaceAgent,
+        surfaceAgentStatus: 'active',
+        surfaceSessionId: 'dsh-session-1',
+      },
     })
     await waitFor(() => expect(registration?.scopeKey).toBe('clinmesh:registrar:settings'))
 
@@ -437,6 +487,14 @@ describe('Web application shell', () => {
     expect(registration?.scopeKey).toBe('clinmesh:registrar:settings')
     expect(contextRequests).toBe(2)
     expect(new Set(registeredScopes)).toEqual(new Set(['clinmesh:registrar:settings']))
+    expect(contextBindings[0]?.client.id).toMatch(/^clinmesh-surface-/)
+    expect(contextBindings[1]?.client.id).toBe(contextBindings[0]?.client.id)
+    expect(contextBindings.map(binding => binding.client.revision)).toEqual([1, 2])
+    expect(contextBindings.map(binding => binding.dshSessionId)).toEqual([
+      'dsh-session-1',
+      'dsh-session-1',
+    ])
+    expect(contextBindings.every(binding => binding.signalBound)).toBe(true)
   })
 
   it('removes Surface Agent tools when Page Context renewal cannot finish before expiry', async () => {
@@ -459,7 +517,11 @@ describe('Web application shell', () => {
       if (path === '/clinmesh-api/agent/v1/page-contexts') {
         contextRequests += 1
         if (contextRequests > 1) throw new Error('Page Context renewal unavailable')
-        const claim = JSON.parse(String(init?.body))
+        const request = JSON.parse(String(init?.body)) as {
+          claim: Record<string, unknown>
+          dshSessionId: string
+        }
+        const claim = request.claim
         return Response.json({
           snapshot: {
             version: 1,
@@ -473,6 +535,7 @@ describe('Web application shell', () => {
             },
             allowedOperationIds: agentToolsForContext('registrar', 'settingsGeneral')
               .map(tool => tool.operationId),
+            dshSessionId: request.dshSessionId,
             scopeKey: 'clinmesh:registrar:settings',
             issuedAt: '2026-08-31T00:00:00.000Z',
             expiresAt: '2026-08-31T00:05:00.000Z',
@@ -485,7 +548,13 @@ describe('Web application shell', () => {
 
     await renderWebApp({
       history,
-      runtime: { apiBasePath: '/clinmesh-api', mode: 'surface', surfaceAgent },
+      runtime: {
+        apiBasePath: '/clinmesh-api',
+        mode: 'surface',
+        surfaceAgent,
+        surfaceAgentStatus: 'active',
+        surfaceSessionId: 'dsh-session-1',
+      },
     })
     await waitFor(() => expect(registration?.scopeKey).toBe('clinmesh:registrar:settings'))
 

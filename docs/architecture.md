@@ -696,15 +696,15 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 ### 7.2 Page Context
 
-浏览器只提交由 `packages/contracts` 验证的 `PageContextClaim`：view、active section、单个选择、草稿引用、加载/错误状态和受限搜索文本。Hono 从当前 session 重新解析 User Account、Actor、Practitioner Role、Workspace/Epoch、Scenario Run 和岗位允许 view，签发五分钟 `PageContextSnapshot` 与不可伪造 token。
+浏览器提交由 `packages/contracts` 验证的 `PageContextClaim`，以及当前 DSH Session、Surface client ID 和单调递增的 client revision。Claim 只包含 view、active section、单个选择、草稿引用、加载/错误状态和受限搜索文本。Hono 从当前 session 重新解析 User Account、Actor、Practitioner Role、Workspace/Epoch、Scenario Run 和岗位允许 view，并在同一个 SQLite 写事务中重新读取 selection、Patient/Encounter 版本和资源状态，再签发五分钟 `PageContextSnapshot` 与不可伪造 token。旧请求晚于新 revision 到达时返回 superseded，不撤销较新的 context。
 
-snapshot 包含短期 context ID 和稳定 page scope。页面状态或 TTL 续签替换 context 并撤销旧 token，但保持同一 DSH lease；Actor、岗位、Workspace/Epoch 或 view 变化会改变 scope 并移除旧 Tools。前端在到期前一分钟续签，失败时有界重试，并在真实到期时主动注销 Tools。已授权 pending call 可以在旧 context 被正常替换后提交结果，但仍须通过 receipt 到期、当前人类身份和 active Epoch 校验。
+snapshot 包含短期 context ID、DSH Session 和 page scope。Actor、岗位、Workspace/Epoch、DSH Session、view、active section、selection 或受信资源版本变化会改变 scope 并移除旧 Tools；其他页面状态或 TTL 续签只替换 context，但同样关闭绑定旧 context 的 pending review。前端在到期前一分钟携带 AbortSignal 续签，失败时有界重试，并在真实到期时主动注销 Tools。普通已授权 pending call 可以在旧 context 被正常替换后提交结果；人工批准必须先在线性化的 decision gate 中重新验证 active context、当前资源、当前人类身份和 active Epoch。
 
 Claim 和 snapshot 不包含 DOM、Query cache、浏览器存储、任意页面 dump、其他患者标签页、完整患者档案、Case Truth、Hidden Fact、Reveal Policy、Scenario authoring truth 或生成 prompt。
 
 ### 7.3 Tool 目录与风险
 
-`packages/contracts/src/agent.ts` 是 Tool 名称、operation、岗位、view、模式和风险的可执行目录。每个岗位动态获得不超过 32 个 Tools：通用读取/导航/聚焦，加上当前管理员、挂号、分诊、医生、收费或药房页面的窄动作。导航 enum 只包含当前岗位主页和共享设置页。
+`packages/contracts/src/agent.ts` 是 Tool 名称、operation、岗位、view、模式和风险的可执行目录，`agent-tool-input.ts` 拥有每项 operation 的完整输入 schema。每个岗位动态获得不超过 32 个 Tools：通用读取/导航/真实聚焦，加上当前管理员、挂号、分诊、医生、收费或药房页面的窄动作。管理员只能读取 Scenario Run、Provider 可用性和当前 generation job 状态；导航 enum 只包含当前岗位主页和共享设置页。
 
 | 模式 | 当前行为 |
 | --- | --- |
@@ -714,21 +714,21 @@ Claim 和 snapshot 不包含 DOM、Query cache、浏览器存储、任意页面 
 | `preview` | 调用既有只读 preview，不提交正式业务 Effect |
 | `proposal` | 打开 ClinMesh 原生人工审阅；Agent 不提交正式 Command |
 
-不提供通用 `execute_action`、任意 method/path/body、FHIR write、Bundle、SQL、URL、DOM selector、JavaScript、JSON Patch 或 `runAs`。DSH Tool runtime 只接受其强制 JSON Schema 子集；Surface adapter 投影 broker 支持的关键词，页面 action 和 Hono contract 继续执行完整业务校验。
+不提供通用 `execute_action`、任意 method/path/body、FHIR write、Bundle、SQL、URL、DOM selector、JavaScript、JSON Patch 或 `runAs`。DSH Tool runtime 只接受其强制 JSON Schema 子集；Surface adapter 投影 broker 支持的关键词，Web action 和 Hono 在 authorization 持久化前都使用同一 operation/input schema 执行完整长度、格式、数组和数值范围校验。
 
 ### 7.4 Execution proof 与调用记录
 
 DSH Host 监听真实 `tools/pre-execute` 事件，为一个 pending call 签发一次性 execution proof。proof 绑定 DSH Session、call ID、Tool 名、page scope、签发时间和过期时间；浏览器不能自行签名。Hono 同时验证 proof、当前 context token、Tool catalog、岗位/view 允许 operation、防重放和当前人类 session，再创建 `agent_tool_call` 与可选 `agent_proposal`。
 
-读取、UI 和草稿动作完成后写入结构化 Tool result。proposal Tool 在打开审阅框后立即向 DSH 返回 `awaiting-human-review`，不让人工等待占用 browser lease；Hono 中的 Tool call 与 proposal 保持 pending。人类决定后，浏览器用原 receipt 后台完成调用。批准结果必须引用当前人类 Actor 成功产生的 Command `requestId/auditId`，服务端再解析对应 Action Trace；任一引用不匹配都拒绝关联。
+读取、UI 和草稿动作完成后写入结构化 Tool result。proposal Tool 在打开审阅框后立即向 DSH 返回 `awaiting-human-review`，不让人工等待占用 browser lease；Hono 中的 Tool call 与 proposal 保持 pending。人类点击决定时，浏览器先用原 receipt 调用 decision gate；Hono 只在 context、DSH Session、当前资源和 Tool 仍有效时原子记录 `approved` 或 `rejected`，随后 Web 才能调用既有 Command。
 
-持久表保存 Page Context、DSH Session/call ID、input hash、proposal、review decision、Command request、Audit ID 和 Trace ID，不保存 DSH transcript。`action_trace.request_id` 是 Tool proposal 与 Command Effect 的精确关联键。
+批准 completion 必须引用同一个已完成 Command receipt 中显式保存的 `requestId`、`auditId` 和 `traceId`。Hono 联结该 receipt、Audit、Action Trace 和 review decision，要求 Actor、Workspace/Epoch、Scenario Run、operation、outcome、标识和决定时序全部一致；拼接两个 Command 的标识、使用 proposal 不允许的 operation 或引用决定前的 Command 都会被拒绝。持久表的主键和外键均携带 Workspace/Epoch，不保存 DSH transcript。
 
 ### 7.5 人工审阅语义
 
 正式挂号、分诊、临床、支付、药房和 Scenario Command 始终由 ClinMesh 原生审阅框提交，最终 Actor 是登录人类，Agent 只记录为 proposal 来源。明确点击取消写入人类 `rejected` decision；批准执行既有 Command，并保留其 idempotency、expected version、preview token、审计和状态机语义。
 
-Surface 隐藏、DSH Session/lease 失效、page scope 改变、context/receipt 过期或 action 错误会关闭 pending review，并把 proposal 标记为 `stale`，不伪造人类拒绝。Agent call 已失败或 stale 时不能留下仍可提交的孤立审阅框。拒绝、stale、冲突和取消都不自动重放，也不产生正式业务 Effect。
+Surface 隐藏、DSH Session/lease 失效、page scope、selection、资源版本、页面 revision 或 context ID 改变，以及 context/receipt 过期或 action 错误，都会关闭尚未决定的 review，并把 proposal 标记为 `stale`，不伪造人类拒绝。decision gate 是批准的线性化点；gate 失败时不会调用 Command。Agent call 已失败或 stale 时不能留下仍可提交的孤立审阅框。拒绝、stale、冲突和取消都不自动重放，也不产生正式业务 Effect。
 
 ### 7.6 内容与能力边界
 

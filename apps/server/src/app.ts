@@ -57,7 +57,8 @@ import { WorkspaceContextError } from './infrastructure/sqlite/workspace-reposit
 import type { AgentIntegrationService } from './application/agent-integration-service.ts'
 import { AgentIntegrationError } from './application/agent-integration-service.ts'
 import {
-  agentPageContextClaimSchema,
+  agentPageContextRequestSchema,
+  agentReviewDecisionRequestSchema,
   agentToolAuthorizationRequestSchema,
   agentToolResultRequestSchema,
 } from '@clinmesh/contracts/agent'
@@ -212,10 +213,10 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
         const session = await identity.resolveSessionContext(context.req.raw.headers)
-        const claim = agentPageContextClaimSchema.parse(await context.req.json())
+        const request = agentPageContextRequestSchema.parse(await context.req.json())
         return context.json(agentIntegration.createPageContext({
           actor: session.actor,
-          claim,
+          request,
           userAccountId: session.user.id,
         }), 201)
       } catch (error) {
@@ -242,6 +243,20 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
         const request = agentToolResultRequestSchema.parse(await context.req.json())
         return context.json(agentIntegration.completeToolCall({
+          actor: session.actor,
+          request,
+          userAccountId: session.user.id,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/agent/v1/tool-calls/review', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const request = agentReviewDecisionRequestSchema.parse(await context.req.json())
+        return context.json(agentIntegration.reviewToolCall({
           actor: session.actor,
           request,
           userAccountId: session.user.id,

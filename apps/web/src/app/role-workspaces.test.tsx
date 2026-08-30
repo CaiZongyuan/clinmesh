@@ -1010,12 +1010,15 @@ function stubEmptyDoctorWorkspace() {
       return Response.json({ items: [], ...pagination(0) })
     }
     if (path === '/api/agent/v1/page-contexts') {
-      const claim = JSON.parse(String(init?.body))
+      const request = JSON.parse(String(init?.body)) as {
+        claim: Record<string, unknown>
+        dshSessionId: string
+      }
       return Response.json({
         snapshot: {
           version: 1,
           id: 'context-doctor-empty',
-          claim,
+          claim: request.claim,
           actor: {
             actorId: doctorSession.actor.actorId,
             practitionerRoleId: doctorSession.actor.practitionerRoleId,
@@ -1028,6 +1031,7 @@ function stubEmptyDoctorWorkspace() {
           },
           allowedOperationIds: agentToolsForContext('outpatient-doctor', 'consultation')
             .map(tool => tool.operationId),
+          dshSessionId: request.dshSessionId,
           scopeKey: 'clinmesh:doctor:consultation',
           issuedAt: '2026-08-31T00:00:00.000Z',
           expiresAt: '2026-08-31T00:05:00.000Z',
@@ -1270,6 +1274,71 @@ describe('role workspaces', () => {
     expect(screen.getByText('未配置 Synthea Provider')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '生成数据' }))
     expect(await screen.findByText('发热门诊样本')).toBeTruthy()
+  })
+
+  it('publishes Provider and generation status Tools from the default administrator data view', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace()
+    const applicationFetch = vi.mocked(fetch).getMockImplementation()
+    if (applicationFetch === undefined) throw new Error('Scenario data fetch stub is unavailable')
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/agent/v1/page-contexts') {
+        const request = JSON.parse(String(init?.body)) as {
+          claim: Record<string, unknown>
+          dshSessionId: string
+        }
+        return Response.json({
+          snapshot: {
+            actor: {
+              actorId: administratorSession.actor.actorId,
+              practitionerRoleId: administratorSession.actor.practitionerRoleId,
+              roleCode: administratorSession.actor.roleCode,
+            },
+            allowedOperationIds: agentToolsForContext('administrator', 'scenarioData')
+              .map(tool => tool.operationId),
+            claim: request.claim,
+            dshSessionId: request.dshSessionId,
+            expiresAt: '2026-08-31T00:05:00.000Z',
+            id: 'context-admin-scenario-data',
+            issuedAt: '2026-08-31T00:00:00.000Z',
+            scopeKey: 'clinmesh:administrator:scenario-data',
+            version: 1,
+            workspace: {
+              epoch: administratorSession.actor.epoch,
+              id: administratorSession.actor.workspaceId,
+              scenarioRunId: administratorSession.actor.scenarioRunId,
+            },
+          },
+          token: 'context-token-with-at-least-32-characters',
+        }, { status: 201 })
+      }
+      return applicationFetch(input, init)
+    })
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registration = value
+        return () => {
+          if (registration === value) registration = undefined
+        }
+      },
+    }
+
+    render(<WebApp runtime={{
+      mode: 'surface',
+      surfaceAgent,
+      surfaceAgentStatus: 'active',
+      surfaceSessionId: 'dsh-session-1',
+    }} />)
+
+    await waitFor(() => expect(registration?.tools.map(tool => tool.name)).toEqual([
+      'clinmesh_read_current_context',
+      'clinmesh_navigate',
+      'clinmesh_focus_panel',
+      'clinmesh_read_scenario_providers',
+      'clinmesh_read_generation_status',
+    ]))
   })
 
   it('shows the published Reference Data release through the administrator Web seam', async () => {
@@ -2676,7 +2745,12 @@ describe('role workspaces', () => {
       },
     }
 
-    render(<WebApp runtime={{ mode: 'surface', surfaceAgent }} />)
+    render(<WebApp runtime={{
+      mode: 'surface',
+      surfaceAgent,
+      surfaceAgentStatus: 'active',
+      surfaceSessionId: 'dsh-session-1',
+    }} />)
 
     const expected = [
       'clinmesh_read_current_context',
