@@ -4,16 +4,13 @@ import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/ale
 import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from '@clinmesh/ui/components/avatar'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import { Checkbox } from '@clinmesh/ui/components/checkbox'
 import {
   Field,
-  FieldContent,
   FieldDescription,
   FieldGroup,
   FieldLabel,
   FieldLegend,
   FieldSet,
-  FieldTitle,
 } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@clinmesh/ui/components/input-group'
@@ -32,6 +29,11 @@ import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@clinmesh/ui/components/tooltip'
 import { cn } from '@clinmesh/ui/lib/utils'
+import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
+import { DiagnosisPage } from './doctor-pages/diagnosis-page.tsx'
+import { ExaminationPage } from './doctor-pages/examination-page.tsx'
+import { LaboratoryPage } from './doctor-pages/laboratory-page.tsx'
+import { PrescriptionPage } from './doctor-pages/prescription-page.tsx'
 import {
   AudioLinesIcon,
   BotIcon,
@@ -40,7 +42,6 @@ import {
   ChartNoAxesCombinedIcon,
   ChevronDownIcon,
   CircleCheckIcon,
-  CircleDotIcon,
   CircleHelpIcon,
   ClipboardClockIcon,
   ClipboardListIcon,
@@ -49,15 +50,16 @@ import {
   FileTextIcon,
   FlaskConicalIcon,
   HeartPulseIcon,
-  HospitalIcon,
+  HistoryIcon,
   HouseIcon,
+  LinkIcon,
   ListFilterIcon,
   MicroscopeIcon,
   PackageCheckIcon,
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
-  PillIcon,
   PlusIcon,
+  PrinterIcon,
   RefreshCwIcon,
   SaveIcon,
   ScanLineIcon,
@@ -139,6 +141,64 @@ const mainTabs = [
   { id: 'diagnosis', label: '诊断' },
   { count: 3, id: 'prescription', label: '处方' },
 ] as const satisfies ReadonlyArray<{ count?: number; id: MainTab; label: string }>
+
+const assistantCopyByTab: Record<MainTab, {
+  actionLabel: string
+  next: readonly string[]
+  risk: string
+  riskDetail: string
+  support: ReadonlyArray<{ label: string; score: number }>
+  supportTitle: string
+}> = {
+  consultation: {
+    actionLabel: '一键生成病历',
+    next: ['完善现病史与用药史', '核对生命体征和过敏史', '补充呼吸系统查体', '完成问诊记录后进入病历'],
+    risk: '青霉素过敏史',
+    riskDetail: '后续开立药品时需避开青霉素及相关药物。',
+    support: [{ label: '急性上呼吸道感染', score: 82 }, { label: '急性支气管炎', score: 41 }, { label: '流行性感冒', score: 36 }],
+    supportTitle: '问诊辅助判断',
+  },
+  record: {
+    actionLabel: '生成病历摘要',
+    next: ['从问诊记录同步病历字段', '核对辅助检查摘要', '补充处理意见和随访', '保存病历草稿'],
+    risk: '病历与过敏史需一致',
+    riskDetail: '病历中的青霉素过敏记录应与患者主索引保持一致。',
+    support: [{ label: '字段完整度', score: 88 }, { label: '时序一致性', score: 76 }, { label: '随访完整度', score: 64 }],
+    supportTitle: '病历完整性',
+  },
+  examination: {
+    actionLabel: '生成检查摘要',
+    next: ['关注胸部 CT 待审核结果', '异常持续 1 周建议复查影像', '结合病史评估肺部小结节', '检查完成后更新诊断依据'],
+    risk: '胸部 CT 异常提示',
+    riskDetail: '双肺下叶磨玻璃影并见右肺中叶约 4 mm 小结节，需随访。',
+    support: [{ label: '胸部 CT 平扫', score: 94 }, { label: '胸部 X 线片', score: 78 }, { label: '肺功能检查', score: 46 }, { label: '心电图', score: 32 }],
+    supportTitle: '检查必要性',
+  },
+  laboratory: {
+    actionLabel: '生成检验解读',
+    next: ['结合症状与 CRP 暂不使用抗生素', '可补充降钙素原评估感染风险', '注意休息并于 3-5 天后复查', '转氨酶升高时避免肝损伤药物'],
+    risk: 'ALT 轻度升高',
+    riskDetail: '当前 ALT 46 U/L，同时存在青霉素过敏史，处方前需复核。',
+    support: [{ label: 'CRP 18.7 mg/L', score: 72 }, { label: '中性粒细胞 78.6%', score: 68 }, { label: 'ALT 46 U/L', score: 48 }, { label: '尿蛋白 1+', score: 35 }],
+    supportTitle: '辅助检验解读',
+  },
+  diagnosis: {
+    actionLabel: '生成诊断摘要',
+    next: ['确认主次诊断与患者沟通', '核对 ICD-10 与诊断依据', '关联既往问题和慢病', '安排 3 天后复诊随访'],
+    risk: '青霉素过敏史',
+    riskDetail: '诊断后的治疗方案需要持续避开相关过敏药物。',
+    support: [{ label: '流行性感冒', score: 48 }, { label: '急性支气管炎', score: 36 }, { label: 'COVID-19', score: 22 }, { label: '过敏性鼻炎', score: 18 }],
+    supportTitle: '辅助诊断建议',
+  },
+  prescription: {
+    actionLabel: '生成用药指导',
+    next: ['再次确认青霉素过敏史', '核对剂量、频次和疗程', '提醒患者注意休息与补水', '高热持续时及时复诊'],
+    risk: '高风险：过敏史',
+    riskDetail: '患者青霉素过敏；当前处方校验通过，仍需确认无同类药物。',
+    support: [{ label: '药物合理性', score: 96 }, { label: '剂量合理性', score: 92 }, { label: '重复用药风险', score: 12 }, { label: '相互作用风险', score: 8 }],
+    supportTitle: '用药建议',
+  },
+}
 
 const symptomOptions = [
   { label: '咳嗽', value: 'cough' },
@@ -247,7 +307,7 @@ const dispositionItems = [
   { label: '建议住院', value: 'admission' },
 ] as const
 
-const labRows = [
+const _labRows = [
   { date: '2025-05-06', item: '胸部 CT 平扫', result: '双肺支气管壁增厚，右肺下叶可见少量炎性渗出影。', status: '报告已出' },
   { date: '2025-05-06', item: '血常规（五分类）', result: '白细胞 8.21 x10^9/L，中性粒细胞 72.3% ↑', status: '报告已出' },
   { date: '2025-05-06', item: 'C 反应蛋白（CRP）', result: '14.6 mg/L ↑', status: '报告已出' },
@@ -272,7 +332,7 @@ function avatarDataUri(seed: string): string {
 }
 
 export function DoctorWorkspaceLabPage(): React.JSX.Element {
-  const [selectedPatientId, setSelectedPatientId] = useState(firstPatient.id)
+  const [selectedPatientId, setSelectedPatientId] = useState<string>(firstPatient.id)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [search, setSearch] = useState('')
   const [mainTab, setMainTab] = useState<MainTab>('consultation')
@@ -348,8 +408,8 @@ function GlobalNavigation({ collapsed, onToggle }: { collapsed: boolean; onToggl
   return (
     <aside className="flex min-w-0 flex-col border-r bg-background">
       <div className={cn('flex h-16 items-center border-b px-3', collapsed ? 'justify-center' : 'gap-2')}>
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground"><HospitalIcon className="size-5" /></span>
-        {collapsed ? null : <strong className="whitespace-nowrap text-sm">Clinmesh HIS</strong>}
+        <img alt="科灵脉智标志" className="size-8 shrink-0 rounded-md" src={clinmeshMarkUrl} />
+        {collapsed ? null : <span className="min-w-0"><strong className="block whitespace-nowrap text-sm">科灵脉智</strong><small className="block truncate text-[0.625rem] text-muted-foreground">医疗智能体平台</small></span>}
         <Tooltip>
           <TooltipTrigger render={<Button aria-label={collapsed ? '展开导航' : '收起导航'} className={cn(collapsed ? '' : 'ml-auto')} onClick={onToggle} size="icon-sm" variant="ghost" />}>
             {collapsed ? <PanelLeftOpenIcon /> : <PanelLeftCloseIcon />}
@@ -517,15 +577,15 @@ function DoctorWorkspace({ mainTab, onMainTabChange, onSave, onSearchChange, onS
         <Tabs className="mt-3 min-h-0 gap-0" onValueChange={value => onMainTabChange(value as MainTab)} value={mainTab}>
           <TabsList className="h-10 w-full justify-start gap-5 rounded-none border-b bg-transparent px-2 py-0" variant="line">
             {mainTabs.map(tab => (
-              <TabsTrigger className="flex-none px-0" key={tab.id} value={tab.id}>{tab.label}{tab.count === undefined ? null : <span className="text-[0.6875rem] text-muted-foreground">{tab.count}</span>}</TabsTrigger>
+              <TabsTrigger className="flex-none px-0" key={tab.id} value={tab.id}>{tab.label}{'count' in tab ? <span className="text-[0.6875rem] text-muted-foreground">{tab.count}</span> : null}</TabsTrigger>
             ))}
           </TabsList>
           <TabsContent className="pt-3" value="consultation"><StructuredInquiry key={`consultation:${patient.id}`} patient={patient} /></TabsContent>
           <TabsContent className="pt-3" value="record"><MedicalRecordEditor key={`record:${patient.id}`} patient={patient} /></TabsContent>
-          <TabsContent className="pt-3" value="examination"><ExaminationWorkspace key={`examination:${patient.id}`} /></TabsContent>
-          <TabsContent className="pt-3" value="laboratory"><LaboratoryWorkspace key={`laboratory:${patient.id}`} /></TabsContent>
-          <TabsContent className="pt-3" value="diagnosis"><DiagnosisEditor key={`diagnosis:${patient.id}`} /></TabsContent>
-          <TabsContent className="pt-3" value="prescription"><PrescriptionEditor key={`prescription:${patient.id}`} /></TabsContent>
+          <TabsContent className="pt-3" value="examination"><ExaminationPage key={`examination:${patient.id}`} /></TabsContent>
+          <TabsContent className="pt-3" value="laboratory"><LaboratoryPage key={`laboratory:${patient.id}`} /></TabsContent>
+          <TabsContent className="pt-3" value="diagnosis"><DiagnosisPage key={`diagnosis:${patient.id}`} /></TabsContent>
+          <TabsContent className="pt-3" value="prescription"><PrescriptionPage key={`prescription:${patient.id}`} /></TabsContent>
         </Tabs>
       </div>
     </section>
@@ -726,7 +786,7 @@ function MedicalRecordEditor({ patient }: { patient: Patient }): React.JSX.Eleme
   )
 }
 
-function ExaminationWorkspace(): React.JSX.Element {
+function _ExaminationWorkspace(): React.JSX.Element {
   const [added, setAdded] = useState(false)
   return (
     <div className="flex flex-col gap-3">
@@ -776,7 +836,7 @@ function ExaminationWorkspace(): React.JSX.Element {
   )
 }
 
-function LaboratoryWorkspace(): React.JSX.Element {
+function _LaboratoryWorkspace(): React.JSX.Element {
   const [added, setAdded] = useState(false)
   return (
     <div className="flex flex-col gap-3">
@@ -833,7 +893,7 @@ function LabProgressRow({ label, progress, status, time }: { label: string; prog
   return <div className="grid grid-cols-[9rem_minmax(0,1fr)_7rem_5rem] items-center gap-3 border-b py-2 text-xs last:border-b-0"><span className="font-medium">{label}</span><Progress value={progress} /><span className="tabular-nums text-muted-foreground">{time}</span><Badge variant={status === '已出报告' ? 'success' : status === '检验中' ? 'info' : 'warning'}>{status}</Badge></div>
 }
 
-function DiagnosisEditor(): React.JSX.Element {
+function _DiagnosisEditor(): React.JSX.Element {
   const [saved, setSaved] = useState(false)
   const [chronic, setChronic] = useState('no')
 
@@ -894,7 +954,7 @@ function FollowUpRow({ alert = false, label, value }: { alert?: boolean; label: 
   return <div className="grid grid-cols-[6rem_minmax(0,1fr)] gap-2 rounded-md border p-2"><dt className="font-medium">{label}</dt><dd className={cn('leading-5', alert ? 'font-medium text-destructive' : '')}>{value}</dd></div>
 }
 
-function PrescriptionEditor(): React.JSX.Element {
+function _PrescriptionEditor(): React.JSX.Element {
   const [medicationIds, setMedicationIds] = useState<string[]>(medicationCatalog.map(item => item.id))
   const [signed, setSigned] = useState(false)
   const selectedMedications = medicationIds.flatMap(id => {
@@ -945,7 +1005,7 @@ function PrescriptionEditor(): React.JSX.Element {
 
       <div className="grid gap-3 xl:grid-cols-[48%_minmax(0,52%)]">
         <section className="rounded-md border bg-background"><PanelHeader action={<Button size="xs" variant="link"><PrinterIcon data-icon="inline-start" />打印用药指导单</Button>} title="用药说明 / 患者教育" /><div className="grid gap-2 p-3"><EducationRow text="对乙酰氨基酚片：退热止痛，出现皮疹、肝区不适请停药就医。" /><EducationRow text="氨溴索口服液：化痰，饭后服用，多饮水，促进痰液排出。" /><EducationRow text="盐酸氨溴索片：清除黏痰，缓解发热、咳嗽等症状。" /><EducationRow text="氯雷他定片：抗过敏，嗜睡者避免驾车或高空作业。" /></div></section>
-        <section className="rounded-md border bg-background"><PanelHeader title="处方历史 / 常用方案" /><div className="p-3"><div className="mb-2 flex gap-4 text-xs"><strong className="text-primary">历史处方</strong><span className="text-muted-foreground">常用方案</span></div><Table><TableBody><TableRow><TableCell className="text-xs">2025-04-22</TableCell><TableCell className="text-xs">普通感冒（咳嗽）</TableCell><TableCell className="text-xs">4 种药品</TableCell><TableCell className="text-xs">¥ 56.20</TableCell><TableCell><Button size="xs" variant="link">查看</Button></TableCell></TableRow><TableRow><TableCell className="text-xs">2025-03-18</TableCell><TableCell className="text-xs">过敏性鼻炎</TableCell><TableCell className="text-xs">3 种药品</TableCell><TableCell className="text-xs">¥ 32.50</TableCell><TableCell><Button size="xs" variant="link">查看</Button></TableCell></TableRow><TableRow><TableCell className="text-xs">2025-02-10</TableCell><TableCell className="text-xs">急性上呼吸道感染</TableCell><TableCell className="text-xs">3 种药品</TableCell><TableCell className="text-xs">¥ 28.60</TableCell><TableCell><Button size="xs" variant="link">查看</Button></TableCell></TableRow></Table><div className="mt-2 flex justify-between"><Button size="xs" variant="link">更多历史处方</Button><Button size="xs" variant="outline">复用所选方案</Button></div></div></section>
+        <section className="rounded-md border bg-background"><PanelHeader title="处方历史 / 常用方案" /><div className="p-3"><div className="mb-2 flex gap-4 text-xs"><strong className="text-primary">历史处方</strong><span className="text-muted-foreground">常用方案</span></div><Table><TableBody><TableRow><TableCell className="text-xs">2025-04-22</TableCell><TableCell className="text-xs">普通感冒（咳嗽）</TableCell><TableCell className="text-xs">4 种药品</TableCell><TableCell className="text-xs">¥ 56.20</TableCell><TableCell><Button size="xs" variant="link">查看</Button></TableCell></TableRow><TableRow><TableCell className="text-xs">2025-03-18</TableCell><TableCell className="text-xs">过敏性鼻炎</TableCell><TableCell className="text-xs">3 种药品</TableCell><TableCell className="text-xs">¥ 32.50</TableCell><TableCell><Button size="xs" variant="link">查看</Button></TableCell></TableRow><TableRow><TableCell className="text-xs">2025-02-10</TableCell><TableCell className="text-xs">急性上呼吸道感染</TableCell><TableCell className="text-xs">3 种药品</TableCell><TableCell className="text-xs">¥ 28.60</TableCell><TableCell><Button size="xs" variant="link">查看</Button></TableCell></TableRow></TableBody></Table><div className="mt-2 flex justify-between"><Button size="xs" variant="link">更多历史处方</Button><Button size="xs" variant="outline">复用所选方案</Button></div></div></section>
       </div>
     </div>
   )
@@ -963,9 +1023,10 @@ function PanelHeader({ action, aside, title }: { action?: React.ReactNode; aside
   return <header className="flex min-h-11 items-center gap-3 border-b px-3"><h3 className="text-sm font-semibold">{title}</h3>{aside === undefined ? null : <span className="text-xs text-muted-foreground">{aside}</span>}<div className="ml-auto">{action}</div></header>
 }
 
-function ClinicalAssistant({ adviceVersion, generated, onGenerate, onRefresh, onToggle, open }: {
+function ClinicalAssistant({ adviceVersion, generated, mainTab, onGenerate, onRefresh, onToggle, open }: {
   adviceVersion: number
   generated: boolean
+  mainTab: MainTab
   onGenerate: () => void
   onRefresh: () => void
   onToggle: () => void
@@ -981,7 +1042,10 @@ function ClinicalAssistant({ adviceVersion, generated, onGenerate, onRefresh, on
     )
   }
 
-  const fourthSuggestion = adviceVersion === 0 ? '建议休息、多饮水，清淡饮食' : '复核过敏史后再选择抗菌药物'
+  const copy = assistantCopyByTab[mainTab]
+  const suggestions = copy.next.map((item, index) => (
+    index === copy.next.length - 1 && adviceVersion === 1 ? `复核：${item}` : item
+  ))
   return (
     <aside className="flex min-w-0 flex-col border-l bg-muted/10">
       <header className="flex h-16 items-center gap-2 border-b bg-background px-3">
@@ -993,7 +1057,7 @@ function ClinicalAssistant({ adviceVersion, generated, onGenerate, onRefresh, on
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         <div className="flex flex-col gap-3">
           <AssistantPanel className="border-info/20 bg-info/5" icon={SparklesIcon} title="下一步建议" titleAction={<Button onClick={onRefresh} size="xs" variant="link"><RefreshCwIcon data-icon="inline-start" />换一换</Button>}>
-            <ol className="flex flex-col gap-2">{['建议完善血常规、CRP，必要时胸部影像', '注意监测体温变化，必要时复查血常规', '评估血压控制情况，指导用药依从性', fourthSuggestion].map((item, index) => <li className="flex gap-2 text-xs leading-5" key={item}><span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-info/10 text-[0.625rem] font-medium text-info">{index + 1}</span><span>{item}</span></li>)}</ol>
+            <ol className="flex flex-col gap-2">{suggestions.map((item, index) => <li className="flex gap-2 text-xs leading-5" key={item}><span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-info/10 text-[0.625rem] font-medium text-info">{index + 1}</span><span>{item}</span></li>)}</ol>
           </AssistantPanel>
 
           <AssistantPanel icon={CircleCheckIcon} title="医患对话摘要">
@@ -1002,18 +1066,18 @@ function ClinicalAssistant({ adviceVersion, generated, onGenerate, onRefresh, on
           </AssistantPanel>
 
           <AssistantPanel className="border-destructive/20 bg-destructive/5" icon={ShieldAlertIcon} title="风险提醒">
-            <div className="flex flex-col gap-3 text-xs"><div><p className="font-medium text-destructive">青霉素过敏史</p><p className="mt-1 text-muted-foreground">避免使用头孢类、青霉素类抗生素。</p></div><div><p className="font-medium text-destructive">用药相互作用</p><p className="mt-1 text-muted-foreground">氨溴索与部分镇咳药合用需谨慎，请确认用药。</p></div></div>
+            <div className="text-xs"><p className="font-medium text-destructive">{copy.risk}</p><p className="mt-1 leading-5 text-muted-foreground">{copy.riskDetail}</p></div>
             <Button className="mt-2" size="xs" variant="link">查看详情<ChevronDownIcon data-icon="inline-end" /></Button>
           </AssistantPanel>
 
-          <AssistantPanel icon={ClipboardPlusIcon} title="辅助诊断建议">
-            <div className="flex flex-col gap-3"><ScoreRow label="急性上呼吸道感染" score={82} /><ScoreRow label="慢性咳嗽" score={56} /><ScoreRow label="急性支气管炎" score={41} /><ScoreRow label="支气管哮喘" score={33} /></div>
-            <p className="mt-3 text-[0.6875rem] leading-4 text-muted-foreground">基于历史相似病例与当前检查结果。</p>
+          <AssistantPanel icon={ClipboardPlusIcon} title={copy.supportTitle}>
+            <div className="flex flex-col gap-3">{copy.support.map(item => <ScoreRow key={item.label} label={item.label} score={item.score} />)}</div>
+            <p className="mt-3 text-[0.6875rem] leading-4 text-muted-foreground">基于当前页面数据与既往合成病例。</p>
           </AssistantPanel>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2 border-t bg-background p-3">
-        <Button onClick={onGenerate}><SparklesIcon data-icon="inline-start" />{generated ? '病历已生成' : '一键生成病历'}</Button>
+        <Button onClick={onGenerate}><SparklesIcon data-icon="inline-start" />{generated ? '内容已生成' : copy.actionLabel}</Button>
         <Button variant="outline">采纳建议</Button>
       </div>
     </aside>
