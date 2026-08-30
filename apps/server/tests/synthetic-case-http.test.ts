@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
 import {
   patientBriefJobSchema,
   patientBriefRevisionListSchema,
   scenarioGenerationJobSchema,
+  startSyntheticCaseResultSchema,
   syntheticCaseInstanceSchema,
   syntheticPatientProfileDetailSchema,
   syntheticSourceHistoryListSchema,
@@ -14,7 +16,13 @@ import {
   type ScenarioProviderCapabilities,
   type PatientBriefContent,
 } from '@clinmesh/contracts/scenario'
-import { commandResponseSchema } from '@clinmesh/contracts/his'
+import {
+  apiErrorSchema,
+  commandResponseSchema,
+  doctorQueueSchema,
+  registrationCatalogSchema,
+  triageResponseSchema,
+} from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
 import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
 import type {
@@ -248,10 +256,13 @@ describe('Synthetic Case generation HTTP contract', () => {
     return commandResponseSchema(patientBriefJobSchema).parse(await response.json()).data
   }
 
-  async function signIn(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>) {
+  async function signIn(
+    runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>,
+    email = 'admin@demo.clinmesh.local',
+  ) {
     const response = await runtime.app.request('/api/auth/sign-in/email', {
       body: JSON.stringify({
-        email: 'admin@demo.clinmesh.local',
+        email,
         password: 'Synthetic-Demo-Password-2026!',
       }),
       headers: { 'content-type': 'application/json', origin: 'http://localhost' },
@@ -410,6 +421,35 @@ describe('Synthetic Case generation HTTP contract', () => {
     const generation = await runtime.scenarioData.processNextGenerationJob()
     const caseId = generation?.caseIds[0] ?? ''
     expect(generation).toMatchObject({ status: 'succeeded' })
+    const registrationCatalog = registrationCatalogSchema.parse(await (await runtime.app.request(
+      '/api/his/v1/catalogs/registration',
+      { headers: { cookie } },
+    )).json())
+    const startBody = (expectedCaseRevision: number, activeBriefRevision: number) => ({
+      activeBriefRevision,
+      departmentId: registrationCatalog.departments[0]!.id,
+      expectedCaseRevision,
+      locationId: registrationCatalog.locations[0]!.id,
+      visitDate: registrationCatalog.virtualDate,
+      visitTypeId: registrationCatalog.visitTypes[0]!.id,
+    })
+    const beforeBriefStart = await runtime.app.request(
+      `/api/his/v1/synthetic-cases/${encodeURIComponent(caseId)}/actions/start-outpatient-visit`,
+      {
+        body: JSON.stringify(startBody(1, 1)),
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(beforeBriefStart.status).toBe(409)
+    expect(apiErrorSchema.parse(await beforeBriefStart.json())).toMatchObject({
+      error: { code: 'BRIEF_NOT_READY' },
+    })
 
     const firstJob = await enqueueBrief(runtime, cookie, caseId)
     expect(await runtime.patientBrief.processNext()).toMatchObject({
@@ -488,8 +528,109 @@ describe('Synthetic Case generation HTTP contract', () => {
       },
     )
     expect(selectResponse.status).toBe(200)
-    expect(commandResponseSchema(syntheticCaseInstanceSchema).parse(await selectResponse.json()).data)
-      .toMatchObject({ activeBriefRevision: 2, status: 'brief-ready' })
+    const selectedCase = commandResponseSchema(syntheticCaseInstanceSchema)
+      .parse(await selectResponse.json()).data
+    expect(selectedCase).toMatchObject({ activeBriefRevision: 2, status: 'brief-ready' })
+
+    const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local')
+    const startIdempotencyKey = randomUUID()
+    const startCase = () => runtime.app.request(
+      `/api/his/v1/synthetic-cases/${encodeURIComponent(caseId)}/actions/start-outpatient-visit`,
+      {
+        body: JSON.stringify(startBody(selectedCase.revision, 2)),
+        headers: {
+          'content-type': 'application/json',
+          cookie: registrarCookie,
+          'idempotency-key': startIdempotencyKey,
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    const startedResponse = await startCase()
+    expect(startedResponse.status).toBe(200)
+    const startedCommand = commandResponseSchema(startSyntheticCaseResultSchema)
+      .parse(await startedResponse.json())
+    expect(startedCommand.data).toMatchObject({
+      status: 'awaiting-triage',
+      syntheticCaseId: caseId,
+    })
+    const replayedStart = await startCase()
+    expect(replayedStart.status).toBe(200)
+    expect(commandResponseSchema(startSyntheticCaseResultSchema).parse(await replayedStart.json()))
+      .toEqual(startedCommand)
+    const duplicateStart = await runtime.app.request(
+      `/api/his/v1/synthetic-cases/${encodeURIComponent(caseId)}/actions/start-outpatient-visit`,
+      {
+        body: JSON.stringify(startBody(selectedCase.revision, 2)),
+        headers: {
+          'content-type': 'application/json',
+          cookie: registrarCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(duplicateStart.status).toBe(409)
+
+    for (const resourceType of ['Condition', 'Observation'] as const) {
+      const response = await runtime.app.request(
+        `/fhir/R5/${resourceType}?patient=${encodeURIComponent(`Patient/${startedCommand.data.patientId}`)}`,
+        { headers: { cookie } },
+      )
+      expect(response.status).toBe(200)
+      expect(fhirBundleSchema.parse(await response.json()).entry ?? []).toEqual([])
+    }
+    expect(runtime.database.driver.prepare(`
+      SELECT case_id, brief_revision, patient_id, encounter_id
+      FROM synthetic_case_materialization
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get('workspace-demo', 'epoch-1', caseId)).toMatchObject({
+      brief_revision: 2,
+      case_id: caseId,
+      encounter_id: startedCommand.data.encounterId,
+      patient_id: startedCommand.data.patientId,
+    })
+
+    const triageCookie = await signIn(runtime, 'triage@demo.clinmesh.local')
+    const triageResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${startedCommand.data.encounterId}/actions/record-triage`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${startedCommand.data.encounterId}`]: '1',
+            [`Task/${startedCommand.data.queueTaskId}`]: '1',
+          },
+          input: {
+            acuityCode: 'level-3',
+            bloodPressure: { diastolicMmHg: 96, systolicMmHg: 162 },
+            chiefComplaint: safeBrief.chiefComplaint,
+            oxygenSaturationPct: 98,
+            pulseBpm: 86,
+            respirationBpm: 18,
+            temperatureC: 36.7,
+          },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: triageCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(triageResponse.status).toBe(200)
+    triageResponseSchema.parse(await triageResponse.json())
+    const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
+    const doctorQueue = doctorQueueSchema.parse(await (await runtime.app.request(
+      '/api/his/v1/doctor/queue?page=1&pageSize=20',
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    expect(doctorQueue.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ encounterId: startedCommand.data.encounterId }),
+    ]))
 
     expect(briefProvider.requests).toHaveLength(3)
     const publicArtifacts = JSON.stringify({ beforeSelection, firstJob, leakingJob, secondJob })

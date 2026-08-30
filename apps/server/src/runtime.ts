@@ -5,6 +5,7 @@ import { ScenarioService } from './application/scenario-service.ts'
 import { ReferenceDataService } from './application/reference-data-service.ts'
 import { ScenarioDataService } from './application/scenario-data/scenario-data-service.ts'
 import { PatientBriefService } from './application/patient-brief-service.ts'
+import { SyntheticCaseVisitService } from './application/synthetic-case-visit-service.ts'
 import { UnavailableScenarioGenerationProvider } from './application/scenario-data/provider.ts'
 import { WorkflowService } from './application/workflow-service.ts'
 import { OutboxDispatcher } from './application/outbox-dispatcher.ts'
@@ -215,6 +216,12 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       profiles: syntheticPatientProfiles,
       ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
     })
+    const caseVisits = new SyntheticCaseVisitService({
+      briefs: patientBriefs,
+      cases: syntheticCases,
+      profiles: syntheticPatientProfiles,
+      workflow,
+    })
     scenario.ensureInitialEpoch({
       epoch: 'epoch-1',
       scenarioRunId: 'scenario-run-1',
@@ -355,6 +362,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         resolveContext: async request => (await identity.resolveSessionContext(request.headers)).actor,
       },
       identity,
+      caseVisits,
       patientBrief,
       referenceData,
       scenario,
@@ -386,6 +394,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       dispatcher,
       fhir,
       identity,
+      caseVisits,
       patientBrief,
       referenceData,
       scenario,

@@ -114,6 +114,34 @@ export class SyntheticPatientProfileRepository {
     return result === undefined ? undefined : this.#map(rowSchema.parse(result))
   }
 
+  getRevision(
+    workspaceId: string,
+    profileId: string,
+    revision: number,
+  ): SyntheticPatientProfile | undefined {
+    const current = this.get(workspaceId, profileId)
+    if (current === undefined) return undefined
+    const row = z.object({
+      created_at: z.iso.datetime({ offset: true }),
+      identity_json: z.string(),
+      mappings_json: z.string(),
+      patient_json: z.string(),
+    }).strict().optional().parse(this.#database.driver.prepare(`
+      SELECT identity_json, mappings_json, patient_json, created_at
+      FROM synthetic_patient_profile_revision
+      WHERE workspace_id = ? AND profile_id = ? AND revision = ?
+    `).get(workspaceId, profileId, revision))
+    if (row === undefined) return undefined
+    return syntheticPatientProfileSchema.parse({
+      ...current,
+      identity: JSON.parse(row.identity_json),
+      mappings: JSON.parse(row.mappings_json),
+      patient: JSON.parse(row.patient_json),
+      revision,
+      updatedAt: row.created_at,
+    })
+  }
+
   mrnBelongsToOtherProfile(workspaceId: string, mrn: string, profileId: string): boolean {
     return this.#database.driver.prepare(`
       SELECT 1 AS present

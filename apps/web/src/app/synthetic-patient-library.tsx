@@ -52,6 +52,7 @@ import {
   PlusIcon,
   SearchIcon,
   SparklesIcon,
+  UserPlusIcon,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import {
@@ -60,6 +61,7 @@ import {
   getCurrentScenario,
   getPatientBriefJob,
   getPatientBriefRevisions,
+  getRegistrationCatalog,
   getScenarioGenerationJob,
   getScenarioProviders,
   getSyntheticCaseHistory,
@@ -68,6 +70,7 @@ import {
   getSyntheticPatientProfiles,
   newIdempotencyKey,
   selectPatientBriefRevision,
+  startSyntheticCaseVisit,
   updateSyntheticPatientProfile,
 } from './api-client.ts'
 import { scenarioModuleOptions } from './scenario-module-options.ts'
@@ -93,7 +96,7 @@ const copy = {
     nationalId: 'Synthetic national ID', next: 'Next', noCase: 'No usable current case',
     noHistory: 'No visible source history', patientCount: 'Patient count', phone: 'Phone',
     populationSeed: 'Population seed', previous: 'Previous', queued: 'Generation request accepted',
-    resourceDetail: 'R4 resource detail', save: 'Save profile', saveFailed: 'Failed to save profile', search: 'Search patients', source: 'Source',
+    resourceDetail: 'R4 resource detail', save: 'Save profile', saveFailed: 'Failed to save profile', search: 'Search patients', source: 'Source', startVisit: 'Start outpatient visit',
   },
   'zh-CN': {
     address: '地址', advanced: '高级设置', allModules: '全部 Synthea 模块', batch: '生成批次', brief: '患者梗概', briefFailed: '梗概生成失败', briefGenerate: '生成患者梗概',
@@ -106,7 +109,7 @@ const copy = {
     name: '展示姓名', nationalId: '模拟身份证', next: '下一页', noCase: '没有可用的本次病例',
     noHistory: '没有可见来源历史', patientCount: '患者人数', phone: '手机号码', populationSeed: '人口 seed',
     previous: '上一页', queued: '生成请求已提交', resourceDetail: 'R4 资源详情', save: '保存档案', saveFailed: '保存失败',
-    search: '搜索患者', source: '来源',
+    search: '搜索患者', source: '来源', startVisit: '开始门诊就诊',
   },
 } as const
 
@@ -168,6 +171,71 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
   return <div className="grid min-h-[360px] lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)]"><div className="border-r">{history.data.items.map(item => <button className={cn('grid w-full grid-cols-[104px_minmax(0,1fr)_24px] items-center gap-3 border-b px-3 py-3 text-left', selectedReference === item.sourceReference && 'bg-muted/50')} key={item.sourceReference} onClick={() => setSelectedReference(item.sourceReference)} type="button"><span className="text-xs text-muted-foreground">{item.clinicalDate.slice(0, 10)}</span><span className="min-w-0"><strong className="block truncate text-sm">{item.title}</strong><span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.resourceType}</span></span><ChevronRightIcon className="size-4 text-muted-foreground" /></button>)}<div className="flex justify-between p-2"><Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="ghost">{messages.previous}</Button><Button disabled={page * history.data.pageSize >= history.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="ghost">{messages.next}</Button></div></div><section className="min-w-0 p-3"><h4 className="flex items-center gap-2 text-sm font-semibold"><FileJsonIcon className="size-4" />{messages.resourceDetail}</h4>{selectedReference === undefined ? <p className="mt-4 text-sm text-muted-foreground">{messages.externalHistory}</p> : detail.isPending ? <Skeleton className="mt-3 h-64 w-full" /> : detail.isError ? <Alert className="mt-3" variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : <pre className="mt-3 max-h-[420px] overflow-auto border bg-muted/20 p-3 text-xs">{JSON.stringify(detail.data.resource, null, 2)}</pre>}</section></div>
 }
 
+function StartCaseVisitSheet({ locale, onOpenChange, open, profileId, syntheticCase }: {
+  locale: WorkspaceLocale
+  onOpenChange: (open: boolean) => void
+  open: boolean
+  profileId: string
+  syntheticCase: NonNullable<SyntheticPatientProfileDetail['case']>
+}) {
+  const messages = copy[locale]
+  const queryClient = useQueryClient()
+  const [departmentId, setDepartmentId] = useState('')
+  const [locationId, setLocationId] = useState('')
+  const [visitTypeId, setVisitTypeId] = useState('')
+  const catalog = useQuery({
+    enabled: open,
+    queryFn: ({ signal }) => getRegistrationCatalog(signal),
+    queryKey: ['registration-catalog'],
+  })
+  const effectiveDepartmentId = departmentId || catalog.data?.departments[0]?.id || ''
+  const effectiveLocationId = locationId || catalog.data?.locations[0]?.id || ''
+  const effectiveVisitTypeId = visitTypeId || catalog.data?.visitTypes[0]?.id || ''
+  const start = useMutation({
+    mutationFn: () => {
+      if (syntheticCase.activeBriefRevision === null || catalog.data === undefined) {
+        throw new Error('The Synthetic Case has no active Patient Brief')
+      }
+      return startSyntheticCaseVisit({
+        activeBriefRevision: syntheticCase.activeBriefRevision,
+        caseId: syntheticCase.caseId,
+        departmentId: effectiveDepartmentId,
+        expectedCaseRevision: syntheticCase.revision,
+        locationId: effectiveLocationId,
+        visitDate: catalog.data.virtualDate,
+        visitTypeId: effectiveVisitTypeId,
+      }, newIdempotencyKey())
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['synthetic-patient-profile', profileId] }),
+        queryClient.invalidateQueries({ queryKey: profileListKey }),
+      ])
+      onOpenChange(false)
+    },
+  })
+  return (
+    <Sheet onOpenChange={onOpenChange} open={open}>
+      <SheetContent className="w-full sm:max-w-md" side="right">
+        <SheetHeader><SheetTitle>{messages.startVisit}</SheetTitle><SheetDescription>{syntheticCase.caseId}</SheetDescription></SheetHeader>
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4">
+          {catalog.isPending ? <Skeleton className="h-28 w-full" /> : catalog.isError ? (
+            <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert>
+          ) : catalog.data === undefined ? null : (
+            <FieldGroup>
+              <Field><FieldLabel htmlFor="case-visit-department">{locale === 'zh-CN' ? '就诊科室' : 'Department'}</FieldLabel><Select items={catalog.data.departments.map(item => ({ label: locale === 'zh-CN' ? item.nameZh : item.nameEn, value: item.id }))} onValueChange={value => setDepartmentId(value ?? '')} value={effectiveDepartmentId}><SelectTrigger className="w-full" id="case-visit-department"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{catalog.data.departments.map(item => <SelectItem key={item.id} value={item.id}>{locale === 'zh-CN' ? item.nameZh : item.nameEn}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>
+              <Field><FieldLabel htmlFor="case-visit-location">{locale === 'zh-CN' ? '就诊地点' : 'Location'}</FieldLabel><Select items={catalog.data.locations.map(item => ({ label: locale === 'zh-CN' ? item.nameZh : item.nameEn, value: item.id }))} onValueChange={value => setLocationId(value ?? '')} value={effectiveLocationId}><SelectTrigger className="w-full" id="case-visit-location"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{catalog.data.locations.map(item => <SelectItem key={item.id} value={item.id}>{locale === 'zh-CN' ? item.nameZh : item.nameEn}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>
+              <Field><FieldLabel htmlFor="case-visit-type">{locale === 'zh-CN' ? '门诊类型' : 'Visit type'}</FieldLabel><Select items={catalog.data.visitTypes.map(item => ({ label: locale === 'zh-CN' ? item.nameZh : item.nameEn, value: item.id }))} onValueChange={value => setVisitTypeId(value ?? '')} value={effectiveVisitTypeId}><SelectTrigger className="w-full" id="case-visit-type"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{catalog.data.visitTypes.map(item => <SelectItem key={item.id} value={item.id}>{locale === 'zh-CN' ? item.nameZh : item.nameEn}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>
+            </FieldGroup>
+          )}
+          {start.error === null ? null : <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{start.error instanceof Error ? start.error.message : String(start.error)}</AlertDescription></Alert>}
+        </div>
+        <SheetFooter><Button disabled={catalog.data === undefined || start.isPending || effectiveDepartmentId === '' || effectiveLocationId === '' || effectiveVisitTypeId === ''} onClick={() => start.mutate()}><UserPlusIcon data-icon="inline-start" />{messages.startVisit}</Button></SheetFooter>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
 function PatientBriefPanel({ locale, profileId, syntheticCase }: {
   locale: WorkspaceLocale
   profileId: string
@@ -176,6 +244,7 @@ function PatientBriefPanel({ locale, profileId, syntheticCase }: {
   const messages = copy[locale]
   const queryClient = useQueryClient()
   const [jobId, setJobId] = useState<string>()
+  const [visitOpen, setVisitOpen] = useState(false)
   const revisions = useQuery({
     queryFn: ({ signal }) => getPatientBriefRevisions(syntheticCase.caseId, signal),
     queryKey: ['patient-brief-revisions', syntheticCase.caseId],
@@ -220,9 +289,16 @@ function PatientBriefPanel({ locale, profileId, syntheticCase }: {
     <section className="p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="text-sm font-semibold">{messages.brief}</h4>
-        <Button disabled={generate.isPending || running} onClick={() => generate.mutate()} size="sm">
-          <SparklesIcon data-icon="inline-start" />{messages.briefGenerate}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {syntheticCase.status === 'brief-ready' && syntheticCase.activeBriefRevision !== null ? (
+            <Button onClick={() => setVisitOpen(true)} size="sm" variant="outline">
+              <UserPlusIcon data-icon="inline-start" />{messages.startVisit}
+            </Button>
+          ) : null}
+          <Button disabled={generate.isPending || running || syntheticCase.status === 'started'} onClick={() => generate.mutate()} size="sm">
+            <SparklesIcon data-icon="inline-start" />{messages.briefGenerate}
+          </Button>
+        </div>
       </div>
       {generate.error === null ? null : (
         <Alert className="mt-3" variant="destructive">
@@ -269,6 +345,13 @@ function PatientBriefPanel({ locale, profileId, syntheticCase }: {
       {select.error === null ? null : (
         <Alert className="mt-3" variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.briefFailed}</AlertTitle><AlertDescription>{select.error instanceof Error ? select.error.message : String(select.error)}</AlertDescription></Alert>
       )}
+      <StartCaseVisitSheet
+        locale={locale}
+        onOpenChange={setVisitOpen}
+        open={visitOpen}
+        profileId={profileId}
+        syntheticCase={syntheticCase}
+      />
     </section>
   )
 }

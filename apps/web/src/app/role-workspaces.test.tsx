@@ -328,6 +328,7 @@ function stubScenarioDataWorkspace(options: {
   onDatasetListRequest?: (url: URL) => void
   onGenerate?: (request: ScenarioGenerationRequest) => void
   onInstall?: () => void
+  onCaseStart?: () => void
   onUpdate?: (content: unknown) => void
   profileAvailable?: boolean
   profileUpdateConflict?: boolean
@@ -337,6 +338,7 @@ function stubScenarioDataWorkspace(options: {
   let generated = false
   let activeVisit = false
   let briefGenerated = false
+  let caseStarted = false
   let jobReads = 0
   let dataset: ScenarioDataset = {
     content: {
@@ -647,15 +649,15 @@ function stubScenarioDataWorkspace(options: {
   const publicProfile = () => ({
     birthDate: profile.patient.birthDate,
     case: {
-      activeBriefRevision: null,
+      activeBriefRevision: briefGenerated ? 1 : null,
       caseId,
       caseType: 'new-problem' as const,
       createdAt: profile.createdAt,
       profileId: profile.profileId,
       profileRevision: 1,
-      revision: 1,
+      revision: caseStarted ? 3 : briefGenerated ? 2 : 1,
       sourceHash: profile.source.hash,
-      status: 'brief-pending' as const,
+      status: caseStarted ? 'started' as const : briefGenerated ? 'brief-ready' as const : 'brief-pending' as const,
       updatedAt: profile.updatedAt,
       visibleHistoryCount: 1,
       workspaceId: profile.workspaceId,
@@ -861,6 +863,28 @@ function stubScenarioDataWorkspace(options: {
           workspaceId: 'workspace-demo',
         }] : [],
       })
+    }
+    if (url.pathname === `/api/his/v1/synthetic-cases/${caseId}/actions/start-outpatient-visit`) {
+      expect(init?.method).toBe('POST')
+      expect(JSON.parse(String(init?.body))).toEqual({
+        activeBriefRevision: 1,
+        departmentId: 'department-general-medicine',
+        expectedCaseRevision: 2,
+        locationId: 'location-outpatient',
+        visitDate: '2026-08-24',
+        visitTypeId: 'visit-type-general',
+      })
+      caseStarted = true
+      options.onCaseStart?.()
+      return Response.json(commandResponse({
+        encounterId: 'encounter-case-001',
+        outpatientCaseId: 'outpatient-case-001',
+        patientId: 'patient-case-001',
+        queueTaskId: 'task-case-001',
+        registrationId: 'registration-case-001',
+        status: 'awaiting-triage',
+        syntheticCaseId: caseId,
+      }))
     }
     if (url.pathname === `/api/sim/v1/synthetic-cases/${caseId}/history`) {
       return Response.json({
@@ -1906,7 +1930,12 @@ describe('role workspaces', () => {
 
   it('generates a Patient Brief explicitly from the synthetic patient library', async () => {
     window.history.replaceState(null, '', '/scenario-data')
-    stubScenarioDataWorkspace({ profileAvailable: true, syntheaAvailable: true })
+    let caseStarts = 0
+    stubScenarioDataWorkspace({
+      onCaseStart: () => { caseStarts += 1 },
+      profileAvailable: true,
+      syntheaAvailable: true,
+    })
     const user = userEvent.setup()
 
     render(<WebApp />)
@@ -1918,6 +1947,10 @@ describe('role workspaces', () => {
     expect(await screen.findByText('反复头晕一周')).toBeTruthy()
     expect(screen.getByText('医生您好，我最近总是头晕。')).toBeTruthy()
     expect(screen.getByText('Active')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '开始门诊就诊' }))
+    const visitSheet = await screen.findByRole('dialog', { name: '开始门诊就诊' })
+    await user.click(within(visitSheet).getByRole('button', { name: '开始门诊就诊' }))
+    await waitFor(() => expect(caseStarts).toBe(1))
   })
 
   it('submits a hypertension-only Synthea population while keeping one module selected', async () => {

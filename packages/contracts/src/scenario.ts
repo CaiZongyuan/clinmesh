@@ -1029,6 +1029,25 @@ export const selectPatientBriefRevisionRequestSchema = z.object({
   expectedCaseRevision: z.number().int().positive(),
 }).strict()
 
+export const startSyntheticCaseRequestSchema = z.object({
+  activeBriefRevision: z.number().int().positive(),
+  departmentId: z.string().min(1).max(128),
+  expectedCaseRevision: z.number().int().positive(),
+  locationId: z.string().min(1).max(128),
+  visitDate: localDateSchema,
+  visitTypeId: z.string().min(1).max(128),
+}).strict()
+
+export const startSyntheticCaseResultSchema = z.object({
+  encounterId: z.string().min(1),
+  outpatientCaseId: z.string().min(1),
+  patientId: z.string().min(1),
+  queueTaskId: z.string().min(1),
+  registrationId: z.string().min(1),
+  status: z.literal('awaiting-triage'),
+  syntheticCaseId: z.string().min(1).max(128),
+}).strict()
+
 export const syntheticPatientMappingCatalogSchema = z.object({
   items: z.array(z.object({
     catalogItemId: z.string().min(1).max(128),

@@ -27,6 +27,7 @@ import { Hono, type Context } from 'hono'
 import { z } from 'zod'
 import {
   selectPatientBriefRevisionRequestSchema,
+  startSyntheticCaseRequestSchema,
   scenarioGenerationRequestSchema,
   startSyntheticPatientVisitsRequestSchema,
   updateSyntheticPatientProfileRequestSchema,
@@ -47,6 +48,8 @@ import type { ScenarioDataService } from './application/scenario-data/scenario-d
 import { ScenarioDataError } from './application/scenario-data/scenario-data-service.ts'
 import type { PatientBriefService } from './application/patient-brief-service.ts'
 import { PatientBriefError } from './application/patient-brief-service.ts'
+import type { SyntheticCaseVisitService } from './application/synthetic-case-visit-service.ts'
+import { SyntheticCaseVisitError } from './application/synthetic-case-visit-service.ts'
 import type { WorkflowService } from './application/workflow-service.ts'
 import { WorkflowError } from './application/workflow-service.ts'
 import { createCapabilityStatement } from './fhir/capabilities.ts'
@@ -64,6 +67,7 @@ interface FhirRuntime {
 }
 
 export interface CreateAppOptions {
+  caseVisits?: SyntheticCaseVisitService
   fhir?: FhirRuntime
   identity?: IdentityService
   patientBrief?: PatientBriefService
@@ -96,6 +100,7 @@ function apiErrorResponse(
   if (
     error instanceof IdentityError
     || error instanceof PatientBriefError
+    || error instanceof SyntheticCaseVisitError
     || error instanceof ReferenceDataError
     || error instanceof ScenarioDataError
     || error instanceof ScenarioError
@@ -642,6 +647,29 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         }))
       } catch (error) {
         return apiErrorResponse(context, error, 'The Patient Brief revision selection is invalid')
+      }
+    })
+  }
+
+  if (options.identity !== undefined && options.caseVisits !== undefined) {
+    const identity = options.identity
+    const caseVisits = options.caseVisits
+    app.post('/api/his/v1/synthetic-cases/:caseId/actions/start-outpatient-visit', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const request = startSyntheticCaseRequestSchema.parse(await context.req.json())
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const idempotencyKey = z.string().min(8).max(128).parse(
+          context.req.header('idempotency-key'),
+        )
+        return context.json(caseVisits.start({
+          caseId: context.req.param('caseId'),
+          context: session.actor,
+          idempotencyKey,
+          request,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error, 'The Synthetic Case visit request is invalid')
       }
     })
   }

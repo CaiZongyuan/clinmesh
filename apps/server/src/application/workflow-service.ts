@@ -8,8 +8,11 @@ import {
 import {
   scenarioDatasetContentSchema,
   scenarioHospitalServiceCatalogItemSchema,
+  startSyntheticCaseResultSchema,
   type ScenarioDatasetContent,
+  type PatientBriefRevision,
   startSyntheticPatientVisitsResultSchema,
+  type SyntheticCaseInstance,
   syntheticPatientMappingCatalogSchema,
   type SyntheticPatientProfile,
 } from '@clinmesh/contracts/scenario'
@@ -1997,6 +2000,179 @@ export class WorkflowService {
     })
   }
 
+  startSyntheticCase(input: {
+    brief: PatientBriefRevision
+    context: ActorContext
+    departmentId: string
+    expectedCaseRevision: number
+    idempotencyKey: string
+    locationId: string
+    profile: SyntheticPatientProfile
+    syntheticCase: SyntheticCaseInstance
+    visitDate: string
+    visitTypeId: string
+  }) {
+    return this.#commands.execute({
+      context: input.context,
+      contextRequirement: 'current',
+      dataSchema: startSyntheticCaseResultSchema,
+      expectedVersions: {},
+      idempotencyKey: input.idempotencyKey,
+      idempotencyScope: 'workspace',
+      input: {
+        activeBriefRevision: input.brief.revision,
+        departmentId: input.departmentId,
+        expectedCaseRevision: input.expectedCaseRevision,
+        locationId: input.locationId,
+        syntheticCaseId: input.syntheticCase.caseId,
+        visitDate: input.visitDate,
+        visitTypeId: input.visitTypeId,
+      },
+      operation: 'synthetic-case.start-outpatient-visit',
+    }, transaction => {
+      this.#assertRole(input.context, ['administrator', 'registrar'])
+      const current = z.object({
+        active_brief_revision: z.number().int().positive().nullable(),
+        profile_id: z.string().min(1),
+        profile_revision: z.number().int().positive(),
+        revision: z.number().int().positive(),
+        status: z.enum(['brief-pending', 'brief-ready', 'started', 'completed', 'retired']),
+      }).strict().optional().parse(this.#database.driver.prepare(`
+        SELECT profile_id, profile_revision, revision, status, active_brief_revision
+        FROM synthetic_case_instance
+        WHERE workspace_id = ? AND case_id = ?
+      `).get(input.context.workspaceId, input.syntheticCase.caseId))
+      if (
+        current === undefined
+        || current.revision !== input.expectedCaseRevision
+        || current.status !== 'brief-ready'
+        || current.active_brief_revision !== input.brief.revision
+        || current.profile_id !== input.profile.profileId
+        || current.profile_revision !== input.profile.revision
+      ) {
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          'The Synthetic Case is not ready to start',
+        )
+      }
+      const consumed = this.#database.driver.prepare(`
+        SELECT 1 AS present FROM synthetic_case_materialization
+        WHERE workspace_id = ? AND case_id = ?
+        LIMIT 1
+      `).get(input.context.workspaceId, input.syntheticCase.caseId)
+      if (consumed !== undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Synthetic Case was already started')
+      }
+      const patient = transaction.fhir.create(input.context, {
+        active: true,
+        address: [{ text: input.profile.identity.address }],
+        birthDate: input.profile.patient.birthDate,
+        extension: [{
+          url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/synthetic-data',
+          valueBoolean: true,
+        }, {
+          url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/synthetic-profile',
+          valueString: input.profile.profileId,
+        }, {
+          url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/synthetic-case',
+          valueString: input.syntheticCase.caseId,
+        }],
+        gender: input.profile.patient.gender,
+        id: uuidv7(),
+        identifier: [{
+          system: 'https://caizongyuan.github.io/clinmesh/fhir/synthetic-patient-id',
+          value: input.profile.identity.mrn,
+        }, {
+          system: 'urn:oid:1.2.156.112605.1.1',
+          value: input.profile.identity.nationalId,
+        }],
+        name: [{ text: input.profile.identity.displayName }],
+        resourceType: 'Patient',
+        telecom: [{ system: 'phone', value: input.profile.identity.phone }, {
+          system: 'email', value: input.profile.identity.email,
+        }],
+      })
+      const now = this.#virtualTime(input.context)
+      this.#database.driver.prepare(`
+        INSERT INTO synthetic_patient_materialization (
+          workspace_id, epoch, profile_id, patient_id, profile_revision, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        input.profile.profileId,
+        patient.id,
+        input.profile.revision,
+        now,
+      )
+      const registered = this.#registerPatient(transaction, input.context, {
+        createConsultation: true,
+        departmentId: input.departmentId,
+        locationId: input.locationId,
+        patientId: patient.id,
+        visitDate: input.visitDate,
+        visitTypeId: input.visitTypeId,
+      })
+      this.#database.driver.prepare(`
+        INSERT INTO synthetic_case_materialization (
+          workspace_id, epoch, case_id, case_revision, profile_id,
+          profile_revision, brief_revision, patient_id, outpatient_case_id,
+          registration_id, encounter_id, queue_task_id, started_by_actor_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        input.syntheticCase.caseId,
+        input.expectedCaseRevision,
+        input.profile.profileId,
+        input.profile.revision,
+        input.brief.revision,
+        patient.id,
+        registered.outpatientCaseId,
+        registered.data.registrationId,
+        registered.data.encounterId,
+        registered.data.queueTaskId,
+        input.context.actorId,
+        now,
+      )
+      const caseUpdate = this.#database.driver.prepare(`
+        UPDATE synthetic_case_instance
+        SET status = 'started', revision = revision + 1, updated_at = ?
+        WHERE workspace_id = ? AND case_id = ? AND revision = ?
+          AND status = 'brief-ready' AND active_brief_revision = ?
+      `).run(
+        now,
+        input.context.workspaceId,
+        input.syntheticCase.caseId,
+        input.expectedCaseRevision,
+        input.brief.revision,
+      )
+      if (caseUpdate.changes !== 1) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Synthetic Case changed while starting')
+      }
+      return {
+        data: {
+          encounterId: registered.data.encounterId,
+          outpatientCaseId: registered.outpatientCaseId,
+          patientId: patient.id,
+          queueTaskId: registered.data.queueTaskId,
+          registrationId: registered.data.registrationId,
+          status: 'awaiting-triage' as const,
+          syntheticCaseId: input.syntheticCase.caseId,
+        },
+        effects: [{
+          kind: 'created' as const,
+          reference: `Patient/${patient.id}`,
+          versionId: patient.meta?.versionId ?? '1',
+        }, ...registered.effects, {
+          kind: 'updated' as const,
+          reference: `SyntheticCase/${input.syntheticCase.caseId}`,
+          versionId: String(input.expectedCaseRevision + 1),
+        }],
+      }
+    })
+  }
+
   #registerPatient(
     transaction: CommandTransaction,
     context: ActorContext,
@@ -2156,6 +2332,7 @@ export class WorkflowService {
         reference: `${resource.resourceType}/${resource.id}`,
         versionId: resource.meta?.versionId ?? '1',
       })),
+      outpatientCaseId: caseId,
     }
   }
 

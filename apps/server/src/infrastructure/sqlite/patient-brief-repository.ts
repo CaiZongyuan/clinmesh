@@ -272,6 +272,20 @@ export class PatientBriefRepository {
     })
   }
 
+  getRevision(
+    workspaceId: string,
+    caseId: string,
+    revision: number,
+  ): PatientBriefRevision | undefined {
+    const row = this.#database.driver.prepare(`
+      SELECT workspace_id, case_id, revision, content_json, model_id,
+        prompt_version, prompt_hash, input_hash, output_hash, created_at
+      FROM patient_brief_revision
+      WHERE workspace_id = ? AND case_id = ? AND revision = ?
+    `).get(workspaceId, caseId, revision)
+    return row === undefined ? undefined : this.#mapRevision(revisionRowSchema.parse(row))
+  }
+
   selectRevision(input: {
     briefRevision: number
     caseId: string

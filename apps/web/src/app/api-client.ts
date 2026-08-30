@@ -64,6 +64,7 @@ import {
   scenarioGenerationJobSchema,
   scenarioGenerationRequestSchema,
   scenarioProviderCapabilitiesListSchema,
+  startSyntheticCaseResultSchema,
   startSyntheticPatientVisitsResultSchema,
   syntheticPatientProfileDetailSchema,
   syntheticSourceHistoryListSchema,
@@ -370,6 +371,30 @@ export function selectPatientBriefRevision(input: {
       expectedCaseRevision: input.expectedCaseRevision,
     },
     { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function startSyntheticCaseVisit(input: {
+  activeBriefRevision: number
+  caseId: string
+  departmentId: string
+  expectedCaseRevision: number
+  locationId: string
+  visitDate: string
+  visitTypeId: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/synthetic-cases/${encodeURIComponent(input.caseId)}/actions/start-outpatient-visit`,
+    commandResponseSchema(startSyntheticCaseResultSchema),
+    {
+      activeBriefRevision: input.activeBriefRevision,
+      departmentId: input.departmentId,
+      expectedCaseRevision: input.expectedCaseRevision,
+      locationId: input.locationId,
+      visitDate: input.visitDate,
+      visitTypeId: input.visitTypeId,
+    },
+    { idempotencyKey },
   )
 }
 
