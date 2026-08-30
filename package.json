@@ -26,7 +26,7 @@
     "typecheck": "turbo run typecheck --filter=!@clinmesh/mobile",
     "typecheck:mobile": "pnpm --filter @clinmesh/mobile typecheck",
     "check:mobile": "pnpm typecheck:mobile && tsx scripts/verify-expo-versions.ts",
-    "clinmesh": "pnpm --filter @clinmesh/cli clinmesh --",
+    "clinmesh": "pnpm --filter @clinmesh/cli clinmesh",
     "lint": "oxlint apps packages scripts --deny-warnings",
     "test": "turbo run test --filter=!@clinmesh/mobile && vitest run scripts/dev-lan.spec.ts",
     "verify:docs": "tsx scripts/verify-docs.ts",

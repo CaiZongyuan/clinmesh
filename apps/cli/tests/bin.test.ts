@@ -3,6 +3,19 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 describe('clinmesh process entrypoint', () => {
+  it('forwards arguments through the repository root entrypoint', () => {
+    const repositoryRoot = fileURLToPath(new URL('../../..', import.meta.url))
+    const result = spawnSync('pnpm', ['clinmesh', '--help'], {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH },
+    })
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).not.toContain('"ok": false')
+    expect(result.stdout).toContain('Usage: clinmesh')
+  })
+
   it('prints help successfully', () => {
     const tsx = fileURLToPath(new URL('../../../node_modules/.bin/tsx', import.meta.url))
     const entry = fileURLToPath(new URL('../src/index.ts', import.meta.url))

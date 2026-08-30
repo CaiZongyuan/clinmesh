@@ -57,6 +57,43 @@ async function parseApiError(response: Response) {
 }
 
 describe('Agent Capability Grant HTTP authentication', () => {
+  it('requires the selected Acting Practitioner Role to be administrator for Agent control', async () => {
+    const { password, runtime } = await createRuntime()
+    const cookie = await signIn(runtime, password)
+    const selectRoleResponse = await runtime.app.request('/api/auth/role', {
+      body: JSON.stringify({
+        practitionerRoleId: 'practitioner-role-outpatient-doctor',
+      }),
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect(selectRoleResponse.status).toBe(200)
+
+    const response = await runtime.app.request('/api/agent/v1/clients', {
+      body: JSON.stringify({ name: 'Wrong acting role agent' }),
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        'idempotency-key': 'agent-control-wrong-role-1',
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+
+    expect(response.status).toBe(403)
+    expect(await parseApiError(response)).toMatchObject({
+      error: { code: 'ROLE_NOT_ALLOWED' },
+    })
+    expect(new AuditQuery(runtime.database).list({
+      epoch: 'epoch-1',
+      workspaceId: 'workspace-demo',
+    }).some(event => event.operation.startsWith('agent-'))).toBe(false)
+  })
+
   it('protects FHIR metadata with authentication and the Grant operation allowlist', async () => {
     const { password, runtime } = await createRuntime()
     const cookie = await signIn(runtime, password)

@@ -11,6 +11,120 @@ function captureStream() {
 }
 
 describe('CLI runtime credential resolution', () => {
+  it.each([
+    {
+      code: 'agent_token_required',
+      env: {
+        CLINMESH_AGENT_TASK_ID: 'task-1',
+        CLINMESH_SERVER_URL: 'http://127.0.0.1:51868',
+      },
+    },
+    {
+      code: 'agent_token_invalid',
+      env: {
+        CLINMESH_AGENT_TASK_ID: 'task-1',
+        CLINMESH_SERVER_URL: 'http://127.0.0.1:51868',
+        CLINMESH_TOKEN: 'cma_too_short',
+      },
+    },
+  ])('returns structured authentication error $code before an Agent request', async ({
+    code,
+    env,
+  }) => {
+    const fetch = vi.fn()
+    const dependencies = createRuntimeDependencies({ env, fetch })
+    const stdout = captureStream()
+    const stderr = captureStream()
+
+    const exitCode = await runCli(
+      ['patient', 'search', '--query', 'Synthetic Patient'],
+      { stderr: stderr.stream, stdout: stdout.stream },
+      dependencies,
+    )
+
+    expect(exitCode).toBe(3)
+    expect(fetch).not.toHaveBeenCalled()
+    expect(stdout.value()).toBe('')
+    expect(JSON.parse(stderr.value())).toMatchObject({
+      error: {
+        code,
+        operationId: 'patient.search',
+        outcome: 'definitely_not_sent',
+        retryable: false,
+        type: 'authentication',
+      },
+      ok: false,
+    })
+  })
+
+  it('returns a structured configuration error when Agent server URL is absent', async () => {
+    const fetch = vi.fn()
+    const dependencies = createRuntimeDependencies({
+      env: {
+        CLINMESH_AGENT_TASK_ID: 'task-1',
+        CLINMESH_TOKEN: `cma_${'a'.repeat(40)}`,
+      },
+      fetch,
+    })
+    const stdout = captureStream()
+    const stderr = captureStream()
+
+    const exitCode = await runCli(
+      ['context', 'show'],
+      { stderr: stderr.stream, stdout: stdout.stream },
+      dependencies,
+    )
+
+    expect(exitCode).toBe(3)
+    expect(fetch).not.toHaveBeenCalled()
+    expect(stdout.value()).toBe('')
+    expect(JSON.parse(stderr.value())).toMatchObject({
+      error: {
+        code: 'server_url_required',
+        operationId: 'agent.context.read',
+        outcome: 'definitely_not_sent',
+        retryable: false,
+        type: 'config',
+      },
+      ok: false,
+    })
+  })
+
+  it('returns a structured configuration error when a human operation profile is absent', async () => {
+    const fetch = vi.fn()
+    const dependencies = createRuntimeDependencies({
+      env: { CLINMESH_PROFILE: 'missing' },
+      fetch,
+      profiles: {
+        load: vi.fn().mockResolvedValue(undefined),
+        remove: vi.fn(),
+        save: vi.fn(),
+      },
+    })
+    const stdout = captureStream()
+    const stderr = captureStream()
+
+    const exitCode = await runCli(
+      ['patient', 'search', '--query', 'Synthetic Patient'],
+      { stderr: stderr.stream, stdout: stdout.stream },
+      dependencies,
+    )
+
+    expect(exitCode).toBe(3)
+    expect(fetch).not.toHaveBeenCalled()
+    expect(stdout.value()).toBe('')
+    expect(JSON.parse(stderr.value())).toMatchObject({
+      error: {
+        code: 'profile_not_found',
+        operationId: 'patient.search',
+        outcome: 'definitely_not_sent',
+        retryable: false,
+        type: 'config',
+      },
+      ok: false,
+    })
+  })
+
   it('classifies an expired Agent context token as authentication failure', async () => {
     const dependencies = createRuntimeDependencies({
       env: {

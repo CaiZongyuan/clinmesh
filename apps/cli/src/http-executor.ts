@@ -170,12 +170,15 @@ export async function parseHttpResponse<Schema extends z.ZodType>(
   operationId: string,
   write: boolean,
   execution?: HttpExecutionContext,
+  bodyFailure: 'protocol' | 'transport' = 'protocol',
 ): Promise<z.infer<Schema>> {
   let payload: unknown
   try {
     payload = await response.json() as unknown
   } catch (cause) {
-    throw invalidResponseError(operationId, write, execution, cause)
+    throw bodyFailure === 'transport'
+      ? transportError(operationId, write, execution, cause)
+      : invalidResponseError(operationId, write, execution, cause)
   }
   if (!response.ok) {
     throw httpResponseError(response, payload, operationId, write, execution)
@@ -269,19 +272,13 @@ export function createHttpExecutor(options: HttpExecutorOptions) {
     } catch (cause) {
       throw transportError(operationId, write, execution, cause)
     }
-    let payload: unknown
-    try {
-      payload = await response.json() as unknown
-    } catch (cause) {
-      throw transportError(operationId, write, execution, cause)
-    }
-    if (!response.ok) {
-      throw httpResponseError(response, payload, operationId, write, execution)
-    }
-    const parsed = operation.output.safeParse(payload)
-    if (!parsed.success) {
-      throw invalidResponseError(operationId, write, execution, parsed.error)
-    }
-    return parsed.data
+    return parseHttpResponse(
+      response,
+      operation.output,
+      operationId,
+      write,
+      execution,
+      'transport',
+    )
   }
 }
