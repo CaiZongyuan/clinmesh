@@ -367,6 +367,25 @@ export class SyntheticCaseRepository {
     })
   }
 
+  getVisibleResourcesForSimulator(
+    workspaceId: string,
+    caseIdValue: string,
+  ): Array<{ resource: z.infer<typeof resourceSchema>; sourceReference: string }> {
+    const rows = z.array(z.object({
+      resource_json: z.string().min(1),
+      source_reference: z.string().min(1),
+    }).strict()).parse(this.#database.driver.prepare(`
+      SELECT source_reference, resource_json
+      FROM synthetic_case_visible_resource
+      WHERE workspace_id = ? AND case_id = ?
+      ORDER BY source_reference
+    `).all(workspaceId, caseIdValue))
+    return rows.map(row => ({
+      resource: resourceSchema.parse(JSON.parse(row.resource_json)),
+      sourceReference: row.source_reference,
+    }))
+  }
+
   #mapCase(row: z.infer<typeof caseRowSchema>): SyntheticCaseInstance {
     return syntheticCaseInstanceSchema.parse({
       activeBriefRevision: row.active_brief_revision,

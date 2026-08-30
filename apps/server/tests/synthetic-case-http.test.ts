@@ -3,6 +3,8 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  patientBriefJobSchema,
+  patientBriefRevisionListSchema,
   scenarioGenerationJobSchema,
   syntheticCaseInstanceSchema,
   syntheticPatientProfileDetailSchema,
@@ -10,6 +12,7 @@ import {
   syntheticSourceResourceDetailSchema,
   type ScenarioGenerationRequest,
   type ScenarioProviderCapabilities,
+  type PatientBriefContent,
 } from '@clinmesh/contracts/scenario'
 import { commandResponseSchema } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -21,8 +24,12 @@ import type {
 import { compileSyntheaR4Bundle } from '../src/application/scenario-data/synthea-case-truth-compiler.ts'
 import { BuiltInScenarioGenerationProvider } from '../src/infrastructure/scenario-generation/builtin-provider.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+import type {
+  JsonChatCompletionInput,
+  JsonChatCompletionsProvider,
+} from '../src/infrastructure/ai/openai-chat-completions.ts'
 
-function patientBundle(qualified: boolean) {
+function patientBundle(qualified: boolean, followUp = true) {
   const entries: Array<Record<string, unknown>> = [{
     fullUrl: 'urn:uuid:patient',
     resource: {
@@ -46,8 +53,8 @@ function patientBundle(qualified: boolean) {
     resource: {
       code: {
         coding: [{
-          code: '59621000',
-          display: '高血压（疾病）',
+          code: followUp ? '59621000' : '44054006',
+          display: followUp ? '高血压（疾病）' : '2 型糖尿病',
           system: 'http://snomed.info/sct',
         }],
       },
@@ -115,6 +122,7 @@ function patientBundle(qualified: boolean) {
 async function corpusFor(
   request: ScenarioGenerationRequest,
   qualified: boolean,
+  followUp = true,
 ): Promise<SourcePatientCorpus> {
   const compatibilityRequest: ScenarioGenerationRequest = {
     ...request,
@@ -122,7 +130,7 @@ async function corpusFor(
     modules: ['hypertension'],
   }
   const base = await new BuiltInScenarioGenerationProvider().generate(compatibilityRequest)
-  const bundle = patientBundle(qualified)
+  const bundle = patientBundle(qualified, followUp)
   const patient = compileSyntheaR4Bundle({ bundle, ordinal: 0, request: compatibilityRequest })
   return {
     content: {
@@ -144,9 +152,11 @@ async function corpusFor(
 class RetryingSyntheaProvider implements ScenarioGenerationProvider {
   readonly requests: ScenarioGenerationRequest[] = []
   readonly #qualifyingAttempt: number | undefined
+  readonly #followUp: boolean
 
-  constructor(qualifyingAttempt?: number) {
+  constructor(qualifyingAttempt?: number, followUp = true) {
     this.#qualifyingAttempt = qualifyingAttempt
+    this.#followUp = followUp
   }
 
   async capabilities(): Promise<ScenarioProviderCapabilities> {
@@ -161,7 +171,23 @@ class RetryingSyntheaProvider implements ScenarioGenerationProvider {
 
   async generate(request: ScenarioGenerationRequest): Promise<SourcePatientCorpus> {
     this.requests.push(request)
-    return corpusFor(request, this.requests.length === this.#qualifyingAttempt)
+    return corpusFor(request, this.requests.length === this.#qualifyingAttempt, this.#followUp)
+  }
+}
+
+class ControlledBriefProvider implements JsonChatCompletionsProvider {
+  readonly requests: JsonChatCompletionInput[] = []
+  readonly #outputs: PatientBriefContent[]
+
+  constructor(outputs: PatientBriefContent[]) {
+    this.#outputs = outputs
+  }
+
+  async completeJson(input: JsonChatCompletionInput) {
+    this.requests.push(input)
+    const output = this.#outputs.shift()
+    if (output === undefined) throw new Error('No fake Patient Brief output remains')
+    return { content: JSON.stringify(output), model: 'resolved-fake-brief-model' }
   }
 }
 
@@ -174,21 +200,52 @@ describe('Synthetic Case generation HTTP contract', () => {
     await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true })))
   })
 
-  async function createRuntime(provider: ScenarioGenerationProvider) {
-    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-synthetic-case-http-'))
-    temporaryDirectories.push(directory)
+  async function createRuntime(
+    provider: ScenarioGenerationProvider,
+    briefProvider?: JsonChatCompletionsProvider,
+    options: { databasePath?: string; migrationMode?: 'apply' | 'verify' } = {},
+  ) {
+    const directory = options.databasePath === undefined
+      ? await mkdtemp(join(tmpdir(), 'clinmesh-synthetic-case-http-'))
+      : undefined
+    if (directory !== undefined) temporaryDirectories.push(directory)
     const runtime = await createClinMeshRuntime({
       authBaseUrl: 'http://localhost',
       authSecret: 'test-auth-secret-with-at-least-32-characters',
       cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
-      databasePath: join(directory, 'clinmesh.sqlite'),
+      databasePath: options.databasePath ?? join(directory!, 'clinmesh.sqlite'),
       demoPassword: 'Synthetic-Demo-Password-2026!',
-      migrationMode: 'apply',
+      migrationMode: options.migrationMode ?? 'apply',
+      ...(briefProvider === undefined
+        ? {}
+        : { chatCompletionsProvider: briefProvider, patientBriefModel: 'fake-brief-model' }),
       syntheaProvider: provider,
       trustedOrigins: ['http://localhost'],
     })
     runtimes.push(runtime)
     return runtime
+  }
+
+  async function enqueueBrief(
+    runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>,
+    cookie: string,
+    caseId: string,
+  ) {
+    const response = await runtime.app.request(
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-brief-jobs`,
+      {
+        body: '{}',
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(response.status).toBe(200)
+    return commandResponseSchema(patientBriefJobSchema).parse(await response.json()).data
   }
 
   async function signIn(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>) {
@@ -317,5 +374,160 @@ describe('Synthetic Case generation HTTP contract', () => {
       expect(runtime.database.driver.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get())
         .toEqual({ count: 0 })
     }
+  })
+
+  it('keeps successful Brief revisions immutable and rejects hidden diagnosis leakage', async () => {
+    const safeBrief: PatientBriefContent = {
+      chiefComplaint: '反复头晕一周',
+      knownHistorySummary: '既往有 2 型糖尿病病史。',
+      openingStatement: '医生您好，我最近一周经常头晕。',
+      symptomTopics: [{
+        answerPoints: ['一周前开始。', '起身时更明显。'],
+        id: 'dizziness-onset',
+        name: '头晕经过',
+      }],
+    }
+    const leakingBrief: PatientBriefContent = {
+      ...safeBrief,
+      knownHistorySummary: '本次诊断是高血压（疾病）。',
+    }
+    const secondBrief: PatientBriefContent = {
+      ...safeBrief,
+      chiefComplaint: '头晕伴乏力一周',
+      openingStatement: '医生您好，我头晕之外还有些乏力。',
+    }
+    const briefProvider = new ControlledBriefProvider([
+      safeBrief,
+      leakingBrief,
+      secondBrief,
+    ])
+    const runtime = await createRuntime(
+      new RetryingSyntheaProvider(1, false),
+      briefProvider,
+    )
+    const cookie = await signIn(runtime)
+    await enqueue(runtime, cookie)
+    const generation = await runtime.scenarioData.processNextGenerationJob()
+    const caseId = generation?.caseIds[0] ?? ''
+    expect(generation).toMatchObject({ status: 'succeeded' })
+
+    const firstJob = await enqueueBrief(runtime, cookie, caseId)
+    expect(await runtime.patientBrief.processNext()).toMatchObject({
+      jobId: firstJob.jobId,
+      resultRevision: 1,
+      status: 'succeeded',
+    })
+    const firstRevisionsResponse = await runtime.app.request(
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-brief-revisions`,
+      { headers: { cookie } },
+    )
+    expect(firstRevisionsResponse.status).toBe(200)
+    const firstRevisions = patientBriefRevisionListSchema.parse(
+      await firstRevisionsResponse.json(),
+    )
+    expect(firstRevisions).toMatchObject({
+      activeRevision: 1,
+      items: [{
+        content: safeBrief,
+        model: 'resolved-fake-brief-model',
+        promptVersion: 'patient-brief-v1',
+        revision: 1,
+      }],
+    })
+    expect(firstRevisions.items[0]).toMatchObject({
+      inputHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      outputHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      promptHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    })
+
+    const leakingJob = await enqueueBrief(runtime, cookie, caseId)
+    expect(await runtime.patientBrief.processNext()).toMatchObject({
+      error: { code: 'BRIEF_DIAGNOSIS_LEAK' },
+      jobId: leakingJob.jobId,
+      resultRevision: null,
+      status: 'failed',
+    })
+    const afterLeak = patientBriefRevisionListSchema.parse(await (await runtime.app.request(
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-brief-revisions`,
+      { headers: { cookie } },
+    )).json())
+    expect(afterLeak).toEqual(firstRevisions)
+
+    const secondJob = await enqueueBrief(runtime, cookie, caseId)
+    expect(await runtime.patientBrief.processNext()).toMatchObject({
+      jobId: secondJob.jobId,
+      resultRevision: 2,
+      status: 'succeeded',
+    })
+    const beforeSelection = patientBriefRevisionListSchema.parse(await (await runtime.app.request(
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-brief-revisions`,
+      { headers: { cookie } },
+    )).json())
+    expect(beforeSelection).toMatchObject({
+      activeRevision: 1,
+      items: [{ revision: 2 }, { revision: 1 }],
+    })
+    const caseBeforeSelection = syntheticCaseInstanceSchema.parse(await (await runtime.app.request(
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}`,
+      { headers: { cookie } },
+    )).json())
+    const selectResponse = await runtime.app.request(
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-brief-revisions/active`,
+      {
+        body: JSON.stringify({
+          briefRevision: 2,
+          expectedCaseRevision: caseBeforeSelection.revision,
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'PUT',
+      },
+    )
+    expect(selectResponse.status).toBe(200)
+    expect(commandResponseSchema(syntheticCaseInstanceSchema).parse(await selectResponse.json()).data)
+      .toMatchObject({ activeBriefRevision: 2, status: 'brief-ready' })
+
+    expect(briefProvider.requests).toHaveLength(3)
+    const publicArtifacts = JSON.stringify({ beforeSelection, firstJob, leakingJob, secondJob })
+    expect(publicArtifacts).not.toMatch(/privateEpisodeEvidence|index-condition|hiddenResourceReferences/)
+  })
+
+  it('requeues an interrupted Patient Brief job after restart', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-patient-brief-recovery-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'clinmesh.sqlite')
+    const provider = new RetryingSyntheaProvider(1, false)
+    const briefProvider = new ControlledBriefProvider([])
+    const first = await createRuntime(provider, briefProvider, { databasePath })
+    const cookie = await signIn(first)
+    await enqueue(first, cookie)
+    const generation = await first.scenarioData.processNextGenerationJob()
+    const caseId = generation?.caseIds[0] ?? ''
+    const job = await enqueueBrief(first, cookie, caseId)
+    first.database.driver.prepare(`
+      UPDATE patient_brief_job
+      SET status = 'running', started_at = updated_at
+      WHERE workspace_id = ? AND job_id = ?
+    `).run(job.workspaceId, job.jobId)
+    await first.close()
+    runtimes.splice(runtimes.indexOf(first), 1)
+
+    const restarted = await createRuntime(provider, briefProvider, {
+      databasePath,
+      migrationMode: 'verify',
+    })
+    const restartedCookie = await signIn(restarted)
+    const recovered = patientBriefJobSchema.parse(await (await restarted.app.request(
+      `/api/sim/v1/patient-brief-jobs/${encodeURIComponent(job.jobId)}`,
+      { headers: { cookie: restartedCookie } },
+    )).json())
+    expect(recovered).toMatchObject({ startedAt: null, status: 'queued' })
+    expect(restarted.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM patient_brief_revision WHERE case_id = ?
+    `).get(caseId)).toEqual({ count: 0 })
   })
 })

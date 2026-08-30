@@ -55,8 +55,11 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import {
+  enqueuePatientBrief,
   enqueueScenarioGenerationJob,
   getCurrentScenario,
+  getPatientBriefJob,
+  getPatientBriefRevisions,
   getScenarioGenerationJob,
   getScenarioProviders,
   getSyntheticCaseHistory,
@@ -64,6 +67,7 @@ import {
   getSyntheticPatientProfile,
   getSyntheticPatientProfiles,
   newIdempotencyKey,
+  selectPatientBriefRevision,
   updateSyntheticPatientProfile,
 } from './api-client.ts'
 import { scenarioModuleOptions } from './scenario-module-options.ts'
@@ -77,7 +81,7 @@ const avatarCache = new Map<string, string>()
 const copy = {
   'en-US': {
     address: 'Address', advanced: 'Advanced settings', allModules: 'All Synthea modules',
-    batch: 'Generation batch', caseType: 'Case type', clinicalSeed: 'Clinical seed',
+    batch: 'Generation batch', brief: 'Patient Brief', briefFailed: 'Brief generation failed', briefGenerate: 'Generate Brief', caseType: 'Case type', clinicalSeed: 'Clinical seed',
     contact: 'Contact', editProfile: 'Edit profile', email: 'Email',
     emptyDescription: 'Generate localized longitudinal Synthea records for up to ten patients.',
     emptyTitle: 'No synthetic patients yet', externalHistory: 'External synthetic R4 history',
@@ -92,7 +96,7 @@ const copy = {
     resourceDetail: 'R4 resource detail', save: 'Save profile', saveFailed: 'Failed to save profile', search: 'Search patients', source: 'Source',
   },
   'zh-CN': {
-    address: '地址', advanced: '高级设置', allModules: '全部 Synthea 模块', batch: '生成批次',
+    address: '地址', advanced: '高级设置', allModules: '全部 Synthea 模块', batch: '生成批次', brief: '患者梗概', briefFailed: '梗概生成失败', briefGenerate: '生成患者梗概',
     caseType: '病例类型', clinicalSeed: '临床 seed', contact: '联系方式', editProfile: '编辑档案',
     email: '电子邮箱', emptyDescription: '生成完整中文 Synthea 纵向病历，每批最多 10 人。',
     emptyTitle: '还没有合成患者', externalHistory: '外部合成 R4 历史', filterModules: '限制 Synthea 模块',
@@ -164,6 +168,111 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
   return <div className="grid min-h-[360px] lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)]"><div className="border-r">{history.data.items.map(item => <button className={cn('grid w-full grid-cols-[104px_minmax(0,1fr)_24px] items-center gap-3 border-b px-3 py-3 text-left', selectedReference === item.sourceReference && 'bg-muted/50')} key={item.sourceReference} onClick={() => setSelectedReference(item.sourceReference)} type="button"><span className="text-xs text-muted-foreground">{item.clinicalDate.slice(0, 10)}</span><span className="min-w-0"><strong className="block truncate text-sm">{item.title}</strong><span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.resourceType}</span></span><ChevronRightIcon className="size-4 text-muted-foreground" /></button>)}<div className="flex justify-between p-2"><Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="ghost">{messages.previous}</Button><Button disabled={page * history.data.pageSize >= history.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="ghost">{messages.next}</Button></div></div><section className="min-w-0 p-3"><h4 className="flex items-center gap-2 text-sm font-semibold"><FileJsonIcon className="size-4" />{messages.resourceDetail}</h4>{selectedReference === undefined ? <p className="mt-4 text-sm text-muted-foreground">{messages.externalHistory}</p> : detail.isPending ? <Skeleton className="mt-3 h-64 w-full" /> : detail.isError ? <Alert className="mt-3" variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : <pre className="mt-3 max-h-[420px] overflow-auto border bg-muted/20 p-3 text-xs">{JSON.stringify(detail.data.resource, null, 2)}</pre>}</section></div>
 }
 
+function PatientBriefPanel({ locale, profileId, syntheticCase }: {
+  locale: WorkspaceLocale
+  profileId: string
+  syntheticCase: NonNullable<SyntheticPatientProfileDetail['case']>
+}) {
+  const messages = copy[locale]
+  const queryClient = useQueryClient()
+  const [jobId, setJobId] = useState<string>()
+  const revisions = useQuery({
+    queryFn: ({ signal }) => getPatientBriefRevisions(syntheticCase.caseId, signal),
+    queryKey: ['patient-brief-revisions', syntheticCase.caseId],
+  })
+  const generate = useMutation({
+    mutationFn: () => enqueuePatientBrief(syntheticCase.caseId, newIdempotencyKey()),
+    onSuccess: response => setJobId(response.data.jobId),
+  })
+  const job = useQuery({
+    enabled: jobId !== undefined,
+    queryFn: ({ signal }) => jobId === undefined
+      ? Promise.reject(new Error('No Patient Brief job'))
+      : getPatientBriefJob(jobId, signal),
+    queryKey: ['patient-brief-job', jobId ?? 'none'],
+    refetchInterval: query => ['queued', 'running'].includes(query.state.data?.status ?? '')
+      ? 1_000
+      : false,
+  })
+  useEffect(() => {
+    if (job.data?.status !== 'succeeded') return
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['patient-brief-revisions', syntheticCase.caseId] }),
+      queryClient.invalidateQueries({ queryKey: ['synthetic-patient-profile', profileId] }),
+      queryClient.invalidateQueries({ queryKey: profileListKey }),
+    ])
+  }, [job.data?.status, profileId, queryClient, syntheticCase.caseId])
+  const select = useMutation({
+    mutationFn: (revision: number) => selectPatientBriefRevision({
+      briefRevision: revision,
+      caseId: syntheticCase.caseId,
+      expectedCaseRevision: syntheticCase.revision,
+    }, newIdempotencyKey()),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['patient-brief-revisions', syntheticCase.caseId] }),
+        queryClient.invalidateQueries({ queryKey: ['synthetic-patient-profile', profileId] }),
+      ])
+    },
+  })
+  const running = job.data?.status === 'queued' || job.data?.status === 'running'
+  return (
+    <section className="p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-sm font-semibold">{messages.brief}</h4>
+        <Button disabled={generate.isPending || running} onClick={() => generate.mutate()} size="sm">
+          <SparklesIcon data-icon="inline-start" />{messages.briefGenerate}
+        </Button>
+      </div>
+      {generate.error === null ? null : (
+        <Alert className="mt-3" variant="destructive">
+          <CircleAlertIcon /><AlertTitle>{messages.briefFailed}</AlertTitle>
+          <AlertDescription>{generate.error instanceof Error ? generate.error.message : String(generate.error)}</AlertDescription>
+        </Alert>
+      )}
+      {job.data?.status === 'failed' ? (
+        <Alert className="mt-3" variant="destructive">
+          <CircleAlertIcon /><AlertTitle>{messages.briefFailed}</AlertTitle>
+          <AlertDescription>{job.data.error?.message}</AlertDescription>
+        </Alert>
+      ) : null}
+      {running ? <Skeleton className="mt-3 h-20 w-full" /> : null}
+      {revisions.isPending ? (
+        <Skeleton className="mt-3 h-64 w-full" />
+      ) : revisions.isError ? (
+        <Alert className="mt-3" variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.briefFailed}</AlertTitle></Alert>
+      ) : revisions.data.items.length === 0 ? (
+        <p className="mt-4 text-sm text-muted-foreground">{locale === 'zh-CN' ? '尚未生成患者梗概' : 'No Patient Brief revision'}</p>
+      ) : (
+        <div className="mt-4 border-t">
+          {revisions.data.items.map(revision => (
+            <section className="border-b py-4" key={revision.revision}>
+              <div className="flex flex-wrap items-center gap-2">
+                <h5 className="text-sm font-semibold">Revision {revision.revision}</h5>
+                {revisions.data.activeRevision === revision.revision
+                  ? <Badge variant="success">Active</Badge>
+                  : <Button disabled={select.isPending} onClick={() => select.mutate(revision.revision)} size="sm" variant="outline">{locale === 'zh-CN' ? '设为当前' : 'Select'}</Button>}
+                <span className="text-xs text-muted-foreground">{revision.model}</span>
+              </div>
+              <dl className="mt-3 grid gap-3 text-sm">
+                <div><dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '主诉' : 'Chief complaint'}</dt><dd className="mt-1">{revision.content.chiefComplaint}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '开场陈述' : 'Opening statement'}</dt><dd className="mt-1">{revision.content.openingStatement}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '已知史' : 'Known history'}</dt><dd className="mt-1">{revision.content.knownHistorySummary}</dd></div>
+              </dl>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {revision.content.symptomTopics.map(topic => <Badge key={topic.id} variant="outline">{topic.name}</Badge>)}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+      {select.error === null ? null : (
+        <Alert className="mt-3" variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.briefFailed}</AlertTitle><AlertDescription>{select.error instanceof Error ? select.error.message : String(select.error)}</AlertDescription></Alert>
+      )}
+    </section>
+  )
+}
+
 function ProfileDetails({ locale, onEdit, profile, referenceDate }: {
   locale: WorkspaceLocale
   onEdit: () => void
@@ -174,7 +283,65 @@ function ProfileDetails({ locale, onEdit, profile, referenceDate }: {
   const displayPhone = /^1\d{10}$/.test(profile.identity.phone)
     ? `${profile.identity.phone.slice(0, 3)}****${profile.identity.phone.slice(-4)}`
     : profile.identity.phone
-  return <div className="min-w-0 bg-background"><header className="border-b px-4 py-4"><div className="flex flex-wrap items-start gap-4"><ProfileAvatar className="size-16" name={profile.identity.displayName} profileId={profile.profileId} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="text-xl font-semibold">{profile.identity.displayName}</h3><Badge variant="outline">{profile.gender}</Badge><span className="text-sm text-muted-foreground">{age(profile.birthDate, referenceDate)} 岁（{profile.birthDate}）</span>{profile.case === null ? <Badge variant="warning">{messages.noCase}</Badge> : <Badge variant="info">{caseTypeLabel(profile.case.caseType, locale)}</Badge>}</div><div className="mt-3 grid gap-x-6 gap-y-1 text-sm text-muted-foreground sm:grid-cols-2 xl:grid-cols-4"><span>{messages.mrn}：<strong className="font-medium text-foreground">{profile.identity.mrn}</strong></span><span>{messages.phone}：<strong className="font-medium text-foreground">{displayPhone}</strong></span><span>{messages.source}：<strong className="font-medium text-foreground">{profile.source.providerId === 'synthea' ? 'Synthea R4' : 'ClinMesh'}</strong></span><span>{messages.batch}：<strong className="font-medium text-foreground">{profile.source.batchName}</strong></span></div></div><Button aria-label={messages.editProfile} onClick={onEdit} size="icon" title={messages.editProfile} variant="outline"><PencilIcon /></Button></div></header><div className="grid border-b sm:grid-cols-2 xl:grid-cols-4"><section className="min-w-0 border-b p-4 sm:border-r xl:border-b-0"><h4 className="text-sm font-semibold">{messages.identity}</h4><p className="mt-2 text-sm">{profile.identity.nationalId}</p><p className="mt-1 text-xs text-muted-foreground">{profile.gender} · {profile.birthDate}</p></section><section className="min-w-0 border-b p-4 sm:border-r xl:border-b-0"><h4 className="text-sm font-semibold">{messages.address}</h4><p className="mt-2 break-words text-sm">{profile.identity.address}</p></section><section className="min-w-0 border-b p-4 sm:border-r xl:border-b-0"><h4 className="text-sm font-semibold">{messages.contact}</h4><p className="mt-2 text-sm">{displayPhone}</p><p className="mt-1 break-words text-xs text-muted-foreground">{profile.identity.email}</p></section><section className="min-w-0 p-4"><h4 className="text-sm font-semibold">{messages.insurance}</h4><p className="mt-2 text-sm">{profile.identity.insuranceDisplay}</p></section></div><Tabs defaultValue="history"><TabsList className="mx-4 mt-3" variant="line"><TabsTrigger value="history">{messages.history}{profile.case === null ? '' : ` ${profile.case.visibleHistoryCount}`}</TabsTrigger><TabsTrigger value="source">{messages.source}</TabsTrigger></TabsList><TabsContent value="history">{profile.case === null ? <p className="p-4 text-sm text-muted-foreground">{messages.noHistory}</p> : <SourceHistory caseId={profile.case.caseId} locale={locale} />}</TabsContent><TabsContent className="p-4" value="source"><Alert><FileJsonIcon /><AlertTitle>{messages.externalHistory}</AlertTitle><AlertDescription>{profile.source.format} · SHA-256 {profile.source.hash}</AlertDescription></Alert>{profile.case === null ? null : <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3"><div><dt className="text-muted-foreground">Case ID</dt><dd className="mt-1 break-all font-mono text-xs">{profile.case.caseId}</dd></div><div><dt className="text-muted-foreground">{messages.caseType}</dt><dd className="mt-1">{caseTypeLabel(profile.case.caseType, locale)}</dd></div><div><dt className="text-muted-foreground">Status</dt><dd className="mt-1">{profile.case.status}</dd></div></dl>}</TabsContent></Tabs></div>
+  return (
+    <div className="min-w-0 bg-background">
+      <header className="border-b px-4 py-4">
+        <div className="flex flex-wrap items-start gap-4">
+          <ProfileAvatar className="size-16" name={profile.identity.displayName} profileId={profile.profileId} />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-xl font-semibold">{profile.identity.displayName}</h3>
+              <Badge variant="outline">{profile.gender}</Badge>
+              <span className="text-sm text-muted-foreground">{age(profile.birthDate, referenceDate)} 岁（{profile.birthDate}）</span>
+              {profile.case === null
+                ? <Badge variant="warning">{messages.noCase}</Badge>
+                : <Badge variant="info">{caseTypeLabel(profile.case.caseType, locale)}</Badge>}
+            </div>
+            <div className="mt-3 grid gap-x-6 gap-y-1 text-sm text-muted-foreground sm:grid-cols-2 xl:grid-cols-4">
+              <span>{messages.mrn}：<strong className="font-medium text-foreground">{profile.identity.mrn}</strong></span>
+              <span>{messages.phone}：<strong className="font-medium text-foreground">{displayPhone}</strong></span>
+              <span>{messages.source}：<strong className="font-medium text-foreground">{profile.source.providerId === 'synthea' ? 'Synthea R4' : 'ClinMesh'}</strong></span>
+              <span>{messages.batch}：<strong className="font-medium text-foreground">{profile.source.batchName}</strong></span>
+            </div>
+          </div>
+          <Button aria-label={messages.editProfile} onClick={onEdit} size="icon" title={messages.editProfile} variant="outline"><PencilIcon /></Button>
+        </div>
+      </header>
+      <div className="grid border-b sm:grid-cols-2 xl:grid-cols-4">
+        <section className="min-w-0 border-b p-4 sm:border-r xl:border-b-0"><h4 className="text-sm font-semibold">{messages.identity}</h4><p className="mt-2 text-sm">{profile.identity.nationalId}</p><p className="mt-1 text-xs text-muted-foreground">{profile.gender} · {profile.birthDate}</p></section>
+        <section className="min-w-0 border-b p-4 sm:border-r xl:border-b-0"><h4 className="text-sm font-semibold">{messages.address}</h4><p className="mt-2 break-words text-sm">{profile.identity.address}</p></section>
+        <section className="min-w-0 border-b p-4 sm:border-r xl:border-b-0"><h4 className="text-sm font-semibold">{messages.contact}</h4><p className="mt-2 text-sm">{displayPhone}</p><p className="mt-1 break-words text-xs text-muted-foreground">{profile.identity.email}</p></section>
+        <section className="min-w-0 p-4"><h4 className="text-sm font-semibold">{messages.insurance}</h4><p className="mt-2 text-sm">{profile.identity.insuranceDisplay}</p></section>
+      </div>
+      <Tabs defaultValue="history">
+        <TabsList className="mx-4 mt-3" variant="line">
+          <TabsTrigger value="history">{messages.history}{profile.case === null ? '' : ` ${profile.case.visibleHistoryCount}`}</TabsTrigger>
+          {profile.case === null ? null : <TabsTrigger value="brief">{messages.brief}</TabsTrigger>}
+          <TabsTrigger value="source">{messages.source}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="history">
+          {profile.case === null
+            ? <p className="p-4 text-sm text-muted-foreground">{messages.noHistory}</p>
+            : <SourceHistory caseId={profile.case.caseId} locale={locale} />}
+        </TabsContent>
+        {profile.case === null ? null : (
+          <TabsContent value="brief">
+            <PatientBriefPanel locale={locale} profileId={profile.profileId} syntheticCase={profile.case} />
+          </TabsContent>
+        )}
+        <TabsContent className="p-4" value="source">
+          <Alert><FileJsonIcon /><AlertTitle>{messages.externalHistory}</AlertTitle><AlertDescription>{profile.source.format} · SHA-256 {profile.source.hash}</AlertDescription></Alert>
+          {profile.case === null ? null : (
+            <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
+              <div><dt className="text-muted-foreground">Case ID</dt><dd className="mt-1 break-all font-mono text-xs">{profile.case.caseId}</dd></div>
+              <div><dt className="text-muted-foreground">{messages.caseType}</dt><dd className="mt-1">{caseTypeLabel(profile.case.caseType, locale)}</dd></div>
+              <div><dt className="text-muted-foreground">Status</dt><dd className="mt-1">{profile.case.status}</dd></div>
+            </dl>
+          )}
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
 }
 
 function GenerationSheet({ error, locale, onGenerate, onOpenChange, open, pending, providers }: {

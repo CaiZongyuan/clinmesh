@@ -967,6 +967,68 @@ export const syntheticPatientProfileDetailSchema = z.object({
   workspaceId: z.string().min(1),
 }).strict()
 
+export const patientBriefContentSchema = z.object({
+  chiefComplaint: z.string().trim().min(1).max(500),
+  knownHistorySummary: z.string().trim().min(1).max(2_000),
+  openingStatement: z.string().trim().min(1).max(1_000),
+  symptomTopics: z.array(z.object({
+    answerPoints: z.array(z.string().trim().min(1).max(500)).min(1).max(20),
+    id: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
+    name: z.string().trim().min(1).max(200),
+  }).strict()).min(1).max(20),
+}).strict().superRefine((brief, context) => {
+  const ids = new Set<string>()
+  brief.symptomTopics.forEach((topic, index) => {
+    if (ids.has(topic.id)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Patient Brief topic IDs must be unique',
+        path: ['symptomTopics', index, 'id'],
+      })
+    }
+    ids.add(topic.id)
+  })
+})
+
+export const patientBriefRevisionSchema = z.object({
+  caseId: z.string().min(1).max(128),
+  content: patientBriefContentSchema,
+  createdAt: z.iso.datetime({ offset: true }),
+  inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  model: z.string().min(1).max(256),
+  outputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  promptHash: z.string().regex(/^[a-f0-9]{64}$/),
+  promptVersion: z.string().min(1).max(128),
+  revision: z.number().int().positive(),
+  workspaceId: z.string().min(1),
+}).strict()
+
+export const patientBriefRevisionListSchema = z.object({
+  activeRevision: z.number().int().positive().nullable(),
+  items: z.array(patientBriefRevisionSchema),
+}).strict()
+
+export const patientBriefJobSchema = z.object({
+  caseId: z.string().min(1).max(128),
+  createdAt: z.iso.datetime({ offset: true }),
+  error: z.object({
+    code: z.string().min(1).max(128),
+    message: z.string().min(1).max(1_000),
+  }).strict().nullable(),
+  finishedAt: z.iso.datetime({ offset: true }).nullable(),
+  jobId: z.string().min(1).max(128),
+  resultRevision: z.number().int().positive().nullable(),
+  startedAt: z.iso.datetime({ offset: true }).nullable(),
+  status: z.enum(['queued', 'running', 'succeeded', 'failed']),
+  updatedAt: z.iso.datetime({ offset: true }),
+  workspaceId: z.string().min(1),
+}).strict()
+
+export const selectPatientBriefRevisionRequestSchema = z.object({
+  briefRevision: z.number().int().positive(),
+  expectedCaseRevision: z.number().int().positive(),
+}).strict()
+
 export const syntheticPatientMappingCatalogSchema = z.object({
   items: z.array(z.object({
     catalogItemId: z.string().min(1).max(128),
@@ -1047,6 +1109,9 @@ export const startSyntheticPatientVisitsResultSchema = z.object({
 }).strict()
 
 export type ScenarioDataset = z.infer<typeof scenarioDatasetSchema>
+export type PatientBriefContent = z.infer<typeof patientBriefContentSchema>
+export type PatientBriefJob = z.infer<typeof patientBriefJobSchema>
+export type PatientBriefRevision = z.infer<typeof patientBriefRevisionSchema>
 export type ScenarioDatasetList = z.infer<typeof scenarioDatasetListSchema>
 export type ScenarioDatasetContent = z.infer<typeof scenarioDatasetContentSchema>
 export type ScenarioCatalogCompilationReport = z.infer<

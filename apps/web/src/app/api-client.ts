@@ -57,6 +57,8 @@ import {
   type SessionContext,
 } from '@clinmesh/contracts/his'
 import {
+  patientBriefJobSchema,
+  patientBriefRevisionListSchema,
   scenarioDatasetListSchema,
   scenarioDatasetSchema,
   scenarioGenerationJobSchema,
@@ -66,6 +68,7 @@ import {
   syntheticPatientProfileDetailSchema,
   syntheticSourceHistoryListSchema,
   syntheticSourceResourceDetailSchema,
+  syntheticCaseInstanceSchema,
   syntheticPatientMappingCatalogSchema,
   syntheticPatientProfileListSchema,
   type ScenarioGenerationRequest,
@@ -326,6 +329,47 @@ export function getSyntheticCaseHistoryDetail(
     `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/history/detail?${parameters.toString()}`,
     syntheticSourceResourceDetailSchema,
     signal,
+  )
+}
+
+export function enqueuePatientBrief(caseId: string, idempotencyKey: string) {
+  return apiMutation(
+    `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-brief-jobs`,
+    commandResponseSchema(patientBriefJobSchema),
+    {},
+    { idempotencyKey },
+  )
+}
+
+export function getPatientBriefJob(jobId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/sim/v1/patient-brief-jobs/${encodeURIComponent(jobId)}`,
+    patientBriefJobSchema,
+    signal,
+  )
+}
+
+export function getPatientBriefRevisions(caseId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-brief-revisions`,
+    patientBriefRevisionListSchema,
+    signal,
+  )
+}
+
+export function selectPatientBriefRevision(input: {
+  briefRevision: number
+  caseId: string
+  expectedCaseRevision: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/sim/v1/synthetic-cases/${encodeURIComponent(input.caseId)}/patient-brief-revisions/active`,
+    commandResponseSchema(syntheticCaseInstanceSchema),
+    {
+      briefRevision: input.briefRevision,
+      expectedCaseRevision: input.expectedCaseRevision,
+    },
+    { idempotencyKey, method: 'PUT' },
   )
 }
 

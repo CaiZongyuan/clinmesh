@@ -4,6 +4,7 @@ import { CommandExecutor, type ActorContext } from './application/command-execut
 import { ScenarioService } from './application/scenario-service.ts'
 import { ReferenceDataService } from './application/reference-data-service.ts'
 import { ScenarioDataService } from './application/scenario-data/scenario-data-service.ts'
+import { PatientBriefService } from './application/patient-brief-service.ts'
 import { UnavailableScenarioGenerationProvider } from './application/scenario-data/provider.ts'
 import { WorkflowService } from './application/workflow-service.ts'
 import { OutboxDispatcher } from './application/outbox-dispatcher.ts'
@@ -20,6 +21,11 @@ import { ScenarioDatasetRepository } from './infrastructure/sqlite/scenario-data
 import { ScenarioGenerationJobRepository } from './infrastructure/sqlite/scenario-generation-job-repository.ts'
 import { SyntheticPatientProfileRepository } from './infrastructure/sqlite/synthetic-patient-profile-repository.ts'
 import { SyntheticCaseRepository } from './infrastructure/sqlite/synthetic-case-repository.ts'
+import { PatientBriefRepository } from './infrastructure/sqlite/patient-brief-repository.ts'
+import {
+  OpenAIChatCompletionsClient,
+  type JsonChatCompletionsProvider,
+} from './infrastructure/ai/openai-chat-completions.ts'
 import { SqliteReferenceDataRepository } from './infrastructure/sqlite/reference-data-repository.ts'
 import {
   openReferenceDatabase,
@@ -54,6 +60,14 @@ function lisActorContext(event: {
 
 export interface CreateClinMeshRuntimeOptions {
   activeReferenceReleaseId?: string
+  ai?: {
+    apiKey: string
+    baseUrl: string
+    briefModel: string
+    investigationModel: string
+    maxResponseBytes: number
+    timeoutMs: number
+  }
   authBaseUrl: string
   authSecret: string
   autoDispatchIntervalMs?: number
@@ -61,6 +75,8 @@ export interface CreateClinMeshRuntimeOptions {
   databasePath: string
   demoPassword: string
   migrationMode: 'apply' | 'verify'
+  chatCompletionsProvider?: JsonChatCompletionsProvider
+  patientBriefModel?: string
   now?: () => Date
   performanceObserver?: SqlitePerformanceObserver
   referenceDatabasePath?: string
@@ -158,7 +174,19 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const generationJobs = new ScenarioGenerationJobRepository(database)
     const syntheticPatientProfiles = new SyntheticPatientProfileRepository(database)
     const syntheticCases = new SyntheticCaseRepository(database)
+    const patientBriefs = new PatientBriefRepository(database, syntheticCases)
+    const chatCompletions = options.chatCompletionsProvider
+      ?? (options.ai === undefined
+        ? undefined
+        : new OpenAIChatCompletionsClient({
+            apiKey: options.ai.apiKey,
+            baseUrl: options.ai.baseUrl,
+            maxResponseBytes: options.ai.maxResponseBytes,
+            timeoutMs: options.ai.timeoutMs,
+          }))
+    const patientBriefModel = options.patientBriefModel ?? options.ai?.briefModel
     generationJobs.requeueInterrupted(new Date().toISOString())
+    patientBriefs.requeueInterrupted(new Date().toISOString())
     const scenarioData = new ScenarioDataService({
       cases: syntheticCases,
       commands,
@@ -178,6 +206,14 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       repository: new ScenarioDatasetRepository(database),
       scenario,
       workflow,
+    })
+    const patientBrief = new PatientBriefService({
+      briefs: patientBriefs,
+      cases: syntheticCases,
+      commands,
+      ...(patientBriefModel === undefined ? {} : { model: patientBriefModel }),
+      profiles: syntheticPatientProfiles,
+      ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
     })
     scenario.ensureInitialEpoch({
       epoch: 'epoch-1',
@@ -257,6 +293,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     let closed = false
     let dispatchCycle: Promise<void> | undefined
     let generationCycle: Promise<void> | undefined
+    let patientBriefCycle: Promise<void> | undefined
     let closePromise: Promise<void> | undefined
     const generationAbort = new AbortController()
     const dispatchPending = (): Promise<void> => {
@@ -281,6 +318,16 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         })
       return generationCycle
     }
+    const dispatchPatientBriefJobs = (): Promise<void> => {
+      if (closed) return Promise.resolve()
+      if (patientBriefCycle !== undefined) return patientBriefCycle
+      patientBriefCycle = patientBrief.processNext(generationAbort.signal)
+        .then(() => undefined)
+        .finally(() => {
+          patientBriefCycle = undefined
+        })
+      return patientBriefCycle
+    }
     const dispatchTimer = options.autoDispatchIntervalMs === undefined
       ? undefined
       : setInterval(() => {
@@ -295,12 +342,20 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             console.error('ClinMesh Scenario generation dispatch cycle failed')
           })
         }, options.autoDispatchIntervalMs)
+    const patientBriefTimer = options.autoDispatchIntervalMs === undefined
+      ? undefined
+      : setInterval(() => {
+          void dispatchPatientBriefJobs().catch(() => {
+            console.error('ClinMesh Patient Brief dispatch cycle failed')
+          })
+        }, options.autoDispatchIntervalMs)
     const app = createApp({
       fhir: {
         repository: fhir,
         resolveContext: async request => (await identity.resolveSessionContext(request.headers)).actor,
       },
       identity,
+      patientBrief,
       referenceData,
       scenario,
       scenarioData,
@@ -314,9 +369,10 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         closed = true
         if (dispatchTimer !== undefined) clearInterval(dispatchTimer)
         if (generationTimer !== undefined) clearInterval(generationTimer)
+        if (patientBriefTimer !== undefined) clearInterval(patientBriefTimer)
         generationAbort.abort()
         closePromise = (async () => {
-          await Promise.all([dispatchCycle, generationCycle])
+          await Promise.all([dispatchCycle, generationCycle, patientBriefCycle])
           referenceDatabase?.close()
           referenceDatabase = undefined
           database.close()
@@ -326,9 +382,11 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       database,
       dispatchPending,
       dispatchScenarioGenerationJobs,
+      dispatchPatientBriefJobs,
       dispatcher,
       fhir,
       identity,
+      patientBrief,
       referenceData,
       scenario,
       scenarioData,

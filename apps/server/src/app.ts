@@ -26,6 +26,7 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
 import {
+  selectPatientBriefRevisionRequestSchema,
   scenarioGenerationRequestSchema,
   startSyntheticPatientVisitsRequestSchema,
   updateSyntheticPatientProfileRequestSchema,
@@ -44,6 +45,8 @@ import type { ScenarioService } from './application/scenario-service.ts'
 import { ScenarioError } from './application/scenario-service.ts'
 import type { ScenarioDataService } from './application/scenario-data/scenario-data-service.ts'
 import { ScenarioDataError } from './application/scenario-data/scenario-data-service.ts'
+import type { PatientBriefService } from './application/patient-brief-service.ts'
+import { PatientBriefError } from './application/patient-brief-service.ts'
 import type { WorkflowService } from './application/workflow-service.ts'
 import { WorkflowError } from './application/workflow-service.ts'
 import { createCapabilityStatement } from './fhir/capabilities.ts'
@@ -63,6 +66,7 @@ interface FhirRuntime {
 export interface CreateAppOptions {
   fhir?: FhirRuntime
   identity?: IdentityService
+  patientBrief?: PatientBriefService
   referenceData?: ReferenceDataService
   scenario?: ScenarioService
   scenarioData?: ScenarioDataService
@@ -91,6 +95,7 @@ function apiErrorResponse(
   }
   if (
     error instanceof IdentityError
+    || error instanceof PatientBriefError
     || error instanceof ReferenceDataError
     || error instanceof ScenarioDataError
     || error instanceof ScenarioError
@@ -577,6 +582,66 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         }))
       } catch (error) {
         return apiErrorResponse(context, error, 'The Scenario Dataset installation request is invalid')
+      }
+    })
+  }
+
+  if (options.identity !== undefined && options.patientBrief !== undefined) {
+    const identity = options.identity
+    const patientBrief = options.patientBrief
+    app.post('/api/sim/v1/synthetic-cases/:caseId/patient-brief-jobs', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        z.object({}).strict().parse(await context.req.json())
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const idempotencyKey = z.string().min(8).max(128).parse(
+          context.req.header('idempotency-key'),
+        )
+        return context.json(patientBrief.enqueue({
+          caseId: context.req.param('caseId'),
+          context: session.actor,
+          idempotencyKey,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error, 'The Patient Brief generation request is invalid')
+      }
+    })
+    app.get('/api/sim/v1/patient-brief-jobs/:jobId', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(patientBrief.getJob(session.actor, context.req.param('jobId')))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/sim/v1/synthetic-cases/:caseId/patient-brief-revisions', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(patientBrief.listRevisions(
+          session.actor,
+          context.req.param('caseId'),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.put('/api/sim/v1/synthetic-cases/:caseId/patient-brief-revisions/active', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = selectPatientBriefRevisionRequestSchema.parse(await context.req.json())
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const idempotencyKey = z.string().min(8).max(128).parse(
+          context.req.header('idempotency-key'),
+        )
+        return context.json(patientBrief.selectRevision({
+          briefRevision: body.briefRevision,
+          caseId: context.req.param('caseId'),
+          context: session.actor,
+          expectedCaseRevision: body.expectedCaseRevision,
+          idempotencyKey,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error, 'The Patient Brief revision selection is invalid')
       }
     })
   }

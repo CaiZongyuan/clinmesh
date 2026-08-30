@@ -336,6 +336,7 @@ function stubScenarioDataWorkspace(options: {
 } = {}) {
   let generated = false
   let activeVisit = false
+  let briefGenerated = false
   let jobReads = 0
   let dataset: ScenarioDataset = {
     content: {
@@ -802,6 +803,63 @@ function stubScenarioDataWorkspace(options: {
         },
         sourceKind: 'synthea-r4-external',
         sourceReference,
+      })
+    }
+    if (url.pathname === `/api/sim/v1/synthetic-cases/${caseId}/patient-brief-jobs`) {
+      expect(init?.method).toBe('POST')
+      expect(JSON.parse(String(init?.body))).toEqual({})
+      return Response.json(commandResponse({
+        caseId,
+        createdAt: '2026-08-30T08:00:00+08:00',
+        error: null,
+        finishedAt: null,
+        jobId: 'patient-brief-job-001',
+        resultRevision: null,
+        startedAt: null,
+        status: 'queued',
+        updatedAt: '2026-08-30T08:00:00+08:00',
+        workspaceId: 'workspace-demo',
+      }))
+    }
+    if (url.pathname === '/api/sim/v1/patient-brief-jobs/patient-brief-job-001') {
+      briefGenerated = true
+      return Response.json({
+        caseId,
+        createdAt: '2026-08-30T08:00:00+08:00',
+        error: null,
+        finishedAt: '2026-08-30T08:00:01+08:00',
+        jobId: 'patient-brief-job-001',
+        resultRevision: 1,
+        startedAt: '2026-08-30T08:00:00+08:00',
+        status: 'succeeded',
+        updatedAt: '2026-08-30T08:00:01+08:00',
+        workspaceId: 'workspace-demo',
+      })
+    }
+    if (url.pathname === `/api/sim/v1/synthetic-cases/${caseId}/patient-brief-revisions`) {
+      return Response.json({
+        activeRevision: briefGenerated ? 1 : null,
+        items: briefGenerated ? [{
+          caseId,
+          content: {
+            chiefComplaint: '反复头晕一周',
+            knownHistorySummary: '既往有高血压病史。',
+            openingStatement: '医生您好，我最近总是头晕。',
+            symptomTopics: [{
+              answerPoints: ['一周前开始。'],
+              id: 'dizziness-onset',
+              name: '头晕经过',
+            }],
+          },
+          createdAt: '2026-08-30T08:00:01+08:00',
+          inputHash: 'a'.repeat(64),
+          model: 'fake-brief-model',
+          outputHash: 'b'.repeat(64),
+          promptHash: 'c'.repeat(64),
+          promptVersion: 'patient-brief-v1',
+          revision: 1,
+          workspaceId: 'workspace-demo',
+        }] : [],
       })
     }
     if (url.pathname === `/api/sim/v1/synthetic-cases/${caseId}/history`) {
@@ -1844,6 +1902,22 @@ describe('role workspaces', () => {
 
     expect(await screen.findByText(/"resourceType": "Condition"/)).toBeTruthy()
     expect(document.body.textContent).not.toContain('index-condition')
+  })
+
+  it('generates a Patient Brief explicitly from the synthetic patient library', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ profileAvailable: true, syntheaAvailable: true })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('tab', { name: '患者梗概' }))
+    expect(await screen.findByText('尚未生成患者梗概')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '生成患者梗概' }))
+
+    expect(await screen.findByText('反复头晕一周')).toBeTruthy()
+    expect(screen.getByText('医生您好，我最近总是头晕。')).toBeTruthy()
+    expect(screen.getByText('Active')).toBeTruthy()
   })
 
   it('submits a hypertension-only Synthea population while keeping one module selected', async () => {

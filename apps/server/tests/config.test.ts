@@ -69,6 +69,45 @@ describe('Node.js server configuration', () => {
     })).toThrow()
   })
 
+  it('requires one complete bounded server-side AI configuration', () => {
+    const requiredEnvironment = {
+      CLINMESH_AUTH_SECRET: 'auth-secret-with-at-least-32-characters',
+      CLINMESH_CURSOR_SECRET: 'cursor-secret-with-at-least-32-characters',
+      CLINMESH_DATABASE_PATH: '/var/lib/clinmesh/clinmesh.sqlite',
+      CLINMESH_DEMO_PASSWORD: 'Synthetic-password-2026!',
+    }
+    expect(readServerConfig({
+      ...requiredEnvironment,
+      CLINMESH_AI_API_KEY: 'synthetic-test-key',
+      CLINMESH_AI_BASE_URL: 'https://openrouter.example/api/v1',
+      CLINMESH_AI_BRIEF_MODEL: 'brief-model',
+      CLINMESH_AI_INVESTIGATION_MODEL: 'investigation-model',
+      CLINMESH_AI_MAX_RESPONSE_BYTES: '2048',
+      CLINMESH_AI_TIMEOUT_MS: '5000',
+    })).toMatchObject({
+      ai: {
+        apiKey: 'synthetic-test-key',
+        baseUrl: 'https://openrouter.example/api/v1',
+        briefModel: 'brief-model',
+        investigationModel: 'investigation-model',
+        maxResponseBytes: 2048,
+        timeoutMs: 5000,
+      },
+    })
+    expect(() => readServerConfig({
+      ...requiredEnvironment,
+      CLINMESH_AI_BASE_URL: 'https://openrouter.example/api/v1',
+    })).toThrow()
+    expect(() => readServerConfig({
+      ...requiredEnvironment,
+      CLINMESH_AI_API_KEY: 'synthetic-test-key',
+      CLINMESH_AI_BASE_URL: 'https://openrouter.example/api/v1',
+      CLINMESH_AI_BRIEF_MODEL: 'brief-model',
+      CLINMESH_AI_INVESTIGATION_MODEL: 'investigation-model',
+      CLINMESH_AI_TIMEOUT_MS: '10',
+    })).toThrow()
+  })
+
   it('rejects an invalid listener port before startup', () => {
     expect(() => readServerConfig({ CLINMESH_PORT: 'invalid' })).toThrow()
   })
