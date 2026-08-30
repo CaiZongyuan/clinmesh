@@ -2,17 +2,11 @@ ALTER TABLE command_receipt ADD COLUMN request_id TEXT;
 ALTER TABLE command_receipt ADD COLUMN audit_id TEXT;
 ALTER TABLE command_receipt ADD COLUMN trace_id TEXT;
 
-CREATE UNIQUE INDEX command_receipt_request_idx
-  ON command_receipt (workspace_id, epoch, request_id)
-  WHERE request_id IS NOT NULL;
-
-CREATE UNIQUE INDEX command_receipt_audit_idx
-  ON command_receipt (workspace_id, epoch, audit_id)
-  WHERE audit_id IS NOT NULL;
-
-CREATE UNIQUE INDEX command_receipt_trace_idx
-  ON command_receipt (workspace_id, epoch, trace_id)
-  WHERE trace_id IS NOT NULL;
+CREATE UNIQUE INDEX command_receipt_execution_link_idx
+  ON command_receipt (
+    workspace_id, epoch, audit_id, request_id, trace_id
+  )
+  WHERE audit_id IS NOT NULL AND request_id IS NOT NULL AND trace_id IS NOT NULL;
 
 ALTER TABLE action_trace ADD COLUMN request_id TEXT;
 
