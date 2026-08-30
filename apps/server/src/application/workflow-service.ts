@@ -10,6 +10,7 @@ import {
   scenarioHospitalServiceCatalogItemSchema,
   startSyntheticCaseResultSchema,
   type ScenarioDatasetContent,
+  type InvestigationResultContent,
   type PatientBriefRevision,
   startSyntheticPatientVisitsResultSchema,
   type SyntheticCaseInstance,
@@ -414,8 +415,11 @@ const laboratoryRequestRowSchema = z.object({
   catalog_item_id: laboratoryRequestSchema.shape.catalogItemId,
   diagnostic_report_id: z.string().min(1).nullable(),
   execution_task_id: z.string().min(1),
+  generation_error_code: z.string().min(1).nullable(),
+  generation_error_message: z.string().min(1).nullable(),
   indication_code: z.string().min(1),
   reference_json: z.string().min(1),
+  result_snapshot_id: z.string().min(1).nullable(),
   request_id: z.string().min(1),
   service_request_id: z.string().min(1),
   status: laboratoryRequestSchema.shape.status,
@@ -431,7 +435,7 @@ const laboratoryRequestCommandRowSchema = laboratoryRequestRowSchema.extend({
 
 const laboratoryRequestSystemResponseSchema = z.object({
   requestId: z.string().min(1),
-  status: z.enum(['accepted', 'cancelled', 'in-progress']),
+  status: z.enum(['accepted', 'cancelled', 'generation-failed', 'in-progress']),
 }).strict()
 
 const laboratoryReportSystemResponseSchema = z.object({
@@ -7210,13 +7214,21 @@ export class WorkflowService {
     context: ActorContext
     eventId: string
     requestId: string
+    resultSnapshot?: {
+      content: InvestigationResultContent
+      snapshotId: string
+      source: 'investigation-agent' | 'synthea-exact'
+    }
   }) {
     return this.#commands.execute({
       context: input.context,
       dataSchema: laboratoryReportSystemResponseSchema,
       expectedVersions: {},
       idempotencyKey: input.eventId,
-      input: { requestId: input.requestId },
+      input: {
+        requestId: input.requestId,
+        resultSnapshotId: input.resultSnapshot?.snapshotId,
+      },
       operation: 'laboratory-request.report',
     }, (transaction) => {
       this.#assertRole(input.context, ['lis-system'])
@@ -7241,7 +7253,9 @@ export class WorkflowService {
           'Only an in-progress laboratory request can be reported',
         )
       }
-      const scenarioContent = this.#activeScenarioDataset(input.context)
+      const scenarioContent = input.resultSnapshot === undefined
+        ? this.#activeScenarioDataset(input.context)
+        : undefined
       const repeatIndex = scenarioContent === undefined
         ? 0
         : countRowSchema.parse(this.#database.driver.prepare(`
@@ -7268,9 +7282,12 @@ export class WorkflowService {
             }),
           }
       const scenarioResolution = scenarioResult?.resolution
-      const laboratoryResultFact = scenarioResult === undefined
-        ? this.#legacyLaboratoryResultFact(input.context, request.catalog_item_id)
-        : scenarioLaboratoryResultFact(scenarioResult.content, scenarioResult.resolution)
+      const laboratoryResultFact = input.resultSnapshot?.content ?? (
+        scenarioResult === undefined
+          ? this.#legacyLaboratoryResultFact(input.context, request.catalog_item_id)
+          : scenarioLaboratoryResultFact(scenarioResult.content, scenarioResult.resolution)
+      )
+      const requestedConcept = referenceConceptSnapshotSchema.parse(JSON.parse(request.reference_json))
       const serviceRequest = transaction.fhir.read(
         input.context,
         'ServiceRequest',
@@ -7311,9 +7328,12 @@ export class WorkflowService {
         const resultCoding = scenarioCatalogItem?.coding ?? {
           code: result.code,
           display: result.display,
-          system: scenarioResult === undefined
-            ? 'http://loinc.org'
-            : 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/investigation',
+          system: input.resultSnapshot === undefined
+            ? scenarioResult === undefined
+              ? 'http://loinc.org'
+              : 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/investigation'
+            : requestedConcept.system,
+          ...(input.resultSnapshot === undefined ? {} : { version: requestedConcept.version }),
         }
         const observationId = `obs-${result.code}-${request.service_request_id}`
         const interpretationCode = result.interpretation === 'normal'
@@ -7385,8 +7405,10 @@ export class WorkflowService {
           }],
         })
       })
-      const reportName = scenarioResolution === undefined
-        ? request.catalog_item_id === 'lab-cbc' ? '血常规报告' : 'C 反应蛋白报告'
+      const reportName = input.resultSnapshot !== undefined
+        ? `${requestedConcept.display}报告`
+        : scenarioResolution === undefined
+          ? request.catalog_item_id === 'lab-cbc' ? '血常规报告' : 'C 反应蛋白报告'
         : `${scenarioResolution.name}报告`
       const report = transaction.fhir.create(input.context, {
         resourceType: 'DiagnosticReport',
@@ -7418,9 +7440,9 @@ export class WorkflowService {
         }),
         code: {
           coding: [{
-            code: scenarioContent?.catalog.investigations.find(
+            code: input.resultSnapshot === undefined ? scenarioContent?.catalog.investigations.find(
               item => item.id === request.catalog_item_id,
-            )?.code ?? (request.catalog_item_id === 'lab-cbc' ? 'CBC' : 'CRP'),
+            )?.code ?? (request.catalog_item_id === 'lab-cbc' ? 'CBC' : 'CRP') : requestedConcept.code,
             display: reportName,
             system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-service',
           }],
@@ -7463,18 +7485,23 @@ export class WorkflowService {
           { reference: `Task/${request.execution_task_id}` },
         ],
         recorded: now,
-        activity: { text: 'Laboratory result generation and report issuance' },
+        activity: {
+          text: input.resultSnapshot === undefined
+            ? 'Laboratory result generation and report issuance'
+            : `Laboratory report issuance from ${input.resultSnapshot.source}`,
+        },
         agent: provenanceAgents(input.context, 'Laboratory report issuer'),
       })
       const update = this.#database.driver.prepare(`
         UPDATE laboratory_request
         SET status = 'reported', version = version + 1, reported_at = ?,
-          diagnostic_report_id = ?
+          diagnostic_report_id = ?, result_snapshot_id = ?
         WHERE workspace_id = ? AND epoch = ? AND request_id = ?
           AND status = 'in-progress' AND version = ?
       `).run(
         now,
         diagnosticReportId,
+        input.resultSnapshot?.snapshotId ?? null,
         input.context.workspaceId,
         input.context.epoch,
         request.request_id,
@@ -7504,6 +7531,155 @@ export class WorkflowService {
           reference: `${resource.resourceType}/${resource.id}`,
           versionId: resource.meta?.versionId ?? '1',
         })),
+      }
+    })
+  }
+
+  failLaboratoryResultGeneration(input: {
+    context: ActorContext
+    error: { code: string; message: string }
+    eventId: string
+    requestId: string
+  }) {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: laboratoryRequestSystemResponseSchema,
+      expectedVersions: {},
+      idempotencyKey: input.eventId,
+      input: { errorCode: input.error.code, requestId: input.requestId },
+      operation: 'laboratory-request.fail-generation',
+    }, transaction => {
+      this.#assertRole(input.context, ['lis-system'])
+      const request = this.#laboratoryRequest(input.context, input.requestId)
+      if (request === undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request was not found')
+      }
+      if (request.status === 'generation-failed') {
+        return {
+          data: { requestId: request.request_id, status: 'generation-failed' as const },
+          effects: [],
+        }
+      }
+      if (request.status !== 'in-progress') {
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          'Only an in-progress laboratory request can fail generation',
+        )
+      }
+      const task = transaction.fhir.read(input.context, 'Task', request.execution_task_id)
+      const now = this.#virtualTime(input.context)
+      const failedTask = transaction.fhir.update(input.context, {
+        ...task,
+        status: 'failed',
+        businessStatus: { text: 'Investigation result generation failed' },
+        statusReason: { text: input.error.message },
+        lastModified: now,
+      }, task.meta?.versionId ?? '3')
+      const update = this.#database.driver.prepare(`
+        UPDATE laboratory_request
+        SET status = 'generation-failed', version = version + 1,
+          generation_error_code = ?, generation_error_message = ?
+        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+          AND status = 'in-progress' AND version = ?
+      `).run(
+        input.error.code,
+        input.error.message,
+        input.context.workspaceId,
+        input.context.epoch,
+        request.request_id,
+        request.version,
+      )
+      if (update.changes !== 1) {
+        throw new WorkflowError(
+          'LABORATORY_REQUEST_VERSION_CONFLICT',
+          'The laboratory request version has changed',
+        )
+      }
+      return {
+        data: { requestId: request.request_id, status: 'generation-failed' as const },
+        effects: [{
+          kind: 'updated' as const,
+          reference: `Task/${failedTask.id}`,
+          versionId: failedTask.meta?.versionId ?? '4',
+        }],
+      }
+    })
+  }
+
+  retryLaboratoryResultGeneration(input: {
+    context: ActorContext
+    expectedRequestVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+    requestId: string
+  }) {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: laboratoryRequestActionResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: {
+        expectedRequestVersion: input.expectedRequestVersion,
+        requestId: input.requestId,
+      },
+      operation: 'laboratory-request.retry-generation',
+    }, transaction => {
+      this.#assertRole(input.context, ['outpatient-doctor'])
+      const request = this.#laboratoryRequest(input.context, input.requestId)
+      if (request === undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request was not found')
+      }
+      if (
+        request.authored_by !== (input.context.practitionerId ?? input.context.actorId)
+        || request.status !== 'generation-failed'
+        || request.version !== input.expectedRequestVersion
+      ) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory generation cannot be retried')
+      }
+      this.#assertExpectedVersions(input.expectedVersions, [`Task/${request.execution_task_id}`])
+      const task = transaction.fhir.read(input.context, 'Task', request.execution_task_id)
+      const now = this.#virtualTime(input.context)
+      const retryTask = { ...task }
+      Reflect.deleteProperty(retryTask, 'statusReason')
+      const retriedTask = transaction.fhir.update(input.context, {
+        ...retryTask,
+        status: 'in-progress',
+        businessStatus: { text: 'Investigation result generation retrying' },
+        lastModified: now,
+      }, task.meta?.versionId ?? '4')
+      const update = this.#database.driver.prepare(`
+        UPDATE laboratory_request
+        SET status = 'in-progress', version = version + 1,
+          generation_error_code = NULL, generation_error_message = NULL
+        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+          AND status = 'generation-failed' AND version = ?
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        request.request_id,
+        request.version,
+      )
+      if (update.changes !== 1) {
+        throw new WorkflowError(
+          'LABORATORY_REQUEST_VERSION_CONFLICT',
+          'The laboratory request version has changed',
+        )
+      }
+      transaction.enqueue({
+        dedupKey: `laboratory-request:${request.request_id}:report:retry:${request.version + 1}`,
+        kind: 'laboratory.report-request',
+        payload: { requestId: request.request_id },
+      })
+      const projected = this.#laboratoryRequests(input.context, request.case_id)
+        .find(item => item.id === request.request_id)
+      if (projected === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request was not found')
+      return {
+        data: { request: projected },
+        effects: [{
+          kind: 'updated' as const,
+          reference: `Task/${retriedTask.id}`,
+          versionId: retriedTask.meta?.versionId ?? '5',
+        }],
       }
     })
   }
@@ -10078,7 +10254,9 @@ export class WorkflowService {
     const requests = z.array(laboratoryRequestRowSchema).parse(
       this.#database.driver.prepare(`
         SELECT request_id, catalog_item_id, indication_code, service_request_id,
-          execution_task_id, diagnostic_report_id, reference_json, status, version
+          execution_task_id, diagnostic_report_id, reference_json,
+          result_snapshot_id, generation_error_code, generation_error_message,
+          status, version
         FROM laboratory_request
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
         ORDER BY authored_at, request_id
@@ -10102,6 +10280,14 @@ export class WorkflowService {
         catalogItemId: request.catalog_item_id,
         id: request.request_id,
         indicationCode: request.indication_code,
+        ...(request.generation_error_code === null || request.generation_error_message === null
+          ? {}
+          : {
+              generationError: {
+                code: request.generation_error_code,
+                message: request.generation_error_message,
+              },
+            }),
         previousReports: reportVersions.slice(0, -1),
         referenceConcept: referenceConceptSnapshotSchema.parse(JSON.parse(request.reference_json)),
         ...(reportVersions.length === 0 ? {} : { report: reportVersions.at(-1) }),
@@ -10699,6 +10885,9 @@ export class WorkflowService {
         SELECT laboratory_request.request_id, laboratory_request.case_id,
           laboratory_request.catalog_item_id, laboratory_request.indication_code,
           laboratory_request.reference_json,
+          laboratory_request.result_snapshot_id,
+          laboratory_request.generation_error_code,
+          laboratory_request.generation_error_message,
           laboratory_request.service_request_id, laboratory_request.execution_task_id,
           laboratory_request.diagnostic_report_id, laboratory_request.status,
           laboratory_request.version, laboratory_request.authored_by,

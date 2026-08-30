@@ -156,13 +156,17 @@ const loincRowSchema = z.object({
 }).passthrough()
 
 const laboratoryRowSchema = z.object({
+  category: z.enum(['chemistry', 'hematology', 'vital-sign']),
   code: z.string().regex(/^\d{1,5}-\d$/),
   display_zh: z.string().min(1).max(1_000),
+  result_type: z.enum(['panel', 'quantity']),
   source_row: z.number().int().positive(),
   source_version: z.string().min(1).max(256),
   status: z.enum(['active', 'inactive']),
   system: z.literal('http://loinc.org'),
   terminology_version: z.string().min(1).max(256),
+  specimen: z.enum(['blood', 'body']),
+  ucum_unit: z.string().min(1).max(128).nullable(),
 }).passthrough()
 
 function hashFile(path: string): { sha256: string; sizeBytes: number } {
@@ -292,7 +296,8 @@ function laboratoryArtifact(
   assertTableShape(database, 'laboratory_concept', laboratoryColumns)
   const concepts = []
   for (const value of database.prepare(`
-    SELECT code, system, terminology_version, display_zh, status,
+    SELECT code, system, terminology_version, display_zh, category, specimen,
+      result_type, ucum_unit, status,
       source_row, source_version
     FROM laboratory_concept ORDER BY code
   `).iterate()) {
@@ -303,6 +308,20 @@ function laboratoryArtifact(
       display: row.display_zh,
       domain: 'laboratory' as const,
       id: `laboratory-cn:${releaseId}:${row.code}`,
+      laboratory: {
+        category: row.category,
+        resultType: row.result_type,
+        specimen: row.specimen,
+        ...(row.ucum_unit === null
+          ? {}
+          : {
+              unit: {
+                code: row.ucum_unit,
+                display: row.ucum_unit,
+                system: 'http://unitsofmeasure.org' as const,
+              },
+            }),
+      },
       sourceLocator: `cn-health:${releaseId}:laboratory:${row.source_row}`,
       status: row.status,
       system: row.system,

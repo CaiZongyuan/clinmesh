@@ -15,6 +15,7 @@ import {
   orderHospitalServiceRequestSchema,
   previewClinicalDocumentSignRequestSchema,
   reviseClinicalDocumentRequestSchema,
+  retryLaboratoryResultGenerationRequestSchema,
   saveClinicalDocumentDraftRequestSchema,
   saveDiagnosisDraftRequestSchema,
   saveLaboratoryRequestDraftRequestSchema,
@@ -1363,6 +1364,21 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           expectedVersions: body.expectedVersions,
           idempotencyKey: idempotencyKey(context),
           reasonCode: body.input.reasonCode,
+          requestId: context.req.param('requestId'),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/laboratory-requests/:requestId/actions/retry-generation', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = retryLaboratoryResultGenerationRequestSchema.parse(await context.req.json())
+        return context.json(workflow.retryLaboratoryResultGeneration({
+          context: await actor(context),
+          expectedRequestVersion: body.input.expectedRequestVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
           requestId: context.req.param('requestId'),
         }))
       } catch (error) {

@@ -6,6 +6,10 @@ import { ReferenceDataService } from './application/reference-data-service.ts'
 import { ScenarioDataService } from './application/scenario-data/scenario-data-service.ts'
 import { PatientBriefService } from './application/patient-brief-service.ts'
 import { SyntheticCaseVisitService } from './application/synthetic-case-visit-service.ts'
+import {
+  InvestigationService,
+  investigationFailure,
+} from './application/investigation-service.ts'
 import { UnavailableScenarioGenerationProvider } from './application/scenario-data/provider.ts'
 import { WorkflowService } from './application/workflow-service.ts'
 import { OutboxDispatcher } from './application/outbox-dispatcher.ts'
@@ -23,6 +27,7 @@ import { ScenarioGenerationJobRepository } from './infrastructure/sqlite/scenari
 import { SyntheticPatientProfileRepository } from './infrastructure/sqlite/synthetic-patient-profile-repository.ts'
 import { SyntheticCaseRepository } from './infrastructure/sqlite/synthetic-case-repository.ts'
 import { PatientBriefRepository } from './infrastructure/sqlite/patient-brief-repository.ts'
+import { InvestigationResultRepository } from './infrastructure/sqlite/investigation-result-repository.ts'
 import {
   OpenAIChatCompletionsClient,
   type JsonChatCompletionsProvider,
@@ -77,6 +82,7 @@ export interface CreateClinMeshRuntimeOptions {
   demoPassword: string
   migrationMode: 'apply' | 'verify'
   chatCompletionsProvider?: JsonChatCompletionsProvider
+  investigationModel?: string
   patientBriefModel?: string
   now?: () => Date
   performanceObserver?: SqlitePerformanceObserver
@@ -176,6 +182,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const syntheticPatientProfiles = new SyntheticPatientProfileRepository(database)
     const syntheticCases = new SyntheticCaseRepository(database)
     const patientBriefs = new PatientBriefRepository(database, syntheticCases)
+    const investigationResults = new InvestigationResultRepository(database)
     const chatCompletions = options.chatCompletionsProvider
       ?? (options.ai === undefined
         ? undefined
@@ -186,6 +193,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             timeoutMs: options.ai.timeoutMs,
           }))
     const patientBriefModel = options.patientBriefModel ?? options.ai?.briefModel
+    const investigationModel = options.investigationModel ?? options.ai?.investigationModel
     generationJobs.requeueInterrupted(new Date().toISOString())
     patientBriefs.requeueInterrupted(new Date().toISOString())
     const scenarioData = new ScenarioDataService({
@@ -221,6 +229,14 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       cases: syntheticCases,
       profiles: syntheticPatientProfiles,
       workflow,
+    })
+    const investigation = new InvestigationService({
+      cases: syntheticCases,
+      database,
+      ...(investigationModel === undefined ? {} : { model: investigationModel }),
+      profiles: syntheticPatientProfiles,
+      ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+      results: investigationResults,
     })
     scenario.ensureInitialEpoch({
       epoch: 'epoch-1',
@@ -271,11 +287,35 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         },
         'laboratory.report-request': async event => {
           const payload = laboratoryRequestPayloadSchema.parse(event.payload)
-          workflow.reportLaboratoryRequest({
-            context: lisActorContext(event),
-            eventId: event.eventId,
-            requestId: payload.requestId,
-          })
+          const context = lisActorContext(event)
+          try {
+            const snapshot = await investigation.resolveForRequest(
+              event.workspaceId,
+              event.epoch,
+              payload.requestId,
+            )
+            workflow.reportLaboratoryRequest({
+              context,
+              eventId: event.eventId,
+              requestId: payload.requestId,
+              ...(snapshot === undefined
+                ? {}
+                : {
+                    resultSnapshot: {
+                      content: snapshot.content,
+                      snapshotId: snapshot.snapshotId,
+                      source: snapshot.source,
+                    },
+                  }),
+            })
+          } catch (error) {
+            workflow.failLaboratoryResultGeneration({
+              context,
+              error: investigationFailure(error),
+              eventId: event.eventId,
+              requestId: payload.requestId,
+            })
+          }
           return { status: 'completed' }
         },
         'lis.process-order': async event => {
@@ -395,6 +435,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       fhir,
       identity,
       caseVisits,
+      investigation,
       patientBrief,
       referenceData,
       scenario,

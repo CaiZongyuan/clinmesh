@@ -3055,7 +3055,7 @@ describe('role workspaces', () => {
     }
     let draftVersion = 1
     const request = (
-      status: 'accepted' | 'acknowledged' | 'cancelled' | 'in-progress' | 'issued' | 'reported',
+      status: 'accepted' | 'acknowledged' | 'cancelled' | 'generation-failed' | 'in-progress' | 'issued' | 'reported',
       index: number,
     ): LaboratoryRequest => ({
       catalogItemId: index % 2 === 0 ? 'lab-cbc' : 'lab-crp',
@@ -3066,8 +3066,8 @@ describe('role workspaces', () => {
       serviceRequestVersion: '1',
       status,
       taskId: `task-laboratory-${index}`,
-      taskVersion: status === 'issued' ? '1' : '2',
-      version: status === 'issued' ? 1 : 2,
+      taskVersion: status === 'issued' ? '1' : status === 'generation-failed' ? '4' : '2',
+      version: status === 'issued' ? 1 : status === 'generation-failed' ? 4 : 2,
     })
     const reportedRequest: LaboratoryRequest = {
       ...request('reported', 4),
@@ -3160,6 +3160,13 @@ describe('role workspaces', () => {
         status: 'final',
       },
     }
+    const generationFailedRequest: LaboratoryRequest = {
+      ...request('generation-failed', 7),
+      generationError: {
+        code: 'INVESTIGATION_OUTPUT_INVALID',
+        message: '模型判读与参考范围冲突',
+      },
+    }
     let requests: LaboratoryRequest[] = [
       request('issued', 1),
       request('accepted', 2),
@@ -3167,6 +3174,7 @@ describe('role workspaces', () => {
       reportedRequest,
       acknowledgedRequest,
       request('cancelled', 6),
+      generationFailedRequest,
     ]
     const patient = {
       birthDate: '1988-03-16',
@@ -3345,6 +3353,22 @@ describe('role workspaces', () => {
           status: acknowledged.status,
         }))
       }
+      if (url.pathname === '/api/his/v1/laboratory-requests/laboratory-request-7/actions/retry-generation') {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedVersions: { 'Task/task-laboratory-7': '4' },
+          input: { expectedRequestVersion: 4 },
+        })
+        const retried = {
+          ...generationFailedRequest,
+          generationError: undefined,
+          status: 'in-progress' as const,
+          taskVersion: '5',
+          version: 5,
+        }
+        const { generationError: _removed, ...withoutError } = retried
+        requests = requests.map(request => request.id === withoutError.id ? withoutError : request)
+        return Response.json(commandResponse({ request: withoutError }))
+      }
       if (url.pathname === '/api/his/v1/encounters/encounter-virtual-1/laboratory-request/draft') {
         draftDeletionRequests += 1
         expect(init?.method).toBe('DELETE')
@@ -3368,6 +3392,10 @@ describe('role workspaces', () => {
     }
     expect(screen.getAllByText('医生已阅')).toHaveLength(2)
     expect(screen.getByText('等待检验结果')).toBeTruthy()
+    expect(screen.getByText('结果生成失败')).toBeTruthy()
+    expect(screen.getByText('模型判读与参考范围冲突')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /重试结果生成 C 反应蛋白/ }))
+    await waitFor(() => expect(screen.queryByText('模型判读与参考范围冲突')).toBeNull())
     expect(screen.getByText('白细胞计数升高，其余血常规指标在参考范围内。')).toBeTruthy()
     expect(screen.getByRole('cell', { name: /11\.2 10\^9\/L/ })).toBeTruthy()
     expect(screen.getByRole('cell', { name: '3.5-9.5 x10^9/L' })).toBeTruthy()

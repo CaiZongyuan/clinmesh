@@ -78,6 +78,7 @@ import {
   previewClinicalSign,
   previewStructuredClinicalDocumentSign,
   reviseStructuredClinicalDocument,
+  retryLaboratoryResultGeneration,
   saveClinicalDocumentDraft,
   saveDiagnosisDraft,
   saveFirstVisitDraft,
@@ -166,6 +167,12 @@ interface LaboratoryRequestActions {
     error: Error | null
     onSubmit: () => void
     pending: boolean
+  }
+  retry: {
+    error: Error | null
+    onSubmit: (request: LaboratoryRequest) => void
+    pending: boolean
+    pendingRequestId?: string
   }
   save: {
     error: Error | null
@@ -612,6 +619,16 @@ function ActiveDoctorWorkspace({
     onError: refreshCase,
     onSuccess: refreshCase,
   })
+  const retryResultGeneration = useMutation({
+    mutationFn: (request: LaboratoryRequest) => retryLaboratoryResultGeneration({
+      requestId: request.id,
+      requestVersion: request.version,
+      taskId: request.taskId,
+      taskVersion: request.taskVersion,
+    }, newIdempotencyKey()),
+    onError: refreshCase,
+    onSuccess: refreshCase,
+  })
   const acknowledgeReport = useMutation({
     mutationFn: (request: LaboratoryRequest) => {
       if (request.report === undefined) throw new Error(messages.consultationUnavailable)
@@ -943,6 +960,14 @@ function ActiveDoctorWorkspace({
                 error: issueRequest.error,
                 onSubmit: () => issueRequest.mutate(),
                 pending: issueRequest.isPending,
+              },
+              retry: {
+                error: retryResultGeneration.error,
+                onSubmit: request => retryResultGeneration.mutate(request),
+                pending: retryResultGeneration.isPending,
+                ...(retryResultGeneration.isPending && retryResultGeneration.variables !== undefined
+                  ? { pendingRequestId: retryResultGeneration.variables.id }
+                  : {}),
               },
               save: {
                 error: saveLaboratoryRequest.error,
@@ -1962,9 +1987,21 @@ function LaboratoryRequestEditor({
                   <TableRow key={request.id}>
                     <TableCell className="font-medium">{itemName}</TableCell>
                     <TableCell>{indicationLabel(request.indicationCode, messages)}</TableCell>
-                    <TableCell><Badge variant="outline">{laboratoryRequestStatusLabel(request, messages)}</Badge></TableCell>
+                    <TableCell><Badge variant="outline">{laboratoryRequestStatusLabel(request, messages)}</Badge>{request.generationError === undefined ? null : <p className="mt-1 text-xs text-destructive">{request.generationError.message}</p>}</TableCell>
                     <TableCell className="text-right">
-                      {readOnly || request.status !== 'issued' ? null : (
+                      {readOnly ? null : request.status === 'generation-failed' ? (
+                        <Button
+                          aria-label={`${locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'} ${itemName}`}
+                          disabled={actions.retry.pending}
+                          onClick={() => actions.retry.onSubmit(request)}
+                          size="icon-sm"
+                          title={locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'}
+                          type="button"
+                          variant="outline"
+                        >
+                          <RefreshCwIcon />
+                        </Button>
+                      ) : request.status !== 'issued' ? null : (
                         <AlertDialog>
                           <AlertDialogTrigger
                             render={(
@@ -2030,6 +2067,7 @@ function LaboratoryRequestEditor({
           </Alert>
         ) : null}
         {actions.cancel.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.cancel.error, messages)} title={getWorkspaceErrorTitle(actions.cancel.error, messages, messages.operationFailed)} />}
+        {actions.retry.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.retry.error, messages)} title={getWorkspaceErrorTitle(actions.retry.error, messages, messages.operationFailed)} />}
         {state?.requests.map((request) => {
           if (request.status !== 'in-progress') return null
           const item = catalogById.get(request.catalogItemId)
@@ -4204,6 +4242,7 @@ function laboratoryRequestStatusLabel(
   if (request.status === 'in-progress') return messages.laboratoryRequestStatus_inProgress
   if (request.status === 'reported') return messages.laboratoryRequestStatus_reported
   if (request.status === 'acknowledged') return messages.laboratoryRequestStatus_acknowledged
+  if (request.status === 'generation-failed') return messages.laboratoryRequestStatus_generationFailed
   return messages.laboratoryRequestStatus_cancelled
 }
 

@@ -1064,6 +1064,23 @@ export function cancelLaboratoryRequest(input: {
   )
 }
 
+export function retryLaboratoryResultGeneration(input: {
+  requestId: string
+  requestVersion: number
+  taskId: string
+  taskVersion: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/laboratory-requests/${encodeURIComponent(input.requestId)}/actions/retry-generation`,
+    laboratoryRequestActionResponseSchema,
+    {
+      expectedVersions: { [`Task/${input.taskId}`]: input.taskVersion },
+      input: { expectedRequestVersion: input.requestVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
 export function acknowledgeLaboratoryReport(input: {
   diagnosticReportId: string
   diagnosticReportVersion: string

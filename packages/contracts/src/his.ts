@@ -24,6 +24,7 @@ export const apiConflictSchema = z.object({
     'dispensing-started',
     'draft',
     'empty',
+    'generation-failed',
     'in-progress',
     'issued',
     'missing',
@@ -851,6 +852,7 @@ export const laboratoryRequestStatusSchema = z.enum([
   'issued',
   'accepted',
   'in-progress',
+  'generation-failed',
   'reported',
   'acknowledged',
   'cancelled',
@@ -1058,6 +1060,10 @@ export const correctLaboratoryReportResponseSchema = commandResponseSchema(z.obj
 
 export const laboratoryRequestSchema = z.object({
   catalogItemId: laboratoryRequestCatalogItemIdSchema,
+  generationError: z.object({
+    code: z.string().min(1).max(128),
+    message: z.string().min(1).max(1_000),
+  }).strict().optional(),
   id: z.string().min(1),
   indicationCode: z.string().min(1),
   previousReports: z.array(laboratoryReportSchema).default([]),
@@ -1150,6 +1156,13 @@ export const cancelLaboratoryRequestRequestSchema = z.object({
 export const laboratoryRequestActionResponseSchema = commandResponseSchema(z.object({
   request: laboratoryRequestSchema,
 }).strict())
+
+export const retryLaboratoryResultGenerationRequestSchema = z.object({
+  expectedVersions: fhirExpectedVersionsSchema,
+  input: z.object({
+    expectedRequestVersion: z.number().int().positive(),
+  }).strict(),
+}).strict()
 
 export const laboratoryRequestStateSchema = z.object({
   draft: z.object({

@@ -1048,6 +1048,42 @@ export const startSyntheticCaseResultSchema = z.object({
   syntheticCaseId: z.string().min(1).max(128),
 }).strict()
 
+export const investigationResultContentSchema = z.object({
+  conclusion: z.string().trim().min(1).max(1_000),
+  results: z.array(z.object({
+    code: z.string().min(1).max(256),
+    display: z.string().min(1).max(1_000),
+    interpretation: z.enum(['normal', 'high', 'low']),
+    referenceRange: z.object({
+      high: z.number().finite().optional(),
+      low: z.number().finite().optional(),
+      text: z.string().min(1).max(500),
+    }).strict(),
+    unit: z.object({
+      code: z.string().min(1).max(128),
+      display: z.string().min(1).max(128),
+      system: z.literal('http://unitsofmeasure.org'),
+    }).strict().optional(),
+    value: z.union([z.boolean(), z.number().finite(), z.string().min(1).max(1_000)]),
+  }).strict()).length(1),
+}).strict()
+
+export const investigationResultSnapshotSchema = z.object({
+  caseId: z.string().min(1).max(128),
+  catalogItemId: z.string().min(1).max(512),
+  content: investigationResultContentSchema,
+  createdAt: z.iso.datetime({ offset: true }),
+  inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  model: z.string().min(1).max(256).nullable(),
+  outputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  promptHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  promptVersion: z.string().min(1).max(128).nullable(),
+  requestedConcept: referenceConceptSnapshotSchema,
+  snapshotId: z.string().min(1).max(128),
+  source: z.enum(['synthea-exact', 'investigation-agent']),
+  workspaceId: z.string().min(1),
+}).strict()
+
 export const syntheticPatientMappingCatalogSchema = z.object({
   items: z.array(z.object({
     catalogItemId: z.string().min(1).max(128),
@@ -1131,6 +1167,8 @@ export type ScenarioDataset = z.infer<typeof scenarioDatasetSchema>
 export type PatientBriefContent = z.infer<typeof patientBriefContentSchema>
 export type PatientBriefJob = z.infer<typeof patientBriefJobSchema>
 export type PatientBriefRevision = z.infer<typeof patientBriefRevisionSchema>
+export type InvestigationResultContent = z.infer<typeof investigationResultContentSchema>
+export type InvestigationResultSnapshot = z.infer<typeof investigationResultSnapshotSchema>
 export type ScenarioDatasetList = z.infer<typeof scenarioDatasetListSchema>
 export type ScenarioDatasetContent = z.infer<typeof scenarioDatasetContentSchema>
 export type ScenarioCatalogCompilationReport = z.infer<

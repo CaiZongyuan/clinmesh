@@ -19,8 +19,13 @@ import {
 import {
   apiErrorSchema,
   commandResponseSchema,
+  doctorCaseDetailSchema,
   doctorQueueSchema,
+  issueLaboratoryRequestResponseSchema,
+  laboratoryRequestActionResponseSchema,
+  laboratoryRequestDraftResponseSchema,
   registrationCatalogSchema,
+  startVisitResponseSchema,
   triageResponseSchema,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -185,9 +190,9 @@ class RetryingSyntheaProvider implements ScenarioGenerationProvider {
 
 class ControlledBriefProvider implements JsonChatCompletionsProvider {
   readonly requests: JsonChatCompletionInput[] = []
-  readonly #outputs: PatientBriefContent[]
+  readonly #outputs: unknown[]
 
-  constructor(outputs: PatientBriefContent[]) {
+  constructor(outputs: unknown[]) {
     this.#outputs = outputs
   }
 
@@ -226,7 +231,11 @@ describe('Synthetic Case generation HTTP contract', () => {
       migrationMode: options.migrationMode ?? 'apply',
       ...(briefProvider === undefined
         ? {}
-        : { chatCompletionsProvider: briefProvider, patientBriefModel: 'fake-brief-model' }),
+        : {
+            chatCompletionsProvider: briefProvider,
+            investigationModel: 'fake-investigation-model',
+            patientBriefModel: 'fake-brief-model',
+          }),
       syntheaProvider: provider,
       trustedOrigins: ['http://localhost'],
     })
@@ -411,6 +420,8 @@ describe('Synthetic Case generation HTTP contract', () => {
       safeBrief,
       leakingBrief,
       secondBrief,
+      { conclusion: 'C 反应蛋白升高。', interpretation: 'normal', value: 24 },
+      { conclusion: 'C 反应蛋白升高。', interpretation: 'high', value: 24 },
     ])
     const runtime = await createRuntime(
       new RetryingSyntheaProvider(1, false),
@@ -622,7 +633,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       },
     )
     expect(triageResponse.status).toBe(200)
-    triageResponseSchema.parse(await triageResponse.json())
+    const triage = triageResponseSchema.parse(await triageResponse.json()).data
     const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
     const doctorQueue = doctorQueueSchema.parse(await (await runtime.app.request(
       '/api/his/v1/doctor/queue?page=1&pageSize=20',
@@ -632,7 +643,207 @@ describe('Synthetic Case generation HTTP contract', () => {
       expect.objectContaining({ encounterId: startedCommand.data.encounterId }),
     ]))
 
+    const startVisit = await runtime.app.request(
+      `/api/his/v1/encounters/${startedCommand.data.encounterId}/actions/start-first-visit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${startedCommand.data.encounterId}`]: '2',
+            [`Task/${triage.doctorTaskId}`]: '1',
+          },
+          input: {},
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: doctorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(startVisit.status).toBe(200)
+    startVisitResponseSchema.parse(await startVisit.json())
+    const encounterReference = `Encounter/${startedCommand.data.encounterId}`
+    const commandHeaders = () => ({
+      'content-type': 'application/json',
+      cookie: doctorCookie,
+      'idempotency-key': randomUUID(),
+      origin: 'http://localhost',
+    })
+    const exactConcept = {
+      code: '8480-6',
+      display: '收缩压',
+      id: 'laboratory:synthetic-systolic-pressure',
+      laboratory: {
+        category: 'vital-sign',
+        referenceRange: { high: 140, low: 90, text: '90-140 mmHg' },
+        resultType: 'quantity',
+        specimen: 'body',
+        unit: {
+          code: 'mm[Hg]',
+          display: 'mmHg',
+          system: 'http://unitsofmeasure.org',
+        },
+      },
+      sourceLocator: 'synthetic:test:systolic-pressure',
+      system: 'http://loinc.org',
+      version: '2.83',
+    }
+    const agentConcept = {
+      code: '1988-5',
+      display: 'C 反应蛋白',
+      id: 'laboratory:synthetic-crp',
+      laboratory: {
+        category: 'chemistry',
+        referenceRange: { high: 10, low: 0, text: '0-10 mg/L' },
+        resultType: 'quantity',
+        specimen: 'blood',
+        unit: {
+          code: 'mg/L',
+          display: 'mg/L',
+          system: 'http://unitsofmeasure.org',
+        },
+      },
+      sourceLocator: 'synthetic:test:crp',
+      system: 'http://loinc.org',
+      version: '2.83',
+    }
+    const updateLaboratoryCatalog = runtime.database.driver.prepare(`
+      UPDATE outpatient_catalog SET config_json = ?
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND kind = 'laboratory' AND item_id = ?
+    `)
+    updateLaboratoryCatalog.run(JSON.stringify({
+      allowedIndicationCodes: ['clinical-evaluation'],
+      contraindicatedAllergyCodes: [],
+      referenceConcept: exactConcept,
+    }), 'lab-cbc')
+    updateLaboratoryCatalog.run(JSON.stringify({
+      allowedIndicationCodes: ['clinical-evaluation'],
+      contraindicatedAllergyCodes: [],
+      referenceConcept: agentConcept,
+    }), 'lab-crp')
+    const saveLaboratoryDraft = async (catalogItemId: string, expectedDraftVersion: number) => {
+      const response = await runtime.app.request(
+        `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/draft`,
+        {
+          body: JSON.stringify({
+            expectedVersions: { [encounterReference]: '3' },
+            input: {
+              catalogItemId,
+              expectedDraftVersion,
+              indicationCode: 'clinical-evaluation',
+            },
+          }),
+          headers: commandHeaders(),
+          method: 'PUT',
+        },
+      )
+      expect(response.status).toBe(200)
+      return laboratoryRequestDraftResponseSchema.parse(await response.json()).data
+    }
+    const issueLaboratory = async (expectedDraftVersion: number) => {
+      const response = await runtime.app.request(
+        `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/actions/issue`,
+        {
+          body: JSON.stringify({
+            expectedVersions: { [encounterReference]: '3' },
+            input: { expectedDraftVersion },
+          }),
+          headers: commandHeaders(),
+          method: 'POST',
+        },
+      )
+      expect(response.status).toBe(200)
+      return issueLaboratoryRequestResponseSchema.parse(await response.json()).data
+    }
+
+    const exactDraft = await saveLaboratoryDraft('lab-cbc', 0)
+    const exactRequest = (await issueLaboratory(exactDraft.draftVersion)).request
+    await runtime.dispatchPending()
+    let detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    const exactReported = detail.laboratoryRequests?.requests.find(item => (
+      item.id === exactRequest.id
+    ))
+    expect(exactReported).toMatchObject({
+      report: {
+        results: [{ code: '8480-6', interpretation: 'high', value: 162 }],
+      },
+      status: 'reported',
+    })
     expect(briefProvider.requests).toHaveLength(3)
+    expect(runtime.database.driver.prepare(`
+      SELECT source FROM investigation_result_snapshot
+      WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = 'lab-cbc'
+    `).get('workspace-demo', caseId)).toEqual({ source: 'synthea-exact' })
+
+    const agentDraft = await saveLaboratoryDraft('lab-crp', 2)
+    const agentRequest = (await issueLaboratory(agentDraft.draftVersion)).request
+    await runtime.dispatchPending()
+    detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    const failedRequest = detail.laboratoryRequests?.requests.find(item => (
+      item.id === agentRequest.id
+    ))
+    expect(failedRequest).toMatchObject({
+      generationError: { code: 'INVESTIGATION_OUTPUT_INVALID' },
+      status: 'generation-failed',
+    })
+    expect(failedRequest?.report).toBeUndefined()
+    expect(runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM investigation_result_snapshot
+      WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = 'lab-crp'
+    `).get('workspace-demo', caseId)).toEqual({ count: 0 })
+    expect(briefProvider.requests).toHaveLength(4)
+
+    const retryResponse = await runtime.app.request(
+      `/api/his/v1/laboratory-requests/${agentRequest.id}/actions/retry-generation`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Task/${agentRequest.taskId}`]: '4' },
+          input: { expectedRequestVersion: 4 },
+        }),
+        headers: commandHeaders(),
+        method: 'POST',
+      },
+    )
+    expect(retryResponse.status).toBe(200)
+    laboratoryRequestActionResponseSchema.parse(await retryResponse.json())
+    await runtime.dispatchPending()
+    detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    const agentReported = detail.laboratoryRequests?.requests.find(item => (
+      item.id === agentRequest.id
+    ))
+    expect(agentReported).toMatchObject({
+      report: {
+        results: [{ code: '1988-5', interpretation: 'high', value: 24 }],
+      },
+      status: 'reported',
+    })
+    expect(briefProvider.requests).toHaveLength(5)
+    expect(runtime.database.driver.prepare(`
+      SELECT source, model_id FROM investigation_result_snapshot
+      WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = 'lab-crp'
+    `).get('workspace-demo', caseId)).toEqual({
+      model_id: 'resolved-fake-brief-model',
+      source: 'investigation-agent',
+    })
+    await expect(runtime.investigation.resolveForRequest(
+      'workspace-demo',
+      'epoch-1',
+      agentRequest.id,
+    )).resolves.toMatchObject({ source: 'investigation-agent' })
+    expect(briefProvider.requests).toHaveLength(5)
+
     const publicArtifacts = JSON.stringify({ beforeSelection, firstJob, leakingJob, secondJob })
     expect(publicArtifacts).not.toMatch(/privateEpisodeEvidence|index-condition|hiddenResourceReferences/)
   })

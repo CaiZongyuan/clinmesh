@@ -266,6 +266,7 @@ const conceptDatabaseRowSchema = z.object({
   concept_id: z.string(),
   display: z.string(),
   domain: z.string(),
+  laboratory_metadata_json: z.string().nullable(),
   source_id: z.string(),
   source_locator: z.string(),
   status: z.string(),
@@ -280,6 +281,9 @@ function mapConceptRow(row: z.infer<typeof conceptDatabaseRowSchema>) {
       display: row.display,
       domain: row.domain,
       id: row.concept_id,
+      ...(row.laboratory_metadata_json === null
+        ? {}
+        : { laboratory: JSON.parse(row.laboratory_metadata_json) }),
       sourceLocator: row.source_locator,
       status: row.status,
       system: row.system,
@@ -295,6 +299,7 @@ function conceptRows(
 ): Array<ReferenceConcept & { sourceId: string }> {
   return z.array(conceptDatabaseRowSchema).parse(database.driver.prepare(`
     SELECT concept_id, domain, system, system_version, code, display, status,
+      laboratory_metadata_json,
       source_id, source_locator
     FROM reference_concept
     WHERE release_id = ?
@@ -458,6 +463,7 @@ export function listReferenceConcepts(
   verifyReferenceMigrations(database)
   const lookup = database.driver.prepare(`
     SELECT concept_id, domain, system, system_version, code, display, status,
+      laboratory_metadata_json,
       source_id, source_locator
     FROM reference_concept
     WHERE release_id = ? AND system = ? AND system_version = ? AND code = ?
@@ -505,6 +511,7 @@ export function searchReferenceConceptCatalog(
     `).get(releaseId, domain)).count
     const rows = z.array(conceptDatabaseRowSchema).parse(database.driver.prepare(`
       SELECT concept_id, domain, system, system_version, code, display, status,
+        laboratory_metadata_json,
         source_id, source_locator
       FROM reference_concept
       WHERE release_id = ? AND domain = ?
@@ -528,6 +535,7 @@ export function searchReferenceConceptCatalog(
     SELECT reference_concept.concept_id, reference_concept.domain,
       reference_concept.system, reference_concept.system_version,
       reference_concept.code, reference_concept.display, reference_concept.status,
+      reference_concept.laboratory_metadata_json,
       reference_concept.source_id, reference_concept.source_locator
     FROM reference_concept
     JOIN reference_concept_fts ON reference_concept_fts.rowid = reference_concept.rowid
@@ -614,6 +622,7 @@ export function getReferenceConceptById(
   verifyReferenceMigrations(database)
   const row = database.driver.prepare(`
     SELECT concept_id, domain, system, system_version, code, display, status,
+      laboratory_metadata_json,
       source_id, source_locator
     FROM reference_concept
     WHERE release_id = ? AND domain = ? AND concept_id = ?
@@ -862,8 +871,8 @@ export function importReferenceDataRelease(
     const insertConcept = database.driver.prepare(`
       INSERT INTO reference_concept (
         release_id, concept_id, domain, system, system_version, code, display,
-        status, source_id, source_locator
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        status, source_id, source_locator, laboratory_metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     for (const concept of concepts) {
       insertConcept.run(
@@ -877,6 +886,7 @@ export function importReferenceDataRelease(
         concept.status,
         concept.sourceId,
         concept.sourceLocator,
+        concept.laboratory === undefined ? null : JSON.stringify(concept.laboratory),
       )
     }
     const insertMedicationProduct = database.driver.prepare(`

@@ -337,8 +337,20 @@ describe('cn-health Candidate importer', () => {
     await expect(runReferenceDatabaseCli(['verify', '--database', databasePath])).resolves.toMatchObject({
       integrity: 'ok',
       releaseCount: 1,
-      schemaVersion: 7,
+      schemaVersion: 8,
     })
+    const published = new Database(databasePath, { readonly: true })
+    expect(JSON.parse((published.prepare(`
+      SELECT laboratory_metadata_json
+      FROM reference_concept
+      WHERE concept_id LIKE 'laboratory-cn:%'
+    `).get() as { laboratory_metadata_json: string }).laboratory_metadata_json)).toEqual({
+      category: 'vital-sign',
+      resultType: 'quantity',
+      specimen: 'body',
+      unit: { code: 'Cel', display: 'Cel', system: 'http://unitsofmeasure.org' },
+    })
+    published.close()
 
     const failedDatabasePath = join(directory, 'failed-reference.sqlite')
     await runReferenceDatabaseCli(['migrate', '--database', failedDatabasePath])
