@@ -5311,11 +5311,12 @@ describe('outpatient workflow HTTP contract', () => {
         })),
       },
     }
+    const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local', password)
     const unauthorizedCorrectionResponse = await runtime.app.request(
       `/api/his/v1/laboratory-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/correct`,
       {
         body: JSON.stringify(correctionBody),
-        headers: commandHeaders(doctorCookie),
+        headers: commandHeaders(registrarCookie),
         method: 'POST',
       },
     )
@@ -5334,7 +5335,7 @@ describe('outpatient workflow HTTP contract', () => {
             [`DiagnosticReport/${request.report.diagnosticReportId}`]: '999',
           },
         }),
-        headers: commandHeaders(administratorCookie),
+        headers: commandHeaders(doctorCookie),
         method: 'POST',
       },
     )

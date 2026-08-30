@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { createMemoryHistory, type RouterHistory } from '@tanstack/react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { WebApp } from './web-app.tsx'
+import { WebApp, type WebRuntimeOptions } from './web-app.tsx'
+import { agentToolsForContext } from '@clinmesh/contracts/agent'
+import type { WebSurfaceAgentController } from './web-runtime.tsx'
 
 const registrarSession = {
   actor: {
@@ -30,6 +33,19 @@ const registrarSession = {
     id: 'user-registrar',
     name: '合成挂号员',
   },
+}
+
+const registrarAgentActor = {
+  actorId: registrarSession.actor.actorId,
+  practitionerRoleId: registrarSession.actor.practitionerRoleId,
+  roleCode: registrarSession.actor.roleCode,
+}
+
+let testCallSequence = 0
+
+function randomTestId(): string {
+  testCallSequence += 1
+  return `call-${String(testCallSequence)}`
 }
 
 function createMediaQueryList(media: string, matches = false): MediaQueryList {
@@ -78,8 +94,11 @@ function installMatchMedia(prefersDark: boolean): { setPrefersDark: (matches: bo
   }
 }
 
-async function renderWebApp() {
-  const rendered = render(<WebApp />)
+async function renderWebApp(options: {
+  history?: RouterHistory
+  runtime?: WebRuntimeOptions
+} = {}) {
+  const rendered = render(<WebApp {...options} />)
   await screen.findByRole('heading', { level: 1 })
   return rendered
 }
@@ -89,6 +108,7 @@ describe('Web application shell', () => {
     localStorage.clear()
     document.body.removeAttribute('style')
     document.documentElement.className = ''
+    document.documentElement.lang = 'zh-CN'
     document.documentElement.removeAttribute('data-theme')
     window.history.replaceState(null, '', '/')
     vi.stubGlobal('matchMedia', vi.fn((query: string) => createMediaQueryList(query)))
@@ -108,6 +128,8 @@ describe('Web application shell', () => {
 
   afterEach(() => {
     cleanup()
+    vi.useRealTimers()
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
 
@@ -126,6 +148,353 @@ describe('Web application shell', () => {
     expect(screen.queryByRole('button', { name: 'English' })).toBeNull()
     expect(await screen.findByText('暂无挂号记录')).toBeTruthy()
     expect(screen.queryByText(/Agent|AI|助手/i)).toBeNull()
+  })
+
+  it('uses an isolated API prefix and memory history in a DSH Surface', async () => {
+    window.history.replaceState(null, '', '/dsh-host')
+    const history = createMemoryHistory({ initialEntries: ['/'] })
+    const requestedPaths: string[] = []
+    vi.mocked(fetch).mockImplementation(async input => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      requestedPaths.push(path)
+      if (path === '/clinmesh-api/auth/context') return Response.json(registrarSession)
+      if (path === '/clinmesh-api/his/v1/catalogs/registration') {
+        return Response.json({ departments: [], virtualDate: '2026-08-24', visitTypes: [] })
+      }
+      if (path === '/clinmesh-api/his/v1/registrations') {
+        return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
+      }
+      throw new Error(`Unexpected request: ${path}`)
+    })
+
+    await renderWebApp({
+      history,
+      runtime: { apiBasePath: '/clinmesh-api', mode: 'surface' },
+    })
+
+    expect(history.location.pathname).toBe('/registration')
+    expect(window.location.pathname).toBe('/dsh-host')
+    expect(requestedPaths).toContain('/clinmesh-api/auth/context')
+  })
+
+  it('scopes Surface appearance and feedback portals to the application root', async () => {
+    localStorage.setItem('clinmesh.preferences:v1', JSON.stringify({
+      locale: 'en-US',
+      theme: 'light',
+    }))
+    const history = createMemoryHistory({ initialEntries: ['/components'] })
+    const user = userEvent.setup()
+
+    await renderWebApp({ history, runtime: { mode: 'surface' } })
+    const applicationRoot = document.querySelector<HTMLElement>('[data-clinmesh-app="web"]')
+    const portalRoot = applicationRoot?.querySelector<HTMLElement>('[data-clinmesh-portal-root]')
+    expect(applicationRoot?.lang).toBe('en-US')
+    expect(document.documentElement.lang).toBe('zh-CN')
+
+    await user.click(screen.getByRole('button', { name: 'Dark theme' }))
+    expect(applicationRoot?.classList.contains('dark')).toBe(true)
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+
+    await user.click(screen.getByRole('button', { name: 'Delete order' }))
+    const dialog = await screen.findByRole('alertdialog', { name: 'Confirm order deletion' })
+    expect(portalRoot?.contains(dialog)).toBe(true)
+  })
+
+  it('lets a Surface Agent fill a draft but requires human review before creating a Patient', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/registration'] })
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    let patientCreated = false
+    const toolResults: unknown[] = []
+    const pageClaims: Array<{ draft?: { dirty: boolean }; ui: { status: string } }> = []
+    let resolveRegistrationQueue: (response: Response) => void = () => undefined
+    const registrationQueue = new Promise<Response>(resolve => {
+      resolveRegistrationQueue = resolve
+    })
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registration = value
+        return () => {
+          if (registration === value) registration = undefined
+        }
+      },
+    }
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/clinmesh-api/auth/context') return Response.json(registrarSession)
+      if (path === '/clinmesh-api/his/v1/catalogs/registration') {
+        return Response.json({
+          departments: [{ id: 'department-general', nameEn: 'General', nameZh: '全科', version: 1 }],
+          locations: [{ id: 'location-clinic', nameEn: 'Clinic', nameZh: '门诊', version: 1 }],
+          virtualDate: '2026-08-31',
+          visitTypes: [{ id: 'visit-general', nameEn: 'General', nameZh: '普通门诊', priceFen: 2000, version: 1 }],
+        })
+      }
+      if (path === '/clinmesh-api/his/v1/registrations') {
+        return registrationQueue
+      }
+      if (path === '/clinmesh-api/agent/v1/page-contexts') {
+        const claim = JSON.parse(String(init?.body)) as {
+          viewId: 'registration'
+          viewRevision: string
+          version: 1
+          ui: { status: 'ready' | 'empty' | 'loading' | 'error' }
+        }
+        pageClaims.push(claim)
+        return Response.json({
+          snapshot: {
+            version: 1,
+            id: `context-${claim.viewRevision}`,
+            claim,
+            actor: registrarAgentActor,
+            workspace: {
+              id: registrarSession.actor.workspaceId,
+              epoch: registrarSession.actor.epoch,
+              scenarioRunId: registrarSession.actor.scenarioRunId,
+            },
+            allowedOperationIds: agentToolsForContext('registrar', 'registration')
+              .map(tool => tool.operationId),
+            scopeKey: 'clinmesh:registrar:registration',
+            issuedAt: '2026-08-31T00:00:00.000Z',
+            expiresAt: '2026-08-31T00:05:00.000Z',
+          },
+          token: 'context-token-with-at-least-32-characters',
+        }, { status: 201 })
+      }
+      if (path === '/clinmesh-agent-proof') {
+        return Response.json({ data: { proof: 'proof-with-at-least-32-characters' } })
+      }
+      if (path === '/clinmesh-api/agent/v1/tool-calls') {
+        const request = JSON.parse(String(init?.body)) as { operationId: string }
+        return Response.json({
+          callId: randomTestId(),
+          context: {
+            version: 1,
+            id: 'context-authorized',
+            claim: {
+              version: 1,
+              viewId: 'registration',
+              viewRevision: 'authorized',
+              ui: { status: 'ready' },
+            },
+            actor: registrarAgentActor,
+            workspace: {
+              id: registrarSession.actor.workspaceId,
+              epoch: registrarSession.actor.epoch,
+              scenarioRunId: registrarSession.actor.scenarioRunId,
+            },
+            allowedOperationIds: [request.operationId],
+            scopeKey: 'clinmesh:registrar:registration',
+            issuedAt: '2026-08-31T00:00:00.000Z',
+            expiresAt: '2026-08-31T00:05:00.000Z',
+          },
+          dshSessionId: 'dsh-session-1',
+          operationId: request.operationId,
+          ...(request.operationId.endsWith('.propose') ? { proposalId: 'proposal-1' } : {}),
+          receiptToken: 'receipt-token-with-at-least-32-characters',
+          status: 'authorized',
+        }, { status: 201 })
+      }
+      if (path === '/clinmesh-api/agent/v1/tool-calls/result') {
+        toolResults.push(JSON.parse(String(init?.body)))
+        return Response.json({ status: 'completed' })
+      }
+      if (path === '/clinmesh-api/his/v1/patients' && init?.method === 'POST') {
+        patientCreated = true
+        return Response.json({
+          auditId: 'audit-1',
+          data: {
+            patient: {
+              birthDate: '1990-01-01',
+              gender: 'male',
+              id: 'patient-agent-1',
+              identifier: 'CM-AGENT-001',
+              name: '合成患者甲',
+              synthetic: true,
+              versionId: '1',
+            },
+          },
+          effects: [{ kind: 'created', reference: 'Patient/patient-agent-1', versionId: '1' }],
+          requestId: 'request-1',
+          warnings: [],
+        })
+      }
+      throw new Error(`Unexpected request: ${path}`)
+    })
+
+    await renderWebApp({ history, runtime: { apiBasePath: '/clinmesh-api', mode: 'surface', surfaceAgent } })
+    await waitFor(() => expect(pageClaims.at(-1)?.ui.status).toBe('loading'))
+    resolveRegistrationQueue(Response.json({ items: [], page: 1, pageSize: 20, total: 0 }))
+    await waitFor(() => expect(registration?.tools.some(tool => (
+      tool.name === 'clinmesh_fill_patient_draft'
+    ))).toBe(true))
+    await waitFor(() => expect(pageClaims.at(-1)?.ui.status).toBe('empty'))
+    expect(registration?.tools.find(tool => tool.name === 'clinmesh_navigate')?.parameters)
+      .toMatchObject({
+        properties: {
+          destination: {
+            enum: ['registration', 'settingsGeneral', 'uiComponents'],
+          },
+        },
+      })
+    expect(registration?.tools.some(tool => tool.name === 'clinmesh_prepare_create_patient'))
+      .toBe(false)
+    let activeRegistration = registration!
+    const stableScopeKey = activeRegistration.scopeKey
+    const fill = activeRegistration.tools.find(tool => tool.name === 'clinmesh_fill_patient_draft')!
+    await act(async () => {
+      await fill.execute({
+        scopeKey: activeRegistration.scopeKey,
+        birthDate: '1990-01-01',
+        gender: 'male',
+        identifier: 'CM-AGENT-001',
+        name: '合成患者甲',
+      }, new AbortController().signal)
+    })
+    await waitFor(() => expect(pageClaims.at(-1)?.draft?.dirty).toBe(true))
+    await waitFor(() => expect(registration?.tools.some(
+      tool => tool.name === 'clinmesh_prepare_create_patient',
+    )).toBe(true))
+    activeRegistration = registration!
+    expect(activeRegistration.scopeKey).toBe(stableScopeKey)
+    expect(activeRegistration.tools.some(tool => tool.name === 'clinmesh_prepare_create_patient'))
+      .toBe(true)
+    const prepare = activeRegistration.tools.find(tool => tool.name === 'clinmesh_prepare_create_patient')!
+    let proposalResult = ''
+    await act(async () => {
+      proposalResult = await prepare.execute(
+        { scopeKey: activeRegistration.scopeKey },
+        new AbortController().signal,
+      )
+    })
+
+    expect(proposalResult).toContain('awaiting-human-review')
+    expect(await screen.findByRole('alertdialog', { name: '创建患者' })).toBeTruthy()
+    expect(patientCreated).toBe(false)
+    await userEvent.setup().click(screen.getByRole('button', { name: '创建患者' }))
+    await waitFor(() => expect(patientCreated).toBe(true))
+    await waitFor(() => expect(toolResults.at(-1)).toMatchObject({
+      ok: true,
+      result: { approved: true },
+    }))
+  })
+
+  it('renews the Agent Page Context without replacing the page Tool scope', async () => {
+    vi.useFakeTimers({ now: new Date('2026-08-31T00:00:00.000Z'), shouldAdvanceTime: true })
+    const history = createMemoryHistory({ initialEntries: ['/settings'] })
+    const registeredScopes: string[] = []
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    let contextRequests = 0
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registeredScopes.push(value.scopeKey)
+        registration = value
+        return () => {
+          if (registration === value) registration = undefined
+        }
+      },
+    }
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/clinmesh-api/auth/context') return Response.json(registrarSession)
+      if (path === '/clinmesh-api/agent/v1/page-contexts') {
+        contextRequests += 1
+        const claim = JSON.parse(String(init?.body))
+        const issuedAt = new Date()
+        return Response.json({
+          snapshot: {
+            version: 1,
+            id: `context-${String(contextRequests)}`,
+            claim,
+            actor: registrarAgentActor,
+            workspace: {
+              id: registrarSession.actor.workspaceId,
+              epoch: registrarSession.actor.epoch,
+              scenarioRunId: registrarSession.actor.scenarioRunId,
+            },
+            allowedOperationIds: agentToolsForContext('registrar', 'settingsGeneral')
+              .map(tool => tool.operationId),
+            scopeKey: 'clinmesh:registrar:settings',
+            issuedAt: issuedAt.toISOString(),
+            expiresAt: new Date(issuedAt.getTime() + 5 * 60_000).toISOString(),
+          },
+          token: `context-token-${String(contextRequests).padEnd(32, 'x')}`,
+        }, { status: 201 })
+      }
+      throw new Error(`Unexpected request: ${path}`)
+    })
+
+    await renderWebApp({
+      history,
+      runtime: { apiBasePath: '/clinmesh-api', mode: 'surface', surfaceAgent },
+    })
+    await waitFor(() => expect(registration?.scopeKey).toBe('clinmesh:registrar:settings'))
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4 * 60_000 + 1_000)
+    })
+
+    await waitFor(() => expect(contextRequests).toBe(2))
+    expect(registration?.scopeKey).toBe('clinmesh:registrar:settings')
+    expect(contextRequests).toBe(2)
+    expect(new Set(registeredScopes)).toEqual(new Set(['clinmesh:registrar:settings']))
+  })
+
+  it('removes Surface Agent tools when Page Context renewal cannot finish before expiry', async () => {
+    vi.useFakeTimers({ now: new Date('2026-08-31T00:00:00.000Z'), shouldAdvanceTime: true })
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const history = createMemoryHistory({ initialEntries: ['/settings'] })
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    let contextRequests = 0
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registration = value
+        return () => {
+          if (registration === value) registration = undefined
+        }
+      },
+    }
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/clinmesh-api/auth/context') return Response.json(registrarSession)
+      if (path === '/clinmesh-api/agent/v1/page-contexts') {
+        contextRequests += 1
+        if (contextRequests > 1) throw new Error('Page Context renewal unavailable')
+        const claim = JSON.parse(String(init?.body))
+        return Response.json({
+          snapshot: {
+            version: 1,
+            id: 'context-expiring',
+            claim,
+            actor: registrarAgentActor,
+            workspace: {
+              id: registrarSession.actor.workspaceId,
+              epoch: registrarSession.actor.epoch,
+              scenarioRunId: registrarSession.actor.scenarioRunId,
+            },
+            allowedOperationIds: agentToolsForContext('registrar', 'settingsGeneral')
+              .map(tool => tool.operationId),
+            scopeKey: 'clinmesh:registrar:settings',
+            issuedAt: '2026-08-31T00:00:00.000Z',
+            expiresAt: '2026-08-31T00:05:00.000Z',
+          },
+          token: 'context-token-with-at-least-32-characters',
+        }, { status: 201 })
+      }
+      throw new Error(`Unexpected request: ${path}`)
+    })
+
+    await renderWebApp({
+      history,
+      runtime: { apiBasePath: '/clinmesh-api', mode: 'surface', surfaceAgent },
+    })
+    await waitFor(() => expect(registration?.scopeKey).toBe('clinmesh:registrar:settings'))
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 1_000)
+    })
+
+    await waitFor(() => expect(registration).toBeUndefined())
+    expect(contextRequests).toBeGreaterThan(1)
   })
 
   it('opens the public component catalog without requesting application data', async () => {

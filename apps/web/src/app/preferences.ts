@@ -51,8 +51,10 @@ export function writeWebPreferences(preferences: WebPreferences): void {
   }
 }
 
-export function applyResolvedWebTheme(theme: ResolvedWebTheme): void {
-  const root = document.documentElement
+export function applyResolvedWebTheme(
+  theme: ResolvedWebTheme,
+  root: HTMLElement = document.documentElement,
+): void {
   root.classList.toggle('dark', theme === 'dark')
   root.dataset.theme = theme
   root.style.colorScheme = theme

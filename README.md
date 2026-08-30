@@ -17,9 +17,15 @@ Browser
             |
             v
     apps/server (Hono on Node.js)
+
+DSH Web -- React Surface --> apps/web application/runtime
+        -- browser Tools --> /api/agent/v1/*
+        -- /clinmesh-api --> fixed loopback Hono
 ```
 
-当前工程具备可持久运行的单实例 Web 发布：同一个 Hono 服务提供 Web 静态资源、SPA fallback、健康检查、会话认证、岗位业务 API 和 FHIR R5 只读接口。挂号员、分诊护士、门诊医生、收费员和药师通过共享 Command 推进同一个普通门诊发热 Encounter；SQLite 保存 FHIR current/history、业务事实、审计、Action Trace 和 outbox，管理员通过新 Epoch 安装或重置合成 Scenario。
+当前工程具备可持久运行的单实例 Web 发布和 DSH 原生 React Surface adapter：同一个 Hono 服务提供 Web 静态资源、SPA fallback、健康检查、会话认证、岗位业务 API、Agent Page Context 和 FHIR R5 只读接口。挂号员、分诊护士、门诊医生、收费员和药师通过共享 Command 推进同一个普通门诊发热 Encounter；SQLite 保存 FHIR current/history、业务事实、审计、Action Trace、outbox 和 Agent Tool/proposal/review 关联，管理员通过新 Epoch 安装或重置合成 Scenario。
+
+DSH 拥有原生模型 Session 与 transcript；ClinMesh Agent Tools 只能读取当前受信页面上下文、导航、编辑草稿和准备人工审阅。正式挂号、分诊、临床、支付、药房和 Scenario Command 的最终 Actor 始终是点击原生审阅框的登录人类。
 
 FHIR 公开面固定为 R5 `5.0.0`，当前只声明并实现资源 read、vread、instance history 和白名单 Search。业务写入只走 `/api/his/v1` 与 `/api/sim/v1` 的受控 Command；服务器不宣告通用 FHIR create/update/delete、自定义 FHIR Operation、项目 Profile 或 Implementation Guide 一致性。
 
@@ -28,6 +34,7 @@ FHIR 公开面固定为 R5 `5.0.0`，当前只声明并实现资源 read、vread
 ```text
 apps/
   web/          Vite + React Web 工作台
+  dsh-web/      DSH Host proxy、execution proof 与 React Surface adapter
   server/       Node.js Hono 后端、FHIR/HTTP adapter 和 Web 静态资源入口
   desktop/      Electron main、preload 和共享 React renderer
   mobile/       Expo / React Native 移动端
@@ -39,6 +46,7 @@ packages/
   views/        当前 Desktop 工程壳与未来共享业务视图边界
 docs/           架构、测试、Agent 工程规范和研究记录
 scripts/        文档投影、依赖边界和质量检查
+vendor/         固定 commit 的外部源码 submodule
 .agents/        Agent skills 与 Agent Notes
 ```
 
@@ -48,6 +56,8 @@ scripts/        文档投影、依赖边界和质量检查
 
 - Node.js `^22.19.0` 或 `>=24.0.0`
 - pnpm `11.17.0`
+- Bun `1.4.0`（仅构建 DSH React Surface artifact 时需要）
+- DSH CLI `0.1.1-rc.2`（仅运行 DSH Web adapter 时需要）
 - Docker Engine 与 `docker compose`（仅容器运行和 Synthea Provider 需要）
 - Xcode/Android Studio 仅在运行对应移动原生目标时需要
 
@@ -134,9 +144,43 @@ pnpm test
 pnpm doc-sync
 pnpm verify:boundaries
 pnpm --filter @clinmesh/server test
+pnpm --filter @clinmesh/dsh-web test
+pnpm --filter @clinmesh/dsh-web build
 ```
 
-`pnpm check` 同时构建 Web 与 Server，验证 Node.js Server 生产 bundle 可以读取 Web 静态资源。
+`pnpm check` 同时构建 standalone Web、DSH Surface artifact 与 Server，并验证 Node.js Server 生产 bundle 可以读取 Web 静态资源。
+
+## DSH Web 原生入口
+
+DSH 入口保留 standalone Web，并复用同一 React application/runtime。首次准备固定依赖与 Web Profile：
+
+```sh
+git submodule update --init --recursive
+pnpm install
+pnpm --filter @clinmesh/dsh-web build
+dsh plugin --profile web add github:CaiZongyuan/dsh-ag-ui#0c0b7e3608ac012dc2b053043fd0460d101b5db3
+dsh plugin --profile web add "$PWD/vendor/dsh-react-surface/packages/runtime"
+dsh plugin --profile web add "$PWD/apps/dsh-web"
+```
+
+`dsh-ag-ui` 的 always-on `browser-tools` row 无须配置 AG-UI Gateway。`dsh-react-surface` 固定为 submodule commit `e7b17dfd566f4a395027bc8ce1fd368b9fea1707`；CI 会递归 checkout 并固定 Bun `1.4.0`。
+
+在 `.env` 中为 Hono 配置至少 32 bytes 的 `CLINMESH_DSH_BRIDGE_SECRET`，然后启动 Server：
+
+```sh
+pnpm dev:server
+```
+
+另一个终端把同一个 secret 提供给 DSH Host；默认 upstream 是 `http://127.0.0.1:51868`，Server 使用其他端口时同时设置 `CLINMESH_DSH_UPSTREAM_ORIGIN`：
+
+```sh
+set -a
+. ./.env
+set +a
+dsh web
+```
+
+从 DSH Web 侧栏的 React applications launcher 打开 ClinMesh。默认使用 `workspace` 并保留原生会话；空间不足时自动退化到 `full-frame`。Surface 使用 Memory Router，页面导航不会修改 DSH document pathname。当前模式只信任安装到同一 Web Profile 的插件，并只允许合成数据。
 
 ## 文档与决策
 

@@ -25,6 +25,9 @@ const runtime = await createClinMeshRuntime({
   cursorSecret: config.cursorSecret,
   databasePath,
   demoPassword: config.demoPassword,
+  ...(config.dshBridgeSecret === undefined
+    ? {}
+    : { dshBridgeSecret: config.dshBridgeSecret }),
   migrationMode: 'verify',
   ...(config.referenceDatabasePath === undefined
     ? {}

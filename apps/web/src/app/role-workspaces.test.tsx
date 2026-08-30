@@ -16,11 +16,13 @@ import {
   type ScenarioGenerationRequest,
   type SyntheticPatientProfile,
 } from '@clinmesh/contracts/scenario'
+import { agentToolsForContext } from '@clinmesh/contracts/agent'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DoctorWorkspace } from './doctor-workspace.tsx'
 import { WebApp } from './web-app.tsx'
+import type { WebSurfaceAgentController } from './web-runtime.tsx'
 
 const forbiddenChineseClinicalUiTerms = /Agent|评分|仿真|Scenario|Epoch/i
 const forbiddenEnglishClinicalUiTerms = /Agent|scor(?:e|ing)|simulation|Scenario|Epoch/i
@@ -991,7 +993,7 @@ async function openAdvancedCaseAuthoring(user: ReturnType<typeof userEvent.setup
 }
 
 function stubEmptyDoctorWorkspace() {
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), 'http://localhost').pathname
     if (path === '/api/auth/context') return Response.json(doctorSession)
     if (path === '/api/his/v1/catalogs/clinical') {
@@ -1006,6 +1008,32 @@ function stubEmptyDoctorWorkspace() {
     }
     if (path === '/api/his/v1/doctor/queue') {
       return Response.json({ items: [], ...pagination(0) })
+    }
+    if (path === '/api/agent/v1/page-contexts') {
+      const claim = JSON.parse(String(init?.body))
+      return Response.json({
+        snapshot: {
+          version: 1,
+          id: 'context-doctor-empty',
+          claim,
+          actor: {
+            actorId: doctorSession.actor.actorId,
+            practitionerRoleId: doctorSession.actor.practitionerRoleId,
+            roleCode: doctorSession.actor.roleCode,
+          },
+          workspace: {
+            id: doctorSession.actor.workspaceId,
+            epoch: doctorSession.actor.epoch,
+            scenarioRunId: doctorSession.actor.scenarioRunId,
+          },
+          allowedOperationIds: agentToolsForContext('outpatient-doctor', 'consultation')
+            .map(tool => tool.operationId),
+          scopeKey: 'clinmesh:doctor:consultation',
+          issuedAt: '2026-08-31T00:00:00.000Z',
+          expiresAt: '2026-08-31T00:05:00.000Z',
+        },
+        token: 'context-token-with-at-least-32-characters',
+      }, { status: 201 })
     }
     throw new Error(`Unexpected request: ${path}`)
   }))
@@ -2634,6 +2662,28 @@ describe('role workspaces', () => {
     expect(await screen.findByText('暂无可接诊候选患者')).toBeTruthy()
     expect(screen.getByText('当前没有可接诊的候选患者。')).toBeTruthy()
     expect(document.body.textContent).not.toMatch(forbiddenChineseClinicalUiTerms)
+  })
+
+  it('narrows an empty doctor page to common Tools while validating every grant', async () => {
+    stubEmptyDoctorWorkspace()
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registration = value
+        return () => {
+          if (registration === value) registration = undefined
+        }
+      },
+    }
+
+    render(<WebApp runtime={{ mode: 'surface', surfaceAgent }} />)
+
+    const expected = [
+      'clinmesh_read_current_context',
+      'clinmesh_navigate',
+      'clinmesh_focus_panel',
+    ]
+    await waitFor(() => expect(registration?.tools.map(tool => tool.name)).toEqual(expected))
   })
 
   it('uses clinical operator language for the English doctor empty state', async () => {

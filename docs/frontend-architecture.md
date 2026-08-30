@@ -2,28 +2,38 @@
 
 本文是 Web、Desktop 和 Mobile 的代码归属与共享规则参考。系统业务和接口设计见[系统架构](architecture.md)。
 
-首个可验收发布只开发 Web。Desktop 和 Mobile 保留现有包边界与工程壳，不承担门诊闭环、语义 parity 或发布验收；后续进入实际开发时再按本页共享规则接入。
+当前可验收发布包含 standalone Web 和复用同一 application interface 的 DSH React Surface。Desktop 和 Mobile 保留现有包边界与工程壳，不承担门诊闭环、语义 parity 或发布验收；后续进入实际开发时再按本页共享规则接入。
 
 ## 目标拓扑
 
 ```text
-apps/web -----------+
-                    +--> packages/views --> packages/core --> packages/contracts
-apps/desktop -------+          |
-                               v
-                         packages/ui
+apps/dsh-web --> apps/web application/runtime --+
+apps/web ----------------------------------------+--> packages/views --> packages/core --> packages/contracts
+apps/desktop ------------------------------------+          |
+                                                            v
+                                                      packages/ui
 
 apps/mobile ------------> packages/core (pure entrypoints)
         +---------------> packages/contracts
 ```
 
-Web 和 Desktop 都运行 DOM/React UI，因此共享视觉 primitives、业务视图、Query hooks 和客户端视图状态。Mobile 使用 React Native，信息密度、导航、生命周期、安全存储和发布节奏不同，只共享协议 schema、类型和纯领域函数。
+standalone Web、DSH Surface 和 Desktop 都运行 DOM/React UI，因此共享视觉 primitives、业务视图、Query hooks 和客户端视图状态。当前 DSH adapter 直接复用 `apps/web` application/runtime；Mobile 使用 React Native，信息密度、导航、生命周期、安全存储和发布节奏不同，只共享协议 schema、类型和纯领域函数。
 
 ## 应用职责
 
 ### Web
 
 `apps/web` 是 Vite React SPA。它负责浏览器启动、Web 路由、cookie/CSRF 和 Web analytics。开发时将 `/api` 和 `/fhir` 代理到 Node.js 服务。
+
+Web application 接受可注入的 API base、Router history、Portal container、appearance root、退出动作和 Surface Agent controller。standalone 默认使用 Browser History、document theme 和默认 API base；平台差异不进入岗位页面或 Command 调用。
+
+### DSH Web
+
+`apps/dsh-web` 是 DSH Host/Client adapter，不拥有医院状态或第二套页面。Host 注册固定 loopback `/clinmesh-api` proxy 与 execution-proof route；Client 把 `apps/web` 挂载为 `dsh-react-surface`，使用 DSH 共享 React runtime、Memory Router、独立 QueryClient 和 ShadowRoot 样式/Portal。
+
+Surface Agent controller 把当前页面注册投影成 DSH Session-scoped browser Tools。Page Context、Tool catalog、proposal 和 review contract 位于 `packages/contracts` 与 Server；DSH adapter 不导入 Repository、Workflow 状态机或 Hidden Fact。默认布局是 `workspace`，空间不足时由 Surface runtime 退化为 `full-frame`，隐藏时 keep-alive 保留客户端草稿。
+
+DSH Client artifact 是一个 lazy-CJS 文件，React、ReactDOM 和 Surface runtime 保持 external，不生成动态 chunk 或第二份 React。`vendor/dsh-react-surface` 以 submodule 固定；pnpm 仍拥有 workspace，Bun 只执行 Surface builder、样式生成和 artifact verifier。
 
 ### Server
 
@@ -90,6 +100,7 @@ interface NavigationAdapter {
 - TanStack Query 是服务端状态唯一客户端缓存。
 - Zustand 只保存筛选、工作台布局、未提交草稿、弹窗和临时选择。
 - 当前 Patient/Encounter context 由路由或服务端 Actor context binding 驱动，store 只能镜像平台 plumbing 所需的稳定标识。
+- DSH Page Context 是短期授权快照，不进入 TanStack Query 或 Zustand；页面状态变化重新签发 context，稳定 page scope 只用于 DSH lease，不成为医院状态 owner。
 - 首期在 Command 成功后精确失效 Query，并通过聚焦刷新和短间隔轮询同步岗位状态；未来的推送仍只更新 Query cache，不把服务端 payload 镜像进 Zustand。
 - 会导航、支付、发药、退费或确认的流程等待服务端成功后再清理本地状态。
 
@@ -98,11 +109,12 @@ interface NavigationAdapter {
 | 目标 | 构建入口 | 发布节奏 |
 | --- | --- | --- |
 | Web + Server | `pnpm build` | 单实例 Node.js 构建与持久卷部署 |
+| DSH Web adapter | `pnpm --filter @clinmesh/dsh-web build` | 随固定 DSH Web Profile 安装；需要 Bun `1.4.0` 构建 artifact |
 | Desktop | `pnpm dev:desktop` / package build | 首期不交付；启用后使用独立安装包版本 |
 | Mobile | `pnpm dev:mobile` / Expo build | 首期不开发；启用后使用独立移动版本与 OTA 策略 |
 | Docs | `pnpm docs:build` | GitHub Pages workflow |
 
-Root `build/typecheck/test` 默认排除 Mobile；CI 使用单独的 `typecheck:mobile`，避免 Expo/React Native 版本约束污染 Web/Desktop 构建图。
+Root `build/typecheck/test` 默认排除 Mobile，并包含 DSH Web adapter；CI 递归 checkout submodule 并固定 Bun。Mobile 使用单独的 `typecheck:mobile`，避免 Expo/React Native 版本约束污染 Web/Desktop 构建图。
 
 ## 禁止的共享方式
 
@@ -110,4 +122,6 @@ Root `build/typecheck/test` 默认排除 Mobile；CI 使用单独的 `typecheck:
 - 不在 `core` 中用 `typeof window` 隐藏平台分支。
 - 不建立一个同时抽象 DOM、Electron 和 React Native 的万能 `Platform` 对象。
 - 不复制 API response type 后用 TypeScript cast 绕过 schema。
+- 不让 DSH Host、Tool 或 Surface 直接读取 DOM、Query cache、浏览器存储、Repository、Hidden Fact 或 Scenario authoring truth。
+- 不为 Surface 建立第二份 transcript、Query cache owner 或 Command 状态机。
 - 不因 Web 与 Mobile 页面名称相同就要求组件树相同。

@@ -8,6 +8,7 @@
     "./health": "./src/health.ts",
     "./his": "./src/his.ts",
     "./reference-data": "./src/reference-data.ts",
+    "./agent": "./src/agent.ts",
     "./scenario": "./src/scenario.ts"
   },
   "scripts": {

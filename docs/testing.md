@@ -12,24 +12,25 @@
 - 状态转换、金额/定点数量、权限和场景纯函数。
 - Query key、cache updater 和无平台 API client。
 - 文档投影的 link rewriting 和路径安全。
+- Agent Page Context、Tool catalog、岗位 view、execution proof 和结果 schema。
 
 测试应覆盖边界、拒绝路径和不变量，不以行覆盖率数字代替行为断言。
 
 ### Adapter
 
-HTTP、FHIR、SQLite、文件持久卷、Electron IPC、浏览器存储和移动安全存储属于 adapter。测试通过公开 interface 驱动真实 adapter，mock 只停在网络、时钟或平台进程等昂贵/非确定输入。
+HTTP、FHIR、SQLite、文件持久卷、Electron IPC、浏览器存储、DSH Host proxy/proof bridge 和移动安全存储属于 adapter。测试通过公开 interface 驱动真实 adapter，mock 只停在网络、时钟或平台进程等昂贵/非确定输入。
 
 Server route 测试必须解析响应 schema。SQLite 正确性 Spike 使用真实临时数据库文件验证事务回滚、外键、WAL 写竞争、幂等竞争、expected-version 条件写、outbox 重启恢复、备份还原和 Epoch reset。
 
 ### Application composition
 
-共享业务视图在 `packages/views` 测试；Web 路由和平台 wiring 在 `apps/web` 测试。Desktop 或 Mobile 进入实际开发后在对应 app 增加平台证据。一个产品行为只有一个完整矩阵归属，其他层保留 wiring、可访问性和真实入口验证，不重复纯函数矩阵。
+共享业务视图在 `packages/views` 测试；Web 路由和平台 wiring 在 `apps/web` 测试。DSH composition 额外覆盖可注入 API base、Memory Router、ShadowRoot Portal、Page Context 续签、稳定 page scope、detached review 和 artifact contract。Desktop 或 Mobile 进入实际开发后在对应 app 增加平台证据。一个产品行为只有一个完整矩阵归属，其他层保留 wiring、可访问性和真实入口验证，不重复纯函数矩阵。
 
 Mobile 只共享产品语义，不共享 DOM 测试。移动测试覆盖 Expo Router wiring、AppState/NetInfo、SecureStore、QueryClient 和原生交互。
 
 ### End-to-end
 
-E2E 从真实入口执行，并从外部观察结果：重新读取资源、数据库投影、页面或审计事件，不以 Agent 自己声称成功作为断言。
+E2E 从真实入口执行，并从外部观察结果：重新读取资源、数据库投影、页面或审计事件，不以 Agent 自己声称成功作为断言。DSH Web 验收从统一 launcher 打开 Surface，要求原生 Session 实际调用 browser Tool，并覆盖一个草稿 action 和一个 proposal → 人工批准 → Command Effect；Tool call、proposal、review、request、audit 和 trace 必须可关联。
 
 核心候选 Scenario 见[系统架构](architecture.md#144-场景测试)。当前 `candidate` 与 `density` 都没有临床审核元数据，不得称为 `golden`。每次运行固定 app build、schema 与 Scenario 版本；未来实际发布 IG、policy package 或 Agent tool schema 后再把对应版本加入固定输入。
 
@@ -72,6 +73,8 @@ pnpm check              # 非 Mobile 主检查集合
 ```sh
 pnpm --filter @clinmesh/core test
 pnpm --filter @clinmesh/server typecheck
+pnpm --filter @clinmesh/dsh-web test
+pnpm --filter @clinmesh/dsh-web build
 pnpm docs:check
 ```
 
@@ -87,7 +90,7 @@ pnpm docs:check
 
 ## 用户界面验证
 
-首期用户界面修改在 Web 真实入口验证。布局需要覆盖长中文文本、窄宽度、缩放和空/错误/加载状态。用户可见的 Web PR 使用 `agent-browser` 走真实应用入口并录制绑定精确 commit 的原生 WebM；成片使用 3–4 倍速、步骤字幕和真实点击高亮，在临床文字仍可读的前提下压缩体积。WebM 不替代自动回归测试。Desktop 进入实际开发后再增加真实 renderer 证据。
+用户界面修改在 standalone Web 与受影响的 DSH Surface 真实入口验证。布局需要覆盖长中文文本、窄宽度、缩放和空/错误/加载状态；DSH `workspace` 同时显示原生会话与 Surface，并验证宽度不足时退化到 `full-frame`。用户可见的 Web PR 使用 `agent-browser` 走真实应用入口并录制绑定精确 commit 的原生 WebM；成片使用 3–4 倍速、步骤字幕和真实点击高亮，在临床文字仍可读的前提下压缩体积。WebM 不替代自动回归测试。Desktop 进入实际开发后再增加真实 renderer 证据。
 
 录制只使用合成医院场景和隔离的 workspace、epoch 与客户端状态。画面不得包含真实患者信息、医保或支付凭证、平台密钥、无关浏览器标签或通知。
 

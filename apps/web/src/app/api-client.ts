@@ -72,9 +72,36 @@ import {
   type SyntheticPatientMappingInput,
 } from '@clinmesh/contracts/scenario'
 import { referenceDataReleaseListSchema } from '@clinmesh/contracts/reference-data'
+import {
+  agentPageContextBindingSchema,
+  agentPageContextClaimSchema,
+  agentToolAuthorizationRequestSchema,
+  agentToolAuthorizationResponseSchema,
+  agentToolCompletionResponseSchema,
+  agentToolResultRequestSchema,
+  type AgentPageContextClaim,
+  type AgentToolAuthorizationRequest,
+  type AgentToolResultRequest,
+} from '@clinmesh/contracts/agent'
 import { z } from 'zod'
 
 export const sessionQueryKey = ['session-context'] as const
+
+let configuredApiBasePath = ''
+
+export function configureApiBasePath(basePath: string): () => void {
+  const normalized = basePath === '' ? '' : `/${basePath.replace(/^\/+|\/+$/g, '')}`
+  const previous = configuredApiBasePath
+  configuredApiBasePath = normalized
+  return () => {
+    if (configuredApiBasePath === normalized) configuredApiBasePath = previous
+  }
+}
+
+function resolveApiPath(path: string): string {
+  if (configuredApiBasePath === '' || (path !== '/api' && !path.startsWith('/api/'))) return path
+  return `${configuredApiBasePath}${path.slice('/api'.length)}`
+}
 
 export class ApiClientError extends Error {
   readonly code: string
@@ -112,7 +139,7 @@ export async function apiGet<Schema extends z.ZodType>(
   schema: Schema,
   signal?: AbortSignal,
 ): Promise<z.infer<Schema>> {
-  const response = await fetch(path, {
+  const response = await fetch(resolveApiPath(path), {
     credentials: 'same-origin',
     headers: { accept: 'application/json' },
     ...(signal === undefined ? {} : { signal }),
@@ -124,7 +151,11 @@ export async function apiMutation<Schema extends z.ZodType>(
   path: string,
   schema: Schema,
   body?: unknown,
-  options: { idempotencyKey?: string; method?: 'DELETE' | 'POST' | 'PUT' } = {},
+  options: {
+    idempotencyKey?: string
+    method?: 'DELETE' | 'POST' | 'PUT'
+    signal?: AbortSignal
+  } = {},
 ): Promise<z.infer<Schema>> {
   const headers: Record<string, string> = {
     accept: 'application/json',
@@ -133,11 +164,12 @@ export async function apiMutation<Schema extends z.ZodType>(
   if (options.idempotencyKey !== undefined) {
     headers['idempotency-key'] = options.idempotencyKey
   }
-  const response = await fetch(path, {
+  const response = await fetch(resolveApiPath(path), {
     body: JSON.stringify(body ?? {}),
     credentials: 'same-origin',
     headers,
     method: options.method ?? 'POST',
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   })
   return parseResponse(response, schema)
 }
@@ -164,6 +196,50 @@ export function selectRole(practitionerRoleId: string): Promise<SessionContext> 
     sessionContextSchema,
     { practitionerRoleId },
   )
+}
+
+export function createAgentPageContext(claim: AgentPageContextClaim) {
+  return apiMutation(
+    '/api/agent/v1/page-contexts',
+    agentPageContextBindingSchema,
+    agentPageContextClaimSchema.parse(claim),
+  )
+}
+
+export function authorizeAgentToolCall(request: AgentToolAuthorizationRequest, signal?: AbortSignal) {
+  return apiMutation(
+    '/api/agent/v1/tool-calls',
+    agentToolAuthorizationResponseSchema,
+    agentToolAuthorizationRequestSchema.parse(request),
+    signal === undefined ? {} : { signal },
+  )
+}
+
+export function completeAgentToolCall(request: AgentToolResultRequest, signal?: AbortSignal) {
+  return apiMutation(
+    '/api/agent/v1/tool-calls/result',
+    agentToolCompletionResponseSchema,
+    agentToolResultRequestSchema.parse(request),
+    signal === undefined ? {} : { signal },
+  )
+}
+
+export async function issueAgentExecutionProof(input: {
+  scopeKey: string
+  signal?: AbortSignal
+  toolName: string
+}): Promise<string> {
+  const response = await fetch('/clinmesh-agent-proof', {
+    body: JSON.stringify({ scopeKey: input.scopeKey, toolName: input.toolName }),
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    method: 'POST',
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
+  })
+  const value = await parseResponse(
+    response,
+    z.object({ data: z.object({ proof: z.string().min(32) }).strict() }).strict(),
+  )
+  return value.data.proof
 }
 
 export function getCurrentScenario(signal?: AbortSignal): Promise<ScenarioState> {

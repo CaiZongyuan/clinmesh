@@ -19,3 +19,5 @@ apps/mobile/android/
 .playwright-mcp/
 .prototypes/
 .claude/
+apps/dsh-web/src/client/styles.generated.ts
+apps/dsh-web/lib/

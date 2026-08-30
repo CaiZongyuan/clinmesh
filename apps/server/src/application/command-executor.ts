@@ -323,7 +323,7 @@ export class CommandExecutor {
         'success',
         result.effects,
       )
-      this.#appendTrace(context, invocation.operation, result.effects, now, 'success')
+      this.#appendTrace(context, invocation.operation, result.effects, now, 'success', requestId)
       const insertEffect = this.#database.driver.prepare(`
         INSERT INTO command_effect (
           workspace_id, epoch, actor_id, operation, idempotency_key,
@@ -508,6 +508,7 @@ export class CommandExecutor {
     effects: CommandEffect[],
     timestamp: string,
     outcome: 'failed' | 'success',
+    requestId?: string,
   ): void {
     const virtualTime = virtualTimeRowSchema.optional().parse(
       this.#database.driver.prepare(`
@@ -524,8 +525,8 @@ export class CommandExecutor {
     this.#database.driver.prepare(`
       INSERT INTO action_trace (
         workspace_id, epoch, scenario_run_id, trace_id, sequence,
-        actor_id, operation, outcome, effect_json, virtual_timestamp
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        actor_id, operation, outcome, effect_json, virtual_timestamp, request_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       context.workspaceId,
       context.epoch,
@@ -537,6 +538,7 @@ export class CommandExecutor {
       outcome,
       JSON.stringify(effects),
       virtualTimestamp,
+      requestId ?? null,
     )
   }
 

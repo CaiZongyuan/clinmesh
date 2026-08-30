@@ -54,6 +54,13 @@ import {
   type RepositoryContext,
 } from './infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceContextError } from './infrastructure/sqlite/workspace-repository.ts'
+import type { AgentIntegrationService } from './application/agent-integration-service.ts'
+import { AgentIntegrationError } from './application/agent-integration-service.ts'
+import {
+  agentPageContextClaimSchema,
+  agentToolAuthorizationRequestSchema,
+  agentToolResultRequestSchema,
+} from '@clinmesh/contracts/agent'
 
 interface FhirRuntime {
   repository: FhirRepository
@@ -61,6 +68,7 @@ interface FhirRuntime {
 }
 
 export interface CreateAppOptions {
+  agentIntegration?: AgentIntegrationService
   fhir?: FhirRuntime
   identity?: IdentityService
   referenceData?: ReferenceDataService
@@ -91,6 +99,7 @@ function apiErrorResponse(
   }
   if (
     error instanceof IdentityError
+    || error instanceof AgentIntegrationError
     || error instanceof ReferenceDataError
     || error instanceof ScenarioDataError
     || error instanceof ScenarioError
@@ -194,6 +203,53 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       }
     })
     app.all('/api/auth/*', context => identity.handle(context.req.raw))
+  }
+
+  if (options.agentIntegration !== undefined && options.identity !== undefined) {
+    const agentIntegration = options.agentIntegration
+    const identity = options.identity
+    app.post('/api/agent/v1/page-contexts', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const claim = agentPageContextClaimSchema.parse(await context.req.json())
+        return context.json(agentIntegration.createPageContext({
+          actor: session.actor,
+          claim,
+          userAccountId: session.user.id,
+        }), 201)
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/agent/v1/tool-calls', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const request = agentToolAuthorizationRequestSchema.parse(await context.req.json())
+        return context.json(agentIntegration.authorizeToolCall({
+          actor: session.actor,
+          request,
+          userAccountId: session.user.id,
+        }), 201)
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/agent/v1/tool-calls/result', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const request = agentToolResultRequestSchema.parse(await context.req.json())
+        return context.json(agentIntegration.completeToolCall({
+          actor: session.actor,
+          request,
+          userAccountId: session.user.id,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
   }
 
   if (options.identity !== undefined && options.scenario !== undefined) {
@@ -1208,10 +1264,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           identity.assertTrustedMutation(context.req.raw.headers)
           const body = correctLaboratoryReportRequestSchema.parse(await context.req.json())
           const session = await identity.resolveSessionContext(context.req.raw.headers)
-          if (!session.availableRoles.some(role => role.code === 'administrator')) {
+          if (
+            session.actor.roleCode !== 'outpatient-doctor'
+            && !session.availableRoles.some(role => role.code === 'administrator')
+          ) {
             throw new WorkflowError(
               'ROLE_NOT_ALLOWED',
-              'Only an administrator can invoke the controlled laboratory report actor',
+              'Only an outpatient doctor or administrator can invoke the controlled report actor',
             )
           }
           const authenticatedContext = session.actor
