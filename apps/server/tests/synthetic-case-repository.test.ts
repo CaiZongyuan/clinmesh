@@ -4,13 +4,11 @@ import { join } from 'node:path'
 import {
   scenarioGenerationRequestSchema,
   syntheticPatientProfileSchema,
-  type ScenarioDataset,
 } from '@clinmesh/contracts/scenario'
 import { afterEach, describe, expect, it } from 'vitest'
 import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
 import { compileSyntheaIndexCase } from '../src/application/scenario-data/synthea-index-case.ts'
 import { createSyntheticPatientProfiles } from '../src/application/scenario-data/synthetic-patient-profile.ts'
-import { BuiltInScenarioGenerationProvider } from '../src/infrastructure/scenario-generation/builtin-provider.ts'
 import {
   applyMigrations,
   openClinMeshDatabase,
@@ -133,39 +131,29 @@ describe('Synthetic Case SQLite boundary', () => {
     })
 
     const request = scenarioGenerationRequestSchema.parse({
+      moduleMode: 'filter',
       modules: ['hypertension'],
       name: 'Synthetic Case',
       population: { age: { maximum: 60, minimum: 40 }, count: 1, gender: 'female' },
-      providerId: 'builtin',
+      providerId: 'synthea',
       seeds: { clinical: 7331, population: 4242 },
       timeRange: { end: '2026-08-01', start: '2016-08-01' },
       timeZone: 'Asia/Shanghai',
     })
-    const corpus = await new BuiltInScenarioGenerationProvider().generate(request)
-    const dataset: ScenarioDataset = {
-      content: corpus.content,
-      contentHash: canonicalJsonHash(corpus.content),
-      createdAt: '2026-08-30T08:00:00+08:00',
-      datasetId: 'batch-synthetic-case',
-      diagnostics: [],
-      name: request.name,
-      providerId: request.providerId,
-      updatedAt: '2026-08-30T08:00:00+08:00',
-      version: 1,
-      workspaceId: 'workspace-synthetic-case',
-    }
     const bundle = sourceBundle()
-    const baseProfile = createSyntheticPatientProfiles({ dataset, sources: corpus.sources })[0]!
-    const profile = syntheticPatientProfileSchema.parse({
-      ...baseProfile,
-      source: {
-        ...baseProfile.source,
+    const profile = syntheticPatientProfileSchema.parse(createSyntheticPatientProfiles({
+      batchId: 'batch-synthetic-case',
+      batchName: request.name,
+      createdAt: '2026-08-30T08:00:00+08:00',
+      request,
+      sources: [{
         format: 'fhir-r4-bundle',
         hash: canonicalJsonHash(bundle),
-        providerId: 'synthea',
+        patientId: 'patient',
         raw: bundle,
-      },
-    })
+      }],
+      workspaceId: 'workspace-synthetic-case',
+    })[0])
     new SyntheticPatientProfileRepository(database).createBatch([profile], 'actor-administrator')
 
     const repository = new SyntheticCaseRepository(database)

@@ -135,6 +135,34 @@ function assertNoDiagnosisLeak(
   }
 }
 
+export async function generatePatientBrief(input: {
+  hiddenResources: Resource[]
+  model: string
+  payload: unknown
+  provider: JsonChatCompletionsProvider
+  signal?: AbortSignal
+  visibleResources: Resource[]
+}) {
+  const completion = await input.provider.completeJson({
+    jsonSchema: z.toJSONSchema(patientBriefContentSchema) as Record<string, unknown>,
+    model: input.model,
+    schemaName: 'patient_brief',
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
+    systemPrompt,
+    userPayload: input.payload,
+  })
+  const content = patientBriefContentSchema.parse(JSON.parse(completion.content))
+  assertNoDiagnosisLeak(content, input.hiddenResources, input.visibleResources)
+  return {
+    content,
+    inputHash: canonicalJsonHash(input.payload),
+    model: completion.model,
+    outputHash: canonicalJsonHash(content),
+    promptHash,
+    promptVersion,
+  }
+}
+
 export class PatientBriefService {
   readonly #briefs: PatientBriefRepository
   readonly #cases: SyntheticCaseRepository
@@ -275,34 +303,26 @@ export class PatientBriefService {
     })
     try {
       const generation = this.#generationInput(claimed)
-      const completion = await this.#provider.completeJson({
-        jsonSchema: z.toJSONSchema(patientBriefContentSchema) as Record<string, unknown>,
+      const generated = await generatePatientBrief({
+        hiddenResources: generation.hiddenResources,
         model: claimed.model,
-        schemaName: 'patient_brief',
+        payload: generation.payload,
+        provider: this.#provider,
         ...(signal === undefined ? {} : { signal }),
-        systemPrompt,
-        userPayload: generation.payload,
+        visibleResources: generation.visibleResources,
       })
-      const content = patientBriefContentSchema.parse(JSON.parse(completion.content))
-      assertNoDiagnosisLeak(content, generation.hiddenResources, generation.visibleResources)
-      const outputHash = canonicalJsonHash(content)
       return this.#commands.execute({
         context: claimed.actorContext,
         contextRequirement: 'known',
         dataSchema: patientBriefJobSchema,
         expectedVersions: {},
-        idempotencyKey: `${claimed.jobId}:complete:${outputHash}`,
+        idempotencyKey: `${claimed.jobId}:complete:${generated.outputHash}`,
         idempotencyScope: 'workspace',
-        input: { jobId: claimed.jobId, outputHash },
+        input: { jobId: claimed.jobId, outputHash: generated.outputHash },
         operation: 'patient-brief-job.complete',
       }, () => {
         const result = this.#briefs.succeed(claimed, {
-          content,
-          inputHash: generation.inputHash,
-          model: completion.model,
-          outputHash,
-          promptHash,
-          promptVersion,
+          ...generated,
         }, new Date().toISOString())
         return {
           data: result.job,
@@ -359,15 +379,14 @@ export class PatientBriefService {
     const payload = {
       caseType: syntheticCase.caseType,
       demographics: {
-        birthDate: profile.patient.birthDate,
-        gender: profile.patient.gender,
+        birthDate: profile.demographics.birthDate,
+        gender: profile.demographics.gender,
       },
       privateEpisodeEvidence: hiddenResources.slice(0, 100).map(summarizedResource),
       visibleHistory: history,
     }
     return {
       hiddenResources,
-      inputHash: canonicalJsonHash(payload),
       payload,
       visibleResources,
     }

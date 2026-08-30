@@ -1,6 +1,5 @@
 import {
   referenceDiagnosisCatalogSearchSchema,
-  referenceCodingIdentity,
   referenceDataProvenanceSchema,
   referenceDataReleaseListSchema,
   referenceLaboratoryCatalogSearchSchema,
@@ -13,8 +12,6 @@ import {
   type ReferenceValueSetEntry,
 } from '@clinmesh/contracts/reference-data'
 import type { ActorContext } from './command-executor.ts'
-import type { ReferenceHospitalSelection } from './reference-hospital-selection.ts'
-import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import { syntheticNhsaMedicationProductSnapshot } from './scenario-data/medication-product-snapshot.ts'
 import {
   syntheticNhcMedicalServiceSnapshot,
@@ -138,16 +135,13 @@ function builtinReferenceData(): ReferenceDataReleaseList {
 export class ReferenceDataService {
   readonly #activeReleaseId: string | undefined
   readonly #reader: ReferenceDataReader | undefined
-  readonly #selection: ReferenceHospitalSelection | undefined
 
   constructor(
     reader?: ReferenceDataReader,
-    selection?: ReferenceHospitalSelection,
     activeReleaseId?: string,
   ) {
     this.#activeReleaseId = activeReleaseId
     this.#reader = reader
-    this.#selection = selection
   }
 
   list(context: ActorContext): ReferenceDataReleaseList {
@@ -249,50 +243,6 @@ export class ReferenceDataService {
     return product?.status === 'active' ? product : undefined
   }
 
-  hospitalReferenceSelection(): {
-    bindings?: ReferenceHospitalSelection
-    concepts: ReferenceConcept[]
-    products: ReferenceMedicationProduct[]
-    release: ReferenceDataReleaseSummary
-    services: ReferenceMedicalService[]
-    valueSetEntries: ReferenceValueSetEntry[]
-  } {
-    if (this.#selection !== undefined) return this.#configuredHospitalSelection(this.#selection)
-    const release = this.#releases().items.find(item => (
-      item.medicationProductCount > 0
-      && item.serviceCount > 0
-      && item.valueSetEntryCount > 0
-    ))
-    const builtin = builtinReferenceData().items[0]!
-    const builtinSelection = {
-      concepts: [],
-      products: syntheticNhsaMedicationProductSnapshot,
-      release: builtin,
-      services: syntheticNhcMedicalServiceSnapshot,
-      valueSetEntries: syntheticWstValueSetSnapshot,
-    }
-    if (release === undefined) return builtinSelection
-    if (release.releaseId === BUILTIN_RELEASE_ID) {
-      if (release.contentHash !== builtin.contentHash) {
-        throw new Error(`Built-in Reference Data Release hash mismatch: ${release.releaseId}`)
-      }
-      return builtinSelection
-    }
-    const products = this.#reader?.medicationProducts(release.releaseId) ?? []
-    const services = this.#reader?.medicalServices(release.releaseId) ?? []
-    const valueSetEntries = this.#reader?.valueSetEntries(release.releaseId) ?? []
-    if (products.length !== release.medicationProductCount) {
-      throw new Error(`Reference Data Release Product count mismatch: ${release.releaseId}`)
-    }
-    if (services.length !== release.serviceCount) {
-      throw new Error(`Reference Data Release Service count mismatch: ${release.releaseId}`)
-    }
-    if (valueSetEntries.length !== release.valueSetEntryCount) {
-      throw new Error(`Reference Data Release ValueSet count mismatch: ${release.releaseId}`)
-    }
-    return { concepts: [], products, release, services, valueSetEntries }
-  }
-
   #assertCatalogReader(context: ActorContext): void {
     if (!['administrator', 'outpatient-doctor'].includes(context.roleCode)) {
       throw new ReferenceDataError(
@@ -305,7 +255,7 @@ export class ReferenceDataService {
   #catalogRelease(): ReferenceDataReleaseSummary {
     if (this.#reader === undefined) return builtinReferenceData().items[0]!
     const releases = this.#reader.list().items
-    const releaseId = this.#activeReleaseId ?? this.#selection?.referenceReleaseId
+    const releaseId = this.#activeReleaseId
     if (releaseId !== undefined) {
       const release = releases.find(item => item.releaseId === releaseId)
       if (release === undefined) {
@@ -344,99 +294,6 @@ export class ReferenceDataService {
       items: items.slice((input.page - 1) * input.pageSize, input.page * input.pageSize),
       total: items.length,
     }
-  }
-
-  #configuredHospitalSelection(selection: ReferenceHospitalSelection) {
-    if (this.#reader === undefined) {
-      throw new Error('Hospital Reference selection requires an external Reference database')
-    }
-    const sourceRelease = this.#reader.list().items.find(release => (
-      release.releaseId === selection.referenceReleaseId
-    ))
-    if (sourceRelease === undefined) {
-      throw new Error(`Hospital Reference selection Release was not found: ${selection.referenceReleaseId}`)
-    }
-    const conceptBindings = selection.bindings.filter(binding => binding.kind !== 'medication-product')
-    const productBindings = selection.bindings.filter(binding => binding.kind === 'medication-product')
-    const concepts = this.#reader.concepts(
-      sourceRelease.releaseId,
-      conceptBindings.map(binding => binding.coding),
-    )
-    const products = this.#reader.medicationProducts(
-      sourceRelease.releaseId,
-      productBindings.map(binding => binding.coding),
-    )
-    for (const binding of conceptBindings) {
-      const matches = concepts.filter(concept => (
-        referenceCodingIdentity(concept) === referenceCodingIdentity(binding.coding)
-        && concept.domain === binding.kind
-        && concept.status === 'active'
-      ))
-      if (matches.length !== 1) {
-        throw new Error(`Hospital Reference selection target is unavailable: ${binding.catalogItemId}`)
-      }
-    }
-    for (const binding of productBindings) {
-      const matches = products.filter(product => (
-        referenceCodingIdentity(product) === referenceCodingIdentity(binding.coding)
-        && product.status === 'active'
-      ))
-      if (matches.length !== 1) {
-        throw new Error(`Hospital Reference selection target is unavailable: ${binding.catalogItemId}`)
-      }
-    }
-
-    const builtin = builtinReferenceData().items[0]!
-    const hasExternalSupport = sourceRelease.serviceCount > 0 || sourceRelease.valueSetEntryCount > 0
-    if (hasExternalSupport
-      && (sourceRelease.serviceCount === 0 || sourceRelease.valueSetEntryCount === 0)) {
-      throw new Error('Hospital Reference selection source has an incomplete service/value-set pair')
-    }
-    const services = hasExternalSupport
-      ? this.#reader.medicalServices(sourceRelease.releaseId)
-      : syntheticNhcMedicalServiceSnapshot
-    const valueSetEntries = hasExternalSupport
-      ? this.#reader.valueSetEntries(sourceRelease.releaseId)
-      : syntheticWstValueSetSnapshot
-    if (hasExternalSupport && services.length !== sourceRelease.serviceCount) {
-      throw new Error(`Reference Data Release Service count mismatch: ${sourceRelease.releaseId}`)
-    }
-    if (hasExternalSupport && valueSetEntries.length !== sourceRelease.valueSetEntryCount) {
-      throw new Error(`Reference Data Release ValueSet count mismatch: ${sourceRelease.releaseId}`)
-    }
-    const supportSources = hasExternalSupport
-      ? []
-      : builtin.sources.filter(source => source.artifactFormat !== 'nhsa-medication-product-csv')
-    const sources = [...sourceRelease.sources, ...supportSources]
-    const release = referenceDataReleaseListSchema.parse({
-      items: [{
-        conceptCount: concepts.length,
-        contentHash: canonicalJsonHash({
-          referenceRelease: {
-            contentHash: sourceRelease.contentHash,
-            releaseId: sourceRelease.releaseId,
-          },
-          selection: {
-            contentHash: selection.contentHash,
-            selectionId: selection.selectionId,
-            version: selection.version,
-          },
-          supportRelease: hasExternalSupport
-            ? null
-            : { contentHash: builtin.contentHash, releaseId: builtin.releaseId },
-        }),
-        createdAt: sourceRelease.createdAt,
-        medicationProductCount: products.length,
-        releaseId: `reference-selection:${selection.selectionId}@${selection.version}`,
-        schemaVersion: '1',
-        serviceCount: services.length,
-        sourceCount: sources.length,
-        sources,
-        status: 'published',
-        valueSetEntryCount: valueSetEntries.length,
-      }],
-    }).items[0]!
-    return { bindings: selection, concepts, products, release, services, valueSetEntries }
   }
 
   #releases(): ReferenceDataReleaseList {

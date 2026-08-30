@@ -304,8 +304,8 @@ const componentCatalogRoute = createRoute({
 
 const UiDevPage = import.meta.env.DEV
   ? lazy(async () => {
-      const module = await import('../ui-dev/ui-dev-page.tsx')
-      return { default: module.UiDevPage }
+      const module = await import('../ui-dev/doctor-workspace-lab-page.tsx')
+      return { default: module.DoctorWorkspaceLabPage }
     })
   : () => null
 

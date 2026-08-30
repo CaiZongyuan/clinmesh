@@ -242,7 +242,7 @@ describe('HIS contracts', () => {
     }).success).toBe(false)
   })
 
-  it('accepts dynamic laboratory catalog IDs and rejects malformed IDs', () => {
+  it('accepts dynamic laboratory catalog IDs, including external reference IDs', () => {
     expect(laboratoryRequestStateSchema.safeParse({
       draft: {
         catalogItemId: 'lab-fever-panel',
@@ -260,7 +260,7 @@ describe('HIS contracts', () => {
       draftVersion: 1,
       reportingSupported: true,
       requests: [],
-    }).success).toBe(false)
+    }).success).toBe(true)
   })
 
   it('requires an explicit Scenario reporting capability in the request read model', () => {

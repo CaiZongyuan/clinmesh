@@ -5,32 +5,25 @@ import type {
   ReferenceMedicationProduct,
   ReferenceValueSetEntry,
 } from '@clinmesh/contracts/reference-data'
-import {
-  scenarioDatasetContentSchema,
-  type ScenarioDatasetContent,
-} from '@clinmesh/contracts/scenario'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import { z } from 'zod'
 import type {
   ActorContext,
-  CommandHandlerResult,
   CommandResponse,
+  CommandTransaction,
 } from './command-executor.ts'
 import { CommandExecutor } from './command-executor.ts'
 import { syntheticAccounts } from './identity-service.ts'
 import { createHospitalBaseline } from './scenario-data/hospital-baseline.ts'
-import { materializeScenarioPatientFhirHistory } from './scenario-data/scenario-patient-fhir-history.ts'
 
 const clinicalReviewSchema = z.record(z.string(), z.unknown())
-const scenarioPackageRowSchema = z.object({
-  content_json: z.string(),
-  source_dataset_version: z.number().int().positive(),
-}).strict()
 const countRowSchema = z.object({ count: z.number().int().nonnegative() }).strict()
 
+type HospitalBaseline = ReturnType<typeof createHospitalBaseline>
+
 function installedMedicationConfigJson(
-  medication: ScenarioDatasetContent['catalog']['medications'][number],
+  medication: HospitalBaseline['catalog']['medications'][number],
   diagnosisIdByCode: ReadonlyMap<string, string>,
   allowedCombinationIds = medication.workflow.allowedCombinationIds,
 ) {
@@ -60,20 +53,19 @@ function installedMedicationConfigJson(
 }
 
 function installedDiagnosisCatalogRow(
-  diagnosis: ScenarioDatasetContent['catalog']['diagnoses'][number],
+  diagnosis: HospitalBaseline['catalog']['diagnoses'][number],
 ) {
-  const coding = diagnosis.referenceConcept
   return [
     diagnosis.id,
-    coding?.system ?? diagnosis.codeSystem,
-    coding?.code ?? diagnosis.code,
-    coding?.display ?? diagnosis.name,
-    coding?.display ?? diagnosis.name,
+    diagnosis.codeSystem,
+    diagnosis.code,
+    diagnosis.name,
+    diagnosis.name,
   ] as const
 }
 
 function installedServiceConfigJson(
-  service: NonNullable<ScenarioDatasetContent['catalog']['services']>[number],
+  service: HospitalBaseline['catalog']['services'][number],
 ) {
   return JSON.stringify({
     availableScopes: service.availableScopes,
@@ -433,7 +425,6 @@ const knownScenarioBlueprints = [
 
 interface ScenarioVirtualPatient {
   birthDate: string
-  fhirHistory?: ScenarioDatasetContent['patients'][number]['fhirHistory']
   gender: 'female' | 'male' | 'other' | 'unknown'
   id: string
   name: string
@@ -463,65 +454,9 @@ interface ScenarioVirtualPatient {
   version: number
 }
 
-function scenarioPatientQuestions(
-  patient: ScenarioDatasetContent['patients'][number],
-  hiddenFacts: ScenarioDatasetContent['hiddenFacts'],
-  revealPolicies: ScenarioDatasetContent['revealPolicies'],
-): ScenarioVirtualPatient['questions'] {
-  const questions = patient.symptomResponses.flatMap((response) => {
-    const responseText = [...response.responsePoints, ...response.denies].join(' ')
-      || patient.patientKnowledge.chiefComplaint
-    const topicPolicy = revealPolicies.find(policy => (
-      policy.patientId === patient.id
-      && policy.triggerCode === 'after-topic'
-      && policy.triggerId === response.id
-    ))
-    const topicFact = hiddenFacts.find(fact => (
-      fact.code === topicPolicy?.factCode
-      && (fact.patientId === undefined || fact.patientId === patient.id)
-    ))
-    const revealedAnswer = typeof topicFact?.value === 'string' ? topicFact.value : null
-    return [{
-      answer: response.secondAskConcede?.firstResponse ?? responseText,
-      code: response.id,
-      factCode: revealedAnswer === null ? null : topicPolicy?.factCode ?? null,
-      revealedAnswer,
-      ...(response.secondAskConcede === undefined
-        ? {}
-        : { secondAskAnswer: response.secondAskConcede.revealedResponse }),
-      text: response.name,
-      version: 1,
-    }, ...response.avoids.map((avoid, index) => ({
-      answer: avoid.response,
-      code: `${response.id}-avoid-${index + 1}`,
-      factCode: null,
-      revealedAnswer: null,
-      text: avoid.questionPattern,
-      version: 1,
-    }))]
-  })
-  const availableQuestions = questions.length === 0
-    ? [{
-        answer: patient.patientKnowledge.chiefComplaint,
-        code: 'chief-complaint',
-        factCode: null,
-        revealedAnswer: null,
-        text: '这次主要哪里不舒服？',
-        version: 1,
-      }]
-    : questions
-  return availableQuestions.map((question, index) => ({
-    ...question,
-    ordinal: index + 1,
-  }))
-}
-
 interface ScenarioBlueprint {
-  catalog?: ScenarioDatasetContent['catalog']
   clinicalReview: null | Record<string, unknown>
   hiddenFacts: ReadonlyArray<{ code: string; patientId?: string; value: unknown }>
-  hospital?: ScenarioDatasetContent['hospital']
-  inventory?: ScenarioDatasetContent['inventory']
   kind: 'candidate' | 'density' | 'golden'
   medicationRulesVersion?: string
   revealPolicies: ReadonlyArray<{
@@ -585,11 +520,18 @@ function blueprintHash(blueprint: ScenarioBlueprint): string {
   return createHash('sha256').update(JSON.stringify(blueprint)).digest('hex')
 }
 
+interface ReplaySyntheticCasesInput {
+  fromContext: ActorContext
+  toContext: ActorContext
+  transaction: CommandTransaction
+}
+
 export class ScenarioService {
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
   readonly #fhir: FhirRepository
   readonly #hospitalBaseline: ReturnType<typeof createHospitalBaseline>
+  readonly #replaySyntheticCases: ((input: ReplaySyntheticCasesInput) => void) | undefined
 
   constructor(
     database: ClinMeshDatabase,
@@ -598,6 +540,7 @@ export class ScenarioService {
     medicationProducts: readonly ReferenceMedicationProduct[],
     medicalServices: readonly ReferenceMedicalService[],
     valueSetEntries: readonly ReferenceValueSetEntry[],
+    options: { replaySyntheticCases?: (input: ReplaySyntheticCasesInput) => void } = {},
   ) {
     this.#commands = commands
     this.#database = database
@@ -607,6 +550,7 @@ export class ScenarioService {
       medicalServices,
       valueSetEntries,
     )
+    this.#replaySyntheticCases = options.replaySyntheticCases
   }
 
   ensureInitialEpoch(input: {
@@ -683,7 +627,7 @@ export class ScenarioService {
       idempotencyScope: 'workspace',
       input: { scenarioRunId: input.scenarioRunId },
       operation: 'scenario.reset',
-    }, () => {
+    }, (transaction) => {
       if (input.context.roleCode !== 'administrator') {
         throw new ScenarioError('ROLE_NOT_ALLOWED', 'Only an administrator can reset a Scenario Run')
       }
@@ -693,9 +637,19 @@ export class ScenarioService {
       const currentState = this.current(input.context)
       const blueprint = knownScenarioBlueprints.find(
         candidate => candidate.scenarioId === currentState.scenarioId,
-      ) ?? this.#packageBlueprint(input.context.workspaceId, currentState.scenarioId)
-        ?? installableScenarioBlueprints.candidate
-      return this.#transitionEpoch(input.context, blueprint)
+      ) ?? installableScenarioBlueprints.candidate
+      const transition = this.#transitionEpoch(input.context, blueprint)
+      // The reset audit belongs to the closing Epoch; replayed FHIR facts belong to the new Epoch.
+      this.#replaySyntheticCases?.({
+        fromContext: input.context,
+        toContext: {
+          ...input.context,
+          epoch: transition.data.epoch,
+          scenarioRunId: transition.data.scenarioRunId,
+        },
+        transaction,
+      })
+      return transition
     })
   }
 
@@ -719,24 +673,6 @@ export class ScenarioService {
       }
       return this.#transitionEpoch(input.context, installableScenarioBlueprints[input.kind])
     })
-  }
-
-  installPackage(input: {
-    content: ScenarioDatasetContent
-    context: ActorContext
-    packageId: string
-    version: number
-  }): CommandHandlerResult<ScenarioState> {
-    if (input.context.roleCode !== 'administrator') {
-      throw new ScenarioError('ROLE_NOT_ALLOWED', 'Only an administrator can install a Scenario Package')
-    }
-    const blueprint = this.#blueprintFromPackage(input.packageId, input.version, input.content)
-    this.#database.driver.prepare(`
-      INSERT INTO scenario_definition (
-        scenario_id, version, kind, schema_version, clinical_review_json
-      ) VALUES (?, ?, 'candidate', ?, NULL)
-    `).run(blueprint.scenarioId, blueprint.version, blueprint.schemaVersion)
-    return this.#transitionEpoch(input.context, blueprint)
   }
 
   #transitionEpoch(context: ActorContext, blueprint: ScenarioBlueprint) {
@@ -827,84 +763,6 @@ export class ScenarioService {
     }
   }
 
-  #packageBlueprint(workspaceId: string, packageId: string): ScenarioBlueprint | undefined {
-    const result = this.#database.driver.prepare(`
-      SELECT content_json, source_dataset_version
-      FROM scenario_package
-      WHERE workspace_id = ? AND package_id = ?
-    `).get(workspaceId, packageId)
-    if (result === undefined) return undefined
-    const row = scenarioPackageRowSchema.parse(result)
-    return this.#blueprintFromPackage(
-      packageId,
-      row.source_dataset_version,
-      scenarioDatasetContentSchema.parse(JSON.parse(row.content_json)),
-    )
-  }
-
-  #blueprintFromPackage(
-    packageId: string,
-    version: number,
-    content: ScenarioDatasetContent,
-  ): ScenarioBlueprint {
-    return {
-      clinicalReview: null,
-      hiddenFacts: content.hiddenFacts.map(fact => ({
-        code: fact.code,
-        ...(fact.patientId === undefined ? {} : { patientId: fact.patientId }),
-        value: fact.value,
-      })),
-      kind: 'candidate',
-      medicationRulesVersion: 'prescription-conclusion-v1',
-      catalog: content.catalog,
-      hospital: content.hospital,
-      inventory: content.inventory,
-      revealPolicies: content.revealPolicies.map(policy => ({
-        code: policy.code,
-        factCode: policy.factCode,
-        ...(policy.patientId === undefined ? {} : { patientId: policy.patientId }),
-        triggerCode: policy.triggerCode === 'after-topic' && policy.triggerId !== undefined
-          ? `consultation-question:${policy.triggerId}`
-          : policy.triggerCode,
-        ...(policy.triggerId === undefined ? {} : { triggerId: policy.triggerId }),
-      })),
-      scenarioId: packageId,
-      schemaVersion: content.schemaVersion,
-      seed: content.reproduction.clinicalSeed,
-      simulatorRules: content.simulatorRules,
-      version: `dataset-${version}`,
-      virtualPatients: content.patients.map((patient) => {
-        const chiefComplaint = patient.patientKnowledge.chiefComplaint
-        const physiology = patient.physiologyBaseline.vitalSigns
-        return {
-          birthDate: patient.birthDate,
-          gender: patient.gender,
-          id: `virtual-${patient.id}`,
-          name: patient.name,
-          patientId: patient.id,
-          presentation: {
-            chiefComplaint,
-            summary: chiefComplaint,
-            vitalSigns: {
-              bloodPressure: {
-                diastolicMmHg: typeof physiology.diastolicMmHg === 'number' ? physiology.diastolicMmHg : 76,
-                systolicMmHg: typeof physiology.systolicMmHg === 'number' ? physiology.systolicMmHg : 118,
-              },
-              oxygenSaturationPct: typeof physiology.oxygenSaturationPct === 'number' ? physiology.oxygenSaturationPct : 98,
-              pulseBpm: typeof physiology.pulseBpm === 'number' ? physiology.pulseBpm : 88,
-              respirationBpm: typeof physiology.respirationBpm === 'number' ? physiology.respirationBpm : 18,
-              temperatureC: typeof physiology.temperatureC === 'number' ? physiology.temperatureC : 36.8,
-            },
-          },
-          questions: scenarioPatientQuestions(patient, content.hiddenFacts, content.revealPolicies),
-          fhirHistory: patient.fhirHistory,
-          version: 1,
-        }
-      }),
-      virtualTime: `${content.reproduction.timeRange.end}T09:00:00+08:00`,
-    }
-  }
-
   #mapState(row: ScenarioStateRow): ScenarioState {
     return {
       clinicalReview: row.clinical_review_json === null
@@ -990,12 +848,6 @@ export class ScenarioService {
     if (hospitalAcetaminophen === undefined) {
       throw new Error('The Hospital Baseline is missing medication-acetaminophen')
     }
-    const packageDiagnosisCatalog = blueprint.catalog?.diagnoses.filter(
-      diagnosis => diagnosis.active && diagnosis.status === 'active',
-    )
-    const diagnosisIdByCode = new Map(
-      packageDiagnosisCatalog?.map(diagnosis => [diagnosis.code, diagnosis.id]),
-    )
     const legacyDepartmentCatalog = [
       'department-general-medicine', 'department', 'GM', '全科医学科', 'General Medicine', 0, '{}',
     ] as const
@@ -1046,53 +898,7 @@ export class ScenarioService {
             ] as const)
         : []),
     ] as const
-    const catalog = blueprint.catalog === undefined
-      ? legacyCatalog
-      : [
-          legacyDepartmentCatalog,
-          legacyVisitCatalog,
-          ...blueprint.catalog.departments
-            .filter(item => item.active && item.status === 'active')
-            .map(item => [
-              item.id,
-              'department',
-              item.code,
-              item.name,
-              item.name,
-              item.priceFen,
-              JSON.stringify({ registrationAvailable: item.registrationAvailable ?? true }),
-            ] as const),
-          ...blueprint.catalog.investigations
-            .filter(item => item.active && item.available && item.status === 'active'
-              && item.category === 'laboratory')
-            .map(item => [
-              item.id,
-              'laboratory',
-              item.code,
-              item.name,
-              item.name,
-              item.priceFen,
-              JSON.stringify({
-                allowedIndicationCodes: item.allowedIndicationCodes,
-                contraindicatedAllergyCodes: item.contraindicatedAllergyCodes,
-                ...(item.referenceConcept === undefined
-                  ? {}
-                  : { referenceConcept: item.referenceConcept }),
-              }),
-            ] as const),
-          ...blueprint.catalog.medications
-            .filter(item => item.active && item.status === 'active')
-            .map(item => [
-              item.id,
-              'medication',
-              item.code,
-              item.name,
-              item.name,
-              item.priceFen,
-              installedMedicationConfigJson(item, diagnosisIdByCode),
-            ] as const),
-        ]
-    const installedCatalog = new Map(catalog.map(item => [item[0], item])).values()
+    const installedCatalog = new Map(legacyCatalog.map(item => [item[0], item])).values()
     for (const item of installedCatalog) {
       insertCatalog.run(input.workspaceId, input.epoch, ...item)
     }
@@ -1102,9 +908,7 @@ export class ScenarioService {
         version, active, config_json
       ) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?)
     `)
-    const installedServices = blueprint.catalog === undefined
-      ? (supportsPrescriptionConclusion ? hospitalBaseline.catalog.services : [])
-      : (blueprint.catalog.services ?? []).filter(item => item.active && item.status === 'active')
+    const installedServices = supportsPrescriptionConclusion ? hospitalBaseline.catalog.services : []
     for (const service of installedServices) {
       insertService.run(
         input.workspaceId,
@@ -1148,10 +952,7 @@ export class ScenarioService {
             .map(installedDiagnosisCatalogRow)
         : []),
     ] as const
-    const diagnosisCatalog = packageDiagnosisCatalog === undefined
-      ? legacyDiagnosisCatalog
-      : packageDiagnosisCatalog.map(installedDiagnosisCatalogRow)
-    for (const diagnosis of diagnosisCatalog) {
+    for (const diagnosis of legacyDiagnosisCatalog) {
       insertDiagnosisCatalog.run(input.workspaceId, input.epoch, ...diagnosis)
     }
     const insertLot = this.#database.driver.prepare(`
@@ -1160,7 +961,7 @@ export class ScenarioService {
         lot_number, expires_on, quantity_on_hand, version
       ) VALUES (?, ?, ?, ?, 'location-pharmacist', ?, ?, ?, 1)
     `)
-    const inventory = blueprint.inventory ?? [{
+    const inventory = [{
       expiresOn: '2027-12-31',
       itemId: 'medication-oseltamivir',
       lotId: 'lot-oseltamivir-202608',
@@ -1183,7 +984,7 @@ export class ScenarioService {
         input.epoch,
         lot.lotId,
         lot.itemId,
-        'lotNumber' in lot ? lot.lotNumber : lot.lotId,
+        lot.lotNumber,
         lot.expiresOn,
         lot.quantity,
       )
@@ -1236,16 +1037,15 @@ export class ScenarioService {
   }): void {
     const context = { epoch: input.epoch, workspaceId: input.workspaceId }
     const hospitalBaseline = this.#hospitalBaseline
-    const hospital = input.blueprint.hospital
     this.#fhir.create(context, {
       resourceType: 'Organization',
       id: 'organization-clinmesh',
-      active: hospital?.active ?? true,
+      active: true,
       identifier: [{
         system: 'https://caizongyuan.github.io/clinmesh/fhir/sid/synthetic-organization',
-        value: hospital?.businessCode ?? 'CM-SYN-HOSPITAL-001',
+        value: 'CM-SYN-HOSPITAL-001',
       }],
-      name: hospital?.name ?? '安康市临床仿真医院',
+      name: '安康市临床仿真医院',
       alias: ['Ankang Clinical Simulation Hospital'],
     })
     const locations: Array<readonly [string, string, string]> = [
@@ -1311,14 +1111,7 @@ export class ScenarioService {
           name: '对乙酰氨基酚片',
           product: undefined,
         }]
-    const medications = input.blueprint.catalog?.medications
-      .filter(medication => medication.active && medication.status === 'active')
-      .map(medication => ({
-        code: medication.code,
-        id: medication.id,
-        name: medication.name,
-        product: 'product' in medication ? medication.product : undefined,
-      })) ?? [{
+    const medications = [{
         id: 'medication-oseltamivir',
         code: 'OSELTAMIVIR',
         name: '磷酸奥司他韦胶囊',
@@ -1362,12 +1155,6 @@ export class ScenarioService {
             url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/synthetic-data',
             valueBoolean: true,
           }],
-        })
-        materializeScenarioPatientFhirHistory({
-          context,
-          fhir: this.#fhir,
-          history: patient.fhirHistory ?? [],
-          patientId: patient.patientId,
         })
         if (patient.priorCondition === undefined) continue
         this.#fhir.create(context, {

@@ -1,15 +1,21 @@
 import {
   scenarioGenerationRequestSchema,
   syntheaCnLocalizationProvenanceSchema,
-  type ScenarioDataset,
 } from '@clinmesh/contracts/scenario'
 import { describe, expect, it } from 'vitest'
 import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
+import type { SourcePatientArtifact } from '../src/application/scenario-data/provider.ts'
 import { createSyntheticPatientProfiles } from '../src/application/scenario-data/synthetic-patient-profile.ts'
-import { BuiltInScenarioGenerationProvider } from '../src/infrastructure/scenario-generation/builtin-provider.ts'
 
 const profileContentHash = 'd8a4ef19561434cb66c8a391aebfcf6a4dc5f14baf4d4171eac3b8c340b5dd12'
 const localization = syntheaCnLocalizationProvenanceSchema.parse({
+  clinicalDisplay: {
+    catalogSha256: 'd7a25fc414d4008cf59145fd8fc3448556635dd2d5ab8e1e7974bc236f825811',
+    language: 'zh-CN',
+    projectionId: 'synthea-zh-cn@2026-08-30.r1',
+    recordCount: 2180,
+    reviewMode: 'experimental-preview',
+  },
   dependencies: [{
     canonicalSha256: '3c632be160c5a3d6e3196b8e95a0b33a25e9f35bcee506b25d7305345c50957a',
     datasetId: 'geography-cn',
@@ -33,50 +39,79 @@ const localization = syntheaCnLocalizationProvenanceSchema.parse({
 })
 
 const request = scenarioGenerationRequestSchema.parse({
+  moduleMode: 'filter',
   modules: ['fever'],
   name: '确定性患者',
   population: { age: { maximum: 50, minimum: 30 }, count: 1, gender: 'any' },
-  providerId: 'builtin',
+  providerId: 'synthea',
   seeds: { clinical: 7331, population: 4242 },
   timeRange: { end: '2026-08-01', start: '2016-08-01' },
   timeZone: 'Asia/Shanghai',
 })
 
+function sourceArtifact(raw: ReturnType<typeof sourceBundle>, patientId = 'patient-cn') {
+  return {
+    format: 'fhir-r4-bundle' as const,
+    hash: canonicalJsonHash(raw),
+    patientId,
+    raw,
+  }
+}
+
+function sourceBundle(patientId = 'patient-cn') {
+  return {
+    entry: [{
+      fullUrl: `urn:uuid:${patientId}`,
+      resource: {
+        birthDate: '1980-01-01',
+        gender: 'female',
+        id: patientId,
+        name: [{ text: '合成患者 source' }],
+        resourceType: 'Patient',
+      },
+    }],
+    resourceType: 'Bundle' as const,
+    type: 'collection' as const,
+  }
+}
+
+function profiles(
+  batchId: string,
+  sources: readonly SourcePatientArtifact[] = [sourceArtifact(sourceBundle())],
+) {
+  return createSyntheticPatientProfiles({
+    batchId,
+    batchName: request.name,
+    createdAt: '2026-08-27T09:00:00+08:00',
+    request,
+    sources,
+    workspaceId: 'workspace-demo',
+  })
+}
+
 describe('Synthetic Patient Profile compilation', () => {
   it('keeps identity deterministic across batches and rejects duplicate artifacts', async () => {
-    const corpus = await new BuiltInScenarioGenerationProvider().generate(request)
-    const dataset = (datasetId: string): ScenarioDataset => ({
-      content: corpus.content,
-      contentHash: canonicalJsonHash(corpus.content),
-      createdAt: '2026-08-27T09:00:00+08:00',
-      datasetId,
-      diagnostics: [],
-      name: request.name,
-      providerId: request.providerId,
-      updatedAt: '2026-08-27T09:00:00+08:00',
-      version: 1,
-      workspaceId: 'workspace-demo',
-    })
-    const first = createSyntheticPatientProfiles({ dataset: dataset('batch-1'), sources: corpus.sources })
-    const second = createSyntheticPatientProfiles({ dataset: dataset('batch-2'), sources: corpus.sources })
+    const source = sourceArtifact(sourceBundle())
+    const first = profiles('batch-1', [source])
+    const second = profiles('batch-2', [source])
 
     expect(second[0]).toMatchObject({
+      demographics: { birthDate: '1980-01-01', gender: 'female' },
       identity: first[0]?.identity,
       profileId: first[0]?.profileId,
       source: {
-        mappingProvenance: {
-          compiler: { id: 'builtin-case-truth', version: '2' },
-          packages: [{
-            contentHash: 'f57a624291b46caa7cb5d83f7686cb0040a417f8f592119889ea751f4c2a74e1',
-            mappingSetId: 'clinmesh-synthea-nhsa-diagnosis',
-            version: '2026-08-28',
-          }, {
-            contentHash: '6d2a98850fb9d3cf96be1cd40d9de7058201f9190f10acb77ca838f7e25a100d',
-            mappingSetId: 'clinmesh-rxnorm-drug-concepts',
-            version: '2026-08-28',
-          }],
+        batchId: 'batch-2',
+        format: 'fhir-r4-bundle',
+        generation: {
+          moduleMode: 'filter',
+          modules: ['fever'],
+          ordinal: 0,
+          seeds: request.seeds,
+          timeRange: request.timeRange,
+          timeZone: 'Asia/Shanghai',
         },
-        mappingVersion: 'builtin-case-truth-v2',
+        providerId: 'synthea',
+        raw: source.raw,
       },
     })
     expect(second[0]?.identity).toMatchObject({
@@ -86,47 +121,13 @@ describe('Synthetic Patient Profile compilation', () => {
       nationalId: expect.stringMatching(/^990000/),
       phone: expect.stringMatching(/^100\d{8}$/),
     })
-    expect(() => createSyntheticPatientProfiles({
-      dataset: dataset('batch-invalid'),
-      sources: [...corpus.sources, ...corpus.sources],
-    })).toThrow('exactly one source artifact')
-
-    const mismatchedTarget = dataset('batch-mismatched-target')
-    mismatchedTarget.content = {
-      ...mismatchedTarget.content,
-      catalog: {
-        ...mismatchedTarget.content.catalog,
-        diagnoses: mismatchedTarget.content.catalog.diagnoses.map(diagnosis => (
-          diagnosis.code === 'R50.9' ? { ...diagnosis, id: 'diagnosis-wrong-fever' } : diagnosis
-        )),
-      },
-    }
-    expect(() => createSyntheticPatientProfiles({
-      dataset: mismatchedTarget,
-      sources: corpus.sources,
-    })).toThrow('Diagnosis mapping target diagnosis-fever is unavailable')
+    expect(() => profiles('batch-invalid', [source, source]))
+      .toThrow('one unique source artifact')
   })
 
   it('uses a localized Patient identity only when provenance and the Bundle tag agree', async () => {
-    const corpus = await new BuiltInScenarioGenerationProvider().generate(request)
-    const sourcePatient = corpus.content.patients[0]!
+    const sourcePatient = sourceBundle().entry[0]!.resource
     const patientId = 'synthea-patient-patient-cn'
-    const content = {
-      ...corpus.content,
-      patients: [{ ...sourcePatient, id: patientId, name: '合成患者 source' }],
-    }
-    const dataset: ScenarioDataset = {
-      content,
-      contentHash: canonicalJsonHash(content),
-      createdAt: '2026-08-27T09:00:00+08:00',
-      datasetId: 'batch-localized',
-      diagnostics: [],
-      name: '本地化患者',
-      providerId: 'synthea',
-      updatedAt: '2026-08-27T09:00:00+08:00',
-      version: 1,
-      workspaceId: 'workspace-demo',
-    }
     const raw = {
       entry: [{
         fullUrl: 'urn:uuid:patient-cn',
@@ -170,6 +171,10 @@ describe('Synthetic Patient Profile compilation', () => {
           code: localization.profileId,
           display: localization.profileContentHash,
           system: 'urn:cn-health-data:synthea-profile',
+        }, {
+          code: localization.clinicalDisplay.projectionId,
+          display: localization.clinicalDisplay.catalogSha256,
+          system: 'urn:cn-health-data:synthea-translation',
         }],
       },
       resourceType: 'Bundle',
@@ -183,7 +188,7 @@ describe('Synthetic Patient Profile compilation', () => {
       raw,
     }
 
-    const profile = createSyntheticPatientProfiles({ dataset, sources: [source] })[0]!
+    const profile = profiles('batch-localized', [source])[0]!
 
     expect(profile).toMatchObject({
       identity: {
@@ -194,7 +199,7 @@ describe('Synthetic Patient Profile compilation', () => {
         nationalId: '990000198001010637',
         phone: '10093284819',
       },
-      patient: { name: '杨秀珍' },
+      demographics: { birthDate: '1980-01-01', gender: 'female' },
       source: { localization },
     })
 
@@ -205,22 +210,17 @@ describe('Synthetic Patient Profile compilation', () => {
         tag: [{ ...raw.meta.tag[0]!, display: 'f'.repeat(64) }],
       },
     }
-    expect(() => createSyntheticPatientProfiles({
-      dataset,
-      sources: [{ ...source, raw: wrongTag }],
-    })).toThrow('localization provenance')
+    expect(() => profiles('batch-wrong-tag', [{ ...source, raw: wrongTag }]))
+      .toThrow('localization provenance')
 
-    const withoutProvenance = createSyntheticPatientProfiles({
-      dataset,
-      sources: [{
-        format: source.format,
-        hash: source.hash,
-        patientId: source.patientId,
-        raw: source.raw,
-      }],
-    })[0]!
+    const withoutProvenance = profiles('batch-without-provenance', [{
+      format: source.format,
+      hash: source.hash,
+      patientId: source.patientId,
+      raw: source.raw,
+    }])[0]!
     expect(withoutProvenance.identity).toMatchObject({
-      displayName: '合成患者 source',
+      displayName: '杨秀珍',
       phone: expect.stringMatching(/^100\d{8}$/),
     })
   })

@@ -1114,6 +1114,7 @@ export const completedCaseLaboratoryRequestSchema = z.object({
   id: z.string().min(1),
   indicationCode: z.string().min(1),
   previousReports: z.array(completedCaseLaboratoryReportSchema).default([]),
+  referenceConcept: referenceConceptSnapshotSchema.optional(),
   report: completedCaseLaboratoryReportSchema.optional(),
   serviceRequestId: z.string().min(1),
   serviceRequestVersion: z.string().regex(/^\d+$/),

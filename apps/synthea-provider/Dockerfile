@@ -21,7 +21,11 @@ WORKDIR /src/synthea
 RUN ./gradlew --no-daemon shadowJar \
   && synthea_jar="$(find build/libs -name '*with-dependencies.jar' -print -quit)" \
   && test -n "${synthea_jar}" \
-  && cp "${synthea_jar}" /tmp/synthea.jar
+  && cp "${synthea_jar}" /tmp/synthea.jar \
+  && find src/main/resources/modules -type f -name '*.json' -print \
+    | sed 's#^src/main/resources/modules/##; s#\.json$##' \
+    | LC_ALL=C sort -u > /tmp/synthea-modules.txt \
+  && test -s /tmp/synthea-modules.txt
 
 WORKDIR /src/provider
 COPY ProviderServer.java ./
@@ -33,6 +37,7 @@ ENV CN_HEALTH_LOCALIZER_URL=http://cn-health-localizer:51879/v1/localize
 ENV SYNTHEA_CLASSPATH_PATH=/opt/cn-health/synthea-profile/classpath
 ENV SYNTHEA_CONFIG_PATH=/opt/cn-health/synthea-profile/synthea.properties
 ENV SYNTHEA_JAR_PATH=/opt/synthea/synthea.jar
+ENV SYNTHEA_MODULES_PATH=/opt/synthea/modules.txt
 ENV SYNTHEA_PROVIDER_PORT=51878
 WORKDIR /opt/provider
 
@@ -42,6 +47,7 @@ RUN groupadd --gid 10001 synthea-provider \
   && chown -R 10001:10001 /opt/provider /opt/synthea /opt/licenses
 COPY --from=build --chown=10001:10001 /tmp/provider-classes/ ./
 COPY --from=build --chown=10001:10001 /tmp/synthea.jar /opt/synthea/synthea.jar
+COPY --from=build --chown=10001:10001 /tmp/synthea-modules.txt /opt/synthea/modules.txt
 COPY --from=build --chown=10001:10001 /src/synthea/LICENSE /opt/licenses/SYNTHEA-LICENSE
 COPY --from=build --chown=10001:10001 /src/synthea/NOTICE /opt/licenses/SYNTHEA-NOTICE
 

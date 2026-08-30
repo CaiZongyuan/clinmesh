@@ -25,17 +25,16 @@ import {
   laboratoryRequestActionResponseSchema,
   laboratoryRequestDraftResponseSchema,
   registrationCatalogSchema,
+  scenarioCommandResponseSchema,
   startVisitResponseSchema,
   triageResponseSchema,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
-import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
 import type {
   ScenarioGenerationProvider,
   SourcePatientCorpus,
 } from '../src/application/scenario-data/provider.ts'
-import { compileSyntheaR4Bundle } from '../src/application/scenario-data/synthea-case-truth-compiler.ts'
-import { BuiltInScenarioGenerationProvider } from '../src/infrastructure/scenario-generation/builtin-provider.ts'
+import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import type {
   JsonChatCompletionInput,
@@ -137,26 +136,13 @@ async function corpusFor(
   qualified: boolean,
   followUp = true,
 ): Promise<SourcePatientCorpus> {
-  const compatibilityRequest: ScenarioGenerationRequest = {
-    ...request,
-    moduleMode: 'filter',
-    modules: ['hypertension'],
-  }
-  const base = await new BuiltInScenarioGenerationProvider().generate(compatibilityRequest)
   const bundle = patientBundle(qualified, followUp)
-  const patient = compileSyntheaR4Bundle({ bundle, ordinal: 0, request: compatibilityRequest })
   return {
-    content: {
-      ...base.content,
-      hiddenFacts: [],
-      patients: [patient],
-      revealPolicies: [],
-    },
-    kind: 'case-truth',
+    kind: 'synthea-r4',
     sources: [{
       format: 'fhir-r4-bundle',
-      hash: canonicalJsonHash(bundle),
-      patientId: patient.id,
+      hash: sourceArtifactHash(bundle),
+      patientId: 'patient',
       raw: bundle,
     }],
   }
@@ -842,6 +828,179 @@ describe('Synthetic Case generation HTTP contract', () => {
       'epoch-1',
       agentRequest.id,
     )).resolves.toMatchObject({ source: 'investigation-agent' })
+    expect(briefProvider.requests).toHaveLength(5)
+
+    const snapshotBeforeReset = runtime.database.driver.prepare(`
+      SELECT * FROM investigation_result_snapshot
+      WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = 'lab-crp'
+    `).get('workspace-demo', caseId)
+    const resetResponse = await runtime.app.request(
+      '/api/sim/v1/scenario-runs/scenario-run-1/actions/reset',
+      {
+        body: '{}',
+        headers: {
+          'content-type': 'application/json',
+          cookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(resetResponse.status).toBe(200)
+    expect(scenarioCommandResponseSchema.parse(await resetResponse.json()).data).toMatchObject({
+      epoch: 'epoch-2',
+      scenarioRunId: 'scenario-run-2',
+    })
+    const materializations = runtime.database.driver.prepare(`
+      SELECT epoch, case_revision, brief_revision, patient_id, outpatient_case_id,
+        registration_id, encounter_id, queue_task_id
+      FROM synthetic_case_materialization
+      WHERE workspace_id = ? AND case_id = ?
+      ORDER BY epoch
+    `).all('workspace-demo', caseId) as Array<{
+      brief_revision: number
+      case_revision: number
+      encounter_id: string
+      epoch: string
+      outpatient_case_id: string
+      patient_id: string
+      queue_task_id: string
+      registration_id: string
+    }>
+    expect(materializations).toHaveLength(2)
+    expect(materializations.map(item => ({
+      briefRevision: item.brief_revision,
+      caseRevision: item.case_revision,
+      epoch: item.epoch,
+    }))).toEqual([
+      { briefRevision: 2, caseRevision: selectedCase.revision, epoch: 'epoch-1' },
+      { briefRevision: 2, caseRevision: selectedCase.revision, epoch: 'epoch-2' },
+    ])
+    const replayed = materializations[1]!
+    expect(replayed.patient_id).not.toBe(startedCommand.data.patientId)
+    expect(replayed.encounter_id).not.toBe(startedCommand.data.encounterId)
+    expect(runtime.database.driver.prepare(`
+      SELECT * FROM investigation_result_snapshot
+      WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = 'lab-crp'
+    `).get('workspace-demo', caseId)).toEqual(snapshotBeforeReset)
+    expect(briefProvider.requests).toHaveLength(5)
+
+    const replayTriageResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${replayed.encounter_id}/actions/record-triage`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${replayed.encounter_id}`]: '1',
+            [`Task/${replayed.queue_task_id}`]: '1',
+          },
+          input: {
+            acuityCode: 'level-3',
+            bloodPressure: { diastolicMmHg: 96, systolicMmHg: 162 },
+            chiefComplaint: safeBrief.chiefComplaint,
+            oxygenSaturationPct: 98,
+            pulseBpm: 86,
+            respirationBpm: 18,
+            temperatureC: 36.7,
+          },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: triageCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(replayTriageResponse.status).toBe(200)
+    const replayTriage = triageResponseSchema.parse(await replayTriageResponse.json()).data
+    const replayStartResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${replayed.encounter_id}/actions/start-first-visit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${replayed.encounter_id}`]: '2',
+            [`Task/${replayTriage.doctorTaskId}`]: '1',
+          },
+          input: {},
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: doctorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(replayStartResponse.status).toBe(200)
+    startVisitResponseSchema.parse(await replayStartResponse.json())
+    runtime.database.driver.prepare(`
+      UPDATE outpatient_catalog SET config_json = ?
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-2'
+        AND kind = 'laboratory' AND item_id = 'lab-crp'
+    `).run(JSON.stringify({
+      allowedIndicationCodes: ['clinical-evaluation'],
+      contraindicatedAllergyCodes: [],
+      referenceConcept: agentConcept,
+    }))
+    const replayEncounterReference = `Encounter/${replayed.encounter_id}`
+    const replayDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${replayed.encounter_id}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [replayEncounterReference]: '3' },
+          input: {
+            catalogItemId: 'lab-crp',
+            expectedDraftVersion: 0,
+            indicationCode: 'clinical-evaluation',
+          },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: doctorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'PUT',
+      },
+    )
+    expect(replayDraftResponse.status).toBe(200)
+    const replayDraft = laboratoryRequestDraftResponseSchema.parse(
+      await replayDraftResponse.json(),
+    ).data
+    const replayIssueResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${replayed.encounter_id}/laboratory-request/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [replayEncounterReference]: '3' },
+          input: { expectedDraftVersion: replayDraft.draftVersion },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: doctorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(replayIssueResponse.status).toBe(200)
+    const replayRequest = issueLaboratoryRequestResponseSchema.parse(
+      await replayIssueResponse.json(),
+    ).data.request
+    await runtime.dispatchPending()
+    const replayDetail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${replayed.outpatient_case_id}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    expect(replayDetail.laboratoryRequests?.requests.find(item => (
+      item.id === replayRequest.id
+    ))).toMatchObject({
+      report: { results: [{ code: '1988-5', interpretation: 'high', value: 24 }] },
+      status: 'reported',
+    })
     expect(briefProvider.requests).toHaveLength(5)
 
     const publicArtifacts = JSON.stringify({ beforeSelection, firstJob, leakingJob, secondJob })

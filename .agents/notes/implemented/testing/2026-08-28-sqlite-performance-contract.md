@@ -10,9 +10,9 @@ Status: implemented
 
 Performance runner 使用固定 `performanceResultSchema` 输出每个 workload 的 P50/P95/P99、transaction time、statement/query/write counts、rows written、数据库增长、Trace rows/bytes、吞吐和 busy/error/retry。Trace bytes 是 `action_trace` 全部持久化 TEXT 字段的 UTF-8 字节数，不是字符数或 SQLite page allocation。可选 `SqlitePerformanceObserver` 只在 runner 显式创建的 Database adapter 上记录 statement 执行；默认 Server 不启用 observer，不改变 SQL、事务、审计或 Trace 行为。
 
-`ci` profile 在隔离 file-backed SQLite 上运行合成参考导入、本院服务 HTTP 查询、普通 Command、25 行重 Command、同写入量的测试专用 SQL control，以及 Scenario install/reset。PR gate 只约束稳定的 count、query plan、Trace 和 storage 指标，延迟分位数始终报告但不作跨机器 hard gate。本院服务 workload 同时拒绝 `pageSize=101` 并要求 `hospital_service_catalog_search_idx`；结果 schema 不接受 rows-read 字段。
+`ci` profile 在隔离 file-backed SQLite 上运行合成 Reference Release 导入、独立 Reference SQLite 疾病/药品/检验全文搜索、本院服务 HTTP 查询、普通 Command、25 行重 Command、同写入量的测试专用 SQL control，以及内置 Scenario install/reset。PR gate 只约束稳定的 count、query plan、Trace 和 storage 指标，延迟分位数始终报告但不作跨机器 hard gate。两个搜索 workload 都拒绝 `pageSize=101`；本院服务要求 `hospital_service_catalog_search_idx`，Reference 搜索要求 FTS virtual-table plan 且保持只读数据库零增长。结果 schema 不接受 rows-read 字段。
 
-`trajectory` profile 通过 production application interfaces 完成高血压 Dataset generate/install、问诊、CBC 报告确认、I10、5 mg 本院处方、病历签署和完诊。`saturation` profile 使用 Worker threads 和独立 SQLite sandbox 覆盖 1、5、10、25 actors；runner 可以对 `SQLITE_BUSY` 做有界重试并报告次数，这不是生产 Command retry。`full-import` profile 要求调用者提供已合法取得的 manifest，在独立 Reference SQLite 中运行，不把原始目录提交到 Git。
+`trajectory` profile 通过 production application interfaces 从内置虚拟患者直接开始就诊，完成问诊、CBC 申请与报告确认、高血压诊断、5 mg 本院处方、病历签署和完诊；它不生成、安装或读取 Scenario Dataset/Package。`saturation` profile 使用 Worker threads 和独立 SQLite sandbox 覆盖 1、5、10、25 actors；runner 可以对 `SQLITE_BUSY` 做有界重试并报告次数，这不是生产 Command retry。`full-import` profile 要求调用者提供已合法取得的 manifest，在独立 Reference SQLite 中运行，不把原始目录提交到 Git。
 
 Trace control 只是在测试临时表执行与重 Command 相同的 25 行写入；真实 Command 始终经过 CommandExecutor、Audit Event 和 Action Trace。系统没有关闭生产审计或 Trace 的性能开关。
 

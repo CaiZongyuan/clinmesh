@@ -30,10 +30,7 @@ import {
   selectPatientBriefRevisionRequestSchema,
   startSyntheticCaseRequestSchema,
   scenarioGenerationRequestSchema,
-  startSyntheticPatientVisitsRequestSchema,
   updateSyntheticPatientProfileRequestSchema,
-  updateSyntheticPatientMappingsRequestSchema,
-  updateScenarioDatasetRequestSchema,
 } from '@clinmesh/contracts/scenario'
 import type { IdentityService } from './application/identity-service.ts'
 import { IdentityError } from './application/identity-service.ts'
@@ -357,23 +354,6 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
-    app.get('/api/sim/v1/scenario-datasets', async (context) => {
-      try {
-        const session = await identity.resolveSessionContext(context.req.raw.headers)
-        const query = z.object({
-          page: z.coerce.number().int().min(1).default(1),
-          pageSize: z.coerce.number().int().min(1).max(100).default(20),
-          search: z.string().trim().min(1).max(120).optional(),
-        }).parse(context.req.query())
-        return context.json(scenarioData.list(session.actor, {
-          page: query.page,
-          pageSize: query.pageSize,
-          ...(query.search === undefined ? {} : { search: query.search }),
-        }))
-      } catch (error) {
-        return apiErrorResponse(context, error)
-      }
-    })
     app.get('/api/sim/v1/synthetic-patients', async (context) => {
       try {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
@@ -433,14 +413,6 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
-    app.get('/api/sim/v1/synthetic-patient-mapping-catalog', async (context) => {
-      try {
-        const session = await identity.resolveSessionContext(context.req.raw.headers)
-        return context.json(scenarioData.syntheticPatientMappingCatalog(session.actor))
-      } catch (error) {
-        return apiErrorResponse(context, error)
-      }
-    })
     app.get('/api/sim/v1/synthetic-patients/:profileId', async (context) => {
       try {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
@@ -469,125 +441,6 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         }))
       } catch (error) {
         return apiErrorResponse(context, error, 'The Synthetic Patient Profile update is invalid')
-      }
-    })
-    app.put('/api/sim/v1/synthetic-patients/:profileId/mappings', async (context) => {
-      try {
-        identity.assertTrustedMutation(context.req.raw.headers)
-        const session = await identity.resolveSessionContext(context.req.raw.headers)
-        const body = updateSyntheticPatientMappingsRequestSchema.parse(await context.req.json())
-        const idempotencyKey = z.string().min(8).max(128).parse(
-          context.req.header('idempotency-key'),
-        )
-        return context.json(scenarioData.updateSyntheticPatientMappings({
-          context: session.actor,
-          expectedRevision: body.expectedRevision,
-          idempotencyKey,
-          mappings: body.input,
-          profileId: context.req.param('profileId'),
-        }))
-      } catch (error) {
-        return apiErrorResponse(context, error, 'The Synthetic Patient mapping update is invalid')
-      }
-    })
-    app.post('/api/sim/v1/synthetic-patients/actions/start-outpatient-visits', async (context) => {
-      try {
-        identity.assertTrustedMutation(context.req.raw.headers)
-        const session = await identity.resolveSessionContext(context.req.raw.headers)
-        const request = startSyntheticPatientVisitsRequestSchema.parse(await context.req.json())
-        const idempotencyKey = z.string().min(8).max(128).parse(
-          context.req.header('idempotency-key'),
-        )
-        return context.json(scenarioData.startSyntheticPatientVisits({
-          context: session.actor,
-          idempotencyKey,
-          request,
-        }))
-      } catch (error) {
-        return apiErrorResponse(context, error, 'The outpatient visit request is invalid')
-      }
-    })
-    app.post('/api/sim/v1/scenario-datasets/actions/generate', async (context) => {
-      try {
-        identity.assertTrustedMutation(context.req.raw.headers)
-        const session = await identity.resolveSessionContext(context.req.raw.headers)
-        const request = scenarioGenerationRequestSchema.parse(await context.req.json())
-        const idempotencyKey = z.string().min(8).max(128).parse(
-          context.req.header('idempotency-key'),
-        )
-        return context.json(await scenarioData.generate({
-          context: session.actor,
-          idempotencyKey,
-          request,
-        }))
-      } catch (error) {
-        return apiErrorResponse(context, error, 'The Scenario Dataset generation request is invalid')
-      }
-    })
-    app.get('/api/sim/v1/scenario-datasets/:datasetId', async (context) => {
-      try {
-        const session = await identity.resolveSessionContext(context.req.raw.headers)
-        return context.json(scenarioData.get(session.actor, context.req.param('datasetId')))
-      } catch (error) {
-        return apiErrorResponse(context, error)
-      }
-    })
-    app.put('/api/sim/v1/scenario-datasets/:datasetId', async (context) => {
-      try {
-        identity.assertTrustedMutation(context.req.raw.headers)
-        const session = await identity.resolveSessionContext(context.req.raw.headers)
-        const body = updateScenarioDatasetRequestSchema.parse(await context.req.json())
-        const idempotencyKey = z.string().min(8).max(128).parse(
-          context.req.header('idempotency-key'),
-        )
-        return context.json(scenarioData.update({
-          content: body.input.content,
-          context: session.actor,
-          datasetId: context.req.param('datasetId'),
-          expectedVersion: body.expectedVersion,
-          idempotencyKey,
-          name: body.input.name,
-        }))
-      } catch (error) {
-        return apiErrorResponse(context, error, 'The Scenario Dataset update request is invalid')
-      }
-    })
-    app.delete('/api/sim/v1/scenario-datasets/:datasetId', async (context) => {
-      try {
-        identity.assertTrustedMutation(context.req.raw.headers)
-        const session = await identity.resolveSessionContext(context.req.raw.headers)
-        const body = z.object({ expectedVersion: z.number().int().positive() }).strict()
-          .parse(await context.req.json())
-        const idempotencyKey = z.string().min(8).max(128).parse(
-          context.req.header('idempotency-key'),
-        )
-        return context.json(scenarioData.delete({
-          context: session.actor,
-          datasetId: context.req.param('datasetId'),
-          expectedVersion: body.expectedVersion,
-          idempotencyKey,
-        }))
-      } catch (error) {
-        return apiErrorResponse(context, error, 'The Scenario Dataset deletion request is invalid')
-      }
-    })
-    app.post('/api/sim/v1/scenario-datasets/:datasetId/actions/install', async (context) => {
-      try {
-        identity.assertTrustedMutation(context.req.raw.headers)
-        const session = await identity.resolveSessionContext(context.req.raw.headers)
-        const body = z.object({ expectedVersion: z.number().int().positive() }).strict()
-          .parse(await context.req.json())
-        const idempotencyKey = z.string().min(8).max(128).parse(
-          context.req.header('idempotency-key'),
-        )
-        return context.json(scenarioData.install({
-          context: session.actor,
-          datasetId: context.req.param('datasetId'),
-          expectedVersion: body.expectedVersion,
-          idempotencyKey,
-        }))
-      } catch (error) {
-        return apiErrorResponse(context, error, 'The Scenario Dataset installation request is invalid')
       }
     })
   }

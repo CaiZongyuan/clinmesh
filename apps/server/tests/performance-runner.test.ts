@@ -17,12 +17,12 @@ afterEach(async () => {
 })
 
 describe('Performance runner', () => {
-  it('runs the fixed hypertension clinical trajectory through completion', async () => {
+  it('runs the built-in outpatient clinical trajectory through completion', async () => {
     const result = await runTrajectoryPerformanceProfile()
 
     expect(result.workloads).toEqual([expect.objectContaining({
       errorCount: 0,
-      name: 'hypertension-trajectory-application',
+      name: 'outpatient-trajectory-application',
       rowsWritten: expect.any(Number),
       trace: { bytes: expect.any(Number), rows: expect.any(Number) },
     })])

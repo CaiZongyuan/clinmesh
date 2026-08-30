@@ -252,8 +252,8 @@ export class InvestigationService {
     const baseInput = {
       caseRevision: row.synthetic_case_revision,
       demographics: {
-        birthDate: profile.patient.birthDate,
-        gender: profile.patient.gender,
+        birthDate: profile.demographics.birthDate,
+        gender: profile.demographics.gender,
       },
       requestedConcept,
       sourceHash: syntheticCase.sourceHash,

@@ -1,8 +1,6 @@
 import {
-  scenarioDatasetSchema,
   scenarioGenerationJobSchema,
   scenarioGenerationRequestSchema,
-  type ScenarioDataset,
   type ScenarioGenerationJob,
 } from '@clinmesh/contracts/scenario'
 import { z } from 'zod'
@@ -14,7 +12,6 @@ const scenarioGenerationJobRowSchema = z.object({
   case_ids_json: z.string(),
   created_at: z.iso.datetime({ offset: true }),
   created_by_actor_id: z.string().min(1),
-  dataset_id: z.string().min(1).nullable(),
   error_code: z.string().min(1).nullable(),
   error_message: z.string().min(1).nullable(),
   finished_at: z.iso.datetime({ offset: true }).nullable(),
@@ -30,8 +27,7 @@ const scenarioGenerationJobRowSchema = z.object({
 type ScenarioGenerationJobRow = z.infer<typeof scenarioGenerationJobRowSchema>
 
 const selectJob = `
-  SELECT workspace_id, job_id, request_json, status,
-    result_dataset_id AS dataset_id, actor_context_json,
+  SELECT workspace_id, job_id, request_json, status, actor_context_json,
     result_profile_ids_json AS profile_ids_json,
     result_case_ids_json AS case_ids_json,
     error_code, error_message, created_by_actor_id, created_at, started_at,
@@ -78,7 +74,6 @@ function publicJob(job: ClaimedScenarioGenerationJob): ScenarioGenerationJob {
   return {
     caseIds: job.caseIds,
     createdAt: job.createdAt,
-    datasetId: job.datasetId,
     error: job.error,
     finishedAt: job.finishedAt,
     jobId: job.jobId,
@@ -106,10 +101,10 @@ export class ScenarioGenerationJobRepository {
     this.#database.driver.prepare(`
       INSERT INTO scenario_generation_job (
         workspace_id, job_id, request_json, status,
-        result_dataset_id, dataset_workspace_id, dataset_id,
+        result_profile_ids_json, result_case_ids_json,
         error_code, error_message, created_by_actor_id, actor_context_json,
         created_at, started_at, finished_at, updated_at
-      ) VALUES (?, ?, ?, 'queued', NULL, NULL, NULL, NULL, NULL, ?, ?, ?, NULL, NULL, ?)
+      ) VALUES (?, ?, ?, 'queued', '[]', '[]', NULL, NULL, ?, ?, ?, NULL, NULL, ?)
     `).run(
       job.workspaceId,
       job.jobId,
@@ -166,53 +161,26 @@ export class ScenarioGenerationJobRepository {
     return claim()
   }
 
-  completeWithDataset(
+  complete(
     job: ClaimedScenarioGenerationJob,
-    dataset: ScenarioDataset,
     results: { caseIds: string[]; profileIds: string[] },
     now: string,
   ): ScenarioGenerationJob {
-    scenarioDatasetSchema.parse(dataset)
     const completed = scenarioGenerationJobSchema.parse({
       ...publicJob(job),
       caseIds: results.caseIds,
-      datasetId: dataset.datasetId,
       error: null,
       finishedAt: now,
       profileIds: results.profileIds,
       status: 'succeeded',
       updatedAt: now,
     })
-    const complete = this.#database.driver.transaction(() => {
-      this.#database.driver.prepare(`
-        INSERT INTO scenario_dataset (
-          workspace_id, dataset_id, name, provider_id, version, content_json,
-          content_hash, diagnostics_json, created_by_actor_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        dataset.workspaceId,
-        dataset.datasetId,
-        dataset.name,
-        dataset.providerId,
-        dataset.version,
-        JSON.stringify(dataset.content),
-        dataset.contentHash,
-        JSON.stringify(dataset.diagnostics),
-        job.createdByActorId,
-        dataset.createdAt,
-        dataset.updatedAt,
-      )
-      const update = this.#database.driver.prepare(`
+    const update = this.#database.driver.prepare(`
         UPDATE scenario_generation_job
-        SET status = 'succeeded', result_dataset_id = ?,
-          dataset_workspace_id = ?, dataset_id = ?,
-          result_profile_ids_json = ?, result_case_ids_json = ?,
+        SET status = 'succeeded', result_profile_ids_json = ?, result_case_ids_json = ?,
           finished_at = ?, updated_at = ?
         WHERE workspace_id = ? AND job_id = ? AND status = 'running'
       `).run(
-        dataset.datasetId,
-        dataset.workspaceId,
-        dataset.datasetId,
         JSON.stringify(results.profileIds),
         JSON.stringify(results.caseIds),
         now,
@@ -220,9 +188,7 @@ export class ScenarioGenerationJobRepository {
         job.workspaceId,
         job.jobId,
       )
-      if (update.changes !== 1) throw new Error('The Scenario generation job is no longer running')
-    })
-    complete()
+    if (update.changes !== 1) throw new Error('The Scenario generation job is no longer running')
     return completed
   }
 
@@ -267,7 +233,6 @@ export class ScenarioGenerationJobRepository {
     return scenarioGenerationJobSchema.parse({
       caseIds: JSON.parse(row.case_ids_json),
       createdAt: row.created_at,
-      datasetId: row.dataset_id,
       error: row.error_code === null || row.error_message === null
         ? null
         : { code: row.error_code, message: row.error_message },
