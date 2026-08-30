@@ -6,6 +6,7 @@ import type {
 import {
   scenarioModuleSchema,
   scenarioModules,
+  syntheaModuleFilterSchema,
   syntheaCnLocalizationProvenanceSchema,
 } from '@clinmesh/contracts/scenario'
 import type {
@@ -63,7 +64,8 @@ const providerResponseSchema = z.object({
     clinicalSeed: z.number().int(),
     configHash: z.string().regex(/^[a-f0-9]{64}$/),
     localization: syntheaCnLocalizationProvenanceSchema,
-    modules: z.array(scenarioModuleSchema).min(1),
+    moduleMode: z.enum(['all', 'filter']).optional(),
+    modules: z.array(syntheaModuleFilterSchema).max(32),
     populationSeed: z.number().int(),
     syntheaCommit: z.literal(SYNTHEA_COMMIT),
     timeRange: z.object({ end: z.iso.date(), start: z.iso.date() }).strict(),
@@ -287,6 +289,7 @@ function assertReproductionMetadata(
     || metadata.timeZone !== request.timeZone
     || metadata.timeRange.start !== request.timeRange.start
     || metadata.timeRange.end !== request.timeRange.end
+    || (metadata.moduleMode ?? (metadata.modules.length === 0 ? 'all' : 'filter')) !== request.moduleMode
     || metadata.modules.length !== request.modules.length
     || metadata.modules.some((module, index) => module !== request.modules[index])
   ) {
@@ -448,6 +451,10 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
       }
     })
     const patients = compiled.map(item => item.patient)
+    const compatibilityModules = request.modules.flatMap((module) => {
+      const parsed = scenarioModuleSchema.safeParse(module)
+      return parsed.success ? [parsed.data] : []
+    })
     const baseline = compileScenarioCatalog({
       baseline: createHospitalBaseline(
         this.#medicationProducts,
@@ -456,7 +463,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
         this.#referenceSelection,
         this.#referenceConcepts,
       ),
-      modules: request.modules,
+      modules: compatibilityModules.length === 0 ? scenarioModules : compatibilityModules,
     })
     const content: ScenarioDatasetContent = {
       catalog: baseline.catalog,

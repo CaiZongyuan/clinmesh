@@ -84,8 +84,15 @@ export const scenarioModules = [
 
 export const scenarioModuleSchema = z.enum(scenarioModules)
 
+export const syntheaModuleFilterSchema = z.string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_./-]*$/)
+  .refine(value => !value.includes('..') && !value.includes('//') && !value.endsWith('/'))
+
 export const scenarioGenerationRequestSchema = z.object({
-  modules: z.array(scenarioModuleSchema).min(1).max(8),
+  moduleMode: z.enum(['all', 'filter']).optional(),
+  modules: z.array(syntheaModuleFilterSchema).max(32).optional(),
   name: z.string().trim().min(1).max(120),
   population: z.object({
     age: z.object({
@@ -106,6 +113,22 @@ export const scenarioGenerationRequestSchema = z.object({
   }).strict(),
   timeZone: z.enum(['Asia/Shanghai']),
 }).strict().superRefine((value, context) => {
+  const moduleMode = value.moduleMode ?? (value.modules === undefined ? 'all' : 'filter')
+  const modules = value.modules ?? []
+  if (moduleMode === 'all' && modules.length > 0) {
+    context.addIssue({
+      code: 'custom',
+      message: 'All-module generation cannot include a module filter',
+      path: ['modules'],
+    })
+  }
+  if (moduleMode === 'filter' && modules.length === 0) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Filtered generation requires at least one module',
+      path: ['modules'],
+    })
+  }
   if (value.population.age.minimum > value.population.age.maximum) {
     context.addIssue({
       code: 'custom',
@@ -120,7 +143,11 @@ export const scenarioGenerationRequestSchema = z.object({
       path: ['timeRange', 'start'],
     })
   }
-})
+}).transform(value => ({
+  ...value,
+  moduleMode: value.moduleMode ?? (value.modules === undefined ? 'all' as const : 'filter' as const),
+  modules: value.modules ?? [],
+}))
 
 export const scenarioDiagnosticSchema = z.object({
   code: z.string().min(1).max(128),
@@ -745,7 +772,7 @@ export const updateScenarioDatasetRequestSchema = z.object({
 export const scenarioProviderCapabilitiesSchema = z.object({
   available: z.boolean(),
   maxPopulation: z.number().int().positive(),
-  modules: z.array(scenarioModuleSchema),
+  modules: z.array(syntheaModuleFilterSchema),
   providerId: z.enum(['builtin', 'synthea']),
   providerName: z.string().min(1),
   unavailableReason: z.string().min(1).optional(),
@@ -756,6 +783,7 @@ export const scenarioProviderCapabilitiesListSchema = z.object({
 }).strict()
 
 export const scenarioGenerationJobSchema = z.object({
+  caseIds: z.array(z.string().min(1).max(128)).default([]),
   createdAt: z.iso.datetime({ offset: true }),
   datasetId: z.string().min(1).nullable(),
   error: z.object({
@@ -764,6 +792,7 @@ export const scenarioGenerationJobSchema = z.object({
   }).strict().nullable(),
   finishedAt: z.iso.datetime({ offset: true }).nullable(),
   jobId: z.string().min(1),
+  profileIds: z.array(z.string().min(1).max(128)).default([]),
   request: scenarioGenerationRequestSchema,
   startedAt: z.iso.datetime({ offset: true }).nullable(),
   status: z.enum(['queued', 'running', 'succeeded', 'failed']),
@@ -785,7 +814,8 @@ const syntheticPatientSourceSchema = z.object({
   batchId: z.string().min(1),
   batchName: z.string().min(1),
   compilation: z.object({
-    modules: z.array(scenarioModuleSchema).min(1),
+    moduleMode: z.enum(['all', 'filter']).optional(),
+    modules: z.array(syntheaModuleFilterSchema).max(32),
     ordinal: z.number().int().nonnegative(),
     seeds: z.object({
       clinical: z.number().int(),
@@ -876,6 +906,65 @@ export const syntheticPatientProfileListSchema = z.object({
   page: z.number().int().positive(),
   pageSize: z.number().int().positive().max(100),
   total: z.number().int().nonnegative(),
+}).strict()
+
+export const syntheticSourceHistoryItemSchema = z.object({
+  clinicalDate: z.iso.datetime({ offset: true }),
+  resourceType: z.string().min(1).max(128),
+  sourceReference: z.string().min(1).max(512),
+  title: z.string().min(1).max(500),
+}).strict()
+
+export const syntheticSourceHistoryListSchema = z.object({
+  items: z.array(syntheticSourceHistoryItemSchema),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive().max(100),
+  total: z.number().int().nonnegative(),
+}).strict()
+
+export const syntheticSourceResourceDetailSchema = z.object({
+  caseId: z.string().min(1).max(128),
+  resource: z.json(),
+  sourceKind: z.literal('synthea-r4-external'),
+  sourceReference: z.string().min(1).max(512),
+}).strict()
+
+export const syntheticCaseInstanceSchema = z.object({
+  activeBriefRevision: z.number().int().positive().nullable(),
+  caseId: z.string().min(1).max(128),
+  caseType: z.enum(['new-problem', 'follow-up', 'preventive']),
+  createdAt: z.iso.datetime({ offset: true }),
+  profileId: z.string().min(1).max(128),
+  profileRevision: z.number().int().positive(),
+  revision: z.number().int().positive(),
+  sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+  status: z.enum(['brief-pending', 'brief-ready', 'started', 'completed', 'retired']),
+  updatedAt: z.iso.datetime({ offset: true }),
+  visibleHistoryCount: z.number().int().nonnegative(),
+  workspaceId: z.string().min(1),
+}).strict()
+
+export const syntheticPatientProfileDetailSchema = z.object({
+  birthDate: localDateSchema,
+  case: syntheticCaseInstanceSchema.nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+  gender: z.enum(['female', 'male', 'other', 'unknown']),
+  identity: syntheticPatientIdentitySchema,
+  profileId: z.string().min(1).max(128),
+  revision: z.number().int().positive(),
+  source: z.object({
+    batchId: z.string().min(1),
+    batchName: z.string().min(1),
+    format: z.enum(['clinmesh-template', 'fhir-r4-bundle', 'legacy-compiled-profile']),
+    hash: z.string().regex(/^[a-f0-9]{64}$/),
+    localization: syntheaCnLocalizationProvenanceSchema.optional(),
+    mappingVersion: z.string().min(1),
+    patientId: z.string().min(1),
+    providerId: z.enum(['builtin', 'synthea']),
+    referenceData: referenceDataProvenanceSchema.optional(),
+  }).strict(),
+  updatedAt: z.iso.datetime({ offset: true }),
+  workspaceId: z.string().min(1),
 }).strict()
 
 export const syntheticPatientMappingCatalogSchema = z.object({
@@ -983,5 +1072,10 @@ export type SyntheaCnLocalizationProvenance = z.infer<
 export type SyntheticPatientMappingCatalog = z.infer<typeof syntheticPatientMappingCatalogSchema>
 export type SyntheticPatientMappingInput = z.infer<typeof updateSyntheticPatientMappingsRequestSchema>['input'][number]
 export type SyntheticPatientProfile = z.infer<typeof syntheticPatientProfileSchema>
+export type SyntheticPatientProfileDetail = z.infer<typeof syntheticPatientProfileDetailSchema>
 export type SyntheticPatientProfileList = z.infer<typeof syntheticPatientProfileListSchema>
 export type SyntheticPatientProfileSummary = z.infer<typeof syntheticPatientProfileSummarySchema>
+export type SyntheticCaseInstance = z.infer<typeof syntheticCaseInstanceSchema>
+export type SyntheticSourceHistoryItem = z.infer<typeof syntheticSourceHistoryItemSchema>
+export type SyntheticSourceHistoryList = z.infer<typeof syntheticSourceHistoryListSchema>
+export type SyntheticSourceResourceDetail = z.infer<typeof syntheticSourceResourceDetailSchema>

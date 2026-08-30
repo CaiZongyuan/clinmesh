@@ -88,6 +88,7 @@ const syntheaR4Bundle = {
     resource: {
       clinicalStatus: { coding: [{ code: 'active' }] },
       code: { coding: [{ code: '386661006', display: 'Fever', system: 'http://snomed.info/sct' }] },
+      encounter: { reference: 'Encounter/source-encounter-1' },
       id: 'source-condition-1',
       onsetDateTime: '2026-08-01T08:00:00+08:00',
       recordedDate: '2026-08-01T09:05:00+08:00',
@@ -1434,19 +1435,24 @@ describe('persistent Scenario generation job HTTP contract', () => {
     expect(invalidHistoricalDataset.status).toBe(200)
     expect(commandResponseSchema(scenarioDatasetSchema)
       .parse(await invalidHistoricalDataset.json()).data.diagnostics.length).toBeGreaterThan(0)
+    firstRuntime.database.driver.exec('DROP TABLE synthetic_case_truth')
+    firstRuntime.database.driver.exec('DROP TABLE synthetic_case_visible_history')
+    firstRuntime.database.driver.exec('DROP TABLE synthetic_case_visible_resource')
+    firstRuntime.database.driver.exec('DROP TABLE synthetic_case_instance')
     firstRuntime.database.driver.exec('DROP TABLE synthetic_patient_materialization')
     firstRuntime.database.driver.exec('DROP TABLE synthetic_patient_profile_revision')
     firstRuntime.database.driver.exec('DROP TABLE synthetic_patient_profile_batch')
     firstRuntime.database.driver.exec('DROP TABLE synthetic_patient_profile')
     firstRuntime.database.driver.exec('DROP TABLE hospital_service_catalog')
     firstRuntime.database.driver.prepare(
-      'DELETE FROM schema_migration WHERE migration_id IN (?, ?, ?, ?, ?)',
+      'DELETE FROM schema_migration WHERE migration_id IN (?, ?, ?, ?, ?, ?)',
     ).run(
       '0024_synthetic-patient-profile.sql',
       '0025_reference-data-provenance.sql',
       '0026_profile-mapping-provenance.sql',
       '0027_service-catalog-search.sql',
       '0028_synthea-localization-provenance.sql',
+      '0029_synthetic-case.sql',
     )
     await firstRuntime.close()
     runtimes.splice(runtimes.indexOf(firstRuntime), 1)

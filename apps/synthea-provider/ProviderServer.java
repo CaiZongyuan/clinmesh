@@ -65,6 +65,7 @@ public final class ProviderServer {
   private static JsonObject verifiedLocalizationMetadata;
 
   private record GenerationRequest(
+      String moduleMode,
       List<String> modules,
       String name,
       int count,
@@ -238,23 +239,33 @@ public final class ProviderServer {
       throw new RequestException("REQUEST_INVALID", "The request must be a JSON object");
     }
     requireKeys(root, Set.of(
-        "modules", "name", "population", "providerId", "seeds", "timeRange", "timeZone"),
+        "moduleMode", "modules", "name", "population", "providerId", "seeds", "timeRange", "timeZone"),
         "request");
     requireString(root, "providerId", 1, 20, "synthea");
     String name = requireString(root, "name", 1, 120, null);
     String timeZone = requireString(root, "timeZone", 1, 40, "Asia/Shanghai");
 
-    JsonArray moduleValues = requireArray(root, "modules", 1, 3);
+    String moduleMode = requireString(root, "moduleMode", 1, 20, null);
+    if (!Set.of("all", "filter").contains(moduleMode)) {
+      throw new RequestException("REQUEST_INVALID", "moduleMode is unsupported");
+    }
+    JsonArray moduleValues = requireArray(root, "modules", 0, 32);
     List<String> modules = new ArrayList<>();
     for (JsonElement value : moduleValues) {
       if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
         throw new RequestException("REQUEST_INVALID", "modules must contain strings");
       }
       String module = value.getAsString();
-      if (!MODULES.contains(module) || modules.contains(module)) {
+      if (!module.matches("[A-Za-z0-9][A-Za-z0-9_./-]{0,127}")
+          || module.contains("..") || module.contains("//") || module.endsWith("/")
+          || modules.contains(module)) {
         throw new RequestException("REQUEST_INVALID", "modules contains an unsupported value");
       }
       modules.add(module);
+    }
+    if ((moduleMode.equals("all") && !modules.isEmpty())
+        || (moduleMode.equals("filter") && modules.isEmpty())) {
+      throw new RequestException("REQUEST_INVALID", "moduleMode and modules do not agree");
     }
 
     JsonObject population = requireObject(root, "population");
@@ -285,7 +296,7 @@ public final class ProviderServer {
       throw new RequestException("REQUEST_INVALID", "history start is after history end");
     }
     return new GenerationRequest(
-        modules, name, count, minimumAge, maximumAge, gender,
+        moduleMode, modules, name, count, minimumAge, maximumAge, gender,
         populationSeed, clinicalSeed, start, end, timeZone);
   }
 
@@ -317,8 +328,10 @@ public final class ProviderServer {
         command.add("-g");
         command.add(request.gender.equals("female") ? "F" : "M");
       }
-      command.add("-m");
-      command.add(String.join(File.pathSeparator, modulePatterns(request.modules)));
+      if (request.moduleMode.equals("filter")) {
+        command.add("-m");
+        command.add(String.join(File.pathSeparator, modulePatterns(request.modules)));
+      }
       command.add("--exporter.baseDirectory=" + outputDirectory);
       long historyDays = ChronoUnit.DAYS.between(request.start, request.end) + 1;
       command.add("--exporter.years_of_history=" + Math.max(1, (historyDays + 364) / 365));
@@ -359,6 +372,7 @@ public final class ProviderServer {
       metadata.addProperty("clinicalSeed", request.clinicalSeed);
       metadata.addProperty("configHash", generationConfigHash());
       metadata.add("localization", localizationMetadata().deepCopy());
+      metadata.addProperty("moduleMode", request.moduleMode);
       metadata.add("modules", GSON.toJsonTree(request.modules));
       metadata.addProperty("populationSeed", request.populationSeed);
       metadata.addProperty("syntheaCommit", SYNTHEA_COMMIT);
@@ -377,9 +391,9 @@ public final class ProviderServer {
   }
 
   private static List<String> modulePatterns(List<String> modules) {
-    return MODULES.stream()
-        .filter(modules::contains)
-        .flatMap(module -> MODULE_PATTERNS.get(module).stream())
+    return modules.stream()
+        .flatMap(module -> MODULE_PATTERNS.getOrDefault(module, List.of(module)).stream())
+        .distinct()
         .toList();
   }
 
@@ -710,7 +724,7 @@ public final class ProviderServer {
   private static void smoke() throws Exception {
     int port = Integer.parseInt(System.getenv().getOrDefault("SYNTHEA_PROVIDER_PORT", "51878"));
     String body = """
-        {"modules":["fever"],"name":"Docker smoke","population":{"age":{"maximum":80,"minimum":20},"count":10,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1996-08-01"},"timeZone":"Asia/Shanghai"}
+        {"moduleMode":"filter","modules":["fever"],"name":"Docker smoke","population":{"age":{"maximum":80,"minimum":20},"count":10,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1996-08-01"},"timeZone":"Asia/Shanghai"}
         """.trim();
     JsonObject result = generateForSmoke(port, body, "Synthea Provider smoke request failed");
     if (result.getAsJsonArray("bundles").size() != 10
@@ -724,7 +738,7 @@ public final class ProviderServer {
     }
 
     String diabetesBody = """
-        {"modules":["type-2-diabetes"],"name":"Docker diabetes smoke","population":{"age":{"maximum":80,"minimum":65},"count":10,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1986-08-01"},"timeZone":"Asia/Shanghai"}
+        {"moduleMode":"filter","modules":["type-2-diabetes"],"name":"Docker diabetes smoke","population":{"age":{"maximum":80,"minimum":65},"count":10,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1986-08-01"},"timeZone":"Asia/Shanghai"}
         """.trim();
     JsonObject diabetesResult = generateForSmoke(
         port, diabetesBody, "Synthea Provider diabetes smoke request failed");
@@ -735,7 +749,7 @@ public final class ProviderServer {
     }
 
     String hypertensionBody = """
-        {"modules":["hypertension"],"name":"Docker hypertension smoke","population":{"age":{"maximum":80,"minimum":50},"count":10,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1986-08-01"},"timeZone":"Asia/Shanghai"}
+        {"moduleMode":"filter","modules":["hypertension"],"name":"Docker hypertension smoke","population":{"age":{"maximum":80,"minimum":50},"count":10,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1986-08-01"},"timeZone":"Asia/Shanghai"}
         """.trim();
     JsonObject hypertensionResult = generateForSmoke(
         port, hypertensionBody, "Synthea Provider hypertension smoke request failed");

@@ -88,6 +88,7 @@ function generationJobQueryKey(jobId: string) {
 }
 
 const initialRequest: ScenarioGenerationRequest = {
+  moduleMode: 'filter',
   modules: ['fever'],
   name: '发热门诊样本',
   population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },

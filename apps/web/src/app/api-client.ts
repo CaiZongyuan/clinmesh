@@ -63,9 +63,11 @@ import {
   scenarioGenerationRequestSchema,
   scenarioProviderCapabilitiesListSchema,
   startSyntheticPatientVisitsResultSchema,
+  syntheticPatientProfileDetailSchema,
+  syntheticSourceHistoryListSchema,
+  syntheticSourceResourceDetailSchema,
   syntheticPatientMappingCatalogSchema,
   syntheticPatientProfileListSchema,
-  syntheticPatientProfileSchema,
   type ScenarioGenerationRequest,
   type ScenarioDataset,
   type SyntheticPatientIdentity,
@@ -266,7 +268,29 @@ export function getSyntheticPatientProfiles(signal?: AbortSignal, page = 1, sear
 export function getSyntheticPatientProfile(profileId: string, signal?: AbortSignal) {
   return apiGet(
     `/api/sim/v1/synthetic-patients/${encodeURIComponent(profileId)}`,
-    syntheticPatientProfileSchema,
+    syntheticPatientProfileDetailSchema,
+    signal,
+  )
+}
+
+export function getSyntheticCaseHistory(caseId: string, signal?: AbortSignal, page = 1) {
+  const parameters = new URLSearchParams({ page: String(page), pageSize: '20' })
+  return apiGet(
+    `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/history?${parameters.toString()}`,
+    syntheticSourceHistoryListSchema,
+    signal,
+  )
+}
+
+export function getSyntheticCaseHistoryDetail(
+  caseId: string,
+  sourceReference: string,
+  signal?: AbortSignal,
+) {
+  const parameters = new URLSearchParams({ sourceReference })
+  return apiGet(
+    `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/history/detail?${parameters.toString()}`,
+    syntheticSourceResourceDetailSchema,
     signal,
   )
 }
@@ -286,7 +310,7 @@ export function updateSyntheticPatientProfile(input: {
 }, idempotencyKey: string) {
   return apiMutation(
     `/api/sim/v1/synthetic-patients/${encodeURIComponent(input.profileId)}`,
-    commandResponseSchema(syntheticPatientProfileSchema),
+    commandResponseSchema(syntheticPatientProfileDetailSchema),
     { expectedRevision: input.expectedRevision, input: input.identity },
     { idempotencyKey, method: 'PUT' },
   )
@@ -299,7 +323,7 @@ export function updateSyntheticPatientMappings(input: {
 }, idempotencyKey: string) {
   return apiMutation(
     `/api/sim/v1/synthetic-patients/${encodeURIComponent(input.profileId)}/mappings`,
-    commandResponseSchema(syntheticPatientProfileSchema),
+    commandResponseSchema(syntheticPatientProfileDetailSchema),
     { expectedRevision: input.expectedRevision, input: input.mappings },
     { idempotencyKey, method: 'PUT' },
   )

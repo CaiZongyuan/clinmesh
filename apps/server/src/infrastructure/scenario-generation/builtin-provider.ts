@@ -4,7 +4,7 @@ import type {
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
 } from '@clinmesh/contracts/scenario'
-import { scenarioModules } from '@clinmesh/contracts/scenario'
+import { scenarioModuleSchema, scenarioModules } from '@clinmesh/contracts/scenario'
 import type {
   ReferenceConcept,
   ReferenceMedicalService,
@@ -50,7 +50,9 @@ function gender(request: ScenarioGenerationRequest, ordinal: number): 'female' |
 }
 
 function patient(request: ScenarioGenerationRequest, ordinal: number) {
-  const module = request.modules[ordinal % request.modules.length] ?? 'fever'
+  const module = scenarioModuleSchema.parse(
+    request.modules[ordinal % request.modules.length] ?? 'fever',
+  )
   const definition = scenarioCaseDefinitions[module]
   const idSuffix = createHash('sha256')
     .update(JSON.stringify([request.seeds, ordinal, module]))
@@ -180,7 +182,14 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
   }
 
   async generate(request: ScenarioGenerationRequest): Promise<SourcePatientCorpus> {
-    const patients = Array.from({ length: request.population.count }, (_, index) => patient(request, index))
+    const selectedModules = request.moduleMode === 'all'
+      ? [...scenarioModules]
+      : request.modules.map(module => scenarioModuleSchema.parse(module))
+    const compatibilityRequest = { ...request, modules: selectedModules }
+    const patients = Array.from(
+      { length: request.population.count },
+      (_, index) => patient(compatibilityRequest, index),
+    )
     const baseline = compileScenarioCatalog({
       baseline: createHospitalBaseline(
         this.#medicationProducts,
@@ -189,7 +198,7 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
         this.#referenceSelection,
         this.#referenceConcepts,
       ),
-      modules: request.modules,
+      modules: selectedModules,
     })
     const content: ScenarioDatasetContent = {
       catalog: baseline.catalog,
@@ -205,7 +214,7 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
         catalogCompilation: baseline.report,
         clinicalSeed: request.seeds.clinical,
         generator: 'clinmesh-builtin-v1',
-        modules: request.modules,
+        modules: selectedModules,
         populationSeed: request.seeds.population,
         timeRange: request.timeRange,
         timeZone: request.timeZone,

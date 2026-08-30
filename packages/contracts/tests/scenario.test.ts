@@ -31,6 +31,38 @@ describe('Scenario generation request', () => {
       population: { ...request.population, count: 11 },
     }).success).toBe(false)
   })
+
+  it('defaults Synthea generation to all modules and bounds advanced filters', () => {
+    const { modules: _legacyModules, ...withoutModules } = request
+
+    expect(scenarioGenerationRequestSchema.parse(withoutModules)).toMatchObject({
+      moduleMode: 'all',
+      modules: [],
+    })
+    expect(scenarioGenerationRequestSchema.parse({
+      ...withoutModules,
+      moduleMode: 'filter',
+      modules: ['cardiovascular/hypertension', 'metabolic_syndrome_disease'],
+    })).toMatchObject({
+      moduleMode: 'filter',
+      modules: ['cardiovascular/hypertension', 'metabolic_syndrome_disease'],
+    })
+    expect(scenarioGenerationRequestSchema.safeParse({
+      ...withoutModules,
+      moduleMode: 'all',
+      modules: ['hypertension'],
+    }).success).toBe(false)
+    expect(scenarioGenerationRequestSchema.safeParse({
+      ...withoutModules,
+      moduleMode: 'filter',
+      modules: [],
+    }).success).toBe(false)
+    expect(scenarioGenerationRequestSchema.safeParse({
+      ...withoutModules,
+      moduleMode: 'filter',
+      modules: ['../secrets'],
+    }).success).toBe(false)
+  })
 })
 
 describe('Scenario UCUM units', () => {

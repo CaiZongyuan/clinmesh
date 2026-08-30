@@ -8,6 +8,7 @@ import {
   type ScenarioGenerationJob,
   type ScenarioGenerationRequest,
   syntheticPatientProfileListSchema,
+  syntheticPatientProfileDetailSchema,
   syntheticPatientProfileSchema,
   startSyntheticPatientVisitsRequestSchema,
   type SyntheticPatientIdentity,
@@ -18,10 +19,12 @@ import { z } from 'zod'
 import type { ScenarioDatasetRepository } from '../../infrastructure/sqlite/scenario-dataset-repository.ts'
 import type { ScenarioGenerationJobRepository } from '../../infrastructure/sqlite/scenario-generation-job-repository.ts'
 import type { SyntheticPatientProfileRepository } from '../../infrastructure/sqlite/synthetic-patient-profile-repository.ts'
+import type { SyntheticCaseRepository } from '../../infrastructure/sqlite/synthetic-case-repository.ts'
 import type { ActorContext, CommandExecutor, CommandResponse } from '../command-executor.ts'
 import {
   ScenarioGenerationProviderError,
   type ScenarioGenerationProvider,
+  type SourcePatientCorpus,
 } from './provider.ts'
 import { validateScenarioDataset } from './scenario-dataset-validator.ts'
 import type { ScenarioService } from '../scenario-service.ts'
@@ -36,6 +39,11 @@ import {
   compileSyntheaR4Bundle,
   pinSyntheaSourceVersions,
 } from './synthea-case-truth-compiler.ts'
+import {
+  compileSyntheaIndexCase,
+  SyntheaIndexCaseError,
+  type CompiledSyntheaIndexCase,
+} from './synthea-index-case.ts'
 
 const scenarioDatasetInstallResultSchema = z.object({
   packageId: z.string().min(1),
@@ -55,25 +63,38 @@ function mappingCatalogKey(
   return `${resourceType}\u0000${catalogItemId}\u0000${version}`
 }
 
+type ScenarioDataErrorCode =
+  | 'CASE_NOT_FOUND'
+  | 'DATASET_INVALID'
+  | 'DATASET_NOT_FOUND'
+  | 'DATASET_VERSION_CONFLICT'
+  | 'PROFILE_IDENTITY_CONFLICT'
+  | 'PROFILE_MAPPING_INVALID'
+  | 'PROFILE_NOT_FOUND'
+  | 'PROFILE_VERSION_CONFLICT'
+  | 'PROVIDER_NOT_AVAILABLE'
+  | 'ROLE_NOT_ALLOWED'
+
 export class ScenarioDataError extends Error {
-  readonly code: 'DATASET_INVALID' | 'DATASET_NOT_FOUND' | 'DATASET_VERSION_CONFLICT' | 'PROFILE_IDENTITY_CONFLICT' | 'PROFILE_MAPPING_INVALID' | 'PROFILE_NOT_FOUND' | 'PROFILE_VERSION_CONFLICT' | 'PROVIDER_NOT_AVAILABLE' | 'ROLE_NOT_ALLOWED'
+  readonly code: ScenarioDataErrorCode
   readonly status: 403 | 404 | 409 | 503
 
   constructor(
-    code: 'DATASET_INVALID' | 'DATASET_NOT_FOUND' | 'DATASET_VERSION_CONFLICT' | 'PROFILE_IDENTITY_CONFLICT' | 'PROFILE_MAPPING_INVALID' | 'PROFILE_NOT_FOUND' | 'PROFILE_VERSION_CONFLICT' | 'PROVIDER_NOT_AVAILABLE' | 'ROLE_NOT_ALLOWED',
+    code: ScenarioDataErrorCode,
     message: string,
   ) {
     super(message)
     this.name = 'ScenarioDataError'
     this.code = code
     if (code === 'ROLE_NOT_ALLOWED') this.status = 403
-    else if (code === 'DATASET_NOT_FOUND' || code === 'PROFILE_NOT_FOUND') this.status = 404
+    else if (code === 'CASE_NOT_FOUND' || code === 'DATASET_NOT_FOUND' || code === 'PROFILE_NOT_FOUND') this.status = 404
     else if (code === 'PROVIDER_NOT_AVAILABLE') this.status = 503
     else this.status = 409
   }
 }
 
 export class ScenarioDataService {
+  readonly #cases: SyntheticCaseRepository
   readonly #commands: CommandExecutor
   readonly #providers: ReadonlyMap<string, ScenarioGenerationProvider>
   readonly #profiles: SyntheticPatientProfileRepository
@@ -84,6 +105,7 @@ export class ScenarioDataService {
   readonly #workflow: WorkflowService
 
   constructor(input: {
+    cases: SyntheticCaseRepository
     commands: CommandExecutor
     jobs: ScenarioGenerationJobRepository
     providers: ReadonlyMap<string, ScenarioGenerationProvider>
@@ -93,6 +115,7 @@ export class ScenarioDataService {
     scenario: ScenarioService
     workflow: WorkflowService
   }) {
+    this.#cases = input.cases
     this.#commands = input.commands
     this.#jobs = input.jobs
     this.#providers = input.providers
@@ -165,11 +188,13 @@ export class ScenarioDataService {
     await this.#providerFor(input.request)
     const now = new Date().toISOString()
     const job: ScenarioGenerationJob = {
+      caseIds: [],
       createdAt: now,
       datasetId: null,
       error: null,
       finishedAt: null,
       jobId: `scenario-generation-job-${randomUUID()}`,
+      profileIds: [],
       request: input.request,
       startedAt: null,
       status: 'queued',
@@ -212,7 +237,8 @@ export class ScenarioDataService {
     if (claimed === undefined) return undefined
     try {
       const provider = await this.#providerFor(claimed.request)
-      const corpus = await provider.generate(claimed.request, signal)
+      const generated = await this.#generateUsableCorpus(provider, claimed.request, signal)
+      const corpus = generated.corpus
       const dataset = this.#dataset(
         claimed.workspaceId,
         claimed.request,
@@ -232,19 +258,41 @@ export class ScenarioDataService {
         input: { contentHash: dataset.contentHash, jobId: claimed.jobId },
         operation: 'scenario-generation-job.complete',
       }, () => {
+        this.#profiles.createBatch(profiles, claimed.createdByActorId)
+        const cases = profiles.flatMap((profile) => {
+          const compiled = generated.casesByPatientId.get(profile.source.patientId)
+          if (compiled === undefined) return []
+          const existing = this.#cases.getByProfileRevision(
+            profile.workspaceId,
+            profile.profileId,
+            profile.revision,
+          )
+          return [existing ?? this.#cases.createFromProfile({
+            actorId: claimed.createdByActorId,
+            compiled,
+            profile,
+          })]
+        })
         const completed = this.#jobs.completeWithDataset(
           claimed,
           dataset,
+          {
+            caseIds: cases.map(item => item.caseId),
+            profileIds: profiles.map(profile => profile.profileId),
+          },
           new Date().toISOString(),
         )
-        this.#profiles.createBatch(profiles, claimed.createdByActorId)
         return {
           data: completed,
           effects: [{
             kind: 'created',
             reference: `ScenarioDataset/${dataset.datasetId}`,
             versionId: '1',
-          }, {
+          }, ...cases.map(item => ({
+            kind: 'created' as const,
+            reference: `SyntheticCase/${item.caseId}`,
+            versionId: String(item.revision),
+          })), {
             kind: 'updated',
             reference: `ScenarioGenerationJob/${claimed.jobId}`,
             versionId: completed.updatedAt,
@@ -267,8 +315,10 @@ export class ScenarioDataService {
         const transitioned = transition === 'requeue'
           ? this.#jobs.requeue(claimed, now)
           : this.#jobs.fail(claimed, {
-              code: error instanceof ScenarioGenerationProviderError ? error.code : 'GENERATION_FAILED',
-              message: error instanceof ScenarioGenerationProviderError
+              code: error instanceof ScenarioGenerationProviderError || error instanceof SyntheaIndexCaseError
+                ? error.code
+                : 'GENERATION_FAILED',
+              message: error instanceof ScenarioGenerationProviderError || error instanceof SyntheaIndexCaseError
                 ? error.message
                 : 'Scenario generation failed',
             }, now)
@@ -343,13 +393,43 @@ export class ScenarioDataService {
     }))
   }
 
+  getSyntheticCase(context: ActorContext, caseId: string) {
+    this.#assertCaseReader(context)
+    const syntheticCase = this.#cases.get(context.workspaceId, caseId)
+    if (syntheticCase === undefined) {
+      throw new ScenarioDataError('CASE_NOT_FOUND', 'The Synthetic Case was not found')
+    }
+    return syntheticCase
+  }
+
+  listSyntheticCaseHistory(
+    context: ActorContext,
+    input: { caseId: string; page: number; pageSize: number },
+  ) {
+    this.getSyntheticCase(context, input.caseId)
+    return this.#cases.listVisibleHistory({ ...input, workspaceId: context.workspaceId })
+  }
+
+  getSyntheticCaseHistoryDetail(
+    context: ActorContext,
+    caseId: string,
+    sourceReference: string,
+  ) {
+    this.getSyntheticCase(context, caseId)
+    const detail = this.#cases.getVisibleResource(context.workspaceId, caseId, sourceReference)
+    if (detail === undefined) {
+      throw new ScenarioDataError('CASE_NOT_FOUND', 'The visible Synthetic Case resource was not found')
+    }
+    return detail
+  }
+
   getSyntheticPatient(context: ActorContext, profileId: string) {
     this.#assertAdministrator(context)
     const profile = this.#profiles.get(context.workspaceId, profileId)
     if (profile === undefined) {
       throw new ScenarioDataError('PROFILE_NOT_FOUND', 'The Synthetic Patient Profile was not found')
     }
-    return syntheticPatientProfileSchema.parse(profile)
+    return this.#publicProfile(profile)
   }
 
   updateSyntheticPatient(input: {
@@ -363,7 +443,7 @@ export class ScenarioDataService {
     return this.#commands.execute({
       context: input.context,
       contextRequirement: 'current',
-      dataSchema: syntheticPatientProfileSchema,
+      dataSchema: syntheticPatientProfileDetailSchema,
       expectedVersions: {},
       idempotencyKey: input.idempotencyKey,
       idempotencyScope: 'workspace',
@@ -407,7 +487,7 @@ export class ScenarioDataService {
         )
       }
       return {
-        data: updated,
+        data: this.#publicProfile(updated),
         effects: [{
           kind: 'updated',
           reference: `SyntheticPatientProfile/${updated.profileId}`,
@@ -428,7 +508,7 @@ export class ScenarioDataService {
     return this.#commands.execute({
       context: input.context,
       contextRequirement: 'current',
-      dataSchema: syntheticPatientProfileSchema,
+      dataSchema: syntheticPatientProfileDetailSchema,
       expectedVersions: {},
       idempotencyKey: input.idempotencyKey,
       idempotencyScope: 'workspace',
@@ -555,7 +635,7 @@ export class ScenarioDataService {
         )
       }
       return {
-        data: updated,
+        data: this.#publicProfile(updated),
         effects: [{
           kind: 'updated',
           reference: `SyntheticPatientProfile/${updated.profileId}`,
@@ -707,6 +787,46 @@ export class ScenarioDataService {
     }
   }
 
+  #assertCaseReader(context: ActorContext): void {
+    if (![
+      'administrator',
+      'outpatient-doctor',
+      'registrar',
+      'triage-nurse',
+    ].includes(context.roleCode)) {
+      throw new ScenarioDataError('ROLE_NOT_ALLOWED', 'This role cannot read Synthetic Case history')
+    }
+  }
+
+  #publicProfile(profile: z.infer<typeof syntheticPatientProfileSchema>) {
+    return syntheticPatientProfileDetailSchema.parse({
+      birthDate: profile.patient.birthDate,
+      case: this.#cases.getByProfile(profile.workspaceId, profile.profileId) ?? null,
+      createdAt: profile.createdAt,
+      gender: profile.patient.gender,
+      identity: profile.identity,
+      profileId: profile.profileId,
+      revision: profile.revision,
+      source: {
+        batchId: profile.source.batchId,
+        batchName: profile.source.batchName,
+        format: profile.source.format,
+        hash: profile.source.hash,
+        ...(profile.source.localization === undefined
+          ? {}
+          : { localization: profile.source.localization }),
+        mappingVersion: profile.source.mappingVersion,
+        patientId: profile.source.patientId,
+        providerId: profile.source.providerId,
+        ...(profile.source.referenceData === undefined
+          ? {}
+          : { referenceData: profile.source.referenceData }),
+      },
+      updatedAt: profile.updatedAt,
+      workspaceId: profile.workspaceId,
+    })
+  }
+
   #withReferenceData(content: ScenarioDataset['content']): ScenarioDataset['content'] {
     return scenarioDatasetContentSchema.parse({
       ...content,
@@ -764,7 +884,11 @@ export class ScenarioDataService {
     }
     if (
       request.population.count > capabilities.maxPopulation
-      || request.modules.some(module => !capabilities.modules.includes(module))
+      || (
+        request.providerId === 'builtin'
+        && request.moduleMode === 'filter'
+        && request.modules.some(module => !capabilities.modules.includes(module))
+      )
     ) {
       throw new ScenarioDataError(
         'DATASET_INVALID',
@@ -772,6 +896,40 @@ export class ScenarioDataService {
       )
     }
     return provider
+  }
+
+  async #generateUsableCorpus(
+    provider: ScenarioGenerationProvider,
+    request: ScenarioGenerationRequest,
+    signal?: AbortSignal,
+  ): Promise<{
+    casesByPatientId: Map<string, CompiledSyntheaIndexCase>
+    corpus: SourcePatientCorpus
+  }> {
+    if (request.providerId !== 'synthea') {
+      return { casesByPatientId: new Map(), corpus: await provider.generate(request, signal) }
+    }
+    let lastError: SyntheaIndexCaseError | undefined
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const attemptRequest = scenarioGenerationRequestSchema.parse({
+        ...request,
+        seeds: {
+          clinical: (request.seeds.clinical + attempt * 104_729) % 2_147_483_648,
+          population: (request.seeds.population + attempt * 130_363) % 2_147_483_648,
+        },
+      })
+      const corpus = await provider.generate(attemptRequest, signal)
+      try {
+        const casesByPatientId = new Map(corpus.sources.map(source => (
+          [source.patientId, compileSyntheaIndexCase(source.raw)] as const
+        )))
+        return { casesByPatientId, corpus }
+      } catch (error) {
+        if (!(error instanceof SyntheaIndexCaseError)) throw error
+        lastError = error
+      }
+    }
+    throw lastError ?? new SyntheaIndexCaseError()
   }
 
   #getDataset(workspaceId: string, datasetId: string): ScenarioDataset {

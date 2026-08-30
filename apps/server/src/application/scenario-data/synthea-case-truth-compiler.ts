@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import {
+  scenarioModuleSchema,
   scenarioPatientSchema,
   type ScenarioGenerationRequest,
   type ScenarioInvestigationResult,
@@ -600,7 +601,9 @@ export function compileSyntheaR4Bundle(input: {
   )))
   const allergies = bundle.entry.flatMap(entry => entry.resource.resourceType === 'AllergyIntolerance' ? [entry.resource] : [])
   const fallbackDateTime = dateAtEnd(input.request)
-  const module = input.request.modules[input.ordinal % input.request.modules.length] ?? 'fever'
+  const module = scenarioModuleSchema.parse(
+    input.request.modules[input.ordinal % input.request.modules.length] ?? 'fever',
+  )
   const definition = scenarioCaseDefinitions[module]
   const currentInvestigations = currentObservations.flatMap((resource) => {
     const investigation = compileCurrentInvestigation(resource)

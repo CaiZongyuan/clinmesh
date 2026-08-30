@@ -642,6 +642,40 @@ function stubScenarioDataWorkspace(options: {
     updatedAt: dataset.updatedAt,
     workspaceId: dataset.workspaceId,
   }
+  const caseId = 'synthetic-case-001'
+  const publicProfile = () => ({
+    birthDate: profile.patient.birthDate,
+    case: {
+      activeBriefRevision: null,
+      caseId,
+      caseType: 'new-problem' as const,
+      createdAt: profile.createdAt,
+      profileId: profile.profileId,
+      profileRevision: 1,
+      revision: 1,
+      sourceHash: profile.source.hash,
+      status: 'brief-pending' as const,
+      updatedAt: profile.updatedAt,
+      visibleHistoryCount: 1,
+      workspaceId: profile.workspaceId,
+    },
+    createdAt: profile.createdAt,
+    gender: profile.patient.gender,
+    identity: profile.identity,
+    profileId: profile.profileId,
+    revision: profile.revision,
+    source: {
+      batchId: profile.source.batchId,
+      batchName: profile.source.batchName,
+      format: profile.source.format,
+      hash: profile.source.hash,
+      mappingVersion: profile.source.mappingVersion,
+      patientId: profile.source.patientId,
+      providerId: profile.source.providerId,
+    },
+    updatedAt: profile.updatedAt,
+    workspaceId: profile.workspaceId,
+  })
   generated = options.profileAvailable === true
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost')
@@ -754,6 +788,35 @@ function stubScenarioDataWorkspace(options: {
         }],
       })
     }
+    if (url.pathname === `/api/sim/v1/synthetic-cases/${caseId}/history/detail`) {
+      const sourceReference = url.searchParams.get('sourceReference')
+      if (sourceReference !== 'urn:uuid:prior-condition') {
+        return Response.json({ error: { code: 'CASE_NOT_FOUND', message: 'Not found' } }, { status: 404 })
+      }
+      return Response.json({
+        caseId,
+        resource: {
+          code: { coding: [{ code: '386661006', display: '发热', system: 'http://snomed.info/sct' }] },
+          id: 'prior-condition',
+          resourceType: 'Condition',
+        },
+        sourceKind: 'synthea-r4-external',
+        sourceReference,
+      })
+    }
+    if (url.pathname === `/api/sim/v1/synthetic-cases/${caseId}/history`) {
+      return Response.json({
+        items: [{
+          clinicalDate: '2026-07-01T08:00:00+08:00',
+          resourceType: 'Condition',
+          sourceReference: 'urn:uuid:prior-condition',
+          title: '发热',
+        }],
+        page: 1,
+        pageSize: 20,
+        total: 1,
+      })
+    }
     if (url.pathname === `/api/sim/v1/synthetic-patients/${profile.profileId}` && init?.method === 'PUT') {
       if (options.profileUpdateConflict === true) {
         return Response.json({
@@ -765,7 +828,7 @@ function stubScenarioDataWorkspace(options: {
       }
       const body = JSON.parse(String(init.body)) as { expectedRevision: number; input: typeof profile.identity }
       profile = { ...profile, identity: body.input, revision: body.expectedRevision + 1 }
-      return Response.json(commandResponse(profile))
+      return Response.json(commandResponse(publicProfile()))
     }
     if (url.pathname === `/api/sim/v1/synthetic-patients/${profile.profileId}/mappings` && init?.method === 'PUT') {
       const body = JSON.parse(String(init.body)) as {
@@ -807,7 +870,7 @@ function stubScenarioDataWorkspace(options: {
       return Response.json(commandResponse(profile))
     }
     if (url.pathname === `/api/sim/v1/synthetic-patients/${profile.profileId}`) {
-      return Response.json(profile)
+      return Response.json(publicProfile())
     }
     if (url.pathname === '/api/his/v1/catalogs/registration') {
       return Response.json({
@@ -1725,12 +1788,15 @@ describe('role workspaces', () => {
     expect(screen.getByRole('tab', { name: '高级病例编排' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '生成患者' }))
     const generationSheet = await screen.findByRole('dialog', { name: '生成患者' })
-    expect(within(generationSheet).getByRole('button', { name: /Synthea/ }).getAttribute('aria-pressed')).toBe('true')
+    expect(within(generationSheet).getByText('全部 Synthea 模块')).toBeTruthy()
     expect(within(generationSheet).getByRole('spinbutton', { name: '患者人数' }).getAttribute('max')).toBe('10')
+    const filter = within(generationSheet).getByRole('checkbox', { name: '限制 Synthea 模块' })
+    expect(filter.getAttribute('aria-checked')).toBe('false')
+    await user.click(filter)
     expect(within(generationSheet).getByRole('checkbox', { name: '高血压' })).toBeTruthy()
   })
 
-  it('edits a persistent profile and starts its outpatient visit', async () => {
+  it('edits a persistent profile and keeps its visible source history', async () => {
     window.history.replaceState(null, '', '/scenario-data')
     stubScenarioDataWorkspace({ profileAvailable: true })
     const user = userEvent.setup()
@@ -1747,11 +1813,9 @@ describe('role workspaces', () => {
     await user.click(within(editSheet).getByRole('button', { name: '保存档案' }))
     expect((await screen.findAllByText('合成患者新姓名')).length).toBeGreaterThan(0)
 
-    await user.click(screen.getByRole('button', { name: '发起门诊就诊' }))
-    const visitSheet = await screen.findByRole('dialog', { name: '发起门诊就诊' })
-    await user.click(within(visitSheet).getByRole('button', { name: '发起门诊就诊' }))
-
-    expect((await screen.findAllByText('已有活动就诊')).length).toBeGreaterThan(0)
+    await user.click(await screen.findByRole('button', { name: /2026-07-01.*发热.*Condition/ }))
+    expect(await screen.findByText(/prior-condition/)).toBeTruthy()
+    expect(document.body.textContent).not.toContain('index-condition')
   })
 
   it('keeps a profile edit conflict visible in the patient library', async () => {
@@ -1769,24 +1833,17 @@ describe('role workspaces', () => {
     expect(within(editSheet).getByText('该合成患者档案已被其他管理员修改。')).toBeTruthy()
   })
 
-  it('creates a profile revision when an administrator saves source mappings', async () => {
+  it('opens only an allowlisted visible R4 source resource', async () => {
     window.history.replaceState(null, '', '/scenario-data')
     stubScenarioDataWorkspace({ profileAvailable: true })
     const user = userEvent.setup()
 
     render(<WebApp />)
 
-    await user.click(await screen.findByRole('button', { name: '处理映射' }))
-    const mappingSheet = await screen.findByRole('dialog', { name: '处理映射' })
-    const mapping = within(mappingSheet).getByRole('combobox', {
-      name: '发热 · Condition/condition-fever',
-    })
-    await user.click(mapping)
-    await user.click(await screen.findByRole('option', { name: '急性上呼吸道感染 · J06.9' }))
-    await user.click(within(mappingSheet).getByRole('button', { name: '保存映射' }))
+    await user.click(await screen.findByRole('button', { name: /2026-07-01.*发热.*Condition/ }))
 
-    expect(await screen.findByText('Profile revision 2')).toBeTruthy()
-    expect(screen.getByText('映射完整')).toBeTruthy()
+    expect(await screen.findByText(/"resourceType": "Condition"/)).toBeTruthy()
+    expect(document.body.textContent).not.toContain('index-condition')
   })
 
   it('submits a hypertension-only Synthea population while keeping one module selected', async () => {

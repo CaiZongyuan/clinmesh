@@ -328,6 +328,48 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.get('/api/sim/v1/synthetic-cases/:caseId/history/detail', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const query = z.object({
+          sourceReference: z.string().min(1).max(512),
+        }).parse(context.req.query())
+        return context.json(scenarioData.getSyntheticCaseHistoryDetail(
+          session.actor,
+          context.req.param('caseId'),
+          query.sourceReference,
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/sim/v1/synthetic-cases/:caseId/history', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const query = z.object({
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(20),
+        }).parse(context.req.query())
+        return context.json(scenarioData.listSyntheticCaseHistory(session.actor, {
+          caseId: context.req.param('caseId'),
+          page: query.page,
+          pageSize: query.pageSize,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/sim/v1/synthetic-cases/:caseId', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(scenarioData.getSyntheticCase(
+          session.actor,
+          context.req.param('caseId'),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
     app.get('/api/sim/v1/synthetic-patient-mapping-catalog', async (context) => {
       try {
         const session = await identity.resolveSessionContext(context.req.raw.headers)

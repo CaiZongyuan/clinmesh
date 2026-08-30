@@ -19,6 +19,7 @@ import { WorkspaceRepository } from './infrastructure/sqlite/workspace-repositor
 import { ScenarioDatasetRepository } from './infrastructure/sqlite/scenario-dataset-repository.ts'
 import { ScenarioGenerationJobRepository } from './infrastructure/sqlite/scenario-generation-job-repository.ts'
 import { SyntheticPatientProfileRepository } from './infrastructure/sqlite/synthetic-patient-profile-repository.ts'
+import { SyntheticCaseRepository } from './infrastructure/sqlite/synthetic-case-repository.ts'
 import { SqliteReferenceDataRepository } from './infrastructure/sqlite/reference-data-repository.ts'
 import {
   openReferenceDatabase,
@@ -153,8 +154,10 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           }))
     const generationJobs = new ScenarioGenerationJobRepository(database)
     const syntheticPatientProfiles = new SyntheticPatientProfileRepository(database)
+    const syntheticCases = new SyntheticCaseRepository(database)
     generationJobs.requeueInterrupted(new Date().toISOString())
     const scenarioData = new ScenarioDataService({
+      cases: syntheticCases,
       commands,
       jobs: generationJobs,
       providers: new Map([

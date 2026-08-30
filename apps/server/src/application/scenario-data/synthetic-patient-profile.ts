@@ -203,6 +203,7 @@ export function createSyntheticPatientProfiles(input: {
         compilation: source.format === 'legacy-compiled-profile'
           ? null
           : {
+              moduleMode: input.dataset.content.reproduction.modules.length === 0 ? 'all' : 'filter',
               modules: input.dataset.content.reproduction.modules,
               ordinal,
               seeds: {

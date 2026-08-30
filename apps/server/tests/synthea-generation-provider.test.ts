@@ -157,6 +157,33 @@ function providerFor(body: unknown, options: { maxResponseBytes?: number } = {})
 }
 
 describe('Synthea Scenario generation Provider contract', () => {
+  it('sends explicit all-module mode without a module filter', async () => {
+    const { moduleMode: _moduleMode, modules: _modules, ...withoutModules } = request
+    const allModulesRequest = scenarioGenerationRequestSchema.parse(withoutModules)
+    let submittedBody: unknown
+    const responseBody = {
+      ...providerResponse([patientBundle()]),
+      metadata: {
+        ...providerResponse([]).metadata,
+        moduleMode: 'all',
+        modules: [],
+      },
+    }
+    const provider = new SyntheaScenarioGenerationProvider({
+      baseUrl: 'http://synthea.internal:51878',
+      fetch: async (_input, init) => {
+        submittedBody = JSON.parse(String(init?.body))
+        return Response.json(responseBody)
+      },
+      maxResponseBytes: 1_000_000,
+      timeoutMs: 1_000,
+    })
+
+    await provider.generate(allModulesRequest)
+
+    expect(submittedBody).toMatchObject({ moduleMode: 'all', modules: [] })
+  })
+
   it('accepts an owned R4 patient history and preserves complete reproduction metadata', async () => {
     const bundle = patientBundle([{
       code: { text: 'Viral sinusitis' },
