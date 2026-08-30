@@ -99,8 +99,16 @@ _Avoid_: Live laboratory result, mutable simulator response, normal fallback
 _Avoid_: User, Practitioner, role
 
 **Actor**:
-在 Workspace 中发起受审计行为的认证主体，可以是 User Account、系统客户端或 Agent client。Actor 与其代表的 Practitioner 分别记录。
+在 Workspace 中发起受审计行为的认证主体，可以是 User Account、系统客户端或 Agent Client。Actor 与其代表的 Practitioner 分别记录。
 _Avoid_: User, Practitioner, role
+
+**Agent Client**:
+代表一个非人类参与者的稳定 Actor 身份。Agent Client 本身不拥有医院岗位或任务权限，必须通过单独的 Agent Capability Grant 行动。
+_Avoid_: User Account, Practitioner, Agent Capability Grant
+
+**Agent Capability Grant**:
+把一个 Agent Client 在单次任务中约束到特定 Workspace、Epoch、Scenario Run、单一 Practitioner Role 和允许行动集合的短期授权。它不等同于岗位、浏览器 Session 或人类确认。
+_Avoid_: Agent Client, Practitioner Role, User Session, confirmation
 
 **Workspace Membership**:
 Actor 参与特定 Workspace 的资格及其可承担岗位范围。Membership 不表示 Actor 当前正以哪个岗位行动。

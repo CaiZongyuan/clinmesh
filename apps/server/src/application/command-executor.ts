@@ -111,6 +111,11 @@ interface ReceiptRow {
   status: string
 }
 
+export class CommandReceiptNotFoundError extends Error {
+  readonly code = 'COMMAND_RECEIPT_NOT_FOUND'
+  readonly status = 404
+}
+
 const virtualTimeRowSchema = z.object({
   virtual_time: z.iso.datetime({ offset: true }),
 }).strict()
@@ -351,6 +356,34 @@ export class CommandExecutor {
         throw invocation.mapExpectedVersionConflict(error)
       }
       throw error
+    }
+  }
+
+  readReceipt(
+    context: ActorContext,
+    operationId: string,
+    idempotencyKey: string,
+  ) {
+    const row = this.#database.driver.prepare(`
+      SELECT response_json, status
+      FROM command_receipt
+      WHERE workspace_id = ? AND epoch = ? AND actor_id = ?
+        AND operation = ? AND idempotency_key = ?
+    `).get(
+      context.workspaceId,
+      context.epoch,
+      context.actorId,
+      operationId,
+      idempotencyKey,
+    ) as Pick<ReceiptRow, 'response_json' | 'status'> | undefined
+    if (row === undefined) {
+      throw new CommandReceiptNotFoundError('The Command receipt was not found')
+    }
+    return {
+      idempotencyKey,
+      operationId,
+      ...(row.response_json === null ? {} : { response: JSON.parse(row.response_json) as unknown }),
+      status: z.enum(['completed', 'executing']).parse(row.status),
     }
   }
 

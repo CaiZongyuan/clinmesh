@@ -6,6 +6,7 @@ import { z } from 'zod'
 import {
   CommandConflictError,
   CommandExecutor,
+  CommandReceiptNotFoundError,
 } from '../src/application/command-executor.ts'
 import { AuditQuery } from '../src/application/audit-query.ts'
 import { OutboxRepository } from '../src/infrastructure/sqlite/outbox-repository.ts'
@@ -89,6 +90,17 @@ describe('CommandExecutor', () => {
     const replay = execute('合成患者甲')
 
     expect(replay).toEqual(first)
+    expect(executor.readReceipt(context, 'registration.register', 'register-001')).toEqual({
+      idempotencyKey: 'register-001',
+      operationId: 'registration.register',
+      response: first,
+      status: 'completed',
+    })
+    expect(() => executor.readReceipt(
+      { ...context, actorId: 'actor-other' },
+      'registration.register',
+      'register-001',
+    )).toThrowError(CommandReceiptNotFoundError)
     expect(fhirRepository.history(repositoryContext, 'Patient', 'patient-001')).toHaveLength(1)
     expect(new OutboxRepository(database).list(repositoryContext)).toHaveLength(1)
     expect(new AuditQuery(database).list(repositoryContext)).toHaveLength(1)

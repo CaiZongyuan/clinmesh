@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto'
 import { v7 as uuidv7 } from 'uuid'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
+import { getHisOperation } from '@clinmesh/contracts/his-operations'
 import {
   referenceConceptSnapshotSchema,
   type ReferenceMedicationProduct,
@@ -1159,6 +1160,16 @@ export class WorkflowService {
       .update('clinmesh.virtual-patient-version.v1\0')
       .update(options.tokenSecret)
       .digest()
+  }
+
+  commandReceipt(context: ActorContext, operationId: string, idempotencyKey: string) {
+    const operation = getHisOperation(operationId)
+    const receipt = this.#commands.readReceipt(
+      context,
+      operation.commandOperation ?? operation.id,
+      idempotencyKey,
+    )
+    return { ...receipt, operationId }
   }
 
   registrationCatalog(context: ActorContext) {

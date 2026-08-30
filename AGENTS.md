@@ -42,6 +42,7 @@ pnpm check
 - `packages/contracts` 和 `packages/core` 不得读取 DOM、`localStorage`、Electron、React Native 或环境变量。平台能力由 app adapter 注入。
 - `packages/ui` 不依赖 `core`；`packages/views` 可依赖 `core + ui`，但不导入 Vite、Electron、Expo 或路由框架。
 - Agent tools 使用窄 schema、受信 context binding、幂等键、预期版本和完整审计；不提供任意 URL、SQL、Bundle 或任意 method/path/body 写工具。
+- Agent-facing CLI 的 `cliPath`、schema、错误或恢复合同变化时，在同一 diff 更新 owning Operation Catalog、对应 `clinmesh-*` Skill 和命令示例漂移测试。
 - 所有演示数据必须是合成数据。禁止提交真实患者信息、医保凭证、支付凭证或平台密钥。
 - 非平凡架构、流程、协议或测试策略变更必须新增或更新一份 [Agent Note](.agents/notes/README.md)。
 - Commit、issue 和 PR 的标题与正文使用简体中文，结构见 [消息与提交规范](docs/agent-development.md#消息与提交规范)。
