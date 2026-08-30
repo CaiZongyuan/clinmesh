@@ -85,6 +85,7 @@ describe('Node.js server configuration', () => {
       'CLINMESH_DEMO_PASSWORD=Env-demo-password-2026!',
       'CLINMESH_PORT=51869',
       'CLINMESH_REFERENCE_DATABASE_PATH=.data/reference.sqlite',
+      'CLINMESH_REFERENCE_RELEASE_ID=reference-production-v1',
       'CLINMESH_REFERENCE_SELECTION_PATH=.data/reference-selection.json',
       '',
     ].join('\n'), 'utf8')
@@ -102,6 +103,7 @@ describe('Node.js server configuration', () => {
           databasePath: join(workspace, '.data/clinmesh.sqlite'),
           port: 51867,
           referenceDatabasePath: join(workspace, '.data/reference.sqlite'),
+          referenceReleaseId: 'reference-production-v1',
           referenceSelectionPath: join(workspace, '.data/reference-selection.json'),
         })
     } finally {

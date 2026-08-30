@@ -153,6 +153,25 @@ function isStaticAssetPath(path: string): boolean {
   return extname(path) !== ''
 }
 
+const referenceCatalogQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(50).default(20),
+  query: z.string().trim().min(3).max(100).optional(),
+}).strict()
+
+function referenceCatalogQuery(context: Context): {
+  page: number
+  pageSize: number
+  query?: string
+} {
+  const parsed = referenceCatalogQuerySchema.parse(context.req.query())
+  return {
+    page: parsed.page,
+    pageSize: parsed.pageSize,
+    ...(parsed.query === undefined ? {} : { query: parsed.query }),
+  }
+}
+
 export function createApp(options: CreateAppOptions = {}): Hono {
   const app = new Hono()
 
@@ -252,6 +271,39 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
         return context.json(referenceData.list(session.actor))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/reference-catalogs/diagnoses', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(referenceData.searchDiagnoses(
+          session.actor,
+          referenceCatalogQuery(context),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/reference-catalogs/medications', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(referenceData.searchMedications(
+          session.actor,
+          referenceCatalogQuery(context),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/reference-catalogs/laboratory', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(referenceData.searchLaboratory(
+          session.actor,
+          referenceCatalogQuery(context),
+        ))
       } catch (error) {
         return apiErrorResponse(context, error)
       }

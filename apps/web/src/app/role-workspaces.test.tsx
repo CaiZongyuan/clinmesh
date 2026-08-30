@@ -2748,13 +2748,26 @@ describe('role workspaces', () => {
 
   it('saves and issues the selected controlled laboratory request', async () => {
     window.history.replaceState(null, '', '/consultation')
-    let draft: { catalogItemId: string; indicationCode: string } | undefined
+    const referenceConcept = {
+      code: '58410-2',
+      display: '血常规组合',
+      id: 'laboratory:cbc-panel',
+      sourceLocator: 'concepts[3]',
+      system: 'http://loinc.org',
+      version: '2.83',
+    }
+    let draft: {
+      catalogItemId: string
+      indicationCode: string
+      referenceConcept?: typeof referenceConcept
+    } | undefined
     let draftVersion = 0
     let request: {
-      catalogItemId: 'lab-crp'
+      catalogItemId: string
       id: string
       indicationCode: string
       previousReports: []
+      referenceConcept?: typeof referenceConcept
       serviceRequestId: string
       serviceRequestVersion: string
       status: 'issued'
@@ -2808,6 +2821,19 @@ describe('role workspaces', () => {
           prescriptionConclusionSupported: true,
         })
       }
+      if (url.pathname === '/api/his/v1/reference-catalogs/laboratory') {
+        return Response.json({
+          items: [{
+            ...referenceConcept,
+            domain: 'laboratory',
+            status: 'active',
+          }],
+          page: 1,
+          pageSize: 20,
+          releaseId: 'reference-http-test-v1',
+          total: 1,
+        })
+      }
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
           items: [{
@@ -2852,12 +2878,16 @@ describe('role workspaces', () => {
         expect(body).toEqual({
           expectedVersions: { 'Encounter/encounter-virtual-1': '1' },
           input: {
-            catalogItemId: 'lab-crp',
+            catalogItemId: 'laboratory:cbc-panel',
             expectedDraftVersion: 0,
-            indicationCode: 'fever',
+            indicationCode: 'clinical-evaluation',
           },
         })
-        draft = { catalogItemId: 'lab-crp', indicationCode: 'fever' }
+        draft = {
+          catalogItemId: 'laboratory:cbc-panel',
+          indicationCode: 'clinical-evaluation',
+          referenceConcept,
+        }
         draftVersion = 1
         return Response.json(commandResponse({ caseId: 'case-virtual-1', draftVersion }))
       }
@@ -2873,10 +2903,11 @@ describe('role workspaces', () => {
         draft = undefined
         draftVersion = 2
         request = {
-          catalogItemId: 'lab-crp',
+          catalogItemId: 'laboratory:cbc-panel',
           id: 'laboratory-request-crp-1',
-          indicationCode: 'fever',
+          indicationCode: 'clinical-evaluation',
           previousReports: [],
+          referenceConcept,
           serviceRequestId: 'service-request-crp-1',
           serviceRequestVersion: '1',
           status: 'issued',
@@ -2896,18 +2927,14 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     await user.click(await screen.findByRole('tab', { name: '检验检查' }))
-    const laboratoryItem = await screen.findByRole('combobox', { name: '检验项目' })
-    await user.click(laboratoryItem)
-    expect(await screen.findByRole('option', { name: '血常规 · ¥25.00' })).toBeTruthy()
-    expect(screen.getByRole('option', { name: 'C 反应蛋白 · ¥43.00' })).toBeTruthy()
-    expect(screen.getByRole('option', { name: '发热检验组合 · ¥68.00' })).toBeTruthy()
-    await user.click(screen.getByRole('option', { name: 'C 反应蛋白 · ¥43.00' }))
+    await user.type(await screen.findByLabelText('搜索检验目录'), '血常规')
+    await user.click(await screen.findByRole('button', { name: /血常规组合.*58410-2/ }))
     await user.click(screen.getByRole('button', { name: '保存检查草稿' }))
 
     expect(await screen.findByText('检查草稿已保存')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '开具检查申请' }))
 
-    expect(await screen.findByRole('cell', { name: 'C 反应蛋白' })).toBeTruthy()
+    expect(await screen.findByRole('cell', { name: '血常规组合' })).toBeTruthy()
     expect(screen.getByText('已开具')).toBeTruthy()
   })
 
@@ -3926,7 +3953,15 @@ describe('role workspaces', () => {
       note: '结合甲型流感抗原结果。',
       role: 'primary',
     }, {
-      catalogItemId: 'diagnosis-acute-upper-respiratory-infection',
+      catalogItemId: 'diagnosis:hypertension',
+      referenceConcept: {
+        code: 'I10',
+        display: '原发性高血压',
+        id: 'diagnosis:hypertension',
+        sourceLocator: 'concepts[1]',
+        system: 'urn:clinmesh:reference:nhsa-diagnosis',
+        version: '2022',
+      },
       role: 'secondary',
     }]
     const confirmation = {
@@ -3940,11 +3975,11 @@ describe('role workspaces', () => {
         system: 'http://hl7.org/fhir/sid/icd-10',
       }, {
         ...draftEntries[1],
-        code: 'J06.9',
+        code: 'I10',
         conditionId: 'condition-diagnosis-secondary',
         conditionVersion: '1',
-        display: '急性上呼吸道感染',
-        system: 'http://hl7.org/fhir/sid/icd-10',
+        display: '原发性高血压',
+        system: 'urn:clinmesh:reference:nhsa-diagnosis',
       }],
       id: 'diagnosis-confirmation-1',
       provenanceId: 'provenance-diagnosis-1',
@@ -3963,6 +3998,24 @@ describe('role workspaces', () => {
           laboratory: [],
           medications: [],
           prescriptionConclusionSupported: false,
+        })
+      }
+      if (url.pathname === '/api/his/v1/reference-catalogs/diagnoses') {
+        return Response.json({
+          items: [{
+            code: 'I10',
+            display: '原发性高血压',
+            domain: 'diagnosis',
+            id: 'diagnosis:hypertension',
+            sourceLocator: 'concepts[1]',
+            status: 'active',
+            system: 'urn:clinmesh:reference:nhsa-diagnosis',
+            version: '2022',
+          }],
+          page: 1,
+          pageSize: 20,
+          releaseId: 'reference-http-test-v1',
+          total: 1,
         })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
@@ -4009,7 +4062,10 @@ describe('role workspaces', () => {
         expect(init?.method).toBe('PUT')
         expect(JSON.parse(String(init?.body))).toEqual({
           expectedVersions: { 'Encounter/encounter-independent-diagnosis': '6' },
-          input: { entries: draftEntries, expectedDraftVersion: 0 },
+          input: {
+            entries: draftEntries.map(({ referenceConcept: _snapshot, ...entry }) => entry),
+            expectedDraftVersion: 0,
+          },
         })
         diagnosis = { draft: { entries: draftEntries }, draftVersion: 1 }
         return Response.json(commandResponse({ draftVersion: 1 }))
@@ -4045,12 +4101,12 @@ describe('role workspaces', () => {
     await user.click(await screen.findByRole('option', { name: '流感伴其他呼吸道表现 · J10.1' }))
     await user.type(screen.getByLabelText('诊断备注'), '结合甲型流感抗原结果。')
     await user.click(screen.getByRole('button', { name: '添加诊断' }))
-    await user.click(screen.getByRole('combobox', { name: '诊断项目 2' }))
-    await user.click(await screen.findByRole('option', { name: '急性上呼吸道感染 · J06.9' }))
+    await user.type(screen.getAllByLabelText('搜索疾病目录')[1]!, '原发性')
+    await user.click(await screen.findByRole('button', { name: /原发性高血压.*I10/ }))
     await user.click(screen.getByRole('button', { name: '确认诊断' }))
     expect(await screen.findByText('诊断已确认')).toBeTruthy()
     expect(screen.getByText('J10.1 · 流感伴其他呼吸道表现')).toBeTruthy()
-    expect(screen.getByText('J06.9 · 急性上呼吸道感染')).toBeTruthy()
+    expect(screen.getByText('I10 · 原发性高血压')).toBeTruthy()
     await user.click(screen.getByRole('tab', { name: '检验检查' }))
     expect(screen.getAllByText(/既往咳嗽/).length).toBeGreaterThan(0)
   })

@@ -19,6 +19,9 @@ const referenceSelection = config.referenceSelectionPath === undefined
     ))
 await mkdir(dirname(databasePath), { recursive: true })
 const runtime = await createClinMeshRuntime({
+  ...(config.referenceReleaseId === undefined
+    ? {}
+    : { activeReferenceReleaseId: config.referenceReleaseId }),
   authBaseUrl: config.authBaseUrl,
   authSecret: config.authSecret,
   autoDispatchIntervalMs: 250,

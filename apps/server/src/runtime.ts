@@ -53,6 +53,7 @@ function lisActorContext(event: {
 }
 
 export interface CreateClinMeshRuntimeOptions {
+  activeReferenceReleaseId?: string
   authBaseUrl: string
   authSecret: string
   autoDispatchIntervalMs?: number
@@ -111,6 +112,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const referenceData = new ReferenceDataService(
       referenceDatabase === undefined ? undefined : new SqliteReferenceDataRepository(referenceDatabase),
       options.referenceSelection,
+      options.activeReferenceReleaseId,
     )
     const hospitalReference = referenceData.hospitalReferenceSelection()
     const scenarioReference = hospitalReference.bindings === undefined
@@ -130,6 +132,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     )
     const workflow = new WorkflowService(database, fhir, commands, {
       ...clockOptions,
+      referenceData,
       tokenSecret: options.cursorSecret,
     })
     const syntheaProvider = options.syntheaProvider

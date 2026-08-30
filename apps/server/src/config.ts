@@ -21,6 +21,7 @@ const serverEnvironmentSchema = z.object({
     .pipe(z.number().int().min(1).max(65_535)),
   CLINMESH_PUBLIC_ORIGIN: z.url().optional(),
   CLINMESH_REFERENCE_DATABASE_PATH: z.string().trim().min(1).optional(),
+  CLINMESH_REFERENCE_RELEASE_ID: z.string().trim().min(1).max(256).optional(),
   CLINMESH_REFERENCE_SELECTION_PATH: z.string().trim().min(1).optional(),
   CLINMESH_SYNTHEA_PROVIDER_URL: httpUrlSchema.optional(),
   CLINMESH_TRUSTED_ORIGINS: z.string().trim().min(1).optional(),
@@ -36,6 +37,7 @@ export interface ServerConfig {
   hostname: string
   port: number
   referenceDatabasePath?: string
+  referenceReleaseId?: string
   referenceSelectionPath?: string
   syntheaProviderUrl?: string
   trustedOrigins: string[]
@@ -103,6 +105,9 @@ export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
     ...(parsed.CLINMESH_REFERENCE_DATABASE_PATH === undefined
       ? {}
       : { referenceDatabasePath: parsed.CLINMESH_REFERENCE_DATABASE_PATH }),
+    ...(parsed.CLINMESH_REFERENCE_RELEASE_ID === undefined
+      ? {}
+      : { referenceReleaseId: parsed.CLINMESH_REFERENCE_RELEASE_ID }),
     ...(parsed.CLINMESH_REFERENCE_SELECTION_PATH === undefined
       ? {}
       : { referenceSelectionPath: parsed.CLINMESH_REFERENCE_SELECTION_PATH }),

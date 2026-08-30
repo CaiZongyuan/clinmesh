@@ -73,7 +73,12 @@ import {
   type SyntheticPatientIdentity,
   type SyntheticPatientMappingInput,
 } from '@clinmesh/contracts/scenario'
-import { referenceDataReleaseListSchema } from '@clinmesh/contracts/reference-data'
+import {
+  referenceDataReleaseListSchema,
+  referenceDiagnosisCatalogSearchSchema,
+  referenceLaboratoryCatalogSearchSchema,
+  referenceMedicationCatalogSearchSchema,
+} from '@clinmesh/contracts/reference-data'
 import { z } from 'zod'
 
 export const sessionQueryKey = ['session-context'] as const
@@ -176,6 +181,35 @@ export function getReferenceDataReleases(signal?: AbortSignal) {
   return apiGet(
     '/api/sim/v1/reference-data/releases',
     referenceDataReleaseListSchema,
+    signal,
+  )
+}
+
+function referenceCatalogPath(kind: 'diagnoses' | 'laboratory' | 'medications', query: string, page: number) {
+  const parameters = new URLSearchParams({ page: String(page), pageSize: '20', query })
+  return `/api/his/v1/reference-catalogs/${kind}?${parameters.toString()}`
+}
+
+export function searchReferenceDiagnoses(query: string, page = 1, signal?: AbortSignal) {
+  return apiGet(
+    referenceCatalogPath('diagnoses', query, page),
+    referenceDiagnosisCatalogSearchSchema,
+    signal,
+  )
+}
+
+export function searchReferenceLaboratory(query: string, page = 1, signal?: AbortSignal) {
+  return apiGet(
+    referenceCatalogPath('laboratory', query, page),
+    referenceLaboratoryCatalogSearchSchema,
+    signal,
+  )
+}
+
+export function searchReferenceMedications(query: string, page = 1, signal?: AbortSignal) {
+  return apiGet(
+    referenceCatalogPath('medications', query, page),
+    referenceMedicationCatalogSearchSchema,
     signal,
   )
 }
@@ -621,7 +655,7 @@ export function saveDiagnosisDraft(input: {
     {
       expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
       input: {
-        entries: input.entries,
+        entries: input.entries.map(({ referenceConcept: _snapshot, ...entry }) => entry),
         expectedDraftVersion: input.expectedDraftVersion,
       },
     },
@@ -658,7 +692,7 @@ export function savePrescriptionDraft(input: {
       expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
       input: {
         expectedDraftVersion: input.expectedDraftVersion,
-        items: input.items,
+        items: input.items.map(({ referenceProduct: _snapshot, ...item }) => item),
       },
     },
     { idempotencyKey, method: 'PUT' },

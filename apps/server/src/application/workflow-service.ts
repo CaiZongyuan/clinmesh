@@ -1,7 +1,10 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto'
 import { v7 as uuidv7 } from 'uuid'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
-import { referenceConceptSnapshotSchema } from '@clinmesh/contracts/reference-data'
+import {
+  referenceConceptSnapshotSchema,
+  type ReferenceMedicationProduct,
+} from '@clinmesh/contracts/reference-data'
 import {
   scenarioDatasetContentSchema,
   scenarioHospitalServiceCatalogItemSchema,
@@ -74,6 +77,7 @@ import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import type { ActorContext, CommandEffect, CommandResponse, CommandTransaction } from './command-executor.ts'
+import type { ReferenceDataService } from './reference-data-service.ts'
 import {
   CommandExecutor,
   ExpectedVersionConflictError,
@@ -408,6 +412,7 @@ const laboratoryRequestRowSchema = z.object({
   diagnostic_report_id: z.string().min(1).nullable(),
   execution_task_id: z.string().min(1),
   indication_code: z.string().min(1),
+  reference_json: z.string().min(1),
   request_id: z.string().min(1),
   service_request_id: z.string().min(1),
   status: laboratoryRequestSchema.shape.status,
@@ -503,9 +508,11 @@ function scenarioLaboratoryResultFact(
 const laboratoryRequestStateRowSchema = z.object({
   draft_catalog_item_id: laboratoryRequestSchema.shape.catalogItemId.nullable(),
   draft_indication_code: z.string().min(1).nullable(),
+  draft_reference_json: z.string().min(1).nullable(),
   version: z.number().int().positive(),
 }).strict().refine(
-  row => (row.draft_catalog_item_id === null) === (row.draft_indication_code === null),
+  row => (row.draft_catalog_item_id === null) === (row.draft_indication_code === null)
+    && (row.draft_catalog_item_id === null) === (row.draft_reference_json === null),
   { message: 'Laboratory request draft fields must be present together' },
 )
 
@@ -1119,6 +1126,7 @@ export class WorkflowService {
   readonly #database: ClinMeshDatabase
   readonly #fhir: FhirRepository
   readonly #now: () => Date
+  readonly #referenceData: ReferenceDataService | undefined
   readonly #tokenSecret: string
   readonly #virtualPatientVersionTokenKey: Buffer
 
@@ -1126,12 +1134,13 @@ export class WorkflowService {
     database: ClinMeshDatabase,
     fhir: FhirRepository,
     commands: CommandExecutor,
-    options: { now?: () => Date; tokenSecret: string },
+    options: { now?: () => Date; referenceData?: ReferenceDataService; tokenSecret: string },
   ) {
     this.#commands = commands
     this.#database = database
     this.#fhir = fhir
     this.#now = options.now ?? (() => new Date())
+    this.#referenceData = options.referenceData
     this.#tokenSecret = options.tokenSecret
     this.#virtualPatientVersionTokenKey = createHash('sha256')
       .update('clinmesh.virtual-patient-version.v1\0')
@@ -3236,11 +3245,15 @@ export class WorkflowService {
         laboratoryRequests: {
           ...(laboratoryRequestState.draft_catalog_item_id === null
             || laboratoryRequestState.draft_indication_code === null
+            || laboratoryRequestState.draft_reference_json === null
             ? {}
             : {
                 draft: {
                   catalogItemId: laboratoryRequestState.draft_catalog_item_id,
                   indicationCode: laboratoryRequestState.draft_indication_code,
+                  referenceConcept: referenceConceptSnapshotSchema.parse(
+                    JSON.parse(laboratoryRequestState.draft_reference_json),
+                  ),
                 },
               }),
           draftVersion: laboratoryRequestState.version,
@@ -3512,9 +3525,9 @@ export class WorkflowService {
       if (new Set(input.entries.map(entry => entry.catalogItemId)).size !== input.entries.length) {
         throw new WorkflowError('CATALOG_CONFLICT', 'The diagnosis draft contains a duplicate catalog item')
       }
-      for (const entry of input.entries) {
-        this.#diagnosisCatalogItem(input.context, entry.catalogItemId)
-      }
+      const resolvedEntries = input.entries.map(entry => (
+        this.#resolvedDiagnosisDraftEntry(input.context, entry)
+      ))
       this.#assertNoLegacyDiagnosisOwner(input.context, outpatientCase.case_id)
       const current = diagnosisStateRowSchema.optional().parse(
         this.#database.driver.prepare(`
@@ -3528,7 +3541,7 @@ export class WorkflowService {
       if ((current?.version ?? 0) !== input.expectedDraftVersion) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The diagnosis draft version has changed')
       }
-      const draft = diagnosisDraftContentSchema.parse({ entries: input.entries })
+      const draft = diagnosisDraftContentSchema.parse({ entries: resolvedEntries })
       const nextVersion = input.expectedDraftVersion + 1
       const updatedAt = this.#virtualTime(input.context)
       if (current === undefined) {
@@ -3626,10 +3639,14 @@ export class WorkflowService {
           'Exactly one primary diagnosis is required',
         )
       }
-      const resolvedEntries = draft.entries.map(entry => ({
-        ...entry,
-        catalog: this.#diagnosisCatalogItem(input.context, entry.catalogItemId),
-      }))
+      const resolvedEntries = draft.entries.map((entry) => {
+        const coding = entry.referenceConcept
+          ?? this.#resolvedDiagnosisDraftEntry(input.context, entry).referenceConcept
+        if (coding === undefined) {
+          throw new WorkflowError('CATALOG_CONFLICT', 'The diagnosis coding snapshot is unavailable')
+        }
+        return { ...entry, coding }
+      })
       const confirmedAt = this.#virtualTime(input.context)
       const confirmedEntries = resolvedEntries.map(entry => ({
         condition: transaction.fhir.create(input.context, {
@@ -3656,11 +3673,11 @@ export class WorkflowService {
           },
           code: {
             coding: [{
-              code: entry.catalog.code,
-              display: entry.catalog.name_zh,
-              system: entry.catalog.code_system,
+              code: entry.coding.code,
+              display: entry.coding.display,
+              system: entry.coding.system,
             }],
-            text: entry.catalog.name_zh,
+            text: entry.coding.display,
           },
           subject: { reference: `Patient/${outpatientCase.patient_id}` },
           encounter: { reference: `Encounter/${input.encounterId}` },
@@ -3719,8 +3736,8 @@ export class WorkflowService {
       const insertEntry = this.#database.driver.prepare(`
         INSERT INTO diagnosis_entry (
           workspace_id, epoch, confirmation_id, ordinal,
-          condition_id, catalog_item_id, role
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          condition_id, catalog_item_id, coding_snapshot_json, role
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `)
       confirmedEntries.forEach(({ condition, entry }, index) => {
         insertEntry.run(
@@ -3730,6 +3747,7 @@ export class WorkflowService {
           index + 1,
           condition.id,
           entry.catalogItemId,
+          JSON.stringify(entry.coding),
           entry.role,
         )
       })
@@ -3756,13 +3774,13 @@ export class WorkflowService {
         confirmedAt,
         entries: confirmedEntries.map(({ condition, entry }) => ({
           catalogItemId: entry.catalogItemId,
-          code: entry.catalog.code,
+          code: entry.coding.code,
           conditionId: condition.id,
           conditionVersion: condition.meta?.versionId ?? '1',
-          display: entry.catalog.name_zh,
+          display: entry.coding.display,
           ...(entry.note === undefined ? {} : { note: entry.note }),
           role: entry.role,
-          system: entry.catalog.code_system,
+          system: entry.coding.system,
         })),
         id: confirmationId,
         provenanceId,
@@ -3855,7 +3873,11 @@ export class WorkflowService {
           'The Encounter already has a formal medication conclusion',
         )
       }
-      this.#validatedPrescriptionDraftMedications(input.context, input.items)
+      const resolvedMedications = this.#validatedPrescriptionDraftMedications(
+        input.context,
+        input.items,
+        false,
+      )
       const current = prescriptionDraftStateRowSchema.optional().parse(
         this.#database.driver.prepare(`
           SELECT version, draft_json FROM prescription_draft_state
@@ -3865,7 +3887,9 @@ export class WorkflowService {
       if ((current?.version ?? 0) !== input.expectedDraftVersion) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription draft version has changed')
       }
-      const draft = prescriptionDraftContentSchema.parse({ items: input.items })
+      const draft = prescriptionDraftContentSchema.parse({
+        items: resolvedMedications.map(({ catalog: _catalog, external: _external, ...item }) => item),
+      })
       const nextVersion = input.expectedDraftVersion + 1
       const updatedAt = this.#virtualTime(input.context)
       if (current === undefined) {
@@ -4094,11 +4118,15 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter already has a prescription')
       }
       const draft = prescriptionDraftContentSchema.parse(JSON.parse(state.draft_json))
-      const medications = this.#validatedPrescriptionDraftMedications(input.context, draft.items)
+      const medications = this.#validatedPrescriptionDraftMedications(
+        input.context,
+        draft.items,
+        true,
+      )
       this.#assertMedicationAllergies(
         input.context,
         outpatientCase.patient_id,
-        medications.map(medication => medication.catalog),
+        medications.filter(medication => !medication.external).map(medication => medication.catalog),
       )
       const confirmedDiagnosisIds = new Set(
         z.array(confirmedDiagnosisCatalogItemRowSchema).parse(
@@ -4122,6 +4150,7 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'A confirmed diagnosis is required to issue a prescription')
       }
       for (const medication of medications) {
+        if (medication.external) continue
         const config = prescriptionMedicationCatalogConfigSchema.parse(
           JSON.parse(medication.catalog.config_json ?? '{}') as unknown,
         )
@@ -4169,10 +4198,32 @@ export class WorkflowService {
       const insertItem = this.#database.driver.prepare(`
         INSERT INTO prescription_item (
           workspace_id, epoch, prescription_id, medication_request_id,
-          medication_id, quantity, dose_text, frequency_code, course_days
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          medication_id, medication_snapshot_json, quantity, dose_text,
+          frequency_code, course_days
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       const issuedItems = medications.map((medication) => {
+        const medicationResourceId = medication.external ? uuidv7() : medication.catalogItemId
+        if (medication.external) {
+          transaction.fhir.create(input.context, {
+            resourceType: 'Medication',
+            id: medicationResourceId,
+            status: 'active',
+            code: {
+              coding: [{
+                code: medication.catalog.code,
+                display: medication.catalog.name_zh,
+                system: medication.referenceProduct?.system,
+                version: medication.referenceProduct?.version,
+              }],
+              text: medication.catalog.name_zh,
+            },
+            doseForm: { text: medication.referenceProduct?.dosageForm },
+            marketingAuthorizationHolder: {
+              display: medication.referenceProduct?.manufacturer,
+            },
+          })
+        }
         const medicationRequest = transaction.fhir.create(input.context, {
           resourceType: 'MedicationRequest',
           id: uuidv7(),
@@ -4181,7 +4232,7 @@ export class WorkflowService {
           medication: {
             reference: {
               display: medication.catalog.name_zh,
-              reference: `Medication/${medication.catalogItemId}`,
+              reference: `Medication/${medicationResourceId}`,
             },
           },
           subject: { reference: `Patient/${outpatientCase.patient_id}` },
@@ -4213,6 +4264,14 @@ export class WorkflowService {
           prescriptionId,
           medicationRequest.id,
           medication.catalogItemId,
+          JSON.stringify(medication.referenceProduct ?? {
+            code: medication.catalog.code,
+            display: medication.catalog.name_zh,
+            id: medication.catalogItemId,
+            sourceLocator: 'operational:outpatient_catalog',
+            system: 'urn:clinmesh:operational:medication',
+            version: String(medication.catalog.version),
+          }),
           medication.quantity,
           medication.doseText,
           medication.frequencyCode,
@@ -6309,10 +6368,12 @@ export class WorkflowService {
         'edit-draft',
       )
       this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
-      const catalog = this.#catalogItem(input.context, input.catalogItemId, 'laboratory')
-      const catalogConfig = laboratoryCatalogConfigSchema.parse(
-        JSON.parse(catalog.config_json ?? '{}') as unknown,
+      const selection = this.#resolvedLaboratorySelection(
+        input.context,
+        input.catalogItemId,
+        input.indicationCode,
       )
+      const { config: catalogConfig, referenceConcept } = selection
       if (!catalogConfig.allowedIndicationCodes.includes(input.indicationCode)) {
         throw new WorkflowError('CATALOG_CONFLICT', 'The indication is not allowed for this laboratory request')
       }
@@ -6330,8 +6391,8 @@ export class WorkflowService {
         this.#database.driver.prepare(`
           INSERT INTO laboratory_request_state (
             workspace_id, epoch, case_id, version, draft_catalog_item_id,
-            draft_indication_code, updated_by, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            draft_indication_code, draft_reference_json, updated_by, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           input.context.workspaceId,
           input.context.epoch,
@@ -6339,6 +6400,7 @@ export class WorkflowService {
           nextVersion,
           input.catalogItemId,
           input.indicationCode,
+          JSON.stringify(referenceConcept),
           input.context.actorId,
           now,
         )
@@ -6346,12 +6408,14 @@ export class WorkflowService {
         const update = this.#database.driver.prepare(`
           UPDATE laboratory_request_state
           SET version = ?, draft_catalog_item_id = ?, draft_indication_code = ?,
+            draft_reference_json = ?,
             updated_by = ?, updated_at = ?
           WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
         `).run(
           nextVersion,
           input.catalogItemId,
           input.indicationCode,
+          JSON.stringify(referenceConcept),
           input.context.actorId,
           now,
           input.context.workspaceId,
@@ -6458,6 +6522,7 @@ export class WorkflowService {
       const update = this.#database.driver.prepare(`
         UPDATE laboratory_request_state
         SET version = ?, draft_catalog_item_id = NULL, draft_indication_code = NULL,
+          draft_reference_json = NULL,
           updated_by = ?, updated_at = ?
         WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
           AND draft_catalog_item_id IS NOT NULL
@@ -6515,7 +6580,8 @@ export class WorkflowService {
       if (state === undefined
         || state.version !== input.expectedDraftVersion
         || state.draft_catalog_item_id === null
-        || state.draft_indication_code === null) {
+        || state.draft_indication_code === null
+        || state.draft_reference_json === null) {
         throw new WorkflowError(
           'LABORATORY_REQUEST_VERSION_CONFLICT',
           'The laboratory request draft version has changed',
@@ -6537,9 +6603,14 @@ export class WorkflowService {
           'An active laboratory request already exists for this catalog item',
         )
       }
-      const catalog = this.#catalogItem(input.context, state.draft_catalog_item_id, 'laboratory')
-      const catalogConfig = laboratoryCatalogConfigSchema.parse(
-        JSON.parse(catalog.config_json ?? '{}') as unknown,
+      const referenceConcept = referenceConceptSnapshotSchema.parse(
+        JSON.parse(state.draft_reference_json),
+      )
+      const { catalog, config: catalogConfig } = this.#laboratorySelectionFromSnapshot(
+        input.context,
+        state.draft_catalog_item_id,
+        referenceConcept,
+        state.draft_indication_code,
       )
       if (!catalogConfig.allowedIndicationCodes.includes(state.draft_indication_code)) {
         throw new WorkflowError('CATALOG_CONFLICT', 'The indication is not allowed for this laboratory request')
@@ -6598,15 +6669,16 @@ export class WorkflowService {
       this.#database.driver.prepare(`
         INSERT INTO laboratory_request (
           workspace_id, epoch, request_id, case_id, catalog_item_id,
-          indication_code, service_request_id, execution_task_id, status,
+          reference_json, indication_code, service_request_id, execution_task_id, status,
           version, authored_by, authored_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'issued', 1, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', 1, ?, ?)
       `).run(
         input.context.workspaceId,
         input.context.epoch,
         requestId,
         outpatientCase.case_id,
         state.draft_catalog_item_id,
+        JSON.stringify(referenceConcept),
         state.draft_indication_code,
         serviceRequestId,
         taskId,
@@ -6617,6 +6689,7 @@ export class WorkflowService {
       const update = this.#database.driver.prepare(`
         UPDATE laboratory_request_state
         SET version = ?, draft_catalog_item_id = NULL, draft_indication_code = NULL,
+          draft_reference_json = NULL,
           updated_by = ?, updated_at = ?
         WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
       `).run(
@@ -6648,6 +6721,7 @@ export class WorkflowService {
             id: requestId,
             indicationCode: state.draft_indication_code,
             previousReports: [],
+            referenceConcept,
             serviceRequestId,
             serviceRequestVersion: serviceRequest.meta?.versionId ?? '1',
             status: 'issued' as const,
@@ -9732,7 +9806,8 @@ export class WorkflowService {
   #laboratoryRequestState(context: ActorContext, caseId: string) {
     return laboratoryRequestStateRowSchema.optional().parse(
       this.#database.driver.prepare(`
-        SELECT version, draft_catalog_item_id, draft_indication_code
+        SELECT version, draft_catalog_item_id, draft_indication_code,
+          draft_reference_json
         FROM laboratory_request_state
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
       `).get(context.workspaceId, context.epoch, caseId),
@@ -9826,7 +9901,7 @@ export class WorkflowService {
     const requests = z.array(laboratoryRequestRowSchema).parse(
       this.#database.driver.prepare(`
         SELECT request_id, catalog_item_id, indication_code, service_request_id,
-          execution_task_id, diagnostic_report_id, status, version
+          execution_task_id, diagnostic_report_id, reference_json, status, version
         FROM laboratory_request
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
         ORDER BY authored_at, request_id
@@ -9851,6 +9926,7 @@ export class WorkflowService {
         id: request.request_id,
         indicationCode: request.indication_code,
         previousReports: reportVersions.slice(0, -1),
+        referenceConcept: referenceConceptSnapshotSchema.parse(JSON.parse(request.reference_json)),
         ...(reportVersions.length === 0 ? {} : { report: reportVersions.at(-1) }),
         serviceRequestId: request.service_request_id,
         serviceRequestVersion: serviceRequest.meta?.versionId ?? '1',
@@ -10445,6 +10521,7 @@ export class WorkflowService {
       this.#database.driver.prepare(`
         SELECT laboratory_request.request_id, laboratory_request.case_id,
           laboratory_request.catalog_item_id, laboratory_request.indication_code,
+          laboratory_request.reference_json,
           laboratory_request.service_request_id, laboratory_request.execution_task_id,
           laboratory_request.diagnostic_report_id, laboratory_request.status,
           laboratory_request.version, laboratory_request.authored_by,
@@ -10503,6 +10580,88 @@ export class WorkflowService {
     return row
   }
 
+  #resolvedLaboratorySelection(
+    context: ActorContext,
+    itemId: string,
+    indicationCode: string,
+  ) {
+    const reference = this.#referenceData?.laboratoryById(context, itemId)
+    if (reference !== undefined) {
+      const referenceConcept = referenceConceptSnapshotSchema.parse({
+        code: reference.code,
+        display: reference.display,
+        id: reference.id,
+        sourceLocator: reference.sourceLocator,
+        system: reference.system,
+        version: reference.version,
+      })
+      return {
+        catalog: {
+          code: reference.code,
+          item_id: reference.id,
+          name_en: reference.display,
+          name_zh: reference.display,
+          price_fen: 0,
+          version: 1,
+        },
+        config: laboratoryCatalogConfigSchema.parse({
+          allowedIndicationCodes: [indicationCode],
+          contraindicatedAllergyCodes: [],
+          referenceConcept,
+        }),
+        referenceConcept,
+      }
+    }
+    const catalog = this.#catalogItem(context, itemId, 'laboratory')
+    const config = laboratoryCatalogConfigSchema.parse(
+      JSON.parse(catalog.config_json ?? '{}') as unknown,
+    )
+    const referenceConcept = config.referenceConcept ?? referenceConceptSnapshotSchema.parse({
+      code: catalog.code,
+      display: catalog.name_zh,
+      id: catalog.item_id,
+      sourceLocator: 'operational:outpatient_catalog',
+      system: 'urn:clinmesh:operational:laboratory',
+      version: String(catalog.version),
+    })
+    return { catalog, config, referenceConcept }
+  }
+
+  #laboratorySelectionFromSnapshot(
+    context: ActorContext,
+    itemId: string,
+    referenceConcept: z.infer<typeof referenceConceptSnapshotSchema>,
+    indicationCode: string,
+  ) {
+    const local = this.#database.driver.prepare(`
+      SELECT item_id, code, name_zh, name_en, price_fen, version, config_json
+      FROM outpatient_catalog
+      WHERE workspace_id = ? AND epoch = ? AND item_id = ?
+        AND kind = 'laboratory' AND active = 1
+    `).get(context.workspaceId, context.epoch, itemId) as CatalogRow | undefined
+    if (local !== undefined) {
+      return {
+        catalog: local,
+        config: laboratoryCatalogConfigSchema.parse(JSON.parse(local.config_json ?? '{}')),
+      }
+    }
+    return {
+      catalog: {
+        code: referenceConcept.code,
+        item_id: itemId,
+        name_en: referenceConcept.display,
+        name_zh: referenceConcept.display,
+        price_fen: 0,
+        version: 1,
+      },
+      config: laboratoryCatalogConfigSchema.parse({
+        allowedIndicationCodes: [indicationCode],
+        contraindicatedAllergyCodes: [],
+        referenceConcept,
+      }),
+    }
+  }
+
   #diagnosisCatalogItem(context: ActorContext, itemId: string) {
     const row = diagnosisCatalogRowSchema.optional().parse(
       this.#database.driver.prepare(`
@@ -10515,6 +10674,39 @@ export class WorkflowService {
       throw new WorkflowError('CATALOG_CONFLICT', 'The diagnosis catalog item is unavailable')
     }
     return row
+  }
+
+  #resolvedDiagnosisDraftEntry(
+    context: ActorContext,
+    entry: DiagnosisDraftEntry,
+  ): DiagnosisDraftEntry {
+    const { referenceConcept: _untrustedReference, ...draftEntry } = entry
+    const reference = this.#referenceData?.diagnosisById(context, entry.catalogItemId)
+    if (reference !== undefined) {
+      return {
+        ...draftEntry,
+        referenceConcept: referenceConceptSnapshotSchema.parse({
+          code: reference.code,
+          display: reference.display,
+          id: reference.id,
+          sourceLocator: reference.sourceLocator,
+          system: reference.system,
+          version: reference.version,
+        }),
+      }
+    }
+    const catalog = this.#diagnosisCatalogItem(context, entry.catalogItemId)
+    return {
+      ...draftEntry,
+      referenceConcept: referenceConceptSnapshotSchema.parse({
+        code: catalog.code,
+        display: catalog.name_zh,
+        id: catalog.item_id,
+        sourceLocator: 'operational:diagnosis_catalog',
+        system: catalog.code_system,
+        version: String(catalog.version),
+      }),
+    }
   }
 
   #assertNoIndependentDiagnosisOwner(context: ActorContext, caseId: string): void {
@@ -10814,18 +11006,45 @@ export class WorkflowService {
   #validatedPrescriptionDraftMedications(
     context: ActorContext,
     items: PrescriptionDraftItem[],
-  ): Array<PrescriptionDraftItem & { catalog: CatalogRow }> {
-    const medications = items.map(item => ({
-      ...item,
-      catalog: this.#catalogItem(context, item.catalogItemId, 'medication'),
-    }))
-    this.#assertMedicationCatalogRules(medications.map(medication => ({
+    trustPersistedSnapshots: boolean,
+  ): Array<PrescriptionDraftItem & { catalog: CatalogRow; external: boolean }> {
+    const medications: Array<PrescriptionDraftItem & { catalog: CatalogRow; external: boolean }> = items.map((item) => {
+      const { referenceProduct: untrustedProduct, ...draftItem } = item
+      const referenceProduct: ReferenceMedicationProduct | undefined = trustPersistedSnapshots
+        ? untrustedProduct
+        : this.#referenceData?.medicationById(context, item.catalogItemId)
+      if (referenceProduct !== undefined) {
+        return {
+          ...draftItem,
+          catalog: {
+            code: referenceProduct.code,
+            item_id: referenceProduct.id,
+            name_en: referenceProduct.genericName,
+            name_zh: referenceProduct.genericName,
+            price_fen: 0,
+            version: 1,
+          },
+          external: true as const,
+          referenceProduct,
+        }
+      }
+      return {
+        ...draftItem,
+        catalog: this.#catalogItem(context, item.catalogItemId, 'medication'),
+        external: false as const,
+      }
+    })
+    if (new Set(medications.map(item => item.catalogItemId)).size !== medications.length) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'A medication can appear only once in a prescription')
+    }
+    const localMedications = medications.filter(medication => !medication.external)
+    this.#assertMedicationCatalogRules(localMedications.map(medication => ({
       catalogItemId: medication.catalogItemId,
       configJson: medication.catalog.config_json,
       doseText: medication.doseText,
       frequencyCode: medication.frequencyCode,
     })))
-    for (const medication of medications) {
+    for (const medication of localMedications) {
       const config = prescriptionMedicationCatalogConfigSchema.parse(
         JSON.parse(medication.catalog.config_json ?? '{}') as unknown,
       )

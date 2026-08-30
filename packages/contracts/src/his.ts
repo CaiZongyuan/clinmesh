@@ -1,6 +1,9 @@
 import { z } from 'zod'
 import { fhirResourceSchema } from './fhir.ts'
-import { referenceConceptSnapshotSchema } from './reference-data.ts'
+import {
+  referenceConceptSnapshotSchema,
+  referenceMedicationProductSchema,
+} from './reference-data.ts'
 
 export const roleCodeSchema = z.enum([
   'administrator',
@@ -295,6 +298,7 @@ export const diagnosisRoleSchema = z.enum(['primary', 'secondary'])
 export const diagnosisDraftEntrySchema = z.object({
   catalogItemId: z.string().min(1),
   note: z.string().trim().min(1).max(500).optional(),
+  referenceConcept: referenceConceptSnapshotSchema.optional(),
   role: diagnosisRoleSchema,
 }).strict()
 
@@ -304,9 +308,10 @@ export const diagnosisDraftContentSchema = z.object({
 
 export const saveDiagnosisDraftRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
-  input: diagnosisDraftContentSchema.extend({
+  input: z.object({
+    entries: z.array(diagnosisDraftEntrySchema.omit({ referenceConcept: true })).min(1).max(8),
     expectedDraftVersion: z.number().int().nonnegative(),
-  }),
+  }).strict(),
 }).strict()
 
 export const diagnosisDraftResponseSchema = commandResponseSchema(z.object({
@@ -353,6 +358,7 @@ export const prescriptionDraftItemSchema = z.object({
   courseDays: z.number().int().min(1).max(30),
   doseText: z.string().trim().min(1).max(120),
   frequencyCode: z.string().trim().min(1).max(32),
+  referenceProduct: referenceMedicationProductSchema.optional(),
   quantity: z.number().int().min(1).max(1_000),
 }).strict()
 
@@ -362,9 +368,10 @@ export const prescriptionDraftContentSchema = z.object({
 
 export const savePrescriptionDraftRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
-  input: prescriptionDraftContentSchema.extend({
+  input: z.object({
     expectedDraftVersion: z.number().int().nonnegative(),
-  }),
+    items: z.array(prescriptionDraftItemSchema.omit({ referenceProduct: true })).min(1).max(8),
+  }).strict(),
 }).strict()
 
 export const deletePrescriptionDraftRequestSchema = z.object({
@@ -822,7 +829,7 @@ export const laboratoryRequestDraftResponseSchema = commandResponseSchema(z.obje
   draftVersion: z.number().int().positive(),
 }).strict())
 
-export const laboratoryRequestCatalogItemIdSchema = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
+export const laboratoryRequestCatalogItemIdSchema = z.string().min(1).max(512)
 
 export const saveLaboratoryRequestDraftRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
@@ -1054,6 +1061,7 @@ export const laboratoryRequestSchema = z.object({
   id: z.string().min(1),
   indicationCode: z.string().min(1),
   previousReports: z.array(laboratoryReportSchema).default([]),
+  referenceConcept: referenceConceptSnapshotSchema.optional(),
   report: laboratoryReportSchema.optional(),
   serviceRequestId: z.string().min(1),
   serviceRequestVersion: z.string().regex(/^\d+$/),
@@ -1147,6 +1155,7 @@ export const laboratoryRequestStateSchema = z.object({
   draft: z.object({
     catalogItemId: laboratoryRequestCatalogItemIdSchema,
     indicationCode: z.string().min(1),
+    referenceConcept: referenceConceptSnapshotSchema.optional(),
   }).strict().optional(),
   draftVersion: z.number().int().nonnegative(),
   reportingSupported: z.boolean(),

@@ -337,7 +337,7 @@ describe('cn-health Candidate importer', () => {
     await expect(runReferenceDatabaseCli(['verify', '--database', databasePath])).resolves.toMatchObject({
       integrity: 'ok',
       releaseCount: 1,
-      schemaVersion: 6,
+      schemaVersion: 7,
     })
 
     const failedDatabasePath = join(directory, 'failed-reference.sqlite')

@@ -178,6 +178,32 @@ export const referenceDataProvenanceSchema = referenceDataReleaseSummarySchema.p
   releaseId: true,
 })
 
+const referenceCatalogPageShape = {
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive().max(50),
+  releaseId: z.string().min(1).max(256),
+  total: z.number().int().nonnegative(),
+}
+
+export const referenceDiagnosisCatalogSearchSchema = z.object({
+  ...referenceCatalogPageShape,
+  items: z.array(referenceConceptSchema.extend({
+    domain: z.literal('diagnosis'),
+  }).strict()),
+}).strict()
+
+export const referenceLaboratoryCatalogSearchSchema = z.object({
+  ...referenceCatalogPageShape,
+  items: z.array(referenceConceptSchema.extend({
+    domain: z.literal('laboratory'),
+  }).strict()),
+}).strict()
+
+export const referenceMedicationCatalogSearchSchema = z.object({
+  ...referenceCatalogPageShape,
+  items: z.array(referenceMedicationProductSchema),
+}).strict()
+
 export const referenceMappingPackageProvenanceSchema = z.object({
   contentHash: sha256Schema,
   mappingSetId: z.string().min(1).max(256),
@@ -189,6 +215,9 @@ export type ReferenceArtifactFormat = z.infer<typeof referenceArtifactFormatSche
 export type CnHealthCandidateProvenance = z.infer<typeof cnHealthCandidateProvenanceSchema>
 export type ReferenceConcept = z.infer<typeof referenceConceptSchema>
 export type ReferenceDataProvenance = z.infer<typeof referenceDataProvenanceSchema>
+export type ReferenceDiagnosisCatalogSearch = z.infer<typeof referenceDiagnosisCatalogSearchSchema>
+export type ReferenceLaboratoryCatalogSearch = z.infer<typeof referenceLaboratoryCatalogSearchSchema>
+export type ReferenceMedicationCatalogSearch = z.infer<typeof referenceMedicationCatalogSearchSchema>
 export type ReferenceDataReleaseList = z.infer<typeof referenceDataReleaseListSchema>
 export type ReferenceDataReleaseSummary = z.infer<typeof referenceDataReleaseSummarySchema>
 export type ReferenceImportManifest = z.infer<typeof referenceImportManifestSchema>

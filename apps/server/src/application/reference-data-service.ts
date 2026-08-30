@@ -1,7 +1,10 @@
 import {
+  referenceDiagnosisCatalogSearchSchema,
   referenceCodingIdentity,
   referenceDataProvenanceSchema,
   referenceDataReleaseListSchema,
+  referenceLaboratoryCatalogSearchSchema,
+  referenceMedicationCatalogSearchSchema,
   type ReferenceConcept,
   type ReferenceDataReleaseList,
   type ReferenceDataReleaseSummary,
@@ -22,6 +25,11 @@ const BUILTIN_RELEASE_CONTENT_HASH = 'bc1e7ca7e11e31851acd651705ab627b45ff459c79
 const BUILTIN_RELEASE_ID = 'clinmesh-hospital-reference-fixture-2026-08-28'
 
 export interface ReferenceDataReader {
+  conceptById?(
+    releaseId: string,
+    domain: 'diagnosis' | 'laboratory',
+    conceptId: string,
+  ): ReferenceConcept | undefined
   concepts(
     releaseId: string,
     codings: readonly { code: string; system: string; version: string }[],
@@ -32,16 +40,34 @@ export interface ReferenceDataReader {
     releaseId: string,
     codings?: readonly { code: string; system: string; version: string }[],
   ): ReferenceMedicationProduct[]
+  medicationProductById?(
+    releaseId: string,
+    productId: string,
+  ): ReferenceMedicationProduct | undefined
+  searchConcepts?(
+    releaseId: string,
+    domain: 'diagnosis' | 'laboratory',
+    input: { page: number; pageSize: number; query?: string },
+  ): { items: ReferenceConcept[]; total: number }
+  searchMedicationProducts?(
+    releaseId: string,
+    input: { page: number; pageSize: number; query?: string },
+  ): { items: ReferenceMedicationProduct[]; total: number }
   valueSetEntries(releaseId: string): ReferenceValueSetEntry[]
 }
 
 export class ReferenceDataError extends Error {
-  readonly code = 'ROLE_NOT_ALLOWED'
-  readonly status = 403
+  readonly code: 'REFERENCE_DATA_UNAVAILABLE' | 'REFERENCE_RELEASE_AMBIGUOUS' | 'REFERENCE_RELEASE_NOT_FOUND' | 'ROLE_NOT_ALLOWED'
+  readonly status: 403 | 503
 
-  constructor(message: string) {
+  constructor(
+    code: 'REFERENCE_DATA_UNAVAILABLE' | 'REFERENCE_RELEASE_AMBIGUOUS' | 'REFERENCE_RELEASE_NOT_FOUND' | 'ROLE_NOT_ALLOWED',
+    message: string,
+  ) {
     super(message)
     this.name = 'ReferenceDataError'
+    this.code = code
+    this.status = code === 'ROLE_NOT_ALLOWED' ? 403 : 503
   }
 }
 
@@ -110,23 +136,32 @@ function builtinReferenceData(): ReferenceDataReleaseList {
 }
 
 export class ReferenceDataService {
+  readonly #activeReleaseId: string | undefined
   readonly #reader: ReferenceDataReader | undefined
   readonly #selection: ReferenceHospitalSelection | undefined
 
-  constructor(reader?: ReferenceDataReader, selection?: ReferenceHospitalSelection) {
+  constructor(
+    reader?: ReferenceDataReader,
+    selection?: ReferenceHospitalSelection,
+    activeReleaseId?: string,
+  ) {
+    this.#activeReleaseId = activeReleaseId
     this.#reader = reader
     this.#selection = selection
   }
 
   list(context: ActorContext): ReferenceDataReleaseList {
     if (context.roleCode !== 'administrator') {
-      throw new ReferenceDataError('Only an administrator can read Reference Data releases')
+      throw new ReferenceDataError(
+        'ROLE_NOT_ALLOWED',
+        'Only an administrator can read Reference Data releases',
+      )
     }
     return this.#releases()
   }
 
   current(): ReferenceDataReleaseList['items'][number] {
-    return this.hospitalReferenceSelection().release
+    return this.#catalogRelease()
   }
 
   provenance() {
@@ -135,6 +170,83 @@ export class ReferenceDataService {
       contentHash: release.contentHash,
       releaseId: release.releaseId,
     })
+  }
+
+  searchDiagnoses(
+    context: ActorContext,
+    input: { page: number; pageSize: number; query?: string },
+  ) {
+    this.#assertCatalogReader(context)
+    const release = this.#catalogRelease()
+    const result = this.#reader?.searchConcepts === undefined
+      ? { items: [], total: 0 }
+      : this.#reader.searchConcepts(release.releaseId, 'diagnosis', input)
+    return referenceDiagnosisCatalogSearchSchema.parse({
+      ...result,
+      page: input.page,
+      pageSize: input.pageSize,
+      releaseId: release.releaseId,
+    })
+  }
+
+  searchLaboratory(
+    context: ActorContext,
+    input: { page: number; pageSize: number; query?: string },
+  ) {
+    this.#assertCatalogReader(context)
+    const release = this.#catalogRelease()
+    const result = this.#reader?.searchConcepts === undefined
+      ? { items: [], total: 0 }
+      : this.#reader.searchConcepts(release.releaseId, 'laboratory', input)
+    return referenceLaboratoryCatalogSearchSchema.parse({
+      ...result,
+      page: input.page,
+      pageSize: input.pageSize,
+      releaseId: release.releaseId,
+    })
+  }
+
+  searchMedications(
+    context: ActorContext,
+    input: { page: number; pageSize: number; query?: string },
+  ) {
+    this.#assertCatalogReader(context)
+    const release = this.#catalogRelease()
+    const result = this.#reader?.searchMedicationProducts === undefined
+      ? this.#searchBuiltinMedications(input)
+      : this.#reader.searchMedicationProducts(release.releaseId, input)
+    return referenceMedicationCatalogSearchSchema.parse({
+      ...result,
+      page: input.page,
+      pageSize: input.pageSize,
+      releaseId: release.releaseId,
+    })
+  }
+
+  diagnosisById(context: ActorContext, conceptId: string): ReferenceConcept | undefined {
+    this.#assertCatalogReader(context)
+    const release = this.#catalogRelease()
+    const concept = this.#reader?.conceptById?.(release.releaseId, 'diagnosis', conceptId)
+    return concept?.status === 'active' ? concept : undefined
+  }
+
+  laboratoryById(context: ActorContext, conceptId: string): ReferenceConcept | undefined {
+    this.#assertCatalogReader(context)
+    const release = this.#catalogRelease()
+    const concept = this.#reader?.conceptById?.(release.releaseId, 'laboratory', conceptId)
+    return concept?.status === 'active' ? concept : undefined
+  }
+
+  medicationById(
+    context: ActorContext,
+    productId: string,
+  ): ReferenceMedicationProduct | undefined {
+    this.#assertCatalogReader(context)
+    const release = this.#catalogRelease()
+    const product = this.#reader?.medicationProductById === undefined
+      ? syntheticNhsaMedicationProductSnapshot.find(item => item.id === productId)
+      : this.#reader.medicationProductById(release.releaseId, productId)
+    return product?.status === 'active' ? product : undefined
   }
 
   hospitalReferenceSelection(): {
@@ -179,6 +291,59 @@ export class ReferenceDataService {
       throw new Error(`Reference Data Release ValueSet count mismatch: ${release.releaseId}`)
     }
     return { concepts: [], products, release, services, valueSetEntries }
+  }
+
+  #assertCatalogReader(context: ActorContext): void {
+    if (!['administrator', 'outpatient-doctor'].includes(context.roleCode)) {
+      throw new ReferenceDataError(
+        'ROLE_NOT_ALLOWED',
+        'This role cannot read the clinical Reference catalogs',
+      )
+    }
+  }
+
+  #catalogRelease(): ReferenceDataReleaseSummary {
+    if (this.#reader === undefined) return builtinReferenceData().items[0]!
+    const releases = this.#reader.list().items
+    const releaseId = this.#activeReleaseId ?? this.#selection?.referenceReleaseId
+    if (releaseId !== undefined) {
+      const release = releases.find(item => item.releaseId === releaseId)
+      if (release === undefined) {
+        throw new ReferenceDataError(
+          'REFERENCE_RELEASE_NOT_FOUND',
+          'The configured current Reference Data Release was not found',
+        )
+      }
+      return release
+    }
+    if (releases.length === 1) return releases[0]!
+    if (releases.length === 0) {
+      throw new ReferenceDataError(
+        'REFERENCE_DATA_UNAVAILABLE',
+        'No published Reference Data Release is available',
+      )
+    }
+    throw new ReferenceDataError(
+      'REFERENCE_RELEASE_AMBIGUOUS',
+      'A current Reference Data Release must be configured when multiple releases exist',
+    )
+  }
+
+  #searchBuiltinMedications(input: { page: number; pageSize: number; query?: string }) {
+    const query = input.query?.toLocaleLowerCase('zh-CN')
+    const items = syntheticNhsaMedicationProductSnapshot.filter(product => (
+      query === undefined
+      || [product.code, product.genericName, product.brandName, product.manufacturer]
+        .some(value => value?.toLocaleLowerCase('zh-CN').includes(query) === true)
+    )).toSorted((left, right) => (
+      left.genericName.localeCompare(right.genericName, 'zh-CN')
+      || left.code.localeCompare(right.code)
+      || left.id.localeCompare(right.id)
+    ))
+    return {
+      items: items.slice((input.page - 1) * input.pageSize, input.page * input.pageSize),
+      total: items.length,
+    }
   }
 
   #configuredHospitalSelection(selection: ReferenceHospitalSelection) {

@@ -13,6 +13,10 @@ import {
   type SessionContext,
   type VirtualPatientList,
 } from '@clinmesh/contracts/his'
+import type {
+  ReferenceConcept,
+  ReferenceMedicationProduct,
+} from '@clinmesh/contracts/reference-data'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
   AlertDialog,
@@ -47,6 +51,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
+import { cn } from '@clinmesh/ui/lib/utils'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, LibraryBigIcon, LockKeyholeIcon, MessagesSquareIcon, PanelRightCloseIcon, PanelRightOpenIcon, PillIcon, PlayIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, SendIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
@@ -79,6 +84,9 @@ import {
   saveLaboratoryRequestDraft,
   savePrescriptionDraft,
   saveRevisitDraft,
+  searchReferenceDiagnoses,
+  searchReferenceLaboratory,
+  searchReferenceMedications,
   signClinicalDocument,
   signStructuredClinicalDocument,
   startFirstVisit,
@@ -367,12 +375,8 @@ function ActiveDoctorWorkspace({
       : item.id === 'lab-fever-panel'
   )) ?? []
   const draftLaboratoryItemId = detail.data?.laboratoryRequests?.draft?.catalogItemId
-  const requestedLaboratoryItemId = laboratoryCatalog.some(item => item.id === laboratoryItemId)
-    ? laboratoryItemId
-    : draftLaboratoryItemId
-  const resolvedLaboratoryItemId = laboratoryCatalog.some(item => item.id === requestedLaboratoryItemId)
-    ? requestedLaboratoryItemId ?? ''
-    : laboratoryCatalog[0]?.id ?? ''
+  const requestedLaboratoryItemId = laboratoryItemId || draftLaboratoryItemId
+  const resolvedLaboratoryItemId = requestedLaboratoryItemId ?? laboratoryCatalog[0]?.id ?? ''
   const resolvedLaboratoryItem = laboratoryCatalog.find(item => item.id === resolvedLaboratoryItemId)
   const draftIndicationCode = detail.data?.laboratoryRequests?.draft?.catalogItemId === resolvedLaboratoryItemId
     ? detail.data.laboratoryRequests.draft.indicationCode
@@ -380,7 +384,9 @@ function ActiveDoctorWorkspace({
   const requestedIndicationCode = resolvedLaboratoryItem?.allowedIndicationCodes.includes(indicationCode)
     ? indicationCode
     : draftIndicationCode
-  const resolvedIndicationCode = resolvedLaboratoryItem?.allowedIndicationCodes.includes(
+  const resolvedIndicationCode = resolvedLaboratoryItem === undefined
+    ? requestedIndicationCode ?? (indicationCode || 'clinical-evaluation')
+    : resolvedLaboratoryItem.allowedIndicationCodes.includes(
     requestedIndicationCode ?? '',
   ) === true
     ? requestedIndicationCode ?? ''
@@ -1795,6 +1801,14 @@ function LaboratoryRequestEditor({
   state: DoctorCaseDetail['laboratoryRequests']
 }): React.JSX.Element {
   const catalogById = new Map(catalog.map(item => [item.id, item]))
+  const [query, setQuery] = useState('')
+  const [referencePage, setReferencePage] = useState(1)
+  const normalizedQuery = query.trim()
+  const referenceLaboratory = useQuery({
+    enabled: normalizedQuery.length >= 3,
+    queryFn: ({ signal }) => searchReferenceLaboratory(normalizedQuery, referencePage, signal),
+    queryKey: ['reference-laboratory', normalizedQuery, referencePage],
+  })
   const draftItem = state?.draft === undefined
     ? undefined
     : catalogById.get(state.draft.catalogItemId)
@@ -1805,7 +1819,45 @@ function LaboratoryRequestEditor({
       {readOnly ? null : <FieldGroup>
         <Field>
           <FieldLabel htmlFor="laboratory-item">{messages.laboratoryItem}</FieldLabel>
-          <WorkspaceSelect id="laboratory-item" items={laboratoryItems} onValueChange={value => onLaboratoryItemChange(value ?? '')} value={laboratoryItemId} />
+          <Input
+            aria-label={locale === 'zh-CN' ? '搜索检验目录' : 'Search laboratory catalog'}
+            onChange={(event) => {
+              setReferencePage(1)
+              setQuery(event.currentTarget.value)
+            }}
+            placeholder={locale === 'zh-CN' ? '检验名称或 LOINC' : 'Name or LOINC'}
+            value={query}
+          />
+          {normalizedQuery.length < 3 ? (
+            <WorkspaceSelect id="laboratory-item" items={laboratoryItems} onValueChange={value => onLaboratoryItemChange(value ?? '')} value={laboratoryItemId} />
+          ) : referenceLaboratory.isPending ? (
+            <Skeleton className="h-20 w-full" />
+          ) : referenceLaboratory.isError ? (
+            <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{locale === 'zh-CN' ? '目录加载失败' : 'Catalog unavailable'}</AlertTitle></Alert>
+          ) : referenceLaboratory.data.items.length === 0 ? (
+            <p className="border px-3 py-4 text-sm text-muted-foreground">{locale === 'zh-CN' ? '未找到检验' : 'No laboratory concepts found'}</p>
+          ) : (
+            <div className="border">
+              {referenceLaboratory.data.items.map(item => (
+                <button
+                  className={cn(
+                    'flex w-full items-center justify-between gap-3 border-b px-3 py-2 text-left text-sm',
+                    laboratoryItemId === item.id && 'bg-muted/60',
+                  )}
+                  disabled={item.status !== 'active'}
+                  key={item.id}
+                  onClick={() => onLaboratoryItemChange(item.id)}
+                  type="button"
+                >
+                  <span>{item.display}</span><span className="font-mono text-xs text-muted-foreground">{item.code}</span>
+                </button>
+              ))}
+              <div className="flex justify-between p-1">
+                <Button disabled={referencePage === 1} onClick={() => setReferencePage(current => current - 1)} size="sm" type="button" variant="ghost">{locale === 'zh-CN' ? '上一页' : 'Previous'}</Button>
+                <Button disabled={referencePage * referenceLaboratory.data.pageSize >= referenceLaboratory.data.total} onClick={() => setReferencePage(current => current + 1)} size="sm" type="button" variant="ghost">{locale === 'zh-CN' ? '下一页' : 'Next'}</Button>
+              </div>
+            </div>
+          )}
         </Field>
         <Field>
           <FieldLabel htmlFor="laboratory-indication">{messages.laboratoryIndication}</FieldLabel>
@@ -1836,6 +1888,7 @@ function LaboratoryRequestEditor({
                       <dt className="text-xs text-muted-foreground">{messages.laboratoryItem}</dt>
                       <dd className="mt-1 font-medium">
                         {(locale === 'zh-CN' ? draftItem?.nameZh : draftItem?.nameEn)
+                          ?? state.draft.referenceConcept?.display
                           ?? state.draft.catalogItemId}
                       </dd>
                     </div>
@@ -1868,6 +1921,7 @@ function LaboratoryRequestEditor({
             <AlertTitle>{messages.laboratoryRequestDraftSaved}</AlertTitle>
             <AlertDescription>
               {(locale === 'zh-CN' ? draftItem?.nameZh : draftItem?.nameEn)
+                ?? state.draft.referenceConcept?.display
                 ?? state.draft.catalogItemId} · {indicationLabel(state.draft.indicationCode, messages)}
             </AlertDescription>
           </Alert>
@@ -1902,6 +1956,7 @@ function LaboratoryRequestEditor({
               {state.requests.map((request) => {
                 const item = catalogById.get(request.catalogItemId)
                 const itemName = (locale === 'zh-CN' ? item?.nameZh : item?.nameEn)
+                  ?? request.referenceConcept?.display
                   ?? request.catalogItemId
                 return (
                   <TableRow key={request.id}>
@@ -1984,6 +2039,7 @@ function LaboratoryRequestEditor({
               <AlertTitle>{messages.laboratoryResultPending}</AlertTitle>
               <AlertDescription>
                 {locale === 'zh-CN' ? item?.nameZh : item?.nameEn}
+                {item === undefined ? request.referenceConcept?.display : null}
               </AlertDescription>
             </Alert>
           )
@@ -1995,7 +2051,7 @@ function LaboratoryRequestEditor({
             <LaboratoryRequestReport
               action={actions.acknowledge}
               correctionAction={actions.correct}
-              itemName={(locale === 'zh-CN' ? item?.nameZh : item?.nameEn) ?? request.catalogItemId}
+              itemName={(locale === 'zh-CN' ? item?.nameZh : item?.nameEn) ?? request.referenceConcept?.display ?? request.catalogItemId}
               key={`report:${request.id}:${request.report.diagnosticReportId}`}
               locale={locale}
               messages={messages}
@@ -3015,6 +3071,94 @@ interface DiagnosisDraftLine extends DiagnosisDraftEntry {
   note: string
 }
 
+function diagnosisReferenceSnapshot(concept: ReferenceConcept) {
+  return {
+    code: concept.code,
+    display: concept.display,
+    id: concept.id,
+    sourceLocator: concept.sourceLocator,
+    system: concept.system,
+    version: concept.version,
+  }
+}
+
+function DiagnosisCatalogPicker({
+  entry,
+  id,
+  locale,
+  localCatalog,
+  onSelect,
+}: {
+  entry: DiagnosisDraftLine
+  id: string
+  locale: WorkspaceLocale
+  localCatalog: ClinicalCatalog['diagnoses']
+  onSelect: (catalogItemId: string, referenceConcept?: DiagnosisDraftEntry['referenceConcept']) => void
+}) {
+  const [query, setQuery] = useState('')
+  const [page, setPage] = useState(1)
+  const normalizedQuery = query.trim()
+  const search = useQuery({
+    enabled: normalizedQuery.length >= 3,
+    queryFn: ({ signal }) => searchReferenceDiagnoses(normalizedQuery, page, signal),
+    queryKey: ['reference-diagnoses', normalizedQuery, page],
+  })
+  const localItems = localCatalog.map(item => ({
+    label: `${locale === 'zh-CN' ? item.nameZh : item.nameEn} · ${item.code}`,
+    value: item.id,
+  }))
+  return (
+    <div className="flex flex-col gap-2">
+      <Input
+        aria-label={locale === 'zh-CN' ? '搜索疾病目录' : 'Search diagnosis catalog'}
+        onChange={(event) => {
+          setPage(1)
+          setQuery(event.currentTarget.value)
+        }}
+        placeholder={locale === 'zh-CN' ? '病名或编码' : 'Name or code'}
+        value={query}
+      />
+      {normalizedQuery.length < 3 ? (
+        <WorkspaceSelect
+          id={id}
+          items={localItems}
+          onValueChange={value => {
+            if (value !== null) onSelect(value)
+          }}
+          value={entry.catalogItemId}
+        />
+      ) : search.isPending ? (
+        <Skeleton className="h-20 w-full" />
+      ) : search.isError ? (
+        <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{locale === 'zh-CN' ? '目录加载失败' : 'Catalog unavailable'}</AlertTitle></Alert>
+      ) : search.data.items.length === 0 ? (
+        <p className="border px-3 py-4 text-sm text-muted-foreground">{locale === 'zh-CN' ? '未找到疾病' : 'No diagnoses found'}</p>
+      ) : (
+        <div className="border">
+          {search.data.items.map(item => (
+            <button
+              className={cn(
+                'flex w-full items-center justify-between gap-3 border-b px-3 py-2 text-left text-sm',
+                entry.catalogItemId === item.id && 'bg-muted/60',
+              )}
+              disabled={item.status !== 'active'}
+              key={item.id}
+              onClick={() => onSelect(item.id, diagnosisReferenceSnapshot(item))}
+              type="button"
+            >
+              <span>{item.display}</span><span className="font-mono text-xs text-muted-foreground">{item.code}</span>
+            </button>
+          ))}
+          <div className="flex justify-between p-1">
+            <Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" type="button" variant="ghost">{locale === 'zh-CN' ? '上一页' : 'Previous'}</Button>
+            <Button disabled={page * search.data.pageSize >= search.data.total} onClick={() => setPage(current => current + 1)} size="sm" type="button" variant="ghost">{locale === 'zh-CN' ? '下一页' : 'Next'}</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function DiagnosisEditor({ actions, catalog, locale, messages, readOnly, state }: {
   actions: DiagnosisActions
   catalog: ClinicalCatalog['diagnoses']
@@ -3033,9 +3177,8 @@ function DiagnosisEditor({ actions, catalog, locale, messages, readOnly, state }
   const usedCatalogItemIds = new Set(entries.map(entry => entry.catalogItemId))
   const addEntry = () => {
     const catalogItem = catalog.find(item => !usedCatalogItemIds.has(item.id))
-    if (catalogItem === undefined) return
     setEntries(current => [...current, {
-      catalogItemId: catalogItem.id,
+      catalogItemId: catalogItem?.id ?? '',
       key: globalThis.crypto.randomUUID(),
       note: '',
       role: current.some(entry => entry.role === 'primary') ? 'secondary' : 'primary',
@@ -3045,6 +3188,21 @@ function DiagnosisEditor({ actions, catalog, locale, messages, readOnly, state }
     setEntries(current => current.map((entry, entryIndex) => (
       entryIndex === index ? { ...entry, ...update } : entry
     )))
+  }
+  const selectEntry = (
+    index: number,
+    catalogItemId: string,
+    referenceConcept?: DiagnosisDraftEntry['referenceConcept'],
+  ) => {
+    setEntries(current => current.map((entry, entryIndex) => {
+      if (entryIndex !== index) return entry
+      const { referenceConcept: _previousReference, ...withoutReference } = entry
+      return {
+        ...withoutReference,
+        catalogItemId,
+        ...(referenceConcept === undefined ? {} : { referenceConcept }),
+      }
+    }))
   }
   const updateRole = (index: number, role: DiagnosisDraftEntry['role']) => {
     setEntries(current => {
@@ -3141,7 +3299,7 @@ function DiagnosisEditor({ actions, catalog, locale, messages, readOnly, state }
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold" id="diagnosis-heading">{messages.diagnosisRecord}</h3>
         <Button
-          disabled={entries.length >= Math.min(catalog.length, 8)}
+          disabled={entries.length >= 8}
           onClick={addEntry}
           size="sm"
           type="button"
@@ -3163,12 +3321,6 @@ function DiagnosisEditor({ actions, catalog, locale, messages, readOnly, state }
         <FieldGroup>
           {entries.map((entry, index) => {
             const suffix = index === 0 ? '' : ` ${index + 1}`
-            const diagnosisItems = catalog
-              .filter(item => item.id === entry.catalogItemId || !usedCatalogItemIds.has(item.id))
-              .map(item => ({
-                label: `${locale === 'zh-CN' ? item.nameZh : item.nameEn} · ${item.code}`,
-                value: item.id,
-              }))
             return (
               <FieldSet className="border-b pb-4" key={entry.key}>
                 <FieldLegend variant="label">{messages.diagnosis} {index + 1}</FieldLegend>
@@ -3176,13 +3328,16 @@ function DiagnosisEditor({ actions, catalog, locale, messages, readOnly, state }
                   <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(15rem,1.5fr)_minmax(12rem,0.8fr)_auto]">
                     <Field>
                       <FieldLabel htmlFor={`diagnosis-item-${index}`}>{messages.diagnosisItem}{suffix}</FieldLabel>
-                      <WorkspaceSelect
+                      <DiagnosisCatalogPicker
+                        entry={entry}
                         id={`diagnosis-item-${index}`}
-                        items={diagnosisItems}
-                        onValueChange={value => {
-                          if (value !== null) updateEntry(index, { catalogItemId: value })
-                        }}
-                        value={entry.catalogItemId}
+                        locale={locale}
+                        localCatalog={catalog.filter(item => (
+                          item.id === entry.catalogItemId || !usedCatalogItemIds.has(item.id)
+                        ))}
+                        onSelect={(catalogItemId, referenceConcept) => (
+                          selectEntry(index, catalogItemId, referenceConcept)
+                        )}
                       />
                     </Field>
                     <Field>
@@ -3230,7 +3385,7 @@ function DiagnosisEditor({ actions, catalog, locale, messages, readOnly, state }
           })}
           <div className="flex flex-wrap justify-end gap-2">
             <Button
-              disabled={actions.confirm.pending || entries.length === 0 || !entries.some(entry => entry.role === 'primary')}
+              disabled={actions.confirm.pending || entries.length === 0 || entries.some(entry => entry.catalogItemId === '') || !entries.some(entry => entry.role === 'primary')}
               type="submit"
             >
               <CheckCircleIcon data-icon="inline-start" />{messages.confirmDiagnosis}
@@ -3268,6 +3423,20 @@ function createPrescriptionDraftLine(
   }
 }
 
+function createReferencePrescriptionDraftLine(
+  product: ReferenceMedicationProduct,
+): PrescriptionDraftLine {
+  return {
+    catalogItemId: product.id,
+    courseDays: 3,
+    doseText: product.strength,
+    frequencyCode: 'QD',
+    key: globalThis.crypto.randomUUID(),
+    quantity: 1,
+    referenceProduct: product,
+  }
+}
+
 function MedicationConclusionPanel({
   allowWithdrawal,
   catalog,
@@ -3293,6 +3462,18 @@ function MedicationConclusionPanel({
     noMedicationConclusion === undefined ? 'prescription' : 'no-medication',
   )
   const [dirty, setDirty] = useState(false)
+  const [medicationQuery, setMedicationQuery] = useState('')
+  const [medicationPage, setMedicationPage] = useState(1)
+  const normalizedMedicationQuery = medicationQuery.trim()
+  const referenceMedications = useQuery({
+    enabled: normalizedMedicationQuery.length >= 3,
+    queryFn: ({ signal }) => searchReferenceMedications(
+      normalizedMedicationQuery,
+      medicationPage,
+      signal,
+    ),
+    queryKey: ['reference-medications', normalizedMedicationQuery, medicationPage],
+  })
   const [items, setItems] = useState<PrescriptionDraftLine[]>(() => {
     if (state?.draft !== undefined) {
       return state.draft.items.map((item, index) => ({ ...item, key: `saved-${index}` }))
@@ -3555,6 +3736,49 @@ function MedicationConclusionPanel({
             }}
           >
             <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="reference-medication-search">
+                  {locale === 'zh-CN' ? '搜索药品目录' : 'Search medication catalog'}
+                </FieldLabel>
+                <Input
+                  id="reference-medication-search"
+                  onChange={(event) => {
+                    setMedicationPage(1)
+                    setMedicationQuery(event.currentTarget.value)
+                  }}
+                  placeholder={locale === 'zh-CN' ? '通用名、商品名或编码' : 'Generic name, brand, or code'}
+                  value={medicationQuery}
+                />
+              </Field>
+              {normalizedMedicationQuery.length < 3 ? null : referenceMedications.isPending ? (
+                <Skeleton className="h-20 w-full" />
+              ) : referenceMedications.isError ? (
+                <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{locale === 'zh-CN' ? '目录加载失败' : 'Catalog unavailable'}</AlertTitle></Alert>
+              ) : referenceMedications.data.items.length === 0 ? (
+                <p className="border px-3 py-4 text-sm text-muted-foreground">{locale === 'zh-CN' ? '未找到药品' : 'No medications found'}</p>
+              ) : (
+                <div className="border">
+                  {referenceMedications.data.items.map(product => (
+                    <button
+                      className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 border-b px-3 py-2 text-left text-sm"
+                      disabled={product.status !== 'active' || items.length >= 8 || usedCatalogItemIds.has(product.id)}
+                      key={product.id}
+                      onClick={() => {
+                        setItems(current => [...current, createReferencePrescriptionDraftLine(product)])
+                        setDirty(true)
+                      }}
+                      type="button"
+                    >
+                      <span><strong className="block">{product.genericName}</strong><span className="text-xs text-muted-foreground">{product.strength} · {product.dosageForm} · {product.manufacturer}</span></span>
+                      <span className="font-mono text-xs text-muted-foreground">{product.code}</span>
+                    </button>
+                  ))}
+                  <div className="flex justify-between p-1">
+                    <Button disabled={medicationPage === 1} onClick={() => setMedicationPage(current => current - 1)} size="sm" type="button" variant="ghost">{locale === 'zh-CN' ? '上一页' : 'Previous'}</Button>
+                    <Button disabled={medicationPage * referenceMedications.data.pageSize >= referenceMedications.data.total} onClick={() => setMedicationPage(current => current + 1)} size="sm" type="button" variant="ghost">{locale === 'zh-CN' ? '下一页' : 'Next'}</Button>
+                  </div>
+                </div>
+              )}
               <div className="flex justify-end">
                 <Button disabled={!canAddMedication} onClick={addMedication} size="sm" type="button" variant="outline">
                   <PlusIcon data-icon="inline-start" />{messages.addMedication}
@@ -3588,7 +3812,7 @@ function MedicationConclusionPanel({
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(12rem,1.4fr)_minmax(7rem,0.8fr)_minmax(7rem,0.8fr)_minmax(6rem,0.7fr)_minmax(6rem,0.7fr)_auto]">
                       <Field>
                         <FieldLabel htmlFor={`prescription-medication-${index}`}>{messages.medication}{suffix}</FieldLabel>
-                        <WorkspaceSelect
+                        {item.referenceProduct === undefined ? <WorkspaceSelect
                           id={`prescription-medication-${index}`}
                           items={medicationItems}
                           onValueChange={value => {
@@ -3597,51 +3821,51 @@ function MedicationConclusionPanel({
                             updateItem(index, createPrescriptionDraftLine(medication, item.key))
                           }}
                           value={item.catalogItemId}
-                        />
+                        /> : <Input id={`prescription-medication-${index}`} readOnly value={item.referenceProduct.genericName} />}
                       </Field>
                       <Field>
                         <FieldLabel htmlFor={`prescription-dose-${index}`}>{messages.dose}{suffix}</FieldLabel>
-                        <WorkspaceSelect
+                        {item.referenceProduct === undefined ? <WorkspaceSelect
                           id={`prescription-dose-${index}`}
                           items={doseItems}
                           onValueChange={value => {
                             if (value !== null) updateItem(index, { doseText: value })
                           }}
                           value={item.doseText}
-                        />
+                        /> : <Input id={`prescription-dose-${index}`} maxLength={120} onChange={event => updateItem(index, { doseText: event.currentTarget.value })} value={item.doseText} />}
                       </Field>
                       <Field>
                         <FieldLabel htmlFor={`prescription-frequency-${index}`}>{messages.frequency}{suffix}</FieldLabel>
-                        <WorkspaceSelect
+                        {item.referenceProduct === undefined ? <WorkspaceSelect
                           id={`prescription-frequency-${index}`}
                           items={frequencyItems}
                           onValueChange={value => {
                             if (value !== null) updateItem(index, { frequencyCode: value })
                           }}
                           value={item.frequencyCode}
-                        />
+                        /> : <Input id={`prescription-frequency-${index}`} maxLength={32} onChange={event => updateItem(index, { frequencyCode: event.currentTarget.value })} value={item.frequencyCode} />}
                       </Field>
                       <Field>
                         <FieldLabel htmlFor={`prescription-course-${index}`}>{messages.course}{suffix}</FieldLabel>
-                        <WorkspaceSelect
+                        {item.referenceProduct === undefined ? <WorkspaceSelect
                           id={`prescription-course-${index}`}
                           items={courseItems}
                           onValueChange={value => {
                             if (value !== null) updateItem(index, { courseDays: Number(value) })
                           }}
                           value={String(item.courseDays)}
-                        />
+                        /> : <Input id={`prescription-course-${index}`} max={30} min={1} onChange={event => updateItem(index, { courseDays: Number(event.currentTarget.value) })} type="number" value={item.courseDays} />}
                       </Field>
                       <Field>
                         <FieldLabel htmlFor={`prescription-quantity-${index}`}>{messages.quantity}{suffix}</FieldLabel>
-                        <WorkspaceSelect
+                        {item.referenceProduct === undefined ? <WorkspaceSelect
                           id={`prescription-quantity-${index}`}
                           items={quantityItems}
                           onValueChange={value => {
                             if (value !== null) updateItem(index, { quantity: Number(value) })
                           }}
                           value={String(item.quantity)}
-                        />
+                        /> : <Input id={`prescription-quantity-${index}`} max={1_000} min={1} onChange={event => updateItem(index, { quantity: Number(event.currentTarget.value) })} type="number" value={item.quantity} />}
                       </Field>
                       <div className="flex items-end">
                         <Button
@@ -3693,6 +3917,7 @@ function MedicationConclusionPanel({
                               <li className="flex flex-wrap justify-between gap-2" key={item.catalogItemId}>
                                 <span className="font-medium">
                                   {(locale === 'zh-CN' ? medication?.nameZh : medication?.nameEn)
+                                    ?? item.referenceProduct?.genericName
                                     ?? item.catalogItemId}
                                 </span>
                                 <span className="text-muted-foreground">
