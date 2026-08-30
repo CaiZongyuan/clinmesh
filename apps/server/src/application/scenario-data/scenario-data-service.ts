@@ -325,6 +325,12 @@ export class ScenarioDataService {
 
   getSyntheticCase(context: ActorContext, caseId: string) {
     this.#assertCaseReader(context)
+    if (
+      context.roleCode !== 'administrator'
+      && !this.#cases.hasMaterialization(context.workspaceId, context.epoch, caseId)
+    ) {
+      throw new ScenarioDataError('CASE_NOT_FOUND', 'The Synthetic Case was not found')
+    }
     const syntheticCase = this.#cases.get(context.workspaceId, caseId)
     if (syntheticCase === undefined) {
       throw new ScenarioDataError('CASE_NOT_FOUND', 'The Synthetic Case was not found')

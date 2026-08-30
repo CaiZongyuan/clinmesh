@@ -8,10 +8,8 @@ import {
 } from '@clinmesh/contracts/scenario'
 import {
   apiErrorSchema,
-  clinicalCatalogSchema,
   createPatientResponseSchema,
   patientSearchSchema,
-  registrationCatalogSchema,
   scenarioCommandResponseSchema,
   scenarioStateSchema,
   serviceCatalogSearchSchema,

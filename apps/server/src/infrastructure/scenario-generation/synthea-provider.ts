@@ -59,6 +59,13 @@ const providerHealthSchema = z.object({
   syntheaCommit: z.literal(SYNTHEA_COMMIT),
 }).strict()
 
+const providerTranslationGapSchema = z.object({
+  error: z.object({
+    code: z.literal('TRANSLATION_GAP'),
+    message: z.string().min(1).max(1_000),
+  }).strict(),
+}).strict()
+
 const r4PatientSchema = r4ResourceSchema.extend({
   birthDate: z.iso.date(),
   gender: z.enum(['female', 'male', 'other', 'unknown']),
@@ -100,6 +107,7 @@ export type SyntheaProviderErrorCode =
   | 'PROVIDER_RESPONSE_TOO_LARGE'
   | 'PROVIDER_TIMEOUT'
   | 'REPRODUCTION_METADATA_MISMATCH'
+  | 'TRANSLATION_GAP'
 
 export class SyntheaProviderError extends ScenarioGenerationProviderError {
   declare readonly code: SyntheaProviderErrorCode
@@ -376,6 +384,24 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
       })
     }
     if (!response.ok) {
+      if (response.status === 422) {
+        let failure: z.infer<typeof providerTranslationGapSchema> | undefined
+        try {
+          failure = providerTranslationGapSchema.parse(JSON.parse(
+            await readBoundedResponse(response, Math.min(this.#maxResponseBytes, 256 * 1024)),
+          ))
+        } catch (error) {
+          if (error instanceof SyntheaProviderError) throw error
+        }
+        if (failure !== undefined) {
+          throw new SyntheaProviderError(
+            failure.error.code,
+            failure.error.message,
+          )
+        }
+      } else {
+        await response.body?.cancel()
+      }
       throw new SyntheaProviderError(
         'PROVIDER_REQUEST_FAILED',
         `The Synthea Provider returned HTTP ${response.status}`,

@@ -98,6 +98,11 @@ describe('Reference Data HTTP contract', () => {
         display: '新版血常规组合',
         domain: 'laboratory',
         id: 'laboratory:cbc-panel',
+        laboratory: {
+          category: 'hematology',
+          resultType: 'panel',
+          specimen: 'blood',
+        },
         sourceLocator: 'updated[1]',
         status: 'active',
         system: 'http://loinc.org',
@@ -168,6 +173,11 @@ describe('Reference Data HTTP contract', () => {
         display: '血常规组合',
         domain: 'laboratory',
         id: 'laboratory:cbc-panel',
+        laboratory: {
+          category: 'hematology',
+          resultType: 'panel',
+          specimen: 'blood',
+        },
         sourceLocator: 'concepts[3]',
         status: 'active',
         system: 'http://loinc.org',
@@ -495,7 +505,12 @@ describe('Reference Data HTTP contract', () => {
     expect(laboratoryResponse.status).toBe(200)
     expect(issueLaboratoryRequestResponseSchema.parse(await laboratoryResponse.json()).data.request)
       .toMatchObject({
-        referenceConcept: { code: '58410-2', display: '血常规组合', version: '2.83' },
+        referenceConcept: {
+          code: '58410-2',
+          display: '血常规组合',
+          laboratory: { category: 'hematology', resultType: 'panel', specimen: 'blood' },
+          version: '2.83',
+        },
       })
 
     expect(JSON.parse((first.runtime.database.driver.prepare(`
@@ -511,7 +526,9 @@ describe('Reference Data HTTP contract', () => {
     expect(JSON.parse((first.runtime.database.driver.prepare(`
       SELECT reference_json FROM laboratory_request LIMIT 1
     `).get() as { reference_json: string }).reference_json)).toMatchObject({
-      display: '血常规组合', version: '2.83',
+      display: '血常规组合',
+      laboratory: { category: 'hematology', resultType: 'panel', specimen: 'blood' },
+      version: '2.83',
     })
 
     await first.runtime.close()
@@ -536,7 +553,10 @@ describe('Reference Data HTTP contract', () => {
     const detail = doctorCaseDetailSchema.parse(await detailResponse.json())
     expect(detail.diagnosis?.confirmation?.entries[0]?.display).toBe('原发性高血压')
     expect(detail.medicationConclusion?.prescription?.items[0]?.display).toBe(product.genericName)
-    expect(detail.laboratoryRequests?.requests[0]?.referenceConcept?.display).toBe('血常规组合')
+    expect(detail.laboratoryRequests?.requests[0]?.referenceConcept).toMatchObject({
+      display: '血常规组合',
+      laboratory: { category: 'hematology', resultType: 'panel', specimen: 'blood' },
+    })
     expect(JSON.stringify(detail)).not.toMatch(/新版原发性高血压|新版血常规组合/)
   })
 

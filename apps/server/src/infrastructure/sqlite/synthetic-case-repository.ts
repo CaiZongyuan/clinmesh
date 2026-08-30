@@ -274,6 +274,15 @@ export class SyntheticCaseRepository {
     return row === undefined ? undefined : this.#mapCase(caseRowSchema.parse(row))
   }
 
+  hasMaterialization(workspaceId: string, epoch: string, caseIdValue: string): boolean {
+    return this.#database.driver.prepare(`
+      SELECT 1 AS present
+      FROM synthetic_case_materialization
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      LIMIT 1
+    `).get(workspaceId, epoch, caseIdValue) !== undefined
+  }
+
   getByProfileRevision(
     workspaceId: string,
     profileId: string,

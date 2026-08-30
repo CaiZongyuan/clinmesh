@@ -179,6 +179,24 @@ function providerFor(body: unknown, options: { maxResponseBytes?: number } = {})
 }
 
 describe('Synthea Scenario generation Provider contract', () => {
+  it('preserves a fail-closed clinical translation gap from the Provider', async () => {
+    const provider = new SyntheaScenarioGenerationProvider({
+      baseUrl: 'http://synthea.internal:51878',
+      fetch: async () => Response.json({
+        error: {
+          code: 'TRANSLATION_GAP',
+          message: 'The generated Synthea Bundle contains untranslated clinical displays',
+        },
+      }, { status: 422 }),
+      timeoutMs: 1_000,
+    })
+
+    await expect(provider.generate(request)).rejects.toMatchObject({
+      code: 'TRANSLATION_GAP',
+      message: 'The generated Synthea Bundle contains untranslated clinical displays',
+    })
+  })
+
   it('sends explicit all-module mode without a module filter', async () => {
     const { moduleMode: _moduleMode, modules: _modules, ...withoutModules } = request
     const allModulesRequest = scenarioGenerationRequestSchema.parse(withoutModules)

@@ -7218,18 +7218,24 @@ export class WorkflowService {
       const reportName = input.resultSnapshot !== undefined
         ? `${requestedConcept.display}报告`
         : request.catalog_item_id === 'lab-cbc' ? '血常规报告' : 'C 反应蛋白报告'
+      const reportCoding = input.resultSnapshot === undefined
+        ? {
+            code: request.catalog_item_id === 'lab-cbc' ? 'CBC' : 'CRP',
+            display: reportName,
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-service',
+          }
+        : {
+            code: requestedConcept.code,
+            display: requestedConcept.display,
+            system: requestedConcept.system,
+            version: requestedConcept.version,
+          }
       const report = transaction.fhir.create(input.context, {
         resourceType: 'DiagnosticReport',
         id: diagnosticReportId,
         status: 'final',
         code: {
-          coding: [{
-            code: input.resultSnapshot === undefined
-              ? request.catalog_item_id === 'lab-cbc' ? 'CBC' : 'CRP'
-              : requestedConcept.code,
-            display: reportName,
-            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-service',
-          }],
+          coding: [reportCoding],
           text: reportName,
         },
         subject: { reference: `Patient/${request.patient_id}` },
@@ -10729,6 +10735,7 @@ export class WorkflowService {
         code: reference.code,
         display: reference.display,
         id: reference.id,
+        ...(reference.laboratory === undefined ? {} : { laboratory: reference.laboratory }),
         sourceLocator: reference.sourceLocator,
         system: reference.system,
         version: reference.version,

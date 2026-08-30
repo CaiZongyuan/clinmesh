@@ -1968,13 +1968,13 @@ function LaboratoryRequestEditor({
         {state === undefined || state.requests.length === 0 ? (
           <p className="text-sm text-muted-foreground">{messages.noLaboratoryRequests}</p>
         ) : (
-          <Table>
+          <Table className="table-fixed">
             <TableHeader>
               <TableRow>
-                <TableHead>{messages.laboratoryItem}</TableHead>
-                <TableHead>{messages.laboratoryIndication}</TableHead>
-                <TableHead>{messages.status}</TableHead>
-                <TableHead><span className="sr-only">{messages.laboratoryRequestActions}</span></TableHead>
+                <TableHead className="w-[34%] whitespace-normal">{messages.laboratoryItem}</TableHead>
+                <TableHead className="w-[28%] whitespace-normal">{messages.laboratoryIndication}</TableHead>
+                <TableHead className="w-[26%] whitespace-normal">{messages.status}</TableHead>
+                <TableHead className="w-[12%]"><span className="sr-only">{messages.laboratoryRequestActions}</span></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1985,9 +1985,9 @@ function LaboratoryRequestEditor({
                   ?? request.catalogItemId
                 return (
                   <TableRow key={request.id}>
-                    <TableCell className="font-medium">{itemName}</TableCell>
-                    <TableCell>{indicationLabel(request.indicationCode, messages)}</TableCell>
-                    <TableCell><Badge variant="outline">{laboratoryRequestStatusLabel(request, messages)}</Badge>{request.generationError === undefined ? null : <p className="mt-1 text-xs text-destructive">{request.generationError.message}</p>}</TableCell>
+                    <TableCell className="break-words whitespace-normal font-medium">{itemName}</TableCell>
+                    <TableCell className="break-words whitespace-normal">{indicationLabel(request.indicationCode, messages)}</TableCell>
+                    <TableCell className="break-words whitespace-normal"><Badge variant="outline">{laboratoryRequestStatusLabel(request, messages)}</Badge>{request.generationError === undefined ? null : <p className="mt-1 text-xs text-destructive">{request.generationError.message}</p>}</TableCell>
                     <TableCell className="text-right">
                       {readOnly ? null : request.status === 'generation-failed' ? (
                         <Button
@@ -2375,12 +2375,12 @@ function LaboratoryReportVersion({ current, locale, messages, report }: {
         <span className="font-medium">{messages.laboratoryReportConclusion}: </span>
         {report.conclusion}
       </p>
-      <Table>
+      <Table className="table-fixed">
         <TableHeader>
           <TableRow>
-            <TableHead>{messages.laboratoryItem}</TableHead>
-            <TableHead>{messages.result}</TableHead>
-            <TableHead>{messages.referenceRange}</TableHead>
+            <TableHead className="w-[30%] whitespace-normal">{messages.laboratoryItem}</TableHead>
+            <TableHead className="w-[30%] whitespace-normal">{messages.result}</TableHead>
+            <TableHead className="w-[40%] whitespace-normal">{messages.referenceRange}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -2388,10 +2388,10 @@ function LaboratoryReportVersion({ current, locale, messages, report }: {
             const unit = 'unit' in result ? result.unit.display : undefined
             return (
               <TableRow key={result.observationId}>
-                <TableCell className="font-medium">
+                <TableCell className="break-words whitespace-normal font-medium">
                   {laboratoryResultName(result.code, messages, result.display)}
                 </TableCell>
-                <TableCell>
+                <TableCell className="break-words whitespace-normal">
                   <span>{laboratoryResultValue(result.value, unit, locale, messages)}</span>
                   <Badge
                     className="ml-2"
@@ -2400,7 +2400,7 @@ function LaboratoryReportVersion({ current, locale, messages, report }: {
                     {interpretationLabel(result.interpretation, messages)}
                   </Badge>
                 </TableCell>
-                <TableCell>{result.referenceRange.text}</TableCell>
+                <TableCell className="break-words whitespace-normal">{result.referenceRange.text}</TableCell>
               </TableRow>
             )
           })}

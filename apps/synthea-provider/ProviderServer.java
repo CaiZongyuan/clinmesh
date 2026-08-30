@@ -90,6 +90,15 @@ public final class ProviderServer {
     }
   }
 
+  private static final class LocalizationException extends Exception {
+    private final String code;
+
+    private LocalizationException(String code, String message) {
+      super(message);
+      this.code = code;
+    }
+  }
+
   private ProviderServer() {}
 
   public static void main(String[] args) throws Exception {
@@ -258,6 +267,8 @@ public final class ProviderServer {
       sendJson(exchange, 200, responseBytes);
     } catch (RequestException error) {
       sendError(exchange, 400, error.code, error.getMessage());
+    } catch (LocalizationException error) {
+      sendError(exchange, 422, error.code, error.getMessage());
     } catch (Exception error) {
       System.err.printf("Synthea generation failed: %s%n", error.getMessage());
       sendError(exchange, 502, "GENERATION_FAILED", "Synthea generation failed");
@@ -449,6 +460,15 @@ public final class ProviderServer {
     }
     if (response.statusCode() != 200) {
       JsonElement error = body.get("error");
+      if (response.statusCode() == 422 && error != null && error.isJsonObject()) {
+        JsonObject failure = error.getAsJsonObject();
+        if (failure.has("code") && failure.get("code").isJsonPrimitive()
+            && failure.get("code").getAsString().equals("TRANSLATION_GAP")) {
+          throw new LocalizationException(
+              "TRANSLATION_GAP",
+              "The generated Synthea Bundle contains untranslated clinical displays");
+        }
+      }
       throw new IOException("cn-health localization failed: "
           + (error == null ? "unknown" : GSON.toJson(error)));
     }

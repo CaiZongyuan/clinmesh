@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
+import { fhirBundleSchema, fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import {
   patientBriefJobSchema,
   patientBriefRevisionListSchema,
@@ -338,6 +338,12 @@ describe('Synthetic Case generation HTTP contract', () => {
       expect.objectContaining({ sourceReference: 'urn:uuid:prior-encounter' }),
       expect.objectContaining({ sourceReference: 'urn:uuid:prior-condition' }),
     ])
+    const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
+    const inaccessibleHistory = await runtime.app.request(
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/history?page=1&pageSize=20`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(inaccessibleHistory.status).toBe(404)
 
     const visibleResponse = await runtime.app.request(
       `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/history/detail?sourceReference=${encodeURIComponent('urn:uuid:prior-condition')}`,
@@ -589,6 +595,11 @@ describe('Synthetic Case generation HTTP contract', () => {
       encounter_id: startedCommand.data.encounterId,
       patient_id: startedCommand.data.patientId,
     })
+    const materializedHistory = await runtime.app.request(
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/history?page=1&pageSize=20`,
+      { headers: { cookie: registrarCookie } },
+    )
+    expect(materializedHistory.status).toBe(200)
 
     const triageCookie = await signIn(runtime, 'triage@demo.clinmesh.local')
     const triageResponse = await runtime.app.request(
@@ -695,6 +706,24 @@ describe('Synthetic Case generation HTTP contract', () => {
       system: 'http://loinc.org',
       version: '2.83',
     }
+    const unsupportedAgentConcept = {
+      code: '6690-2',
+      display: '白细胞计数',
+      id: 'laboratory:synthetic-white-blood-cell-count',
+      laboratory: {
+        category: 'hematology',
+        resultType: 'quantity',
+        specimen: 'blood',
+        unit: {
+          code: '10*9/L',
+          display: '10*9/L',
+          system: 'http://unitsofmeasure.org',
+        },
+      },
+      sourceLocator: 'synthetic:test:white-blood-cell-count',
+      system: 'http://loinc.org',
+      version: '2.83',
+    }
     const updateLaboratoryCatalog = runtime.database.driver.prepare(`
       UPDATE outpatient_catalog SET config_json = ?
       WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
@@ -710,6 +739,11 @@ describe('Synthetic Case generation HTTP contract', () => {
       contraindicatedAllergyCodes: [],
       referenceConcept: agentConcept,
     }), 'lab-crp')
+    updateLaboratoryCatalog.run(JSON.stringify({
+      allowedIndicationCodes: ['clinical-evaluation'],
+      contraindicatedAllergyCodes: [],
+      referenceConcept: unsupportedAgentConcept,
+    }), 'lab-fever-panel')
     const saveLaboratoryDraft = async (catalogItemId: string, expectedDraftVersion: number) => {
       const response = await runtime.app.request(
         `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/draft`,
@@ -815,6 +849,17 @@ describe('Synthetic Case generation HTTP contract', () => {
       },
       status: 'reported',
     })
+    const agentDiagnosticReportResponse = await runtime.app.request(
+      `/fhir/R5/DiagnosticReport/${encodeURIComponent(agentReported!.report!.diagnosticReportId)}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(agentDiagnosticReportResponse.status).toBe(200)
+    expect(fhirResourceSchema.parse(await agentDiagnosticReportResponse.json())).toMatchObject({
+      code: {
+        coding: [{ code: '1988-5', display: 'C 反应蛋白', system: 'http://loinc.org', version: '2.83' }],
+      },
+      resourceType: 'DiagnosticReport',
+    })
     expect(briefProvider.requests).toHaveLength(5)
     expect(runtime.database.driver.prepare(`
       SELECT source, model_id FROM investigation_result_snapshot
@@ -828,6 +873,21 @@ describe('Synthetic Case generation HTTP contract', () => {
       'epoch-1',
       agentRequest.id,
     )).resolves.toMatchObject({ source: 'investigation-agent' })
+    expect(briefProvider.requests).toHaveLength(5)
+
+    const unsupportedDraft = await saveLaboratoryDraft('lab-fever-panel', 4)
+    const unsupportedRequest = (await issueLaboratory(unsupportedDraft.draftVersion)).request
+    await runtime.dispatchPending()
+    detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    expect(detail.laboratoryRequests?.requests.find(item => (
+      item.id === unsupportedRequest.id
+    ))).toMatchObject({
+      generationError: { code: 'INVESTIGATION_UNSUPPORTED' },
+      status: 'generation-failed',
+    })
     expect(briefProvider.requests).toHaveLength(5)
 
     const snapshotBeforeReset = runtime.database.driver.prepare(`

@@ -50,6 +50,8 @@ describe('Synthea Docker Provider contract', () => {
     expect(providerSource).toContain('command.add("App")')
     expect(providerSource).toContain('command.add("中国")')
     expect(providerSource).toContain('localizeBundle(')
+    expect(providerSource).toContain('catch (LocalizationException error)')
+    expect(providerSource).toContain('"TRANSLATION_GAP"')
     expect(providerSource).toContain('metadata.add("localization"')
     expect(providerSource).toContain('body.add("modules"')
     expect(providerSource).toContain('"moduleMode":"all","modules":[]')
@@ -69,6 +71,8 @@ describe('Synthea Docker Provider contract', () => {
     expect(compose).toContain('/data/translation:ro')
     expect(compose).toContain('CN_HEALTH_SYNTHEA_TRANSLATION_CATALOG_PATH')
     expect(compose).toContain('CN_HEALTH_SYNTHEA_CLINICAL_DISPLAY_PROJECTION_ID')
+    expect(compose).toContain('CN_HEALTH_SYNTHEA_EXPECTED_CATALOG_SHA256')
+    expect(compose).toContain('d7a25fc414d4008cf59145fd8fc3448556635dd2d5ab8e1e7974bc236f825811')
     expect(compose).toContain('condition: service_healthy')
     const cpuLimits = compose.match(/^    cpus: /gmu) ?? []
     const memoryLimits = compose.match(/^    mem_limit: /gmu) ?? []

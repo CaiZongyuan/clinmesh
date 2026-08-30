@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import type {
   DiagnosisDraftEntry,
   DiagnosisState,
@@ -2499,6 +2499,9 @@ describe('role workspaces', () => {
     await waitFor(() => {
       expect(screen.getByText('C 反应蛋白升高。')).toBeTruthy()
     }, { timeout: 3_000 })
+    const referenceRangeCell = screen.getByRole('cell', { name: '0-8 mg/L' })
+    expect(referenceRangeCell.className).toContain('whitespace-normal')
+    expect(referenceRangeCell.closest('table')?.className).toContain('table-fixed')
     expect(screen.queryByText('等待检验结果')).toBeNull()
     expect(polling.detailRequestCount()).toBeGreaterThanOrEqual(2)
   })

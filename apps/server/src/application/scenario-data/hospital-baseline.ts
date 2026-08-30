@@ -1,7 +1,6 @@
 import {
   type ScenarioHospitalServiceCatalogItem,
   type ScenarioInvestigationCatalogItem,
-  type ScenarioProductMedicationCatalogItem,
 } from '@clinmesh/contracts/scenario'
 import type {
   ReferenceMedicalService,

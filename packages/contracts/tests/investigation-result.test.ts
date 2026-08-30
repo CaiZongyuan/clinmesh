@@ -1,4 +1,5 @@
 import {
+  investigationResultContentSchema,
   investigationResultSnapshotSchema,
 } from '@clinmesh/contracts/scenario'
 import { describe, expect, it } from 'vitest'
@@ -44,5 +45,19 @@ describe('Investigation Result Snapshot contract', () => {
       source: 'investigation-agent',
       workspaceId: 'workspace-demo',
     }).content.results).toHaveLength(1)
+  })
+
+  it('rejects a quantitative result without numeric reference boundaries', () => {
+    expect(() => investigationResultContentSchema.parse({
+      conclusion: '白细胞计数在正常范围内。',
+      results: [{
+        code: '6690-2',
+        display: '白细胞计数',
+        interpretation: 'normal',
+        referenceRange: { text: '未配置参考范围' },
+        unit: { code: '10*9/L', display: '10*9/L', system: 'http://unitsofmeasure.org' },
+        value: 7.5,
+      }],
+    })).toThrow('A quantitative Investigation result requires a numeric reference boundary')
   })
 })

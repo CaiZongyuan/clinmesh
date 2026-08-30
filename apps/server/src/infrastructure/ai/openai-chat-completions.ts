@@ -207,19 +207,25 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
       }
       const structuredJsonContent = (parsed: z.infer<typeof providerResponseSchema>) => {
         const message = parsed.choices[0]!.message
-        const content = typeof message.content === 'string' && message.content.length > 0
-          ? message.content
-          : message.tool_calls?.find(
-              call => call.function.name === input.schemaName,
-            )?.function.arguments
-        if (content === undefined) return undefined
-        const normalized = singleJsonCodeBlock(content) ?? content
-        try {
-          JSON.parse(normalized)
-          return normalized
-        } catch {
-          return undefined
+        const candidates = [
+          message.tool_calls?.find(
+            call => call.function.name === input.schemaName,
+          )?.function.arguments,
+          typeof message.content === 'string' && message.content.length > 0
+            ? message.content
+            : undefined,
+        ]
+        for (const candidate of candidates) {
+          if (candidate === undefined) continue
+          const normalized = singleJsonCodeBlock(candidate) ?? candidate
+          try {
+            JSON.parse(normalized)
+            return normalized
+          } catch {
+            continue
+          }
         }
+        return undefined
       }
       let parsed: z.infer<typeof providerResponseSchema> | undefined
       let content: string | undefined

@@ -21,7 +21,6 @@ import {
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
   completeHospitalServiceResponseSchema,
-  commandResponseSchema,
   confirmDiagnosisResponseSchema,
   confirmNoMedicationResponseSchema,
   correctLaboratoryReportResponseSchema,

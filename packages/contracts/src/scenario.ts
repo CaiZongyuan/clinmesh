@@ -154,18 +154,6 @@ const scenarioCatalogItemBaseSchema = z.object({
   status: z.enum(['active', 'inactive']),
 }).strict()
 
-const scenarioDepartmentCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
-  displayOrder: z.number().int().nonnegative(),
-  parentId: z.string().min(1).nullable(),
-  registrationAvailable: z.boolean().optional(),
-  type: z.enum(['hospital', 'department']),
-}).strict()
-
-const scenarioDiagnosisCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
-  codeSystem: z.string().url(),
-  referenceConcept: referenceConceptSnapshotSchema.optional(),
-}).strict()
-
 const scenarioReferenceRangeSchema = z.object({
   appliesToGender: z.enum(['female', 'male', 'any']).default('any'),
   maximum: z.number().optional(),
@@ -833,7 +821,32 @@ export const investigationResultContentSchema = z.object({
     }).strict().optional(),
     value: z.union([z.boolean(), z.number().finite(), z.string().min(1).max(1_000)]),
   }).strict()).length(1),
-}).strict()
+}).strict().superRefine((content, context) => {
+  content.results.forEach((result, index) => {
+    if (
+      typeof result.value === 'number'
+      && result.referenceRange.low === undefined
+      && result.referenceRange.high === undefined
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A quantitative Investigation result requires a numeric reference boundary',
+        path: ['results', index, 'referenceRange'],
+      })
+    }
+    if (
+      result.referenceRange.low !== undefined
+      && result.referenceRange.high !== undefined
+      && result.referenceRange.low > result.referenceRange.high
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Investigation reference range low must not exceed high',
+        path: ['results', index, 'referenceRange'],
+      })
+    }
+  })
+})
 
 export const investigationResultSnapshotSchema = z.object({
   caseId: z.string().min(1).max(128),

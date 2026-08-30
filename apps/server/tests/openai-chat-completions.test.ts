@@ -99,7 +99,7 @@ describe('OpenAI-compatible Chat Completions client', () => {
     expect(bodies[1]).toHaveProperty('tool_choice')
   })
 
-  it('retries an unsupported JSON-schema request with one required schema tool', async () => {
+  it('prefers valid required-tool arguments over non-JSON message content', async () => {
     const bodies: unknown[] = []
     const client = new OpenAIChatCompletionsClient({
       apiKey: secret,
@@ -110,7 +110,7 @@ describe('OpenAI-compatible Chat Completions client', () => {
         return Response.json({
           choices: [{
             message: {
-              content: null,
+              content: ' ',
               role: 'assistant',
               tool_calls: [{
                 function: {
