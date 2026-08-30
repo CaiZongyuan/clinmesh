@@ -8,10 +8,10 @@ describe('clinmesh process entrypoint', () => {
     const result = spawnSync('pnpm', ['clinmesh', '--help'], {
       cwd: repositoryRoot,
       encoding: 'utf8',
-      env: { PATH: process.env.PATH },
+      env: process.env,
     })
 
-    expect(result.status).toBe(0)
+    expect(result.status, result.stderr).toBe(0)
     expect(result.stderr).not.toContain('"ok": false')
     expect(result.stdout).toContain('Usage: clinmesh')
   })
