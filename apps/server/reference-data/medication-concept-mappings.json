@@ -1,0 +1,75 @@
+{
+  "contentHash": "6d2a98850fb9d3cf96be1cd40d9de7058201f9190f10acb77ca838f7e25a100d",
+  "mappingSetId": "clinmesh-rxnorm-drug-concepts",
+  "mappings": [
+    {
+      "direction": "source-to-target",
+      "evidence": ["ClinMesh #46 synthetic medication history review"],
+      "mappingId": "rxnorm-acetaminophen-tablet-to-drug-concept",
+      "relationship": "equivalent",
+      "source": {
+        "code": "198440",
+        "display": "Acetaminophen 500 MG Oral Tablet",
+        "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+        "version": "rxnorm-2026-08-03"
+      },
+      "status": "active",
+      "target": {
+        "code": "CM-DRUG-ACETAMINOPHEN-500MG-ORAL-TABLET",
+        "conceptId": "drug-concept-acetaminophen-500mg-oral-tablet",
+        "display": "对乙酰氨基酚 500 mg 口服片剂",
+        "kind": "drug-concept",
+        "system": "urn:clinmesh:reference:drug-concept",
+        "version": "clinmesh-drug-concepts-2026-08-28"
+      }
+    },
+    {
+      "direction": "source-to-target",
+      "evidence": ["ClinMesh #46 synthetic medication history review"],
+      "mappingId": "rxnorm-metformin-tablet-to-drug-concept",
+      "relationship": "equivalent",
+      "source": {
+        "code": "860975",
+        "display": "Metformin hydrochloride 500 MG Oral Tablet",
+        "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+        "version": "rxnorm-2026-08-03"
+      },
+      "status": "active",
+      "target": {
+        "code": "CM-DRUG-METFORMIN-HCL-500MG-ORAL-TABLET",
+        "conceptId": "drug-concept-metformin-hcl-500mg-oral-tablet",
+        "display": "盐酸二甲双胍 500 mg 口服片剂",
+        "kind": "drug-concept",
+        "system": "urn:clinmesh:reference:drug-concept",
+        "version": "clinmesh-drug-concepts-2026-08-28"
+      }
+    },
+    {
+      "direction": "source-to-target",
+      "evidence": ["ClinMesh #49 synthetic hypertension case review"],
+      "mappingId": "rxnorm-amlodipine-tablet-to-drug-concept",
+      "relationship": "equivalent",
+      "source": {
+        "code": "308136",
+        "display": "amLODIPine 2.5 MG Oral Tablet",
+        "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+        "version": "rxnorm-2026-08-03"
+      },
+      "status": "active",
+      "target": {
+        "code": "CM-DRUG-AMLODIPINE-2.5MG-ORAL-TABLET",
+        "conceptId": "drug-concept-amlodipine-2.5mg-oral-tablet",
+        "display": "氨氯地平 2.5 mg 口服片剂",
+        "kind": "drug-concept",
+        "system": "urn:clinmesh:reference:drug-concept",
+        "version": "clinmesh-drug-concepts-2026-08-28"
+      }
+    }
+  ],
+  "schemaVersion": "1",
+  "sourceSystem": "http://www.nlm.nih.gov/research/umls/rxnorm",
+  "sourceVersion": "rxnorm-2026-08-03",
+  "targetSystem": "urn:clinmesh:reference:drug-concept",
+  "targetVersion": "clinmesh-drug-concepts-2026-08-28",
+  "version": "2026-08-28"
+}

@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest'
 import { resolveScenarioInvestigation } from '../src/application/scenario-data/scenario-investigation-resolver.ts'
 import { BuiltInScenarioGenerationProvider } from '../src/infrastructure/scenario-generation/builtin-provider.ts'
 
+const ucum = (code: string, display = code) => ({
+  code,
+  display,
+  system: 'http://unitsofmeasure.org' as const,
+  version: '2.2' as const,
+})
+
 async function generatedContent(module: 'fever' | 'type-2-diabetes') {
   const provider = new BuiltInScenarioGenerationProvider()
   const generated = await provider.generate(scenarioGenerationRequestSchema.parse({
@@ -40,7 +47,7 @@ describe('Scenario investigation resolver', () => {
         flag: 'H',
         outcome: 'reported',
         referenceRange: '36.0-37.3 °C',
-        unit: '°C',
+        unit: ucum('Cel', '°C'),
         value: 38.6,
       },
       sourceLevel: 'L1',
@@ -75,7 +82,7 @@ describe('Scenario investigation resolver', () => {
         flag: 'H',
         outcome: 'reported',
         referenceRange: '3.9-11.1 mmol/L',
-        unit: 'mmol/L',
+        unit: ucum('mmol/L'),
         value: 13.8,
       },
       sourceLevel: 'L2',
@@ -98,7 +105,7 @@ describe('Scenario investigation resolver', () => {
     })).toMatchObject({
       critical: false,
       report: '体温 38.6 °C。',
-      result: { flag: 'H', outcome: 'reported', unit: '°C', value: 38.6 },
+      result: { flag: 'H', outcome: 'reported', unit: ucum('Cel', '°C'), value: 38.6 },
       sourceLevel: 'L2',
     })
   })
@@ -117,7 +124,7 @@ describe('Scenario investigation resolver', () => {
     })).toMatchObject({
       critical: false,
       report: '血红蛋白 148 g/L。',
-      result: { flag: 'N', outcome: 'reported', unit: 'g/L', value: 148 },
+      result: { flag: 'N', outcome: 'reported', unit: ucum('g/L'), value: 148 },
       sourceLevel: 'L2',
     })
   })
@@ -141,7 +148,7 @@ describe('Scenario investigation resolver', () => {
       reportTemplate: '体重指数 {value} kg/m²。',
       status: 'active',
       tatMinutes: 0,
-      unit: 'kg/m²',
+      unit: ucum('kg/m2', 'kg/m²'),
       valueType: 'quantity',
     })
     patient.physiologyBaseline.generators.push({
@@ -150,7 +157,7 @@ describe('Scenario investigation resolver', () => {
       id: 'body-mass-index-worked-example',
       kind: 'derived',
       source: 'scenario:height-weight',
-      unit: 'kg/m²',
+      unit: ucum('kg/m2', 'kg/m²'),
     })
 
     expect(resolveScenarioInvestigation({
@@ -163,7 +170,7 @@ describe('Scenario investigation resolver', () => {
     })).toMatchObject({
       critical: false,
       report: '体重指数 27.11 kg/m²。',
-      result: { flag: 'H', outcome: 'reported', unit: 'kg/m²', value: 27.11 },
+      result: { flag: 'H', outcome: 'reported', unit: ucum('kg/m2', 'kg/m²'), value: 27.11 },
       sourceLevel: 'L2',
     })
   })
@@ -187,7 +194,7 @@ describe('Scenario investigation resolver', () => {
       reportTemplate: '估算肾小球滤过率 {value} mL/min/1.73m²。',
       status: 'active',
       tatMinutes: 60,
-      unit: 'mL/min/1.73m²',
+      unit: ucum('mL/min/{1.73_m2}', 'mL/min/1.73m²'),
       valueType: 'quantity',
     })
     patient.physiologyBaseline.generators.push({
@@ -199,14 +206,14 @@ describe('Scenario investigation resolver', () => {
       minimum: 88.4,
       source: 'scenario:renal-baseline',
       standardDeviation: 1,
-      unit: 'μmol/L',
+      unit: ucum('umol/L', 'μmol/L'),
     }, {
       dependencies: ['serum-creatinine-worked-example'],
       formula: 'egfr-ckd-epi-2021',
       id: 'estimated-gfr-worked-example',
       kind: 'derived',
       source: 'scenario:ckd-epi-2021',
-      unit: 'mL/min/1.73m²',
+      unit: ucum('mL/min/{1.73_m2}', 'mL/min/1.73m²'),
     })
 
     expect(resolveScenarioInvestigation({
@@ -244,7 +251,7 @@ describe('Scenario investigation resolver', () => {
       minimum: 3.8,
       source: 'scenario:hematology-baseline',
       standardDeviation: 0.35,
-      unit: '10^12/L',
+      unit: ucum('10*12/L', '10^12/L'),
     }, {
       assayCv: 0.02,
       id: 'mean-corpuscular-volume',
@@ -254,14 +261,14 @@ describe('Scenario investigation resolver', () => {
       minimum: 80,
       source: 'scenario:hematology-baseline',
       standardDeviation: 4,
-      unit: 'fL',
+      unit: ucum('fL'),
     }, {
       dependencies: ['red-blood-cells', 'mean-corpuscular-volume'],
       formula: 'hematocrit-from-rbc-mcv',
       id: 'hematocrit',
       kind: 'derived',
       source: 'scenario:rbc-mcv',
-      unit: 'L/L',
+      unit: ucum('L/L'),
     })
     const resolveValue = (catalogItemId: string) => {
       const resolved = resolveScenarioInvestigation({
@@ -316,7 +323,7 @@ describe('Scenario investigation resolver', () => {
       id: 'urine-glucose-worked-example',
       kind: 'derived',
       source: 'scenario:renal-glucose-threshold',
-      unit: 'qualitative',
+      unit: ucum('{qualitative}', 'qualitative'),
     })
 
     expect(resolveScenarioInvestigation({
@@ -396,13 +403,13 @@ describe('Scenario investigation resolver', () => {
       reportTemplate: '低密度脂蛋白胆固醇 {value} mmol/L。',
       status: 'active',
       tatMinutes: 60,
-      unit: 'mmol/L',
+      unit: ucum('mmol/L'),
       valueType: 'quantity',
     })
     patient.physiologyBaseline.generators.push(...[
-      { id: 'total-cholesterol-worked-example', value: 6, unit: 'mmol/L' },
-      { id: 'hdl-worked-example', value: 1, unit: 'mmol/L' },
-      { id: 'triglycerides-worked-example', value: 2.2, unit: 'mmol/L' },
+      { id: 'total-cholesterol-worked-example', value: 6, unit: ucum('mmol/L') },
+      { id: 'hdl-worked-example', value: 1, unit: ucum('mmol/L') },
+      { id: 'triglycerides-worked-example', value: 2.2, unit: ucum('mmol/L') },
     ].map(generator => ({
       assayCv: 0,
       ...generator,
@@ -418,7 +425,7 @@ describe('Scenario investigation resolver', () => {
       id: 'ldl-worked-example',
       kind: 'derived',
       source: 'scenario:friedewald',
-      unit: 'mmol/L',
+      unit: ucum('mmol/L'),
     })
 
     expect(resolveScenarioInvestigation({
@@ -431,7 +438,7 @@ describe('Scenario investigation resolver', () => {
     })).toMatchObject({
       critical: false,
       report: '低密度脂蛋白胆固醇 4 mmol/L。',
-      result: { flag: 'H', outcome: 'reported', unit: 'mmol/L', value: 4 },
+      result: { flag: 'H', outcome: 'reported', unit: ucum('mmol/L'), value: 4 },
       sourceLevel: 'L2',
     })
   })
@@ -460,7 +467,7 @@ describe('Scenario investigation resolver', () => {
       diagnostics: ['unmodeled_item'],
       feeFen: 18_000,
       itemId: 'lab-tsh',
-      result: { flag: 'N', outcome: 'reported', unit: 'mIU/L' },
+      result: { flag: 'N', outcome: 'reported', unit: ucum('m[IU]/L', 'mIU/L') },
       sourceLevel: 'L3',
       tatMinutes: 240,
     })
@@ -564,7 +571,7 @@ describe('Scenario investigation resolver', () => {
       minimum: 3.8,
       source: 'scenario:hematology-baseline',
       standardDeviation: 0.35,
-      unit: '10^12/L',
+      unit: ucum('10*12/L', '10^12/L'),
     }, {
       assayCv: 0.02,
       id: 'mean-corpuscular-volume',
@@ -574,14 +581,14 @@ describe('Scenario investigation resolver', () => {
       minimum: 80,
       source: 'scenario:hematology-baseline',
       standardDeviation: 4,
-      unit: 'fL',
+      unit: ucum('fL'),
     }, {
       dependencies: ['red-blood-cells', 'mean-corpuscular-volume'],
       formula: 'hematocrit-from-rbc-mcv',
       id: 'hematocrit',
       kind: 'derived',
       source: 'scenario:rbc-mcv',
-      unit: 'L/L',
+      unit: ucum('L/L'),
     })
 
     const resolved = resolveScenarioInvestigation({

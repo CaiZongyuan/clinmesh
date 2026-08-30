@@ -60,6 +60,7 @@ import {
   confirmDiagnosis,
   correctLaboratoryReport,
   deleteLaboratoryRequestDraft,
+  deletePrescriptionDraft,
   getClinicalCatalog,
   getDoctorCase,
   getDoctorQueue,
@@ -206,7 +207,18 @@ function isLaboratoryRequestCatalogItemId(
 function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocumentContent {
   const persisted = detail.clinicalDocument?.draft
     ?? detail.clinicalDocument?.signed.at(-1)?.content
-  if (persisted !== undefined) return persisted
+  if (persisted !== undefined) {
+    return {
+      assessment: persisted.assessment,
+      auxiliaryExamination: persisted.auxiliaryExamination,
+      chiefComplaint: persisted.chiefComplaint,
+      disposition: persisted.disposition,
+      followUp: persisted.followUp,
+      historyOfPresentIllness: persisted.historyOfPresentIllness,
+      physicalExamination: persisted.physicalExamination,
+      priorMedicalHistory: persisted.priorMedicalHistory,
+    }
+  }
   const vitals = detail.presentation.vitalSigns
   return {
     assessment: '',
@@ -338,6 +350,16 @@ function ActiveDoctorWorkspace({
     queryFn: ({ signal }) => getClinicalCatalog(signal),
     queryKey: ['clinical-catalog', ...scope],
   })
+  const persistedClinicalDocumentVersion = detail.data?.clinicalDocument?.draft?.version
+    ?? detail.data?.clinicalDocument?.signed.at(-1)?.revisionNumber
+  useEffect(() => {
+    const currentDetail = detail.data
+    if (currentDetail === undefined || persistedClinicalDocumentVersion === undefined) return
+    setWorkingClinicalDocuments(current => ({
+      ...current,
+      [currentDetail.caseId]: createWorkingClinicalDocument(currentDetail),
+    }))
+  }, [detail.data?.caseId, persistedClinicalDocumentVersion])
   const usesIndependentLaboratoryRequests = detail.data?.consultation !== undefined
   const laboratoryCatalog = catalog.data?.laboratory.filter(item => (
     usesIndependentLaboratoryRequests
@@ -521,25 +543,35 @@ function ActiveDoctorWorkspace({
     },
     onSuccess: refreshCase,
   })
-  const issueRequest = useMutation({
-    mutationFn: async () => {
+  const saveLaboratoryRequest = useMutation({
+    mutationFn: () => {
       const current = detail.data
       if (current === undefined
         || !isLaboratoryRequestCatalogItemId(resolvedLaboratoryItemId)
         || resolvedIndicationCode.length === 0) {
         throw new Error(messages.consultationUnavailable)
       }
-      const saved = await saveLaboratoryRequestDraft({
+      return saveLaboratoryRequestDraft({
         catalogItemId: resolvedLaboratoryItemId,
         encounterId: current.encounter.id,
         encounterVersion: current.encounter.versionId,
         expectedDraftVersion: current.laboratoryRequests?.draftVersion ?? 0,
         indicationCode: resolvedIndicationCode,
       }, newIdempotencyKey())
+    },
+    onSuccess: refreshCase,
+  })
+  const issueRequest = useMutation({
+    mutationFn: () => {
+      const current = detail.data
+      const requestState = current?.laboratoryRequests
+      if (current === undefined || requestState?.draft === undefined) {
+        throw new Error(messages.consultationUnavailable)
+      }
       return issueLaboratoryRequest({
         encounterId: current.encounter.id,
         encounterVersion: current.encounter.versionId,
-        expectedDraftVersion: saved.data.draftVersion,
+        expectedDraftVersion: requestState.draftVersion,
       }, newIdempotencyKey())
     },
     onSuccess: refreshCase,
@@ -824,7 +856,6 @@ function ActiveDoctorWorkspace({
           <CaseDetail
             completionQueryScope={encounterCompletionScopeKey}
             correctionTarget={correctionNavigation?.caseId === detail.data.caseId
-              && !correctionNavigation.handled
               ? correctionNavigation.target
               : undefined}
             consultationAction={{
@@ -908,9 +939,9 @@ function ActiveDoctorWorkspace({
                 pending: issueRequest.isPending,
               },
               save: {
-                error: null,
-                onSubmit: () => issueRequest.mutate(),
-                pending: issueRequest.isPending,
+                error: saveLaboratoryRequest.error,
+                onSubmit: () => saveLaboratoryRequest.mutate(),
+                pending: saveLaboratoryRequest.isPending,
               },
             }}
             locale={locale}
@@ -1526,6 +1557,7 @@ function CaseDetail({
                   ) : (
                     <LaboratoryRequestEditor
                       actions={laboratoryRequestActions}
+                      caseId={detail.caseId}
                       catalog={laboratoryCatalog}
                       indicationCode={indicationCode}
                       indicationItems={indicationItems}
@@ -1733,6 +1765,7 @@ function EncounterCompletionPanel({ detail, messages, onCompleted, onNavigate, o
 
 function LaboratoryRequestEditor({
   actions,
+  caseId,
   catalog,
   indicationCode,
   indicationItems,
@@ -1747,6 +1780,7 @@ function LaboratoryRequestEditor({
   state,
 }: {
   actions: LaboratoryRequestActions
+  caseId: string
   catalog: ClinicalCatalog['laboratory']
   indicationCode: string
   indicationItems: Array<{ label: string; value: string }>
@@ -1761,6 +1795,11 @@ function LaboratoryRequestEditor({
   state: DoctorCaseDetail['laboratoryRequests']
 }): React.JSX.Element {
   const catalogById = new Map(catalog.map(item => [item.id, item]))
+  const draftItem = state?.draft === undefined
+    ? undefined
+    : catalogById.get(state.draft.catalogItemId)
+  const draftMatchesSelection = state?.draft?.catalogItemId === laboratoryItemId
+    && state.draft.indicationCode === indicationCode
   return (
     <div className="flex flex-col gap-4">
       {readOnly ? null : <FieldGroup>
@@ -1774,13 +1813,75 @@ function LaboratoryRequestEditor({
         </Field>
         <div className="flex flex-wrap justify-end gap-2">
           <Button
-            disabled={actions.issue.pending || laboratoryItemId.length === 0 || indicationCode.length === 0}
-            onClick={actions.issue.onSubmit}
+            disabled={actions.save.pending || laboratoryItemId.length === 0 || indicationCode.length === 0}
+            onClick={actions.save.onSubmit}
             type="button"
+            variant="outline"
           >
-            <FlaskConicalIcon data-icon="inline-start" />{messages.issueLaboratoryRequest}
+            <ClipboardPenIcon data-icon="inline-start" />{messages.saveLaboratoryRequestDraft}
           </Button>
+          {state?.draft === undefined ? null : (
+            <>
+              <AlertDialog>
+                <AlertDialogTrigger render={<Button disabled={actions.deleteDraft.pending} type="button" variant="destructive" />}>
+                  <Trash2Icon data-icon="inline-start" />{messages.deleteLaboratoryRequestDraft}
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{messages.deleteLaboratoryRequestDraftTitle}</AlertDialogTitle>
+                    <AlertDialogDescription>{messages.deleteLaboratoryRequestDraftDescription}</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <dl className="text-sm">
+                    <div>
+                      <dt className="text-xs text-muted-foreground">{messages.laboratoryItem}</dt>
+                      <dd className="mt-1 font-medium">
+                        {(locale === 'zh-CN' ? draftItem?.nameZh : draftItem?.nameEn)
+                          ?? state.draft.catalogItemId}
+                      </dd>
+                    </div>
+                  </dl>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={actions.deleteDraft.pending}
+                      onClick={actions.deleteDraft.onSubmit}
+                      variant="destructive"
+                    >
+                      <Trash2Icon data-icon="inline-start" />{messages.confirmDelete}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+              <Button
+                disabled={actions.issue.pending || !draftMatchesSelection}
+                onClick={actions.issue.onSubmit}
+                type="button"
+              >
+                <FlaskConicalIcon data-icon="inline-start" />{messages.issueLaboratoryRequest}
+              </Button>
+            </>
+          )}
         </div>
+        {state?.draft === undefined ? null : (
+          <Alert>
+            <CheckIcon aria-hidden="true" />
+            <AlertTitle>{messages.laboratoryRequestDraftSaved}</AlertTitle>
+            <AlertDescription>
+              {(locale === 'zh-CN' ? draftItem?.nameZh : draftItem?.nameEn)
+                ?? state.draft.catalogItemId} · {indicationLabel(state.draft.indicationCode, messages)}
+            </AlertDescription>
+          </Alert>
+        )}
+        {actions.deleteDraft.success?.caseId === caseId
+          && state?.draft === undefined
+          && state?.draftVersion === actions.deleteDraft.success.draftVersion ? (
+          <Alert>
+            <CheckIcon aria-hidden="true" />
+            <AlertTitle>{messages.laboratoryRequestDraftDeleted}</AlertTitle>
+          </Alert>
+        ) : null}
+        {actions.save.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.save.error, messages)} title={getWorkspaceErrorTitle(actions.save.error, messages, messages.operationFailed)} />}
+        {actions.deleteDraft.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.deleteDraft.error, messages)} title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)} />}
         {actions.issue.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.issue.error, messages)} title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)} />}
       </FieldGroup>}
       <div className="flex flex-col gap-2">
@@ -2347,7 +2448,10 @@ function StructuredClinicalDocumentPanel({
               {signedDocuments.map(document => (
                 <li className="flex flex-col gap-3 border-b pb-4 last:border-b-0 last:pb-0" key={document.documentId}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <Badge variant="secondary">{messages.clinicalDocumentSigned}</Badge>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="secondary">{messages.clinicalDocumentSigned}</Badge>
+                      <Badge variant="outline">{messages.documentVersion} {document.revisionNumber}</Badge>
+                    </div>
                     <span className="text-xs text-muted-foreground">
                       {messages.signedAt} {formatClinicalDocumentTime(document.signedAt, locale)}
                     </span>
@@ -2401,7 +2505,7 @@ function StructuredClinicalDocumentPanel({
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   {revisionPreview === undefined ? null : (
-                    <div className="max-h-[55vh] space-y-4 overflow-y-auto text-sm">
+                    <div className="flex max-h-[55vh] flex-col gap-4 overflow-y-auto text-sm">
                       <ClinicalDocumentContentView
                         content={revisionPreview.document}
                         messages={messages}
@@ -3188,6 +3292,7 @@ function MedicationConclusionPanel({
   const [mode, setMode] = useState<MedicationConclusionMode>(
     noMedicationConclusion === undefined ? 'prescription' : 'no-medication',
   )
+  const [dirty, setDirty] = useState(false)
   const [items, setItems] = useState<PrescriptionDraftLine[]>(() => {
     if (state?.draft !== undefined) {
       return state.draft.items.map((item, index) => ({ ...item, key: `saved-${index}` }))
@@ -3195,18 +3300,43 @@ function MedicationConclusionPanel({
     const firstMedication = catalog[0]
     return firstMedication === undefined ? [] : [createPrescriptionDraftLine(firstMedication, 'new-0')]
   })
-  const issue = useMutation({
-    mutationFn: async () => {
-      const saved = await savePrescriptionDraft({
+  const saveDraft = useMutation({
+    mutationFn: () => savePrescriptionDraft({
+      encounterId: detail.encounter.id,
+      encounterVersion: detail.encounter.versionId,
+      expectedDraftVersion: state?.draftVersion ?? 0,
+      items: items.map(({ key: _key, ...item }) => item),
+    }, newIdempotencyKey()),
+    onError: onRefresh,
+    onSuccess: async () => {
+      setDirty(false)
+      await onRefresh()
+    },
+  })
+  const removeDraft = useMutation({
+    mutationFn: (caseId: string) => {
+      if (detail.caseId !== caseId || state?.draft === undefined) {
+        throw new Error(messages.consultationUnavailable)
+      }
+      return deletePrescriptionDraft({
         encounterId: detail.encounter.id,
         encounterVersion: detail.encounter.versionId,
-        expectedDraftVersion: state?.draftVersion ?? 0,
-        items: items.map(({ key: _key, ...item }) => item),
+        expectedDraftVersion: state.draftVersion,
       }, newIdempotencyKey())
+    },
+    onError: onRefresh,
+    onSuccess: async () => {
+      setDirty(false)
+      await onRefresh()
+    },
+  })
+  const issue = useMutation({
+    mutationFn: () => {
+      if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
       return issuePrescription({
         encounterId: detail.encounter.id,
         encounterVersion: detail.encounter.versionId,
-        expectedDraftVersion: saved.data.draftVersion,
+        expectedDraftVersion: state.draftVersion,
       }, newIdempotencyKey())
     },
     onError: onRefresh,
@@ -3261,11 +3391,13 @@ function MedicationConclusionPanel({
       ...current,
       createPrescriptionDraftLine(nextMedication, globalThis.crypto.randomUUID()),
     ])
+    setDirty(true)
   }
   const updateItem = (index: number, update: Partial<PrescriptionDraftLine>) => {
     setItems(current => current.map((item, itemIndex) => (
       itemIndex === index ? { ...item, ...update } : item
     )))
+    setDirty(true)
   }
   const canAddMedication = items.length < 8 && catalog.some(candidate => (
     !usedCatalogItemIds.has(candidate.id) && canCombineWithCurrentItems(candidate)
@@ -3419,7 +3551,7 @@ function MedicationConclusionPanel({
           <form
             onSubmit={event => {
               event.preventDefault()
-              issue.mutate()
+              saveDraft.mutate()
             }}
           >
             <FieldGroup>
@@ -3517,6 +3649,7 @@ function MedicationConclusionPanel({
                           disabled={items.length === 1}
                           onClick={() => {
                             setItems(current => current.filter((_, itemIndex) => itemIndex !== index))
+                            setDirty(true)
                           }}
                           size="icon"
                           title={`${messages.removeMedication}${suffix}`}
@@ -3531,10 +3664,93 @@ function MedicationConclusionPanel({
                 )
               })}
               <div className="flex flex-wrap justify-end gap-2">
-                <Button disabled={issue.isPending || items.length === 0} type="submit">
-                  <PillIcon data-icon="inline-start" />{messages.issuePrescription}
+                <Button disabled={saveDraft.isPending || items.length === 0} type="submit" variant="outline">
+                  <ClipboardPenIcon data-icon="inline-start" />{messages.savePrescriptionDraft}
                 </Button>
+                {state?.draft === undefined ? null : (
+                  <>
+                    <AlertDialog>
+                      <AlertDialogTrigger
+                        render={(
+                          <Button
+                            disabled={removeDraft.isPending || issue.isPending}
+                            type="button"
+                            variant="ghost"
+                          />
+                        )}
+                      >
+                        <Trash2Icon data-icon="inline-start" />{messages.deletePrescriptionDraft}
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>{messages.deletePrescriptionDraftTitle}</AlertDialogTitle>
+                          <AlertDialogDescription>{messages.deletePrescriptionDraftDescription}</AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <ul className="flex flex-col gap-1.5 text-sm">
+                          {state.draft.items.map((item) => {
+                            const medication = catalog.find(candidate => candidate.id === item.catalogItemId)
+                            return (
+                              <li className="flex flex-wrap justify-between gap-2" key={item.catalogItemId}>
+                                <span className="font-medium">
+                                  {(locale === 'zh-CN' ? medication?.nameZh : medication?.nameEn)
+                                    ?? item.catalogItemId}
+                                </span>
+                                <span className="text-muted-foreground">
+                                  {messages.quantity} {item.quantity}
+                                </span>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
+                          <AlertDialogAction
+                            disabled={removeDraft.isPending}
+                            onClick={() => removeDraft.mutate(detail.caseId)}
+                            variant="destructive"
+                          >
+                            <Trash2Icon data-icon="inline-start" />{messages.confirmDelete}
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                    <Button
+                      disabled={dirty || issue.isPending || saveDraft.isPending}
+                      onClick={() => issue.mutate()}
+                      type="button"
+                    >
+                      <PillIcon data-icon="inline-start" />{messages.issuePrescription}
+                    </Button>
+                  </>
+                )}
               </div>
+              {saveDraft.isSuccess && state?.draft !== undefined ? (
+                <Alert>
+                  <CheckIcon aria-hidden="true" />
+                  <AlertTitle>{messages.prescriptionDraftSaved}</AlertTitle>
+                </Alert>
+              ) : null}
+              {removeDraft.data !== undefined
+                && removeDraft.variables === detail.caseId
+                && state?.draft === undefined
+                && state?.draftVersion === removeDraft.data.data.draftVersion ? (
+                <Alert>
+                  <CheckIcon aria-hidden="true" />
+                  <AlertTitle>{messages.prescriptionDraftDeleted}</AlertTitle>
+                </Alert>
+              ) : null}
+              {saveDraft.error === null ? null : (
+                <ErrorAlert
+                  message={getWorkspaceErrorMessage(saveDraft.error, messages)}
+                  title={getWorkspaceErrorTitle(saveDraft.error, messages, messages.operationFailed)}
+                />
+              )}
+              {removeDraft.error === null || removeDraft.variables !== detail.caseId ? null : (
+                <ErrorAlert
+                  message={getWorkspaceErrorMessage(removeDraft.error, messages)}
+                  title={getWorkspaceErrorTitle(removeDraft.error, messages, messages.operationFailed)}
+                />
+              )}
               {issue.error === null ? null : (
                 <ErrorAlert
                   message={getPrescriptionIssueErrorMessage(issue.error, messages)}

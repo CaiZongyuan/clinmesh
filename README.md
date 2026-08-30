@@ -158,7 +158,26 @@ pnpm --filter @clinmesh/server test
 
 ### 推荐：本地 Web 与 Server，加 Docker Synthea
 
-这种方式只把需要 Java 环境的 Synthea Provider 放进 Docker，ClinMesh Web 与 Server 继续使用本地 Node.js 工具链，便于开发和调试。
+这种方式把需要 Java 环境的 Synthea Provider 和 `cn-health-data` 本地化服务放进 Docker，ClinMesh Web 与 Server 继续使用本地 Node.js 工具链，便于开发和调试。`cn-health-data` 保持通用中国健康数据基础设施的定位；ClinMesh 只消费其固定版本的 Synthea profile、姓名、地理和人口 Candidate。
+
+默认目录结构要求两个仓库同级：
+
+```text
+backend/
+  clinmesh/
+  cn-health-data/
+```
+
+启动前，`cn-health-data/dist/` 应存在以下已构建目录：
+
+```text
+synthea-cn-profile/releases/2026-08-29.r3
+names-cn/releases/40.37.0.r1
+geography-cn/releases/2026-08-29.r1
+population-cn/releases/WPP2024.r1
+```
+
+如目录不在默认位置，通过 `CN_HEALTH_DATA_CONTEXT` 和 `CN_HEALTH_DATA_DIST` 指向仓库与 Candidate 根目录。Candidate 默认使用仅所有者可读权限；宿主账户不是 `1000:1000` 时，启动前设置 `export CN_HEALTH_DATA_RUN_AS="$(id -u):$(id -g)"`，容器仍以非 root 身份运行。
 
 首次运行先创建环境文件；已有 `.env` 时不要覆盖，并确认端口与 Provider URL 使用以下值：
 
@@ -178,6 +197,8 @@ CLINMESH_SYNTHEA_PROVIDER_URL=http://127.0.0.1:51878
 ```sh
 docker compose -f compose.synthea-provider.yaml up -d --build
 ```
+
+Compose 会启动两个内部服务：`cn-health-localizer` 在启动时验证 profile Manifest、文件哈希、SQLite integrity/application ID 和三个 Candidate 依赖；`synthea-provider` 使用 profile classpath 与外部配置运行固定 Synthea commit，并在返回前把每个 Bundle 交给 localizer。两者都使用只读文件系统，Candidate 只读挂载，不复制进 ClinMesh 仓库或镜像。
 
 另外打开两个终端启动 Server 和 Web：
 
@@ -210,6 +231,8 @@ docker compose -f compose.synthea-provider.yaml exec -T synthea-provider \
   java -cp /opt/provider:/opt/synthea/synthea.jar ProviderServer --smoke
 ```
 
+`/health` 会返回 profile ID、内容哈希、身份算法、固定 Synthea commit 以及姓名、地理和人口 Release provenance。`--smoke` 对 fever、type-2-diabetes 和 hypertension 各生成 10 人，并验证临床关键编码仍存在。
+
 使用 Web 开发入口访问管理员模拟数据页面：http://127.0.0.1:51888/scenario-data
 
 停止 Docker 中的 Provider，但保留容器：
@@ -220,7 +243,7 @@ docker compose -f compose.synthea-provider.yaml stop
 
 ### 备选：本机 JDK 17 启动 Synthea
 
-不使用 Docker 时，需要本机安装 Git 和 JDK 17。以下命令从仓库根目录执行，将固定版本的 Synthea 和编译产物保存到已忽略的 `.data/`：
+不使用 Docker 时，需要本机安装 Git、JDK 17，并在同级 `cn-health-data` 仓库运行本地化服务。以下命令从 ClinMesh 仓库根目录执行，将固定版本的 Synthea 和编译产物保存到已忽略的 `.data/`：
 
 ```sh
 SYNTHEA_DIR="$PWD/.data/synthea"
@@ -241,19 +264,144 @@ javac -cp "$SYNTHEA_JAR" -d "$PROVIDER_CLASSES" \
   apps/synthea-provider/ProviderServer.java
 ```
 
-启动 Provider；该进程在前台运行，停止时按 `Ctrl+C`：
+先在另一个终端从 `cn-health-data` 仓库启动 localizer；该进程会在监听前完成 profile 与 Candidate 验证：
+
+```sh
+CN_HEALTH_DATA_ROOT="$(cd ../cn-health-data && pwd)"
+cd "$CN_HEALTH_DATA_ROOT"
+CN_HEALTH_SYNTHEA_PROFILE_PATH="$PWD/dist/synthea-cn-profile/releases/2026-08-29.r3" \
+CN_HEALTH_NAMES_RELEASE_PATH="$PWD/dist/names-cn/releases/40.37.0.r1" \
+CN_HEALTH_GEOGRAPHY_RELEASE_PATH="$PWD/dist/geography-cn/releases/2026-08-29.r1" \
+CN_HEALTH_POPULATION_RELEASE_PATH="$PWD/dist/population-cn/releases/WPP2024.r1" \
+uv run cn-health-synthea-service --host 127.0.0.1
+```
+
+再启动 Provider；该进程在前台运行，停止时按 `Ctrl+C`：
 
 ```sh
 SYNTHEA_DIR="$PWD/.data/synthea"
 SYNTHEA_JAR="$(find "$SYNTHEA_DIR/build/libs" -name '*with-dependencies.jar' -print -quit)"
 PROVIDER_CLASSES="$PWD/.data/synthea-provider/classes"
+CN_HEALTH_DATA_ROOT="$(cd ../cn-health-data && pwd)"
+CN_HEALTH_LOCALIZER_URL=http://127.0.0.1:51879/v1/localize \
 SYNTHEA_JAR_PATH="$SYNTHEA_JAR" \
-SYNTHEA_CONFIG_PATH="$PWD/apps/synthea-provider/synthea.properties" \
+SYNTHEA_CLASSPATH_PATH="$CN_HEALTH_DATA_ROOT/dist/synthea-cn-profile/releases/2026-08-29.r3/classpath" \
+SYNTHEA_CONFIG_PATH="$CN_HEALTH_DATA_ROOT/dist/synthea-cn-profile/releases/2026-08-29.r3/synthea.properties" \
 SYNTHEA_PROVIDER_PORT=51878 \
 java -cp "$PROVIDER_CLASSES:$SYNTHEA_JAR" ProviderServer
 ```
 
-随后仍按推荐方式运行 `pnpm dev:server` 和 `pnpm dev:web`。本机 Java 路径与 Docker 路径使用同一 Provider HTTP 协议、固定 Synthea commit 和配置文件。
+随后仍按推荐方式运行 `pnpm dev:server` 和 `pnpm dev:web`。本机 Java 路径与 Docker 路径使用同一 Provider HTTP 协议、固定 Synthea commit、profile 和 localizer 合同。
+
+### 更新 Synthea 依赖清单
+
+`apps/server/reference-data/synthea-dependency-inventory.json` 保存递归 static inventory 和固定 generated corpus 的频次与 hash，不保存原始患者 Bundle。先从固定 Synthea checkout 准备 module 目录，并用 Provider 分别生成三个病种各 10 人的 `fever.json`、`type-2-diabetes.json` 和 `hypertension.json`，再从仓库根目录运行：
+
+```sh
+SYNTHEA_DIR="$PWD/.data/synthea"
+CORPUS_DIRECTORY="$PWD/.data/synthea-provider/dependency-corpora"
+pnpm --filter @clinmesh/server synthea-inventory \
+  --module-directory "$SYNTHEA_DIR/src/main/resources/modules" \
+  --corpus-directory "$CORPUS_DIRECTORY" \
+  --output "$PWD/apps/server/reference-data/synthea-dependency-inventory.json"
+```
+
+CLI 分别固定校验三份 corpus 的 Synthea commit、`populationSeed=4242`、`clinicalSeed=7331`、单病种、10 人、`1986-08-01` 至 `2026-08-01` 和 `Asia/Shanghai`；参数不符时不覆盖清单。
+
+### 导入 cn-health Candidate 到作者参考库
+
+ClinMesh 的作者参考库是独立 SQLite，不是 HIS operational SQLite。它可以直接读取 `cn-health-data` 的疾病、药品和检验 Candidate，无需先导出中间 CSV。外层 Reference Release manifest 选择一组固定来源；每个 Candidate source 指向自己的 `manifest.json`，`checksum` 是该 Manifest 文件的 SHA-256，`upstreamVersion` 必须等于 Candidate Release ID：
+
+```json
+{
+  "createdAt": "2026-08-30T00:00:00.000+08:00",
+  "releaseId": "clinmesh-cn-health-2026-08-30.r1",
+  "schemaVersion": "1",
+  "sources": [
+    {
+      "acquisitionMethod": "manual-download",
+      "artifactFormat": "cn-health-candidate",
+      "artifactPath": "/absolute/path/to/nhc-icd10-clinical/release/manifest.json",
+      "checksum": "<candidate-manifest-sha256>",
+      "licenseId": "LicenseRef-cn-health-source-terms",
+      "retrievedAt": "2026-08-30T00:00:00.000+08:00",
+      "sourceId": "cn-health-nhc-icd10-clinical",
+      "sourceUrl": "https://github.com/CaiZongyuan/cn-health-data",
+      "upstreamVersion": "nhc-icd10-clinical@2022.r3"
+    }
+  ]
+}
+```
+
+从仓库根目录执行 migration、import、verify 和 list：
+
+```sh
+REFERENCE_DATABASE="$PWD/.data/clinmesh-reference.sqlite"
+REFERENCE_MANIFEST="$PWD/.data/cn-health-reference-release.json"
+
+pnpm --filter @clinmesh/server reference-db migrate \
+  --database "$REFERENCE_DATABASE"
+pnpm --filter @clinmesh/server reference-db import \
+  --database "$REFERENCE_DATABASE" \
+  --manifest "$REFERENCE_MANIFEST"
+pnpm --filter @clinmesh/server reference-db verify \
+  --database "$REFERENCE_DATABASE"
+pnpm --filter @clinmesh/server reference-db list \
+  --database "$REFERENCE_DATABASE"
+```
+
+Importer 会验证外层 checksum、Candidate schema/Dataset/Release、`data.sqlite` SHA-256 与大小、SQLite integrity/application ID、主表列和 canonical record count，再在一个事务中发布 ClinMesh Reference Release。发布摘要保存 Candidate Release ID、source version、canonical hash、SQLite hash/size 和记录数；任一来源失败时不留下部分 Release。当前疾病、药品和项目自有 `laboratory-cn` Candidate 均可直接使用。`laboratory-cn` 是当前病例所需概念的精选中文目录，不是官方完整 LOINC 中文语言包；调用方提供 `loinc-zh-cn` Candidate 时仍通过同一 reference concept 边界导入。
+
+Reference Release 不会按中文名自动选择本院产品或概念。运行时使用单独的 Hospital Reference Selection，以 `system + version + code` 绑定本院目录 ID；药品至少需要 `medication-acetaminophen`、`medication-metformin` 和 `medication-amlodipine` 三项，疾病和检验 binding 用于选择 Package 中实际物化的本院目标。配置文件可以省略 `contentHash`，Server 会从其余字段确定性派生；显式提供时必须匹配：
+
+```json
+{
+  "bindings": [
+    {
+      "catalogItemId": "diagnosis-fever",
+      "coding": {
+        "code": "<exact-diagnosis-code>",
+        "system": "urn:clinmesh:reference:nhsa-diagnosis",
+        "version": "<source-version>"
+      },
+      "kind": "diagnosis"
+    },
+    {
+      "catalogItemId": "medication-acetaminophen",
+      "coding": {
+        "code": "<exact-product-code>",
+        "system": "urn:clinmesh:reference:nhsa-medication-product",
+        "version": "<source-version>"
+      },
+      "kind": "medication-product"
+    },
+    {
+      "catalogItemId": "lab-cbc",
+      "coding": {
+        "code": "58410-2",
+        "system": "http://loinc.org",
+        "version": "2.83"
+      },
+      "kind": "laboratory"
+    }
+  ],
+  "referenceReleaseId": "clinmesh-cn-health-2026-08-30.r1",
+  "schemaVersion": "1",
+  "selectionId": "cn-health-hospital-baseline",
+  "version": "2026-08-30.r1"
+}
+```
+
+在 `.env` 中同时启用只读作者库和选择文件：
+
+```dotenv
+CLINMESH_REFERENCE_DATABASE_PATH=.data/clinmesh-reference.sqlite
+CLINMESH_REFERENCE_SELECTION_PATH=.data/reference-hospital-selection.json
+```
+
+Server 只查询 selection 声明的精确概念与产品。若外部 Release 没有本院服务和值域，组合投影会显式使用内置合成服务支撑，并把外部 Release hash、selection hash 和支撑 Release hash 合成新的 provenance；不会把不同 Release 静默表示为同一个来源。Candidate 产品在新 Package 中标记为 `cn-health-candidate / source-record`，内置合成产品继续保留原有 `nmpa-manual-check / synthetic-match` 兼容记录。
+
+完整全国参考行只存在于作者数据库。Scenario Compiler 选择当前病种所需的诊断、检验和药品闭包写入不可变 Package，普通运行与 reset 不读取 Candidate。挂载数据的来源条款不因 ClinMesh 软件许可证而改变。
 
 ### Docker 一键启动 ClinMesh 与 Synthea
 
@@ -278,6 +426,8 @@ docker compose -f compose.yaml -f compose.synthea.yaml stop
 ```
 
 只需要容器化 ClinMesh、但不需要 Synthea 时，可以单独运行 `docker compose up -d --build`。ClinMesh 不把 Synthea 作为启动门禁；Provider 未启动、不可达或生成失败时，只影响对应生成任务，不影响内置生成器和既有 HIS 流程。除非明确要删除本地合成数据，不要使用 `docker compose down -v`。
+
+ClinMesh 与 `cn-health-data` 自行创作的软件代码采用各仓库声明的 MIT License。Compose 挂载的第三方来源数据及其规范化产物不因软件许可证而改变权属或使用条件，具体 provenance 和条款记录由对应 Candidate Manifest、`cn-health-data/DATA-NOTICE.md` 与来源说明提供。
 
 ### 直接运行 Node.js
 

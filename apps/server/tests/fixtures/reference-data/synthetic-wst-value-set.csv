@@ -1,0 +1,7 @@
+VALUE_SET_URI,SYSTEM,CODE,DISPLAY,STATUS,SYNTHETIC_NOTE
+urn:clinmesh:wst:ValueSet:service-category,urn:clinmesh:wst:service-category,LABORATORY,检验服务,ACTIVE,Self-authored synthetic fixture; not WS/T content
+urn:clinmesh:wst:ValueSet:service-category,urn:clinmesh:wst:service-category,EXAMINATION,检查服务,ACTIVE,Self-authored synthetic fixture; not WS/T content
+urn:clinmesh:wst:ValueSet:service-category,urn:clinmesh:wst:service-category,IMAGING,影像服务,ACTIVE,Self-authored synthetic fixture; not WS/T content
+urn:clinmesh:wst:ValueSet:service-category,urn:clinmesh:wst:service-category,TREATMENT,治疗服务,ACTIVE,Self-authored synthetic fixture; not WS/T content
+urn:clinmesh:wst:ValueSet:billing-unit,urn:clinmesh:wst:billing-unit,ITEM,项目,ACTIVE,Self-authored synthetic fixture; not WS/T content
+urn:clinmesh:wst:ValueSet:billing-unit,urn:clinmesh:wst:billing-unit,SESSION,次,ACTIVE,Self-authored synthetic fixture; not WS/T content

@@ -55,6 +55,7 @@ export function materializeScenarioPatientFhirHistory(input: {
                   code: resource.code.code,
                   display: resource.code.display,
                   ...(resource.code.system === undefined ? {} : { system: resource.code.system }),
+                  ...(resource.code.version === undefined ? {} : { version: resource.code.version }),
                 }],
               }),
           text: resource.code.display,
@@ -73,7 +74,11 @@ export function materializeScenarioPatientFhirHistory(input: {
         ? typeof resource.value.value === 'number'
           ? {
               valueQuantity: {
-                ...(resource.value.unit === undefined ? {} : { unit: resource.value.unit }),
+                ...(resource.value.unit === undefined ? {} : {
+                  code: resource.value.unit.code,
+                  system: resource.value.unit.system,
+                  unit: resource.value.unit.display,
+                }),
                 value: resource.value.value,
               },
             }
@@ -90,6 +95,7 @@ export function materializeScenarioPatientFhirHistory(input: {
                   code: resource.code.code,
                   display: resource.code.display,
                   ...(resource.code.system === undefined ? {} : { system: resource.code.system }),
+                  ...(resource.code.version === undefined ? {} : { version: resource.code.version }),
                 }],
               }),
           text: resource.code.display,
@@ -115,6 +121,11 @@ export function materializeScenarioPatientFhirHistory(input: {
       continue
     }
     if (resource.resourceType === 'MedicationRequest') {
+      const medicationCodings = 'sourceCodings' in resource.medication
+        ? resource.medication.sourceCodings
+        : resource.medication.code === undefined
+          ? []
+          : [resource.medication]
       created.push(input.fhir.create(input.context, {
         ...(resource.authoredOn === undefined ? {} : { authoredOn: resource.authoredOn }),
         ...encounter,
@@ -122,16 +133,15 @@ export function materializeScenarioPatientFhirHistory(input: {
         intent: resource.intent,
         medication: {
           concept: {
-            ...(resource.medication.code === undefined
+            ...(medicationCodings.length === 0
               ? {}
               : {
-                  coding: [{
-                    code: resource.medication.code,
-                    display: resource.medication.display,
-                    ...(resource.medication.system === undefined
-                      ? {}
-                      : { system: resource.medication.system }),
-                  }],
+                  coding: medicationCodings.map(coding => ({
+                    code: coding.code,
+                    display: coding.display,
+                    ...(coding.system === undefined ? {} : { system: coding.system }),
+                    ...(coding.version === undefined ? {} : { version: coding.version }),
+                  })),
                 }),
             text: resource.medication.display,
           },

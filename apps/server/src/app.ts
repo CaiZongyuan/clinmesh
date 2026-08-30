@@ -3,6 +3,7 @@ import type { HealthResponse } from '@clinmesh/contracts/health'
 import {
   acknowledgeLaboratoryReportRequestSchema,
   cancelLaboratoryRequestRequestSchema,
+  completeHospitalServiceRequestSchema,
   completeEncounterRequestSchema,
   confirmDiagnosisRequestSchema,
   confirmNoMedicationRequestSchema,
@@ -11,6 +12,7 @@ import {
   deletePrescriptionDraftRequestSchema,
   issueLaboratoryRequestRequestSchema,
   issuePrescriptionRequestSchema,
+  orderHospitalServiceRequestSchema,
   previewClinicalDocumentSignRequestSchema,
   reviseClinicalDocumentRequestSchema,
   saveClinicalDocumentDraftRequestSchema,
@@ -32,6 +34,8 @@ import {
 } from '@clinmesh/contracts/scenario'
 import type { IdentityService } from './application/identity-service.ts'
 import { IdentityError } from './application/identity-service.ts'
+import type { ReferenceDataService } from './application/reference-data-service.ts'
+import { ReferenceDataError } from './application/reference-data-service.ts'
 import {
   CommandConflictError,
   ExpectedVersionConflictError,
@@ -59,6 +63,7 @@ interface FhirRuntime {
 export interface CreateAppOptions {
   fhir?: FhirRuntime
   identity?: IdentityService
+  referenceData?: ReferenceDataService
   scenario?: ScenarioService
   scenarioData?: ScenarioDataService
   workflow?: WorkflowService
@@ -86,6 +91,7 @@ function apiErrorResponse(
   }
   if (
     error instanceof IdentityError
+    || error instanceof ReferenceDataError
     || error instanceof ScenarioDataError
     || error instanceof ScenarioError
     || error instanceof WorkflowError
@@ -235,6 +241,19 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         }))
       } catch (error) {
         return apiErrorResponse(context, error, 'The Scenario installation request is invalid')
+      }
+    })
+  }
+
+  if (options.identity !== undefined && options.referenceData !== undefined) {
+    const identity = options.identity
+    const referenceData = options.referenceData
+    app.get('/api/sim/v1/reference-data/releases', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(referenceData.list(session.actor))
+      } catch (error) {
+        return apiErrorResponse(context, error)
       }
     })
   }
@@ -490,6 +509,51 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(workflow.clinicalCatalog(await actor(context)))
       } catch (error) {
         return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/catalogs/services', async (context) => {
+      try {
+        const query = z.object({
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(20),
+          query: z.string().trim().min(1).max(200).optional(),
+        }).parse(context.req.query())
+        return context.json(workflow.serviceCatalog(await actor(context), {
+          page: query.page,
+          pageSize: query.pageSize,
+          ...(query.query === undefined ? {} : { query: query.query }),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/services/:serviceId/actions/order', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const request = orderHospitalServiceRequestSchema.parse(await context.req.json())
+        return context.json(workflow.orderHospitalService({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedVersions: request.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          serviceId: context.req.param('serviceId'),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error, 'The Hospital Service order request is invalid')
+      }
+    })
+    app.post('/api/his/v1/service-requests/:serviceRequestId/actions/complete', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const request = completeHospitalServiceRequestSchema.parse(await context.req.json())
+        return context.json(workflow.completeHospitalService({
+          context: await actor(context),
+          expectedVersions: request.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+          serviceRequestId: context.req.param('serviceRequestId'),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error, 'The Hospital Service completion request is invalid')
       }
     })
     app.get('/api/his/v1/patients', async (context) => {

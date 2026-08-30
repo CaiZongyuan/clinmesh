@@ -7,6 +7,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -37,20 +38,31 @@ public final class ProviderServer {
   private static final String SYNTHEA_COMMIT =
       "d9d07a6eef91ee5144293b42ab64224d84d124f8";
   private static final String GENERATION_CONFIG_HASH =
-      "b26dd4f34bd75c5328892e382f57899221e2581f5a03902bde09f0ec05f57ef9";
+      "81c9b79f5426b85244f42275f98d2f9e161a4c502980d9cde8d027cdda6ef103";
   private static final Path SYNTHEA_JAR = Path.of(
       System.getenv().getOrDefault("SYNTHEA_JAR_PATH", "/opt/synthea/synthea.jar"));
+  private static final Path SYNTHEA_CLASSPATH = Path.of(
+      System.getenv().getOrDefault(
+          "SYNTHEA_CLASSPATH_PATH", "/opt/cn-health/synthea-profile/classpath"));
   private static final Path SYNTHEA_CONFIG = Path.of(
       System.getenv().getOrDefault(
-          "SYNTHEA_CONFIG_PATH", "/opt/provider/synthea.properties"));
+          "SYNTHEA_CONFIG_PATH", "/opt/cn-health/synthea-profile/synthea.properties"));
+  private static final URI CN_HEALTH_LOCALIZER_ENDPOINT = URI.create(
+      System.getenv().getOrDefault(
+          "CN_HEALTH_LOCALIZER_URL", "http://cn-health-localizer:51879/v1/localize"));
   private static final int MAX_REQUEST_BYTES = 64 * 1024;
   private static final int MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
   private static final Gson GSON = new Gson();
+  private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
+      .connectTimeout(Duration.ofSeconds(5))
+      .build();
   private static final Map<String, List<String>> MODULE_PATTERNS = Map.of(
       "fever", List.of("sinusitis"),
+      "hypertension", List.of("hypertension"),
       "type-2-diabetes", List.of(
           "metabolic_syndrome_disease", "metabolic_syndrome_care"));
   private static final List<String> MODULES = MODULE_PATTERNS.keySet().stream().sorted().toList();
+  private static JsonObject verifiedLocalizationMetadata;
 
   private record GenerationRequest(
       List<String> modules,
@@ -97,12 +109,81 @@ public final class ProviderServer {
     System.out.printf("Synthea Provider %s listening on port %d%n", SYNTHEA_COMMIT, port);
   }
 
-  private static void validateRuntimeInputs() throws IOException {
+  private static void validateRuntimeInputs() throws Exception {
     if (!Files.isRegularFile(SYNTHEA_JAR) || !Files.isReadable(SYNTHEA_JAR)) {
       throw new IOException("SYNTHEA_JAR_PATH must reference a readable regular file");
     }
+    if (!Files.isDirectory(SYNTHEA_CLASSPATH) || !Files.isReadable(SYNTHEA_CLASSPATH)) {
+      throw new IOException("SYNTHEA_CLASSPATH_PATH must reference a readable directory");
+    }
     if (!Files.isRegularFile(SYNTHEA_CONFIG) || !Files.isReadable(SYNTHEA_CONFIG)) {
       throw new IOException("SYNTHEA_CONFIG_PATH must reference a readable regular file");
+    }
+    if (!generationConfigHash().equals(GENERATION_CONFIG_HASH)) {
+      throw new IOException("The mounted Synthea configuration does not match the Provider build");
+    }
+    verifiedLocalizationMetadata = loadLocalizationMetadata();
+  }
+
+  private static JsonObject localizationMetadata() throws IOException {
+    if (verifiedLocalizationMetadata == null) {
+      throw new IOException("cn-health localization metadata is unavailable");
+    }
+    return verifiedLocalizationMetadata;
+  }
+
+  private static JsonObject loadLocalizationMetadata() throws Exception {
+    URI healthEndpoint = CN_HEALTH_LOCALIZER_ENDPOINT.resolve("/health");
+    HttpRequest request = HttpRequest.newBuilder(healthEndpoint)
+        .timeout(Duration.ofSeconds(10))
+        .GET()
+        .build();
+    HttpResponse<InputStream> response = HTTP_CLIENT.send(
+        request, HttpResponse.BodyHandlers.ofInputStream());
+    JsonObject body;
+    try (InputStream stream = response.body()) {
+      body = parseBoundedJson(stream, MAX_REQUEST_BYTES, "cn-health health response");
+    }
+    if (response.statusCode() != 200
+        || !body.keySet().equals(Set.of("localization", "status"))
+        || !body.get("status").isJsonPrimitive()
+        || !body.get("status").getAsString().equals("ok")
+        || !body.get("localization").isJsonObject()) {
+      throw new IOException("cn-health localizer health response is invalid");
+    }
+    JsonObject metadata = body.getAsJsonObject("localization");
+    validateLocalizationMetadata(metadata);
+    return metadata.deepCopy();
+  }
+
+  private static void validateLocalizationMetadata(JsonObject metadata) throws IOException {
+    if (!metadata.keySet().equals(Set.of(
+        "dependencies", "identityAlgorithm", "profileContentHash", "profileId", "syntheaCommit"))) {
+      throw new IOException("cn-health localization metadata fields are invalid");
+    }
+    if (!metadata.get("identityAlgorithm").getAsString().equals("synthetic-identity-v1")
+        || !metadata.get("syntheaCommit").getAsString().equals(SYNTHEA_COMMIT)
+        || !metadata.get("profileContentHash").getAsString().matches("[0-9a-f]{64}")
+        || !metadata.get("profileId").getAsString()
+            .matches("synthea-cn@[A-Za-z0-9][A-Za-z0-9._-]*")) {
+      throw new IOException("cn-health localization profile identity is invalid");
+    }
+    JsonArray dependencies = metadata.getAsJsonArray("dependencies");
+    List<String> expectedDatasets = List.of("geography-cn", "names-cn", "population-cn");
+    if (dependencies.size() != expectedDatasets.size()) {
+      throw new IOException("cn-health localization dependency count is invalid");
+    }
+    for (int index = 0; index < dependencies.size(); index++) {
+      JsonObject dependency = dependencies.get(index).getAsJsonObject();
+      String datasetId = expectedDatasets.get(index);
+      if (!dependency.keySet().equals(Set.of(
+          "canonicalSha256", "datasetId", "releaseId", "sqliteSha256"))
+          || !dependency.get("datasetId").getAsString().equals(datasetId)
+          || !dependency.get("releaseId").getAsString().startsWith(datasetId + "@")
+          || !dependency.get("canonicalSha256").getAsString().matches("[0-9a-f]{64}")
+          || !dependency.get("sqliteSha256").getAsString().matches("[0-9a-f]{64}")) {
+        throw new IOException("cn-health localization dependency is invalid");
+      }
     }
   }
 
@@ -112,6 +193,7 @@ public final class ProviderServer {
       return;
     }
     JsonObject body = new JsonObject();
+    body.add("localization", localizationMetadata().deepCopy());
     body.addProperty("status", "ok");
     body.addProperty("syntheaCommit", SYNTHEA_COMMIT);
     sendJson(exchange, 200, body);
@@ -162,7 +244,7 @@ public final class ProviderServer {
     String name = requireString(root, "name", 1, 120, null);
     String timeZone = requireString(root, "timeZone", 1, 40, "Asia/Shanghai");
 
-    JsonArray moduleValues = requireArray(root, "modules", 1, 2);
+    JsonArray moduleValues = requireArray(root, "modules", 1, 3);
     List<String> modules = new ArrayList<>();
     for (JsonElement value : moduleValues) {
       if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
@@ -214,8 +296,9 @@ public final class ProviderServer {
       List<String> command = new ArrayList<>();
       command.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
       command.add("-Duser.timezone=" + request.timeZone);
-      command.add("-jar");
-      command.add(SYNTHEA_JAR.toString());
+      command.add("-cp");
+      command.add(SYNTHEA_CLASSPATH + File.pathSeparator + SYNTHEA_JAR);
+      command.add("App");
       command.add("-c");
       command.add(SYNTHEA_CONFIG.toString());
       command.add("-p");
@@ -239,7 +322,7 @@ public final class ProviderServer {
       command.add("--exporter.baseDirectory=" + outputDirectory);
       long historyDays = ChronoUnit.DAYS.between(request.start, request.end) + 1;
       command.add("--exporter.years_of_history=" + Math.max(1, (historyDays + 364) / 365));
-      command.add("Massachusetts");
+      command.add("中国");
 
       Process process = new ProcessBuilder(command)
           .directory(workingDirectory.toFile())
@@ -257,11 +340,14 @@ public final class ProviderServer {
       JsonArray bundles = new JsonArray();
       Path fhirDirectory = outputDirectory.resolve("fhir");
       if (!Files.isDirectory(fhirDirectory)) throw new IOException("FHIR output directory is missing");
+      int ordinal = 0;
       try (Stream<Path> paths = Files.list(fhirDirectory)) {
         for (Path path : paths.filter(Files::isRegularFile).sorted().toList()) {
           JsonElement value = JsonParser.parseString(Files.readString(path));
           if (isPatientBundle(value)) {
-            bundles.add(trimBundleToTimeRange(value.getAsJsonObject(), request));
+            JsonObject trimmed = trimBundleToTimeRange(value.getAsJsonObject(), request);
+            bundles.add(localizeBundle(trimmed, request, ordinal));
+            ordinal++;
           }
         }
       }
@@ -272,6 +358,7 @@ public final class ProviderServer {
       JsonObject metadata = new JsonObject();
       metadata.addProperty("clinicalSeed", request.clinicalSeed);
       metadata.addProperty("configHash", generationConfigHash());
+      metadata.add("localization", localizationMetadata().deepCopy());
       metadata.add("modules", GSON.toJsonTree(request.modules));
       metadata.addProperty("populationSeed", request.populationSeed);
       metadata.addProperty("syntheaCommit", SYNTHEA_COMMIT);
@@ -294,6 +381,79 @@ public final class ProviderServer {
         .filter(modules::contains)
         .flatMap(module -> MODULE_PATTERNS.get(module).stream())
         .toList();
+  }
+
+  private static JsonObject localizeBundle(
+      JsonObject bundle, GenerationRequest request, int ordinal) throws Exception {
+    JsonObject localizationRequest = new JsonObject();
+    localizationRequest.add("bundle", bundle);
+    localizationRequest.addProperty(
+        "seed", request.populationSeed + ":" + request.clinicalSeed + ":" + ordinal);
+    HttpRequest httpRequest = HttpRequest.newBuilder(CN_HEALTH_LOCALIZER_ENDPOINT)
+        .timeout(Duration.ofMinutes(2))
+        .header("content-type", "application/json")
+        .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(localizationRequest)))
+        .build();
+    HttpResponse<InputStream> response = HTTP_CLIENT.send(
+        httpRequest, HttpResponse.BodyHandlers.ofInputStream());
+    JsonObject body;
+    try (InputStream stream = response.body()) {
+      body = parseBoundedJson(stream, MAX_RESPONSE_BYTES, "cn-health localization response");
+    }
+    if (response.statusCode() != 200
+        || !body.keySet().equals(Set.of("bundle", "metadata"))
+        || !body.get("bundle").isJsonObject()
+        || !body.get("metadata").isJsonObject()) {
+      throw new IOException("cn-health localization response is invalid");
+    }
+    JsonObject metadata = body.getAsJsonObject("metadata");
+    validateLocalizationMetadata(metadata);
+    if (!metadata.equals(localizationMetadata())) {
+      throw new IOException("cn-health localization metadata changed after Provider startup");
+    }
+    JsonObject localized = body.getAsJsonObject("bundle");
+    validateLocalizedBundleTag(localized, metadata);
+    return localized;
+  }
+
+  private static void validateLocalizedBundleTag(JsonObject bundle, JsonObject metadata)
+      throws IOException {
+    if (!bundle.has("meta") || !bundle.get("meta").isJsonObject()) {
+      throw new IOException("Localized Bundle has no metadata");
+    }
+    JsonObject meta = bundle.getAsJsonObject("meta");
+    if (!meta.has("tag") || !meta.get("tag").isJsonArray()) {
+      throw new IOException("Localized Bundle has no profile tag");
+    }
+    int matchingTags = 0;
+    for (JsonElement value : meta.getAsJsonArray("tag")) {
+      if (!value.isJsonObject()) continue;
+      JsonObject tag = value.getAsJsonObject();
+      if (tag.has("system")
+          && tag.get("system").getAsString().equals("urn:cn-health-data:synthea-profile")) {
+        matchingTags++;
+        if (!tag.has("code") || !tag.has("display")
+            || !tag.get("code").getAsString().equals(metadata.get("profileId").getAsString())
+            || !tag.get("display").getAsString()
+                .equals(metadata.get("profileContentHash").getAsString())) {
+          throw new IOException("Localized Bundle profile tag does not match metadata");
+        }
+      }
+    }
+    if (matchingTags != 1) {
+      throw new IOException("Localized Bundle must contain one cn-health profile tag");
+    }
+  }
+
+  private static JsonObject parseBoundedJson(InputStream stream, int maximumBytes, String label)
+      throws IOException {
+    byte[] bytes = stream.readNBytes(maximumBytes + 1);
+    if (bytes.length > maximumBytes) throw new IOException(label + " is too large");
+    try {
+      return JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
+    } catch (RuntimeException error) {
+      throw new IOException(label + " is not a JSON object", error);
+    }
   }
 
   private static boolean isPatientBundle(JsonElement value) {
@@ -550,10 +710,10 @@ public final class ProviderServer {
   private static void smoke() throws Exception {
     int port = Integer.parseInt(System.getenv().getOrDefault("SYNTHEA_PROVIDER_PORT", "51878"));
     String body = """
-        {"modules":["fever"],"name":"Docker smoke","population":{"age":{"maximum":80,"minimum":20},"count":5,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1996-08-01"},"timeZone":"Asia/Shanghai"}
+        {"modules":["fever"],"name":"Docker smoke","population":{"age":{"maximum":80,"minimum":20},"count":10,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1996-08-01"},"timeZone":"Asia/Shanghai"}
         """.trim();
     JsonObject result = generateForSmoke(port, body, "Synthea Provider smoke request failed");
-    if (result.getAsJsonArray("bundles").size() != 5
+    if (result.getAsJsonArray("bundles").size() != 10
         || !result.getAsJsonObject("metadata").get("configHash").getAsString()
             .equals(GENERATION_CONFIG_HASH)
         || !result.getAsJsonObject("metadata").get("syntheaCommit").getAsString()
@@ -564,7 +724,7 @@ public final class ProviderServer {
     }
 
     String diabetesBody = """
-        {"modules":["type-2-diabetes"],"name":"Docker diabetes smoke","population":{"age":{"maximum":80,"minimum":50},"count":10,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1986-08-01"},"timeZone":"Asia/Shanghai"}
+        {"modules":["type-2-diabetes"],"name":"Docker diabetes smoke","population":{"age":{"maximum":80,"minimum":65},"count":10,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1986-08-01"},"timeZone":"Asia/Shanghai"}
         """.trim();
     JsonObject diabetesResult = generateForSmoke(
         port, diabetesBody, "Synthea Provider diabetes smoke request failed");
@@ -572,6 +732,17 @@ public final class ProviderServer {
         || !containsCode(diabetesResult.getAsJsonArray("bundles"),
             Set.of("44054006", "237602007"))) {
       throw new IOException("Synthea Provider diabetes smoke response is invalid");
+    }
+
+    String hypertensionBody = """
+        {"modules":["hypertension"],"name":"Docker hypertension smoke","population":{"age":{"maximum":80,"minimum":50},"count":10,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1986-08-01"},"timeZone":"Asia/Shanghai"}
+        """.trim();
+    JsonObject hypertensionResult = generateForSmoke(
+        port, hypertensionBody, "Synthea Provider hypertension smoke request failed");
+    if (hypertensionResult.getAsJsonArray("bundles").size() != 10
+        || !containsCode(hypertensionResult.getAsJsonArray("bundles"),
+            Set.of("59621000"))) {
+      throw new IOException("Synthea Provider hypertension smoke response is invalid");
     }
     System.out.println("Synthea Provider smoke passed");
   }

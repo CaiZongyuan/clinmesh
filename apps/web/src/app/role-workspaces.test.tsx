@@ -49,20 +49,24 @@ const doctorPresentation = {
 
 const structuredClinicalDocument = {
   assessment: '考虑急性上呼吸道感染，暂未见重症征象。',
+  auxiliaryExamination: '甲型流感抗原阳性，血常规未见危急值。',
   chiefComplaint: '发热伴咽痛两天。',
   disposition: '门诊随诊，完善检验后复评。',
   followUp: '持续高热或呼吸困难时立即复诊。',
   historyOfPresentIllness: '患者两天前出现发热和咽痛，最高体温 38.7 °C。',
   physicalExamination: '咽部充血，双肺呼吸音清，未闻及干湿啰音。',
+  priorMedicalHistory: '既往体健，无重大慢性病史。',
 }
 
 const revisedStructuredClinicalDocument = {
   assessment: '检验支持甲型流感，当前生命体征稳定。',
+  auxiliaryExamination: '甲型流感抗原阳性，复核血常规无危急值。',
   chiefComplaint: '发热伴咽痛两天。',
   disposition: '门诊抗病毒及对症治疗。',
   followUp: '三日内门诊复查；呼吸困难时立即就诊。',
   historyOfPresentIllness: '患者两天前出现发热和咽痛，甲型流感抗原阳性。',
   physicalExamination: '咽部充血，双肺呼吸音清，血氧饱和度 98%。',
+  priorMedicalHistory: '既往体健，无重大慢性病史。',
 }
 
 const virtualPatientPresentation = {
@@ -377,16 +381,45 @@ function stubScenarioDataWorkspace(options: {
         }],
         medications: [{
           active: true,
+          availableScopes: ['outpatient'],
           category: '解热镇痛药',
           code: 'ACETAMINOPHEN',
           defaultDose: '0.5 g',
           defaultFrequency: 'PRN',
           defaultRoute: '口服',
           dosageForm: '片剂',
+          drugConcept: {
+            code: 'CM-DRUG-ACETAMINOPHEN-500MG-ORAL-TABLET',
+            conceptId: 'drug-concept-acetaminophen-500mg-oral-tablet',
+            display: '对乙酰氨基酚 500 mg 口服片剂',
+            kind: 'drug-concept',
+            system: 'urn:clinmesh:reference:drug-concept',
+            version: 'clinmesh-drug-concepts-2026-08-28',
+          },
           id: 'medication-acetaminophen',
           name: '对乙酰氨基酚片',
           organizationId: 'hospital-synthetic-renhe',
           priceFen: 120,
+          product: {
+            approvalNumber: 'CM-APPROVAL-ACETAMINOPHEN',
+            brandName: null,
+            code: 'CM-NHSA-PRODUCT-ACETAMINOPHEN',
+            dosageForm: '片剂',
+            genericName: '对乙酰氨基酚片',
+            id: 'nhsa-medication-product:nhsa-medication-products-2026-08-07:CM-NHSA-PRODUCT-ACETAMINOPHEN',
+            manufacturer: '仁和仿真制药一厂',
+            packageDescription: '20片/盒',
+            strength: '500 mg',
+            system: 'urn:clinmesh:reference:nhsa-medication-product',
+            version: 'nhsa-medication-products-2026-08-07',
+          },
+          regulatoryVerification: {
+            evidenceUrl: 'https://www.nmpa.gov.cn/datasearch/home-index.html',
+            result: 'synthetic-match',
+            source: 'nmpa-manual-check',
+            verifiedAt: '2026-08-28T00:00:00+08:00',
+            verifiedFieldsHash: '59579c2a8c1dad78dcb4be3f510c969d3fb61d21a696fa290f748fc596b3f133',
+          },
           restriction: '注意总剂量。',
           status: 'active',
           unit: '片',
@@ -501,6 +534,44 @@ function stubScenarioDataWorkspace(options: {
         }],
       }],
       reproduction: {
+        catalogCompilation: {
+          blockers: [],
+          caseDefinitions: [{
+            contentHash: 'c'.repeat(64),
+            module: 'fever',
+            version: '1',
+          }],
+          catalogHash: 'd'.repeat(64),
+          compiler: { id: 'clinmesh-scenario-catalog-compiler', version: '1' },
+          counts: {
+            requirements: {
+              criticalTruth: 3,
+              explicitlyIgnored: 5,
+              historyOnly: 12,
+              workflowRequired: 9,
+            },
+            resolutions: {
+              ambiguous: 0,
+              hospitalNotEnabled: 7,
+              mapped: 17,
+              missing: 0,
+              notApplicable: 5,
+            },
+          },
+          entries: [],
+          hospitalBaselineHash: 'e'.repeat(64),
+          sourceInventory: {
+            generated: [{
+              contentHash: 'f'.repeat(64),
+              corpusHash: '1'.repeat(64),
+              module: 'fever',
+              patientCount: 10,
+            }],
+            staticContentHash: '2'.repeat(64),
+            syntheaCommit: '3'.repeat(40),
+          },
+          supported: true,
+        },
         clinicalSeed: 7331,
         generator: 'clinmesh-builtin-v1',
         modules: ['fever'],
@@ -589,19 +660,46 @@ function stubScenarioDataWorkspace(options: {
         workspaceId: 'workspace-demo',
       })
     }
+    if (url.pathname === '/api/sim/v1/reference-data/releases') {
+      return Response.json({
+        items: [{
+          conceptCount: 4,
+          contentHash: '0123456789abcdef'.repeat(4),
+          createdAt: '2026-08-27T00:00:00+08:00',
+          releaseId: 'clinmesh-builtin-reference-v1',
+          schemaVersion: '1',
+          sourceCount: 1,
+          sources: [{
+            acquisitionMethod: 'generated',
+            checksum: '0123456789abcdef'.repeat(4),
+            importDiagnostics: {
+              acceptedCount: 4,
+              rejectedCount: 0,
+              warnings: [],
+            },
+            licenseId: 'Apache-2.0',
+            recordCount: 4,
+            retrievedAt: '2026-08-27T00:00:00+08:00',
+            sourceId: 'clinmesh-builtin',
+            sourceUrl: 'https://github.com/CaiZongyuan/clinmesh/blob/main/apps/server/src/application/scenario-data/hospital-baseline.ts',
+            upstreamVersion: 'builtin-reference-v1',
+          }],
+          status: 'published',
+        }],
+      })
+    }
     if (url.pathname === '/api/sim/v1/scenario-providers') {
       return Response.json({
         items: [{
-          catalogItemId: 'diagnosis-acute-upper-respiratory-infection',
           available: true,
           maxPopulation: 10,
-          modules: ['fever', 'type-2-diabetes'],
+          modules: ['fever', 'type-2-diabetes', 'hypertension'],
           providerId: 'builtin',
           providerName: 'ClinMesh 内置生成器',
         }, {
           available: options.syntheaAvailable === true,
           maxPopulation: 10,
-          modules: ['fever', 'type-2-diabetes'],
+          modules: ['fever', 'type-2-diabetes', 'hypertension'],
           providerId: 'synthea',
           providerName: 'Synthea',
           ...(options.syntheaAvailable === true
@@ -1146,6 +1244,20 @@ describe('role workspaces', () => {
     expect(await screen.findByText('发热门诊样本')).toBeTruthy()
   })
 
+  it('shows the published Reference Data release through the administrator Web seam', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace()
+
+    render(<WebApp />)
+
+    expect(await screen.findByRole('heading', { name: '参考数据版本' })).toBeTruthy()
+    expect(await screen.findByText('clinmesh-builtin-reference-v1')).toBeTruthy()
+    expect(screen.getByText('0123456789ab...')).toBeTruthy()
+    expect(screen.getByText('1 个来源')).toBeTruthy()
+    expect(screen.getByText('4 个概念')).toBeTruthy()
+    expect(screen.getByText('clinmesh-builtin · builtin-reference-v1 · Apache-2.0')).toBeTruthy()
+  })
+
   it('searches and pages Scenario Datasets through the administrator Web seam', async () => {
     window.history.replaceState(null, '', '/scenario-data')
     const listRequests: URL[] = []
@@ -1381,7 +1493,7 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: '新增生理生成器' }))
     await changeText('生成器 ID 1', 'baseline-glucose')
     await changeText('生成器来源 1', '合成病例基线')
-    await changeText('生成器单位 1', 'mmol/L')
+    await changeText('UCUM 单位编码 1', 'mmol/L')
     await changeText('常量值 1', '6.1')
 
     await user.click(screen.getByRole('tab', { name: '问诊应答' }))
@@ -1452,7 +1564,12 @@ describe('role workspaces', () => {
             id: 'baseline-glucose',
             kind: 'constant',
             source: '合成病例基线',
-            unit: 'mmol/L',
+            unit: {
+              code: 'mmol/L',
+              display: 'mmol/L',
+              system: 'http://unitsofmeasure.org',
+              version: '2.2',
+            },
             value: 6.1,
           }],
           vitalSigns: {
@@ -1499,6 +1616,24 @@ describe('role workspaces', () => {
 
     expect(await screen.findByText('hiddenFacts[0].patientId: Hidden Fact references an unknown patient')).toBeTruthy()
     expect(screen.getByRole('button', { name: '安装运行' }).hasAttribute('disabled')).toBe(true)
+  })
+
+  it('shows compiled catalog coverage in the Dataset editor', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace()
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await openAdvancedCaseAuthoring(user)
+    await user.click(await screen.findByRole('button', { name: '生成数据' }))
+    await user.click(await screen.findByRole('button', { name: '编辑 发热门诊样本' }))
+
+    expect(await screen.findByRole('heading', { name: '目录覆盖' })).toBeTruthy()
+    expect(screen.getByText('可安装')).toBeTruthy()
+    expect(screen.getByText('关键真值').nextElementSibling?.textContent).toBe('3')
+    expect(screen.getByText('本院未启用').nextElementSibling?.textContent).toBe('7')
+    expect(screen.getByText('2'.repeat(64))).toBeTruthy()
   })
 
   it('reports a stale Dataset version without replacing the administrator draft', async () => {
@@ -1592,6 +1727,7 @@ describe('role workspaces', () => {
     const generationSheet = await screen.findByRole('dialog', { name: '生成患者' })
     expect(within(generationSheet).getByRole('button', { name: /Synthea/ }).getAttribute('aria-pressed')).toBe('true')
     expect(within(generationSheet).getByRole('spinbutton', { name: '患者人数' }).getAttribute('max')).toBe('10')
+    expect(within(generationSheet).getByRole('checkbox', { name: '高血压' })).toBeTruthy()
   })
 
   it('edits a persistent profile and starts its outpatient visit', async () => {
@@ -1653,7 +1789,7 @@ describe('role workspaces', () => {
     expect(screen.getByText('映射完整')).toBeTruthy()
   })
 
-  it('submits a diabetes-only Synthea population while keeping one module selected', async () => {
+  it('submits a hypertension-only Synthea population while keeping one module selected', async () => {
     window.history.replaceState(null, '', '/scenario-data')
     let submittedRequest: ScenarioGenerationRequest | undefined
     stubScenarioDataWorkspace({
@@ -1671,12 +1807,19 @@ describe('role workspaces', () => {
     const fever = screen.getByRole('checkbox', { name: '发热门诊' })
     await user.click(fever)
     expect(fever.getAttribute('aria-checked')).toBe('true')
-    await user.click(screen.getByRole('checkbox', { name: '2 型糖尿病' }))
+    const diabetes = screen.getByRole('checkbox', { name: '2 型糖尿病' })
+    await user.click(diabetes)
+    const hypertension = screen.getByRole('checkbox', { name: '高血压' })
+    await user.click(hypertension)
     await user.click(fever)
     expect(fever.getAttribute('aria-checked')).toBe('false')
+    await user.click(diabetes)
+    expect(hypertension.getAttribute('aria-checked')).toBe('true')
+    await user.click(hypertension)
+    expect(hypertension.getAttribute('aria-checked')).toBe('true')
     await user.click(screen.getByRole('button', { name: '生成数据' }))
 
-    await waitFor(() => expect(submittedRequest?.modules).toEqual(['type-2-diabetes']))
+    await waitFor(() => expect(submittedRequest?.modules).toEqual(['hypertension']))
   })
 
   it('uses clinical operator language for the registrar empty state', async () => {
@@ -1808,6 +1951,7 @@ describe('role workspaces', () => {
   })
 
   it('exposes patient-search loading and service errors at the Web seam', async () => {
+    window.history.replaceState(null, '', '/registration')
     let resolvePatientSearch: (response: Response) => void = () => undefined
     const patientSearch = new Promise<Response>((resolve) => {
       resolvePatientSearch = resolve
@@ -1842,6 +1986,7 @@ describe('role workspaces', () => {
   })
 
   it('distinguishes a registration conflict from a generic operation failure', async () => {
+    window.history.replaceState(null, '', '/registration')
     const patient = {
       birthDate: '1990-05-10',
       gender: 'male',
@@ -1907,6 +2052,7 @@ describe('role workspaces', () => {
   })
 
   it('keeps a long Chinese patient name available through search and selection', async () => {
+    window.history.replaceState(null, '', '/registration')
     const longName = '合成患者用于验证窄视口下超长中文姓名仍可被完整识别与选择'
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), 'http://localhost')
@@ -2161,7 +2307,7 @@ describe('role workspaces', () => {
     })
     expect(screen.getByText('发热、咽痛 1 天。')).toBeTruthy()
     await user.click(candidate)
-    expect(screen.getByText('昨日傍晚开始发热，最高 38.7 °C，伴咽痛。')).toBeTruthy()
+    expect(screen.getByText(/昨日傍晚开始发热，最高 38\.7 °C，伴咽痛。/)).toBeTruthy()
     expect(screen.getByText('38.6')).toBeTruthy()
     expect(screen.getByText('118/76')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '开始接诊' }))
@@ -2170,6 +2316,7 @@ describe('role workspaces', () => {
   })
 
   it('refreshes Virtual Patients and the queue before opening the started case', async () => {
+    window.history.replaceState(null, '', '/consultation')
     let started = false
     let queueRequests = 0
     let virtualPatientRequests = 0
@@ -2282,8 +2429,8 @@ describe('role workspaces', () => {
 
     const firstVisitForm = await screen.findByRole('form', { name: '首诊记录' })
     expect(within(firstVisitForm).getByLabelText('现病史')).toBeTruthy()
-    expect(screen.getByText('CM-SYN-CANDIDATE-001')).toBeTruthy()
-    expect(screen.getByText('昨日傍晚开始发热，最高 38.7 °C，伴咽痛。')).toBeTruthy()
+    expect(screen.getByText(/CM-SYN-CANDIDATE-001/)).toBeTruthy()
+    expect(screen.getByText('主诉：发热、咽痛 1 天。')).toBeTruthy()
     expect(virtualPatientRequests).toBeGreaterThanOrEqual(2)
     expect(queueRequests).toBeGreaterThanOrEqual(2)
   })
@@ -2543,6 +2690,7 @@ describe('role workspaces', () => {
   })
 
   it('saves and issues the selected controlled laboratory request', async () => {
+    window.history.replaceState(null, '', '/consultation')
     let draft: { catalogItemId: string; indicationCode: string } | undefined
     let draftVersion = 0
     let request: {
@@ -2690,11 +2838,12 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
+    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
     const laboratoryItem = await screen.findByRole('combobox', { name: '检验项目' })
     await user.click(laboratoryItem)
     expect(await screen.findByRole('option', { name: '血常规 · ¥25.00' })).toBeTruthy()
     expect(screen.getByRole('option', { name: 'C 反应蛋白 · ¥43.00' })).toBeTruthy()
-    expect(screen.queryByRole('option', { name: '发热检验组合 · ¥68.00' })).toBeNull()
+    expect(screen.getByRole('option', { name: '发热检验组合 · ¥68.00' })).toBeTruthy()
     await user.click(screen.getByRole('option', { name: 'C 反应蛋白 · ¥43.00' }))
     await user.click(screen.getByRole('button', { name: '保存检查草稿' }))
 
@@ -2706,6 +2855,7 @@ describe('role workspaces', () => {
   })
 
   it('shows laboratory request statuses and exposes only valid correction actions', async () => {
+    window.history.replaceState(null, '', '/consultation')
     let cancellationRequests = 0
     let draftDeletionRequests = 0
     let draft: { catalogItemId: string; indicationCode: string } | undefined = {
@@ -3020,6 +3170,7 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
+    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
     expect(await screen.findByText('已开具')).toBeTruthy()
     for (const label of ['已受理', '执行中', '已报告', '已取消']) {
       expect(screen.getByText(label)).toBeTruthy()
@@ -3056,12 +3207,14 @@ describe('role workspaces', () => {
 
     await user.click(within(cancelDialog).getByRole('button', { name: '取消' }))
     await user.click(screen.getByRole('listitem', { name: '选择病例 合成候选患者周远' }))
+    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
     expect(await screen.findByText('当前无正式检查申请')).toBeTruthy()
     expect(screen.queryByText(
       '检查申请当前状态为“已受理”，版本为 2。请刷新后重新确认。',
     )).toBeNull()
 
     await user.click(screen.getByRole('listitem', { name: '选择病例 合成候选患者林晓' }))
+    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
     const retryCancelButton = (await screen.findAllByRole('button', { name: /取消检查申请/ }))[0]
     if (retryCancelButton === undefined) throw new Error('Cancellable request was not restored')
     await user.click(retryCancelButton)
@@ -3080,14 +3233,17 @@ describe('role workspaces', () => {
     await waitFor(() => expect(screen.queryByText('检查草稿已保存')).toBeNull())
 
     await user.click(screen.getByRole('listitem', { name: '选择病例 合成候选患者周远' }))
+    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
     expect(await screen.findByText('当前无正式检查申请')).toBeTruthy()
     expect(screen.queryByText('检查草稿已删除')).toBeNull()
   })
 
   it('keeps polling an in-progress laboratory request until its report arrives', async () => {
+    window.history.replaceState(null, '', '/consultation')
     const polling = stubLaboratoryReportPolling(true)
     render(<WebApp />)
 
+    await userEvent.setup().click(await screen.findByRole('tab', { name: '检验检查' }))
     expect(await screen.findByText('等待检验结果')).toBeTruthy()
     polling.makeReportReady()
     await waitFor(() => {
@@ -3098,9 +3254,11 @@ describe('role workspaces', () => {
   })
 
   it('does not poll an in-progress request when Scenario reporting is unsupported', async () => {
+    window.history.replaceState(null, '', '/consultation')
     const polling = stubLaboratoryReportPolling(false)
     render(<WebApp />)
 
+    await userEvent.setup().click(await screen.findByRole('tab', { name: '检验检查' }))
     expect(await screen.findByText('等待检验结果')).toBeTruthy()
     const initialDetailRequests = polling.detailRequestCount()
     await act(async () => new Promise(resolve => setTimeout(resolve, 1_700)))
@@ -3109,6 +3267,7 @@ describe('role workspaces', () => {
   })
 
   it('starts the first visit, saves a CAS draft, and issues the laboratory order', async () => {
+    window.history.replaceState(null, '', '/consultation')
     let status: 'awaiting-doctor' | 'awaiting-lab-payment' | 'first-visit' = 'awaiting-doctor'
     let draftVersion = 0
     const patient = {
@@ -3242,22 +3401,26 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    expect(await screen.findByText('门诊医生 · 合成门诊医生')).toBeTruthy()
+    expect(await screen.findByText('门诊医生 · 门诊医生')).toBeTruthy()
     expect(await screen.findByRole('listitem', { name: '选择病例 合成患者周明' })).toBeTruthy()
-    expect((await screen.findByText('脉搏（次/分）')).nextElementSibling?.textContent).toBe('102')
-    expect(screen.getByText('呼吸（次/分）').nextElementSibling?.textContent).toBe('20')
-    expect(screen.getByText('血压（mmHg）').nextElementSibling?.textContent).toBe('118/76')
-    expect(screen.getByText('血氧饱和度（%）').nextElementSibling?.textContent).toBe('98')
+    const caseDetail = await screen.findByRole('region', { name: '病例详情' })
+    expect(within(caseDetail).getByText('102 次/分')).toBeTruthy()
+    expect(within(caseDetail).getByText('20 次/分')).toBeTruthy()
+    expect(within(caseDetail).getByText('118/76 mmHg')).toBeTruthy()
+    expect(within(caseDetail).getByText('98%')).toBeTruthy()
     await user.click(await screen.findByRole('button', { name: '开始首诊' }))
+    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
     expect((await screen.findByRole('combobox', { name: '检验项目' })).textContent).toContain('发热检验组合 · ¥68.00')
     expect(screen.getByRole('combobox', { name: '检验适应证' }).textContent).toContain('发热')
 
+    await user.click(screen.getByRole('tab', { name: '病历记录' }))
     const firstVisitForm = await screen.findByRole('form', { name: '首诊记录' })
     await user.type(within(firstVisitForm).getByLabelText('现病史'), '两天前出现发热，伴咽痛。')
     await user.type(within(firstVisitForm).getByLabelText('首诊评估'), '急性发热，待检验明确病原')
     await user.click(within(firstVisitForm).getByRole('button', { name: '保存首诊草稿' }))
     expect(await screen.findByText('草稿已保存')).toBeTruthy()
 
+    await user.click(screen.getByRole('tab', { name: '检验检查' }))
     await user.click(screen.getByRole('button', { name: '签发检验申请' }))
     expect(await screen.findByText('检验申请已签发')).toBeTruthy()
     expect(screen.getByText(/¥68\.00/)).toBeTruthy()
@@ -3475,6 +3638,7 @@ describe('role workspaces', () => {
   })
 
   it('reviews the LIS report and saves versioned revisit clinical drafts', async () => {
+    window.history.replaceState(null, '', '/consultation')
     let status: 'awaiting-revisit' | 'revisit-draft' = 'awaiting-revisit'
     let draftSaved = false
     const patient = {
@@ -3644,11 +3808,14 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
+    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
     expect(await screen.findByText('甲型流感抗原')).toBeTruthy()
     expect(screen.getAllByText('阳性')).toHaveLength(2)
     expect(screen.getByText(/6\.8.*×10⁹\/L/)).toBeTruthy()
     expect(screen.getByText('磷酸奥司他韦过敏')).toBeTruthy()
+    await user.click(screen.getByRole('tab', { name: '病历记录' }))
     await user.click(screen.getByRole('button', { name: '开始复诊' }))
+    await user.click(await screen.findByRole('tab', { name: '处方' }))
     expect((await screen.findByRole('combobox', { name: '药品' })).textContent).toContain('磷酸奥司他韦胶囊')
     expect(screen.getByRole('combobox', { name: '剂量' }).textContent).toContain('75 mg')
     expect(screen.getByRole('combobox', { name: '频次' }).textContent).toContain('BID')
@@ -3928,7 +4095,7 @@ describe('role workspaces', () => {
 
     expect(await screen.findByRole('tab', { name: '病历记录' })).toBeTruthy()
     expect(screen.getAllByRole('img', { name: '王晓明 患者' }).length).toBeGreaterThan(0)
-    expect(screen.getByRole('complementary', { name: '诊疗对话' })).toBeTruthy()
+    expect(await screen.findByRole('complementary', { name: '诊疗对话' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '收起右侧边栏' }).getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByRole('heading', { name: '过敏提示' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '向患者提问' })).toBeTruthy()
@@ -3944,6 +4111,7 @@ describe('role workspaces', () => {
   })
 
   it('completes an eligible Encounter from the patient header and converts it to read-only', async () => {
+    window.history.replaceState(null, '', '/consultation')
     const patient = {
       birthDate: '1990-05-10',
       gender: 'male',
@@ -4122,7 +4290,7 @@ describe('role workspaces', () => {
 
     expect(await screen.findByRole('complementary', { name: '诊疗队列' })).toBeTruthy()
     expect(screen.getByRole('region', { name: '病例详情' })).toBeTruthy()
-    expect(screen.getByRole('complementary', { name: '诊疗对话' })).toBeTruthy()
+    expect(await screen.findByRole('complementary', { name: '诊疗对话' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '病历记录' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '诊断' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '处方' })).toBeTruthy()
@@ -4137,12 +4305,14 @@ describe('role workspaces', () => {
     expect(screen.queryByRole('button', { name: '提交病历修订' })).toBeNull()
     expect(screen.queryByRole('button', { name: '撤回处方' })).toBeNull()
     expect(screen.queryByRole('button', { name: '确认完诊' })).toBeNull()
+    await user.click(screen.getByRole('tab', { name: '处方' }))
     expect(screen.getByText('已确认无需用药')).toBeTruthy()
     await user.click(screen.getByRole('tab', { name: '病历记录' }))
     expect(screen.getByRole('heading', { name: '签署历史' })).toBeTruthy()
   })
 
   it('shows the server diagnosis primary validation error in the doctor workspace', async () => {
+    window.history.replaceState(null, '', '/consultation')
     const patient = {
       birthDate: '1990-05-10',
       gender: 'male',
@@ -4152,7 +4322,7 @@ describe('role workspaces', () => {
       synthetic: true,
       versionId: '1',
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
@@ -4215,7 +4385,22 @@ describe('role workspaces', () => {
           taskVersion: '2',
         })
       }
+      if (url.pathname === '/api/his/v1/encounters/encounter-diagnosis-validation/diagnosis/draft') {
+        expect(init?.method).toBe('PUT')
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedVersions: { 'Encounter/encounter-diagnosis-validation': '6' },
+          input: {
+            entries: [{ catalogItemId: 'diagnosis-influenza', role: 'primary' }],
+            expectedDraftVersion: 1,
+          },
+        })
+        return Response.json(commandResponse({ draftVersion: 2 }))
+      }
       if (url.pathname === '/api/his/v1/encounters/encounter-diagnosis-validation/diagnosis/actions/confirm') {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedVersions: { 'Encounter/encounter-diagnosis-validation': '6' },
+          input: { expectedDraftVersion: 2 },
+        })
         return Response.json({
           error: {
             code: 'DIAGNOSIS_PRIMARY_REQUIRED',
@@ -4228,11 +4413,13 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
+    await user.click(await screen.findByRole('tab', { name: '诊断' }))
     await user.click(await screen.findByRole('button', { name: '确认诊断' }))
     expect(await screen.findByText('必须且只能选择一个主诊断。')).toBeTruthy()
   })
 
   it('saves and issues a controlled prescription, withdraws it, and confirms no medication', async () => {
+    window.history.replaceState(null, '', '/consultation')
     const patient = {
       birthDate: '1990-05-10',
       gender: 'male',
@@ -4434,6 +4621,7 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
+    await user.click(await screen.findByRole('tab', { name: '处方' }))
     expect((await screen.findByRole('combobox', { name: '药品' })).textContent).toContain('磷酸奥司他韦胶囊')
     expect(screen.getByRole('combobox', { name: '剂量' }).textContent).toContain('75 mg')
     expect(screen.getByRole('combobox', { name: '频次' }).textContent).toContain('BID')
@@ -4469,6 +4657,7 @@ describe('role workspaces', () => {
   })
 
   it('keeps the prescription draft visible when controlled issuance is rejected', async () => {
+    window.history.replaceState(null, '', '/consultation')
     const patient = {
       birthDate: '1990-05-10',
       gender: 'male',
@@ -4566,6 +4755,7 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
+    await user.click(await screen.findByRole('tab', { name: '处方' }))
     await user.click(await screen.findByRole('button', { name: '正式开具处方' }))
     expect(await screen.findByText('当前诊断、过敏信息、目录或处方状态不允许正式开具，请检查后重试。')).toBeTruthy()
     expect(screen.getByRole('combobox', { name: '药品' }).textContent).toContain('磷酸奥司他韦胶囊')
@@ -4576,6 +4766,7 @@ describe('role workspaces', () => {
   })
 
   it('previews clinical signing and completes the Encounter before medication payment', async () => {
+    window.history.replaceState(null, '', '/consultation')
     let signed = false
     const patient = {
       birthDate: '1990-05-10',
@@ -4755,6 +4946,7 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
+    await user.click(await screen.findByRole('tab', { name: '诊断' }))
     await user.click(await screen.findByRole('button', { name: '预览签署' }))
     expect(await screen.findByRole('heading', { name: '签署预览' })).toBeTruthy()
     expect(screen.getByText('J10.1 · 甲型流感')).toBeTruthy()
@@ -4766,6 +4958,7 @@ describe('role workspaces', () => {
   })
 
   it('recovers a versioned structured Clinical Document draft and signs it without completing the Encounter', async () => {
+    window.history.replaceState(null, '', '/consultation')
     let document = structuredClinicalDocument
     let documentVersion = 1
     let saveAttempt = 0
@@ -4833,6 +5026,7 @@ describe('role workspaces', () => {
               signedAt: '2026-08-24T09:00:00+08:00',
             }] : [],
           },
+          consultation: { questions: [], records: [], version: 1 },
           encounter: { id: 'encounter-1', status: 'in-progress', versionId: '1' },
           patient,
           presentation: doctorPresentation,
@@ -4861,6 +5055,10 @@ describe('role workspaces', () => {
           return conflictingSave
         }
         expect(body.input.expectedDraftVersion).toBe(2)
+        expect(body.input.document).toEqual({
+          ...structuredClinicalDocument,
+          assessment: '复核并合并并发编辑后的最终评估。',
+        })
         document = body.input.document
         documentVersion = 3
         return Response.json(commandResponse({ caseId: 'case-1', draftVersion: 3 }))
@@ -4924,8 +5122,8 @@ describe('role workspaces', () => {
 
     await user.clear(within(recoveredForm).getByLabelText('评估'))
     await user.type(within(recoveredForm).getByLabelText('评估'), '本工作站准备保存的评估。')
-    await user.click(within(recoveredForm).getByRole('button', { name: '保存病历草稿' }))
-    const pendingButton = await within(recoveredForm).findByRole('button', { name: '正在保存病历' })
+    await user.click(within(recoveredForm).getByRole('button', { name: '签署病历' }))
+    const pendingButton = await within(recoveredForm).findByRole('button', { name: '正在准备签署' })
     expect((pendingButton as HTMLButtonElement).disabled).toBe(true)
 
     await act(async () => {
@@ -4943,22 +5141,20 @@ describe('role workspaces', () => {
 
     await user.clear(within(refreshedForm).getByLabelText('评估'))
     await user.type(within(refreshedForm).getByLabelText('评估'), '复核并合并并发编辑后的最终评估。')
-    await user.click(within(refreshedForm).getByRole('button', { name: '保存病历草稿' }))
-    expect(await screen.findByText('病历草稿已保存')).toBeTruthy()
+    await user.click(within(refreshedForm).getByRole('button', { name: '签署病历' }))
+    const previewDialog = await screen.findByRole('alertdialog', { name: '确认签署病历' })
+    expect(within(previewDialog).getByText('复核并合并并发编辑后的最终评估。')).toBeTruthy()
+    await user.click(within(previewDialog).getByRole('button', { name: '确认签署病历' }))
 
-    await user.click(screen.getByRole('button', { name: '预览病历签署' }))
-    const previewHeading = await screen.findByRole('heading', { name: '病历签署预览' })
-    expect(within(previewHeading.parentElement as HTMLElement)
-      .getByText('复核并合并并发编辑后的最终评估。')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '确认签署病历' }))
-
-    expect(await screen.findByText('病历已签署')).toBeTruthy()
-    expect(screen.getByText('Encounter 仍为诊疗中')).toBeTruthy()
+    const signedAlert = (await screen.findByText('Encounter 仍为诊疗中')).closest('[role="alert"]')
+    expect(signedAlert).not.toBeNull()
+    expect(within(signedAlert as HTMLElement).getByText('病历已签署')).toBeTruthy()
     expect(screen.getByRole('heading', { name: '签署历史' })).toBeTruthy()
     expect(screen.getByText('版本 1')).toBeTruthy()
   })
 
   it('binds a Clinical Document revision confirmation to its previewed source version', async () => {
+    window.history.replaceState(null, '', '/consultation')
     let caseDetailRequests = 0
     let clinicalRevisionRequest: unknown
     let clinicalRevisionPath: string | undefined
@@ -5028,6 +5224,7 @@ describe('role workspaces', () => {
           allergies: [],
           caseId: 'case-1',
           clinicalDocument: { signed: signedDocuments },
+          consultation: { questions: [], records: [], version: 1 },
           encounter: { id: 'encounter-1', status: 'in-progress', versionId: '5' },
           patient,
           presentation: doctorPresentation,
@@ -5082,7 +5279,7 @@ describe('role workspaces', () => {
     expect(screen.getByText(/检验结果回报后修订诊断与处置。/)).toBeTruthy()
     expect(screen.getAllByRole('button', { name: '提交病历修订' })).toHaveLength(1)
 
-    const revisionForm = screen.getByRole('form', { name: '修订病历版本 2' })
+    const revisionForm = screen.getByRole('form', { name: '修订病历版本' })
     await user.clear(within(revisionForm).getByLabelText('评估'))
     await user.type(within(revisionForm).getByLabelText('评估'), '修订后明确为甲型流感轻症。')
     await user.type(within(revisionForm).getByLabelText('修订原因'), '补充复诊时限和危险征象。')
@@ -5135,6 +5332,7 @@ describe('role workspaces', () => {
   })
 
   it('searches completed cases with controlled patient, date, and diagnosis filters and shows the empty state', async () => {
+    window.history.replaceState(null, '', '/consultation')
     const listRequests: URL[] = []
     stubDoctorCompletedCaseLibrary({
       list: { items: [], ...pagination(0) },
@@ -5166,6 +5364,7 @@ describe('role workspaces', () => {
   })
 
   it('opens long completed case facts and preserves the server timeline in read-only details', async () => {
+    window.history.replaceState(null, '', '/consultation')
     const longPatientName = '合成患者欧阳晨曦阿依古丽娜扎诸葛明远司马清和上官云舒测试长姓名'
     const longAssessment = '患者持续高热伴咽痛，结合流行病学接触史、甲型流感抗原结果及完整查体，当前生命体征稳定，未见呼吸衰竭或其他重症危险征象；已详细告知居家隔离、补液、体温监测、复诊时限与需要立即就医的危险表现。'
     const patient = {
@@ -5339,6 +5538,7 @@ describe('role workspaces', () => {
   })
 
   it('withdraws a paid undispensed prescription from its completed case', async () => {
+    window.history.replaceState(null, '', '/consultation')
     const patient = {
       birthDate: '1988-03-16',
       gender: 'female',
@@ -5484,6 +5684,7 @@ describe('role workspaces', () => {
     await waitFor(() => {
       expect(document.activeElement?.id).toBe('encounter-completion-target-medication-conclusion')
     })
+    await user.click(await screen.findByRole('tab', { name: '处方' }))
     await user.click(await screen.findByRole('button', { name: '撤回处方' }))
     const dialog = await screen.findByRole('alertdialog', { name: '确认撤回处方' })
     expect(within(dialog).getByText(prescription.number)).toBeTruthy()
@@ -5503,6 +5704,7 @@ describe('role workspaces', () => {
   })
 
   it('keeps legacy completed facts readable without unsupported correction navigation', async () => {
+    window.history.replaceState(null, '', '/consultation')
     const patient = {
       birthDate: '1988-03-16',
       gender: 'female',
@@ -5616,6 +5818,7 @@ describe('role workspaces', () => {
   })
 
   it('completes all five controlled clinical correction classes and shows the final timeline', async () => {
+    window.history.replaceState(null, '', '/consultation')
     let clinicalRevisionRequest: unknown
     let laboratoryCancellationRequest: unknown
     let laboratoryCorrectionRequest: unknown
@@ -6176,6 +6379,7 @@ describe('role workspaces', () => {
       </QueryClientProvider>,
     )
 
+    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
     await user.click(await screen.findByRole('button', { name: '删除检查草稿' }))
     const laboratoryDraftDialog = await screen.findByRole('alertdialog', {
       name: '确认删除检查草稿',
@@ -6203,6 +6407,7 @@ describe('role workspaces', () => {
       input: { expectedRequestVersion: 1, reasonCode: 'no-longer-needed' },
     })
 
+    await user.click(screen.getByRole('tab', { name: '处方' }))
     await user.click(screen.getByRole('button', { name: '删除处方草稿' }))
     const prescriptionDraftDialog = await screen.findByRole('alertdialog', {
       name: '确认删除处方草稿',
@@ -6253,7 +6458,7 @@ describe('role workspaces', () => {
       expect(document.activeElement?.id).toBe('encounter-completion-target-clinical-document')
     })
     expect(screen.getByRole('tab', { name: '当前诊疗' }).getAttribute('aria-selected')).toBe('true')
-    const revisionForm = await screen.findByRole('form', { name: '修订病历版本 1' })
+    const revisionForm = await screen.findByRole('form', { name: '修订病历版本' })
     await user.type(within(revisionForm).getByLabelText('修订原因'), '补充检验复核后的处置说明。')
     await user.click(within(revisionForm).getByRole('button', { name: '提交病历修订' }))
     const revisionConfirmation = await screen.findByRole('alertdialog', {

@@ -3,21 +3,44 @@ import type {
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
 } from '@clinmesh/contracts/scenario'
+import {
+  scenarioModuleSchema,
+  scenarioModules,
+  syntheaCnLocalizationProvenanceSchema,
+} from '@clinmesh/contracts/scenario'
+import type {
+  ReferenceConcept,
+  ReferenceMedicalService,
+  ReferenceMedicationProduct,
+  ReferenceValueSetEntry,
+} from '@clinmesh/contracts/reference-data'
 import { z } from 'zod'
 import {
+  generatedScenarioSimulatorRules,
   ScenarioGenerationProviderError,
   sourceArtifactHash,
   type ScenarioGenerationProvider,
   type SourcePatientCorpus,
 } from '../../application/scenario-data/provider.ts'
 import { createHospitalBaseline } from '../../application/scenario-data/hospital-baseline.ts'
+import type { ReferenceHospitalSelection } from '../../application/reference-hospital-selection.ts'
+import { compileScenarioCatalog } from '../../application/scenario-data/scenario-catalog-compiler.ts'
+import { syntheticNhsaMedicationProductSnapshot } from '../../application/scenario-data/medication-product-snapshot.ts'
+import {
+  syntheticNhcMedicalServiceSnapshot,
+  syntheticWstValueSetSnapshot,
+} from '../../application/scenario-data/medical-service-snapshot.ts'
 import {
   compileSyntheaR4Bundle,
   syntheaR4ResourceTypes,
 } from '../../application/scenario-data/synthea-case-truth-compiler.ts'
+import {
+  localizedSyntheaPatientIdentity,
+  SyntheaLocalizationValidationError,
+} from '../../application/scenario-data/synthea-localized-identity.ts'
 
 const SYNTHEA_COMMIT = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
-const SYNTHEA_CONFIG_HASH = 'b26dd4f34bd75c5328892e382f57899221e2581f5a03902bde09f0ec05f57ef9'
+const SYNTHEA_CONFIG_HASH = '81c9b79f5426b85244f42275f98d2f9e161a4c502980d9cde8d027cdda6ef103'
 const allowedR4ResourceTypes = syntheaR4ResourceTypes
 
 const r4ResourceSchema = z.object({
@@ -39,7 +62,8 @@ const providerResponseSchema = z.object({
   metadata: z.object({
     clinicalSeed: z.number().int(),
     configHash: z.string().regex(/^[a-f0-9]{64}$/),
-    modules: z.array(z.enum(['fever', 'type-2-diabetes'])).min(1),
+    localization: syntheaCnLocalizationProvenanceSchema,
+    modules: z.array(scenarioModuleSchema).min(1),
     populationSeed: z.number().int(),
     syntheaCommit: z.literal(SYNTHEA_COMMIT),
     timeRange: z.object({ end: z.iso.date(), start: z.iso.date() }).strict(),
@@ -79,6 +103,7 @@ const patientOwnedReferenceFields: Partial<Record<
 export type SyntheaProviderErrorCode =
   | 'FHIR_R4_BUNDLE_INVALID'
   | 'FHIR_R4_HISTORY_OUT_OF_RANGE'
+  | 'FHIR_R4_LOCALIZATION_INVALID'
   | 'FHIR_R4_PATIENT_OWNERSHIP_INVALID'
   | 'FHIR_R4_REFERENCE_INVALID'
   | 'FHIR_R4_RESOURCE_NOT_ALLOWED'
@@ -257,6 +282,7 @@ function assertReproductionMetadata(
   if (
     metadata.clinicalSeed !== request.seeds.clinical
     || metadata.configHash !== SYNTHEA_CONFIG_HASH
+    || metadata.localization.syntheaCommit !== metadata.syntheaCommit
     || metadata.populationSeed !== request.seeds.population
     || metadata.timeZone !== request.timeZone
     || metadata.timeRange.start !== request.timeRange.start
@@ -275,13 +301,23 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
   readonly #endpoint: URL
   readonly #fetch: typeof fetch
   readonly #maxResponseBytes: number
+  readonly #medicalServices: readonly ReferenceMedicalService[]
+  readonly #medicationProducts: readonly ReferenceMedicationProduct[]
+  readonly #referenceSelection: ReferenceHospitalSelection | undefined
+  readonly #referenceConcepts: readonly ReferenceConcept[]
   readonly #timeoutMs: number
+  readonly #valueSetEntries: readonly ReferenceValueSetEntry[]
 
   constructor(options: {
     baseUrl: string
     fetch?: typeof fetch
     maxResponseBytes?: number
+    medicalServices?: readonly ReferenceMedicalService[]
+    medicationProducts?: readonly ReferenceMedicationProduct[]
+    referenceSelection?: ReferenceHospitalSelection
+    referenceConcepts?: readonly ReferenceConcept[]
     timeoutMs?: number
+    valueSetEntries?: readonly ReferenceValueSetEntry[]
   }) {
     const endpoint = new URL(options.baseUrl)
     if (!['http:', 'https:'].includes(endpoint.protocol)) {
@@ -293,14 +329,19 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
     this.#endpoint = endpoint
     this.#fetch = options.fetch ?? globalThis.fetch
     this.#maxResponseBytes = options.maxResponseBytes ?? 64 * 1024 * 1024
+    this.#medicalServices = options.medicalServices ?? syntheticNhcMedicalServiceSnapshot
+    this.#medicationProducts = options.medicationProducts ?? syntheticNhsaMedicationProductSnapshot
+    this.#referenceSelection = options.referenceSelection
+    this.#referenceConcepts = options.referenceConcepts ?? []
     this.#timeoutMs = options.timeoutMs ?? 5 * 60 * 1_000
+    this.#valueSetEntries = options.valueSetEntries ?? syntheticWstValueSetSnapshot
   }
 
   async capabilities(): Promise<ScenarioProviderCapabilities> {
     return {
       available: true,
       maxPopulation: 10,
-      modules: ['fever', 'type-2-diabetes'],
+      modules: [...scenarioModules],
       providerId: 'synthea',
       providerName: 'Synthea',
     }
@@ -346,6 +387,15 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
     } catch (error) {
       if (error instanceof SyntheaProviderError) throw error
       if (error instanceof z.ZodError && error.issues.some(issue => (
+        issue.path[0] === 'metadata' && issue.path[1] === 'localization'
+      ))) {
+        throw new SyntheaProviderError(
+          'FHIR_R4_LOCALIZATION_INVALID',
+          'The Synthea Provider returned invalid localization metadata',
+          { cause: error },
+        )
+      }
+      if (error instanceof z.ZodError && error.issues.some(issue => (
         issue.code === 'invalid_value'
         && issue.path.at(-1) === 'resourceType'
       ))) {
@@ -372,18 +422,42 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
     const compiled = parsed.bundles.map((bundle, index) => {
       validateBundle(bundle, request)
       const patient = compileSyntheaR4Bundle({ bundle, ordinal: index, request })
+      try {
+        localizedSyntheaPatientIdentity({
+          bundle,
+          expectedPatientId: patient.id,
+          provenance: parsed.metadata.localization,
+        })
+      } catch (error) {
+        if (!(error instanceof SyntheaLocalizationValidationError)) throw error
+        throw new SyntheaProviderError(
+          'FHIR_R4_LOCALIZATION_INVALID',
+          'The Synthea Provider returned an invalid localized Patient',
+          { cause: error },
+        )
+      }
       return {
         patient,
         source: {
           format: 'fhir-r4-bundle' as const,
           hash: sourceArtifactHash(bundle),
+          localization: parsed.metadata.localization,
           patientId: patient.id,
           raw: bundle,
         },
       }
     })
     const patients = compiled.map(item => item.patient)
-    const baseline = createHospitalBaseline()
+    const baseline = compileScenarioCatalog({
+      baseline: createHospitalBaseline(
+        this.#medicationProducts,
+        this.#medicalServices,
+        this.#valueSetEntries,
+        this.#referenceSelection,
+        this.#referenceConcepts,
+      ),
+      modules: request.modules,
+    })
     const content: ScenarioDatasetContent = {
       catalog: baseline.catalog,
       hiddenFacts: patients.map(patient => ({
@@ -395,10 +469,12 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
       inventory: baseline.inventory,
       patients,
       reproduction: {
+        catalogCompilation: baseline.report,
         clinicalSeed: request.seeds.clinical,
         configHash: parsed.metadata.configHash,
         generator: 'synthea-fhir-r4',
         generatorVersion: parsed.metadata.syntheaCommit,
+        localization: parsed.metadata.localization,
         modules: request.modules,
         populationSeed: request.seeds.population,
         timeRange: request.timeRange,
@@ -411,7 +487,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
         triggerCode: 'evaluator-only',
       })),
       schemaVersion: '1',
-      simulatorRules: [{ code: 'default-success', outcome: 'success', simulator: 'lis' }],
+      simulatorRules: generatedScenarioSimulatorRules,
     }
     return { content, kind: 'case-truth', sources: compiled.map(item => item.source) }
   }

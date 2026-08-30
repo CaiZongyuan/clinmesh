@@ -1,9 +1,91 @@
 import { z } from 'zod'
+import {
+  referenceConceptSnapshotSchema,
+  referenceDataProvenanceSchema,
+  referenceMappingPackageProvenanceSchema,
+} from './reference-data.ts'
 
 const localDateSchema = z.iso.date()
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
+
+function cnHealthDependencySchema(datasetId: 'geography-cn' | 'names-cn' | 'population-cn') {
+  return z.object({
+    canonicalSha256: sha256Schema,
+    datasetId: z.literal(datasetId),
+    releaseId: z.string().regex(new RegExp(`^${datasetId}@[A-Za-z0-9][A-Za-z0-9._-]*$`)),
+    sqliteSha256: sha256Schema,
+  }).strict()
+}
+
+export const syntheaCnLocalizationProvenanceSchema = z.object({
+  dependencies: z.tuple([
+    cnHealthDependencySchema('geography-cn'),
+    cnHealthDependencySchema('names-cn'),
+    cnHealthDependencySchema('population-cn'),
+  ]),
+  identityAlgorithm: z.literal('synthetic-identity-v1'),
+  profileContentHash: sha256Schema,
+  profileId: z.string().regex(/^synthea-cn@[A-Za-z0-9][A-Za-z0-9._-]*$/),
+  syntheaCommit: z.string().regex(/^[a-f0-9]{40}$/),
+}).strict()
+
+const legacyUcumUnitByDisplay = {
+  '%': '%',
+  '1': '1',
+  '10^12/L': '10*12/L',
+  '10^9/L': '10*9/L',
+  '10*3/uL': '10*3/uL',
+  '10*6/uL': '10*6/uL',
+  'L/L': 'L/L',
+  'fL': 'fL',
+  'g/L': 'g/L',
+  'g/dL': 'g/dL',
+  'kg/m²': 'kg/m2',
+  'mIU/L': 'm[IU]/L',
+  'mL/min/1.73m²': 'mL/min/{1.73_m2}',
+  'mg/L': 'mg/L',
+  'mmol/L': 'mmol/L',
+  'qualitative': '{qualitative}',
+  'pg': 'pg',
+  '°C': 'Cel',
+  'μmol/L': 'umol/L',
+} as const
+
+const canonicalUcumUnitSchema = z.object({
+  code: z.string().min(1),
+  display: z.string().min(1),
+  system: z.literal('http://unitsofmeasure.org'),
+  version: z.literal('2.2'),
+}).strict()
+
+export const scenarioUcumUnitSchema = z.preprocess((value) => {
+  if (typeof value !== 'string') return value
+  const code = legacyUcumUnitByDisplay[value as keyof typeof legacyUcumUnitByDisplay]
+  return code === undefined ? value : {
+    code,
+    display: value,
+    system: 'http://unitsofmeasure.org',
+    version: '2.2',
+  }
+}, canonicalUcumUnitSchema)
+
+export const scenarioLoincCodingSchema = z.object({
+  code: z.string().regex(/^\d{1,5}-\d$/),
+  display: z.string().min(1),
+  system: z.literal('http://loinc.org'),
+  version: z.literal('2.83'),
+}).strict()
+
+export const scenarioModules = [
+  'fever',
+  'type-2-diabetes',
+  'hypertension',
+] as const
+
+export const scenarioModuleSchema = z.enum(scenarioModules)
 
 export const scenarioGenerationRequestSchema = z.object({
-  modules: z.array(z.enum(['fever', 'type-2-diabetes'])).min(1).max(8),
+  modules: z.array(scenarioModuleSchema).min(1).max(8),
   name: z.string().trim().min(1).max(120),
   population: z.object({
     age: z.object({
@@ -47,6 +129,84 @@ export const scenarioDiagnosticSchema = z.object({
   severity: z.enum(['error', 'warning']),
 }).strict()
 
+export const scenarioCatalogCompilationReportSchema = z.object({
+  blockers: z.array(z.object({
+    code: z.enum([
+      'CRITICAL_DEPENDENCY_AMBIGUOUS',
+      'CRITICAL_DEPENDENCY_MISSING',
+      'WORKFLOW_DEPENDENCY_AMBIGUOUS',
+      'WORKFLOW_DEPENDENCY_MISSING',
+    ]),
+    module: scenarioModuleSchema,
+    targetId: z.string().min(1),
+  }).strict()),
+  caseDefinitions: z.array(z.object({
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    module: scenarioModuleSchema,
+    version: z.string().min(1),
+  }).strict()).min(1),
+  catalogHash: z.string().regex(/^[a-f0-9]{64}$/),
+  compiler: z.object({
+    id: z.literal('clinmesh-scenario-catalog-compiler'),
+    version: z.string().min(1),
+  }).strict(),
+  counts: z.object({
+    requirements: z.object({
+      criticalTruth: z.number().int().nonnegative(),
+      explicitlyIgnored: z.number().int().nonnegative(),
+      historyOnly: z.number().int().nonnegative(),
+      workflowRequired: z.number().int().nonnegative(),
+    }).strict(),
+    resolutions: z.object({
+      ambiguous: z.number().int().nonnegative(),
+      hospitalNotEnabled: z.number().int().nonnegative(),
+      mapped: z.number().int().nonnegative(),
+      missing: z.number().int().nonnegative(),
+      notApplicable: z.number().int().nonnegative(),
+    }).strict(),
+  }).strict(),
+  entries: z.array(z.object({
+    generatedOccurrences: z.number().int().nonnegative().optional(),
+    module: z.union([scenarioModuleSchema, z.literal('baseline-workflow')]),
+    requirement: z.enum([
+      'critical-truth',
+      'workflow-required',
+      'history-only',
+      'explicitly-ignored',
+    ]),
+    resolution: z.enum([
+      'ambiguous',
+      'hospital-not-enabled',
+      'mapped',
+      'missing',
+      'not-applicable',
+    ]),
+    source: z.union([
+      z.object({
+        code: z.string().min(1),
+        display: z.string().min(1),
+        system: z.string().min(1),
+        version: z.string().min(1).optional(),
+      }).strict(),
+      z.object({ resourceType: z.string().min(1) }).strict(),
+    ]).optional(),
+    staticOccurrences: z.number().int().nonnegative().optional(),
+    targetId: z.string().min(1).optional(),
+  }).strict()),
+  hospitalBaselineHash: z.string().regex(/^[a-f0-9]{64}$/),
+  sourceInventory: z.object({
+    generated: z.array(z.object({
+      contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+      corpusHash: z.string().regex(/^[a-f0-9]{64}$/),
+      module: scenarioModuleSchema,
+      patientCount: z.number().int().positive(),
+    }).strict()).min(1),
+    staticContentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    syntheaCommit: z.string().regex(/^[a-f0-9]{40}$/),
+  }).strict(),
+  supported: z.boolean(),
+}).strict()
+
 const scenarioCatalogItemBaseSchema = z.object({
   active: z.boolean(),
   code: z.string().min(1),
@@ -60,11 +220,13 @@ const scenarioCatalogItemBaseSchema = z.object({
 const scenarioDepartmentCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
   displayOrder: z.number().int().nonnegative(),
   parentId: z.string().min(1).nullable(),
+  registrationAvailable: z.boolean().optional(),
   type: z.enum(['hospital', 'department']),
 }).strict()
 
 const scenarioDiagnosisCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
   codeSystem: z.string().url(),
+  referenceConcept: referenceConceptSnapshotSchema.optional(),
 }).strict()
 
 const scenarioReferenceRangeSchema = z.object({
@@ -74,10 +236,11 @@ const scenarioReferenceRangeSchema = z.object({
   text: z.string().min(1),
 }).strict()
 
-const scenarioInvestigationCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
+export const scenarioInvestigationCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
   allowedIndicationCodes: z.array(z.string().min(1)).min(1),
   available: z.boolean(),
   category: z.enum(['examination', 'imaging', 'laboratory']),
+  coding: scenarioLoincCodingSchema.optional(),
   componentItemIds: z.array(z.string().min(1)).min(1).optional(),
   contraindicatedAllergyCodes: z.array(z.string().min(1)),
   criticalMaximum: z.number().optional(),
@@ -92,29 +255,114 @@ const scenarioInvestigationCatalogItemSchema = scenarioCatalogItemBaseSchema.ext
   physiologyGeneratorId: z.string().min(1).optional(),
   referenceRanges: z.array(scenarioReferenceRangeSchema),
   reportTemplate: z.string().min(1),
+  referenceConcept: referenceConceptSnapshotSchema.optional(),
   tatMinutes: z.number().int().nonnegative(),
-  unit: z.string().min(1).optional(),
+  unit: scenarioUcumUnitSchema.optional(),
   valueType: z.enum(['boolean', 'codeable', 'panel', 'quantity', 'string']),
 }).strict()
 
-const scenarioMedicationCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
+const scenarioMedicationWorkflowSchema = z.object({
+  allowedCombinationIds: z.array(z.string().min(1)),
+  allowedCourseDays: z.array(z.number().int().positive()).min(1),
+  allowedDiagnosisCodes: z.array(z.string().min(1)).min(1),
+  allowedDoseTexts: z.array(z.string().min(1)).min(1),
+  allowedFrequencyCodes: z.array(z.string().min(1)).min(1),
+  allowedQuantities: z.array(z.number().int().positive()).min(1),
+  defaultCourseDays: z.number().int().positive(),
+  defaultQuantity: z.number().int().positive(),
+}).strict()
+
+const scenarioLegacyMedicationCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
   category: z.string().min(1),
   defaultDose: z.string().min(1),
   defaultFrequency: z.string().min(1),
   defaultRoute: z.string().min(1),
   dosageForm: z.string().min(1),
   restriction: z.string().min(1).nullable(),
-  workflow: z.object({
-    allowedCombinationIds: z.array(z.string().min(1)),
-    allowedCourseDays: z.array(z.number().int().positive()).min(1),
-    allowedDiagnosisCodes: z.array(z.string().min(1)).min(1),
-    allowedDoseTexts: z.array(z.string().min(1)).min(1),
-    allowedFrequencyCodes: z.array(z.string().min(1)).min(1),
-    allowedQuantities: z.array(z.number().int().positive()).min(1),
-    defaultCourseDays: z.number().int().positive(),
-    defaultQuantity: z.number().int().positive(),
-  }).strict(),
   unit: z.string().min(1),
+  workflow: scenarioMedicationWorkflowSchema,
+}).strict()
+
+export const scenarioProductMedicationCatalogItemSchema = scenarioLegacyMedicationCatalogItemSchema.extend({
+  availableScopes: z.array(z.enum(['outpatient', 'inpatient'])).min(1),
+  drugConcept: z.object({
+    code: z.string().min(1),
+    conceptId: z.string().min(1),
+    display: z.string().min(1),
+    kind: z.literal('drug-concept'),
+    system: z.literal('urn:clinmesh:reference:drug-concept'),
+    version: z.string().min(1),
+  }).strict(),
+  product: z.object({
+    approvalNumber: z.string().min(1),
+    brandName: z.string().min(1).nullable(),
+    code: z.string().min(1),
+    dosageForm: z.string().min(1),
+    genericName: z.string().min(1),
+    id: z.string().min(1),
+    manufacturer: z.string().min(1),
+    packageDescription: z.string().min(1),
+    strength: z.string().min(1),
+    system: z.literal('urn:clinmesh:reference:nhsa-medication-product'),
+    version: z.string().min(1),
+  }).strict(),
+  regulatoryVerification: z.discriminatedUnion('source', [
+    z.object({
+      evidenceUrl: z.string().url(),
+      result: z.literal('synthetic-match'),
+      source: z.literal('nmpa-manual-check'),
+      verifiedAt: z.iso.datetime({ offset: true }),
+      verifiedFieldsHash: z.string().regex(/^[a-f0-9]{64}$/),
+    }).strict(),
+    z.object({
+      evidenceUrl: z.string().url(),
+      result: z.literal('source-record'),
+      selection: z.object({
+        contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+        selectionId: z.string().min(1).max(256),
+        version: z.string().min(1).max(256),
+      }).strict(),
+      source: z.literal('cn-health-candidate'),
+      verifiedFieldsHash: z.string().regex(/^[a-f0-9]{64}$/),
+    }).strict(),
+  ]),
+}).strict()
+
+export const scenarioMedicationCatalogItemSchema = z.union([
+  scenarioProductMedicationCatalogItemSchema,
+  scenarioLegacyMedicationCatalogItemSchema,
+])
+
+const scenarioServiceValueCodingSchema = z.object({
+  code: z.string().min(1),
+  display: z.string().min(1),
+  system: z.string().url(),
+  valueSet: z.string().url(),
+  version: z.string().min(1),
+}).strict()
+
+export const scenarioHospitalServiceCatalogItemSchema = scenarioCatalogItemBaseSchema.extend({
+  availableScopes: z.array(z.enum(['outpatient', 'inpatient'])).min(1),
+  billingUnit: scenarioServiceValueCodingSchema,
+  category: scenarioServiceValueCodingSchema,
+  chargeDefinition: z.object({
+    currency: z.literal('CNY'),
+    effectiveOn: localDateSchema,
+    id: z.string().min(1),
+    priceFen: z.number().int().nonnegative(),
+  }).strict(),
+  componentServiceIds: z.array(z.string().min(1)),
+  executingDepartmentId: z.string().min(1),
+  nationalService: z.object({
+    code: z.string().min(1),
+    display: z.string().min(1),
+    id: z.string().min(1),
+    system: z.literal('urn:clinmesh:reference:nhc-medical-service'),
+    version: z.string().min(1),
+  }).strict(),
+  reportTemplate: z.string().min(1),
+  requestCatalogItemIds: z.array(z.string().min(1)),
+  tatMinutes: z.number().int().nonnegative(),
 }).strict()
 
 const scenarioResultValueSchema = z.union([z.boolean(), z.number(), z.string().min(1)])
@@ -124,7 +372,7 @@ export const scenarioInvestigationResultSchema = z.discriminatedUnion('outcome',
     flag: z.string().min(1).optional(),
     outcome: z.literal('reported'),
     referenceRange: z.string().min(1).optional(),
-    unit: z.string().min(1).optional(),
+    unit: scenarioUcumUnitSchema.optional(),
     value: scenarioResultValueSchema,
   }).strict(),
   z.object({
@@ -153,6 +401,9 @@ const scenarioHistoryEventSchema = z.object({
     'MedicationRequest',
     'Observation',
   ]),
+  sourceDisplay: z.string().min(1).optional(),
+  sourceSystem: z.string().url().optional(),
+  sourceVersion: z.string().min(1).optional(),
   status: z.string().min(1),
 }).strict()
 
@@ -160,7 +411,19 @@ const scenarioCodeSchema = z.object({
   code: z.string().min(1).optional(),
   display: z.string().min(1),
   system: z.string().url().optional(),
+  version: z.string().min(1).optional(),
 }).strict()
+
+const scenarioMedicationHistoryCodingSchema = z.union([
+  scenarioCodeSchema.extend({
+    conceptId: z.string().min(1),
+    kind: z.literal('drug-concept'),
+  }).strict(),
+  scenarioCodeSchema.extend({
+    sourceCodings: z.array(scenarioCodeSchema).min(2),
+  }).strict(),
+  scenarioCodeSchema,
+])
 
 const scenarioFhirHistorySchema = z.discriminatedUnion('resourceType', [
   z.object({
@@ -196,7 +459,7 @@ const scenarioFhirHistorySchema = z.discriminatedUnion('resourceType', [
     encounterId: z.string().min(1).optional(),
     id: z.string().min(1),
     intent: z.string().min(1),
-    medication: scenarioCodeSchema,
+    medication: scenarioMedicationHistoryCodingSchema,
     resourceType: z.literal('MedicationRequest'),
     status: z.string().min(1),
   }).strict(),
@@ -219,13 +482,13 @@ const scenarioDiagnosisSchema = z.object({
   truth: z.string().min(1).optional(),
 }).strict()
 
-const scenarioPhysiologyGeneratorSchema = z.discriminatedUnion('kind', [
+export const scenarioPhysiologyGeneratorSchema = z.discriminatedUnion('kind', [
   z.object({
     assayCv: z.number().nonnegative().max(1).optional(),
     id: z.string().min(1),
     kind: z.literal('constant'),
     source: z.string().min(1),
-    unit: z.string().min(1),
+    unit: scenarioUcumUnitSchema,
     value: z.number(),
   }).strict(),
   z.object({
@@ -237,7 +500,7 @@ const scenarioPhysiologyGeneratorSchema = z.discriminatedUnion('kind', [
     minimum: z.number(),
     source: z.string().min(1),
     standardDeviation: z.number().positive(),
-    unit: z.string().min(1),
+    unit: scenarioUcumUnitSchema,
   }).strict(),
   z.object({
     assayCv: z.number().nonnegative().max(1),
@@ -247,7 +510,7 @@ const scenarioPhysiologyGeneratorSchema = z.discriminatedUnion('kind', [
     minimum: z.number(),
     source: z.string().min(1),
     target: z.number(),
-    unit: z.string().min(1),
+    unit: scenarioUcumUnitSchema,
     walkStep: z.number().positive(),
   }).strict(),
   z.object({
@@ -262,7 +525,7 @@ const scenarioPhysiologyGeneratorSchema = z.discriminatedUnion('kind', [
     id: z.string().min(1),
     kind: z.literal('derived'),
     source: z.string().min(1),
-    unit: z.string().min(1),
+    unit: scenarioUcumUnitSchema,
   }).strict(),
   z.object({
     id: z.string().min(1),
@@ -384,6 +647,7 @@ export const scenarioDatasetContentSchema = z.object({
     diagnoses: z.array(scenarioDiagnosisCatalogItemSchema),
     investigations: z.array(scenarioInvestigationCatalogItemSchema),
     medications: z.array(scenarioMedicationCatalogItemSchema),
+    services: z.array(scenarioHospitalServiceCatalogItemSchema).optional(),
   }).strict(),
   hiddenFacts: z.array(z.object({
     code: z.string().min(1),
@@ -408,12 +672,15 @@ export const scenarioDatasetContentSchema = z.object({
   }).strict()),
   patients: z.array(scenarioPatientSchema).min(1),
   reproduction: z.object({
+    catalogCompilation: scenarioCatalogCompilationReportSchema.optional(),
     clinicalSeed: z.number().int(),
     configHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     generator: z.string().min(1),
     generatorVersion: z.string().min(1).optional(),
+    localization: syntheaCnLocalizationProvenanceSchema.optional(),
     modules: z.array(z.string().min(1)),
     populationSeed: z.number().int(),
+    referenceData: referenceDataProvenanceSchema.optional(),
     timeRange: z.object({ end: localDateSchema, start: localDateSchema }).strict(),
     timeZone: z.string().min(1),
   }).strict(),
@@ -478,7 +745,7 @@ export const updateScenarioDatasetRequestSchema = z.object({
 export const scenarioProviderCapabilitiesSchema = z.object({
   available: z.boolean(),
   maxPopulation: z.number().int().positive(),
-  modules: z.array(z.enum(['fever', 'type-2-diabetes'])),
+  modules: z.array(scenarioModuleSchema),
   providerId: z.enum(['builtin', 'synthea']),
   providerName: z.string().min(1),
   unavailableReason: z.string().min(1).optional(),
@@ -518,7 +785,7 @@ const syntheticPatientSourceSchema = z.object({
   batchId: z.string().min(1),
   batchName: z.string().min(1),
   compilation: z.object({
-    modules: z.array(z.enum(['fever', 'type-2-diabetes'])).min(1),
+    modules: z.array(scenarioModuleSchema).min(1),
     ordinal: z.number().int().nonnegative(),
     seeds: z.object({
       clinical: z.number().int(),
@@ -529,9 +796,19 @@ const syntheticPatientSourceSchema = z.object({
   }).strict().nullable(),
   format: z.enum(['clinmesh-template', 'fhir-r4-bundle', 'legacy-compiled-profile']),
   hash: z.string().regex(/^[a-f0-9]{64}$/),
+  mappingProvenance: z.object({
+    compiler: z.object({
+      id: z.string().min(1).max(128),
+      version: z.string().min(1).max(128),
+    }).strict(),
+    overlayRevision: z.number().int().positive().optional(),
+    packages: z.array(referenceMappingPackageProvenanceSchema).min(1).max(20),
+  }).strict().optional(),
   mappingVersion: z.string().min(1),
   patientId: z.string().min(1),
   providerId: z.enum(['builtin', 'synthea']),
+  referenceData: referenceDataProvenanceSchema.optional(),
+  localization: syntheaCnLocalizationProvenanceSchema.optional(),
   raw: z.json().nullable(),
 }).strict()
 
@@ -683,13 +960,26 @@ export const startSyntheticPatientVisitsResultSchema = z.object({
 export type ScenarioDataset = z.infer<typeof scenarioDatasetSchema>
 export type ScenarioDatasetList = z.infer<typeof scenarioDatasetListSchema>
 export type ScenarioDatasetContent = z.infer<typeof scenarioDatasetContentSchema>
+export type ScenarioCatalogCompilationReport = z.infer<
+  typeof scenarioCatalogCompilationReportSchema
+>
+export type ScenarioProductMedicationCatalogItem = z.infer<
+  typeof scenarioProductMedicationCatalogItemSchema
+>
+export type ScenarioHospitalServiceCatalogItem = z.infer<
+  typeof scenarioHospitalServiceCatalogItemSchema
+>
 export type ScenarioDiagnostic = z.infer<typeof scenarioDiagnosticSchema>
 export type ScenarioGenerationRequest = z.infer<typeof scenarioGenerationRequestSchema>
+export type ScenarioModule = z.infer<typeof scenarioModuleSchema>
 export type ScenarioGenerationJob = z.infer<typeof scenarioGenerationJobSchema>
 export type ScenarioInvestigationResult = z.infer<typeof scenarioInvestigationResultSchema>
 export type ScenarioPatient = z.infer<typeof scenarioPatientSchema>
 export type ScenarioProviderCapabilities = z.infer<typeof scenarioProviderCapabilitiesSchema>
 export type SyntheticPatientIdentity = z.infer<typeof syntheticPatientIdentitySchema>
+export type SyntheaCnLocalizationProvenance = z.infer<
+  typeof syntheaCnLocalizationProvenanceSchema
+>
 export type SyntheticPatientMappingCatalog = z.infer<typeof syntheticPatientMappingCatalogSchema>
 export type SyntheticPatientMappingInput = z.infer<typeof updateSyntheticPatientMappingsRequestSchema>['input'][number]
 export type SyntheticPatientProfile = z.infer<typeof syntheticPatientProfileSchema>

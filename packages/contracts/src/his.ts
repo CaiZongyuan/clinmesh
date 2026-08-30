@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { fhirResourceSchema } from './fhir.ts'
+import { referenceConceptSnapshotSchema } from './reference-data.ts'
 
 export const roleCodeSchema = z.enum([
   'administrator',
@@ -177,11 +178,13 @@ const catalogItemSchema = z.object({
 const clinicalCatalogBaseShape = {
   diagnoses: z.array(catalogItemSchema.extend({
     code: z.string().min(1),
+    referenceConcept: referenceConceptSnapshotSchema.optional(),
     system: z.url(),
   })).default([]),
   laboratory: z.array(catalogItemSchema.extend({
     allowedIndicationCodes: z.array(z.string().min(1)).min(1),
     contraindicatedAllergyCodes: z.array(z.string().min(1)),
+    referenceConcept: referenceConceptSnapshotSchema.optional(),
   })),
 }
 
@@ -212,6 +215,80 @@ export const clinicalCatalogSchema = z.discriminatedUnion('prescriptionConclusio
     prescriptionConclusionSupported: z.literal(true),
   }),
 ])
+
+const serviceCatalogValueCodingSchema = z.object({
+  code: z.string().min(1),
+  display: z.string().min(1),
+  system: z.string().url(),
+  valueSet: z.string().url(),
+  version: z.string().min(1),
+}).strict()
+
+export const serviceCatalogSearchSchema = z.object({
+  items: z.array(z.object({
+    availableScopes: z.array(z.enum(['outpatient', 'inpatient'])).min(1),
+    billingUnit: serviceCatalogValueCodingSchema,
+    category: serviceCatalogValueCodingSchema,
+    chargeDefinition: z.object({
+      currency: z.literal('CNY'),
+      effectiveOn: z.iso.date(),
+      id: z.string().min(1),
+      priceFen: z.number().int().nonnegative(),
+    }).strict(),
+    code: z.string().min(1),
+    componentServiceIds: z.array(z.string().min(1)),
+    executingDepartmentId: z.string().min(1),
+    id: z.string().min(1),
+    nameEn: z.string().min(1),
+    nameZh: z.string().min(1),
+    nationalService: z.object({
+      code: z.string().min(1),
+      display: z.string().min(1),
+      id: z.string().min(1),
+      system: z.literal('urn:clinmesh:reference:nhc-medical-service'),
+      version: z.string().min(1),
+    }).strict(),
+    reportTemplate: z.string().min(1),
+    requestCatalogItemIds: z.array(z.string().min(1)),
+    tatMinutes: z.number().int().nonnegative(),
+    version: z.number().int().positive(),
+  }).strict()),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive().max(100),
+  total: z.number().int().nonnegative(),
+}).strict()
+
+export const orderHospitalServiceRequestSchema = z.object({
+  expectedVersions: fhirExpectedVersionsSchema,
+  input: z.object({}).strict(),
+}).strict()
+
+export const orderHospitalServiceResponseSchema = commandResponseSchema(z.object({
+  chargeDefinitionId: z.string().min(1),
+  chargeItemId: z.string().min(1),
+  hospitalServiceId: z.string().min(1),
+  nationalServiceId: z.string().min(1),
+  serviceRequestId: z.string().min(1),
+  serviceRequestVersion: z.string().regex(/^\d+$/),
+  status: z.literal('requested'),
+  taskId: z.string().min(1),
+  taskVersion: z.string().regex(/^\d+$/),
+  totalFen: z.number().int().nonnegative(),
+}).strict())
+
+export const completeHospitalServiceRequestSchema = z.object({
+  expectedVersions: fhirExpectedVersionsSchema,
+  input: z.object({}).strict(),
+}).strict()
+
+export const completeHospitalServiceResponseSchema = commandResponseSchema(z.object({
+  chargeItemId: z.string().min(1),
+  serviceRequestId: z.string().min(1),
+  serviceRequestVersion: z.string().regex(/^\d+$/),
+  status: z.literal('completed'),
+  taskId: z.string().min(1),
+  taskVersion: z.string().regex(/^\d+$/),
+}).strict())
 
 export const diagnosisRoleSchema = z.enum(['primary', 'secondary'])
 

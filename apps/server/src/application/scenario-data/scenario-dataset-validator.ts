@@ -2,6 +2,8 @@ import type {
   ScenarioDatasetContent,
   ScenarioDiagnostic,
 } from '@clinmesh/contracts/scenario'
+import { isKnownLoincCoding, isKnownUcumUnit } from './reference-coding-package.ts'
+import { canonicalJsonHash } from './canonical-json.ts'
 
 function graphReaches(
   currentId: string,
@@ -20,6 +22,11 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
   const diagnosisCodes = new Set(content.catalog.diagnoses.map(item => item.code))
   const investigationCatalog = new Map(content.catalog.investigations.map(item => [item.id, item]))
   const medicationIds = new Set(content.catalog.medications.map(item => item.id))
+  const serviceIds = new Set((content.catalog.services ?? []).map(item => item.id))
+  const departmentIds = new Set(content.catalog.departments.map(item => item.id))
+  const productMedications = content.catalog.medications.flatMap((medication, index) => (
+    'product' in medication ? [{ index, medication }] : []
+  ))
   const patientIds = new Set(content.patients.map(patient => patient.id))
   const patientsById = new Map(content.patients.map(patient => [patient.id, patient]))
   const hiddenFactCodes = new Set(content.hiddenFacts.map(fact => fact.code))
@@ -37,6 +44,42 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
 
   const add = (diagnostic: ScenarioDiagnostic): void => {
     diagnostics.push(diagnostic)
+  }
+
+  const catalogCompilation = content.reproduction.catalogCompilation
+  const unresolvedRequiredDependency = catalogCompilation?.entries.some(entry => (
+    (entry.requirement === 'critical-truth' || entry.requirement === 'workflow-required')
+    && entry.resolution !== 'mapped'
+  )) === true
+  if (
+    catalogCompilation !== undefined
+    && (
+      !catalogCompilation.supported
+      || catalogCompilation.blockers.length > 0
+      || unresolvedRequiredDependency
+    )
+  ) {
+    add({
+      code: 'CATALOG_COMPILATION_BLOCKED',
+      message: 'Scenario catalog compilation has unresolved critical dependencies',
+      path: 'reproduction.catalogCompilation.blockers',
+      severity: 'error',
+    })
+  }
+  if (
+    catalogCompilation !== undefined
+    && catalogCompilation.catalogHash !== canonicalJsonHash({
+      catalog: content.catalog,
+      hospital: content.hospital,
+      inventory: content.inventory,
+    })
+  ) {
+    add({
+      code: 'CATALOG_COMPILATION_HASH_MISMATCH',
+      message: 'Scenario catalog content does not match its compilation hash',
+      path: 'reproduction.catalogCompilation.catalogHash',
+      severity: 'error',
+    })
   }
 
   const diagnoseDuplicates = <Item>(input: {
@@ -102,6 +145,10 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
       ...content.catalog.diagnoses.map((item, index) => ({ item, path: `catalog.diagnoses[${index}].id` })),
       ...content.catalog.investigations.map((item, index) => ({ item, path: `catalog.investigations[${index}].id` })),
       ...content.catalog.medications.map((item, index) => ({ item, path: `catalog.medications[${index}].id` })),
+      ...(content.catalog.services ?? []).map((item, index) => ({
+        item,
+        path: `catalog.services[${index}].id`,
+      })),
     ],
     key: entry => entry.item.id,
     label: 'Catalog item ID',
@@ -114,12 +161,79 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
     label: 'Diagnosis code',
     path: (_, index) => `catalog.diagnoses[${index}].code`,
   })
+  if (content.catalog.services === undefined || content.catalog.services.length === 0) {
+    add({
+      code: 'SERVICE_CATALOG_MISSING',
+      message: 'The Hospital Baseline has no compiled service catalog',
+      path: 'catalog.services',
+      severity: 'error',
+    })
+  }
+
+  for (const [serviceIndex, service] of (content.catalog.services ?? []).entries()) {
+    const path = `catalog.services[${serviceIndex}]`
+    if (
+      service.id === service.nationalService.id
+      || service.id === service.chargeDefinition.id
+      || service.nationalService.id === service.chargeDefinition.id
+    ) {
+      add({
+        code: 'SERVICE_IDENTITY_COLLISION',
+        message: `Service ${service.id} reuses a national or charge identity`,
+        path: `${path}.id`,
+        severity: 'error',
+      })
+    }
+    if (!departmentIds.has(service.executingDepartmentId)) {
+      add({
+        code: 'SERVICE_DEPARTMENT_REFERENCE_MISSING',
+        message: `Service ${service.id} references an unknown executing department`,
+        path: `${path}.executingDepartmentId`,
+        severity: 'error',
+      })
+    }
+    if (service.priceFen !== service.chargeDefinition.priceFen) {
+      add({
+        code: 'SERVICE_CHARGE_PRICE_MISMATCH',
+        message: `Service ${service.id} price differs from its Charge Definition`,
+        path: `${path}.chargeDefinition.priceFen`,
+        severity: 'error',
+      })
+    }
+    for (const [requestIndex, requestCatalogItemId] of service.requestCatalogItemIds.entries()) {
+      if (!investigationCatalog.has(requestCatalogItemId)) {
+        add({
+          code: 'SERVICE_REQUEST_REFERENCE_MISSING',
+          message: `Service ${service.id} references an unknown request catalog item`,
+          path: `${path}.requestCatalogItemIds[${requestIndex}]`,
+          severity: 'error',
+        })
+      }
+    }
+    for (const [componentIndex, componentId] of service.componentServiceIds.entries()) {
+      if (!serviceIds.has(componentId)) {
+        add({
+          code: 'SERVICE_COMPONENT_REFERENCE_MISSING',
+          message: `Service ${service.id} references an unknown component service`,
+          path: `${path}.componentServiceIds[${componentIndex}]`,
+          severity: 'error',
+        })
+      }
+    }
+  }
   diagnoseDuplicates({
     code: 'DUPLICATE_INVENTORY_LOT_ID',
     items: content.inventory,
     key: lot => lot.lotId,
     label: 'Inventory lot ID',
     path: (_, index) => `inventory[${index}].lotId`,
+  })
+  diagnoseDuplicates({
+    code: 'DUPLICATE_MEDICATION_PRODUCT_ID',
+    items: productMedications,
+    key: entry => entry.medication.product.id,
+    label: 'Medication Product ID',
+    path: entry => `catalog.medications[${entry.index}].product.id`,
   })
   diagnoseDuplicates({
     code: 'DUPLICATE_SIMULATOR_RULE_CODE',
@@ -142,6 +256,49 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
 
   for (const [medicationIndex, medication] of content.catalog.medications.entries()) {
     const workflowPath = `catalog.medications[${medicationIndex}].workflow`
+    const medicationPath = `catalog.medications[${medicationIndex}]`
+    if (!('product' in medication)) {
+      add({
+        code: 'MEDICATION_PRODUCT_METADATA_MISSING',
+        message: `Medication ${medication.id} does not select a versioned product`,
+        path: medicationPath,
+        severity: 'error',
+      })
+      continue
+    }
+    const verifiedFieldsHash = canonicalJsonHash({
+      approvalNumber: medication.product.approvalNumber,
+      genericName: medication.product.genericName,
+      manufacturer: medication.product.manufacturer,
+    })
+    if (verifiedFieldsHash !== medication.regulatoryVerification.verifiedFieldsHash) {
+      add({
+        code: 'MEDICATION_REGULATORY_VERIFICATION_MISMATCH',
+        message: `Medication ${medication.id} regulatory verification does not match its selected product`,
+        path: `${medicationPath}.regulatoryVerification.verifiedFieldsHash`,
+        severity: 'error',
+      })
+    }
+    if (
+      medication.id === medication.product.id
+      || medication.id === medication.drugConcept.conceptId
+      || medication.product.id === medication.drugConcept.conceptId
+    ) {
+      add({
+        code: 'MEDICATION_IDENTITY_COLLISION',
+        message: `Medication ${medication.id} reuses a concept or product identity`,
+        path: `${medicationPath}.id`,
+        severity: 'error',
+      })
+    }
+    if (medication.dosageForm !== medication.product.dosageForm) {
+      add({
+        code: 'MEDICATION_PRODUCT_DOSAGE_FORM_MISMATCH',
+        message: `Medication ${medication.id} dosage form differs from its selected product`,
+        path: `${medicationPath}.dosageForm`,
+        severity: 'error',
+      })
+    }
     for (const [combinationIndex, combinationId] of medication.workflow.allowedCombinationIds.entries()) {
       if (!medicationIds.has(combinationId)) {
         add({
@@ -166,6 +323,22 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
 
   for (const [investigationIndex, investigation] of content.catalog.investigations.entries()) {
     const investigationPath = `catalog.investigations[${investigationIndex}]`
+    if (investigation.unit !== undefined && !isKnownUcumUnit(investigation.unit)) {
+      add({
+        code: 'UCUM_UNIT_UNKNOWN',
+        message: `Investigation ${investigation.id} uses an unknown UCUM 2.2 unit`,
+        path: `${investigationPath}.unit`,
+        severity: 'error',
+      })
+    }
+    if (investigation.coding !== undefined && !isKnownLoincCoding(investigation.coding)) {
+      add({
+        code: 'LOINC_CODING_UNKNOWN',
+        message: `Investigation ${investigation.id} uses an unknown LOINC 2.83 coding`,
+        path: `${investigationPath}.coding`,
+        severity: 'error',
+      })
+    }
     for (const [rangeIndex, range] of investigation.referenceRanges.entries()) {
       if (
         range.minimum !== undefined
@@ -447,6 +620,15 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
     }
 
     for (const [generatorIndex, generator] of patient.physiologyBaseline.generators.entries()) {
+      const generatorPath = `${patientPath}.physiologyBaseline.generators[${generatorIndex}]`
+      if (generator.kind !== 'text' && !isKnownUcumUnit(generator.unit)) {
+        add({
+          code: 'UCUM_UNIT_UNKNOWN',
+          message: `Physiology generator ${generator.id} uses an unknown UCUM 2.2 unit`,
+          path: `${generatorPath}.unit`,
+          severity: 'error',
+        })
+      }
       if (generator.kind !== 'derived') continue
       for (const [dependencyIndex, dependency] of generator.dependencies.entries()) {
         const missing = dependency.startsWith('vital:')
@@ -483,6 +665,18 @@ export function validateScenarioDataset(content: ScenarioDatasetContent): Scenar
 
     for (const [investigationIndex, investigation] of patient.investigations.entries()) {
       const investigationPath = `${patientPath}.investigations[${investigationIndex}]`
+      if (
+        investigation.result.outcome === 'reported'
+        && investigation.result.unit !== undefined
+        && !isKnownUcumUnit(investigation.result.unit)
+      ) {
+        add({
+          code: 'UCUM_UNIT_UNKNOWN',
+          message: `Investigation result ${investigation.id} uses an unknown UCUM 2.2 unit`,
+          path: `${investigationPath}.result.unit`,
+          severity: 'error',
+        })
+      }
       const catalogItem = investigationCatalog.get(investigation.catalogItemId)
       if (catalogItem === undefined) {
         add({

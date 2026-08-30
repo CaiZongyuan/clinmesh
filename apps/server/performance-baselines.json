@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "1",
+  "workloads": {
+    "catalog-search-http": {
+      "maximumBusyCount": 0,
+      "maximumDatabaseGrowthBytes": 65536,
+      "maximumErrorCount": 0,
+      "maximumQueriesPerIteration": 4,
+      "maximumRetryCount": 0,
+      "maximumRowsWrittenPerIteration": 0,
+      "maximumStatementsPerIteration": 4,
+      "maximumTraceBytesPerIteration": 0,
+      "maximumTraceRowsPerIteration": 0,
+      "maximumWritesPerIteration": 0,
+      "minimumRowsWrittenPerIteration": 0,
+      "requiredQueryPlan": "hospital_service_catalog_search_idx"
+    },
+    "command-heavy-application": {
+      "maximumBusyCount": 0,
+      "maximumDatabaseGrowthBytes": 1310720,
+      "maximumErrorCount": 0,
+      "maximumQueriesPerIteration": 6,
+      "maximumRetryCount": 0,
+      "maximumRowsWrittenPerIteration": 57,
+      "maximumStatementsPerIteration": 66,
+      "maximumTraceBytesPerIteration": 2200,
+      "maximumTraceRowsPerIteration": 1,
+      "maximumWritesPerIteration": 58,
+      "minimumRowsWrittenPerIteration": 57
+    },
+    "command-ordinary-application": {
+      "maximumBusyCount": 0,
+      "maximumDatabaseGrowthBytes": 1572864,
+      "maximumErrorCount": 0,
+      "maximumQueriesPerIteration": 6,
+      "maximumRetryCount": 0,
+      "maximumRowsWrittenPerIteration": 7,
+      "maximumStatementsPerIteration": 16,
+      "maximumTraceBytesPerIteration": 192,
+      "maximumTraceRowsPerIteration": 1,
+      "maximumWritesPerIteration": 8,
+      "minimumRowsWrittenPerIteration": 7
+    },
+    "reference-import-application": {
+      "maximumBusyCount": 0,
+      "maximumDatabaseGrowthBytes": 720896,
+      "maximumErrorCount": 0,
+      "maximumQueriesPerIteration": 3,
+      "maximumRetryCount": 0,
+      "maximumRowsWrittenPerIteration": 202,
+      "maximumStatementsPerIteration": 207,
+      "maximumTraceBytesPerIteration": 0,
+      "maximumTraceRowsPerIteration": 0,
+      "maximumWritesPerIteration": 202,
+      "minimumRowsWrittenPerIteration": 202
+    },
+    "scenario-install-reset-application": {
+      "maximumBusyCount": 0,
+      "maximumDatabaseGrowthBytes": 4194304,
+      "maximumErrorCount": 0,
+      "maximumQueriesPerIteration": 92,
+      "maximumRetryCount": 0,
+      "maximumRowsWrittenPerIteration": 218,
+      "maximumStatementsPerIteration": 360,
+      "maximumTraceBytesPerIteration": 256,
+      "maximumTraceRowsPerIteration": 1,
+      "maximumWritesPerIteration": 265,
+      "minimumRowsWrittenPerIteration": 218
+    },
+    "trace-control-sqlite": {
+      "maximumBusyCount": 0,
+      "maximumDatabaseGrowthBytes": 786432,
+      "maximumErrorCount": 0,
+      "maximumQueriesPerIteration": 0,
+      "maximumRetryCount": 0,
+      "maximumRowsWrittenPerIteration": 25,
+      "maximumStatementsPerIteration": 27,
+      "maximumTraceBytesPerIteration": 0,
+      "maximumTraceRowsPerIteration": 0,
+      "maximumWritesPerIteration": 25,
+      "minimumRowsWrittenPerIteration": 25
+    }
+  }
+}

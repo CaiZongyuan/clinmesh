@@ -1,0 +1,99 @@
+{
+  "loincVersion": "2.83",
+  "observationMappings": [
+    {
+      "source": {
+        "code": "8310-5",
+        "display": "Body temperature",
+        "system": "http://loinc.org",
+        "version": "2.83"
+      },
+      "target": {
+        "catalogItemId": "lab-body-temperature",
+        "code": "BODY-TEMP",
+        "feeFen": 0,
+        "name": "体温",
+        "referenceMaximum": 37.3,
+        "referenceMinimum": 36.0,
+        "referenceRange": "36.0-37.3 °C",
+        "reportTemplate": "体温 {value} {unit}",
+        "sourceUnits": [
+          { "multiplier": 1, "unitCode": "Cel" }
+        ],
+        "tatMinutes": 0,
+        "unitCode": "Cel"
+      }
+    },
+    {
+      "source": {
+        "code": "4548-4",
+        "display": "Hemoglobin A1c/Hemoglobin.total in Blood",
+        "system": "http://loinc.org",
+        "version": "2.83"
+      },
+      "target": {
+        "catalogItemId": "lab-hba1c",
+        "code": "HBA1C",
+        "feeFen": 4500,
+        "name": "糖化血红蛋白",
+        "referenceMaximum": 6.0,
+        "referenceMinimum": 4.0,
+        "referenceRange": "4.0-6.0 %",
+        "reportTemplate": "糖化血红蛋白 {value} {unit}",
+        "sourceUnits": [
+          { "multiplier": 1, "unitCode": "%" }
+        ],
+        "tatMinutes": 120,
+        "unitCode": "%"
+      }
+    },
+    {
+      "source": {
+        "code": "2339-0",
+        "display": "Glucose [Mass/volume] in Blood",
+        "system": "http://loinc.org",
+        "version": "2.83"
+      },
+      "target": {
+        "catalogItemId": "lab-random-glucose",
+        "code": "GLUCOSE",
+        "feeFen": 500,
+        "name": "随机血糖",
+        "referenceMaximum": 11.1,
+        "referenceMinimum": 3.9,
+        "referenceRange": "3.9-11.1 mmol/L",
+        "reportTemplate": "随机血糖 {value} {unit}",
+        "sourceUnits": [
+          { "multiplier": 1, "unitCode": "mmol/L" },
+          { "multiplier": 0.0555075, "unitCode": "mg/dL" }
+        ],
+        "tatMinutes": 30,
+        "unitCode": "mmol/L"
+      }
+    }
+  ],
+  "schemaVersion": "1",
+  "ucumVersion": "2.2",
+  "units": [
+    { "code": "%", "display": "%", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "1", "display": "1", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "10*12/L", "display": "10^12/L", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "10*3/uL", "display": "10*3/uL", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "10*6/uL", "display": "10*6/uL", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "10*9/L", "display": "10^9/L", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "Cel", "display": "°C", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "L/L", "display": "L/L", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "fL", "display": "fL", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "g/L", "display": "g/L", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "g/dL", "display": "g/dL", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "kg/m2", "display": "kg/m²", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "m[IU]/L", "display": "mIU/L", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "mL/min/{1.73_m2}", "display": "mL/min/1.73m²", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "mg/L", "display": "mg/L", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "mg/dL", "display": "mg/dL", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "mmol/L", "display": "mmol/L", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "pg", "display": "pg", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "umol/L", "display": "μmol/L", "system": "http://unitsofmeasure.org", "version": "2.2" },
+    { "code": "{qualitative}", "display": "qualitative", "system": "http://unitsofmeasure.org", "version": "2.2" }
+  ]
+}

@@ -1,6 +1,224 @@
-import type { ScenarioDatasetContent } from '@clinmesh/contracts/scenario'
+import {
+  scenarioModules,
+  type ScenarioDatasetContent,
+  type ScenarioHospitalServiceCatalogItem,
+  type ScenarioProductMedicationCatalogItem,
+} from '@clinmesh/contracts/scenario'
+import type {
+  ReferenceConcept,
+  ReferenceMedicalService,
+  ReferenceMedicationProduct,
+  ReferenceValueSetEntry,
+} from '@clinmesh/contracts/reference-data'
+import { referenceCodingIdentity } from '@clinmesh/contracts/reference-data'
+import {
+  investigationLoincCoding,
+  resolveUcumUnit,
+} from './reference-coding-package.ts'
+import { canonicalJsonHash } from './canonical-json.ts'
+import type { ReferenceHospitalSelection } from '../reference-hospital-selection.ts'
 
 const hospitalId = 'hospital-synthetic-renhe'
+
+type HospitalBaseline = Omit<
+  Pick<ScenarioDatasetContent, 'catalog' | 'hospital' | 'inventory'>,
+  'catalog'
+> & {
+  catalog: Omit<ScenarioDatasetContent['catalog'], 'medications' | 'services'> & {
+    medications: ScenarioProductMedicationCatalogItem[]
+    services: ScenarioHospitalServiceCatalogItem[]
+  }
+}
+
+function regulatoryVerification(product: {
+  approvalNumber: string
+  genericName: string
+  manufacturer: string
+}, selection?: ReferenceHospitalSelection) {
+  const verifiedFieldsHash = canonicalJsonHash({
+    approvalNumber: product.approvalNumber,
+    genericName: product.genericName,
+    manufacturer: product.manufacturer,
+  })
+  return selection === undefined ? {
+    evidenceUrl: 'https://www.nmpa.gov.cn/datasearch/home-index.html',
+    result: 'synthetic-match' as const,
+    source: 'nmpa-manual-check' as const,
+    verifiedAt: '2026-08-28T00:00:00+08:00',
+    verifiedFieldsHash,
+  } : {
+    evidenceUrl: 'https://github.com/CaiZongyuan/cn-health-data',
+    result: 'source-record' as const,
+    selection: {
+      contentHash: selection.contentHash,
+      selectionId: selection.selectionId,
+      version: selection.version,
+    },
+    source: 'cn-health-candidate' as const,
+    verifiedFieldsHash,
+  }
+}
+
+function selectedMedicationProduct(
+  products: readonly ReferenceMedicationProduct[],
+  catalogItemId: string,
+  defaultCode: string,
+  selection?: ReferenceHospitalSelection,
+): ReferenceMedicationProduct {
+  const binding = selection?.bindings.find(candidate => (
+    candidate.kind === 'medication-product' && candidate.catalogItemId === catalogItemId
+  ))
+  if (selection !== undefined && binding === undefined) {
+    throw new Error(`Hospital Reference selection has no binding for ${catalogItemId}`)
+  }
+  const matches = products.filter(product => (
+    product.code === (binding?.coding.code ?? defaultCode)
+    && product.system === (
+      binding?.coding.system ?? 'urn:clinmesh:reference:nhsa-medication-product'
+    )
+    && (binding === undefined || product.version === binding.coding.version)
+  ))
+  if (matches.length !== 1) {
+    throw new Error(`Medication Product snapshot must contain exactly one ${catalogItemId}`)
+  }
+  const product = matches[0]!
+  if (product.status !== 'active') throw new Error(`Medication Product ${catalogItemId} is not active`)
+  return product
+}
+
+function selectedProductSnapshot(product: ReferenceMedicationProduct) {
+  return {
+    approvalNumber: product.approvalNumber,
+    brandName: product.brandName,
+    code: product.code,
+    dosageForm: product.dosageForm,
+    genericName: product.genericName,
+    id: product.id,
+    manufacturer: product.manufacturer,
+    packageDescription: product.packageDescription,
+    strength: product.strength,
+    system: 'urn:clinmesh:reference:nhsa-medication-product' as const,
+    version: product.version,
+  }
+}
+
+function withSelectedReferenceConcept<Item extends { id: string }>(
+  item: Item,
+  kind: 'diagnosis' | 'laboratory',
+  selection: ReferenceHospitalSelection | undefined,
+  concepts: readonly ReferenceConcept[],
+) {
+  const binding = selection?.bindings.find(candidate => (
+    candidate.kind === kind && candidate.catalogItemId === item.id
+  ))
+  if (binding === undefined) return item
+  const matches = concepts.filter(concept => (
+    concept.domain === kind
+    && concept.status === 'active'
+    && referenceCodingIdentity(concept) === referenceCodingIdentity(binding.coding)
+  ))
+  if (matches.length !== 1) {
+    throw new Error(`Hospital Reference selection target is unavailable: ${item.id}`)
+  }
+  const concept = matches[0]!
+  return {
+    ...item,
+    referenceConcept: {
+      code: concept.code,
+      display: concept.display,
+      id: concept.id,
+      sourceLocator: concept.sourceLocator,
+      system: concept.system,
+      version: concept.version,
+    },
+  }
+}
+
+function selectedMedicalService(
+  services: readonly ReferenceMedicalService[],
+  code: string,
+): ReferenceMedicalService {
+  const matches = services.filter(service => (
+    service.code === code
+    && service.system === 'urn:clinmesh:reference:nhc-medical-service'
+  ))
+  if (matches.length !== 1) {
+    throw new Error(`Medical Service snapshot must contain exactly one ${code}`)
+  }
+  const service = matches[0]!
+  if (service.status !== 'active') throw new Error(`Medical Service ${code} is not active`)
+  return service
+}
+
+function selectedValueSetEntry(
+  entries: readonly ReferenceValueSetEntry[],
+  system: string,
+  code: string,
+) {
+  const matches = entries.filter(entry => entry.system === system && entry.code === code)
+  if (matches.length !== 1) throw new Error(`WS/T snapshot must contain exactly one ${system}|${code}`)
+  const entry = matches[0]!
+  if (entry.status !== 'active') throw new Error(`WS/T value ${system}|${code} is not active`)
+  return {
+    code: entry.code,
+    display: entry.display,
+    system: entry.system,
+    valueSet: entry.valueSet,
+    version: entry.version,
+  }
+}
+
+function hospitalService(input: {
+  itemId: string
+  localCode: string
+  name: string
+  nationalService: ReferenceMedicalService
+  componentServiceIds?: string[]
+  executingDepartmentId?: string
+  priceFen: number
+  reportTemplate: string
+  requestCatalogItemIds: string[]
+  tatMinutes: number
+  valueSetEntries: readonly ReferenceValueSetEntry[]
+}): ScenarioHospitalServiceCatalogItem {
+  return {
+    ...catalogBase({
+      code: input.localCode,
+      id: input.itemId,
+      name: input.name,
+      priceFen: input.priceFen,
+    }),
+    availableScopes: ['outpatient'],
+    billingUnit: selectedValueSetEntry(
+      input.valueSetEntries,
+      'urn:clinmesh:wst:billing-unit',
+      input.nationalService.billingUnitCode,
+    ),
+    category: selectedValueSetEntry(
+      input.valueSetEntries,
+      'urn:clinmesh:wst:service-category',
+      input.nationalService.categoryCode,
+    ),
+    chargeDefinition: {
+      currency: 'CNY',
+      effectiveOn: '2026-08-28',
+      id: `charge-definition-${input.itemId}`,
+      priceFen: input.priceFen,
+    },
+    componentServiceIds: input.componentServiceIds ?? [],
+    executingDepartmentId: input.executingDepartmentId ?? 'department-laboratory',
+    nationalService: {
+      code: input.nationalService.code,
+      display: input.nationalService.display,
+      id: input.nationalService.id,
+      system: 'urn:clinmesh:reference:nhc-medical-service',
+      version: input.nationalService.version,
+    },
+    reportTemplate: input.reportTemplate,
+    requestCatalogItemIds: input.requestCatalogItemIds,
+    tatMinutes: input.tatMinutes,
+  }
+}
 
 function catalogBase(input: { code: string; id: string; name: string; priceFen: number }) {
   return {
@@ -50,13 +268,19 @@ function investigation(input: {
         standardDeviation: input.standardDeviation,
       }
     : undefined
+  const coding = investigationLoincCoding(input.id)
+  const unit = input.unit === undefined ? undefined : resolveUcumUnit({ display: input.unit })
+  if (input.unit !== undefined && unit === undefined) {
+    throw new Error(`Investigation ${input.id} has an unknown UCUM unit: ${input.unit}`)
+  }
   return {
     ...catalogBase(input),
     allowedIndicationCodes: input.allowedIndicationCodes ?? (input.category === 'examination'
       ? ['clinical-assessment']
-      : ['fever', 'type-2-diabetes']),
+      : [...scenarioModules]),
     available: input.available ?? true,
     category: input.category ?? 'laboratory',
+    ...(coding === undefined ? {} : { coding }),
     ...(input.componentItemIds === undefined ? {} : { componentItemIds: input.componentItemIds }),
     contraindicatedAllergyCodes: [],
     ...(input.criticalMaximum === undefined ? {} : { criticalMaximum: input.criticalMaximum }),
@@ -73,24 +297,76 @@ function investigation(input: {
     }],
     reportTemplate: input.reportTemplate,
     tatMinutes: input.tatMinutes,
-    ...(input.unit === undefined ? {} : { unit: input.unit }),
+    ...(unit === undefined ? {} : { unit }),
     valueType: input.valueType ?? 'quantity',
   }
 }
 
-export function createHospitalBaseline(): Pick<
-  ScenarioDatasetContent,
-  'catalog' | 'hospital' | 'inventory'
-> {
+export function createHospitalBaseline(
+  medicationProducts: readonly ReferenceMedicationProduct[],
+  medicalServices: readonly ReferenceMedicalService[],
+  valueSetEntries: readonly ReferenceValueSetEntry[],
+  selection?: ReferenceHospitalSelection,
+  referenceConcepts: readonly ReferenceConcept[] = [],
+): HospitalBaseline {
+  const acetaminophenProduct = selectedMedicationProduct(
+    medicationProducts,
+    'medication-acetaminophen',
+    'CM-NHSA-PRODUCT-ACETAMINOPHEN',
+    selection,
+  )
+  const metforminProduct = selectedMedicationProduct(
+    medicationProducts,
+    'medication-metformin',
+    'CM-NHSA-PRODUCT-METFORMIN',
+    selection,
+  )
+  const amlodipineProduct = selectedMedicationProduct(
+    medicationProducts,
+    'medication-amlodipine',
+    'CM-NHSA-PRODUCT-AMLODIPINE',
+    selection,
+  )
+  const cbcService = selectedMedicalService(medicalServices, 'CM-NHC-SERVICE-CBC')
+  const hba1cService = selectedMedicalService(medicalServices, 'CM-NHC-SERVICE-HBA1C')
+  const fundusService = selectedMedicalService(medicalServices, 'CM-NHC-SERVICE-FUNDUS')
+  const educationService = selectedMedicalService(
+    medicalServices,
+    'CM-NHC-SERVICE-DIABETES-EDUCATION',
+  )
+  const cbcComponentServices = ([
+    ['WBC', '白细胞计数服务', 'lab-wbc', '白细胞计数 {value} x10^9/L。'],
+    ['HGB', '血红蛋白服务', 'lab-hemoglobin', '血红蛋白 {value} g/L。'],
+    ['RBC', '红细胞计数服务', 'lab-rbc', '红细胞计数 {value} x10^12/L。'],
+    ['MCV', '平均红细胞体积服务', 'lab-mcv', '平均红细胞体积 {value} fL。'],
+    ['HCT', '红细胞压积服务', 'lab-hematocrit', '红细胞压积 {value} L/L。'],
+  ] as const).map(([code, name, requestCatalogItemId, reportTemplate]) => hospitalService({
+    itemId: `hospital-service-${code.toLowerCase()}`,
+    localCode: `HOSP-SVC-${code}`,
+    name,
+    nationalService: selectedMedicalService(medicalServices, `CM-NHC-SERVICE-${code}`),
+    priceFen: 800,
+    reportTemplate,
+    requestCatalogItemIds: [requestCatalogItemId],
+    tatMinutes: 20,
+    valueSetEntries,
+  }))
   return {
     catalog: {
       departments: [{
         ...catalogBase({ code: 'GM', id: 'department-general-medicine', name: '全科医学科', priceFen: 0 }),
         displayOrder: 10,
         parentId: hospitalId,
+        registrationAvailable: true,
+        type: 'department',
+      }, {
+        ...catalogBase({ code: 'LAB', id: 'department-laboratory', name: '检验科', priceFen: 0 }),
+        displayOrder: 20,
+        parentId: hospitalId,
+        registrationAvailable: false,
         type: 'department',
       }],
-      diagnoses: [{
+      diagnoses: ([{
         ...catalogBase({ code: 'J10.1', id: 'diagnosis-influenza', name: '流感伴呼吸道表现', priceFen: 0 }),
         codeSystem: 'http://hl7.org/fhir/sid/icd-10',
       }, {
@@ -108,8 +384,13 @@ export function createHospitalBaseline(): Pick<
       }, {
         ...catalogBase({ code: 'E05.90', id: 'diagnosis-hyperthyroidism', name: '甲状腺功能亢进', priceFen: 0 }),
         codeSystem: 'http://hl7.org/fhir/sid/icd-10',
-      }],
-      investigations: [
+      }] as const).map(item => withSelectedReferenceConcept(
+        item,
+        'diagnosis',
+        selection,
+        referenceConcepts,
+      )),
+      investigations: ([
         investigation({
           category: 'examination',
           code: 'BODY-TEMP',
@@ -361,14 +642,30 @@ export function createHospitalBaseline(): Pick<
           tatMinutes: 180,
           valueType: 'panel',
         }),
-      ],
+      ]).map(item => withSelectedReferenceConcept(
+        item,
+        'laboratory',
+        selection,
+        referenceConcepts,
+      )),
       medications: [{
         ...catalogBase({ code: 'ACETAMINOPHEN', id: 'medication-acetaminophen', name: '对乙酰氨基酚片', priceFen: 120 }),
+        availableScopes: ['outpatient'] as const,
         category: '解热镇痛药',
         defaultDose: '0.5 g',
         defaultFrequency: 'PRN',
         defaultRoute: '口服',
         dosageForm: '片剂',
+        drugConcept: {
+          code: 'CM-DRUG-ACETAMINOPHEN-500MG-ORAL-TABLET',
+          conceptId: 'drug-concept-acetaminophen-500mg-oral-tablet',
+          display: '对乙酰氨基酚 500 mg 口服片剂',
+          kind: 'drug-concept' as const,
+          system: 'urn:clinmesh:reference:drug-concept' as const,
+          version: 'clinmesh-drug-concepts-2026-08-28',
+        },
+        product: selectedProductSnapshot(acetaminophenProduct),
+        regulatoryVerification: regulatoryVerification(acetaminophenProduct, selection),
         restriction: '注意总剂量及肝功能风险。',
         unit: '片',
         workflow: {
@@ -383,11 +680,22 @@ export function createHospitalBaseline(): Pick<
         },
       }, {
         ...catalogBase({ code: 'METFORMIN', id: 'medication-metformin', name: '盐酸二甲双胍片', priceFen: 1_200 }),
+        availableScopes: ['outpatient'] as const,
         category: '双胍类降糖药',
         defaultDose: '0.5 g',
         defaultFrequency: 'BID',
         defaultRoute: '口服',
         dosageForm: '片剂',
+        drugConcept: {
+          code: 'CM-DRUG-METFORMIN-HCL-500MG-ORAL-TABLET',
+          conceptId: 'drug-concept-metformin-hcl-500mg-oral-tablet',
+          display: '盐酸二甲双胍 500 mg 口服片剂',
+          kind: 'drug-concept' as const,
+          system: 'urn:clinmesh:reference:drug-concept' as const,
+          version: 'clinmesh-drug-concepts-2026-08-28',
+        },
+        product: selectedProductSnapshot(metforminProduct),
+        regulatoryVerification: regulatoryVerification(metforminProduct, selection),
         restriction: '调整方案前评估肾功能。',
         unit: '片',
         workflow: {
@@ -400,7 +708,81 @@ export function createHospitalBaseline(): Pick<
           defaultCourseDays: 30,
           defaultQuantity: 60,
         },
+      }, {
+        ...catalogBase({ code: 'AMLODIPINE', id: 'medication-amlodipine', name: '苯磺酸氨氯地平片', priceFen: 1_500 }),
+        availableScopes: ['outpatient'] as const,
+        category: '钙通道阻滞剂',
+        defaultDose: '5 mg',
+        defaultFrequency: 'QD',
+        defaultRoute: '口服',
+        dosageForm: '片剂',
+        drugConcept: {
+          code: 'CM-DRUG-AMLODIPINE-5MG-ORAL-TABLET',
+          conceptId: 'drug-concept-amlodipine-5mg-oral-tablet',
+          display: '氨氯地平 5 mg 口服片剂',
+          kind: 'drug-concept' as const,
+          system: 'urn:clinmesh:reference:drug-concept' as const,
+          version: 'clinmesh-drug-concepts-2026-08-28',
+        },
+        product: selectedProductSnapshot(amlodipineProduct),
+        regulatoryVerification: regulatoryVerification(amlodipineProduct, selection),
+        restriction: '开始或调整方案前评估血压和外周水肿。',
+        unit: '片',
+        workflow: {
+          allowedCombinationIds: [],
+          allowedCourseDays: [30],
+          allowedDiagnosisCodes: ['I10'],
+          allowedDoseTexts: ['5 mg'],
+          allowedFrequencyCodes: ['QD'],
+          allowedQuantities: [30],
+          defaultCourseDays: 30,
+          defaultQuantity: 30,
+        },
       }],
+      services: [hospitalService({
+        componentServiceIds: cbcComponentServices.map(service => service.id),
+        itemId: 'hospital-service-cbc',
+        localCode: 'HOSP-SVC-CBC',
+        name: '血常规服务',
+        nationalService: cbcService,
+        priceFen: 2_500,
+        reportTemplate: '{value}',
+        requestCatalogItemIds: ['lab-cbc'],
+        tatMinutes: 20,
+        valueSetEntries,
+      }), ...cbcComponentServices, hospitalService({
+        itemId: 'hospital-service-hba1c',
+        localCode: 'HOSP-SVC-HBA1C',
+        name: '糖化血红蛋白服务',
+        nationalService: hba1cService,
+        priceFen: 4_500,
+        reportTemplate: '糖化血红蛋白 {value}%。',
+        requestCatalogItemIds: ['lab-hba1c'],
+        tatMinutes: 120,
+        valueSetEntries,
+      }), hospitalService({
+        executingDepartmentId: 'department-general-medicine',
+        itemId: 'hospital-service-fundus',
+        localCode: 'HOSP-SVC-FUNDUS',
+        name: '眼底检查服务',
+        nationalService: fundusService,
+        priceFen: 8_000,
+        reportTemplate: '眼底检查结果：{value}。',
+        requestCatalogItemIds: [],
+        tatMinutes: 60,
+        valueSetEntries,
+      }), hospitalService({
+        executingDepartmentId: 'department-general-medicine',
+        itemId: 'hospital-service-diabetes-education',
+        localCode: 'HOSP-SVC-DIABETES-EDUCATION',
+        name: '糖尿病健康教育',
+        nationalService: educationService,
+        priceFen: 3_000,
+        reportTemplate: '完成糖尿病饮食、运动和用药教育。',
+        requestCatalogItemIds: [],
+        tatMinutes: 30,
+        valueSetEntries,
+      })],
     },
     hospital: {
       active: true,
@@ -421,6 +803,11 @@ export function createHospitalBaseline(): Pick<
       expiresOn: '2030-12-31',
       itemId: 'medication-metformin',
       lotId: 'lot-metformin-synthetic-001',
+      quantity: 1_000,
+    }, {
+      expiresOn: '2030-12-31',
+      itemId: 'medication-amlodipine',
+      lotId: 'lot-amlodipine-synthetic-001',
       quantity: 1_000,
     }],
   }

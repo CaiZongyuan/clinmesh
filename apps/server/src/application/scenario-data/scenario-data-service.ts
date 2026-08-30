@@ -26,11 +26,15 @@ import {
 import { validateScenarioDataset } from './scenario-dataset-validator.ts'
 import type { ScenarioService } from '../scenario-service.ts'
 import type { WorkflowService } from '../workflow-service.ts'
-import { createSyntheticPatientProfiles } from './synthetic-patient-profile.ts'
+import type { ReferenceDataService } from '../reference-data-service.ts'
+import {
+  applySyntheticPatientProfileMappings,
+  createSyntheticPatientProfiles,
+} from './synthetic-patient-profile.ts'
 import { canonicalJsonHash } from './canonical-json.ts'
 import {
   compileSyntheaR4Bundle,
-  stableHistoryId,
+  pinSyntheaSourceVersions,
 } from './synthea-case-truth-compiler.ts'
 
 const scenarioDatasetInstallResultSchema = z.object({
@@ -75,6 +79,7 @@ export class ScenarioDataService {
   readonly #profiles: SyntheticPatientProfileRepository
   readonly #jobs: ScenarioGenerationJobRepository
   readonly #repository: ScenarioDatasetRepository
+  readonly #referenceData: ReferenceDataService
   readonly #scenario: ScenarioService
   readonly #workflow: WorkflowService
 
@@ -83,6 +88,7 @@ export class ScenarioDataService {
     jobs: ScenarioGenerationJobRepository
     providers: ReadonlyMap<string, ScenarioGenerationProvider>
     profiles: SyntheticPatientProfileRepository
+    referenceData: ReferenceDataService
     repository: ScenarioDatasetRepository
     scenario: ScenarioService
     workflow: WorkflowService
@@ -91,6 +97,7 @@ export class ScenarioDataService {
     this.#jobs = input.jobs
     this.#providers = input.providers
     this.#profiles = input.profiles
+    this.#referenceData = input.referenceData
     this.#repository = input.repository
     this.#scenario = input.scenario
     this.#workflow = input.workflow
@@ -117,7 +124,11 @@ export class ScenarioDataService {
     }
     const provider = await this.#providerFor(input.request)
     const corpus = await provider.generate(input.request)
-    const dataset = this.#dataset(input.context.workspaceId, input.request, corpus.content)
+    const dataset = this.#dataset(
+      input.context.workspaceId,
+      input.request,
+      this.#withReferenceData(corpus.content),
+    )
     const profiles = createSyntheticPatientProfiles({
       dataset,
       sources: corpus.sources,
@@ -202,7 +213,11 @@ export class ScenarioDataService {
     try {
       const provider = await this.#providerFor(claimed.request)
       const corpus = await provider.generate(claimed.request, signal)
-      const dataset = this.#dataset(claimed.workspaceId, claimed.request, corpus.content)
+      const dataset = this.#dataset(
+        claimed.workspaceId,
+        claimed.request,
+        this.#withReferenceData(corpus.content),
+      )
       const profiles = createSyntheticPatientProfiles({
         dataset,
         sources: corpus.sources,
@@ -439,7 +454,7 @@ export class ScenarioDataService {
         && current.source.raw !== null
         && compilation !== null
         ? compileSyntheaR4Bundle({
-            bundle: current.source.raw,
+            bundle: pinSyntheaSourceVersions(current.source.raw, current.patient),
             ordinal: compilation.ordinal,
             request: scenarioGenerationRequestSchema.parse({
               modules: compilation.modules,
@@ -510,51 +525,26 @@ export class ScenarioDataService {
         left.sourceResourceType.localeCompare(right.sourceResourceType)
           || left.sourceResourceId.localeCompare(right.sourceResourceId)
       ))
-      const longitudinalHistory = recompiledPatient.longitudinalHistory.map(event => (
-        { ...event, mappedCode: mappingBySourceId.get(event.sourceResourceId)?.target.code ?? null }
-      ))
-      const targetMappingByHistoryId = new Map(mappings.map(mapping => (
-        [stableHistoryId(mapping.sourceResourceType, mapping.sourceResourceId), mapping.target] as const
-      )))
-      const fhirHistory = recompiledPatient.fhirHistory.map((resource) => {
-        const target = targetMappingByHistoryId.get(resource.id)
-        if (target === undefined) return resource
-        if (resource.resourceType === 'Encounter') {
-          return { ...resource, classCode: target.code }
-        }
-        if (resource.resourceType === 'MedicationRequest') {
-          return {
-            ...resource,
-            medication: {
-              code: target.code,
-              display: resource.medication.display,
-              ...(target.system === undefined ? {} : { system: target.system }),
-            },
-          }
-        }
-        return {
-          ...resource,
-          code: {
-            code: target.code,
-            display: resource.code.display,
-            ...(target.system === undefined ? {} : { system: target.system }),
-          },
-        }
-      })
       const revision = input.expectedRevision + 1
-      const mappingVersion = current.source.mappingVersion.replace(/\+overlay-r\d+$/, '')
+      const mappingSource = current.source.mappingProvenance === undefined
+        ? {
+            mappingVersion: `${current.source.mappingVersion.replace(/\+overlay-r\d+$/, '')}+overlay-r${revision}`,
+          }
+        : {
+            mappingProvenance: {
+              ...current.source.mappingProvenance,
+              overlayRevision: revision,
+            },
+            mappingVersion: current.source.mappingVersion,
+          }
       const updated = syntheticPatientProfileSchema.parse({
         ...current,
         mappings,
-        patient: {
-          ...recompiledPatient,
-          fhirHistory,
-          longitudinalHistory,
-        },
+        patient: applySyntheticPatientProfileMappings(recompiledPatient, mappings),
         revision,
         source: {
           ...current.source,
-          mappingVersion: `${mappingVersion}+overlay-r${revision}`,
+          ...mappingSource,
         },
         updatedAt: new Date().toISOString(),
       })
@@ -663,7 +653,13 @@ export class ScenarioDataService {
     this.#assertAdministrator(input.context)
     const current = this.#getDataset(input.context.workspaceId, input.datasetId)
     const now = new Date().toISOString()
-    const content = scenarioDatasetContentSchema.parse(input.content)
+    const content = scenarioDatasetContentSchema.parse({
+      ...input.content,
+      reproduction: {
+        ...input.content.reproduction,
+        referenceData: current.content.reproduction.referenceData ?? this.#referenceData.provenance(),
+      },
+    })
     const updated: ScenarioDataset = {
       ...current,
       content,
@@ -709,6 +705,16 @@ export class ScenarioDataService {
     if (context.roleCode !== 'administrator') {
       throw new ScenarioDataError('ROLE_NOT_ALLOWED', 'Only an administrator can manage Scenario Datasets')
     }
+  }
+
+  #withReferenceData(content: ScenarioDataset['content']): ScenarioDataset['content'] {
+    return scenarioDatasetContentSchema.parse({
+      ...content,
+      reproduction: {
+        ...content.reproduction,
+        referenceData: this.#referenceData.provenance(),
+      },
+    })
   }
 
   #assertExpectedVersion(dataset: ScenarioDataset, expectedVersion: number): void {

@@ -132,6 +132,7 @@ describe('trusted Web session workflow', () => {
   })
 
   it('authenticates before exposing only the granted role workspace', async () => {
+    window.history.replaceState(null, '', '/registration')
     let authenticated = false
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const path = new URL(String(input), 'http://localhost').pathname
@@ -144,6 +145,12 @@ describe('trusted Web session workflow', () => {
         authenticated = true
         return Response.json({ user: registrarSession.user })
       }
+      if (path === '/api/his/v1/catalogs/registration') {
+        return Response.json({ departments: [], locations: [], virtualDate: '2026-08-24', visitTypes: [] })
+      }
+      if (path === '/api/his/v1/registrations') {
+        return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
+      }
       throw new Error(`Unexpected request: ${path}`)
     }))
     const user = userEvent.setup()
@@ -154,7 +161,8 @@ describe('trusted Web session workflow', () => {
     await user.type(screen.getByLabelText('账户密码'), 'test-only-password')
     await user.click(screen.getByRole('button', { name: '登录' }))
 
-    expect(await screen.findByRole('heading', { name: '工作台总览' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '门诊挂号' })).toBeTruthy()
+    expect(window.location.pathname).toBe('/registration')
     expect(screen.getByRole('link', { name: '门诊挂号' })).toBeTruthy()
     expect(screen.queryByRole('link', { name: '分诊护理' })).toBeNull()
     expect(screen.queryByText(/Agent|AI|助手/i)).toBeNull()
@@ -176,6 +184,7 @@ describe('trusted Web session workflow', () => {
       if (path === '/api/sim/v1/scenario-runs/current') {
         scenarioRequests += 1
         return Response.json({
+          clinicalReview: null,
           epoch: 'epoch-1',
           initialStateHash: 'a'.repeat(64),
           kind: 'candidate',
@@ -187,7 +196,7 @@ describe('trusted Web session workflow', () => {
         })
       }
       if (path === '/api/his/v1/catalogs/registration') {
-        return Response.json({ departments: [], virtualDate: '2026-08-24', visitTypes: [] })
+        return Response.json({ departments: [], locations: [], virtualDate: '2026-08-24', visitTypes: [] })
       }
       if (path === '/api/his/v1/registrations') {
         return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
@@ -198,28 +207,27 @@ describe('trusted Web session workflow', () => {
     render(<WebApp />)
 
     expect(await screen.findByRole('heading', { name: '工作台总览' })).toBeTruthy()
-    expect(screen.getByText('管理员 · 合成管理员')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     for (const label of [
-      '管理员 · 合成管理员',
-      '收费员 · 合成收费员',
-      '门诊医生 · 合成门诊医生',
-      '药师 · 合成药师',
-      '挂号员 · 合成挂号员',
-      '分诊护士 · 合成分诊护士',
+      '管理员 · 管理员',
+      '收费员 · 收费员',
+      '门诊医生 · 门诊医生',
+      '药师 · 药师',
+      '挂号员 · 挂号员',
+      '分诊护士 · 分诊护士',
     ]) {
       expect(await screen.findByRole('menuitemradio', { name: label })).toBeTruthy()
     }
-    await user.click(await screen.findByRole('menuitemradio', { name: '挂号员 · 合成挂号员' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: '挂号员 · 挂号员' }))
 
     expect(await screen.findByRole('heading', { name: '门诊挂号' })).toBeTruthy()
     expect(window.location.pathname).toBe('/registration')
-    expect(screen.getByText('挂号员 · 合成挂号员')).toBeTruthy()
+    expect(screen.getByText('挂号员 · 挂号员')).toBeTruthy()
     expect(screen.getByRole('link', { name: '门诊挂号' })).toBeTruthy()
     expect(screen.queryByRole('link', { name: '门诊收费' })).toBeNull()
 
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
-    await user.click(await screen.findByRole('menuitemradio', { name: '管理员 · 合成管理员' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: '管理员 · 管理员' }))
 
     expect(await screen.findByRole('heading', { name: '工作台总览' })).toBeTruthy()
     expect(window.location.pathname).toBe('/')
@@ -240,6 +248,7 @@ describe('trusted Web session workflow', () => {
       }
       if (path === '/api/sim/v1/scenario-runs/current') {
         return Response.json({
+          clinicalReview: null,
           epoch: 'epoch-1',
           initialStateHash: 'a'.repeat(64),
           kind: 'candidate',
@@ -257,7 +266,7 @@ describe('trusted Web session workflow', () => {
 
     expect(await screen.findByRole('heading', { name: '工作台总览' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
-    await user.click(await screen.findByRole('menuitemradio', { name: '挂号员 · 合成挂号员' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: '挂号员 · 挂号员' }))
 
     expect(await screen.findByText('当前岗位无权执行此操作')).toBeTruthy()
     expect(screen.getByText('请切换到有权限的岗位后重试。')).toBeTruthy()
@@ -265,12 +274,11 @@ describe('trusted Web session workflow', () => {
   })
 
   it('signs out and removes the authenticated role workspace', async () => {
+    window.history.replaceState(null, '', '/registration')
     let authenticated = true
-    let contextRequests = 0
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const path = new URL(String(input), 'http://localhost').pathname
       if (path === '/api/auth/context') {
-        contextRequests += 1
         return authenticated
           ? Response.json(registrarSession)
           : Response.json({ error: { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in required' } }, { status: 401 })
@@ -280,7 +288,7 @@ describe('trusted Web session workflow', () => {
         return Response.json({ success: true })
       }
       if (path === '/api/his/v1/catalogs/registration') {
-        return Response.json({ departments: [], virtualDate: '2026-08-24', visitTypes: [] })
+        return Response.json({ departments: [], locations: [], virtualDate: '2026-08-24', visitTypes: [] })
       }
       if (path === '/api/his/v1/registrations') {
         return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
@@ -290,16 +298,16 @@ describe('trusted Web session workflow', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    expect(await screen.findByRole('heading', { name: '工作台总览' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '门诊挂号' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     await user.click(await screen.findByRole('menuitem', { name: '退出登录' }))
 
     expect(await screen.findByRole('heading', { name: '登录 ClinMesh' })).toBeTruthy()
     expect(screen.queryByRole('link', { name: '门诊挂号' })).toBeNull()
-    expect(contextRequests).toBe(2)
   })
 
   it('does not reuse role data after one account signs out and another signs in', async () => {
+    window.history.replaceState(null, '', '/registration')
     const secondSession = {
       ...registrarSession,
       actor: {
@@ -336,7 +344,7 @@ describe('trusted Web session workflow', () => {
         return Response.json({ user: secondSession.user })
       }
       if (path === '/api/his/v1/catalogs/registration') {
-        return Response.json({ departments: [], virtualDate: '2026-08-24', visitTypes: [] })
+        return Response.json({ departments: [], locations: [], virtualDate: '2026-08-24', visitTypes: [] })
       }
       if (path === '/api/his/v1/registrations') {
         if (account === undefined) {

@@ -71,6 +71,7 @@ import {
   type SyntheticPatientIdentity,
   type SyntheticPatientMappingInput,
 } from '@clinmesh/contracts/scenario'
+import { referenceDataReleaseListSchema } from '@clinmesh/contracts/reference-data'
 import { z } from 'zod'
 
 export const sessionQueryKey = ['session-context'] as const
@@ -167,6 +168,14 @@ export function selectRole(practitionerRoleId: string): Promise<SessionContext> 
 
 export function getCurrentScenario(signal?: AbortSignal): Promise<ScenarioState> {
   return apiGet('/api/sim/v1/scenario-runs/current', scenarioStateSchema, signal)
+}
+
+export function getReferenceDataReleases(signal?: AbortSignal) {
+  return apiGet(
+    '/api/sim/v1/reference-data/releases',
+    referenceDataReleaseListSchema,
+    signal,
+  )
 }
 
 export function installScenario(

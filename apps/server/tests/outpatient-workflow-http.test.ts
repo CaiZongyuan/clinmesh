@@ -21,6 +21,7 @@ import {
   clinicalDocumentSignResponseSchema,
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
+  completeHospitalServiceResponseSchema,
   commandResponseSchema,
   confirmDiagnosisResponseSchema,
   confirmNoMedicationResponseSchema,
@@ -39,6 +40,7 @@ import {
   firstVisitDraftResponseSchema,
   issueLaboratoryRequestResponseSchema,
   issuePrescriptionResponseSchema,
+  orderHospitalServiceResponseSchema,
   laboratoryRequestActionResponseSchema,
   laboratoryOrderResponseSchema,
   laboratoryRequestDraftResponseSchema,
@@ -54,6 +56,7 @@ import {
   revisitDraftResponseSchema,
   scenarioCommandResponseSchema,
   scenarioStateSchema,
+  serviceCatalogSearchSchema,
   sessionContextSchema,
   startVirtualPatientResponseSchema,
   startVisitResponseSchema,
@@ -73,6 +76,13 @@ type RevisitMedicationDraft = {
   doseText: string
   frequencyCode: string
   quantity: number
+}
+type RevisitDraftOptions = {
+  diagnosis?: {
+    code: string
+    display: string
+  }
+  medications?: RevisitMedicationDraft[]
 }
 
 const structuredClinicalDocument = {
@@ -544,41 +554,6 @@ async function createCompletionReadyConsultation(
   }
 }
 
-function seedAdditionalVirtualPatient(
-  runtime: TestRuntime,
-  input: { id: string; name: string; patientId: string },
-): void {
-  const repositoryContext = { epoch: 'epoch-1', workspaceId: 'workspace-demo' }
-  runtime.fhir.create(repositoryContext, {
-    resourceType: 'Patient',
-    id: input.patientId,
-    active: true,
-    birthDate: '1990-06-15',
-    gender: 'female',
-    identifier: [{
-      system: 'https://caizongyuan.github.io/clinmesh/fhir/sid/synthetic-patient',
-      value: `CM-SYN-${input.patientId.toUpperCase()}`,
-    }],
-    name: [{ text: input.name }],
-  })
-  runtime.database.driver.prepare(`
-    INSERT INTO virtual_patient (
-      workspace_id, epoch, virtual_patient_id, version, patient_id,
-      clinical_summary_json, available
-    ) VALUES ('workspace-demo', 'epoch-1', ?, 1, ?, ?, 1)
-  `).run(input.id, input.patientId, JSON.stringify({
-    chiefComplaint: '反复发热伴明显咽痛两天。',
-    summary: '合成患者出现发热与咽部不适，需门诊评估。',
-    vitalSigns: {
-      bloodPressure: { diastolicMmHg: 78, systolicMmHg: 120 },
-      oxygenSaturationPct: 98,
-      pulseBpm: 94,
-      respirationBpm: 19,
-      temperatureC: 38.4,
-    },
-  }))
-}
-
 async function selectAdditionalDoctorRole(
   runtime: TestRuntime,
   password: string,
@@ -866,13 +841,18 @@ async function createReportedCase(runtime: TestRuntime, password: string) {
 async function createRevisitDraftCase(
   runtime: TestRuntime,
   password: string,
-  medications: RevisitMedicationDraft[] = [{
+  options: RevisitDraftOptions = {},
+) {
+  const diagnosis = options.diagnosis ?? {
+    code: 'J10.1',
+    display: '流感伴其他呼吸道表现，季节性流感病毒已标明',
+  }
+  const medications = options.medications ?? [{
     catalogItemId: 'medication-oseltamivir',
     doseText: '75 mg',
     frequencyCode: 'BID',
     quantity: 10,
-  }],
-) {
+  }]
   const testCase = await createReportedCase(runtime, password)
   await runtime.app.request(
     `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/start-revisit`,
@@ -894,10 +874,7 @@ async function createRevisitDraftCase(
       body: JSON.stringify({
         expectedVersions: { [`Encounter/${testCase.registration.encounterId}`]: '6' },
         input: {
-          diagnosis: {
-            code: 'J10.1',
-            display: '流感伴其他呼吸道表现，季节性流感病毒已标明',
-          },
+          diagnosis,
           document: {
             assessment: '甲型流感，生命体征稳定。',
             plan: '口服抗病毒药物，对症处理，必要时复诊。',
@@ -921,9 +898,9 @@ async function createRevisitDraftCase(
 async function createSignedCase(
   runtime: TestRuntime,
   password: string,
-  medications?: RevisitMedicationDraft[],
+  options?: RevisitDraftOptions,
 ) {
-  const testCase = await createRevisitDraftCase(runtime, password, medications)
+  const testCase = await createRevisitDraftCase(runtime, password, options)
   const expectedVersions = {
     [`Condition/${testCase.draft.conditionId}`]: '1',
     [`Encounter/${testCase.registration.encounterId}`]: '6',
@@ -968,9 +945,9 @@ async function createSignedCase(
 async function createPaidMedicationCase(
   runtime: TestRuntime,
   password: string,
-  medications?: RevisitMedicationDraft[],
+  options?: RevisitDraftOptions,
 ) {
-  const testCase = await createSignedCase(runtime, password, medications)
+  const testCase = await createSignedCase(runtime, password, options)
   const cashierCookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
   const previewResponse = await runtime.app.request('/api/his/v1/payments/actions/preview', {
     body: JSON.stringify({
@@ -1018,8 +995,8 @@ async function createPaidMedicationCase(
     },
   )
   if (!reviewResponse.ok) throw new Error('Test prescription review did not complete')
-  prescriptionReviewResponseSchema.parse(await reviewResponse.json())
-  return { ...testCase, cashierCookie, payment, pharmacistCookie }
+  const review = prescriptionReviewResponseSchema.parse(await reviewResponse.json()).data
+  return { ...testCase, cashierCookie, payment, pharmacistCookie, review }
 }
 
 const completionBlockerCases: Array<{
@@ -1325,11 +1302,6 @@ describe('outpatient workflow HTTP contract', () => {
       trustedOrigins: ['http://localhost'],
     })
     runtimes.push(runtime)
-    seedAdditionalVirtualPatient(runtime, {
-      id: 'virtual-patient-fever-002',
-      name: '合成患者林晓雨',
-      patientId: 'candidate-patient-002',
-    })
     const complete = async (candidate: Awaited<ReturnType<typeof createCompletionReadyConsultation>>) => {
       const response = await runtime.app.request(
         `/api/his/v1/encounters/${candidate.started.encounterId}/actions/complete`,
@@ -1367,7 +1339,7 @@ describe('outpatient workflow HTTP contract', () => {
         caseId: second.started.caseId,
         patient: {
           id: 'candidate-patient-002',
-          name: '合成患者林晓雨',
+          name: '王晓明',
         },
       }],
       page: 1,
@@ -1390,11 +1362,6 @@ describe('outpatient workflow HTTP contract', () => {
       trustedOrigins: ['http://localhost'],
     })
     runtimes.push(runtime)
-    seedAdditionalVirtualPatient(runtime, {
-      id: 'virtual-patient-fever-002',
-      name: '合成患者林晓雨',
-      patientId: 'candidate-patient-002',
-    })
     const complete = async (candidate: Awaited<ReturnType<typeof createCompletionReadyConsultation>>) => {
       const response = await runtime.app.request(
         `/api/his/v1/encounters/${candidate.started.encounterId}/actions/complete`,
@@ -1451,11 +1418,6 @@ describe('outpatient workflow HTTP contract', () => {
       trustedOrigins: ['http://localhost'],
     })
     runtimes.push(runtime)
-    seedAdditionalVirtualPatient(runtime, {
-      id: 'virtual-patient-fever-002',
-      name: '合成患者林晓雨',
-      patientId: 'candidate-patient-002',
-    })
     const complete = async (candidate: Awaited<ReturnType<typeof createCompletionReadyConsultation>>) => {
       const response = await runtime.app.request(
         `/api/his/v1/encounters/${candidate.started.encounterId}/actions/complete`,
@@ -1514,16 +1476,6 @@ describe('outpatient workflow HTTP contract', () => {
       trustedOrigins: ['http://localhost'],
     })
     runtimes.push(runtime)
-    seedAdditionalVirtualPatient(runtime, {
-      id: 'virtual-patient-fever-002',
-      name: '合成患者林晓雨',
-      patientId: 'candidate-patient-002',
-    })
-    seedAdditionalVirtualPatient(runtime, {
-      id: 'virtual-patient-fever-003',
-      name: '合成患者周清和',
-      patientId: 'candidate-patient-003',
-    })
     const complete = async (candidate: Awaited<ReturnType<typeof createCompletionReadyConsultation>>) => {
       const response = await runtime.app.request(
         `/api/his/v1/encounters/${candidate.started.encounterId}/actions/complete`,
@@ -2626,28 +2578,28 @@ describe('outpatient workflow HTTP contract', () => {
     expect(response.status).toBe(200)
     const body: unknown = await response.json()
     const candidates = virtualPatientListSchema.parse(body)
-    expect(candidates).toEqual({
-      items: [{
-        birthDate: '1988-03-16',
-        gender: 'female',
-        id: 'virtual-patient-fever-001',
-        name: '合成候选患者林晓',
-        presentation: {
-          chiefComplaint: '发热、咽痛 1 天。',
-          summary: '昨日傍晚开始发热，最高 38.7 °C，伴咽痛。',
-          vitalSigns: {
-            bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
-            oxygenSaturationPct: 98,
-            pulseBpm: 96,
-            respirationBpm: 20,
-            temperatureC: 38.6,
-          },
-        },
-        version: expect.any(String),
-      }],
+    expect(candidates).toMatchObject({
       page: 1,
       pageSize: 20,
-      total: 1,
+      total: 12,
+    })
+    expect(candidates.items[0]).toEqual({
+      birthDate: '1988-03-16',
+      gender: 'female',
+      id: 'virtual-patient-fever-001',
+      name: '林晓',
+      presentation: {
+        chiefComplaint: '发热、咽痛 1 天',
+        summary: '昨日傍晚开始发热，最高 38.7 °C，伴咽痛。',
+        vitalSigns: {
+          bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
+          oxygenSaturationPct: 98,
+          pulseBpm: 96,
+          respirationBpm: 20,
+          temperatureC: 38.6,
+        },
+      },
+      version: expect.any(String),
     })
     expect(candidates.items[0]?.version.length).toBeGreaterThanOrEqual(32)
     expect(JSON.stringify(body)).not.toMatch(/scenario|hidden|influenza|candidate-patient-001/i)
@@ -2656,11 +2608,11 @@ describe('outpatient workflow HTTP contract', () => {
       '/api/his/v1/doctor/virtual-patients?page=2&pageSize=1',
       { headers: { cookie: doctorCookie } },
     )
-    expect(await secondPageResponse.json()).toEqual({
-      items: [],
+    expect(await secondPageResponse.json()).toMatchObject({
+      items: [{ id: 'virtual-patient-fever-002' }],
       page: 2,
       pageSize: 1,
-      total: 1,
+      total: 12,
     })
   })
 
@@ -2847,7 +2799,7 @@ describe('outpatient workflow HTTP contract', () => {
       consultation: {
         questions: expect.arrayContaining([expect.objectContaining({
           code: 'symptom-onset',
-          text: '什么时候开始发热？',
+          text: '什么时候开始不舒服？',
         })]),
         records: [],
         version: 1,
@@ -2877,10 +2829,10 @@ describe('outpatient workflow HTTP contract', () => {
         caseId: started.caseId,
         consultationVersion: 2,
         record: {
-          answer: '昨天傍晚开始发热，最高量到 38.7 °C。',
+          answer: '昨天下午开始发热，夜里最高 38.7 °C。',
           question: {
             code: 'symptom-onset',
-            text: '什么时候开始发热？',
+            text: '什么时候开始不舒服？',
           },
           recordedAt: '2026-08-24T09:00:00+08:00',
           sequence: 1,
@@ -2896,10 +2848,10 @@ describe('outpatient workflow HTTP contract', () => {
     expect(restoredDetail).toMatchObject({
       consultation: {
         records: [{
-          answer: '昨天傍晚开始发热，最高量到 38.7 °C。',
+          answer: '昨天下午开始发热，夜里最高 38.7 °C。',
           question: {
             code: 'symptom-onset',
-            text: '什么时候开始发热？',
+            text: '什么时候开始不舒服？',
           },
           recordedAt: '2026-08-24T09:00:00+08:00',
           sequence: 1,
@@ -3822,7 +3774,7 @@ describe('outpatient workflow HTTP contract', () => {
       data: {
         consultationVersion: 3,
         record: {
-          answer: '咽痛，吞咽时更明显，没有气促。',
+          answer: '咽痛，吞咽时明显，没有气促。',
           question: { code: 'associated-symptoms' },
           sequence: 2,
         },
@@ -3844,11 +3796,11 @@ describe('outpatient workflow HTTP contract', () => {
       consultation: {
         records: [
           expect.objectContaining({
-            question: { code: 'symptom-onset', text: '什么时候开始发热？' },
+            question: { code: 'symptom-onset', text: '什么时候开始不舒服？' },
             sequence: 1,
           }),
           expect.objectContaining({
-            question: { code: 'associated-symptoms', text: '除了发热，还有哪里不舒服？' },
+            question: { code: 'associated-symptoms', text: '还有哪些伴随症状？' },
             sequence: 2,
           }),
         ],
@@ -4427,6 +4379,18 @@ describe('outpatient workflow HTTP contract', () => {
         { kind: 'created', reference: `Task/${issued.data.request.taskId}` },
       ],
     })
+    const serviceCatalogResponse = await runtime.app.request(
+      `/api/his/v1/catalogs/services?query=${encodeURIComponent('HOSP-SVC-CBC')}&pageSize=20`,
+      { headers: { cookie: doctorCookie } },
+    )
+    const service = serviceCatalogSearchSchema.parse(await serviceCatalogResponse.json()).items[0]
+    if (service === undefined) throw new Error('Hospital CBC service was not searchable')
+    expect(new Set([
+      service.nationalService.id,
+      service.id,
+      service.chargeDefinition.id,
+      issued.data.request.serviceRequestId,
+    ]).size).toBe(4)
     const { previousReports, ...legacyRequest } = issued.data.request
     expect(previousReports).toEqual([])
     const receiptUpdate = runtime.database.driver.prepare(`
@@ -4501,7 +4465,143 @@ describe('outpatient workflow HTTP contract', () => {
     expect(fhirBundleSchema.parse(await chargeSearch.json())).toMatchObject({ total: 0 })
   })
 
-  it('rejects stale, duplicate, and legacy-panel independent laboratory requests', async () => {
+  it.each([
+    {
+      hospitalServiceId: 'hospital-service-fundus',
+      nationalServiceId: 'nhc-medical-service:nhc-medical-services-2026-08-28:CM-NHC-SERVICE-FUNDUS',
+      totalFen: 8_000,
+    },
+    {
+      hospitalServiceId: 'hospital-service-diabetes-education',
+      nationalServiceId: 'nhc-medical-service:nhc-medical-services-2026-08-28:CM-NHC-SERVICE-DIABETES-EDUCATION',
+      totalFen: 3_000,
+    },
+  ])('orders, charges, and completes $hospitalServiceId', async ({
+    hospitalServiceId,
+    nationalServiceId,
+    totalFen,
+  }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-hospital-service-command-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const orderBody = JSON.stringify({
+      expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+      input: {},
+    })
+    const untrustedOrderResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/services/${hospitalServiceId}/actions/order`,
+      {
+        body: orderBody,
+        headers: {
+          ...commandHeaders(doctorCookie),
+          origin: 'https://untrusted.example',
+        },
+        method: 'POST',
+      },
+    )
+    expect(untrustedOrderResponse.status).toBe(403)
+    for (const resourceType of ['ServiceRequest', 'ChargeItem'] as const) {
+      expect(fhirBundleSchema.parse(await (await runtime.app.request(
+        `/fhir/R5/${resourceType}?_total=accurate`,
+        { headers: { cookie: doctorCookie } },
+      )).json()).total).toBe(0)
+    }
+    const orderResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/services/${hospitalServiceId}/actions/order`,
+      {
+        body: orderBody,
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(orderResponse.status).toBe(200)
+    const ordered = orderHospitalServiceResponseSchema.parse(await orderResponse.json()).data
+    expect(ordered).toMatchObject({
+      hospitalServiceId,
+      nationalServiceId,
+      status: 'requested',
+      totalFen,
+    })
+    expect(new Set([
+      ordered.nationalServiceId,
+      ordered.hospitalServiceId,
+      ordered.chargeDefinitionId,
+      ordered.serviceRequestId,
+    ]).size).toBe(4)
+    const chargeResponse = await runtime.app.request(
+      `/fhir/R5/ChargeItem/${ordered.chargeItemId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirResourceSchema.parse(await chargeResponse.json())).toMatchObject({
+      encounter: { reference: `Encounter/${started.encounterId}` },
+      status: 'billable',
+      unitPriceComponent: { amount: { currency: 'CNY', value: totalFen / 100 } },
+    })
+
+    const completeBody = JSON.stringify({
+      expectedVersions: {
+        [`ServiceRequest/${ordered.serviceRequestId}`]: ordered.serviceRequestVersion,
+        [`Task/${ordered.taskId}`]: ordered.taskVersion,
+      },
+      input: {},
+    })
+    const untrustedCompleteResponse = await runtime.app.request(
+      `/api/his/v1/service-requests/${ordered.serviceRequestId}/actions/complete`,
+      {
+        body: completeBody,
+        headers: {
+          ...commandHeaders(doctorCookie),
+          origin: 'https://untrusted.example',
+        },
+        method: 'POST',
+      },
+    )
+    expect(untrustedCompleteResponse.status).toBe(403)
+    expect(fhirResourceSchema.parse(await (await runtime.app.request(
+      `/fhir/R5/ServiceRequest/${ordered.serviceRequestId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())).toMatchObject({ meta: { versionId: '1' }, status: 'active' })
+
+    const completeResponse = await runtime.app.request(
+      `/api/his/v1/service-requests/${ordered.serviceRequestId}/actions/complete`,
+      {
+        body: completeBody,
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(completeResponse.status).toBe(200)
+    const completed = completeHospitalServiceResponseSchema.parse(
+      await completeResponse.json(),
+    ).data
+    expect(completed).toMatchObject({
+      chargeItemId: ordered.chargeItemId,
+      serviceRequestVersion: '2',
+      status: 'completed',
+      taskVersion: '2',
+    })
+    expect(fhirResourceSchema.parse(await (await runtime.app.request(
+      `/fhir/R5/ServiceRequest/${ordered.serviceRequestId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())).toMatchObject({ meta: { versionId: '2' }, status: 'completed' })
+    expect(fhirResourceSchema.parse(await (await runtime.app.request(
+      `/fhir/R5/Task/${ordered.taskId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())).toMatchObject({ meta: { versionId: '2' }, status: 'completed' })
+  })
+
+  it('rejects stale, duplicate, and unknown-catalog independent laboratory requests', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-request-guards-http-'))
     temporaryDirectories.push(directory)
     const password = `Test-${randomUUID()}-Aa1!`
@@ -4540,10 +4640,10 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
 
-    const legacyPanelResponse = await save('lab-fever-panel', 0)
-    expect(legacyPanelResponse.status).toBe(400)
-    expect(apiErrorSchema.parse(await legacyPanelResponse.json())).toMatchObject({
-      error: { code: 'INVALID_INPUT' },
+    const unknownCatalogResponse = await save('lab-not-catalogued', 0)
+    expect(unknownCatalogResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await unknownCatalogResponse.json())).toMatchObject({
+      error: { code: 'CATALOG_CONFLICT' },
     })
 
     const firstDraft = laboratoryRequestDraftResponseSchema.parse(
@@ -5630,6 +5730,98 @@ describe('outpatient workflow HTTP contract', () => {
     expect(repeatedHemoglobin).not.toBe(148)
     expect(Math.abs(Number(repeatedHemoglobin) - 148)).toBeLessThanOrEqual(8.88)
 
+    const issueMappedObservation = async (input: {
+      catalogItemId: 'lab-hba1c' | 'lab-random-glucose'
+      expectedDraftVersion: number | undefined
+      expectedCoding: { code: string; display: string }
+      expectedUnit: { code: string; display: string }
+      expectedValue: number
+    }) => {
+      const mappedDraftResponse = await runtime.app.request(
+        `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+        {
+          body: JSON.stringify({
+            expectedVersions,
+            input: {
+              catalogItemId: input.catalogItemId,
+              expectedDraftVersion: input.expectedDraftVersion,
+              indicationCode: 'type-2-diabetes',
+            },
+          }),
+          headers: commandHeaders(doctorCookie),
+          method: 'PUT',
+        },
+      )
+      const mappedDraft = laboratoryRequestDraftResponseSchema.parse(
+        await mappedDraftResponse.json(),
+      ).data
+      const mappedIssueResponse = await runtime.app.request(
+        `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
+        {
+          body: JSON.stringify({
+            expectedVersions,
+            input: { expectedDraftVersion: mappedDraft.draftVersion },
+          }),
+          headers: commandHeaders(doctorCookie),
+          method: 'POST',
+        },
+      )
+      const mapped = issueLaboratoryRequestResponseSchema.parse(
+        await mappedIssueResponse.json(),
+      ).data.request
+      expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({ kind: 'laboratory.accept-request', status: 'completed' })
+      expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({ kind: 'laboratory.start-request', status: 'completed' })
+      expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({ kind: 'laboratory.report-request', status: 'completed' })
+      const mappedDetailResponse = await runtime.app.request(
+        `/api/his/v1/doctor/cases/${started.caseId}`,
+        { headers: { cookie: doctorCookie } },
+      )
+      const mappedDetailBody: unknown = await mappedDetailResponse.json()
+      expect(mappedDetailResponse.status, JSON.stringify(mappedDetailBody)).toBe(200)
+      const mappedDetail = doctorCaseDetailSchema.parse(mappedDetailBody)
+      const mappedResult = mappedDetail.laboratoryRequests?.requests
+        .find(request => request.id === mapped.id)?.report?.results[0]
+      expect(mappedResult).toMatchObject({
+        code: input.expectedCoding.code,
+        unit: input.expectedUnit,
+        value: input.expectedValue,
+      })
+      const observationResponse = await runtime.app.request(
+        `/fhir/R5/Observation/${mappedResult?.observationId ?? ''}`,
+        { headers: { cookie: doctorCookie } },
+      )
+      expect(fhirResourceSchema.parse(await observationResponse.json())).toMatchObject({
+        code: {
+          coding: [{
+            ...input.expectedCoding,
+            system: 'http://loinc.org',
+            version: '2.83',
+          }],
+        },
+        valueQuantity: {
+          code: input.expectedUnit.code,
+          system: 'http://unitsofmeasure.org',
+          unit: input.expectedUnit.display,
+          value: input.expectedValue,
+        },
+      })
+      return mappedDetail
+    }
+    const afterGlucose = await issueMappedObservation({
+      catalogItemId: 'lab-random-glucose',
+      expectedCoding: { code: '2339-0', display: 'Glucose [Mass/volume] in Blood' },
+      expectedDraftVersion: afterRepeat.laboratoryRequests?.draftVersion,
+      expectedUnit: { code: 'mmol/L', display: 'mmol/L' },
+      expectedValue: 13.8,
+    })
+    const afterMappedObservations = await issueMappedObservation({
+      catalogItemId: 'lab-hba1c',
+      expectedCoding: { code: '4548-4', display: 'Hemoglobin A1c/Hemoglobin.total in Blood' },
+      expectedDraftVersion: afterGlucose.laboratoryRequests?.draftVersion,
+      expectedUnit: { code: '%', display: '%' },
+      expectedValue: 9.2,
+    })
+
     const urineDraftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
@@ -5637,7 +5829,7 @@ describe('outpatient workflow HTTP contract', () => {
           expectedVersions,
           input: {
             catalogItemId: 'lab-urine-glucose',
-            expectedDraftVersion: afterRepeat.laboratoryRequests?.draftVersion,
+            expectedDraftVersion: afterMappedObservations.laboratoryRequests?.draftVersion,
             indicationCode: 'type-2-diabetes',
           },
         }),
@@ -6211,7 +6403,7 @@ describe('outpatient workflow HTTP contract', () => {
     if (staleCandidate === undefined) throw new Error('Candidate Virtual Patient was not seeded')
     const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local', password)
     const patientResponse = await runtime.app.request(
-      '/api/his/v1/patients?query=CM-CANDIDATE-001&pageSize=20',
+      '/api/his/v1/patients?query=MZ20260826001&pageSize=20',
       { headers: { cookie: registrarCookie } },
     )
     const patient = patientSearchSchema.parse(await patientResponse.json()).items[0]
@@ -6328,7 +6520,7 @@ describe('outpatient workflow HTTP contract', () => {
     runtimes.push(runtime)
     const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local', password)
     const patientResponse = await runtime.app.request(
-      '/api/his/v1/patients?query=CM-CANDIDATE-001&pageSize=20',
+      '/api/his/v1/patients?query=MZ20260826001&pageSize=20',
       { headers: { cookie: registrarCookie } },
     )
     const patient = patientSearchSchema.parse(await patientResponse.json()).items[0]
@@ -6422,7 +6614,8 @@ describe('outpatient workflow HTTP contract', () => {
     const candidatesResponse = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
       headers: { cookie: doctorCookie },
     })
-    const candidate = virtualPatientListSchema.parse(await candidatesResponse.json()).items[0]
+    const candidates = virtualPatientListSchema.parse(await candidatesResponse.json())
+    const candidate = candidates.items[0]
     if (candidate === undefined) throw new Error('Candidate Virtual Patient was not seeded')
     const start = (expectedVersion = candidate.version) => runtime.app.request(
       `/api/his/v1/doctor/virtual-patients/${candidate.id}/actions/start`, {
@@ -6458,10 +6651,9 @@ describe('outpatient workflow HTTP contract', () => {
     const refreshedCandidatesResponse = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
       headers: { cookie: doctorCookie },
     })
-    expect(virtualPatientListSchema.parse(await refreshedCandidatesResponse.json())).toMatchObject({
-      items: [],
-      total: 0,
-    })
+    const refreshedCandidates = virtualPatientListSchema.parse(await refreshedCandidatesResponse.json())
+    expect(refreshedCandidates.total).toBe(candidates.total - 1)
+    expect(refreshedCandidates.items.map(item => item.id)).not.toContain(candidate.id)
     const queueResponse = await runtime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
       headers: { cookie: doctorCookie },
     })
@@ -6530,11 +6722,11 @@ describe('outpatient workflow HTTP contract', () => {
     })
 
     const candidatePatientResponse = await runtime.app.request(
-      '/api/his/v1/patients?query=CM-CANDIDATE-001&pageSize=20',
+      '/api/his/v1/patients?query=MZ20260826001&pageSize=20',
       { headers: { cookie: registrarCookie } },
     )
     expect(patientSearchSchema.parse(await candidatePatientResponse.json())).toMatchObject({
-      items: [{ identifier: 'CM-CANDIDATE-001', synthetic: true }],
+      items: [{ identifier: 'MZ20260826001', synthetic: true }],
       total: 1,
     })
 
@@ -6557,7 +6749,7 @@ describe('outpatient workflow HTTP contract', () => {
     const patientResult = createPatientResponseSchema.parse(await patientResponse.json())
     expect(patientResult.data.patient).toMatchObject({
       identifier: 'CM-SYN-1001',
-      name: '合成患者周明',
+      name: '周明',
       synthetic: true,
       versionId: '1',
     })
@@ -6569,7 +6761,7 @@ describe('outpatient workflow HTTP contract', () => {
     )
     expect(searchResponse.status).toBe(200)
     expect(patientSearchSchema.parse(await searchResponse.json())).toMatchObject({
-      items: [{ id: patientResult.data.patient.id, name: '合成患者周明' }],
+      items: [{ id: patientResult.data.patient.id, name: '周明' }],
       total: 1,
     })
 
@@ -6696,7 +6888,7 @@ describe('outpatient workflow HTTP contract', () => {
         },
         patient: {
           id: patientResult.data.patient.id,
-          name: '合成患者周明',
+          name: '周明',
         },
         riskFlags: [{ code: 'PENICILLIN', display: '青霉素过敏' }],
         status: 'awaiting-triage',
@@ -6869,7 +7061,8 @@ describe('outpatient workflow HTTP contract', () => {
       headers: { cookie: testCase.doctorCookie },
     })
     expect(catalogResponse.status).toBe(200)
-    expect(clinicalCatalogSchema.parse(await catalogResponse.json())).toMatchObject({
+    const clinicalCatalog = clinicalCatalogSchema.parse(await catalogResponse.json())
+    expect(clinicalCatalog).toMatchObject({
       laboratory: [{
         allowedIndicationCodes: ['fever'],
         contraindicatedAllergyCodes: [],
@@ -6895,7 +7088,7 @@ describe('outpatient workflow HTTP contract', () => {
         priceFen: 6800,
         version: 1,
       }],
-      medications: [
+      medications: expect.arrayContaining([
         expect.objectContaining({
           allowedDoseTexts: ['0.5 g'],
           allowedFrequencyCodes: ['PRN'],
@@ -6910,9 +7103,12 @@ describe('outpatient workflow HTTP contract', () => {
           defaultFrequencyCode: 'BID',
           id: 'medication-oseltamivir',
         }),
-      ],
+        expect.objectContaining({ id: 'medication-metformin' }),
+        expect.objectContaining({ id: 'medication-amlodipine' }),
+      ]),
       prescriptionConclusionSupported: true,
     })
+    expect(clinicalCatalog.medications).toHaveLength(4)
 
     const detailResponse = await runtime.app.request(
       `/api/his/v1/doctor/cases/${testCase.caseId}`,
@@ -9709,12 +9905,14 @@ describe('outpatient workflow HTTP contract', () => {
       error: { code: 'WORKFLOW_CONFLICT' },
     })
     for (const [resourceType, expectedTotal] of [
-      ['Condition', 2],
+      ['Condition', 1],
       ['MedicationRequest', 0],
     ] as const) {
-      const response = await runtime.app.request(`/fhir/R5/${resourceType}?_total=accurate`, {
-        headers: { cookie: testCase.doctorCookie },
-      })
+      const response = await runtime.app.request(
+        `/fhir/R5/${resourceType}?patient=Patient/${testCase.patient.id}&_total=accurate`, {
+          headers: { cookie: testCase.doctorCookie },
+        },
+      )
       expect(fhirBundleSchema.parse(await response.json())).toMatchObject({ total: expectedTotal })
     }
   })
@@ -10637,6 +10835,137 @@ describe('outpatient workflow HTTP contract', () => {
     expect(readInitialRun()).toEqual(completedRun)
   })
 
+  it.each([
+    {
+      diagnosis: { code: 'E11.65', display: '2型糖尿病伴高血糖' },
+      label: 'type 2 diabetes with metformin',
+      lotId: 'lot-metformin-synthetic-001',
+      medication: {
+        catalogItemId: 'medication-metformin',
+        doseText: '0.5 g',
+        frequencyCode: 'BID',
+        quantity: 60,
+      },
+      nameZh: '盐酸二甲双胍片',
+      productCode: 'CM-NHSA-PRODUCT-METFORMIN',
+    },
+    {
+      diagnosis: { code: 'I10', display: '高血压' },
+      label: 'hypertension with amlodipine',
+      lotId: 'lot-amlodipine-synthetic-001',
+      medication: {
+        catalogItemId: 'medication-amlodipine',
+        doseText: '5 mg',
+        frequencyCode: 'QD',
+        quantity: 30,
+      },
+      nameZh: '苯磺酸氨氯地平片',
+      productCode: 'CM-NHSA-PRODUCT-AMLODIPINE',
+    },
+  ])('takes $label through prescribing, charging, review, and dispensing', async ({
+    diagnosis,
+    lotId,
+    medication: medicationDraft,
+    nameZh,
+    productCode,
+  }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-catalog-medication-trajectory-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createPaidMedicationCase(runtime, password, {
+      diagnosis,
+      medications: [medicationDraft],
+    })
+    expect(testCase.payment).toMatchObject({ outcome: 'success', status: 'awaiting-dispense' })
+    expect(testCase.review).toMatchObject({
+      prescriptionId: testCase.draft.prescriptionId,
+      status: 'awaiting-dispense',
+    })
+
+    const medicationResponse = await runtime.app.request(
+      `/fhir/R5/Medication/${medicationDraft.catalogItemId}`,
+      { headers: { cookie: testCase.pharmacistCookie } },
+    )
+    expect(fhirResourceSchema.parse(await medicationResponse.json())).toMatchObject({
+      code: {
+        coding: expect.arrayContaining([expect.objectContaining({
+          code: productCode,
+          system: 'urn:clinmesh:reference:nhsa-medication-product',
+        })]),
+      },
+    })
+    const queueResponse = await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
+      headers: { cookie: testCase.pharmacistCookie },
+    })
+    const prescription = pharmacyQueueSchema.parse(await queueResponse.json()).items[0]
+    const medication = prescription?.medications[0]
+    const lot = medication?.lots[0]
+    expect({ lot, medication, prescription }).toMatchObject({
+      lot: { id: lotId, quantityOnHand: 1_000, version: 1 },
+      medication: {
+        medicationId: medicationDraft.catalogItemId,
+        nameZh,
+        quantity: medicationDraft.quantity,
+      },
+      prescription: {
+        prescriptionId: testCase.draft.prescriptionId,
+        status: 'awaiting-dispense',
+      },
+    })
+    if (prescription === undefined || medication === undefined || lot === undefined) {
+      throw new Error('Reviewed catalog medication did not expose its selected inventory lot')
+    }
+
+    const dispenseResponse = await runtime.app.request(
+      `/api/his/v1/prescriptions/${prescription.prescriptionId}/actions/dispense`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${prescription.encounterId}`]: prescription.encounterVersion,
+            [`MedicationRequest/${medication.medicationRequestId}`]
+              : medication.medicationRequestVersion,
+          },
+          input: {
+            expectedPrescriptionVersion: prescription.prescriptionVersion,
+            lotSelections: [{
+              expectedVersion: lot.version,
+              lotId: lot.id,
+              quantity: medication.remainingQuantity,
+            }],
+          },
+        }),
+        headers: commandHeaders(testCase.pharmacistCookie),
+        method: 'POST',
+      },
+    )
+    expect(dispenseResponse.status).toBe(200)
+    const dispensed = dispenseResponseSchema.parse(await dispenseResponse.json()).data
+    expect(dispensed).toMatchObject({
+      prescriptionId: prescription.prescriptionId,
+      scenarioStatus: 'completed',
+      status: 'completed',
+    })
+    const medicationDispenseResponse = await runtime.app.request(
+      `/fhir/R5/MedicationDispense/${dispensed.medicationDispenseIds[0]}`,
+      { headers: { cookie: testCase.pharmacistCookie } },
+    )
+    expect(fhirResourceSchema.parse(await medicationDispenseResponse.json())).toMatchObject({
+      medication: { reference: { reference: `Medication/${medicationDraft.catalogItemId}` } },
+      quantity: { value: medicationDraft.quantity },
+      status: 'completed',
+    })
+  })
+
   it('creates one accurately referenced MedicationDispense for each dispensed prescription line', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-multi-medication-dispense-http-'))
     temporaryDirectories.push(directory)
@@ -10651,8 +10980,8 @@ describe('outpatient workflow HTTP contract', () => {
       trustedOrigins: ['http://localhost'],
     })
     runtimes.push(runtime)
-    const testCase = await createPaidMedicationCase(runtime, password, [
-      {
+    const testCase = await createPaidMedicationCase(runtime, password, {
+      medications: [{
         catalogItemId: 'medication-oseltamivir',
         doseText: '75 mg',
         frequencyCode: 'BID',
@@ -10664,7 +10993,8 @@ describe('outpatient workflow HTTP contract', () => {
         frequencyCode: 'PRN',
         quantity: 6,
       },
-    ])
+      ],
+    })
     const queueResponse = await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
       headers: { cookie: testCase.pharmacistCookie },
     })

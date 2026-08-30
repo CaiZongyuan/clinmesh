@@ -2,11 +2,13 @@ import { createApp } from './app.ts'
 import { IdentityService } from './application/identity-service.ts'
 import { CommandExecutor, type ActorContext } from './application/command-executor.ts'
 import { ScenarioService } from './application/scenario-service.ts'
+import { ReferenceDataService } from './application/reference-data-service.ts'
 import { ScenarioDataService } from './application/scenario-data/scenario-data-service.ts'
 import { UnavailableScenarioGenerationProvider } from './application/scenario-data/provider.ts'
 import { WorkflowService } from './application/workflow-service.ts'
 import { OutboxDispatcher } from './application/outbox-dispatcher.ts'
 import { z } from 'zod'
+import { scenarioModules } from '@clinmesh/contracts/scenario'
 import {
   applyMigrations,
   openClinMeshDatabase,
@@ -17,9 +19,22 @@ import { WorkspaceRepository } from './infrastructure/sqlite/workspace-repositor
 import { ScenarioDatasetRepository } from './infrastructure/sqlite/scenario-dataset-repository.ts'
 import { ScenarioGenerationJobRepository } from './infrastructure/sqlite/scenario-generation-job-repository.ts'
 import { SyntheticPatientProfileRepository } from './infrastructure/sqlite/synthetic-patient-profile-repository.ts'
+import { SqliteReferenceDataRepository } from './infrastructure/sqlite/reference-data-repository.ts'
+import {
+  openReferenceDatabase,
+  verifyReferenceDatabase,
+  type ReferenceDatabase,
+} from './infrastructure/sqlite/reference-database.ts'
 import { BuiltInScenarioGenerationProvider } from './infrastructure/scenario-generation/builtin-provider.ts'
 import { SyntheaScenarioGenerationProvider } from './infrastructure/scenario-generation/synthea-provider.ts'
+import { syntheticNhsaMedicationProductSnapshot } from './application/scenario-data/medication-product-snapshot.ts'
+import {
+  syntheticNhcMedicalServiceSnapshot,
+  syntheticWstValueSetSnapshot,
+} from './application/scenario-data/medical-service-snapshot.ts'
 import type { ScenarioGenerationProvider } from './application/scenario-data/provider.ts'
+import type { SqlitePerformanceObserver } from './infrastructure/sqlite/performance-observer.ts'
+import type { ReferenceHospitalSelection } from './application/reference-hospital-selection.ts'
 
 function lisActorContext(event: {
   epoch: string
@@ -45,6 +60,9 @@ export interface CreateClinMeshRuntimeOptions {
   demoPassword: string
   migrationMode: 'apply' | 'verify'
   now?: () => Date
+  performanceObserver?: SqlitePerformanceObserver
+  referenceDatabasePath?: string
+  referenceSelection?: ReferenceHospitalSelection
   syntheaProvider?: ScenarioGenerationProvider
   syntheaProviderUrl?: string
   trustedOrigins: string[]
@@ -55,7 +73,11 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
   const database = openClinMeshDatabase({
     busyTimeoutMs: 5_000,
     databasePath: options.databasePath,
+    ...(options.performanceObserver === undefined
+      ? {}
+      : { performanceObserver: options.performanceObserver }),
   })
+  let referenceDatabase: ReferenceDatabase | undefined
   try {
     if (options.migrationMode === 'apply') applyMigrations(database)
     else verifyMigrations(database)
@@ -77,7 +99,34 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ...clockOptions,
     })
     const commands = new CommandExecutor(database, fhir, clockOptions)
-    const scenario = new ScenarioService(database, fhir, commands)
+    if (options.referenceDatabasePath !== undefined) {
+      referenceDatabase = openReferenceDatabase({
+        busyTimeoutMs: 5_000,
+        databasePath: options.referenceDatabasePath,
+        readonly: true,
+      })
+      verifyReferenceDatabase(referenceDatabase)
+    }
+    const referenceData = new ReferenceDataService(
+      referenceDatabase === undefined ? undefined : new SqliteReferenceDataRepository(referenceDatabase),
+      options.referenceSelection,
+    )
+    const hospitalReference = referenceData.hospitalReferenceSelection()
+    const scenarioReference = hospitalReference.bindings === undefined
+      ? hospitalReference
+      : {
+          products: syntheticNhsaMedicationProductSnapshot,
+          services: syntheticNhcMedicalServiceSnapshot,
+          valueSetEntries: syntheticWstValueSetSnapshot,
+        }
+    const scenario = new ScenarioService(
+      database,
+      fhir,
+      commands,
+      scenarioReference.products,
+      scenarioReference.services,
+      scenarioReference.valueSetEntries,
+    )
     const workflow = new WorkflowService(database, fhir, commands, {
       ...clockOptions,
       tokenSecret: options.cursorSecret,
@@ -87,12 +136,21 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         ? new UnavailableScenarioGenerationProvider({
             available: false,
             maxPopulation: 10,
-            modules: ['fever', 'type-2-diabetes'],
+            modules: [...scenarioModules],
             providerId: 'synthea',
             providerName: 'Synthea',
             unavailableReason: '未配置 Synthea Provider',
           })
-        : new SyntheaScenarioGenerationProvider({ baseUrl: options.syntheaProviderUrl }))
+        : new SyntheaScenarioGenerationProvider({
+            baseUrl: options.syntheaProviderUrl,
+            medicalServices: hospitalReference.services,
+            medicationProducts: hospitalReference.products,
+            valueSetEntries: hospitalReference.valueSetEntries,
+            ...(hospitalReference.bindings === undefined
+              ? {}
+              : { referenceSelection: hospitalReference.bindings }),
+            referenceConcepts: hospitalReference.concepts,
+          }))
     const generationJobs = new ScenarioGenerationJobRepository(database)
     const syntheticPatientProfiles = new SyntheticPatientProfileRepository(database)
     generationJobs.requeueInterrupted(new Date().toISOString())
@@ -100,10 +158,17 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       commands,
       jobs: generationJobs,
       providers: new Map([
-        ['builtin', new BuiltInScenarioGenerationProvider()],
+        ['builtin', new BuiltInScenarioGenerationProvider(
+          hospitalReference.products,
+          hospitalReference.services,
+          hospitalReference.valueSetEntries,
+          hospitalReference.bindings,
+          hospitalReference.concepts,
+        )],
         ['synthea', syntheaProvider],
       ]),
       profiles: syntheticPatientProfiles,
+      referenceData,
       repository: new ScenarioDatasetRepository(database),
       scenario,
       workflow,
@@ -230,6 +295,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         resolveContext: async request => (await identity.resolveSessionContext(request.headers)).actor,
       },
       identity,
+      referenceData,
       scenario,
       scenarioData,
       workflow,
@@ -245,6 +311,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         generationAbort.abort()
         closePromise = (async () => {
           await Promise.all([dispatchCycle, generationCycle])
+          referenceDatabase?.close()
+          referenceDatabase = undefined
           database.close()
         })()
         return closePromise
@@ -255,11 +323,13 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       dispatcher,
       fhir,
       identity,
+      referenceData,
       scenario,
       scenarioData,
       workflow,
     }
   } catch (error) {
+    referenceDatabase?.close()
     database.close()
     throw error
   }

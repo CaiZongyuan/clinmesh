@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest'
 import { validateScenarioDataset } from '../src/application/scenario-data/scenario-dataset-validator.ts'
 import { BuiltInScenarioGenerationProvider } from '../src/infrastructure/scenario-generation/builtin-provider.ts'
 
+const bmiUnit = {
+  code: 'kg/m2',
+  display: 'kg/m²',
+  system: 'http://unitsofmeasure.org' as const,
+  version: '2.2' as const,
+}
+
 describe('Scenario Dataset diagnostics', () => {
   it('reports mapping, reference, chronology, catalog and business-rule errors with stable paths', async () => {
     const provider = new BuiltInScenarioGenerationProvider()
@@ -21,7 +28,13 @@ describe('Scenario Dataset diagnostics', () => {
       catalog: {
         ...generated.content.catalog,
         investigations: generated.content.catalog.investigations.map((item, index) => index === 0
-          ? { ...item, componentItemIds: ['missing-investigation'] }
+          ? {
+              ...item,
+              coding: item.coding === undefined
+                ? undefined
+                : { ...item.coding, code: '9999-9', display: 'Unknown observation' },
+              componentItemIds: ['missing-investigation'],
+            }
           : item),
       },
       inventory: [{ ...generated.content.inventory[0]!, itemId: 'missing-medication' }],
@@ -53,7 +66,7 @@ describe('Scenario Dataset diagnostics', () => {
             id: 'invalid-derived-generator',
             kind: 'derived' as const,
             source: 'scenario:invalid-test',
-            unit: 'kg/m²',
+            unit: { ...bmiUnit, code: 'made-up', display: 'made-up' },
           }],
         },
       }],
@@ -67,7 +80,12 @@ describe('Scenario Dataset diagnostics', () => {
       expect.objectContaining({ code: 'INVESTIGATION_CATALOG_CONFLICT', path: 'patients[0].investigations[0].result.outcome' }),
       expect.objectContaining({ code: 'INVESTIGATION_EXACT_SOURCE_INVALID', path: 'patients[0].investigations[0].sourceLevel' }),
       expect.objectContaining({ code: 'INVESTIGATION_COMPONENT_REFERENCE_MISSING', path: 'catalog.investigations[0].componentItemIds[0]' }),
+      expect.objectContaining({ code: 'LOINC_CODING_UNKNOWN', path: 'catalog.investigations[0].coding' }),
       expect.objectContaining({ code: 'PHYSIOLOGY_DEPENDENCY_MISSING', path: expect.stringContaining('dependencies[0]') }),
+      expect.objectContaining({
+        code: 'UCUM_UNIT_UNKNOWN',
+        path: expect.stringContaining('physiologyBaseline.generators'),
+      }),
     ]))
   })
 
@@ -92,14 +110,14 @@ describe('Scenario Dataset diagnostics', () => {
       id: 'derived-cycle-a',
       kind: 'derived' as const,
       source: 'scenario:cycle-test',
-      unit: 'kg/m²',
+      unit: bmiUnit,
     }, {
       dependencies: ['derived-cycle-a'],
       formula: 'bmi' as const,
       id: 'derived-cycle-b',
       kind: 'derived' as const,
       source: 'scenario:cycle-test',
-      unit: 'kg/m²',
+      unit: bmiUnit,
     }]
 
     expect(validateScenarioDataset({
@@ -118,6 +136,81 @@ describe('Scenario Dataset diagnostics', () => {
         code: 'PHYSIOLOGY_DEPENDENCY_CYCLE',
         path: expect.stringContaining('.dependencies[0]'),
       }),
+    ]))
+  })
+
+  it('rejects tampered selected-product verification and duplicate product identity', async () => {
+    const generated = await new BuiltInScenarioGenerationProvider().generate(
+      scenarioGenerationRequestSchema.parse({
+        modules: ['fever', 'type-2-diabetes'],
+        name: '药品产品校验冲突',
+        population: { age: { maximum: 40, minimum: 40 }, count: 1, gender: 'female' },
+        providerId: 'builtin',
+        seeds: { clinical: 46, population: 47 },
+        timeRange: { end: '2026-08-01', start: '2020-01-01' },
+        timeZone: 'Asia/Shanghai',
+      }),
+    )
+    const first = generated.content.catalog.medications[0]!
+    const second = generated.content.catalog.medications[1]!
+    if (!('product' in first) || !('product' in second)) {
+      throw new Error('Built-in generation did not compile Product-backed medications')
+    }
+    const medications = [{
+      ...first,
+      regulatoryVerification: {
+        ...first.regulatoryVerification,
+        verifiedFieldsHash: '0'.repeat(64),
+      },
+    }, {
+      ...second,
+      product: { ...second.product, id: first.product.id },
+    }]
+
+    expect(validateScenarioDataset({
+      ...generated.content,
+      catalog: { ...generated.content.catalog, medications },
+    })).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'DUPLICATE_MEDICATION_PRODUCT_ID',
+        path: 'catalog.medications[1].product.id',
+      }),
+      expect.objectContaining({
+        code: 'MEDICATION_REGULATORY_VERIFICATION_MISMATCH',
+        path: 'catalog.medications[0].regulatoryVerification.verifiedFieldsHash',
+      }),
+    ]))
+  })
+
+  it('rejects service identity, charge, department, and request reference conflicts', async () => {
+    const generated = await new BuiltInScenarioGenerationProvider().generate(
+      scenarioGenerationRequestSchema.parse({
+        modules: ['type-2-diabetes'],
+        name: '服务目录引用冲突',
+        population: { age: { maximum: 40, minimum: 40 }, count: 1, gender: 'female' },
+        providerId: 'builtin',
+        seeds: { clinical: 48, population: 49 },
+        timeRange: { end: '2026-08-01', start: '2020-01-01' },
+        timeZone: 'Asia/Shanghai',
+      }),
+    )
+    const service = generated.content.catalog.services?.[0]
+    if (service === undefined) throw new Error('Built-in generation did not compile services')
+    const services = [{
+      ...service,
+      chargeDefinition: { ...service.chargeDefinition, id: service.id, priceFen: 999 },
+      executingDepartmentId: 'department-missing',
+      requestCatalogItemIds: ['laboratory-missing'],
+    }]
+
+    expect(validateScenarioDataset({
+      ...generated.content,
+      catalog: { ...generated.content.catalog, services },
+    })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'SERVICE_CHARGE_PRICE_MISMATCH' }),
+      expect.objectContaining({ code: 'SERVICE_DEPARTMENT_REFERENCE_MISSING' }),
+      expect.objectContaining({ code: 'SERVICE_IDENTITY_COLLISION' }),
+      expect.objectContaining({ code: 'SERVICE_REQUEST_REFERENCE_MISSING' }),
     ]))
   })
 
@@ -455,5 +548,78 @@ describe('Scenario Dataset diagnostics', () => {
         path: `catalog.investigations[${investigationIndex}].referenceRanges[0].minimum`,
       }),
     ]))
+  })
+
+  it('blocks installation when catalog compilation has a critical dependency gap', async () => {
+    const provider = new BuiltInScenarioGenerationProvider()
+    const generated = await provider.generate(scenarioGenerationRequestSchema.parse({
+      modules: ['hypertension'],
+      name: '高血压目录缺口病例',
+      population: { age: { maximum: 60, minimum: 60 }, count: 1, gender: 'female' },
+      providerId: 'builtin',
+      seeds: { clinical: 288, population: 277 },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    }))
+    const report = generated.content.reproduction.catalogCompilation
+    if (report === undefined) throw new Error('Expected catalog compilation provenance')
+
+    expect(validateScenarioDataset({
+      ...generated.content,
+      reproduction: {
+        ...generated.content.reproduction,
+        catalogCompilation: {
+          ...report,
+          blockers: [{
+            code: 'CRITICAL_DEPENDENCY_MISSING',
+            module: 'hypertension',
+            targetId: 'medication-amlodipine',
+          }],
+          supported: false,
+        },
+      },
+    })).toContainEqual({
+      code: 'CATALOG_COMPILATION_BLOCKED',
+      message: 'Scenario catalog compilation has unresolved critical dependencies',
+      path: 'reproduction.catalogCompilation.blockers',
+      severity: 'error',
+    })
+
+    const hiddenGapEntries = report.entries.map(entry => (
+      entry.requirement === 'critical-truth' && entry.targetId === 'medication-amlodipine'
+        ? { ...entry, resolution: 'missing' as const }
+        : entry
+    ))
+    expect(validateScenarioDataset({
+      ...generated.content,
+      reproduction: {
+        ...generated.content.reproduction,
+        catalogCompilation: {
+          ...report,
+          blockers: [],
+          entries: hiddenGapEntries,
+          supported: true,
+        },
+      },
+    })).toContainEqual(expect.objectContaining({
+      code: 'CATALOG_COMPILATION_BLOCKED',
+      severity: 'error',
+    }))
+
+    expect(validateScenarioDataset({
+      ...generated.content,
+      catalog: {
+        ...generated.content.catalog,
+        medications: generated.content.catalog.medications.map(item => ({
+          ...item,
+          priceFen: item.priceFen + 1,
+        })),
+      },
+    })).toContainEqual({
+      code: 'CATALOG_COMPILATION_HASH_MISMATCH',
+      message: 'Scenario catalog content does not match its compilation hash',
+      path: 'reproduction.catalogCompilation.catalogHash',
+      severity: 'error',
+    })
   })
 })

@@ -1,0 +1,92 @@
+{
+  "contentHash": "f57a624291b46caa7cb5d83f7686cb0040a417f8f592119889ea751f4c2a74e1",
+  "mappingSetId": "clinmesh-synthea-nhsa-diagnosis",
+  "mappings": [
+    {
+      "direction": "source-to-target",
+      "evidence": ["ClinMesh #45 synthetic scenario clinical review"],
+      "mappingId": "snomed-fever-to-nhsa-r50-9",
+      "relationship": "equivalent",
+      "source": {
+        "code": "386661006",
+        "display": "Fever",
+        "system": "http://snomed.info/sct",
+        "version": "http://snomed.info/sct/900000000000207008/version/20250201"
+      },
+      "status": "active",
+      "target": {
+        "catalogItemId": "diagnosis-fever",
+        "code": "R50.9",
+        "display": "发热，未特指",
+        "system": "urn:clinmesh:reference:nhsa-diagnosis",
+        "version": "nhsa-diagnosis-2026-08-07"
+      }
+    },
+    {
+      "direction": "source-to-target",
+      "evidence": ["ClinMesh #45 synthetic scenario clinical review"],
+      "mappingId": "snomed-type-2-diabetes-to-nhsa-e11-65",
+      "relationship": "equivalent",
+      "source": {
+        "code": "44054006",
+        "display": "Diabetes mellitus type 2",
+        "system": "http://snomed.info/sct",
+        "version": "http://snomed.info/sct/900000000000207008/version/20250201"
+      },
+      "status": "active",
+      "target": {
+        "catalogItemId": "diagnosis-type-2-diabetes-hyperglycemia",
+        "code": "E11.65",
+        "display": "2型糖尿病伴高血糖",
+        "system": "urn:clinmesh:reference:nhsa-diagnosis",
+        "version": "nhsa-diagnosis-2026-08-07"
+      }
+    },
+    {
+      "direction": "source-to-target",
+      "evidence": ["ClinMesh #45 synthetic scenario clinical review"],
+      "mappingId": "snomed-hypertension-to-nhsa-i10",
+      "relationship": "equivalent",
+      "source": {
+        "code": "38341003",
+        "display": "Hypertension",
+        "system": "http://snomed.info/sct",
+        "version": "http://snomed.info/sct/900000000000207008/version/20250201"
+      },
+      "status": "active",
+      "target": {
+        "catalogItemId": "diagnosis-hypertension",
+        "code": "I10",
+        "display": "高血压",
+        "system": "urn:clinmesh:reference:nhsa-diagnosis",
+        "version": "nhsa-diagnosis-2026-08-07"
+      }
+    },
+    {
+      "direction": "source-to-target",
+      "evidence": ["ClinMesh #49 synthetic hypertension case review"],
+      "mappingId": "snomed-essential-hypertension-to-nhsa-i10",
+      "relationship": "equivalent",
+      "source": {
+        "code": "59621000",
+        "display": "Essential hypertension (disorder)",
+        "system": "http://snomed.info/sct",
+        "version": "http://snomed.info/sct/900000000000207008/version/20250201"
+      },
+      "status": "active",
+      "target": {
+        "catalogItemId": "diagnosis-hypertension",
+        "code": "I10",
+        "display": "高血压",
+        "system": "urn:clinmesh:reference:nhsa-diagnosis",
+        "version": "nhsa-diagnosis-2026-08-07"
+      }
+    }
+  ],
+  "schemaVersion": "1",
+  "sourceSystem": "http://snomed.info/sct",
+  "sourceVersion": "http://snomed.info/sct/900000000000207008/version/20250201",
+  "targetSystem": "urn:clinmesh:reference:nhsa-diagnosis",
+  "targetVersion": "nhsa-diagnosis-2026-08-07",
+  "version": "2026-08-28"
+}

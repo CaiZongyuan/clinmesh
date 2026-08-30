@@ -421,9 +421,17 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 
 医保投影必须遵守资源原义：Coverage 表达保障资格，不表示一次人员查询；Claim 表达向付款方提出的费用申报；ClaimResponse 表达付款方裁决；ExplanationOfBenefit 是面向受益人的裁决结果表达，不是接口调用日志。签到、查询、上传批次、游标、重试和原始报文不得机械转换为 Claim 系列资源。一次结算、多次申报、撤销和重结算之间使用稳定 identifier 和明确 replacement 关系。
 
-### 5.4 后续中国术语策略
+### 5.4 中国术语与参考数据策略
 
-当前只包含完成合成门诊闭环所需的最小虚构目录与 ICD-10 示例 code，不发布 CodeSystem、ValueSet、ConceptMap 或 terminology operation。后续术语是接口兼容性的核心，不是 UI 字典。
+当前 authoring 平面使用独立 Reference Data SQLite，可从固定 manifest 导入 LOINC 2.83 CSV、UCUM 2.2 XML、版本固定的诊断/药品 CSV，也可直接导入 `cn-health-data` 的疾病、药品和 `laboratory-cn` Candidate。项目自有 `laboratory-cn` 提供当前病例闭包所需的精选中文检验与生命体征概念、精确 LOINC 2.83 编码和首选 UCUM 单位，不代表官方完整 LOINC 中文语言包；调用方提供的 `loinc-zh-cn` Candidate 使用同一 concept importer。Candidate adapter 验证外层 Manifest checksum、Candidate schema/Dataset/Release、SQLite hash/size、integrity、application ID、主表形状和 canonical record count，并在 source manifest 保存 Candidate Release ID、source version、canonical hash、SQLite hash/size 和记录数；多个来源只在一个事务中发布。Medication Product 保存产品代码、通用/商品名、剂型、规格、包装、企业、批准文号、状态和来源定位，不进入 generic concept 表。Scenario Compiler 通过版本控制的审核映射，以 `system + version + code` 解析体温、HbA1c、随机血糖和 truth-critical Synthea 诊断；诊断映射固定方向、关系、状态、证据和内容哈希，只有唯一的 active 等价关系可自动应用。未知、歧义和非等价诊断保留来源 coding 并生成稳定的未映射诊断；缺失的 source version 在编译时固定为 mapping package 版本并供后续 overlay 重放。自动应用的诊断到本院目录映射连同结构化 compiler、mapping package version/hash 和 overlay revision 固定在 Profile Revision。选中的疾病和检验概念快照分别进入 Dataset/Package 目录；Package 安装将疾病 coding 物化到 `diagnosis_catalog`，将检验 `referenceConcept` 物化到本院项目配置，FHIR ServiceRequest 同时保存本院 coding 与所选 LOINC coding。检验目录、病例结果和生理生成器保存 UCUM `code/system/display/version`，FHIR Quantity 投影使用 `code/system/unit`。旧 Package 的裸单位字符串只在读取时经固定兼容表规范化，不覆盖持久化 JSON 或 content hash。
+
+Synthea `MedicationRequest.medicationCodeableConcept` 与引用型 Medication 共用一个 RxNorm 来源解析边界。唯一的 active 等价映射可转为版本固定 Drug Concept；未映射来源保留完整 coding 并生成稳定诊断。Drug Concept 不包含 Medication Product、本院药品、价格或 Inventory Lot 身份，药物 mapping package version/hash 与诊断 package 一起固定在 Profile Revision。
+
+Reference Data Service 默认将 Product、Medical Service 与辅助值域 rows 作为一个 Release 原子选择。使用全量 Candidate 时，版本化 Hospital Reference Selection 以 `system + version + code` 把本院目录 ID 绑定到精确概念和产品；Server 只查询这些行，不按显示文本匹配，也不把 269,110 个产品载入运行内存。若所选外部 Release 不含本院服务和值域，组合投影会显式固定外部 Release hash、selection hash 和内置合成支撑 Release hash，生成独立 projection ID/hash，不能把跨 Release 选择静默表示为原 Release。完整 Hospital Baseline 从中构造对乙酰氨基酚、二甲双胍和氨氯地平三项 Hospital Medication，并补齐本院代码、门诊范围、合成价格、处方规则和合成 Inventory Lot；每次生成再按所选病种与基础工作流只编译需要的药品和库存闭包。Candidate 产品标记 `cn-health-candidate / source-record` 及 selection provenance；内置产品的 NMPA 合成核验记录保持兼容。Package 安装只把编译后的 Hospital Medication snapshot 写入 Operational SQLite；当前 `candidate`/`density` v3 兼容流程另保留一项合成奥司他韦目录，不创建全国 Medication Product 表。升级前 Package 的药品项可通过 legacy contract 原样读取、安装和 reset，但不会补写 Product 字段或改变 content hash；新建或更新 Dataset 缺少 Product metadata 时由 validator 阻止安装。
+
+同一 Reference Data Release 可从固定 NHC Medical Service CSV 与适用 WS/T 值域 CSV 导入国家服务、服务类别和计价单位；国家服务不保存医院价格。完整 Hospital Baseline 可从 9 项合成国家参考构造血常规组合、5 个血常规成员、HbA1c、眼底检查和糖尿病健康教育共 9 项 Hospital Service，并分别固定本院代码、执行科室、门诊范围、TAT、组合关系、报告模板和独立 Charge Definition；病种目录编译器只把当前检查闭包对应的服务、组合成员和执行科室写入 Package。Operational SQLite 的 `hospital_service_catalog` 只保存已选 snapshot，普通查询使用本院局部索引和最大 100 项分页，不连接 Reference SQLite。检查与治疗通过受控 Hospital Service Command 创建 ServiceRequest、执行 Task 和 billable ChargeItem，再以 expected version 完成执行，不伪装成 DiagnosticReport。升级前 Package 可缺少 service catalog 并原样 reset；新建或更新 Dataset 缺少 service catalog 时由 validator 阻止安装。
+
+未实现的中国诊断和药品映射仍使用最小虚构目录与 ICD-10 示例 code；医疗服务只实现当前固定 NHC/WS/T 合成参考到本院执行目录的显式编译。当前不发布 CodeSystem、ValueSet、ConceptMap 或 terminology operation；术语是接口兼容性的一部分，不是 UI 字典。
 
 至少维护：
 
@@ -437,6 +445,8 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 实现原则：
 
 - FHIR 绑定使用 canonical URL + version，不只保存 display；每个 coded 元素明确 `required`、`extensible`、`preferred` 或 `example` binding strength。
+- 外部编码映射键必须包含 `system + version + code`；相同 code 不得跨 system 碰撞，显示文本不得作为正式映射 fallback。
+- 数值单位转换由审核映射明确保存源 UCUM code、目标 UCUM code 与换算因子；不允许只替换单位标签而不转换数值。
 - 院内码、国家码、医保码只有在表达同一个语义概念时才可并列于同一个 `CodeableConcept.coding`；属性、分类和价格目录号不得混入同一概念。
 - 本地到国家/医保编码映射使用 `ConceptMap`，不在业务代码中写 switch；ConceptMap 不代表映射天然无损、双向或可自动应用。
 - 编码导入保留来源、版本、生效期和停用状态；运行时区分未知 code、inactive code、版本不匹配和 display 不一致。
@@ -892,7 +902,7 @@ Consultation 是病例级领域聚合，Consultation Record 是按序号追加�
 
 处方撤回使用不可变 `prescription_withdrawal` 事实表达，不删除或覆盖原 Prescription。只有未发生任何调剂的 signed 或 paid 处方可按 Prescription expected version 和全部 MedicationRequest expected versions 撤回；成功后各 MedicationRequest 进入 `cancelled` 并保留 FHIR history，Prescription 版本递增且读模型投影为 `withdrawn`。未收费的已撤回药品费用不再进入收费员待收费队列，已收费历史仍可查询且不会隐式退款；药房队列、审核、支付和发药入口都拒绝已撤回处方。
 
-带 Consultation 的 Virtual Patient 医生病例使用独立检查申请 owner。`laboratory_request_state` 保存一个病例级草稿及单调递增版本；保存和删除都以当前 Encounter 与草稿版本做 CAS，删除或开具只清空草稿而不复用旧版本。草稿只接受 `lab-cbc`、`lab-crp` 及目录允许的 `fever` 适应证，不创建 FHIR 资源。开具以当前草稿创建 `ServiceRequest.status=active` 和 `Task.status=requested`，Task `focus` 指向该 ServiceRequest，并拒绝同一病例中同项目的未取消申请；该独立流程不创建 ChargeItem，也不推进 Encounter 或医生 Queue Task。
+带 Consultation 的 Virtual Patient 医生病例使用独立检查申请 owner。`laboratory_request_state` 保存一个病例级草稿及单调递增版本；保存和删除都以当前 Encounter 与草稿版本做 CAS，删除或开具只清空草稿而不复用旧版本。草稿只接受活动 Package 检查目录中存在且允许当前适应证的项目；当前高血压闭包允许以 `hypertension` 开立 `lab-cbc`，发热闭包允许以 `fever` 开立 `lab-cbc` 或 `lab-crp`。开具以当前草稿创建 `ServiceRequest.status=active` 和 `Task.status=requested`，Task `focus` 指向该 ServiceRequest，并拒绝同一病例中同项目的未取消申请；该独立流程不创建 ChargeItem，也不推进 Encounter 或医生 Queue Task。
 
 独立申请开具后由持久 outbox 绑定 `lis-system`，依次把领域状态和执行 Task 从 `issued/requested` 推进到 `accepted/accepted` 与 `in-progress/in-progress`。具有结构化检验结果 Hidden Fact 的 Scenario 在进入执行中后由开工 Command 同事务追加报告事件；只有领域状态、ServiceRequest 和执行 Task 都仍为执行中的正式申请可以签发结果。签发从该 Hidden Fact 读取按项目固定的合成结果，创建一个关联申请的血液 Specimen、一个或多个带数值、UCUM 单位、参考范围和异常标识的 Observation、引用完整结果集与申请的 DiagnosticReport，以及覆盖签发资源的 Provenance；随后把 ServiceRequest 和执行 Task 完成、把申请推进到 `reported`，但不改变 Encounter、医生 Queue Task 或创建 Report Acknowledgement。资源 ID 从申请关联派生，申请保存当前 DiagnosticReport 关联；相同或不同 event ID 的重复投递都返回既有报告且不重复创建资源。保留的 v1 Scenario 没有该 Hidden Fact，不追加报告事件；医生病例读模型以 `reportingSupported=false` 暴露这一能力差异，Web 保留执行中状态但不持续轮询。
 
@@ -1270,13 +1280,15 @@ clock_revision
 
 ### 10.3 场景定义
 
-内置 Scenario blueprint 由 `ScenarioService` 中的受版本控制 TypeScript 数据定义，包含 scenario ID/version、schema version、seed、固定虚拟时间、Virtual Patient 可见表现与 Patient 绑定、合成目录、Hidden Fact、Reveal Policy 和模拟器规则。管理员也可以通过内置生成器或可选 Synthea Provider 创建每批最多 10 人的 Generation Batch；同一事务保存 `scenario_dataset`、Synthetic Patient Profile、编译病史、来源哈希和经过验证的原始 Synthea R4 Bundle。患者库默认按 Profile 浏览、编辑展示 overlay，并通过共享 Workflow Command 批量发起门诊就诊；物化 Command 同时建立独立 Consultation owner，使 Profile 患者与 Virtual Patient 使用同一套结构化病历、诊断、处方、检查与完诊状态，脚本问答仅对实际绑定 Virtual Patient 的病例可用。高级病例编排仍可编辑 CaseTruth 与 Hospital Baseline，再把指定 Dataset 版本复制为不可变 `scenario_package` 并安装。安装过程在一个 Command 事务中创建新 Epoch；普通岗位 API 不暴露 Dataset、Profile 来源、Hidden Fact 或 Reveal Policy。
+内置 Scenario blueprint 由 `ScenarioService` 中的受版本控制 TypeScript 数据定义，包含 scenario ID/version、schema version、seed、固定虚拟时间、Virtual Patient 可见表现与 Patient 绑定、合成目录、Hidden Fact、Reveal Policy 和模拟器规则。管理员也可以通过内置生成器或可选 Synthea Provider 创建每批最多 10 人的 Generation Batch；`fever`、`type-2-diabetes` 和 `hypertension` 从同一版本化病例定义注册表物化，同一事务保存 `scenario_dataset`、Synthetic Patient Profile、编译病史、来源哈希和经过验证的原始 Synthea R4 Bundle。患者库默认按 Profile 浏览、编辑展示 overlay，并通过共享 Workflow Command 批量发起门诊就诊；物化 Command 同时建立独立 Consultation owner，使 Profile 患者与 Virtual Patient 使用同一套结构化病历、诊断、处方、检查与完诊状态，脚本问答仅对实际绑定 Virtual Patient 的病例可用。高级病例编排仍可编辑 CaseTruth 与 Hospital Baseline，再把指定 Dataset 版本复制为不可变 `scenario_package` 并安装。安装过程在一个 Command 事务中创建新 Epoch；普通岗位 API 不暴露 Dataset、Profile 来源、Hidden Fact 或 Reveal Policy。
 
 当前安装 API 提供 `candidate-fever-outpatient-v3` 与 `density-fever-outpatient-v3`，并只接受 `candidate` 或 `density`。v1 是基线定义，v2 增加确定性结构化检验结果，v3 再以进入初始定义 hash 的 `medicationRulesVersion` 增加独立用药结论目录规则。v1/v2 blueprint、Hidden Fact 和药品目录配置保持原定义，既有 Scenario Run 的 reset 继续按其固定 scenario ID seed，不由 migration 改写。两个当前 v3 定义的 `clinicalReview` 都是 `null`，因此没有任何场景标记为 `golden`；数据库约束要求未来 `golden` 定义必须同时具有临床审核元数据。`density` 使用同一业务 schema，并增加合成患者和队列数据以验证分页与界面密度。
 
-所有 seed、账户、患者、机构、目录、支付和检验内容都是合成数据。内置生成器始终可用；Synthea 固定版本并可由 standalone `compose.synthea-provider.yaml`、本机 JDK 17 或完整容器 overlay `compose.synthea.yaml` 按需启用，未配置、不可达或失败只影响对应持久生成任务，不影响 Server 启动、既有 Dataset、Scenario Run 或内置生成。Synthea FHIR R4 Bundle 只作为编译输入，严格白名单转换为中国化 CaseTruth；美国机构、地址、付款方和标识不进入运行事实。LLM 不生成结构化真值，当前也不声明正式 FHIR Profile/IG 校验。
+所有 seed、账户、患者、机构、目录、支付和检验内容都是合成数据。内置生成器始终可用；Synthea 固定版本并可由 standalone `compose.synthea-provider.yaml`、本机 JDK 17 或完整容器 overlay `compose.synthea.yaml` 按需启用，未配置、不可达或失败只影响对应持久生成任务，不影响 Server 启动、既有 Dataset、Scenario Run 或内置生成。Provider 使用 `cn-health-data` profile classpath 和外部配置运行“中国”地域，原始自包含 FHIR R4 Bundle 在返回前经过独立 localizer；localizer 启动时验证 profile 内容哈希和姓名、地理、人口 Candidate，并为 Bundle 与响应写入同一 localization provenance。ClinMesh 只在 provenance、Bundle tag、中国地址、安全 synthetic 电话和 identifier namespace 全部一致时复用 Patient 身份，随后严格白名单转换临床 CaseTruth；来源机构和付款方不进入运行事实。LLM 不生成结构化真值，当前也不声明正式 FHIR Profile/IG 校验。
 
-Dataset 保存规范化内容哈希、expected version 和稳定诊断；错误诊断允许继续编辑但阻止安装。Package 与来源 Dataset 分离，安装后的 reset 只读取不可变 Package 快照，不重新调用 Provider 或当前编译器。生成任务到 Dataset 的复合外键是可空来源链接：删除 Dataset 时使用 `ON DELETE SET NULL`，任务仍以独立 `result_dataset_id` 保留完成时的结果标识；该例外不用于 Package、Epoch 或 HIS 运行事实。CaseTruth 保存患者认知、纵向病史、本次就诊、生理生成器、三级检查来源、诊断与处置空间及费用基准；Hospital Baseline 保存虚构医院、科室、诊断、检查、药品和库存目录。OpenHIS 只用于校准中国医院字段、关系和状态语义，不复制其数据或物理模型。
+完整 Reference Data Release 保存在可选的独立 SQLite 文件中，通过显式 CLI 执行 migration、import、list 和 verify；每个成功发布的 Release 固定来源版本、获取方式、许可、实际 artifact checksum、Candidate provenance、记录数、导入诊断与 content hash，失败导入不改变已有 Release。Server 只读打开该文件；未配置时使用稳定的内置 Release，仍可启动和 reset 已安装 Package。管理员 API 和 Web 只读取 Release 摘要，普通岗位不能读取完整参考内容。生成 Dataset 时固定 release ID/hash，并把同一 provenance 保存到 Profile Revision 和不可变 Package；operational SQLite 不保存完整全国参考目录，Package 安装和 reset 只读取已经解析的 Hospital Baseline 与患者事实。
+
+Dataset 保存规范化内容哈希、expected version 和稳定诊断；新生成内容同时保存病例定义 hash、完整 Hospital Baseline hash、编译后目录 snapshot、固定 Synthea static inventory hash 和所选病种 generated inventory hash，以及区分关键真值、工作流必需、历史保留、明确忽略、歧义和本院未启用的覆盖报告。关键依赖缺失或歧义会产生阻断安装的诊断。Package 与来源 Dataset 分离，安装后的 reset 只读取不可变 Package 快照，不重新调用 Provider 或当前编译器。生成任务到 Dataset 的复合外键是可空来源链接：删除 Dataset 时使用 `ON DELETE SET NULL`，任务仍以独立 `result_dataset_id` 保留完成时的结果标识；该例外不用于 Package、Epoch 或 HIS 运行事实。CaseTruth 保存患者认知、纵向病史、本次就诊、生理生成器、三级检查来源、诊断与处置空间及费用基准；Hospital Baseline 保存虚构医院、科室、诊断、检查、药品和库存目录。OpenHIS 只用于校准中国医院字段、关系和状态语义，不复制其数据或物理模型。
 
 ### 10.4 确定性与故障注入
 
@@ -1418,7 +1430,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 
 当前成功 Command 响应返回 `requestId` 和 `auditId`，持久表通过 Workspace/Epoch、Scenario Run、idempotency key、Audit ID、Action Trace ID 和 outbox event ID 建立关联。`/api/health` 只报告服务状态与 FHIR 版本。
 
-首期没有 metrics exporter、分布式 trace、request log 或管理仪表盘，因此不宣称已经采集 API latency、SQLite busy/transaction duration、Search 规模或 outbox backlog 指标。诊断依赖数据库 CLI、结构化 API 错误和持久审计/outbox 状态；任何后续日志或指标都不得把患者姓名、身份信息、完整临床正文、token 或自由文本作为标签。
+首期没有生产 metrics exporter、分布式 trace、request log 或管理仪表盘，因此不宣称在线采集 API latency、SQLite busy/transaction duration、Search 规模或 outbox backlog 指标。独立 performance runner 可以在临时 sandbox 重复执行固定工作负载并输出分位数、SQL/存储和 Trace 指标，但不改变生产请求或持久化路径。运行诊断仍依赖数据库 CLI、结构化 API 错误和持久审计/outbox 状态；任何后续日志或指标都不得把患者姓名、身份信息、完整临床正文、token 或自由文本作为标签。
 
 ## 13. 代码结构
 
@@ -1525,11 +1537,11 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 ### 15.1 运行与持久化
 
 - Node.js Hono 同时提供 Web SPA、认证、HIS/Scenario API、FHIR R5 只读 API 和健康检查。
-- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；二十五个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、Virtual Patient 接诊与问诊、门诊事实、结构化病历、独立检查申请、检验报告关联、报告确认与修订、诊断草稿与确认、处方审核状态、处方草稿、无需用药结论与撤回事实、门诊病例责任、Scenario Dataset/Package、持久生成任务、已报告检查复测约束、结构化二次追问回答，以及 Synthetic Patient Profile、Profile Revision、原始来源和 Epoch materialization。
+- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；二十九个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、Virtual Patient 接诊与问诊、门诊事实、结构化病历、独立检查申请、检验报告关联、报告确认与修订、诊断草稿与确认、处方审核状态、处方草稿、无需用药结论与撤回事实、门诊病例责任、Scenario Dataset/Package、持久生成任务、已报告检查复测约束、结构化二次追问回答，以及 Synthetic Patient Profile、Profile Revision、参考数据、mapping/localization provenance、原始来源、服务目录检索和 Epoch materialization。
 - 数据库 CLI 提供 migrate、verify、reindex、backup 和 restore；已有旧版数据库执行 migrate 时先在同目录创建并验证升级前备份，Server 进程只验证 migration。
 - CommandExecutor 统一 `BEGIN IMMEDIATE`、expected versions、幂等 receipt、FHIR current/history/search、领域事实、AuditEvent、Action Trace 和 outbox 原子提交。
 - 同进程 dispatcher 持久化 claim/lease/attempt/correlation，支持失败重试、ambiguous、重复消费和旧 Epoch abandon。
-- Docs 开发与预览入口使用 `51898/51899`，Web 开发入口使用 `51888`，Synthea Provider 在宿主与容器内统一使用 `51878`，Server 本地、宿主与容器内统一使用 `51868`。standalone Provider 仅绑定宿主回环地址。默认 Dockerfile 与 Compose 固定单实例和命名持久卷，不包含 Java 或 Synthea；`compose.synthea-provider.yaml` 只启动非 root Provider，`compose.synthea.yaml` 复用该服务并为一键部署注入容器内 URL。Server 通过可选 URL adapter 调用固定协议，不把 Provider 健康状态作为启动门禁。
+- Docs 开发与预览入口使用 `51898/51899`，Web 开发入口使用 `51888`，Synthea Provider 默认在宿主与容器内使用 `51878`，内部 cn-health localizer 使用 `51879`，Server 本地、宿主与容器内统一使用 `51868`。standalone Provider 仅绑定宿主回环地址，宿主端口可覆盖；localizer 不发布宿主端口。默认 Dockerfile 与 Compose 固定单实例和命名持久卷，不包含 Java 或 Synthea；`compose.synthea-provider.yaml` 启动两个非 root、只读服务并只读挂载版本化 Candidate，`compose.synthea.yaml` 复用它们并为一键部署注入容器内 URL。Server 通过可选 URL adapter 调用固定协议，不把 Provider 健康状态作为启动门禁。
 
 ### 15.2 协议与业务
 

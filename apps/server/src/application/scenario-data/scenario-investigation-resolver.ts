@@ -174,8 +174,8 @@ function generatorValue(
       || hdlCholesterol === undefined
       || triglycerides === undefined
       || generator.dependencies.length !== 3
-      || generator.unit !== 'mmol/L'
-      || dependencyUnits.some(unit => unit !== 'mmol/L')
+      || generator.unit.code !== 'mmol/L'
+      || dependencyUnits.some(unit => unit?.code !== 'mmol/L')
       || triglycerides < 0
       || triglycerides >= 4.5
     ) {

@@ -1,0 +1,4 @@
+LOINC_NUM,LONG_COMMON_NAME,STATUS,CLINMESH_FIXTURE_NOTICE
+90001-1,Synthetic laboratory concept alpha,ACTIVE,Self-authored synthetic parser fixture; not LOINC content
+90002-2,Synthetic laboratory concept beta,DEPRECATED,Self-authored synthetic parser fixture; not LOINC content
+90003-3,Synthetic laboratory concept gamma,TRIAL,Self-authored synthetic parser fixture; not LOINC content

@@ -4,16 +4,32 @@ import type {
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
 } from '@clinmesh/contracts/scenario'
+import { scenarioModules } from '@clinmesh/contracts/scenario'
+import type {
+  ReferenceConcept,
+  ReferenceMedicalService,
+  ReferenceMedicationProduct,
+  ReferenceValueSetEntry,
+} from '@clinmesh/contracts/reference-data'
 import { scenarioPatientSchema } from '@clinmesh/contracts/scenario'
 import type {
   ScenarioGenerationProvider,
   SourcePatientCorpus,
 } from '../../application/scenario-data/provider.ts'
-import { sourceArtifactHash } from '../../application/scenario-data/provider.ts'
+import {
+  generatedScenarioSimulatorRules,
+  sourceArtifactHash,
+} from '../../application/scenario-data/provider.ts'
 import { createHospitalBaseline } from '../../application/scenario-data/hospital-baseline.ts'
+import { scenarioCaseDefinitions } from '../../application/scenario-data/scenario-case-definitions.ts'
+import { compileScenarioCatalog } from '../../application/scenario-data/scenario-catalog-compiler.ts'
+import { syntheticNhsaMedicationProductSnapshot } from '../../application/scenario-data/medication-product-snapshot.ts'
+import {
+  syntheticNhcMedicalServiceSnapshot,
+  syntheticWstValueSetSnapshot,
+} from '../../application/scenario-data/medical-service-snapshot.ts'
 import { compileSyntheaR4Bundle } from '../../application/scenario-data/synthea-case-truth-compiler.ts'
-
-const syntheticNames = ['林晓', '王晓明', '李静', '张伟', '刘洋', '陈勇'] as const
+import type { ReferenceHospitalSelection } from '../../application/reference-hospital-selection.ts'
 
 function deterministicNumber(input: unknown): number {
   return Number.parseInt(createHash('sha256').update(JSON.stringify(input)).digest('hex').slice(0, 8), 16)
@@ -35,23 +51,23 @@ function gender(request: ScenarioGenerationRequest, ordinal: number): 'female' |
 
 function patient(request: ScenarioGenerationRequest, ordinal: number) {
   const module = request.modules[ordinal % request.modules.length] ?? 'fever'
+  const definition = scenarioCaseDefinitions[module]
   const idSuffix = createHash('sha256')
     .update(JSON.stringify([request.seeds, ordinal, module]))
     .digest('hex')
     .slice(0, 12)
-  const isDiabetes = module === 'type-2-diabetes'
   const patientId = `builtin-source-${idSuffix}`
   const patientReference = `Patient/${patientId}`
   const encounterId = `builtin-encounter-${idSuffix}`
   const encounterReference = `Encounter/${encounterId}`
-  const observationInputs = isDiabetes
-    ? [{ code: '2339-0', display: 'Glucose', id: `glucose-${idSuffix}`, unit: 'mmol/L', value: 13.8 },
-        { code: '4548-4', display: 'Hemoglobin A1c', id: `hba1c-${idSuffix}`, unit: '%', value: 9.2 }]
-    : [{ code: '8310-5', display: 'Body temperature', id: `temperature-${idSuffix}`, unit: '°C', value: 38.6 }]
-  const conditionInputs = isDiabetes
-    ? [{ code: '44054006', display: 'Diabetes mellitus type 2', id: `diabetes-${idSuffix}` },
-        { code: '38341003', display: 'Hypertension', id: `hypertension-${idSuffix}` }]
-    : [{ code: '386661006', display: 'Fever', id: `fever-${idSuffix}` }]
+  const observationInputs = definition.builtInSource.observations.map((observation, index) => ({
+    ...observation,
+    id: `observation-${index}-${idSuffix}`,
+  }))
+  const conditionInputs = definition.builtInSource.conditions.map((condition, index) => ({
+    ...condition,
+    id: `condition-${index}-${idSuffix}`,
+  }))
   const compiled = compileSyntheaR4Bundle({
     bundle: {
       entry: [{
@@ -95,6 +111,23 @@ function patient(request: ScenarioGenerationRequest, ordinal: number) {
           subject: { reference: patientReference },
           valueQuantity: { unit: observation.unit, value: observation.value },
         },
+      })), ...definition.builtInSource.medications.map((medication, index) => ({
+        resource: {
+          authoredOn: `${request.timeRange.end}T09:20:00+08:00`,
+          encounter: { reference: encounterReference },
+          id: `medication-request-${index}-${idSuffix}`,
+          intent: 'order',
+          medicationCodeableConcept: {
+            coding: [{
+              code: medication.code,
+              display: medication.display,
+              system: 'http://www.nlm.nih.gov/research/umls/rxnorm',
+            }],
+          },
+          resourceType: 'MedicationRequest',
+          status: 'completed',
+          subject: { reference: patientReference },
+        },
       }))],
       resourceType: 'Bundle',
       type: 'collection',
@@ -105,7 +138,6 @@ function patient(request: ScenarioGenerationRequest, ordinal: number) {
   return scenarioPatientSchema.parse({
     ...compiled,
     id: `synthetic-patient-${idSuffix}`,
-    name: syntheticNames[deterministicNumber([request.seeds.population, ordinal, 'name']) % syntheticNames.length]!,
     physiologyBaseline: {
       ...compiled.physiologyBaseline,
       generators: compiled.physiologyBaseline.generators.map(generator => ({
@@ -117,11 +149,31 @@ function patient(request: ScenarioGenerationRequest, ordinal: number) {
 }
 
 export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProvider {
+  readonly #medicalServices: readonly ReferenceMedicalService[]
+  readonly #medicationProducts: readonly ReferenceMedicationProduct[]
+  readonly #referenceSelection: ReferenceHospitalSelection | undefined
+  readonly #referenceConcepts: readonly ReferenceConcept[]
+  readonly #valueSetEntries: readonly ReferenceValueSetEntry[]
+
+  constructor(
+    medicationProducts = syntheticNhsaMedicationProductSnapshot,
+    medicalServices = syntheticNhcMedicalServiceSnapshot,
+    valueSetEntries = syntheticWstValueSetSnapshot,
+    referenceSelection?: ReferenceHospitalSelection,
+    referenceConcepts: readonly ReferenceConcept[] = [],
+  ) {
+    this.#medicalServices = medicalServices
+    this.#medicationProducts = medicationProducts
+    this.#referenceSelection = referenceSelection
+    this.#referenceConcepts = referenceConcepts
+    this.#valueSetEntries = valueSetEntries
+  }
+
   async capabilities(): Promise<ScenarioProviderCapabilities> {
     return {
       available: true,
       maxPopulation: 10,
-      modules: ['fever', 'type-2-diabetes'],
+      modules: [...scenarioModules],
       providerId: 'builtin',
       providerName: 'ClinMesh 内置生成器',
     }
@@ -129,7 +181,16 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
 
   async generate(request: ScenarioGenerationRequest): Promise<SourcePatientCorpus> {
     const patients = Array.from({ length: request.population.count }, (_, index) => patient(request, index))
-    const baseline = createHospitalBaseline()
+    const baseline = compileScenarioCatalog({
+      baseline: createHospitalBaseline(
+        this.#medicationProducts,
+        this.#medicalServices,
+        this.#valueSetEntries,
+        this.#referenceSelection,
+        this.#referenceConcepts,
+      ),
+      modules: request.modules,
+    })
     const content: ScenarioDatasetContent = {
       catalog: baseline.catalog,
       hiddenFacts: patients.map(patient => ({
@@ -141,6 +202,7 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
       inventory: baseline.inventory,
       patients,
       reproduction: {
+        catalogCompilation: baseline.report,
         clinicalSeed: request.seeds.clinical,
         generator: 'clinmesh-builtin-v1',
         modules: request.modules,
@@ -155,7 +217,7 @@ export class BuiltInScenarioGenerationProvider implements ScenarioGenerationProv
         triggerCode: 'evaluator-only',
       })),
       schemaVersion: '1',
-      simulatorRules: [{ code: 'default-success', outcome: 'success', simulator: 'lis' }],
+      simulatorRules: generatedScenarioSimulatorRules,
     }
     return {
       content,

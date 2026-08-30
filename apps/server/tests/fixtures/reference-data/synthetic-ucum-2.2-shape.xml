@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root version="2.2" fixtureNotice="Self-authored synthetic parser fixture; not UCUM content">
+  <unit Code="{clinmesh_synthetic_a}">
+    <name>synthetic unit alpha</name>
+    <printSymbol>synthetic-a</printSymbol>
+  </unit>
+  <unit Code="{clinmesh_synthetic_b}">
+    <name>synthetic unit beta</name>
+    <printSymbol>synthetic-b</printSymbol>
+  </unit>
+  <unit Code="{clinmesh_synthetic_c}">
+    <name>synthetic unit gamma</name>
+    <printSymbol>synthetic-c</printSymbol>
+  </unit>
+</root>

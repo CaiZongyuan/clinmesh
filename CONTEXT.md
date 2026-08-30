@@ -41,8 +41,12 @@ Scenario 采用的虚构医院类型、所属地区和政策生效日期。它�
 _Avoid_: Generic Chinese hospital, live policy
 
 **Reference Data Package**:
-构建 Scenario 时使用的版本固定术语、目录和映射集合，并保留来源、地域、有效期和使用条件。它不是运行中的医院事实，也不是完整 Scenario。
+构建 Scenario 时使用的版本固定 Reference Data Release 与审核映射集合，并保留来源、地域、有效期和使用条件。它不是运行中的医院事实，也不是完整 Scenario。
 _Avoid_: Seed, live catalog, Scenario
+
+**Reference Data Release**:
+一次不可变发布的规范化参考术语或目录数据及其来源清单。它是 Scenario authoring 输入，不表示某所医院已经启用其中项目。
+_Avoid_: Hospital Baseline, live catalog, patient fact
 
 **Generation Batch**:
 一次受控生成请求产生的一组合成患者及其共同来源参数。Generation Batch 只表达 provenance，不是患者生命周期，也不决定患者是否进入业务流程。
@@ -147,6 +151,30 @@ _Avoid_: Login identity, account switch, unrestricted impersonation
 _Avoid_: Encounter location, bed status text
 
 ## 临床请求与执行
+
+**Drug Concept**:
+不绑定生产企业、批准文号、产品包装或医院可用性的药物语义概念，可表达成分以及临床必要的强度和剂型。
+_Avoid_: Medication Product, hospital medication catalog item, Inventory Lot
+
+**Medication Product**:
+由注册或产品目录识别的具体药品呈现，包含剂型、规格、包装、企业和监管标识等产品属性。
+_Avoid_: Drug Concept, Hospital Medication, Inventory Lot
+
+**Hospital Medication**:
+某所医院已启用的 Medication Product，拥有本院代码、可用范围、价格和处方规则，但不表示某个具体库存批次。
+_Avoid_: Drug Concept, Medication Product, Inventory Lot
+
+**National Medical Service**:
+国家层面对检查、检验或治疗项目边界及计价单位的规范定义，不表示某所医院已经开展，也不拥有本院价格。
+_Avoid_: Hospital Service, Charge Definition, Clinical Request
+
+**Hospital Service**:
+某所医院从 National Medical Service 选择并启用的服务项目，拥有本院代码、执行科室、可用范围、TAT、组合成员和报告模板。
+_Avoid_: National Medical Service, Charge Definition, Clinical Request
+
+**Charge Definition**:
+医院对一个可收费项目固定的计价单位、币种、价格和生效日期定义；它不是患者已经发生的费用事实。
+_Avoid_: National Medical Service, Hospital Service, Charge Item
 
 **Clinical Request**:
 临床人员对药品、检查、检验、治疗或耗材提出的单项意图。

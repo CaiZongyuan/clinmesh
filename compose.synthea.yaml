@@ -3,6 +3,11 @@ services:
     environment:
       CLINMESH_SYNTHEA_PROVIDER_URL: http://synthea-provider:51878
 
+  cn-health-localizer:
+    extends:
+      file: compose.synthea-provider.yaml
+      service: cn-health-localizer
+
   synthea-provider:
     extends:
       file: compose.synthea-provider.yaml

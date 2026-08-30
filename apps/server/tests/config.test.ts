@@ -84,6 +84,8 @@ describe('Node.js server configuration', () => {
       'CLINMESH_DATABASE_PATH=.data/clinmesh.sqlite',
       'CLINMESH_DEMO_PASSWORD=Env-demo-password-2026!',
       'CLINMESH_PORT=51869',
+      'CLINMESH_REFERENCE_DATABASE_PATH=.data/reference.sqlite',
+      'CLINMESH_REFERENCE_SELECTION_PATH=.data/reference-selection.json',
       '',
     ].join('\n'), 'utf8')
     await writeFile(join(serverDirectory, '.env'), [
@@ -99,6 +101,8 @@ describe('Node.js server configuration', () => {
         .toMatchObject({
           databasePath: join(workspace, '.data/clinmesh.sqlite'),
           port: 51867,
+          referenceDatabasePath: join(workspace, '.data/reference.sqlite'),
+          referenceSelectionPath: join(workspace, '.data/reference-selection.json'),
         })
     } finally {
       await rm(workspace, { recursive: true })

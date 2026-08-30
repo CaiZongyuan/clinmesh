@@ -51,24 +51,26 @@ export class ScenarioDatasetRepository {
   createPackage(input: {
     actorId: string
     createdAt: string
-    dataset: ScenarioDataset
+    dataset: Pick<ScenarioDataset, 'datasetId' | 'version' | 'workspaceId'>
     packageId: string
   }): void {
-    this.#database.driver.prepare(`
+    const result = this.#database.driver.prepare(`
       INSERT INTO scenario_package (
         workspace_id, package_id, source_dataset_id, source_dataset_version,
         content_json, content_hash, created_by_actor_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      )
+      SELECT workspace_id, ?, dataset_id, version, content_json, content_hash, ?, ?
+      FROM scenario_dataset
+      WHERE workspace_id = ? AND dataset_id = ? AND version = ?
     `).run(
-      input.dataset.workspaceId,
       input.packageId,
-      input.dataset.datasetId,
-      input.dataset.version,
-      JSON.stringify(input.dataset.content),
-      input.dataset.contentHash,
       input.actorId,
       input.createdAt,
+      input.dataset.workspaceId,
+      input.dataset.datasetId,
+      input.dataset.version,
     )
+    if (result.changes !== 1) throw new Error('Scenario Dataset changed before Package creation')
   }
 
   delete(workspaceId: string, datasetId: string, expectedVersion: number): boolean {

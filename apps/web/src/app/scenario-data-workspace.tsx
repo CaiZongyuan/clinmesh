@@ -1,5 +1,9 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import type { ScenarioDataset, ScenarioGenerationRequest } from '@clinmesh/contracts/scenario'
+import {
+  scenarioUcumUnitSchema,
+  type ScenarioDataset,
+  type ScenarioGenerationRequest,
+} from '@clinmesh/contracts/scenario'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
   AlertDialog,
@@ -56,17 +60,20 @@ import {
   getScenarioDatasets,
   getScenarioGenerationJob,
   getScenarioProviders,
+  getReferenceDataReleases,
   installScenarioDataset,
   newIdempotencyKey,
   sessionQueryKey,
   updateScenarioDataset,
 } from './api-client.ts'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
+import { scenarioModuleOptions } from './scenario-module-options.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 
 const providersQueryKey = ['scenario-providers'] as const
 const datasetsQueryKey = ['scenario-datasets'] as const
+const referenceDataReleasesQueryKey = ['reference-data-releases'] as const
 const SyntheticPatientLibrary = lazy(async () => {
   const module = await import('./synthetic-patient-library.tsx')
   return { default: module.SyntheticPatientLibrary }
@@ -161,9 +168,16 @@ function createPhysiologyGenerator(
   id: string,
 ): ScenarioPhysiologyGenerator {
   const common = { id, source: '合成病例基线' }
+  const dimensionlessUnit = scenarioUcumUnitSchema.parse('1')
   if (kind === 'text') return { ...common, kind, value: '待编辑结果' }
   if (kind === 'derived') {
-    return { ...common, dependencies: ['baseline-weight'], formula: 'bmi', kind, unit: 'kg/m2' }
+    return {
+      ...common,
+      dependencies: ['baseline-weight'],
+      formula: 'bmi',
+      kind,
+      unit: scenarioUcumUnitSchema.parse('kg/m²'),
+    }
   }
   if (kind === 'normal') {
     return {
@@ -174,7 +188,7 @@ function createPhysiologyGenerator(
       mean: 0.5,
       minimum: 0,
       standardDeviation: 0.1,
-      unit: '1',
+      unit: dimensionlessUnit,
     }
   }
   if (kind === 'trajectory') {
@@ -185,11 +199,11 @@ function createPhysiologyGenerator(
       maximum: 1,
       minimum: 0,
       target: 0.5,
-      unit: '1',
+      unit: dimensionlessUnit,
       walkStep: 0.1,
     }
   }
-  return { ...common, kind, unit: '1', value: 0 }
+  return { ...common, kind, unit: dimensionlessUnit, value: 0 }
 }
 
 function optionalString<T extends object, Key extends keyof T>(
@@ -689,6 +703,7 @@ function DatasetEditor({
     }))
   }
   const patient = draft.content.patients[selectedPatientIndex] ?? draft.content.patients[0]!
+  const catalogCompilation = draft.content.reproduction.catalogCompilation
   const mutationError = save.error ?? install.error ?? remove.error
 
   return (
@@ -743,6 +758,28 @@ function DatasetEditor({
           </AlertDescription>
         </Alert>
       ) : null}
+
+      {catalogCompilation === undefined ? null : (
+        <section aria-labelledby="catalog-coverage-heading" className="border-y py-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold" id="catalog-coverage-heading">{messages.catalogCoverage}</h3>
+            <Badge variant={catalogCompilation.supported ? 'success' : 'destructive'}>
+              {catalogCompilation.supported
+                ? messages.catalogCoverageSupported
+                : messages.catalogCoverageBlocked}
+            </Badge>
+          </div>
+          <dl className="mt-3 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2 xl:grid-cols-4">
+            <div><dt className="text-muted-foreground">{messages.criticalTruthCoverage}</dt><dd className="font-medium">{catalogCompilation.counts.requirements.criticalTruth}</dd></div>
+            <div><dt className="text-muted-foreground">{messages.workflowCoverage}</dt><dd className="font-medium">{catalogCompilation.counts.requirements.workflowRequired}</dd></div>
+            <div><dt className="text-muted-foreground">{messages.historyCoverage}</dt><dd className="font-medium">{catalogCompilation.counts.requirements.historyOnly}</dd></div>
+            <div><dt className="text-muted-foreground">{messages.ignoredCoverage}</dt><dd className="font-medium">{catalogCompilation.counts.requirements.explicitlyIgnored}</dd></div>
+            <div><dt className="text-muted-foreground">{messages.ambiguousCoverage}</dt><dd className="font-medium">{catalogCompilation.counts.resolutions.ambiguous}</dd></div>
+            <div><dt className="text-muted-foreground">{messages.hospitalNotEnabledCoverage}</dt><dd className="font-medium">{catalogCompilation.counts.resolutions.hospitalNotEnabled}</dd></div>
+            <div className="sm:col-span-2"><dt className="text-muted-foreground">{messages.sourceInventoryHash}</dt><dd className="break-all font-mono text-xs">{catalogCompilation.sourceInventory.staticContentHash}</dd></div>
+          </dl>
+        </section>
+      )}
 
       <FieldGroup className="grid gap-4 md:grid-cols-2">
         <Field>
@@ -1057,7 +1094,7 @@ function DatasetEditor({
                 <Field><FieldLabel htmlFor={`editor-generator-id-${generatorIndex}`}>{messages.generatorId}{suffix}</FieldLabel><Input id={`editor-generator-id-${generatorIndex}`} onChange={event => updateGenerator(current => ({ ...current, id: event.target.value }))} value={generator.id} /></Field>
                 <Field><FieldLabel htmlFor={`editor-generator-kind-${generatorIndex}`}>{messages.generatorKind}{suffix}</FieldLabel><select className="h-8 rounded-md border border-input bg-background px-2 text-sm" id={`editor-generator-kind-${generatorIndex}`} onChange={event => updateGenerator(current => createPhysiologyGenerator(event.target.value as ScenarioPhysiologyGenerator['kind'], current.id))} value={generator.kind}>{(['constant', 'normal', 'trajectory', 'derived', 'text'] as const).map(kind => <option key={kind} value={kind}>{kind}</option>)}</select></Field>
                 <Field><FieldLabel htmlFor={`editor-generator-source-${generatorIndex}`}>{messages.generatorSource}{suffix}</FieldLabel><Input id={`editor-generator-source-${generatorIndex}`} onChange={event => updateGenerator(current => ({ ...current, source: event.target.value }))} value={generator.source} /></Field>
-                {generator.kind === 'text' ? null : <Field><FieldLabel htmlFor={`editor-generator-unit-${generatorIndex}`}>{messages.generatorUnit}{suffix}</FieldLabel><Input id={`editor-generator-unit-${generatorIndex}`} onChange={event => updateGenerator(current => ({ ...current, unit: event.target.value }))} value={generator.unit} /></Field>}
+                {generator.kind === 'text' ? null : <Field><FieldLabel htmlFor={`editor-generator-unit-${generatorIndex}`}>{messages.generatorUnit}{suffix}</FieldLabel><Input id={`editor-generator-unit-${generatorIndex}`} onChange={event => updateGenerator(current => current.kind === 'text' ? current : ({ ...current, unit: { ...current.unit, code: event.target.value, display: event.target.value } }))} value={generator.unit.code} /></Field>}
                 {generator.kind === 'constant' ? <>
                   <Field><FieldLabel htmlFor={`editor-generator-value-${generatorIndex}`}>{messages.generatorValue}{suffix}</FieldLabel><Input id={`editor-generator-value-${generatorIndex}`} onChange={event => updateGenerator(current => current.kind === 'constant' ? ({ ...current, value: Number(event.target.value) }) : current)} type="number" value={generator.value} /></Field>
                   <Field><FieldLabel htmlFor={`editor-generator-assay-cv-${generatorIndex}`}>{messages.generatorAssayCv}{suffix}</FieldLabel><Input id={`editor-generator-assay-cv-${generatorIndex}`} max={1} min={0} onChange={event => updateGenerator((current) => {
@@ -1926,28 +1963,19 @@ function ScenarioDatasetStudio({ locale }: { locale: WorkspaceLocale }): React.J
             </Field>
           </FieldGroup>
           <div className="flex flex-wrap items-center gap-4">
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={request.modules.includes('fever')}
-                disabled={request.modules.length === 1 && request.modules.includes('fever')}
-                onCheckedChange={checked => setRequest(current => ({
-                  ...current,
-                  modules: updateModules(current.modules, 'fever', checked === true),
-                }))}
-              />
-              {messages.moduleFever}
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={request.modules.includes('type-2-diabetes')}
-                disabled={request.modules.length === 1 && request.modules.includes('type-2-diabetes')}
-                onCheckedChange={checked => setRequest(current => ({
-                  ...current,
-                  modules: updateModules(current.modules, 'type-2-diabetes', checked === true),
-                }))}
-              />
-              {messages.moduleDiabetes}
-            </label>
+            {scenarioModuleOptions.map(option => (
+              <label className="flex items-center gap-2 text-sm" key={option.value}>
+                <Checkbox
+                  checked={request.modules.includes(option.value)}
+                  disabled={request.modules.length === 1 && request.modules.includes(option.value)}
+                  onCheckedChange={checked => setRequest(current => ({
+                    ...current,
+                    modules: updateModules(current.modules, option.value, checked === true),
+                  }))}
+                />
+                {option.label[locale]}
+              </label>
+            ))}
           </div>
           <div className="flex justify-end">
             <Button disabled={generate.isPending || selectedProvider?.available !== true} type="submit">
@@ -2079,21 +2107,82 @@ function ScenarioDatasetStudio({ locale }: { locale: WorkspaceLocale }): React.J
   )
 }
 
+function ReferenceDataReleaseSummary({ locale }: { locale: WorkspaceLocale }): React.JSX.Element {
+  const messages = getWorkspaceMessages(locale)
+  const releases = useQuery({
+    queryFn: ({ signal }) => getReferenceDataReleases(signal),
+    queryKey: referenceDataReleasesQueryKey,
+  })
+
+  return (
+    <section aria-labelledby="reference-data-releases-heading" className="flex min-w-0 flex-col gap-3 border-b pb-4">
+      <div className="flex items-center gap-2">
+        <DatabaseIcon aria-hidden="true" className="size-4" />
+        <h2 className="text-base font-semibold" id="reference-data-releases-heading">
+          {messages.referenceDataReleases}
+        </h2>
+      </div>
+      {releases.isPending ? <Skeleton className="h-20 w-full" /> : null}
+      {releases.isError ? (
+        <Alert variant="destructive">
+          <CircleAlertIcon aria-hidden="true" />
+          <AlertTitle>{getWorkspaceErrorTitle(releases.error, messages, messages.referenceDataUnavailable)}</AlertTitle>
+          <AlertDescription>{getWorkspaceErrorMessage(releases.error, messages)}</AlertDescription>
+        </Alert>
+      ) : null}
+      {releases.data?.items.map(release => (
+        <div className="min-w-0" key={release.releaseId}>
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm lg:grid-cols-4">
+            <div className="min-w-0">
+              <dt className="text-xs text-muted-foreground">{messages.referenceDataRelease}</dt>
+              <dd className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="break-all font-medium">{release.releaseId}</span>
+                <Badge variant="success">{messages.referenceDataPublished}</Badge>
+              </dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-xs text-muted-foreground">{messages.referenceDataHash}</dt>
+              <dd><code className="text-xs" title={release.contentHash}>{release.contentHash.slice(0, 12)}...</code></dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-xs text-muted-foreground">{messages.referenceDataSourceCount.replace('{count}', release.sourceCount.toLocaleString(locale))}</dt>
+              <dd className="flex flex-col gap-1 text-xs text-muted-foreground">
+                {release.sources.map(source => (
+                  <span className="break-words" key={source.sourceId}>
+                    {source.sourceId} · {source.upstreamVersion} · {source.licenseId}
+                  </span>
+                ))}
+              </dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-xs text-muted-foreground">{messages.referenceDataConceptCount.replace('{count}', release.conceptCount.toLocaleString(locale))}</dt>
+              <dd>{release.conceptCount.toLocaleString(locale)}</dd>
+            </div>
+          </dl>
+        </div>
+      ))}
+    </section>
+  )
+}
+
 export function ScenarioDataWorkspace({ locale }: { locale: WorkspaceLocale }): React.JSX.Element {
   return (
-    <Tabs defaultValue="library">
-      <TabsList aria-label="模拟数据视图" variant="line">
-        <TabsTrigger value="library">{locale === 'zh-CN' ? '合成患者库' : 'Synthetic patient library'}</TabsTrigger>
-        <TabsTrigger value="studio">{locale === 'zh-CN' ? '高级病例编排' : 'Advanced case authoring'}</TabsTrigger>
-      </TabsList>
-      <TabsContent className="pt-4" value="library">
-        <Suspense fallback={<Skeleton className="h-[680px] w-full" />}>
-          <SyntheticPatientLibrary locale={locale} />
-        </Suspense>
-      </TabsContent>
-      <TabsContent className="pt-4" value="studio">
-        <ScenarioDatasetStudio locale={locale} />
-      </TabsContent>
-    </Tabs>
+    <div className="flex min-w-0 flex-col gap-4">
+      <ReferenceDataReleaseSummary locale={locale} />
+      <Tabs defaultValue="library">
+        <TabsList aria-label="模拟数据视图" variant="line">
+          <TabsTrigger value="library">{locale === 'zh-CN' ? '合成患者库' : 'Synthetic patient library'}</TabsTrigger>
+          <TabsTrigger value="studio">{locale === 'zh-CN' ? '高级病例编排' : 'Advanced case authoring'}</TabsTrigger>
+        </TabsList>
+        <TabsContent className="pt-4" value="library">
+          <Suspense fallback={<Skeleton className="h-[680px] w-full" />}>
+            <SyntheticPatientLibrary locale={locale} />
+          </Suspense>
+        </TabsContent>
+        <TabsContent className="pt-4" value="studio">
+          <ScenarioDatasetStudio locale={locale} />
+        </TabsContent>
+      </Tabs>
+    </div>
   )
 }

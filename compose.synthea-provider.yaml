@@ -1,13 +1,46 @@
 services:
+  cn-health-localizer:
+    build:
+      context: ${CN_HEALTH_DATA_CONTEXT:-../cn-health-data}
+      dockerfile: Dockerfile.synthea-localizer
+    cap_drop:
+      - ALL
+    environment:
+      CN_HEALTH_GEOGRAPHY_RELEASE_PATH: /data/geography
+      CN_HEALTH_NAMES_RELEASE_PATH: /data/names
+      CN_HEALTH_POPULATION_RELEASE_PATH: /data/population
+      CN_HEALTH_SYNTHEA_PROFILE_PATH: /data/profile
+    init: true
+    pids_limit: 128
+    read_only: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    user: ${CN_HEALTH_DATA_RUN_AS:-1000:1000}
+    volumes:
+      - ${CN_HEALTH_DATA_DIST:-../cn-health-data/dist}/synthea-cn-profile/releases/2026-08-29.r3:/data/profile:ro
+      - ${CN_HEALTH_DATA_DIST:-../cn-health-data/dist}/names-cn/releases/40.37.0.r1:/data/names:ro
+      - ${CN_HEALTH_DATA_DIST:-../cn-health-data/dist}/geography-cn/releases/2026-08-29.r1:/data/geography:ro
+      - ${CN_HEALTH_DATA_DIST:-../cn-health-data/dist}/population-cn/releases/WPP2024.r1:/data/population:ro
+
   synthea-provider:
     build:
       context: apps/synthea-provider
     cap_drop:
       - ALL
+    depends_on:
+      cn-health-localizer:
+        condition: service_healthy
+    environment:
+      CN_HEALTH_LOCALIZER_URL: http://cn-health-localizer:51879/v1/localize
+      SYNTHEA_CLASSPATH_PATH: /opt/cn-health/synthea-profile/classpath
+      SYNTHEA_CONFIG_PATH: /opt/cn-health/synthea-profile/synthea.properties
     init: true
     pids_limit: 256
     ports:
-      - "127.0.0.1:51878:51878"
+      - "127.0.0.1:${CLINMESH_SYNTHEA_PROVIDER_PORT:-51878}:51878"
     read_only: true
     restart: unless-stopped
     security_opt:
@@ -15,3 +48,6 @@ services:
     stop_grace_period: 20s
     tmpfs:
       - /tmp:size=1g,mode=1777
+    user: ${CN_HEALTH_DATA_RUN_AS:-1000:1000}
+    volumes:
+      - ${CN_HEALTH_DATA_DIST:-../cn-health-data/dist}/synthea-cn-profile/releases/2026-08-29.r3:/opt/cn-health/synthea-profile:ro

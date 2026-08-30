@@ -6,6 +6,18 @@ import {
   type ScenarioPatient,
 } from '@clinmesh/contracts/scenario'
 import { z } from 'zod'
+import { resolveDiagnosisMapping } from './diagnosis-coding-package.ts'
+import {
+  isMedicationMappingSourceSystem,
+  medicationMappingSourceVersion,
+  resolveMedicationMapping,
+} from './medication-coding-package.ts'
+import {
+  isKnownObservationMappingCode,
+  resolveObservationMapping,
+  resolveUcumUnit,
+} from './reference-coding-package.ts'
+import { scenarioCaseDefinitions } from './scenario-case-definitions.ts'
 
 export const syntheaR4ResourceTypes = [
   'AllergyIntolerance',
@@ -38,6 +50,7 @@ const codingSchema = z.object({
   code: z.string().min(1).optional(),
   display: z.string().min(1).optional(),
   system: z.string().url().optional(),
+  version: z.string().min(1).optional(),
 }).passthrough()
 const conceptSchema = z.object({
   coding: z.array(codingSchema).optional(),
@@ -99,6 +112,12 @@ const observationSchema = z.object({
   valueString: z.string().min(1).optional(),
 }).passthrough()
 
+const medicationSchema = z.object({
+  code: conceptSchema.optional(),
+  id: z.string().min(1),
+  resourceType: z.literal('Medication'),
+}).passthrough()
+
 const medicationRequestSchema = z.object({
   authoredOn: z.iso.datetime({ offset: true }).optional(),
   encounter: referenceSchema.optional(),
@@ -132,7 +151,6 @@ const ignoredResourceTypes = [
   'ImagingStudy',
   'Immunization',
   'Location',
-  'Medication',
   'Organization',
   'Practitioner',
   'Procedure',
@@ -149,6 +167,7 @@ const compileableResourceSchema = z.discriminatedUnion('resourceType', [
   allergySchema,
   conditionSchema,
   encounterSchema,
+  medicationSchema,
   medicationRequestSchema,
   observationSchema,
   patientSchema,
@@ -166,64 +185,49 @@ export const syntheaR4BundleSchema = z.object({
 type Concept = z.infer<typeof conceptSchema>
 type R4Bundle = z.infer<typeof syntheaR4BundleSchema>
 type R4Observation = z.infer<typeof observationSchema>
+type R4MedicationRequest = z.infer<typeof medicationRequestSchema>
 
-const chineseNames = [
-  '林安宁',
-  '王嘉禾',
-  '李思远',
-  '张清和',
-  '刘知夏',
-  '陈景明',
-  '赵文舒',
-  '周允康',
-] as const
+type SyntheaCaseTruthCompilerErrorCode =
+  | 'MEDICATION_SOURCE_INVALID'
+  | 'OBSERVATION_CODING_MISMATCH'
+  | 'OBSERVATION_UNIT_INVALID'
 
-const codeMappings = new Map<string, { code: string; display: string }>([
-  ['386661006', { code: 'R50.9', display: '发热，原因待查' }],
-  ['44054006', { code: 'E11.65', display: '2型糖尿病伴高血糖' }],
-  ['38341003', { code: 'I10', display: '高血压' }],
-])
+export class SyntheaCaseTruthCompilerError extends Error {
+  readonly code: SyntheaCaseTruthCompilerErrorCode
+  readonly sourceResourceId: string
 
-const observationMappings = new Map<string, {
-  catalogItemId: string
-  code: string
-  feeFen: number
-  name: string
-  referenceRange: string
-  report: (value: string, unit: string) => string
-  tatMinutes: number
-}>([
-  ['8310-5', {
-    catalogItemId: 'lab-body-temperature',
-    code: 'BODY-TEMP',
-    feeFen: 0,
-    name: '体温',
-    referenceRange: '36.0-37.3 °C',
-    report: (value, unit) => `体温 ${value} ${unit}`,
-    tatMinutes: 0,
-  }],
-  ['4548-4', {
-    catalogItemId: 'lab-hba1c',
-    code: 'HBA1C',
-    feeFen: 4_500,
-    name: '糖化血红蛋白',
-    referenceRange: '4.0-6.0 %',
-    report: (value, unit) => `糖化血红蛋白 ${value} ${unit}`,
-    tatMinutes: 120,
-  }],
-  ['2339-0', {
-    catalogItemId: 'lab-random-glucose',
-    code: 'GLUCOSE',
-    feeFen: 500,
-    name: '随机血糖',
-    referenceRange: '3.9-11.1 mmol/L',
-    report: (value, unit) => `随机血糖 ${value} ${unit}`,
-    tatMinutes: 30,
-  }],
-])
+  constructor(
+    code: SyntheaCaseTruthCompilerErrorCode,
+    sourceResourceId: string,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'SyntheaCaseTruthCompilerError'
+    this.code = code
+    this.sourceResourceId = sourceResourceId
+  }
+}
 
 function firstCoding(concept: Concept | undefined): z.infer<typeof codingSchema> | undefined {
   return concept?.coding?.find(coding => coding.code !== undefined || coding.display !== undefined)
+}
+
+function observationMapping(observation: R4Observation) {
+  const coding = firstCoding(observation.code)
+  const mapping = resolveObservationMapping({
+    ...(coding?.code === undefined ? {} : { code: coding.code }),
+    ...(coding?.display === undefined ? {} : { display: coding.display }),
+    ...(coding?.system === undefined ? {} : { system: coding.system }),
+    ...(coding?.version === undefined ? {} : { version: coding.version }),
+  })
+  if (mapping === undefined && coding?.code !== undefined && isKnownObservationMappingCode(coding.code)) {
+    throw new SyntheaCaseTruthCompilerError(
+      'OBSERVATION_CODING_MISMATCH',
+      observation.id,
+      `Observation/${observation.id} has a mismatched reference coding`,
+    )
+  }
+  return mapping
 }
 
 function conceptDisplay(concept: Concept | undefined, fallback: string): string {
@@ -247,6 +251,158 @@ function localReferenceId(reference: string | undefined, bundle: R4Bundle): stri
   return referencedEntry?.resource.id
 }
 
+function medicationSourceConcept(
+  request: R4MedicationRequest,
+  bundle: R4Bundle,
+): Concept | undefined {
+  if (
+    (request.medicationCodeableConcept === undefined)
+    === (request.medicationReference === undefined)
+  ) {
+    throw new SyntheaCaseTruthCompilerError(
+      'MEDICATION_SOURCE_INVALID',
+      request.id,
+      `MedicationRequest/${request.id} must provide exactly one medication source`,
+    )
+  }
+  if (request.medicationCodeableConcept !== undefined) return request.medicationCodeableConcept
+  const reference = request.medicationReference?.reference
+  const exactEntry = bundle.entry.find(entry => entry.fullUrl === reference)
+  if (exactEntry !== undefined) {
+    if (exactEntry.resource.resourceType === 'Medication') return exactEntry.resource.code
+    throw new SyntheaCaseTruthCompilerError(
+      'MEDICATION_SOURCE_INVALID',
+      request.id,
+      `MedicationRequest/${request.id} references a non-Medication resource`,
+    )
+  }
+  const relativeMatch = /^Medication\/([^/]+)$/.exec(reference ?? '')
+  const medication = relativeMatch === null
+    ? undefined
+    : bundle.entry.map(entry => entry.resource).find(resource => (
+        resource.resourceType === 'Medication' && resource.id === relativeMatch[1]
+      ))
+  if (medication?.resourceType === 'Medication') return medication.code
+  throw new SyntheaCaseTruthCompilerError(
+    'MEDICATION_SOURCE_INVALID',
+    request.id,
+    `MedicationRequest/${request.id} references an unavailable Medication`,
+  )
+}
+
+function medicationSourceCodings(concept: Concept | undefined) {
+  const rxNormCodings = concept?.coding?.filter(coding => (
+    coding.code !== undefined && isMedicationMappingSourceSystem(coding.system)
+  )) ?? []
+  if (rxNormCodings.length > 0) return rxNormCodings
+  const fallback = firstCoding(concept)
+  return fallback === undefined ? [] : [fallback]
+}
+
+export function pinSyntheaSourceVersions(rawBundle: unknown, patient: ScenarioPatient) {
+  const bundle = syntheaR4BundleSchema.parse(structuredClone(rawBundle))
+  const eventBySourceId = new Map(patient.longitudinalHistory.flatMap(event => (
+    event.sourceResourceType === 'Condition' || event.sourceResourceType === 'MedicationRequest'
+      ? [[event.sourceResourceId, event] as const]
+      : []
+  )))
+  const medicationHistoryById = new Map(patient.fhirHistory.flatMap(resource => (
+    resource.resourceType === 'MedicationRequest' ? [[resource.id, resource] as const] : []
+  )))
+  for (const entry of bundle.entry) {
+    const resource = entry.resource
+    const event = eventBySourceId.get(resource.id)
+    if (event === undefined) continue
+    const concept = resource.resourceType === 'Condition'
+      ? resource.code
+      : resource.resourceType === 'MedicationRequest'
+        ? medicationSourceConcept(resource, bundle)
+        : undefined
+    const medicationHistory = medicationHistoryById.get(stableHistoryId(
+      'MedicationRequest',
+      event.sourceResourceId,
+    ))
+    const pinnedSources = medicationHistory !== undefined
+      && 'sourceCodings' in medicationHistory.medication
+      ? medicationHistory.medication.sourceCodings
+      : [{
+          code: event.code,
+          display: event.sourceDisplay ?? event.display,
+          ...(event.sourceSystem === undefined ? {} : { system: event.sourceSystem }),
+          ...(event.sourceVersion === undefined ? {} : { version: event.sourceVersion }),
+        }]
+    for (const source of pinnedSources) {
+      if (source.version === undefined) continue
+      const coding = concept?.coding?.find(candidate => (
+        candidate.code === source.code
+        && (source.system === undefined || candidate.system === source.system)
+      ))
+      if (coding !== undefined && coding.version === undefined) coding.version = source.version
+    }
+  }
+  return bundle
+}
+
+function mappedMedication(request: R4MedicationRequest, bundle: R4Bundle) {
+  const sourceConcept = medicationSourceConcept(request, bundle)
+  const sourceDisplay = conceptDisplay(sourceConcept, '历史用药')
+  const sources = medicationSourceCodings(sourceConcept).map((source) => {
+    const sourceVersion = medicationMappingSourceVersion({
+      ...(source.system === undefined ? {} : { system: source.system }),
+      ...(source.version === undefined ? {} : { version: source.version }),
+    })
+    return {
+      resolution: resolveMedicationMapping({
+        ...(source.code === undefined ? {} : { code: source.code }),
+        ...(source.display === undefined ? {} : { display: source.display }),
+        ...(source.system === undefined ? {} : { system: source.system }),
+        ...(source.version === undefined ? {} : { version: source.version }),
+      }),
+      source,
+      sourceVersion,
+    }
+  })
+  const applicable = sources.flatMap(item => (
+    item.resolution.status === 'mapped'
+      ? [{ ...item, mapping: item.resolution.mapping }]
+      : []
+  ))
+  if (applicable.length === 1) {
+    const selected = applicable[0]!
+    return {
+      mappedCode: selected.mapping.target.code,
+      medication: selected.mapping.target,
+      source: selected.source,
+      sourceDisplay,
+      sourceVersion: selected.sourceVersion,
+    }
+  }
+  const primary = sources[0]
+  const sourceCodings = sources.flatMap(({ source, sourceVersion }) => (
+    source.code === undefined
+      ? []
+      : [{
+          code: source.code,
+          display: source.display ?? sourceDisplay,
+          ...(source.system === undefined ? {} : { system: source.system }),
+          ...(sourceVersion === undefined ? {} : { version: sourceVersion }),
+        }]
+  ))
+  return {
+    mappedCode: null,
+    medication: {
+      ...(primary?.source.code === undefined ? {} : { code: primary.source.code }),
+      display: primary?.source.display ?? sourceDisplay,
+      ...(primary?.source.system === undefined ? {} : { system: primary.source.system }),
+      ...(primary?.sourceVersion === undefined ? {} : { version: primary.sourceVersion }),
+      ...(sourceCodings.length < 2 ? {} : { sourceCodings }),
+    },
+    source: primary?.source,
+    sourceDisplay,
+    sourceVersion: primary?.sourceVersion,
+  }
+}
+
 export function stableHistoryId(resourceType: string, id: string): string {
   const prefix = resourceType.toLowerCase().replace(/[^a-z0-9]/g, '-')
   const suffix = id.replace(/[^A-Za-z0-9.-]/g, '-').slice(0, 48)
@@ -263,11 +419,16 @@ function observedResult(observation: R4Observation): ScenarioInvestigationResult
   const interpretation = conceptCode(observation.interpretation?.[0])
   const referenceRange = observation.referenceRange?.find(range => range.text !== undefined)?.text
   if (observation.valueQuantity !== undefined) {
+    const unit = resolveUcumUnit({
+      ...(observation.valueQuantity.code === undefined ? {} : { code: observation.valueQuantity.code }),
+      ...(observation.valueQuantity.system === undefined ? {} : { system: observation.valueQuantity.system }),
+      ...(observation.valueQuantity.unit === undefined ? {} : { display: observation.valueQuantity.unit }),
+    })
     return {
       ...(interpretation === undefined ? {} : { flag: interpretation }),
       outcome: 'reported',
       ...(referenceRange === undefined ? {} : { referenceRange }),
-      ...(observation.valueQuantity.unit === undefined ? {} : { unit: observation.valueQuantity.unit }),
+      ...(unit === undefined ? {} : { unit }),
       value: observation.valueQuantity.value,
     }
   }
@@ -293,12 +454,39 @@ function observedResult(observation: R4Observation): ScenarioInvestigationResult
   return undefined
 }
 
+function mappedObservedResult(observation: R4Observation) {
+  const mapping = observationMapping(observation)
+  const result = observedResult(observation)
+  if (mapping === undefined || result === undefined || result.outcome !== 'reported') return undefined
+  if (typeof result.value !== 'number') return { ...result, unit: mapping.unit }
+  const sourceUnitCode = result.unit?.code
+  if (sourceUnitCode === undefined) {
+    throw new SyntheaCaseTruthCompilerError(
+      'OBSERVATION_UNIT_INVALID',
+      observation.id,
+      `Observation/${observation.id} has a missing, unknown, or inconsistent UCUM unit`,
+    )
+  }
+  const conversion = mapping.sourceUnits.find(source => source.unitCode === sourceUnitCode)
+  if (conversion === undefined) {
+    throw new SyntheaCaseTruthCompilerError(
+      'OBSERVATION_UNIT_INVALID',
+      observation.id,
+      `Observation/${observation.id} uses an unsupported UCUM unit for its mapping`,
+    )
+  }
+  return {
+    ...result,
+    unit: mapping.unit,
+    value: Number((result.value * conversion.multiplier).toFixed(2)),
+  }
+}
+
 function currentMappedObservations(observations: R4Observation[]): R4Observation[] {
   const currentByCatalogItem = new Map<string, R4Observation>()
   for (const observation of observations) {
-    const sourceCode = conceptCode(observation.code)
-    const mapping = sourceCode === undefined ? undefined : observationMappings.get(sourceCode)
-    if (mapping === undefined || observedResult(observation) === undefined) continue
+    const mapping = observationMapping(observation)
+    if (mapping === undefined || mappedObservedResult(observation) === undefined) continue
 
     const current = currentByCatalogItem.get(mapping.catalogItemId)
     const observationTime = observation.effectiveDateTime === undefined
@@ -325,28 +513,57 @@ function dateAtEnd(request: ScenarioGenerationRequest): string {
   return `${request.timeRange.end}T09:00:00+08:00`
 }
 
-function formatResultValue(result: ScenarioInvestigationResult): { unit: string; value: string } {
-  if (result.outcome !== 'reported') return { unit: '', value: result.message }
+function formatResultValue(result: ScenarioInvestigationResult): string {
+  return result.outcome === 'reported' ? String(result.value) : result.message
+}
+
+function compileCurrentInvestigation(
+  resource: R4Observation,
+): ScenarioPatient['investigations'][number] | undefined {
+  const mapping = observationMapping(resource)
+  const result = mappedObservedResult(resource)
+  if (mapping === undefined || result === undefined) return undefined
+  const formattedValue = formatResultValue(result)
+  const normalizedResult: ScenarioInvestigationResult = result.outcome === 'reported'
+    ? {
+        ...result,
+        flag: result.flag ?? (typeof result.value !== 'number'
+          ? 'N'
+          : mapping.referenceMaximum !== undefined && result.value > mapping.referenceMaximum
+            ? 'H'
+            : mapping.referenceMinimum !== undefined && result.value < mapping.referenceMinimum ? 'L' : 'N'),
+        referenceRange: result.referenceRange ?? mapping.referenceRange,
+      }
+    : result
   return {
-    unit: result.unit ?? '',
-    value: typeof result.value === 'boolean' ? String(result.value) : String(result.value),
+    catalogItemId: mapping.catalogItemId,
+    critical: false,
+    feeFen: mapping.feeFen,
+    id: `investigation-${resource.id}`,
+    name: mapping.name,
+    report: mapping.reportTemplate
+      .replace('{value}', formattedValue)
+      .replace('{unit}', mapping.unit.display),
+    result: normalizedResult,
+    sourceLevel: 'L1',
+    tatMinutes: mapping.tatMinutes,
   }
 }
 
 function mappedCondition(condition: z.infer<typeof conditionSchema>) {
-  const sourceCode = conceptCode(condition.code)
+  const source = firstCoding(condition.code)
   const sourceDisplay = conceptDisplay(condition.code, '未命名临床问题')
-  const normalized = sourceDisplay.toLowerCase()
-  const mapped = sourceCode === undefined ? undefined : codeMappings.get(sourceCode)
-  if (mapped !== undefined) return mapped
-  if (normalized.includes('type 2 diabetes') || normalized.includes('2型糖尿病')) {
-    return { code: 'E11.65', display: '2型糖尿病伴高血糖' }
-  }
-  if (normalized.includes('fever') || normalized.includes('发热')) {
-    return { code: 'R50.9', display: '发热，原因待查' }
-  }
-  if (normalized.includes('hypertension') || normalized.includes('高血压')) {
-    return { code: 'I10', display: '高血压' }
+  const resolution = resolveDiagnosisMapping({
+    ...(source?.code === undefined ? {} : { code: source.code }),
+    ...(source?.display === undefined ? {} : { display: source.display }),
+    ...(source?.system === undefined ? {} : { system: source.system }),
+    ...(source?.version === undefined ? {} : { version: source.version }),
+  })
+  if (resolution.status === 'mapped') {
+    return {
+      ...resolution.mapping.target,
+      sourceVersion: resolution.mapping.source.version,
+    }
   }
   return { code: null, display: sourceDisplay }
 }
@@ -359,319 +576,6 @@ function deterministicPersona(ordinal: number) {
     healthLiteracy: '一般，能描述症状和既往用药，但不会主动使用检验术语。',
     occupation: occupations[ordinal % occupations.length]!,
     speechStyle: '使用简短、自然的中文口语。',
-  }
-}
-
-function hematologyGenerators(): ScenarioPatient['physiologyBaseline']['generators'] {
-  return [{
-    assayCv: 0.02,
-    id: 'hemoglobin',
-    kind: 'normal',
-    maximum: 165,
-    mean: 148,
-    minimum: 130,
-    source: 'scenario:normal-routine-lab',
-    standardDeviation: 4,
-    unit: 'g/L',
-  }, {
-    assayCv: 0.03,
-    id: 'red-blood-cells',
-    kind: 'normal',
-    maximum: 5.8,
-    mean: 4.7,
-    minimum: 3.8,
-    source: 'scenario:hematology-baseline',
-    standardDeviation: 0.35,
-    unit: '10^12/L',
-  }, {
-    assayCv: 0.02,
-    id: 'mean-corpuscular-volume',
-    kind: 'normal',
-    maximum: 100,
-    mean: 90,
-    minimum: 80,
-    source: 'scenario:hematology-baseline',
-    standardDeviation: 4,
-    unit: 'fL',
-  }, {
-    dependencies: ['red-blood-cells', 'mean-corpuscular-volume'],
-    formula: 'hematocrit-from-rbc-mcv',
-    id: 'hematocrit',
-    kind: 'derived',
-    source: 'scenario:rbc-mcv',
-    unit: 'L/L',
-  }]
-}
-
-function renalGenerators(): ScenarioPatient['physiologyBaseline']['generators'] {
-  return [{
-    assayCv: 0.03,
-    id: 'serum-creatinine',
-    kind: 'normal',
-    maximum: 104,
-    mean: 75,
-    minimum: 45,
-    source: 'scenario:renal-baseline',
-    standardDeviation: 12,
-    unit: 'μmol/L',
-  }, {
-    dependencies: ['serum-creatinine'],
-    formula: 'egfr-ckd-epi-2021',
-    id: 'estimated-gfr',
-    kind: 'derived',
-    source: 'scenario:ckd-epi-2021',
-    unit: 'mL/min/1.73m²',
-  }]
-}
-
-function bodyMassIndexGenerator(): ScenarioPatient['physiologyBaseline']['generators'][number] {
-  return {
-    dependencies: ['vital:weightKg', 'vital:heightCm'],
-    formula: 'bmi',
-    id: 'body-mass-index',
-    kind: 'derived',
-    source: 'scenario:height-weight',
-    unit: 'kg/m²',
-  }
-}
-
-function urineGlucoseGenerator(): ScenarioPatient['physiologyBaseline']['generators'][number] {
-  return {
-    dependencies: ['random-glucose'],
-    formula: 'urine-glucose-from-blood-glucose',
-    id: 'urine-glucose',
-    kind: 'derived',
-    source: 'scenario:renal-glucose-threshold',
-    unit: 'qualitative',
-  }
-}
-
-function feverCaseTruth(input: {
-  conditions: Array<z.infer<typeof conditionSchema>>
-  observations: R4Observation[]
-}) {
-  const temperature = input.observations.find(observation => conceptCode(observation.code) === '8310-5')
-    ?.valueQuantity?.value ?? 38.6
-  const primary = input.conditions.map(mappedCondition).find(condition => condition.code === 'R50.9')
-    ?? { code: 'R50.9', display: '发热，原因待查' }
-  return {
-    costBaseline: {
-      note: '费用仅用于合成门诊场景，不代表真实医院价格。',
-      overInvestigationThresholdFen: 50_000,
-      reasonableRangeFen: [2_500, 15_000] as [number, number],
-      referencePath: '血常规、C 反应蛋白等按临床需要选择。',
-    },
-    diagnosisSpace: {
-      comorbidities: [],
-      differentials: [{
-        code: 'J10.1',
-        display: '流感伴呼吸道表现',
-        evidence: ['流行病学接触史、急性高热或全身症状'],
-        expectedAction: '结合流行季节和必要的病原学检查鉴别。',
-        id: 'diagnosis-differential-influenza',
-      }],
-      primary: {
-        code: primary.code,
-        display: primary.display,
-        evidence: [`体温 ${temperature} °C`, '急性起病'],
-        id: 'diagnosis-primary-fever',
-      },
-      traps: ['不能仅凭发热直接使用抗菌药物。'],
-    },
-    encounter: {
-      openingStatement: '发热一天，伴咽部不适。',
-      setting: '综合医院全科医学科门诊',
-      timeStateItems: [],
-    },
-    examinationFindings: [{
-      abnormal: [`体温 ${temperature} °C，升高`],
-      finding: `神志清，体温 ${temperature} °C，咽部轻度充血。`,
-      id: 'exam-vital-signs',
-      name: '生命体征',
-    }],
-    managementSpace: {
-      acceptableOptions: ['对症退热、补液和门诊随访。'],
-      contraindications: ['无明确细菌感染证据时常规使用抗菌药物。'],
-      followUp: '症状持续或出现呼吸困难、高热不退时及时复诊。',
-      requiredElements: ['评估危险征象', '说明退热与复诊条件'],
-    },
-    patientKnowledge: {
-      careMemory: '记得本次发热前没有接受相关检查。',
-      chiefComplaint: '发热一天，伴咽部不适。',
-      healthLiteracy: '知道自己发热，但不知道具体病因。',
-      lifestyle: [],
-      medicationMemory: '只记得曾用过普通退热药，具体名称不确定。',
-      neverKnows: ['本次尚未告知的检查数值', '尚未由医生告知的诊断结论'],
-      toldDiagnoses: [],
-    },
-    physiologyBaseline: {
-      generators: [{
-        assayCv: 0.005,
-        id: 'body-temperature',
-        kind: 'constant' as const,
-        source: 'synthea-r4:Observation/8310-5',
-        unit: '°C',
-        value: temperature,
-      }, ...hematologyGenerators(), {
-        assayCv: 0.02,
-        id: 'random-glucose',
-        kind: 'normal',
-        maximum: 7.8,
-        mean: 5.4,
-        minimum: 3.9,
-        source: 'scenario:normal-glucose-baseline',
-        standardDeviation: 0.7,
-        unit: 'mmol/L',
-      }, ...renalGenerators(), bodyMassIndexGenerator(), urineGlucoseGenerator()],
-      vitalSigns: {
-        heightCm: 165,
-        oxygenSaturationPct: 98,
-        pulseBpm: 92,
-        respirationBpm: 18,
-        temperatureC: temperature,
-        weightKg: 60,
-      },
-    },
-    symptomResponses: [{
-      avoids: [],
-      denies: ['没有明显胸痛或呼吸困难。'],
-      id: 'symptom-fever',
-      name: '发热与起病经过',
-      passive: false,
-      responsePoints: ['昨天下午开始觉得发热，咽部有些不舒服。'],
-    }],
-  }
-}
-
-function diabetesCaseTruth(input: {
-  conditions: Array<z.infer<typeof conditionSchema>>
-  observations: R4Observation[]
-}) {
-  const hba1c = input.observations.find(observation => conceptCode(observation.code) === '4548-4')
-    ?.valueQuantity?.value ?? 9.2
-  const glucose = input.observations.find(observation => conceptCode(observation.code) === '2339-0')
-    ?.valueQuantity?.value ?? 13.8
-  const primary = input.conditions.map(mappedCondition).find(condition => condition.code === 'E11.65')
-    ?? { code: 'E11.65', display: '2型糖尿病伴高血糖' }
-  return {
-    costBaseline: {
-      note: '合理费用需与并发症筛查和鉴别诊断需求共同判断。',
-      overInvestigationThresholdFen: 100_000,
-      reasonableRangeFen: [20_000, 60_000] as [number, number],
-      referencePath: '随机血糖、HbA1c、尿常规、肝肾功能、血脂和心电图。',
-    },
-    diagnosisSpace: {
-      comorbidities: [{
-        code: 'I10',
-        display: '高血压',
-        evidence: ['门诊血压达到高血压范围'],
-        id: 'diagnosis-comorbidity-hypertension',
-        route: '需要通过查体测量，不能只依赖患者自述。',
-      }],
-      differentials: [{
-        code: 'E05.90',
-        display: '甲状腺功能亢进',
-        evidence: ['近期体重下降'],
-        expectedAction: '必要时检查 TSH 或在病历中解释体重下降原因。',
-        id: 'diagnosis-differential-hyperthyroidism',
-        truth: 'TSH 正常时排除。',
-      }],
-      primary: {
-        code: primary.code,
-        display: primary.display,
-        evidence: [`随机血糖 ${glucose} mmol/L`, `HbA1c ${hba1c}%`, '多饮多尿和体重下降'],
-        id: 'diagnosis-primary-type-2-diabetes',
-      },
-      traps: ['患者没有主动说足麻时仍需筛查并发症。', '不能只加药而忽略依从性。'],
-    },
-    encounter: {
-      openingStatement: '这两个月总是口渴，水喝得很多，人也瘦了。',
-      setting: '综合医院内科门诊',
-      timeStateItems: [{
-        change: '患者开始催促，希望尽快完成本次就诊。',
-        id: 'time-state-visit-pressure',
-        triggerAfterMinutes: 20,
-      }],
-    },
-    examinationFindings: [{
-      abnormal: ['血压 162/96 mmHg，升高'],
-      finding: 'T 36.5 °C，P 88 次/分，R 16 次/分，BP 162/96 mmHg。',
-      id: 'exam-vital-signs',
-      name: '生命体征',
-    }, {
-      abnormal: ['双足远端感觉减退'],
-      finding: '双足皮肤完整，足背动脉搏动存在，双足远端感觉减退。',
-      id: 'exam-diabetic-foot',
-      name: '糖尿病足筛查',
-    }],
-    managementSpace: {
-      acceptableOptions: ['核对肝肾功能后优化二甲双胍方案。', '根据个体情况加用第二种降糖药。'],
-      contraindications: ['在未核对肾功能前盲目强化二甲双胍。', '已确诊糖尿病时常规开 OGTT。'],
-      followUp: '3 个月复查 HbA1c 和血压，并完成眼底及足部筛查。',
-      requiredElements: ['核实服药依从性', '停止含糖饮料并规律进餐', '评估血压和微血管并发症'],
-    },
-    patientKnowledge: {
-      careMemory: '记得去年社区检查说血糖控制不好，没有保存报告。',
-      chiefComplaint: '口渴、多饮两个月，体重下降。',
-      healthLiteracy: '只会说血糖高，不理解 HbA1c 和并发症术语。',
-      lifestyle: [{
-        actual: '长期饮用含糖饮料。',
-        admittedOnFirstAsk: '口渴时会喝饮料。',
-        concedeOnSecondAsk: true,
-        id: 'sugary-drinks',
-        label: '含糖饮料',
-      }],
-      medicationMemory: '知道服用二甲双胍，但常因跑车和进餐不规律漏服。',
-      neverKnows: ['本次尚未告知的检查数值', '自己的血压值', '周围神经病变这个诊断术语'],
-      toldDiagnoses: ['2型糖尿病', '血糖控制不好'],
-    },
-    physiologyBaseline: {
-      generators: [{
-        assayCv: 0.005,
-        id: 'body-temperature',
-        kind: 'constant' as const,
-        source: 'scenario:vital-signs',
-        unit: '°C',
-        value: 36.5,
-      }, {
-        assayCv: 0.03,
-        id: 'random-glucose',
-        kind: 'trajectory' as const,
-        maximum: 18,
-        minimum: 9,
-        source: 'synthea-r4:Observation/2339-0',
-        target: glucose,
-        unit: 'mmol/L',
-        walkStep: 0.8,
-      }, ...hematologyGenerators(), ...renalGenerators(), bodyMassIndexGenerator(), urineGlucoseGenerator()],
-      vitalSigns: { diastolicMmHg: 96, heightCm: 172, pulseBpm: 88, systolicMmHg: 162, temperatureC: 36.5, weightKg: 80.2 },
-    },
-    symptomResponses: [{
-      avoids: [],
-      denies: [],
-      id: 'symptom-polydipsia-polyuria',
-      name: '多饮多尿',
-      passive: false,
-      responsePoints: ['这两个月渴得厉害，喝水多，夜里也要起来两三次。'],
-    }, {
-      avoids: [],
-      denies: ['双足没有破溃。'],
-      id: 'symptom-foot-numbness',
-      name: '足部感觉异常',
-      passive: true,
-      responsePoints: ['脚底有些发木，像穿了厚袜子，已经大半年。'],
-    }, {
-      avoids: [],
-      denies: [],
-      id: 'symptom-medication-adherence',
-      name: '用药依从性',
-      passive: false,
-      responsePoints: ['吃的是二甲双胍，但跑车时经常忘记。'],
-      secondAskConcede: {
-        firstResponse: '基本都按时吃。',
-        revealedResponse: '说实话经常漏服，有时一天只吃一次。',
-      },
-    }],
   }
 }
 
@@ -691,12 +595,23 @@ export function compileSyntheaR4Bundle(input: {
   const observations = bundle.entry.flatMap(entry => entry.resource.resourceType === 'Observation' ? [entry.resource] : [])
   const currentObservations = currentMappedObservations(observations)
   const medicationRequests = bundle.entry.flatMap(entry => entry.resource.resourceType === 'MedicationRequest' ? [entry.resource] : [])
+  const medicationByRequestId = new Map(medicationRequests.map(request => (
+    [request.id, mappedMedication(request, bundle)] as const
+  )))
   const allergies = bundle.entry.flatMap(entry => entry.resource.resourceType === 'AllergyIntolerance' ? [entry.resource] : [])
   const fallbackDateTime = dateAtEnd(input.request)
   const module = input.request.modules[input.ordinal % input.request.modules.length] ?? 'fever'
-  const authored = module === 'type-2-diabetes'
-    ? diabetesCaseTruth({ conditions, observations: currentObservations })
-    : feverCaseTruth({ conditions, observations: currentObservations })
+  const definition = scenarioCaseDefinitions[module]
+  const currentInvestigations = currentObservations.flatMap((resource) => {
+    const investigation = compileCurrentInvestigation(resource)
+    return investigation === undefined ? [] : [investigation]
+  })
+  const authored = definition.buildCaseTruth({
+    conditions: conditions.map(mappedCondition),
+    observations: new Map(currentInvestigations.map(investigation => (
+      [investigation.catalogItemId, investigation.result] as const
+    ))),
+  })
 
   const fhirHistory = bundle.entry.flatMap((entry): ScenarioPatient['fhirHistory'] => {
     const resource = entry.resource
@@ -718,11 +633,16 @@ export function compileSyntheaR4Bundle(input: {
       return [{
         clinicalStatus: clinicalStatus(resource.clinicalStatus, 'active'),
         code: {
-          ...(mapped.code === null ? {} : { code: mapped.code }),
+          ...(mapped.code === null
+            ? (coding?.code === undefined ? {} : { code: coding.code })
+            : { code: mapped.code }),
           display: mapped.display,
           ...(mapped.code === null
             ? (coding?.system === undefined ? {} : { system: coding.system })
-            : { system: 'http://hl7.org/fhir/sid/icd-10' }),
+            : { system: mapped.system }),
+          ...(mapped.code === null
+            ? (coding?.version === undefined ? {} : { version: coding.version })
+            : { version: mapped.version }),
         },
         ...(localReferenceId(resource.encounter?.reference, bundle) === undefined
           ? {}
@@ -737,11 +657,17 @@ export function compileSyntheaR4Bundle(input: {
       const result = observedResult(resource)
       if (result === undefined) return []
       const coding = firstCoding(resource.code)
+      const mappedCoding = observationMapping(resource)?.coding
       return [{
         code: {
-          ...(coding?.code === undefined ? {} : { code: coding.code }),
-          display: conceptDisplay(resource.code, '未命名观察'),
-          ...(coding?.system === undefined ? {} : { system: coding.system }),
+          ...(mappedCoding?.code === undefined
+            ? (coding?.code === undefined ? {} : { code: coding.code })
+            : { code: mappedCoding.code }),
+          display: mappedCoding?.display ?? conceptDisplay(resource.code, '未命名观察'),
+          ...(mappedCoding?.system === undefined
+            ? (coding?.system === undefined ? {} : { system: coding.system })
+            : { system: mappedCoding.system }),
+          ...(mappedCoding?.version === undefined ? {} : { version: mappedCoding.version }),
         },
         ...(resource.effectiveDateTime === undefined ? {} : { effectiveDateTime: resource.effectiveDateTime }),
         ...(localReferenceId(resource.encounter?.reference, bundle) === undefined
@@ -754,8 +680,7 @@ export function compileSyntheaR4Bundle(input: {
       }]
     }
     if (resource.resourceType === 'MedicationRequest') {
-      const medication = resource.medicationCodeableConcept
-      const coding = firstCoding(medication)
+      const mapped = medicationByRequestId.get(resource.id)!
       return [{
         ...(resource.authoredOn === undefined ? {} : { authoredOn: resource.authoredOn }),
         ...(localReferenceId(resource.encounter?.reference, bundle) === undefined
@@ -763,11 +688,7 @@ export function compileSyntheaR4Bundle(input: {
           : { encounterId: stableHistoryId('Encounter', localReferenceId(resource.encounter?.reference, bundle)!) }),
         id: stableHistoryId(resource.resourceType, resource.id),
         intent: resource.intent,
-        medication: {
-          ...(coding?.code === undefined ? {} : { code: coding.code }),
-          display: conceptDisplay(medication, '历史用药'),
-          ...(coding?.system === undefined ? {} : { system: coding.system }),
-        },
+        medication: mapped.medication,
         resourceType: resource.resourceType,
         status: resource.status,
       }]
@@ -803,7 +724,9 @@ export function compileSyntheaR4Bundle(input: {
       status: resource.status ?? 'finished',
     })),
     ...conditions.map(resource => {
+      const source = firstCoding(resource.code)
       const mapped = mappedCondition(resource)
+      const sourceVersion = source?.version ?? (mapped.code === null ? undefined : mapped.sourceVersion)
       return {
         code: conceptCode(resource.code) ?? 'unmapped',
         display: mapped.display,
@@ -813,6 +736,9 @@ export function compileSyntheaR4Bundle(input: {
         occurredAt: resource.onsetDateTime ?? resource.recordedDate ?? fallbackDateTime,
         sourceResourceId: resource.id,
         sourceResourceType: resource.resourceType,
+        ...(source?.display === undefined ? {} : { sourceDisplay: source.display }),
+        ...(source?.system === undefined ? {} : { sourceSystem: source.system }),
+        ...(sourceVersion === undefined ? {} : { sourceVersion }),
         status: clinicalStatus(resource.clinicalStatus, 'active'),
       }
     }),
@@ -821,23 +747,29 @@ export function compileSyntheaR4Bundle(input: {
       display: conceptDisplay(resource.code, '未命名观察'),
       id: `history-event-${resource.id}`,
       kind: 'observation' as const,
-      mappedCode: observationMappings.get(conceptCode(resource.code) ?? '')?.code ?? null,
+      mappedCode: observationMapping(resource)?.code ?? null,
       occurredAt: resource.effectiveDateTime ?? fallbackDateTime,
       sourceResourceId: resource.id,
       sourceResourceType: resource.resourceType,
       status: resource.status,
     })),
-    ...medicationRequests.map(resource => ({
-      code: conceptCode(resource.medicationCodeableConcept) ?? 'unmapped',
-      display: conceptDisplay(resource.medicationCodeableConcept, '历史用药'),
-      id: `history-event-${resource.id}`,
-      kind: 'medication' as const,
-      mappedCode: null,
-      occurredAt: resource.authoredOn ?? fallbackDateTime,
-      sourceResourceId: resource.id,
-      sourceResourceType: resource.resourceType,
-      status: resource.status,
-    })),
+    ...medicationRequests.map((resource) => {
+      const mapped = medicationByRequestId.get(resource.id)!
+      return {
+        code: mapped.source?.code ?? 'unmapped',
+        display: mapped.medication.display,
+        id: `history-event-${resource.id}`,
+        kind: 'medication' as const,
+        mappedCode: mapped.mappedCode,
+        occurredAt: resource.authoredOn ?? fallbackDateTime,
+        sourceResourceId: resource.id,
+        sourceResourceType: resource.resourceType,
+        ...(mapped.source?.display === undefined ? {} : { sourceDisplay: mapped.source.display }),
+        ...(mapped.source?.system === undefined ? {} : { sourceSystem: mapped.source.system }),
+        ...(mapped.sourceVersion === undefined ? {} : { sourceVersion: mapped.sourceVersion }),
+        status: resource.status,
+      }
+    }),
     ...allergies.map(resource => ({
       code: conceptCode(resource.code) ?? 'unmapped',
       display: conceptDisplay(resource.code, '未说明过敏原'),
@@ -851,33 +783,12 @@ export function compileSyntheaR4Bundle(input: {
     })),
   ].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id))
 
-  const investigations: ScenarioPatient['investigations'] = currentObservations.flatMap(resource => {
-    const sourceCode = conceptCode(resource.code)
-    const mapping = sourceCode === undefined ? undefined : observationMappings.get(sourceCode)
-    const result = observedResult(resource)
-    if (mapping === undefined || result === undefined) return []
-    const formatted = formatResultValue(result)
-    const normalizedResult: ScenarioInvestigationResult = result.outcome === 'reported'
-      ? {
-          ...result,
-          flag: result.flag ?? (
-            sourceCode === '8310-5' && typeof result.value === 'number' && result.value > 37.3 ? 'H' : 'N'
-          ),
-          referenceRange: result.referenceRange ?? mapping.referenceRange,
-        }
-      : result
-    return [{
-      catalogItemId: mapping.catalogItemId,
-      critical: false,
-      feeFen: mapping.feeFen,
-      id: `investigation-${resource.id}`,
-      name: mapping.name,
-      report: mapping.report(formatted.value, formatted.unit),
-      result: normalizedResult,
-      sourceLevel: 'L1' as const,
-      tatMinutes: mapping.tatMinutes,
-    }]
-  })
+  const currentInvestigationByCatalog = new Map(currentInvestigations.map(investigation => (
+    [investigation.catalogItemId, investigation] as const
+  )))
+  const investigations: ScenarioPatient['investigations'] = definition.investigationTruth.map((fallback) => (
+    currentInvestigationByCatalog.get(fallback.catalogItemId) ?? fallback
+  ))
 
   const fingerprint = createHash('sha256')
     .update(`${input.request.seeds.population}:${patient.id}:${input.ordinal}`)
@@ -892,7 +803,7 @@ export function compileSyntheaR4Bundle(input: {
     id: `synthea-patient-${patient.id}`,
     investigations,
     longitudinalHistory,
-    name: chineseNames[input.ordinal % chineseNames.length]!,
+    name: `合成患者 ${fingerprint}`,
     persona: {
       ...deterministicPersona(input.ordinal),
       attitude: `${deterministicPersona(input.ordinal).attitude}（合成档案 ${fingerprint}）`,

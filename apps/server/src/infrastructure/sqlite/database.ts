@@ -13,12 +13,17 @@ import {
 } from 'node:fs/promises'
 import Database from 'better-sqlite3'
 import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
+import {
+  instrumentSqliteDriver,
+  type SqlitePerformanceObserver,
+} from './performance-observer.ts'
 
 const MIGRATION_FILE_PATTERN = /^\d{4}_[a-z0-9-]+\.sql$/
 
 export interface OpenDatabaseOptions {
   databasePath: string
   busyTimeoutMs: number
+  performanceObserver?: SqlitePerformanceObserver
 }
 
 export interface DatabaseDiagnostics {
@@ -196,7 +201,9 @@ export function openClinMeshDatabase(options: OpenDatabaseOptions): ClinMeshData
   driver.pragma('foreign_keys = ON')
   driver.pragma('journal_mode = WAL')
   driver.pragma(`busy_timeout = ${options.busyTimeoutMs}`)
-  return new ClinMeshDatabase(driver)
+  return new ClinMeshDatabase(options.performanceObserver === undefined
+    ? driver
+    : instrumentSqliteDriver(driver, options.performanceObserver))
 }
 
 export function applyMigrations(

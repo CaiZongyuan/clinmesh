@@ -17,6 +17,10 @@
     "docs:build": "pnpm --filter @clinmesh/docs build",
     "docs:preview": "pnpm --filter @clinmesh/docs preview",
     "docs:check": "vitest run scripts/project-doc-site.spec.ts && pnpm docs:build",
+    "perf:ci": "pnpm --filter @clinmesh/server performance --profile ci",
+    "perf:full-import": "pnpm --filter @clinmesh/server performance --profile full-import",
+    "perf:saturation": "pnpm --filter @clinmesh/server performance --profile saturation",
+    "perf:trajectory": "pnpm --filter @clinmesh/server performance --profile trajectory",
     "build": "turbo run build --filter=!@clinmesh/mobile",
     "typecheck": "turbo run typecheck --filter=!@clinmesh/mobile",
     "typecheck:mobile": "pnpm --filter @clinmesh/mobile typecheck",
@@ -27,7 +31,7 @@
     "verify:agent-notes": "tsx scripts/verify-agent-note-format.ts",
     "verify:boundaries": "tsx scripts/verify-package-boundaries.ts",
     "doc-sync": "pnpm verify:docs && pnpm verify:agent-notes && pnpm docs:check",
-    "check": "pnpm verify:boundaries && pnpm typecheck && pnpm lint && pnpm test && pnpm doc-sync && pnpm build",
+    "check": "pnpm verify:boundaries && pnpm typecheck && pnpm lint && pnpm test && pnpm perf:ci && pnpm doc-sync && pnpm build",
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {
