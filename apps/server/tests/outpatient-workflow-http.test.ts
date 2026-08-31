@@ -7567,13 +7567,14 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
 
-    const responses = await Promise.all([
-      confirm(randomUUID()),
-      confirm(randomUUID()),
-    ])
+    const confirmationKeys = [randomUUID(), randomUUID()] as const
+    const responses = await Promise.all(confirmationKeys.map(confirm))
     expect(responses.map(response => response.status).toSorted()).toEqual([200, 409])
     const successfulResponse = responses.find(response => response.status === 200)
     if (successfulResponse === undefined) throw new Error('Diagnosis confirmation did not succeed')
+    const successfulIndex = responses.indexOf(successfulResponse)
+    const successfulKey = confirmationKeys[successfulIndex]
+    if (successfulKey === undefined) throw new Error('Diagnosis confirmation key was not found')
     const confirmed = confirmDiagnosisResponseSchema.parse(await successfulResponse.json()).data
     expect(confirmed).toMatchObject({
       confirmation: {
@@ -7599,6 +7600,17 @@ describe('outpatient workflow HTTP contract', () => {
       encounterId: started.encounterId,
       encounterVersion: '2',
     })
+    runtime.database.driver.prepare(`
+      UPDATE command_receipt
+      SET response_json = json_remove(response_json, '$.data.confirmation.revisionNumber')
+      WHERE workspace_id = ? AND epoch = ? AND operation = 'encounter.confirm-diagnosis'
+        AND idempotency_key = ?
+    `).run('workspace-demo', 'epoch-1', successfulKey)
+    const replayedConfirmation = await confirm(successfulKey)
+    expect(replayedConfirmation.status).toBe(200)
+    expect(confirmDiagnosisResponseSchema.parse(
+      await replayedConfirmation.json(),
+    ).data.confirmation.revisionNumber).toBe(1)
     const conditionIds = confirmed.confirmation.entries.map(entry => entry.conditionId)
     const conditionSearchResponse = await runtime.app.request(
       `/fhir/R5/Condition?patient=Patient/${started.patientId}&encounter=Encounter/${started.encounterId}&_total=accurate`,
@@ -7744,6 +7756,7 @@ describe('outpatient workflow HTTP contract', () => {
       expect(previousCondition).toMatchObject({
         verificationStatus: { coding: [expect.objectContaining({ code: 'entered-in-error' })] },
       })
+      expect(previousCondition).not.toHaveProperty('clinicalStatus')
     }
     const revisedConditionId = revised.confirmation.entries[0]?.conditionId
     const revisedEncounter = fhirResourceSchema.parse(await (

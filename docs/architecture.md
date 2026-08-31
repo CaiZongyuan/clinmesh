@@ -905,7 +905,7 @@ Consultation 是病例级领域聚合，Consultation Record 是按序号追加�
 
 处方撤回使用不可变 `prescription_withdrawal` 事实表达，不删除或覆盖原 Prescription。只有未发生任何调剂的 signed 或 paid 处方可按 Prescription expected version 和全部 MedicationRequest expected versions 撤回；成功后各 MedicationRequest 进入 `cancelled` 并保留 FHIR history，Prescription 版本递增且读模型投影为 `withdrawn`。未收费的已撤回药品费用不再进入收费员待收费队列，已收费历史仍可查询且不会隐式退款；药房队列、审核、支付和发药入口都拒绝已撤回处方。
 
-带 Consultation 的病例使用独立检验申请 owner。`laboratory_request_state` 保存一个病例级草稿及单调递增版本；保存和删除都以当前 Encounter 与草稿版本做 CAS，删除或开具只清空草稿而不复用旧版本。病例级目录在全局当前 Reference Release 结果上投影 Investigation Generation Capability，Web 只提交支持当前病例生成结果的项目；单一内部适应证 `clinical-evaluation` 不要求医生选择。开具时保存 coding/display 快照并创建 `ServiceRequest.status=active` 和 `Task.status=requested`，Task `focus` 指向该 ServiceRequest。该流程不创建 ChargeItem，也不推进 Encounter 或医生 Queue Task。
+带 Consultation 的病例使用独立检验申请 owner。`laboratory_request_state` 保存一个病例级草稿及单调递增版本；保存和删除都以当前 Encounter 与草稿版本做 CAS，删除或开具只清空草稿而不复用旧版本。病例级目录在全局当前 Reference Release 结果上投影 Investigation Generation Capability，Web 只提交支持当前病例生成结果的项目；保存草稿、开立申请和重试生成的 Command 都重新校验同一 capability，不能通过绕过选择器提交不可生成项目。单一内部适应证 `clinical-evaluation` 不要求医生选择。开具时保存 coding/display 快照并创建 `ServiceRequest.status=active` 和 `Task.status=requested`，Task `focus` 指向该 ServiceRequest。该流程不创建 ChargeItem，也不推进 Encounter 或医生 Queue Task。
 
 独立申请开具后由持久 outbox 绑定 `lis-system`，依次把领域状态和执行 Task 从 `issued/requested` 推进到 `accepted/accepted` 与 `in-progress/in-progress`。Simulator 优先复用同 LOINC 的隐藏来源结果，否则异步生成 Investigation Result Snapshot；失败进入可重试的 `generation-failed` 且不创建报告。成功后才创建 Specimen、Observation、DiagnosticReport 和 Provenance，并完成 ServiceRequest、执行 Task 与申请；重复投递返回同一冻结结果，不重复调用模型或创建资源。
 

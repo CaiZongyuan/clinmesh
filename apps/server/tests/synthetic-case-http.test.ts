@@ -858,7 +858,16 @@ describe('Synthetic Case generation HTTP contract', () => {
     `).get('workspace-demo', caseId)).toEqual({ count: 0 })
     expect(briefProvider.requests).toHaveLength(4)
 
-    const retryResponse = await runtime.app.request(
+    runtime.database.driver.prepare(`
+      UPDATE laboratory_request SET reference_json = ?
+      WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+    `).run(
+      JSON.stringify(unsupportedAgentConcept),
+      'workspace-demo',
+      'epoch-1',
+      agentRequest.id,
+    )
+    const unsupportedRetryResponse = await runtime.app.request(
       `/api/his/v1/laboratory-requests/${agentRequest.id}/actions/retry-generation`,
       {
         body: JSON.stringify({
@@ -869,15 +878,50 @@ describe('Synthetic Case generation HTTP contract', () => {
         method: 'POST',
       },
     )
-    expect(retryResponse.status).toBe(200)
-    laboratoryRequestActionResponseSchema.parse(await retryResponse.json())
+    expect(unsupportedRetryResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await unsupportedRetryResponse.json())).toMatchObject({
+      error: { code: 'CATALOG_CONFLICT' },
+    })
+    runtime.database.driver.prepare(`
+      UPDATE laboratory_request SET reference_json = ?
+      WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+    `).run(
+      JSON.stringify(agentConcept),
+      'workspace-demo',
+      'epoch-1',
+      agentRequest.id,
+    )
+    const cancelFailedResponse = await runtime.app.request(
+      `/api/his/v1/laboratory-requests/${agentRequest.id}/actions/cancel`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`ServiceRequest/${agentRequest.serviceRequestId}`]: failedRequest?.serviceRequestVersion,
+            [`Task/${agentRequest.taskId}`]: failedRequest?.taskVersion,
+          },
+          input: {
+            expectedRequestVersion: failedRequest?.version,
+            reasonCode: 'no-longer-needed',
+          },
+        }),
+        headers: commandHeaders(),
+        method: 'POST',
+      },
+    )
+    expect(cancelFailedResponse.status).toBe(200)
+    expect(laboratoryRequestActionResponseSchema.parse(
+      await cancelFailedResponse.json(),
+    ).data.request).toMatchObject({ status: 'cancelled' })
+
+    const secondAgentDraft = await saveLaboratoryDraft('lab-crp', 4)
+    const secondAgentRequest = (await issueLaboratory(secondAgentDraft.draftVersion)).request
     await runtime.dispatchPending()
     detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
       `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,
       { headers: { cookie: doctorCookie } },
     )).json())
     const agentReported = detail.laboratoryRequests?.requests.find(item => (
-      item.id === agentRequest.id
+      item.id === secondAgentRequest.id
     ))
     expect(agentReported).toMatchObject({
       report: {
@@ -907,46 +951,30 @@ describe('Synthetic Case generation HTTP contract', () => {
     await expect(runtime.investigation.resolveForRequest(
       'workspace-demo',
       'epoch-1',
-      agentRequest.id,
+      secondAgentRequest.id,
     )).resolves.toMatchObject({ source: 'investigation-agent' })
     expect(briefProvider.requests).toHaveLength(5)
 
-    const unsupportedDraft = await saveLaboratoryDraft('lab-fever-panel', 4)
-    const unsupportedRequest = (await issueLaboratory(unsupportedDraft.draftVersion)).request
-    await runtime.dispatchPending()
-    detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
-      `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,
-      { headers: { cookie: doctorCookie } },
-    )).json())
-    const unsupportedFailedRequest = detail.laboratoryRequests?.requests.find(item => (
-      item.id === unsupportedRequest.id
-    ))
-    expect(unsupportedFailedRequest).toMatchObject({
-      generationError: { code: 'INVESTIGATION_UNSUPPORTED' },
-      status: 'generation-failed',
-    })
-    expect(briefProvider.requests).toHaveLength(5)
-    const cancelUnsupportedResponse = await runtime.app.request(
-      `/api/his/v1/laboratory-requests/${unsupportedRequest.id}/actions/cancel`,
+    const unsupportedDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: {
-            [`ServiceRequest/${unsupportedRequest.serviceRequestId}`]: unsupportedFailedRequest?.serviceRequestVersion,
-            [`Task/${unsupportedRequest.taskId}`]: unsupportedFailedRequest?.taskVersion,
-          },
+          expectedVersions: { [encounterReference]: '3' },
           input: {
-            expectedRequestVersion: unsupportedFailedRequest?.version,
-            reasonCode: 'no-longer-needed',
+            catalogItemId: 'lab-fever-panel',
+            expectedDraftVersion: 6,
+            indicationCode: 'clinical-evaluation',
           },
         }),
         headers: commandHeaders(),
-        method: 'POST',
+        method: 'PUT',
       },
     )
-    expect(cancelUnsupportedResponse.status).toBe(200)
-    expect(laboratoryRequestActionResponseSchema.parse(
-      await cancelUnsupportedResponse.json(),
-    ).data.request).toMatchObject({ status: 'cancelled' })
+    expect(unsupportedDraftResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await unsupportedDraftResponse.json())).toMatchObject({
+      error: { code: 'CATALOG_CONFLICT' },
+    })
+    expect(briefProvider.requests).toHaveLength(5)
 
     const snapshotBeforeReset = runtime.database.driver.prepare(`
       SELECT * FROM investigation_result_snapshot

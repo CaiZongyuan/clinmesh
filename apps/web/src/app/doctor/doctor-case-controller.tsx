@@ -664,6 +664,7 @@ function DoctorCaseController({
         indicationCode: resolvedIndicationCode,
       }, newIdempotencyKey())
     },
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
     onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const issueRequest = useMutation({
@@ -945,6 +946,7 @@ function DoctorCaseController({
         expectedDraftVersion: current.diagnosis?.draftVersion ?? 0,
       }, newIdempotencyKey())
     },
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
     onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const confirmCaseDiagnosis = useMutation({

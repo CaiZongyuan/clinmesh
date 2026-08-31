@@ -3521,7 +3521,7 @@ describe('role workspaces', () => {
     expect(await screen.findByText('草稿已自动保存')).toBeTruthy()
     expect(screen.queryByText('诊断已确认')).toBeNull()
     await user.click(screen.getByRole('button', { name: '确认诊断' }))
-    const confirmDiagnosisDialog = await screen.findByRole('alertdialog', { name: '确认最终诊断' })
+    const confirmDiagnosisDialog = await screen.findByRole('alertdialog', { name: '确认诊断版本' })
     await user.click(within(confirmDiagnosisDialog).getByRole('button', { name: '确认诊断版本' }))
     expect(await screen.findByText(/诊断已确认/)).toBeTruthy()
     expect(screen.getByText('J10.1')).toBeTruthy()
@@ -3989,7 +3989,7 @@ describe('role workspaces', () => {
 
     await user.click(await screen.findByRole('tab', { name: '诊断' }))
     await user.click(await screen.findByRole('button', { name: '确认诊断' }))
-    const confirmDialog = await screen.findByRole('alertdialog', { name: '确认最终诊断' })
+    const confirmDialog = await screen.findByRole('alertdialog', { name: '确认诊断版本' })
     await user.click(within(confirmDialog).getByRole('button', { name: '确认诊断版本' }))
     expect(await screen.findByText('必须且只能选择一个主诊断。')).toBeTruthy()
   })

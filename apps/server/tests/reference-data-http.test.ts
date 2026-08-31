@@ -9,13 +9,12 @@ import {
   referenceMedicationCatalogSearchSchema,
 } from '@clinmesh/contracts/reference-data'
 import {
+  apiErrorSchema,
   caseLaboratoryCatalogSearchSchema,
   confirmDiagnosisResponseSchema,
   diagnosisDraftResponseSchema,
   doctorCaseDetailSchema,
-  issueLaboratoryRequestResponseSchema,
   issuePrescriptionResponseSchema,
-  laboratoryRequestDraftResponseSchema,
   prescriptionDraftResponseSchema,
   startVirtualPatientResponseSchema,
   virtualPatientListSchema,
@@ -518,31 +517,13 @@ describe('Reference Data HTTP contract', () => {
         method: 'PUT',
       },
     )
-    expect(laboratoryDraftResponse.status).toBe(200)
-    const laboratoryDraft = laboratoryRequestDraftResponseSchema.parse(
-      await laboratoryDraftResponse.json(),
-    ).data
-    const laboratoryResponse = await first.runtime.app.request(
-      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
-      {
-        body: JSON.stringify({
-          expectedVersions: { [encounterReference]: diagnosis.encounterVersion },
-          input: { expectedDraftVersion: laboratoryDraft.draftVersion },
-        }),
-        headers: headers(),
-        method: 'POST',
+    expect(laboratoryDraftResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await laboratoryDraftResponse.json())).toMatchObject({
+      error: {
+        code: 'CATALOG_CONFLICT',
+        message: 'The investigation cannot generate a result for this case and catalog item',
       },
-    )
-    expect(laboratoryResponse.status).toBe(200)
-    expect(issueLaboratoryRequestResponseSchema.parse(await laboratoryResponse.json()).data.request)
-      .toMatchObject({
-        referenceConcept: {
-          code: '58410-2',
-          display: '血常规组合',
-          laboratory: { category: 'hematology', resultType: 'panel', specimen: 'blood' },
-          version: '2.83',
-        },
-      })
+    })
 
     expect(JSON.parse((first.runtime.database.driver.prepare(`
       SELECT coding_snapshot_json FROM diagnosis_entry LIMIT 1
@@ -553,13 +534,6 @@ describe('Reference Data HTTP contract', () => {
       SELECT medication_snapshot_json FROM prescription_item LIMIT 1
     `).get() as { medication_snapshot_json: string }).medication_snapshot_json)).toMatchObject({
       genericName: product.genericName,
-    })
-    expect(JSON.parse((first.runtime.database.driver.prepare(`
-      SELECT reference_json FROM laboratory_request LIMIT 1
-    `).get() as { reference_json: string }).reference_json)).toMatchObject({
-      display: '血常规组合',
-      laboratory: { category: 'hematology', resultType: 'panel', specimen: 'blood' },
-      version: '2.83',
     })
 
     await first.runtime.close()
@@ -584,10 +558,6 @@ describe('Reference Data HTTP contract', () => {
     const detail = doctorCaseDetailSchema.parse(await detailResponse.json())
     expect(detail.diagnosis?.confirmation?.entries[0]?.display).toBe('原发性高血压')
     expect(detail.medicationConclusion?.prescription?.items[0]?.display).toBe(product.genericName)
-    expect(detail.laboratoryRequests?.requests[0]?.referenceConcept).toMatchObject({
-      display: '血常规组合',
-      laboratory: { category: 'hematology', resultType: 'panel', specimen: 'blood' },
-    })
     expect(JSON.stringify(detail)).not.toMatch(/新版原发性高血压|新版血常规组合/)
   })
 

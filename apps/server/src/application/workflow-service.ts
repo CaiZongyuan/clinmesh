@@ -54,6 +54,7 @@ import {
   laboratoryRequestSchema,
   laboratoryResultMeasurementSchema,
   type LaboratoryRequestCatalogItemId,
+  type InvestigationGenerationCapability,
   paymentPreviewResponseSchema,
   paymentResponseSchema,
   type PatientSummary,
@@ -1116,10 +1117,20 @@ function completedCaseInterpretation(code: string | undefined): string | undefin
   ] ?? code
 }
 
+interface InvestigationCapabilityResolver {
+  generationCapabilityForCase: (
+    workspaceId: string,
+    epoch: string,
+    outpatientCaseId: string,
+    concept: z.infer<typeof referenceConceptSnapshotSchema>,
+  ) => InvestigationGenerationCapability
+}
+
 export class WorkflowService {
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
   readonly #fhir: FhirRepository
+  readonly #investigation: InvestigationCapabilityResolver | undefined
   readonly #now: () => Date
   readonly #referenceData: ReferenceDataService | undefined
   readonly #tokenSecret: string
@@ -1129,11 +1140,17 @@ export class WorkflowService {
     database: ClinMeshDatabase,
     fhir: FhirRepository,
     commands: CommandExecutor,
-    options: { now?: () => Date; referenceData?: ReferenceDataService; tokenSecret: string },
+    options: {
+      investigation?: InvestigationCapabilityResolver
+      now?: () => Date
+      referenceData?: ReferenceDataService
+      tokenSecret: string
+    },
   ) {
     this.#commands = commands
     this.#database = database
     this.#fhir = fhir
+    this.#investigation = options.investigation
     this.#now = options.now ?? (() => new Date())
     this.#referenceData = options.referenceData
     this.#tokenSecret = options.tokenSecret
@@ -3681,14 +3698,9 @@ export class WorkflowService {
       const confirmedAt = this.#virtualTime(input.context)
       const supersededConditions = (previousConfirmation?.entries ?? []).map((entry) => {
         const condition = transaction.fhir.read(input.context, 'Condition', entry.conditionId)
+        const { clinicalStatus: _clinicalStatus, ...conditionWithoutClinicalStatus } = condition
         return transaction.fhir.update(input.context, {
-          ...condition,
-          clinicalStatus: {
-            coding: [{
-              code: 'inactive',
-              system: 'http://terminology.hl7.org/CodeSystem/condition-clinical',
-            }],
-          },
+          ...conditionWithoutClinicalStatus,
           verificationStatus: {
             coding: [{
               code: 'entered-in-error',
@@ -6478,6 +6490,12 @@ export class WorkflowService {
         input.indicationCode,
       )
       const { config: catalogConfig, referenceConcept } = selection
+      this.#assertInvestigationGenerationSupported(
+        input.context,
+        outpatientCase.case_id,
+        input.catalogItemId,
+        referenceConcept,
+      )
       if (!catalogConfig.allowedIndicationCodes.includes(input.indicationCode)) {
         throw new WorkflowError('CATALOG_CONFLICT', 'The indication is not allowed for this laboratory request')
       }
@@ -6709,6 +6727,12 @@ export class WorkflowService {
       }
       const referenceConcept = referenceConceptSnapshotSchema.parse(
         JSON.parse(state.draft_reference_json),
+      )
+      this.#assertInvestigationGenerationSupported(
+        input.context,
+        outpatientCase.case_id,
+        state.draft_catalog_item_id,
+        referenceConcept,
       )
       const { catalog, config: catalogConfig } = this.#laboratorySelectionFromSnapshot(
         input.context,
@@ -7503,6 +7527,12 @@ export class WorkflowService {
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory generation cannot be retried')
       }
+      this.#assertInvestigationGenerationSupported(
+        input.context,
+        request.case_id,
+        request.catalog_item_id,
+        referenceConceptSnapshotSchema.parse(JSON.parse(request.reference_json)),
+      )
       this.#assertExpectedVersions(input.expectedVersions, [`Task/${request.execution_task_id}`])
       const task = transaction.fhir.read(input.context, 'Task', request.execution_task_id)
       const now = this.#virtualTime(input.context)
@@ -10549,6 +10579,31 @@ export class WorkflowService {
       SELECT 1 AS present FROM scenario_hidden_fact
       WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
     `).get(context.workspaceId, context.epoch) !== undefined
+  }
+
+  #assertInvestigationGenerationSupported(
+    context: ActorContext,
+    outpatientCaseId: string,
+    catalogItemId: string,
+    concept: z.infer<typeof referenceConceptSnapshotSchema>,
+  ): void {
+    const materialized = this.#database.driver.prepare(`
+      SELECT 1 AS present FROM synthetic_case_materialization
+      WHERE workspace_id = ? AND epoch = ? AND outpatient_case_id = ?
+    `).get(context.workspaceId, context.epoch, outpatientCaseId) !== undefined
+    const referenceItem = this.#referenceData?.laboratoryById(context, catalogItemId)
+    if (!materialized && referenceItem === undefined) return
+    const capability = this.#investigation?.generationCapabilityForCase(
+      context.workspaceId,
+      context.epoch,
+      outpatientCaseId,
+      concept,
+    )
+    if (capability?.supported === true) return
+    throw new WorkflowError(
+      'CATALOG_CONFLICT',
+      'The investigation cannot generate a result for this case and catalog item',
+    )
   }
 
   #legacyLaboratoryResultFact(

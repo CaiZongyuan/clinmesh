@@ -333,6 +333,7 @@ function LaboratoryRequestEditor({
       ? []
       : [{ label: indicationLabel(indicationCode, messages), value: indicationCode }]
   useAutosave({
+    delayMs: 800,
     enabled: !readOnly
       && !actions.save.pending
       && laboratoryItemId.length > 0
@@ -399,7 +400,7 @@ function LaboratoryRequestEditor({
               {state?.draft === undefined ? null : (
                 <>
                   <AlertDialog>
-                    <AlertDialogTrigger render={<Button disabled={actions.deleteDraft.pending} type="button" variant="destructive" />}>
+                    <AlertDialogTrigger render={<Button disabled={actions.deleteDraft.pending || actions.issue.pending || actions.save.pending || !draftMatchesSelection} type="button" variant="destructive" />}>
                       <Trash2Icon data-icon="inline-start" />{messages.deleteLaboratoryRequestDraft}
                     </AlertDialogTrigger>
                     <AlertDialogContent>
@@ -420,7 +421,7 @@ function LaboratoryRequestEditor({
                       <AlertDialogFooter>
                         <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
                         <AlertDialogAction
-                          disabled={actions.deleteDraft.pending}
+                          disabled={actions.deleteDraft.pending || actions.save.pending}
                           onClick={actions.deleteDraft.onSubmit}
                           variant="destructive"
                         >
@@ -430,7 +431,7 @@ function LaboratoryRequestEditor({
                     </AlertDialogContent>
                   </AlertDialog>
                   <Button
-                    disabled={actions.issue.pending || !draftMatchesSelection}
+                    disabled={actions.issue.pending || actions.save.pending || !draftMatchesSelection}
                     onClick={actions.issue.onSubmit}
                     type="button"
                   >

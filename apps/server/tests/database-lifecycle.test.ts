@@ -1291,6 +1291,53 @@ describe('SQLite lifecycle', () => {
       context.epoch,
       '2026-08-24T09:03:00+08:00',
     )).toThrow(/FOREIGN KEY constraint failed/)
+    const remainingMigrations = [
+      '0020_scenario-dataset.sql',
+      '0021_scenario-generation-job.sql',
+      '0022_laboratory-request-repeat.sql',
+      '0023_consultation-second-ask.sql',
+      '0024_synthetic-patient-profile.sql',
+      '0025_reference-data-provenance.sql',
+      '0026_profile-mapping-provenance.sql',
+      '0027_service-catalog-search.sql',
+      '0028_synthea-localization-provenance.sql',
+      '0029_synthetic-case.sql',
+      '0030_diagnosis-reference-snapshot.sql',
+      '0031_prescription-reference-snapshot.sql',
+      '0032_laboratory-reference-snapshot.sql',
+      '0033_patient-brief.sql',
+      '0034_synthetic-case-materialization.sql',
+      '0035_investigation-result-snapshot.sql',
+      '0036_retire-scenario-dataset.sql',
+      '0037_synthea-translation-warning.sql',
+      '0038_diagnosis-confirmation-revision.sql',
+    ]
+    for (const migration of remainingMigrations) {
+      await copyFile(
+        join(process.cwd(), 'drizzle', migration),
+        join(legacyMigrationDirectory, migration),
+      )
+    }
+    expect(applyMigrations(database, legacyMigrationDirectory)).toEqual({
+      applied: remainingMigrations,
+      schemaVersion: 39,
+    })
+    expect(database.driver.prepare(`
+      SELECT confirmation_id, revision_number, supersedes_confirmation_id
+      FROM diagnosis_confirmation
+      WHERE workspace_id = ? AND epoch = ? AND case_id = 'case-legacy'
+    `).get(context.workspaceId, context.epoch)).toEqual({
+      confirmation_id: 'confirmation-legacy',
+      revision_number: 1,
+      supersedes_confirmation_id: null,
+    })
+    expect(database.driver.prepare(`
+      SELECT condition_id, coding_snapshot_json FROM diagnosis_entry
+      WHERE workspace_id = ? AND epoch = ? AND confirmation_id = 'confirmation-legacy'
+    `).get(context.workspaceId, context.epoch)).toMatchObject({
+      condition_id: 'condition-legacy-primary',
+      coding_snapshot_json: expect.stringContaining('J10.1'),
+    })
     expect(database.driver.pragma('foreign_key_check')).toEqual([])
     expect(database.driver.pragma('integrity_check', { simple: true })).toBe('ok')
     database.close()

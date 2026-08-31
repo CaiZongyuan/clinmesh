@@ -358,7 +358,7 @@ export function DiagnosisPage({ actions, catalog, elementId, locale, messages, r
           </AlertDialogTrigger>
           <AlertDialogContent className="sm:max-w-lg">
             <AlertDialogHeader>
-              <AlertDialogTitle>{locale === 'zh-CN' ? '确认最终诊断' : 'Confirm final diagnoses'}</AlertDialogTitle>
+              <AlertDialogTitle>{locale === 'zh-CN' ? '确认诊断版本' : 'Confirm diagnosis revision'}</AlertDialogTitle>
               <AlertDialogDescription>
                 {locale === 'zh-CN'
                   ? '确认后生成正式诊断版本；本次就诊结束前仍可继续修改，历史版本会保留。'

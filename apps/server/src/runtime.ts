@@ -135,7 +135,32 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       referenceDatabase === undefined ? undefined : new SqliteReferenceDataRepository(referenceDatabase),
       options.activeReferenceReleaseId,
     )
+    const generationJobs = new ScenarioGenerationJobRepository(database)
+    const syntheticPatientProfiles = new SyntheticPatientProfileRepository(database)
+    const syntheticCases = new SyntheticCaseRepository(database)
+    const patientBriefs = new PatientBriefRepository(database, syntheticCases)
+    const investigationResults = new InvestigationResultRepository(database)
+    const chatCompletions = options.chatCompletionsProvider
+      ?? (options.ai === undefined
+        ? undefined
+        : new OpenAIChatCompletionsClient({
+            apiKey: options.ai.apiKey,
+            baseUrl: options.ai.baseUrl,
+            maxResponseBytes: options.ai.maxResponseBytes,
+            timeoutMs: options.ai.timeoutMs,
+          }))
+    const patientBriefModel = options.patientBriefModel ?? options.ai?.briefModel
+    const investigationModel = options.investigationModel ?? options.ai?.investigationModel
+    const investigation = new InvestigationService({
+      cases: syntheticCases,
+      database,
+      ...(investigationModel === undefined ? {} : { model: investigationModel }),
+      profiles: syntheticPatientProfiles,
+      ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+      results: investigationResults,
+    })
     const workflow = new WorkflowService(database, fhir, commands, {
+      investigation,
       ...clockOptions,
       referenceData,
       tokenSecret: options.cursorSecret,
@@ -162,22 +187,6 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         : new SyntheaScenarioGenerationProvider({
             baseUrl: options.syntheaProviderUrl,
           }))
-    const generationJobs = new ScenarioGenerationJobRepository(database)
-    const syntheticPatientProfiles = new SyntheticPatientProfileRepository(database)
-    const syntheticCases = new SyntheticCaseRepository(database)
-    const patientBriefs = new PatientBriefRepository(database, syntheticCases)
-    const investigationResults = new InvestigationResultRepository(database)
-    const chatCompletions = options.chatCompletionsProvider
-      ?? (options.ai === undefined
-        ? undefined
-        : new OpenAIChatCompletionsClient({
-            apiKey: options.ai.apiKey,
-            baseUrl: options.ai.baseUrl,
-            maxResponseBytes: options.ai.maxResponseBytes,
-            timeoutMs: options.ai.timeoutMs,
-          }))
-    const patientBriefModel = options.patientBriefModel ?? options.ai?.briefModel
-    const investigationModel = options.investigationModel ?? options.ai?.investigationModel
     generationJobs.requeueInterrupted(new Date().toISOString())
     patientBriefs.requeueInterrupted(new Date().toISOString())
     const scenarioData = new ScenarioDataService({
@@ -200,14 +209,6 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       cases: syntheticCases,
       profiles: syntheticPatientProfiles,
       workflow,
-    })
-    const investigation = new InvestigationService({
-      cases: syntheticCases,
-      database,
-      ...(investigationModel === undefined ? {} : { model: investigationModel }),
-      profiles: syntheticPatientProfiles,
-      ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
-      results: investigationResults,
     })
     scenario.ensureInitialEpoch({
       epoch: 'epoch-1',

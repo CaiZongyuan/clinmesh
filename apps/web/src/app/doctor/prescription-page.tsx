@@ -520,7 +520,7 @@ export function PrescriptionPage({
                       <AlertDialogTrigger
                         render={(
                           <Button
-                            disabled={actions.deleteDraft.pending || actions.issue.pending}
+                            disabled={dirty || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending}
                             type="button"
                             variant="ghost"
                           />
@@ -553,7 +553,7 @@ export function PrescriptionPage({
                         <AlertDialogFooter>
                           <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
                           <AlertDialogCancel
-                            disabled={actions.deleteDraft.pending}
+                            disabled={dirty || actions.deleteDraft.pending || actions.saveDraft.pending}
                             onClick={() => {
                               setDeleteDraftOpen(false)
                               queueMicrotask(actions.deleteDraft.onSubmit)
@@ -659,7 +659,11 @@ export function PrescriptionPage({
         && !hasActivePrescription
         && mode === 'no-medication' ? (
           <div className="flex flex-col items-end gap-3">
-            <Button disabled={actions.confirmNoMedication.pending} onClick={actions.confirmNoMedication.onSubmit} type="button">
+            <Button
+              disabled={dirty || actions.confirmNoMedication.pending || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending}
+              onClick={actions.confirmNoMedication.onSubmit}
+              type="button"
+            >
               <CircleXIcon data-icon="inline-start" />{messages.confirmNoMedication}
             </Button>
             {actions.confirmNoMedication.error === null ? null : (
