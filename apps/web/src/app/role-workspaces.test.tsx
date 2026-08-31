@@ -1581,9 +1581,15 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
+    await waitFor(() => expect(
+      screen.getByRole('tab', { name: /候选患者/ }).textContent,
+    ).toContain('1'))
+    const candidatesTab = screen.getByRole('tab', { name: /候选患者/ })
+    await user.click(candidatesTab)
+    await waitFor(() => expect(candidatesTab.getAttribute('aria-selected')).toBe('true'))
     const candidate = await screen.findByRole('button', {
       name: '选择候选患者 合成候选患者林晓',
-    })
+    }, { timeout: 3_000 })
     expect(screen.getByText('发热、咽痛 1 天。')).toBeTruthy()
     await user.click(candidate)
     expect(screen.getByText(/昨日傍晚开始发热，最高 38\.7 °C，伴咽痛。/)).toBeTruthy()
@@ -1701,6 +1707,10 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
+    await waitFor(() => expect(
+      screen.getByRole('tab', { name: /候选患者/ }).textContent,
+    ).toContain('1'))
+    await user.click(screen.getByRole('tab', { name: /候选患者/ }))
     await user.click(await screen.findByRole('button', {
       name: '选择候选患者 合成候选患者林晓',
     }))
@@ -1819,15 +1829,24 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    expect(await screen.findByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '除了发热，还有哪里不舒服？' }))
-    await user.click(screen.getByRole('button', { name: '向患者提问' }))
+    const contextRail = await screen.findByRole('complementary', { name: '病例上下文' })
+    expect(within(contextRail).queryByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeNull()
+    await user.click(await screen.findByRole('tab', { name: '问诊记录' }))
+    const consultationRegion = screen.getByRole('region', { name: '问诊记录' })
+    expect(within(consultationRegion).getByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeTruthy()
+    await user.click(within(consultationRegion).getByRole('button', { name: '除了发热，还有哪里不舒服？' }))
+    await user.click(within(consultationRegion).getByRole('button', { name: '向患者提问' }))
 
     const pendingButton = await screen.findByRole('button', { name: '正在等待患者回答' })
     expect((pendingButton as HTMLButtonElement).disabled).toBe(true)
     await act(async () => releaseAnswer?.())
     expect(await screen.findByText('咽痛，吞咽时更明显，没有气促。')).toBeTruthy()
     expect(screen.getByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeTruthy()
+    await user.click(screen.getByRole('tab', { name: '病历记录' }))
+    expect(await screen.findByRole('region', { name: '结构化病历' })).toBeTruthy()
+    expect(screen.queryByText('咽痛，吞咽时更明显，没有气促。')).toBeNull()
+    await user.click(screen.getByRole('tab', { name: '问诊记录' }))
+    expect(await screen.findByText('咽痛，吞咽时更明显，没有气促。')).toBeTruthy()
   })
 
   it('keeps the Consultation Record visible when a question version conflicts', async () => {
@@ -1896,6 +1915,7 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
+    await user.click(await screen.findByRole('tab', { name: '问诊记录' }))
     await user.click(await screen.findByRole('button', { name: question.text }))
     await user.click(screen.getByRole('button', { name: '向患者提问' }))
 
@@ -2150,8 +2170,12 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
-    await user.click(await screen.findByRole('button', { name: '选择检验项目' }))
+    await user.click(await screen.findByRole('tab', { name: '检验' }))
+    const requestRegion = await screen.findByRole('region', { name: '检验申请' })
+    const resultsRegion = screen.getByRole('region', { name: '检验结果' })
+    expect(screen.queryByRole('tab', { name: '检验检查' })).toBeNull()
+    expect(within(resultsRegion).getByText('暂无检验申请或结果')).toBeTruthy()
+    await user.click(within(requestRegion).getByRole('button', { name: '选择检验项目' }))
     const laboratoryDialog = await screen.findByRole('dialog', { name: '选择检验项目' })
     await user.type(within(laboratoryDialog).getByLabelText('搜索检验目录'), '血常')
     await user.click(within(laboratoryDialog).getByRole('button', { name: '执行检验目录搜索' }))
@@ -2161,13 +2185,21 @@ describe('role workspaces', () => {
     }))
     await user.click(within(laboratoryDialog).getByRole('button', { name: '确定选择' }))
     expect(await screen.findByText('血常规组合')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '保存检查草稿' }))
+    await user.click(within(requestRegion).getByRole('button', { name: '保存检验草稿' }))
 
-    expect(await screen.findByText('检查草稿已保存')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '开具检查申请' }))
+    expect(await screen.findByText('检验草稿已保存')).toBeTruthy()
+    const savedRequestRegion = screen.getByRole('region', { name: '检验申请' })
+    expect(within(savedRequestRegion).getByText('检验草稿已保存')).toBeTruthy()
+    await user.click(within(savedRequestRegion).getByRole('button', { name: '开具检验申请' }))
 
     expect(await screen.findByRole('cell', { name: '血常规组合' })).toBeTruthy()
-    expect(screen.getByText('已开具')).toBeTruthy()
+    const issuedResultsRegion = screen.getByRole('region', { name: '检验结果' })
+    expect(within(issuedResultsRegion).getByRole('cell', { name: '血常规组合' })).toBeTruthy()
+    expect(within(issuedResultsRegion).getByText('已开具')).toBeTruthy()
+    const contextRail = screen.getByRole('complementary', { name: '病例上下文' })
+    expect(within(contextRail).getByRole('heading', { name: '检验概况' })).toBeTruthy()
+    expect(within(contextRail).getByText('1 项申请')).toBeTruthy()
+    expect(within(contextRail).getByText('暂无待阅报告')).toBeTruthy()
   })
 
   it('shows laboratory request statuses and exposes only valid correction actions', async () => {
@@ -2510,7 +2542,7 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+    await user.click(await screen.findByRole('tab', { name: '检验' }))
     expect(await screen.findByText('已开具')).toBeTruthy()
     for (const label of ['已受理', '执行中', '已报告', '已取消']) {
       expect(screen.getByText(label)).toBeTruthy()
@@ -2533,53 +2565,53 @@ describe('role workspaces', () => {
     const acknowledgeButton = screen.getByRole('button', { name: '确认已阅 血常规' })
     await user.click(acknowledgeButton)
     await waitFor(() => expect(screen.queryByRole('button', { name: '确认已阅 血常规' })).toBeNull())
-    const cancelButtons = screen.getAllByRole('button', { name: /取消检查申请/ })
+    const cancelButtons = screen.getAllByRole('button', { name: /取消检验申请/ })
     expect(cancelButtons).toHaveLength(1)
-    expect(cancelButtons[0]?.getAttribute('aria-label')).toBe('取消检查申请 C 反应蛋白')
+    expect(cancelButtons[0]?.getAttribute('aria-label')).toBe('取消检验申请 C 反应蛋白')
 
     await user.click(cancelButtons[0] as HTMLElement)
-    const cancelDialog = await screen.findByRole('alertdialog', { name: '确认取消检查申请' })
+    const cancelDialog = await screen.findByRole('alertdialog', { name: '确认取消检验申请' })
     expect(cancellationRequests).toBe(0)
     expect(within(cancelDialog).getByText('C 反应蛋白')).toBeTruthy()
     expect(within(cancelDialog).getByText('已开具')).toBeTruthy()
     await user.click(within(cancelDialog).getByRole('button', { name: '确认取消' }))
     expect(await screen.findByText(
-      '检查申请当前状态为“已受理”，版本为 2。请刷新后重新确认。',
+      '检验申请当前状态为“已受理”，版本为 2。请刷新后重新确认。',
     )).toBeTruthy()
     expect(screen.queryByText(/The laboratory request cannot be cancelled/)).toBeNull()
     expect(cancellationRequests).toBe(1)
 
     await user.click(within(cancelDialog).getByRole('button', { name: '取消' }))
     await user.click(screen.getByRole('listitem', { name: '选择病例 合成候选患者周远' }))
-    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
-    expect(await screen.findByText('当前无正式检查申请')).toBeTruthy()
+    await user.click(await screen.findByRole('tab', { name: '检验' }))
+    expect(await screen.findByText('暂无检验申请或结果')).toBeTruthy()
     expect(screen.queryByText(
-      '检查申请当前状态为“已受理”，版本为 2。请刷新后重新确认。',
+      '检验申请当前状态为“已受理”，版本为 2。请刷新后重新确认。',
     )).toBeNull()
 
     await user.click(screen.getByRole('listitem', { name: '选择病例 合成候选患者林晓' }))
-    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
-    const retryCancelButton = (await screen.findAllByRole('button', { name: /取消检查申请/ }))[0]
+    await user.click(await screen.findByRole('tab', { name: '检验' }))
+    const retryCancelButton = (await screen.findAllByRole('button', { name: /取消检验申请/ }))[0]
     if (retryCancelButton === undefined) throw new Error('Cancellable request was not restored')
     await user.click(retryCancelButton)
-    const retryCancelDialog = await screen.findByRole('alertdialog', { name: '确认取消检查申请' })
+    const retryCancelDialog = await screen.findByRole('alertdialog', { name: '确认取消检验申请' })
     await user.click(within(retryCancelDialog).getByRole('button', { name: '确认取消' }))
-    expect(await screen.findByText('检查申请已取消')).toBeTruthy()
+    expect(await screen.findByText('检验申请已取消')).toBeTruthy()
     expect(cancellationRequests).toBe(2)
     await waitFor(() => expect(screen.queryByText('已开具')).toBeNull())
-    await user.click(screen.getByRole('button', { name: '删除检查草稿' }))
-    const deleteDialog = await screen.findByRole('alertdialog', { name: '确认删除检查草稿' })
+    await user.click(screen.getByRole('button', { name: '删除检验草稿' }))
+    const deleteDialog = await screen.findByRole('alertdialog', { name: '确认删除检验草稿' })
     expect(draftDeletionRequests).toBe(0)
     expect(within(deleteDialog).getByText('血常规')).toBeTruthy()
     await user.click(within(deleteDialog).getByRole('button', { name: '确认删除' }))
-    expect(await screen.findByText('检查草稿已删除')).toBeTruthy()
+    expect(await screen.findByText('检验草稿已删除')).toBeTruthy()
     expect(draftDeletionRequests).toBe(1)
-    await waitFor(() => expect(screen.queryByText('检查草稿已保存')).toBeNull())
+    await waitFor(() => expect(screen.queryByText('检验草稿已保存')).toBeNull())
 
     await user.click(screen.getByRole('listitem', { name: '选择病例 合成候选患者周远' }))
-    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
-    expect(await screen.findByText('当前无正式检查申请')).toBeTruthy()
-    expect(screen.queryByText('检查草稿已删除')).toBeNull()
+    await user.click(await screen.findByRole('tab', { name: '检验' }))
+    expect(await screen.findByText('暂无检验申请或结果')).toBeTruthy()
+    expect(screen.queryByText('检验草稿已删除')).toBeNull()
   })
 
   it('keeps polling an in-progress laboratory request until its report arrives', async () => {
@@ -2587,7 +2619,7 @@ describe('role workspaces', () => {
     const polling = stubLaboratoryReportPolling(true)
     render(<WebApp />)
 
-    await userEvent.setup().click(await screen.findByRole('tab', { name: '检验检查' }))
+    await userEvent.setup().click(await screen.findByRole('tab', { name: '检验' }))
     expect(await screen.findByText('等待检验结果')).toBeTruthy()
     polling.makeReportReady()
     await waitFor(() => {
@@ -2605,7 +2637,7 @@ describe('role workspaces', () => {
     const polling = stubLaboratoryReportPolling(false)
     render(<WebApp />)
 
-    await userEvent.setup().click(await screen.findByRole('tab', { name: '检验检查' }))
+    await userEvent.setup().click(await screen.findByRole('tab', { name: '检验' }))
     expect(await screen.findByText('等待检验结果')).toBeTruthy()
     const initialDetailRequests = polling.detailRequestCount()
     await act(async () => new Promise(resolve => setTimeout(resolve, 1_700)))
@@ -2756,7 +2788,7 @@ describe('role workspaces', () => {
     expect(within(caseDetail).getByText('118/76 mmHg')).toBeTruthy()
     expect(within(caseDetail).getByText('98%')).toBeTruthy()
     await user.click(await screen.findByRole('button', { name: '开始首诊' }))
-    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+    await user.click(await screen.findByRole('tab', { name: '检验' }))
     expect((await screen.findByRole('combobox', { name: '检验项目' })).textContent).toContain('发热检验组合 · ¥68.00')
     expect(screen.getByRole('combobox', { name: '检验适应证' }).textContent).toContain('发热')
 
@@ -2767,7 +2799,7 @@ describe('role workspaces', () => {
     await user.click(within(firstVisitForm).getByRole('button', { name: '保存首诊草稿' }))
     expect(await screen.findByText('草稿已保存')).toBeTruthy()
 
-    await user.click(screen.getByRole('tab', { name: '检验检查' }))
+    await user.click(screen.getByRole('tab', { name: '检验' }))
     await user.click(screen.getByRole('button', { name: '签发检验申请' }))
     expect(await screen.findByText('检验申请已签发')).toBeTruthy()
     expect(screen.getByText(/¥68\.00/)).toBeTruthy()
@@ -3155,7 +3187,7 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+    await user.click(await screen.findByRole('tab', { name: '检验' }))
     expect(await screen.findByText('甲型流感抗原')).toBeTruthy()
     expect(screen.getAllByText('阳性')).toHaveLength(2)
     expect(screen.getByText(/6\.8.*×10⁹\/L/)).toBeTruthy()
@@ -3372,8 +3404,8 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    expect(await screen.findByRole('complementary', { name: '病情摘要' })).toBeTruthy()
-    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+    expect(await screen.findByRole('complementary', { name: '病例上下文' })).toBeTruthy()
+    await user.click(await screen.findByRole('tab', { name: '检验' }))
     expect((await screen.findAllByText(/既往咳嗽/)).length).toBeGreaterThan(0)
     expect(screen.queryByRole('heading', { name: '用药结论' })).toBeNull()
     expect(screen.queryByLabelText('诊断编码')).toBeNull()
@@ -3406,7 +3438,7 @@ describe('role workspaces', () => {
     expect(await screen.findByText('诊断已确认')).toBeTruthy()
     expect(screen.getByText('J10.1 · 流感伴其他呼吸道表现')).toBeTruthy()
     expect(screen.getByText('I10 · 原发性高血压')).toBeTruthy()
-    await user.click(screen.getByRole('tab', { name: '检验检查' }))
+    await user.click(screen.getByRole('tab', { name: '检验' }))
     expect(screen.getAllByText(/既往咳嗽/).length).toBeGreaterThan(0)
   })
 
@@ -3506,11 +3538,17 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     expect(await screen.findByRole('tab', { name: '病历记录' })).toBeTruthy()
-    expect(screen.getAllByRole('img', { name: '王晓明 患者' }).length).toBeGreaterThan(0)
-    expect(await screen.findByRole('complementary', { name: '诊疗对话' })).toBeTruthy()
+    const queueRegion = await screen.findByRole('complementary', { name: '候诊队列' })
+    expect(within(queueRegion).getByRole('listitem', { name: '选择病例 王晓明' })).toBeTruthy()
+    const patientBanner = screen.getByRole('region', { name: '当前患者' })
+    expect(within(patientBanner).getByRole('img', { name: '王晓明 患者' })).toBeTruthy()
+    const contextRail = await screen.findByRole('complementary', { name: '病例上下文' })
+    expect(within(contextRail).queryByRole('button', { name: '向患者提问' })).toBeNull()
     expect(screen.getByRole('button', { name: '收起右侧边栏' }).getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByRole('heading', { name: '过敏提示' })).toBeTruthy()
+    await user.click(screen.getByRole('tab', { name: '问诊记录' }))
     expect(screen.getByRole('button', { name: '向患者提问' })).toBeTruthy()
+    await user.click(screen.getByRole('tab', { name: '病历记录' }))
     const history = screen.getByLabelText('现病史') as HTMLTextAreaElement
     await user.clear(history)
     await user.type(history, '患者三天前受凉后出现咳嗽、发热。')
@@ -3700,19 +3738,19 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    expect(await screen.findByRole('complementary', { name: '诊疗队列' })).toBeTruthy()
-    expect(screen.getByRole('region', { name: '病例详情' })).toBeTruthy()
-    expect(await screen.findByRole('complementary', { name: '诊疗对话' })).toBeTruthy()
+    expect(await screen.findByRole('complementary', { name: '候诊队列' })).toBeTruthy()
+    expect(await screen.findByRole('region', { name: '当前患者' })).toBeTruthy()
+    expect(await screen.findByRole('complementary', { name: '病例上下文' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '病历记录' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '诊断' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '处方' })).toBeTruthy()
-    expect(screen.getByRole('tab', { name: '检验检查' })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '检验' })).toBeTruthy()
     await user.click(await screen.findByRole('button', { name: '完诊' }))
     expect(screen.getByRole('heading', { name: '确认完诊' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '确认完诊' }))
 
     expect(await screen.findByText('Encounter 已完成，当前病例为只读。')).toBeTruthy()
-    expect(screen.getByText('当前无待诊病例')).toBeTruthy()
+    expect(screen.getByRole('tab', { name: /候诊队列/ }).textContent).toContain('0')
     expect(screen.queryByRole('button', { name: '向患者提问' })).toBeNull()
     expect(screen.queryByRole('button', { name: '提交病历修订' })).toBeNull()
     expect(screen.queryByRole('button', { name: '撤回处方' })).toBeNull()
@@ -3832,7 +3870,7 @@ describe('role workspaces', () => {
     expect(await screen.findByText('必须且只能选择一个主诊断。')).toBeTruthy()
   })
 
-  it('saves and issues a controlled prescription, withdraws it, and confirms no medication', async () => {
+  it('groups medication package variants, saves and issues a controlled prescription, withdraws it, and confirms no medication', async () => {
     window.history.replaceState(null, '', '/consultation')
     const patient = {
       birthDate: '1990-05-10',
@@ -3866,13 +3904,19 @@ describe('role workspaces', () => {
       manufacturer: '另一合成制药有限公司',
       sourceLocator: 'products[2]',
     } as const
+    const referenceMedicationPackageVariant = {
+      ...referenceMedication,
+      id: 'medication-product-oseltamivir-a-12',
+      packageDescription: '12粒/盒',
+      sourceLocator: 'products[1].packages[2]',
+    } as const
     const draftItem = {
-      catalogItemId: referenceMedication.id,
+      catalogItemId: referenceMedicationPackageVariant.id,
       courseDays: 5,
       doseText: '75 mg',
       frequencyCode: 'BID',
       quantity: 10,
-      referenceProduct: referenceMedication,
+      referenceProduct: referenceMedicationPackageVariant,
     }
     const { referenceProduct: _referenceProduct, ...submittedDraftItem } = draftItem
     const issuedItem = {
@@ -3940,11 +3984,11 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/reference-catalogs/medications') {
         medicationQueries.push(url.searchParams.get('query'))
         return Response.json({
-          items: [referenceMedication, secondReferenceMedication],
+          items: [referenceMedication, referenceMedicationPackageVariant, secondReferenceMedication],
           page: 1,
           pageSize: 20,
           releaseId: 'reference-http-test-v1',
-          total: 2,
+          total: 3,
         })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
@@ -4078,10 +4122,11 @@ describe('role workspaces', () => {
     await user.type(within(medicationDialog).getByLabelText('搜索药品目录'), '奥司')
     await user.click(within(medicationDialog).getByRole('button', { name: '执行药品目录搜索' }))
     await waitFor(() => expect(medicationQueries).toContain('奥司'))
-    expect(await within(medicationDialog).findByText('合成制药有限公司')).toBeTruthy()
+    expect(await within(medicationDialog).findByText('2 个包装')).toBeTruthy()
+    expect(within(medicationDialog).getAllByText('合成制药有限公司')).toHaveLength(1)
     expect(within(medicationDialog).getByText('另一合成制药有限公司')).toBeTruthy()
     await user.click(within(medicationDialog).getByRole('button', {
-      name: '选择 磷酸奥司他韦胶囊 75 mg 合成制药有限公司 国药准字H20260001',
+      name: '选择 磷酸奥司他韦胶囊 75 mg 12粒/盒 合成制药有限公司 国药准字H20260001',
     }))
     await user.click(within(medicationDialog).getByRole('button', { name: '加入处方' }))
     const dose = await screen.findByLabelText('剂量')
@@ -5290,7 +5335,7 @@ describe('role workspaces', () => {
     expect(screen.getByText('甲型流感抗原阳性。')).toBeTruthy()
     expect(screen.getByText('处方号 RX-COMPLETED-LEGACY-001')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '更正病历' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '更正检查报告' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '更正检验报告' })).toBeNull()
     expect(screen.queryByRole('button', { name: '撤回处方' })).toBeNull()
   })
 
@@ -5856,26 +5901,26 @@ describe('role workspaces', () => {
       </QueryClientProvider>,
     )
 
-    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
-    await user.click(await screen.findByRole('button', { name: '删除检查草稿' }))
+    await user.click(await screen.findByRole('tab', { name: '检验' }))
+    await user.click(await screen.findByRole('button', { name: '删除检验草稿' }))
     const laboratoryDraftDialog = await screen.findByRole('alertdialog', {
-      name: '确认删除检查草稿',
+      name: '确认删除检验草稿',
     })
     expect(within(laboratoryDraftDialog).getByText('C 反应蛋白')).toBeTruthy()
     await user.click(within(laboratoryDraftDialog).getByRole('button', { name: '确认删除' }))
-    expect(await screen.findByText('检查草稿已删除')).toBeTruthy()
+    expect(await screen.findByText('检验草稿已删除')).toBeTruthy()
     expect(laboratoryDraftDeletionRequest).toEqual({
       expectedVersions: { 'Encounter/encounter-completed-correction-1': '6' },
       input: { expectedDraftVersion: 1 },
     })
 
-    await user.click(screen.getByRole('button', { name: '取消检查申请 血常规' }))
+    await user.click(screen.getByRole('button', { name: '取消检验申请 血常规' }))
     const laboratoryCancellationDialog = await screen.findByRole('alertdialog', {
-      name: '确认取消检查申请',
+      name: '确认取消检验申请',
     })
     expect(within(laboratoryCancellationDialog).getByText('血常规')).toBeTruthy()
     await user.click(within(laboratoryCancellationDialog).getByRole('button', { name: '确认取消' }))
-    expect(await screen.findByText('检查申请已取消')).toBeTruthy()
+    expect(await screen.findByText('检验申请已取消')).toBeTruthy()
     expect(laboratoryCancellationRequest).toEqual({
       expectedVersions: {
         'ServiceRequest/service-request-cancellation-1': '1',
@@ -5961,23 +6006,23 @@ describe('role workspaces', () => {
     await user.click(await screen.findByRole('button', { name: `查看病例 ${patient.name}` }))
     expect(await screen.findByText('版本 2')).toBeTruthy()
     expect(screen.getByText('补充检验复核后的处置说明。')).toBeTruthy()
-    await user.click(await screen.findByRole('button', { name: '更正检查报告' }))
+    await user.click(await screen.findByRole('button', { name: '更正检验报告' }))
     await waitFor(() => {
       expect(document.activeElement?.id).toBe('encounter-completion-target-laboratory')
     })
     expect(screen.getByRole('tab', { name: '当前诊疗' }).getAttribute('aria-selected')).toBe('true')
-    const correctionForm = await screen.findByRole('form', { name: '更正检查报告 C 反应蛋白' })
+    const correctionForm = await screen.findByRole('form', { name: '更正检验报告 C 反应蛋白' })
     await user.clear(within(correctionForm).getByLabelText('更正后结论'))
     await user.type(within(correctionForm).getByLabelText('更正后结论'), '复核后 C 反应蛋白仍升高。')
     await user.clear(within(correctionForm).getByLabelText('C 反应蛋白 · 结果'))
     await user.type(within(correctionForm).getByLabelText('C 反应蛋白 · 结果'), '29.1')
     await user.type(within(correctionForm).getByLabelText('更正原因'), '复核仪器原始数据后更正。')
     await user.click(within(correctionForm).getByRole('button', { name: '预览报告更正' }))
-    const confirmation = await screen.findByRole('alertdialog', { name: '确认更正检查报告' })
+    const confirmation = await screen.findByRole('alertdialog', { name: '确认更正检验报告' })
     expect(within(confirmation).getByText('复核后 C 反应蛋白仍升高。')).toBeTruthy()
     expect(within(confirmation).getByText('29.1 mg/L')).toBeTruthy()
     expect(within(confirmation).getByText('复核仪器原始数据后更正。')).toBeTruthy()
-    await user.click(within(confirmation).getByRole('button', { name: '确认更正检查报告' }))
+    await user.click(within(confirmation).getByRole('button', { name: '确认更正检验报告' }))
     await waitFor(() => {
       expect(laboratoryCorrectionRequest).toEqual({
         expectedVersions: { 'DiagnosticReport/diagnostic-report-correction-1': '1' },
@@ -5997,11 +6042,11 @@ describe('role workspaces', () => {
     const timeline = screen.getByRole('region', { name: '业务时间线' })
     expect(within(timeline).getByText('签署病历')).toBeTruthy()
     expect(within(timeline).getByText('修订病历')).toBeTruthy()
-    expect(within(timeline).getByText('删除检查草稿')).toBeTruthy()
-    expect(within(timeline).getByText('开具检查申请')).toBeTruthy()
-    expect(within(timeline).getByText('取消检查申请')).toBeTruthy()
-    expect(within(timeline).getByText('签发检查报告')).toBeTruthy()
-    expect(within(timeline).getByText('更正检查报告')).toBeTruthy()
+    expect(within(timeline).getByText('删除检验草稿')).toBeTruthy()
+    expect(within(timeline).getByText('开具检验申请')).toBeTruthy()
+    expect(within(timeline).getByText('取消检验申请')).toBeTruthy()
+    expect(within(timeline).getByText('签发检验报告')).toBeTruthy()
+    expect(within(timeline).getByText('更正检验报告')).toBeTruthy()
     expect(within(timeline).getByText('删除处方草稿')).toBeTruthy()
     expect(within(timeline).getByText('开具处方')).toBeTruthy()
     expect(within(timeline).getByText('撤回处方')).toBeTruthy()

@@ -6,7 +6,7 @@ Status: implemented
 
 医生工作台曾把 Reference 目录结果直接铺在诊断、处方和检验表单中。页面打开后出现大量同名药品，却没有足够的规格、包装、厂家和批准文号用于区分；诊断虽然合同支持最多八条，但每条都嵌入一份搜索列表，用户难以理解“加入多条、保存草稿、最终确认”的顺序；检验选择、适应证、草稿动作、正式申请和报告状态也混在同一纵向区域。输入少于三个字符时前端不提交搜索，使两字中文关键词看起来完全无效。
 
-本决策交付[门诊医生工作台 UI 重构](../../proposed/architecture/2026-08-31-doctor-workspace-ui-refactor.md)的检验、诊断和处方切片，并取代 [Synthea 缺译告警与全量目录默认浏览](../bug-fix/2026-08-31-synthea-translation-warning-and-catalog-browse.md)中“少于三个字符只浏览、三个字符以上才搜索”的目录交互。后者的 Synthea warning、随机 seed、Reference owner 和 fallback 决策继续有效。
+本决策交付[门诊医生工作台 UI 重构](../architecture/2026-08-31-doctor-workspace-ui-refactor.md)的检验、诊断和处方切片，并取代 [Synthea 缺译告警与全量目录默认浏览](../bug-fix/2026-08-31-synthea-translation-warning-and-catalog-browse.md)中“少于三个字符只浏览、三个字符以上才搜索”的目录交互。后者的 Synthea warning、随机 seed、Reference owner 和 fallback 决策继续有效。
 
 ## Decision
 

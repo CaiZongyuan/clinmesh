@@ -66,6 +66,7 @@ const copy = {
     medicationSearchInput: 'Search medication catalog',
     next: 'Next page',
     noResults: 'No matching records',
+    packageVariants: '{count} package variants',
     previous: 'Previous page',
     replaceDiagnosis: 'Replace diagnosis',
     replaceMedication: 'Replace medication',
@@ -90,7 +91,7 @@ const copy = {
     diagnosisDescription: '当前疾病诊断目录',
     diagnosisPlaceholder: '病名或编码（至少 2 字）',
     diagnosisSearchInput: '搜索疾病目录',
-    laboratoryDescription: '当前检验检查目录',
+    laboratoryDescription: '当前检验目录',
     laboratoryPlaceholder: '检验名称或 LOINC（至少 2 字）',
     laboratorySearchInput: '搜索检验目录',
     localCatalog: '本院常用',
@@ -99,6 +100,7 @@ const copy = {
     medicationSearchInput: '搜索药品目录',
     next: '下一页',
     noResults: '没有匹配记录',
+    packageVariants: '{count} 个包装',
     previous: '上一页',
     replaceDiagnosis: '更换诊断',
     replaceMedication: '更换药品',
@@ -112,6 +114,10 @@ const copy = {
 
 function totalLabel(template: string, total: number): string {
   return template.replace('{total}', String(total))
+}
+
+function countLabel(template: string, count: number): string {
+  return template.replace('{count}', String(count))
 }
 
 function CatalogSearchForm({
@@ -608,6 +614,35 @@ export type MedicationCatalogSelection =
   | { kind: 'local'; medication: PrescriptionMedication }
   | { kind: 'reference'; product: ReferenceMedicationProduct }
 
+interface MedicationProductGroup {
+  product: ReferenceMedicationProduct
+  variants: ReferenceMedicationProduct[]
+}
+
+function medicationProductGroupKey(product: ReferenceMedicationProduct): string {
+  return JSON.stringify([
+    product.genericName,
+    product.strength,
+    product.dosageForm,
+    product.manufacturer,
+    product.approvalNumber,
+  ])
+}
+
+function groupMedicationProducts(products: ReferenceMedicationProduct[]): MedicationProductGroup[] {
+  const groups = new Map<string, MedicationProductGroup>()
+  for (const product of products) {
+    const key = medicationProductGroupKey(product)
+    const group = groups.get(key)
+    if (group === undefined) {
+      groups.set(key, { product, variants: [product] })
+    } else {
+      group.variants.push(product)
+    }
+  }
+  return [...groups.values()]
+}
+
 export function MedicationCatalogDialog({
   disabled,
   excludedIds,
@@ -642,6 +677,9 @@ export function MedicationCatalogDialog({
     return normalizedLocalQuery.length === 0
       || display.toLocaleLowerCase().includes(normalizedLocalQuery)
   })
+  const referenceGroups = results.data === undefined
+    ? []
+    : groupMedicationProducts(results.data.items)
   const openDialog = () => {
     setInput('')
     setQuery('')
@@ -700,33 +738,52 @@ export function MedicationCatalogDialog({
                 <TableHeader className="sticky top-0 z-10 bg-popover">
                   <TableRow>
                     <TableHead className="w-12"><span className="sr-only">{messages.choose}</span></TableHead>
-                    <TableHead className="min-w-52">{locale === 'zh-CN' ? '通用名' : 'Generic name'}</TableHead>
+                    <TableHead className="min-w-52">{locale === 'zh-CN' ? '临床产品' : 'Clinical product'}</TableHead>
                     <TableHead className="min-w-28">{locale === 'zh-CN' ? '规格' : 'Strength'}</TableHead>
                     <TableHead className="min-w-24">{locale === 'zh-CN' ? '剂型' : 'Form'}</TableHead>
-                    <TableHead className="min-w-32">{locale === 'zh-CN' ? '包装' : 'Package'}</TableHead>
                     <TableHead className="min-w-56">{locale === 'zh-CN' ? '生产企业' : 'Manufacturer'}</TableHead>
                     <TableHead className="min-w-44">{locale === 'zh-CN' ? '批准文号' : 'Approval number'}</TableHead>
+                    <TableHead className="min-w-32">{locale === 'zh-CN' ? '包装变体' : 'Package variant'}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(useLocal ? localResults : results.data.items).map(item => {
-                    const selection: MedicationCatalogSelection = 'genericName' in item
-                      ? { kind: 'reference', product: item }
-                      : { kind: 'local', medication: item }
+                  {useLocal ? localResults.map(item => {
+                    const selection: MedicationCatalogSelection = { kind: 'local', medication: item }
                     const id = item.id
-                    const inactive = 'status' in item && item.status !== 'active'
                     const excluded = excludedIds.has(id)
-                    const unavailable = inactive || excluded
-                    const genericName = 'genericName' in item
-                      ? item.genericName
-                      : locale === 'zh-CN' ? item.nameZh : item.nameEn
-                    const label = 'genericName' in item
-                      ? `${messages.choose} ${item.genericName} ${item.strength} ${item.manufacturer} ${item.approvalNumber}`
-                      : `${messages.choose} ${genericName}`
+                    const genericName = locale === 'zh-CN' ? item.nameZh : item.nameEn
                     return (
                       <TableRow
-                        className={cn(unavailable && 'opacity-50', selectionId === id && 'bg-muted/70')}
+                        className={cn(excluded && 'opacity-50', selectionId === id && 'bg-muted/70')}
                         key={id}
+                        onDoubleClick={() => { if (!excluded) confirm(selection) }}
+                      >
+                        <TableCell>
+                          <SelectionButton
+                            disabled={excluded}
+                            label={`${messages.choose} ${genericName}`}
+                            onSelect={() => setSelected(selection)}
+                            selected={selectionId === id}
+                          />
+                        </TableCell>
+                        <TableCell className="font-medium">{genericName}</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell>{messages.localCatalog}</TableCell>
+                        <TableCell>-</TableCell>
+                        <TableCell className="font-mono text-xs">{excluded ? (locale === 'zh-CN' ? '已添加' : 'Added') : '-'}</TableCell>
+                        <TableCell>-</TableCell>
+                      </TableRow>
+                    )
+                  }) : referenceGroups.flatMap(group => group.variants.map((item, index) => {
+                    const selection: MedicationCatalogSelection = { kind: 'reference', product: item }
+                    const inactive = item.status !== 'active'
+                    const excluded = excludedIds.has(item.id)
+                    const unavailable = inactive || excluded
+                    const label = `${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`
+                    return (
+                      <TableRow
+                        className={cn(unavailable && 'opacity-50', selectionId === item.id && 'bg-muted/70')}
+                        key={item.id}
                         onDoubleClick={() => { if (!unavailable) confirm(selection) }}
                       >
                         <TableCell>
@@ -734,20 +791,31 @@ export function MedicationCatalogDialog({
                             disabled={unavailable}
                             label={label}
                             onSelect={() => setSelected(selection)}
-                            selected={selectionId === id}
+                            selected={selectionId === item.id}
                           />
                         </TableCell>
-                        <TableCell className="font-medium">{genericName}</TableCell>
-                        <TableCell>{'strength' in item ? item.strength : '-'}</TableCell>
-                        <TableCell>{'dosageForm' in item ? item.dosageForm : messages.localCatalog}</TableCell>
-                        <TableCell>{'packageDescription' in item ? item.packageDescription : '-'}</TableCell>
-                        <TableCell>{'manufacturer' in item ? item.manufacturer : '-'}</TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {'approvalNumber' in item ? item.approvalNumber : (excluded ? (locale === 'zh-CN' ? '已添加' : 'Added') : '-')}
-                        </TableCell>
+                        {index === 0 ? (
+                          <>
+                            <TableCell className="align-top font-medium" rowSpan={group.variants.length}>
+                              <div className="flex items-center gap-2">
+                                <span>{group.product.genericName}</span>
+                                {group.variants.length > 1 ? (
+                                  <Badge variant="secondary">
+                                    {countLabel(messages.packageVariants, group.variants.length)}
+                                  </Badge>
+                                ) : null}
+                              </div>
+                            </TableCell>
+                            <TableCell className="align-top" rowSpan={group.variants.length}>{group.product.strength}</TableCell>
+                            <TableCell className="align-top" rowSpan={group.variants.length}>{group.product.dosageForm}</TableCell>
+                            <TableCell className="align-top" rowSpan={group.variants.length}>{group.product.manufacturer}</TableCell>
+                            <TableCell className="align-top font-mono text-xs" rowSpan={group.variants.length}>{group.product.approvalNumber}</TableCell>
+                          </>
+                        ) : null}
+                        <TableCell>{item.packageDescription}</TableCell>
                       </TableRow>
                     )
-                  })}
+                  }))}
                 </TableBody>
               </Table>
             )}
