@@ -2151,8 +2151,16 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     await user.click(await screen.findByRole('tab', { name: '检验检查' }))
-    await user.click(await screen.findByRole('button', { name: /血常规组合.*58410-2/ }))
-    expect(laboratoryQueries).toContain(null)
+    await user.click(await screen.findByRole('button', { name: '选择检验项目' }))
+    const laboratoryDialog = await screen.findByRole('dialog', { name: '选择检验项目' })
+    await user.type(within(laboratoryDialog).getByLabelText('搜索检验目录'), '血常')
+    await user.click(within(laboratoryDialog).getByRole('button', { name: '执行检验目录搜索' }))
+    await waitFor(() => expect(laboratoryQueries).toContain('血常'))
+    await user.click(await within(laboratoryDialog).findByRole('button', {
+      name: '选择 血常规组合 58410-2',
+    }))
+    await user.click(within(laboratoryDialog).getByRole('button', { name: '确定选择' }))
+    expect(await screen.findByText('血常规组合')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '保存检查草稿' }))
 
     expect(await screen.findByText('检查草稿已保存')).toBeTruthy()
@@ -3371,13 +3379,30 @@ describe('role workspaces', () => {
     expect(screen.queryByLabelText('诊断编码')).toBeNull()
     await user.click(screen.getByRole('tab', { name: '诊断' }))
     await user.click(screen.getByRole('button', { name: '添加诊断' }))
-    await user.click(await screen.findByRole('button', { name: /流感伴其他呼吸道表现.*J10.1/ }))
+    let diagnosisDialog = await screen.findByRole('dialog', { name: '选择诊断' })
+    await user.type(within(diagnosisDialog).getByLabelText('搜索疾病目录'), '流感')
+    await user.click(within(diagnosisDialog).getByRole('button', { name: '执行疾病目录搜索' }))
+    await waitFor(() => expect(diagnosisQueries).toContain('流感'))
+    await user.click(await within(diagnosisDialog).findByRole('button', {
+      name: '选择 流感伴其他呼吸道表现 J10.1',
+    }))
+    await user.click(within(diagnosisDialog).getByRole('button', { name: '加入诊断' }))
     await user.type(screen.getByLabelText('诊断备注'), '结合甲型流感抗原结果。')
     await user.click(screen.getByRole('button', { name: '添加诊断' }))
-    const referenceDiagnoses = await screen.findAllByRole('button', { name: /原发性高血压.*I10/ })
-    await user.click(referenceDiagnoses.at(-1)!)
-    expect(diagnosisQueries).toContain(null)
+    diagnosisDialog = await screen.findByRole('dialog', { name: '选择诊断' })
+    await user.type(within(diagnosisDialog).getByLabelText('搜索疾病目录'), '高血')
+    await user.click(within(diagnosisDialog).getByRole('button', { name: '执行疾病目录搜索' }))
+    await waitFor(() => expect(diagnosisQueries).toContain('高血'))
+    await user.click(await within(diagnosisDialog).findByRole('button', {
+      name: '选择 原发性高血压 I10',
+    }))
+    await user.click(within(diagnosisDialog).getByRole('button', { name: '加入诊断' }))
+    await user.click(screen.getByRole('button', { name: '保存诊断草稿' }))
+    expect(await screen.findByText('诊断草稿已保存')).toBeTruthy()
+    expect(screen.queryByText('诊断已确认')).toBeNull()
     await user.click(screen.getByRole('button', { name: '确认诊断' }))
+    const confirmDiagnosisDialog = await screen.findByRole('alertdialog', { name: '确认最终诊断' })
+    await user.click(within(confirmDiagnosisDialog).getByRole('button', { name: '确认并锁定诊断' }))
     expect(await screen.findByText('诊断已确认')).toBeTruthy()
     expect(screen.getByText('J10.1 · 流感伴其他呼吸道表现')).toBeTruthy()
     expect(screen.getByText('I10 · 原发性高血压')).toBeTruthy()
@@ -3786,7 +3811,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/encounters/encounter-diagnosis-validation/diagnosis/actions/confirm') {
         expect(JSON.parse(String(init?.body))).toEqual({
           expectedVersions: { 'Encounter/encounter-diagnosis-validation': '6' },
-          input: { expectedDraftVersion: 2 },
+          input: { expectedDraftVersion: 1 },
         })
         return Response.json({
           error: {
@@ -3802,6 +3827,8 @@ describe('role workspaces', () => {
 
     await user.click(await screen.findByRole('tab', { name: '诊断' }))
     await user.click(await screen.findByRole('button', { name: '确认诊断' }))
+    const confirmDialog = await screen.findByRole('alertdialog', { name: '确认最终诊断' })
+    await user.click(within(confirmDialog).getByRole('button', { name: '确认并锁定诊断' }))
     expect(await screen.findByText('必须且只能选择一个主诊断。')).toBeTruthy()
   })
 
@@ -3816,28 +3843,38 @@ describe('role workspaces', () => {
       synthetic: true,
       versionId: '1',
     }
-    const draftItem = {
-      catalogItemId: 'medication-oseltamivir',
-      courseDays: 5,
-      doseText: '75 mg',
-      frequencyCode: 'BID',
-      quantity: 10,
-    }
     const referenceMedication = {
       approvalNumber: '国药准字H20260001',
       brandName: null,
       code: 'H20260001',
-      dosageForm: '片剂',
-      genericName: '对乙酰氨基酚片',
-      id: 'medication-product-acetaminophen',
+      dosageForm: '胶囊剂',
+      genericName: '磷酸奥司他韦胶囊',
+      id: 'medication-product-oseltamivir-a',
       manufacturer: '合成制药有限公司',
-      packageDescription: '10片/盒',
+      packageDescription: '10粒/盒',
       sourceLocator: 'products[1]',
       status: 'active',
-      strength: '0.5 g',
+      strength: '75 mg',
       system: 'https://www.nmpa.gov.cn/datasearch/home-index.html',
       version: '2026-08',
     } as const
+    const secondReferenceMedication = {
+      ...referenceMedication,
+      approvalNumber: '国药准字H20260002',
+      code: 'H20260002',
+      id: 'medication-product-oseltamivir-b',
+      manufacturer: '另一合成制药有限公司',
+      sourceLocator: 'products[2]',
+    } as const
+    const draftItem = {
+      catalogItemId: referenceMedication.id,
+      courseDays: 5,
+      doseText: '75 mg',
+      frequencyCode: 'BID',
+      quantity: 10,
+      referenceProduct: referenceMedication,
+    }
+    const { referenceProduct: _referenceProduct, ...submittedDraftItem } = draftItem
     const issuedItem = {
       ...draftItem,
       display: '磷酸奥司他韦胶囊',
@@ -3903,11 +3940,11 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/reference-catalogs/medications') {
         medicationQueries.push(url.searchParams.get('query'))
         return Response.json({
-          items: [referenceMedication],
+          items: [referenceMedication, secondReferenceMedication],
           page: 1,
           pageSize: 20,
           releaseId: 'reference-http-test-v1',
-          total: 1,
+          total: 2,
         })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
@@ -3975,7 +4012,7 @@ describe('role workspaces', () => {
         const expectedDraftVersion = medicationConclusion?.draftVersion ?? 0
         expect(JSON.parse(String(init?.body))).toEqual({
           expectedVersions: { 'Encounter/encounter-prescription-conclusion': '6' },
-          input: { expectedDraftVersion, items: [draftItem] },
+          input: { expectedDraftVersion, items: [submittedDraftItem] },
         })
         const draftVersion = expectedDraftVersion + 1
         medicationConclusion = { draft: { items: [draftItem] }, draftVersion }
@@ -4035,13 +4072,28 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     await user.click(await screen.findByRole('tab', { name: '处方' }))
-    expect(await screen.findByRole('button', { name: /对乙酰氨基酚片.*H20260001/ })).toBeTruthy()
-    expect(medicationQueries).toContain(null)
-    expect((await screen.findByRole('combobox', { name: '药品' })).textContent).toContain('磷酸奥司他韦胶囊')
-    expect(screen.getByRole('combobox', { name: '剂量' }).textContent).toContain('75 mg')
-    expect(screen.getByRole('combobox', { name: '频次' }).textContent).toContain('BID')
-    expect(screen.getByRole('combobox', { name: '疗程' }).textContent).toContain('5 天')
-    expect(screen.getByRole('combobox', { name: '数量' }).textContent).toContain('10')
+    expect(screen.queryByLabelText('剂量')).toBeNull()
+    await user.click(await screen.findByRole('button', { name: '添加药品' }))
+    const medicationDialog = await screen.findByRole('dialog', { name: '选择药品' })
+    await user.type(within(medicationDialog).getByLabelText('搜索药品目录'), '奥司')
+    await user.click(within(medicationDialog).getByRole('button', { name: '执行药品目录搜索' }))
+    await waitFor(() => expect(medicationQueries).toContain('奥司'))
+    expect(await within(medicationDialog).findByText('合成制药有限公司')).toBeTruthy()
+    expect(within(medicationDialog).getByText('另一合成制药有限公司')).toBeTruthy()
+    await user.click(within(medicationDialog).getByRole('button', {
+      name: '选择 磷酸奥司他韦胶囊 75 mg 合成制药有限公司 国药准字H20260001',
+    }))
+    await user.click(within(medicationDialog).getByRole('button', { name: '加入处方' }))
+    const dose = await screen.findByLabelText('剂量')
+    const frequency = screen.getByLabelText('频次')
+    const course = screen.getByLabelText('疗程')
+    const quantity = screen.getByLabelText('数量')
+    await user.type(dose, '75 mg')
+    await user.type(frequency, 'BID')
+    await user.clear(course)
+    await user.type(course, '5')
+    await user.clear(quantity)
+    await user.type(quantity, '10')
     await user.click(screen.getByRole('button', { name: '保存处方草稿' }))
 
     expect(await screen.findByText('处方草稿已保存')).toBeTruthy()
@@ -4051,10 +4103,15 @@ describe('role workspaces', () => {
     expect(within(deleteDialog).getByText('磷酸奥司他韦胶囊')).toBeTruthy()
     await user.click(within(deleteDialog).getByRole('button', { name: '确认删除' }))
     expect(await screen.findByText('处方草稿已删除')).toBeTruthy()
+    await waitFor(() => expect(screen.queryByRole('alertdialog', {
+      name: '确认删除处方草稿',
+    })).toBeNull())
     expect(draftDeletionRequests).toBe(1)
     await user.click(screen.getByRole('button', { name: '保存处方草稿' }))
     expect(await screen.findByText('处方草稿已保存')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '正式开具处方' }))
+    const issueDialog = await screen.findByRole('alertdialog', { name: '确认正式开具处方' })
+    await user.click(within(issueDialog).getByRole('button', { name: '确认开具' }))
     expect(await screen.findByText('处方已正式开具')).toBeTruthy()
     expect(screen.getByText(/CM-RX-20260824-0001/)).toBeTruthy()
     expect(screen.queryByRole('combobox', { name: '药品' })).toBeNull()
@@ -4172,8 +4229,13 @@ describe('role workspaces', () => {
 
     await user.click(await screen.findByRole('tab', { name: '处方' }))
     await user.click(await screen.findByRole('button', { name: '正式开具处方' }))
+    const issueDialog = await screen.findByRole('alertdialog', { name: '确认正式开具处方' })
+    await user.click(within(issueDialog).getByRole('button', { name: '确认开具' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog', {
+      name: '确认正式开具处方',
+    })).toBeNull())
     expect(await screen.findByText('当前诊断、过敏信息、目录或处方状态不允许正式开具，请检查后重试。')).toBeTruthy()
-    expect(screen.getByRole('combobox', { name: '药品' }).textContent).toContain('磷酸奥司他韦胶囊')
+    expect(screen.getAllByText('磷酸奥司他韦胶囊').length).toBeGreaterThan(0)
     expect(screen.getByRole('combobox', { name: '剂量' }).textContent).toContain('75 mg')
     expect(screen.getByRole('combobox', { name: '频次' }).textContent).toContain('BID')
     expect(screen.getByRole('combobox', { name: '疗程' }).textContent).toContain('5 天')
@@ -5830,6 +5892,9 @@ describe('role workspaces', () => {
     expect(within(prescriptionDraftDialog).getByText('磷酸奥司他韦胶囊')).toBeTruthy()
     await user.click(within(prescriptionDraftDialog).getByRole('button', { name: '确认删除' }))
     expect(await screen.findByText('处方草稿已删除')).toBeTruthy()
+    await waitFor(() => expect(screen.queryByRole('alertdialog', {
+      name: '确认删除处方草稿',
+    })).toBeNull())
     expect(prescriptionDraftDeletionRequest).toEqual({
       expectedVersions: { 'Encounter/encounter-completed-correction-1': '6' },
       input: { expectedDraftVersion: 1 },
@@ -5842,6 +5907,8 @@ describe('role workspaces', () => {
       input: { expectedDraftVersion: 2, items: [prescriptionDraftItem] },
     })
     await user.click(screen.getByRole('button', { name: '正式开具处方' }))
+    const issueDialog = await screen.findByRole('alertdialog', { name: '确认正式开具处方' })
+    await user.click(within(issueDialog).getByRole('button', { name: '确认开具' }))
     expect(await screen.findByText('处方已正式开具')).toBeTruthy()
     expect(prescriptionIssueRequest).toEqual({
       expectedVersions: { 'Encounter/encounter-completed-correction-1': '6' },

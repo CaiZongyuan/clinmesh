@@ -10,7 +10,7 @@ ClinMesh 的首位设计评审者不熟悉 HIS，单独展示挂号、医生或�
 
 ## Proposal
 
-本 Note 只限定 throwaway 原型的设计边界，不定义正式业务顺序、API 或验收范围。正式首期以[多岗位发热门诊首期闭环](../../implemented/feature/2026-08-23-outpatient-fever-first-release.md)为准；原型中的“发药后完诊”和 evaluator 页面不得迁入正式状态机。
+本 Note 只限定 throwaway 原型的设计边界，不定义正式业务顺序、API 或验收范围。正式首期以[多岗位发热门诊首期闭环](../../implemented/feature/2026-08-23-outpatient-fever-first-release.md)为准；原型中的“发药后完诊”和 evaluator 页面不得迁入正式状态机。原型选型迁入正式医生工作台的约束由[门诊医生工作台 UI 重构](../architecture/2026-08-31-doctor-workspace-ui-refactor.md)定义。
 
 建立仅用于设计评审的 Web 原型路由 `/prototype/his-flow`。原型使用内存中的单个合成 Workspace/Epoch 和一名发热患者，让评审者通过预置合成账户切换岗位，并观察同一状态如何进入不同岗位的工作队列。原型不调用真实认证、FHIR 或 Command API，也不作为生产实现复用。
 

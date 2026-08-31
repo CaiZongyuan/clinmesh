@@ -16,6 +16,8 @@ cn-health localizer 对合法但未命中翻译 catalog 的 display 保留来源
 
 医生选择诊断、药品和检验时默认请求当前 Reference Release 的第一页。输入不足三个字符时继续浏览无 query 的稳定分页；达到三个字符后执行 FTS 搜索并从第一页开始。全局目录成功返回时不自动选择第一行，inactive 行可见但不可选。只有 Reference 请求失败，或无 query 的全局目录为空时，才回退到既有本院常用项。
 
+上述关键词阈值和行内选择 UI 后来由[医生临床目录选择与草稿确认](../feature/2026-08-31-doctor-clinical-catalog-dialogs.md)局部取代；默认第一页、无自动选择、inactive 不可选和 fallback 语义不变。
+
 ## Alternatives considered
 
 **继续让 translation gap 阻塞患者。** 这种策略可以保证界面没有英文，但全模块随机生成会被翻译目录的暂时缺口绑死，且一个患者可阻塞同批其他患者。

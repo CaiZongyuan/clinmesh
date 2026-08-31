@@ -292,7 +292,7 @@ CLINMESH_REFERENCE_DATABASE_PATH=.data/clinmesh-reference.sqlite
 CLINMESH_REFERENCE_RELEASE_ID=clinmesh-cn-health-2026-08-30.r1
 ```
 
-疾病、药品和检验目录的完整行只存在于 Reference SQLite。医生打开诊断、药品或检验选择器时直接看到当前 Release 的第一页并可翻页；输入至少三个字符后执行全局全文搜索。Reference 不可用或空目录时才显示少量本院常用项，不按病例预选目录，也不把全国目录复制到 operational SQLite。新建诊断、医嘱和检验申请会保存当时的 `system + version + code + display` 业务快照；以后切换当前 Release 不会改写既有医疗事实。Synthea 来源历史编码只用于展示外部合成病历，不要求映射到当前中国参考目录。挂载数据的来源条款不因 ClinMesh 软件许可证而改变。
+疾病、药品和检验目录的完整行只存在于 Reference SQLite。医生打开诊断、药品或检验选择器时直接看到当前 Release 的第一页并可翻页；显式提交两字符关键词时使用 substring 检索，至少三个字符时使用 trigram FTS。Reference 不可用或空目录时才显示少量本院常用项，不按病例预选目录，也不把全国目录复制到 operational SQLite。诊断先加入多条草稿再最终确认；处方初始为空，同名产品按规格、剂型、包装、厂家和批准文号区分；检验先选择项目再保存或开立。新建诊断、医嘱和检验申请会保存当时的 `system + version + code + display` 业务快照；以后切换当前 Release 不会改写既有医疗事实。Synthea 来源历史编码只用于展示外部合成病历，不要求映射到当前中国参考目录。挂载数据的来源条款不因 ClinMesh 软件许可证而改变。
 
 ### 可选：验证真实 Patient Brief Provider
 

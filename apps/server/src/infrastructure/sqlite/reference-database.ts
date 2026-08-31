@@ -523,6 +523,33 @@ export function searchReferenceConceptCatalog(
       total,
     }
   }
+  if (input.query.length < 3) {
+    const total = countSchema.parse(database.driver.prepare(`
+      SELECT COUNT(*) AS count
+      FROM reference_concept
+      WHERE release_id = ? AND domain = ?
+        AND (
+          instr(lower(display), lower(?)) > 0
+          OR instr(lower(code), lower(?)) > 0
+        )
+    `).get(releaseId, domain, input.query, input.query)).count
+    const rows = z.array(conceptDatabaseRowSchema).parse(database.driver.prepare(`
+      SELECT concept_id, domain, system, system_version, code, display, status,
+        laboratory_metadata_json, source_id, source_locator
+      FROM reference_concept
+      WHERE release_id = ? AND domain = ?
+        AND (
+          instr(lower(display), lower(?)) > 0
+          OR instr(lower(code), lower(?)) > 0
+        )
+      ORDER BY display, code, concept_id
+      LIMIT ? OFFSET ?
+    `).all(releaseId, domain, input.query, input.query, input.pageSize, offset))
+    return {
+      items: rows.map(mapConceptRow).map(({ sourceId: _sourceId, ...concept }) => concept),
+      total,
+    }
+  }
   const match = ftsPhrase(input.query)
   const total = countSchema.parse(database.driver.prepare(`
     SELECT COUNT(*) AS count
@@ -573,6 +600,52 @@ export function searchReferenceMedicationCatalog(
       ORDER BY generic_name, code, product_id
       LIMIT ? OFFSET ?
     `).all(releaseId, input.pageSize, offset))
+    return {
+      items: rows.map(mapMedicationProductRow).map(({ sourceId: _sourceId, ...product }) => product),
+      total,
+    }
+  }
+  if (input.query.length < 3) {
+    const total = countSchema.parse(database.driver.prepare(`
+      SELECT COUNT(*) AS count
+      FROM reference_medication_product
+      WHERE release_id = ?
+        AND (
+          instr(lower(generic_name), lower(?)) > 0
+          OR instr(lower(COALESCE(brand_name, '')), lower(?)) > 0
+          OR instr(lower(manufacturer), lower(?)) > 0
+          OR instr(lower(code), lower(?)) > 0
+        )
+    `).get(
+      releaseId,
+      input.query,
+      input.query,
+      input.query,
+      input.query,
+    )).count
+    const rows = z.array(medicationProductDatabaseRowSchema).parse(database.driver.prepare(`
+      SELECT product_id, system, system_version, code, generic_name, brand_name,
+        dosage_form, strength, package_description, manufacturer, approval_number,
+        status, source_id, source_locator
+      FROM reference_medication_product
+      WHERE release_id = ?
+        AND (
+          instr(lower(generic_name), lower(?)) > 0
+          OR instr(lower(COALESCE(brand_name, '')), lower(?)) > 0
+          OR instr(lower(manufacturer), lower(?)) > 0
+          OR instr(lower(code), lower(?)) > 0
+        )
+      ORDER BY generic_name, code, product_id
+      LIMIT ? OFFSET ?
+    `).all(
+      releaseId,
+      input.query,
+      input.query,
+      input.query,
+      input.query,
+      input.pageSize,
+      offset,
+    ))
     return {
       items: rows.map(mapMedicationProductRow).map(({ sourceId: _sourceId, ...product }) => product),
       total,

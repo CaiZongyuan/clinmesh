@@ -12,6 +12,14 @@ import {
   AlertDialogTrigger,
 } from '../src/components/alert-dialog.tsx'
 import { Button } from '../src/components/button.tsx'
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+  DialogTrigger,
+} from '../src/components/dialog.tsx'
 import { Spinner } from '../src/components/spinner.tsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../src/components/tabs.tsx'
 
@@ -64,6 +72,27 @@ describe('UI accessibility contracts', () => {
     const trigger = screen.getByRole('button', { name: '删除草稿' })
     await user.click(trigger)
     expect(await screen.findByRole('alertdialog', { name: '确认删除草稿' })).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('names a browsing dialog and restores focus when it is closed', async () => {
+    const user = userEvent.setup()
+    render(
+      <Dialog>
+        <DialogTrigger render={<Button type="button" />}>选择诊断</DialogTrigger>
+        <DialogContent>
+          <DialogTitle>疾病目录</DialogTitle>
+          <DialogDescription>当前发布目录</DialogDescription>
+          <DialogClose render={<Button type="button" />}>取消</DialogClose>
+        </DialogContent>
+      </Dialog>,
+    )
+
+    const trigger = screen.getByRole('button', { name: '选择诊断' })
+    await user.click(trigger)
+    expect(await screen.findByRole('dialog', { name: '疾病目录' })).toBeTruthy()
 
     await user.click(screen.getByRole('button', { name: '取消' }))
     expect(document.activeElement).toBe(trigger)

@@ -340,11 +340,29 @@ describe('Reference Data HTTP contract', () => {
         total: 1,
       })
 
-    const shortQuery = await runtime.app.request(
+    const twoCharacterLaboratoryQuery = await runtime.app.request(
+      '/api/his/v1/reference-catalogs/laboratory?page=1&pageSize=20&query=%E8%A1%80%E5%B8%B8',
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(twoCharacterLaboratoryQuery.status).toBe(200)
+    expect(referenceLaboratoryCatalogSearchSchema.parse(
+      await twoCharacterLaboratoryQuery.json(),
+    )).toMatchObject({ items: [{ code: '58410-2' }], total: 1 })
+
+    const twoCharacterMedicationQuery = await runtime.app.request(
+      '/api/his/v1/reference-catalogs/medications?page=1&pageSize=20&query=%E5%AF%B9%E4%B9%99',
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(twoCharacterMedicationQuery.status).toBe(200)
+    expect(referenceMedicationCatalogSearchSchema.parse(
+      await twoCharacterMedicationQuery.json(),
+    )).toMatchObject({ items: [expect.objectContaining({ genericName: '对乙酰氨基酚片' })], total: 1 })
+
+    const oneCharacterQuery = await runtime.app.request(
       '/api/his/v1/reference-catalogs/diagnoses?page=1&pageSize=20&query=%E8%A1%80',
       { headers: { cookie: doctorCookie } },
     )
-    expect(shortQuery.status).toBe(400)
+    expect(oneCharacterQuery.status).toBe(400)
     const clientRelease = await runtime.app.request(
       '/api/his/v1/reference-catalogs/diagnoses?page=1&pageSize=20&query=%E5%8E%9F%E5%8F%91%E6%80%A7&releaseId=other',
       { headers: { cookie: doctorCookie } },
