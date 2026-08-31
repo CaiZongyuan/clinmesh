@@ -4,7 +4,6 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
@@ -29,18 +28,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@clinmesh/ui/components/select'
-import { Separator } from '@clinmesh/ui/components/separator'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import {
-  BadgeCheckIcon,
-  CalendarClockIcon,
   CheckIcon,
   ClipboardPenLineIcon,
   LinkIcon,
   RotateCcwIcon,
   SaveIcon,
-  UserRoundIcon,
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -76,10 +71,6 @@ const diagnosisSelectItems = diagnosisItems.map(item => ({
   label: `${item.label}（${item.code}）`,
   value: item.value,
 }))
-
-const diagnosisByValue = new Map<string, (typeof diagnosisItems)[number]>(
-  diagnosisItems.map(item => [item.value, item]),
-)
 
 const severityItems = [
   { label: '轻度', value: 'mild' },
@@ -134,56 +125,13 @@ const emptyDraft: DiagnosisDraft = {
 
 const initialLinkedProblemIds = linkedProblems.map(problem => problem.id)
 
-function diagnosisLabel(value: string): string {
-  const diagnosis = diagnosisByValue.get(value)
-  return diagnosis === undefined ? '未选择诊断' : diagnosis.label
-}
-
-function diagnosisCode(value: string): string {
-  return diagnosisByValue.get(value)?.code ?? '待补充'
-}
-
-function severityLabel(value: string): string {
-  return severityItems.find(item => item.value === value)?.label ?? '未分级'
-}
-
-function doctorLabel(value: string): string {
-  return doctorItems.find(item => item.value === value)?.label ?? '未指定医生'
-}
-
 function ProblemStatusBadge({ status }: { status: LinkedProblem['status'] }): React.JSX.Element {
   const variant = status === '过敏史' ? 'destructive' : status === '慢病' ? 'warning' : 'success'
   return <Badge variant={variant}>{status}</Badge>
 }
 
-function DiagnosisSummaryRow({
-  code,
-  index,
-  label,
-  role,
-}: {
-  code: string
-  index: number
-  label: string
-  role: '主诊断' | '次要诊断'
-}): React.JSX.Element {
-  return (
-    <div className="grid grid-cols-[1.75rem_minmax(0,1fr)_auto] items-center gap-3 py-3">
-      <span className="flex size-7 items-center justify-center rounded-md bg-muted text-xs font-medium tabular-nums">
-        {index}
-      </span>
-      <div className="min-w-0">
-        <p className="font-medium">{label}</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">ICD-10 · {code}</p>
-      </div>
-      <Badge variant={role === '主诊断' ? 'success' : 'info'}>{role}</Badge>
-    </div>
-  )
-}
-
 export function DiagnosisPage(): React.JSX.Element {
   const [draft, setDraft] = useState<DiagnosisDraft>(() => ({ ...initialDraft }))
-  const [signedDiagnosis, setSignedDiagnosis] = useState<DiagnosisDraft>(() => ({ ...initialDraft }))
   const [isDirty, setIsDirty] = useState(false)
   const [linkedProblemIds, setLinkedProblemIds] = useState<string[]>(initialLinkedProblemIds)
   const [followUpDate, setFollowUpDate] = useState('2025-06-09')
@@ -197,8 +145,7 @@ export function DiagnosisPage(): React.JSX.Element {
     setIsDirty(true)
   }
 
-  const signDiagnosis = (): void => {
-    setSignedDiagnosis({ ...draft, evidence: [...draft.evidence] })
+  const saveDiagnosis = (): void => {
     setIsDirty(false)
   }
 
@@ -209,53 +156,42 @@ export function DiagnosisPage(): React.JSX.Element {
 
   return (
     <div className="@container/diagnosis mx-auto flex w-full max-w-[1280px] flex-col gap-4 p-4">
-      <div className="grid items-start gap-4 @min-[880px]/diagnosis:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ClipboardPenLineIcon className="size-4 text-muted-foreground" aria-hidden="true" />
-              诊断录入
-            </CardTitle>
-            <CardDescription>确认本次就诊的最终诊断与临床依据</CardDescription>
-            <CardAction>
-              <Button onClick={resetDraft} size="sm" type="button" variant="ghost">
-                <RotateCcwIcon data-icon="inline-start" />
-                清空
-              </Button>
-            </CardAction>
-          </CardHeader>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ClipboardPenLineIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+            诊断录入
+          </CardTitle>
+          <CardAction>
+            <Button onClick={resetDraft} size="sm" type="button" variant="ghost">
+              <RotateCcwIcon data-icon="inline-start" />
+              清空
+            </Button>
+          </CardAction>
+        </CardHeader>
 
-          <CardContent>
-            <FieldGroup className="gap-4">
-              <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_9rem]">
-                <Field>
-                  <FieldLabel htmlFor="diagnosis-primary">主诊断 *</FieldLabel>
-                  <Select
-                    items={diagnosisSelectItems}
-                    onValueChange={value => updateDraft('primaryDiagnosis', String(value))}
-                    value={draft.primaryDiagnosis}
-                  >
-                    <SelectTrigger className="w-full" id="diagnosis-primary">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent alignItemWithTrigger={false}>
-                      <SelectGroup>
-                        {diagnosisSelectItems.map(item => (
-                          <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="diagnosis-icd10">ICD-10 编码 *</FieldLabel>
-                  <Input
-                    id="diagnosis-icd10"
-                    onChange={event => updateDraft('icd10', event.target.value)}
-                    value={draft.icd10}
-                  />
-                </Field>
-              </div>
+        <CardContent>
+          <FieldGroup className="gap-5">
+            <FieldGroup className="grid gap-4 @min-[680px]/diagnosis:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="diagnosis-primary">主诊断 *</FieldLabel>
+                <Select
+                  items={diagnosisSelectItems}
+                  onValueChange={value => updateDraft('primaryDiagnosis', String(value))}
+                  value={draft.primaryDiagnosis}
+                >
+                  <SelectTrigger className="w-full" id="diagnosis-primary">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {diagnosisSelectItems.map(item => (
+                        <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
 
               <Field>
                 <FieldLabel htmlFor="diagnosis-secondary">次要诊断</FieldLabel>
@@ -276,29 +212,19 @@ export function DiagnosisPage(): React.JSX.Element {
                   </SelectContent>
                 </Select>
               </Field>
+            </FieldGroup>
 
-              <FieldSet>
-                <FieldLegend variant="label">诊断依据 *</FieldLegend>
-                <FieldDescription>选择已在问诊、查体或检验中确认的依据</FieldDescription>
-                <ToggleGroup
-                  aria-label="诊断依据"
-                  className="w-full flex-wrap justify-start"
-                  multiple
-                  onValueChange={values => updateDraft('evidence', values as string[])}
-                  size="sm"
-                  value={draft.evidence}
-                  variant="outline"
-                >
-                  {evidenceOptions.map(evidence => (
-                    <ToggleGroupItem aria-label={evidence} key={evidence} value={evidence}>
-                      <CheckIcon aria-hidden="true" />
-                      {evidence}
-                    </ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
-              </FieldSet>
+            <FieldGroup className="grid gap-4 @min-[680px]/diagnosis:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="diagnosis-icd10">ICD-10 编码 *</FieldLabel>
+                <Input
+                  id="diagnosis-icd10"
+                  onChange={event => updateDraft('icd10', event.target.value)}
+                  value={draft.icd10}
+                />
+              </Field>
 
-              <div className="grid gap-4 sm:grid-cols-2">
+              <FieldGroup className="grid grid-cols-[minmax(0,1fr)_auto] gap-4">
                 <Field>
                   <FieldLabel htmlFor="diagnosis-severity">病情分级</FieldLabel>
                   <Select
@@ -318,8 +244,9 @@ export function DiagnosisPage(): React.JSX.Element {
                     </SelectContent>
                   </Select>
                 </Field>
+
                 <FieldSet>
-                  <FieldLegend variant="label">纳入慢病管理</FieldLegend>
+                  <FieldLegend variant="label">慢病管理</FieldLegend>
                   <ToggleGroup
                     aria-label="是否纳入慢病管理"
                     onValueChange={values => {
@@ -334,19 +261,42 @@ export function DiagnosisPage(): React.JSX.Element {
                     <ToggleGroupItem value="no">否</ToggleGroupItem>
                   </ToggleGroup>
                 </FieldSet>
-              </div>
+              </FieldGroup>
+            </FieldGroup>
 
+            <FieldSet>
+              <FieldLegend variant="label">诊断依据 *</FieldLegend>
+              <FieldDescription>选择已在问诊、查体或检验中确认的依据</FieldDescription>
+              <ToggleGroup
+                aria-label="诊断依据"
+                className="w-full flex-wrap justify-start"
+                multiple
+                onValueChange={values => updateDraft('evidence', values as string[])}
+                size="sm"
+                value={draft.evidence}
+                variant="outline"
+              >
+                {evidenceOptions.map(evidence => (
+                  <ToggleGroupItem aria-label={evidence} key={evidence} value={evidence}>
+                    <CheckIcon aria-hidden="true" />
+                    {evidence}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+            </FieldSet>
+
+            <FieldGroup className="grid gap-4 @min-[760px]/diagnosis:grid-cols-[minmax(0,1.35fr)_minmax(15rem,0.65fr)]">
               <Field>
                 <FieldLabel htmlFor="diagnosis-notes">诊断备注</FieldLabel>
                 <Textarea
                   id="diagnosis-notes"
                   onChange={event => updateDraft('notes', event.target.value)}
-                  rows={4}
+                  rows={5}
                   value={draft.notes}
                 />
               </Field>
 
-              <div className="grid gap-4 sm:grid-cols-2">
+              <FieldGroup className="gap-4">
                 <Field>
                   <FieldLabel htmlFor="diagnosis-time">诊断时间</FieldLabel>
                   <Input
@@ -375,103 +325,29 @@ export function DiagnosisPage(): React.JSX.Element {
                     </SelectContent>
                   </Select>
                 </Field>
-              </div>
+              </FieldGroup>
             </FieldGroup>
-          </CardContent>
+          </FieldGroup>
+        </CardContent>
 
-          <CardFooter className="gap-3">
-            <p className="mr-auto text-xs text-muted-foreground">
-              {isDirty ? '当前修改尚未签署' : '诊断已签署，可继续开立处方'}
-            </p>
-            <Button onClick={signDiagnosis} type="button">
-              <BadgeCheckIcon data-icon="inline-start" />
-              保存并签署
-            </Button>
-          </CardFooter>
-        </Card>
+        <CardFooter className="flex-wrap gap-3">
+          <p className="mr-auto text-xs text-muted-foreground">
+            {isDirty ? '当前修改尚未保存' : '诊断信息已保存'}
+          </p>
+          <Button onClick={saveDiagnosis} type="button">
+            <SaveIcon data-icon="inline-start" />
+            保存诊断
+          </Button>
+        </CardFooter>
+      </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <BadgeCheckIcon className="size-4 text-muted-foreground" aria-hidden="true" />
-              已签署诊断
-            </CardTitle>
-            <CardDescription>当前有效的医生诊断结论</CardDescription>
-            <CardAction><Badge variant="success">签署有效</Badge></CardAction>
-          </CardHeader>
-
-          <CardContent className="flex flex-col gap-4">
-            <div>
-              <DiagnosisSummaryRow
-                code={diagnosisCode(signedDiagnosis.primaryDiagnosis)}
-                index={1}
-                label={diagnosisLabel(signedDiagnosis.primaryDiagnosis)}
-                role="主诊断"
-              />
-              <Separator />
-              <DiagnosisSummaryRow
-                code={diagnosisCode(signedDiagnosis.secondaryDiagnosis)}
-                index={2}
-                label={diagnosisLabel(signedDiagnosis.secondaryDiagnosis)}
-                role="次要诊断"
-              />
-            </div>
-
-            <Separator />
-
-            <dl className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <dt className="text-xs text-muted-foreground">病情分级</dt>
-                <dd className="mt-1 font-medium">{severityLabel(signedDiagnosis.severity)}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">慢病管理</dt>
-                <dd className="mt-1 font-medium">{signedDiagnosis.chronic === 'yes' ? '纳入' : '不纳入'}</dd>
-              </div>
-              <div className="sm:col-span-2">
-                <dt className="text-xs text-muted-foreground">录入 ICD-10</dt>
-                <dd className="mt-1 font-medium">{signedDiagnosis.icd10 || '未填写'}</dd>
-              </div>
-            </dl>
-
-            <div>
-              <p className="text-xs text-muted-foreground">诊断依据</p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {signedDiagnosis.evidence.length === 0
-                  ? <span className="text-sm text-muted-foreground">未选择临床依据</span>
-                  : signedDiagnosis.evidence.map(evidence => (
-                    <Badge key={evidence} variant="secondary">{evidence}</Badge>
-                  ))}
-              </div>
-            </div>
-
-            <div>
-              <p className="text-xs text-muted-foreground">医生备注</p>
-              <p className="mt-1 text-sm leading-6">{signedDiagnosis.notes || '无'}</p>
-            </div>
-          </CardContent>
-
-          <CardFooter className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="flex items-center gap-2 text-xs">
-              <CalendarClockIcon className="size-4 text-muted-foreground" aria-hidden="true" />
-              <span>{signedDiagnosis.time.replace('T', ' ')}</span>
-            </div>
-            <div className="flex items-center gap-2 text-xs sm:justify-end">
-              <UserRoundIcon className="size-4 text-muted-foreground" aria-hidden="true" />
-              <span>{doctorLabel(signedDiagnosis.doctor)}</span>
-            </div>
-          </CardFooter>
-        </Card>
-      </div>
-
-      <div className="grid items-start gap-4 @min-[880px]/diagnosis:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+      <div className="grid items-start gap-4 @min-[960px]/diagnosis:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <LinkIcon className="size-4 text-muted-foreground" aria-hidden="true" />
               问题与既往史关联
             </CardTitle>
-            <CardDescription>勾选本次诊断需要引用的患者问题</CardDescription>
             <CardAction><Badge variant="outline">已关联 {linkedProblemIds.length} 项</Badge></CardAction>
           </CardHeader>
           <CardContent>
@@ -514,14 +390,13 @@ export function DiagnosisPage(): React.JSX.Element {
         <Card>
           <CardHeader>
             <CardTitle>随访与处置计划</CardTitle>
-            <CardDescription>记录患者离开诊室后的明确安排</CardDescription>
             <CardAction>
               {planSaved ? <Badge variant="success">已保存</Badge> : <Badge variant="secondary">待保存</Badge>}
             </CardAction>
           </CardHeader>
           <CardContent>
             <FieldGroup className="gap-4">
-              <div className="grid gap-4 sm:grid-cols-2">
+              <FieldGroup className="grid gap-4 sm:grid-cols-2">
                 <Field>
                   <FieldLabel htmlFor="follow-up-date">复诊日期</FieldLabel>
                   <Input
@@ -550,7 +425,7 @@ export function DiagnosisPage(): React.JSX.Element {
                     </SelectContent>
                   </Select>
                 </Field>
-              </div>
+              </FieldGroup>
               <Field>
                 <FieldLabel htmlFor="follow-up-notes">注意事项</FieldLabel>
                 <Textarea

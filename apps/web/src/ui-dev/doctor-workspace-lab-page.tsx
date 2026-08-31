@@ -6,7 +6,6 @@ import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import {
   Field,
-  FieldDescription,
   FieldGroup,
   FieldLabel,
   FieldLegend,
@@ -35,7 +34,6 @@ import { ExaminationPage } from './doctor-pages/examination-page.tsx'
 import { LaboratoryPage } from './doctor-pages/laboratory-page.tsx'
 import { PrescriptionPage } from './doctor-pages/prescription-page.tsx'
 import {
-  AudioLinesIcon,
   BotIcon,
   CalendarDaysIcon,
   CalendarClockIcon,
@@ -200,15 +198,6 @@ const assistantCopyByTab: Record<MainTab, {
   },
 }
 
-const symptomOptions = [
-  { label: '咳嗽', value: 'cough' },
-  { label: '咳痰', value: 'sputum' },
-  { label: '发热', value: 'fever' },
-  { label: '咽痛', value: 'sore-throat' },
-  { label: '乏力', value: 'fatigue' },
-  { label: '头痛', value: 'headache' },
-] as const
-
 const onsetUnitItems = [
   { label: '小时', value: 'hour' },
   { label: '天', value: 'day' },
@@ -294,31 +283,12 @@ const prescriptionTypeItems = [
   { label: '外用药处方', value: 'topical' },
 ] as const
 
-const recordTypeItems = [
-  { label: '门诊病历', value: 'outpatient' },
-  { label: '复诊病历', value: 'revisit' },
-  { label: '专病随访记录', value: 'follow-up' },
-] as const
-
-const dispositionItems = [
-  { label: '门诊治疗', value: 'outpatient' },
-  { label: '留观', value: 'observation' },
-  { label: '转急诊', value: 'emergency' },
-  { label: '建议住院', value: 'admission' },
-] as const
-
 const _labRows = [
   { date: '2025-05-06', item: '胸部 CT 平扫', result: '双肺支气管壁增厚，右肺下叶可见少量炎性渗出影。', status: '报告已出' },
   { date: '2025-05-06', item: '血常规（五分类）', result: '白细胞 8.21 x10^9/L，中性粒细胞 72.3% ↑', status: '报告已出' },
   { date: '2025-05-06', item: 'C 反应蛋白（CRP）', result: '14.6 mg/L ↑', status: '报告已出' },
   { date: '2025-05-06', item: '甲型流感病毒抗原', result: '阴性', status: '报告已出' },
   { date: '2025-04-20', item: '肝功能（八项）', result: '谷丙转氨酶 28 U/L，余正常', status: '报告已出' },
-] as const
-
-const historyRows = [
-  { date: '2025-03-18', detail: '血压控制稳定，继续口服氨氯地平 5 mg qd，低盐饮食、定期监测。', title: '高血压病 · 复诊' },
-  { date: '2024-11-02', detail: '给予对症治疗，症状好转。', title: '急性上呼吸道感染 · 门诊' },
-  { date: '2024-07-15', detail: '建议清淡饮食、规律作息，避免辛辣刺激食物。', title: '慢性胃炎 · 门诊' },
 ] as const
 
 const avatarCache = new Map<string, string>()
@@ -581,7 +551,7 @@ function DoctorWorkspace({ mainTab, onMainTabChange, onSave, onSearchChange, onS
             ))}
           </TabsList>
           <TabsContent className="pt-3" value="consultation"><StructuredInquiry key={`consultation:${patient.id}`} patient={patient} /></TabsContent>
-          <TabsContent className="pt-3" value="record"><MedicalRecordEditor key={`record:${patient.id}`} patient={patient} /></TabsContent>
+          <TabsContent className="pt-3" value="record"><MedicalRecordPreview key={`record:${patient.id}`} onEdit={() => onMainTabChange('consultation')} patient={patient} /></TabsContent>
           <TabsContent className="pt-3" value="examination"><ExaminationPage key={`examination:${patient.id}`} /></TabsContent>
           <TabsContent className="pt-3" value="laboratory"><LaboratoryPage key={`laboratory:${patient.id}`} /></TabsContent>
           <TabsContent className="pt-3" value="diagnosis"><DiagnosisPage key={`diagnosis:${patient.id}`} /></TabsContent>
@@ -624,14 +594,8 @@ function PatientFact({ label, value }: { label: string; value: string }): React.
 
 function StructuredInquiry({ patient }: { patient: Patient }): React.JSX.Element {
   const [saved, setSaved] = useState(false)
-  const [symptoms, setSymptoms] = useState<string[]>(['cough', 'fever', 'sore-throat', 'fatigue'])
   return (
     <section className="rounded-md border bg-background">
-      <PanelHeader
-        action={<div className="flex gap-2"><Button size="xs" variant="outline"><AudioLinesIcon data-icon="inline-start" />AI 语音转写</Button><Button size="xs" variant="outline">从分诊同步</Button></div>}
-        aside="接诊中"
-        title="结构化问诊"
-      />
       <form onSubmit={event => { event.preventDefault(); setSaved(true) }}>
         <FieldGroup className="p-4">
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_12rem_10rem]">
@@ -652,29 +616,24 @@ function StructuredInquiry({ patient }: { patient: Patient }): React.JSX.Element
             </Field>
           </div>
 
-          <FieldSet>
-            <FieldLegend variant="label">主要症状</FieldLegend>
-            <ToggleGroup className="flex-wrap justify-start" multiple onValueChange={setSymptoms} size="sm" spacing={2} value={symptoms} variant="outline">
-              {symptomOptions.map(item => <ToggleGroupItem key={item.value} value={item.value}>{item.label}</ToggleGroupItem>)}
-            </ToggleGroup>
-          </FieldSet>
+          <Field>
+            <FieldLabel htmlFor={`consultation-symptoms-${patient.id}`}>主要症状</FieldLabel>
+            <Input defaultValue="咳嗽、咳痰、发热、咽痛、乏力、头痛" id={`consultation-symptoms-${patient.id}`} />
+          </Field>
 
           <Field>
             <FieldLabel htmlFor={`consultation-history-${patient.id}`}>现病史</FieldLabel>
             <Textarea defaultValue="3 天前出现咳嗽，干咳为主，伴咽部不适，1 天前体温升高，最高 38.5°C，伴乏力、头痛，无明显胸闷、气促。无恶心呕吐、腹泻、咯血。" id={`consultation-history-${patient.id}`} rows={5} />
-            <FieldDescription>按时间顺序记录症状变化、伴随症状和已采取的处理。</FieldDescription>
           </Field>
 
-          <div className="grid gap-4 xl:grid-cols-2">
-            <Field>
-              <FieldLabel htmlFor={`consultation-past-${patient.id}`}>既往史</FieldLabel>
-              <Textarea defaultValue="高血压病史 2 年，间断口服氨氯地平片，血压控制可。否认糖尿病、冠心病、肝炎、结核等病史。" id={`consultation-past-${patient.id}`} rows={4} />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor={`consultation-medication-${patient.id}`}>用药史与过敏史</FieldLabel>
-              <Textarea defaultValue={`长期用药：氨氯地平片 5 mg qd。药物过敏：${patient.allergy}。`} id={`consultation-medication-${patient.id}`} rows={4} />
-            </Field>
-          </div>
+          <Field>
+            <FieldLabel htmlFor={`consultation-past-${patient.id}`}>既往史</FieldLabel>
+            <Textarea defaultValue="高血压病史 2 年，间断口服氨氯地平片，血压控制可。否认糖尿病、冠心病、肝炎、结核等病史。" id={`consultation-past-${patient.id}`} rows={4} />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`consultation-medication-${patient.id}`}>用药史与过敏史</FieldLabel>
+            <Textarea defaultValue={`长期用药：氨氯地平片 5 mg qd。药物过敏：${patient.allergy}。`} id={`consultation-medication-${patient.id}`} rows={4} />
+          </Field>
 
           <FieldSet>
             <FieldLegend variant="label">生命体征</FieldLegend>
@@ -697,7 +656,6 @@ function StructuredInquiry({ patient }: { patient: Patient }): React.JSX.Element
           <Button
             onClick={event => {
               event.currentTarget.form?.reset()
-              setSymptoms(['cough', 'fever', 'sore-throat', 'fatigue'])
               setSaved(false)
             }}
             size="sm"
@@ -717,73 +675,28 @@ function VitalField({ defaultValue, id, label }: { defaultValue: string; id: str
   return <Field><FieldLabel htmlFor={id}>{label}</FieldLabel><Input defaultValue={defaultValue} id={id} /></Field>
 }
 
-function MedicalRecordEditor({ patient }: { patient: Patient }): React.JSX.Element {
-  const [saved, setSaved] = useState(false)
-  const [synced, setSynced] = useState(false)
+function MedicalRecordPreview({ onEdit, patient }: { onEdit: () => void; patient: Patient }): React.JSX.Element {
   return (
     <section className="rounded-md border bg-background">
-      <PanelHeader
-        action={<Button onClick={() => setSynced(true)} size="xs" variant="outline"><RefreshCwIcon data-icon="inline-start" />{synced ? '已从问诊同步' : '从问诊记录同步'}</Button>}
-        aside="门诊病历草稿"
-        title="病历填写"
-      />
-      <div className="grid xl:grid-cols-[minmax(0,1fr)_17rem]">
-        <form className="border-b xl:border-r xl:border-b-0" onSubmit={event => { event.preventDefault(); setSaved(true) }}>
-          <FieldGroup className="p-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field>
-                <FieldLabel htmlFor={`record-type-${patient.id}`}>文书类型</FieldLabel>
-                <Select defaultValue="outpatient" items={recordTypeItems}>
-                  <SelectTrigger className="w-full" id={`record-type-${patient.id}`}><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectGroup>{recordTypeItems.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
-                </Select>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor={`record-disposition-${patient.id}`}>处置去向</FieldLabel>
-                <Select defaultValue="outpatient" items={dispositionItems}>
-                  <SelectTrigger className="w-full" id={`record-disposition-${patient.id}`}><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectGroup>{dispositionItems.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
-                </Select>
-              </Field>
-            </div>
-            <Field>
-              <FieldLabel htmlFor={`record-chief-${patient.id}`}>主诉</FieldLabel>
-              <Input defaultValue={patient.chiefComplaint} id={`record-chief-${patient.id}`} />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor={`record-present-${patient.id}`}>现病史</FieldLabel>
-              <Textarea defaultValue="3 天前出现咳嗽，干咳为主，伴咽部不适；1 天前体温升高，最高 38.5°C。无明显胸闷、气促，无恶心呕吐、腹泻、咯血。" id={`record-present-${patient.id}`} rows={5} />
-            </Field>
-            <div className="grid gap-4 xl:grid-cols-2">
-              <Field><FieldLabel htmlFor={`record-past-${patient.id}`}>既往史</FieldLabel><Textarea defaultValue="高血压病史 2 年，间断口服氨氯地平片，血压控制可。" id={`record-past-${patient.id}`} rows={4} /></Field>
-              <Field><FieldLabel htmlFor={`record-personal-${patient.id}`}>个人史与家族史</FieldLabel><Textarea defaultValue="无吸烟史，偶尔饮酒。否认家族遗传病史。" id={`record-personal-${patient.id}`} rows={4} /></Field>
-            </div>
-            <Field><FieldLabel htmlFor={`record-exam-${patient.id}`}>体格检查</FieldLabel><Textarea defaultValue="T 38.5°C，P 96 次/分，R 20 次/分，BP 138/86 mmHg。咽部充血，双肺呼吸音清。" id={`record-exam-${patient.id}`} rows={4} /></Field>
-            <Field><FieldLabel htmlFor={`record-auxiliary-${patient.id}`}>辅助检查摘要</FieldLabel><Textarea defaultValue="血常规：白细胞 8.21 x10^9/L，中性粒细胞 72.3%；CRP 14.6 mg/L。" id={`record-auxiliary-${patient.id}`} rows={3} /></Field>
-            <Field><FieldLabel htmlFor={`record-advice-${patient.id}`}>处理意见与随访</FieldLabel><Textarea defaultValue="对症治疗，注意休息和补液；体温持续升高或出现呼吸困难时及时复诊。" id={`record-advice-${patient.id}`} rows={4} /></Field>
-          </FieldGroup>
-          <div className="flex items-center justify-end gap-2 border-t p-3">
-            <span className="mr-auto text-xs text-muted-foreground">{saved ? '病历草稿已保存' : '病历草稿未保存'}</span>
-            <Button size="sm" type="button" variant="outline">预览病历</Button>
-            <Button size="sm" type="submit"><SaveIcon data-icon="inline-start" />保存病历草稿</Button>
-          </div>
-        </form>
-        <aside className="bg-muted/10 p-3">
-          <h3 className="text-sm font-semibold">历史病历</h3>
-          <p className="mt-1 text-xs text-muted-foreground">近 1 年 · 3 次就诊</p>
-          <ol className="mt-3 flex flex-col gap-3">
-            {historyRows.map(row => (
-              <li className="border-l-2 border-l-border pl-3" key={row.date}>
-                <p className="text-[0.6875rem] tabular-nums text-muted-foreground">{row.date}</p>
-                <p className="mt-1 text-xs font-medium">{row.title}</p>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">{row.detail}</p>
-              </li>
-            ))}
-          </ol>
-        </aside>
-      </div>
+      <PanelHeader action={<Button onClick={onEdit} size="xs" variant="outline">返回问诊记录修改</Button>} aside="草稿预览" title="门诊病历" />
+      <dl className="p-4">
+        <RecordPreviewRow label="患者" value={`${patient.name}，${patient.gender}，${patient.age} 岁`} />
+        <RecordPreviewRow label="主诉" value={patient.chiefComplaint} />
+        <RecordPreviewRow label="现病史" value="3 天前出现咳嗽，干咳为主，伴咽部不适；1 天前体温升高，最高 38.5°C。无明显胸闷、气促，无恶心呕吐、腹泻、咯血。" />
+        <RecordPreviewRow label="既往史" value="高血压病史 2 年，间断口服氨氯地平片，血压控制可。否认糖尿病、冠心病、肝炎、结核等病史。" />
+        <RecordPreviewRow label="用药与过敏史" value={`长期用药：氨氯地平片 5 mg qd。药物过敏：${patient.allergy}。`} />
+        <RecordPreviewRow label="体格检查" value="T 38.5°C，P 96 次/分，R 20 次/分，BP 138/86 mmHg。咽部充血，双肺呼吸音清。" />
+        <RecordPreviewRow label="辅助检查" value="血常规：白细胞 8.21 x10^9/L，中性粒细胞 72.3%；CRP 14.6 mg/L。" />
+        <RecordPreviewRow label="诊断" value="急性上呼吸道感染（J06.9）；原发性高血压（I10）。" />
+        <RecordPreviewRow label="处理意见" value="对症治疗，注意休息和补液；体温持续升高或出现呼吸困难时及时复诊。" />
+      </dl>
+      <div className="flex justify-end gap-2 border-t p-3"><Button size="sm" variant="outline">打印预览</Button><Button size="sm"><SaveIcon data-icon="inline-start" />保存病历草稿</Button></div>
     </section>
   )
+}
+
+function RecordPreviewRow({ label, value }: { label: string; value: string }): React.JSX.Element {
+  return <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-4 border-b py-3 text-sm last:border-b-0"><dt className="font-medium">{label}</dt><dd className="leading-6">{value}</dd></div>
 }
 
 function _ExaminationWorkspace(): React.JSX.Element {

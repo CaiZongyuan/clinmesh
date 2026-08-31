@@ -32,24 +32,18 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
-import { cn } from '@clinmesh/ui/lib/utils'
 import {
-  CalendarClockIcon,
   CheckIcon,
-  CircleCheckIcon,
   ClipboardListIcon,
-  FileCheck2Icon,
-  FileTextIcon,
   PlusIcon,
   RefreshCwIcon,
-  ScanLineIcon,
   SearchIcon,
 } from 'lucide-react'
 import { useState } from 'react'
 
 type ExaminationPriority = 'urgent' | 'normal'
-type ExaminationRequestStatus = '已出报告' | '已开立' | '已执行' | '已预约'
 type ResultFilter = 'all' | 'pending' | 'reported'
+type WorkflowStatus = '待执行' | '报告审核中' | '报告已出'
 
 interface ExaminationCatalogItem {
   department: string
@@ -60,14 +54,14 @@ interface ExaminationCatalogItem {
 
 interface ExaminationRequest extends ExaminationCatalogItem {
   priority: ExaminationPriority
-  status: ExaminationRequestStatus
 }
 
-interface ExaminationResult {
+interface ExaminationWorkflowRow {
   finding: string
   id: string
   name: string
-  reportStatus: '待审核' | '报告已出'
+  progress: number
+  status: WorkflowStatus
   time: string
 }
 
@@ -80,62 +74,43 @@ const examinationCatalog = [
 ] as const satisfies readonly ExaminationCatalogItem[]
 
 const initialRequests: ExaminationRequest[] = [
-  { ...examinationCatalog[0], priority: 'normal', status: '已预约' },
-  { ...examinationCatalog[1], priority: 'normal', status: '已执行' },
-  { ...examinationCatalog[2], priority: 'normal', status: '已出报告' },
+  { ...examinationCatalog[0], priority: 'normal' },
+  { ...examinationCatalog[1], priority: 'normal' },
+  { ...examinationCatalog[2], priority: 'normal' },
 ]
 
-const examinationResults = [
+const initialWorkflowRows = [
   {
     finding: '两肺纹理增多，未见明显实变影；心影大小、形态正常。',
     id: 'chest-xray',
     name: '胸部 X 线片（正位）',
-    reportStatus: '报告已出',
+    progress: 100,
+    status: '报告已出',
     time: '06-06 09:45',
   },
   {
-    finding: '双肺下叶见片状磨玻璃影，右肺中叶见约 4 mm 小结节影。',
+    finding: '检查已完成，影像报告正在审核。',
     id: 'chest-ct',
     name: '胸部 CT 平扫',
-    reportStatus: '待审核',
+    progress: 82,
+    status: '报告审核中',
     time: '06-06 10:18',
   },
   {
     finding: '窦性心律，心率 86 次/分，ST-T 非特异性改变。',
     id: 'ecg',
     name: '十二导联心电图',
-    reportStatus: '报告已出',
+    progress: 100,
+    status: '报告已出',
     time: '06-06 09:32',
   },
-] as const satisfies readonly ExaminationResult[]
-
-const evidenceFacts = [
-  { label: '主诉', value: '咳嗽伴胸闷 3 天，夜间加重，偶有白痰。' },
-  { label: '现病史', value: '受凉后出现咳嗽，伴胸闷，无胸痛、气促及咯血。' },
-  { label: '体格检查', value: '体温 37.6°C，双肺呼吸音清，心率 86 次/分。' },
-  { label: '初步判断', value: '急性上呼吸道感染，需排除肺部感染及其他病变。' },
-  { label: '检查目的', value: '明确病因，评估肺部感染范围并排除心源性风险。' },
-] as const
-
-const progressItems = [
-  { label: '胸部 X 线片', progress: 100, status: '已出报告', time: '10:02' },
-  { label: '胸部 CT 平扫', progress: 80, status: '待审核', time: '10:18' },
-  { label: '十二导联心电图', progress: 100, status: '已出报告', time: '09:36' },
-] as const
+] as const satisfies readonly ExaminationWorkflowRow[]
 
 const resultFilterItems = [
   { label: '全部状态', value: 'all' },
   { label: '报告已出', value: 'reported' },
-  { label: '待审核', value: 'pending' },
+  { label: '处理中', value: 'pending' },
 ] as const satisfies ReadonlyArray<{ label: string; value: ResultFilter }>
-
-const progressStages = [
-  { complete: true, icon: FileTextIcon, label: '已申请', time: '09:18' },
-  { complete: true, icon: FileCheck2Icon, label: '已缴费', time: '09:20' },
-  { complete: true, icon: CalendarClockIcon, label: '已预约', time: '09:22' },
-  { active: true, icon: ScanLineIcon, label: '执行中', time: '3 / 5 项' },
-  { icon: ClipboardListIcon, label: '出报告', time: '部分完成' },
-] as const
 
 export function ExaminationPage(): React.JSX.Element {
   const [composerOpen, setComposerOpen] = useState(false)
@@ -145,15 +120,16 @@ export function ExaminationPage(): React.JSX.Element {
   const [resultFilter, setResultFilter] = useState<ResultFilter>('all')
   const [search, setSearch] = useState('')
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([])
+  const [workflowRows, setWorkflowRows] = useState<ExaminationWorkflowRow[]>([...initialWorkflowRows])
 
   const normalizedSearch = search.trim().toLowerCase()
   const catalogItems = normalizedSearch.length === 0
     ? examinationCatalog
     : examinationCatalog.filter(item => `${item.name}${item.department}`.toLowerCase().includes(normalizedSearch))
   const requestedIds = new Set(requests.map(item => item.id))
-  const filteredResults = examinationResults.filter(result => {
-    if (resultFilter === 'reported') return result.reportStatus === '报告已出'
-    if (resultFilter === 'pending') return result.reportStatus === '待审核'
+  const filteredResults = workflowRows.filter(result => {
+    if (resultFilter === 'reported') return result.status === '报告已出'
+    if (resultFilter === 'pending') return result.status !== '报告已出'
     return true
   })
 
@@ -173,7 +149,18 @@ export function ExaminationPage(): React.JSX.Element {
 
     setRequests(current => [
       ...current,
-      ...selectedItems.map(item => ({ ...item, priority, purpose: clinicalPurpose, status: '已开立' as const })),
+      ...selectedItems.map(item => ({ ...item, priority, purpose: clinicalPurpose })),
+    ])
+    setWorkflowRows(current => [
+      ...current,
+      ...selectedItems.map(item => ({
+        finding: '检查已开立，等待患者完成预约与执行。',
+        id: item.id,
+        name: item.name,
+        progress: 18,
+        status: '待执行' as const,
+        time: '刚刚开立',
+      })),
     ])
     setSelectedProjectIds([])
     setComposerOpen(false)
@@ -181,7 +168,7 @@ export function ExaminationPage(): React.JSX.Element {
 
   return (
     <>
-      <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(20rem,0.82fr)_minmax(0,1.18fr)]">
         <WorkspaceSection
           action={
             <div className="flex items-center gap-2">
@@ -200,15 +187,13 @@ export function ExaminationPage(): React.JSX.Element {
         >
           <Table className="table-fixed">
             <colgroup>
-              <col className="w-[42%]" />
-              <col className="w-[38%]" />
-              <col className="w-[20%]" />
+              <col className="w-[46%]" />
+              <col className="w-[54%]" />
             </colgroup>
             <TableHeader>
               <TableRow>
                 <TableHead>检查项目</TableHead>
                 <TableHead>临床目的</TableHead>
-                <TableHead>状态</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -221,9 +206,6 @@ export function ExaminationPage(): React.JSX.Element {
                     </span>
                   </TableCell>
                   <TableCell className="whitespace-normal text-xs leading-5 text-muted-foreground">{request.purpose}</TableCell>
-                  <TableCell>
-                    <RequestStatusBadge status={request.status} />
-                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -252,20 +234,20 @@ export function ExaminationPage(): React.JSX.Element {
               </Select>
             </div>
           }
-          description="最近一次同步 10:26"
-          title="检查结果"
+          description={`${workflowRows.filter(row => row.status === '报告已出').length} 份报告 · ${workflowRows.length} 项检查`}
+          title="检查结果与进度"
         >
           <Table className="table-fixed">
             <colgroup>
-              <col className="w-[34%]" />
-              <col className="w-[46%]" />
-              <col className="w-[20%]" />
+              <col className="w-[30%]" />
+              <col className="w-[43%]" />
+              <col className="w-[27%]" />
             </colgroup>
             <TableHeader>
               <TableRow>
                 <TableHead>检查项目</TableHead>
                 <TableHead>主要所见</TableHead>
-                <TableHead>报告状态</TableHead>
+                <TableHead>执行进度</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -276,48 +258,17 @@ export function ExaminationPage(): React.JSX.Element {
                     <span className="block text-xs tabular-nums text-muted-foreground">{result.time}</span>
                   </TableCell>
                   <TableCell className="whitespace-normal text-xs leading-5">{result.finding}</TableCell>
-                  <TableCell>
-                    <Badge variant={result.reportStatus === '报告已出' ? 'success' : 'warning'}>{result.reportStatus}</Badge>
+                  <TableCell className="whitespace-normal">
+                    <div className="flex items-center gap-2">
+                      <Progress aria-label={`${result.name}${result.status}`} className="min-w-16 flex-1" value={result.progress} />
+                      <span className="w-8 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{result.progress}%</span>
+                    </div>
+                    <Badge className="mt-2" variant={result.status === '报告已出' ? 'success' : result.status === '报告审核中' ? 'warning' : 'secondary'}>{result.status}</Badge>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
-        </WorkspaceSection>
-
-        <WorkspaceSection description="来自当前问诊记录" title="检查相关病历依据">
-          <dl className="flex flex-col px-4 py-2">
-            {evidenceFacts.map(fact => (
-              <div className="grid grid-cols-[5rem_minmax(0,1fr)] gap-4 border-b py-3 last:border-b-0" key={fact.label}>
-                <dt className="text-xs font-medium text-muted-foreground">{fact.label}</dt>
-                <dd className="text-sm leading-6">{fact.value}</dd>
-              </div>
-            ))}
-          </dl>
-        </WorkspaceSection>
-
-        <WorkspaceSection description="预计 12:30 前全部完成" title="检查进度">
-          <ol className="grid grid-cols-5 border-b px-4 py-5">
-            {progressStages.map((stage, index) => (
-              <ProgressStage index={index} key={stage.label} {...stage} />
-            ))}
-          </ol>
-          <div className="flex flex-col px-4 py-2">
-            {progressItems.map(item => (
-              <div className="grid grid-cols-[minmax(7rem,1fr)_6rem_4.5rem] items-center gap-3 border-b py-3 last:border-b-0" key={item.label}>
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-medium">{item.label}</p>
-                  <p className="mt-0.5 text-xs tabular-nums text-muted-foreground">{item.time}</p>
-                </div>
-                <Progress aria-label={`${item.label}进度 ${item.progress}%`} value={item.progress} />
-                <Badge variant={item.status === '已出报告' ? 'success' : 'warning'}>{item.status}</Badge>
-              </div>
-            ))}
-          </div>
-          <div className="mt-auto flex items-center border-t px-4 py-3 text-xs">
-            <span>当前完成 <strong className="text-primary">3 / 5</strong> 项</span>
-            <Button className="ml-auto" size="xs" variant="link">查看详情</Button>
-          </div>
         </WorkspaceSection>
       </div>
 
@@ -426,7 +377,7 @@ function WorkspaceSection({
   title: string
 }): React.JSX.Element {
   return (
-    <section className="flex min-h-[21rem] min-w-0 flex-col overflow-hidden rounded-lg border bg-background">
+    <section className="flex min-h-[34rem] min-w-0 flex-col overflow-hidden rounded-lg border bg-background">
       <header className="flex min-h-14 items-center gap-3 border-b px-4 py-3">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold">{title}</h2>
@@ -436,40 +387,5 @@ function WorkspaceSection({
       </header>
       <div className="flex min-h-0 flex-1 flex-col overflow-auto">{children}</div>
     </section>
-  )
-}
-
-function RequestStatusBadge({ status }: { status: ExaminationRequestStatus }): React.JSX.Element {
-  const variant = status === '已出报告' ? 'success' : status === '已执行' ? 'info' : status === '已开立' ? 'secondary' : 'warning'
-  return <Badge variant={variant}>{status}</Badge>
-}
-
-function ProgressStage({
-  active = false,
-  complete = false,
-  icon: Icon,
-  index,
-  label,
-  time,
-}: {
-  active?: boolean
-  complete?: boolean
-  icon: typeof FileTextIcon
-  index: number
-  label: string
-  time: string
-}): React.JSX.Element {
-  return (
-    <li className="relative flex min-w-0 flex-col items-center gap-1.5 text-center">
-      {index === 0 ? null : <span aria-hidden="true" className="absolute right-1/2 top-4 h-px w-full bg-border" />}
-      <span className={cn(
-        'relative flex size-8 items-center justify-center rounded-full border bg-background [&>svg]:size-4',
-        complete ? 'border-primary text-primary' : active ? 'border-info text-info' : 'text-muted-foreground',
-      )}>
-        {complete ? <CircleCheckIcon aria-hidden="true" /> : <Icon aria-hidden="true" />}
-      </span>
-      <span className="text-xs font-medium">{label}</span>
-      <span className="text-[0.6875rem] tabular-nums text-muted-foreground">{time}</span>
-    </li>
   )
 }

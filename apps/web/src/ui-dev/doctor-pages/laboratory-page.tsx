@@ -3,14 +3,7 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Progress } from '@clinmesh/ui/components/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { cn } from '@clinmesh/ui/lib/utils'
-import {
-  CircleCheckIcon,
-  FileCheck2Icon,
-  MicroscopeIcon,
-  PlusIcon,
-  SyringeIcon,
-  TestTube2Icon,
-} from 'lucide-react'
+import { PlusIcon } from 'lucide-react'
 import { useState } from 'react'
 
 const requests = [
@@ -50,7 +43,7 @@ export function LaboratoryPage(): React.JSX.Element {
               <TableBody>{requests.map(item => <TableRow key={item.name}><TableCell className="whitespace-nowrap text-xs font-medium">{item.name}</TableCell><TableCell className="text-xs">{item.sample}</TableCell><TableCell className="text-xs">{item.fasting}</TableCell><TableCell className="text-xs">{item.priority}</TableCell><TableCell className="whitespace-nowrap text-xs tabular-nums">05-06 {item.time}</TableCell><TableCell><Badge variant={statusVariant(item.status)}>{item.status}</Badge></TableCell></TableRow>)}</TableBody>
             </Table>
           </div>
-          <div className="border-t px-3 py-2 text-xs text-muted-foreground">共 {added ? 7 : 6} 项</div>
+          <div className="flex items-center gap-3 border-t px-3 py-2 text-xs"><span>共 {added ? 7 : 6} 项</span><span className="ml-auto text-success">已采样 / 已报告 3</span><span className="text-info">检验中 1</span><span className="text-warning-foreground">待采样 2</span></div>
         </section>
 
         <section className="overflow-hidden rounded-md border bg-background">
@@ -61,38 +54,7 @@ export function LaboratoryPage(): React.JSX.Element {
               <TableBody>{results.map(item => <TableRow key={item.item}><TableCell className="whitespace-nowrap text-xs font-medium">{item.item}</TableCell><TableCell className={cn('whitespace-nowrap text-xs tabular-nums', item.flag === '—' ? '' : 'font-medium text-destructive')}>{item.value}</TableCell><TableCell className="text-xs">{item.unit}</TableCell><TableCell className="whitespace-nowrap text-xs">{item.reference}</TableCell><TableCell>{item.flag === '—' ? <span className="text-xs text-muted-foreground">—</span> : <Badge variant="destructive">{item.flag}</Badge>}</TableCell><TableCell><Badge variant="success">已审核</Badge></TableCell></TableRow>)}</TableBody>
             </Table>
           </div>
-        </section>
-      </div>
-
-      <div className="grid gap-3 2xl:grid-cols-[36%_minmax(0,64%)]">
-        <section className="rounded-md border bg-background">
-          <PageHeader title="异常指标汇总" />
-          <dl className="grid gap-2 p-3">
-            <AbnormalFact label="C 反应蛋白" reference="0-8 mg/L" value="18.7 mg/L" />
-            <AbnormalFact label="中性粒细胞%" reference="40.0-75.0%" value="78.6%" />
-            <AbnormalFact label="ALT" reference="7-40 U/L" value="46 U/L" />
-            <AbnormalFact label="尿蛋白" reference="阴性" value="1+" />
-          </dl>
-        </section>
-
-        <section className="rounded-md border bg-background">
-          <PageHeader title="采样与报告进度" />
-          <div className="flex items-center justify-center gap-6 border-b p-3 text-xs">
-            <Stage icon={FileCheck2Icon} label="已开立" />
-            <span className="text-muted-foreground">→</span>
-            <Stage icon={SyringeIcon} label="已采样" />
-            <span className="text-muted-foreground">→</span>
-            <Stage icon={MicroscopeIcon} label="检验中" />
-            <span className="text-muted-foreground">→</span>
-            <Stage icon={CircleCheckIcon} label="已出报告" />
-          </div>
-          <div className="p-3">
-            <ProgressRow label="血常规（五分类）" progress={100} status="已出报告" time="2025-05-06 09:28" />
-            <ProgressRow label="C 反应蛋白（CRP）" progress={100} status="已出报告" time="2025-05-06 09:28" />
-            <ProgressRow label="肝功能（八项）" progress={100} status="已出报告" time="2025-05-06 10:25" />
-            <ProgressRow label="肾功能三项" progress={66} status="检验中" time="—" />
-            <ProgressRow label="尿常规" progress={20} status="待采样" time="—" />
-          </div>
+          <div className="flex items-center gap-3 border-t px-3 py-2 text-xs"><span>报告审核 8 / 8</span><Progress className="ml-auto w-28" value={100} /><Badge variant="success">全部已审核</Badge></div>
         </section>
       </div>
     </div>
@@ -107,16 +69,4 @@ function statusVariant(status: string): 'info' | 'success' | 'warning' {
   if (status === '已出报告' || status === '已采样') return 'success'
   if (status === '检验中') return 'info'
   return 'warning'
-}
-
-function AbnormalFact({ label, reference, value }: { label: string; reference: string; value: string }): React.JSX.Element {
-  return <div className="grid grid-cols-[minmax(0,1fr)_5rem] items-center gap-3 rounded-md border p-2 text-xs"><div><dt className="font-medium">{label}</dt><dd className="mt-1 text-muted-foreground">参考 {reference}</dd></div><strong className="text-right tabular-nums text-destructive">{value}</strong></div>
-}
-
-function Stage({ icon: Icon, label }: { icon: typeof TestTube2Icon; label: string }): React.JSX.Element {
-  return <span className="flex items-center gap-1.5"><Icon className="size-4 text-primary" /><strong className="font-medium">{label}</strong></span>
-}
-
-function ProgressRow({ label, progress, status, time }: { label: string; progress: number; status: string; time: string }): React.JSX.Element {
-  return <div className="grid grid-cols-[9rem_minmax(0,1fr)_7rem_5rem] items-center gap-3 border-b py-2 text-xs last:border-b-0"><span className="font-medium">{label}</span><Progress value={progress} /><span className="tabular-nums text-muted-foreground">{time}</span><Badge variant={statusVariant(status)}>{status}</Badge></div>
 }
