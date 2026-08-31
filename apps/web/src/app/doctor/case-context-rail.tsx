@@ -1,4 +1,4 @@
-import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
+import type { DoctorCaseDetail, EncounterCompletionPreview } from '@clinmesh/contracts/his'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { PanelRightCloseIcon, PanelRightOpenIcon } from 'lucide-react'
@@ -26,6 +26,9 @@ const copy = {
     recordCount: (count: number) => `${count} records`,
     reportAbnormalities: (count: number) => `${count} abnormal results`,
     signedVersions: (count: number) => `${count} signed versions`,
+    vitalSigns: 'Vital signs',
+    complete: 'Complete',
+    incomplete: 'Incomplete',
   },
   'zh-CN': {
     availableQuestions: '可提问项',
@@ -46,6 +49,9 @@ const copy = {
     recordCount: (count: number) => `${count} 条记录`,
     reportAbnormalities: (count: number) => `${count} 项异常结果`,
     signedVersions: (count: number) => `${count} 个签署版本`,
+    vitalSigns: '生命体征',
+    complete: '已完成',
+    incomplete: '待完成',
   },
 } as const
 
@@ -156,16 +162,21 @@ function PageContext({ detail, locale, messages, section }: {
 
   const requests = detail.laboratoryRequests?.requests ?? []
   const pendingReports = requests.filter(request => request.status === 'reported').length
-  const abnormalResults = requests.flatMap(request => request.report?.results ?? [])
+  const reportResults = requests.flatMap(request => request.report?.results ?? [])
+  const legacyReport = detail.report
+  const abnormalResults = [...reportResults, ...(legacyReport?.results ?? [])]
     .filter(result => result.interpretation !== 'normal').length
   return (
     <section aria-labelledby={headingId}>
       <h3 className="text-sm font-semibold" id={headingId}>{labels.laboratoryContext}</h3>
       <dl className="mt-2 flex flex-col gap-3">
-        <ContextFact label={messages.laboratoryRequestStatus} value={labels.laboratoryRequests(requests.length)} />
+        {legacyReport === undefined ? (
+          <ContextFact label={messages.laboratoryRequestStatus} value={labels.laboratoryRequests(requests.length)} />
+        ) : null}
         <ContextFact
           label={messages.laboratoryReport}
-          value={pendingReports === 0 ? labels.noPendingReports : labels.pendingReports(pendingReports)}
+          value={legacyReport?.status
+            ?? (pendingReports === 0 ? labels.noPendingReports : labels.pendingReports(pendingReports))}
         />
         {abnormalResults === 0 ? null : (
           <ContextFact label={messages.result} value={labels.reportAbnormalities(abnormalResults)} />
@@ -176,6 +187,7 @@ function PageContext({ detail, locale, messages, section }: {
 }
 
 export function DoctorCaseContextRail({
+  completion,
   detail,
   expanded,
   locale,
@@ -184,6 +196,7 @@ export function DoctorCaseContextRail({
   section,
   statusText,
 }: {
+  completion: EncounterCompletionPreview | undefined
   detail: DoctorCaseDetail
   expanded: boolean
   locale: WorkspaceLocale
@@ -192,6 +205,9 @@ export function DoctorCaseContextRail({
   section: DoctorCaseSection
   statusText: string
 }): React.JSX.Element {
+  const labels = copy[locale]
+  const vitalSigns = detail.presentation.vitalSigns
+  const completionCount = completion?.items.filter(item => item.status === 'complete').length ?? 0
   return (
     <aside
       aria-label={messages.caseContext}
@@ -219,7 +235,7 @@ export function DoctorCaseContextRail({
         ) : null}
       </div>
       {!expanded ? null : (
-        <div className="flex min-h-0 flex-col gap-4 border-t p-4 pt-3">
+        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto border-t p-4 pt-3">
           <section aria-labelledby={`allergy-warning-heading-${detail.caseId}`} className="border-b pb-4">
             <h3 className="text-sm font-semibold" id={`allergy-warning-heading-${detail.caseId}`}>
               {messages.allergyWarnings}
@@ -249,6 +265,38 @@ export function DoctorCaseContextRail({
               />
             </dl>
           </section>
+          <section aria-labelledby={`vital-signs-heading-${detail.caseId}`} className="border-b pb-4">
+            <h3 className="text-sm font-semibold" id={`vital-signs-heading-${detail.caseId}`}>
+              {labels.vitalSigns}
+            </h3>
+            <p className="mt-2 text-sm font-medium tabular-nums">
+              T {vitalSigns.temperatureC} °C · P {vitalSigns.pulseBpm} · R {vitalSigns.respirationBpm}
+              {' · '}BP {vitalSigns.bloodPressure.systolicMmHg}/{vitalSigns.bloodPressure.diastolicMmHg}
+              {' · '}SpO₂ {vitalSigns.oxygenSaturationPct}%
+            </p>
+          </section>
+          {completion === undefined ? null : (
+            <section aria-labelledby={`completion-heading-${detail.caseId}`} className="border-b pb-4">
+              <h3 className="text-sm font-semibold" id={`completion-heading-${detail.caseId}`}>
+                {messages.encounterCompletionChecklist}
+              </h3>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {messages.encounterCompletionSatisfied
+                  .replace('{complete}', String(completionCount))
+                  .replace('{total}', String(completion.items.length))}
+              </p>
+              <ul className="mt-2 flex flex-col gap-1.5">
+                {completion.items.map(item => (
+                  <li className="flex items-center justify-between gap-2 text-xs" key={item.code}>
+                    <span>{item.statusText}</span>
+                    <Badge variant={item.status === 'complete' ? 'success' : 'secondary'}>
+                      {item.status === 'complete' ? labels.complete : labels.incomplete}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           <PageContext detail={detail} locale={locale} messages={messages} section={section} />
         </div>
       )}

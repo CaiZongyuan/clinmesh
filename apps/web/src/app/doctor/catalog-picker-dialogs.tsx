@@ -29,7 +29,7 @@ import {
   PlusIcon,
   SearchIcon,
 } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import {
   searchReferenceDiagnoses,
   searchReferenceLaboratory,
@@ -40,6 +40,7 @@ import type { WorkspaceLocale } from '../workspace-i18n.ts'
 type TriggerMode = 'add' | 'replace' | 'select'
 type PrescriptionCatalog = Extract<ClinicalCatalog, { prescriptionConclusionSupported: true }>
 type PrescriptionMedication = PrescriptionCatalog['medications'][number]
+export type ReferenceCatalogQueryScope = readonly ['reference-catalog', string, string]
 
 const copy = {
   'en-US': {
@@ -302,6 +303,7 @@ export function DiagnosisCatalogDialog({
   locale,
   mode = 'add',
   onSelect,
+  queryScope,
 }: {
   disabled?: boolean
   excludedIds: ReadonlySet<string>
@@ -309,6 +311,7 @@ export function DiagnosisCatalogDialog({
   locale: WorkspaceLocale
   mode?: TriggerMode
   onSelect: (selection: DiagnosisCatalogSelection) => void
+  queryScope: ReferenceCatalogQueryScope
 }) {
   const messages = copy[locale]
   const [open, setOpen] = useState(false)
@@ -319,7 +322,7 @@ export function DiagnosisCatalogDialog({
   const results = useQuery({
     enabled: open,
     queryFn: ({ signal }) => searchReferenceDiagnoses(query, page, signal),
-    queryKey: ['reference-diagnoses', query, page],
+    queryKey: [...queryScope, 'diagnoses', query, page],
   })
   const useLocal = results.isError
     || (query.length === 0 && results.isSuccess && results.data.items.length === 0)
@@ -472,10 +475,12 @@ export function LaboratoryCatalogDialog({
   localCatalog,
   locale,
   onSelect,
+  queryScope,
 }: {
   localCatalog: ClinicalCatalog['laboratory']
   locale: WorkspaceLocale
   onSelect: (selection: LaboratoryCatalogSelection) => void
+  queryScope: ReferenceCatalogQueryScope
 }) {
   const messages = copy[locale]
   const [open, setOpen] = useState(false)
@@ -486,7 +491,7 @@ export function LaboratoryCatalogDialog({
   const results = useQuery({
     enabled: open,
     queryFn: ({ signal }) => searchReferenceLaboratory(query, page, signal),
-    queryKey: ['reference-laboratory', query, page],
+    queryKey: [...queryScope, 'laboratory', query, page],
   })
   const useLocal = results.isError
     || (query.length === 0 && results.isSuccess && results.data.items.length === 0)
@@ -650,6 +655,7 @@ export function MedicationCatalogDialog({
   locale,
   mode = 'add',
   onSelect,
+  queryScope,
 }: {
   disabled?: boolean
   excludedIds: ReadonlySet<string>
@@ -657,6 +663,7 @@ export function MedicationCatalogDialog({
   locale: WorkspaceLocale
   mode?: TriggerMode
   onSelect: (selection: MedicationCatalogSelection) => void
+  queryScope: ReferenceCatalogQueryScope
 }) {
   const messages = copy[locale]
   const [open, setOpen] = useState(false)
@@ -667,7 +674,7 @@ export function MedicationCatalogDialog({
   const results = useQuery({
     enabled: open,
     queryFn: ({ signal }) => searchReferenceMedications(query, page, signal),
-    queryKey: ['reference-medications', query, page],
+    queryKey: [...queryScope, 'medications', query, page],
   })
   const useLocal = results.isError
     || (query.length === 0 && results.isSuccess && results.data.items.length === 0)
@@ -677,9 +684,10 @@ export function MedicationCatalogDialog({
     return normalizedLocalQuery.length === 0
       || display.toLocaleLowerCase().includes(normalizedLocalQuery)
   })
-  const referenceGroups = results.data === undefined
-    ? []
-    : groupMedicationProducts(results.data.items)
+  const referenceGroups = useMemo(
+    () => results.data === undefined ? [] : groupMedicationProducts(results.data.items),
+    [results.data],
+  )
   const openDialog = () => {
     setInput('')
     setQuery('')

@@ -17,12 +17,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardPenIcon, Trash2Icon } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import {
   DiagnosisCatalogDialog,
   type DiagnosisCatalogSelection,
+  type ReferenceCatalogQueryScope,
 } from './catalog-picker-dialogs.tsx'
 
 export interface DiagnosisPageActions {
@@ -44,16 +45,17 @@ interface DiagnosisDraftLine extends DiagnosisDraftEntry {
   note: string
 }
 
-export function DiagnosisPage({ actions, catalog, elementId, locale, messages, readOnly, state }: {
+export function DiagnosisPage({ actions, catalog, elementId, locale, messages, readOnly, referenceQueryScope, state }: {
   actions: DiagnosisPageActions
   catalog: ClinicalCatalog['diagnoses']
   elementId: string
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   readOnly: boolean
+  referenceQueryScope: ReferenceCatalogQueryScope
   state: DoctorCaseDetail['diagnosis']
 }): React.JSX.Element {
-  const catalogById = new Map(catalog.map(item => [item.id, item]))
+  const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
   const [entries, setEntries] = useState<DiagnosisDraftLine[]>(() => (
     state?.draft?.entries.map((entry, index) => ({
       ...entry,
@@ -202,6 +204,7 @@ export function DiagnosisPage({ actions, catalog, elementId, locale, messages, r
           localCatalog={catalog}
           locale={locale}
           onSelect={addEntry}
+          queryScope={referenceQueryScope}
         />
       </div>
       {entries.length === 0 ? (
@@ -256,6 +259,7 @@ export function DiagnosisPage({ actions, catalog, elementId, locale, messages, r
                         locale={locale}
                         mode="replace"
                         onSelect={selection => selectEntry(index, selection)}
+                        queryScope={referenceQueryScope}
                       />
                     </div>
                   </TableCell>

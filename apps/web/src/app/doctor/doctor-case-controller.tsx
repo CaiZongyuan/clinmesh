@@ -4,20 +4,16 @@ import {
   type ClinicalDocumentContent,
   type DiagnosisDraftEntry,
   type DoctorCaseDetail,
-  type DoctorQueueItem,
+  type EncounterCompletionPreview,
   type EncounterCompletionTarget,
-  type LaboratoryReport,
   type LaboratoryRequest,
   type LaboratoryRequestCatalogItemId,
-  type PrescriptionDraftItem,
   type SessionContext,
   type VirtualPatientList,
 } from '@clinmesh/contracts/his'
-import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -28,20 +24,17 @@ import {
 } from '@clinmesh/ui/components/alert-dialog'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
-import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/ui/components/field'
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
+import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
-import { Spinner } from '@clinmesh/ui/components/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
-import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, CircleXIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, FlaskConicalIcon, LibraryBigIcon, MessagesSquareIcon, PillIcon, PlayIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon, UserRoundPlusIcon } from 'lucide-react'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
+import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, LibraryBigIcon, MessagesSquareIcon, PillIcon, PlusIcon, RefreshCwIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ApiClientError,
   acknowledgeLaboratoryReport,
   askConsultationQuestion,
   cancelLaboratoryRequest,
@@ -82,7 +75,6 @@ import {
   type CompletedCaseCorrectionTarget,
 } from '../doctor-completed-cases.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
-import { PaginationControls } from '../pagination-controls.tsx'
 import {
   getWorkspaceErrorMessage,
   getWorkspaceErrorTitle,
@@ -90,14 +82,16 @@ import {
 import { formatFen } from '../workspace-format.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import {
-  MedicationCatalogDialog,
-  type MedicationCatalogSelection,
-} from './catalog-picker-dialogs.tsx'
-import {
   DoctorCaseContextRail,
   type DoctorCaseSection,
 } from './case-context-rail.tsx'
-import { ClinicalDocumentPage } from './clinical-document-page.tsx'
+import type { ReferenceCatalogQueryScope } from './catalog-picker-dialogs.tsx'
+import {
+  ClinicalDocumentPage,
+  type ClinicalDocumentPageActions,
+  type ClinicalDocumentRevisionInput,
+  type ClinicalDocumentSignPreview,
+} from './clinical-document-page.tsx'
 import {
   ConsultationPage,
   type ConsultationPageAction,
@@ -111,7 +105,7 @@ import {
   type LaboratoryReportCorrectionInput,
 } from './laboratory-page.tsx'
 import { PatientBanner } from './patient-summary.tsx'
-import { PrescriptionPage } from './prescription-page.tsx'
+import { PrescriptionPage, type PrescriptionPageActions } from './prescription-page.tsx'
 
 interface DoctorWorkspaceProps {
   locale: WorkspaceLocale
@@ -130,8 +124,6 @@ interface DoctorCaseControllerProps extends DoctorWorkspaceProps {
   onSelectedCaseIdChange: (caseId: string | undefined) => void
   selectedCaseId: string | undefined
 }
-
-type EncounterCompletionQueryScope = readonly ['encounter-completion', string, string]
 
 const encounterCompletionTargetElementIds = {
   diagnosis: 'encounter-completion-target-diagnosis',
@@ -192,6 +184,11 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
   const [correctionNavigation, setCorrectionNavigation] = useState<
     CompletedCaseCorrectionNavigation
   >()
+  useEffect(() => {
+    setActiveTab('active')
+    setSelectedCaseId(undefined)
+    setCorrectionNavigation(undefined)
+  }, [session.actor.epoch, session.actor.workspaceId])
   return (
     <Tabs onValueChange={value => setActiveTab(value as 'active' | 'completed')} value={activeTab}>
       <TabsList aria-label={messages.consultation} className="w-full sm:w-fit" variant="line">
@@ -207,6 +204,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
       <TabsContent className="pt-4" value="active">
         <DoctorCaseController
           correctionNavigation={correctionNavigation}
+          key={`${session.actor.workspaceId}:${session.actor.epoch}`}
           locale={locale}
           onCorrectionNavigationHandled={() => setCorrectionNavigation(current => (
             current === undefined ? undefined : { ...current, handled: true }
@@ -247,6 +245,7 @@ function DoctorCaseController({
   const queueKey = ['doctor-queue', ...scope, page] as const
   const virtualPatientScopeKey = ['doctor-virtual-patients', ...scope] as const
   const encounterCompletionScopeKey = ['encounter-completion', ...scope] as const
+  const referenceCatalogQueryScope: ReferenceCatalogQueryScope = ['reference-catalog', ...scope]
   const completedCaseListScopeKey = ['doctor-completed-cases', ...scope] as const
   const completedCaseDetailScopeKey = ['doctor-completed-case', ...scope] as const
   const virtualPatientKey = [...virtualPatientScopeKey, virtualPatientPage] as const
@@ -295,6 +294,20 @@ function DoctorCaseController({
       ? 1_500
       : false,
   })
+  const completion = useQuery({
+    enabled: detail.data?.consultation !== undefined
+      && detail.data.encounter.status === 'in-progress',
+    queryFn: ({ signal }) => getEncounterCompletion(detail.data?.encounter.id ?? '', signal),
+    queryKey: [
+      ...encounterCompletionScopeKey,
+      detail.data?.encounter.id ?? '',
+      detail.data?.encounter.versionId ?? '',
+    ],
+  })
+  useEffect(() => {
+    setLaboratoryItemId('')
+    setIndicationCode('')
+  }, [activeCaseId, session.actor.epoch, session.actor.workspaceId])
   const catalog = useQuery({
     queryFn: ({ signal }) => getClinicalCatalog(signal),
     queryKey: ['clinical-catalog', ...scope],
@@ -364,18 +377,20 @@ function DoctorCaseController({
     autoStartRequested.current = true
     startCandidate.mutate(autoStartCandidate)
   }, [autoStartCandidate, queue.data?.total, startCandidate, virtualPatients.data])
-  const refreshCase = async () => {
+  const refreshCaseById = async (caseId: string | undefined) => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queueKey }),
-      queryClient.invalidateQueries({ queryKey: detailKey }),
+      queryClient.invalidateQueries({
+        queryKey: caseId === undefined
+          ? ['doctor-case', ...scope]
+          : ['doctor-case', ...scope, caseId],
+      }),
       queryClient.invalidateQueries({ queryKey: encounterCompletionScopeKey }),
     ])
   }
+  const refreshCase = async () => refreshCaseById(activeCaseId)
   const refreshCompletedCaseDetails = async () => {
     await queryClient.invalidateQueries({ queryKey: completedCaseDetailScopeKey })
-  }
-  const refreshAfterCorrection = async () => {
-    await Promise.all([refreshCase(), refreshCompletedCaseDetails()])
   }
   const refreshAfterCompletion = async () => {
     if (detail.data !== undefined) onSelectedCaseIdChange(detail.data.caseId)
@@ -386,9 +401,9 @@ function DoctorCaseController({
     ])
   }
   const askQuestion = useMutation({
-    mutationFn: (questionCode: string) => {
+    mutationFn: ({ caseId, questionCode }: { caseId: string; questionCode: string }) => {
       const current = detail.data
-      if (current?.consultation === undefined) {
+      if (current?.caseId !== caseId || current.consultation === undefined) {
         throw new Error(messages.consultationUnavailable)
       }
       return askConsultationQuestion({
@@ -400,14 +415,19 @@ function DoctorCaseController({
         taskVersion: current.taskVersion,
       }, newIdempotencyKey())
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: detailKey }),
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
-  const signingDependencies = () => {
+  const signingDependencies = (caseId: string) => {
     const current = detail.data
     const revisit = current?.drafts?.revisit
     const prescription = current?.drafts?.prescription
     const document = current?.drafts?.document
-    if (current === undefined || revisit === undefined || prescription === undefined || document === undefined) {
+    if (
+      current?.caseId !== caseId
+      || revisit === undefined
+      || prescription === undefined
+      || document === undefined
+    ) {
       throw new Error(messages.consultationUnavailable)
     }
     const expectedVersions: Record<string, string> = {
@@ -429,8 +449,8 @@ function DoctorCaseController({
     }
   }
   const start = useMutation({
-    mutationFn: () => {
-      if (detail.data === undefined) throw new Error(messages.consultationUnavailable)
+    mutationFn: ({ caseId }: { caseId: string }) => {
+      if (detail.data?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
       return startFirstVisit({
         encounterId: detail.data.encounter.id,
         encounterVersion: detail.data.encounter.versionId,
@@ -438,11 +458,11 @@ function DoctorCaseController({
         taskVersion: detail.data.taskVersion,
       }, newIdempotencyKey())
     },
-    onSuccess: refreshCase,
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const beginRevisit = useMutation({
-    mutationFn: () => {
-      if (detail.data === undefined) throw new Error(messages.consultationUnavailable)
+    mutationFn: ({ caseId }: { caseId: string }) => {
+      if (detail.data?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
       return startRevisit({
         encounterId: detail.data.encounter.id,
         encounterVersion: detail.data.encounter.versionId,
@@ -450,11 +470,15 @@ function DoctorCaseController({
         taskVersion: detail.data.taskVersion,
       }, newIdempotencyKey())
     },
-    onSuccess: refreshCase,
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const saveDraft = useMutation({
-    mutationFn: (input: { assessment: string; historyOfPresentIllness: string }) => {
-      if (detail.data === undefined) throw new Error(messages.consultationUnavailable)
+    mutationFn: ({ caseId, ...input }: {
+      assessment: string
+      caseId: string
+      historyOfPresentIllness: string
+    }) => {
+      if (detail.data?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
       return saveFirstVisitDraft({
         ...input,
         encounterId: detail.data.encounter.id,
@@ -462,11 +486,11 @@ function DoctorCaseController({
         expectedDraftVersion: detail.data.drafts?.firstVisit?.version ?? 0,
       }, newIdempotencyKey())
     },
-    onSuccess: refreshCase,
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const issueOrder = useMutation({
-    mutationFn: () => {
-      if (detail.data === undefined || catalog.data === undefined) {
+    mutationFn: ({ caseId }: { caseId: string }) => {
+      if (detail.data?.caseId !== caseId || catalog.data === undefined) {
         throw new Error(messages.consultationUnavailable)
       }
       const catalogItemId = resolvedLaboratoryItemId
@@ -490,12 +514,12 @@ function DoctorCaseController({
         taskVersion: detail.data.taskVersion,
       }, newIdempotencyKey())
     },
-    onSuccess: refreshCase,
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const saveLaboratoryRequest = useMutation({
-    mutationFn: () => {
+    mutationFn: ({ caseId }: { caseId: string }) => {
       const current = detail.data
-      if (current === undefined
+      if (current?.caseId !== caseId
         || !isLaboratoryRequestCatalogItemId(resolvedLaboratoryItemId)
         || resolvedIndicationCode.length === 0) {
         throw new Error(messages.consultationUnavailable)
@@ -508,13 +532,13 @@ function DoctorCaseController({
         indicationCode: resolvedIndicationCode,
       }, newIdempotencyKey())
     },
-    onSuccess: refreshCase,
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const issueRequest = useMutation({
-    mutationFn: () => {
+    mutationFn: ({ caseId }: { caseId: string }) => {
       const current = detail.data
       const requestState = current?.laboratoryRequests
-      if (current === undefined || requestState?.draft === undefined) {
+      if (current?.caseId !== caseId || requestState?.draft === undefined) {
         throw new Error(messages.consultationUnavailable)
       }
       return issueLaboratoryRequest({
@@ -523,7 +547,7 @@ function DoctorCaseController({
         expectedDraftVersion: requestState.draftVersion,
       }, newIdempotencyKey())
     },
-    onSuccess: refreshCase,
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const deleteRequestDraft = useMutation({
     mutationFn: (caseId: string) => {
@@ -538,8 +562,8 @@ function DoctorCaseController({
         expectedDraftVersion: requestState.draftVersion,
       }, newIdempotencyKey())
     },
-    onError: refreshCase,
-    onSuccess: refreshCase,
+    onError: async (_error, caseId) => refreshCaseById(caseId),
+    onSuccess: async (_response, caseId) => refreshCaseById(caseId),
   })
   const cancelRequest = useMutation({
     mutationFn: ({ request }: { caseId: string; request: LaboratoryRequest }) => (
@@ -552,21 +576,21 @@ function DoctorCaseController({
         taskVersion: request.taskVersion,
       }, newIdempotencyKey())
     ),
-    onError: refreshCase,
-    onSuccess: refreshCase,
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const retryResultGeneration = useMutation({
-    mutationFn: (request: LaboratoryRequest) => retryLaboratoryResultGeneration({
+    mutationFn: ({ request }: { caseId: string; request: LaboratoryRequest }) => retryLaboratoryResultGeneration({
       requestId: request.id,
       requestVersion: request.version,
       taskId: request.taskId,
       taskVersion: request.taskVersion,
     }, newIdempotencyKey()),
-    onError: refreshCase,
-    onSuccess: refreshCase,
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const acknowledgeReport = useMutation({
-    mutationFn: (request: LaboratoryRequest) => {
+    mutationFn: ({ request }: { caseId: string; request: LaboratoryRequest }) => {
       if (request.report === undefined) throw new Error(messages.consultationUnavailable)
       return acknowledgeLaboratoryReport({
         diagnosticReportId: request.report.diagnosticReportId,
@@ -575,7 +599,7 @@ function DoctorCaseController({
         requestVersion: request.version,
       }, newIdempotencyKey())
     },
-    onSuccess: refreshCase,
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const correctReport = useMutation({
     mutationFn: ({ input, request }: {
@@ -592,13 +616,180 @@ function DoctorCaseController({
         requestVersion: request.version,
       }, newIdempotencyKey())
     },
-    onError: refreshAfterCorrection,
-    onSuccess: refreshAfterCorrection,
+    onError: async (_error, variables) => {
+      await Promise.all([
+        refreshCaseById(variables.caseId),
+        refreshCompletedCaseDetails(),
+      ])
+    },
+    onSuccess: async (_response, variables) => {
+      await Promise.all([
+        refreshCaseById(variables.caseId),
+        refreshCompletedCaseDetails(),
+      ])
+    },
+  })
+  const prepareClinicalDocumentSign = useMutation({
+    mutationFn: async ({ caseId, document }: {
+      caseId: string
+      document: ClinicalDocumentContent
+    }) => {
+      const current = detail.data
+      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
+      const saved = await saveClinicalDocumentDraft({
+        document,
+        encounterId: current.encounter.id,
+        encounterVersion: current.encounter.versionId,
+        expectedDraftVersion: current.clinicalDocument?.draft?.version ?? 0,
+      }, newIdempotencyKey())
+      return previewStructuredClinicalDocumentSign({
+        encounterId: current.encounter.id,
+        encounterVersion: current.encounter.versionId,
+        expectedDraftVersion: saved.data.draftVersion,
+      }, newIdempotencyKey())
+    },
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
+  })
+  const signStructuredDocument = useMutation({
+    mutationFn: ({ caseId, preview }: {
+      caseId: string
+      preview: ClinicalDocumentSignPreview
+    }) => {
+      const current = detail.data
+      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
+      return signStructuredClinicalDocument({
+        commitToken: preview.commitToken,
+        encounterId: current.encounter.id,
+        encounterVersion: current.encounter.versionId,
+        previewId: preview.previewId,
+      }, newIdempotencyKey())
+    },
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => {
+      prepareClinicalDocumentSign.reset()
+      await refreshCaseById(variables.caseId)
+    },
+  })
+  const reviseClinicalDocument = useMutation({
+    mutationFn: (input: ClinicalDocumentRevisionInput) => reviseStructuredClinicalDocument({
+      compositionId: input.compositionId,
+      compositionVersion: input.compositionVersion,
+      document: input.document,
+      encounterId: input.encounterId,
+      encounterVersion: input.encounterVersion,
+      reason: input.reason,
+    }, newIdempotencyKey()),
+    onError: async (_error, variables) => {
+      await Promise.all([
+        refreshCaseById(variables.caseId),
+        refreshCompletedCaseDetails(),
+      ])
+    },
+    onSuccess: async (_response, variables) => {
+      await Promise.all([
+        refreshCaseById(variables.caseId),
+        refreshCompletedCaseDetails(),
+      ])
+    },
+  })
+  const savePrescription = useMutation({
+    mutationFn: ({ caseId, items }: {
+      caseId: string
+      items: Parameters<typeof savePrescriptionDraft>[0]['items']
+    }) => {
+      const current = detail.data
+      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
+      return savePrescriptionDraft({
+        encounterId: current.encounter.id,
+        encounterVersion: current.encounter.versionId,
+        expectedDraftVersion: current.medicationConclusion?.draftVersion ?? 0,
+        items,
+      }, newIdempotencyKey())
+    },
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
+  })
+  const removePrescriptionDraft = useMutation({
+    mutationFn: ({ caseId }: { caseId: string }) => {
+      const current = detail.data
+      const state = current?.medicationConclusion
+      if (current?.caseId !== caseId || state?.draft === undefined) {
+        throw new Error(messages.consultationUnavailable)
+      }
+      return deletePrescriptionDraft({
+        encounterId: current.encounter.id,
+        encounterVersion: current.encounter.versionId,
+        expectedDraftVersion: state.draftVersion,
+      }, newIdempotencyKey())
+    },
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
+  })
+  const issueCasePrescription = useMutation({
+    mutationFn: ({ caseId }: { caseId: string }) => {
+      const current = detail.data
+      const state = current?.medicationConclusion
+      if (current?.caseId !== caseId || state?.draft === undefined) {
+        throw new Error(messages.consultationUnavailable)
+      }
+      return issuePrescription({
+        encounterId: current.encounter.id,
+        encounterVersion: current.encounter.versionId,
+        expectedDraftVersion: state.draftVersion,
+      }, newIdempotencyKey())
+    },
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
+  })
+  const confirmCaseNoMedication = useMutation({
+    mutationFn: ({ caseId }: { caseId: string }) => {
+      const current = detail.data
+      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
+      return confirmNoMedication({
+        encounterId: current.encounter.id,
+        encounterVersion: current.encounter.versionId,
+        expectedDraftVersion: current.medicationConclusion?.draftVersion ?? 0,
+      }, newIdempotencyKey())
+    },
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
+  })
+  const withdrawCasePrescription = useMutation({
+    mutationFn: ({ caseId, prescriptionId }: { caseId: string; prescriptionId: string }) => {
+      const current = detail.data
+      const prescription = current?.medicationConclusion?.prescription
+      if (current?.caseId !== caseId || prescription?.id !== prescriptionId) {
+        throw new Error(messages.consultationUnavailable)
+      }
+      return withdrawPrescription({
+        expectedPrescriptionVersion: prescription.version,
+        medicationRequests: prescription.items.map(item => ({
+          id: item.medicationRequestId,
+          version: item.medicationRequestVersion,
+        })),
+        prescriptionId: prescription.id,
+      }, newIdempotencyKey())
+    },
+    onError: async (_error, variables) => {
+      await Promise.all([
+        refreshCaseById(variables.caseId),
+        refreshCompletedCaseDetails(),
+      ])
+    },
+    onSuccess: async (_response, variables) => {
+      await Promise.all([
+        refreshCaseById(variables.caseId),
+        refreshCompletedCaseDetails(),
+      ])
+    },
   })
   const saveCaseDiagnosis = useMutation({
-    mutationFn: (entries: DiagnosisDraftEntry[]) => {
+    mutationFn: ({ caseId, entries }: {
+      caseId: string
+      entries: DiagnosisDraftEntry[]
+    }) => {
       const current = detail.data
-      if (current === undefined) throw new Error(messages.consultationUnavailable)
+      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
       return saveDiagnosisDraft({
         encounterId: current.encounter.id,
         encounterVersion: current.encounter.versionId,
@@ -606,12 +797,12 @@ function DoctorCaseController({
         expectedDraftVersion: current.diagnosis?.draftVersion ?? 0,
       }, newIdempotencyKey())
     },
-    onSuccess: refreshCase,
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const confirmCaseDiagnosis = useMutation({
-    mutationFn: () => {
+    mutationFn: ({ caseId }: { caseId: string }) => {
       const current = detail.data
-      if (current?.diagnosis?.draft === undefined) {
+      if (current?.caseId !== caseId || current.diagnosis?.draft === undefined) {
         throw new Error(messages.consultationUnavailable)
       }
       return confirmDiagnosis({
@@ -620,10 +811,11 @@ function DoctorCaseController({
         expectedDraftVersion: current.diagnosis.draftVersion,
       }, newIdempotencyKey())
     },
-    onSuccess: refreshCase,
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const saveRevisit = useMutation({
     mutationFn: (input: {
+      caseId: string
       diagnosis: { code: string; display: string }
       document: { assessment: string; plan: string }
       medications: Array<{
@@ -633,7 +825,7 @@ function DoctorCaseController({
         quantity: number
       }>
     }) => {
-      if (detail.data === undefined) throw new Error(messages.consultationUnavailable)
+      if (detail.data?.caseId !== input.caseId) throw new Error(messages.consultationUnavailable)
       const revisit = detail.data.drafts?.revisit
       const prescription = detail.data.drafts?.prescription
       const expectedVersions: Record<string, string> = {
@@ -646,7 +838,8 @@ function DoctorCaseController({
         expectedVersions[`MedicationRequest/${item.medicationRequestId}`] = item.versionId
       }
       return saveRevisitDraft({
-        ...input,
+        diagnosis: input.diagnosis,
+        document: input.document,
         draftVersions: {
           documentDraft: detail.data.drafts?.document?.version ?? 0,
           prescription: prescription?.version ?? 0,
@@ -654,17 +847,22 @@ function DoctorCaseController({
         },
         encounterId: detail.data.encounter.id,
         expectedVersions,
+        medications: input.medications,
       }, newIdempotencyKey())
     },
-    onSuccess: refreshCase,
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const previewSign = useMutation({
-    mutationFn: () => previewClinicalSign(signingDependencies(), newIdempotencyKey()),
+    mutationFn: ({ caseId }: { caseId: string }) => (
+      previewClinicalSign(signingDependencies(caseId), newIdempotencyKey())
+    ),
   })
   const completeSign = useMutation({
-    mutationFn: () => {
-      if (previewSign.data === undefined) throw new Error(messages.consultationUnavailable)
-      const dependencies = signingDependencies()
+    mutationFn: ({ caseId }: { caseId: string }) => {
+      if (previewSign.variables?.caseId !== caseId || previewSign.data === undefined) {
+        throw new Error(messages.consultationUnavailable)
+      }
+      const dependencies = signingDependencies(caseId)
       return signClinicalDocument({
         commitToken: previewSign.data.data.commitToken,
         encounterId: dependencies.encounterId,
@@ -672,7 +870,7 @@ function DoctorCaseController({
         previewId: previewSign.data.data.previewId,
       }, newIdempotencyKey())
     },
-    onSuccess: refreshCase,
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   return (
     <div className="grid min-h-[calc(100svh-9.5rem)] min-w-0 grid-cols-1 border bg-background xl:grid-cols-[300px_minmax(0,1fr)]">
@@ -705,7 +903,7 @@ function DoctorCaseController({
       />
       <section aria-labelledby="case-detail-heading" className="flex min-w-0 flex-col gap-3 p-3">
         <h2 className="sr-only" id="case-detail-heading">{messages.caseDetail}</h2>
-        {issueOrder.isSuccess ? (
+        {issueOrder.isSuccess && issueOrder.variables.caseId === activeCaseId ? (
           <Alert>
             <CheckIcon aria-hidden="true" />
             <AlertTitle>{messages.laboratoryOrderIssued}</AlertTitle>
@@ -714,7 +912,7 @@ function DoctorCaseController({
             </AlertDescription>
           </Alert>
         ) : null}
-        {completeSign.isSuccess ? (
+        {completeSign.isSuccess && completeSign.variables.caseId === activeCaseId ? (
           <Alert>
             <CheckCircleIcon aria-hidden="true" />
             <AlertTitle>{messages.encounterCompleted}</AlertTitle>
@@ -727,40 +925,104 @@ function DoctorCaseController({
           <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
         ) : (
           <CaseDetail
-            completionQueryScope={encounterCompletionScopeKey}
+            clinicalDocumentActions={{
+              prepareSign: {
+                data: prepareClinicalDocumentSign.variables?.caseId === detail.data.caseId
+                  ? prepareClinicalDocumentSign.data?.data
+                  : undefined,
+                error: prepareClinicalDocumentSign.variables?.caseId === detail.data.caseId
+                  ? prepareClinicalDocumentSign.error
+                  : null,
+                onReset: prepareClinicalDocumentSign.reset,
+                onSubmit: document => prepareClinicalDocumentSign.mutate({
+                  caseId: detail.data.caseId,
+                  document,
+                }),
+                pending: prepareClinicalDocumentSign.isPending
+                  && prepareClinicalDocumentSign.variables?.caseId === detail.data.caseId,
+              },
+              revise: {
+                error: reviseClinicalDocument.variables?.caseId === detail.data.caseId
+                  ? reviseClinicalDocument.error
+                  : null,
+                onSubmit: input => reviseClinicalDocument.mutate(input),
+                pending: reviseClinicalDocument.isPending
+                  && reviseClinicalDocument.variables?.caseId === detail.data.caseId,
+                success: reviseClinicalDocument.isSuccess
+                  && reviseClinicalDocument.variables?.caseId === detail.data.caseId,
+              },
+              sign: {
+                error: signStructuredDocument.variables?.caseId === detail.data.caseId
+                  ? signStructuredDocument.error
+                  : null,
+                onSubmit: preview => signStructuredDocument.mutate({
+                  caseId: detail.data.caseId,
+                  preview,
+                }),
+                pending: signStructuredDocument.isPending
+                  && signStructuredDocument.variables?.caseId === detail.data.caseId,
+                success: signStructuredDocument.isSuccess
+                  && signStructuredDocument.variables?.caseId === detail.data.caseId,
+              },
+            }}
+            completion={completion}
             correctionTarget={correctionNavigation?.caseId === detail.data.caseId
               ? correctionNavigation.target
               : undefined}
             consultationAction={{
-              error: askQuestion.error,
-              onAsk: questionCode => askQuestion.mutate(questionCode),
-              pending: askQuestion.isPending,
+              error: askQuestion.variables?.caseId === detail.data.caseId
+                ? askQuestion.error
+                : null,
+              onAsk: questionCode => askQuestion.mutate({
+                caseId: detail.data.caseId,
+                questionCode,
+              }),
+              pending: askQuestion.isPending
+                && askQuestion.variables?.caseId === detail.data.caseId,
             }}
             catalog={catalog}
             detail={detail.data}
             diagnosisActions={{
               confirm: {
-                error: confirmCaseDiagnosis.error,
-                onSubmit: () => confirmCaseDiagnosis.mutate(),
-                pending: confirmCaseDiagnosis.isPending,
+                error: confirmCaseDiagnosis.variables?.caseId === detail.data.caseId
+                  ? confirmCaseDiagnosis.error
+                  : null,
+                onSubmit: () => confirmCaseDiagnosis.mutate({ caseId: detail.data.caseId }),
+                pending: confirmCaseDiagnosis.isPending
+                  && confirmCaseDiagnosis.variables?.caseId === detail.data.caseId,
               },
               save: {
-                error: saveCaseDiagnosis.error,
-                onSubmit: entries => saveCaseDiagnosis.mutate(entries),
-                pending: saveCaseDiagnosis.isPending,
-                success: saveCaseDiagnosis.isSuccess,
+                error: saveCaseDiagnosis.variables?.caseId === detail.data.caseId
+                  ? saveCaseDiagnosis.error
+                  : null,
+                onSubmit: entries => saveCaseDiagnosis.mutate({
+                  caseId: detail.data.caseId,
+                  entries,
+                }),
+                pending: saveCaseDiagnosis.isPending
+                  && saveCaseDiagnosis.variables?.caseId === detail.data.caseId,
+                success: saveCaseDiagnosis.isSuccess
+                  && saveCaseDiagnosis.variables?.caseId === detail.data.caseId,
               },
             }}
             indicationCode={resolvedIndicationCode}
+            key={detail.data.caseId}
             laboratoryCatalog={laboratoryCatalog}
             laboratoryItemId={resolvedLaboratoryItemId}
             laboratoryRequestActions={{
               acknowledge: {
-                error: acknowledgeReport.error,
-                onSubmit: request => acknowledgeReport.mutate(request),
-                pending: acknowledgeReport.isPending,
-                ...(acknowledgeReport.isPending && acknowledgeReport.variables !== undefined
-                  ? { pendingRequestId: acknowledgeReport.variables.id }
+                error: acknowledgeReport.variables?.caseId === detail.data.caseId
+                  ? acknowledgeReport.error
+                  : null,
+                onSubmit: request => acknowledgeReport.mutate({
+                  caseId: detail.data.caseId,
+                  request,
+                }),
+                pending: acknowledgeReport.isPending
+                  && acknowledgeReport.variables?.caseId === detail.data.caseId,
+                ...(acknowledgeReport.isPending
+                  && acknowledgeReport.variables?.caseId === detail.data.caseId
+                  ? { pendingRequestId: acknowledgeReport.variables.request.id }
                   : {}),
               },
               cancel: {
@@ -771,8 +1033,10 @@ function DoctorCaseController({
                   ? cancelRequest.error
                   : null,
                 onSubmit: request => cancelRequest.mutate({ caseId: detail.data.caseId, request }),
-                pending: cancelRequest.isPending,
-                ...(cancelRequest.isSuccess && cancelRequest.variables !== undefined
+                pending: cancelRequest.isPending
+                  && cancelRequest.variables?.caseId === detail.data.caseId,
+                ...(cancelRequest.isSuccess
+                  && cancelRequest.variables?.caseId === detail.data.caseId
                   ? { successRequestId: cancelRequest.variables.request.id }
                   : {}),
               },
@@ -794,11 +1058,14 @@ function DoctorCaseController({
                   input,
                   request,
                 }),
-                pending: correctReport.isPending,
-                ...(correctReport.isPending && correctReport.variables !== undefined
+                pending: correctReport.isPending
+                  && correctReport.variables?.caseId === detail.data.caseId,
+                ...(correctReport.isPending
+                  && correctReport.variables?.caseId === detail.data.caseId
                   ? { pendingRequestId: correctReport.variables.request.id }
                   : {}),
-                ...(correctReport.isSuccess && correctReport.variables !== undefined
+                ...(correctReport.isSuccess
+                  && correctReport.variables?.caseId === detail.data.caseId
                   ? { successRequestId: correctReport.variables.request.id }
                   : {}),
               },
@@ -807,28 +1074,48 @@ function DoctorCaseController({
                   ? deleteRequestDraft.error
                   : null,
                 onSubmit: () => deleteRequestDraft.mutate(detail.data.caseId),
-                pending: deleteRequestDraft.isPending,
+                pending: deleteRequestDraft.isPending
+                  && deleteRequestDraft.variables === detail.data.caseId,
                 ...(deleteRequestDraft.data === undefined
+                  || deleteRequestDraft.variables !== detail.data.caseId
                   ? {}
-                  : { success: deleteRequestDraft.data.data }),
+                  : {
+                      success: {
+                        caseId: detail.data.caseId,
+                        draftVersion: deleteRequestDraft.data.data.draftVersion,
+                      },
+                    }),
               },
               issue: {
-                error: issueRequest.error,
-                onSubmit: () => issueRequest.mutate(),
-                pending: issueRequest.isPending,
+                error: issueRequest.variables?.caseId === detail.data.caseId
+                  ? issueRequest.error
+                  : null,
+                onSubmit: () => issueRequest.mutate({ caseId: detail.data.caseId }),
+                pending: issueRequest.isPending
+                  && issueRequest.variables?.caseId === detail.data.caseId,
               },
               retry: {
-                error: retryResultGeneration.error,
-                onSubmit: request => retryResultGeneration.mutate(request),
-                pending: retryResultGeneration.isPending,
-                ...(retryResultGeneration.isPending && retryResultGeneration.variables !== undefined
-                  ? { pendingRequestId: retryResultGeneration.variables.id }
+                error: retryResultGeneration.variables?.caseId === detail.data.caseId
+                  ? retryResultGeneration.error
+                  : null,
+                onSubmit: request => retryResultGeneration.mutate({
+                  caseId: detail.data.caseId,
+                  request,
+                }),
+                pending: retryResultGeneration.isPending
+                  && retryResultGeneration.variables?.caseId === detail.data.caseId,
+                ...(retryResultGeneration.isPending
+                  && retryResultGeneration.variables?.caseId === detail.data.caseId
+                  ? { pendingRequestId: retryResultGeneration.variables.request.id }
                   : {}),
               },
               save: {
-                error: saveLaboratoryRequest.error,
-                onSubmit: () => saveLaboratoryRequest.mutate(),
-                pending: saveLaboratoryRequest.isPending,
+                error: saveLaboratoryRequest.variables?.caseId === detail.data.caseId
+                  ? saveLaboratoryRequest.error
+                  : null,
+                onSubmit: () => saveLaboratoryRequest.mutate({ caseId: detail.data.caseId }),
+                pending: saveLaboratoryRequest.isPending
+                  && saveLaboratoryRequest.variables?.caseId === detail.data.caseId,
               },
             }}
             locale={locale}
@@ -840,39 +1127,112 @@ function DoctorCaseController({
               }))
             }}
             onIndicationChange={setIndicationCode}
-            onCorrectionCompleted={refreshAfterCorrection}
             onCorrectionNavigationHandled={onCorrectionNavigationHandled}
             onEncounterCompleted={refreshAfterCompletion}
             onLaboratoryItemChange={(value) => {
               setLaboratoryItemId(value)
               setIndicationCode('')
             }}
-            onIssueOrder={() => issueOrder.mutate()}
+            onIssueOrder={() => {
+              onSelectedCaseIdChange(detail.data.caseId)
+              issueOrder.mutate({ caseId: detail.data.caseId })
+            }}
             onRefreshCase={refreshCase}
-            onPreviewSign={() => previewSign.mutate()}
-            onSaveDraft={input => saveDraft.mutate(input)}
-            onSaveRevisit={input => saveRevisit.mutate(input)}
-            onSign={() => completeSign.mutate()}
-            onStart={() => start.mutate()}
-            onStartRevisit={() => beginRevisit.mutate()}
-            issueOrderError={issueOrder.error}
-            issueOrderPending={issueOrder.isPending}
-            saveDraftError={saveDraft.error}
-            saveDraftPending={saveDraft.isPending}
-            saveDraftSuccess={saveDraft.isSuccess}
-            saveRevisitError={saveRevisit.error}
-            saveRevisitPending={saveRevisit.isPending}
-            saveRevisitSuccess={saveRevisit.isSuccess}
-            signCompleted={completeSign.isSuccess}
-            signError={completeSign.error}
-            signPending={completeSign.isPending}
-            signPreview={previewSign.data?.data}
-            signPreviewError={previewSign.error}
-            signPreviewPending={previewSign.isPending}
-            startError={start.error}
-            startPending={start.isPending}
-            startRevisitError={beginRevisit.error}
-            startRevisitPending={beginRevisit.isPending}
+            onPreviewSign={() => previewSign.mutate({ caseId: detail.data.caseId })}
+            prescriptionActions={{
+              confirmNoMedication: {
+                error: confirmCaseNoMedication.variables?.caseId === detail.data.caseId
+                  ? confirmCaseNoMedication.error
+                  : null,
+                onSubmit: () => confirmCaseNoMedication.mutate({ caseId: detail.data.caseId }),
+                pending: confirmCaseNoMedication.isPending
+                  && confirmCaseNoMedication.variables?.caseId === detail.data.caseId,
+              },
+              deleteDraft: {
+                data: removePrescriptionDraft.variables?.caseId === detail.data.caseId
+                  && removePrescriptionDraft.data !== undefined
+                  ? {
+                      caseId: detail.data.caseId,
+                      draftVersion: removePrescriptionDraft.data.data.draftVersion,
+                    }
+                  : undefined,
+                error: removePrescriptionDraft.variables?.caseId === detail.data.caseId
+                  ? removePrescriptionDraft.error
+                  : null,
+                onSubmit: () => removePrescriptionDraft.mutate({ caseId: detail.data.caseId }),
+                pending: removePrescriptionDraft.isPending
+                  && removePrescriptionDraft.variables?.caseId === detail.data.caseId,
+              },
+              issue: {
+                error: issueCasePrescription.variables?.caseId === detail.data.caseId
+                  ? issueCasePrescription.error
+                  : null,
+                onSubmit: () => issueCasePrescription.mutate({ caseId: detail.data.caseId }),
+                pending: issueCasePrescription.isPending
+                  && issueCasePrescription.variables?.caseId === detail.data.caseId,
+              },
+              saveDraft: {
+                error: savePrescription.variables?.caseId === detail.data.caseId
+                  ? savePrescription.error
+                  : null,
+                onSubmit: items => savePrescription.mutate({
+                  caseId: detail.data.caseId,
+                  items,
+                }),
+                pending: savePrescription.isPending
+                  && savePrescription.variables?.caseId === detail.data.caseId,
+                success: savePrescription.isSuccess
+                  && savePrescription.variables?.caseId === detail.data.caseId,
+              },
+              withdraw: {
+                error: withdrawCasePrescription.variables?.caseId === detail.data.caseId
+                  ? withdrawCasePrescription.error
+                  : null,
+                onSubmit: () => {
+                  const prescription = detail.data.medicationConclusion?.prescription
+                  if (prescription !== undefined) {
+                    withdrawCasePrescription.mutate({
+                      caseId: detail.data.caseId,
+                      prescriptionId: prescription.id,
+                    })
+                  }
+                },
+                pending: withdrawCasePrescription.isPending
+                  && withdrawCasePrescription.variables?.caseId === detail.data.caseId,
+              },
+            }}
+            referenceQueryScope={referenceCatalogQueryScope}
+            onSaveDraft={input => saveDraft.mutate({ caseId: detail.data.caseId, ...input })}
+            onSaveRevisit={input => saveRevisit.mutate({ caseId: detail.data.caseId, ...input })}
+            onSign={() => {
+              onSelectedCaseIdChange(detail.data.caseId)
+              completeSign.mutate({ caseId: detail.data.caseId })
+            }}
+            onStart={() => start.mutate({ caseId: detail.data.caseId })}
+            onStartRevisit={() => beginRevisit.mutate({ caseId: detail.data.caseId })}
+            issueOrderError={issueOrder.variables?.caseId === detail.data.caseId ? issueOrder.error : null}
+            issueOrderPending={issueOrder.isPending && issueOrder.variables?.caseId === detail.data.caseId}
+            saveDraftError={saveDraft.variables?.caseId === detail.data.caseId ? saveDraft.error : null}
+            saveDraftPending={saveDraft.isPending && saveDraft.variables?.caseId === detail.data.caseId}
+            saveDraftSuccess={saveDraft.isSuccess && saveDraft.variables?.caseId === detail.data.caseId}
+            saveRevisitError={saveRevisit.variables?.caseId === detail.data.caseId ? saveRevisit.error : null}
+            saveRevisitPending={saveRevisit.isPending && saveRevisit.variables?.caseId === detail.data.caseId}
+            saveRevisitSuccess={saveRevisit.isSuccess && saveRevisit.variables?.caseId === detail.data.caseId}
+            signCompleted={completeSign.isSuccess && completeSign.variables?.caseId === detail.data.caseId}
+            signError={completeSign.variables?.caseId === detail.data.caseId ? completeSign.error : null}
+            signPending={completeSign.isPending && completeSign.variables?.caseId === detail.data.caseId}
+            signPreview={previewSign.variables?.caseId === detail.data.caseId
+              ? previewSign.data?.data
+              : undefined}
+            signPreviewError={previewSign.variables?.caseId === detail.data.caseId ? previewSign.error : null}
+            signPreviewPending={previewSign.isPending && previewSign.variables?.caseId === detail.data.caseId}
+            startError={start.variables?.caseId === detail.data.caseId ? start.error : null}
+            startPending={start.isPending && start.variables?.caseId === detail.data.caseId}
+            startRevisitError={beginRevisit.variables?.caseId === detail.data.caseId
+              ? beginRevisit.error
+              : null}
+            startRevisitPending={beginRevisit.isPending
+              && beginRevisit.variables?.caseId === detail.data.caseId}
             workingClinicalDocument={workingClinicalDocuments[detail.data.caseId]
               ?? createWorkingClinicalDocument(detail.data)}
           />
@@ -884,7 +1244,8 @@ function DoctorCaseController({
 
 function CaseDetail({
   catalog,
-  completionQueryScope,
+  clinicalDocumentActions,
+  completion,
   consultationAction,
   correctionTarget,
   detail,
@@ -901,11 +1262,12 @@ function CaseDetail({
   onEncounterCompleted,
   onIssueOrder,
   onIndicationChange,
-  onCorrectionCompleted,
   onCorrectionNavigationHandled,
   onRefreshCase,
   onPreviewSign,
   onLaboratoryItemChange,
+  prescriptionActions,
+  referenceQueryScope,
   onSaveDraft,
   onSaveRevisit,
   onSign,
@@ -930,7 +1292,8 @@ function CaseDetail({
   workingClinicalDocument,
 }: {
   catalog: ReturnType<typeof useQuery<Awaited<ReturnType<typeof getClinicalCatalog>>>>
-  completionQueryScope: EncounterCompletionQueryScope
+  clinicalDocumentActions: ClinicalDocumentPageActions
+  completion: UseQueryResult<EncounterCompletionPreview, Error>
   consultationAction: ConsultationPageAction
   correctionTarget: CompletedCaseCorrectionTarget | undefined
   detail: DoctorCaseDetail
@@ -947,11 +1310,12 @@ function CaseDetail({
   onEncounterCompleted: () => Promise<void>
   onIssueOrder: () => void
   onIndicationChange: (value: string) => void
-  onCorrectionCompleted: () => Promise<void>
   onCorrectionNavigationHandled: () => void
   onRefreshCase: () => Promise<void>
   onPreviewSign: () => void
   onLaboratoryItemChange: (value: string) => void
+  prescriptionActions: PrescriptionPageActions
+  referenceQueryScope: ReferenceCatalogQueryScope
   onSaveDraft: (input: { assessment: string; historyOfPresentIllness: string }) => void
   onSaveRevisit: (input: {
     diagnosis: { code: string; display: string }
@@ -985,7 +1349,6 @@ function CaseDetail({
   workingClinicalDocument: ClinicalDocumentContent
 }): React.JSX.Element {
   const firstVisitDraft = detail.drafts?.firstVisit
-  const presentation = detail.presentation
   const readOnly = detail.encounter.status !== 'in-progress'
   const [activeSection, setActiveSection] = useState<DoctorCaseSection>('record')
   const [contextRailOpen, setContextRailOpen] = useState(true)
@@ -1226,12 +1589,11 @@ function CaseDetail({
             : {
                 completionAction: (
                   <EncounterCompletionPanel
-                    detail={detail}
                     messages={messages}
                     onCompleted={onEncounterCompleted}
                     onNavigate={navigateToCompletionTarget}
                     onRefresh={onRefreshCase}
-                    queryScope={completionQueryScope}
+                    preview={completion}
                   />
                 ),
               })}
@@ -1281,6 +1643,7 @@ function CaseDetail({
               <div className="min-w-0">
                 {detail.consultation === undefined ? firstVisitRecord : (
                   <ClinicalDocumentPage
+                    actions={clinicalDocumentActions}
                     allowRevision={!readOnly || correctionTarget === 'clinical-document'}
                     detail={detail}
                     elementId={encounterCompletionTargetElementIds['clinical-document']}
@@ -1288,8 +1651,6 @@ function CaseDetail({
                     locale={locale}
                     messages={messages}
                     onDocumentChange={onClinicalDocumentChange}
-                    onRevisionCompleted={onCorrectionCompleted}
-                    onRefresh={onRefreshCase}
                     workingDocument={workingClinicalDocument}
                   />
                 )}
@@ -1314,6 +1675,7 @@ function CaseDetail({
                 locale={locale}
                 messages={messages}
                 readOnly={readOnly}
+                referenceQueryScope={referenceQueryScope}
                 state={detail.diagnosis}
               />
             )}
@@ -1329,6 +1691,7 @@ function CaseDetail({
               />
             ) : catalog.data.prescriptionConclusionSupported ? (
               <PrescriptionPage
+                actions={prescriptionActions}
                 allowWithdrawal={!readOnly || correctionTarget === 'medication-conclusion'}
                 catalog={catalog.data.medications}
                 detail={detail}
@@ -1336,10 +1699,8 @@ function CaseDetail({
                 key={`medication-conclusion:${detail.caseId}`}
                 locale={locale}
                 messages={messages}
-                onRefresh={correctionTarget === 'medication-conclusion'
-                  ? onCorrectionCompleted
-                  : onRefreshCase}
                 readOnly={readOnly}
+                referenceQueryScope={referenceQueryScope}
               />
             ) : null}
           </TabsContent>
@@ -1362,6 +1723,7 @@ function CaseDetail({
               onIssueLegacyOrder={onIssueOrder}
               onLaboratoryItemChange={onLaboratoryItemChange}
               readOnly={readOnly}
+              referenceQueryScope={referenceQueryScope}
               showCorrection={correctionTarget === 'laboratory'}
             />
           </TabsContent>
@@ -1369,6 +1731,7 @@ function CaseDetail({
       </div>
 
       <DoctorCaseContextRail
+        completion={completion.data}
         detail={detail}
         expanded={contextRailOpen}
         locale={locale}
@@ -1381,19 +1744,14 @@ function CaseDetail({
   )
 }
 
-function EncounterCompletionPanel({ detail, messages, onCompleted, onNavigate, onRefresh, queryScope }: {
-  detail: DoctorCaseDetail
+function EncounterCompletionPanel({ messages, onCompleted, onNavigate, onRefresh, preview }: {
   messages: ReturnType<typeof getWorkspaceMessages>
   onCompleted: () => Promise<void>
   onNavigate: (target: EncounterCompletionTarget) => void
   onRefresh: () => Promise<void>
-  queryScope: EncounterCompletionQueryScope
+  preview: UseQueryResult<EncounterCompletionPreview, Error>
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
-  const preview = useQuery({
-    queryFn: ({ signal }) => getEncounterCompletion(detail.encounter.id, signal),
-    queryKey: [...queryScope, detail.encounter.id, detail.encounter.versionId],
-  })
   const complete = useMutation({
     mutationFn: () => {
       if (preview.data === undefined) throw new Error(messages.encounterCompletionUnavailable)
@@ -1515,6 +1873,10 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
   const [diagnosisDisplay, setDiagnosisDisplay] = useState(revisit?.diagnosis.display ?? '')
   const [assessment, setAssessment] = useState(document?.assessment ?? '')
   const [plan, setPlan] = useState(document?.plan ?? '')
+  const medicationById = useMemo(
+    () => new Map(catalog.medications.map(item => [item.id, item])),
+    [catalog.medications],
+  )
   const [medications, setMedications] = useState<MedicationDraftLine[]>(() => {
     if (prescription !== undefined && prescription.items.length > 0) {
       return prescription.items.map(item => ({
@@ -1525,14 +1887,7 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
         quantity: String(item.quantity),
       }))
     }
-    const firstMedication = catalog.medications[0]
-    return firstMedication === undefined ? [] : [{
-      catalogItemId: firstMedication.id,
-      doseText: firstMedication.defaultDoseText,
-      frequencyCode: firstMedication.defaultFrequencyCode,
-      key: 'new-0',
-      quantity: '1',
-    }]
+    return []
   })
   const medicationItems = catalog.medications.map(item => ({
     label: locale === 'zh-CN' ? item.nameZh : item.nameEn,
@@ -1544,16 +1899,21 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
     )))
   }
   const addMedication = () => {
-    const firstMedication = catalog.medications[0]
-    if (firstMedication === undefined) return
     setMedications(current => [...current, {
-      catalogItemId: firstMedication.id,
-      doseText: firstMedication.defaultDoseText,
-      frequencyCode: firstMedication.defaultFrequencyCode,
-      key: `new-${current.length}`,
+      catalogItemId: '',
+      doseText: '',
+      frequencyCode: '',
+      key: globalThis.crypto.randomUUID(),
       quantity: '1',
     }])
   }
+  const hasInvalidMedication = medications.some(item => (
+    item.catalogItemId.length === 0
+    || item.doseText.length === 0
+    || item.frequencyCode.length === 0
+    || !Number.isInteger(Number(item.quantity))
+    || Number(item.quantity) < 1
+  ))
 
   return (
     <form
@@ -1587,7 +1947,7 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
         </div>
         {medications.map((line, index) => {
           const suffix = index === 0 ? '' : ` ${index + 1}`
-          const selectedMedication = catalog.medications.find(item => item.id === line.catalogItemId)
+          const selectedMedication = medicationById.get(line.catalogItemId)
           const doseItems = selectedMedication?.allowedDoseTexts.map(value => ({ label: value, value })) ?? []
           const frequencyItems = selectedMedication?.allowedFrequencyCodes.map(value => ({ label: value, value })) ?? []
           return (
@@ -1598,7 +1958,7 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
                   id={`medication-${index}`}
                   items={medicationItems}
                   onValueChange={value => {
-                    const selected = catalog.medications.find(item => item.id === value)
+                    const selected = value === null ? undefined : medicationById.get(value)
                     if (selected === undefined) return
                     updateMedication(index, {
                       catalogItemId: selected.id,
@@ -1606,7 +1966,8 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
                       frequencyCode: selected.defaultFrequencyCode,
                     })
                   }}
-                  value={line.catalogItemId}
+                  placeholder={locale === 'zh-CN' ? '请选择药品' : 'Select medication'}
+                  value={line.catalogItemId || null}
                 />
               </Field>
               <Field>
@@ -1619,13 +1980,13 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
               </Field>
               <Field><FieldLabel htmlFor={`quantity-${index}`}>{messages.quantity}{suffix}</FieldLabel><Input id={`quantity-${index}`} min="1" onChange={event => updateMedication(index, { quantity: event.currentTarget.value })} required type="number" value={line.quantity} /></Field>
               <div className="flex items-end">
-                <Button aria-label={`${messages.removeMedication}${suffix}`} disabled={medications.length === 1} onClick={() => setMedications(current => current.filter((_, itemIndex) => itemIndex !== index))} size="icon" title={`${messages.removeMedication}${suffix}`} type="button" variant="ghost"><Trash2Icon /></Button>
+                <Button aria-label={`${messages.removeMedication}${suffix}`} onClick={() => setMedications(current => current.filter((_, itemIndex) => itemIndex !== index))} size="icon" title={`${messages.removeMedication}${suffix}`} type="button" variant="ghost"><Trash2Icon /></Button>
               </div>
             </div>
           )
         })}
         <div className="sticky bottom-0 flex justify-end border-t bg-background py-3">
-          <Button disabled={pending || medications.length === 0} type="submit"><ClipboardPenIcon data-icon="inline-start" />{messages.saveRevisitDraft}</Button>
+          <Button disabled={pending || medications.length === 0 || hasInvalidMedication} type="submit"><ClipboardPenIcon data-icon="inline-start" />{messages.saveRevisitDraft}</Button>
         </div>
       </FieldGroup>
     </form>

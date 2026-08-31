@@ -33,7 +33,7 @@ DoctorWorkspace
   -> DoctorCompletedCaseLibrary
 ```
 
-`DoctorCaseController` 是 Query、Command、expected version、幂等键、错误映射和精确失效的 seam。页面模块只接收当前 owner 的状态与动作切片，不拼 query key、版本或跨 owner 失效列表。`DoctorQueueModule` 只组合 controller 提供的分页快照和选择/接诊动作，不拥有病例 DTO 副本。
+`DoctorCaseController` 是 Doctor Case 与诊疗流程 Query、Command、expected version、幂等键、错误映射和精确失效的 seam。页面模块只接收当前 owner 的状态与动作切片，不拼病例 query key、版本或跨 owner 失效列表。全局 Reference Catalog 是独立系统 owner，目录 picker 直接读取其只读搜索接口，但 query key 必须带当前 Workspace 与 Epoch，不能把目录结果复制进 Doctor Case 状态。`DoctorQueueModule` 只组合 controller 提供的分页快照和选择/接诊动作，不拥有病例 DTO 副本。
 
 页面责任如下：
 
@@ -50,14 +50,14 @@ DoctorWorkspace
 
 检验页统一使用“检验”术语。内容容器达到 672px 时显示申请/结果双栏，窄容器纵向排列；正式申请、报告和纠错继续由 `LaboratoryRequest` owner 驱动。Doctor Case 尚未拥有 Hospital Service 检查读模型、报告和纠错规则，因此生产导航不显示独立“检查”页。
 
-右栏只消费当前 Doctor Case 快照，展示过敏、主诉、病例状态和页签相关的问诊、病历、检验、诊断或处方概况。它不提交临床 Command，也不显示 AI 建议、置信度或生成动作。右栏在 1536px 及以上与主区并排，在中等桌面宽度下移并保留折叠入口。
+右栏消费当前 Doctor Case 快照和 Encounter Completion 预览，展示过敏、主诉、生命体征、病例状态、完诊门禁和页签相关的问诊、病历、检验、诊断或处方概况。它不提交临床 Command，也不显示 AI 建议、置信度或生成动作。右栏在 1536px 及以上与主区并排，在中等桌面宽度下移并保留折叠入口。
 
 以下业务合同保持不变：
 
 | 范围 | 不变量 |
 | --- | --- |
 | 身份与责任 | 所有写入使用服务端解析的 Actor、Practitioner Role、Workspace 和 Epoch |
-| 服务端状态 | TanStack Query 是唯一缓存；Zustand 不镜像病例 DTO |
+| 服务端状态 | TanStack Query 是唯一缓存；Zustand 不镜像病例 DTO；病例与目录查询按 Workspace 和 Epoch 隔离 |
 | 并发 | 每个写 Command 保留 expected version、草稿版本、幂等键和冲突刷新 |
 | Encounter | 同一病例使用同一个 Encounter；页签切换不推进状态 |
 | Consultation Record | 问答按序追加且不可覆盖，不自动成为正式病历 |

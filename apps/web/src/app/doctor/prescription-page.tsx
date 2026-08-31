@@ -22,7 +22,6 @@ import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/
 import { Input } from '@clinmesh/ui/components/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
-import { useMutation } from '@tanstack/react-query'
 import {
   CheckIcon,
   CircleAlertIcon,
@@ -32,22 +31,15 @@ import {
   RotateCcwIcon,
   Trash2Icon,
 } from 'lucide-react'
-import { useState } from 'react'
-import {
-  ApiClientError,
-  confirmNoMedication,
-  deletePrescriptionDraft,
-  issuePrescription,
-  newIdempotencyKey,
-  savePrescriptionDraft,
-  withdrawPrescription,
-} from '../api-client.ts'
+import { useEffect, useMemo, useState } from 'react'
+import { ApiClientError } from '../api-client.ts'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import {
   MedicationCatalogDialog,
   type MedicationCatalogSelection,
+  type ReferenceCatalogQueryScope,
 } from './catalog-picker-dialogs.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 
@@ -59,6 +51,36 @@ function ErrorAlert({ message, title }: { message: string; title: string }): Rea
       <AlertDescription>{message}</AlertDescription>
     </Alert>
   )
+}
+
+export interface PrescriptionPageActions {
+  confirmNoMedication: {
+    error: Error | null
+    onSubmit: () => void
+    pending: boolean
+  }
+  deleteDraft: {
+    data: { caseId: string; draftVersion: number } | undefined
+    error: Error | null
+    onSubmit: () => void
+    pending: boolean
+  }
+  issue: {
+    error: Error | null
+    onSubmit: () => void
+    pending: boolean
+  }
+  saveDraft: {
+    error: Error | null
+    onSubmit: (items: PrescriptionDraftItem[]) => void
+    pending: boolean
+    success: boolean
+  }
+  withdraw: {
+    error: Error | null
+    onSubmit: () => void
+    pending: boolean
+  }
 }
 
 interface PrescriptionDraftLine extends PrescriptionDraftItem {
@@ -102,23 +124,25 @@ function createReferencePrescriptionDraftLine(
 }
 
 export function PrescriptionPage({
+  actions,
   allowWithdrawal,
   catalog,
   detail,
   elementId,
   locale,
   messages,
-  onRefresh,
   readOnly,
+  referenceQueryScope,
 }: {
+  actions: PrescriptionPageActions
   allowWithdrawal: boolean
   catalog: PrescriptionClinicalCatalog['medications']
   detail: DoctorCaseDetail
   elementId: string
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
-  onRefresh: () => Promise<void>
   readOnly: boolean
+  referenceQueryScope: ReferenceCatalogQueryScope
 }): React.JSX.Element {
   const state = detail.medicationConclusion
   const prescription = state?.prescription
@@ -136,85 +160,17 @@ export function PrescriptionPage({
     }
     return []
   })
-  const saveDraft = useMutation({
-    mutationFn: () => savePrescriptionDraft({
-      encounterId: detail.encounter.id,
-      encounterVersion: detail.encounter.versionId,
-      expectedDraftVersion: state?.draftVersion ?? 0,
-      items: items.map(({ key: _key, ...item }) => item),
-    }, newIdempotencyKey()),
-    onError: onRefresh,
-    onSuccess: async () => {
-      setDirty(false)
-      await onRefresh()
-    },
-  })
-  const removeDraft = useMutation({
-    mutationFn: (caseId: string) => {
-      if (detail.caseId !== caseId || state?.draft === undefined) {
-        throw new Error(messages.consultationUnavailable)
-      }
-      return deletePrescriptionDraft({
-        encounterId: detail.encounter.id,
-        encounterVersion: detail.encounter.versionId,
-        expectedDraftVersion: state.draftVersion,
-      }, newIdempotencyKey())
-    },
-    onError: onRefresh,
-    onSuccess: async () => {
-      setDirty(false)
-      await onRefresh()
-    },
-  })
-  const issue = useMutation({
-    mutationFn: () => {
-      if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
-      return issuePrescription({
-        encounterId: detail.encounter.id,
-        encounterVersion: detail.encounter.versionId,
-        expectedDraftVersion: state.draftVersion,
-      }, newIdempotencyKey())
-    },
-    onError: onRefresh,
-    onSuccess: onRefresh,
-  })
-  const confirmNone = useMutation({
-    mutationFn: () => confirmNoMedication({
-      encounterId: detail.encounter.id,
-      encounterVersion: detail.encounter.versionId,
-      expectedDraftVersion: state?.draftVersion ?? 0,
-    }, newIdempotencyKey()),
-    onError: onRefresh,
-    onSuccess: onRefresh,
-  })
-  const withdraw = useMutation({
-    mutationFn: ({ caseId, prescriptionId }: { caseId: string; prescriptionId: string }) => {
-      if (
-        detail.caseId !== caseId
-        || prescription === undefined
-        || prescription.id !== prescriptionId
-      ) {
-        throw new Error(messages.consultationUnavailable)
-      }
-      return withdrawPrescription({
-        expectedPrescriptionVersion: prescription.version,
-        medicationRequests: prescription.items.map(item => ({
-          id: item.medicationRequestId,
-          version: item.medicationRequestVersion,
-        })),
-        prescriptionId: prescription.id,
-      }, newIdempotencyKey())
-    },
-    onError: onRefresh,
-    onSuccess: onRefresh,
-  })
+  const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
+  useEffect(() => {
+    if (actions.saveDraft.success || actions.deleteDraft.data !== undefined) setDirty(false)
+  }, [actions.deleteDraft.data, actions.saveDraft.success])
   const usedCatalogItemIds = new Set(items.map(item => item.catalogItemId))
   const canCombineWithCurrentItems = (
     candidate: PrescriptionMedicationCatalogItem,
     ignoredIndex?: number,
   ) => items.every((item, index) => {
     if (index === ignoredIndex || item.catalogItemId === candidate.id) return true
-    const selected = catalog.find(medication => medication.id === item.catalogItemId)
+    const selected = catalogById.get(item.catalogItemId)
     return selected?.allowedCombinationIds.includes(candidate.id) === true
       && candidate.allowedCombinationIds.includes(item.catalogItemId)
   })
@@ -311,11 +267,8 @@ export function PrescriptionPage({
                   <AlertDialogFooter>
                     <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
                     <AlertDialogAction
-                      disabled={withdraw.isPending}
-                      onClick={() => withdraw.mutate({
-                        caseId: detail.caseId,
-                        prescriptionId: prescription.id,
-                      })}
+                      disabled={actions.withdraw.pending}
+                      onClick={actions.withdraw.onSubmit}
                     >
                       <RotateCcwIcon data-icon="inline-start" />{messages.confirmWithdrawal}
                     </AlertDialogAction>
@@ -346,13 +299,10 @@ export function PrescriptionPage({
               ))}
             </TableBody>
           </Table>
-          {!allowWithdrawal
-            || withdraw.error === null
-            || withdraw.variables?.caseId !== detail.caseId
-            || withdraw.variables.prescriptionId !== prescription.id ? null : (
+          {!allowWithdrawal || actions.withdraw.error === null ? null : (
             <ErrorAlert
-              message={getWorkspaceErrorMessage(withdraw.error, messages)}
-              title={getWorkspaceErrorTitle(withdraw.error, messages, messages.operationFailed)}
+              message={getWorkspaceErrorMessage(actions.withdraw.error, messages)}
+              title={getWorkspaceErrorTitle(actions.withdraw.error, messages, messages.operationFailed)}
             />
           )}
         </div>
@@ -398,7 +348,7 @@ export function PrescriptionPage({
           <form
             onSubmit={event => {
               event.preventDefault()
-              saveDraft.mutate()
+              actions.saveDraft.onSubmit(items.map(({ key: _key, ...item }) => item))
             }}
           >
             <FieldGroup>
@@ -417,6 +367,7 @@ export function PrescriptionPage({
                   ))}
                   locale={locale}
                   onSelect={addMedication}
+                  queryScope={referenceQueryScope}
                 />
               </div>
               {items.length === 0 ? (
@@ -426,7 +377,7 @@ export function PrescriptionPage({
               ) : null}
               {items.length === 0 ? null : <div className="@container/prescription border">{items.map((item, index) => {
                 const suffix = index === 0 ? '' : ` ${index + 1}`
-                const selectedMedication = catalog.find(medication => medication.id === item.catalogItemId)
+                const selectedMedication = catalogById.get(item.catalogItemId)
                 const doseItems = selectedMedication?.allowedDoseTexts.map(value => ({ label: value, value })) ?? []
                 const frequencyItems = selectedMedication?.allowedFrequencyCodes.map(value => ({ label: value, value })) ?? []
                 const courseItems = selectedMedication?.allowedCourseDays.map(value => ({
@@ -523,6 +474,7 @@ export function PrescriptionPage({
                         locale={locale}
                         mode="replace"
                         onSelect={selection => replaceMedication(index, selection)}
+                        queryScope={referenceQueryScope}
                       />
                       <Button
                         aria-label={`${messages.removeMedication}${suffix}`}
@@ -542,7 +494,7 @@ export function PrescriptionPage({
                 )
               })}</div>}
               <div className="flex flex-wrap justify-end gap-2">
-                <Button disabled={saveDraft.isPending || invalidDraft} type="submit" variant="outline">
+                <Button disabled={actions.saveDraft.pending || invalidDraft} type="submit" variant="outline">
                   <ClipboardPenIcon data-icon="inline-start" />{messages.savePrescriptionDraft}
                 </Button>
                 {state?.draft === undefined ? null : (
@@ -551,7 +503,7 @@ export function PrescriptionPage({
                       <AlertDialogTrigger
                         render={(
                           <Button
-                            disabled={removeDraft.isPending || issue.isPending}
+                            disabled={actions.deleteDraft.pending || actions.issue.pending}
                             type="button"
                             variant="ghost"
                           />
@@ -566,7 +518,7 @@ export function PrescriptionPage({
                         </AlertDialogHeader>
                         <ul className="flex flex-col gap-1.5 text-sm">
                           {state.draft.items.map((item) => {
-                            const medication = catalog.find(candidate => candidate.id === item.catalogItemId)
+                            const medication = catalogById.get(item.catalogItemId)
                             return (
                               <li className="flex flex-wrap justify-between gap-2" key={item.catalogItemId}>
                                 <span className="font-medium">
@@ -584,10 +536,10 @@ export function PrescriptionPage({
                         <AlertDialogFooter>
                           <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
                           <AlertDialogCancel
-                            disabled={removeDraft.isPending}
+                            disabled={actions.deleteDraft.pending}
                             onClick={() => {
                               setDeleteDraftOpen(false)
-                              queueMicrotask(() => removeDraft.mutate(detail.caseId))
+                              queueMicrotask(actions.deleteDraft.onSubmit)
                             }}
                             variant="destructive"
                           >
@@ -600,7 +552,7 @@ export function PrescriptionPage({
                       <AlertDialogTrigger
                         render={(
                           <Button
-                            disabled={dirty || issue.isPending || saveDraft.isPending}
+                            disabled={dirty || actions.issue.pending || actions.saveDraft.pending}
                             type="button"
                           />
                         )}
@@ -620,7 +572,7 @@ export function PrescriptionPage({
                         </AlertDialogHeader>
                         <ul className="divide-y border text-sm">
                           {state.draft.items.map((draftItem) => {
-                            const medication = catalog.find(candidate => candidate.id === draftItem.catalogItemId)
+                            const medication = catalogById.get(draftItem.catalogItemId)
                             return (
                               <li className="flex items-center justify-between gap-3 px-3 py-2" key={draftItem.catalogItemId}>
                                 <span className="font-medium">
@@ -638,10 +590,10 @@ export function PrescriptionPage({
                         <AlertDialogFooter>
                           <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
                           <AlertDialogCancel
-                            disabled={issue.isPending}
+                            disabled={actions.issue.pending}
                             onClick={() => {
                               setIssueOpen(false)
-                              queueMicrotask(() => issue.mutate())
+                              queueMicrotask(actions.issue.onSubmit)
                             }}
                             variant="default"
                           >
@@ -654,37 +606,37 @@ export function PrescriptionPage({
                   </>
                 )}
               </div>
-              {saveDraft.isSuccess && state?.draft !== undefined ? (
+              {actions.saveDraft.success && state?.draft !== undefined ? (
                 <Alert>
                   <CheckIcon aria-hidden="true" />
                   <AlertTitle>{messages.prescriptionDraftSaved}</AlertTitle>
                 </Alert>
               ) : null}
-              {removeDraft.data !== undefined
-                && removeDraft.variables === detail.caseId
+              {actions.deleteDraft.data !== undefined
+                && actions.deleteDraft.data.caseId === detail.caseId
                 && state?.draft === undefined
-                && state?.draftVersion === removeDraft.data.data.draftVersion ? (
+                && state?.draftVersion === actions.deleteDraft.data.draftVersion ? (
                 <Alert>
                   <CheckIcon aria-hidden="true" />
                   <AlertTitle>{messages.prescriptionDraftDeleted}</AlertTitle>
                 </Alert>
               ) : null}
-              {saveDraft.error === null ? null : (
+              {actions.saveDraft.error === null ? null : (
                 <ErrorAlert
-                  message={getWorkspaceErrorMessage(saveDraft.error, messages)}
-                  title={getWorkspaceErrorTitle(saveDraft.error, messages, messages.operationFailed)}
+                  message={getWorkspaceErrorMessage(actions.saveDraft.error, messages)}
+                  title={getWorkspaceErrorTitle(actions.saveDraft.error, messages, messages.operationFailed)}
                 />
               )}
-              {removeDraft.error === null || removeDraft.variables !== detail.caseId ? null : (
+              {actions.deleteDraft.error === null ? null : (
                 <ErrorAlert
-                  message={getWorkspaceErrorMessage(removeDraft.error, messages)}
-                  title={getWorkspaceErrorTitle(removeDraft.error, messages, messages.operationFailed)}
+                  message={getWorkspaceErrorMessage(actions.deleteDraft.error, messages)}
+                  title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)}
                 />
               )}
-              {issue.error === null ? null : (
+              {actions.issue.error === null ? null : (
                 <ErrorAlert
-                  message={getPrescriptionIssueErrorMessage(issue.error, messages)}
-                  title={getWorkspaceErrorTitle(issue.error, messages, messages.operationFailed)}
+                  message={getPrescriptionIssueErrorMessage(actions.issue.error, messages)}
+                  title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)}
                 />
               )}
             </FieldGroup>
@@ -696,13 +648,13 @@ export function PrescriptionPage({
         && !hasActivePrescription
         && mode === 'no-medication' ? (
           <div className="flex flex-col items-end gap-3">
-            <Button disabled={confirmNone.isPending} onClick={() => confirmNone.mutate()} type="button">
+            <Button disabled={actions.confirmNoMedication.pending} onClick={actions.confirmNoMedication.onSubmit} type="button">
               <CircleXIcon data-icon="inline-start" />{messages.confirmNoMedication}
             </Button>
-            {confirmNone.error === null ? null : (
+            {actions.confirmNoMedication.error === null ? null : (
               <ErrorAlert
-                message={getWorkspaceErrorMessage(confirmNone.error, messages)}
-                title={getWorkspaceErrorTitle(confirmNone.error, messages, messages.operationFailed)}
+                message={getWorkspaceErrorMessage(actions.confirmNoMedication.error, messages)}
+                title={getWorkspaceErrorTitle(actions.confirmNoMedication.error, messages, messages.operationFailed)}
               />
             )}
           </div>

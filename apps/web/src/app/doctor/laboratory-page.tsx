@@ -32,7 +32,7 @@ import {
   RefreshCwIcon,
   Trash2Icon,
 } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { formatFen } from '../workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
@@ -40,6 +40,7 @@ import { WorkspaceSelect } from '../workspace-select.tsx'
 import {
   LaboratoryCatalogDialog,
   type LaboratoryCatalogSelection,
+  type ReferenceCatalogQueryScope,
 } from './catalog-picker-dialogs.tsx'
 
 export interface LaboratoryPageActions {
@@ -126,6 +127,7 @@ export function LaboratoryPage({
   onIssueLegacyOrder,
   onLaboratoryItemChange,
   readOnly,
+  referenceQueryScope,
   showCorrection,
 }: {
   actions: LaboratoryPageActions
@@ -144,6 +146,7 @@ export function LaboratoryPage({
   onIssueLegacyOrder: () => void
   onLaboratoryItemChange: (value: string) => void
   readOnly: boolean
+  referenceQueryScope: ReferenceCatalogQueryScope
   showCorrection: boolean
 }): React.JSX.Element {
   const firstVisitDraft = detail.drafts?.firstVisit
@@ -253,6 +256,7 @@ export function LaboratoryPage({
             onIndicationChange={onIndicationChange}
             onLaboratoryItemChange={onLaboratoryItemChange}
             readOnly={readOnly}
+            referenceQueryScope={referenceQueryScope}
             showCorrection={showCorrection}
             state={detail.laboratoryRequests}
           />
@@ -274,6 +278,7 @@ function LaboratoryRequestEditor({
   onIndicationChange,
   onLaboratoryItemChange,
   readOnly,
+  referenceQueryScope,
   showCorrection,
   state,
 }: {
@@ -288,10 +293,11 @@ function LaboratoryRequestEditor({
   onIndicationChange: (value: string) => void
   onLaboratoryItemChange: (value: string) => void
   readOnly: boolean
+  referenceQueryScope: ReferenceCatalogQueryScope
   showCorrection: boolean
   state: DoctorCaseDetail['laboratoryRequests']
 }): React.JSX.Element {
-  const catalogById = new Map(catalog.map(item => [item.id, item]))
+  const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
   const [selectedReference, setSelectedReference] = useState<LaboratoryCatalogSelection | undefined>(
     () => {
       const reference = state?.draft?.referenceConcept
@@ -353,6 +359,7 @@ function LaboratoryRequestEditor({
                     setSelectedReference(selection)
                     onLaboratoryItemChange(selection.catalogItemId)
                   }}
+                  queryScope={referenceQueryScope}
                 />
               </div>
             </Field>

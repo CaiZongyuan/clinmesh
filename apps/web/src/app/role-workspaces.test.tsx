@@ -3192,10 +3192,18 @@ describe('role workspaces', () => {
     expect(screen.getAllByText('阳性')).toHaveLength(2)
     expect(screen.getByText(/6\.8.*×10⁹\/L/)).toBeTruthy()
     expect(screen.getByText('磷酸奥司他韦过敏')).toBeTruthy()
+    const contextRail = screen.getByRole('complementary', { name: '病例上下文' })
+    expect(within(contextRail).getByText('final')).toBeTruthy()
+    expect(within(contextRail).getByText('2 项异常结果')).toBeTruthy()
     await user.click(screen.getByRole('tab', { name: '病历记录' }))
     await user.click(screen.getByRole('button', { name: '开始复诊' }))
     await user.click(await screen.findByRole('tab', { name: '处方' }))
-    expect((await screen.findByRole('combobox', { name: '药品' })).textContent).toContain('磷酸奥司他韦胶囊')
+    expect(screen.queryByRole('combobox', { name: '药品' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: '添加药品' }))
+    const medicationSelect = await screen.findByRole('combobox', { name: '药品' })
+    expect(medicationSelect.textContent).not.toContain('磷酸奥司他韦胶囊')
+    await user.click(medicationSelect)
+    await user.click(await screen.findByRole('option', { name: '磷酸奥司他韦胶囊' }))
     expect(screen.getByRole('combobox', { name: '剂量' }).textContent).toContain('75 mg')
     expect(screen.getByRole('combobox', { name: '频次' }).textContent).toContain('BID')
 
@@ -3443,7 +3451,9 @@ describe('role workspaces', () => {
   })
 
   it('keeps each patient clinical record while aligning the consultation workbench', async () => {
-    const questions = [{ code: 'symptom-onset', text: '什么时候开始不舒服？' }]
+    const questionText = '什么时候开始不舒服？'
+    const questions = [{ code: 'symptom-onset', text: questionText }]
+    let releaseFirstPatientAnswer: (() => void) | undefined
     const patients = [{
       birthDate: '1981-06-12',
       gender: 'male',
@@ -3532,6 +3542,16 @@ describe('role workspaces', () => {
             { code: 'follow-up-complete', status: 'incomplete', statusText: '待填写随访', target: 'clinical-document' }],
         })
       }
+      if (url.pathname === '/api/his/v1/encounters/encounter-1/actions/ask-consultation-question') {
+        return new Promise<Response>(resolve => {
+          releaseFirstPatientAnswer = () => resolve(Response.json({
+            error: {
+              code: 'WORKFLOW_CONFLICT',
+              message: 'The first patient Consultation Record changed',
+            },
+          }, { status: 409 }))
+        })
+      }
       throw new Error(`Unexpected request: ${url.pathname}`)
     }))
     const user = userEvent.setup()
@@ -3546,8 +3566,26 @@ describe('role workspaces', () => {
     expect(within(contextRail).queryByRole('button', { name: '向患者提问' })).toBeNull()
     expect(screen.getByRole('button', { name: '收起右侧边栏' }).getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByRole('heading', { name: '过敏提示' })).toBeTruthy()
+    expect(within(contextRail).getByRole('heading', { name: '生命体征' })).toBeTruthy()
+    expect(within(contextRail).getByText('T 38.2 °C · P 102 · R 20 · BP 118/76 · SpO₂ 98%')).toBeTruthy()
+    expect(within(contextRail).getByRole('heading', { name: '完诊清单' })).toBeTruthy()
+    expect(within(contextRail).getByText('已满足 2 / 7')).toBeTruthy()
     await user.click(screen.getByRole('tab', { name: '问诊记录' }))
-    expect(screen.getByRole('button', { name: '向患者提问' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: questionText }))
+    await user.click(screen.getByRole('button', { name: '向患者提问' }))
+    expect((await screen.findByRole('button', {
+      name: '正在等待患者回答',
+    }) as HTMLButtonElement).disabled).toBe(true)
+    await user.click(screen.getByRole('listitem', { name: '选择病例 李静' }))
+    expect(await screen.findByRole('heading', { name: '李静' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '正在等待患者回答' })).toBeNull()
+    await act(async () => {
+      releaseFirstPatientAnswer?.()
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('heading', { name: '李静' })).toBeTruthy()
+    expect(screen.queryByText('操作冲突')).toBeNull()
+    await user.click(screen.getByRole('listitem', { name: '选择病例 王晓明' }))
     await user.click(screen.getByRole('tab', { name: '病历记录' }))
     const history = screen.getByLabelText('现病史') as HTMLTextAreaElement
     await user.clear(history)

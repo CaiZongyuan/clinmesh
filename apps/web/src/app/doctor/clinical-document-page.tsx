@@ -15,7 +15,6 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Textarea } from '@clinmesh/ui/components/textarea'
-import { useMutation } from '@tanstack/react-query'
 import {
   CheckCircleIcon,
   CheckIcon,
@@ -25,13 +24,6 @@ import {
   RefreshCwIcon,
 } from 'lucide-react'
 import { useState } from 'react'
-import {
-  newIdempotencyKey,
-  previewStructuredClinicalDocumentSign,
-  reviseStructuredClinicalDocument,
-  saveClinicalDocumentDraft,
-  signStructuredClinicalDocument,
-} from '../api-client.ts'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
@@ -45,98 +37,67 @@ function ErrorAlert({ message, title }: { message: string; title: string }): Rea
     </Alert>
   )
 }
+
+export interface ClinicalDocumentSignPreview {
+  commitToken: string
+  document: { content: ClinicalDocumentContent }
+  previewId: string
+}
+
+export interface ClinicalDocumentRevisionInput {
+  caseId: string
+  compositionId: string
+  compositionVersion: string
+  document: ClinicalDocumentContent
+  encounterId: string
+  encounterVersion: string
+  reason: string
+}
+
+export interface ClinicalDocumentPageActions {
+  prepareSign: {
+    data: ClinicalDocumentSignPreview | undefined
+    error: Error | null
+    onReset: () => void
+    onSubmit: (document: ClinicalDocumentContent) => void
+    pending: boolean
+  }
+  revise: {
+    error: Error | null
+    onSubmit: (input: ClinicalDocumentRevisionInput) => void
+    pending: boolean
+    success: boolean
+  }
+  sign: {
+    error: Error | null
+    onSubmit: (preview: ClinicalDocumentSignPreview) => void
+    pending: boolean
+    success: boolean
+  }
+}
+
 export function ClinicalDocumentPage({
+  actions,
   allowRevision,
   detail,
   elementId,
   locale,
   messages,
   onDocumentChange,
-  onRefresh,
-  onRevisionCompleted,
   workingDocument,
 }: {
+  actions: ClinicalDocumentPageActions
   allowRevision: boolean
   detail: DoctorCaseDetail
   elementId: string
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   onDocumentChange: (document: ClinicalDocumentContent) => void
-  onRefresh: () => Promise<void>
-  onRevisionCompleted: () => Promise<void>
   workingDocument: ClinicalDocumentContent
 }): React.JSX.Element | null {
-  const draft = detail.clinicalDocument?.draft
   const signedDocuments = detail.clinicalDocument?.signed ?? []
   const latestSignedDocument = signedDocuments.at(-1)
-  const [revisionPreview, setRevisionPreview] = useState<{
-    caseId: string
-    compositionId: string
-    compositionVersion: string
-    document: ClinicalDocumentContent
-    encounterId: string
-    encounterVersion: string
-    reason: string
-  }>()
-  const prepareSign = useMutation({
-    mutationFn: async (document: ClinicalDocumentContent) => {
-      const saved = await saveClinicalDocumentDraft({
-        document,
-        encounterId: detail.encounter.id,
-        encounterVersion: detail.encounter.versionId,
-        expectedDraftVersion: draft?.version ?? 0,
-      }, newIdempotencyKey())
-      return previewStructuredClinicalDocumentSign({
-        encounterId: detail.encounter.id,
-        encounterVersion: detail.encounter.versionId,
-        expectedDraftVersion: saved.data.draftVersion,
-      }, newIdempotencyKey())
-    },
-    onError: async () => {
-      await onRefresh()
-    },
-  })
-  const sign = useMutation({
-    mutationFn: (preview: Awaited<ReturnType<typeof previewStructuredClinicalDocumentSign>>['data']) => (
-      signStructuredClinicalDocument({
-        commitToken: preview.commitToken,
-        encounterId: detail.encounter.id,
-        encounterVersion: detail.encounter.versionId,
-        previewId: preview.previewId,
-      }, newIdempotencyKey())
-    ),
-    onError: async () => {
-      await onRefresh()
-    },
-    onSuccess: async () => {
-      prepareSign.reset()
-      await onRefresh()
-    },
-  })
-  const revise = useMutation({
-    mutationFn: (input: {
-      caseId: string
-      compositionId: string
-      compositionVersion: string
-      document: ClinicalDocumentContent
-      encounterId: string
-      encounterVersion: string
-      reason: string
-    }) => reviseStructuredClinicalDocument({
-      compositionId: input.compositionId,
-      compositionVersion: input.compositionVersion,
-      document: input.document,
-      encounterId: input.encounterId,
-      encounterVersion: input.encounterVersion,
-      reason: input.reason,
-    }, newIdempotencyKey()),
-    onError: async () => {
-      await onRefresh()
-    },
-    onSuccess: async () => {
-      await onRevisionCompleted()
-    },
-  })
+  const [revisionPreview, setRevisionPreview] = useState<ClinicalDocumentRevisionInput>()
 
   if (
     signedDocuments.length === 0
@@ -145,7 +106,7 @@ export function ClinicalDocumentPage({
     return null
   }
 
-  const currentPreview = prepareSign.data?.data
+  const currentPreview = actions.prepareSign.data
   return (
     <section
       aria-labelledby="structured-clinical-document-heading"
@@ -156,7 +117,7 @@ export function ClinicalDocumentPage({
       <h3 className="text-sm font-semibold" id="structured-clinical-document-heading">
         {messages.structuredClinicalDocument}
       </h3>
-      {sign.isSuccess ? (
+      {actions.sign.success ? (
         <Alert>
           <CheckCircleIcon aria-hidden="true" />
           <AlertTitle>{messages.clinicalDocumentSigned}</AlertTitle>
@@ -165,7 +126,7 @@ export function ClinicalDocumentPage({
       ) : null}
       {signedDocuments.length > 0 ? (
         <>
-          {revise.isSuccess ? (
+          {actions.revise.success ? (
             <Alert>
               <CheckIcon aria-hidden="true" />
               <AlertTitle>{messages.clinicalDocumentRevisionSaved}</AlertTitle>
@@ -218,7 +179,7 @@ export function ClinicalDocumentPage({
                   encounterVersion: detail.encounter.versionId,
                   reason,
                 })}
-                pending={revise.isPending}
+                pending={actions.revise.pending}
                 pendingLabel={messages.revisingClinicalDocument}
                 submitLabel={messages.submitClinicalDocumentRevision}
               />
@@ -252,10 +213,10 @@ export function ClinicalDocumentPage({
                   <AlertDialogFooter>
                     <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
                     <AlertDialogAction
-                      disabled={revise.isPending}
+                      disabled={actions.revise.pending}
                       onClick={() => {
                         if (revisionPreview === undefined) return
-                        revise.mutate(revisionPreview)
+                        actions.revise.onSubmit(revisionPreview)
                         setRevisionPreview(undefined)
                       }}
                     >
@@ -265,14 +226,10 @@ export function ClinicalDocumentPage({
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
-              {revise.error === null
-                || revise.variables?.caseId !== detail.caseId
-                || !signedDocuments.some(document => (
-                  document.compositionId === revise.variables?.compositionId
-                )) ? null : (
+              {actions.revise.error === null ? null : (
                 <ErrorAlert
-                  message={getWorkspaceErrorMessage(revise.error, messages)}
-                  title={getWorkspaceErrorTitle(revise.error, messages, messages.operationFailed)}
+                  message={getWorkspaceErrorMessage(actions.revise.error, messages)}
+                  title={getWorkspaceErrorTitle(actions.revise.error, messages, messages.operationFailed)}
                 />
               )}
             </div>
@@ -285,7 +242,7 @@ export function ClinicalDocumentPage({
             className="flex flex-col gap-3"
             onSubmit={event => {
               event.preventDefault()
-              prepareSign.mutate(workingDocument)
+              actions.prepareSign.onSubmit(workingDocument)
             }}
           >
             <ClinicalRecordEditor
@@ -295,23 +252,23 @@ export function ClinicalDocumentPage({
               onChange={onDocumentChange}
             />
             <div className="flex justify-end border-t pt-3">
-              <Button disabled={prepareSign.isPending} type="submit">
-                {prepareSign.isPending
+              <Button disabled={actions.prepareSign.pending} type="submit">
+                {actions.prepareSign.pending
                   ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
                   : <FileSignatureIcon aria-hidden="true" data-icon="inline-start" />}
-                {prepareSign.isPending ? messages.signingClinicalRecord : messages.signClinicalRecord}
+                {actions.prepareSign.pending ? messages.signingClinicalRecord : messages.signClinicalRecord}
               </Button>
             </div>
           </form>
-          {prepareSign.error === null ? null : (
+          {actions.prepareSign.error === null ? null : (
             <ErrorAlert
-              message={getWorkspaceErrorMessage(prepareSign.error, messages)}
-              title={getWorkspaceErrorTitle(prepareSign.error, messages, messages.operationFailed)}
+              message={getWorkspaceErrorMessage(actions.prepareSign.error, messages)}
+              title={getWorkspaceErrorTitle(actions.prepareSign.error, messages, messages.operationFailed)}
             />
           )}
           <AlertDialog
             onOpenChange={open => {
-              if (!open && !sign.isPending) prepareSign.reset()
+              if (!open && !actions.sign.pending) actions.prepareSign.onReset()
             }}
             open={currentPreview !== undefined}
           >
@@ -326,15 +283,15 @@ export function ClinicalDocumentPage({
                 </div>
               )}
               <AlertDialogFooter>
-                <AlertDialogCancel disabled={sign.isPending}>{messages.cancel}</AlertDialogCancel>
+                <AlertDialogCancel disabled={actions.sign.pending}>{messages.cancel}</AlertDialogCancel>
                 <Button
-                  disabled={currentPreview === undefined || sign.isPending}
+                  disabled={currentPreview === undefined || actions.sign.pending}
                   onClick={() => {
-                    if (currentPreview !== undefined) sign.mutate(currentPreview)
+                    if (currentPreview !== undefined) actions.sign.onSubmit(currentPreview)
                   }}
                   type="button"
                 >
-                  {sign.isPending
+                  {actions.sign.pending
                     ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
                     : <CheckCircleIcon aria-hidden="true" data-icon="inline-start" />}
                   {messages.confirmClinicalRecordSign}
@@ -342,10 +299,10 @@ export function ClinicalDocumentPage({
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
-          {sign.error === null ? null : (
+          {actions.sign.error === null ? null : (
             <ErrorAlert
-              message={getWorkspaceErrorMessage(sign.error, messages)}
-              title={getWorkspaceErrorTitle(sign.error, messages, messages.operationFailed)}
+              message={getWorkspaceErrorMessage(actions.sign.error, messages)}
+              title={getWorkspaceErrorTitle(actions.sign.error, messages, messages.operationFailed)}
             />
           )}
         </>
