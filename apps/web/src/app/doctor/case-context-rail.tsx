@@ -66,6 +66,11 @@ function ContextFact({ label, value }: { label: string; value: string }): React.
   )
 }
 
+function isAbnormalInterpretation(interpretation: string | undefined): boolean {
+  if (interpretation === undefined) return false
+  return !['n', 'neg', 'negative', 'normal'].includes(interpretation.trim().toLowerCase())
+}
+
 function prescriptionStatus(
   detail: DoctorCaseDetail,
   messages: WorkspaceMessages,
@@ -165,7 +170,7 @@ function PageContext({ detail, locale, messages, section }: {
   const reportResults = requests.flatMap(request => request.report?.results ?? [])
   const legacyReport = detail.report
   const abnormalResults = [...reportResults, ...(legacyReport?.results ?? [])]
-    .filter(result => result.interpretation !== 'normal').length
+    .filter(result => isAbnormalInterpretation(result.interpretation)).length
   return (
     <section aria-labelledby={headingId}>
       <h3 className="text-sm font-semibold" id={headingId}>{labels.laboratoryContext}</h3>

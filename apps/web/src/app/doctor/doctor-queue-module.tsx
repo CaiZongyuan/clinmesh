@@ -12,7 +12,7 @@ import { PaginationControls } from '../pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { doctorCaseStatusLabel } from './doctor-case-status.ts'
-import { PatientAvatar, VitalSummary } from './patient-summary.tsx'
+import { patientAge, PatientAvatar, VitalSummary } from './patient-summary.tsx'
 
 type WorkspaceMessages = ReturnType<typeof getWorkspaceMessages>
 type VirtualPatient = VirtualPatientList['items'][number]
@@ -44,28 +44,32 @@ function VirtualPatientRow({ item, messages, onSelect, selected }: {
   onSelect: () => void
   selected: boolean
 }): React.JSX.Element {
+  const label = `${messages.selectVirtualPatient} ${item.name}`
+  const age = patientAge(item.birthDate)
   return (
-    <Button
-      aria-label={`${messages.selectVirtualPatient} ${item.name}`}
-      aria-pressed={selected}
-      className={`h-auto min-h-20 w-full justify-start gap-3 rounded-md border px-3 py-2 text-left ${selected
-        ? 'border-primary/40 bg-primary/5'
-        : 'border-border bg-background hover:border-foreground/20'}`}
-      onClick={onSelect}
-      type="button"
-      variant="ghost"
-    >
-      <PatientAvatar className="size-9" label={`${item.name} ${messages.patient}`} name={item.name} />
-      <span className="min-w-0">
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="truncate font-medium">{item.name}</span>
-          <span className="shrink-0 text-xs text-muted-foreground">
-            {messages[`gender_${item.gender}` as 'gender_male']} · {item.birthDate}
+    <li aria-label={label} className="list-none">
+      <Button
+        aria-label={label}
+        aria-pressed={selected}
+        className={`h-auto min-h-20 w-full justify-start gap-3 rounded-md border px-3 py-2 text-left ${selected
+          ? 'border-primary/40 bg-primary/5'
+          : 'border-border bg-background hover:border-foreground/20'}`}
+        onClick={onSelect}
+        type="button"
+        variant="ghost"
+      >
+        <PatientAvatar className="size-9" label={`${item.name} ${messages.patient}`} name={item.name} />
+        <span className="min-w-0">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate font-medium">{item.name}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {messages[`gender_${item.gender}` as 'gender_male']} · {age === undefined ? '-' : messages.patientAge.replace('{age}', String(age))}
+            </span>
           </span>
+          <span className="mt-1 block truncate text-xs text-muted-foreground">{item.presentation.chiefComplaint}</span>
         </span>
-        <span className="mt-1 block truncate text-xs text-muted-foreground">{item.presentation.chiefComplaint}</span>
-      </span>
-    </Button>
+      </Button>
+    </li>
   )
 }
 
@@ -75,31 +79,34 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
   onSelect: () => void
   selected: boolean
 }): React.JSX.Element {
+  const label = `${messages.selectCase} ${item.patient.name}`
+  const age = patientAge(item.patient.birthDate)
   return (
-    <Button
-      aria-label={`${messages.selectCase} ${item.patient.name}`}
-      className={`h-auto min-h-20 w-full justify-between gap-3 rounded-md border px-3 py-2 text-left ${selected
-        ? 'border-primary/40 bg-primary/5'
-        : 'border-border bg-background hover:border-foreground/20'}`}
-      onClick={onSelect}
-      role="listitem"
-      type="button"
-      variant="ghost"
-    >
-      <span className="flex min-w-0 items-center gap-3">
-        <PatientAvatar className="size-9" label={`${item.patient.name} ${messages.patient}`} name={item.patient.name} />
-        <span className="min-w-0">
-          <span className="flex min-w-0 items-center gap-2">
-            <span className="truncate font-medium">{item.patient.name}</span>
-            <span className="shrink-0 text-xs text-muted-foreground">
-              {messages[`gender_${item.patient.gender}` as 'gender_male']} · {item.patient.birthDate}
+    <li aria-label={label} className="list-none">
+      <Button
+        aria-label={label}
+        className={`h-auto min-h-20 w-full justify-between gap-3 rounded-md border px-3 py-2 text-left ${selected
+          ? 'border-primary/40 bg-primary/5'
+          : 'border-border bg-background hover:border-foreground/20'}`}
+        onClick={onSelect}
+        type="button"
+        variant="ghost"
+      >
+        <span className="flex min-w-0 items-center gap-3">
+          <PatientAvatar className="size-9" label={`${item.patient.name} ${messages.patient}`} name={item.patient.name} />
+          <span className="min-w-0">
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="truncate font-medium">{item.patient.name}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {messages[`gender_${item.patient.gender}` as 'gender_male']} · {age === undefined ? '-' : messages.patientAge.replace('{age}', String(age))}
+              </span>
             </span>
+            <span className="mt-1 block truncate text-xs text-muted-foreground">{item.presentation.chiefComplaint}</span>
           </span>
-          <span className="mt-1 block truncate text-xs text-muted-foreground">{item.presentation.chiefComplaint}</span>
         </span>
-      </span>
-      <Badge className="shrink-0" variant="outline">{doctorCaseStatusLabel(item.status, messages)}</Badge>
-    </Button>
+        <Badge className="shrink-0" variant="outline">{doctorCaseStatusLabel(item.status, messages)}</Badge>
+      </Button>
+    </li>
   )
 }
 
@@ -183,7 +190,7 @@ export function DoctorQueueModule({
               </Empty>
             ) : (
               <>
-                <div className="flex max-h-[calc(100svh-19rem)] flex-col gap-2 overflow-y-auto pr-1" role="list">
+                <ul className="flex max-h-[calc(100svh-19rem)] flex-col gap-2 overflow-y-auto pr-1">
                   {queueData.items.map(item => (
                     <DoctorCaseRow
                       item={item}
@@ -193,7 +200,7 @@ export function DoctorQueueModule({
                       selected={item.caseId === activeCaseId}
                     />
                   ))}
-                </div>
+                </ul>
                 <PaginationControls
                   messages={messages}
                   onPageChange={onQueuePageChange}
@@ -221,7 +228,7 @@ export function DoctorQueueModule({
               </Empty>
             ) : (
               <>
-                <div className="flex max-h-[calc(100svh-29rem)] flex-col gap-2 overflow-y-auto pr-1">
+                <ul className="flex max-h-[calc(100svh-29rem)] flex-col gap-2 overflow-y-auto pr-1">
                   {virtualPatientData.items.map(item => (
                     <VirtualPatientRow
                       item={item}
@@ -231,7 +238,7 @@ export function DoctorQueueModule({
                       selected={item.id === selectedVirtualPatient?.id}
                     />
                   ))}
-                </div>
+                </ul>
                 {selectedVirtualPatient === undefined ? null : (
                   <div className="flex flex-col gap-3 border-t pt-3">
                     <p className="text-sm">{selectedVirtualPatient.presentation.summary}</p>

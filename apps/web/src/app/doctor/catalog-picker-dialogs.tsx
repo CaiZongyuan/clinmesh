@@ -1,5 +1,11 @@
 import type { ClinicalCatalog, DiagnosisDraftEntry } from '@clinmesh/contracts/his'
-import type { ReferenceConcept, ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
+import type {
+  ReferenceConcept,
+  ReferenceDiagnosisCatalogSearch,
+  ReferenceLaboratoryCatalogSearch,
+  ReferenceMedicationCatalogSearch,
+  ReferenceMedicationProduct,
+} from '@clinmesh/contracts/reference-data'
 import { Alert, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
@@ -16,7 +22,6 @@ import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { cn } from '@clinmesh/ui/lib/utils'
-import { useQuery } from '@tanstack/react-query'
 import {
   CheckIcon,
   ChevronLeftIcon,
@@ -30,17 +35,26 @@ import {
   SearchIcon,
 } from 'lucide-react'
 import { useMemo, useState, type FormEvent } from 'react'
-import {
-  searchReferenceDiagnoses,
-  searchReferenceLaboratory,
-  searchReferenceMedications,
-} from '../api-client.ts'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
 
 type TriggerMode = 'add' | 'replace' | 'select'
 type PrescriptionCatalog = Extract<ClinicalCatalog, { prescriptionConclusionSupported: true }>
 type PrescriptionMedication = PrescriptionCatalog['medications'][number]
-export type ReferenceCatalogQueryScope = readonly ['reference-catalog', string, string]
+
+export interface ReferenceCatalogSearchModel<Data> {
+  data: Data | undefined
+  error: Error | null
+  isError: boolean
+  isFetching: boolean
+  isPending: boolean
+  onSearch: (query: string, page: number) => void
+}
+
+export interface ReferenceCatalogSearches {
+  diagnoses: ReferenceCatalogSearchModel<ReferenceDiagnosisCatalogSearch>
+  laboratory: ReferenceCatalogSearchModel<ReferenceLaboratoryCatalogSearch>
+  medications: ReferenceCatalogSearchModel<ReferenceMedicationCatalogSearch>
+}
 
 const copy = {
   'en-US': {
@@ -303,7 +317,7 @@ export function DiagnosisCatalogDialog({
   locale,
   mode = 'add',
   onSelect,
-  queryScope,
+  search,
 }: {
   disabled?: boolean
   excludedIds: ReadonlySet<string>
@@ -311,7 +325,7 @@ export function DiagnosisCatalogDialog({
   locale: WorkspaceLocale
   mode?: TriggerMode
   onSelect: (selection: DiagnosisCatalogSelection) => void
-  queryScope: ReferenceCatalogQueryScope
+  search: ReferenceCatalogSearches['diagnoses']
 }) {
   const messages = copy[locale]
   const [open, setOpen] = useState(false)
@@ -319,13 +333,10 @@ export function DiagnosisCatalogDialog({
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<DiagnosisCatalogSelection>()
-  const results = useQuery({
-    enabled: open,
-    queryFn: ({ signal }) => searchReferenceDiagnoses(query, page, signal),
-    queryKey: [...queryScope, 'diagnoses', query, page],
-  })
+  const results = search
+  const remoteResults = results.data?.items ?? []
   const useLocal = results.isError
-    || (query.length === 0 && results.isSuccess && results.data.items.length === 0)
+    || (query.length === 0 && results.data !== undefined && remoteResults.length === 0)
   const normalizedLocalQuery = query.toLocaleLowerCase()
   const localResults = localCatalog.flatMap(item => {
     const display = locale === 'zh-CN' ? item.nameZh : item.nameEn
@@ -341,6 +352,7 @@ export function DiagnosisCatalogDialog({
     setQuery('')
     setPage(1)
     setSelected(undefined)
+    search.onSearch('', 1)
     setOpen(true)
   }
   const confirm = (selection = selected) => {
@@ -370,7 +382,9 @@ export function DiagnosisCatalogDialog({
           onSearch={() => {
             setPage(1)
             setSelected(undefined)
-            setQuery(input.trim())
+            const nextQuery = input.trim()
+            setQuery(nextQuery)
+            search.onSearch(nextQuery, 1)
           }}
           pending={results.isFetching}
           placeholder={messages.diagnosisPlaceholder}
@@ -380,7 +394,7 @@ export function DiagnosisCatalogDialog({
             {results.isError && localResults.length > 0 ? (
               <Alert className="m-2"><CircleAlertIcon /><AlertTitle>{messages.catalogUnavailable}</AlertTitle></Alert>
             ) : null}
-            {(useLocal ? localResults : results.data.items).length === 0 ? (
+            {(useLocal ? localResults : remoteResults).length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
             ) : (
               <Table>
@@ -393,7 +407,7 @@ export function DiagnosisCatalogDialog({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(useLocal ? localResults : results.data.items).map(item => {
+                  {(useLocal ? localResults : remoteResults).map(item => {
                     const selection: DiagnosisCatalogSelection = 'domain' in item
                       ? {
                           catalogItemId: item.id,
@@ -447,6 +461,7 @@ export function DiagnosisCatalogDialog({
             onPageChange={(nextPage) => {
               setPage(nextPage)
               setSelected(undefined)
+              search.onSearch(query, nextPage)
             }}
             page={page}
             pageSize={results.data.pageSize}
@@ -475,12 +490,12 @@ export function LaboratoryCatalogDialog({
   localCatalog,
   locale,
   onSelect,
-  queryScope,
+  search,
 }: {
   localCatalog: ClinicalCatalog['laboratory']
   locale: WorkspaceLocale
   onSelect: (selection: LaboratoryCatalogSelection) => void
-  queryScope: ReferenceCatalogQueryScope
+  search: ReferenceCatalogSearches['laboratory']
 }) {
   const messages = copy[locale]
   const [open, setOpen] = useState(false)
@@ -488,13 +503,10 @@ export function LaboratoryCatalogDialog({
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<LaboratoryCatalogSelection>()
-  const results = useQuery({
-    enabled: open,
-    queryFn: ({ signal }) => searchReferenceLaboratory(query, page, signal),
-    queryKey: [...queryScope, 'laboratory', query, page],
-  })
+  const results = search
+  const remoteResults = results.data?.items ?? []
   const useLocal = results.isError
-    || (query.length === 0 && results.isSuccess && results.data.items.length === 0)
+    || (query.length === 0 && results.data !== undefined && remoteResults.length === 0)
   const normalizedLocalQuery = query.toLocaleLowerCase()
   const localResults = localCatalog.flatMap(item => {
     const display = locale === 'zh-CN' ? item.nameZh : item.nameEn
@@ -506,6 +518,7 @@ export function LaboratoryCatalogDialog({
     setQuery('')
     setPage(1)
     setSelected(undefined)
+    search.onSearch('', 1)
     setOpen(true)
   }
   const confirm = (selection = selected) => {
@@ -529,7 +542,9 @@ export function LaboratoryCatalogDialog({
           onSearch={() => {
             setPage(1)
             setSelected(undefined)
-            setQuery(input.trim())
+            const nextQuery = input.trim()
+            setQuery(nextQuery)
+            search.onSearch(nextQuery, 1)
           }}
           pending={results.isFetching}
           placeholder={messages.laboratoryPlaceholder}
@@ -539,7 +554,7 @@ export function LaboratoryCatalogDialog({
             {results.isError && localResults.length > 0 ? (
               <Alert className="m-2"><CircleAlertIcon /><AlertTitle>{messages.catalogUnavailable}</AlertTitle></Alert>
             ) : null}
-            {(useLocal ? localResults : results.data.items).length === 0 ? (
+            {(useLocal ? localResults : remoteResults).length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
             ) : (
               <Table>
@@ -552,7 +567,7 @@ export function LaboratoryCatalogDialog({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(useLocal ? localResults : results.data.items).map(item => {
+                  {(useLocal ? localResults : remoteResults).map(item => {
                     const selection: LaboratoryCatalogSelection = 'domain' in item
                       ? {
                           catalogItemId: item.id,
@@ -598,6 +613,7 @@ export function LaboratoryCatalogDialog({
             onPageChange={(nextPage) => {
               setPage(nextPage)
               setSelected(undefined)
+              search.onSearch(query, nextPage)
             }}
             page={page}
             pageSize={results.data.pageSize}
@@ -655,7 +671,7 @@ export function MedicationCatalogDialog({
   locale,
   mode = 'add',
   onSelect,
-  queryScope,
+  search,
 }: {
   disabled?: boolean
   excludedIds: ReadonlySet<string>
@@ -663,7 +679,7 @@ export function MedicationCatalogDialog({
   locale: WorkspaceLocale
   mode?: TriggerMode
   onSelect: (selection: MedicationCatalogSelection) => void
-  queryScope: ReferenceCatalogQueryScope
+  search: ReferenceCatalogSearches['medications']
 }) {
   const messages = copy[locale]
   const [open, setOpen] = useState(false)
@@ -671,13 +687,10 @@ export function MedicationCatalogDialog({
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<MedicationCatalogSelection>()
-  const results = useQuery({
-    enabled: open,
-    queryFn: ({ signal }) => searchReferenceMedications(query, page, signal),
-    queryKey: [...queryScope, 'medications', query, page],
-  })
+  const results = search
+  const remoteResults = results.data?.items ?? []
   const useLocal = results.isError
-    || (query.length === 0 && results.isSuccess && results.data.items.length === 0)
+    || (query.length === 0 && results.data !== undefined && remoteResults.length === 0)
   const normalizedLocalQuery = query.toLocaleLowerCase()
   const localResults = localCatalog.filter(item => {
     const display = locale === 'zh-CN' ? item.nameZh : item.nameEn
@@ -693,6 +706,7 @@ export function MedicationCatalogDialog({
     setQuery('')
     setPage(1)
     setSelected(undefined)
+    search.onSearch('', 1)
     setOpen(true)
   }
   const selectionId = selected === undefined
@@ -729,7 +743,9 @@ export function MedicationCatalogDialog({
           onSearch={() => {
             setPage(1)
             setSelected(undefined)
-            setQuery(input.trim())
+            const nextQuery = input.trim()
+            setQuery(nextQuery)
+            search.onSearch(nextQuery, 1)
           }}
           pending={results.isFetching}
           placeholder={messages.medicationPlaceholder}
@@ -739,7 +755,7 @@ export function MedicationCatalogDialog({
             {results.isError && localResults.length > 0 ? (
               <Alert className="m-2"><CircleAlertIcon /><AlertTitle>{messages.catalogUnavailable}</AlertTitle></Alert>
             ) : null}
-            {(useLocal ? localResults : results.data.items).length === 0 ? (
+            {(useLocal ? localResults : remoteResults).length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
             ) : (
               <Table>
@@ -835,6 +851,7 @@ export function MedicationCatalogDialog({
             onPageChange={(nextPage) => {
               setPage(nextPage)
               setSelected(undefined)
+              search.onSearch(query, nextPage)
             }}
             page={page}
             pageSize={results.data.pageSize}

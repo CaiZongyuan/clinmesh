@@ -39,7 +39,7 @@ import { WorkspaceSelect } from '../workspace-select.tsx'
 import {
   MedicationCatalogDialog,
   type MedicationCatalogSelection,
-  type ReferenceCatalogQueryScope,
+  type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 
@@ -132,7 +132,7 @@ export function PrescriptionPage({
   locale,
   messages,
   readOnly,
-  referenceQueryScope,
+  referenceSearch,
 }: {
   actions: PrescriptionPageActions
   allowWithdrawal: boolean
@@ -142,7 +142,7 @@ export function PrescriptionPage({
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   readOnly: boolean
-  referenceQueryScope: ReferenceCatalogQueryScope
+  referenceSearch: ReferenceCatalogSearches['medications']
 }): React.JSX.Element {
   const state = detail.medicationConclusion
   const prescription = state?.prescription
@@ -367,7 +367,7 @@ export function PrescriptionPage({
                   ))}
                   locale={locale}
                   onSelect={addMedication}
-                  queryScope={referenceQueryScope}
+                  search={referenceSearch}
                 />
               </div>
               {items.length === 0 ? (
@@ -474,7 +474,7 @@ export function PrescriptionPage({
                         locale={locale}
                         mode="replace"
                         onSelect={selection => replaceMedication(index, selection)}
-                        queryScope={referenceQueryScope}
+                        search={referenceSearch}
                       />
                       <Button
                         aria-label={`${messages.removeMedication}${suffix}`}

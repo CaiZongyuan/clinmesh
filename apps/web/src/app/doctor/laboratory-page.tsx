@@ -40,7 +40,7 @@ import { WorkspaceSelect } from '../workspace-select.tsx'
 import {
   LaboratoryCatalogDialog,
   type LaboratoryCatalogSelection,
-  type ReferenceCatalogQueryScope,
+  type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
 
 export interface LaboratoryPageActions {
@@ -127,7 +127,7 @@ export function LaboratoryPage({
   onIssueLegacyOrder,
   onLaboratoryItemChange,
   readOnly,
-  referenceQueryScope,
+  referenceSearch,
   showCorrection,
 }: {
   actions: LaboratoryPageActions
@@ -146,7 +146,7 @@ export function LaboratoryPage({
   onIssueLegacyOrder: () => void
   onLaboratoryItemChange: (value: string) => void
   readOnly: boolean
-  referenceQueryScope: ReferenceCatalogQueryScope
+  referenceSearch: ReferenceCatalogSearches['laboratory']
   showCorrection: boolean
 }): React.JSX.Element {
   const firstVisitDraft = detail.drafts?.firstVisit
@@ -256,7 +256,7 @@ export function LaboratoryPage({
             onIndicationChange={onIndicationChange}
             onLaboratoryItemChange={onLaboratoryItemChange}
             readOnly={readOnly}
-            referenceQueryScope={referenceQueryScope}
+            referenceSearch={referenceSearch}
             showCorrection={showCorrection}
             state={detail.laboratoryRequests}
           />
@@ -278,7 +278,7 @@ function LaboratoryRequestEditor({
   onIndicationChange,
   onLaboratoryItemChange,
   readOnly,
-  referenceQueryScope,
+  referenceSearch,
   showCorrection,
   state,
 }: {
@@ -293,7 +293,7 @@ function LaboratoryRequestEditor({
   onIndicationChange: (value: string) => void
   onLaboratoryItemChange: (value: string) => void
   readOnly: boolean
-  referenceQueryScope: ReferenceCatalogQueryScope
+  referenceSearch: ReferenceCatalogSearches['laboratory']
   showCorrection: boolean
   state: DoctorCaseDetail['laboratoryRequests']
 }): React.JSX.Element {
@@ -359,7 +359,7 @@ function LaboratoryRequestEditor({
                     setSelectedReference(selection)
                     onLaboratoryItemChange(selection.catalogItemId)
                   }}
-                  queryScope={referenceQueryScope}
+                  search={referenceSearch}
                 />
               </div>
             </Field>

@@ -2582,14 +2582,14 @@ describe('role workspaces', () => {
     expect(cancellationRequests).toBe(1)
 
     await user.click(within(cancelDialog).getByRole('button', { name: '取消' }))
-    await user.click(screen.getByRole('listitem', { name: '选择病例 合成候选患者周远' }))
+    await user.click(screen.getByRole('button', { name: '选择病例 合成候选患者周远' }))
     await user.click(await screen.findByRole('tab', { name: '检验' }))
     expect(await screen.findByText('暂无检验申请或结果')).toBeTruthy()
     expect(screen.queryByText(
       '检验申请当前状态为“已受理”，版本为 2。请刷新后重新确认。',
     )).toBeNull()
 
-    await user.click(screen.getByRole('listitem', { name: '选择病例 合成候选患者林晓' }))
+    await user.click(screen.getByRole('button', { name: '选择病例 合成候选患者林晓' }))
     await user.click(await screen.findByRole('tab', { name: '检验' }))
     const retryCancelButton = (await screen.findAllByRole('button', { name: /取消检验申请/ }))[0]
     if (retryCancelButton === undefined) throw new Error('Cancellable request was not restored')
@@ -2608,7 +2608,7 @@ describe('role workspaces', () => {
     expect(draftDeletionRequests).toBe(1)
     await waitFor(() => expect(screen.queryByText('检验草稿已保存')).toBeNull())
 
-    await user.click(screen.getByRole('listitem', { name: '选择病例 合成候选患者周远' }))
+    await user.click(screen.getByRole('button', { name: '选择病例 合成候选患者周远' }))
     await user.click(await screen.findByRole('tab', { name: '检验' }))
     expect(await screen.findByText('暂无检验申请或结果')).toBeTruthy()
     expect(screen.queryByText('检验草稿已删除')).toBeNull()
@@ -2781,7 +2781,7 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     expect(await screen.findByText('门诊医生 · 门诊医生')).toBeTruthy()
-    expect(await screen.findByRole('listitem', { name: '选择病例 合成患者周明' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: '选择病例 合成患者周明' })).toBeTruthy()
     const caseDetail = await screen.findByRole('region', { name: '病例详情' })
     expect(within(caseDetail).getByText('102 次/分')).toBeTruthy()
     expect(within(caseDetail).getByText('20 次/分')).toBeTruthy()
@@ -3132,6 +3132,13 @@ describe('role workspaces', () => {
               referenceRange: '3.5–9.5',
               unit: '×10⁹/L',
               value: 6.8,
+            }, {
+              code: '789-8',
+              interpretation: 'N',
+              value: 4.7,
+            }, {
+              code: '718-7',
+              value: 138,
             }],
             status: 'final',
           },
@@ -3559,7 +3566,7 @@ describe('role workspaces', () => {
 
     expect(await screen.findByRole('tab', { name: '病历记录' })).toBeTruthy()
     const queueRegion = await screen.findByRole('complementary', { name: '候诊队列' })
-    expect(within(queueRegion).getByRole('listitem', { name: '选择病例 王晓明' })).toBeTruthy()
+    expect(within(queueRegion).getByRole('button', { name: '选择病例 王晓明' })).toBeTruthy()
     const patientBanner = screen.getByRole('region', { name: '当前患者' })
     expect(within(patientBanner).getByRole('img', { name: '王晓明 患者' })).toBeTruthy()
     const contextRail = await screen.findByRole('complementary', { name: '病例上下文' })
@@ -3576,7 +3583,7 @@ describe('role workspaces', () => {
     expect((await screen.findByRole('button', {
       name: '正在等待患者回答',
     }) as HTMLButtonElement).disabled).toBe(true)
-    await user.click(screen.getByRole('listitem', { name: '选择病例 李静' }))
+    await user.click(screen.getByRole('button', { name: '选择病例 李静' }))
     expect(await screen.findByRole('heading', { name: '李静' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: '正在等待患者回答' })).toBeNull()
     await act(async () => {
@@ -3585,13 +3592,13 @@ describe('role workspaces', () => {
     })
     expect(screen.getByRole('heading', { name: '李静' })).toBeTruthy()
     expect(screen.queryByText('操作冲突')).toBeNull()
-    await user.click(screen.getByRole('listitem', { name: '选择病例 王晓明' }))
+    await user.click(screen.getByRole('button', { name: '选择病例 王晓明' }))
     await user.click(screen.getByRole('tab', { name: '病历记录' }))
     const history = screen.getByLabelText('现病史') as HTMLTextAreaElement
     await user.clear(history)
     await user.type(history, '患者三天前受凉后出现咳嗽、发热。')
-    await user.click(screen.getByRole('listitem', { name: '选择病例 李静' }))
-    await user.click(await screen.findByRole('listitem', { name: '选择病例 王晓明' }))
+    await user.click(screen.getByRole('button', { name: '选择病例 李静' }))
+    await user.click(await screen.findByRole('button', { name: '选择病例 王晓明' }))
 
     expect((await screen.findByLabelText('现病史') as HTMLTextAreaElement).value)
       .toBe('患者三天前受凉后出现咳嗽、发热。')

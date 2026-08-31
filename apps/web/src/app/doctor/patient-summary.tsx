@@ -25,6 +25,22 @@ function triageAcuityLabel(code: string, messages: WorkspaceMessages): string {
   return code
 }
 
+export function patientAge(
+  birthDate: string | undefined,
+  referenceDate: Date = new Date(),
+): number | undefined {
+  if (birthDate === undefined) return undefined
+  const birth = new Date(`${birthDate}T00:00:00Z`)
+  let age = referenceDate.getUTCFullYear() - birth.getUTCFullYear()
+  const birthdayPending = referenceDate.getUTCMonth() < birth.getUTCMonth()
+    || (
+      referenceDate.getUTCMonth() === birth.getUTCMonth()
+      && referenceDate.getUTCDate() < birth.getUTCDate()
+    )
+  if (birthdayPending) age -= 1
+  return age
+}
+
 export function PatientAvatar({ className = 'size-12', label, name }: {
   className?: string
   label: string
@@ -65,6 +81,7 @@ export function PatientBanner({
 }): React.JSX.Element {
   const presentation = detail.presentation
   const readOnly = detail.encounter.status !== 'in-progress'
+  const age = patientAge(detail.patient.birthDate)
   return (
     <section aria-label={messages.selectedPatient} className="overflow-hidden border-b bg-background">
       <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
@@ -74,7 +91,9 @@ export function PatientBanner({
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="truncate text-lg font-semibold">{detail.patient.name}</h2>
               <Badge variant="outline">{messages[`gender_${detail.patient.gender}` as 'gender_male']}</Badge>
-              <span className="text-sm text-muted-foreground">{detail.patient.birthDate}</span>
+              <span className="text-sm text-muted-foreground">
+                {age === undefined ? '-' : messages.patientAge.replace('{age}', String(age))}
+              </span>
             </div>
             <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
               <span>{messages.registrationNumber}：{detail.patient.identifier}</span>

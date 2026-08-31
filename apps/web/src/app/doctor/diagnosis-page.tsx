@@ -23,7 +23,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts
 import {
   DiagnosisCatalogDialog,
   type DiagnosisCatalogSelection,
-  type ReferenceCatalogQueryScope,
+  type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
 
 export interface DiagnosisPageActions {
@@ -45,14 +45,14 @@ interface DiagnosisDraftLine extends DiagnosisDraftEntry {
   note: string
 }
 
-export function DiagnosisPage({ actions, catalog, elementId, locale, messages, readOnly, referenceQueryScope, state }: {
+export function DiagnosisPage({ actions, catalog, elementId, locale, messages, readOnly, referenceSearch, state }: {
   actions: DiagnosisPageActions
   catalog: ClinicalCatalog['diagnoses']
   elementId: string
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   readOnly: boolean
-  referenceQueryScope: ReferenceCatalogQueryScope
+  referenceSearch: ReferenceCatalogSearches['diagnoses']
   state: DoctorCaseDetail['diagnosis']
 }): React.JSX.Element {
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
@@ -204,7 +204,7 @@ export function DiagnosisPage({ actions, catalog, elementId, locale, messages, r
           localCatalog={catalog}
           locale={locale}
           onSelect={addEntry}
-          queryScope={referenceQueryScope}
+          search={referenceSearch}
         />
       </div>
       {entries.length === 0 ? (
@@ -259,7 +259,7 @@ export function DiagnosisPage({ actions, catalog, elementId, locale, messages, r
                         locale={locale}
                         mode="replace"
                         onSelect={selection => selectEntry(index, selection)}
-                        queryScope={referenceQueryScope}
+                        search={referenceSearch}
                       />
                     </div>
                   </TableCell>

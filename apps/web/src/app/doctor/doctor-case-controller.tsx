@@ -63,6 +63,9 @@ import {
   saveLaboratoryRequestDraft,
   savePrescriptionDraft,
   saveRevisitDraft,
+  searchReferenceDiagnoses,
+  searchReferenceLaboratory,
+  searchReferenceMedications,
   signClinicalDocument,
   signStructuredClinicalDocument,
   startFirstVisit,
@@ -85,7 +88,7 @@ import {
   DoctorCaseContextRail,
   type DoctorCaseSection,
 } from './case-context-rail.tsx'
-import type { ReferenceCatalogQueryScope } from './catalog-picker-dialogs.tsx'
+import type { ReferenceCatalogSearches } from './catalog-picker-dialogs.tsx'
 import {
   ClinicalDocumentPage,
   type ClinicalDocumentPageActions,
@@ -123,6 +126,19 @@ interface DoctorCaseControllerProps extends DoctorWorkspaceProps {
   onCorrectionNavigationHandled: () => void
   onSelectedCaseIdChange: (caseId: string | undefined) => void
   selectedCaseId: string | undefined
+}
+
+interface EncounterCompletionAction {
+  error: Error | null
+  onSubmit: () => void
+  pending: boolean
+  success: boolean
+}
+
+interface ReferenceCatalogSearchParameters {
+  enabled: boolean
+  page: number
+  query: string
 }
 
 const encounterCompletionTargetElementIds = {
@@ -242,10 +258,24 @@ function DoctorCaseController({
   const scope = [session.actor.workspaceId, session.actor.epoch] as const
   const [page, setPage] = useState(1)
   const [virtualPatientPage, setVirtualPatientPage] = useState(1)
+  const [diagnosisReferenceSearch, setDiagnosisReferenceSearch] = useState<ReferenceCatalogSearchParameters>({
+    enabled: false,
+    page: 1,
+    query: '',
+  })
+  const [laboratoryReferenceSearch, setLaboratoryReferenceSearch] = useState<ReferenceCatalogSearchParameters>({
+    enabled: false,
+    page: 1,
+    query: '',
+  })
+  const [medicationReferenceSearch, setMedicationReferenceSearch] = useState<ReferenceCatalogSearchParameters>({
+    enabled: false,
+    page: 1,
+    query: '',
+  })
   const queueKey = ['doctor-queue', ...scope, page] as const
   const virtualPatientScopeKey = ['doctor-virtual-patients', ...scope] as const
   const encounterCompletionScopeKey = ['encounter-completion', ...scope] as const
-  const referenceCatalogQueryScope: ReferenceCatalogQueryScope = ['reference-catalog', ...scope]
   const completedCaseListScopeKey = ['doctor-completed-cases', ...scope] as const
   const completedCaseDetailScopeKey = ['doctor-completed-case', ...scope] as const
   const virtualPatientKey = [...virtualPatientScopeKey, virtualPatientPage] as const
@@ -312,6 +342,89 @@ function DoctorCaseController({
     queryFn: ({ signal }) => getClinicalCatalog(signal),
     queryKey: ['clinical-catalog', ...scope],
   })
+  const referenceDiagnoses = useQuery({
+    enabled: diagnosisReferenceSearch.enabled,
+    queryFn: ({ signal }) => searchReferenceDiagnoses(
+      diagnosisReferenceSearch.query,
+      diagnosisReferenceSearch.page,
+      signal,
+    ),
+    queryKey: [
+      'reference-catalog',
+      ...scope,
+      'diagnoses',
+      diagnosisReferenceSearch.query,
+      diagnosisReferenceSearch.page,
+    ],
+  })
+  const referenceLaboratory = useQuery({
+    enabled: laboratoryReferenceSearch.enabled,
+    queryFn: ({ signal }) => searchReferenceLaboratory(
+      laboratoryReferenceSearch.query,
+      laboratoryReferenceSearch.page,
+      signal,
+    ),
+    queryKey: [
+      'reference-catalog',
+      ...scope,
+      'laboratory',
+      laboratoryReferenceSearch.query,
+      laboratoryReferenceSearch.page,
+    ],
+  })
+  const referenceMedications = useQuery({
+    enabled: medicationReferenceSearch.enabled,
+    queryFn: ({ signal }) => searchReferenceMedications(
+      medicationReferenceSearch.query,
+      medicationReferenceSearch.page,
+      signal,
+    ),
+    queryKey: [
+      'reference-catalog',
+      ...scope,
+      'medications',
+      medicationReferenceSearch.query,
+      medicationReferenceSearch.page,
+    ],
+  })
+  const referenceCatalogSearches: ReferenceCatalogSearches = {
+    diagnoses: {
+      data: referenceDiagnoses.data,
+      error: referenceDiagnoses.error,
+      isError: referenceDiagnoses.isError,
+      isFetching: referenceDiagnoses.isFetching,
+      isPending: referenceDiagnoses.isPending,
+      onSearch: (query, searchPage) => setDiagnosisReferenceSearch({
+        enabled: true,
+        page: searchPage,
+        query,
+      }),
+    },
+    laboratory: {
+      data: referenceLaboratory.data,
+      error: referenceLaboratory.error,
+      isError: referenceLaboratory.isError,
+      isFetching: referenceLaboratory.isFetching,
+      isPending: referenceLaboratory.isPending,
+      onSearch: (query, searchPage) => setLaboratoryReferenceSearch({
+        enabled: true,
+        page: searchPage,
+        query,
+      }),
+    },
+    medications: {
+      data: referenceMedications.data,
+      error: referenceMedications.error,
+      isError: referenceMedications.isError,
+      isFetching: referenceMedications.isFetching,
+      isPending: referenceMedications.isPending,
+      onSearch: (query, searchPage) => setMedicationReferenceSearch({
+        enabled: true,
+        page: searchPage,
+        query,
+      }),
+    },
+  }
   const persistedClinicalDocumentVersion = detail.data?.clinicalDocument?.draft?.version
     ?? detail.data?.clinicalDocument?.signed.at(-1)?.revisionNumber
   useEffect(() => {
@@ -388,18 +501,35 @@ function DoctorCaseController({
       queryClient.invalidateQueries({ queryKey: encounterCompletionScopeKey }),
     ])
   }
-  const refreshCase = async () => refreshCaseById(activeCaseId)
   const refreshCompletedCaseDetails = async () => {
     await queryClient.invalidateQueries({ queryKey: completedCaseDetailScopeKey })
   }
-  const refreshAfterCompletion = async () => {
-    if (detail.data !== undefined) onSelectedCaseIdChange(detail.data.caseId)
-    await Promise.all([
-      refreshCase(),
-      refreshCompletedCaseDetails(),
-      queryClient.invalidateQueries({ queryKey: completedCaseListScopeKey }),
-    ])
-  }
+  const completeCaseEncounter = useMutation({
+    mutationFn: ({ caseId }: { caseId: string }) => {
+      const current = detail.data
+      const preview = completion.data
+      if (
+        current?.caseId !== caseId
+        || preview?.encounterId !== current.encounter.id
+        || preview.encounterVersion !== current.encounter.versionId
+      ) {
+        throw new Error(messages.encounterCompletionUnavailable)
+      }
+      return completeEncounter({
+        encounterId: preview.encounterId,
+        encounterVersion: preview.encounterVersion,
+      }, newIdempotencyKey())
+    },
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => {
+      onSelectedCaseIdChange(variables.caseId)
+      await Promise.all([
+        refreshCaseById(variables.caseId),
+        refreshCompletedCaseDetails(),
+        queryClient.invalidateQueries({ queryKey: completedCaseListScopeKey }),
+      ])
+    },
+  })
   const askQuestion = useMutation({
     mutationFn: ({ caseId, questionCode }: { caseId: string; questionCode: string }) => {
       const current = detail.data
@@ -966,6 +1096,16 @@ function DoctorCaseController({
               },
             }}
             completion={completion}
+            completionAction={{
+              error: completeCaseEncounter.variables?.caseId === detail.data.caseId
+                ? completeCaseEncounter.error
+                : null,
+              onSubmit: () => completeCaseEncounter.mutate({ caseId: detail.data.caseId }),
+              pending: completeCaseEncounter.isPending
+                && completeCaseEncounter.variables?.caseId === detail.data.caseId,
+              success: completeCaseEncounter.isSuccess
+                && completeCaseEncounter.variables?.caseId === detail.data.caseId,
+            }}
             correctionTarget={correctionNavigation?.caseId === detail.data.caseId
               ? correctionNavigation.target
               : undefined}
@@ -1128,7 +1268,6 @@ function DoctorCaseController({
             }}
             onIndicationChange={setIndicationCode}
             onCorrectionNavigationHandled={onCorrectionNavigationHandled}
-            onEncounterCompleted={refreshAfterCompletion}
             onLaboratoryItemChange={(value) => {
               setLaboratoryItemId(value)
               setIndicationCode('')
@@ -1137,7 +1276,6 @@ function DoctorCaseController({
               onSelectedCaseIdChange(detail.data.caseId)
               issueOrder.mutate({ caseId: detail.data.caseId })
             }}
-            onRefreshCase={refreshCase}
             onPreviewSign={() => previewSign.mutate({ caseId: detail.data.caseId })}
             prescriptionActions={{
               confirmNoMedication: {
@@ -1201,7 +1339,7 @@ function DoctorCaseController({
                   && withdrawCasePrescription.variables?.caseId === detail.data.caseId,
               },
             }}
-            referenceQueryScope={referenceCatalogQueryScope}
+            referenceCatalogSearches={referenceCatalogSearches}
             onSaveDraft={input => saveDraft.mutate({ caseId: detail.data.caseId, ...input })}
             onSaveRevisit={input => saveRevisit.mutate({ caseId: detail.data.caseId, ...input })}
             onSign={() => {
@@ -1246,6 +1384,7 @@ function CaseDetail({
   catalog,
   clinicalDocumentActions,
   completion,
+  completionAction,
   consultationAction,
   correctionTarget,
   detail,
@@ -1259,15 +1398,13 @@ function CaseDetail({
   locale,
   messages,
   onClinicalDocumentChange,
-  onEncounterCompleted,
   onIssueOrder,
   onIndicationChange,
   onCorrectionNavigationHandled,
-  onRefreshCase,
   onPreviewSign,
   onLaboratoryItemChange,
   prescriptionActions,
-  referenceQueryScope,
+  referenceCatalogSearches,
   onSaveDraft,
   onSaveRevisit,
   onSign,
@@ -1294,6 +1431,7 @@ function CaseDetail({
   catalog: ReturnType<typeof useQuery<Awaited<ReturnType<typeof getClinicalCatalog>>>>
   clinicalDocumentActions: ClinicalDocumentPageActions
   completion: UseQueryResult<EncounterCompletionPreview, Error>
+  completionAction: EncounterCompletionAction
   consultationAction: ConsultationPageAction
   correctionTarget: CompletedCaseCorrectionTarget | undefined
   detail: DoctorCaseDetail
@@ -1307,15 +1445,13 @@ function CaseDetail({
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   onClinicalDocumentChange: (document: ClinicalDocumentContent) => void
-  onEncounterCompleted: () => Promise<void>
   onIssueOrder: () => void
   onIndicationChange: (value: string) => void
   onCorrectionNavigationHandled: () => void
-  onRefreshCase: () => Promise<void>
   onPreviewSign: () => void
   onLaboratoryItemChange: (value: string) => void
   prescriptionActions: PrescriptionPageActions
-  referenceQueryScope: ReferenceCatalogQueryScope
+  referenceCatalogSearches: ReferenceCatalogSearches
   onSaveDraft: (input: { assessment: string; historyOfPresentIllness: string }) => void
   onSaveRevisit: (input: {
     diagnosis: { code: string; display: string }
@@ -1589,10 +1725,9 @@ function CaseDetail({
             : {
                 completionAction: (
                   <EncounterCompletionPanel
+                    action={completionAction}
                     messages={messages}
-                    onCompleted={onEncounterCompleted}
                     onNavigate={navigateToCompletionTarget}
-                    onRefresh={onRefreshCase}
                     preview={completion}
                   />
                 ),
@@ -1675,7 +1810,7 @@ function CaseDetail({
                 locale={locale}
                 messages={messages}
                 readOnly={readOnly}
-                referenceQueryScope={referenceQueryScope}
+                referenceSearch={referenceCatalogSearches.diagnoses}
                 state={detail.diagnosis}
               />
             )}
@@ -1700,7 +1835,7 @@ function CaseDetail({
                 locale={locale}
                 messages={messages}
                 readOnly={readOnly}
-                referenceQueryScope={referenceQueryScope}
+                referenceSearch={referenceCatalogSearches.medications}
               />
             ) : null}
           </TabsContent>
@@ -1723,7 +1858,7 @@ function CaseDetail({
               onIssueLegacyOrder={onIssueOrder}
               onLaboratoryItemChange={onLaboratoryItemChange}
               readOnly={readOnly}
-              referenceQueryScope={referenceQueryScope}
+              referenceSearch={referenceCatalogSearches.laboratory}
               showCorrection={correctionTarget === 'laboratory'}
             />
           </TabsContent>
@@ -1744,28 +1879,16 @@ function CaseDetail({
   )
 }
 
-function EncounterCompletionPanel({ messages, onCompleted, onNavigate, onRefresh, preview }: {
+function EncounterCompletionPanel({ action, messages, onNavigate, preview }: {
+  action: EncounterCompletionAction
   messages: ReturnType<typeof getWorkspaceMessages>
-  onCompleted: () => Promise<void>
   onNavigate: (target: EncounterCompletionTarget) => void
-  onRefresh: () => Promise<void>
   preview: UseQueryResult<EncounterCompletionPreview, Error>
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
-  const complete = useMutation({
-    mutationFn: () => {
-      if (preview.data === undefined) throw new Error(messages.encounterCompletionUnavailable)
-      return completeEncounter({
-        encounterId: preview.data.encounterId,
-        encounterVersion: preview.data.encounterVersion,
-      }, newIdempotencyKey())
-    },
-    onError: onRefresh,
-    onSuccess: async () => {
-      setOpen(false)
-      await onCompleted()
-    },
-  })
+  useEffect(() => {
+    if (action.success) setOpen(false)
+  }, [action.success])
   const incompleteItems = preview.data?.items.filter(item => item.status !== 'complete') ?? []
 
   return (
@@ -1819,20 +1942,20 @@ function EncounterCompletionPanel({ messages, onCompleted, onNavigate, onRefresh
             })}
           </ul>
         )}
-        {complete.error === null ? null : (
+        {action.error === null ? null : (
           <ErrorAlert
-            message={getWorkspaceErrorMessage(complete.error, messages)}
-            title={getWorkspaceErrorTitle(complete.error, messages, messages.operationFailed)}
+            message={getWorkspaceErrorMessage(action.error, messages)}
+            title={getWorkspaceErrorTitle(action.error, messages, messages.operationFailed)}
           />
         )}
         <AlertDialogFooter>
           <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
           {preview.data?.canComplete === true ? (
-            <Button disabled={complete.isPending} onClick={() => complete.mutate()} type="button">
-              {complete.isPending
+            <Button disabled={action.pending} onClick={action.onSubmit} type="button">
+              {action.pending
                 ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
                 : <ClipboardCheckIcon aria-hidden="true" data-icon="inline-start" />}
-              {complete.isPending ? messages.completingEncounter : messages.confirmEncounterCompletion}
+              {action.pending ? messages.completingEncounter : messages.confirmEncounterCompletion}
             </Button>
           ) : null}
         </AlertDialogFooter>
