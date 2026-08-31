@@ -14,6 +14,8 @@ ClinMesh 的 Synthetic Patient Profile 曾从少量姓名、地址、固定行�
 
 cn-health localizer 先生成中国合成身份，再用固定的 `synthea-zh-cn` catalog 投影 clinical display；运行时只接受 approved、human-reviewed 和 machine-checked，任何 gap 整个请求失败，Claim/ExplanationOfBenefit 及其引用闭包被删除。provenance 明确保存 experimental-preview projection ID、catalog SHA-256、语言和记录数，不声称术语内容已具备公开再分发资格。ClinMesh Provider adapter 再次验证 profile ID/hash、固定 commit、依赖集合、display provenance 与 Bundle 双 tag、中国地址、`100` 电话、`.test` 邮箱、项目 identifier namespace 和 `990000` 模拟居民号码。`createSyntheticPatientProfiles` 仅在完整 provenance 可信时复用来源 Patient 身份，并原样保存不可变的完整中文 FHIR R4 Bundle；Index Encounter、Visible Source History 和隐藏 Case Truth 从同一已验证来源确定性派生，不做诊断或药品 mapping。其他来源使用明显虚构的 fallback，不生成真实移动号段外观或真实行政区划式号码。Profile 当前行和每条 revision 独立保存 localization provenance，新 Release 不改写旧 revision。
 
+其中 translation gap 的失败策略后来由 [Synthea 缺译告警与全量目录默认浏览](../bug-fix/2026-08-31-synthea-translation-warning-and-catalog-browse.md)局部取代；catalog/provenance 验证、来源 owner 和不做临床编码 mapping 的决策不变。
+
 ClinMesh 独立 Reference SQLite 通过 `cn-health-candidate` adapter 验证 Manifest、Dataset/Release、SQLite hash/size、integrity、application ID、主表形状和 canonical record count，并原子导入疾病、药品和项目自有 `laboratory-cn` Candidate；调用方提供的完整 `loinc-zh-cn` Candidate 使用同一 concept importer。系统选择一个全局当前 Reference Release，医生通过有界分页和全文搜索使用完整疾病、药品和检验目录。目录行不复制进 Profile、Case 或 operational SQLite；新建业务事实保存当时的 `system + version + code + display` 快照，Synthea 来源编码仅用于展示来源病史。
 
 ## Alternatives considered

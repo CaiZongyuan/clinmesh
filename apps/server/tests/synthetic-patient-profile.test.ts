@@ -1,6 +1,7 @@
 import {
   scenarioGenerationRequestSchema,
   syntheaCnLocalizationProvenanceSchema,
+  syntheaTranslationWarningSchema,
 } from '@clinmesh/contracts/scenario'
 import { describe, expect, it } from 'vitest'
 import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
@@ -36,6 +37,21 @@ const localization = syntheaCnLocalizationProvenanceSchema.parse({
   profileContentHash,
   profileId: 'synthea-cn@2026-08-29.r3',
   syntheaCommit: 'd9d07a6eef91ee5144293b42ab64224d84d124f8',
+})
+const translationWarning = syntheaTranslationWarningSchema.parse({
+  code: 'TRANSLATION_GAP',
+  gapCount: 1,
+  gaps: [{
+    code: 'missing-code',
+    path: 'code.coding[0]',
+    resourceId: 'observation-1',
+    resourceType: 'Observation',
+    sourceDisplay: 'Untranslated display',
+    system: 'http://loinc.org',
+    version: null,
+  }],
+  message: 'The Synthea Bundle contains untranslated clinical displays',
+  truncated: false,
 })
 
 const request = scenarioGenerationRequestSchema.parse({
@@ -186,6 +202,7 @@ describe('Synthetic Patient Profile compilation', () => {
       localization,
       patientId,
       raw,
+      translationWarning,
     }
 
     const profile = profiles('batch-localized', [source])[0]!
@@ -200,7 +217,7 @@ describe('Synthetic Patient Profile compilation', () => {
         phone: '10093284819',
       },
       demographics: { birthDate: '1980-01-01', gender: 'female' },
-      source: { localization },
+      source: { localization, translationWarning },
     })
 
     const wrongTag = {

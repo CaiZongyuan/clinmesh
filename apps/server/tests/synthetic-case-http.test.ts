@@ -41,6 +41,22 @@ import type {
   JsonChatCompletionsProvider,
 } from '../src/infrastructure/ai/openai-chat-completions.ts'
 
+const translationWarning = {
+  code: 'TRANSLATION_GAP' as const,
+  gapCount: 1,
+  gaps: [{
+    code: 'missing-code',
+    path: 'code.coding[0]',
+    resourceId: 'prior-condition',
+    resourceType: 'Condition',
+    sourceDisplay: 'Untranslated display',
+    system: 'http://snomed.info/sct',
+    version: null,
+  }],
+  message: 'The Synthea Bundle contains untranslated clinical displays' as const,
+  truncated: false,
+}
+
 function patientBundle(qualified: boolean, followUp = true) {
   const entries: Array<Record<string, unknown>> = [{
     fullUrl: 'urn:uuid:patient',
@@ -144,6 +160,7 @@ async function corpusFor(
       hash: sourceArtifactHash(bundle),
       patientId: 'patient',
       raw: bundle,
+      translationWarning,
     }],
   }
 }
@@ -316,6 +333,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     expect(profileResponse.status).toBe(200)
     const publicProfile = syntheticPatientProfileDetailSchema.parse(await profileResponse.json())
     expect(publicProfile.case?.caseId).toBe(caseId)
+    expect(publicProfile.source.translationWarning).toEqual(translationWarning)
     expect(JSON.stringify(publicProfile)).not.toMatch(
       /index-encounter|index-condition|index-observation|hiddenResourceReferences/,
     )

@@ -1829,11 +1829,17 @@ function LaboratoryRequestEditor({
   const [query, setQuery] = useState('')
   const [referencePage, setReferencePage] = useState(1)
   const normalizedQuery = query.trim()
+  const referenceQuery = normalizedQuery.length >= 3 ? normalizedQuery : ''
   const referenceLaboratory = useQuery({
-    enabled: normalizedQuery.length >= 3,
-    queryFn: ({ signal }) => searchReferenceLaboratory(normalizedQuery, referencePage, signal),
-    queryKey: ['reference-laboratory', normalizedQuery, referencePage],
+    queryFn: ({ signal }) => searchReferenceLaboratory(referenceQuery, referencePage, signal),
+    queryKey: ['reference-laboratory', referenceQuery, referencePage],
   })
+  const showLocalLaboratory = laboratoryItems.length > 0 && (
+    referenceLaboratory.isError
+    || (referenceQuery.length === 0
+      && referenceLaboratory.isSuccess
+      && referenceLaboratory.data.items.length === 0)
+  )
   const draftItem = state?.draft === undefined
     ? undefined
     : catalogById.get(state.draft.catalogItemId)
@@ -1853,10 +1859,10 @@ function LaboratoryRequestEditor({
             placeholder={locale === 'zh-CN' ? '检验名称或 LOINC' : 'Name or LOINC'}
             value={query}
           />
-          {normalizedQuery.length < 3 ? (
-            <WorkspaceSelect id="laboratory-item" items={laboratoryItems} onValueChange={value => onLaboratoryItemChange(value ?? '')} value={laboratoryItemId} />
-          ) : referenceLaboratory.isPending ? (
+          {referenceLaboratory.isPending ? (
             <Skeleton className="h-20 w-full" />
+          ) : showLocalLaboratory ? (
+            <WorkspaceSelect id="laboratory-item" items={laboratoryItems} onValueChange={value => onLaboratoryItemChange(value ?? '')} value={laboratoryItemId} />
           ) : referenceLaboratory.isError ? (
             <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{locale === 'zh-CN' ? '目录加载失败' : 'Catalog unavailable'}</AlertTitle></Alert>
           ) : referenceLaboratory.data.items.length === 0 ? (
@@ -3136,15 +3142,19 @@ function DiagnosisCatalogPicker({
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
   const normalizedQuery = query.trim()
+  const referenceQuery = normalizedQuery.length >= 3 ? normalizedQuery : ''
   const search = useQuery({
-    enabled: normalizedQuery.length >= 3,
-    queryFn: ({ signal }) => searchReferenceDiagnoses(normalizedQuery, page, signal),
-    queryKey: ['reference-diagnoses', normalizedQuery, page],
+    queryFn: ({ signal }) => searchReferenceDiagnoses(referenceQuery, page, signal),
+    queryKey: ['reference-diagnoses', referenceQuery, page],
   })
   const localItems = localCatalog.map(item => ({
     label: `${locale === 'zh-CN' ? item.nameZh : item.nameEn} · ${item.code}`,
     value: item.id,
   }))
+  const showLocalCatalog = localItems.length > 0 && (
+    search.isError
+    || (referenceQuery.length === 0 && search.isSuccess && search.data.items.length === 0)
+  )
   return (
     <div className="flex flex-col gap-2">
       <Input
@@ -3156,7 +3166,9 @@ function DiagnosisCatalogPicker({
         placeholder={locale === 'zh-CN' ? '病名或编码' : 'Name or code'}
         value={query}
       />
-      {normalizedQuery.length < 3 ? (
+      {search.isPending ? (
+        <Skeleton className="h-20 w-full" />
+      ) : showLocalCatalog ? (
         <WorkspaceSelect
           id={id}
           items={localItems}
@@ -3165,8 +3177,6 @@ function DiagnosisCatalogPicker({
           }}
           value={entry.catalogItemId}
         />
-      ) : search.isPending ? (
-        <Skeleton className="h-20 w-full" />
       ) : search.isError ? (
         <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{locale === 'zh-CN' ? '目录加载失败' : 'Catalog unavailable'}</AlertTitle></Alert>
       ) : search.data.items.length === 0 ? (
@@ -3503,14 +3513,16 @@ function MedicationConclusionPanel({
   const [medicationQuery, setMedicationQuery] = useState('')
   const [medicationPage, setMedicationPage] = useState(1)
   const normalizedMedicationQuery = medicationQuery.trim()
+  const referenceMedicationQuery = normalizedMedicationQuery.length >= 3
+    ? normalizedMedicationQuery
+    : ''
   const referenceMedications = useQuery({
-    enabled: normalizedMedicationQuery.length >= 3,
     queryFn: ({ signal }) => searchReferenceMedications(
-      normalizedMedicationQuery,
+      referenceMedicationQuery,
       medicationPage,
       signal,
     ),
-    queryKey: ['reference-medications', normalizedMedicationQuery, medicationPage],
+    queryKey: ['reference-medications', referenceMedicationQuery, medicationPage],
   })
   const [items, setItems] = useState<PrescriptionDraftLine[]>(() => {
     if (state?.draft !== undefined) {
@@ -3621,6 +3633,12 @@ function MedicationConclusionPanel({
   const canAddMedication = items.length < 8 && catalog.some(candidate => (
     !usedCatalogItemIds.has(candidate.id) && canCombineWithCurrentItems(candidate)
   ))
+  const showLocalMedicationCatalog = catalog.length > 0 && (
+    referenceMedications.isError
+    || (referenceMedicationQuery.length === 0
+      && referenceMedications.isSuccess
+      && referenceMedications.data.items.length === 0)
+  )
 
   return (
     <section
@@ -3788,9 +3806,9 @@ function MedicationConclusionPanel({
                   value={medicationQuery}
                 />
               </Field>
-              {normalizedMedicationQuery.length < 3 ? null : referenceMedications.isPending ? (
+              {referenceMedications.isPending ? (
                 <Skeleton className="h-20 w-full" />
-              ) : referenceMedications.isError ? (
+              ) : showLocalMedicationCatalog ? null : referenceMedications.isError ? (
                 <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{locale === 'zh-CN' ? '目录加载失败' : 'Catalog unavailable'}</AlertTitle></Alert>
               ) : referenceMedications.data.items.length === 0 ? (
                 <p className="border px-3 py-4 text-sm text-muted-foreground">{locale === 'zh-CN' ? '未找到药品' : 'No medications found'}</p>

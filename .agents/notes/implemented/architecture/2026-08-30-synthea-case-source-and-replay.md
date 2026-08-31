@@ -14,6 +14,8 @@ Index Encounter 是来源时间线上最后一个具有 Condition、Observation�
 
 `ScenarioGenerationJob` 只接受 Synthea，默认运行全部模块并允许使用 Provider `/health` 返回的模块清单做高级过滤。Provider provenance 同时固定中国身份依赖与 experimental-preview clinical-display catalog；任何翻译 gap 拒绝整份患者 Bundle，不允许生成英中混合病历。任务成功时在一个 Command 中创建 Profile 与 Case IDs；没有合格 Index Encounter 时使用派生 seed 有界重试十次，失败不留下部分 Profile、Case 或 truth。Dataset、Package、安装、Hospital Reference Selection、三病种 Case builder、Synthea 诊断/药品映射和 Scenario Catalog closure 不再是生产合同。
 
+其中 translation gap 的失败策略后来由 [Synthea 缺译告警与全量目录默认浏览](../bug-fix/2026-08-31-synthea-translation-warning-and-catalog-browse.md)局部取代；Profile/Case owner、原子提交和 Index Encounter 重试语义不变。
+
 Patient Brief 使用 Server 固定模型、prompt 和 strict Zod schema异步生成，成功结果形成不可变 Brief Revision；诊断泄漏或无效输出不会覆盖已有 revision。普通开始要求显式选择成功 Brief，并通过共享物化内核创建新的 Patient、Registration、Encounter、Queue Task 和 Case materialization；来源历史不会随开始动作写入本院 FHIR。普通 Case 只能开始一次。
 
 检验模拟先按请求的精确 LOINC coding 查找 Case Truth Observation，缺失时才调用 Investigation Agent。首次成功结果连同请求 coding、模型和 prompt provenance 保存为 workspace-global Investigation Result Snapshot；失败进入可重试状态且不生成正常兜底。管理员 Reset 关闭旧 Epoch、创建新 Epoch，并通过同一病例物化内核重建上一 Epoch 已开始的 Synthetic Case。新物化继续引用相同 Case revision、Profile revision、Brief revision、Case Truth 和 Investigation snapshot，但 Patient、Registration、Encounter 与 Queue Task 使用新 ID；Reset 和新 Epoch 下再次申请同一检验都不调用外部模型，也不改变 workspace-global Case 生命周期。

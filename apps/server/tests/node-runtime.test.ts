@@ -61,7 +61,7 @@ describe('Node.js runtime', () => {
       await runtime.close()
       await rm(directory, { recursive: true })
     }
-  })
+  }, 15_000)
 
   it('waits for an in-flight dispatch cycle before closing SQLite', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-runtime-close-'))

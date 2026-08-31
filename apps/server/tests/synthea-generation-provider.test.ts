@@ -39,6 +39,21 @@ const localization = syntheaCnLocalizationProvenanceSchema.parse({
   profileId: 'synthea-cn@2026-08-29.r3',
   syntheaCommit,
 })
+const translationWarning = {
+  code: 'TRANSLATION_GAP' as const,
+  gapCount: 1,
+  gaps: [{
+    code: 'missing-code',
+    path: 'code.coding[0]',
+    resourceId: 'observation-1',
+    resourceType: 'Observation',
+    sourceDisplay: 'Untranslated display',
+    system: 'http://loinc.org',
+    version: null,
+  }],
+  message: 'The Synthea Bundle contains untranslated clinical displays' as const,
+  truncated: false,
+}
 const request = scenarioGenerationRequestSchema.parse({
   modules: ['fever'],
   name: 'Synthea 发热病史',
@@ -179,6 +194,45 @@ function providerFor(body: unknown, options: { maxResponseBytes?: number } = {})
 }
 
 describe('Synthea Scenario generation Provider contract', () => {
+  it('preserves bounded translation warnings for the matching patient artifact', async () => {
+    const body = providerResponse([patientBundle()])
+    const provider = providerFor({
+      ...body,
+      metadata: {
+        ...body.metadata,
+        translationWarnings: [{ ordinal: 0, warning: translationWarning }],
+      },
+    })
+
+    await expect(provider.generate(request)).resolves.toMatchObject({
+      sources: [{ translationWarning }],
+    })
+  })
+
+  it.each([
+    {
+      label: 'duplicate',
+      warnings: [
+        { ordinal: 0, warning: translationWarning },
+        { ordinal: 0, warning: translationWarning },
+      ],
+    },
+    {
+      label: 'out-of-range',
+      warnings: [{ ordinal: 1, warning: translationWarning }],
+    },
+  ])('rejects $label translation warning ordinals', async ({ warnings }) => {
+    const body = providerResponse([patientBundle()])
+    const provider = providerFor({
+      ...body,
+      metadata: { ...body.metadata, translationWarnings: warnings },
+    })
+
+    await expect(provider.generate(request)).rejects.toMatchObject({
+      code: 'FHIR_R4_BUNDLE_INVALID',
+    })
+  })
+
   it('preserves a fail-closed clinical translation gap from the Provider', async () => {
     const provider = new SyntheaScenarioGenerationProvider({
       baseUrl: 'http://synthea.internal:51878',

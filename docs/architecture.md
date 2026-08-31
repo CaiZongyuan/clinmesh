@@ -426,7 +426,7 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 
 ### 5.4 中国术语与参考数据策略
 
-独立 Reference SQLite 通过显式 CLI 一次性导入和验证版本固定的疾病、药品与检验来源。每个成功发布的 Reference Release 固定来源版本、许可、artifact checksum、记录数、导入诊断和 content hash；失败导入不改变当前 Release。Server 只读打开一个系统级全局当前 Release，使用索引和 FTS 为疾病、药品、检验提供有界分页搜索，不把全国目录载入内存或复制进 Workspace、Epoch 和 operational SQLite。
+独立 Reference SQLite 通过显式 CLI 一次性导入和验证版本固定的疾病、药品与检验来源。每个成功发布的 Reference Release 固定来源版本、许可、artifact checksum、记录数、导入诊断和 content hash；失败导入不改变当前 Release。Server 只读打开一个系统级全局当前 Release，使用索引和 FTS 为疾病、药品、检验提供有界分页搜索，不把全国目录载入内存或复制进 Workspace、Epoch 和 operational SQLite。医生打开选择器时默认浏览稳定排序的第一页；输入至少三个字符后切换为 FTS 并从第一页开始，Reference 不可用或无查询目录为空时才回退到本院常用项。
 
 目录搜索返回稳定的 `system + version + code + display`。诊断、医嘱等本院 R5 业务事实在创建时保存所选 coding/display 快照，因此切换全局当前 Release 不会改写既有病历。Synthea R4 来源 coding 仅用于呈现 Visible Source History 和解析同 LOINC 的隐藏 Observation；不以显示文本匹配，不建设 Synthea 到本院疾病或药品目录的通用映射。
 
@@ -1283,9 +1283,9 @@ clock_revision
 
 ### 10.3 场景定义
 
-固定 commit 的 Synthea Provider 默认运行全部模块，也可接受有界模块过滤、人数、年龄、性别、时间范围和 seed。每个患者最多尝试十次；系统确定性选择最后一个包含临床资源或明确 reason 的 Encounter，跳过纯行政、账单和单纯疫苗 Encounter。没有合格 Encounter 时本次患者生成失败且不留下部分 Profile 或 Case。
+固定 commit 的 Synthea Provider 默认运行全部模块，也可接受有界模块过滤、人数、年龄、性别、时间范围和 seed。Web 每次打开生成抽屉时随机提供双 seed，管理员仍可手动修改以复现。每个患者最多尝试十次；系统确定性选择最后一个包含临床资源或明确 reason 的 Encounter，跳过纯行政、账单和单纯疫苗 Encounter。没有合格 Encounter 时本次患者生成失败且不留下部分 Profile 或 Case。
 
-一次成功生成原子保存不可变 Synthetic Patient Profile Revision、本地化完整 R4 Bundle 和 Synthetic Case Instance。Index Encounter 之前的闭包构成按临床时间排序的 Visible Source History；授权临床岗位可以分页查看摘要和经过可见性检查的原始 R4 详情。Index Encounter 与当前 episode 的关联资源构成 Case Truth，保存在私有边界，不进入普通 HIS/FHIR/history/tool 响应。Case 类型由来源时间线推断为 new-problem、follow-up 或 preventive。
+一次成功生成原子保存不可变 Synthetic Patient Profile Revision、本地化 R4 Bundle 和 Synthetic Case Instance。固定 catalog 未命中的 clinical display 保留来源英文，并把有界 translation warning 与 Profile 一起保存供管理员校对；缺译不阻塞患者，FHIR 结构、引用、身份、catalog hash 或 provenance 无效仍阻塞。Index Encounter 之前的闭包构成按临床时间排序的 Visible Source History；授权临床岗位可以分页查看摘要和经过可见性检查的原始 R4 详情。Index Encounter 与当前 episode 的关联资源构成 Case Truth，保存在私有边界，不进入普通 HIS/FHIR/history/tool 响应。Case 类型由来源时间线推断为 new-problem、follow-up 或 preventive。
 
 管理员显式请求异步 Patient Brief。Server-owned OpenAI-compatible transport 只接受启动配置的 HTTPS endpoint、模型和凭证，使用固定版本 prompt 与严格 schema；客户端不能覆盖 URL、模型、header 或请求体。成功结果经过结构校验和隐藏诊断泄漏检查后成为不可变 Brief Revision，失败或拒绝不会覆盖既有成功 revision。Case 必须选择一个成功 Brief Revision 才能开始。
 
@@ -1602,7 +1602,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 - clinical/financial Command 同时生成 AuditEvent 与 Action Trace；文书签署/修订生成 Provenance，任一同事务写入失败时整体回滚。
 - 结构化病历草稿按病例 CAS 更新；签署创建唯一根文书但不推进 Encounter，修订只从最新 Composition 创建线性替代版本。
 - v3 处方草稿按病例 CAS 更新且不创建 FHIR 资源；正式开具与无需用药互斥，责任 Actor/Practitioner Role 受 workspace 级外键约束，撤回以追加事实取消未调剂 MedicationRequest，并保留处方、支付和 FHIR 历史。v1/v2 的固定目录配置与初始定义 hash 不被升级改写。
-- generation 固定 Synthea commit、profile/身份依赖、experimental-preview clinical-display catalog provenance 和 seed；翻译 gap 拒绝整个患者，reset/replay 复用 Case、Brief 与 Investigation snapshots，不重新调用外部模型。
+- generation 固定 Synthea commit、profile/身份依赖、experimental-preview clinical-display catalog provenance 和 seed；翻译 gap 保留来源 display 并绑定有界 warning，结构或 provenance 错误仍拒绝患者，reset/replay 复用 Case、Brief 与 Investigation snapshots，不重新调用外部模型。
 - 真实 file-backed SQLite 测试覆盖 transaction rollback、零行条件写、幂等竞争、outbox lease/recovery、audit head、backup/restore 和 reset/callback 隔离。
 - 一个 Encounter 贯穿首期门诊；独立结构化病历签署与 Encounter 完成是不同事实，首期复诊兼容流仍可组合处理，发药只完成 Scenario Run。
 - 挂号原子创建 Registration、Encounter、Queue Task、Account 和挂号 Charge Item；Prescription 稳定关联 MedicationRequest、费用、支付和发药。

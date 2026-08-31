@@ -5,6 +5,7 @@ import type {
 import {
   syntheaModuleFilterSchema,
   syntheaCnLocalizationProvenanceSchema,
+  syntheaTranslationWarningSchema,
 } from '@clinmesh/contracts/scenario'
 import { z } from 'zod'
 import {
@@ -47,6 +48,10 @@ const providerResponseSchema = z.object({
     modules: z.array(syntheaModuleFilterSchema).max(32),
     populationSeed: z.number().int(),
     syntheaCommit: z.literal(SYNTHEA_COMMIT),
+    translationWarnings: z.array(z.object({
+      ordinal: z.number().int().nonnegative().max(9),
+      warning: syntheaTranslationWarningSchema,
+    }).strict()).max(10).default([]),
     timeRange: z.object({ end: z.iso.date(), start: z.iso.date() }).strict(),
     timeZone: z.literal('Asia/Shanghai'),
   }).strict(),
@@ -447,9 +452,23 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
       )
     }
 
-    const sources = parsed.bundles.map((bundle) => {
+    const translationWarnings = new Map(
+      parsed.metadata.translationWarnings.map(item => [item.ordinal, item.warning] as const),
+    )
+    if (
+      translationWarnings.size !== parsed.metadata.translationWarnings.length
+      || parsed.metadata.translationWarnings.some(item => item.ordinal >= parsed.bundles.length)
+    ) {
+      throw new SyntheaProviderError(
+        'FHIR_R4_BUNDLE_INVALID',
+        'The Synthea Provider returned invalid translation warning ordinals',
+      )
+    }
+
+    const sources = parsed.bundles.map((bundle, ordinal) => {
       const patient = validateBundle(bundle, request)
       const patientId = `synthea-patient-${patient.id}`
+      const translationWarning = translationWarnings.get(ordinal)
       try {
         localizedSyntheaPatientIdentity({
           bundle,
@@ -470,6 +489,9 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
         localization: parsed.metadata.localization,
         patientId,
         raw: bundle,
+        ...(translationWarning === undefined
+          ? {}
+          : { translationWarning }),
       }
     })
     return { kind: 'synthea-r4', sources }

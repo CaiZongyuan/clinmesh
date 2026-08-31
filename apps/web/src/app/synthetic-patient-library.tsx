@@ -52,6 +52,7 @@ import {
   PlusIcon,
   SearchIcon,
   SparklesIcon,
+  TriangleAlertIcon,
   UserPlusIcon,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -78,6 +79,7 @@ import type { WorkspaceLocale } from './workspace-i18n.ts'
 const profileListKey = ['synthetic-patient-profiles'] as const
 const providerKey = ['scenario-providers'] as const
 const currentScenarioKey = ['scenario-current'] as const
+const maximumScenarioSeed = 2_147_483_647
 const avatarCache = new Map<string, string>()
 
 const copy = {
@@ -96,6 +98,8 @@ const copy = {
     noHistory: 'No visible source history', patientCount: 'Patient count', phone: 'Phone',
     populationSeed: 'Population seed', previous: 'Previous', queued: 'Generation request accepted',
     resourceDetail: 'R4 resource detail', save: 'Save profile', saveFailed: 'Failed to save profile', search: 'Search patients', source: 'Source', startVisit: 'Start outpatient visit',
+    translationReview: 'Translation review {count}', translationWarningDescription: 'The patient is still usable. These English clinical names need later medical or pharmacy review.',
+    translationWarningTitle: '{count} clinical names remain in English', translationWarningTruncated: 'Only the first retained items are shown.',
   },
   'zh-CN': {
     address: '地址', advanced: '高级设置', allModules: '全部 Synthea 模块', batch: '生成批次', brief: '患者梗概', briefFailed: '梗概生成失败', briefGenerate: '生成患者梗概',
@@ -109,6 +113,8 @@ const copy = {
     noHistory: '没有可见来源历史', patientCount: '患者人数', phone: '手机号码', populationSeed: '人口 seed',
     previous: '上一页', queued: '生成请求已提交', resourceDetail: 'R4 资源详情', save: '保存档案', saveFailed: '保存失败',
     search: '搜索患者', source: '来源', startVisit: '开始门诊就诊',
+    translationReview: '翻译待确认 {count}', translationWarningDescription: '患者仍可使用；这些英文临床名称需要后续医学或药学校对。',
+    translationWarningTitle: '{count} 个临床名称保留英文', translationWarningTruncated: '这里只显示已保留的前几项。',
   },
 } as const
 
@@ -124,6 +130,10 @@ function avatarUri(seed: string): string {
   const value = createAvatar(lorelei, { seed: `clinmesh:${seed}` }).toDataUri()
   avatarCache.set(seed, value)
   return value
+}
+
+function randomScenarioSeed(): number {
+  return Math.floor(Math.random() * (maximumScenarioSeed + 1))
 }
 
 function ProfileAvatar({ className, name, profileId }: {
@@ -147,6 +157,38 @@ function caseTypeLabel(type: NonNullable<SyntheticPatientProfileDetail['case']>[
     ? { 'follow-up': '复诊', 'new-problem': '新问题', preventive: '预防保健' }
     : { 'follow-up': 'Follow-up', 'new-problem': 'New problem', preventive: 'Preventive' }
   return labels[type]
+}
+
+function translationCount(message: string, count: number): string {
+  return message.replace('{count}', String(count))
+}
+
+function TranslationWarningPanel({ locale, warning }: {
+  locale: WorkspaceLocale
+  warning: NonNullable<SyntheticPatientProfileDetail['source']['translationWarning']>
+}) {
+  const messages = copy[locale]
+  return (
+    <Alert className="mt-3 border-warning/40 bg-warning/5">
+      <TriangleAlertIcon className="text-warning-foreground" />
+      <AlertTitle>{translationCount(messages.translationWarningTitle, warning.gapCount)}</AlertTitle>
+      <AlertDescription>
+        <p>{messages.translationWarningDescription}</p>
+        <ul className="mt-3 divide-y border-t text-left">
+          {warning.gaps.map(gap => (
+            <li className="grid gap-1 py-2" key={`${gap.resourceType}:${gap.resourceId}:${gap.path}:${gap.code}`}>
+              <strong className="font-medium text-foreground">{gap.sourceDisplay}</strong>
+              <span className="break-all font-mono text-xs">
+                {gap.resourceType}/{gap.resourceId} · {gap.path}
+              </span>
+              <span className="break-all font-mono text-xs">{gap.system} · {gap.code}</span>
+            </li>
+          ))}
+        </ul>
+        {warning.truncated ? <p className="mt-2">{messages.translationWarningTruncated}</p> : null}
+      </AlertDescription>
+    </Alert>
+  )
 }
 
 function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLocale }) {
@@ -378,6 +420,14 @@ function ProfileDetails({ locale, onEdit, profile, referenceDate }: {
               {profile.case === null
                 ? <Badge variant="warning">{messages.noCase}</Badge>
                 : <Badge variant="info">{caseTypeLabel(profile.case.caseType, locale)}</Badge>}
+              {profile.source.translationWarning === undefined ? null : (
+                <Badge variant="warning">
+                  {translationCount(
+                    messages.translationReview,
+                    profile.source.translationWarning.gapCount,
+                  )}
+                </Badge>
+              )}
             </div>
             <div className="mt-3 grid gap-x-6 gap-y-1 text-sm text-muted-foreground sm:grid-cols-2 xl:grid-cols-4">
               <span>{messages.mrn}：<strong className="font-medium text-foreground">{profile.identity.mrn}</strong></span>
@@ -413,6 +463,9 @@ function ProfileDetails({ locale, onEdit, profile, referenceDate }: {
         )}
         <TabsContent className="p-4" value="source">
           <Alert><FileJsonIcon /><AlertTitle>{messages.externalHistory}</AlertTitle><AlertDescription>{profile.source.format} · SHA-256 {profile.source.hash}</AlertDescription></Alert>
+          {profile.source.translationWarning === undefined ? null : (
+            <TranslationWarningPanel locale={locale} warning={profile.source.translationWarning} />
+          )}
           {profile.case === null ? null : (
             <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
               <div><dt className="text-muted-foreground">Case ID</dt><dd className="mt-1 break-all font-mono text-xs">{profile.case.caseId}</dd></div>
@@ -443,12 +496,19 @@ function GenerationSheet({ error, locale, onGenerate, onOpenChange, open, pendin
     providerId: 'synthea', seeds: { clinical: 7331, population: 4242 },
     timeRange: { end: '2026-08-01', start: '2011-08-01' }, timeZone: 'Asia/Shanghai',
   })
+  useEffect(() => {
+    if (!open) return
+    setRequest(current => ({
+      ...current,
+      seeds: { clinical: randomScenarioSeed(), population: randomScenarioSeed() },
+    }))
+  }, [open])
   const provider = providers.find(item => item.providerId === 'synthea')
   const availableModules = provider?.modules ?? []
   const filtered = request.moduleMode === 'filter'
   const updatePopulation = (next: Partial<ScenarioGenerationRequest['population']>) => setRequest(current => ({ ...current, population: { ...current.population, ...next } }))
   const updateModule = (module: string, checked: boolean) => setRequest(current => ({ ...current, modules: checked ? [...new Set([...current.modules, module])] : current.modules.length === 1 ? current.modules : current.modules.filter(item => item !== module) }))
-  return <Sheet onOpenChange={onOpenChange} open={open}><SheetContent className="w-full sm:max-w-lg" side="right"><SheetHeader><SheetTitle>{messages.generate}</SheetTitle><SheetDescription>{messages.emptyDescription}</SheetDescription></SheetHeader><div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4"><div className="border-b pb-3"><p className="text-sm font-semibold">Synthea</p><p className="mt-1 text-xs text-muted-foreground">{messages.allModules}</p></div><FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="patient-batch-name">{messages.batch}</FieldLabel><Input id="patient-batch-name" maxLength={120} onChange={event => setRequest(current => ({ ...current, name: event.target.value }))} value={request.name} /></Field><Field><FieldLabel htmlFor="patient-count">{messages.patientCount}</FieldLabel><Input id="patient-count" max={10} min={1} onChange={event => updatePopulation({ count: Number(event.target.value) })} type="number" value={request.population.count} /></Field><Field><FieldLabel htmlFor="patient-min-age">最小年龄</FieldLabel><Input id="patient-min-age" max={120} min={0} onChange={event => updatePopulation({ age: { ...request.population.age, minimum: Number(event.target.value) } })} type="number" value={request.population.age.minimum} /></Field><Field><FieldLabel htmlFor="patient-max-age">最大年龄</FieldLabel><Input id="patient-max-age" max={120} min={0} onChange={event => updatePopulation({ age: { ...request.population.age, maximum: Number(event.target.value) } })} type="number" value={request.population.age.maximum} /></Field></FieldGroup><Field><FieldLabel htmlFor="patient-gender">性别</FieldLabel><Select items={genderItems} onValueChange={value => { if (value !== null) updatePopulation({ gender: value }) }} value={request.population.gender}><SelectTrigger className="w-full" id="patient-gender"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{genderItems.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent></Select></Field><details className="border-t pt-4"><summary className="cursor-pointer text-sm font-medium">{messages.advanced}</summary><FieldGroup className="mt-4"><Field orientation="horizontal"><Checkbox checked={filtered} disabled={availableModules.length === 0} id="patient-filter-modules" onCheckedChange={checked => setRequest(current => ({ ...current, moduleMode: checked === true ? 'filter' : 'all', modules: checked === true ? availableModules.slice(0, 1) : [] }))} /><FieldLabel htmlFor="patient-filter-modules">{messages.filterModules}</FieldLabel></Field>{filtered ? <FieldSet><FieldLegend variant="label">Synthea modules</FieldLegend><FieldGroup>{availableModules.map(module => <Field key={module} orientation="horizontal"><Checkbox checked={request.modules.includes(module)} id={`patient-module-${module}`} onCheckedChange={checked => updateModule(module, checked === true)} /><FieldLabel htmlFor={`patient-module-${module}`}>{module}</FieldLabel></Field>)}</FieldGroup></FieldSet> : null}<FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="patient-population-seed">{messages.populationSeed}</FieldLabel><Input id="patient-population-seed" min={0} onChange={event => setRequest(current => ({ ...current, seeds: { ...current.seeds, population: Number(event.target.value) } }))} type="number" value={request.seeds.population} /></Field><Field><FieldLabel htmlFor="patient-clinical-seed">{messages.clinicalSeed}</FieldLabel><Input id="patient-clinical-seed" min={0} onChange={event => setRequest(current => ({ ...current, seeds: { ...current.seeds, clinical: Number(event.target.value) } }))} type="number" value={request.seeds.clinical} /></Field><Field className="sm:col-span-2"><FieldLabel htmlFor="patient-history-start">{messages.historyStart}</FieldLabel><Input id="patient-history-start" onChange={event => setRequest(current => ({ ...current, timeRange: { ...current.timeRange, start: event.target.value } }))} type="date" value={request.timeRange.start} /></Field></FieldGroup></FieldGroup></details>{provider?.available === false ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{provider.unavailableReason}</AlertTitle></Alert> : null}{error === null ? null : <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{error instanceof Error ? error.message : String(error)}</AlertDescription></Alert>}</div><SheetFooter><Button disabled={pending || provider?.available !== true} onClick={() => onGenerate(request)}><SparklesIcon data-icon="inline-start" />{messages.generate}</Button></SheetFooter></SheetContent></Sheet>
+  return <Sheet onOpenChange={onOpenChange} open={open}><SheetContent className="w-full sm:max-w-lg" side="right"><SheetHeader><SheetTitle>{messages.generate}</SheetTitle><SheetDescription>{messages.emptyDescription}</SheetDescription></SheetHeader><div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4"><div className="border-b pb-3"><p className="text-sm font-semibold">Synthea</p><p className="mt-1 text-xs text-muted-foreground">{messages.allModules}</p></div><FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="patient-batch-name">{messages.batch}</FieldLabel><Input id="patient-batch-name" maxLength={120} onChange={event => setRequest(current => ({ ...current, name: event.target.value }))} value={request.name} /></Field><Field><FieldLabel htmlFor="patient-count">{messages.patientCount}</FieldLabel><Input id="patient-count" max={10} min={1} onChange={event => updatePopulation({ count: Number(event.target.value) })} type="number" value={request.population.count} /></Field><Field><FieldLabel htmlFor="patient-min-age">最小年龄</FieldLabel><Input id="patient-min-age" max={120} min={0} onChange={event => updatePopulation({ age: { ...request.population.age, minimum: Number(event.target.value) } })} type="number" value={request.population.age.minimum} /></Field><Field><FieldLabel htmlFor="patient-max-age">最大年龄</FieldLabel><Input id="patient-max-age" max={120} min={0} onChange={event => updatePopulation({ age: { ...request.population.age, maximum: Number(event.target.value) } })} type="number" value={request.population.age.maximum} /></Field></FieldGroup><Field><FieldLabel htmlFor="patient-gender">性别</FieldLabel><Select items={genderItems} onValueChange={value => { if (value !== null) updatePopulation({ gender: value }) }} value={request.population.gender}><SelectTrigger className="w-full" id="patient-gender"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{genderItems.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent></Select></Field><details className="border-t pt-4"><summary className="cursor-pointer text-sm font-medium">{messages.advanced}</summary><FieldGroup className="mt-4"><Field orientation="horizontal"><Checkbox checked={filtered} disabled={availableModules.length === 0} id="patient-filter-modules" onCheckedChange={checked => setRequest(current => ({ ...current, moduleMode: checked === true ? 'filter' : 'all', modules: checked === true ? availableModules.slice(0, 1) : [] }))} /><FieldLabel htmlFor="patient-filter-modules">{messages.filterModules}</FieldLabel></Field>{filtered ? <FieldSet><FieldLegend variant="label">Synthea modules</FieldLegend><FieldGroup>{availableModules.map(module => <Field key={module} orientation="horizontal"><Checkbox checked={request.modules.includes(module)} id={`patient-module-${module}`} onCheckedChange={checked => updateModule(module, checked === true)} /><FieldLabel htmlFor={`patient-module-${module}`}>{module}</FieldLabel></Field>)}</FieldGroup></FieldSet> : null}<FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="patient-population-seed">{messages.populationSeed}</FieldLabel><Input id="patient-population-seed" max={maximumScenarioSeed} min={0} onChange={event => setRequest(current => ({ ...current, seeds: { ...current.seeds, population: Number(event.target.value) } }))} type="number" value={request.seeds.population} /></Field><Field><FieldLabel htmlFor="patient-clinical-seed">{messages.clinicalSeed}</FieldLabel><Input id="patient-clinical-seed" max={maximumScenarioSeed} min={0} onChange={event => setRequest(current => ({ ...current, seeds: { ...current.seeds, clinical: Number(event.target.value) } }))} type="number" value={request.seeds.clinical} /></Field><Field className="sm:col-span-2"><FieldLabel htmlFor="patient-history-start">{messages.historyStart}</FieldLabel><Input id="patient-history-start" onChange={event => setRequest(current => ({ ...current, timeRange: { ...current.timeRange, start: event.target.value } }))} type="date" value={request.timeRange.start} /></Field></FieldGroup></FieldGroup></details>{provider?.available === false ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{provider.unavailableReason}</AlertTitle></Alert> : null}{error === null ? null : <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{error instanceof Error ? error.message : String(error)}</AlertDescription></Alert>}</div><SheetFooter><Button disabled={pending || provider?.available !== true} onClick={() => onGenerate(request)}><SparklesIcon data-icon="inline-start" />{messages.generate}</Button></SheetFooter></SheetContent></Sheet>
 }
 
 function EditProfileSheet({ error, locale, onOpenChange, onSave, open, pending, profile }: {

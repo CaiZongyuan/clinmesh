@@ -14,6 +14,8 @@ Synthea 固定在 commit `d9d07a6eef91ee5144293b42ab64224d84d124f8`。推荐开�
 
 Provider HTTP 协议只接受已验证的人数、年龄、性别、生成模式、可选模块过滤、双 seed、时间范围和 `Asia/Shanghai` 时区，并固定调用 `/v1/generate`。默认 `all` 模式运行全部 Synthea 模块；`filter` 只用于管理员显式限制模块。Synthea 使用 [cn-health 数据与 Synthea 中国本地化接入](./2026-08-30-cn-health-synthea-localization.md)拥有的 profile、身份 localizer 和固定 clinical-display projector 输出自包含、不可变的中文 FHIR R4 collection Bundle，使患者、机构和医务人员来源资源可在一个边界内完成身份、资源类型、大小、引用和单患者归属验证。Provider 响应必须匹配请求的 commit、配置哈希、身份依赖与 display catalog provenance、生成模式、模块、双 seed、时间范围和时区；未知资源、悬空引用、跨患者引用、翻译 gap、越界响应和复现元数据漂移产生稳定错误。
 
+其中 translation gap 的失败策略后来由 [Synthea 缺译告警与全量目录默认浏览](../bug-fix/2026-08-31-synthea-translation-warning-and-catalog-browse.md)局部取代；结构、边界和 provenance 错误仍沿用本 Note 的失败语义。
+
 ## Alternatives considered
 
 **把 Java 和 Synthea 放入主镜像。** 这种拓扑只有一个容器，但扩大默认镜像和供应链，并让主服务发布依赖 Java 构建。

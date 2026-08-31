@@ -16,6 +16,7 @@ const rowSchema = z.object({
   generation_json: z.string(),
   identity_json: z.string(),
   localization_provenance_json: z.string().nullable(),
+  localization_warning_json: z.string().nullable(),
   mrn: z.string().min(1),
   profile_id: z.string().min(1),
   raw_source_json: z.string(),
@@ -30,7 +31,7 @@ const selectProfile = `
   SELECT workspace_id, profile_id, batch_id, batch_name, source_patient_id,
     revision, display_name, mrn, identity_json, demographics_json,
     source_hash, raw_source_json, generation_json,
-    localization_provenance_json, created_at, updated_at
+    localization_provenance_json, localization_warning_json, created_at, updated_at
   FROM synthetic_patient_profile
 `
 
@@ -47,8 +48,9 @@ export class SyntheticPatientProfileRepository {
         workspace_id, profile_id, batch_id, batch_name, source_patient_id,
         revision, display_name, mrn, identity_json, demographics_json,
         source_hash, raw_source_json, generation_json,
-        localization_provenance_json, created_by_actor_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        localization_provenance_json, localization_warning_json,
+        created_by_actor_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (workspace_id, profile_id) DO NOTHING
     `)
     for (const value of profiles) {
@@ -70,6 +72,9 @@ export class SyntheticPatientProfileRepository {
         profile.source.localization === undefined
           ? null
           : JSON.stringify(profile.source.localization),
+        profile.source.translationWarning === undefined
+          ? null
+          : JSON.stringify(profile.source.translationWarning),
         actorId,
         profile.createdAt,
         profile.updatedAt,
@@ -159,6 +164,7 @@ export class SyntheticPatientProfileRepository {
           profile.display_name, profile.mrn, profile.identity_json,
           profile.demographics_json, profile.source_hash, profile.raw_source_json,
           profile.generation_json, profile.localization_provenance_json,
+          profile.localization_warning_json,
           profile.created_at, profile.updated_at,
           COALESCE((
             SELECT visible_history_count
@@ -275,6 +281,9 @@ export class SyntheticPatientProfileRepository {
         ...(row.localization_provenance_json === null
           ? {}
           : { localization: JSON.parse(row.localization_provenance_json) }),
+        ...(row.localization_warning_json === null
+          ? {}
+          : { translationWarning: JSON.parse(row.localization_warning_json) }),
         patientId: row.source_patient_id,
         providerId: 'synthea',
         raw: JSON.parse(row.raw_source_json),

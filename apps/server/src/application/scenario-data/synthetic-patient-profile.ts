@@ -139,6 +139,9 @@ export function createSyntheticPatientProfiles(input: {
         patientId: source.patientId,
         providerId: 'synthea',
         raw: source.raw,
+        ...(source.translationWarning === undefined
+          ? {}
+          : { translationWarning: source.translationWarning }),
       },
       updatedAt: input.createdAt,
       workspaceId: input.workspaceId,

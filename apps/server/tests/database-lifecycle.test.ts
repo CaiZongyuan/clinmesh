@@ -7,6 +7,7 @@ import { z } from 'zod'
 import {
   scenarioGenerationRequestSchema,
   syntheaCnLocalizationProvenanceSchema,
+  syntheaTranslationWarningSchema,
 } from '@clinmesh/contracts/scenario'
 import { runDatabaseCli } from '../src/database-cli.ts'
 import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
@@ -46,6 +47,21 @@ const profileRequest = scenarioGenerationRequestSchema.parse({
   seeds: { clinical: 7331, population: 4242 },
   timeRange: { end: '2026-08-01', start: '2016-08-01' },
   timeZone: 'Asia/Shanghai',
+})
+const translationWarning = syntheaTranslationWarningSchema.parse({
+  code: 'TRANSLATION_GAP',
+  gapCount: 1,
+  gaps: [{
+    code: 'missing-code',
+    path: 'code.coding[0]',
+    resourceId: 'observation-1',
+    resourceType: 'Observation',
+    sourceDisplay: 'Untranslated display',
+    system: 'http://loinc.org',
+    version: null,
+  }],
+  message: 'The Synthea Bundle contains untranslated clinical displays',
+  truncated: false,
 })
 
 function profileBundle() {
@@ -96,6 +112,7 @@ function createProfile(input: {
   batchId: string
   createdAt: string
   localization?: ReturnType<typeof syntheaCnLocalizationProvenanceSchema.parse>
+  translationWarning?: ReturnType<typeof syntheaTranslationWarningSchema.parse>
   workspaceId: string
 }) {
   const baseBundle = profileBundle()
@@ -126,6 +143,9 @@ function createProfile(input: {
       ...(input.localization === undefined ? {} : { localization: input.localization }),
       patientId: 'synthea-patient-patient-profile',
       raw,
+      ...(input.translationWarning === undefined
+        ? {}
+        : { translationWarning: input.translationWarning }),
     }],
     workspaceId: input.workspaceId,
   })[0]!
@@ -151,7 +171,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 37,
+      schemaVersion: 38,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -192,8 +212,9 @@ describe('SQLite lifecycle', () => {
         '0034_synthetic-case-materialization.sql',
         '0035_investigation-result-snapshot.sql',
         '0036_retire-scenario-dataset.sql',
+        '0037_synthea-translation-warning.sql',
       ],
-      schemaVersion: 37,
+      schemaVersion: 38,
     })
     expect(first.driver.prepare(`
       SELECT name FROM sqlite_schema
@@ -209,12 +230,12 @@ describe('SQLite lifecycle', () => {
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 37 })
-    expect(reopened.diagnostics().schemaVersion).toBe(37)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 38 })
+    expect(reopened.diagnostics().schemaVersion).toBe(38)
     reopened.close()
   })
 
-  it('persists Synthea localization provenance in the Profile and its revision', async () => {
+  it('persists Synthea localization provenance and warnings in the Profile', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-profile-localization-'))
     temporaryDirectories.push(directory)
     const database = openClinMeshDatabase({
@@ -251,6 +272,7 @@ describe('SQLite lifecycle', () => {
       batchId: 'batch-profile-localization',
       createdAt: '2026-08-30T00:00:00.000Z',
       localization,
+      translationWarning,
       workspaceId: 'workspace-profile-localization',
     })
     const repository = new SyntheticPatientProfileRepository(database)
@@ -265,6 +287,8 @@ describe('SQLite lifecycle', () => {
       localizedProfile.profileId,
       1,
     )?.source.localization).toEqual(localization)
+    expect(repository.get(localizedProfile.workspaceId, localizedProfile.profileId)
+      ?.source.translationWarning).toEqual(translationWarning)
     database.close()
   })
 
@@ -1292,7 +1316,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(37)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(38)
     await runtime.close()
   })
 
@@ -1362,7 +1386,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 37,
+      schemaVersion: 38,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -1374,11 +1398,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 37,
+      expectedSchemaVersion: 38,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 37,
+      schemaVersion: 38,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -1562,7 +1586,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(37),
+      schemaVersion: z.literal(38),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -1599,26 +1623,27 @@ describe('SQLite lifecycle', () => {
       '0034_synthetic-case-materialization.sql',
       '0035_investigation-result-snapshot.sql',
       '0036_retire-scenario-dataset.sql',
+      '0037_synthea-translation-warning.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 37 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 38 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 37 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 38 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 37 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 38 })
   })
 })

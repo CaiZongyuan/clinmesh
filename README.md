@@ -19,7 +19,7 @@ Browser
     apps/server (Hono on Node.js)
 ```
 
-当前工程具备可持久运行的单实例 Web 发布：同一个 Hono 服务提供 Web 静态资源、SPA fallback、健康检查、会话认证、岗位业务 API 和 FHIR R5 只读接口。挂号员、分诊护士、门诊医生、收费员和药师通过共享 Command 推进普通门诊 Encounter；SQLite 保存 FHIR current/history、业务事实、审计、Action Trace 和 outbox。管理员从完整中文 Synthea 纵向病历生成患者，查看可见来源历史、生成 Patient Brief，再将不可变 Synthetic Case Instance 直接开始为普通 HIS 就诊；新 Epoch reset 重放同一病例 revision。
+当前工程具备可持久运行的单实例 Web 发布：同一个 Hono 服务提供 Web 静态资源、SPA fallback、健康检查、会话认证、岗位业务 API 和 FHIR R5 只读接口。挂号员、分诊护士、门诊医生、收费员和药师通过共享 Command 推进普通门诊 Encounter；SQLite 保存 FHIR current/history、业务事实、审计、Action Trace 和 outbox。管理员从中文化 Synthea 纵向病历生成患者，查看可见来源历史、生成 Patient Brief，再将不可变 Synthetic Case Instance 直接开始为普通 HIS 就诊；新 Epoch reset 重放同一病例 revision。
 
 FHIR 公开面固定为 R5 `5.0.0`，当前只声明并实现资源 read、vread、instance history 和白名单 Search。业务写入只走 `/api/his/v1` 与 `/api/sim/v1` 的受控 Command；服务器不宣告通用 FHIR create/update/delete、自定义 FHIR Operation、项目 Profile 或 Implementation Guide 一致性。
 
@@ -198,7 +198,7 @@ CLINMESH_SYNTHEA_PROVIDER_URL=http://127.0.0.1:51878
 docker compose -f compose.synthea-provider.yaml up -d --build
 ```
 
-Compose 会启动两个内部服务：`cn-health-localizer` 在启动时验证 profile Manifest、文件哈希、SQLite integrity/application ID、三个 Candidate 依赖和固定中文 clinical-display catalog；`synthea-provider` 使用 profile classpath 与外部配置运行固定 Synthea commit，并在返回前把每个 Bundle 交给 localizer 完成身份与临床显示投影。两者都使用只读文件系统，Candidate 与翻译目录只读挂载，不复制进 ClinMesh 仓库或镜像。Provider 的 `/health` 同时暴露可用模块和 localizer provenance，Server 在接受生成请求前校验 Synthea commit、profile 身份、姓名/地理/人口 Release 以及 display projection ID/hash/记录数。当前完整目录使用明确的 `experimental-preview` review mode，不声称术语内容已具备公开再分发资格。
+Compose 会启动两个内部服务：`cn-health-localizer` 在启动时验证 profile Manifest、文件哈希、SQLite integrity/application ID、三个 Candidate 依赖和固定中文 clinical-display catalog；`synthea-provider` 使用 profile classpath 与外部配置运行固定 Synthea commit，并在返回前把每个 Bundle 交给 localizer 完成身份与临床显示投影。两者都使用只读文件系统，Candidate 与翻译目录只读挂载，不复制进 ClinMesh 仓库或镜像。Provider 的 `/health` 同时暴露可用模块和 localizer provenance，Server 在接受生成请求前校验 Synthea commit、profile 身份、姓名/地理/人口 Release 以及 display projection ID/hash/记录数。catalog 未命中的显示名称保留来源英文并在患者详情中标记为待校对，不阻塞整批生成；结构、引用、hash 或 provenance 无效仍然失败。当前目录使用明确的 `experimental-preview` review mode，不声称术语内容已具备公开再分发资格。
 
 另外打开两个终端启动 Server 和 Web：
 
@@ -233,7 +233,7 @@ docker compose -f compose.synthea-provider.yaml exec -T synthea-provider \
 
 `/health` 会返回固定 Synthea commit、全部可用模块、profile ID、内容哈希、身份算法、姓名/地理/人口 Release provenance，以及中文 display projection ID、catalog SHA-256、记录数和 review mode。`--smoke` 以 `moduleMode=all` 生成一名患者，并校验返回 Bundle、全模块 metadata 和完整 localization provenance。
 
-使用 Web 开发入口访问管理员模拟数据页面：http://127.0.0.1:51888/scenario-data 。在“合成患者库”中点击“生成患者”；默认选择全部 Synthea 模块。生成完成后选择患者，在“来源历史”中打开任一条目的 R4 详情，再点击“生成患者梗概”。Brief 成功且已有当前 revision 后点击“开始门诊就诊”，选择科室、地点和门诊类型；系统会直接创建普通 HIS 的 Patient、Registration、Encounter 和 Queue Task，随后继续完成挂号、分诊、医生接诊、收费、检验、药房等现有岗位流程。
+使用 Web 开发入口访问管理员模拟数据页面：http://127.0.0.1:51888/scenario-data 。在“合成患者库”中点击“生成患者”；默认选择全部 Synthea 模块，每次打开都会产生新的双 seed，高级设置仍可手动修改以复现。生成完成后选择患者；标题中的“翻译待确认”表示患者可以继续使用，并可在“来源”页查看保留英文的名称、编码和 FHIR 位置。在“来源历史”中可打开任一条目的 R4 详情，再点击“生成患者梗概”。Brief 成功且已有当前 revision 后点击“开始门诊就诊”，选择科室、地点和门诊类型；系统会直接创建普通 HIS 的 Patient、Registration、Encounter 和 Queue Task，随后继续完成挂号、分诊、医生接诊、收费、检验、药房等现有岗位流程。
 
 停止 Docker 中的 Provider，但保留容器：
 
@@ -292,7 +292,7 @@ CLINMESH_REFERENCE_DATABASE_PATH=.data/clinmesh-reference.sqlite
 CLINMESH_REFERENCE_RELEASE_ID=clinmesh-cn-health-2026-08-30.r1
 ```
 
-疾病、药品和检验目录的完整行只存在于 Reference SQLite。医生在普通 HIS 中对当前 Release 做全局全文搜索和分页，不按病例预选目录，也不把全国目录复制到 operational SQLite。新建诊断、医嘱和检验申请会保存当时的 `system + version + code + display` 业务快照；以后切换当前 Release 不会改写既有医疗事实。Synthea 来源历史编码只用于展示外部合成病历，不要求映射到当前中国参考目录。挂载数据的来源条款不因 ClinMesh 软件许可证而改变。
+疾病、药品和检验目录的完整行只存在于 Reference SQLite。医生打开诊断、药品或检验选择器时直接看到当前 Release 的第一页并可翻页；输入至少三个字符后执行全局全文搜索。Reference 不可用或空目录时才显示少量本院常用项，不按病例预选目录，也不把全国目录复制到 operational SQLite。新建诊断、医嘱和检验申请会保存当时的 `system + version + code + display` 业务快照；以后切换当前 Release 不会改写既有医疗事实。Synthea 来源历史编码只用于展示外部合成病历，不要求映射到当前中国参考目录。挂载数据的来源条款不因 ClinMesh 软件许可证而改变。
 
 ### 可选：验证真实 Patient Brief Provider
 

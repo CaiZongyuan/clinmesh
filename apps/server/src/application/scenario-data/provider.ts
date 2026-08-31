@@ -2,6 +2,7 @@ import type {
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
   SyntheaCnLocalizationProvenance,
+  SyntheaTranslationWarning,
 } from '@clinmesh/contracts/scenario'
 import { canonicalJsonHash } from './canonical-json.ts'
 
@@ -9,6 +10,7 @@ export interface SourcePatientArtifact {
   format: 'fhir-r4-bundle'
   hash: string
   localization?: SyntheaCnLocalizationProvenance
+  translationWarning?: SyntheaTranslationWarning
   patientId: string
   raw: unknown
 }

@@ -1,4 +1,5 @@
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -55,6 +56,7 @@ public final class ProviderServer {
   private static final int MAX_REQUEST_BYTES = 64 * 1024;
   private static final int MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
   private static final Gson GSON = new Gson();
+  private static final Gson RESPONSE_GSON = new GsonBuilder().serializeNulls().create();
   private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
       .connectTimeout(Duration.ofSeconds(5))
       .build();
@@ -80,6 +82,8 @@ public final class ProviderServer {
       LocalDate start,
       LocalDate end,
       String timeZone) {}
+
+  private record LocalizedBundle(JsonObject bundle, JsonObject warning) {}
 
   private static final class RequestException extends Exception {
     private final String code;
@@ -259,7 +263,7 @@ public final class ProviderServer {
       }
       GenerationRequest request = parseRequest(new String(requestBytes, StandardCharsets.UTF_8));
       JsonObject response = generate(request);
-      byte[] responseBytes = GSON.toJson(response).getBytes(StandardCharsets.UTF_8);
+      byte[] responseBytes = RESPONSE_GSON.toJson(response).getBytes(StandardCharsets.UTF_8);
       if (responseBytes.length > MAX_RESPONSE_BYTES) {
         sendError(exchange, 413, "RESPONSE_TOO_LARGE", "Generated data exceeds 64 MiB");
         return;
@@ -395,6 +399,7 @@ public final class ProviderServer {
       }
 
       JsonArray bundles = new JsonArray();
+      JsonArray translationWarnings = new JsonArray();
       Path fhirDirectory = outputDirectory.resolve("fhir");
       if (!Files.isDirectory(fhirDirectory)) throw new IOException("FHIR output directory is missing");
       int ordinal = 0;
@@ -403,7 +408,14 @@ public final class ProviderServer {
           JsonElement value = JsonParser.parseString(Files.readString(path));
           if (isPatientBundle(value)) {
             JsonObject trimmed = trimBundleToTimeRange(value.getAsJsonObject(), request);
-            bundles.add(localizeBundle(trimmed, request, ordinal));
+            LocalizedBundle localized = localizeBundle(trimmed, request, ordinal);
+            bundles.add(localized.bundle());
+            if (localized.warning() != null) {
+              JsonObject item = new JsonObject();
+              item.addProperty("ordinal", ordinal);
+              item.add("warning", localized.warning());
+              translationWarnings.add(item);
+            }
             ordinal++;
           }
         }
@@ -420,6 +432,7 @@ public final class ProviderServer {
       metadata.add("modules", GSON.toJsonTree(request.modules));
       metadata.addProperty("populationSeed", request.populationSeed);
       metadata.addProperty("syntheaCommit", SYNTHEA_COMMIT);
+      metadata.add("translationWarnings", translationWarnings);
       JsonObject timeRange = new JsonObject();
       timeRange.addProperty("end", request.end.toString());
       timeRange.addProperty("start", request.start.toString());
@@ -441,7 +454,7 @@ public final class ProviderServer {
         .toList();
   }
 
-  private static JsonObject localizeBundle(
+  private static LocalizedBundle localizeBundle(
       JsonObject bundle, GenerationRequest request, int ordinal) throws Exception {
     JsonObject localizationRequest = new JsonObject();
     localizationRequest.add("bundle", bundle);
@@ -472,9 +485,10 @@ public final class ProviderServer {
       throw new IOException("cn-health localization failed: "
           + (error == null ? "unknown" : GSON.toJson(error)));
     }
-    if (!body.keySet().equals(Set.of("bundle", "metadata"))
+    if (!body.keySet().equals(Set.of("bundle", "metadata", "warnings"))
         || !body.get("bundle").isJsonObject()
-        || !body.get("metadata").isJsonObject()) {
+        || !body.get("metadata").isJsonObject()
+        || !body.get("warnings").isJsonArray()) {
       throw new IOException("cn-health localization response is invalid");
     }
     JsonObject metadata = body.getAsJsonObject("metadata");
@@ -484,7 +498,64 @@ public final class ProviderServer {
     }
     JsonObject localized = body.getAsJsonObject("bundle");
     validateLocalizedBundleTag(localized, metadata);
-    return localized;
+    JsonObject warning = validateTranslationWarning(body.getAsJsonArray("warnings"));
+    return new LocalizedBundle(localized, warning);
+  }
+
+  private static JsonObject validateTranslationWarning(JsonArray warnings) throws IOException {
+    if (warnings.isEmpty()) return null;
+    if (warnings.size() != 1 || !warnings.get(0).isJsonObject()) {
+      throw new IOException("cn-health translation warnings are invalid");
+    }
+    JsonObject warning = warnings.get(0).getAsJsonObject();
+    try {
+      if (!warning.keySet().equals(Set.of(
+          "code", "gapCount", "gaps", "message", "truncated"))
+          || !warning.get("code").getAsString().equals("TRANSLATION_GAP")
+          || !warning.get("message").getAsString()
+              .equals("The Synthea Bundle contains untranslated clinical displays")
+          || !warning.get("gapCount").isJsonPrimitive()
+          || !warning.get("gapCount").getAsJsonPrimitive().isNumber()
+          || !warning.get("gapCount").getAsString().matches("[1-9]\\d{0,5}")
+          || !warning.get("gaps").isJsonArray()
+          || !warning.get("truncated").isJsonPrimitive()
+          || !warning.get("truncated").getAsJsonPrimitive().isBoolean()) {
+        throw new IllegalArgumentException("invalid warning fields");
+      }
+      int gapCount = warning.get("gapCount").getAsInt();
+      JsonArray gaps = warning.getAsJsonArray("gaps");
+      boolean truncated = warning.get("truncated").getAsBoolean();
+      if (gapCount > 100_000 || gaps.isEmpty() || gaps.size() > 100
+          || gapCount < gaps.size() || (!truncated && gapCount != gaps.size())) {
+        throw new IllegalArgumentException("invalid warning bounds");
+      }
+      for (JsonElement value : gaps) {
+        if (!value.isJsonObject()) throw new IllegalArgumentException("invalid warning gap");
+        JsonObject gap = value.getAsJsonObject();
+        if (!gap.keySet().equals(Set.of(
+            "code", "path", "resourceId", "resourceType", "sourceDisplay", "system", "version"))
+            || !isBoundedString(gap.get("code"), 256)
+            || !isBoundedString(gap.get("path"), 1_000)
+            || !isBoundedString(gap.get("resourceId"), 256)
+            || !isBoundedString(gap.get("resourceType"), 128)
+            || !isBoundedString(gap.get("sourceDisplay"), 1_000)
+            || !isBoundedString(gap.get("system"), 1_000)
+            || !(gap.get("version").isJsonNull()
+                || isBoundedString(gap.get("version"), 256))) {
+          throw new IllegalArgumentException("invalid warning gap fields");
+        }
+      }
+    } catch (RuntimeException error) {
+      throw new IOException("cn-health translation warnings are invalid", error);
+    }
+    return warning.deepCopy();
+  }
+
+  private static boolean isBoundedString(JsonElement value, int maximumLength) {
+    if (value == null || !value.isJsonPrimitive()
+        || !value.getAsJsonPrimitive().isString()) return false;
+    String text = value.getAsString();
+    return !text.isEmpty() && text.length() <= maximumLength;
   }
 
   private static void validateLocalizedBundleTag(JsonObject bundle, JsonObject metadata)
@@ -771,7 +842,7 @@ public final class ProviderServer {
 
   private static void sendJson(HttpExchange exchange, int status, JsonElement body)
       throws IOException {
-    sendJson(exchange, status, GSON.toJson(body).getBytes(StandardCharsets.UTF_8));
+    sendJson(exchange, status, RESPONSE_GSON.toJson(body).getBytes(StandardCharsets.UTF_8));
   }
 
   private static void sendJson(HttpExchange exchange, int status, byte[] body) throws IOException {

@@ -184,7 +184,8 @@ export function getReferenceDataReleases(signal?: AbortSignal) {
 }
 
 function referenceCatalogPath(kind: 'diagnoses' | 'laboratory' | 'medications', query: string, page: number) {
-  const parameters = new URLSearchParams({ page: String(page), pageSize: '20', query })
+  const parameters = new URLSearchParams({ page: String(page), pageSize: '20' })
+  if (query.length > 0) parameters.set('query', query)
   return `/api/his/v1/reference-catalogs/${kind}?${parameters.toString()}`
 }
 

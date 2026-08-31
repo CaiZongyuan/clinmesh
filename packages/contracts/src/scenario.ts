@@ -32,6 +32,39 @@ export const syntheaCnLocalizationProvenanceSchema = z.object({
   syntheaCommit: z.string().regex(/^[a-f0-9]{40}$/),
 }).strict()
 
+export const syntheaTranslationGapSchema = z.object({
+  code: z.string().min(1).max(256),
+  path: z.string().min(1).max(1_000),
+  resourceId: z.string().min(1).max(256),
+  resourceType: z.string().min(1).max(128),
+  sourceDisplay: z.string().min(1).max(1_000),
+  system: z.string().min(1).max(1_000),
+  version: z.string().min(1).max(256).nullable(),
+}).strict()
+
+export const syntheaTranslationWarningSchema = z.object({
+  code: z.literal('TRANSLATION_GAP'),
+  gapCount: z.number().int().positive().max(100_000),
+  gaps: z.array(syntheaTranslationGapSchema).min(1).max(100),
+  message: z.literal('The Synthea Bundle contains untranslated clinical displays'),
+  truncated: z.boolean(),
+}).strict().superRefine((warning, context) => {
+  if (warning.gapCount < warning.gaps.length) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Translation warning gapCount cannot be smaller than the retained gaps',
+      path: ['gapCount'],
+    })
+  }
+  if (!warning.truncated && warning.gapCount !== warning.gaps.length) {
+    context.addIssue({
+      code: 'custom',
+      message: 'A complete translation warning must retain every gap',
+      path: ['truncated'],
+    })
+  }
+})
+
 const legacyUcumUnitByDisplay = {
   '%': '%',
   '1': '1',
@@ -625,6 +658,7 @@ const syntheticPatientSourceSchema = z.object({
   patientId: z.string().min(1),
   providerId: z.literal('synthea'),
   localization: syntheaCnLocalizationProvenanceSchema.optional(),
+  translationWarning: syntheaTranslationWarningSchema.optional(),
   raw: z.json(),
 }).strict()
 
@@ -715,6 +749,7 @@ export const syntheticPatientProfileDetailSchema = z.object({
     format: z.literal('fhir-r4-bundle'),
     hash: z.string().regex(/^[a-f0-9]{64}$/),
     localization: syntheaCnLocalizationProvenanceSchema.optional(),
+    translationWarning: syntheaTranslationWarningSchema.optional(),
     patientId: z.string().min(1),
     providerId: z.literal('synthea'),
   }).strict(),
@@ -892,6 +927,7 @@ export type SyntheticPatientIdentity = z.infer<typeof syntheticPatientIdentitySc
 export type SyntheaCnLocalizationProvenance = z.infer<
   typeof syntheaCnLocalizationProvenanceSchema
 >
+export type SyntheaTranslationWarning = z.infer<typeof syntheaTranslationWarningSchema>
 export type SyntheticPatientProfile = z.infer<typeof syntheticPatientProfileSchema>
 export type SyntheticPatientProfileDetail = z.infer<typeof syntheticPatientProfileDetailSchema>
 export type SyntheticPatientProfileList = z.infer<typeof syntheticPatientProfileListSchema>

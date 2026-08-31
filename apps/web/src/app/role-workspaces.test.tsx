@@ -22,6 +22,21 @@ import { WebApp } from './web-app.tsx'
 
 const forbiddenChineseClinicalUiTerms = /Agent|评分|仿真|Scenario|Epoch/i
 const forbiddenEnglishClinicalUiTerms = /Agent|scor(?:e|ing)|simulation|Scenario|Epoch/i
+const translationWarning = {
+  code: 'TRANSLATION_GAP' as const,
+  gapCount: 1,
+  gaps: [{
+    code: 'missing-code',
+    path: 'code.coding[0]',
+    resourceId: 'observation-1',
+    resourceType: 'Observation',
+    sourceDisplay: 'Untranslated display',
+    system: 'http://loinc.org',
+    version: null,
+  }],
+  message: 'The Synthea Bundle contains untranslated clinical displays' as const,
+  truncated: false,
+}
 
 const doctorTriage = {
   acuityCode: 'level-3',
@@ -326,6 +341,7 @@ function stubScenarioDataWorkspace(options: {
   profileUpdateConflict?: boolean
   providerModules?: string[]
   syntheaAvailable?: boolean
+  translationWarning?: boolean
 } = {}) {
   let generated = false
   let briefGenerated = false
@@ -364,6 +380,7 @@ function stubScenarioDataWorkspace(options: {
       patientId: 'synthea-patient-001',
       providerId: 'synthea' as const,
       raw: { entry: [], resourceType: 'Bundle', type: 'collection' },
+      ...(options.translationWarning === true ? { translationWarning } : {}),
     },
     updatedAt: '2026-08-26T09:00:00+08:00',
     workspaceId: 'workspace-demo',
@@ -395,6 +412,9 @@ function stubScenarioDataWorkspace(options: {
       batchName: profile.source.batchName,
       format: profile.source.format,
       hash: profile.source.hash,
+      ...(profile.source.translationWarning === undefined
+        ? {}
+        : { translationWarning: profile.source.translationWarning }),
       patientId: profile.source.patientId,
       providerId: profile.source.providerId,
     },
@@ -863,7 +883,11 @@ describe('role workspaces', () => {
 
     render(<WebApp />)
 
-    expect(await screen.findByRole('heading', { name: '演示数据' })).toBeTruthy()
+    expect(await screen.findByRole(
+      'heading',
+      { name: '演示数据' },
+      { timeout: 3_000 },
+    )).toBeTruthy()
     expect(screen.getByText('标准门诊数据')).toBeTruthy()
     expect(screen.queryByText('candidate-fever-outpatient-v1')).toBeNull()
     expect(screen.queryByText('epoch-1')).toBeNull()
@@ -934,12 +958,72 @@ describe('role workspaces', () => {
 
     render(<WebApp />)
 
-    await user.click(await screen.findByRole('button', { name: '生成患者' }))
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
     const generationSheet = await screen.findByRole('dialog', { name: '生成患者' })
     const moduleFilter = within(generationSheet).getByRole('checkbox', { name: '限制 Synthea 模块' })
     await user.click(moduleFilter)
     expect(moduleFilter.getAttribute('aria-checked')).toBe('false')
     expect(within(generationSheet).queryByText('Synthea modules')).toBeNull()
+  })
+
+  it('randomizes both seeds whenever the generation sheet opens and submits the visible values', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    let randomCalls = 0
+    vi.spyOn(Math, 'random').mockImplementation(() => ((randomCalls += 1) % 100) / 100)
+    let submitted: ScenarioGenerationRequest | undefined
+    stubScenarioDataWorkspace({
+      onGenerate: request => { submitted = request },
+      syntheaAvailable: true,
+    })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    let sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    await user.click(within(sheet).getByText('高级设置'))
+    const firstPopulation = Number(within(sheet).getByRole<HTMLInputElement>(
+      'spinbutton',
+      { name: '人口 seed' },
+    ).value)
+    const firstClinical = Number(within(sheet).getByRole<HTMLInputElement>(
+      'spinbutton',
+      { name: '临床 seed' },
+    ).value)
+    await user.click(within(sheet).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '生成患者' })).toBeNull())
+
+    await user.click(screen.getAllByRole('button', { name: '生成患者' })[0]!)
+    sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    await user.click(within(sheet).getByText('高级设置'))
+    const population = Number(within(sheet).getByRole<HTMLInputElement>(
+      'spinbutton',
+      { name: '人口 seed' },
+    ).value)
+    const clinical = Number(within(sheet).getByRole<HTMLInputElement>(
+      'spinbutton',
+      { name: '临床 seed' },
+    ).value)
+
+    expect({ clinical, population }).not.toEqual({
+      clinical: firstClinical,
+      population: firstPopulation,
+    })
+    await user.click(within(sheet).getByRole('button', { name: '生成患者' }))
+    await waitFor(() => expect(submitted?.seeds).toEqual({ clinical, population }))
+  })
+
+  it('keeps profiles usable while exposing untranslated clinical displays for review', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ profileAvailable: true, translationWarning: true })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    expect(await screen.findByText('翻译待确认 1')).toBeTruthy()
+    expect(screen.queryByText('患者生成失败')).toBeNull()
+    await user.click(screen.getByRole('tab', { name: '来源' }))
+    expect(await screen.findByText('1 个临床名称保留英文')).toBeTruthy()
+    expect(screen.getByText('Untranslated display')).toBeTruthy()
+    expect(screen.getByText(/Observation\/observation-1.*code\.coding\[0\]/)).toBeTruthy()
   })
 
   it('edits a persistent profile and keeps its visible source history', async () => {
@@ -1886,6 +1970,7 @@ describe('role workspaces', () => {
 
   it('saves and issues the selected controlled laboratory request', async () => {
     window.history.replaceState(null, '', '/consultation')
+    const laboratoryQueries: Array<string | null> = []
     const referenceConcept = {
       code: '58410-2',
       display: '血常规组合',
@@ -1960,6 +2045,7 @@ describe('role workspaces', () => {
         })
       }
       if (url.pathname === '/api/his/v1/reference-catalogs/laboratory') {
+        laboratoryQueries.push(url.searchParams.get('query'))
         return Response.json({
           items: [{
             ...referenceConcept,
@@ -2065,8 +2151,8 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     await user.click(await screen.findByRole('tab', { name: '检验检查' }))
-    await user.type(await screen.findByLabelText('搜索检验目录'), '血常规')
     await user.click(await screen.findByRole('button', { name: /血常规组合.*58410-2/ }))
+    expect(laboratoryQueries).toContain(null)
     await user.click(screen.getByRole('button', { name: '保存检查草稿' }))
 
     expect(await screen.findByText('检查草稿已保存')).toBeTruthy()
@@ -3120,6 +3206,14 @@ describe('role workspaces', () => {
     const draftEntries: [DiagnosisDraftEntry, DiagnosisDraftEntry] = [{
       catalogItemId: 'diagnosis-influenza',
       note: '结合甲型流感抗原结果。',
+      referenceConcept: {
+        code: 'J10.1',
+        display: '流感伴其他呼吸道表现',
+        id: 'diagnosis-influenza',
+        sourceLocator: 'concepts[0]',
+        system: 'http://hl7.org/fhir/sid/icd-10',
+        version: '2026',
+      },
       role: 'primary',
     }, {
       catalogItemId: 'diagnosis:hypertension',
@@ -3153,6 +3247,7 @@ describe('role workspaces', () => {
       id: 'diagnosis-confirmation-1',
       provenanceId: 'provenance-diagnosis-1',
     }
+    const diagnosisQueries: Array<string | null> = []
     let diagnosis: DiagnosisState | undefined
     let encounterVersion = '6'
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -3170,8 +3265,18 @@ describe('role workspaces', () => {
         })
       }
       if (url.pathname === '/api/his/v1/reference-catalogs/diagnoses') {
+        diagnosisQueries.push(url.searchParams.get('query'))
         return Response.json({
           items: [{
+            code: 'J10.1',
+            display: '流感伴其他呼吸道表现',
+            domain: 'diagnosis',
+            id: 'diagnosis-influenza',
+            sourceLocator: 'concepts[0]',
+            status: 'active',
+            system: 'http://hl7.org/fhir/sid/icd-10',
+            version: '2026',
+          }, {
             code: 'I10',
             display: '原发性高血压',
             domain: 'diagnosis',
@@ -3184,7 +3289,7 @@ describe('role workspaces', () => {
           page: 1,
           pageSize: 20,
           releaseId: 'reference-http-test-v1',
-          total: 1,
+          total: 2,
         })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
@@ -3266,12 +3371,12 @@ describe('role workspaces', () => {
     expect(screen.queryByLabelText('诊断编码')).toBeNull()
     await user.click(screen.getByRole('tab', { name: '诊断' }))
     await user.click(screen.getByRole('button', { name: '添加诊断' }))
-    await user.click(screen.getByRole('combobox', { name: '诊断项目' }))
-    await user.click(await screen.findByRole('option', { name: '流感伴其他呼吸道表现 · J10.1' }))
+    await user.click(await screen.findByRole('button', { name: /流感伴其他呼吸道表现.*J10.1/ }))
     await user.type(screen.getByLabelText('诊断备注'), '结合甲型流感抗原结果。')
     await user.click(screen.getByRole('button', { name: '添加诊断' }))
-    await user.type(screen.getAllByLabelText('搜索疾病目录')[1]!, '原发性')
-    await user.click(await screen.findByRole('button', { name: /原发性高血压.*I10/ }))
+    const referenceDiagnoses = await screen.findAllByRole('button', { name: /原发性高血压.*I10/ })
+    await user.click(referenceDiagnoses.at(-1)!)
+    expect(diagnosisQueries).toContain(null)
     await user.click(screen.getByRole('button', { name: '确认诊断' }))
     expect(await screen.findByText('诊断已确认')).toBeTruthy()
     expect(screen.getByText('J10.1 · 流感伴其他呼吸道表现')).toBeTruthy()
@@ -3718,6 +3823,21 @@ describe('role workspaces', () => {
       frequencyCode: 'BID',
       quantity: 10,
     }
+    const referenceMedication = {
+      approvalNumber: '国药准字H20260001',
+      brandName: null,
+      code: 'H20260001',
+      dosageForm: '片剂',
+      genericName: '对乙酰氨基酚片',
+      id: 'medication-product-acetaminophen',
+      manufacturer: '合成制药有限公司',
+      packageDescription: '10片/盒',
+      sourceLocator: 'products[1]',
+      status: 'active',
+      strength: '0.5 g',
+      system: 'https://www.nmpa.gov.cn/datasearch/home-index.html',
+      version: '2026-08',
+    } as const
     const issuedItem = {
       ...draftItem,
       display: '磷酸奥司他韦胶囊',
@@ -3748,6 +3868,7 @@ describe('role workspaces', () => {
       id: 'no-medication-conclusion-1',
       version: 1,
     }
+    const medicationQueries: Array<string | null> = []
     let draftDeletionRequests = 0
     let medicationConclusion: DoctorCaseDetail['medicationConclusion']
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -3777,6 +3898,16 @@ describe('role workspaces', () => {
             version: 1,
           }],
           prescriptionConclusionSupported: true,
+        })
+      }
+      if (url.pathname === '/api/his/v1/reference-catalogs/medications') {
+        medicationQueries.push(url.searchParams.get('query'))
+        return Response.json({
+          items: [referenceMedication],
+          page: 1,
+          pageSize: 20,
+          releaseId: 'reference-http-test-v1',
+          total: 1,
         })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
@@ -3904,6 +4035,8 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     await user.click(await screen.findByRole('tab', { name: '处方' }))
+    expect(await screen.findByRole('button', { name: /对乙酰氨基酚片.*H20260001/ })).toBeTruthy()
+    expect(medicationQueries).toContain(null)
     expect((await screen.findByRole('combobox', { name: '药品' })).textContent).toContain('磷酸奥司他韦胶囊')
     expect(screen.getByRole('combobox', { name: '剂量' }).textContent).toContain('75 mg')
     expect(screen.getByRole('combobox', { name: '频次' }).textContent).toContain('BID')

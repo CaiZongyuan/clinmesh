@@ -435,6 +435,9 @@ export class ScenarioDataService {
         ...(profile.source.localization === undefined
           ? {}
           : { localization: profile.source.localization }),
+        ...(profile.source.translationWarning === undefined
+          ? {}
+          : { translationWarning: profile.source.translationWarning }),
         patientId: profile.source.patientId,
         providerId: profile.source.providerId,
       },
