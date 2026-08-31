@@ -16,7 +16,7 @@ function AutosaveHarness({ enabled, onSave, revision }: {
 describe('useAutosave', () => {
   afterEach(() => vi.useRealTimers())
 
-  it('attempts each content revision once and waits for a new revision after failure', () => {
+  it('attempts each content-owner revision once and waits for a new revision after failure', () => {
     vi.useFakeTimers()
     const onSave = vi.fn()
     const view = render(<AutosaveHarness enabled onSave={onSave} revision="draft-1:a" />)

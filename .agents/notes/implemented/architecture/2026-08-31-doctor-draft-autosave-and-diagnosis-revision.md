@@ -34,7 +34,7 @@ Reference 检验项目当前只有内部适应证 `clinical-evaluation`，Web �
 
 ## Consequences
 
-医生只负责选择、填写、确认和开具；草稿持久化成为可观察的后台行为。无效或不完整内容不会自动提交，完整内容在并发修改时按内容指纹连续保存，CAS 冲突仍刷新服务端 owner 并显示错误。
+医生只负责选择、填写、确认和开具；草稿持久化成为可观察的后台行为。无效或不完整内容不会自动提交；同一内容与 owner 草稿版本组合失败后不会循环重试，CAS 冲突刷新到新 owner 版本后可以再次尝试当前有效内容并显示原错误。
 
 一个病例可以拥有多条诊断确认历史，但 Doctor Case、处方适应规则、病例库筛选和 Encounter 当前诊断只读取最高 revision。旧 Command receipt 缺少 revision 字段时按 revision 1 解析，升级前确认记录由 migration 赋值为 revision 1。
 

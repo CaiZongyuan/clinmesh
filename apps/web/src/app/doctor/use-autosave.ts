@@ -12,7 +12,7 @@ export function useAutosave({
   revision: string
 }): void {
   const onSaveRef = useRef(onSave)
-  // The same failed content waits for another edit instead of retrying forever.
+  // The same content and owner version wait for a new edit or owner refresh after failure.
   const attemptedRevisionRef = useRef<string | undefined>(undefined)
 
   useEffect(() => {

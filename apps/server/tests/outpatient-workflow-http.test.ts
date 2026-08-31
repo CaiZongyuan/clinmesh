@@ -4050,6 +4050,51 @@ describe('outpatient workflow HTTP contract', () => {
     })
   })
 
+  it('rejects a legacy laboratory draft when its result fact is unavailable', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-request-capability-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    runtime.database.driver.prepare(`
+      DELETE FROM scenario_hidden_fact
+      WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
+    `).run('workspace-demo', 'epoch-1')
+
+    const response = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          input: {
+            catalogItemId: 'lab-cbc',
+            expectedDraftVersion: 0,
+            indicationCode: 'fever',
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+
+    expect(response.status).toBe(409)
+    expect(apiErrorSchema.parse(await response.json())).toMatchObject({
+      error: {
+        code: 'CATALOG_CONFLICT',
+        message: 'The investigation cannot generate a result for this case and catalog item',
+      },
+    })
+  })
+
   it('lets only the responsible doctor delete the current laboratory request draft', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-request-draft-cas-http-'))
     temporaryDirectories.push(directory)

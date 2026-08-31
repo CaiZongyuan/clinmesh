@@ -7200,9 +7200,16 @@ export class WorkflowService {
           'Only an in-progress laboratory request can be reported',
         )
       }
-      const laboratoryResultFact = input.resultSnapshot?.content ?? (
-        this.#legacyLaboratoryResultFact(input.context, request.catalog_item_id)
-      )
+      let laboratoryResultFact = input.resultSnapshot?.content
+      if (laboratoryResultFact === undefined) {
+        laboratoryResultFact = this.#legacyLaboratoryResultFact(
+          input.context,
+          request.catalog_item_id,
+        )
+        if (laboratoryResultFact === undefined) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory result fact is unavailable')
+        }
+      }
       const requestedConcept = referenceConceptSnapshotSchema.parse(JSON.parse(request.reference_json))
       const serviceRequest = transaction.fhir.read(
         input.context,
@@ -10592,7 +10599,13 @@ export class WorkflowService {
       WHERE workspace_id = ? AND epoch = ? AND outpatient_case_id = ?
     `).get(context.workspaceId, context.epoch, outpatientCaseId) !== undefined
     const referenceItem = this.#referenceData?.laboratoryById(context, catalogItemId)
-    if (!materialized && referenceItem === undefined) return
+    if (!materialized && referenceItem === undefined) {
+      if (this.#legacyLaboratoryResultFact(context, catalogItemId) !== undefined) return
+      throw new WorkflowError(
+        'CATALOG_CONFLICT',
+        'The investigation cannot generate a result for this case and catalog item',
+      )
+    }
     const capability = this.#investigation?.generationCapabilityForCase(
       context.workspaceId,
       context.epoch,
@@ -10608,18 +10621,16 @@ export class WorkflowService {
 
   #legacyLaboratoryResultFact(
     context: ActorContext,
-    catalogItemId: LaboratoryRequestCatalogItemId,
+    catalogItemId: string,
   ) {
     const hiddenFact = this.#database.driver.prepare(`
       SELECT value_json FROM scenario_hidden_fact
       WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
     `).get(context.workspaceId, context.epoch) as { value_json: string } | undefined
-    if (hiddenFact === undefined) {
-      throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory result fact is unavailable')
-    }
+    if (hiddenFact === undefined) return undefined
     const facts = laboratoryResultsFactSchema.parse(JSON.parse(hiddenFact.value_json))
     if (catalogItemId === 'lab-cbc' || catalogItemId === 'lab-crp') return facts[catalogItemId]
-    throw new WorkflowError('CATALOG_CONFLICT', 'The laboratory result fact is unavailable for this item')
+    return undefined
   }
 
   #laboratoryReportVersions(
