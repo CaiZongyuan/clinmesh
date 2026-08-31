@@ -343,15 +343,16 @@ describe('Web application shell', () => {
       throw new Error(`Unexpected request: ${path}`)
     })
 
-    await renderWebApp({
+    const runtimeFor = (surfaceAgentStatus: 'active' | 'connecting') => ({
+      apiBasePath: '/clinmesh-api',
+      mode: 'surface' as const,
+      surfaceAgent,
+      surfaceAgentStatus,
+      surfaceSessionId: 'dsh-session-1',
+    })
+    const rendered = await renderWebApp({
       history,
-      runtime: {
-        apiBasePath: '/clinmesh-api',
-        mode: 'surface',
-        surfaceAgent,
-        surfaceAgentStatus: 'idle',
-        surfaceSessionId: 'dsh-session-1',
-      },
+      runtime: runtimeFor('active'),
     })
     await waitFor(() => expect(pageClaims.at(-1)?.ui.status).toBe('loading'))
     resolveRegistrationQueue(Response.json({ items: [], page: 1, pageSize: 20, total: 0 }))
@@ -413,6 +414,24 @@ describe('Web application shell', () => {
     expect(proposalResult).toContain('awaiting-human-review')
     expect(await screen.findByRole('alertdialog', { name: '创建患者' })).toBeTruthy()
     expect(patientCreated).toBe(false)
+
+    rendered.rerender(<WebApp history={history} runtime={runtimeFor('connecting')} />)
+    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: '创建患者' })).toBeNull())
+    await waitFor(() => expect(toolResults.at(-1)).toMatchObject({ ok: false }))
+    expect(patientCreated).toBe(false)
+
+    rendered.rerender(<WebApp history={history} runtime={runtimeFor('active')} />)
+    await act(async () => {
+      proposalResult = await prepare.execute(
+        {
+          contextId: boundToolValue(prepare, 'contextId'),
+          scopeKey: activeRegistration.scopeKey,
+        },
+        new AbortController().signal,
+      )
+    })
+    expect(proposalResult).toContain('awaiting-human-review')
+    expect(await screen.findByRole('alertdialog', { name: '创建患者' })).toBeTruthy()
     await userEvent.setup().click(screen.getByRole('button', { name: '创建患者' }))
     await waitFor(() => expect(patientCreated).toBe(true))
     await waitFor(() => expect(toolResults.at(-1)).toMatchObject({
@@ -482,17 +501,25 @@ describe('Web application shell', () => {
       throw new Error(`Unexpected request: ${path}`)
     })
 
-    await renderWebApp({
+    const runtimeFor = (surfaceAgentStatus: 'active' | 'connecting' | 'unavailable') => ({
+      apiBasePath: '/clinmesh-api',
+      mode: 'surface' as const,
+      surfaceAgent,
+      surfaceAgentStatus,
+      surfaceSessionId: 'dsh-session-1',
+    })
+    const rendered = await renderWebApp({
       history,
-      runtime: {
-        apiBasePath: '/clinmesh-api',
-        mode: 'surface',
-        surfaceAgent,
-        surfaceAgentStatus: 'active',
-        surfaceSessionId: 'dsh-session-1',
-      },
+      runtime: runtimeFor('unavailable'),
     })
     await waitFor(() => expect(registration?.scopeKey).toBe('clinmesh:registrar:settings'))
+    expect(contextRequests).toBe(1)
+
+    rendered.rerender(<WebApp history={history} runtime={runtimeFor('connecting')} />)
+    await act(async () => Promise.resolve())
+    rendered.rerender(<WebApp history={history} runtime={runtimeFor('active')} />)
+    await act(async () => Promise.resolve())
+    expect(contextRequests).toBe(1)
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(4 * 60_000 + 1_000)
