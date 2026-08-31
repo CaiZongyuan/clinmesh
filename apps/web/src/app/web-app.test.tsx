@@ -537,6 +537,12 @@ describe('Web application shell', () => {
       'dsh-session-1',
     ])
     expect(contextBindings.every(binding => binding.signalBound)).toBe(true)
+
+    rendered.rerender(<WebApp history={history} runtime={runtimeFor('connecting')} />)
+    await act(async () => Promise.resolve())
+    rendered.rerender(<WebApp history={history} runtime={runtimeFor('active')} />)
+    await act(async () => Promise.resolve())
+    expect(contextRequests).toBe(2)
   })
 
   it('replaces the Agent Page Context after an active Surface lease is lost', async () => {

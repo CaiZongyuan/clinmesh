@@ -165,10 +165,14 @@ export function useSurfaceAgentPublisher(input: {
   useEffect(() => {
     const previousStatus = previousSurfaceAgentStatus.current
     previousSurfaceAgentStatus.current = runtime.surfaceAgentStatus
+    const leaseFailed = runtime.surfaceAgentStatus === 'contended'
+      || runtime.surfaceAgentStatus === 'error'
+      || runtime.surfaceAgentStatus === 'idle'
+      || runtime.surfaceAgentStatus === 'unavailable'
     if (
       runtime.mode !== 'surface'
       || previousStatus !== 'active'
-      || runtime.surfaceAgentStatus === 'active'
+      || !leaseFailed
     ) return
 
     setBinding(undefined)
