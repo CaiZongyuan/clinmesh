@@ -64,6 +64,7 @@ import {
   withdrawPrescriptionResponseSchema,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { AuditQuery } from '../src/application/audit-query.ts'
 import { WorkspaceContextError } from '../src/infrastructure/sqlite/workspace-repository.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
@@ -5806,6 +5807,27 @@ describe('outpatient workflow HTTP contract', () => {
       kind: 'laboratory.start-request',
       status: 'completed',
     })
+
+    const resultFact = z.object({ value_json: z.string() }).strict().parse(
+      runtime.database.driver.prepare(`
+        SELECT value_json FROM scenario_hidden_fact
+        WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
+      `).get('workspace-demo', 'epoch-1'),
+    )
+    runtime.database.driver.prepare(`
+      DELETE FROM scenario_hidden_fact
+      WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
+    `).run('workspace-demo', 'epoch-1')
+    expect(report).toThrow('The laboratory result fact is unavailable')
+    const reportsWhileFactMissing = await runtime.app.request(
+      `/fhir/R5/DiagnosticReport?encounter=Encounter/${started.encounterId}&_total=accurate`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(fhirBundleSchema.parse(await reportsWhileFactMissing.json())).toMatchObject({ total: 0 })
+    runtime.database.driver.prepare(`
+      INSERT INTO scenario_hidden_fact (workspace_id, epoch, fact_code, value_json)
+      VALUES (?, ?, 'laboratory-results', ?)
+    `).run('workspace-demo', 'epoch-1', resultFact.value_json)
 
     const firstReport = report()
     expect(firstReport).toMatchObject({

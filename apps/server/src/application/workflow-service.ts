@@ -378,6 +378,7 @@ const triageRecordContentSchema = z.object({
 })
 
 const countRowSchema = z.object({ count: z.number().int().nonnegative() }).strict()
+const hiddenFactValueRowSchema = z.object({ value_json: z.string() }).strict()
 const syntheticCaseReplayRowSchema = z.object({
   brief_revision: z.number().int().positive(),
   case_id: z.string().min(1),
@@ -10599,20 +10600,15 @@ export class WorkflowService {
       WHERE workspace_id = ? AND epoch = ? AND outpatient_case_id = ?
     `).get(context.workspaceId, context.epoch, outpatientCaseId) !== undefined
     const referenceItem = this.#referenceData?.laboratoryById(context, catalogItemId)
-    if (!materialized && referenceItem === undefined) {
-      if (this.#legacyLaboratoryResultFact(context, catalogItemId) !== undefined) return
-      throw new WorkflowError(
-        'CATALOG_CONFLICT',
-        'The investigation cannot generate a result for this case and catalog item',
-      )
-    }
-    const capability = this.#investigation?.generationCapabilityForCase(
-      context.workspaceId,
-      context.epoch,
-      outpatientCaseId,
-      concept,
-    )
-    if (capability?.supported === true) return
+    const supported = !materialized && referenceItem === undefined
+      ? this.#legacyLaboratoryResultFact(context, catalogItemId) !== undefined
+      : this.#investigation?.generationCapabilityForCase(
+          context.workspaceId,
+          context.epoch,
+          outpatientCaseId,
+          concept,
+        ).supported === true
+    if (supported) return
     throw new WorkflowError(
       'CATALOG_CONFLICT',
       'The investigation cannot generate a result for this case and catalog item',
@@ -10623,10 +10619,12 @@ export class WorkflowService {
     context: ActorContext,
     catalogItemId: string,
   ) {
-    const hiddenFact = this.#database.driver.prepare(`
-      SELECT value_json FROM scenario_hidden_fact
-      WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
-    `).get(context.workspaceId, context.epoch) as { value_json: string } | undefined
+    const hiddenFact = hiddenFactValueRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT value_json FROM scenario_hidden_fact
+        WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
+      `).get(context.workspaceId, context.epoch),
+    )
     if (hiddenFact === undefined) return undefined
     const facts = laboratoryResultsFactSchema.parse(JSON.parse(hiddenFact.value_json))
     if (catalogItemId === 'lab-cbc' || catalogItemId === 'lab-crp') return facts[catalogItemId]
