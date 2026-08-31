@@ -7509,7 +7509,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(conditionCountAfter).toBe(conditionCountBefore)
   })
 
-  it('confirms one primary and secondary diagnoses once with FHIR Conditions and Provenance', async () => {
+  it('confirms and revises primary and secondary diagnoses with FHIR history and Provenance', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-diagnosis-confirm-http-'))
     temporaryDirectories.push(directory)
     const password = `Test-${randomUUID()}-Aa1!`
@@ -7674,6 +7674,94 @@ describe('outpatient workflow HTTP contract', () => {
     expect(restoredDetail.priorFacts.map(fact => fact.id)).not.toEqual(
       expect.arrayContaining(conditionIds),
     )
+
+    const revisedDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '2' },
+          input: {
+            entries: [{
+              catalogItemId: 'diagnosis-fever',
+              note: '复核后调整为发热待查。',
+              role: 'primary',
+            }],
+            expectedDraftVersion: 2,
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(revisedDraftResponse.status).toBe(200)
+    expect(diagnosisDraftResponseSchema.parse(await revisedDraftResponse.json())).toMatchObject({
+      data: { draftVersion: 3 },
+    })
+    const editingDetail = doctorCaseDetailSchema.parse(await (
+      await runtime.app.request(`/api/his/v1/doctor/cases/${started.caseId}`, {
+        headers: { cookie: doctorCookie },
+      })
+    ).json())
+    expect(editingDetail.diagnosis).toMatchObject({
+      confirmation: confirmed.confirmation,
+      draft: { entries: [{ catalogItemId: 'diagnosis-fever', role: 'primary' }] },
+      draftVersion: 3,
+    })
+
+    const reviseResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/diagnosis/actions/confirm`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '2' },
+          input: { expectedDraftVersion: 3 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(reviseResponse.status).toBe(200)
+    const revised = confirmDiagnosisResponseSchema.parse(await reviseResponse.json()).data
+    expect(revised).toMatchObject({
+      confirmation: {
+        entries: [{
+          catalogItemId: 'diagnosis-fever',
+          code: 'R50.9',
+          note: '复核后调整为发热待查。',
+          role: 'primary',
+        }],
+        revisionNumber: 2,
+        supersedesConfirmationId: confirmed.confirmation.id,
+      },
+      diagnosisVersion: 4,
+      encounterVersion: '3',
+    })
+    for (const conditionId of conditionIds) {
+      const previousCondition = fhirResourceSchema.parse(await (
+        await runtime.app.request(`/fhir/R5/Condition/${conditionId}`, {
+          headers: { cookie: doctorCookie },
+        })
+      ).json())
+      expect(previousCondition).toMatchObject({
+        verificationStatus: { coding: [expect.objectContaining({ code: 'entered-in-error' })] },
+      })
+    }
+    const revisedConditionId = revised.confirmation.entries[0]?.conditionId
+    const revisedEncounter = fhirResourceSchema.parse(await (
+      await runtime.app.request(`/fhir/R5/Encounter/${started.encounterId}`, {
+        headers: { cookie: doctorCookie },
+      })
+    ).json())
+    expect(revisedEncounter).toMatchObject({
+      diagnosis: [{
+        condition: [{ reference: { reference: `Condition/${revisedConditionId}` } }],
+        use: [{ coding: [expect.objectContaining({ code: 'primary' })] }],
+      }],
+      meta: { versionId: '3' },
+    })
+    expect(runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM diagnosis_confirmation
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get('workspace-demo', 'epoch-1', started.caseId)).toEqual({ count: 2 })
   })
 
   it('keeps independent and legacy diagnosis drafts mutually exclusive', async () => {

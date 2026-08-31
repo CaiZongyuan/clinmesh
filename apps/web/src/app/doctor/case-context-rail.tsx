@@ -130,11 +130,13 @@ function PageContext({ detail, locale, messages, section }: {
     const diagnosis = detail.diagnosis
     const confirmedEntries = diagnosis?.confirmation?.entries ?? []
     const primary = confirmedEntries.find(entry => entry.role === 'primary')
-    const status = diagnosis?.confirmation !== undefined
-      ? labels.confirmed
-      : diagnosis?.draft === undefined
-        ? labels.notRecorded
-        : labels.draftAvailable
+    const draftPrimary = diagnosis?.draft?.entries.find(entry => entry.role === 'primary')
+    const draftPrimaryLocal = diagnosis?.draft === undefined
+      ? undefined
+      : draftPrimary?.referenceConcept?.display ?? draftPrimary?.catalogItemId
+    const status = diagnosis?.draft !== undefined
+      ? labels.draftAvailable
+      : diagnosis?.confirmation === undefined ? labels.notRecorded : labels.confirmed
     return (
       <section aria-labelledby={headingId}>
         <h3 className="text-sm font-semibold" id={headingId}>{labels.diagnosisContext}</h3>
@@ -142,7 +144,9 @@ function PageContext({ detail, locale, messages, section }: {
           <ContextFact label={messages.status} value={status} />
           <ContextFact
             label={messages.primaryDiagnosis}
-            value={primary?.display ?? labels.diagnosisEntries(diagnosis?.draft?.entries.length ?? 0)}
+            value={draftPrimaryLocal
+              ?? primary?.display
+              ?? labels.diagnosisEntries(diagnosis?.draft?.entries.length ?? 0)}
           />
         </dl>
       </section>

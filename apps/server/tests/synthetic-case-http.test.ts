@@ -704,7 +704,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       sourceLocator: 'synthetic:test:systolic-pressure',
       system: 'http://loinc.org',
       version: '2.83',
-    }
+    } as const
     const agentConcept = {
       code: '1988-5',
       display: 'C 反应蛋白',
@@ -723,7 +723,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       sourceLocator: 'synthetic:test:crp',
       system: 'http://loinc.org',
       version: '2.83',
-    }
+    } as const
     const unsupportedAgentConcept = {
       code: '6690-2',
       display: '白细胞计数',
@@ -741,7 +741,25 @@ describe('Synthetic Case generation HTTP contract', () => {
       sourceLocator: 'synthetic:test:white-blood-cell-count',
       system: 'http://loinc.org',
       version: '2.83',
-    }
+    } as const
+    expect(runtime.investigation.generationCapabilityForCase(
+      'workspace-demo',
+      'epoch-1',
+      startedCommand.data.outpatientCaseId,
+      exactConcept,
+    )).toEqual({ source: 'synthea-exact', supported: true })
+    expect(runtime.investigation.generationCapabilityForCase(
+      'workspace-demo',
+      'epoch-1',
+      startedCommand.data.outpatientCaseId,
+      agentConcept,
+    )).toEqual({ source: 'investigation-agent', supported: true })
+    expect(runtime.investigation.generationCapabilityForCase(
+      'workspace-demo',
+      'epoch-1',
+      startedCommand.data.outpatientCaseId,
+      unsupportedAgentConcept,
+    )).toEqual({ reason: 'metadata-incomplete', supported: false })
     const updateLaboratoryCatalog = runtime.database.driver.prepare(`
       UPDATE outpatient_catalog SET config_json = ?
       WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
@@ -900,13 +918,35 @@ describe('Synthetic Case generation HTTP contract', () => {
       `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,
       { headers: { cookie: doctorCookie } },
     )).json())
-    expect(detail.laboratoryRequests?.requests.find(item => (
+    const unsupportedFailedRequest = detail.laboratoryRequests?.requests.find(item => (
       item.id === unsupportedRequest.id
-    ))).toMatchObject({
+    ))
+    expect(unsupportedFailedRequest).toMatchObject({
       generationError: { code: 'INVESTIGATION_UNSUPPORTED' },
       status: 'generation-failed',
     })
     expect(briefProvider.requests).toHaveLength(5)
+    const cancelUnsupportedResponse = await runtime.app.request(
+      `/api/his/v1/laboratory-requests/${unsupportedRequest.id}/actions/cancel`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`ServiceRequest/${unsupportedRequest.serviceRequestId}`]: unsupportedFailedRequest?.serviceRequestVersion,
+            [`Task/${unsupportedRequest.taskId}`]: unsupportedFailedRequest?.taskVersion,
+          },
+          input: {
+            expectedRequestVersion: unsupportedFailedRequest?.version,
+            reasonCode: 'no-longer-needed',
+          },
+        }),
+        headers: commandHeaders(),
+        method: 'POST',
+      },
+    )
+    expect(cancelUnsupportedResponse.status).toBe(200)
+    expect(laboratoryRequestActionResponseSchema.parse(
+      await cancelUnsupportedResponse.json(),
+    ).data.request).toMatchObject({ status: 'cancelled' })
 
     const snapshotBeforeReset = runtime.database.driver.prepare(`
       SELECT * FROM investigation_result_snapshot

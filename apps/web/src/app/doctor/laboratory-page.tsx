@@ -27,7 +27,6 @@ import {
   CheckIcon,
   CircleAlertIcon,
   CircleXIcon,
-  ClipboardPenIcon,
   FlaskConicalIcon,
   RefreshCwIcon,
   Trash2Icon,
@@ -42,6 +41,7 @@ import {
   type LaboratoryCatalogSelection,
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
+import { useAutosave } from './use-autosave.ts'
 
 export interface LaboratoryPageActions {
   acknowledge: {
@@ -327,6 +327,20 @@ function LaboratoryRequestEditor({
     ?? selectedItem?.id
   const draftMatchesSelection = state?.draft?.catalogItemId === laboratoryItemId
     && state.draft.indicationCode === indicationCode
+  const effectiveIndicationItems = indicationItems.length > 0
+    ? indicationItems
+    : laboratoryItemId.length === 0 || indicationCode.length === 0
+      ? []
+      : [{ label: indicationLabel(indicationCode, messages), value: indicationCode }]
+  useAutosave({
+    enabled: !readOnly
+      && !actions.save.pending
+      && laboratoryItemId.length > 0
+      && indicationCode.length > 0
+      && !draftMatchesSelection,
+    onSave: actions.save.onSubmit,
+    revision: `${caseId}:${state?.draftVersion ?? 0}:${laboratoryItemId}:${indicationCode}`,
+  })
   const requestHeadingId = `laboratory-request-heading-${caseId}`
   const resultsHeadingId = `laboratory-results-heading-${caseId}`
   return (
@@ -353,7 +367,6 @@ function LaboratoryRequestEditor({
                   )}
                 </span>
                 <LaboratoryCatalogDialog
-                  localCatalog={catalog}
                   locale={locale}
                   onSelect={(selection) => {
                     setSelectedReference(selection)
@@ -363,19 +376,26 @@ function LaboratoryRequestEditor({
                 />
               </div>
             </Field>
-            <Field>
+            {laboratoryItemId.length === 0 ? null : <Field>
               <FieldLabel htmlFor="laboratory-indication">{messages.laboratoryIndication}</FieldLabel>
-              <WorkspaceSelect id="laboratory-indication" items={indicationItems} onValueChange={value => onIndicationChange(value ?? '')} value={indicationCode} />
-            </Field>
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button
-                disabled={actions.save.pending || laboratoryItemId.length === 0 || indicationCode.length === 0}
-                onClick={actions.save.onSubmit}
-                type="button"
-                variant="outline"
-              >
-                <ClipboardPenIcon data-icon="inline-start" />{messages.saveLaboratoryRequestDraft}
-              </Button>
+              {effectiveIndicationItems.length === 1 ? (
+                <div className="flex h-8 items-center rounded-md border px-2.5 text-sm" id="laboratory-indication">
+                  {effectiveIndicationItems[0]?.label}
+                </div>
+              ) : (
+                <WorkspaceSelect id="laboratory-indication" items={effectiveIndicationItems} onValueChange={value => onIndicationChange(value ?? '')} value={indicationCode} />
+              )}
+            </Field>}
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <p aria-live="polite" className="mr-auto text-xs text-muted-foreground">
+                {actions.save.error !== null
+                  ? messages.autosaveFailed
+                  : actions.save.pending
+                  ? messages.autosaveSaving
+                  : !draftMatchesSelection
+                    ? messages.autosavePending
+                    : state?.draft === undefined ? '' : messages.autosaveSaved}
+              </p>
               {state?.draft === undefined ? null : (
                 <>
                   <AlertDialog>
@@ -419,17 +439,6 @@ function LaboratoryRequestEditor({
                 </>
               )}
             </div>
-            {state?.draft === undefined ? null : (
-              <Alert>
-                <CheckIcon aria-hidden="true" />
-                <AlertTitle>{messages.laboratoryRequestDraftSaved}</AlertTitle>
-                <AlertDescription>
-                  {(locale === 'zh-CN' ? draftItem?.nameZh : draftItem?.nameEn)
-                    ?? state.draft.referenceConcept?.display
-                    ?? state.draft.catalogItemId} · {indicationLabel(state.draft.indicationCode, messages)}
-                </AlertDescription>
-              </Alert>
-            )}
             {actions.deleteDraft.success?.caseId === caseId
               && state?.draft === undefined
               && state?.draftVersion === actions.deleteDraft.success.draftVersion ? (
@@ -469,72 +478,41 @@ function LaboratoryRequestEditor({
                 const itemName = (locale === 'zh-CN' ? item?.nameZh : item?.nameEn)
                   ?? request.referenceConcept?.display
                   ?? request.catalogItemId
+                const permanentlyUnsupported = request.generationError?.code === 'INVESTIGATION_UNSUPPORTED'
                 return (
                   <TableRow key={request.id}>
                     <TableCell className="break-words whitespace-normal font-medium">{itemName}</TableCell>
                     <TableCell className="break-words whitespace-normal">{indicationLabel(request.indicationCode, messages)}</TableCell>
-                    <TableCell className="break-words whitespace-normal"><Badge variant="outline">{laboratoryRequestStatusLabel(request, messages)}</Badge>{request.generationError === undefined ? null : <p className="mt-1 text-xs text-destructive">{request.generationError.message}</p>}</TableCell>
+                    <TableCell className="break-words whitespace-normal"><Badge variant="outline">{laboratoryRequestStatusLabel(request, messages)}</Badge>{request.generationError === undefined ? null : <p className="mt-1 text-xs text-destructive">{generationErrorMessage(request, locale)}</p>}</TableCell>
                     <TableCell className="text-right">
                       {readOnly ? null : request.status === 'generation-failed' ? (
-                        <Button
-                          aria-label={`${locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'} ${itemName}`}
-                          disabled={actions.retry.pending}
-                          onClick={() => actions.retry.onSubmit(request)}
-                          size="icon-sm"
-                          title={locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'}
-                          type="button"
-                          variant="outline"
-                        >
-                          <RefreshCwIcon />
-                        </Button>
-                      ) : request.status !== 'issued' ? null : (
-                        <AlertDialog>
-                          <AlertDialogTrigger
-                            render={(
-                              <Button
-                                aria-label={`${messages.cancelLaboratoryRequest} ${itemName}`}
-                                disabled={actions.cancel.pending}
-                                size="icon-sm"
-                                title={`${messages.cancelLaboratoryRequest} ${itemName}`}
-                                type="button"
-                                variant="destructive"
-                              />
-                            )}
+                        permanentlyUnsupported ? (
+                          <CancelLaboratoryRequestButton
+                            action={actions.cancel}
+                            itemName={itemName}
+                            messages={messages}
+                            request={request}
+                          />
+                        ) : (
+                          <Button
+                            aria-label={`${locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'} ${itemName}`}
+                            disabled={actions.retry.pending}
+                            onClick={() => actions.retry.onSubmit(request)}
+                            size="icon-sm"
+                            title={locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'}
+                            type="button"
+                            variant="outline"
                           >
-                            <CircleXIcon />
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>{messages.cancelLaboratoryRequestTitle}</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                {messages.cancelLaboratoryRequestDescription}
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <dl className="grid grid-cols-2 gap-3 text-sm">
-                              <div>
-                                <dt className="text-xs text-muted-foreground">{messages.laboratoryItem}</dt>
-                                <dd className="mt-1 font-medium">{itemName}</dd>
-                              </div>
-                              <div>
-                                <dt className="text-xs text-muted-foreground">{messages.status}</dt>
-                                <dd className="mt-1 font-medium">
-                                  {laboratoryRequestStatusLabel(request, messages)}
-                                </dd>
-                              </div>
-                            </dl>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
-                              <AlertDialogAction
-                                disabled={actions.cancel.pending}
-                                onClick={() => actions.cancel.onSubmit(request)}
-                                variant="destructive"
-                              >
-                                <CircleXIcon data-icon="inline-start" />
-                                {messages.confirmCancelLaboratoryRequest}
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
+                            <RefreshCwIcon />
+                          </Button>
+                        )
+                      ) : request.status !== 'issued' ? null : (
+                        <CancelLaboratoryRequestButton
+                          action={actions.cancel}
+                          itemName={itemName}
+                          messages={messages}
+                          request={request}
+                        />
                       )}
                     </TableCell>
                   </TableRow>
@@ -597,6 +575,77 @@ function LaboratoryRequestEditor({
         )}
       </section>
     </div>
+  )
+}
+
+function generationErrorMessage(
+  request: LaboratoryRequest,
+  locale: WorkspaceLocale,
+): string {
+  if (request.generationError?.code === 'INVESTIGATION_UNSUPPORTED') {
+    return locale === 'zh-CN'
+      ? '该项目无法为当前病例生成结果，请取消后重新选择。'
+      : 'This item cannot generate a result for the current case. Cancel it and choose another item.'
+  }
+  return locale === 'zh-CN'
+    ? '结果生成失败，可重试。'
+    : 'Result generation failed. You can retry.'
+}
+
+function CancelLaboratoryRequestButton({ action, itemName, messages, request }: {
+  action: LaboratoryPageActions['cancel']
+  itemName: string
+  messages: ReturnType<typeof getWorkspaceMessages>
+  request: LaboratoryRequest
+}): React.JSX.Element {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger
+        render={(
+          <Button
+            aria-label={`${messages.cancelLaboratoryRequest} ${itemName}`}
+            disabled={action.pending}
+            size="icon-sm"
+            title={`${messages.cancelLaboratoryRequest} ${itemName}`}
+            type="button"
+            variant="destructive"
+          />
+        )}
+      >
+        <CircleXIcon />
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{messages.cancelLaboratoryRequestTitle}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {messages.cancelLaboratoryRequestDescription}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <dl className="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <dt className="text-xs text-muted-foreground">{messages.laboratoryItem}</dt>
+            <dd className="mt-1 font-medium">{itemName}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">{messages.status}</dt>
+            <dd className="mt-1 font-medium">
+              {laboratoryRequestStatusLabel(request, messages)}
+            </dd>
+          </div>
+        </dl>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={action.pending}
+            onClick={() => action.onSubmit(request)}
+            variant="destructive"
+          >
+            <CircleXIcon data-icon="inline-start" />
+            {messages.confirmCancelLaboratoryRequest}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 
@@ -950,7 +999,9 @@ function laboratoryResultName(
 }
 
 function indicationLabel(code: string, messages: ReturnType<typeof getWorkspaceMessages>): string {
-  return code === 'fever' ? messages.indication_fever : code
+  if (code === 'fever') return messages.indication_fever
+  if (code === 'clinical-evaluation') return messages.indication_clinicalEvaluation
+  return code
 }
 
 function laboratoryRequestStatusLabel(

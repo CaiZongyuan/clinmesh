@@ -3,6 +3,7 @@ import {
   apiErrorSchema,
   askConsultationQuestionResponseSchema,
   billingQueueSchema,
+  caseLaboratoryCatalogSearchSchema,
   laboratoryRequestActionResponseSchema,
   clinicalDocumentDraftResponseSchema,
   clinicalDocumentRevisionResponseSchema,
@@ -74,7 +75,6 @@ import {
 import {
   referenceDataReleaseListSchema,
   referenceDiagnosisCatalogSearchSchema,
-  referenceLaboratoryCatalogSearchSchema,
   referenceMedicationCatalogSearchSchema,
 } from '@clinmesh/contracts/reference-data'
 import { z } from 'zod'
@@ -197,10 +197,17 @@ export function searchReferenceDiagnoses(query: string, page = 1, signal?: Abort
   )
 }
 
-export function searchReferenceLaboratory(query: string, page = 1, signal?: AbortSignal) {
+export function searchReferenceLaboratory(
+  caseId: string,
+  query: string,
+  page = 1,
+  signal?: AbortSignal,
+) {
+  const parameters = new URLSearchParams({ page: String(page), pageSize: '20' })
+  if (query.length > 0) parameters.set('query', query)
   return apiGet(
-    referenceCatalogPath('laboratory', query, page),
-    referenceLaboratoryCatalogSearchSchema,
+    `/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/reference-catalogs/laboratory?${parameters.toString()}`,
+    caseLaboratoryCatalogSearchSchema,
     signal,
   )
 }

@@ -2,6 +2,7 @@ import { extname } from 'node:path'
 import type { HealthResponse } from '@clinmesh/contracts/health'
 import {
   acknowledgeLaboratoryReportRequestSchema,
+  caseLaboratoryCatalogSearchSchema,
   cancelLaboratoryRequestRequestSchema,
   completeHospitalServiceRequestSchema,
   completeEncounterRequestSchema,
@@ -34,6 +35,7 @@ import {
 } from '@clinmesh/contracts/scenario'
 import type { IdentityService } from './application/identity-service.ts'
 import { IdentityError } from './application/identity-service.ts'
+import type { InvestigationService } from './application/investigation-service.ts'
 import type { ReferenceDataService } from './application/reference-data-service.ts'
 import { ReferenceDataError } from './application/reference-data-service.ts'
 import {
@@ -68,6 +70,7 @@ export interface CreateAppOptions {
   caseVisits?: SyntheticCaseVisitService
   fhir?: FhirRuntime
   identity?: IdentityService
+  investigation?: InvestigationService
   patientBrief?: PatientBriefService
   referenceData?: ReferenceDataService
   scenario?: ScenarioService
@@ -807,6 +810,38 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    if (options.investigation !== undefined && options.referenceData !== undefined) {
+      const investigation = options.investigation
+      const referenceData = options.referenceData
+      app.get('/api/his/v1/doctor/cases/:caseId/reference-catalogs/laboratory', async (context) => {
+        try {
+          const actorContext = await actor(context)
+          const caseId = context.req.param('caseId')
+          workflow.doctorCaseDetail(actorContext, caseId)
+          const result = referenceData.searchLaboratory(
+            actorContext,
+            referenceCatalogQuery(context),
+          )
+          return context.json(caseLaboratoryCatalogSearchSchema.parse({
+            ...result,
+            items: result.items.map((item) => {
+              const { domain: _domain, status: _status, ...concept } = item
+              return {
+                ...item,
+                resultGeneration: investigation.generationCapabilityForCase(
+                  actorContext.workspaceId,
+                  actorContext.epoch,
+                  caseId,
+                  concept,
+                ),
+              }
+            }),
+          }))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+    }
     app.get('/api/his/v1/doctor/cases/:caseId', async (context) => {
       try {
         return context.json(workflow.doctorCaseDetail(

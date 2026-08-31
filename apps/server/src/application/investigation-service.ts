@@ -6,6 +6,7 @@ import {
   type InvestigationResultSnapshot,
 } from '@clinmesh/contracts/scenario'
 import { referenceConceptSnapshotSchema } from '@clinmesh/contracts/reference-data'
+import type { InvestigationGenerationCapability } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { InvestigationResultRepository } from '../infrastructure/sqlite/investigation-result-repository.ts'
@@ -40,7 +41,12 @@ const requestRowSchema = z.object({
   synthetic_case_revision: z.number().int().positive(),
 }).strict()
 
+const caseMaterializationRowSchema = z.object({
+  synthetic_case_id: z.string().min(1),
+}).strict()
+
 type Resource = { id: string; resourceType: string; [key: string]: unknown }
+type RequestedConcept = z.infer<typeof referenceConceptSnapshotSchema>
 
 export class InvestigationGenerationError extends Error {
   readonly code: 'INVESTIGATION_OUTPUT_INVALID' | 'INVESTIGATION_UNSUPPORTED'
@@ -184,6 +190,20 @@ function evidence(resources: Resource[]) {
   })
 }
 
+function exactObservation(
+  hiddenResources: Resource[],
+  requestedConcept: RequestedConcept,
+): Resource | undefined {
+  return hiddenResources
+    .filter(resource => resource.resourceType === 'Observation')
+    .filter(resource => conceptCodings(resource).some(coding => (
+      coding.system === requestedConcept.system && coding.code === requestedConcept.code
+    )))
+    .toSorted((left, right) => (
+      clinicalTimestamp(right) - clinicalTimestamp(left) || left.id.localeCompare(right.id)
+    ))[0]
+}
+
 export class InvestigationService {
   readonly #cases: SyntheticCaseRepository
   readonly #database: ClinMeshDatabase
@@ -206,6 +226,55 @@ export class InvestigationService {
     this.#profiles = input.profiles
     this.#provider = input.provider
     this.#results = input.results
+  }
+
+  generationCapabilityForCase(
+    workspaceId: string,
+    epoch: string,
+    outpatientCaseId: string,
+    concept: RequestedConcept,
+  ): InvestigationGenerationCapability {
+    const materialization = caseMaterializationRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT case_id AS synthetic_case_id
+        FROM synthetic_case_materialization
+        WHERE workspace_id = ? AND epoch = ? AND outpatient_case_id = ?
+      `).get(workspaceId, epoch, outpatientCaseId),
+    )
+    if (materialization === undefined) {
+      return { reason: 'no-case-source', supported: false }
+    }
+    const truth = this.#cases.getTruthForSimulator(workspaceId, materialization.synthetic_case_id)
+    if (truth === undefined) return { reason: 'no-case-source', supported: false }
+    const exact = exactObservation(
+      truth.hiddenResources.map(item => item.resource as Resource),
+      concept,
+    )
+    if (exact !== undefined) {
+      try {
+        this.#contentFromExactObservation(concept, exact)
+        return { source: 'synthea-exact', supported: true }
+      } catch (error) {
+        if (error instanceof InvestigationGenerationError) {
+          return { reason: 'exact-incompatible', supported: false }
+        }
+        throw error
+      }
+    }
+    const metadata = concept.laboratory
+    const referenceRange = metadata?.referenceRange
+    if (
+      metadata?.resultType !== 'quantity'
+      || metadata.unit === undefined
+      || referenceRange === undefined
+      || (referenceRange.low === undefined && referenceRange.high === undefined)
+    ) {
+      return { reason: 'metadata-incomplete', supported: false }
+    }
+    if (this.#provider === undefined || this.#model === undefined) {
+      return { reason: 'agent-unavailable', supported: false }
+    }
+    return { source: 'investigation-agent', supported: true }
   }
 
   async resolveForRequest(
@@ -241,14 +310,7 @@ export class InvestigationService {
       throw new InvestigationGenerationError('INVESTIGATION_OUTPUT_INVALID', 'The Synthetic Case context is incomplete')
     }
     const hiddenResources = truth.hiddenResources.map(item => item.resource as Resource)
-    const exact = hiddenResources
-      .filter(resource => resource.resourceType === 'Observation')
-      .filter(resource => conceptCodings(resource).some(coding => (
-        coding.system === requestedConcept.system && coding.code === requestedConcept.code
-      )))
-      .toSorted((left, right) => (
-        clinicalTimestamp(right) - clinicalTimestamp(left) || left.id.localeCompare(right.id)
-      ))[0]
+    const exact = exactObservation(hiddenResources, requestedConcept)
     const baseInput = {
       caseRevision: row.synthetic_case_revision,
       demographics: {

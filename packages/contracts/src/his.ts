@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { fhirResourceSchema } from './fhir.ts'
 import {
+  referenceConceptSchema,
   referenceConceptSnapshotSchema,
   referenceMedicationProductSchema,
 } from './reference-data.ts'
@@ -296,6 +297,33 @@ export const completeHospitalServiceResponseSchema = commandResponseSchema(z.obj
 
 export const diagnosisRoleSchema = z.enum(['primary', 'secondary'])
 
+export const investigationGenerationCapabilitySchema = z.discriminatedUnion('supported', [
+  z.object({
+    source: z.enum(['investigation-agent', 'synthea-exact']),
+    supported: z.literal(true),
+  }).strict(),
+  z.object({
+    reason: z.enum([
+      'agent-unavailable',
+      'exact-incompatible',
+      'metadata-incomplete',
+      'no-case-source',
+    ]),
+    supported: z.literal(false),
+  }).strict(),
+])
+
+export const caseLaboratoryCatalogSearchSchema = z.object({
+  items: z.array(referenceConceptSchema.safeExtend({
+    domain: z.literal('laboratory'),
+    resultGeneration: investigationGenerationCapabilitySchema,
+  })),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive().max(50),
+  releaseId: z.string().min(1).max(256),
+  total: z.number().int().nonnegative(),
+}).strict()
+
 export const diagnosisDraftEntrySchema = z.object({
   catalogItemId: z.string().min(1),
   note: z.string().trim().min(1).max(500).optional(),
@@ -339,6 +367,8 @@ export const diagnosisConfirmationSchema = z.object({
   entries: z.array(diagnosisConfirmationEntrySchema).min(1).max(8),
   id: z.string().min(1),
   provenanceId: z.string().min(1),
+  revisionNumber: z.number().int().positive().default(1),
+  supersedesConfirmationId: z.string().min(1).optional(),
 }).strict()
 
 export const confirmDiagnosisResponseSchema = commandResponseSchema(z.object({
@@ -1494,6 +1524,7 @@ export type ScenarioState = z.infer<typeof scenarioStateSchema>
 export type PatientSummary = z.infer<typeof patientSummarySchema>
 export type ClinicalPresentation = z.infer<typeof clinicalPresentationSchema>
 export type ClinicalDocumentContent = z.infer<typeof clinicalDocumentContentSchema>
+export type CaseLaboratoryCatalogSearch = z.infer<typeof caseLaboratoryCatalogSearchSchema>
 export type DiagnosisDraftEntry = z.infer<typeof diagnosisDraftEntrySchema>
 export type DiagnosisConfirmation = z.infer<typeof diagnosisConfirmationSchema>
 export type DiagnosisState = z.infer<typeof diagnosisStateSchema>
@@ -1512,6 +1543,7 @@ export type EncounterCompletionPreview = z.infer<typeof encounterCompletionPrevi
 export type EncounterCompletionTarget = z.infer<typeof encounterCompletionTargetSchema>
 export type LaboratoryRequestCatalogItemId = z.infer<typeof laboratoryRequestCatalogItemIdSchema>
 export type LaboratoryRequest = z.infer<typeof laboratoryRequestSchema>
+export type InvestigationGenerationCapability = z.infer<typeof investigationGenerationCapabilitySchema>
 export type LaboratoryReport = z.infer<typeof laboratoryReportSchema>
 export type BillingQueueItem = z.infer<typeof billingQueueSchema>['items'][number]
 export type PharmacyQueueItem = z.infer<typeof pharmacyQueueSchema>['items'][number]

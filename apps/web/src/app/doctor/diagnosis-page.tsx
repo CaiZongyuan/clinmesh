@@ -16,8 +16,8 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
-import { CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardPenIcon, Trash2Icon } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { CheckCircleIcon, CheckIcon, CircleAlertIcon, Trash2Icon } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import {
@@ -25,6 +25,7 @@ import {
   type DiagnosisCatalogSelection,
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
+import { useAutosave } from './use-autosave.ts'
 
 export interface DiagnosisPageActions {
   confirm: {
@@ -36,6 +37,7 @@ export interface DiagnosisPageActions {
     error: Error | null
     onSubmit: (entries: DiagnosisDraftEntry[]) => void
     pending: boolean
+    savedRevision: string | undefined
     success: boolean
   }
 }
@@ -43,6 +45,8 @@ export interface DiagnosisPageActions {
 interface DiagnosisDraftLine extends DiagnosisDraftEntry {
   key: string
   note: string
+  snapshotCode?: string
+  snapshotDisplay?: string
 }
 
 export function DiagnosisPage({ actions, catalog, elementId, locale, messages, readOnly, referenceSearch, state }: {
@@ -56,13 +60,24 @@ export function DiagnosisPage({ actions, catalog, elementId, locale, messages, r
   state: DoctorCaseDetail['diagnosis']
 }): React.JSX.Element {
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
-  const [entries, setEntries] = useState<DiagnosisDraftLine[]>(() => (
-    state?.draft?.entries.map((entry, index) => ({
-      ...entry,
-      key: `saved-${index}`,
+  const [entries, setEntries] = useState<DiagnosisDraftLine[]>(() => {
+    if (state?.draft !== undefined) {
+      return state.draft.entries.map((entry, index) => ({
+        ...entry,
+        key: `saved-${index}`,
+        note: entry.note ?? '',
+      }))
+    }
+    return state?.confirmation?.entries.map((entry, index) => ({
+      catalogItemId: entry.catalogItemId,
+      key: `confirmed-${index}`,
       note: entry.note ?? '',
+      ...(entry.referenceConcept === undefined ? {} : { referenceConcept: entry.referenceConcept }),
+      role: entry.role,
+      snapshotCode: entry.code,
+      snapshotDisplay: entry.display,
     })) ?? []
-  ))
+  })
   const [dirty, setDirty] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const usedCatalogItemIds = new Set(entries.map(entry => entry.catalogItemId))
@@ -129,6 +144,8 @@ export function DiagnosisPage({ actions, catalog, elementId, locale, messages, r
   const submittedEntries = (): DiagnosisDraftEntry[] => entries.map(({
     key: _key,
     note,
+    snapshotCode: _snapshotCode,
+    snapshotDisplay: _snapshotDisplay,
     ...entry
   }) => ({
     ...entry,
@@ -138,17 +155,29 @@ export function DiagnosisPage({ actions, catalog, elementId, locale, messages, r
   const valid = entries.length > 0
     && entries.every(entry => entry.catalogItemId.length > 0)
     && primaryCount === 1
+  const currentEntries = submittedEntries()
+  const currentRevision = JSON.stringify(currentEntries)
+  useEffect(() => {
+    if (actions.save.success && actions.save.savedRevision === currentRevision) setDirty(false)
+  }, [actions.save.savedRevision, actions.save.success, currentRevision])
+  useAutosave({
+    delayMs: 800,
+    enabled: !readOnly && dirty && valid && !actions.save.pending,
+    onSave: () => actions.save.onSubmit(currentEntries),
+    revision: `${state?.draftVersion ?? 0}:${currentRevision}`,
+  })
   const entryDisplay = (entry: DiagnosisDraftLine) => {
     const local = catalogById.get(entry.catalogItemId)
     return {
-      code: entry.referenceConcept?.code ?? local?.code ?? entry.catalogItemId,
+      code: entry.referenceConcept?.code ?? entry.snapshotCode ?? local?.code ?? entry.catalogItemId,
       display: entry.referenceConcept?.display
+        ?? entry.snapshotDisplay
         ?? (locale === 'zh-CN' ? local?.nameZh : local?.nameEn)
         ?? entry.catalogItemId,
     }
   }
 
-  if (state?.confirmation !== undefined) {
+  if (readOnly && state?.confirmation !== undefined) {
     return (
       <section aria-labelledby="diagnosis-heading" className="flex flex-col gap-3" id={elementId} tabIndex={-1}>
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -207,6 +236,21 @@ export function DiagnosisPage({ actions, catalog, elementId, locale, messages, r
           search={referenceSearch}
         />
       </div>
+      {state?.confirmation === undefined ? null : (
+        <Alert>
+          <CheckCircleIcon aria-hidden="true" />
+          <AlertTitle>
+            {messages.diagnosisConfirmed} · {locale === 'zh-CN'
+              ? `第 ${state.confirmation.revisionNumber} 版`
+              : `Revision ${state.confirmation.revisionNumber}`}
+          </AlertTitle>
+          <AlertDescription>
+            {locale === 'zh-CN'
+              ? '本次就诊结束前仍可继续修改；再次确认会保留上一版本。'
+              : 'You can keep editing until the encounter ends; reconfirming preserves the previous revision.'}
+          </AlertDescription>
+        </Alert>
+      )}
       {entries.length === 0 ? (
         <div className="border px-4 py-10 text-center text-sm text-muted-foreground">
           {locale === 'zh-CN' ? '尚未添加本次诊断' : 'No encounter diagnosis added'}
@@ -296,15 +340,16 @@ export function DiagnosisPage({ actions, catalog, elementId, locale, messages, r
           <AlertTitle>{messages.diagnosisPrimaryRequiredDescription}</AlertTitle>
         </Alert>
       ) : null}
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button
-          disabled={!valid || !dirty || actions.save.pending}
-          onClick={() => actions.save.onSubmit(submittedEntries())}
-          type="button"
-          variant="outline"
-        >
-          <ClipboardPenIcon data-icon="inline-start" />{messages.saveDiagnosisDraft}
-        </Button>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+        <p aria-live="polite" className="text-xs text-muted-foreground">
+          {actions.save.error !== null
+            ? messages.autosaveFailed
+            : actions.save.pending
+            ? messages.autosaveSaving
+            : dirty
+              ? messages.autosavePending
+              : state?.draft === undefined ? '' : messages.autosaveSaved}
+        </p>
         <AlertDialog onOpenChange={setConfirmOpen} open={confirmOpen}>
           <AlertDialogTrigger
             render={<Button disabled={!valid || dirty || state?.draft === undefined || actions.confirm.pending} type="button" />}
@@ -316,8 +361,8 @@ export function DiagnosisPage({ actions, catalog, elementId, locale, messages, r
               <AlertDialogTitle>{locale === 'zh-CN' ? '确认最终诊断' : 'Confirm final diagnoses'}</AlertDialogTitle>
               <AlertDialogDescription>
                 {locale === 'zh-CN'
-                  ? '确认后将创建正式诊断记录，不能通过普通草稿继续覆盖。'
-                  : 'Confirmation creates formal diagnosis records that cannot be overwritten by an ordinary draft.'}
+                  ? '确认后生成正式诊断版本；本次就诊结束前仍可继续修改，历史版本会保留。'
+                  : 'Confirmation creates a formal diagnosis revision. You can keep editing until the encounter ends, and prior revisions remain available.'}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <ul className="divide-y border text-sm">
@@ -343,7 +388,7 @@ export function DiagnosisPage({ actions, catalog, elementId, locale, messages, r
                 }}
               >
                 <CheckCircleIcon data-icon="inline-start" />
-                {locale === 'zh-CN' ? '确认并锁定诊断' : 'Confirm diagnoses'}
+                {locale === 'zh-CN' ? '确认诊断版本' : 'Confirm diagnosis revision'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

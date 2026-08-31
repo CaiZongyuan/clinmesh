@@ -1,8 +1,11 @@
-import type { ClinicalCatalog, DiagnosisDraftEntry } from '@clinmesh/contracts/his'
+import type {
+  CaseLaboratoryCatalogSearch,
+  ClinicalCatalog,
+  DiagnosisDraftEntry,
+} from '@clinmesh/contracts/his'
 import type {
   ReferenceConcept,
   ReferenceDiagnosisCatalogSearch,
-  ReferenceLaboratoryCatalogSearch,
   ReferenceMedicationCatalogSearch,
   ReferenceMedicationProduct,
 } from '@clinmesh/contracts/reference-data'
@@ -52,7 +55,7 @@ export interface ReferenceCatalogSearchModel<Data> {
 
 export interface ReferenceCatalogSearches {
   diagnoses: ReferenceCatalogSearchModel<ReferenceDiagnosisCatalogSearch>
-  laboratory: ReferenceCatalogSearchModel<ReferenceLaboratoryCatalogSearch>
+  laboratory: ReferenceCatalogSearchModel<CaseLaboratoryCatalogSearch>
   medications: ReferenceCatalogSearchModel<ReferenceMedicationCatalogSearch>
 }
 
@@ -81,6 +84,7 @@ const copy = {
     medicationSearchInput: 'Search medication catalog',
     next: 'Next page',
     noResults: 'No matching records',
+    noSupportedLaboratoryResults: 'No matching item can generate a result for this case',
     packageVariants: '{count} package variants',
     previous: 'Previous page',
     replaceDiagnosis: 'Replace diagnosis',
@@ -115,6 +119,7 @@ const copy = {
     medicationSearchInput: '搜索药品目录',
     next: '下一页',
     noResults: '没有匹配记录',
+    noSupportedLaboratoryResults: '没有可为当前病例生成结果的匹配项目',
     packageVariants: '{count} 个包装',
     previous: '上一页',
     replaceDiagnosis: '更换诊断',
@@ -487,12 +492,10 @@ export interface LaboratoryCatalogSelection {
 }
 
 export function LaboratoryCatalogDialog({
-  localCatalog,
   locale,
   onSelect,
   search,
 }: {
-  localCatalog: ClinicalCatalog['laboratory']
   locale: WorkspaceLocale
   onSelect: (selection: LaboratoryCatalogSelection) => void
   search: ReferenceCatalogSearches['laboratory']
@@ -505,14 +508,7 @@ export function LaboratoryCatalogDialog({
   const [selected, setSelected] = useState<LaboratoryCatalogSelection>()
   const results = search
   const remoteResults = results.data?.items ?? []
-  const useLocal = results.isError
-    || (query.length === 0 && results.data !== undefined && remoteResults.length === 0)
-  const normalizedLocalQuery = query.toLocaleLowerCase()
-  const localResults = localCatalog.flatMap(item => {
-    const display = locale === 'zh-CN' ? item.nameZh : item.nameEn
-    if (normalizedLocalQuery.length > 0 && !display.toLocaleLowerCase().includes(normalizedLocalQuery)) return []
-    return [{ catalogItemId: item.id, code: item.id, display }]
-  })
+  const supportedResults = remoteResults.filter(item => item.resultGeneration.supported)
   const openDialog = () => {
     setInput('')
     setQuery('')
@@ -551,11 +547,15 @@ export function LaboratoryCatalogDialog({
         />
         {results.isPending ? <Skeleton className="mx-4 min-h-0 flex-1" /> : (
           <div className="mx-4 min-h-0 flex-1 overflow-auto border">
-            {results.isError && localResults.length > 0 ? (
+            {results.isError ? (
               <Alert className="m-2"><CircleAlertIcon /><AlertTitle>{messages.catalogUnavailable}</AlertTitle></Alert>
             ) : null}
-            {(useLocal ? localResults : remoteResults).length === 0 ? (
-              <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
+            {supportedResults.length === 0 ? (
+              <p className="p-8 text-center text-sm text-muted-foreground">
+                {results.data === undefined
+                  ? messages.noResults
+                  : messages.noSupportedLaboratoryResults}
+              </p>
             ) : (
               <Table>
                 <TableHeader className="sticky top-0 z-10 bg-popover">
@@ -567,16 +567,14 @@ export function LaboratoryCatalogDialog({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(useLocal ? localResults : remoteResults).map(item => {
-                    const selection: LaboratoryCatalogSelection = 'domain' in item
-                      ? {
-                          catalogItemId: item.id,
-                          code: item.code,
-                          display: item.display,
-                          referenceConcept: item,
-                        }
-                      : item
-                    const inactive = 'status' in item && item.status !== 'active'
+                  {supportedResults.map(item => {
+                    const selection: LaboratoryCatalogSelection = {
+                      catalogItemId: item.id,
+                      code: item.code,
+                      display: item.display,
+                      referenceConcept: item,
+                    }
+                    const inactive = item.status !== 'active'
                     const label = `${messages.choose} ${selection.display} ${selection.code}`
                     return (
                       <TableRow
@@ -595,9 +593,7 @@ export function LaboratoryCatalogDialog({
                         <TableCell className="font-medium">{selection.display}</TableCell>
                         <TableCell className="font-mono text-xs">{selection.code}</TableCell>
                         <TableCell>
-                          {'laboratory' in item && item.laboratory !== undefined
-                            ? item.laboratory.resultType
-                            : messages.localCatalog}
+                          {item.laboratory?.resultType ?? '-'}
                         </TableCell>
                       </TableRow>
                     )
@@ -607,7 +603,7 @@ export function LaboratoryCatalogDialog({
             )}
           </div>
         )}
-        {!useLocal && results.data !== undefined ? (
+        {results.data !== undefined ? (
           <CatalogPagination
             locale={locale}
             onPageChange={(nextPage) => {

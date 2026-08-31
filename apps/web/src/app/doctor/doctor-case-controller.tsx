@@ -358,8 +358,9 @@ function DoctorCaseController({
     ],
   })
   const referenceLaboratory = useQuery({
-    enabled: laboratoryReferenceSearch.enabled,
+    enabled: laboratoryReferenceSearch.enabled && activeCaseId !== undefined,
     queryFn: ({ signal }) => searchReferenceLaboratory(
+      activeCaseId ?? '',
       laboratoryReferenceSearch.query,
       laboratoryReferenceSearch.page,
       signal,
@@ -368,6 +369,7 @@ function DoctorCaseController({
       'reference-catalog',
       ...scope,
       'laboratory',
+      activeCaseId,
       laboratoryReferenceSearch.query,
       laboratoryReferenceSearch.page,
     ],
@@ -677,7 +679,12 @@ function DoctorCaseController({
         expectedDraftVersion: requestState.draftVersion,
       }, newIdempotencyKey())
     },
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => {
+      saveLaboratoryRequest.reset()
+      setLaboratoryItemId('')
+      setIndicationCode('')
+      await refreshCaseById(variables.caseId)
+    },
   })
   const deleteRequestDraft = useMutation({
     mutationFn: (caseId: string) => {
@@ -693,7 +700,12 @@ function DoctorCaseController({
       }, newIdempotencyKey())
     },
     onError: async (_error, caseId) => refreshCaseById(caseId),
-    onSuccess: async (_response, caseId) => refreshCaseById(caseId),
+    onSuccess: async (_response, caseId) => {
+      saveLaboratoryRequest.reset()
+      setLaboratoryItemId('')
+      setIndicationCode('')
+      await refreshCaseById(caseId)
+    },
   })
   const cancelRequest = useMutation({
     mutationFn: ({ request }: { caseId: string; request: LaboratoryRequest }) => (
@@ -853,7 +865,10 @@ function DoctorCaseController({
       }, newIdempotencyKey())
     },
     onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => {
+      savePrescription.reset()
+      await refreshCaseById(variables.caseId)
+    },
   })
   const issueCasePrescription = useMutation({
     mutationFn: ({ caseId }: { caseId: string }) => {
@@ -869,7 +884,10 @@ function DoctorCaseController({
       }, newIdempotencyKey())
     },
     onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => {
+      savePrescription.reset()
+      await refreshCaseById(variables.caseId)
+    },
   })
   const confirmCaseNoMedication = useMutation({
     mutationFn: ({ caseId }: { caseId: string }) => {
@@ -941,7 +959,10 @@ function DoctorCaseController({
         expectedDraftVersion: current.diagnosis.draftVersion,
       }, newIdempotencyKey())
     },
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => {
+      saveCaseDiagnosis.reset()
+      await refreshCaseById(variables.caseId)
+    },
   })
   const saveRevisit = useMutation({
     mutationFn: (input: {
@@ -1141,6 +1162,10 @@ function DoctorCaseController({
                 }),
                 pending: saveCaseDiagnosis.isPending
                   && saveCaseDiagnosis.variables?.caseId === detail.data.caseId,
+                savedRevision: saveCaseDiagnosis.isSuccess
+                  && saveCaseDiagnosis.variables?.caseId === detail.data.caseId
+                  ? JSON.stringify(saveCaseDiagnosis.variables.entries)
+                  : undefined,
                 success: saveCaseDiagnosis.isSuccess
                   && saveCaseDiagnosis.variables?.caseId === detail.data.caseId,
               },
@@ -1319,6 +1344,10 @@ function DoctorCaseController({
                 }),
                 pending: savePrescription.isPending
                   && savePrescription.variables?.caseId === detail.data.caseId,
+                savedRevision: savePrescription.isSuccess
+                  && savePrescription.variables?.caseId === detail.data.caseId
+                  ? JSON.stringify(savePrescription.variables.items)
+                  : undefined,
                 success: savePrescription.isSuccess
                   && savePrescription.variables?.caseId === detail.data.caseId,
               },
@@ -1806,7 +1835,7 @@ function CaseDetail({
                 actions={diagnosisActions}
                 catalog={catalog.data.diagnoses}
                 elementId={encounterCompletionTargetElementIds.diagnosis}
-                key={`${detail.caseId}:${detail.diagnosis?.draftVersion ?? 0}`}
+                key={detail.caseId}
                 locale={locale}
                 messages={messages}
                 readOnly={readOnly}

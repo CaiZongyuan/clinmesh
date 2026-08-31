@@ -162,6 +162,14 @@ _Avoid_: Real patient, chatbot, Scenario
 一次 Encounter 中医患问答的有序业务记录。它保存问诊过程，但不等同于医生整理和签署的 Clinical Document。
 _Avoid_: Clinical Document, chat transcript, medical record
 
+**Diagnosis Draft**:
+一次 Encounter 中尚待确认的当前诊断集合，包含主次角色和临床备注。它可以反复更新，但不是正式诊断事实。
+_Avoid_: Diagnosis Confirmation, prior diagnosis, Condition history
+
+**Diagnosis Confirmation**:
+医生对一次 Encounter 当前诊断集合的正式确认 revision。后续确认可以替代其当前效力，但不能覆盖或删除既有 revision。
+_Avoid_: Diagnosis Draft, immutable editing lock, prior diagnosis
+
 **Report Acknowledgement**:
 负责医生确认已查看一份已签发诊断报告的业务事实。它不改变报告内容或签发状态。
 _Avoid_: Report status, report approval, read receipt
@@ -207,6 +215,10 @@ _Avoid_: National Medical Service, Hospital Service, Charge Item
 **Clinical Request**:
 临床人员对药品、检查、检验、治疗或耗材提出的单项意图。
 _Avoid_: Prescription, template, execution record
+
+**Investigation Generation Capability**:
+一个具体病例与检验项目组合能否从 Case Truth 或已配置的受限生成器产生结构化结果的能力事实。它不等同于项目存在于全局 Reference 目录。
+_Avoid_: Reference catalog availability, Laboratory Request status, generated result
 
 **Request Orchestration**:
 一组请求或建议之间的组合、选择、条件和顺序。

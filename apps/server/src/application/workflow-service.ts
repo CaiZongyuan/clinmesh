@@ -142,6 +142,8 @@ const diagnosisConfirmationRowSchema = z.object({
   confirmation_id: z.string().min(1),
   confirmed_at: z.string().datetime({ offset: true }),
   provenance_id: z.string().min(1),
+  revision_number: z.number().int().positive(),
+  supersedes_confirmation_id: z.string().min(1).nullable(),
 })
 
 const diagnosisEntryRowSchema = z.object({
@@ -154,6 +156,20 @@ const diagnosisEntryRowSchema = z.object({
 const confirmedDiagnosisCatalogItemRowSchema = z.object({
   catalog_item_id: z.string().min(1),
 })
+
+function encounterDiagnosisConditionReference(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const conditions = (value as Record<string, unknown>).condition
+  if (!Array.isArray(conditions)) return undefined
+  for (const condition of conditions) {
+    if (typeof condition !== 'object' || condition === null) continue
+    const reference = (condition as Record<string, unknown>).reference
+    if (typeof reference !== 'object' || reference === null) continue
+    const value = (reference as Record<string, unknown>).reference
+    if (typeof value === 'string') return value
+  }
+  return undefined
+}
 
 const prescriptionDraftStateRowSchema = z.object({
   draft_json: z.string().nullable(),
@@ -932,6 +948,13 @@ const completedCaseSelectionSql = `
         WHERE diagnosis_confirmation.workspace_id = outpatient_case.workspace_id
           AND diagnosis_confirmation.epoch = outpatient_case.epoch
           AND diagnosis_confirmation.case_id = outpatient_case.case_id
+          AND diagnosis_confirmation.revision_number = (
+            SELECT MAX(current_confirmation.revision_number)
+            FROM diagnosis_confirmation AS current_confirmation
+            WHERE current_confirmation.workspace_id = diagnosis_confirmation.workspace_id
+              AND current_confirmation.epoch = diagnosis_confirmation.epoch
+              AND current_confirmation.case_id = diagnosis_confirmation.case_id
+          )
           AND diagnosis_entry.catalog_item_id = ?
       )
       OR EXISTS (
@@ -3541,9 +3564,6 @@ export class WorkflowService {
           WHERE workspace_id = ? AND epoch = ? AND case_id = ?
         `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id),
       )
-      if (current?.status === 'confirmed') {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter diagnosis is already confirmed')
-      }
       if ((current?.version ?? 0) !== input.expectedDraftVersion) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The diagnosis draft version has changed')
       }
@@ -3568,9 +3588,9 @@ export class WorkflowService {
       } else {
         const update = this.#database.driver.prepare(`
           UPDATE diagnosis_state
-          SET version = ?, draft_json = ?, updated_by = ?, updated_at = ?
+          SET version = ?, status = 'draft', draft_json = ?, updated_by = ?, updated_at = ?
           WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-            AND status = 'draft' AND version = ?
+            AND version = ?
         `).run(
           nextVersion,
           JSON.stringify(draft),
@@ -3653,7 +3673,30 @@ export class WorkflowService {
         }
         return { ...entry, coding }
       })
+      const previousConfirmation = this.#diagnosisConfirmation(
+        input.context,
+        outpatientCase.case_id,
+      )
+      const revisionNumber = (previousConfirmation?.revisionNumber ?? 0) + 1
       const confirmedAt = this.#virtualTime(input.context)
+      const supersededConditions = (previousConfirmation?.entries ?? []).map((entry) => {
+        const condition = transaction.fhir.read(input.context, 'Condition', entry.conditionId)
+        return transaction.fhir.update(input.context, {
+          ...condition,
+          clinicalStatus: {
+            coding: [{
+              code: 'inactive',
+              system: 'http://terminology.hl7.org/CodeSystem/condition-clinical',
+            }],
+          },
+          verificationStatus: {
+            coding: [{
+              code: 'entered-in-error',
+              system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status',
+            }],
+          },
+        }, entry.conditionVersion)
+      })
       const confirmedEntries = resolvedEntries.map(entry => ({
         condition: transaction.fhir.create(input.context, {
           resourceType: 'Condition',
@@ -3693,10 +3736,20 @@ export class WorkflowService {
         }),
         entry,
       }))
+      const supersededConditionReferences = new Set(
+        (previousConfirmation?.entries ?? []).map(entry => `Condition/${entry.conditionId}`),
+      )
+      const currentEncounterDiagnoses = Array.isArray(encounter.diagnosis)
+        ? encounter.diagnosis.filter(diagnosis => (
+            !supersededConditionReferences.has(
+              encounterDiagnosisConditionReference(diagnosis) ?? '',
+            )
+          ))
+        : []
       const updatedEncounter = transaction.fhir.update(input.context, {
         ...encounter,
         diagnosis: [
-          ...(Array.isArray(encounter.diagnosis) ? encounter.diagnosis : []),
+          ...currentEncounterDiagnoses,
           ...confirmedEntries.map(({ condition, entry }) => ({
             condition: [{ reference: { reference: `Condition/${condition.id}` } }],
             use: [{
@@ -3716,24 +3769,32 @@ export class WorkflowService {
         resourceType: 'Provenance',
         id: provenanceId,
         target: [
+          ...supersededConditions.map(condition => ({ reference: `Condition/${condition.id}` })),
           ...confirmedEntries.map(({ condition }) => ({ reference: `Condition/${condition.id}` })),
           { reference: `Encounter/${input.encounterId}` },
         ],
         recorded: confirmedAt,
-        activity: { text: 'Encounter diagnosis confirmation' },
+        activity: {
+          text: previousConfirmation === undefined
+            ? 'Encounter diagnosis confirmation'
+            : 'Encounter diagnosis revision',
+        },
         agent: provenanceAgents(input.context, 'Diagnosis confirmer'),
       })
       const confirmationId = uuidv7()
       this.#database.driver.prepare(`
         INSERT INTO diagnosis_confirmation (
-          workspace_id, epoch, confirmation_id, case_id, provenance_id,
+          workspace_id, epoch, confirmation_id, case_id, revision_number,
+          supersedes_confirmation_id, provenance_id,
           confirmed_by_actor_id, confirmed_by_practitioner_role_id, confirmed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.context.workspaceId,
         input.context.epoch,
         confirmationId,
         outpatientCase.case_id,
+        revisionNumber,
+        previousConfirmation?.id ?? null,
         provenanceId,
         input.context.actorId,
         input.context.practitionerRoleId,
@@ -3790,6 +3851,10 @@ export class WorkflowService {
         })),
         id: confirmationId,
         provenanceId,
+        revisionNumber,
+        ...(previousConfirmation === undefined
+          ? {}
+          : { supersedesConfirmationId: previousConfirmation.id }),
       }
       return {
         data: {
@@ -3799,6 +3864,11 @@ export class WorkflowService {
           encounterVersion: updatedEncounter.meta?.versionId ?? '2',
         },
         effects: [
+          ...supersededConditions.map(condition => ({
+            kind: 'updated' as const,
+            reference: `Condition/${condition.id}`,
+            versionId: condition.meta?.versionId ?? '2',
+          })),
           ...confirmedEntries.map(({ condition }) => ({
             kind: 'created' as const,
             reference: `Condition/${condition.id}`,
@@ -4145,6 +4215,13 @@ export class WorkflowService {
              AND diagnosis_entry.confirmation_id = diagnosis_confirmation.confirmation_id
             WHERE diagnosis_confirmation.workspace_id = ?
               AND diagnosis_confirmation.epoch = ? AND diagnosis_confirmation.case_id = ?
+              AND diagnosis_confirmation.revision_number = (
+                SELECT MAX(current_confirmation.revision_number)
+                FROM diagnosis_confirmation AS current_confirmation
+                WHERE current_confirmation.workspace_id = diagnosis_confirmation.workspace_id
+                  AND current_confirmation.epoch = diagnosis_confirmation.epoch
+                  AND current_confirmation.case_id = diagnosis_confirmation.case_id
+              )
           `).all(
             input.context.workspaceId,
             input.context.epoch,
@@ -6818,7 +6895,7 @@ export class WorkflowService {
           },
         )
       }
-      if (request.status !== 'issued') {
+      if (request.status !== 'issued' && request.status !== 'generation-failed') {
         throw new WorkflowError(
           'LABORATORY_REQUEST_NOT_CANCELLABLE',
           `The laboratory request cannot be cancelled from status "${request.status}"`,
@@ -6859,7 +6936,7 @@ export class WorkflowService {
         UPDATE laboratory_request
         SET status = 'cancelled', version = ?, cancelled_at = ?
         WHERE workspace_id = ? AND epoch = ? AND request_id = ?
-          AND status = 'issued' AND version = ?
+          AND status IN ('issued', 'generation-failed') AND version = ?
       `).run(
         version,
         now,
@@ -10912,9 +10989,12 @@ export class WorkflowService {
   ): DiagnosisConfirmation | undefined {
     const confirmation = diagnosisConfirmationRowSchema.optional().parse(
       this.#database.driver.prepare(`
-        SELECT confirmation_id, provenance_id, confirmed_at
+        SELECT confirmation_id, provenance_id, confirmed_at, revision_number,
+          supersedes_confirmation_id
         FROM diagnosis_confirmation
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        ORDER BY revision_number DESC
+        LIMIT 1
       `).get(context.workspaceId, context.epoch, caseId),
     )
     if (confirmation === undefined) return undefined
@@ -10953,6 +11033,10 @@ export class WorkflowService {
       entries,
       id: confirmation.confirmation_id,
       provenanceId: confirmation.provenance_id,
+      revisionNumber: confirmation.revision_number,
+      ...(confirmation.supersedes_confirmation_id === null
+        ? {}
+        : { supersedesConfirmationId: confirmation.supersedes_confirmation_id }),
     }
   }
 

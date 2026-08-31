@@ -9,6 +9,7 @@ import {
   referenceMedicationCatalogSearchSchema,
 } from '@clinmesh/contracts/reference-data'
 import {
+  caseLaboratoryCatalogSearchSchema,
   confirmDiagnosisResponseSchema,
   diagnosisDraftResponseSchema,
   doctorCaseDetailSchema,
@@ -488,6 +489,18 @@ describe('Reference Data HTTP contract', () => {
     expect(prescription.items[0]).toMatchObject({
       catalogItemId: product.id,
       display: product.genericName,
+    })
+
+    const caseLaboratoryCatalogResponse = await first.runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}/reference-catalogs/laboratory?page=1&pageSize=20&query=%E8%A1%80%E5%B8%B8`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(caseLaboratoryCatalogResponse.status).toBe(200)
+    expect(caseLaboratoryCatalogSearchSchema.parse(
+      await caseLaboratoryCatalogResponse.json(),
+    ).items[0]?.resultGeneration).toEqual({
+      reason: 'no-case-source',
+      supported: false,
     })
 
     const laboratoryDraftResponse = await first.runtime.app.request(

@@ -373,6 +373,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         resolveContext: async request => (await identity.resolveSessionContext(request.headers)).actor,
       },
       identity,
+      investigation,
       caseVisits,
       patientBrief,
       referenceData,

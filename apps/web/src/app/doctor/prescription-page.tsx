@@ -26,7 +26,6 @@ import {
   CheckIcon,
   CircleAlertIcon,
   CircleXIcon,
-  ClipboardPenIcon,
   PillIcon,
   RotateCcwIcon,
   Trash2Icon,
@@ -42,6 +41,7 @@ import {
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
+import { useAutosave } from './use-autosave.ts'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return (
@@ -74,6 +74,7 @@ export interface PrescriptionPageActions {
     error: Error | null
     onSubmit: (items: PrescriptionDraftItem[]) => void
     pending: boolean
+    savedRevision: string | undefined
     success: boolean
   }
   withdraw: {
@@ -161,9 +162,18 @@ export function PrescriptionPage({
     return []
   })
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
+  const submittedItems = items.map(({ key: _key, ...item }) => item)
+  const currentRevision = JSON.stringify(submittedItems)
   useEffect(() => {
-    if (actions.saveDraft.success || actions.deleteDraft.data !== undefined) setDirty(false)
-  }, [actions.deleteDraft.data, actions.saveDraft.success])
+    if (actions.saveDraft.success && actions.saveDraft.savedRevision === currentRevision) {
+      setDirty(false)
+    }
+  }, [actions.saveDraft.savedRevision, actions.saveDraft.success, currentRevision])
+  useEffect(() => {
+    if (actions.deleteDraft.data === undefined) return
+    setItems([])
+    setDirty(false)
+  }, [actions.deleteDraft.data])
   const usedCatalogItemIds = new Set(items.map(item => item.catalogItemId))
   const canCombineWithCurrentItems = (
     candidate: PrescriptionMedicationCatalogItem,
@@ -205,6 +215,12 @@ export function PrescriptionPage({
     || !Number.isInteger(item.quantity)
     || item.quantity < 1
   ))
+  useAutosave({
+    delayMs: 800,
+    enabled: dirty && !invalidDraft && !actions.saveDraft.pending,
+    onSave: () => actions.saveDraft.onSubmit(submittedItems),
+    revision: `${state?.draftVersion ?? 0}:${currentRevision}`,
+  })
 
   return (
     <section
@@ -345,12 +361,7 @@ export function PrescriptionPage({
         && !hasActivePrescription
         && mode === 'prescription'
         && prescription === undefined ? (
-          <form
-            onSubmit={event => {
-              event.preventDefault()
-              actions.saveDraft.onSubmit(items.map(({ key: _key, ...item }) => item))
-            }}
-          >
+          <div>
             <FieldGroup>
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -493,10 +504,16 @@ export function PrescriptionPage({
                   </FieldSet>
                 )
               })}</div>}
-              <div className="flex flex-wrap justify-end gap-2">
-                <Button disabled={actions.saveDraft.pending || invalidDraft} type="submit" variant="outline">
-                  <ClipboardPenIcon data-icon="inline-start" />{messages.savePrescriptionDraft}
-                </Button>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <p aria-live="polite" className="mr-auto text-xs text-muted-foreground">
+                  {actions.saveDraft.error !== null
+                    ? messages.autosaveFailed
+                    : actions.saveDraft.pending
+                    ? messages.autosaveSaving
+                    : dirty
+                      ? messages.autosavePending
+                      : state?.draft === undefined ? '' : messages.autosaveSaved}
+                </p>
                 {state?.draft === undefined ? null : (
                   <>
                     <AlertDialog onOpenChange={setDeleteDraftOpen} open={deleteDraftOpen}>
@@ -606,12 +623,6 @@ export function PrescriptionPage({
                   </>
                 )}
               </div>
-              {actions.saveDraft.success && state?.draft !== undefined ? (
-                <Alert>
-                  <CheckIcon aria-hidden="true" />
-                  <AlertTitle>{messages.prescriptionDraftSaved}</AlertTitle>
-                </Alert>
-              ) : null}
               {actions.deleteDraft.data !== undefined
                 && actions.deleteDraft.data.caseId === detail.caseId
                 && state?.draft === undefined
@@ -640,7 +651,7 @@ export function PrescriptionPage({
                 />
               )}
             </FieldGroup>
-          </form>
+          </div>
         ) : null}
 
       {!readOnly
