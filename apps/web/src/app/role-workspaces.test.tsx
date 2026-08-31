@@ -1014,6 +1014,7 @@ function stubEmptyDoctorWorkspace() {
         claim: Record<string, unknown>
         dshSessionId: string
       }
+      const issuedAt = new Date()
       return Response.json({
         snapshot: {
           version: 1,
@@ -1033,8 +1034,8 @@ function stubEmptyDoctorWorkspace() {
             .map(tool => tool.operationId),
           dshSessionId: request.dshSessionId,
           scopeKey: 'clinmesh:doctor:consultation',
-          issuedAt: '2026-08-31T00:00:00.000Z',
-          expiresAt: '2026-08-31T00:05:00.000Z',
+          issuedAt: issuedAt.toISOString(),
+          expiresAt: new Date(issuedAt.getTime() + 5 * 60_000).toISOString(),
         },
         token: 'context-token-with-at-least-32-characters',
       }, { status: 201 })
@@ -1288,6 +1289,7 @@ describe('role workspaces', () => {
           claim: Record<string, unknown>
           dshSessionId: string
         }
+        const issuedAt = new Date()
         return Response.json({
           snapshot: {
             actor: {
@@ -1299,9 +1301,9 @@ describe('role workspaces', () => {
               .map(tool => tool.operationId),
             claim: request.claim,
             dshSessionId: request.dshSessionId,
-            expiresAt: '2026-08-31T00:05:00.000Z',
+            expiresAt: new Date(issuedAt.getTime() + 5 * 60_000).toISOString(),
             id: 'context-admin-scenario-data',
-            issuedAt: '2026-08-31T00:00:00.000Z',
+            issuedAt: issuedAt.toISOString(),
             scopeKey: 'clinmesh:administrator:scenario-data',
             version: 1,
             workspace: {

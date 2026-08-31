@@ -251,6 +251,7 @@ describe('Web application shell', () => {
         }
         const claim = request.claim
         pageClaims.push(claim)
+        const issuedAt = new Date()
         return Response.json({
           snapshot: {
             version: 1,
@@ -266,8 +267,8 @@ describe('Web application shell', () => {
               .map(tool => tool.operationId),
             dshSessionId: request.dshSessionId,
             scopeKey: 'clinmesh:registrar:registration',
-            issuedAt: '2026-08-31T00:00:00.000Z',
-            expiresAt: '2026-08-31T00:05:00.000Z',
+            issuedAt: issuedAt.toISOString(),
+            expiresAt: new Date(issuedAt.getTime() + 5 * 60_000).toISOString(),
           },
           token: 'context-token-with-at-least-32-characters',
         }, { status: 201 })
@@ -348,7 +349,7 @@ describe('Web application shell', () => {
         apiBasePath: '/clinmesh-api',
         mode: 'surface',
         surfaceAgent,
-        surfaceAgentStatus: 'active',
+        surfaceAgentStatus: 'idle',
         surfaceSessionId: 'dsh-session-1',
       },
     })

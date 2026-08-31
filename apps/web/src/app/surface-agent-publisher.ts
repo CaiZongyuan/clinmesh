@@ -73,9 +73,13 @@ export function useSurfaceAgentPublisher(input: {
   const [pageContextClientId] = useState(() => `clinmesh-surface-${crypto.randomUUID()}`)
   const pageContextRevision = useRef(0)
   const [binding, setBinding] = useState<AgentPageContextBinding>()
+  const canPublishAgentBinding = runtime.surfaceAgentStatus === undefined
+    || runtime.surfaceAgentStatus === 'idle'
+    || runtime.surfaceAgentStatus === 'connecting'
+    || runtime.surfaceAgentStatus === 'active'
   const activeBinding = binding !== undefined
     && runtime.surfaceActive !== false
-    && runtime.surfaceAgentStatus === 'active'
+    && canPublishAgentBinding
     && runtime.surfaceSessionId !== undefined
     && binding.snapshot.actor.actorId === input.session.actor.actorId
     && binding.snapshot.actor.practitionerRoleId === input.session.actor.practitionerRoleId
@@ -115,7 +119,7 @@ export function useSurfaceAgentPublisher(input: {
       runtime.mode !== 'surface'
       || runtime.surfaceActive === false
       || runtime.surfaceAgent === undefined
-      || runtime.surfaceAgentStatus !== 'active'
+      || !canPublishAgentBinding
       || dshSessionId === undefined
     ) {
       setBinding(undefined)
@@ -155,6 +159,7 @@ export function useSurfaceAgentPublisher(input: {
   }, [
     page,
     pageContextClientId,
+    canPublishAgentBinding,
     runtime.mode,
     runtime.surfaceActive,
     runtime.surfaceAgent,

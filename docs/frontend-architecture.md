@@ -31,7 +31,7 @@ Web application 接受可注入的 API base、Router history、Portal container�
 
 `apps/dsh-web` 是 DSH Host/Client adapter，不拥有医院状态或第二套页面。Host 注册固定 loopback `/clinmesh-api` proxy 与 execution-proof route；Client 把 `apps/web` 挂载为 `dsh-react-surface`，使用 DSH 共享 React runtime、Memory Router、独立 QueryClient 和 ShadowRoot 样式/Portal。
 
-Surface Agent controller 把当前页面注册投影成 DSH Session-scoped browser Tools。Client adapter 订阅 DSH 唯一的 current-session store，并把当前 Session ID 作为 Web runtime 输入；切换 Session 会立即撤下旧 Page Context 与 review。Page Context、Tool catalog、proposal 和 review contract 位于 `packages/contracts` 与 Server；DSH adapter 不导入 Repository、Workflow 状态机或 Hidden Fact。默认布局是 `workspace`，空间不足时由 Surface runtime 退化为 `full-frame`，隐藏时 keep-alive 保留客户端草稿。
+Surface Agent controller 把当前页面注册投影成 DSH Session-scoped browser Tools。Client adapter 订阅 DSH 唯一的 current-session store，并把当前 Session ID 作为 Web runtime 输入；切换 Session 会立即撤下旧 Page Context 与 review。`active` 是 capability registration 完成后的结果，不是发布 Page Context 的前置条件；publisher 在 `idle`、`connecting` 和 `active` 状态建立 binding，在 `unavailable`、`error` 或 `contended` 状态撤下。Page Context、Tool catalog、proposal 和 review contract 位于 `packages/contracts` 与 Server；DSH adapter 不导入 Repository、Workflow 状态机或 Hidden Fact。默认布局是 `workspace`，空间不足时由 Surface runtime 退化到 `full-frame`，隐藏时 keep-alive 保留客户端草稿。
 
 DSH Client artifact 是一个 lazy-CJS 文件，React、ReactDOM 和 Surface runtime 保持 external，不生成动态 chunk 或第二份 React。`vendor/dsh-react-surface` 以 submodule 固定；pnpm 仍拥有 workspace 并通过 tsx 生成样式，Bun 只执行上游 Surface builder 和 artifact verifier。
 
