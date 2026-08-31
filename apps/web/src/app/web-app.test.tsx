@@ -539,6 +539,91 @@ describe('Web application shell', () => {
     expect(contextBindings.every(binding => binding.signalBound)).toBe(true)
   })
 
+  it('replaces the Agent Page Context after an active Surface lease is lost', async () => {
+    vi.useFakeTimers({ now: new Date('2026-08-31T00:00:00.000Z'), shouldAdvanceTime: true })
+    const history = createMemoryHistory({ initialEntries: ['/settings'] })
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    let contextRequests = 0
+    const clientRevisions: number[] = []
+    let resolveReplacement: (() => void) | undefined
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registration = value
+        return () => {
+          if (registration === value) registration = undefined
+        }
+      },
+    }
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/clinmesh-api/auth/context') return Response.json(registrarSession)
+      if (path === '/clinmesh-api/agent/v1/page-contexts') {
+        contextRequests += 1
+        const request = JSON.parse(String(init?.body)) as {
+          claim: Record<string, unknown>
+          client: { revision: number }
+          dshSessionId: string
+        }
+        clientRevisions.push(request.client.revision)
+        const response = Response.json({
+          snapshot: {
+            version: 1,
+            id: `context-${String(contextRequests)}`,
+            claim: request.claim,
+            actor: registrarAgentActor,
+            workspace: {
+              id: registrarSession.actor.workspaceId,
+              epoch: registrarSession.actor.epoch,
+              scenarioRunId: registrarSession.actor.scenarioRunId,
+            },
+            allowedOperationIds: agentToolsForContext('registrar', 'settingsGeneral')
+              .map(tool => tool.operationId),
+            dshSessionId: request.dshSessionId,
+            scopeKey: 'clinmesh:registrar:settings',
+            issuedAt: '2026-08-31T00:00:00.000Z',
+            expiresAt: '2026-08-31T00:05:00.000Z',
+          },
+          token: `context-token-${String(contextRequests).padEnd(32, 'x')}`,
+        }, { status: 201 })
+        if (contextRequests === 1) return response
+        return new Promise<Response>(resolve => {
+          resolveReplacement = () => resolve(response)
+        })
+      }
+      throw new Error(`Unexpected request: ${path}`)
+    })
+
+    const runtimeFor = (
+      surfaceAgentStatus: 'active' | 'connecting' | 'contended' | 'unavailable',
+    ) => ({
+      apiBasePath: '/clinmesh-api',
+      mode: 'surface' as const,
+      surfaceAgent,
+      surfaceAgentStatus,
+      surfaceSessionId: 'dsh-session-1',
+    })
+    const rendered = await renderWebApp({
+      history,
+      runtime: runtimeFor('unavailable'),
+    })
+    await waitFor(() => expect(registration).toBeDefined())
+    const initialContextId = boundToolValue(registration!.tools[0]!, 'contextId')
+
+    rendered.rerender(<WebApp history={history} runtime={runtimeFor('connecting')} />)
+    rendered.rerender(<WebApp history={history} runtime={runtimeFor('active')} />)
+    await act(async () => Promise.resolve())
+    expect(contextRequests).toBe(1)
+
+    rendered.rerender(<WebApp history={history} runtime={runtimeFor('contended')} />)
+
+    await waitFor(() => expect(contextRequests).toBe(2))
+    await waitFor(() => expect(registration).toBeUndefined())
+    await act(async () => resolveReplacement?.())
+    await waitFor(() => expect(boundToolValue(registration!.tools[0]!, 'contextId'))
+      .not.toBe(initialContextId))
+    expect(clientRevisions).toEqual([1, 2])
+  })
+
   it('removes Surface Agent tools when Page Context renewal cannot finish before expiry', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-31T00:00:00.000Z'), shouldAdvanceTime: true })
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)

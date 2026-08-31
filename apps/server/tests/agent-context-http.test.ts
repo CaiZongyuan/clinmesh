@@ -351,6 +351,47 @@ describe('DSH Agent Page Context HTTP contract', () => {
     expect(authorized.status).toBe(201)
   })
 
+  it('keeps active Page Contexts isolated between Surface clients', async () => {
+    const { cookie, runtime } = await setup()
+    const claim = {
+      version: 1,
+      viewId: 'registration',
+      viewRevision: 'registration-multi-client',
+      ui: { status: 'ready' },
+    } satisfies AgentPageContextClaim
+    const leaderResponse = await createContext(runtime, cookie, claim, {
+      clientId: 'leader-surface-client',
+      clientRevision: 1,
+    })
+    expect(leaderResponse.status).toBe(201)
+    const leader = agentPageContextBindingSchema.parse(await leaderResponse.json())
+
+    const contenderResponse = await createContext(runtime, cookie, claim, {
+      clientId: 'contender-surface-client',
+      clientRevision: 1,
+    })
+    expect(contenderResponse.status).toBe(201)
+
+    const authorized = await runtime.app.request('/api/agent/v1/tool-calls', {
+      body: JSON.stringify({
+        contextToken: leader.token,
+        executionProof: executionProof({
+          callId: 'call-after-contender-context',
+          contextId: leader.snapshot.id,
+          dshSessionId: 'dsh-session-1',
+          scopeKey: leader.snapshot.scopeKey,
+          toolName: 'clinmesh_read_current_context',
+        }),
+        input: {},
+        operationId: 'ui.context.read',
+      }),
+      headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' },
+      method: 'POST',
+    })
+
+    expect(authorized.status).toBe(201)
+  })
+
   it('rejects an execution proof issued for a previous Page Context binding', async () => {
     const { cookie, runtime } = await setup()
     const firstResponse = await createContext(runtime, cookie, {

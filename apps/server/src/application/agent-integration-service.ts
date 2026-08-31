@@ -158,12 +158,13 @@ export class AgentIntegrationService {
         UPDATE agent_page_context
         SET status = 'revoked'
         WHERE workspace_id = ? AND epoch = ? AND user_account_id = ?
-          AND practitioner_role_id = ? AND status = 'active'
+          AND practitioner_role_id = ? AND client_id = ? AND status = 'active'
       `).run(
         input.actor.workspaceId,
         input.actor.epoch,
         input.userAccountId,
         input.actor.practitionerRoleId,
+        request.client.id,
       )
       this.#database.driver.prepare(`
         INSERT INTO agent_page_context (
