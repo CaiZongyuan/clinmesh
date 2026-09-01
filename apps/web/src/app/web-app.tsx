@@ -103,9 +103,6 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
   })
   const roleChange = useMutation({
     mutationFn: selectRole,
-    onMutate: async () => {
-      await queryClient.cancelQueries({ queryKey: sessionQueryKey })
-    },
     onSuccess: async nextSession => {
       queryClient.removeQueries({
         predicate: query => query.queryKey[0] !== sessionQueryKey[0],
@@ -218,9 +215,6 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
       onSignOut={() => signOutRequest.mutate()}
       onThemeChange={theme => setPreferences(current => ({ ...current, theme }))}
       roleChangePending={roleChange.isPending}
-      selectedRoleId={roleChange.isPending
-        ? roleChange.variables
-        : session.data.actor.practitionerRoleId}
       session={session.data}
       signOutPending={signOutRequest.isPending}
       theme={preferences.theme}

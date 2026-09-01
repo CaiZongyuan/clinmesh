@@ -92,7 +92,6 @@ interface WorkspaceShellProps {
   onSignOut: () => void
   onThemeChange: (theme: WorkspaceTheme) => void
   roleChangePending: boolean
-  selectedRoleId: string
   signOutPending: boolean
   theme: WorkspaceTheme
 }
@@ -257,7 +256,6 @@ function UserMenu({
   onSignOut,
   onThemeChange,
   roleChangePending,
-  selectedRoleId,
   signOutPending,
   theme,
   session,
@@ -265,7 +263,6 @@ function UserMenu({
   onRoleChange: (practitionerRoleId: string) => void
   onSignOut: () => void
   roleChangePending: boolean
-  selectedRoleId: string
   session: SessionContext
   signOutPending: boolean
 }): React.JSX.Element {
@@ -314,7 +311,7 @@ function UserMenu({
           <DropdownMenuLabel>{messages.practitionerRole}</DropdownMenuLabel>
           <DropdownMenuRadioGroup
             onValueChange={onRoleChange}
-            value={selectedRoleId}
+            value={session.actor.practitionerRoleId}
           >
             {session.availableRoles.map(role => (
               <DropdownMenuRadioItem
@@ -380,7 +377,6 @@ export function WorkspaceShell({
   onSignOut,
   onThemeChange,
   roleChangePending,
-  selectedRoleId,
   session,
   signOutPending,
   theme,
@@ -515,7 +511,6 @@ export function WorkspaceShell({
                 onSignOut={onSignOut}
                 onThemeChange={onThemeChange}
                 roleChangePending={roleChangePending}
-                selectedRoleId={selectedRoleId}
                 session={session}
                 signOutPending={signOutPending}
                 theme={theme}
