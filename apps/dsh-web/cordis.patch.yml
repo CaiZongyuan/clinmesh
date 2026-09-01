@@ -1,0 +1,11 @@
+- insert:
+    - id: clinmesh-dsh-web
+      name: "@clinmesh/dsh-web"
+      config:
+        bridgeSecret: !!js process.env.CLINMESH_DSH_BRIDGE_SECRET
+        upstreamOrigin: !!js >-
+          process.env.CLINMESH_DSH_UPSTREAM_ORIGIN ||
+          'http://127.0.0.1:51868'
+        maxRequestBytes: 1048576
+        maxResponseBytes: 4194304
+        requestTimeoutMs: 30000

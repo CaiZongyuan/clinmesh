@@ -53,6 +53,7 @@ import {
 import type { ReactNode } from 'react'
 import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
 import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
+import { useWebRuntime } from './web-runtime.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale, type WorkspaceMessageKey } from './workspace-i18n.ts'
 
 export type WorkspaceTheme = 'system' | 'light' | 'dark'
@@ -381,6 +382,7 @@ export function WorkspaceShell({
   theme,
 }: WorkspaceShellProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  const runtime = useWebRuntime()
   const activeRoleSection = roleSections[session.actor.roleCode]
   const visibleRoutes = workspaceRoutes.filter(route => (
     route.key === activeRoleSection
@@ -395,6 +397,7 @@ export function WorkspaceShell({
   return (
     <TooltipProvider>
       <SidebarProvider
+        heightMode={runtime.mode === 'surface' ? 'container' : 'viewport'}
         style={{
           '--sidebar-width': '13.75rem',
           '--sidebar-width-icon': '3rem',
@@ -494,7 +497,7 @@ export function WorkspaceShell({
             />
           </SidebarFooter>
         </Sidebar>
-        <SidebarInset className="min-w-0 overflow-hidden">
+        <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
           <header className="sticky top-0 z-10 flex h-[3.375rem] shrink-0 items-center gap-2 border-b bg-background px-3 sm:px-4">
             <SidebarTrigger aria-label={messages.sidebarToggle} title={messages.sidebarToggle} />
             <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
@@ -514,7 +517,11 @@ export function WorkspaceShell({
               />
             </div>
           </header>
-          <div className="flex flex-1 flex-col gap-5 bg-muted/40 p-4 sm:p-5">
+          <div
+            className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto bg-muted/40 p-4 outline-none sm:p-5"
+            data-clinmesh-workspace-panel=""
+            tabIndex={-1}
+          >
             {children}
           </div>
         </SidebarInset>

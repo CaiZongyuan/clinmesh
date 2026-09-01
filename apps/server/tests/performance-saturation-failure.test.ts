@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest'
+import { runSaturationPerformanceProfile } from '../src/performance/performance-runner.ts'
 
 const workerState = vi.hoisted(() => ({
   created: 0,
@@ -46,10 +47,6 @@ vi.mock('node:worker_threads', async () => {
 })
 
 it('terminates started Workers when a later Worker fails to spawn', async () => {
-  const { runSaturationPerformanceProfile } = await import(
-    '../src/performance/performance-runner.ts'
-  )
-
   await expect(runSaturationPerformanceProfile()).rejects.toThrow(
     'Synthetic Worker spawn failure',
   )

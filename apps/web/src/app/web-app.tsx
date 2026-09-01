@@ -12,6 +12,7 @@ import {
   createRouter,
   Outlet,
   RouterProvider,
+  type RouterHistory,
   useNavigate,
 } from '@tanstack/react-router'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
@@ -36,7 +37,8 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import { CircleAlertIcon, LogInIcon } from 'lucide-react'
-import { lazy, Suspense, useEffect, useState } from 'react'
+import type { SessionContext } from '@clinmesh/contracts/his'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import {
   applyResolvedWebTheme,
   readWebPreferences,
@@ -49,22 +51,51 @@ import {
   sessionQueryKey,
   signIn,
   signOut,
+  configureApiBasePath,
 } from './api-client.ts'
 import { getWorkspaceMessages } from './workspace-i18n.ts'
 import { RoleWorkspace } from './role-workspaces.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { ComponentCatalog } from './component-catalog.tsx'
 import { SettingsWorkspace } from './settings-workspace.tsx'
+import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
+import {
+  useWebRuntime,
+  WebRuntimeProvider,
+  type WebRuntimeOptions,
+} from './web-runtime.tsx'
+import { AgentPageRegistryProvider } from './agent-page-context.tsx'
+import { useSurfaceAgentPublisher } from './surface-agent-publisher.ts'
+import { AgentReviewProvider } from './agent-review.tsx'
 import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
 import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
 
 const DARK_MODE_QUERY = '(prefers-color-scheme: dark)'
+const IS_DEVELOPMENT = process.env.NODE_ENV !== 'production'
+
+function SurfaceAgentBinding({
+  activeSection,
+  navigate,
+  session,
+}: {
+  activeSection: AppSection
+  navigate: ReturnType<typeof useNavigate>
+  session: SessionContext
+}): null {
+  useSurfaceAgentPublisher({
+    activeSection,
+    navigate,
+    session,
+  })
+  return null
+}
 
 function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.JSX.Element {
   const [preferences, setPreferences] = useState(readWebPreferences)
   const messages = getWorkspaceMessages(preferences.locale)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const runtime = useWebRuntime()
   const session = useQuery({
     queryFn: ({ signal }) => getSession(signal),
     queryKey: sessionQueryKey,
@@ -107,24 +138,38 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
   }, [activeSection, navigate, roleCode])
 
   useEffect(() => {
-    document.documentElement.lang = preferences.locale
+    const root = runtime.mode === 'surface'
+      ? runtime.appearanceRoot.current
+      : document.documentElement
+    if (root !== null) root.lang = preferences.locale
     writeWebPreferences(preferences)
-  }, [preferences])
+  }, [preferences, runtime.appearanceRoot, runtime.mode])
 
   useEffect(() => {
+    const root = runtime.mode === 'surface'
+      ? runtime.appearanceRoot.current
+      : document.documentElement
+    if (root === null) return
     if (preferences.theme !== 'system') {
-      applyResolvedWebTheme(preferences.theme)
+      applyResolvedWebTheme(preferences.theme, root)
+      return
+    }
+    if (runtime.mode === 'surface' && runtime.surfaceColorScheme !== undefined) {
+      applyResolvedWebTheme(runtime.surfaceColorScheme, root)
       return
     }
 
     const mediaQuery = window.matchMedia(DARK_MODE_QUERY)
-    const applySystemTheme = (): void => applyResolvedWebTheme(mediaQuery.matches ? 'dark' : 'light')
+    const applySystemTheme = (): void => applyResolvedWebTheme(
+      mediaQuery.matches ? 'dark' : 'light',
+      root,
+    )
 
     applySystemTheme()
     mediaQuery.addEventListener('change', applySystemTheme)
 
     return () => mediaQuery.removeEventListener('change', applySystemTheme)
-  }, [preferences.theme])
+  }, [preferences.theme, runtime.appearanceRoot, runtime.mode, runtime.surfaceColorScheme])
 
   if (session.isPending) {
     return (
@@ -174,6 +219,11 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
       signOutPending={signOutRequest.isPending}
       theme={preferences.theme}
     >
+      <SurfaceAgentBinding
+        activeSection={effectiveSection}
+        navigate={navigate}
+        session={session.data}
+      />
       {roleChange.isError ? (
         <Alert variant="destructive">
           <CircleAlertIcon aria-hidden="true" />
@@ -314,28 +364,28 @@ const componentCatalogRoute = createRoute({
   path: '/components',
 })
 
-const UiDevPage = import.meta.env.DEV
+const UiDevPage = IS_DEVELOPMENT
   ? lazy(async () => {
       const module = await import('../ui-dev/doctor-workspace-lab-page.tsx')
       return { default: module.DoctorWorkspaceLabPage }
     })
   : () => null
 
-const DataGenerationLabPage = import.meta.env.DEV
+const DataGenerationLabPage = IS_DEVELOPMENT
   ? lazy(async () => {
       const module = await import('../ui-dev/data-generation-lab-page.tsx')
       return { default: module.DataGenerationLabPage }
     })
   : () => null
 
-const BrandLockupLabPage = import.meta.env.DEV
+const BrandLockupLabPage = IS_DEVELOPMENT
   ? lazy(async () => {
       const module = await import('../ui-dev/brand-lockup-lab-page.tsx')
       return { default: module.BrandLockupLabPage }
     })
   : () => null
 
-const developmentRoutes = import.meta.env.DEV
+const developmentRoutes = IS_DEVELOPMENT
   ? [
       createRoute({
         component: () => (
@@ -373,8 +423,8 @@ const routeTree = rootRoute.addChildren([
   ...developmentRoutes,
 ])
 
-export function createWebRouter(): ReturnType<typeof createRouter<typeof routeTree>> {
-  return createRouter({ routeTree })
+export function createWebRouter(history?: RouterHistory): ReturnType<typeof createRouter<typeof routeTree>> {
+  return createRouter({ routeTree, ...(history === undefined ? {} : { history }) })
 }
 
 type WebRouter = ReturnType<typeof createWebRouter>
@@ -385,19 +435,79 @@ declare module '@tanstack/react-router' {
   }
 }
 
-export function WebApp(): React.JSX.Element {
-  const [router] = useState(createWebRouter)
-  const [queryClient] = useState(() => new QueryClient({
+export function createWebQueryClient(): QueryClient {
+  return new QueryClient({
     defaultOptions: {
       queries: { refetchOnWindowFocus: false, retry: false },
       mutations: { retry: false },
     },
+  })
+}
+
+export function WebApp({
+  history,
+  runtime: runtimeOptions = {},
+}: {
+  history?: RouterHistory
+  runtime?: WebRuntimeOptions
+} = {}): React.JSX.Element {
+  const [router] = useState(() => createWebRouter(history))
+  const [queryClient] = useState(createWebQueryClient)
+  const applicationRoot = useRef<HTMLDivElement>(null)
+  const portalRoot = useRef<HTMLDivElement>(null)
+  const [apiConfiguration] = useState(() => ({
+    release: configureApiBasePath(runtimeOptions.apiBasePath ?? ''),
   }))
+  useEffect(() => apiConfiguration.release, [apiConfiguration])
+  const runtime = useMemo(() => ({
+    appearanceRoot: applicationRoot,
+    mode: runtimeOptions.mode ?? 'standalone',
+    ...(runtimeOptions.onExit === undefined ? {} : { onExit: runtimeOptions.onExit }),
+    ...(runtimeOptions.surfaceActive === undefined ? {} : { surfaceActive: runtimeOptions.surfaceActive }),
+    ...(runtimeOptions.surfaceAgent === undefined ? {} : { surfaceAgent: runtimeOptions.surfaceAgent }),
+    ...(runtimeOptions.surfaceAgentStatus === undefined
+      ? {}
+      : { surfaceAgentStatus: runtimeOptions.surfaceAgentStatus }),
+    ...(runtimeOptions.surfaceColorScheme === undefined
+      ? {}
+      : { surfaceColorScheme: runtimeOptions.surfaceColorScheme }),
+    ...(runtimeOptions.surfaceSessionId === undefined
+      ? {}
+      : { surfaceSessionId: runtimeOptions.surfaceSessionId }),
+  }), [
+    runtimeOptions.mode,
+    runtimeOptions.onExit,
+    runtimeOptions.surfaceActive,
+    runtimeOptions.surfaceAgent,
+    runtimeOptions.surfaceAgentStatus,
+    runtimeOptions.surfaceColorScheme,
+    runtimeOptions.surfaceSessionId,
+  ])
+
   return (
-    <QueryClientProvider client={queryClient}>
-      <Toaster>
-        <RouterProvider router={router} />
-      </Toaster>
-    </QueryClientProvider>
+    <WebRuntimeProvider value={runtime}>
+      <PortalContainerProvider container={portalRoot}>
+        <div
+          className={runtime.mode === 'surface'
+            ? 'clinmesh-web-root h-full min-h-0 overflow-hidden'
+            : 'clinmesh-web-root'}
+          data-clinmesh-app="web"
+          ref={applicationRoot}
+        >
+          <QueryClientProvider client={queryClient}>
+            <AgentPageRegistryProvider>
+              <AgentReviewProvider>
+                <Toaster>
+                  <RouterProvider router={router} />
+                </Toaster>
+              </AgentReviewProvider>
+            </AgentPageRegistryProvider>
+          </QueryClientProvider>
+          <div data-clinmesh-portal-root="" ref={portalRoot} />
+        </div>
+      </PortalContainerProvider>
+    </WebRuntimeProvider>
   )
 }
+
+export type { WebRuntimeOptions } from './web-runtime.tsx'

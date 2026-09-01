@@ -19,7 +19,7 @@ import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CircleAlertIcon, PackageCheckIcon, PillIcon, ShieldAlertIcon, ShieldCheckIcon } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   dispensePrescription,
   getPharmacyQueue,
@@ -31,6 +31,8 @@ import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
+import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
+import { useAgentReview } from './agent-review.tsx'
 
 interface PharmacyWorkspaceProps {
   locale: WorkspaceLocale
@@ -41,6 +43,7 @@ type PharmacyStatus = 'completed' | 'exception' | 'pending'
 
 export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  const agentReview = useAgentReview()
   const queryClient = useQueryClient()
   const scope = [session.actor.workspaceId, session.actor.epoch] as const
   const [status, setStatus] = useState<PharmacyStatus>('pending')
@@ -127,6 +130,193 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
     review.reset()
     dispense.reset()
   }
+
+  const agentPage = useMemo(() => ({
+    actions: {
+      'pharmacy.queue.read': {
+        description: 'Read the current authorized pharmacy queue page.',
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => getPharmacyQueue(status, signal, page),
+      },
+      'pharmacy.prescription.select': {
+        description: 'Select one prescription from the current pharmacy queue.',
+        enabled: (queue.data?.items.length ?? 0) > 0,
+        parameters: {
+          type: 'object' as const,
+          properties: { prescriptionId: { type: 'string', maxLength: 128 } },
+          required: ['prescriptionId'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown) => {
+          const prescriptionId = pharmacyString(raw, 'prescriptionId')
+          if (!queue.data?.items.some(item => item.prescriptionId === prescriptionId)) {
+            throw new Error('Prescription is not in the current pharmacy queue')
+          }
+          selectPrescription(prescriptionId)
+          return { prescriptionId, selected: true }
+        },
+      },
+      'pharmacy.review.draft.set': {
+        description: 'Fill the pharmacist review note without approving the prescription.',
+        enabled: selectedPrescription !== undefined && selectedPrescription.review === undefined,
+        parameters: {
+          type: 'object' as const,
+          properties: { note: { type: 'string', maxLength: 500 } },
+          required: ['note'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown) => {
+          const note = pharmacyString(raw, 'note')
+          setReviewNote(note)
+          return { updated: true }
+        },
+      },
+      'pharmacy.dispense.draft.set': {
+        description: 'Fill lot and quantity selections without dispensing medication.',
+        enabled: selectedPrescription?.review !== undefined,
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            selections: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  lotId: { type: 'string' },
+                  medicationRequestId: { type: 'string' },
+                  quantity: { type: 'number', minimum: 0.01 },
+                },
+                required: ['lotId', 'medicationRequestId', 'quantity'],
+                additionalProperties: false,
+              },
+              maxItems: 20,
+            },
+          },
+          required: ['selections'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown) => {
+          if (selectedPrescription === undefined) throw new Error(messages.pharmacyUnavailable)
+          const selections = pharmacySelections(raw)
+          const lots: Record<string, string> = {}
+          const quantities: Record<string, string> = {}
+          for (const selection of selections) {
+            const medication = selectedPrescription.medications.find(
+              item => item.medicationRequestId === selection.medicationRequestId,
+            )
+            if (medication === undefined || !medication.lots.some(lot => lot.id === selection.lotId)) {
+              throw new Error('Dispense selection is not available for the current prescription')
+            }
+            lots[selection.medicationRequestId] = selection.lotId
+            quantities[selection.medicationRequestId] = String(selection.quantity)
+          }
+          setSelectedLotIds(lots)
+          setDispenseQuantities(quantities)
+          return { updated: true }
+        },
+      },
+      'pharmacy.review.propose': {
+        description: 'Open human review for formal pharmacist approval.',
+        enabled: selectedPrescription !== undefined
+          && selectedPrescription.review === undefined
+          && reviewNote.trim() !== '',
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => {
+          if (selectedPrescription === undefined || reviewNote.trim() === '') {
+            throw new Error(messages.pharmacyUnavailable)
+          }
+          return agentReview.request({
+            confirmLabel: messages.approvePrescription,
+            description: `${selectedPrescription.patient.name} · ${selectedPrescription.prescriptionNumber}`,
+            onConfirm: () => review.mutateAsync(),
+            signal,
+            title: messages.prescriptionReview,
+          })
+        },
+      },
+      'pharmacy.dispense.propose': {
+        description: 'Open human review for formal medication dispense.',
+        enabled: selectedPrescription !== undefined
+          && hasValidDispense(selectedPrescription, selectedLotIds, dispenseQuantities),
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => {
+          if (
+            selectedPrescription === undefined
+            || !hasValidDispense(selectedPrescription, selectedLotIds, dispenseQuantities)
+          ) throw new Error(messages.inventoryUnavailable)
+          return agentReview.request({
+            confirmLabel: messages.confirmDispense,
+            description: `${selectedPrescription.patient.name} · ${selectedPrescription.prescriptionNumber}`,
+            onConfirm: () => dispense.mutateAsync(),
+            signal,
+            title: messages.dispenseReview,
+          })
+        },
+      },
+    },
+    claim: {
+      version: 1 as const,
+      viewId: 'pharmacy' as const,
+      viewRevision: agentViewRevision({
+        dispenseQuantities,
+        page,
+        reviewNote,
+        selectedLotIds,
+        selectedPrescriptionId: selectedPrescription?.prescriptionId,
+        status,
+      }),
+      activeSection: status,
+      ...(selectedPrescription === undefined ? {} : {
+        selection: {
+          id: selectedPrescription.prescriptionId,
+          kind: 'prescription' as const,
+          version: String(selectedPrescription.prescriptionVersion),
+        },
+        draft: {
+          dirty: reviewNote !== '' || Object.keys(selectedLotIds).length > 0,
+          id: `${selectedPrescription.prescriptionId}:pharmacy`,
+          kind: selectedPrescription.status === 'awaiting-review'
+            ? 'pharmacy-review' as const
+            : 'dispense' as const,
+          revision: agentViewRevision({ dispenseQuantities, reviewNote, selectedLotIds }),
+        },
+      }),
+      ui: {
+        status: queue.isPending ? 'loading' as const
+          : queue.isError ? 'error' as const
+            : queue.data?.items.length === 0 ? 'empty' as const : 'ready' as const,
+      },
+    },
+    label: 'ClinMesh · 门诊药房',
+    readState: () => ({
+      dispenseQuantities,
+      queueCount: queue.data?.total ?? 0,
+      reviewNote,
+      selectedLotIds,
+      selectedPrescription: selectedPrescription === undefined ? null : {
+        patientName: selectedPrescription.patient.name,
+        prescriptionId: selectedPrescription.prescriptionId,
+        prescriptionNumber: selectedPrescription.prescriptionNumber,
+        status: selectedPrescription.status,
+      },
+      status,
+    }),
+  }), [
+    agentReview,
+    dispense.mutateAsync,
+    dispenseQuantities,
+    messages,
+    page,
+    queue.data,
+    queue.isError,
+    queue.isPending,
+    review.mutateAsync,
+    reviewNote,
+    selectedLotIds,
+    selectedPrescription,
+    status,
+  ])
+  useRegisterAgentPage(agentPage)
 
   return (
     <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(19rem,0.75fr)_minmax(32rem,1.25fr)]">
@@ -262,6 +452,48 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
       </section>
     </div>
   )
+}
+
+function pharmacyString(value: unknown, key: string): string {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Pharmacy Agent input must be an object')
+  }
+  const candidate = (value as Record<string, unknown>)[key]
+  if (typeof candidate !== 'string' || candidate.trim() === '') {
+    throw new TypeError(`${key} must be a non-empty string`)
+  }
+  return candidate.trim()
+}
+
+function pharmacySelections(value: unknown): Array<{
+  lotId: string
+  medicationRequestId: string
+  quantity: number
+}> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Pharmacy Agent input must be an object')
+  }
+  const selections = (value as Record<string, unknown>).selections
+  if (!Array.isArray(selections) || selections.length > 20) {
+    throw new TypeError('selections must be a bounded array')
+  }
+  return selections.map(selection => {
+    if (typeof selection !== 'object' || selection === null || Array.isArray(selection)) {
+      throw new TypeError('Each dispense selection must be an object')
+    }
+    const record = selection as Record<string, unknown>
+    if (
+      typeof record.lotId !== 'string'
+      || typeof record.medicationRequestId !== 'string'
+      || typeof record.quantity !== 'number'
+      || !Number.isFinite(record.quantity)
+    ) throw new TypeError('Dispense selection is invalid')
+    return {
+      lotId: record.lotId,
+      medicationRequestId: record.medicationRequestId,
+      quantity: record.quantity,
+    }
+  })
 }
 
 function PrescriptionRow({ item, messages, onSelect, selected }: {

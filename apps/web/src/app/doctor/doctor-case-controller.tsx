@@ -1,5 +1,9 @@
+import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import {
+  clinicalDocumentContentSchema,
+  diagnosisDraftEntrySchema,
   laboratoryRequestCatalogItemIdSchema,
+  prescriptionDraftContentSchema,
   type ClinicalCatalog,
   type ClinicalDocumentContent,
   type DiagnosisDraftEntry,
@@ -8,9 +12,11 @@ import {
   type EncounterCompletionTarget,
   type LaboratoryRequest,
   type LaboratoryRequestCatalogItemId,
+  type LaboratoryReport,
   type SessionContext,
   type VirtualPatientList,
 } from '@clinmesh/contracts/his'
+import { z } from 'zod'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
   AlertDialog,
@@ -33,7 +39,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/component
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, LibraryBigIcon, MessagesSquareIcon, PillIcon, PlusIcon, RefreshCwIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   acknowledgeLaboratoryReport,
   askConsultationQuestion,
@@ -109,6 +115,8 @@ import {
 } from './laboratory-page.tsx'
 import { PatientBanner } from './patient-summary.tsx'
 import { PrescriptionPage, type PrescriptionPageActions } from './prescription-page.tsx'
+import { agentViewRevision, useRegisterAgentPage } from '../agent-page-context.tsx'
+import { useAgentReview } from '../agent-review.tsx'
 
 interface DoctorWorkspaceProps {
   locale: WorkspaceLocale
@@ -127,6 +135,18 @@ interface DoctorCaseControllerProps extends DoctorWorkspaceProps {
   onSelectedCaseIdChange: (caseId: string | undefined) => void
   selectedCaseId: string | undefined
 }
+
+type DoctorAgentDraftKind =
+  | 'diagnosis'
+  | 'first-visit'
+  | 'laboratory'
+  | 'prescription'
+  | 'record'
+  | 'revisit'
+
+type DoctorAgentDraftHydrationRevisions = Partial<Record<DoctorAgentDraftKind, number>>
+
+const emptyDoctorAgentDraftHydrationRevisions: DoctorAgentDraftHydrationRevisions = {}
 
 interface EncounterCompletionAction {
   error: Error | null
@@ -155,10 +175,70 @@ const caseDetailSectionByCompletionTarget = {
   'medication-conclusion': 'prescription',
 } satisfies Record<EncounterCompletionTarget, DoctorCaseSection>
 
+const doctorCaseSectionTabElementIds = {
+  consultation: 'doctor-case-section-consultation',
+  diagnosis: 'doctor-case-section-diagnosis',
+  laboratory: 'doctor-case-section-laboratory',
+  prescription: 'doctor-case-section-prescription',
+  record: 'doctor-case-section-record',
+} satisfies Record<DoctorCaseSection, string>
+
+const caseDetailSectionSchema = z.enum([
+  'consultation',
+  'record',
+  'diagnosis',
+  'prescription',
+  'laboratory',
+])
+const reportCorrectionInputSchema = z.object({
+  conclusion: z.string().trim().min(2).max(2_000),
+  reason: z.string().trim().min(2).max(500),
+  requestId: z.string().min(1).max(128),
+  results: z.array(z.object({
+    code: z.string().min(1),
+    value: z.number().finite(),
+  }).strict()).min(1).max(32),
+}).strict().superRefine((input, context) => {
+  if (new Set(input.results.map(result => result.code)).size === input.results.length) return
+  context.addIssue({
+    code: 'custom',
+    message: 'Laboratory report correction result codes must be unique',
+    path: ['results'],
+  })
+})
+const revisitDraftInputSchema = z.object({
+  diagnosis: z.object({
+    code: z.string().trim().min(1).max(80),
+    display: z.string().trim().min(1).max(200),
+  }).strict(),
+  document: z.object({
+    assessment: z.string().trim().min(1).max(4_000),
+    plan: z.string().trim().min(1).max(4_000),
+  }).strict(),
+  medications: z.array(z.object({
+    catalogItemId: z.string().min(1).max(128),
+    doseText: z.string().trim().min(1).max(120),
+    frequencyCode: z.string().trim().min(1).max(32),
+    quantity: z.number().int().min(1).max(1_000),
+  }).strict()).min(1).max(8),
+}).strict()
+const clinicalDocumentRevisionInputSchema = z.object({
+  document: clinicalDocumentContentSchema,
+  reason: z.string().trim().min(2).max(500),
+}).strict()
+
 function isLaboratoryRequestCatalogItemId(
   value: string,
 ): value is LaboratoryRequestCatalogItemId {
   return laboratoryRequestCatalogItemIdSchema.safeParse(value).success
+}
+
+function isCancellableLaboratoryRequest(request: LaboratoryRequest): boolean {
+  return request.status === 'issued'
+    || (
+      request.status === 'generation-failed'
+      && request.generationError?.code === 'INVESTIGATION_UNSUPPORTED'
+    )
 }
 
 function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocumentContent {
@@ -254,9 +334,11 @@ function DoctorCaseController({
   session,
 }: DoctorCaseControllerProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  const agentReview = useAgentReview()
   const queryClient = useQueryClient()
   const scope = [session.actor.workspaceId, session.actor.epoch] as const
   const [page, setPage] = useState(1)
+  const [activeCaseSection, setActiveCaseSection] = useState<DoctorCaseSection>('record')
   const [virtualPatientPage, setVirtualPatientPage] = useState(1)
   const [diagnosisReferenceSearch, setDiagnosisReferenceSearch] = useState<ReferenceCatalogSearchParameters>({
     enabled: false,
@@ -296,6 +378,18 @@ function DoctorCaseController({
   const [workingClinicalDocuments, setWorkingClinicalDocuments] = useState<
     Record<string, ClinicalDocumentContent>
   >({})
+  const [agentDraftHydrationRevisions, setAgentDraftHydrationRevisions] = useState<
+    Record<string, DoctorAgentDraftHydrationRevisions>
+  >({})
+  const hydrateAgentDraft = useCallback((caseId: string, kind: DoctorAgentDraftKind): void => {
+    setAgentDraftHydrationRevisions(current => ({
+      ...current,
+      [caseId]: {
+        ...current[caseId],
+        [kind]: (current[caseId]?.[kind] ?? 0) + 1,
+      },
+    }))
+  }, [])
   const autoStartRequested = useRef(false)
   const activeCaseId = selectedCaseId ?? queue.data?.items[0]?.caseId
   const selectedCase = queue.data?.items.find(item => item.caseId === activeCaseId)
@@ -338,6 +432,7 @@ function DoctorCaseController({
   useEffect(() => {
     setLaboratoryItemId('')
     setIndicationCode('')
+    setActiveCaseSection('record')
   }, [activeCaseId, session.actor.epoch, session.actor.workspaceId])
   const catalog = useQuery({
     queryFn: ({ signal }) => getClinicalCatalog(signal),
@@ -1026,6 +1121,765 @@ function DoctorCaseController({
     },
     onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
+  const currentClinicalDocument = detail.data === undefined
+    ? undefined
+    : workingClinicalDocuments[detail.data.caseId] ?? createWorkingClinicalDocument(detail.data)
+  const agentPage = useMemo(() => ({
+    actions: {
+      'outpatient.case.read': {
+        description: 'Read the selected authorized outpatient case and visible clinical state.',
+        enabled: activeCaseId !== undefined,
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => {
+          if (activeCaseId === undefined) throw new Error(messages.consultationUnavailable)
+          return getDoctorCase(activeCaseId, signal)
+        },
+      },
+      'outpatient.case.select': {
+        description: 'Select one case from the current doctor queue.',
+        enabled: (queue.data?.items.length ?? 0) > 0,
+        parameters: {
+          type: 'object' as const,
+          properties: { caseId: { type: 'string', maxLength: 128 } },
+          required: ['caseId'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown) => {
+          const caseId = doctorString(raw, 'caseId', 128)
+          if (!queue.data?.items.some(item => item.caseId === caseId)) {
+            throw new Error('Case is not in the current doctor queue')
+          }
+          onSelectedCaseIdChange(caseId)
+          return { caseId, selected: true }
+        },
+      },
+      'outpatient.section.select': {
+        description: 'Select one visible section in the current doctor case.',
+        enabled: detail.data !== undefined,
+        parameters: {
+          type: 'object' as const,
+          properties: { section: { type: 'string', enum: caseDetailSectionSchema.options } },
+          required: ['section'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown) => {
+          const section = caseDetailSectionSchema.parse(doctorRecord(raw).section)
+          const tab = document.getElementById(doctorCaseSectionTabElementIds[section])
+          if (!(tab instanceof HTMLButtonElement)) {
+            throw new Error('Doctor case section is not available')
+          }
+          tab.click()
+          return { section, selected: true }
+        },
+      },
+      'outpatient.consultation.ask': {
+        description: 'Ask one allowlisted Virtual Patient question in the current consultation.',
+        enabled: (detail.data?.consultation?.questions.length ?? 0) > 0,
+        parameters: {
+          type: 'object' as const,
+          properties: { questionCode: { type: 'string', maxLength: 128 } },
+          required: ['questionCode'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          return askQuestion.mutateAsync({
+            caseId: current.caseId,
+            questionCode: doctorString(raw, 'questionCode', 128),
+          })
+        },
+      },
+      'outpatient.first-visit.draft.set': {
+        description: 'Validate and save the current first-visit draft without issuing an order.',
+        enabled: detail.data?.status === 'first-visit',
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            assessment: { type: 'string', maxLength: 2000 },
+            historyOfPresentIllness: { type: 'string', maxLength: 4000 },
+          },
+          required: ['assessment', 'historyOfPresentIllness'],
+          additionalProperties: false,
+        },
+        execute: async (raw: unknown) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const result = await saveDraft.mutateAsync({
+            assessment: doctorString(raw, 'assessment', 2000),
+            caseId: current.caseId,
+            historyOfPresentIllness: doctorString(raw, 'historyOfPresentIllness', 4000),
+          })
+          hydrateAgentDraft(current.caseId, 'first-visit')
+          return result
+        },
+      },
+      'outpatient.diagnosis.draft.set': {
+        description: 'Validate and save the structured diagnosis draft without confirming it.',
+        enabled: detail.data?.consultation !== undefined
+          && detail.data.encounter.status === 'in-progress',
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            entries: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 8,
+              items: {
+                type: 'object',
+                properties: {
+                  catalogItemId: { type: 'string' },
+                  note: { type: 'string', maxLength: 500 },
+                  role: { type: 'string', enum: ['principal', 'secondary'] },
+                },
+                required: ['catalogItemId', 'role'],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ['entries'],
+          additionalProperties: false,
+        },
+        execute: async (raw: unknown) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const entries = doctorDiagnosisEntries(raw)
+          const result = await saveCaseDiagnosis.mutateAsync({
+            caseId: current.caseId,
+            entries,
+          })
+          hydrateAgentDraft(current.caseId, 'diagnosis')
+          return result
+        },
+      },
+      'outpatient.laboratory.draft.set': {
+        description: 'Validate and save a laboratory request draft without issuing it.',
+        enabled: detail.data?.consultation !== undefined
+          && detail.data.encounter.status === 'in-progress',
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            catalogItemId: { type: 'string', maxLength: 512 },
+            indicationCode: { type: 'string', maxLength: 64 },
+          },
+          required: ['catalogItemId', 'indicationCode'],
+          additionalProperties: false,
+        },
+        execute: async (raw: unknown) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const {
+            catalogItemId,
+            indicationCode: nextIndication,
+          } = agentToolInputSchemas['outpatient.laboratory.draft.set'].parse(raw)
+          const result = await saveLaboratoryRequestDraft({
+            catalogItemId,
+            encounterId: current.encounter.id,
+            encounterVersion: current.encounter.versionId,
+            expectedDraftVersion: current.laboratoryRequests?.draftVersion ?? 0,
+            indicationCode: nextIndication,
+          }, newIdempotencyKey())
+          await refreshCaseById(current.caseId)
+          setLaboratoryItemId(catalogItemId)
+          setIndicationCode(nextIndication)
+          hydrateAgentDraft(current.caseId, 'laboratory')
+          return result
+        },
+      },
+      'outpatient.prescription.draft.set': {
+        description: 'Validate and save the controlled prescription draft without issuing it.',
+        enabled: detail.data?.consultation !== undefined
+          && detail.data.medicationConclusion?.prescription === undefined
+          && detail.data.medicationConclusion?.noMedication === undefined,
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            items: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 8,
+              items: {
+                type: 'object',
+                properties: {
+                  catalogItemId: { type: 'string' },
+                  courseDays: { type: 'integer', minimum: 1, maximum: 30 },
+                  doseText: { type: 'string', maxLength: 120 },
+                  frequencyCode: { type: 'string', maxLength: 32 },
+                  quantity: { type: 'integer', minimum: 1, maximum: 1_000 },
+                },
+                required: [
+                  'catalogItemId', 'courseDays', 'doseText', 'frequencyCode', 'quantity',
+                ],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ['items'],
+          additionalProperties: false,
+        },
+        execute: async (raw: unknown) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const input = prescriptionDraftContentSchema.parse(raw)
+          const result = await savePrescription.mutateAsync({
+            caseId: current.caseId,
+            items: input.items,
+          })
+          hydrateAgentDraft(current.caseId, 'prescription')
+          return result
+        },
+      },
+      'outpatient.revisit.draft.set': {
+        description: 'Validate and save the current revisit draft without signing it.',
+        enabled: detail.data?.status === 'revisit-draft'
+          && detail.data.consultation === undefined,
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            diagnosis: {
+              type: 'object',
+              properties: { code: { type: 'string' }, display: { type: 'string' } },
+              required: ['code', 'display'],
+              additionalProperties: false,
+            },
+            document: {
+              type: 'object',
+              properties: { assessment: { type: 'string' }, plan: { type: 'string' } },
+              required: ['assessment', 'plan'],
+              additionalProperties: false,
+            },
+            medications: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 8,
+              items: {
+                type: 'object',
+                properties: {
+                  catalogItemId: { type: 'string' },
+                  doseText: { type: 'string' },
+                  frequencyCode: { type: 'string' },
+                  quantity: { type: 'integer' },
+                },
+                required: ['catalogItemId', 'doseText', 'frequencyCode', 'quantity'],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ['diagnosis', 'document', 'medications'],
+          additionalProperties: false,
+        },
+        execute: async (raw: unknown) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const result = await saveRevisit.mutateAsync({
+            caseId: current.caseId,
+            ...revisitDraftInputSchema.parse(raw),
+          })
+          hydrateAgentDraft(current.caseId, 'revisit')
+          return result
+        },
+      },
+      'outpatient.record.draft.set': {
+        description: 'Validate and save the structured clinical document draft without signing it.',
+        enabled: detail.data?.consultation !== undefined
+          && detail.data.encounter.status === 'in-progress',
+        parameters: {
+          type: 'object' as const,
+          properties: Object.fromEntries([
+            'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
+            'followUp', 'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
+          ].map(key => [key, { type: 'string', maxLength: 4000 }])),
+          required: [
+            'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
+            'followUp', 'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
+          ],
+          additionalProperties: false,
+        },
+        execute: async (raw: unknown) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const document = doctorClinicalDocument(raw)
+          const result = await saveClinicalDocumentDraft({
+            document,
+            encounterId: current.encounter.id,
+            encounterVersion: current.encounter.versionId,
+            expectedDraftVersion: current.clinicalDocument?.draft?.version ?? 0,
+          }, newIdempotencyKey())
+          await refreshCaseById(current.caseId)
+          setWorkingClinicalDocuments(documents => ({
+            ...documents,
+            [current.caseId]: document,
+          }))
+          hydrateAgentDraft(current.caseId, 'record')
+          return result
+        },
+      },
+      'outpatient.preview.request': {
+        description: 'Generate the current clinical sign preview without committing it.',
+        enabled: detail.data?.consultation === undefined
+          ? detail.data?.drafts?.document !== undefined
+          : detail.data?.clinicalDocument?.draft !== undefined,
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: () => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          if (current.consultation === undefined) {
+            return previewSign.mutateAsync({ caseId: current.caseId })
+          }
+          const draft = current.clinicalDocument?.draft
+          if (draft === undefined) throw new Error(messages.consultationUnavailable)
+          return previewStructuredClinicalDocumentSign({
+            encounterId: current.encounter.id,
+            encounterVersion: current.encounter.versionId,
+            expectedDraftVersion: draft.version,
+          }, newIdempotencyKey())
+        },
+      },
+      'outpatient.visit.start.propose': {
+        description: 'Open human review before starting the selected visit.',
+        enabled: detail.data?.status === 'awaiting-doctor'
+          || detail.data?.status === 'awaiting-revisit',
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const revisit = current.status === 'awaiting-revisit'
+          return agentReview.request({
+            confirmLabel: revisit ? messages.startRevisit : messages.startFirstVisit,
+            description: current.patient.name,
+            onConfirm: () => revisit
+              ? beginRevisit.mutateAsync({ caseId: current.caseId })
+              : start.mutateAsync({ caseId: current.caseId }),
+            signal,
+            title: revisit ? messages.startRevisit : messages.startFirstVisit,
+          })
+        },
+      },
+      'outpatient.diagnosis.confirm.propose': {
+        description: 'Open human review before confirming structured diagnoses.',
+        enabled: detail.data?.consultation !== undefined
+          && detail.data.encounter.status === 'in-progress',
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            entries: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 8,
+              items: {
+                type: 'object',
+                properties: {
+                  catalogItemId: { type: 'string' },
+                  note: { type: 'string', maxLength: 500 },
+                  role: { type: 'string', enum: ['principal', 'secondary'] },
+                },
+                required: ['catalogItemId', 'role'],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ['entries'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown, signal: AbortSignal) => {
+          const entries = doctorDiagnosisEntries(raw)
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          return agentReview.request({
+            confirmLabel: messages.confirmDiagnosis,
+            description: `${entries.length} 项诊断`,
+            onConfirm: async () => {
+              const saved = await saveDiagnosisDraft({
+                encounterId: current.encounter.id,
+                encounterVersion: current.encounter.versionId,
+                entries,
+                expectedDraftVersion: current.diagnosis?.draftVersion ?? 0,
+              }, newIdempotencyKey())
+              const result = await confirmDiagnosis({
+                encounterId: current.encounter.id,
+                encounterVersion: current.encounter.versionId,
+                expectedDraftVersion: saved.data.draftVersion,
+              }, newIdempotencyKey())
+              await refreshCaseById(current.caseId)
+              return result
+            },
+            signal,
+            title: messages.confirmDiagnosis,
+          })
+        },
+      },
+      'outpatient.laboratory.issue.propose': {
+        description: 'Open human review before issuing the current laboratory request.',
+        enabled: usesIndependentLaboratoryRequests
+          ? detail.data?.laboratoryRequests?.draft !== undefined
+          : detail.data?.drafts?.firstVisit !== undefined,
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => agentReview.request({
+          confirmLabel: messages.issueLaboratoryRequest,
+          description: resolvedLaboratoryItem?.nameZh ?? messages.consultationUnavailable,
+          onConfirm: () => {
+            const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+            return usesIndependentLaboratoryRequests
+              ? issueRequest.mutateAsync({ caseId: current.caseId })
+              : issueOrder.mutateAsync({ caseId: current.caseId })
+          },
+          signal,
+          title: messages.issueLaboratoryRequest,
+        }),
+      },
+      'outpatient.laboratory.cancel.propose': {
+        description: 'Open human review before cancelling one cancellable laboratory request.',
+        enabled: detail.data?.laboratoryRequests?.requests.some(
+          isCancellableLaboratoryRequest,
+        ) === true,
+        parameters: {
+          type: 'object' as const,
+          properties: { requestId: { type: 'string', maxLength: 128 } },
+          required: ['requestId'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const requestId = doctorString(raw, 'requestId', 128)
+          const request = current.laboratoryRequests?.requests.find(item => item.id === requestId)
+          if (request === undefined || !isCancellableLaboratoryRequest(request)) {
+            throw new Error(messages.consultationUnavailable)
+          }
+          return agentReview.request({
+            confirmLabel: messages.confirmCancelLaboratoryRequest,
+            description: request.catalogItemId,
+            onConfirm: () => cancelRequest.mutateAsync({ caseId: current.caseId, request }),
+            signal,
+            title: messages.cancelLaboratoryRequestTitle,
+          })
+        },
+      },
+      'outpatient.report.acknowledge.propose': {
+        description: 'Open human review before acknowledging one signed laboratory report.',
+        enabled: detail.data?.laboratoryRequests?.requests.some(
+          request => request.status === 'reported',
+        ) === true,
+        parameters: {
+          type: 'object' as const,
+          properties: { requestId: { type: 'string', maxLength: 128 } },
+          required: ['requestId'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const requestId = doctorString(raw, 'requestId', 128)
+          const request = current.laboratoryRequests?.requests.find(item => item.id === requestId)
+          if (request?.status !== 'reported' || request.report === undefined) {
+            throw new Error(messages.consultationUnavailable)
+          }
+          return agentReview.request({
+            confirmLabel: messages.acknowledgeLaboratoryReport,
+            description: request.catalogItemId,
+            onConfirm: () => acknowledgeReport.mutateAsync({
+              caseId: current.caseId,
+              request,
+            }),
+            signal,
+            title: messages.acknowledgeLaboratoryReport,
+          })
+        },
+      },
+      'outpatient.report.correct.propose': {
+        description: 'Open human review before correcting one quantitative laboratory report.',
+        enabled: detail.data?.laboratoryRequests?.requests.some(request => (
+          request.report !== undefined
+          && request.report.results.every(isQuantitativeLaboratoryResult)
+        )) === true,
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            conclusion: { type: 'string', maxLength: 2_000 },
+            reason: { type: 'string', maxLength: 500 },
+            requestId: { type: 'string', maxLength: 128 },
+            results: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 32,
+              items: {
+                type: 'object',
+                properties: { code: { type: 'string' }, value: { type: 'number' } },
+                required: ['code', 'value'],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ['conclusion', 'reason', 'requestId', 'results'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const input = reportCorrectionInputSchema.parse(raw)
+          const request = current.laboratoryRequests?.requests.find(item => item.id === input.requestId)
+          if (
+            request?.report === undefined
+            || !request.report.results.every(isQuantitativeLaboratoryResult)
+          ) throw new Error(messages.consultationUnavailable)
+          return agentReview.request({
+            confirmLabel: messages.confirmLaboratoryReportCorrection,
+            description: `${request.catalogItemId} · ${input.reason}`,
+            onConfirm: () => correctReport.mutateAsync({
+              caseId: current.caseId,
+              input: {
+                conclusion: input.conclusion,
+                reason: input.reason,
+                results: input.results,
+              },
+              request,
+            }),
+            signal,
+            title: messages.previewLaboratoryReportCorrection,
+          })
+        },
+      },
+      'outpatient.prescription.issue.propose': {
+        description: 'Open human review before issuing the current prescription draft.',
+        enabled: detail.data?.medicationConclusion?.draft !== undefined,
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const state = current.medicationConclusion
+          if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
+          return agentReview.request({
+            confirmLabel: messages.issuePrescription,
+            description: `${current.patient.name} · ${state.draft.items.length} 项药品`,
+            onConfirm: () => issueCasePrescription.mutateAsync({ caseId: current.caseId }),
+            signal,
+            title: messages.issuePrescription,
+          })
+        },
+      },
+      'outpatient.prescription.withdraw.propose': {
+        description: 'Open human review before withdrawing the current undispensed prescription.',
+        enabled: detail.data?.medicationConclusion?.prescription?.status === 'signed'
+          || detail.data?.medicationConclusion?.prescription?.status === 'paid',
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const prescription = current.medicationConclusion?.prescription
+          if (
+            prescription === undefined
+            || (prescription.status !== 'signed' && prescription.status !== 'paid')
+          ) throw new Error(messages.consultationUnavailable)
+          return agentReview.request({
+            confirmLabel: messages.confirmWithdrawal,
+            description: prescription.number,
+            onConfirm: () => withdrawCasePrescription.mutateAsync({
+              caseId: current.caseId,
+              prescriptionId: prescription.id,
+            }),
+            signal,
+            title: messages.withdrawPrescriptionTitle,
+          })
+        },
+      },
+      'outpatient.medication.none.propose': {
+        description: 'Open human review before recording a formal no-medication conclusion.',
+        enabled: detail.data?.consultation !== undefined
+          && detail.data.medicationConclusion?.prescription === undefined
+          && detail.data.medicationConclusion?.noMedication === undefined,
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const state = current.medicationConclusion
+          if (state?.prescription !== undefined || state?.noMedication !== undefined) {
+            throw new Error(messages.consultationUnavailable)
+          }
+          return agentReview.request({
+            confirmLabel: messages.confirmNoMedication,
+            description: current.patient.name,
+            onConfirm: () => confirmCaseNoMedication.mutateAsync({ caseId: current.caseId }),
+            signal,
+            title: messages.confirmNoMedication,
+          })
+        },
+      },
+      'outpatient.record.sign.propose': {
+        description: 'Generate a sign preview and open human review before signing clinical facts.',
+        enabled: detail.data?.consultation === undefined
+          ? detail.data?.drafts?.document !== undefined
+          : detail.data?.clinicalDocument?.draft !== undefined,
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: async (_raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          if (current.consultation !== undefined) {
+            const draft = current.clinicalDocument?.draft
+            if (draft === undefined) throw new Error(messages.consultationUnavailable)
+            const preview = await previewStructuredClinicalDocumentSign({
+              encounterId: current.encounter.id,
+              encounterVersion: current.encounter.versionId,
+              expectedDraftVersion: draft.version,
+            }, newIdempotencyKey())
+            return agentReview.request({
+              confirmLabel: messages.confirmClinicalRecordSign,
+              description: current.patient.name,
+              onConfirm: () => signStructuredClinicalDocument({
+                commitToken: preview.data.commitToken,
+                encounterId: current.encounter.id,
+                encounterVersion: current.encounter.versionId,
+                previewId: preview.data.previewId,
+              }, newIdempotencyKey()).then(async result => {
+                await refreshCaseById(current.caseId)
+                return result
+              }),
+              signal,
+              title: messages.confirmClinicalRecordSign,
+            })
+          }
+          const preview = await previewSign.mutateAsync({ caseId: current.caseId })
+          const dependencies = signingDependencies(current.caseId)
+          return agentReview.request({
+            confirmLabel: messages.confirmClinicalSign,
+            description: detail.data?.patient.name ?? messages.consultationUnavailable,
+            onConfirm: () => signClinicalDocument({
+              commitToken: preview.data.commitToken,
+              encounterId: dependencies.encounterId,
+              expectedVersions: dependencies.expectedVersions,
+              previewId: preview.data.previewId,
+            }, newIdempotencyKey()).then(async result => {
+              await refreshCaseById(current.caseId)
+              return result
+            }),
+            signal,
+            title: messages.confirmClinicalSign,
+          })
+        },
+      },
+      'outpatient.record.revise.propose': {
+        description: 'Open human review before creating a revision of the latest signed document.',
+        enabled: (detail.data?.clinicalDocument?.signed.length ?? 0) > 0,
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            document: {
+              type: 'object',
+              properties: Object.fromEntries([
+                'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
+                'followUp', 'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
+              ].map(key => [key, { type: 'string' }])),
+              required: [
+                'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
+                'followUp', 'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
+              ],
+              additionalProperties: false,
+            },
+            reason: { type: 'string', maxLength: 500 },
+          },
+          required: ['document', 'reason'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const latest = current.clinicalDocument?.signed.at(-1)
+          if (latest === undefined) throw new Error(messages.consultationUnavailable)
+          const input = clinicalDocumentRevisionInputSchema.parse(raw)
+          return agentReview.request({
+            confirmLabel: messages.confirmClinicalDocumentRevisionAction,
+            description: `${current.patient.name} · ${input.reason}`,
+            onConfirm: () => reviseClinicalDocument.mutateAsync({
+              caseId: current.caseId,
+              compositionId: latest.compositionId,
+              compositionVersion: latest.compositionVersion,
+              document: input.document,
+              encounterId: current.encounter.id,
+              encounterVersion: current.encounter.versionId,
+              reason: input.reason,
+            }),
+            signal,
+            title: messages.confirmClinicalDocumentRevision,
+          })
+        },
+      },
+      'outpatient.encounter.complete.propose': {
+        description: 'Open human review before completing the selected Encounter.',
+        enabled: detail.data?.encounter.status === 'in-progress',
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          return agentReview.request({
+            confirmLabel: messages.encounterCompleted,
+            description: current.patient.name,
+            onConfirm: () => completeCaseEncounter.mutateAsync({ caseId: current.caseId }),
+            signal,
+            title: messages.encounterCompleted,
+          })
+        },
+      },
+    },
+    claim: {
+      version: 1 as const,
+      viewId: 'consultation' as const,
+      activeSection: activeCaseSection,
+      viewRevision: agentViewRevision({
+        activeCaseId,
+        activeCaseSection,
+        clinicalDocument: currentClinicalDocument,
+        diagnosisDraftVersion: detail.data?.diagnosis?.draftVersion,
+        encounterVersion: detail.data?.encounter.versionId,
+        laboratoryDraftVersion: detail.data?.laboratoryRequests?.draftVersion,
+        page,
+      }),
+      ...(detail.data === undefined ? {} : {
+        selection: {
+          id: detail.data.caseId,
+          kind: 'case' as const,
+          version: detail.data.encounter.versionId,
+        },
+        ...(currentClinicalDocument === undefined ? {} : {
+          draft: {
+            dirty: true,
+            id: `${detail.data.caseId}:clinical-document`,
+            kind: 'clinical-document' as const,
+            revision: String(detail.data.clinicalDocument?.draft?.version ?? 0),
+          },
+        }),
+      }),
+      ui: {
+        status: queue.isPending || detail.isPending ? 'loading' as const
+          : queue.isError || detail.isError ? 'error' as const
+            : queue.data?.items.length === 0 ? 'empty' as const : 'ready' as const,
+      },
+    },
+    label: 'ClinMesh · 门诊医生',
+    readState: () => ({
+      case: detail.data === undefined ? null : {
+        caseId: detail.data.caseId,
+        consultation: detail.data.consultation ?? null,
+        diagnosis: detail.data.diagnosis ?? null,
+        encounter: detail.data.encounter,
+        laboratoryRequests: detail.data.laboratoryRequests ?? null,
+        patient: detail.data.patient,
+        presentation: detail.data.presentation,
+      },
+      clinicalDocumentDraft: currentClinicalDocument ?? null,
+      queueCount: queue.data?.total ?? 0,
+      section: activeCaseSection,
+    }),
+  }), [
+    activeCaseId,
+    activeCaseSection,
+    acknowledgeReport.mutateAsync,
+    agentReview,
+    askQuestion.mutateAsync,
+    beginRevisit.mutateAsync,
+    cancelRequest.mutateAsync,
+    confirmCaseDiagnosis.mutateAsync,
+    correctReport.mutateAsync,
+    currentClinicalDocument,
+    detail.data,
+    detail.isError,
+    detail.isPending,
+    hydrateAgentDraft,
+    issueOrder.mutateAsync,
+    issueRequest.mutateAsync,
+    messages,
+    onSelectedCaseIdChange,
+    page,
+    previewSign.mutateAsync,
+    queue.data,
+    queue.isError,
+    queue.isPending,
+    resolvedLaboratoryItem,
+    saveDraft.mutateAsync,
+    saveRevisit.mutateAsync,
+    start.mutateAsync,
+    usesIndependentLaboratoryRequests,
+  ])
+  useRegisterAgentPage(agentPage)
   return (
     <div className="grid min-h-[calc(100svh-9.5rem)] min-w-0 grid-cols-1 border bg-background xl:grid-cols-[300px_minmax(0,1fr)]">
       <DoctorQueueModule
@@ -1079,6 +1933,8 @@ function DoctorCaseController({
           <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
         ) : (
           <CaseDetail
+            agentDraftHydrationRevisions={agentDraftHydrationRevisions[detail.data.caseId]
+              ?? emptyDoctorAgentDraftHydrationRevisions}
             clinicalDocumentActions={{
               prepareSign: {
                 data: prepareClinicalDocumentSign.variables?.caseId === detail.data.caseId
@@ -1294,6 +2150,7 @@ function DoctorCaseController({
                 [detail.data.caseId]: document,
               }))
             }}
+            onActiveSectionChange={setActiveCaseSection}
             onIndicationChange={setIndicationCode}
             onCorrectionNavigationHandled={onCorrectionNavigationHandled}
             onLaboratoryItemChange={(value) => {
@@ -1413,6 +2270,7 @@ function DoctorCaseController({
 }
 
 function CaseDetail({
+  agentDraftHydrationRevisions,
   catalog,
   clinicalDocumentActions,
   completion,
@@ -1430,6 +2288,7 @@ function CaseDetail({
   locale,
   messages,
   onClinicalDocumentChange,
+  onActiveSectionChange,
   onIssueOrder,
   onIndicationChange,
   onCorrectionNavigationHandled,
@@ -1460,6 +2319,7 @@ function CaseDetail({
   startRevisitPending,
   workingClinicalDocument,
 }: {
+  agentDraftHydrationRevisions: DoctorAgentDraftHydrationRevisions
   catalog: ReturnType<typeof useQuery<Awaited<ReturnType<typeof getClinicalCatalog>>>>
   clinicalDocumentActions: ClinicalDocumentPageActions
   completion: UseQueryResult<EncounterCompletionPreview, Error>
@@ -1477,6 +2337,7 @@ function CaseDetail({
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   onClinicalDocumentChange: (document: ClinicalDocumentContent) => void
+  onActiveSectionChange: (section: DoctorCaseSection) => void
   onIssueOrder: () => void
   onIndicationChange: (value: string) => void
   onCorrectionNavigationHandled: () => void
@@ -1544,6 +2405,10 @@ function CaseDetail({
     setPendingNavigation(undefined)
   }, [activeSection, onCorrectionNavigationHandled, pendingNavigation])
 
+  useEffect(() => {
+    onActiveSectionChange(activeSection)
+  }, [activeSection, onActiveSectionChange])
+
   const navigateToCompletionTarget = (target: EncounterCompletionTarget): void => {
     setActiveSection(caseDetailSectionByCompletionTarget[target])
     setPendingNavigation({ source: 'checklist', target })
@@ -1582,7 +2447,7 @@ function CaseDetail({
       <h3 className="text-sm font-semibold" id="first-visit-heading">{messages.firstVisitRecord}</h3>
       <form
         aria-labelledby="first-visit-heading"
-        key={`${detail.caseId}:${firstVisitDraft?.version ?? 0}`}
+        key={`${detail.caseId}:${firstVisitDraft?.version ?? 0}:${agentDraftHydrationRevisions['first-visit'] ?? 0}`}
         onSubmit={event => {
           event.preventDefault()
           const data = new FormData(event.currentTarget)
@@ -1654,7 +2519,7 @@ function CaseDetail({
         <RevisitEditor
           catalog={catalog.data}
           detail={detail}
-          key={`${detail.caseId}:${detail.drafts?.prescription?.version ?? 0}`}
+          key={`${detail.caseId}:${detail.drafts?.prescription?.version ?? 0}:${agentDraftHydrationRevisions.revisit ?? 0}`}
           locale={locale}
           messages={messages}
           onSave={onSaveRevisit}
@@ -1787,12 +2652,12 @@ function CaseDetail({
           <div className="overflow-x-auto border-b px-2">
             <TabsList className="h-11 min-w-max" variant="line">
               {detail.consultation === undefined ? null : (
-                <TabsTrigger value="consultation"><MessagesSquareIcon aria-hidden="true" />{messages.consultationRecord}</TabsTrigger>
+                <TabsTrigger id={doctorCaseSectionTabElementIds.consultation} value="consultation"><MessagesSquareIcon aria-hidden="true" />{messages.consultationRecord}</TabsTrigger>
               )}
-              <TabsTrigger value="record"><ClipboardListIcon aria-hidden="true" />{messages.medicalRecord}</TabsTrigger>
-              <TabsTrigger value="laboratory"><TestTubesIcon aria-hidden="true" />{messages.laboratoryAndExamination}</TabsTrigger>
-              <TabsTrigger value="diagnosis"><StethoscopeIcon aria-hidden="true" />{messages.diagnosis}</TabsTrigger>
-              <TabsTrigger value="prescription"><PillIcon aria-hidden="true" />{messages.prescription}</TabsTrigger>
+              <TabsTrigger id={doctorCaseSectionTabElementIds.record} value="record"><ClipboardListIcon aria-hidden="true" />{messages.medicalRecord}</TabsTrigger>
+              <TabsTrigger id={doctorCaseSectionTabElementIds.laboratory} value="laboratory"><TestTubesIcon aria-hidden="true" />{messages.laboratoryAndExamination}</TabsTrigger>
+              <TabsTrigger id={doctorCaseSectionTabElementIds.diagnosis} value="diagnosis"><StethoscopeIcon aria-hidden="true" />{messages.diagnosis}</TabsTrigger>
+              <TabsTrigger id={doctorCaseSectionTabElementIds.prescription} value="prescription"><PillIcon aria-hidden="true" />{messages.prescription}</TabsTrigger>
             </TabsList>
           </div>
 
@@ -1819,7 +2684,7 @@ function CaseDetail({
                     allowRevision={!clinicalReadOnly || correctionTarget === 'clinical-document'}
                     detail={detail}
                     elementId={encounterCompletionTargetElementIds['clinical-document']}
-                    key={`structured-clinical-document:${detail.caseId}`}
+                    key={`structured-clinical-document:${detail.caseId}:${agentDraftHydrationRevisions.record ?? 0}`}
                     locale={locale}
                     messages={messages}
                     onDocumentChange={onClinicalDocumentChange}
@@ -1843,7 +2708,7 @@ function CaseDetail({
                 actions={diagnosisActions}
                 catalog={catalog.data.diagnoses}
                 elementId={encounterCompletionTargetElementIds.diagnosis}
-                key={detail.caseId}
+                key={`${detail.caseId}:${agentDraftHydrationRevisions.diagnosis ?? 0}`}
                 locale={locale}
                 messages={messages}
                 readOnly={clinicalReadOnly}
@@ -1868,7 +2733,7 @@ function CaseDetail({
                 catalog={catalog.data.medications}
                 detail={detail}
                 elementId={encounterCompletionTargetElementIds['medication-conclusion']}
-                key={`medication-conclusion:${detail.caseId}`}
+                key={`medication-conclusion:${detail.caseId}:${agentDraftHydrationRevisions.prescription ?? 0}`}
                 locale={locale}
                 messages={messages}
                 readOnly={clinicalReadOnly}
@@ -1889,6 +2754,7 @@ function CaseDetail({
               issueLegacyOrderPending={issueOrderPending}
               laboratoryCatalog={laboratoryCatalog}
               laboratoryItemId={laboratoryItemId}
+              key={`laboratory:${detail.caseId}:${agentDraftHydrationRevisions.laboratory ?? 0}`}
               locale={locale}
               messages={messages}
               onIndicationChange={onIndicationChange}
@@ -2155,4 +3021,54 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{title}</AlertTitle><AlertDescription>{message}</AlertDescription></Alert>
+}
+
+function doctorRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Doctor Agent input must be an object')
+  }
+  return value as Record<string, unknown>
+}
+
+function doctorString(value: unknown, key: string, maximum: number): string {
+  const candidate = doctorRecord(value)[key]
+  if (typeof candidate !== 'string' || candidate.trim() === '' || candidate.length > maximum) {
+    throw new TypeError(`${key} is invalid`)
+  }
+  return candidate.trim()
+}
+
+function doctorDiagnosisEntries(value: unknown): DiagnosisDraftEntry[] {
+  const entries = doctorRecord(value).entries
+  if (!Array.isArray(entries)) throw new TypeError('entries must be an array')
+  return entries.map(entry => diagnosisDraftEntrySchema.parse(entry))
+}
+
+function doctorClinicalDocument(value: unknown): ClinicalDocumentContent {
+  const input = doctorRecord(value)
+  const field = (key: keyof ClinicalDocumentContent): string => doctorString(input, key, 4_000)
+  return {
+    assessment: field('assessment'),
+    auxiliaryExamination: field('auxiliaryExamination'),
+    chiefComplaint: field('chiefComplaint'),
+    disposition: field('disposition'),
+    followUp: field('followUp'),
+    historyOfPresentIllness: field('historyOfPresentIllness'),
+    physicalExamination: field('physicalExamination'),
+    priorMedicalHistory: field('priorMedicalHistory'),
+  }
+}
+
+function requireDoctorDetail(
+  detail: DoctorCaseDetail | undefined,
+  message: string,
+): DoctorCaseDetail {
+  if (detail === undefined) throw new Error(message)
+  return detail
+}
+
+function isQuantitativeLaboratoryResult(
+  result: LaboratoryReport['results'][number],
+): result is Extract<LaboratoryReport['results'][number], { value: number }> {
+  return typeof result.value === 'number' && 'unit' in result
 }
