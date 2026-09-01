@@ -8,6 +8,8 @@ Status: implemented
 
 本决策由 [issue #66](https://github.com/CaiZongyuan/clinmesh/issues/66) 实施，并局部取代[医生核心临床业务流](../feature/2026-08-24-doctor-clinical-core-workflow.md)、[医生临床目录选择与草稿确认](../feature/2026-08-31-doctor-clinical-catalog-dialogs.md)、[医生草稿自动保存与诊断确认修订](./2026-08-31-doctor-draft-autosave-and-diagnosis-revision.md)和 [Synthea 来源病例与跨 Epoch 重放](./2026-08-30-synthea-case-source-and-replay.md)中的精选数值目录、病例级 capability、永久失败恢复分支与按病例项目永久复用 snapshot 决策。
 
+`laboratory-cn` 的可信数据集发布与 Adult Reference Baseline 是本决策的扩展路径，由[可信成人检验基线](./2026-09-02-trusted-laboratory-baseline.md)拥有。
+
 ## Decision
 
 Reference SQLite 接受既有 Dataset Schema v1 和 `loinc-zh-cn` Schema v2。Schema v2 importer 校验 Candidate manifest、SQLite artifact、四张 canonical 表及其记录数，把 LOINC 主表、单位、SYSTEM 标本关系和 panel 成员边原子发布为不可变 Reference Release。Class Type 1 概念属于 laboratory domain；生命体征、临床观察、问卷和量表属于 `other`，不会进入 Laboratory Service 候选。

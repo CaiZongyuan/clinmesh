@@ -16,6 +16,7 @@ import {
   deletePrescriptionDraftRequestSchema,
   issueLaboratoryRequestRequestSchema,
   issuePrescriptionRequestSchema,
+  laboratoryServiceCandidateSearchInputSchema,
   laboratoryServicePublicationJobSchema,
   publishLaboratoryServicesRequestSchema,
   orderHospitalServiceRequestSchema,
@@ -194,6 +195,27 @@ function referenceCatalogQuery(context: Context): {
     page: parsed.page,
     pageSize: parsed.pageSize,
     ...(parsed.query === undefined ? {} : { query: parsed.query }),
+  }
+}
+
+const laboratoryServiceCandidateQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(50).default(20),
+  panelOnly: z.enum(['false', 'true']).transform(value => value === 'true').default(false),
+  query: z.string().trim().min(2).max(100).optional(),
+  sourceDataset: z.enum(['laboratory-cn', 'loinc-zh-cn']).optional(),
+}).strict()
+
+function laboratoryServiceCandidateQuery(context: Context) {
+  const parsed = laboratoryServiceCandidateSearchInputSchema.parse(
+    laboratoryServiceCandidateQuerySchema.parse(context.req.query()),
+  )
+  return {
+    page: parsed.page,
+    pageSize: parsed.pageSize,
+    panelOnly: parsed.panelOnly,
+    ...(parsed.query === undefined ? {} : { query: parsed.query }),
+    ...(parsed.sourceDataset === undefined ? {} : { sourceDataset: parsed.sourceDataset }),
   }
 }
 
@@ -450,7 +472,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try {
         return context.json(publisher.candidates(
           await actor(context),
-          referenceCatalogQuery(context),
+          laboratoryServiceCandidateQuery(context),
         ))
       } catch (error) {
         return apiErrorResponse(context, error)

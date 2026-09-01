@@ -428,13 +428,19 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 
 ### 5.4 中国术语与参考数据策略
 
-独立 Reference SQLite 通过显式 CLI 一次性导入和验证版本固定的疾病、药品与检验来源。每个成功发布的 Reference Release 固定来源版本、许可、artifact checksum、记录数、导入诊断和 content hash；失败导入不改变当前 Release。`loinc-zh-cn` Dataset Schema v2 把完整 LOINC 主表、单位、SYSTEM 标本关系和 panel 成员边保存在同一不可变 Release，Class Type 1 进入 laboratory domain，其他 Class Type 进入 `other`。Server 只读打开一个系统级全局当前 Release，使用索引和 FTS 提供有界分页查询，不把全国目录复制进 Workspace、Epoch 或 operational SQLite。
+独立 Reference SQLite 通过 `reference-data.lock.json` 和 `pnpm reference:sync` 获取、验证并导入版本固定的疾病、药品与检验来源。项目内锁固定 `cn-health` 版本、Registry URL、Ed25519 信任根、Dataset Release、Manifest hash 和复合 Release 身份；`cn-health dataset materialize` 只在显式同步时访问 Registry，并把签名已验证的 Manifest、SQLite 和 receipt 原子交给 ClinMesh。ClinMesh 再校验 receipt、hash、SQLite、Schema 和 canonical 表不变量。check-only 使用临时 Reference SQLite，正式同步失败不留下部分 Release，也不切换 Server 当前 Release。运行中的 Server 只读 ClinMesh Reference SQLite，不调用 `cn-health`、GitHub 或 Registry。
+
+每个成功发布的 Reference Release 固定来源版本、许可、artifact checksum、materialization provenance、记录数、导入诊断和 content hash。`loinc-zh-cn` Dataset Schema v2 把完整 LOINC 主表、单位、SYSTEM 标本关系和 panel 成员边保存在同一不可变 Release，Class Type 1 进入 laboratory domain，其他 Class Type 进入 `other`。`laboratory-cn` Schema v2 在同一 Release 中保存 WS/T 886 原子项目、全部成人参考规则、项目整理 panel 和有序成员边；首个锁定 Release 的四张表分别有 84、96、15 和 88 条记录。Server 使用索引和 FTS 提供有界分页查询，不把全国目录复制进 Workspace、Epoch 或 operational SQLite。
 
 目录搜索返回稳定的 `system + version + code + display`。诊断、医嘱等本院 R5 业务事实在创建时保存所选 coding/display 快照，因此切换全局当前 Release 不会改写既有病历。Synthea R4 来源 coding 仅用于呈现 Visible Source History 和解析同 LOINC 的隐藏 Observation；不以显示文本匹配，不建设 Synthea 到本院疾病或药品目录的通用映射。
 
-Reference Concept 只表达检验术语、分类、值类型候选、UCUM 单位、标本和 panel 关系，不表示医院已经开展。管理员从 active、Class Type 1、Order/Both 候选中选择最多 50 个根项目；Catalog Enrichment Agent 使用独立模型配置补齐并验证本院名称、合成价格、TAT、参考范围、定性值和报告闭包，随后把根服务与 dependency-only 成员原子发布到现有 `hospital_service_catalog`。失败候选保留结构化状态但不激活，医生路径不调用 enrichment。
+Reference Concept 只表达检验术语、分类、值类型、UCUM 单位、标本、成人规则和 panel 关系，不表示医院已经开展。管理员按 Dataset 来源和 panel 状态搜索候选，候选同时返回 Dataset Release、成员数、标本、成人适用性和规则来源。LOINC active Class Type 1 Order/Both 根仍由 Catalog Enrichment Agent 补齐本院运营字段；`laboratory-cn` 只把 Dataset panel 根作为候选，并以确定性 policy 直接冻结单位、precision、成人规则、健康生成策略、TAT 180 分钟和未计价状态，不调用模型。每批最多选择 50 个根，根服务与 dependency-only 成员原子发布到唯一的 `hospital_service_catalog`；同一 `laboratory-cn` panel 跨 Reference Release 保持 Hospital Service ID 并递增版本。失败候选不激活，医生路径不调用 enrichment。
 
-医生病例级检验目录只返回当前 Workspace/Epoch 中 active、doctor-orderable 的 Hospital Laboratory Service；所有可见项目都可保存草稿和正式开立，响应不含 Case Truth、模型或 Investigation Generation Capability。开立时冻结服务版本、根 LOINC 和完整 report definition。Simulator 对每个报告叶子优先复用精确 Case Truth Observation；完整 panel 全部命中时不调用模型，partial panel 只生成缺失叶子。Agent 输入最多包含最近 20 条 Visible History、20 条相关 Case Truth 证据，以及当前正式诊断和已有正式检验；输出必须保持编码闭包、值类型、单位、参考范围和判读一致。outbox 最多自动尝试三次，连续失败进入 `generation-failed` 且不创建临床资源。成功 snapshot 按 Case revision、服务/报告版本和申请前正式证据形成 evidence hash；相同 request 与 Reset 初始证据复用，复查在新增正式证据后生成新 snapshot。
+医生病例级检验目录只返回当前 Workspace/Epoch 中 active、doctor-orderable 的 Hospital Laboratory Service；dependency-only 叶子不会单独出现。所有可见项目都可保存草稿和正式开立，响应不含 Case Truth、模型或 Investigation Generation Capability。开立时冻结服务版本、source coding 和完整 report definition；成人规则按 Virtual Time 计算年龄，男/女规则优先于 `all`，其他或未知性别只使用 `all`。不足 18 岁或任一叶子没有适用规则时，保存和开立都以稳定领域错误失败。
+
+Simulator 对每个冻结报告叶子先复用编码、值类型和单位均兼容的精确 Case Truth Observation；存在精确但不兼容的事实时失败，不生成正常值。缺少精确事实且存在适用的 `laboratory-cn` 规则时，generation policy v1 从 input hash、服务版本和 concept ID 的 SHA-256 固定位生成均匀值，使用独立 simulation bounds、precision 舍入和夹紧；fixed-normal 直接使用冻结字符串。其余 LOINC 叶子才进入 Investigation Agent。一个 panel 可以混合精确结果和 Adult Reference Baseline，每个结果记录来源；单侧临床范围只进入报告语义，不作为随机边界。outbox 最多自动尝试三次，连续失败进入 `generation-failed` 且报告事务不创建部分 Specimen、Observation、DiagnosticReport 或 Provenance。Snapshot 按 Case revision、冻结服务/报告版本和申请前证据形成 input hash；相同请求、重试和 Reset 初始证据复用，新正式证据产生新 Snapshot。
+
+`laboratory-cn` 的 Observation 以 ClinMesh-owned WS/T 886 system 为主并附可用 LOINC crosswalk，Quantity 使用 UCUM，fixed-normal 使用 `valueString`。Specimen 使用本地 specimen system；ServiceRequest 和 DiagnosticReport 同时保留本院服务与 source panel coding。Provenance 关联 Investigation Result Snapshot、ClinMesh Reference Release、Dataset Release、generation policy 和 input hash。WS/T 886—2026 在 2026-11-01 实施；更早的 Hospital Baseline 只能以明确 future-standard preview 方式启用，不能描述为已生效标准。
 
 当前不发布 CodeSystem、ValueSet、ConceptMap 或 terminology operation；术语是接口兼容性的一部分，不是 UI 字典。
 
@@ -1148,7 +1154,7 @@ clock_revision
 ### 10.4 确定性与故障注入
 
 - 生成请求固定 Provider commit、profile/localization hash、模块模式、人口参数和 seed；相同来源 Bundle 的 Index Encounter 选择、历史/真值闭包和 case type 保持确定。
-- Investigation resolver 先匹配 Case Truth 中完全相同 LOINC 的 Observation；缺失时才调用受限模型。首次验证成功的结果按 input hash 冻结，重试、reset 和 replay 复用 snapshot。
+- Investigation resolver 先匹配 Case Truth 中完全兼容的冻结 coding；缺失时按冻结 Adult Reference Baseline 确定性生成，只有没有该规则的 LOINC 叶子才调用受限模型。首次验证成功的结果按 input hash 冻结，重试、reset 和 replay 复用 snapshot。
 - 支付规则可确定地产生 success、declined 或 ambiguous；LIS 规则确定地产生结构化报告。outbox 通过测试 handler 验证 retryable failure、lease 恢复、重复消费和结果未知。
 - 数据库备份的 canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引、schema migration 和 runtime metadata 外的全部持久领域表；`*_json` 按 JSON 值规范化，递归排除 FHIR `lastUpdated` 和存放 hash 自身的列。它用于同一 schema 下的备份/恢复等价校验，不宣称是跨版本 replay hash。
 - 当前 replay 是 Case Revision 到新 Epoch 的重新物化，不是 command-log replay；当前没有逐步 state hash 或通用故障编排 API。
@@ -1406,7 +1412,7 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 
 ### 15.3 Web 与明确边界
 
-- Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员入口；管理员可生成 Synthetic Profile/Case、浏览 Visible Source History、生成并选择 Brief、直接开始病例、reset/replay，以及搜索和发布 Laboratory Service。医生工作台从全局 Reference Release 分页搜索诊断和药品，从病例级目录搜索本院已发布检验服务；诊断、检验和处方有效修改自动保存，已创建事实固定对应 snapshot。Investigation 的系统执行异常支持受控重试，不向医生展示生成 capability。病例库继续提供责任范围内的已完诊 Encounter 与受控更正入口。服务端状态只由 TanStack Query 缓存，退出或跨账户登录会清除非 session 查询。
+- Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员入口；管理员可生成 Synthetic Profile/Case、浏览 Visible Source History、生成并选择 Brief、直接开始病例、reset/replay，以及按 Dataset/panel 筛选并发布 Laboratory Service。候选列表显示 Release、成员数、标本、成人适用性和规则来源，并把项目整理来源与国家标准分开；未计价服务不显示为免费。医生工作台从全局 Reference Release 分页搜索诊断和药品，从病例级目录搜索本院已发布检验服务；诊断、检验和处方有效修改自动保存，已创建事实固定对应 snapshot。Investigation 的系统执行异常支持受控重试，不向医生展示生成 capability。病例库继续提供责任范围内的已完诊 Encounter 与受控更正入口。服务端状态只由 TanStack Query 缓存，退出或跨账户登录会清除非 session 查询。
 - 可见字符串具有中文和英文 catalog；主题支持 system、light 与 dark。岗位页面具有分页、加载、空、错误、冲突、无权限和成功状态，并覆盖长中文文本与窄视口。
 - 首期不包含 Desktop/Mobile 产品行为、模型 runner、AG-UI/MCP、评分、附件、真实外部系统、完整医保/住院/库存、远程数据库、多实例或高可用。
 - 当前没有 FHIR generic write、自定义 FHIR Operation、正式 Profile/IG、官方 Validator、标准 compartment、metrics exporter 或公开在线 SLA。

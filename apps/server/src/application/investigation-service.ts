@@ -23,6 +23,14 @@ import {
 } from '../infrastructure/ai/openai-chat-completions.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import { syntheticInvestigationReferenceRange } from './scenario-data/reference-coding-package.ts'
+import {
+  AdultReferenceApplicabilityError,
+  adultReferenceGenerationPolicyVersion,
+  adultReferenceRange,
+  adultRuleProvenance,
+  generateAdultReferenceResult,
+  selectAdultReferenceRule,
+} from './laboratory-adult-reference.ts'
 
 const promptVersion = 'investigation-result-v1'
 const systemPrompt = [
@@ -77,6 +85,7 @@ const serviceAgentOutputSchema = z.object({
 }).strict()
 
 const requestRowSchema = z.object({
+  authored_at: z.iso.datetime({ offset: true }),
   catalog_item_id: z.string().min(1),
   encounter_id: z.string().min(1),
   patient_id: z.string().min(1),
@@ -302,6 +311,21 @@ function exactObservation(
     ))[0]
 }
 
+function exactObservationForDefinition(
+  hiddenResources: Resource[],
+  definition: ServiceResultDefinition,
+): Resource | undefined {
+  const codings = [definition.referenceConcept, ...definition.alternateCodings]
+  return hiddenResources
+    .filter(resource => resource.resourceType === 'Observation')
+    .filter(resource => conceptCodings(resource).some(coding => codings.some(candidate => (
+      coding.system === candidate.system && coding.code === candidate.code
+    ))))
+    .toSorted((left, right) => (
+      clinicalTimestamp(right) - clinicalTimestamp(left) || left.id.localeCompare(right.id)
+    ))[0]
+}
+
 function agentLaboratoryMetadata(
   concept: RequestedConcept,
 ): AgentLaboratoryMetadata | undefined {
@@ -393,7 +417,7 @@ export class InvestigationService {
     signal?: AbortSignal,
   ): Promise<InvestigationResultSnapshot | undefined> {
     const row = requestRowSchema.optional().parse(this.#database.driver.prepare(`
-      SELECT request.catalog_item_id, request.reference_json,
+      SELECT request.authored_at, request.catalog_item_id, request.reference_json,
         request.result_snapshot_id, request.service_snapshot_json,
         outpatient_case.encounter_id, outpatient_case.patient_id,
         materialization.case_id AS synthetic_case_id,
@@ -544,14 +568,36 @@ export class InvestigationService {
     const hiddenResources = truth.hiddenResources.map(item => (
       investigationResourceSchema.parse(item.resource)
     ))
+    const adultRules = new Map<
+      string,
+      ReturnType<typeof selectAdultReferenceRule>
+    >()
+    if (service.sourceDataset?.datasetId === 'laboratory-cn') {
+      try {
+        for (const definition of service.reportDefinition.results) {
+          adultRules.set(definition.referenceConcept.id, selectAdultReferenceRule(
+            definition,
+            profile.demographics,
+            row.authored_at,
+          ))
+        }
+      } catch (error) {
+        if (!(error instanceof AdultReferenceApplicabilityError)) throw error
+        throw new InvestigationGenerationError('INVESTIGATION_OUTPUT_INVALID', error.message)
+      }
+    }
     const exactResults = new Map<string, InvestigationResultContent['results'][number]>()
     for (const definition of service.reportDefinition.results) {
-      const exact = exactObservation(hiddenResources, definition.referenceConcept)
+      const exact = exactObservationForDefinition(hiddenResources, definition)
       if (exact === undefined) continue
-      exactResults.set(definition.referenceConcept.code, this.#contentFromServiceObservation(
+      const exactResult = this.#contentFromServiceObservation(
         definition,
         exact,
-      ))
+        adultRules.get(definition.referenceConcept.id),
+      )
+      exactResults.set(definition.referenceConcept.code, service.sourceDataset === undefined
+        ? exactResult
+        : { ...exactResult, source: 'case-truth-exact' })
     }
     const formalEvidence = this.#formalEvidence(
       workspaceId,
@@ -568,12 +614,17 @@ export class InvestigationService {
         birthDate: profile.demographics.birthDate,
         gender: profile.demographics.gender,
       },
+      authoredAt: row.authored_at,
       exactResults: [...exactResults.values()],
       formalEvidence,
       requestedService: service,
+      selectedAdultRules: [...adultRules.entries()],
       sourceHash: syntheticCase.sourceHash,
     }
-    if (missing.length === 0) {
+    const agentMissing = missing.filter(
+      definition => !adultRules.has(definition.referenceConcept.id),
+    )
+    if (agentMissing.length === 0) {
       const inputHash = canonicalJsonHash(basePayload)
       const existing = this.#results.getByEvidence(
         workspaceId,
@@ -582,21 +633,48 @@ export class InvestigationService {
         inputHash,
       )
       if (existing !== undefined) return existing
+      const baselineResults = new Map(missing.map((definition) => {
+        const rule = adultRules.get(definition.referenceConcept.id)!
+        return [definition.referenceConcept.code, generateAdultReferenceResult({
+          definition,
+          inputHash,
+          rule,
+          serviceVersion: service.version,
+        })] as const
+      }))
+      const baselineCount = baselineResults.size
+      const exactCount = exactResults.size
       return this.#freeze({
         caseId: row.synthetic_case_id,
         catalogItemId: row.catalog_item_id,
         content: investigationResultContentSchema.parse({
           conclusion: service.reportDefinition.conclusionTemplate,
           results: service.reportDefinition.results.map(definition => (
-            exactResults.get(definition.referenceConcept.code)!
+            exactResults.get(definition.referenceConcept.code)
+            ?? baselineResults.get(definition.referenceConcept.code)!
           )),
         }),
         inputHash,
         model: null,
         promptHash: null,
         promptVersion: null,
+        ...(service.sourceDataset === undefined
+          ? {}
+          : {
+              provenance: {
+                datasetReleaseId: service.sourceDataset.releaseId,
+                generationPolicyVersion: adultReferenceGenerationPolicyVersion,
+                referenceReleaseId: service.referenceReleaseId,
+                rules: service.reportDefinition.results.map(definition => adultRuleProvenance(
+                  definition.referenceConcept.id,
+                  adultRules.get(definition.referenceConcept.id)!,
+                )),
+              },
+            }),
         requestedConcept: service.referenceConcept,
-        source: 'synthea-exact',
+        source: baselineCount === 0
+          ? 'synthea-exact'
+          : exactCount === 0 ? 'adult-reference-baseline' : 'mixed',
         workspaceId,
       })
     }
@@ -609,7 +687,7 @@ export class InvestigationService {
     const payload = {
       ...basePayload,
       privateCaseEvidence: evidence(hiddenResources),
-      requestedResults: missing,
+      requestedResults: agentMissing,
       visibleHistory: this.#cases.listRecentVisibleHistory({
         caseId: row.synthetic_case_id,
         limit: maximumAgentEvidenceItems,
@@ -635,24 +713,36 @@ export class InvestigationService {
     const output = serviceAgentOutputSchema.parse(JSON.parse(completion.content))
     const outputByCode = new Map(output.results.map(result => [result.code, result]))
     if (outputByCode.size !== output.results.length
-      || output.results.length !== missing.length
-      || missing.some(definition => !outputByCode.has(definition.referenceConcept.code))) {
+      || output.results.length !== agentMissing.length
+      || agentMissing.some(definition => !outputByCode.has(definition.referenceConcept.code))) {
       throw new InvestigationGenerationError(
         'INVESTIGATION_OUTPUT_INVALID',
         'The Investigation Agent changed the requested report closure',
       )
     }
-    const generatedResults = new Map(missing.map((definition) => {
+    const generatedResults = new Map(agentMissing.map((definition) => {
       const generated = outputByCode.get(definition.referenceConcept.code)!
       return [definition.referenceConcept.code, this.#validatedServiceAgentResult(
         definition,
         generated,
       )] as const
     }))
+    const baselineResults = new Map(missing.flatMap((definition) => {
+      const rule = adultRules.get(definition.referenceConcept.id)
+      return rule === undefined
+        ? []
+        : [[definition.referenceConcept.code, generateAdultReferenceResult({
+            definition,
+            inputHash,
+            rule,
+            serviceVersion: service.version,
+          })] as const]
+    }))
     const content = investigationResultContentSchema.parse({
       conclusion: output.conclusion,
       results: service.reportDefinition.results.map(definition => (
         exactResults.get(definition.referenceConcept.code)
+        ?? baselineResults.get(definition.referenceConcept.code)
         ?? generatedResults.get(definition.referenceConcept.code)
       )),
     })
@@ -665,7 +755,7 @@ export class InvestigationService {
       promptHash: servicePromptHash,
       promptVersion: servicePromptVersion,
       requestedConcept: service.referenceConcept,
-      source: 'investigation-agent',
+      source: exactResults.size > 0 || baselineResults.size > 0 ? 'mixed' : 'investigation-agent',
       workspaceId,
     })
   }
@@ -673,6 +763,7 @@ export class InvestigationService {
   #contentFromServiceObservation(
     definition: ServiceResultDefinition,
     observation: Resource,
+    adultRule?: ReturnType<typeof selectAdultReferenceRule>,
   ): InvestigationResultContent['results'][number] {
     if (definition.valueType === 'quantity') {
       const result = quantity(observation.valueQuantity)
@@ -684,11 +775,14 @@ export class InvestigationService {
           'The exact Case Truth Observation conflicts with the Laboratory Service unit',
         )
       }
+      const referenceRange = adultRule === undefined
+        ? definition.referenceRange
+        : adultReferenceRange(adultRule, definition.unit)
       return {
         code: definition.referenceConcept.code,
         display: definition.referenceConcept.display,
-        interpretation: interpretationFor(result.value, definition.referenceRange),
-        referenceRange: definition.referenceRange,
+        interpretation: interpretationFor(result.value, referenceRange),
+        referenceRange,
         unit: definition.unit,
         value: result.value,
       }

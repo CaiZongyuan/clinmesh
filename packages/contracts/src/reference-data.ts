@@ -75,7 +75,8 @@ export const referenceConceptSnapshotSchema = z.object({
   version: z.string().min(1).max(256),
 }).strict()
 
-export const referenceLaboratoryDefinitionSchema = z.object({
+const loincReferenceLaboratoryDefinitionSchema = z.object({
+  kind: z.literal('loinc'),
   classCode: z.string().min(1).max(128).nullable(),
   classType: z.number().int().min(1).max(4).nullable(),
   component: z.string().min(1).max(1_000).nullable(),
@@ -89,6 +90,101 @@ export const referenceLaboratoryDefinitionSchema = z.object({
   system: z.string().min(1).max(1_000).nullable(),
   timeAspect: z.string().min(1).max(128).nullable(),
 }).strict()
+
+export const referenceLaboratoryAdultRuleSchema = z.object({
+  high: z.number().finite().optional(),
+  low: z.number().finite().optional(),
+  normalValue: z.string().min(1).max(256).optional(),
+  notes: z.string().max(1_000),
+  referenceKind: z.enum(['range', 'upper-bound', 'lower-bound', 'coded', 'ordinal']),
+  sex: z.enum(['all', 'male', 'female']),
+  simulationHigh: z.number().finite().optional(),
+  simulationLow: z.number().finite().optional(),
+  sourceLocation: z.string().min(1).max(1_000),
+  sourceStandard: z.string().min(1).max(1_000),
+  sourceType: z.enum(['national-standard', 'project-curated']),
+  sourceVersion: z.string().min(1).max(256),
+}).strict().superRefine((rule, context) => {
+  if ((rule.simulationLow === undefined) !== (rule.simulationHigh === undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Laboratory simulation bounds must be present together',
+      path: ['simulationLow'],
+    })
+  }
+  if (rule.simulationLow !== undefined && rule.simulationHigh !== undefined
+    && rule.simulationLow >= rule.simulationHigh) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Laboratory simulation low must be below simulation high',
+      path: ['simulationLow'],
+    })
+  }
+})
+
+const laboratoryCnTestDefinitionSchema = z.object({
+  adultReferenceRules: z.array(referenceLaboratoryAdultRuleSchema).min(1).max(3),
+  alternateCodings: z.array(z.object({
+    code: z.string().min(1).max(256),
+    system: z.literal('http://loinc.org'),
+    version: z.string().min(1).max(256),
+  }).strict()).max(4),
+  analyte: z.string().min(1).max(1_000),
+  category: z.string().min(1).max(1_000),
+  conceptId: referenceDataItemIdSchema,
+  datasetReleaseId: z.string().min(1).max(256),
+  healthyStrategy: z.enum(['uniform', 'fixed-normal']),
+  kind: z.literal('laboratory-cn-test'),
+  precision: z.number().int().min(0).max(4),
+  resultKind: z.enum(['quantity', 'qualitative', 'ordinal', 'named']),
+  scale: z.string().min(1).max(256),
+  sourceLocator: z.string().min(1).max(1_000),
+  sourceVersion: z.string().min(1).max(256),
+  specimen: z.string().min(1).max(1_000),
+  unit: z.object({
+    code: z.string().min(1).max(128),
+    display: z.string().min(1).max(128),
+    system: z.literal('http://unitsofmeasure.org'),
+  }).strict().optional(),
+}).strict().superRefine((definition, context) => {
+  if ((definition.resultKind === 'quantity') !== (definition.unit !== undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Quantity laboratory definitions require one UCUM unit',
+      path: ['unit'],
+    })
+  }
+  if ((definition.healthyStrategy === 'uniform') !== (definition.resultKind === 'quantity')) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Uniform healthy generation is valid only for Quantity definitions',
+      path: ['healthyStrategy'],
+    })
+  }
+})
+
+const laboratoryCnPanelDefinitionSchema = z.object({
+  conceptId: referenceDataItemIdSchema,
+  datasetReleaseId: z.string().min(1).max(256),
+  kind: z.literal('laboratory-cn-panel'),
+  notes: z.string().max(1_000),
+  sourceLocation: z.string().min(1).max(1_000),
+  sourceLocator: z.string().min(1).max(1_000),
+  sourceType: z.literal('project-authored'),
+  sourceVersion: z.string().min(1).max(256),
+  specimen: z.string().min(1).max(1_000),
+}).strict()
+
+const versionedReferenceLaboratoryDefinitionSchema = z.discriminatedUnion('kind', [
+  loincReferenceLaboratoryDefinitionSchema,
+  laboratoryCnTestDefinitionSchema,
+  laboratoryCnPanelDefinitionSchema,
+])
+
+export const referenceLaboratoryDefinitionSchema = z.preprocess((value) => {
+  if (typeof value !== 'object' || value === null || 'kind' in value) return value
+  return { ...value, kind: 'loinc' }
+}, versionedReferenceLaboratoryDefinitionSchema)
 
 export const referenceLaboratoryUnitSchema = z.object({
   code: z.string().min(1).max(128),
@@ -185,6 +281,15 @@ export const referenceArtifactFormatSchema = z.enum([
   'wst-value-set-csv',
 ])
 
+export const referenceMaterializationProvenanceSchema = z.object({
+  cliVersion: z.string().regex(/^\d+\.\d+\.\d+$/),
+  manifestSha256: sha256Schema,
+  registryKeyId: z.string().min(1).max(128),
+  registryUrl: z.string().url(),
+  sqliteSha256: sha256Schema,
+  sqliteSizeBytes: z.number().int().positive(),
+}).strict()
+
 export const cnHealthCandidateProvenanceSchema = z.object({
   canonicalSha256: sha256Schema,
   datasetId: z.enum([
@@ -211,6 +316,7 @@ export const referenceImportManifestSchema = z.object({
     artifactPath: z.string().min(1),
     checksum: sha256Schema,
     licenseId: z.string().min(1).max(256),
+    materialization: referenceMaterializationProvenanceSchema.optional(),
     publishedAt: z.iso.date().optional(),
     retrievedAt: z.iso.datetime({ offset: true }),
     sourceId: z.string().min(1).max(256),

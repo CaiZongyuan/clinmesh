@@ -19,6 +19,26 @@ const clinicalDocumentOperationIds = {
 } as const
 
 describe('HIS operation catalog', () => {
+  it('describes source and panel filters for Laboratory Service candidates', () => {
+    const operation = getHisOperation('admin.laboratory-services.candidates.search')
+
+    expect(operation).toMatchObject({
+      cliPath: ['admin', 'laboratory-services', 'candidates', 'search'],
+      version: 2,
+    })
+    expect(operation.input.parse({
+      page: 1,
+      pageSize: 20,
+      panelOnly: true,
+      sourceDataset: 'laboratory-cn',
+    })).toEqual({
+      page: 1,
+      pageSize: 20,
+      panelOnly: true,
+      sourceDataset: 'laboratory-cn',
+    })
+  })
+
   it('describes diagnosis reference search through one stable operation interface', () => {
     const operation: HisOperationDefinition = getHisOperation('reference.diagnoses.search')
 

@@ -43,6 +43,7 @@ import {
   issueLaboratoryRequestResponseSchema,
   laboratoryRequestActionResponseSchema,
   laboratoryRequestDraftResponseSchema,
+  laboratoryServiceCandidateSearchInputSchema,
   laboratoryServiceCandidateSearchSchema,
   laboratoryServicePublicationJobSchema,
   orderHospitalServiceResponseSchema,
@@ -733,7 +734,7 @@ const operationDefinitions = [
       path: '/api/his/v1/admin/laboratory-services/candidates',
     },
     id: 'admin.laboratory-services.candidates.search',
-    input: referenceCatalogSearchInputSchema,
+    input: laboratoryServiceCandidateSearchInputSchema,
     mode: 'query',
     output: laboratoryServiceCandidateSearchSchema,
     requirements: {
@@ -742,8 +743,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['administrator'],
-    summary: 'Search orderable laboratory Reference candidates and publication state',
-    version: 1,
+    summary: 'Search laboratory publication candidates by source and panel status',
+    version: 2,
   },
   {
     cliPath: ['admin', 'laboratory-services', 'publish'],
@@ -761,7 +762,7 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['administrator'],
-    summary: 'Queue one bounded Laboratory Service enrichment and publication batch',
+    summary: 'Queue one bounded Laboratory Service publication batch',
     version: 1,
   },
   {

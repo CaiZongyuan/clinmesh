@@ -151,6 +151,33 @@ describe('Laboratory Service Publisher HTTP contract', () => {
         status: 'active',
         system: 'http://loinc.org',
         version: '2.83',
+      }, {
+        code: '0100101A',
+        display: '白细胞计数',
+        domain: 'laboratory',
+        id: 'wst-886:2026:0100101A',
+        sourceLocator: 'synthetic:laboratory-cn:test:0100101A',
+        status: 'active',
+        system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026',
+        version: '2026',
+      }, {
+        code: '0100201A',
+        display: '红细胞计数',
+        domain: 'laboratory',
+        id: 'wst-886:2026:0100201A',
+        sourceLocator: 'synthetic:laboratory-cn:test:0100201A',
+        status: 'active',
+        system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026',
+        version: '2026',
+      }, {
+        code: 'CN-LAB-CBC',
+        display: '合成血常规',
+        domain: 'laboratory',
+        id: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+        sourceLocator: 'synthetic:laboratory-cn:panel:CN-LAB-CBC',
+        status: 'active',
+        system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn',
+        version: '2026-09-01',
       }],
       laboratoryDefinitions: [{
         classCode: 'PANEL.HEM',
@@ -204,6 +231,92 @@ describe('Laboratory Service Publisher HTTP contract', () => {
         sourceLocator: 'synthetic:definition:94500-6',
         system: 'Urine',
         timeAspect: 'Pt',
+      }, {
+        adultReferenceRules: [{
+          high: 9.5,
+          low: 3.5,
+          notes: '成人静脉血',
+          referenceKind: 'range',
+          sex: 'all',
+          simulationHigh: 9.5,
+          simulationLow: 3.5,
+          sourceLocation: '表 1',
+          sourceStandard: 'WS/T 405-2012',
+          sourceType: 'national-standard',
+          sourceVersion: '2012',
+        }],
+        alternateCodings: [{ code: '6690-2', system: 'http://loinc.org', version: '2.83' }],
+        analyte: '白细胞(数量)',
+        category: '血细胞分析',
+        conceptId: 'wst-886:2026:0100101A',
+        datasetReleaseId: 'laboratory-cn@2026-09-01.r1',
+        healthyStrategy: 'uniform',
+        kind: 'laboratory-cn-test',
+        precision: 1,
+        resultKind: 'quantity',
+        scale: '定量',
+        sourceLocator: 'synthetic:laboratory-cn:test:0100101A',
+        sourceVersion: '2026-09-01',
+        specimen: '全血',
+        unit: {
+          code: '10*9/L',
+          display: '×10^9/L',
+          system: 'http://unitsofmeasure.org',
+        },
+      }, {
+        adultReferenceRules: [{
+          high: 5.8,
+          low: 4.3,
+          notes: '成年男性静脉血',
+          referenceKind: 'range',
+          sex: 'male',
+          simulationHigh: 5.8,
+          simulationLow: 4.3,
+          sourceLocation: '表 1',
+          sourceStandard: 'WS/T 405-2012',
+          sourceType: 'national-standard',
+          sourceVersion: '2012',
+        }, {
+          high: 5.1,
+          low: 3.8,
+          notes: '成年女性静脉血',
+          referenceKind: 'range',
+          sex: 'female',
+          simulationHigh: 5.1,
+          simulationLow: 3.8,
+          sourceLocation: '表 1',
+          sourceStandard: 'WS/T 405-2012',
+          sourceType: 'national-standard',
+          sourceVersion: '2012',
+        }],
+        alternateCodings: [{ code: '789-8', system: 'http://loinc.org', version: '2.83' }],
+        analyte: '红细胞(数量)',
+        category: '血细胞分析',
+        conceptId: 'wst-886:2026:0100201A',
+        datasetReleaseId: 'laboratory-cn@2026-09-01.r1',
+        healthyStrategy: 'uniform',
+        kind: 'laboratory-cn-test',
+        precision: 1,
+        resultKind: 'quantity',
+        scale: '定量',
+        sourceLocator: 'synthetic:laboratory-cn:test:0100201A',
+        sourceVersion: '2026-09-01',
+        specimen: '全血',
+        unit: {
+          code: '10*12/L',
+          display: '×10^12/L',
+          system: 'http://unitsofmeasure.org',
+        },
+      }, {
+        conceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+        datasetReleaseId: 'laboratory-cn@2026-09-01.r1',
+        kind: 'laboratory-cn-panel',
+        notes: '合成多叶子 panel',
+        sourceLocation: 'fixture/panel/1',
+        sourceLocator: 'synthetic:laboratory-cn:panel:CN-LAB-CBC',
+        sourceType: 'project-authored',
+        sourceVersion: '2026-09-01',
+        specimen: '全血',
       }],
       laboratoryPanelMembers: [{
         memberConceptId: 'loinc:synthetic:6690-2',
@@ -211,6 +324,18 @@ describe('Laboratory Service Publisher HTTP contract', () => {
         panelConceptId: 'loinc:synthetic:58410-2',
         relationship: 'contains',
         sourceLocator: 'synthetic:panel:58410-2:6690-2',
+      }, {
+        memberConceptId: 'wst-886:2026:0100101A',
+        memberOrder: 1,
+        panelConceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+        relationship: 'contains',
+        sourceLocator: 'synthetic:laboratory-cn:panel:CN-LAB-CBC:1',
+      }, {
+        memberConceptId: 'wst-886:2026:0100201A',
+        memberOrder: 2,
+        panelConceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+        relationship: 'contains',
+        sourceLocator: 'synthetic:laboratory-cn:panel:CN-LAB-CBC:2',
       }],
       laboratorySpecimens: [{
         conceptId: 'loinc:synthetic:58410-2',
@@ -360,9 +485,169 @@ describe('Laboratory Service Publisher HTTP contract', () => {
         { headers: { cookie: administratorCookie } },
       )).json())
     )))
-    expect(candidatePages.map(page => page.total)).toEqual([3, 3])
+    expect(candidatePages.map(page => page.total)).toEqual([4, 4])
     expect(new Set(candidatePages.flatMap(page => page.items.map(item => item.concept.id))).size)
       .toBe(2)
+  })
+
+  it('filters laboratory-cn panel candidates and exposes their publication provenance', async () => {
+    const { administratorCookie, runtime } = await createRuntime()
+    const response = await runtime.app.request(
+      '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20'
+        + '&sourceDataset=laboratory-cn&panelOnly=true',
+      { headers: { cookie: administratorCookie } },
+    )
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      items: [{
+        adultApplicability: {
+          minimumAgeYears: 18,
+          patientSexes: ['female', 'male'],
+        },
+        concept: {
+          code: 'CN-LAB-CBC',
+          id: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+        },
+        memberCount: 2,
+        referenceSources: [{
+          sourceStandard: 'WS/T 405-2012',
+          sourceType: 'national-standard',
+          sourceVersion: '2012',
+        }],
+        sourceDataset: {
+          datasetId: 'laboratory-cn',
+          releaseId: 'laboratory-cn@2026-09-01.r1',
+        },
+        specimen: '全血',
+      }],
+      total: 1,
+    })
+  })
+
+  it('publishes a laboratory-cn panel deterministically without an AI provider', async () => {
+    const { administratorCookie, runtime } = await createRuntime()
+    const response = await runtime.app.request(
+      '/api/his/v1/admin/laboratory-services/actions/publish',
+      {
+        body: JSON.stringify({
+          input: {
+            entries: [{
+              conceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+              expectedVersion: 0,
+            }],
+          },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: administratorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(response.status).toBe(200)
+    const jobId = publishLaboratoryServicesResponseSchema.parse(await response.json()).data.jobId
+    await runtime.dispatchLaboratoryServicePublicationJobs()
+
+    expect(laboratoryServicePublicationJobSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/admin/laboratory-services/jobs/${jobId}`,
+      { headers: { cookie: administratorCookie } },
+    )).json())).toMatchObject({
+      publishedServiceIds: expect.arrayContaining([
+        expect.stringMatching(/^hospital-laboratory-service-/),
+      ]),
+      status: 'succeeded',
+    })
+    const rows = runtime.database.driver.prepare(`
+      SELECT service_id, config_json FROM hospital_service_catalog
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND json_extract(config_json, '$.laboratoryService.sourceDataset.datasetId') = 'laboratory-cn'
+      ORDER BY json_extract(config_json, '$.laboratoryService.doctorOrderable') DESC, service_id
+    `).all() as Array<{ config_json: string; service_id: string }>
+    expect(rows).toHaveLength(3)
+    const rootService = laboratoryServiceSnapshotSchema.parse(
+      JSON.parse(rows[0]!.config_json).laboratoryService,
+    )
+    expect(rootService).toMatchObject({
+      componentServiceIds: expect.arrayContaining([rows[1]!.service_id, rows[2]!.service_id]),
+      doctorOrderable: true,
+      nameZh: '合成血常规',
+      priceFen: 0,
+      publicationPolicyVersion: 'clinmesh-laboratory-defaults-v1',
+      reportDefinition: {
+        conclusionTemplate: '本报告为 ClinMesh 合成检验结果，仅用于仿真。',
+        results: [
+          expect.objectContaining({
+            adultReferenceRules: [expect.objectContaining({ sex: 'all' })],
+            alternateCodings: [{ code: '6690-2', system: 'http://loinc.org', version: '2.83' }],
+            healthyStrategy: 'uniform',
+            precision: 1,
+          }),
+          expect.objectContaining({
+            adultReferenceRules: [
+              expect.objectContaining({ sex: 'male' }),
+              expect.objectContaining({ sex: 'female' }),
+            ],
+          }),
+        ],
+      },
+      sourceDataset: {
+        datasetId: 'laboratory-cn',
+        releaseId: 'laboratory-cn@2026-09-01.r1',
+      },
+      tatMinutes: 180,
+    })
+    expect(rootService.reportDefinition.results.map(result => result.referenceConcept.code))
+      .toEqual(['0100101A', '0100201A'])
+
+    const republishCandidates = laboratoryServiceCandidateSearchSchema.parse(
+      await (await runtime.app.request(
+        '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20'
+          + '&sourceDataset=laboratory-cn&panelOnly=true',
+        { headers: { cookie: administratorCookie } },
+      )).json(),
+    )
+    expect(republishCandidates.items[0]).toMatchObject({
+      publishedServiceId: rootService.id,
+      status: 'published',
+      version: 1,
+    })
+    const republishResponse = await runtime.app.request(
+      '/api/his/v1/admin/laboratory-services/actions/publish',
+      {
+        body: JSON.stringify({
+          input: {
+            entries: [{
+              conceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+              expectedVersion: 1,
+            }],
+          },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: administratorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(republishResponse.status).toBe(200)
+    await runtime.dispatchLaboratoryServicePublicationJobs()
+    const republishedRows = runtime.database.driver.prepare(`
+      SELECT service_id, version FROM hospital_service_catalog
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND json_extract(config_json, '$.laboratoryService.sourceDataset.datasetId') = 'laboratory-cn'
+      ORDER BY service_id
+    `).all() as Array<{ service_id: string; version: number }>
+    expect(republishedRows).toHaveLength(3)
+    expect(republishedRows.find(row => row.service_id === rootService.id)).toMatchObject({
+      service_id: rootService.id,
+      version: 2,
+    })
+
   })
 
   it('publishes an enriched panel atomically and exposes only its orderable root to doctors', async () => {
@@ -370,7 +655,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     const { administratorCookie, doctorCookie, runtime } = await createRuntime(provider)
 
     const candidatesResponse = await runtime.app.request(
-      '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20&query=%E8%A1%80%E5%B8%B8',
+      '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20&query=58410-2',
       { headers: { cookie: administratorCookie } },
     )
     if (candidatesResponse.status !== 200) {
@@ -712,7 +997,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       status: 'failed',
     })
     expect(laboratoryServiceCandidateSearchSchema.parse(await (await runtime.app.request(
-      '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20&query=%E8%A1%80%E5%B8%B8',
+      '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20&query=58410-2',
       { headers: { cookie: administratorCookie } },
     )).json())).toMatchObject({
       items: [{

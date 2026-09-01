@@ -43,8 +43,8 @@ describe('clinmesh operations', () => {
       risk: 'read',
       roles: ['administrator'],
       skill: 'clinmesh-administrator',
-      summary: 'Search orderable laboratory Reference candidates and publication state',
-      version: 1,
+      summary: 'Search laboratory publication candidates by source and panel status',
+      version: 2,
     })
   })
 

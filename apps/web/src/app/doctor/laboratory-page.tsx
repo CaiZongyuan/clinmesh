@@ -33,7 +33,7 @@ import {
 } from 'lucide-react'
 import { useMemo, useState, type FormEvent } from 'react'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
-import { formatFen } from '../workspace-format.ts'
+import { formatLaboratoryPrice } from '../workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import {
@@ -151,7 +151,7 @@ export function LaboratoryPage({
 }): React.JSX.Element {
   const firstVisitDraft = detail.drafts?.firstVisit
   const laboratoryItems = laboratoryCatalog.map(item => ({
-    label: `${locale === 'zh-CN' ? item.nameZh : item.nameEn} · ${formatFen(item.priceFen ?? 0, locale)}`,
+    label: `${locale === 'zh-CN' ? item.nameZh : item.nameEn} · ${formatLaboratoryPrice(item.priceFen ?? 0, locale)}`,
     value: item.id,
   }))
   const indicationItems = laboratoryCatalog

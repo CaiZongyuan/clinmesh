@@ -1,0 +1,61 @@
+{
+  "cli": {
+    "package": "cn-health",
+    "version": "0.5.0"
+  },
+  "compositeRelease": {
+    "createdAt": "2026-09-02T00:00:00.000Z",
+    "releaseId": "clinmesh-cn-health-2026-09-02.r1",
+    "schemaVersion": "1"
+  },
+  "datasets": [
+    {
+      "datasetId": "nhc-icd10-clinical",
+      "datasetSchemaVersion": 1,
+      "licenseId": "LicenseRef-cn-health-source-terms",
+      "manifestSha256": "75702c6aec00dc5b869babe176d67d13024d10996b501f8f65bae61803b15e39",
+      "publishedAt": "2022-01-01",
+      "releaseId": "nhc-icd10-clinical@2022.r4",
+      "sourceId": "cn-health-nhc-icd10-clinical",
+      "sourceUrl": "https://raw.githubusercontent.com/CaiZongyuan/cn-health-data/main/distribution/releases/nhc-icd10-clinical/2022.r4/manifest.json"
+    },
+    {
+      "datasetId": "nhsa-drugs",
+      "datasetSchemaVersion": 1,
+      "licenseId": "LicenseRef-cn-health-source-terms",
+      "manifestSha256": "6d1220df9c86b164f61dcea74ea4d742acea6d9cd706d8f93db54e9a2fc10f49",
+      "publishedAt": "2026-01-09",
+      "releaseId": "nhsa-drugs@2026-01-09.r4",
+      "sourceId": "cn-health-nhsa-drugs",
+      "sourceUrl": "https://raw.githubusercontent.com/CaiZongyuan/cn-health-data/main/distribution/releases/nhsa-drugs/2026-01-09.r4/manifest.json"
+    },
+    {
+      "datasetId": "loinc-zh-cn",
+      "datasetSchemaVersion": 2,
+      "licenseId": "LOINC-5.8",
+      "manifestSha256": "801a5eb75f59db4d1a4cefe5d539a852d3f0c94110d2369b0c5ef6bd18753f8c",
+      "publishedAt": "2026-09-01",
+      "releaseId": "loinc-zh-cn@2.83.r2",
+      "sourceId": "cn-health-loinc-zh-cn",
+      "sourceUrl": "https://raw.githubusercontent.com/CaiZongyuan/cn-health-data/main/distribution/releases/loinc-zh-cn/2.83.r2/manifest.json"
+    },
+    {
+      "datasetId": "laboratory-cn",
+      "datasetSchemaVersion": 2,
+      "licenseId": "LicenseRef-cn-health-source-terms",
+      "manifestSha256": "bf1ec69b38513288b449f39dff383a0b2887cbd427ce267e16d874b71d0cbe14",
+      "publishedAt": "2026-09-01",
+      "releaseId": "laboratory-cn@2026-09-01.r1",
+      "sourceId": "cn-health-laboratory-cn",
+      "sourceUrl": "https://raw.githubusercontent.com/CaiZongyuan/cn-health-data/main/distribution/releases/laboratory-cn/2026-09-01.r1/manifest.json"
+    }
+  ],
+  "registry": {
+    "keyId": "39a4b92d69269839",
+    "publicKeyHex": "7c22552bb3de668a140c014a74892514e83e5f9d761bc5d76aa4aa52985e2925",
+    "publicKeySha256": "39a4b92d692698391907f26ab461b3c71f3379bcd4c9a14743b941ed3ff5a81e",
+    "url": "https://raw.githubusercontent.com/CaiZongyuan/cn-health-data/main/distribution/registry.json"
+  },
+  "retrievedAt": "2026-09-02T00:00:00.000Z",
+  "schemaVersion": 1
+}

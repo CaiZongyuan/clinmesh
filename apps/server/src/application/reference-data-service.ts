@@ -50,7 +50,13 @@ export interface ReferenceDataReader {
   ): { items: ReferenceConcept[]; total: number }
   searchLaboratoryRecords?(
     releaseId: string,
-    input: { page: number; pageSize: number; query?: string },
+    input: {
+      page: number
+      pageSize: number
+      panelOnly?: boolean
+      query?: string
+      sourceDataset?: 'laboratory-cn' | 'loinc-zh-cn'
+    },
   ): { items: ReferenceLaboratoryRecord[]; total: number }
   searchMedicationProducts?(
     releaseId: string,
@@ -235,7 +241,13 @@ export class ReferenceDataService {
 
   searchLaboratoryCandidates(
     context: ActorContext,
-    input: { page: number; pageSize: number; query?: string },
+    input: {
+      page: number
+      pageSize: number
+      panelOnly?: boolean
+      query?: string
+      sourceDataset?: 'laboratory-cn' | 'loinc-zh-cn'
+    },
   ) {
     if (context.roleCode !== 'administrator') {
       throw new ReferenceDataError(
