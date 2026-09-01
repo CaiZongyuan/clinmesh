@@ -6,6 +6,7 @@ import {
   listHisOperations,
   matchHisOperation,
 } from '@clinmesh/contracts/his-operations'
+import { createAgentCapabilityGrantInputSchema } from '@clinmesh/contracts/agent'
 
 const clinicalDocumentOperationIds = {
   draftSet: `encounter.clinical-${'document'}.draft.set`,
@@ -192,13 +193,18 @@ describe('HIS operation catalog', () => {
       { id: 'encounter.completion.preview', mode: 'preview', risk: 'read', roles: ['outpatient-doctor'] },
       { id: 'encounter.complete', mode: 'command', risk: 'high-risk-write', roles: ['outpatient-doctor'] },
     ])
+    expect(getHisOperation('doctor.completed-cases.list').input.parse({
+      diagnosisCatalogItemId: 'diagnosis:hypertension',
+      page: 1,
+      pageSize: 20,
+    })).toMatchObject({ diagnosisCatalogItemId: 'diagnosis:hypertension' })
   })
 
   it('publishes the case-scoped laboratory catalog with result-generation capability', () => {
     const operation = getHisOperation('doctor.case.laboratory-catalog.search')
     expect(operation).toMatchObject({
       cliPath: ['doctor', 'case', 'laboratory-catalog', 'search'],
-      handlerOwner: 'InvestigationService',
+      handlerOwner: 'WorkflowService',
       http: {
         method: 'GET',
         path: '/api/his/v1/doctor/cases/:caseId/reference-catalogs/laboratory',
@@ -238,6 +244,15 @@ describe('HIS operation catalog', () => {
         resultGeneration: { source: 'synthea-exact', supported: true },
       }],
     })
+  })
+
+  it('rejects unknown operation IDs at the Agent Grant contract boundary', () => {
+    expect(createAgentCapabilityGrantInputSchema.safeParse({
+      agentClientId: '11111111-1111-4111-8111-111111111111',
+      operationIds: ['missing.operation'],
+      practitionerRoleId: 'practitioner-role-outpatient-doctor',
+      ttlSeconds: 3_600,
+    }).success).toBe(false)
   })
 
   it('publishes only the independent diagnosis draft and confirmation lifecycle', () => {

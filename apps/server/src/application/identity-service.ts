@@ -9,6 +9,7 @@ import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import * as authSchema from '../infrastructure/auth/schema.ts'
 import {
   getHisOperation,
+  hisOperationIdSchema,
   listHisOperations,
   matchHisOperation,
 } from '@clinmesh/contracts/his-operations'
@@ -115,11 +116,11 @@ const agentGrantRowSchema = z.object({
   epoch: z.string().min(1),
   expires_at: z.iso.datetime({ offset: true }),
   grant_id: z.uuid(),
-  operation_ids_json: z.string(),
   policy_version: z.number().int().positive(),
   practitioner_role_id: z.string().min(1),
   revoked_at: z.iso.datetime({ offset: true }).nullable(),
   run_status: z.string().nullable(),
+  workspace_id: z.string().min(1),
   workspace_policy_version: z.number().int().positive(),
 })
 
@@ -384,25 +385,37 @@ export class IdentityService {
       const expiresAt = new Date(this.#now().getTime() + input.ttlSeconds * 1_000).toISOString()
       this.#database.driver.prepare(`
         INSERT INTO agent_capability_grant (
-          grant_id, token_hash, agent_client_id, workspace_id, epoch,
-          scenario_run_id, practitioner_role_id, operation_ids_json,
+          workspace_id, epoch, grant_id, token_hash, agent_client_id,
+          scenario_run_id, practitioner_role_id,
           catalog_hash, policy_version, expires_at, created_by_actor_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
+        session.actor.workspaceId,
+        session.actor.epoch,
         grantId,
         createHash('sha256').update(token).digest('hex'),
         input.agentClientId,
-        session.actor.workspaceId,
-        session.actor.epoch,
         session.actor.scenarioRunId,
         input.practitionerRoleId,
-        JSON.stringify(operationIds),
         this.#catalogHash,
         workspace.policy_version,
         expiresAt,
         session.actor.actorId,
         createdAt,
       )
+      const insertOperation = this.#database.driver.prepare(`
+        INSERT INTO agent_grant_operation (
+          workspace_id, epoch, grant_id, operation_id
+        ) VALUES (?, ?, ?, ?)
+      `)
+      for (const operationId of operationIds) {
+        insertOperation.run(
+          session.actor.workspaceId,
+          session.actor.epoch,
+          grantId,
+          operationId,
+        )
+      }
       return {
         data: {
           agentClientId: input.agentClientId,
@@ -421,7 +434,7 @@ export class IdentityService {
     const session = await this.#administratorSession(headers, false)
     const rows = z.array(agentGrantRowSchema).parse(this.#database.driver.prepare(`
       SELECT grant.agent_client_id, grant.catalog_hash, grant.created_at,
-        grant.epoch, grant.expires_at, grant.grant_id, grant.operation_ids_json,
+        grant.workspace_id, grant.epoch, grant.expires_at, grant.grant_id,
         grant.policy_version, grant.practitioner_role_id, grant.revoked_at,
         client.status AS client_status, workspace.active_epoch,
         workspace.policy_version AS workspace_policy_version,
@@ -445,7 +458,7 @@ export class IdentityService {
     const session = await this.#administratorSession(headers, false)
     const row = agentGrantRowSchema.optional().parse(this.#database.driver.prepare(`
       SELECT grant.agent_client_id, grant.catalog_hash, grant.created_at,
-        grant.epoch, grant.expires_at, grant.grant_id, grant.operation_ids_json,
+        grant.workspace_id, grant.epoch, grant.expires_at, grant.grant_id,
         grant.policy_version, grant.practitioner_role_id, grant.revoked_at,
         client.status AS client_status, workspace.active_epoch,
         workspace.policy_version AS workspace_policy_version,
@@ -476,8 +489,8 @@ export class IdentityService {
       catalog_hash: z.string().length(64),
       epoch: z.string().min(1),
       expires_at: z.iso.datetime({ offset: true }),
+      grant_id: z.uuid(),
       location_id: z.string().min(1),
-      operation_ids_json: z.string(),
       organization_id: z.string().min(1),
       policy_version: z.number().int().positive(),
       practitioner_id: z.string().min(1),
@@ -489,8 +502,8 @@ export class IdentityService {
       workspace_policy_version: z.number().int().positive(),
     }).optional().parse(this.#database.driver.prepare(`
       SELECT client.actor_id, client.status,
-        grant.workspace_id, grant.epoch, grant.scenario_run_id,
-        grant.practitioner_role_id, grant.operation_ids_json,
+        grant.workspace_id, grant.epoch, grant.grant_id, grant.scenario_run_id,
+        grant.practitioner_role_id,
         grant.catalog_hash, grant.policy_version, grant.expires_at,
         workspace.active_epoch, workspace.policy_version AS workspace_policy_version,
         role.practitioner_id, role.role_code, role.organization_id, role.location_id
@@ -521,8 +534,11 @@ export class IdentityService {
     ) {
       throw new IdentityError('AGENT_TOKEN_INVALID', 'The Agent Capability Grant is invalid')
     }
-    const operationIds = z.array(z.string().min(1)).parse(JSON.parse(row.operation_ids_json) as unknown)
-    if (!operationIds.includes(operationId)) {
+    const allowed = this.#database.driver.prepare(`
+      SELECT 1 FROM agent_grant_operation
+      WHERE workspace_id = ? AND epoch = ? AND grant_id = ? AND operation_id = ?
+    `).get(row.workspace_id, row.epoch, row.grant_id, operationId)
+    if (allowed === undefined) {
       throw new IdentityError('OPERATION_NOT_ALLOWED', `Operation ${operationId} is not allowed by this Agent Grant`)
     }
     const operation = getHisOperation(operationId)
@@ -599,11 +615,12 @@ export class IdentityService {
       expires_at: z.iso.datetime({ offset: true }),
       grant_id: z.uuid(),
       name: z.string().min(1),
-      operation_ids_json: z.string(),
+      epoch: z.string().min(1),
       policy_version: z.number().int().positive(),
+      workspace_id: z.string().min(1),
     }).optional().parse(this.#database.driver.prepare(`
-      SELECT grant.grant_id, grant.agent_client_id, grant.expires_at,
-        grant.operation_ids_json, grant.policy_version, client.name
+      SELECT grant.workspace_id, grant.epoch, grant.grant_id,
+        grant.agent_client_id, grant.expires_at, grant.policy_version, client.name
       FROM agent_capability_grant AS grant
       JOIN agent_client AS client
         ON client.agent_client_id = grant.agent_client_id
@@ -614,8 +631,11 @@ export class IdentityService {
     if (row === undefined) {
       throw new IdentityError('AGENT_TOKEN_INVALID', 'The Agent Capability Grant is invalid')
     }
-    const operationIds = z.array(z.string().min(1)).min(1)
-      .parse(JSON.parse(row.operation_ids_json) as unknown)
+    const operationIds = this.#agentGrantOperationIds(
+      row.workspace_id,
+      row.epoch,
+      row.grant_id,
+    )
     const actor = await this.resolveActorContext(headers, operationIds[0]!)
     return agentCapabilityContextSchema.parse({
       actor,
@@ -849,6 +869,17 @@ export class IdentityService {
     })
   }
 
+  #agentGrantOperationIds(workspaceId: string, epoch: string, grantId: string): string[] {
+    return z.array(z.object({ operation_id: hisOperationIdSchema }))
+      .min(1)
+      .parse(this.#database.driver.prepare(`
+        SELECT operation_id FROM agent_grant_operation
+        WHERE workspace_id = ? AND epoch = ? AND grant_id = ?
+        ORDER BY operation_id
+      `).all(workspaceId, epoch, grantId))
+      .map(row => row.operation_id)
+  }
+
   #agentGrant(row: AgentGrantRow) {
     let status: 'active' | 'expired' | 'invalidated' | 'revoked' = 'active'
     if (row.revoked_at !== null) {
@@ -869,9 +900,7 @@ export class IdentityService {
       createdAt: row.created_at,
       expiresAt: row.expires_at,
       grantId: row.grant_id,
-      operationIds: z.array(z.string().min(1)).min(1).parse(
-        JSON.parse(row.operation_ids_json) as unknown,
-      ),
+      operationIds: this.#agentGrantOperationIds(row.workspace_id, row.epoch, row.grant_id),
       practitionerRoleId: row.practitioner_role_id,
       revokedAt: row.revoked_at,
       status,

@@ -68,6 +68,7 @@ import {
 } from './his.ts'
 import {
   referenceDiagnosisCatalogSearchSchema,
+  referenceDataItemIdSchema,
   referenceLaboratoryCatalogSearchSchema,
   referenceMedicationCatalogSearchSchema,
 } from './reference-data.ts'
@@ -82,7 +83,6 @@ export const hisOperationIdentitySchema = z.enum(['agent', 'human'])
 export const hisOperationHandlerOwnerSchema = z.enum([
   'FhirCapabilities',
   'FhirRepository',
-  'InvestigationService',
   'ReferenceDataService',
   'SyntheticCaseVisitService',
   'WorkflowService',
@@ -236,7 +236,7 @@ const encounterIdInputSchema = z.object({
 const doctorCompletedCasesInputSchema = paginationInputSchema.extend({
   completedFrom: z.iso.date().optional(),
   completedTo: z.iso.date().optional(),
-  diagnosisCatalogItemId: z.string().regex(/^[A-Za-z0-9.-]{1,64}$/).optional(),
+  diagnosisCatalogItemId: referenceDataItemIdSchema.optional(),
   patientId: z.string().regex(/^[A-Za-z0-9.-]{1,64}$/).optional(),
 }).refine(value => (
   value.completedFrom === undefined
@@ -1807,7 +1807,6 @@ function handlerOwnerFor(
   if (operation.http.path.startsWith('/api/his/v1/reference-catalogs/')) {
     return 'ReferenceDataService'
   }
-  if (operation.id === 'doctor.case.laboratory-catalog.search') return 'InvestigationService'
   if (operation.id === 'registration.synthetic-case.start') return 'SyntheticCaseVisitService'
   return 'WorkflowService'
 }
@@ -1902,6 +1901,10 @@ export const excludedHisRoutes = [
 ] as const satisfies readonly ExcludedHisRoute[]
 
 const operationsById = new Map(hisOperationCatalog.map(operation => [operation.id, operation]))
+export const hisOperationIdSchema = z.string().refine(
+  id => operationsById.has(id),
+  { message: 'Unknown HIS operation ID' },
+)
 const operationRoutes = hisOperationCatalog.map(operation => ({
   method: operation.http.method,
   operation,

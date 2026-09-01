@@ -21,6 +21,7 @@ import {
   acknowledgeLaboratoryReportResponseSchema,
   type ApiConflict,
   askConsultationQuestionResponseSchema,
+  caseLaboratoryCatalogSearchSchema,
   laboratoryRequestActionResponseSchema,
   type ClinicalDocumentContent,
   clinicalDocumentContentSchema,
@@ -3063,6 +3064,34 @@ export class WorkflowService {
       }
       throw error
     }
+  }
+
+  caseLaboratoryCatalog(
+    context: ActorContext,
+    caseId: string,
+    input: { page: number; pageSize: number; query?: string },
+  ) {
+    this.doctorCaseDetail(context, caseId)
+    if (this.#referenceData === undefined || this.#investigation === undefined) {
+      throw new WorkflowError('CATALOG_CONFLICT', 'The case laboratory catalog is unavailable')
+    }
+    const investigation = this.#investigation
+    const result = this.#referenceData.searchLaboratory(context, input)
+    return caseLaboratoryCatalogSearchSchema.parse({
+      ...result,
+      items: result.items.map((item) => {
+        const { domain: _domain, status: _status, ...concept } = item
+        return {
+          ...item,
+          resultGeneration: investigation.generationCapabilityForCase(
+            context.workspaceId,
+            context.epoch,
+            caseId,
+            concept,
+          ),
+        }
+      }),
+    })
   }
 
   doctorCaseDetail(context: ActorContext, caseId: string) {

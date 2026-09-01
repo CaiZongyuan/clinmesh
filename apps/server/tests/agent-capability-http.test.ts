@@ -57,6 +57,38 @@ async function parseApiError(response: Response) {
 }
 
 describe('Agent Capability Grant HTTP authentication', () => {
+  it('rejects an unknown operation before creating a Grant', async () => {
+    const { password, runtime } = await createRuntime()
+    const cookie = await signIn(runtime, password)
+    const headers = {
+      'content-type': 'application/json',
+      cookie,
+      'idempotency-key': 'agent-unknown-operation-1',
+      origin: 'http://localhost',
+    }
+    const client = agentClientSchema.parse(await (await runtime.app.request('/api/agent/v1/clients', {
+      body: JSON.stringify({ name: 'Unknown operation test agent' }),
+      headers,
+      method: 'POST',
+    })).json())
+
+    const response = await runtime.app.request('/api/agent/v1/grants', {
+      body: JSON.stringify({
+        agentClientId: client.agentClientId,
+        operationIds: ['missing.operation'],
+        practitionerRoleId: 'practitioner-role-outpatient-doctor',
+        ttlSeconds: 3_600,
+      }),
+      headers,
+      method: 'POST',
+    })
+
+    expect(response.status).toBe(400)
+    expect(await parseApiError(response)).toMatchObject({
+      error: { code: 'INVALID_INPUT' },
+    })
+  })
+
   it('requires the selected Acting Practitioner Role to be administrator for Agent control', async () => {
     const { password, runtime } = await createRuntime()
     const cookie = await signIn(runtime, password)
@@ -275,6 +307,24 @@ describe('Agent Capability Grant HTTP authentication', () => {
     ).get(grant.grantId) as { token_hash: string }
     expect(persisted.token_hash).toMatch(/^[a-f0-9]{64}$/)
     expect(persisted.token_hash).not.toContain(grant.token)
+    const grantPrimaryKey = (runtime.database.driver.prepare(
+      'PRAGMA table_info(agent_capability_grant)',
+    ).all() as Array<{ name: string; pk: number }>)
+      .filter(column => column.pk > 0)
+      .toSorted((left, right) => left.pk - right.pk)
+      .map(column => column.name)
+    expect(grantPrimaryKey).toEqual(['workspace_id', 'epoch', 'grant_id'])
+    expect((runtime.database.driver.prepare(
+      'PRAGMA table_info(agent_capability_grant)',
+    ).all() as Array<{ name: string }>).map(column => column.name))
+      .not.toContain('operation_ids_json')
+    expect(runtime.database.driver.prepare(`
+      SELECT operation_id FROM agent_grant_operation
+      WHERE workspace_id = ? AND epoch = ? AND grant_id = ?
+      ORDER BY operation_id
+    `).all('workspace-demo', 'epoch-1', grant.grantId)).toEqual([
+      { operation_id: 'reference.diagnoses.search' },
+    ])
     const persistedReceipt = runtime.database.driver.prepare(`
       SELECT response_json FROM command_receipt
       WHERE operation = 'agent-grant.create' AND idempotency_key = ?

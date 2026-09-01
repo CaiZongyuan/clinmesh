@@ -6,7 +6,6 @@ import {
 } from '@clinmesh/contracts/agent'
 import {
   acknowledgeLaboratoryReportRequestSchema,
-  caseLaboratoryCatalogSearchSchema,
   cancelLaboratoryRequestRequestSchema,
   completeHospitalServiceRequestSchema,
   completeEncounterRequestSchema,
@@ -28,6 +27,7 @@ import {
   signClinicalDocumentRequestSchema,
   withdrawPrescriptionRequestSchema,
 } from '@clinmesh/contracts/his'
+import { referenceDataItemIdSchema } from '@clinmesh/contracts/reference-data'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
@@ -879,7 +879,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         const query = z.object({
           completedFrom: z.iso.date().optional(),
           completedTo: z.iso.date().optional(),
-          diagnosisCatalogItemId: z.string().regex(/^[A-Za-z0-9.-]{1,64}$/).optional(),
+          diagnosisCatalogItemId: referenceDataItemIdSchema.optional(),
           page: z.coerce.number().int().min(1).default(1),
           pageSize: z.coerce.number().int().min(1).max(100).default(20),
           patientId: z.string().regex(/^[A-Za-z0-9.-]{1,64}$/).optional(),
@@ -947,32 +947,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       }
     })
     if (options.investigation !== undefined && options.referenceData !== undefined) {
-      const investigation = options.investigation
-      const referenceData = options.referenceData
       app.get('/api/his/v1/doctor/cases/:caseId/reference-catalogs/laboratory', async (context) => {
         try {
-          const actorContext = await actor(context)
-          const caseId = context.req.param('caseId')
-          workflow.doctorCaseDetail(actorContext, caseId)
-          const result = referenceData.searchLaboratory(
-            actorContext,
+          return context.json(workflow.caseLaboratoryCatalog(
+            await actor(context),
+            context.req.param('caseId'),
             referenceCatalogQuery(context),
-          )
-          return context.json(caseLaboratoryCatalogSearchSchema.parse({
-            ...result,
-            items: result.items.map((item) => {
-              const { domain: _domain, status: _status, ...concept } = item
-              return {
-                ...item,
-                resultGeneration: investigation.generationCapabilityForCase(
-                  actorContext.workspaceId,
-                  actorContext.epoch,
-                  caseId,
-                  concept,
-                ),
-              }
-            }),
-          }))
+          ))
         } catch (error) {
           return apiErrorResponse(context, error)
         }

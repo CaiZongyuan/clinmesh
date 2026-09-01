@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { roleCodeSchema } from './his.ts'
+import { hisOperationIdSchema } from './his-operations.ts'
 
 export const agentClientSchema = z.object({
   actorId: z.string().min(1),
@@ -21,7 +22,7 @@ export const agentCapabilityGrantSchema = z.object({
   agentClientId: z.uuid(),
   expiresAt: z.iso.datetime({ offset: true }),
   grantId: z.uuid(),
-  operationIds: z.array(z.string().min(1)).min(1),
+  operationIds: z.array(hisOperationIdSchema).min(1),
   practitionerRoleId: z.string().min(1),
   token: z.string().regex(/^cma_[a-f0-9]{40}$/),
 }).strict()
@@ -31,7 +32,7 @@ export const agentCapabilityGrantViewSchema = z.object({
   createdAt: z.iso.datetime({ offset: true }),
   expiresAt: z.iso.datetime({ offset: true }),
   grantId: z.uuid(),
-  operationIds: z.array(z.string().min(1)).min(1),
+  operationIds: z.array(hisOperationIdSchema).min(1),
   practitionerRoleId: z.string().min(1),
   revokedAt: z.iso.datetime({ offset: true }).nullable(),
   status: z.enum(['active', 'expired', 'invalidated', 'revoked']),
@@ -43,7 +44,7 @@ export const agentCapabilityGrantListSchema = z.object({
 
 export const createAgentCapabilityGrantInputSchema = z.object({
   agentClientId: z.uuid(),
-  operationIds: z.array(z.string().min(1)).min(1),
+  operationIds: z.array(hisOperationIdSchema).min(1),
   practitionerRoleId: z.string().min(1),
   ttlSeconds: z.number().int().min(60).max(86_400),
 }).strict()
@@ -73,7 +74,7 @@ export const agentCapabilityContextSchema = z.object({
   grant: z.object({
     expiresAt: z.iso.datetime({ offset: true }),
     grantId: z.uuid(),
-    operationIds: z.array(z.string().min(1)).min(1),
+    operationIds: z.array(hisOperationIdSchema).min(1),
     policyVersion: z.number().int().positive(),
   }).strict(),
 }).strict()
