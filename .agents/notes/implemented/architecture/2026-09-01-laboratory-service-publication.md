@@ -6,7 +6,7 @@ Status: implemented
 
 完整 LOINC Reference Release、医院实际开展的 Laboratory Service、医生一次 Clinical Request 和 LIS 执行报告具有不同身份、生命周期和可见性。此前病例级目录直接在全局 Reference Concept 上投影 Investigation Generation Capability，使医生看到“当前病例不可生成”，也允许运行时模型配置决定项目能否开立。`laboratory-cn` 的 18 条精选概念与临时白细胞来源同时承担参考术语、本院目录和模拟器 profile，无法消费 `loinc-zh-cn@2.83.r1` 的完整单位、标本和 panel 关系。
 
-本决策由 [issue #66](https://github.com/CaiZongyuan/clinmesh/issues/66) 实施，并局部取代[医生核心临床业务流](../feature/2026-08-24-doctor-clinical-core-workflow.md)、[医生临床目录选择与草稿确认](../feature/2026-08-31-doctor-clinical-catalog-dialogs.md)和 [Synthea 来源病例与跨 Epoch 重放](./2026-08-30-synthea-case-source-and-replay.md)中的精选数值目录、病例级 capability 与按病例项目永久复用 snapshot 决策。
+本决策由 [issue #66](https://github.com/CaiZongyuan/clinmesh/issues/66) 实施，并局部取代[医生核心临床业务流](../feature/2026-08-24-doctor-clinical-core-workflow.md)、[医生临床目录选择与草稿确认](../feature/2026-08-31-doctor-clinical-catalog-dialogs.md)、[医生草稿自动保存与诊断确认修订](./2026-08-31-doctor-draft-autosave-and-diagnosis-revision.md)和 [Synthea 来源病例与跨 Epoch 重放](./2026-08-30-synthea-case-source-and-replay.md)中的精选数值目录、病例级 capability、永久失败恢复分支与按病例项目永久复用 snapshot 决策。
 
 ## Decision
 
@@ -18,7 +18,7 @@ Reference SQLite 接受既有 Dataset Schema v1 和 `loinc-zh-cn` Schema v2。Sc
 
 医生病例目录只返回 active、doctor-orderable Laboratory Service。选择器展示根 LOINC、报告结构、标本和 TAT，不返回 Case Truth、模型或 generation capability。草稿冻结 Hospital Service、根 Reference coding 和完整 report definition；开立重新校验 service ID 与版本。Reference Concept ID 不能替代 Hospital Service ID。旧 `outpatient_catalog` 单项路径只作为既有兼容调用保留，不在新医生目录公开。
 
-Investigation 按冻结 report definition 的叶子闭包执行。每个叶子先按精确 LOINC coding 读取 Case Truth；完整 panel 全部命中时不调用模型，partial panel 只生成缺失叶子。Agent 输入加入当前正式诊断和已有正式检验，并继续限制 Visible History 与私有证据各 20 项；输出必须保持结果全集、值类型、单位、参考范围和判读一致。outbox 最多自动尝试三次，连续失败后才进入 `generation-failed`，且不创建 Specimen、Observation 或 DiagnosticReport。
+Investigation 按冻结 report definition 的叶子闭包执行。每个叶子先按精确 LOINC coding 读取 Case Truth；完整 panel 全部命中时不调用模型，partial panel 只生成缺失叶子。Agent 输入加入当前正式诊断和已有正式检验，并继续限制 Visible History 与私有证据各 20 项；输出必须保持结果全集、值类型、单位、参考范围和判读一致。outbox 最多自动尝试三次，连续失败后才进入 `generation-failed`，且不创建 Specimen、Observation 或 DiagnosticReport。人工重试不重新解释病例级 generation capability，而是为同一冻结申请开启新的三次尝试窗口。
 
 Investigation Result Snapshot 的唯一键是 `workspace + case + Hospital Service + input/evidence hash`。hash 固定 Case revision、服务/报告版本、申请前正式证据与私有来源输入。同一 request 通过持久 snapshot ID 幂等复用；Reset 后相同初始证据复用旧 snapshot；完成报告或诊断变化后的复查形成新 hash 和新 snapshot。
 

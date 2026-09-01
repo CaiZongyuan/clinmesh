@@ -1014,36 +1014,29 @@ describe('Synthetic Case generation HTTP contract', () => {
     expect(apiErrorSchema.parse(await duplicateIssueResponse.json())).toMatchObject({
       error: { code: 'LABORATORY_REQUEST_DUPLICATE' },
     })
-    const cancelFailedResponse = await runtime.app.request(
-      `/api/his/v1/laboratory-requests/${agentRequest.id}/actions/cancel`,
+    const retryResponse = await runtime.app.request(
+      `/api/his/v1/laboratory-requests/${agentRequest.id}/actions/retry-generation`,
       {
         body: JSON.stringify({
-          expectedVersions: {
-            [`ServiceRequest/${agentRequest.serviceRequestId}`]: failedRequest?.serviceRequestVersion,
-            [`Task/${agentRequest.taskId}`]: failedRequest?.taskVersion,
-          },
-          input: {
-            expectedRequestVersion: failedRequest?.version,
-            reasonCode: 'no-longer-needed',
-          },
+          expectedVersions: { [`Task/${agentRequest.taskId}`]: failedRequest?.taskVersion },
+          input: { expectedRequestVersion: failedRequest?.version },
         }),
         headers: commandHeaders(),
         method: 'POST',
       },
     )
-    expect(cancelFailedResponse.status).toBe(200)
+    expect(retryResponse.status).toBe(200)
     expect(laboratoryRequestActionResponseSchema.parse(
-      await cancelFailedResponse.json(),
-    ).data.request).toMatchObject({ status: 'cancelled' })
+      await retryResponse.json(),
+    ).data.request).toMatchObject({ status: 'in-progress' })
 
-    const secondAgentRequest = (await issueLaboratory(duplicateDraft.draftVersion)).request
     await runtime.dispatchPending()
     detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
       `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,
       { headers: { cookie: doctorCookie } },
     )).json())
     const agentReported = detail.laboratoryRequests?.requests.find(item => (
-      item.id === secondAgentRequest.id
+      item.id === agentRequest.id
     ))
     expect(agentReported).toMatchObject({
       report: {
@@ -1073,7 +1066,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     await expect(runtime.investigation.resolveForRequest(
       'workspace-demo',
       'epoch-1',
-      secondAgentRequest.id,
+      agentRequest.id,
     )).resolves.toMatchObject({ source: 'investigation-agent' })
     expect(briefProvider.requests).toHaveLength(7)
 
@@ -1084,7 +1077,7 @@ describe('Synthetic Case generation HTTP contract', () => {
           expectedVersions: { [encounterReference]: '3' },
           input: {
             catalogItemId: 'lab-fever-panel',
-            expectedDraftVersion: 6,
+            expectedDraftVersion: duplicateDraft.draftVersion,
             indicationCode: 'clinical-evaluation',
           },
         }),
@@ -1161,7 +1154,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       panelService.nameEn,
       JSON.stringify({ laboratoryService: panelService }),
     )
-    const panelDraft = await saveLaboratoryDraft(panelService.id, 6)
+    const panelDraft = await saveLaboratoryDraft(panelService.id, duplicateDraft.draftVersion)
     const panelRequest = (await issueLaboratory(panelDraft.draftVersion)).request
     await runtime.dispatchPending()
     detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
@@ -1201,7 +1194,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     )).resolves.toMatchObject({ source: 'investigation-agent' })
     expect(briefProvider.requests).toHaveLength(10)
 
-    const repeatPanelDraft = await saveLaboratoryDraft(panelService.id, 8)
+    const repeatPanelDraft = await saveLaboratoryDraft(panelService.id, 7)
     const repeatPanelRequest = (await issueLaboratory(repeatPanelDraft.draftVersion)).request
     await runtime.dispatchPending()
     detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
@@ -1276,7 +1269,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       exactPanelService.nameEn,
       JSON.stringify({ laboratoryService: exactPanelService }),
     )
-    const exactPanelDraft = await saveLaboratoryDraft(exactPanelService.id, 10)
+    const exactPanelDraft = await saveLaboratoryDraft(exactPanelService.id, 9)
     const exactPanelRequest = (await issueLaboratory(exactPanelDraft.draftVersion)).request
     await runtime.dispatchPending()
     detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
@@ -1361,7 +1354,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       codeableService.nameEn,
       JSON.stringify({ laboratoryService: codeableService }),
     )
-    const codeableDraft = await saveLaboratoryDraft(codeableService.id, 12)
+    const codeableDraft = await saveLaboratoryDraft(codeableService.id, 11)
     const codeableRequest = (await issueLaboratory(codeableDraft.draftVersion)).request
     await runtime.dispatchPending()
     detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(

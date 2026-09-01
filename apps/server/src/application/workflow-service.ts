@@ -7755,14 +7755,6 @@ export class WorkflowService {
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory generation cannot be retried')
       }
-      if (request.service_snapshot_json === null) {
-        this.#assertInvestigationGenerationSupported(
-          input.context,
-          request.case_id,
-          request.catalog_item_id,
-          referenceConceptSnapshotSchema.parse(JSON.parse(request.reference_json)),
-        )
-      }
       this.#assertExpectedVersions(input.expectedVersions, [`Task/${request.execution_task_id}`])
       const task = transaction.fhir.read(input.context, 'Task', request.execution_task_id)
       const now = this.#virtualTime(input.context)
