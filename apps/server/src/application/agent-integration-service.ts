@@ -133,7 +133,12 @@ export class AgentIntegrationService {
     const contextId = uuidv7()
     const scopeKey = pageScopeKey(input)
     const snapshot = this.#database.driver.transaction(() => {
-      const resolved = resolveAgentPageContext(this.#database, input.actor, claim)
+      const resolved = resolveAgentPageContext(
+        this.#database,
+        input.actor,
+        input.userAccountId,
+        claim,
+      )
       if (resolved === undefined) throw this.#staleContext()
       const latest = this.#database.driver.prepare(`
         SELECT MAX(client_revision) AS revision
@@ -349,6 +354,7 @@ export class AgentIntegrationService {
     const parsedInput = validateAgentToolInputForContext(
       this.#database,
       context,
+      input.userAccountId,
       definition.operationId,
       request.input,
     )
@@ -453,7 +459,12 @@ export class AgentIntegrationService {
     }
     this.#assertCurrentCaller(context, input.actor, input.userAccountId)
     if (context.dshSessionId !== receipt.dshSessionId) throw this.#callNotPending()
-    const resolved = resolveAgentPageContext(this.#database, input.actor, context.claim)
+    const resolved = resolveAgentPageContext(
+      this.#database,
+      input.actor,
+      input.userAccountId,
+      context.claim,
+    )
     if (
       resolved === undefined
       || !isAgentOperationId(receipt.operationId)

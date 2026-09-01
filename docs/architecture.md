@@ -713,6 +713,8 @@ Claim 和 snapshot 不包含 DOM、Query cache、浏览器存储、任意页面 
 
 `packages/contracts/src/agent.ts` 是 Tool 名称、operation、岗位、view、模式和风险的可执行目录，`agent-tool-input.ts` 拥有每项 operation 的完整输入 schema。每个岗位动态获得不超过 32 个 Tools：通用读取/导航/真实聚焦，加上当前管理员、挂号、分诊、医生、收费或药房页面的窄动作。管理员只能读取 Scenario Run、Provider 可用性和当前 generation job 状态；导航 enum 只包含当前岗位主页和共享设置页。
 
+报告更正 Tool 只在当前账户通过服务端 membership 仍持有 active administrator role 时进入 outpatient-doctor Page Context；普通医生即使面对可更正报告也不会取得该 operation。管理员账户可在 acting-doctor 页面准备更正，Page Context 的当前 Practitioner Role 必须继续匹配最终 Command receipt 与 Audit Event。
+
 | 模式 | 当前行为 |
 | --- | --- |
 | `query` | 读取当前 Page Context、岗位队列或当前受权对象；不返回隐藏真值 |
@@ -844,7 +846,7 @@ Report Acknowledgement 是按报告版本独立保存的领域事实，只能由
 
 医生通过 `GET /api/his/v1/doctor/completed-cases` 查询当前 Practitioner Role 负责且 `Encounter.status=completed`、具有 `actualPeriod.end` 的病例。查询支持 Patient logical ID、完诊业务日期闭区间和诊断目录项筛选，按 `actualPeriod.end` 降序、病例 ID 升序稳定分页。`GET /api/his/v1/doctor/completed-cases/{caseId}` 对未完诊、未分配或属于其他医生的病例统一返回业务冲突，只读取各 owner 的正式事实：Consultation Record、不可变 Clinical Document 修订链、检查申请与报告修订及确认、诊断确认、处方或无需用药结论、Patient 和已完成 Encounter；活动草稿、编辑版本和页面状态不进入病例库合同。
 
-病例库详情的业务时间线由服务端从各 owner 的正式事实和成功草稿删除 Action Trace 组装，按虚拟业务时间升序排列，相同时间依次按主资源引用和事件 kind 排序。活动草稿正文和编辑版本不进入病例库；只有 Effect 引用当前病例 `LaboratoryRequestDraft` 或 `PrescriptionDraft` 的成功删除 trace 进入时间线，以 ActionTrace 为主引用并关联对应 Draft。检查取消以 LaboratoryRequest 为主引用并关联 ServiceRequest 和执行 Task；处方撤回以 PrescriptionWithdrawal 为主引用并关联原 Prescription，因此原始开具与逆向事实分别形成事件。每个事件返回稳定 kind、主资源引用和关联资源引用；Web 只按响应顺序展示，不重新推断事件、当前版本或临床状态。医生工作台以“当前诊疗”和“已完诊病例”页签分隔写入与查询入口；病例库页只提供受控筛选、分页、只读事实展示和受控 owner 导航。详情为每个 Clinical Document 和检查申请返回 `correctionSupported`，为处方返回 `withdrawalSupported`，缺失字段按 `false` 处理；只有能在活动病例读模型中恢复并由现有 Command 执行的结构化病历和独立检查申请标记为可更正，只有当前 Epoch 支持独立用药结论且处方为 signed 或 paid、未发生任何调剂时才标记为可撤回，首期两字段病历与兼容检验事实继续可读但不显示更正导航。病历更正从病例库显式跳转后才显示最新版本修订表单，修订 Command 重新校验当前 Practitioner Role 是该病例的持久责任岗位；报告更正要求当前门诊医生岗位或登录 session 具有 administrator 能力，并使用结构化字段和提交前确认；处方撤回从病例库跳转到活动病例的用药结论区，复用对象预览和显式确认。三个动作都调用各自 owner 的受控 Command，成功后同时失效活动病例与病例库详情查询，使新版本和时间线从服务端正式事实重新读取；完诊成功还会失效病例库列表。任何动作都不能在病例库 DTO 上普通覆盖。
+病例库详情的业务时间线由服务端从各 owner 的正式事实和成功草稿删除 Action Trace 组装，按虚拟业务时间升序排列，相同时间依次按主资源引用和事件 kind 排序。活动草稿正文和编辑版本不进入病例库；只有 Effect 引用当前病例 `LaboratoryRequestDraft` 或 `PrescriptionDraft` 的成功删除 trace 进入时间线，以 ActionTrace 为主引用并关联对应 Draft。检查取消以 LaboratoryRequest 为主引用并关联 ServiceRequest 和执行 Task；处方撤回以 PrescriptionWithdrawal 为主引用并关联原 Prescription，因此原始开具与逆向事实分别形成事件。每个事件返回稳定 kind、主资源引用和关联资源引用；Web 只按响应顺序展示，不重新推断事件、当前版本或临床状态。医生工作台以“当前诊疗”和“已完诊病例”页签分隔写入与查询入口；病例库页只提供受控筛选、分页、只读事实展示和受控 owner 导航。详情为每个 Clinical Document 和检查申请返回 `correctionSupported`，为处方返回 `withdrawalSupported`，缺失字段按 `false` 处理；只有能在活动病例读模型中恢复并由现有 Command 执行的结构化病历和独立检查申请标记为可更正，只有当前 Epoch 支持独立用药结论且处方为 signed 或 paid、未发生任何调剂时才标记为可撤回，首期两字段病历与兼容检验事实继续可读但不显示更正导航。病历更正从病例库显式跳转后才显示最新版本修订表单，修订 Command 重新校验当前 Practitioner Role 是该病例的持久责任岗位；报告更正要求登录 session 具有 administrator 能力，可从当前 acting-doctor 页面使用结构化字段和提交前确认发起；处方撤回从病例库跳转到活动病例的用药结论区，复用对象预览和显式确认。三个动作都调用各自 owner 的受控 Command，成功后同时失效活动病例与病例库详情查询，使新版本和时间线从服务端正式事实重新读取；完诊成功还会失效病例库列表。任何动作都不能在病例库 DTO 上普通覆盖。
 
 医生工作台对未开具草稿删除、未受理检查取消、未调剂处方撤回、病历修订和报告更正统一采用对象预览、显式确认和结果反馈。页面只在 owner 读模型声明的可逆窗口显示入口，确认时仍提交当前 expected version 与新的幂等键；服务端独立重新校验岗位、责任、状态和资源版本。成功 Command 都生成 AuditEvent；病历和报告更正还创建新的正式资源、Provenance 与替代关系，原事实保持可读。冲突响应说明当前状态或版本，包括空草稿、已受理或执行中的检查、已撤回或已开始调剂的处方、已替代文书和并发报告版本；Web 刷新 owner 查询后只展示服务端当前事实。
 

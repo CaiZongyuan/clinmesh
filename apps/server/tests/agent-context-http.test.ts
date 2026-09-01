@@ -310,6 +310,82 @@ describe('DSH Agent Page Context HTTP contract', () => {
     expect(doctorContext.status).toBe(201)
     const doctor = agentPageContextBindingSchema.parse(await doctorContext.json())
     expect(doctor.snapshot.allowedOperationIds).toContain('outpatient.visit.start.propose')
+
+    runtime.database.driver.prepare(`
+      INSERT INTO laboratory_request (
+        workspace_id, epoch, request_id, case_id, catalog_item_id, reference_json,
+        indication_code, service_request_id, execution_task_id, diagnostic_report_id,
+        status, version, authored_by, authored_at, reported_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'reported', 1, ?, ?, ?)
+    `).run(
+      'workspace-demo',
+      'epoch-1',
+      'laboratory-request-admin-correction',
+      item!.caseId,
+      'lab-crp',
+      JSON.stringify({
+        code: '1988-5',
+        display: 'C 反应蛋白',
+        id: 'lab-crp',
+        sourceLocator: 'agent-context-test',
+        system: 'http://loinc.org',
+        version: '2.83',
+      }),
+      'fever',
+      'service-request-admin-correction',
+      'task-admin-correction',
+      'diagnostic-report-admin-correction',
+      'actor-outpatient-doctor',
+      '2026-08-24T01:00:00.000Z',
+      '2026-08-24T01:05:00.000Z',
+    )
+    const correctionClaim = {
+      activeSection: 'laboratory',
+      selection: {
+        id: item!.caseId,
+        kind: 'case' as const,
+        version: triaged.data.encounterVersion,
+      },
+      ui: { status: 'ready' as const },
+      version: 1 as const,
+      viewId: 'consultation' as const,
+      viewRevision: 'doctor-report-correction-capability',
+    }
+    const ordinaryCorrectionContext = await createContext(runtime, doctorCookie, correctionClaim)
+    expect(ordinaryCorrectionContext.status).toBe(201)
+    const ordinaryCorrection = agentPageContextBindingSchema.parse(
+      await ordinaryCorrectionContext.json(),
+    )
+    expect(ordinaryCorrection.snapshot.allowedOperationIds)
+      .not.toContain('outpatient.report.correct.propose')
+
+    const administratorSignIn = await runtime.app.request('/api/auth/sign-in/email', {
+      body: JSON.stringify({ email: 'admin@demo.clinmesh.local', password }),
+      headers: { 'content-type': 'application/json', origin: 'http://localhost' },
+      method: 'POST',
+    })
+    const administratorCookie = administratorSignIn.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
+    const selectDoctorRole = await runtime.app.request('/api/auth/role', {
+      body: JSON.stringify({ practitionerRoleId: 'practitioner-role-outpatient-doctor' }),
+      headers: {
+        'content-type': 'application/json',
+        cookie: administratorCookie,
+        origin: 'http://localhost',
+      },
+      method: 'POST',
+    })
+    expect(selectDoctorRole.status).toBe(200)
+    const administratorCorrectionContext = await createContext(
+      runtime,
+      administratorCookie,
+      { ...correctionClaim, viewRevision: 'administrator-report-correction-capability' },
+    )
+    expect(administratorCorrectionContext.status).toBe(201)
+    const administratorCorrection = agentPageContextBindingSchema.parse(
+      await administratorCorrectionContext.json(),
+    )
+    expect(administratorCorrection.snapshot.allowedOperationIds)
+      .toContain('outpatient.report.correct.propose')
   })
 
   it('does not let an older browser revision revoke a newer Page Context', async () => {

@@ -88,6 +88,7 @@ const commonOperations = new Set<AgentOperationId>([
 export function resolveAgentPageContext(
   database: ClinMeshDatabase,
   actor: ActorContext,
+  userAccountId: string,
   claim: AgentPageContextClaim,
 ): ResolvedAgentPageContext | undefined {
   const roleCode = agentHumanRoleCodeSchema.safeParse(actor.roleCode)
@@ -96,13 +97,17 @@ export function resolveAgentPageContext(
   if (selection === undefined || !draftMatchesSelection(claim, selection)) return undefined
   const allowed = new Set(agentToolsForContext(roleCode.data, claim.viewId)
     .map(definition => definition.operationId))
-  narrowOperations(allowed, claim, selection)
+  const accountCanCorrectLaboratoryReport = roleCode.data === 'outpatient-doctor'
+    && claim.viewId === 'consultation'
+    && accountHasAdministratorRole(database, actor, userAccountId)
+  narrowOperations(allowed, claim, selection, accountCanCorrectLaboratoryReport)
   return { allowedOperationIds: [...allowed], selection }
 }
 
 export function validateAgentToolInputForContext(
   database: ClinMeshDatabase,
   context: AgentPageContextSnapshot,
+  userAccountId: string,
   operationId: AgentOperationId,
   rawInput: unknown,
 ): unknown | undefined {
@@ -120,7 +125,7 @@ export function validateAgentToolInputForContext(
     scenarioRunId: context.workspace.scenarioRunId,
     workspaceId: context.workspace.id,
   }
-  const current = resolveAgentPageContext(database, actor, context.claim)
+  const current = resolveAgentPageContext(database, actor, userAccountId, context.claim)
   if (current === undefined || !current.allowedOperationIds.includes(operationId)) return undefined
   if (!inputMatchesCurrentResources(database, actor, context.claim, operationId, input)) return undefined
   return input
@@ -376,6 +381,7 @@ function narrowOperations(
   allowed: Set<AgentOperationId>,
   claim: AgentPageContextClaim,
   selection: ResolvedSelection,
+  accountCanCorrectLaboratoryReport: boolean,
 ): void {
   const retain = (operations: readonly AgentOperationId[]): void => {
     const selected = new Set([...commonOperations, ...operations])
@@ -437,7 +443,9 @@ function narrowOperations(
       operations.push('outpatient.laboratory.cancel.propose')
     }
     if (selection.has_reported_laboratory === 1) operations.push('outpatient.report.acknowledge.propose')
-    if (selection.has_correctable_laboratory === 1) operations.push('outpatient.report.correct.propose')
+    if (selection.has_correctable_laboratory === 1 && accountCanCorrectLaboratoryReport) {
+      operations.push('outpatient.report.correct.propose')
+    }
     if (selection.has_prescription_draft === 1) operations.push('outpatient.prescription.issue.propose')
     if (selection.prescription_status === 'signed' || selection.prescription_status === 'paid') {
       operations.push('outpatient.prescription.withdraw.propose')
@@ -468,6 +476,27 @@ function narrowOperations(
     }
     retain(operations)
   }
+}
+
+function accountHasAdministratorRole(
+  database: ClinMeshDatabase,
+  actor: ActorContext,
+  userAccountId: string,
+): boolean {
+  return database.driver.prepare(`
+    SELECT 1
+    FROM workspace_membership AS membership
+    JOIN membership_practitioner_role AS membership_role
+      ON membership_role.membership_id = membership.membership_id
+     AND membership_role.workspace_id = membership.workspace_id
+    JOIN practitioner_role_binding AS role
+      ON role.workspace_id = membership_role.workspace_id
+     AND role.practitioner_role_id = membership_role.practitioner_role_id
+    WHERE membership.workspace_id = ? AND membership.user_id = ?
+      AND membership.actor_id = ? AND membership.status = 'active'
+      AND role.role_code = 'administrator' AND role.active = 1
+    LIMIT 1
+  `).get(actor.workspaceId, userAccountId, actor.actorId) !== undefined
 }
 
 function inputMatchesCurrentResources(
