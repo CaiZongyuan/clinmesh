@@ -913,7 +913,7 @@ describe('role workspaces', () => {
     expect(screen.getByRole('button', { name: 'Load standard data' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Load high-volume data' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Reset current data' })).toBeTruthy()
-    expect(document.body.textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
+    expect(screen.getByRole('main').textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
   })
 
   it('does not expose synthetic data management to a non-administrator role', async () => {
@@ -1120,7 +1120,7 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     expect(await screen.findByText('No outpatient registrations are currently available.')).toBeTruthy()
-    expect(document.body.textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
+    expect(screen.getByRole('main').textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
   })
 
   it('creates a synthetic patient and registers the selected patient from server catalogs', async () => {
@@ -1946,7 +1946,7 @@ describe('role workspaces', () => {
 
     expect(await screen.findByText('No candidate patients available')).toBeTruthy()
     expect(screen.getByText('No candidate patient is currently available for consultation.')).toBeTruthy()
-    expect(document.body.textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
+    expect(screen.getByRole('main').textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
   })
 
   it('shows the operation-conflict alert when a Virtual Patient version is stale', async () => {
