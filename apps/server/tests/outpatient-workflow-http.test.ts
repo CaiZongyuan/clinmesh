@@ -1349,6 +1349,7 @@ describe('outpatient workflow HTTP contract', () => {
       pageSize: 20,
       total: 1,
     })
+
   })
 
   it('filters completed cases by an inclusive completion business-date range', async () => {
@@ -1463,6 +1464,14 @@ describe('outpatient workflow HTTP contract', () => {
       pageSize: 20,
       total: 1,
     })
+
+    const referenceIdResponse = await runtime.app.request(
+      '/api/his/v1/doctor/completed-cases?diagnosisCatalogItemId=diagnosis%3Ahypertension&pageSize=20',
+      { headers: { cookie: upperRespiratoryInfection.doctorCookie } },
+    )
+    expect(referenceIdResponse.status).toBe(200)
+    expect(doctorCompletedCaseListSchema.parse(await referenceIdResponse.json()))
+      .toMatchObject({ items: [], total: 0 })
   })
 
   it('orders and paginates completed cases with a stable newest-first contract', async () => {
@@ -1650,6 +1659,10 @@ describe('outpatient workflow HTTP contract', () => {
       laboratory: 'acknowledged',
       medication: 'prescription',
     })
+    expect(runtime.database.driver.prepare(`
+      UPDATE laboratory_request SET catalog_item_id = 'laboratory:white-cell-count'
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND case_id = ?
+    `).run(candidate.started.caseId).changes).toBe(1)
     const questionResponse = await runtime.app.request(
       `/api/his/v1/encounters/${candidate.started.encounterId}/actions/ask-consultation-question`,
       {
@@ -1708,7 +1721,7 @@ describe('outpatient workflow HTTP contract', () => {
         }],
       },
       laboratoryRequests: [{
-        catalogItemId: 'lab-cbc',
+        catalogItemId: 'laboratory:white-cell-count',
         correctionSupported: true,
         report: { acknowledgement: { id: expect.any(String) } },
         status: 'acknowledged',

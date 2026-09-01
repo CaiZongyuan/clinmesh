@@ -2,25 +2,25 @@
 
 ## 范围与结论
 
-- 状态：未来设计输入，不定义 ClinMesh 当前已实现行为。
+- 状态：参考研究，不拥有 ClinMesh 当前行为；实现合同见[系统架构](../architecture.md#7-agent-cli-与-skills)。
 - 核验日期：2026 年 8 月 30 日。
 - 核验对象：CLI-Anything commit [`810c18b0d1ab9b234bc996c9fd999318523a3ef0`][cli-anything-tree]、lark-cli commit [`4e0a6a988cf32b26219b3425f6dbb7ce8332b292`][lark-tree]、Multica commit [`722bde9d1818dbe5c49e60a8c57a283712646457`][multica-tree]。
 - 证据边界：只使用三个仓库的源码、测试和官方仓库文档；CLI-Anything 除生成规范外还核验 Blender、ChromaDB 和 JumpServer harness，避免把方法论要求误写成所有生成物都已满足的事实。
 
 一个后端业务成为 Agent 容易理解且可靠调用的 CLI，不是把 HTTP endpoint 逐个改成子命令。有效的 CLI 需要同时提供三层信息：用业务意图命名的窄操作、可机器读取的精确合同，以及解释“何时用、前置条件、状态副作用和失败后如何恢复”的 affordance。三个参考分别在这三层表现出不同优势：CLI-Anything 擅长从真实后端和数据模型建立操作面与端到端验证，lark-cli 提供最完整的机器合同与统一执行管线，Multica 则把复杂业务副作用和受信 Agent 上下文写进平台 skill 与服务端授权边界。
 
-ClinMesh 已有设计把 `HisOperationCatalog` 定为 operation 合同 owner，并规定从同一 catalog 派生 human CLI、HTTP 和 Cordis adapter；临床 Agent 不通过 shell 启动 CLI。该设计及其字段、handler ownership 和工具边界由[嵌入式 HIS 助手融合研究](./embedded-his-assistant-integration.md#his-operation-catalog-与-dsh-cordis-装配)拥有。本文只说明 CLI adapter 应从参考中吸收什么、拒绝什么，以及首个测试 CLI 如何分阶段验收。
+ClinMesh 已将 `hisOperationCatalog`、`clinmesh` CLI、Agent Capability Grant 和七个领域 Skills 落地；当前字段、授权、恢复和边界由[系统架构](../architecture.md#7-agent-cli-与-skills)拥有。未来嵌入式助手或 Cordis adapter 可以投影同一 Catalog，但不改变 CLI 已经是任务 Agent 正式操作面的事实。本文只解释参考机制与 ClinMesh 取舍。
 
 ## 对照结论
 
 | 维度 | CLI-Anything | lark-cli | Multica | ClinMesh 取舍 |
 | --- | --- | --- | --- | --- |
 | 命令建模 | 从源码识别 backend、数据模型和 GUI command/undo，再按 project/core/import-export/config/session 分组；推荐 REPL 与 one-shot 并存 | 同一 domain 下提供高层 `+shortcut`、元数据生成的 typed API command 和 raw API escape hatch | 手写 `issue/project/agent/...` 业务命令；命令直接组装各自 HTTP path/body | 从 catalog 生成稳定层级命令，但只暴露已批准的 query/draft/preview/command；不提供 raw method/path/body |
-| Schema 与 help | Click 自动 help；skill generator 只抽取 group、command、docstring，不抽取 flag 或 I/O/error schema | `schema`、typed flags、shell completion、risk、affordance 和 skill 互相补充 | Cobra help 很具体，built-in skills 补充状态副作用；没有统一 schema catalog | `his schema <operationId>` 必须输出 catalog 原始合同；help 只做局部投影，skill 不复制 schema |
+| Schema 与 help | Click 自动 help；skill generator 只抽取 group、command、docstring，不抽取 flag 或 I/O/error schema | `schema`、typed flags、shell completion、risk、affordance 和 skill 互相补充 | Cobra help 很具体，built-in skills 补充状态副作用；没有统一 schema catalog | `clinmesh operations schema <operationId>` 输出 Catalog 原始合同；help 只做局部投影，Skill 不复制 schema |
 | 输入输出 | 人类输出与 `--json` 双模式；样例常直接输出业务对象 | 成功 stdout 统一 envelope，错误 stderr 统一 envelope；支持 JSON、NDJSON、table、CSV、`--jq` 和 batch partial failure | 命令各自选择 table/JSON，JSON 形状通常直通 endpoint；默认格式不完全一致 | JSON 默认且 envelope 固定；table 仅显式请求；单个临床 Command 不产生隐式 partial success |
 | 错误与退出码 | 样例多为 `{"error", "type"}`，`type` 可来自 Python exception class，常统一 exit 1 | 闭集 category/subtype、hint、param、retryable、log id 与稳定 category→exit 映射 | 稳定的粗粒度 exit tier 和友好文本，但默认错误不是机器 JSON | 闭集 error code + 粗粒度 exit；`definitely_not_sent` 与 `ambiguous` 必须分开 |
 | 状态与上下文 | REPL 内存状态、项目 JSON、undo/redo；文件锁只保护写入 | profile/workspace 配置、user/bot identity、strict mode 和 scope preflight | human profile 与 daemon task context 分离；task token 在服务端覆盖 Agent/Task/Workspace headers | CLI 参数不能授予 actor/workspace/epoch/role；服务端重新绑定受信上下文，目标 Patient/Encounter 仍需授权校验 |
-| 幂等与安全 | 规范要求“where possible”；Blender `--dry-run` 只禁止 auto-save，锁不提供 CAS | risk 分级、high-risk `--yes`、真实 request dry-run、路径校验；幂等 token 仍是少数命令的业务字段 | task-scoped token、workdir 文件边界和副作用专用 flag 较强；没有统一 CLI idempotency/expected-version 合同 | 所有写操作必须显式 idempotency key、expected version 和 receipt；临床复核不能降级成 `--yes` |
+| 幂等与安全 | 规范要求“where possible”；Blender `--dry-run` 只禁止 auto-save，锁不提供 CAS | risk 分级、high-risk `--yes`、真实 request dry-run、路径校验；幂等 token 仍是少数命令的业务字段 | task-scoped token、workdir 文件边界和副作用专用 flag 较强；没有统一 CLI idempotency/expected-version 合同 | 所有写操作显式携带 idempotency key，修改事实携带 expected version；human `--yes` 只做本地确认，Agent 授权来自单岗位 Grant |
 | 可发现性 | CLI-Hub、生成 SKILL、REPL banner | 根 help quickstart、domain help、schema、affordance、skills、completion、错误 suggestion | 每个 Agent 自动获得 built-in skills；skill 有 source map，并用测试钉住业务语义 | catalog list/schema 是机器发现源；skill 只负责意图路由、业务前置和反例 |
 | 测试 | unit、native file、真实 backend、installed subprocess 与产物语义验证 | unit、dry-run E2E、live E2E、error/schema/stream/path contract 和 lint gate | Cobra/HTTP tests、上下文隔离 tests、built-in skill 与真实 parser/业务合同的 eval | projection conformance + subprocess + synthetic Scenario HTTP + 幂等/竞态/ambiguous/security 矩阵 |
 
@@ -56,7 +56,7 @@ CLI-Anything 的测试方法是上限而非所有 harness 的自动保证。[HAR
 
 [schema command][lark-schema]不需要认证即可从同一 API catalog 输出参数、类型、scope，并用同一 catalog 提供 completion；错误会返回候选项和修复 hint。[Affordance format][lark-affordance]给 schema 和 help 叠加 `use when`、`avoid when`、prerequisites、tips、examples 与关联 skill，同时要求不复述 schema 已表达的字段。[Task skill][lark-task-skill]再负责自然语言意图消歧、跨 domain 边界和多步工作流。三者分别回答“有哪些精确字段”“什么时候用”“如何完成任务”，避免把所有信息塞进一个巨大 help 或 skill。
 
-ClinMesh 应采用同样的 progressive disclosure：`his catalog list` 用于发现 operation，`his schema` 返回精确合同，命令 `--help` 只显示局部参数和风险，skill 只保留医院业务语义、前置状态、禁止路径和恢复策略。schema、help 与 tool schema 都从 `HisOperationCatalog` 投影；skill 不手抄字段表。
+ClinMesh 采用同样的 progressive disclosure：`clinmesh operations list` 发现 operation，`clinmesh operations schema` 返回精确合同，命令 `--help` 显示局部参数，Skill 只保留医院业务语义、前置状态、禁止路径和恢复策略。schema、help 与命令树从 `hisOperationCatalog` 投影；Skill 不手抄字段表。
 
 ### Wire、错误和执行安全
 
@@ -64,7 +64,7 @@ ClinMesh 应采用同样的 progressive disclosure：`his catalog list` 用于�
 
 [shortcut runner][lark-shortcut-runner]把每个命令标记为 read/write/high-risk-write，高风险写要求 `--yes`，`--dry-run` 返回真实 method/URL/params/body 预览；scope 在执行前检查。[Workspace 和 strict mode][lark-workspace]把 agent workspace 配置与 local profile 隔离，并可把可见命令树裁剪到单一 identity。可迁移的不是 Lark 的 user/bot 结构，而是统一执行管线、fail-closed identity、机器可恢复错误和“传入但无法遵守的 flag 必须报错”。
 
-lark-cli 仍没有适用于 ClinMesh 的通用写入可靠性。[Whiteboard update][lark-idempotency]显式传递 upstream `client_token`，[Base workflow create][lark-workflow-idempotency]要求调用者提供唯一 `client_token`，但 idempotency 不是所有 write command 的统一框架字段；`--yes` 也只是本地确认信号。ClinMesh 必须把 idempotency、expected version、review grant 和 receipt 作为每个写 operation 的 catalog 合同，不能依赖某个 endpoint 恰好支持 token，也不能用 `--yes` 代替临床复核。
+lark-cli 仍没有适用于 ClinMesh 的通用写入可靠性。[Whiteboard update][lark-idempotency]显式传递 upstream `client_token`，[Base workflow create][lark-workflow-idempotency]要求调用者提供唯一 `client_token`，但 idempotency 不是所有 write command 的统一框架字段；`--yes` 也只是本地确认信号。ClinMesh 把 idempotency、适用时的 expected version、Agent Capability Grant 和 receipt 作为 Catalog 合同，不能依赖某个 endpoint 恰好支持 token，也不能用 `--yes` 替代服务端授权。
 
 ## Multica：把复杂副作用写进 skill，把 Agent 身份绑定在服务端
 
@@ -80,7 +80,7 @@ ClinMesh 可吸收的机制是：skill 记录状态副作用、跨命令次序�
 
 [CLI context resolver][multica-cli-context]在 daemon-managed task 中要求 `mat_` task token，不回退到人类 profile；Workspace 和 token 必须来自 daemon 注入环境，human-only local command 被拒绝。[API client][multica-api-client]虽然发送 Workspace、Agent 和 Task headers，但[服务端 auth middleware][multica-auth]根据 task token 中绑定的 user/agent/task/workspace 覆盖客户端值，并先删除客户端伪造的 actor source。这是三个参考里最接近 ClinMesh “模型参数不能切换受信 context”要求的实现。
 
-ClinMesh 应保留这个方向但使用自身 IdentityService、Workspace/Epoch、Practitioner Role、Patient/Encounter capability 和 ReviewGrant。CLI 可以接受目标资源标识作为业务输入，但不能通过 `--actor`、`--role`、`--workspace` 或 `--epoch` 自我授予权限；服务端必须重新解析并在响应中回显实际使用的 context reference。
+ClinMesh 保留这个方向并使用自身 IdentityService、Workspace/Epoch、Scenario Run、Practitioner Role 和 Agent Capability Grant。CLI 可以接受目标资源标识作为业务输入，但不能通过 `--actor`、`--role`、`--workspace` 或 `--epoch` 自我授予权限；服务端从 token hash 重新解析实际 context。
 
 ### 不统一之处
 
@@ -88,127 +88,42 @@ ClinMesh 应保留这个方向但使用自身 IdentityService、Workspace/Epoch�
 
 [issue create][multica-issue-create]会在创建前读取并校验全部附件，降低“创建成功后附件失败导致整条命令重试”的风险；但创建后的附件失败只写 stderr warning 并 exit 0，避免重复 issue，却没有统一 partial-success envelope 或 receipt lookup。这个局部策略揭示了真实问题：Agent 会因不确定结果重试。ClinMesh 的解决方案应是原子 Command、持久 receipt 和 explicit ambiguous reconciliation，而不是针对每个命令选择 warning/exit 0。
 
-## ClinMesh CLI adapter 建议
+## ClinMesh 落地映射
 
-### 设计原则
+这项研究形成了 [GitHub issue 61](https://github.com/CaiZongyuan/clinmesh/issues/61) 的设计输入。以下只记录参考与实现之间的映射；精确命令、schema 和当前数量从 CLI discovery 查询。
 
-1. `HisOperationCatalog` 是 command name、mode、schema、risk、context、idempotency 和 owner 的唯一来源；CLI 注册、HTTP route binding、help/schema 和 contract tests 都检查同一个 definition，不从 Cobra/Click 声明反向推导业务合同。
-2. 命令以医院任务和状态转换命名，不以数据库表或通用 CRUD 命名。查询、draft mutation、preview 和 final command 是不同 mode，不能用一个 `update --dry-run/--yes` 混合。
-3. 先读后写是可执行合同。每个 mutation help 和 error 指向最窄的 context/status/schema 查询；unknown command/flag/enum 返回机器候选，不依赖 message 文本让 Agent 猜。
-4. JSON 是默认输出，table 只通过 `--output table` 显式选择。stdout 只承载成功或完整 batch result，stderr 只承载结构化错误、warning 和 progress；TTY spinner 不进入 pipe。
-5. context authority 在服务端。CLI profile 只选择 endpoint 和 credential；Actor、Workspace/Epoch、Practitioner Role 和 grant 从认证状态重算。目标 Patient/Encounter 标识不等于授权，response 回显实际 context ref 与版本。
-6. 所有 write operation 要求 idempotency key；修改既有资源还要求 expected version 或绑定 preview version。human/test CLI 可以显式接收并复用 key，Agent adapter 必须从受信调用上下文派生且不把它暴露为模型参数。CLI 不对“可能已发送”自动重试；`ambiguous` 只能通过 receipt/ActionTrace/canonical state 对账。
-7. 临床最终提交要求 server-side one-shot ReviewGrant。`--yes` 可以用于本地非临床运维确认，但不能替代医生复核、签署责任或 permission re-check。
-8. 不提供 raw URL、任意 method/path/body、SQL、FHIR Bundle、任意 JSON Patch 或通用 command executor。复杂输入通过 `--input @file` 或 stdin 进入已知 schema，路径和大小受限，secret 不出现在 argv。
+### 合同分层
 
-### 最小命令树
+1. `hisOperationCatalog` 拥有稳定 operation ID、显式 `cliPath`、mode、输入输出 schema、岗位、风险、HTTP adapter、幂等、expected version、receipt adapter 和所属 Skill。CLI 注册、服务端 Agent route matching、Grant Catalog hash 与测试读取同一合同。
+2. `clinmesh operations list/schema` 是机器发现面，Commander help 是局部人类视图，七个 `clinmesh-*` Skills 解释业务意图、前置状态、岗位交接、反例和恢复。三层不复制彼此的 owner 信息。
+3. Canonical HIS route 全量分类；兼容组合 route 保留在 Server 但有明确排除理由。FHIR 只投影 metadata、read、vread、history 和能力注册表允许的 search。
+4. CLI 没有 raw URL、任意 method/path/body、SQL、JSON Patch、FHIR write、Bundle write或通用 invoke。
 
-以下命令名是 catalog projection 的验收草案，不声明当前已经实现；正式 operationId 和层级仍由 `HisOperationCatalog` owner 决定。
+### 身份与输入
 
-```text
-his catalog list [--mode query|draft|preview|command] [--output json]
-his schema <operation-id> [--output json]
-his context show [--output json]
+Human 使用 Better Auth profile，密码从 stdin 进入，profile 以最小文件权限原子保存 cookie 与 Server origin。Agent runner 注入短期 `cma_` token；CLI 发现 task context 后不读取 human profile。Server 只保存 token hash，并把 Grant 约束到 Workspace、Epoch、Scenario Run、单一 Practitioner Role、operation allowlist、Catalog hash、policy version 和期限。
 
-his patient summary get [--patient-id <id>] [--output json]
-his diagnosis catalog search --query <text> [--limit <n>] [--output json]
+标量使用 typed flags，嵌套临床数据使用 workspace 内文件或 stdin，单次输入有界。Agent 不能通过 CLI 参数选择 Actor、Workspace、Epoch、Scenario Run 或岗位。human high-risk command 的 `--yes` 只是一层本地确认；Agent high-risk command 必须由 Grant allowlist 明确授权，服务端仍重新校验岗位、状态和版本。
 
-his encounter diagnosis draft-set --input @diagnosis.json --expected-version <v> --idempotency-key <key>
-his encounter lab-order preview --input @lab-order.json --expected-version <v> --idempotency-key <key>
+### 结果与恢复
 
-his command submit --preview-id <id> --review-grant <one-shot-ref> --idempotency-key <key>
-his command receipt get --request-id <id> [--output json]
-```
+成功默认写版本化 JSON envelope，human 可显式选择 table；错误只写 stderr JSON，精确分支依赖稳定 `type/code/outcome`。FHIR `OperationOutcome` 进入相同错误合同。
 
-`command submit` 不是任意 operation executor：它只能提交服务端已生成且绑定 operation、input hash、resource versions、Actor context 和短期 ReviewGrant 的 preview。若首版 CLI 只用于 catalog/query/draft/preview 测试，应暂不注册该命令。
+每个 write 使用一个业务意图稳定的 idempotency key。CLI 不自动重发可能已到达 Server 的 write；响应丢失返回 `ambiguous_outcome`，Agent 使用公开 operation ID 和原 key 查询 Command receipt。Catalog 的 receipt adapter 保留既有持久 Command operation 名称，不通过重命名破坏跨版本 receipt。
 
-### JSON 合同
+### Skills 与证据
 
-成功 envelope 建议保持所有 operation 一致，query 可省略 `receipt`，但不能改变顶层含义：
+Skills 默认面向注入 token 的任务 Agent，不在领域示例中使用 human profile，也不包含 Agent Client/Grant 管理命令。Doctor 的长临床分支按需加载 reference，其余领域保持短入口。测试把每个 bash 示例交给真实 Commander help parser，并核对 Catalog 的 Skill assignment，使不存在的路径和 flag 直接失败。
 
-```json
-{
-  "ok": true,
-  "schemaVersion": 1,
-  "operation": {
-    "id": "outpatient.diagnosis.draft.set",
-    "version": 1,
-    "mode": "draft"
-  },
-  "context": {
-    "workspaceId": "...",
-    "epoch": "...",
-    "actorRole": "outpatient-doctor",
-    "patientId": "...",
-    "encounterId": "..."
-  },
-  "data": {},
-  "receipt": {
-    "requestId": "...",
-    "status": "committed",
-    "auditId": "...",
-    "actionTraceId": "..."
-  }
-}
-```
-
-错误 envelope 写 stderr，message 可改写，调用者只按稳定 `type/code` 和声明的扩展字段分支：
-
-```json
-{
-  "ok": false,
-  "schemaVersion": 1,
-  "operationId": "outpatient.diagnosis.draft.set",
-  "error": {
-    "type": "conflict",
-    "code": "version_conflict",
-    "message": "diagnosis draft changed since it was read",
-    "hint": "read the current draft and create a new preview",
-    "param": "expectedVersion",
-    "retryable": false,
-    "outcome": "definitely_not_sent"
-  },
-  "correlationId": "..."
-}
-```
-
-若请求可能已到达服务端，`error.outcome` 必须为 `ambiguous`，并返回可供 `command receipt get` 查询的 `requestId` 或 correlation reference；不能提示直接重试。顶层字段沿用 ClinMesh 现有 camelCase wire 约定，不为 CLI 另造一套命名风格。
-
-### 退出码
-
-退出码保持粗粒度，精确分支仍读 `error.type/code`：
-
-| Exit | 类别 | 自动动作 |
-| --- | --- | --- |
-| `0` | 成功 | 读取 stdout envelope |
-| `1` | 已知业务/API 拒绝 | 读取 code/hint，不盲重试 |
-| `2` | 参数或 schema validation | 修正 `param` 后重试 |
-| `3` | authentication/authorization/context | 重新认证或请求用户切换受信 context |
-| `4` | transport 且可证明未发送 | 仅在 retry policy 允许时用同一 idempotency key 重试 |
-| `5` | stale/version conflict | 重新读取状态并重新 preview，不重放旧 input |
-| `6` | policy/review required | 停止并取得真实 ReviewGrant；不能自动追加 `--yes` |
-| `7` | ambiguous outcome | 查询 receipt/ActionTrace/canonical state，禁止立即重发 |
-| `8` | internal/protocol | 停止自动操作，带 correlation id 报告 |
-
-### 分阶段验收
-
-| 阶段 | 命令范围 | 必须通过的验收 |
-| --- | --- | --- |
-| 0：Catalog projection | `catalog list`、`schema`、`context show` | 每个公开 operation 恰有一个 handler owner；CLI/help/HTTP schema hash 与 catalog 一致；unknown path/flag/enum 返回候选；CLI 不出现未实现 capability |
-| 1：只读纵向切片 | patient summary、diagnosis catalog search | installed subprocess 通过真实 HTTP adapter读取合成 Scenario；stdout 只含 JSON；认证、Workspace/Epoch、role、Patient/Encounter 越界逐项 fail closed；分页和空结果 shape 固定 |
-| 2：Draft 与 preview | diagnosis draft-set、lab-order preview | nested input schema、safe file/stdin、expected version、同 idempotency key replay、stale draft/resource/context、permission changed、preview 无最终业务副作用全部有测试 |
-| 3：受复核 Command | preview-bound submit、receipt get | one-shot ReviewGrant、input hash/version binding、成功 receipt replay、并发幂等竞争、审计/ActionTrace 原子性、definitely-not-sent/ambiguous 分流和 crash 后 reconciliation 全部通过；没有 `--yes` 绕过路径 |
-| 4：可发现性与 skill | domain skill、affordance、source-map eval | skill 只写意图/前置/副作用/反例并链接 schema owner；skill 命令示例真实存在；业务状态副作用由测试关联 owner；description 与正文有预算 |
-
-每个行为切片至少包含 catalog conformance、CLI parser unit、installed subprocess、HTTP adapter 和服务端 Command/Query contract 五类证据。涉及最终 artifact 或投影时还要验证业务可观察结果，不能把 exit 0 或 JSON 可解析当成业务成功的充分条件。
+验证组合采用 Catalog conformance、真实 SQLite/HTTP identity、CLI subprocess、response-loss receipt 恢复和 Skill drift seam。Server 既有场景测试继续拥有业务状态机矩阵，CLI 测试不复制全部内部断言。
 
 ## 不应照搬
 
 - 不照搬 CLI-Anything 的 stateful REPL、项目 JSON 权威状态、undo/redo 或“执行但不保存”的 dry-run；医院状态由服务端持久化与 CommandExecutor 拥有。
 - 不照搬 lark-cli 的 raw API escape hatch、任意未声明 `--params/--data` passthrough 或 `--yes` 高风险确认；开放平台覆盖目标与临床最小权限目标不同。
 - 不照搬 Multica 手写 command/path/body 的多处映射，也不以 skill/source-map 人工同步代替 catalog projection；它们适合记录业务解释，不适合拥有 schema。
-- 不让产品内临床 Agent 通过 shell 调 CLI。CLI 是 human/test adapter 和合同探针；Cordis tool adapter 仍直接调用 typed client，并保留 DSH callId、capability、deadline、取消和 receipt 关联。
-- 不把“JSON 输出”“非零 exit”或“有 E2E test”当作 Agent-safe 的充分条件。受信 context、幂等、expected version、ambiguous outcome、审计和 server-side review 都必须同时成立。
+- 不把未来嵌入式 Cordis adapter 当成 CLI 的替代品。任务 Agent 通过 CLI 操作 HIS；嵌入式 adapter 若落地则投影同一 Catalog，并额外保留 DSH callId、deadline、取消和 receipt 关联。
+- 不把“JSON 输出”“非零 exit”或“有 E2E test”当作 Agent-safe 的充分条件。受信 context、幂等、expected version、ambiguous outcome、审计和服务端授权必须同时成立。
 
 ## 固定源码
 

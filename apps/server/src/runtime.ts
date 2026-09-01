@@ -220,6 +220,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const identity = new IdentityService(database, {
       authBaseUrl: options.authBaseUrl,
       authSecret: options.authSecret,
+      commands,
+      ...clockOptions,
       trustedOrigins: options.trustedOrigins,
     })
     await identity.seedSyntheticAccounts({
@@ -380,7 +382,11 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ...(agentIntegration === undefined ? {} : { agentIntegration }),
       fhir: {
         repository: fhir,
-        resolveContext: async request => (await identity.resolveSessionContext(request.headers)).actor,
+        resolveContext: request => identity.resolveRequestActor(
+          request.headers,
+          request.method,
+          new URL(request.url).pathname,
+        ),
       },
       identity,
       investigation,
