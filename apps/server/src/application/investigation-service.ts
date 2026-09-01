@@ -17,6 +17,7 @@ import {
   type JsonChatCompletionsProvider,
 } from '../infrastructure/ai/openai-chat-completions.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
+import { syntheticInvestigationReferenceRange } from './scenario-data/reference-coding-package.ts'
 
 const promptVersion = 'investigation-result-v1'
 const systemPrompt = [
@@ -26,6 +27,8 @@ const systemPrompt = [
   '不得修改项目编码、单位或参考范围，不得添加其他项目。',
 ].join('\n')
 const promptHash = canonicalJsonHash({ promptVersion, systemPrompt })
+const maximumAgentEvidenceItems = 20
+const agentEvidenceResourceTypes = new Set(['Condition', 'Observation', 'Procedure'])
 const agentOutputSchema = z.object({
   conclusion: z.string().trim().min(1).max(1_000),
   interpretation: z.enum(['normal', 'high', 'low']),
@@ -182,30 +185,37 @@ function sourceInterpretation(
 }
 
 function evidence(resources: Resource[]) {
-  return resources.slice(0, 100).map((resource) => {
-    const valueQuantity = quantity(resource.valueQuantity)
-    const scalarValue = typeof resource.valueString === 'string'
-      || typeof resource.valueBoolean === 'boolean'
-      ? resource.valueString ?? resource.valueBoolean
-      : undefined
-    return {
-      codings: conceptCodings(resource).slice(0, 5),
-      resourceType: resource.resourceType,
-      ...(clinicalTimestamp(resource) === 0
-        ? {}
-        : { clinicalTime: new Date(clinicalTimestamp(resource)).toISOString() }),
-      ...(valueQuantity === undefined
-        ? scalarValue === undefined ? {} : { value: scalarValue }
-        : {
-            value: {
-              code: valueQuantity.code,
-              display: valueQuantity.display,
-              system: valueQuantity.system,
-              value: valueQuantity.value,
-            },
-          }),
-    }
-  })
+  return resources
+    .filter(resource => agentEvidenceResourceTypes.has(resource.resourceType))
+    .toSorted((left, right) => (
+      clinicalTimestamp(right) - clinicalTimestamp(left) || left.id.localeCompare(right.id)
+    ))
+    .slice(0, maximumAgentEvidenceItems)
+    .map((resource) => {
+      const valueQuantity = quantity(resource.valueQuantity)
+      const scalarValue = typeof resource.valueString === 'string'
+        || typeof resource.valueBoolean === 'boolean'
+        ? resource.valueString ?? resource.valueBoolean
+        : undefined
+      const timestamp = clinicalTimestamp(resource)
+      return {
+        codings: conceptCodings(resource).slice(0, 5),
+        resourceType: resource.resourceType,
+        ...(timestamp === 0
+          ? {}
+          : { clinicalTime: new Date(timestamp).toISOString() }),
+        ...(valueQuantity === undefined
+          ? scalarValue === undefined ? {} : { value: scalarValue }
+          : {
+              value: {
+                code: valueQuantity.code,
+                display: valueQuantity.display,
+                system: valueQuantity.system,
+                value: valueQuantity.value,
+              },
+            }),
+      }
+    })
 }
 
 function exactObservation(
@@ -226,7 +236,17 @@ function agentLaboratoryMetadata(
   concept: RequestedConcept,
 ): AgentLaboratoryMetadata | undefined {
   const metadata = concept.laboratory
-  const referenceRange = metadata?.referenceRange
+  const referenceRange = metadata?.referenceRange ?? (
+    metadata?.unit === undefined
+      ? undefined
+      : syntheticInvestigationReferenceRange({
+          code: concept.code,
+          system: concept.system,
+          unitCode: metadata.unit.code,
+          unitDisplay: metadata.unit.display,
+          version: concept.version,
+        })
+  )
   if (
     metadata?.resultType !== 'quantity'
     || metadata.unit === undefined
@@ -370,12 +390,11 @@ export class InvestigationService {
       referenceRange,
       resultType: metadata.resultType,
       unit: metadata.unit,
-      visibleHistory: this.#cases.listVisibleHistory({
+      visibleHistory: this.#cases.listRecentVisibleHistory({
         caseId: row.synthetic_case_id,
-        page: 1,
-        pageSize: 100,
+        limit: maximumAgentEvidenceItems,
         workspaceId,
-      }).items,
+      }),
     }
     const inputHash = canonicalJsonHash(payload)
     const completion = await this.#provider.completeJson({

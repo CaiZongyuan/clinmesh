@@ -12,11 +12,11 @@ Status: implemented
 
 ## Decision
 
-诊断、检验和处方编辑器在有效内容静止 800 ms 后自动保存。Web 显示等待、保存中和已保存状态，不显示普通“保存草稿”按钮。自动保存仍调用各 owner 的既有 Command，携带 Encounter expected version、草稿 expected version 和新幂等键；页面用提交内容指纹区分已保存响应和保存期间产生的新修改。确认、开具、删除草稿或切换病例会重置对应保存状态，不能让旧 success 阻止下一轮相同内容保存；当前输入尚未同步或保存请求仍在进行时，删除、确认、开立和无需用药等终结动作等待 owner 返回最新草稿。
+诊断、检验和处方编辑器在有效内容静止 800 ms 后自动保存。Web 显示等待、保存中和已保存状态，不显示普通“保存草稿”按钮。自动保存仍调用各 owner 的既有 Command，携带 Encounter expected version、草稿 expected version 和新幂等键；页面用提交内容指纹区分已保存响应和保存期间产生的新修改。确认、开具、删除草稿或切换病例会重置对应保存状态，不能让旧 success 阻止下一轮相同内容保存；当前输入尚未同步或保存请求仍在进行时，删除、确认、开立和无需用药等终结动作等待 owner 返回最新草稿。没有病例责任人的 `awaiting-doctor` 病例在接诊 Command 成功前保持临床只读，开始首诊动作位于业务页签上方，切换页签不会提前触发草稿保存；`awaiting-revisit` 保留既有受控修订能力。
 
 诊断确认是不可覆盖的 revision，不是本次 Encounter 的编辑锁。已确认诊断仍可重新打开为草稿；再次确认创建新的 `diagnosis_confirmation` 和 Condition 集合，以递增 `revision_number` 和 `supersedes_confirmation_id` 连接上一确认。旧 Condition 保持可读并改为 `verificationStatus=entered-in-error`，Encounter 当前诊断引用只指向最新 Condition；每次确认创建独立 Provenance。完诊门禁只接受没有待处理诊断草稿的最新确认。
 
-`InvestigationService` 通过 `generationCapabilityForCase` 统一判断一个病例与检验概念能否产生结果。完全匹配 Case Truth 的 Observation 使用 `synthea-exact`；具备数值、UCUM 单位和参考范围且运行时配置结构化模型时使用 `investigation-agent`；其余情况返回稳定的不可生成原因。病例级检验目录携带该 capability，Web 只展示 `supported=true` 的项目，不复制 Case Truth、模型或 metadata 判断；`WorkflowService` 在保存草稿、正式开立和重试生成时重新调用同一判断，绕过 picker 不能提交不可生成项目。
+`InvestigationService` 通过 `generationCapabilityForCase` 统一判断一个病例与检验概念能否产生结果。完全匹配 Case Truth 的 Observation 使用 `synthea-exact`；数值项目具备 UCUM 单位，并从 Reference metadata 或受控 LOINC 本院检验映射取得合成参考范围，且运行时配置结构化模型时使用 `investigation-agent`；其余情况返回稳定的不可生成原因。Agent payload 只包含最近 20 条 Visible History 和按临床时间选择的最多 20 条 Condition、Observation 或 Procedure 证据，避免无界病例上下文破坏结构化响应。病例级检验目录携带 capability，Web 展示查询到的唯一项目并禁用 `supported=false` 的行，不复制 Case Truth、模型或 profile 判断；`WorkflowService` 在保存草稿、正式开立和重试生成时重新调用同一判断，绕过 picker 不能提交不可生成项目。
 
 Reference 检验项目当前只有内部适应证 `clinical-evaluation`，Web 将单一适应证显示为只读“临床评估”；只有目录真实提供多个合法适应证时才显示选择控件。永久 `INVESTIGATION_UNSUPPORTED` 失败不再提供无效重试，医生可以取消该申请并重新选择；瞬时或输出校验失败仍可重试。
 
@@ -38,4 +38,4 @@ Reference 检验项目当前只有内部适应证 `clinical-evaluation`，Web �
 
 一个病例可以拥有多条诊断确认历史，但 Doctor Case、处方适应规则、病例库筛选和 Encounter 当前诊断只读取最高 revision。旧 Command receipt 缺少 revision 字段时按 revision 1 解析，升级前确认记录由 migration 赋值为 revision 1。
 
-病例级检验目录可能比全局 Reference 目录更窄；没有 Case Truth 精确结果且未配置 Investigation Agent 时，医生只能开具能确定生成的项目。既有永久失败申请可以取消，不再阻塞完诊，但失败事实和取消审计继续保留。
+病例级检验目录保留全局 Reference 项目的可发现性，但只有 Case Truth 精确结果或受控生成 profile 与可用 Investigation Agent 支持的项目可以选择。既有永久失败申请可以取消，不再阻塞完诊，但失败事实和取消审计继续保留。

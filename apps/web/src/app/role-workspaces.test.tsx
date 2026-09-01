@@ -2191,7 +2191,11 @@ describe('role workspaces', () => {
     await user.type(within(laboratoryDialog).getByLabelText('搜索检验目录'), '血常')
     await user.click(within(laboratoryDialog).getByRole('button', { name: '执行检验目录搜索' }))
     await waitFor(() => expect(laboratoryQueries).toContain('血常'))
-    expect(within(laboratoryDialog).queryByText('体温')).toBeNull()
+    const unavailableTemperature = within(laboratoryDialog).getByRole('button', {
+      name: '选择 体温 8310-5',
+    })
+    expect(unavailableTemperature.hasAttribute('disabled')).toBe(true)
+    expect(within(laboratoryDialog).getByText('当前病例不可生成')).toBeTruthy()
     await user.click(await within(laboratoryDialog).findByRole('button', {
       name: '选择 血常规组合 58410-2',
     }))
@@ -2839,8 +2843,9 @@ describe('role workspaces', () => {
     expect(within(caseDetail).getByText('20 次/分')).toBeTruthy()
     expect(within(caseDetail).getByText('118/76 mmHg')).toBeTruthy()
     expect(within(caseDetail).getByText('98%')).toBeTruthy()
-    await user.click(await screen.findByRole('button', { name: '开始首诊' }))
     await user.click(await screen.findByRole('tab', { name: '检验' }))
+    expect(screen.queryByRole('combobox', { name: '检验项目' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: '开始首诊' }))
     expect((await screen.findByRole('combobox', { name: '检验项目' })).textContent).toContain('发热检验组合 · ¥68.00')
     expect(screen.getByRole('combobox', { name: '检验适应证' }).textContent).toContain('发热')
 

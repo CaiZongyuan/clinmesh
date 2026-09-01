@@ -33,7 +33,7 @@ DoctorWorkspace
   -> DoctorCompletedCaseLibrary
 ```
 
-`DoctorCaseController` 是 Doctor Case 与诊疗流程 Query、Command、expected version、幂等键、错误映射和精确失效的 seam。页面模块只接收当前 owner 的状态与动作切片，不拼 query key、版本或跨 owner 失效列表。全局 Reference Catalog 仍是独立系统 owner；controller 只拥有目录搜索 Query 与带 Workspace、Epoch 的缓存键，不把目录结果复制进 Doctor Case 状态。`DoctorQueueModule` 只组合 controller 提供的分页快照和选择/接诊动作，不拥有病例 DTO 副本。
+`DoctorCaseController` 是 Doctor Case 与诊疗流程 Query、Command、expected version、幂等键、错误映射和精确失效的 seam。页面模块只接收当前 owner 的状态与动作切片，不拼 query key、版本或跨 owner 失效列表。全局 Reference Catalog 仍是独立系统 owner；controller 只拥有目录搜索 Query 与带 Workspace、Epoch 的缓存键，不把目录结果复制进 Doctor Case 状态。`DoctorQueueModule` 只组合 controller 提供的分页快照和选择/接诊动作，不拥有病例 DTO 副本。病例为 `awaiting-doctor` 时，controller 在接诊成功前把全部临床页设为只读，并把开始首诊动作放在页签外的稳定位置；`awaiting-revisit` 仍按各 owner 的现有纠错合同开放受控修订。
 
 页面责任如下：
 

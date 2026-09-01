@@ -115,6 +115,15 @@ function sourceReference(entry: z.infer<typeof bundleSchema>['entry'][number]): 
   return entry.fullUrl ?? `${entry.resource.resourceType}/${entry.resource.id}`
 }
 
+function visibleHistoryItem(row: z.infer<typeof historyRowSchema>) {
+  return {
+    clinicalDate: row.clinical_date,
+    resourceType: row.resource_type,
+    sourceReference: row.source_reference,
+    title: row.title,
+  }
+}
+
 function caseId(profile: SyntheticPatientProfile): string {
   const digest = createHash('sha256')
     .update(`${profile.workspaceId}:${profile.profileId}:${profile.revision}:${profile.source.hash}`)
@@ -327,16 +336,26 @@ export class SyntheticCaseRepository {
       (input.page - 1) * input.pageSize,
     ))
     return syntheticSourceHistoryListSchema.parse({
-      items: rows.map(row => ({
-        clinicalDate: row.clinical_date,
-        resourceType: row.resource_type,
-        sourceReference: row.source_reference,
-        title: row.title,
-      })),
+      items: rows.map(visibleHistoryItem),
       page: input.page,
       pageSize: input.pageSize,
       total,
     })
+  }
+
+  listRecentVisibleHistory(input: {
+    caseId: string
+    limit: number
+    workspaceId: string
+  }): SyntheticSourceHistoryList['items'] {
+    const rows = z.array(historyRowSchema).parse(this.#database.driver.prepare(`
+      SELECT source_reference, resource_type, clinical_date, title
+      FROM synthetic_case_visible_history
+      WHERE workspace_id = ? AND case_id = ?
+      ORDER BY sequence DESC
+      LIMIT ?
+    `).all(input.workspaceId, input.caseId, input.limit))
+    return rows.toReversed().map(visibleHistoryItem)
   }
 
   getVisibleResource(

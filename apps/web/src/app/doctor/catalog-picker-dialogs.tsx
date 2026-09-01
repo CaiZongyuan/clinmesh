@@ -78,13 +78,14 @@ const copy = {
     laboratoryDescription: 'Current laboratory catalog',
     laboratoryPlaceholder: 'Name or LOINC (2+ characters)',
     laboratorySearchInput: 'Search laboratory catalog',
+    laboratorySupported: 'Available',
+    laboratoryUnsupported: 'Unavailable for this case',
     localCatalog: 'Local common',
     medicationDescription: 'Current medication product catalog',
     medicationPlaceholder: 'Generic name, brand, manufacturer, or code',
     medicationSearchInput: 'Search medication catalog',
     next: 'Next page',
     noResults: 'No matching records',
-    noSupportedLaboratoryResults: 'No matching item can generate a result for this case',
     packageVariants: '{count} package variants',
     previous: 'Previous page',
     replaceDiagnosis: 'Replace diagnosis',
@@ -113,13 +114,14 @@ const copy = {
     laboratoryDescription: '当前检验目录',
     laboratoryPlaceholder: '检验名称或 LOINC（至少 2 字）',
     laboratorySearchInput: '搜索检验目录',
+    laboratorySupported: '可开立',
+    laboratoryUnsupported: '当前病例不可生成',
     localCatalog: '本院常用',
     medicationDescription: '当前药品产品目录',
     medicationPlaceholder: '通用名、商品名、厂家或编码',
     medicationSearchInput: '搜索药品目录',
     next: '下一页',
     noResults: '没有匹配记录',
-    noSupportedLaboratoryResults: '没有可为当前病例生成结果的匹配项目',
     packageVariants: '{count} 个包装',
     previous: '上一页',
     replaceDiagnosis: '更换诊断',
@@ -138,6 +140,18 @@ function totalLabel(template: string, total: number): string {
 
 function countLabel(template: string, count: number): string {
   return template.replace('{count}', String(count))
+}
+
+function uniqueCaseLaboratoryResults(items: CaseLaboratoryCatalogSearch['items']) {
+  const results = new Map<string, CaseLaboratoryCatalogSearch['items'][number]>()
+  for (const item of items) {
+    const key = JSON.stringify([item.system, item.code])
+    const current = results.get(key)
+    if (current === undefined || (!current.resultGeneration.supported && item.resultGeneration.supported)) {
+      results.set(key, item)
+    }
+  }
+  return [...results.values()]
 }
 
 function CatalogSearchForm({
@@ -508,7 +522,7 @@ export function LaboratoryCatalogDialog({
   const [selected, setSelected] = useState<LaboratoryCatalogSelection>()
   const results = search
   const remoteResults = results.data?.items ?? []
-  const supportedResults = remoteResults.filter(item => item.resultGeneration.supported)
+  const visibleResults = uniqueCaseLaboratoryResults(remoteResults)
   const openDialog = () => {
     setInput('')
     setQuery('')
@@ -550,11 +564,9 @@ export function LaboratoryCatalogDialog({
             {results.isError ? (
               <Alert className="m-2"><CircleAlertIcon /><AlertTitle>{messages.catalogUnavailable}</AlertTitle></Alert>
             ) : null}
-            {supportedResults.length === 0 ? (
+            {visibleResults.length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">
-                {results.data === undefined
-                  ? messages.noResults
-                  : messages.noSupportedLaboratoryResults}
+                {messages.noResults}
               </p>
             ) : (
               <Table>
@@ -564,10 +576,11 @@ export function LaboratoryCatalogDialog({
                     <TableHead>{locale === 'zh-CN' ? '检验项目' : 'Laboratory item'}</TableHead>
                     <TableHead className="w-44">LOINC</TableHead>
                     <TableHead className="w-36">{locale === 'zh-CN' ? '结果类型' : 'Result type'}</TableHead>
+                    <TableHead className="w-40">{locale === 'zh-CN' ? '当前病例' : 'Current case'}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {supportedResults.map(item => {
+                  {visibleResults.map(item => {
                     const selection: LaboratoryCatalogSelection = {
                       catalogItemId: item.id,
                       code: item.code,
@@ -575,16 +588,17 @@ export function LaboratoryCatalogDialog({
                       referenceConcept: item,
                     }
                     const inactive = item.status !== 'active'
+                    const unavailable = inactive || !item.resultGeneration.supported
                     const label = `${messages.choose} ${selection.display} ${selection.code}`
                     return (
                       <TableRow
-                        className={cn(inactive && 'opacity-50', selected?.catalogItemId === selection.catalogItemId && 'bg-muted/70')}
+                        className={cn(unavailable && 'opacity-50', selected?.catalogItemId === selection.catalogItemId && 'bg-muted/70')}
                         key={selection.catalogItemId}
-                        onDoubleClick={() => { if (!inactive) confirm(selection) }}
+                        onDoubleClick={() => { if (!unavailable) confirm(selection) }}
                       >
                         <TableCell>
                           <SelectionButton
-                            disabled={inactive}
+                            disabled={unavailable}
                             label={label}
                             onSelect={() => setSelected(selection)}
                             selected={selected?.catalogItemId === selection.catalogItemId}
@@ -594,6 +608,11 @@ export function LaboratoryCatalogDialog({
                         <TableCell className="font-mono text-xs">{selection.code}</TableCell>
                         <TableCell>
                           {item.laboratory?.resultType ?? '-'}
+                        </TableCell>
+                        <TableCell>
+                          {item.resultGeneration.supported
+                            ? messages.laboratorySupported
+                            : messages.laboratoryUnsupported}
                         </TableCell>
                       </TableRow>
                     )

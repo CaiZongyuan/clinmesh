@@ -70,6 +70,144 @@
         "tatMinutes": 30,
         "unitCode": "mmol/L"
       }
+    },
+    {
+      "source": {
+        "code": "6690-2",
+        "display": "Leukocytes [#/volume] in Blood by Automated count",
+        "system": "http://loinc.org",
+        "version": "2.83"
+      },
+      "target": {
+        "catalogItemId": "lab-wbc",
+        "code": "WBC",
+        "feeFen": 800,
+        "name": "白细胞计数",
+        "referenceMaximum": 9.5,
+        "referenceMinimum": 3.5,
+        "referenceRange": "3.5-9.5 x10^9/L",
+        "reportTemplate": "白细胞计数 {value} {unit}",
+        "sourceUnits": [
+          { "multiplier": 1, "unitCode": "10*9/L" }
+        ],
+        "tatMinutes": 20,
+        "unitCode": "10*9/L"
+      }
+    },
+    {
+      "source": {
+        "code": "718-7",
+        "display": "Hemoglobin [Mass/volume] in Blood",
+        "system": "http://loinc.org",
+        "version": "2.83"
+      },
+      "target": {
+        "catalogItemId": "lab-hemoglobin",
+        "code": "HGB",
+        "feeFen": 800,
+        "name": "血红蛋白",
+        "referenceMaximum": 175,
+        "referenceMinimum": 115,
+        "referenceRange": "115-175 g/L",
+        "reportTemplate": "血红蛋白 {value} {unit}",
+        "sourceUnits": [
+          { "multiplier": 1, "unitCode": "g/L" }
+        ],
+        "tatMinutes": 20,
+        "unitCode": "g/L"
+      }
+    },
+    {
+      "source": {
+        "code": "777-3",
+        "display": "Platelets [#/volume] in Blood by Automated count",
+        "system": "http://loinc.org",
+        "version": "2.83"
+      },
+      "target": {
+        "catalogItemId": "lab-platelets",
+        "code": "PLT",
+        "feeFen": 800,
+        "name": "血小板计数",
+        "referenceMaximum": 350,
+        "referenceMinimum": 125,
+        "referenceRange": "125-350 x10^9/L",
+        "reportTemplate": "血小板计数 {value} {unit}",
+        "sourceUnits": [
+          { "multiplier": 1, "unitCode": "10*9/L" }
+        ],
+        "tatMinutes": 20,
+        "unitCode": "10*9/L"
+      }
+    },
+    {
+      "source": {
+        "code": "787-2",
+        "display": "MCV [Entitic mean volume] in Red Blood Cells by Automated count",
+        "system": "http://loinc.org",
+        "version": "2.83"
+      },
+      "target": {
+        "catalogItemId": "lab-mcv",
+        "code": "MCV",
+        "feeFen": 800,
+        "name": "平均红细胞体积",
+        "referenceMaximum": 100,
+        "referenceMinimum": 80,
+        "referenceRange": "80-100 fL",
+        "reportTemplate": "平均红细胞体积 {value} {unit}",
+        "sourceUnits": [
+          { "multiplier": 1, "unitCode": "fL" }
+        ],
+        "tatMinutes": 20,
+        "unitCode": "fL"
+      }
+    },
+    {
+      "source": {
+        "code": "789-8",
+        "display": "Erythrocytes [#/volume] in Blood by Automated count",
+        "system": "http://loinc.org",
+        "version": "2.83"
+      },
+      "target": {
+        "catalogItemId": "lab-rbc",
+        "code": "RBC",
+        "feeFen": 800,
+        "name": "红细胞计数",
+        "referenceMaximum": 5.8,
+        "referenceMinimum": 3.8,
+        "referenceRange": "3.8-5.8 x10^12/L",
+        "reportTemplate": "红细胞计数 {value} {unit}",
+        "sourceUnits": [
+          { "multiplier": 1, "unitCode": "10*12/L" }
+        ],
+        "tatMinutes": 20,
+        "unitCode": "10*12/L"
+      }
+    },
+    {
+      "source": {
+        "code": "20570-8",
+        "display": "Hematocrit [Volume Fraction] of Blood by calculation",
+        "system": "http://loinc.org",
+        "version": "2.83"
+      },
+      "target": {
+        "catalogItemId": "lab-hematocrit",
+        "code": "HCT",
+        "feeFen": 800,
+        "name": "红细胞压积",
+        "referenceMaximum": 0.52,
+        "referenceMinimum": 0.35,
+        "referenceRange": "0.35-0.52 L/L",
+        "reportTemplate": "红细胞压积 {value} {unit}",
+        "sourceUnits": [
+          { "multiplier": 1, "unitCode": "L/L" }
+        ],
+        "tatMinutes": 20,
+        "unitCode": "L/L"
+      }
     }
   ],
   "schemaVersion": "1",

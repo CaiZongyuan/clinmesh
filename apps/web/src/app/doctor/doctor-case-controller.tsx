@@ -326,7 +326,8 @@ function DoctorCaseController({
   })
   const completion = useQuery({
     enabled: detail.data?.consultation !== undefined
-      && detail.data.encounter.status === 'in-progress',
+      && detail.data.encounter.status === 'in-progress'
+      && detail.data.status !== 'awaiting-doctor',
     queryFn: ({ signal }) => getEncounterCompletion(detail.data?.encounter.id ?? '', signal),
     queryKey: [
       ...encounterCompletionScopeKey,
@@ -1517,6 +1518,8 @@ function CaseDetail({
 }): React.JSX.Element {
   const firstVisitDraft = detail.drafts?.firstVisit
   const readOnly = detail.encounter.status !== 'in-progress'
+  const visitNotStarted = detail.status === 'awaiting-doctor'
+  const clinicalReadOnly = readOnly || visitNotStarted
   const [activeSection, setActiveSection] = useState<DoctorCaseSection>('record')
   const [contextRailOpen, setContextRailOpen] = useState(true)
   const [pendingNavigation, setPendingNavigation] = useState<{
@@ -1751,7 +1754,7 @@ function CaseDetail({
       : 'grid min-w-0 overflow-hidden border bg-background 2xl:grid-cols-[minmax(0,1fr)_2.75rem]'}>
       <div className="flex min-w-0 flex-col">
         <PatientBanner
-          {...(readOnly || detail.consultation === undefined
+          {...(clinicalReadOnly || detail.consultation === undefined
             ? {}
             : {
                 completionAction: (
@@ -1767,6 +1770,10 @@ function CaseDetail({
           messages={messages}
           statusText={doctorCaseStatusLabel(detail.status, messages)}
         />
+
+        {overviewWorkflow === null ? null : (
+          <div className="border-b p-4">{overviewWorkflow}</div>
+        )}
 
         <Tabs
           className="min-w-0 gap-0 bg-background"
@@ -1798,19 +1805,18 @@ function CaseDetail({
                 locale={locale}
                 messages={messages}
                 patientName={detail.patient.name}
-                readOnly={readOnly}
+                readOnly={clinicalReadOnly}
               />
             </TabsContent>
           )}
 
           <TabsContent className="p-4" value="record">
             <div className="flex flex-col gap-4">
-              {overviewWorkflow}
               <div className="min-w-0">
-                {detail.consultation === undefined ? firstVisitRecord : (
+                {visitNotStarted ? null : detail.consultation === undefined ? firstVisitRecord : (
                   <ClinicalDocumentPage
                     actions={clinicalDocumentActions}
-                    allowRevision={!readOnly || correctionTarget === 'clinical-document'}
+                    allowRevision={!clinicalReadOnly || correctionTarget === 'clinical-document'}
                     detail={detail}
                     elementId={encounterCompletionTargetElementIds['clinical-document']}
                     key={`structured-clinical-document:${detail.caseId}`}
@@ -1840,7 +1846,7 @@ function CaseDetail({
                 key={detail.caseId}
                 locale={locale}
                 messages={messages}
-                readOnly={readOnly}
+                readOnly={clinicalReadOnly}
                 referenceSearch={referenceCatalogSearches.diagnoses}
                 state={detail.diagnosis}
               />
@@ -1858,14 +1864,14 @@ function CaseDetail({
             ) : catalog.data.prescriptionConclusionSupported ? (
               <PrescriptionPage
                 actions={prescriptionActions}
-                allowWithdrawal={!readOnly || correctionTarget === 'medication-conclusion'}
+                allowWithdrawal={!clinicalReadOnly || correctionTarget === 'medication-conclusion'}
                 catalog={catalog.data.medications}
                 detail={detail}
                 elementId={encounterCompletionTargetElementIds['medication-conclusion']}
                 key={`medication-conclusion:${detail.caseId}`}
                 locale={locale}
                 messages={messages}
-                readOnly={readOnly}
+                readOnly={clinicalReadOnly}
                 referenceSearch={referenceCatalogSearches.medications}
               />
             ) : null}
@@ -1888,7 +1894,7 @@ function CaseDetail({
               onIndicationChange={onIndicationChange}
               onIssueLegacyOrder={onIssueOrder}
               onLaboratoryItemChange={onLaboratoryItemChange}
-              readOnly={readOnly}
+              readOnly={clinicalReadOnly}
               referenceSearch={referenceCatalogSearches.laboratory}
               showCorrection={correctionTarget === 'laboratory'}
             />

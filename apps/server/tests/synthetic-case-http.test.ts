@@ -724,21 +724,39 @@ describe('Synthetic Case generation HTTP contract', () => {
       system: 'http://loinc.org',
       version: '2.83',
     } as const
+    const profiledAgentConcept = {
+      code: '8310-5',
+      display: '体温',
+      id: 'laboratory:synthetic-body-temperature',
+      laboratory: {
+        category: 'vital-sign',
+        resultType: 'quantity',
+        specimen: 'body',
+        unit: {
+          code: 'Cel',
+          display: 'Cel',
+          system: 'http://unitsofmeasure.org',
+        },
+      },
+      sourceLocator: 'synthetic:test:body-temperature',
+      system: 'http://loinc.org',
+      version: '2.83',
+    } as const
     const unsupportedAgentConcept = {
-      code: '6690-2',
-      display: '白细胞计数',
-      id: 'laboratory:synthetic-white-blood-cell-count',
+      code: '785-6',
+      display: '平均红细胞血红蛋白量',
+      id: 'laboratory:synthetic-mean-corpuscular-hemoglobin',
       laboratory: {
         category: 'hematology',
         resultType: 'quantity',
         specimen: 'blood',
         unit: {
-          code: '10*9/L',
-          display: '10*9/L',
+          code: 'pg',
+          display: 'pg',
           system: 'http://unitsofmeasure.org',
         },
       },
-      sourceLocator: 'synthetic:test:white-blood-cell-count',
+      sourceLocator: 'synthetic:test:mean-corpuscular-hemoglobin',
       system: 'http://loinc.org',
       version: '2.83',
     } as const
@@ -753,6 +771,12 @@ describe('Synthetic Case generation HTTP contract', () => {
       'epoch-1',
       startedCommand.data.outpatientCaseId,
       agentConcept,
+    )).toEqual({ source: 'investigation-agent', supported: true })
+    expect(runtime.investigation.generationCapabilityForCase(
+      'workspace-demo',
+      'epoch-1',
+      startedCommand.data.outpatientCaseId,
+      profiledAgentConcept,
     )).toEqual({ source: 'investigation-agent', supported: true })
     expect(runtime.investigation.generationCapabilityForCase(
       'workspace-demo',
@@ -837,6 +861,35 @@ describe('Synthetic Case generation HTTP contract', () => {
       WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = 'lab-cbc'
     `).get('workspace-demo', caseId)).toEqual({ source: 'synthea-exact' })
 
+    const insertVisibleResource = runtime.database.driver.prepare(`
+      INSERT INTO synthetic_case_visible_resource (
+        workspace_id, case_id, source_reference, resource_type, resource_json
+      ) VALUES (?, ?, ?, 'Procedure', ?)
+    `)
+    const insertVisibleHistory = runtime.database.driver.prepare(`
+      INSERT INTO synthetic_case_visible_history (
+        workspace_id, case_id, sequence, source_reference,
+        resource_type, clinical_date, title
+      ) VALUES (?, ?, ?, ?, 'Procedure', ?, ?)
+    `)
+    for (let index = 0; index < 30; index += 1) {
+      const sourceReference = `urn:uuid:agent-context-${index}`
+      insertVisibleResource.run(
+        'workspace-demo',
+        caseId,
+        sourceReference,
+        JSON.stringify({ id: `agent-context-${index}`, resourceType: 'Procedure', status: 'completed' }),
+      )
+      insertVisibleHistory.run(
+        'workspace-demo',
+        caseId,
+        100 + index,
+        sourceReference,
+        `2025-01-${String(index + 1).padStart(2, '0')}T09:00:00+08:00`,
+        `既往处置 ${index + 1}`,
+      )
+    }
+
     const agentDraft = await saveLaboratoryDraft('lab-crp', 2)
     const agentRequest = (await issueLaboratory(agentDraft.draftVersion)).request
     await runtime.dispatchPending()
@@ -857,6 +910,12 @@ describe('Synthetic Case generation HTTP contract', () => {
       WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = 'lab-crp'
     `).get('workspace-demo', caseId)).toEqual({ count: 0 })
     expect(briefProvider.requests).toHaveLength(4)
+    const firstAgentPayload = briefProvider.requests.at(-1)?.userPayload as {
+      privateCaseEvidence: unknown[]
+      visibleHistory: unknown[]
+    }
+    expect(firstAgentPayload.privateCaseEvidence.length).toBeLessThanOrEqual(20)
+    expect(firstAgentPayload.visibleHistory.length).toBeLessThanOrEqual(20)
 
     runtime.database.driver.prepare(`
       UPDATE laboratory_request SET reference_json = ?

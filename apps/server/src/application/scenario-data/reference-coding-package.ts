@@ -119,6 +119,37 @@ export function resolveObservationMapping(input: {
     : undefined
 }
 
+function rangeValue(value: number): number {
+  return Number(value.toFixed(4))
+}
+
+export function syntheticInvestigationReferenceRange(input: {
+  code: string
+  system: string
+  unitCode: string
+  unitDisplay: string
+  version: string
+}) {
+  const mapping = resolveObservationMapping(input)
+  const sourceUnit = mapping?.sourceUnits.find(unit => unit.unitCode === input.unitCode)
+  if (mapping === undefined || sourceUnit === undefined) return undefined
+  const low = mapping.referenceMinimum === undefined
+    ? undefined
+    : rangeValue(mapping.referenceMinimum / sourceUnit.multiplier)
+  const high = mapping.referenceMaximum === undefined
+    ? undefined
+    : rangeValue(mapping.referenceMaximum / sourceUnit.multiplier)
+  if (low === undefined && high === undefined) return undefined
+  const interval = low === undefined
+    ? `<=${high}`
+    : high === undefined ? `>=${low}` : `${low}-${high}`
+  return {
+    ...(high === undefined ? {} : { high }),
+    ...(low === undefined ? {} : { low }),
+    text: `合成成人演示范围 ${interval} ${input.unitDisplay}`,
+  }
+}
+
 export function isKnownObservationMappingCode(code: string): boolean {
   return observationMappingCodes.has(code)
 }
