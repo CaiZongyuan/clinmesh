@@ -11,6 +11,7 @@ import {
   referenceConceptSnapshotSchema,
   type ReferenceLaboratoryDefinition,
   type ReferenceLaboratoryRecord,
+  type ReferenceLaboratorySourceDataset,
 } from '@clinmesh/contracts/reference-data'
 import { z } from 'zod'
 import {
@@ -31,6 +32,7 @@ const promptVersion = 'laboratory-service-enrichment-v1'
 const laboratoryCnPublicationPolicyVersion = 'clinmesh-laboratory-defaults-v1'
 const laboratoryCnConclusion = '本报告为 ClinMesh 合成检验结果，仅用于仿真。'
 const laboratorySpecimenSystem = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-specimen-cn'
+const wst886EffectiveOn = '2026-11-01'
 const maximumPanelDepth = 32
 const maximumPanelEdges = 512
 const maximumPanelNodes = 256
@@ -143,7 +145,7 @@ export class LaboratoryServicePublisher {
       pageSize: number
       panelOnly?: boolean
       query?: string
-      sourceDataset?: 'laboratory-cn' | 'loinc-zh-cn'
+      sourceDataset?: ReferenceLaboratorySourceDataset
     },
   ) {
     this.#assertAdministrator(context)
@@ -196,6 +198,7 @@ export class LaboratoryServicePublisher {
           releaseId: source?.candidate?.releaseId ?? source?.upstreamVersion ?? record.concept.version,
         },
         specimen: record.specimens[0]?.display ?? null,
+        standardStatus: null,
       }
     }
     const leaves = record.panelMembers.map(member => (
@@ -238,7 +241,24 @@ export class LaboratoryServicePublisher {
         releaseId: record.definition.datasetReleaseId,
       },
       specimen: record.definition.specimen,
+      standardStatus: this.#laboratoryStandardStatus(context),
     }
+  }
+
+  #laboratoryStandardStatus(context: ActorContext) {
+    const state = z.object({ virtual_time: z.iso.datetime({ offset: true }) }).parse(
+      this.#database.driver.prepare(`
+        SELECT virtual_time FROM scenario_epoch_state
+        WHERE workspace_id = ? AND epoch = ? AND scenario_run_id = ?
+      `).get(context.workspaceId, context.epoch, context.scenarioRunId),
+    )
+    return {
+      effectiveOn: wst886EffectiveOn,
+      mode: state.virtual_time.slice(0, 10) < wst886EffectiveOn
+        ? 'future-standard-preview'
+        : 'effective',
+      standard: 'WS/T 886-2026',
+    } as const
   }
 
   enqueue(input: {
@@ -454,6 +474,13 @@ export class LaboratoryServicePublisher {
     const visited = new Set<string>()
     let edgeCount = 0
     const visit = (record: ReferenceLaboratoryRecord, depth: number): void => {
+      if (record.concept.status !== 'active') {
+        throw new LaboratoryServicePublisherError(
+          'LABORATORY_PANEL_INVALID',
+          'The selected laboratory panel contains an inactive member',
+          409,
+        )
+      }
       if (visiting.has(record.concept.id)) {
         throw new LaboratoryServicePublisherError(
           'LABORATORY_PANEL_INVALID',
@@ -529,6 +556,17 @@ export class LaboratoryServicePublisher {
         this.#assertLaboratoryCnLeaf(leaf)
       }
     }
+    const rootDefinition = root!.definition
+    if (rootDefinition.kind === 'laboratory-cn-panel' && leaves.some(leaf => (
+      leaf.definition.kind !== 'laboratory-cn-test'
+      || leaf.definition.specimen !== rootDefinition.specimen
+    ))) {
+      throw new LaboratoryServicePublisherError(
+        'LABORATORY_PANEL_INVALID',
+        'The laboratory-cn panel contains incompatible specimen definitions',
+        409,
+      )
+    }
     return { leaves, root: root! }
   }
 
@@ -588,6 +626,7 @@ export class LaboratoryServicePublisher {
     roots: ResolvedRoot[],
   ): Array<{ draft: ServiceDraft; rootConceptId?: string }> {
     const drafts: Array<{ draft: ServiceDraft; rootConceptId?: string }> = []
+    const standardStatus = this.#laboratoryStandardStatus(job.actorContext)
     for (const resolved of roots) {
       if (resolved.root.definition.kind !== 'laboratory-cn-panel'
         || resolved.leaves.some(leaf => leaf.definition.kind !== 'laboratory-cn-test')) {
@@ -648,6 +687,7 @@ export class LaboratoryServicePublisher {
           },
           serviceKind: 'laboratory',
           sourceDataset,
+          standardStatus,
           specimen: this.#specimen(resolved.root)!,
           tatMinutes: 180,
         },
@@ -673,6 +713,7 @@ export class LaboratoryServicePublisher {
             },
             serviceKind: 'laboratory',
             sourceDataset,
+            standardStatus,
             specimen: this.#specimen(leaf)!,
             tatMinutes: 180,
           },

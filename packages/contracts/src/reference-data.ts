@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 export const referenceDataItemIdSchema = z.string().min(1).max(256)
+export const referenceLaboratorySourceDatasetSchema = z.enum(['laboratory-cn', 'loinc-zh-cn'])
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
 
@@ -118,6 +119,34 @@ export const referenceLaboratoryAdultRuleSchema = z.object({
       code: 'custom',
       message: 'Laboratory simulation low must be below simulation high',
       path: ['simulationLow'],
+    })
+  }
+  if (rule.referenceKind === 'range') {
+    if (rule.low === undefined || rule.high === undefined || rule.low > rule.high) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A range reference rule requires ordered low and high values',
+        path: ['low'],
+      })
+    }
+  } else if (rule.referenceKind === 'upper-bound' && rule.high === undefined) {
+    context.addIssue({
+      code: 'custom',
+      message: 'An upper-bound reference rule requires a high value',
+      path: ['high'],
+    })
+  } else if (rule.referenceKind === 'lower-bound' && rule.low === undefined) {
+    context.addIssue({
+      code: 'custom',
+      message: 'A lower-bound reference rule requires a low value',
+      path: ['low'],
+    })
+  } else if ((rule.referenceKind === 'coded' || rule.referenceKind === 'ordinal')
+    && rule.normalValue === undefined) {
+    context.addIssue({
+      code: 'custom',
+      message: 'A coded or ordinal reference rule requires a normal value',
+      path: ['normalValue'],
     })
   }
 })
@@ -425,6 +454,9 @@ export type ReferenceLaboratoryDefinition = z.infer<typeof referenceLaboratoryDe
 export type ReferenceLaboratoryPanelMember = z.infer<typeof referenceLaboratoryPanelMemberSchema>
 export type ReferenceLaboratoryRecord = z.infer<typeof referenceLaboratoryRecordSchema>
 export type ReferenceLaboratorySpecimen = z.infer<typeof referenceLaboratorySpecimenSchema>
+export type ReferenceLaboratorySourceDataset = z.infer<
+  typeof referenceLaboratorySourceDatasetSchema
+>
 export type ReferenceLaboratoryUnit = z.infer<typeof referenceLaboratoryUnitSchema>
 export type ReferenceMedicationProduct = z.infer<typeof referenceMedicationProductSchema>
 export type ReferenceMappingPackageProvenance = z.infer<typeof referenceMappingPackageProvenanceSchema>

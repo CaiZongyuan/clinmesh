@@ -22,6 +22,7 @@ import {
   type ReferenceLaboratoryPanelMember,
   type ReferenceLaboratoryRecord,
   type ReferenceLaboratorySpecimen,
+  type ReferenceLaboratorySourceDataset,
   type ReferenceLaboratoryUnit,
   type ReferenceMedicalService,
   type ReferenceMedicationProduct,
@@ -64,7 +65,7 @@ export interface ReferenceCatalogSearchInput {
 
 export interface ReferenceLaboratoryCandidateSearchInput extends ReferenceCatalogSearchInput {
   panelOnly?: boolean
-  sourceDataset?: 'laboratory-cn' | 'loinc-zh-cn'
+  sourceDataset?: ReferenceLaboratorySourceDataset
 }
 
 export interface ReferenceCatalogSearchResult<Item> {

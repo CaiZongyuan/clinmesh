@@ -2,6 +2,7 @@ import { laboratoryServiceSnapshotSchema } from '@clinmesh/contracts/his'
 import { describe, expect, it } from 'vitest'
 import {
   AdultReferenceApplicabilityError,
+  exactAdultReferenceScalarResult,
   generateAdultReferenceResult,
   selectAdultReferenceRule,
 } from '../src/application/laboratory-adult-reference.ts'
@@ -185,5 +186,21 @@ describe('adult laboratory reference policy', () => {
       rule: fixedRule,
       serviceVersion: 1,
     })).toMatchObject({ referenceRange: { text: '5.0～8.0' }, value: '5.0～8.0' })
+    expect(exactAdultReferenceScalarResult({
+      definition: {
+        ...definition,
+        adultReferenceRules: [fixedRule],
+        healthyStrategy: 'fixed-normal',
+        precision: 0,
+        unit: undefined,
+        valueType: 'string',
+      },
+      rule: fixedRule,
+      value: '9.0',
+    })).toMatchObject({
+      interpretation: 'abnormal',
+      source: 'case-truth-exact',
+      value: '9.0',
+    })
   })
 })

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   referenceCodingIdentity,
   referenceImportManifestSchema,
+  referenceLaboratoryAdultRuleSchema,
 } from '../src/reference-data.ts'
 
 describe('Reference Data contracts', () => {
@@ -32,5 +33,27 @@ describe('Reference Data contracts', () => {
       system: 'https://example.test/codes',
       version: 'b\u0000c',
     }))
+  })
+
+  it('requires the clinical values declared by each adult reference kind', () => {
+    const base = {
+      notes: '',
+      sex: 'all' as const,
+      sourceLocation: 'fixture/1',
+      sourceStandard: 'Synthetic Standard',
+      sourceType: 'national-standard' as const,
+      sourceVersion: '1',
+    }
+    expect(referenceLaboratoryAdultRuleSchema.safeParse({
+      ...base,
+      referenceKind: 'range',
+      simulationHigh: 9,
+      simulationLow: 3,
+    }).success).toBe(false)
+    expect(referenceLaboratoryAdultRuleSchema.safeParse({
+      ...base,
+      normalValue: '阴性',
+      referenceKind: 'coded',
+    }).success).toBe(true)
   })
 })

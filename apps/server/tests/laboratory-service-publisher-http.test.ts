@@ -520,6 +520,11 @@ describe('Laboratory Service Publisher HTTP contract', () => {
           releaseId: 'laboratory-cn@2026-09-01.r1',
         },
         specimen: '全血',
+        standardStatus: {
+          effectiveOn: '2026-11-01',
+          mode: 'future-standard-preview',
+          standard: 'WS/T 886-2026',
+        },
       }],
       total: 1,
     })
@@ -597,6 +602,11 @@ describe('Laboratory Service Publisher HTTP contract', () => {
         datasetId: 'laboratory-cn',
         releaseId: 'laboratory-cn@2026-09-01.r1',
       },
+      standardStatus: {
+        effectiveOn: '2026-11-01',
+        mode: 'future-standard-preview',
+        standard: 'WS/T 886-2026',
+      },
       tatMinutes: 180,
     })
     expect(rootService.reportDefinition.results.map(result => result.referenceConcept.code))
@@ -648,6 +658,68 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       version: 2,
     })
 
+  })
+
+  it.each([
+    {
+      mutate: (databasePath: string) => {
+        editReferenceDatabase(databasePath, database => {
+          database.driver.prepare(`
+            UPDATE reference_concept SET status = 'inactive'
+            WHERE release_id = 'laboratory-service-reference-v1'
+              AND concept_id = 'wst-886:2026:0100101A'
+          `).run()
+        })
+      },
+      scenario: 'an inactive panel member',
+    },
+    {
+      mutate: (databasePath: string) => {
+        editReferenceDatabase(databasePath, database => {
+          database.driver.prepare(`
+            UPDATE reference_laboratory_definition
+            SET definition_json = json_set(definition_json, '$.specimen', '血清')
+            WHERE release_id = 'laboratory-service-reference-v1'
+              AND concept_id = 'wst-886:2026:0100101A'
+          `).run()
+        })
+      },
+      scenario: 'a panel specimen conflict',
+    },
+  ])('rejects $scenario before publishing laboratory-cn services', async ({ mutate }) => {
+    const { administratorCookie, referenceDatabasePath, runtime } = await createRuntime()
+    mutate(referenceDatabasePath)
+    const response = await runtime.app.request(
+      '/api/his/v1/admin/laboratory-services/actions/publish',
+      {
+        body: JSON.stringify({
+          input: {
+            entries: [{
+              conceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+              expectedVersion: 0,
+            }],
+          },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: administratorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(response.status).toBe(200)
+    const jobId = publishLaboratoryServicesResponseSchema.parse(await response.json()).data.jobId
+    await runtime.dispatchLaboratoryServicePublicationJobs()
+    expect(laboratoryServicePublicationJobSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/admin/laboratory-services/jobs/${jobId}`,
+      { headers: { cookie: administratorCookie } },
+    )).json())).toMatchObject({
+      error: { code: 'LABORATORY_PANEL_INVALID' },
+      publishedServiceIds: [],
+      status: 'failed',
+    })
   })
 
   it('publishes an enriched panel atomically and exposes only its orderable root to doctors', async () => {

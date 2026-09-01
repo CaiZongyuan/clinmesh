@@ -631,6 +631,13 @@ describe('cn-health Candidate importer', () => {
         releaseId: candidate.releaseId,
       },
     })
+    const manifest = JSON.parse(await readFile(candidate.manifestPath, 'utf8')) as {
+      canonical: { recordCount: number }
+    }
+    manifest.canonical.recordCount += 1
+    await writeFile(candidate.manifestPath, `${JSON.stringify(manifest)}\n`)
+    expect(() => parseCnHealthCandidateReferenceArtifact(candidate.manifestPath))
+      .toThrow('primary record count')
   })
 
   it('publishes Schema v2 adult laboratory definitions through the Reference Database interface', async () => {

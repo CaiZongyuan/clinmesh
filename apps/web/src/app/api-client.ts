@@ -60,6 +60,7 @@ import {
   type ScenarioState,
   type SessionContext,
 } from '@clinmesh/contracts/his'
+import type { ReferenceLaboratorySourceDataset } from '@clinmesh/contracts/reference-data'
 import {
   patientBriefJobSchema,
   patientBriefRevisionListSchema,
@@ -191,7 +192,7 @@ export function searchLaboratoryServiceCandidates(
   page = 1,
   filters: {
     panelOnly?: boolean
-    sourceDataset?: 'laboratory-cn' | 'loinc-zh-cn'
+    sourceDataset?: ReferenceLaboratorySourceDataset
   } = {},
   signal?: AbortSignal,
 ) {

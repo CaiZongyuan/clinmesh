@@ -709,7 +709,7 @@ const laboratoryObservationContentSchema = z.object({
     }).loose()).min(1),
   }).loose(),
   interpretation: z.array(z.object({
-    coding: z.array(z.object({ code: z.enum(['N', 'H', 'L']) }).loose()).min(1),
+    coding: z.array(z.object({ code: z.enum(['N', 'A', 'H', 'L']) }).loose()).min(1),
   }).loose()).min(1),
   referenceRange: z.array(z.object({
     high: z.object({ value: z.number().finite() }).loose().optional(),
@@ -7499,7 +7499,9 @@ export class WorkflowService {
         const observationId = `obs-${result.code}-${request.service_request_id}`
         const interpretationCode = result.interpretation === 'normal'
           ? 'N'
-          : result.interpretation === 'high' ? 'H' : 'L'
+          : result.interpretation === 'abnormal'
+            ? 'A'
+            : result.interpretation === 'high' ? 'H' : 'L'
         const value = typeof result.value === 'number'
           ? result.unit === undefined
             ? { valueQuantity: { value: result.value } }
@@ -11098,7 +11100,9 @@ export class WorkflowService {
           display: coding.display,
           interpretation: interpretationCode === 'N'
             ? 'normal' as const
-            : interpretationCode === 'H' ? 'high' as const : 'low' as const,
+            : interpretationCode === 'H'
+              ? 'high' as const
+              : interpretationCode === 'L' ? 'low' as const : 'abnormal' as const,
           observationId,
         }
         if (observation.valueQuantity !== undefined) {

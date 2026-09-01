@@ -162,6 +162,24 @@ function patientBundle(qualified: boolean, followUp = true) {
           value: 96,
         },
       },
+    }, {
+      fullUrl: 'urn:uuid:index-qualitative-observation',
+      resource: {
+        code: {
+          coding: [{
+            code: '9900002A',
+            display: '合成定性检验',
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026',
+          }],
+        },
+        effectiveDateTime: '2026-06-01T10:12:00+08:00',
+        encounter: { reference: 'urn:uuid:index-encounter' },
+        id: 'index-qualitative-observation',
+        resourceType: 'Observation',
+        status: 'final',
+        subject: { reference: 'urn:uuid:patient' },
+        valueString: '阳性',
+      },
     })
   }
   return { entry: entries, resourceType: 'Bundle', type: 'collection' }
@@ -1084,6 +1102,8 @@ describe('Synthetic Case generation HTTP contract', () => {
       componentServiceIds: [
         'hospital-laboratory-service-adult-wbc',
         'hospital-laboratory-service-adult-rbc',
+        'hospital-laboratory-service-adult-exact-fixed',
+        'hospital-laboratory-service-adult-baseline-fixed',
       ],
       doctorOrderable: true,
       executingDepartmentId: 'department-laboratory',
@@ -1179,6 +1199,54 @@ describe('Synthetic Case generation HTTP contract', () => {
             system: 'http://unitsofmeasure.org',
           },
           valueType: 'quantity',
+        }, {
+          adultReferenceRules: [{
+            normalValue: '阴性',
+            notes: '成人固定正常值',
+            referenceKind: 'coded',
+            sex: 'all',
+            sourceLocation: 'fixture/fixed/1',
+            sourceStandard: 'CN Health Data adult healthy baseline',
+            sourceType: 'project-curated',
+            sourceVersion: '2026-09-01',
+          }],
+          alternateCodings: [],
+          healthyStrategy: 'fixed-normal',
+          precision: 0,
+          referenceConcept: {
+            code: '9900002A',
+            display: '合成定性检验',
+            id: 'wst-886:2026:9900002A',
+            sourceLocator: 'synthetic:laboratory-cn:test:9900002A',
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026',
+            version: '2026',
+          },
+          referenceRange: { text: '按成人适用规则' },
+          valueType: 'string',
+        }, {
+          adultReferenceRules: [{
+            normalValue: '正常',
+            notes: '成人固定正常值',
+            referenceKind: 'ordinal',
+            sex: 'all',
+            sourceLocation: 'fixture/fixed/2',
+            sourceStandard: 'CN Health Data adult healthy baseline',
+            sourceType: 'project-curated',
+            sourceVersion: '2026-09-01',
+          }],
+          alternateCodings: [],
+          healthyStrategy: 'fixed-normal',
+          precision: 0,
+          referenceConcept: {
+            code: '9900003A',
+            display: '合成序数检验',
+            id: 'wst-886:2026:9900003A',
+            sourceLocator: 'synthetic:laboratory-cn:test:9900003A',
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026',
+            version: '2026',
+          },
+          referenceRange: { text: '按成人适用规则' },
+          valueType: 'string',
         }],
       },
       serviceKind: 'laboratory',
@@ -1289,6 +1357,16 @@ describe('Synthetic Case generation HTTP contract', () => {
           code: '0100201A',
           referenceRange: { high: 5.1, low: 3.8 },
           source: 'adult-reference-baseline',
+        }, {
+          code: '9900002A',
+          referenceRange: { text: '阴性' },
+          source: 'case-truth-exact',
+          value: '阳性',
+        }, {
+          code: '9900003A',
+          referenceRange: { text: '正常' },
+          source: 'adult-reference-baseline',
+          value: '正常',
         }],
       },
       provenance: {
@@ -1297,10 +1375,30 @@ describe('Synthetic Case generation HTTP contract', () => {
         referenceReleaseId: 'clinmesh-cn-health-2026-09-02.r1',
         rules: [
           expect.objectContaining({ conceptId: 'wst-886:2026:0100101A', sex: 'all' }),
-          expect.objectContaining({ conceptId: 'wst-886:2026:0100201A', sex: 'female' }),
+          expect.objectContaining({
+            conceptId: 'wst-886:2026:0100201A',
+            high: 5.1,
+            low: 3.8,
+            referenceKind: 'range',
+            sex: 'female',
+            simulationHigh: 5.1,
+            simulationLow: 3.8,
+          }),
+          expect.objectContaining({
+            conceptId: 'wst-886:2026:9900002A',
+            normalValue: '阴性',
+            referenceKind: 'coded',
+            sex: 'all',
+          }),
+          expect.objectContaining({
+            conceptId: 'wst-886:2026:9900003A',
+            normalValue: '正常',
+            referenceKind: 'ordinal',
+            sex: 'all',
+          }),
         ],
       },
-      source: 'adult-reference-baseline',
+      source: 'mixed',
     })
     await runtime.dispatchPending()
     const adultDetailResponse = await runtime.app.request(
@@ -1314,7 +1412,12 @@ describe('Synthetic Case generation HTTP contract', () => {
     ))
     expect(adultReported).toMatchObject({
       report: {
-        results: [{ code: '0100101A' }, { code: '0100201A' }],
+        results: [
+          { code: '0100101A' },
+          { code: '0100201A' },
+          { code: '9900002A', interpretation: 'abnormal', value: '阳性' },
+          { code: '9900003A', interpretation: 'normal', value: '正常' },
+        ],
       },
       status: 'reported',
     })
@@ -1356,6 +1459,18 @@ describe('Synthetic Case generation HTTP contract', () => {
         { code: '789-8', system: 'http://loinc.org', version: '2.83' },
       ] },
       referenceRange: [{ high: { value: 5.1 }, low: { value: 3.8 } }],
+    })
+    expect(adultObservations[2]).toMatchObject({
+      code: { coding: [{ code: '9900002A' }] },
+      referenceRange: [{ text: '阴性' }],
+      valueString: '阳性',
+      interpretation: [{ coding: [{ code: 'A' }] }],
+    })
+    expect(adultObservations[3]).toMatchObject({
+      code: { coding: [{ code: '9900003A' }] },
+      referenceRange: [{ text: '正常' }],
+      valueString: '正常',
+      interpretation: [{ coding: [{ code: 'N' }] }],
     })
     expect(fhirResourceSchema.parse(await (await runtime.app.request(
       `/fhir/R5/Specimen/${adultReported!.report!.specimenId}`,
@@ -2022,7 +2137,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       inputHash: adultSnapshot!.inputHash,
       outputHash: adultSnapshot!.outputHash,
       snapshotId: adultSnapshot!.snapshotId,
-      source: 'adult-reference-baseline',
+      source: 'mixed',
     })
     await runtime.dispatchPending()
     const replayAdultDetail = doctorCaseDetailSchema.parse(await (await runtime.app.request(

@@ -8,6 +8,7 @@ import {
   type ReferenceDataReleaseList,
   type ReferenceDataReleaseSummary,
   type ReferenceLaboratoryRecord,
+  type ReferenceLaboratorySourceDataset,
   type ReferenceMedicalService,
   type ReferenceMedicationProduct,
   type ReferenceValueSetEntry,
@@ -55,7 +56,7 @@ export interface ReferenceDataReader {
       pageSize: number
       panelOnly?: boolean
       query?: string
-      sourceDataset?: 'laboratory-cn' | 'loinc-zh-cn'
+      sourceDataset?: ReferenceLaboratorySourceDataset
     },
   ): { items: ReferenceLaboratoryRecord[]; total: number }
   searchMedicationProducts?(
@@ -246,7 +247,7 @@ export class ReferenceDataService {
       pageSize: number
       panelOnly?: boolean
       query?: string
-      sourceDataset?: 'laboratory-cn' | 'loinc-zh-cn'
+      sourceDataset?: ReferenceLaboratorySourceDataset
     },
   ) {
     if (context.roleCode !== 'administrator') {

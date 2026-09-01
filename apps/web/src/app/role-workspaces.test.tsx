@@ -989,6 +989,11 @@ describe('role workspaces', () => {
               releaseId: 'laboratory-cn@2026-09-01.r1',
             },
             specimen: '全血',
+            standardStatus: {
+              effectiveOn: '2026-11-01',
+              mode: 'future-standard-preview',
+              standard: 'WS/T 886-2026',
+            },
             status: published ? 'published' : 'unconfigured',
             version: published ? 1 : 0,
           }],
@@ -1041,6 +1046,7 @@ describe('role workspaces', () => {
     expect(screen.getByText('全血')).toBeTruthy()
     expect(screen.getByText('成人：女性、男性')).toBeTruthy()
     expect(screen.getByText('国家标准 · WS/T 405-2012 · 2012')).toBeTruthy()
+    expect(screen.getByText('WS/T 886-2026 · 2026-11-01 前预览')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'laboratory-cn' }))
     await user.click(screen.getByRole('checkbox', { name: '仅组合' }))
     await waitFor(() => expect(candidateQueries.at(-1)).toContain('sourceDataset=laboratory-cn'))

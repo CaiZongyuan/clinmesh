@@ -7,6 +7,7 @@ import {
   referenceDataItemIdSchema,
   referenceLaboratoryAdultRuleSchema,
   referenceLaboratoryDefinitionSchema,
+  referenceLaboratorySourceDatasetSchema,
   referenceMedicationProductSchema,
 } from './reference-data.ts'
 
@@ -424,6 +425,11 @@ export const laboratoryServiceSnapshotSchema = z.object({
     datasetId: z.literal('laboratory-cn'),
     releaseId: z.string().min(1).max(256),
   }).strict().optional(),
+  standardStatus: z.object({
+    effectiveOn: z.literal('2026-11-01'),
+    mode: z.enum(['effective', 'future-standard-preview']),
+    standard: z.literal('WS/T 886-2026'),
+  }).strict().optional(),
   serviceKind: z.literal('laboratory'),
   tatMinutes: z.number().int().nonnegative(),
   version: z.number().int().positive(),
@@ -449,10 +455,11 @@ export const laboratoryServiceCandidateSchema = z.object({
     sourceVersion: z.string().min(1).max(256),
   }).strict()).max(20),
   sourceDataset: z.object({
-    datasetId: z.enum(['laboratory-cn', 'loinc-zh-cn']),
+    datasetId: referenceLaboratorySourceDatasetSchema,
     releaseId: z.string().min(1).max(256),
   }).strict(),
   specimen: z.string().min(1).max(1_000).nullable(),
+  standardStatus: laboratoryServiceSnapshotSchema.shape.standardStatus.unwrap().nullable(),
   status: z.enum(['failed', 'published', 'publishing', 'unconfigured']),
   version: z.number().int().nonnegative(),
 }).strict()
@@ -462,7 +469,7 @@ export const laboratoryServiceCandidateSearchInputSchema = z.object({
   pageSize: z.number().int().positive().max(50).default(20),
   panelOnly: z.boolean().default(false),
   query: z.string().trim().min(2).max(100).optional(),
-  sourceDataset: z.enum(['laboratory-cn', 'loinc-zh-cn']).optional(),
+  sourceDataset: referenceLaboratorySourceDatasetSchema.optional(),
 }).strict()
 
 export const laboratoryServiceCandidateSearchSchema = z.object({
@@ -1076,7 +1083,7 @@ export const laboratoryRequestStatusSchema = z.enum([
   'cancelled',
 ])
 
-export const laboratoryResultInterpretationSchema = z.enum(['normal', 'high', 'low'])
+export const laboratoryResultInterpretationSchema = z.enum(['normal', 'abnormal', 'high', 'low'])
 
 const quantitativeLaboratoryReferenceRangeSchema = z.object({
   high: z.number().finite().optional(),

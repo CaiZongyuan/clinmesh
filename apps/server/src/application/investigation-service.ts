@@ -28,6 +28,7 @@ import {
   adultReferenceGenerationPolicyVersion,
   adultReferenceRange,
   adultRuleProvenance,
+  exactAdultReferenceScalarResult,
   generateAdultReferenceResult,
   selectAdultReferenceRule,
 } from './laboratory-adult-reference.ts'
@@ -788,6 +789,14 @@ export class InvestigationService {
       }
     }
     const value = scalarValue(observation)
+    if (adultRule !== undefined && definition.healthyStrategy === 'fixed-normal') {
+      try {
+        return exactAdultReferenceScalarResult({ definition, rule: adultRule, value })
+      } catch (error) {
+        if (!(error instanceof AdultReferenceApplicabilityError)) throw error
+        throw new InvestigationGenerationError('INVESTIGATION_OUTPUT_INVALID', error.message)
+      }
+    }
     if (value === undefined || definition.allowedValues?.some(
       item => canonicalJsonHash(item) === canonicalJsonHash(value),
     ) !== true) {

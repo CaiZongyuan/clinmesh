@@ -336,6 +336,13 @@ export function LaboratoryServiceWorkspace({
                       <span className="mt-1 block max-w-64 break-all font-mono text-xs text-muted-foreground">
                         {item.sourceDataset.releaseId}
                       </span>
+                      {item.standardStatus?.mode !== 'future-standard-preview' ? null : (
+                        <Badge className="mt-1 block w-fit" variant="secondary">
+                          {locale === 'zh-CN'
+                            ? `${item.standardStatus.standard} · ${item.standardStatus.effectiveOn} 前预览`
+                            : `${item.standardStatus.standard} · preview before ${item.standardStatus.effectiveOn}`}
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell>
                       <span className="block text-sm">

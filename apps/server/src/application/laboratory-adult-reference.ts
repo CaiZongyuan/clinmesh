@@ -137,13 +137,29 @@ export function generateAdultReferenceResult(input: {
   }
 }
 
-export function adultRuleProvenance(conceptId: string, rule: AdultRule) {
-  return {
-    conceptId,
-    sex: rule.sex,
-    sourceLocation: rule.sourceLocation,
-    sourceStandard: rule.sourceStandard,
-    sourceType: rule.sourceType,
-    sourceVersion: rule.sourceVersion,
+export function exactAdultReferenceScalarResult(input: {
+  definition: ResultDefinition
+  rule: AdultRule
+  value: unknown
+}): InvestigationResultContent['results'][number] {
+  if (input.definition.healthyStrategy !== 'fixed-normal'
+    || input.definition.valueType !== 'string'
+    || typeof input.value !== 'string'
+    || input.rule.normalValue === undefined) {
+    throw new AdultReferenceApplicabilityError(
+      'The exact Case Truth scalar conflicts with the adult reference definition',
+    )
   }
+  return {
+    code: input.definition.referenceConcept.code,
+    display: input.definition.referenceConcept.display,
+    interpretation: input.value === input.rule.normalValue ? 'normal' : 'abnormal',
+    referenceRange: adultReferenceRange(input.rule, input.definition.unit),
+    source: 'case-truth-exact',
+    value: input.value,
+  }
+}
+
+export function adultRuleProvenance(conceptId: string, rule: AdultRule) {
+  return { conceptId, ...rule }
 }

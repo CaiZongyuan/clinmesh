@@ -933,12 +933,16 @@ export function parseCnHealthCandidateReferenceArtifact(manifestPath: string): {
                 manifest.canonical.sha256,
               )
             : legacyLoincArtifact(database, manifest.release.id, manifest.dataset.sourceVersion)
-    const recordCount = manifest.dataset.id === 'laboratory-cn'
+    const laboratoryPrimaryCount = manifest.dataset.id === 'laboratory-cn'
       && manifest.dataset.datasetSchemaVersion === 2
-      ? manifest.canonical.recordCount
-      : artifactRecordCount(artifact)
-    if (manifest.dataset.id !== 'laboratory-cn'
-      && recordCount !== manifest.canonical.recordCount) {
+      ? manifest.canonical.tables?.find(table => table.table === 'laboratory_test')?.recordCount
+      : undefined
+    if (laboratoryPrimaryCount !== undefined
+      && laboratoryPrimaryCount !== manifest.canonical.recordCount) {
+      throw new Error('cn-health Candidate primary record count does not match laboratory_test')
+    }
+    const recordCount = laboratoryPrimaryCount ?? artifactRecordCount(artifact)
+    if (recordCount !== manifest.canonical.recordCount) {
       throw new Error('cn-health Candidate canonical record count does not match SQLite')
     }
     return {
