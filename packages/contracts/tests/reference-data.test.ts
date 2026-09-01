@@ -3,6 +3,7 @@ import {
   referenceCodingIdentity,
   referenceImportManifestSchema,
   referenceLaboratoryAdultRuleSchema,
+  referenceLaboratoryDefinitionSchema,
 } from '../src/reference-data.ts'
 
 describe('Reference Data contracts', () => {
@@ -55,5 +56,32 @@ describe('Reference Data contracts', () => {
       normalValue: '阴性',
       referenceKind: 'coded',
     }).success).toBe(true)
+    expect(referenceLaboratoryDefinitionSchema.safeParse({
+      adultReferenceRules: [{
+        ...base,
+        normalValue: '阴性',
+        referenceKind: 'coded',
+        simulationHigh: 9,
+        simulationLow: 3,
+      }],
+      alternateCodings: [],
+      analyte: '合成分析物',
+      category: '合成分类',
+      conceptId: 'wst-886:2026:0000001A',
+      datasetReleaseId: 'laboratory-cn@fixture.r1',
+      healthyStrategy: 'uniform',
+      kind: 'laboratory-cn-test',
+      precision: 1,
+      resultKind: 'quantity',
+      scale: '定量',
+      sourceLocator: 'fixture/test/1',
+      sourceVersion: '2026',
+      specimen: '全血',
+      unit: {
+        code: 'mg/L',
+        display: 'mg/L',
+        system: 'http://unitsofmeasure.org',
+      },
+    }).success).toBe(false)
   })
 })

@@ -583,6 +583,7 @@ export class LaboratoryServicePublisher {
       if (definition.unit === undefined || definition.healthyStrategy !== 'uniform'
         || definition.adultReferenceRules.some(rule => (
           rule.simulationLow === undefined || rule.simulationHigh === undefined
+          || rule.referenceKind === 'coded' || rule.referenceKind === 'ordinal'
         ))) {
         throw new LaboratoryServicePublisherError(
           'LABORATORY_SERVICE_METADATA_INCOMPLETE',
@@ -593,7 +594,10 @@ export class LaboratoryServicePublisher {
       return
     }
     if (definition.healthyStrategy !== 'fixed-normal'
-      || definition.adultReferenceRules.some(rule => rule.normalValue === undefined)) {
+      || definition.adultReferenceRules.some(rule => (
+        rule.normalValue === undefined
+        || (rule.referenceKind !== 'coded' && rule.referenceKind !== 'ordinal')
+      ))) {
       throw new LaboratoryServicePublisherError(
         'LABORATORY_SERVICE_METADATA_INCOMPLETE',
         'A laboratory-cn fixed result has no normal value',

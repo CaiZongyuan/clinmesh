@@ -190,6 +190,18 @@ const laboratoryCnTestDefinitionSchema = z.object({
       path: ['healthyStrategy'],
     })
   }
+  const numericRules = definition.adultReferenceRules.every(rule => (
+    rule.referenceKind === 'range'
+    || rule.referenceKind === 'upper-bound'
+    || rule.referenceKind === 'lower-bound'
+  ))
+  if ((definition.resultKind === 'quantity') !== numericRules) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Quantity definitions require numeric rules and fixed definitions require coded rules',
+      path: ['adultReferenceRules'],
+    })
+  }
 })
 
 const laboratoryCnPanelDefinitionSchema = z.object({
