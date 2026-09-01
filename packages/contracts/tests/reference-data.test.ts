@@ -83,5 +83,31 @@ describe('Reference Data contracts', () => {
         system: 'http://unitsofmeasure.org',
       },
     }).success).toBe(false)
+    expect(referenceLaboratoryDefinitionSchema.safeParse({
+      adultReferenceRules: [{
+        ...base,
+        normalValue: '阴性',
+        referenceKind: 'coded',
+      }, {
+        ...base,
+        high: 9,
+        low: 3,
+        referenceKind: 'range',
+        sex: 'female',
+      }],
+      alternateCodings: [],
+      analyte: '合成分析物',
+      category: '合成分类',
+      conceptId: 'wst-886:2026:0000002A',
+      datasetReleaseId: 'laboratory-cn@fixture.r1',
+      healthyStrategy: 'fixed-normal',
+      kind: 'laboratory-cn-test',
+      precision: 0,
+      resultKind: 'qualitative',
+      scale: '定性',
+      sourceLocator: 'fixture/test/2',
+      sourceVersion: '2026',
+      specimen: '全血',
+    }).success).toBe(false)
   })
 })
