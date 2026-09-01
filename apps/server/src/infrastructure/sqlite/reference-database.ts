@@ -47,6 +47,17 @@ export interface ReferenceImportResult extends Omit<ReferenceDataReleaseSummary,
   created: boolean
 }
 
+export interface ReferenceCatalogSearchInput {
+  page: number
+  pageSize: number
+  query?: string
+}
+
+export interface ReferenceCatalogSearchResult<Item> {
+  items: Item[]
+  total: number
+}
+
 export class ReferenceDatabase {
   readonly driver: Database.Database
 
@@ -255,6 +266,7 @@ const conceptDatabaseRowSchema = z.object({
   concept_id: z.string(),
   display: z.string(),
   domain: z.string(),
+  laboratory_metadata_json: z.string().nullable(),
   source_id: z.string(),
   source_locator: z.string(),
   status: z.string(),
@@ -269,6 +281,9 @@ function mapConceptRow(row: z.infer<typeof conceptDatabaseRowSchema>) {
       display: row.display,
       domain: row.domain,
       id: row.concept_id,
+      ...(row.laboratory_metadata_json === null
+        ? {}
+        : { laboratory: JSON.parse(row.laboratory_metadata_json) }),
       sourceLocator: row.source_locator,
       status: row.status,
       system: row.system,
@@ -284,6 +299,7 @@ function conceptRows(
 ): Array<ReferenceConcept & { sourceId: string }> {
   return z.array(conceptDatabaseRowSchema).parse(database.driver.prepare(`
     SELECT concept_id, domain, system, system_version, code, display, status,
+      laboratory_metadata_json,
       source_id, source_locator
     FROM reference_concept
     WHERE release_id = ?
@@ -447,6 +463,7 @@ export function listReferenceConcepts(
   verifyReferenceMigrations(database)
   const lookup = database.driver.prepare(`
     SELECT concept_id, domain, system, system_version, code, display, status,
+      laboratory_metadata_json,
       source_id, source_locator
     FROM reference_concept
     WHERE release_id = ? AND system = ? AND system_version = ? AND code = ?
@@ -471,6 +488,316 @@ export function listReferenceValueSetEntries(
 ): ReferenceValueSetEntry[] {
   verifyReferenceMigrations(database)
   return valueSetEntryRows(database, releaseId).map(({ sourceId: _sourceId, ...entry }) => entry)
+}
+
+function ftsPhrase(query: string): string {
+  return `"${query.replaceAll('"', '""')}"`
+}
+
+function searchReferenceLaboratoryCatalog(
+  database: ReferenceDatabase,
+  releaseId: string,
+  input: ReferenceCatalogSearchInput,
+): ReferenceCatalogSearchResult<ReferenceConcept> {
+  const parameters: unknown[] = [releaseId]
+  let source = 'reference_concept'
+  let queryCondition = ''
+  if (input.query !== undefined && input.query.length < 3) {
+    queryCondition = `
+      AND (
+        instr(lower(reference_concept.display), lower(?)) > 0
+        OR instr(lower(reference_concept.code), lower(?)) > 0
+      )
+    `
+    parameters.push(input.query, input.query)
+  } else if (input.query !== undefined) {
+    source += `
+      JOIN reference_concept_fts
+        ON reference_concept_fts.rowid = reference_concept.rowid
+    `
+    queryCondition = 'AND reference_concept_fts MATCH ?'
+    parameters.push(ftsPhrase(input.query))
+  }
+  const rankedConcepts = `
+    WITH ranked_concepts AS (
+      SELECT
+        reference_concept.concept_id,
+        reference_concept.domain,
+        reference_concept.system,
+        reference_concept.system_version,
+        reference_concept.code,
+        reference_concept.display,
+        reference_concept.status,
+        reference_concept.laboratory_metadata_json,
+        reference_concept.source_id,
+        reference_concept.source_locator,
+        ROW_NUMBER() OVER (
+          PARTITION BY reference_concept.system, reference_concept.code
+          ORDER BY
+            CASE WHEN reference_concept.status = 'active' THEN 0 ELSE 1 END,
+            reference_concept.source_id DESC,
+            reference_concept.system_version DESC,
+            reference_concept.concept_id
+        ) AS coding_rank
+      FROM ${source}
+      WHERE reference_concept.release_id = ?
+        AND reference_concept.domain = 'laboratory'
+        ${queryCondition}
+    )
+  `
+  const countSchema = z.object({ count: z.number().int().nonnegative() }).strict()
+  const total = countSchema.parse(database.driver.prepare(`
+    ${rankedConcepts}
+    SELECT COUNT(*) AS count FROM ranked_concepts WHERE coding_rank = 1
+  `).get(...parameters)).count
+  const offset = (input.page - 1) * input.pageSize
+  const rows = z.array(conceptDatabaseRowSchema).parse(database.driver.prepare(`
+    ${rankedConcepts}
+    SELECT concept_id, domain, system, system_version, code, display, status,
+      laboratory_metadata_json, source_id, source_locator
+    FROM ranked_concepts
+    WHERE coding_rank = 1
+    ORDER BY display, code, concept_id
+    LIMIT ? OFFSET ?
+  `).all(...parameters, input.pageSize, offset))
+  return {
+    items: rows.map(mapConceptRow).map(({ sourceId: _sourceId, ...concept }) => concept),
+    total,
+  }
+}
+
+export function searchReferenceConceptCatalog(
+  database: ReferenceDatabase,
+  releaseId: string,
+  domain: 'diagnosis' | 'laboratory',
+  input: ReferenceCatalogSearchInput,
+): ReferenceCatalogSearchResult<ReferenceConcept> {
+  verifyReferenceMigrations(database)
+  if (domain === 'laboratory') {
+    return searchReferenceLaboratoryCatalog(database, releaseId, input)
+  }
+  const offset = (input.page - 1) * input.pageSize
+  const countSchema = z.object({ count: z.number().int().nonnegative() }).strict()
+  if (input.query === undefined) {
+    const total = countSchema.parse(database.driver.prepare(`
+      SELECT COUNT(*) AS count
+      FROM reference_concept
+      WHERE release_id = ? AND domain = ?
+    `).get(releaseId, domain)).count
+    const rows = z.array(conceptDatabaseRowSchema).parse(database.driver.prepare(`
+      SELECT concept_id, domain, system, system_version, code, display, status,
+        laboratory_metadata_json,
+        source_id, source_locator
+      FROM reference_concept
+      WHERE release_id = ? AND domain = ?
+      ORDER BY display, code, concept_id
+      LIMIT ? OFFSET ?
+    `).all(releaseId, domain, input.pageSize, offset))
+    return {
+      items: rows.map(mapConceptRow).map(({ sourceId: _sourceId, ...concept }) => concept),
+      total,
+    }
+  }
+  if (input.query.length < 3) {
+    const total = countSchema.parse(database.driver.prepare(`
+      SELECT COUNT(*) AS count
+      FROM reference_concept
+      WHERE release_id = ? AND domain = ?
+        AND (
+          instr(lower(display), lower(?)) > 0
+          OR instr(lower(code), lower(?)) > 0
+        )
+    `).get(releaseId, domain, input.query, input.query)).count
+    const rows = z.array(conceptDatabaseRowSchema).parse(database.driver.prepare(`
+      SELECT concept_id, domain, system, system_version, code, display, status,
+        laboratory_metadata_json, source_id, source_locator
+      FROM reference_concept
+      WHERE release_id = ? AND domain = ?
+        AND (
+          instr(lower(display), lower(?)) > 0
+          OR instr(lower(code), lower(?)) > 0
+        )
+      ORDER BY display, code, concept_id
+      LIMIT ? OFFSET ?
+    `).all(releaseId, domain, input.query, input.query, input.pageSize, offset))
+    return {
+      items: rows.map(mapConceptRow).map(({ sourceId: _sourceId, ...concept }) => concept),
+      total,
+    }
+  }
+  const match = ftsPhrase(input.query)
+  const total = countSchema.parse(database.driver.prepare(`
+    SELECT COUNT(*) AS count
+    FROM reference_concept
+    JOIN reference_concept_fts ON reference_concept_fts.rowid = reference_concept.rowid
+    WHERE reference_concept.release_id = ? AND reference_concept.domain = ?
+      AND reference_concept_fts MATCH ?
+  `).get(releaseId, domain, match)).count
+  const rows = z.array(conceptDatabaseRowSchema).parse(database.driver.prepare(`
+    SELECT reference_concept.concept_id, reference_concept.domain,
+      reference_concept.system, reference_concept.system_version,
+      reference_concept.code, reference_concept.display, reference_concept.status,
+      reference_concept.laboratory_metadata_json,
+      reference_concept.source_id, reference_concept.source_locator
+    FROM reference_concept
+    JOIN reference_concept_fts ON reference_concept_fts.rowid = reference_concept.rowid
+    WHERE reference_concept.release_id = ? AND reference_concept.domain = ?
+      AND reference_concept_fts MATCH ?
+    ORDER BY reference_concept.display, reference_concept.code, reference_concept.concept_id
+    LIMIT ? OFFSET ?
+  `).all(releaseId, domain, match, input.pageSize, offset))
+  return {
+    items: rows.map(mapConceptRow).map(({ sourceId: _sourceId, ...concept }) => concept),
+    total,
+  }
+}
+
+export function searchReferenceMedicationCatalog(
+  database: ReferenceDatabase,
+  releaseId: string,
+  input: ReferenceCatalogSearchInput,
+): ReferenceCatalogSearchResult<ReferenceMedicationProduct> {
+  verifyReferenceMigrations(database)
+  const offset = (input.page - 1) * input.pageSize
+  const countSchema = z.object({ count: z.number().int().nonnegative() }).strict()
+  if (input.query === undefined) {
+    const total = countSchema.parse(database.driver.prepare(`
+      SELECT COUNT(*) AS count
+      FROM reference_medication_product
+      WHERE release_id = ?
+    `).get(releaseId)).count
+    const rows = z.array(medicationProductDatabaseRowSchema).parse(database.driver.prepare(`
+      SELECT product_id, system, system_version, code, generic_name, brand_name,
+        dosage_form, strength, package_description, manufacturer, approval_number,
+        status, source_id, source_locator
+      FROM reference_medication_product
+      WHERE release_id = ?
+      ORDER BY generic_name, code, product_id
+      LIMIT ? OFFSET ?
+    `).all(releaseId, input.pageSize, offset))
+    return {
+      items: rows.map(mapMedicationProductRow).map(({ sourceId: _sourceId, ...product }) => product),
+      total,
+    }
+  }
+  if (input.query.length < 3) {
+    const total = countSchema.parse(database.driver.prepare(`
+      SELECT COUNT(*) AS count
+      FROM reference_medication_product
+      WHERE release_id = ?
+        AND (
+          instr(lower(generic_name), lower(?)) > 0
+          OR instr(lower(COALESCE(brand_name, '')), lower(?)) > 0
+          OR instr(lower(manufacturer), lower(?)) > 0
+          OR instr(lower(code), lower(?)) > 0
+        )
+    `).get(
+      releaseId,
+      input.query,
+      input.query,
+      input.query,
+      input.query,
+    )).count
+    const rows = z.array(medicationProductDatabaseRowSchema).parse(database.driver.prepare(`
+      SELECT product_id, system, system_version, code, generic_name, brand_name,
+        dosage_form, strength, package_description, manufacturer, approval_number,
+        status, source_id, source_locator
+      FROM reference_medication_product
+      WHERE release_id = ?
+        AND (
+          instr(lower(generic_name), lower(?)) > 0
+          OR instr(lower(COALESCE(brand_name, '')), lower(?)) > 0
+          OR instr(lower(manufacturer), lower(?)) > 0
+          OR instr(lower(code), lower(?)) > 0
+        )
+      ORDER BY generic_name, code, product_id
+      LIMIT ? OFFSET ?
+    `).all(
+      releaseId,
+      input.query,
+      input.query,
+      input.query,
+      input.query,
+      input.pageSize,
+      offset,
+    ))
+    return {
+      items: rows.map(mapMedicationProductRow).map(({ sourceId: _sourceId, ...product }) => product),
+      total,
+    }
+  }
+  const match = ftsPhrase(input.query)
+  const total = countSchema.parse(database.driver.prepare(`
+    SELECT COUNT(*) AS count
+    FROM reference_medication_product
+    JOIN reference_medication_product_fts
+      ON reference_medication_product_fts.rowid = reference_medication_product.rowid
+    WHERE reference_medication_product.release_id = ?
+      AND reference_medication_product_fts MATCH ?
+  `).get(releaseId, match)).count
+  const rows = z.array(medicationProductDatabaseRowSchema).parse(database.driver.prepare(`
+    SELECT reference_medication_product.product_id,
+      reference_medication_product.system, reference_medication_product.system_version,
+      reference_medication_product.code, reference_medication_product.generic_name,
+      reference_medication_product.brand_name, reference_medication_product.dosage_form,
+      reference_medication_product.strength,
+      reference_medication_product.package_description,
+      reference_medication_product.manufacturer,
+      reference_medication_product.approval_number,
+      reference_medication_product.status, reference_medication_product.source_id,
+      reference_medication_product.source_locator
+    FROM reference_medication_product
+    JOIN reference_medication_product_fts
+      ON reference_medication_product_fts.rowid = reference_medication_product.rowid
+    WHERE reference_medication_product.release_id = ?
+      AND reference_medication_product_fts MATCH ?
+    ORDER BY reference_medication_product.generic_name,
+      reference_medication_product.code, reference_medication_product.product_id
+    LIMIT ? OFFSET ?
+  `).all(releaseId, match, input.pageSize, offset))
+  return {
+    items: rows.map(mapMedicationProductRow).map(({ sourceId: _sourceId, ...product }) => product),
+    total,
+  }
+}
+
+export function getReferenceConceptById(
+  database: ReferenceDatabase,
+  releaseId: string,
+  domain: 'diagnosis' | 'laboratory',
+  conceptId: string,
+): ReferenceConcept | undefined {
+  verifyReferenceMigrations(database)
+  const row = database.driver.prepare(`
+    SELECT concept_id, domain, system, system_version, code, display, status,
+      laboratory_metadata_json,
+      source_id, source_locator
+    FROM reference_concept
+    WHERE release_id = ? AND domain = ? AND concept_id = ?
+  `).get(releaseId, domain, conceptId)
+  if (row === undefined) return undefined
+  const { sourceId: _sourceId, ...concept } = mapConceptRow(conceptDatabaseRowSchema.parse(row))
+  return concept
+}
+
+export function getReferenceMedicationProductById(
+  database: ReferenceDatabase,
+  releaseId: string,
+  productId: string,
+): ReferenceMedicationProduct | undefined {
+  verifyReferenceMigrations(database)
+  const row = database.driver.prepare(`
+    SELECT product_id, system, system_version, code, generic_name, brand_name,
+      dosage_form, strength, package_description, manufacturer, approval_number,
+      status, source_id, source_locator
+    FROM reference_medication_product
+    WHERE release_id = ? AND product_id = ?
+  `).get(releaseId, productId)
+  if (row === undefined) return undefined
+  const { sourceId: _sourceId, ...product } = mapMedicationProductRow(
+    medicationProductDatabaseRowSchema.parse(row),
+  )
+  return product
 }
 
 function readReferenceDataReleases(database: ReferenceDatabase): ReferenceDataReleaseList {
@@ -692,8 +1019,8 @@ export function importReferenceDataRelease(
     const insertConcept = database.driver.prepare(`
       INSERT INTO reference_concept (
         release_id, concept_id, domain, system, system_version, code, display,
-        status, source_id, source_locator
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        status, source_id, source_locator, laboratory_metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     for (const concept of concepts) {
       insertConcept.run(
@@ -707,6 +1034,7 @@ export function importReferenceDataRelease(
         concept.status,
         concept.sourceId,
         concept.sourceLocator,
+        concept.laboratory === undefined ? null : JSON.stringify(concept.laboratory),
       )
     }
     const insertMedicationProduct = database.driver.prepare(`

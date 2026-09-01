@@ -156,7 +156,11 @@ describe('trusted Web session workflow', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    expect(await screen.findByRole('heading', { name: '登录 ClinMesh' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '登录科灵脉智' })).toBeTruthy()
+    expect(screen.getByRole('img', { name: '科灵脉智标志' })).toBeTruthy()
+    expect(screen.getByRole('img', { name: 'Clinmesh' })).toBeTruthy()
+    expect(screen.getByText('科灵脉智')).toBeTruthy()
+    expect(screen.getByText('医疗智能体平台')).toBeTruthy()
     await user.type(screen.getByLabelText('账户邮箱'), 'registrar@demo.clinmesh.local')
     await user.type(screen.getByLabelText('账户密码'), 'test-only-password')
     await user.click(screen.getByRole('button', { name: '登录' }))
@@ -302,7 +306,7 @@ describe('trusted Web session workflow', () => {
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     await user.click(await screen.findByRole('menuitem', { name: '退出登录' }))
 
-    expect(await screen.findByRole('heading', { name: '登录 ClinMesh' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '登录科灵脉智' })).toBeTruthy()
     expect(screen.queryByRole('link', { name: '门诊挂号' })).toBeNull()
   })
 

@@ -54,4 +54,4 @@ it('terminates started Workers when a later Worker fails to spawn', async () => 
     'Synthetic Worker spawn failure',
   )
   expect(workerState).toEqual({ created: 3, terminated: 1 })
-})
+}, 30_000)

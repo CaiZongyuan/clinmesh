@@ -1,60 +1,35 @@
 import {
-  scenarioModules,
-  type ScenarioDatasetContent,
   type ScenarioHospitalServiceCatalogItem,
-  type ScenarioProductMedicationCatalogItem,
+  type ScenarioInvestigationCatalogItem,
 } from '@clinmesh/contracts/scenario'
 import type {
-  ReferenceConcept,
   ReferenceMedicalService,
   ReferenceMedicationProduct,
   ReferenceValueSetEntry,
 } from '@clinmesh/contracts/reference-data'
-import { referenceCodingIdentity } from '@clinmesh/contracts/reference-data'
 import {
   investigationLoincCoding,
   resolveUcumUnit,
 } from './reference-coding-package.ts'
 import { canonicalJsonHash } from './canonical-json.ts'
-import type { ReferenceHospitalSelection } from '../reference-hospital-selection.ts'
 
 const hospitalId = 'hospital-synthetic-renhe'
-
-type HospitalBaseline = Omit<
-  Pick<ScenarioDatasetContent, 'catalog' | 'hospital' | 'inventory'>,
-  'catalog'
-> & {
-  catalog: Omit<ScenarioDatasetContent['catalog'], 'medications' | 'services'> & {
-    medications: ScenarioProductMedicationCatalogItem[]
-    services: ScenarioHospitalServiceCatalogItem[]
-  }
-}
 
 function regulatoryVerification(product: {
   approvalNumber: string
   genericName: string
   manufacturer: string
-}, selection?: ReferenceHospitalSelection) {
+}) {
   const verifiedFieldsHash = canonicalJsonHash({
     approvalNumber: product.approvalNumber,
     genericName: product.genericName,
     manufacturer: product.manufacturer,
   })
-  return selection === undefined ? {
+  return {
     evidenceUrl: 'https://www.nmpa.gov.cn/datasearch/home-index.html',
     result: 'synthetic-match' as const,
     source: 'nmpa-manual-check' as const,
     verifiedAt: '2026-08-28T00:00:00+08:00',
-    verifiedFieldsHash,
-  } : {
-    evidenceUrl: 'https://github.com/CaiZongyuan/cn-health-data',
-    result: 'source-record' as const,
-    selection: {
-      contentHash: selection.contentHash,
-      selectionId: selection.selectionId,
-      version: selection.version,
-    },
-    source: 'cn-health-candidate' as const,
     verifiedFieldsHash,
   }
 }
@@ -63,20 +38,10 @@ function selectedMedicationProduct(
   products: readonly ReferenceMedicationProduct[],
   catalogItemId: string,
   defaultCode: string,
-  selection?: ReferenceHospitalSelection,
 ): ReferenceMedicationProduct {
-  const binding = selection?.bindings.find(candidate => (
-    candidate.kind === 'medication-product' && candidate.catalogItemId === catalogItemId
-  ))
-  if (selection !== undefined && binding === undefined) {
-    throw new Error(`Hospital Reference selection has no binding for ${catalogItemId}`)
-  }
   const matches = products.filter(product => (
-    product.code === (binding?.coding.code ?? defaultCode)
-    && product.system === (
-      binding?.coding.system ?? 'urn:clinmesh:reference:nhsa-medication-product'
-    )
-    && (binding === undefined || product.version === binding.coding.version)
+    product.code === defaultCode
+    && product.system === 'urn:clinmesh:reference:nhsa-medication-product'
   ))
   if (matches.length !== 1) {
     throw new Error(`Medication Product snapshot must contain exactly one ${catalogItemId}`)
@@ -99,38 +64,6 @@ function selectedProductSnapshot(product: ReferenceMedicationProduct) {
     strength: product.strength,
     system: 'urn:clinmesh:reference:nhsa-medication-product' as const,
     version: product.version,
-  }
-}
-
-function withSelectedReferenceConcept<Item extends { id: string }>(
-  item: Item,
-  kind: 'diagnosis' | 'laboratory',
-  selection: ReferenceHospitalSelection | undefined,
-  concepts: readonly ReferenceConcept[],
-) {
-  const binding = selection?.bindings.find(candidate => (
-    candidate.kind === kind && candidate.catalogItemId === item.id
-  ))
-  if (binding === undefined) return item
-  const matches = concepts.filter(concept => (
-    concept.domain === kind
-    && concept.status === 'active'
-    && referenceCodingIdentity(concept) === referenceCodingIdentity(binding.coding)
-  ))
-  if (matches.length !== 1) {
-    throw new Error(`Hospital Reference selection target is unavailable: ${item.id}`)
-  }
-  const concept = matches[0]!
-  return {
-    ...item,
-    referenceConcept: {
-      code: concept.code,
-      display: concept.display,
-      id: concept.id,
-      sourceLocator: concept.sourceLocator,
-      system: concept.system,
-      version: concept.version,
-    },
   }
 }
 
@@ -254,7 +187,7 @@ function investigation(input: {
   tatMinutes: number
   unit?: string
   valueType?: 'boolean' | 'codeable' | 'panel' | 'quantity' | 'string'
-}): ScenarioDatasetContent['catalog']['investigations'][number] {
+}): ScenarioInvestigationCatalogItem {
   const normalDistribution = input.assayCv !== undefined
     && input.maximum !== undefined
     && input.mean !== undefined
@@ -275,9 +208,7 @@ function investigation(input: {
   }
   return {
     ...catalogBase(input),
-    allowedIndicationCodes: input.allowedIndicationCodes ?? (input.category === 'examination'
-      ? ['clinical-assessment']
-      : [...scenarioModules]),
+    allowedIndicationCodes: input.allowedIndicationCodes ?? ['clinical-assessment'],
     available: input.available ?? true,
     category: input.category ?? 'laboratory',
     ...(coding === undefined ? {} : { coding }),
@@ -306,26 +237,21 @@ export function createHospitalBaseline(
   medicationProducts: readonly ReferenceMedicationProduct[],
   medicalServices: readonly ReferenceMedicalService[],
   valueSetEntries: readonly ReferenceValueSetEntry[],
-  selection?: ReferenceHospitalSelection,
-  referenceConcepts: readonly ReferenceConcept[] = [],
-): HospitalBaseline {
+) {
   const acetaminophenProduct = selectedMedicationProduct(
     medicationProducts,
     'medication-acetaminophen',
     'CM-NHSA-PRODUCT-ACETAMINOPHEN',
-    selection,
   )
   const metforminProduct = selectedMedicationProduct(
     medicationProducts,
     'medication-metformin',
     'CM-NHSA-PRODUCT-METFORMIN',
-    selection,
   )
   const amlodipineProduct = selectedMedicationProduct(
     medicationProducts,
     'medication-amlodipine',
     'CM-NHSA-PRODUCT-AMLODIPINE',
-    selection,
   )
   const cbcService = selectedMedicalService(medicalServices, 'CM-NHC-SERVICE-CBC')
   const hba1cService = selectedMedicalService(medicalServices, 'CM-NHC-SERVICE-HBA1C')
@@ -384,12 +310,7 @@ export function createHospitalBaseline(
       }, {
         ...catalogBase({ code: 'E05.90', id: 'diagnosis-hyperthyroidism', name: '甲状腺功能亢进', priceFen: 0 }),
         codeSystem: 'http://hl7.org/fhir/sid/icd-10',
-      }] as const).map(item => withSelectedReferenceConcept(
-        item,
-        'diagnosis',
-        selection,
-        referenceConcepts,
-      )),
+      }] as const),
       investigations: ([
         investigation({
           category: 'examination',
@@ -642,12 +563,7 @@ export function createHospitalBaseline(
           tatMinutes: 180,
           valueType: 'panel',
         }),
-      ]).map(item => withSelectedReferenceConcept(
-        item,
-        'laboratory',
-        selection,
-        referenceConcepts,
-      )),
+      ]),
       medications: [{
         ...catalogBase({ code: 'ACETAMINOPHEN', id: 'medication-acetaminophen', name: '对乙酰氨基酚片', priceFen: 120 }),
         availableScopes: ['outpatient'] as const,
@@ -665,7 +581,7 @@ export function createHospitalBaseline(
           version: 'clinmesh-drug-concepts-2026-08-28',
         },
         product: selectedProductSnapshot(acetaminophenProduct),
-        regulatoryVerification: regulatoryVerification(acetaminophenProduct, selection),
+        regulatoryVerification: regulatoryVerification(acetaminophenProduct),
         restriction: '注意总剂量及肝功能风险。',
         unit: '片',
         workflow: {
@@ -695,7 +611,7 @@ export function createHospitalBaseline(
           version: 'clinmesh-drug-concepts-2026-08-28',
         },
         product: selectedProductSnapshot(metforminProduct),
-        regulatoryVerification: regulatoryVerification(metforminProduct, selection),
+        regulatoryVerification: regulatoryVerification(metforminProduct),
         restriction: '调整方案前评估肾功能。',
         unit: '片',
         workflow: {
@@ -725,7 +641,7 @@ export function createHospitalBaseline(
           version: 'clinmesh-drug-concepts-2026-08-28',
         },
         product: selectedProductSnapshot(amlodipineProduct),
-        regulatoryVerification: regulatoryVerification(amlodipineProduct, selection),
+        regulatoryVerification: regulatoryVerification(amlodipineProduct),
         restriction: '开始或调整方案前评估血压和外周水肿。',
         unit: '片',
         workflow: {

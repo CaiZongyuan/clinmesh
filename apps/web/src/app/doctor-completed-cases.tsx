@@ -98,6 +98,7 @@ const laboratoryStatusMessageKeys = {
   accepted: 'laboratoryRequestStatus_accepted',
   acknowledged: 'laboratoryRequestStatus_acknowledged',
   cancelled: 'laboratoryRequestStatus_cancelled',
+  'generation-failed': 'laboratoryRequestStatus_generationFailed',
   'in-progress': 'laboratoryRequestStatus_inProgress',
   issued: 'laboratoryRequestStatus_issued',
   reported: 'laboratoryRequestStatus_reported',

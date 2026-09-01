@@ -19,24 +19,58 @@ export const referenceDataDomainSchema = z.enum([
   'other',
 ])
 
+export const referenceLaboratoryMetadataSchema = z.object({
+  category: z.enum(['chemistry', 'hematology', 'vital-sign']),
+  referenceRange: z.object({
+    high: z.number().finite().optional(),
+    low: z.number().finite().optional(),
+    text: z.string().min(1).max(500),
+  }).strict().optional(),
+  resultType: z.enum(['panel', 'quantity']),
+  specimen: z.enum(['blood', 'body']),
+  unit: z.object({
+    code: z.string().min(1).max(128),
+    display: z.string().min(1).max(128),
+    system: z.literal('http://unitsofmeasure.org'),
+  }).strict().optional(),
+}).strict().superRefine((metadata, context) => {
+  if ((metadata.resultType === 'quantity') !== (metadata.unit !== undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Quantity laboratory concepts require a UCUM unit and panels must not have one',
+      path: ['unit'],
+    })
+  }
+})
+
 export const referenceConceptSchema = z.object({
   code: z.string().min(1).max(256),
   display: z.string().min(1).max(1_000),
   domain: referenceDataDomainSchema,
   id: z.string().min(1).max(256),
+  laboratory: referenceLaboratoryMetadataSchema.optional(),
   sourceLocator: z.string().min(1).max(1_000),
   status: z.enum(['active', 'inactive']),
   system: z.string().url(),
   version: z.string().min(1).max(256),
-}).strict()
+}).strict().superRefine((concept, context) => {
+  if (concept.laboratory !== undefined && concept.domain !== 'laboratory') {
+    context.addIssue({
+      code: 'custom',
+      message: 'Laboratory metadata is valid only for laboratory concepts',
+      path: ['laboratory'],
+    })
+  }
+})
 
-export const referenceConceptSnapshotSchema = referenceConceptSchema.pick({
-  code: true,
-  display: true,
-  id: true,
-  sourceLocator: true,
-  system: true,
-  version: true,
+export const referenceConceptSnapshotSchema = z.object({
+  code: z.string().min(1).max(256),
+  display: z.string().min(1).max(1_000),
+  id: z.string().min(1).max(256),
+  laboratory: referenceLaboratoryMetadataSchema.optional(),
+  sourceLocator: z.string().min(1).max(1_000),
+  system: z.string().url(),
+  version: z.string().min(1).max(256),
 }).strict()
 
 export const referenceMedicationProductSchema = z.object({
@@ -178,6 +212,32 @@ export const referenceDataProvenanceSchema = referenceDataReleaseSummarySchema.p
   releaseId: true,
 })
 
+const referenceCatalogPageShape = {
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive().max(50),
+  releaseId: z.string().min(1).max(256),
+  total: z.number().int().nonnegative(),
+}
+
+export const referenceDiagnosisCatalogSearchSchema = z.object({
+  ...referenceCatalogPageShape,
+  items: z.array(referenceConceptSchema.safeExtend({
+    domain: z.literal('diagnosis'),
+  }).strict()),
+}).strict()
+
+export const referenceLaboratoryCatalogSearchSchema = z.object({
+  ...referenceCatalogPageShape,
+  items: z.array(referenceConceptSchema.safeExtend({
+    domain: z.literal('laboratory'),
+  }).strict()),
+}).strict()
+
+export const referenceMedicationCatalogSearchSchema = z.object({
+  ...referenceCatalogPageShape,
+  items: z.array(referenceMedicationProductSchema),
+}).strict()
+
 export const referenceMappingPackageProvenanceSchema = z.object({
   contentHash: sha256Schema,
   mappingSetId: z.string().min(1).max(256),
@@ -189,6 +249,9 @@ export type ReferenceArtifactFormat = z.infer<typeof referenceArtifactFormatSche
 export type CnHealthCandidateProvenance = z.infer<typeof cnHealthCandidateProvenanceSchema>
 export type ReferenceConcept = z.infer<typeof referenceConceptSchema>
 export type ReferenceDataProvenance = z.infer<typeof referenceDataProvenanceSchema>
+export type ReferenceDiagnosisCatalogSearch = z.infer<typeof referenceDiagnosisCatalogSearchSchema>
+export type ReferenceLaboratoryCatalogSearch = z.infer<typeof referenceLaboratoryCatalogSearchSchema>
+export type ReferenceMedicationCatalogSearch = z.infer<typeof referenceMedicationCatalogSearchSchema>
 export type ReferenceDataReleaseList = z.infer<typeof referenceDataReleaseListSchema>
 export type ReferenceDataReleaseSummary = z.infer<typeof referenceDataReleaseSummarySchema>
 export type ReferenceImportManifest = z.infer<typeof referenceImportManifestSchema>

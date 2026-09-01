@@ -21,6 +21,7 @@
     "perf:full-import": "pnpm --filter @clinmesh/server performance --profile full-import",
     "perf:saturation": "pnpm --filter @clinmesh/server performance --profile saturation",
     "perf:trajectory": "pnpm --filter @clinmesh/server performance --profile trajectory",
+    "smoke:patient-brief:live": "pnpm --filter @clinmesh/server smoke:patient-brief:live",
     "build": "turbo run build --filter=!@clinmesh/mobile",
     "typecheck": "turbo run typecheck --filter=!@clinmesh/mobile",
     "typecheck:mobile": "pnpm --filter @clinmesh/mobile typecheck",

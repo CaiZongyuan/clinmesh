@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { hasValidResidentIdChecksum } from './synthetic-resident-id.ts'
 
 const syntheaCnProfileTagSystem = 'urn:cn-health-data:synthea-profile'
+const syntheaCnTranslationTagSystem = 'urn:cn-health-data:synthea-translation'
 
 const chineseText = /[\u3400-\u9fff]/u
 const allowedIdentifierSystems = new Set([
@@ -113,6 +114,12 @@ export function localizedSyntheaPatientIdentity(input: {
     tags.length !== 1
     || tags[0]?.code !== provenance.profileId
     || tags[0]?.display !== provenance.profileContentHash
+  ) fail()
+  const translationTags = bundle.meta.tag.filter(tag => tag.system === syntheaCnTranslationTagSystem)
+  if (
+    translationTags.length !== 1
+    || translationTags[0]?.code !== provenance.clinicalDisplay.projectionId
+    || translationTags[0]?.display !== provenance.clinicalDisplay.catalogSha256
   ) fail()
 
   const patientEntries = bundle.entry.filter(entry => entry.resource.resourceType === 'Patient')

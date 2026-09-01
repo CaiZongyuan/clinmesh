@@ -19,3 +19,5 @@ apps/mobile/android/
 .playwright-mcp/
 .prototypes/
 .claude/
+.worktrees/
+docs/ui/references/

@@ -12,6 +12,11 @@ import {
   listReferenceMedicalServices,
   listReferenceMedicationProducts,
   listReferenceValueSetEntries,
+  searchReferenceConceptCatalog,
+  searchReferenceMedicationCatalog,
+  getReferenceConceptById,
+  getReferenceMedicationProductById,
+  type ReferenceCatalogSearchInput,
   type ReferenceDatabase,
 } from './reference-database.ts'
 
@@ -46,5 +51,29 @@ export class SqliteReferenceDataRepository implements ReferenceDataReader {
 
   valueSetEntries(releaseId: string): ReferenceValueSetEntry[] {
     return listReferenceValueSetEntries(this.#database, releaseId)
+  }
+
+  searchConcepts(
+    releaseId: string,
+    domain: 'diagnosis' | 'laboratory',
+    input: ReferenceCatalogSearchInput,
+  ) {
+    return searchReferenceConceptCatalog(this.#database, releaseId, domain, input)
+  }
+
+  searchMedicationProducts(releaseId: string, input: ReferenceCatalogSearchInput) {
+    return searchReferenceMedicationCatalog(this.#database, releaseId, input)
+  }
+
+  conceptById(
+    releaseId: string,
+    domain: 'diagnosis' | 'laboratory',
+    conceptId: string,
+  ) {
+    return getReferenceConceptById(this.#database, releaseId, domain, conceptId)
+  }
+
+  medicationProductById(releaseId: string, productId: string) {
+    return getReferenceMedicationProductById(this.#database, releaseId, productId)
   }
 }

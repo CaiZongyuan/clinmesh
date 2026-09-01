@@ -64,6 +64,34 @@ _Avoid_: Generation Batch, Scenario Dataset list, queue
 Synthetic Patient Profile 一次不可覆盖的修订。修订不改写已经创建的 Patient、Registration 或 Encounter 事实，只影响之后的业务物化。
 _Avoid_: FHIR resource version, Dataset version, overwrite
 
+**Index Encounter**:
+Synthea 来源时间线中最后一次具有诊断、检验、用药、操作或明确就医原因的临床 Encounter。它定义待诊断的本次就医，不等同于 ClinMesh 后续创建的本院 Encounter。
+_Avoid_: Latest event, local Encounter, visible history
+
+**Visible Source History**:
+Index Encounter 之前允许临床参与者查看的本地化 Synthea 来源资源及其时间线投影。它是外部合成病史，不表示本院实施过这些诊疗活动。
+_Avoid_: Local FHIR record, Case Truth, imported Encounter
+
+**Case Truth**:
+由 Index Encounter 及其关联来源资源组成的本次病例客观依据。它只供仿真器使用，不是参与者可直接读取的 Clinical Record，也不能通过普通 HIS、FHIR、历史详情或 Agent 接口返回。
+_Avoid_: Clinical Record, answer key endpoint, Visible Source History
+
+**Synthetic Case Instance**:
+绑定一个不可变 Profile Revision、Case Truth、病例类型和可见历史清单的合成病例实例。普通业务只能开始一次；管理员可在新 Epoch 中重放同一不可变 revision。
+_Avoid_: Synthetic Patient Profile, local Encounter, Scenario Dataset
+
+**Patient Brief**:
+根据合成患者背景和本次病例证据生成的患者初始表现，包括主诉、开场陈述、已知史摘要和问诊主题。它不得直接泄露参与者尚不可见的本次诊断。
+_Avoid_: Case Truth, diagnosis note, chat transcript
+
+**Brief Revision**:
+一次通过结构校验和诊断泄漏检查的不可覆盖 Patient Brief 结果。Case 只能选择已有成功 revision，重新生成不会改写旧结果。
+_Avoid_: Editable prompt output, Case revision, overwrite
+
+**Investigation Result Snapshot**:
+针对一个 Synthetic Case Instance 和一个固定检查编码首次成功解析或生成的不可变结构化结果。后续重试和新 Epoch 重放复用该结果，不再次调用外部模型。
+_Avoid_: Live laboratory result, mutable simulator response, normal fallback
+
 ## 身份与参与
 
 **User Account**:
@@ -134,6 +162,14 @@ _Avoid_: Real patient, chatbot, Scenario
 一次 Encounter 中医患问答的有序业务记录。它保存问诊过程，但不等同于医生整理和签署的 Clinical Document。
 _Avoid_: Clinical Document, chat transcript, medical record
 
+**Diagnosis Draft**:
+一次 Encounter 中尚待确认的当前诊断集合，包含主次角色和临床备注。它可以反复更新，但不是正式诊断事实。
+_Avoid_: Diagnosis Confirmation, prior diagnosis, Condition history
+
+**Diagnosis Confirmation**:
+医生对一次 Encounter 当前诊断集合的正式确认 revision。后续确认可以替代其当前效力，但不能覆盖或删除既有 revision。
+_Avoid_: Diagnosis Draft, immutable editing lock, prior diagnosis
+
 **Report Acknowledgement**:
 负责医生确认已查看一份已签发诊断报告的业务事实。它不改变报告内容或签发状态。
 _Avoid_: Report status, report approval, read receipt
@@ -179,6 +215,10 @@ _Avoid_: National Medical Service, Hospital Service, Charge Item
 **Clinical Request**:
 临床人员对药品、检查、检验、治疗或耗材提出的单项意图。
 _Avoid_: Prescription, template, execution record
+
+**Investigation Generation Capability**:
+一个具体病例与检验项目组合能否从 Case Truth 或已配置的受限生成器产生结构化结果的能力事实。它不等同于项目存在于全局 Reference 目录。
+_Avoid_: Reference catalog availability, Laboratory Request status, generated result
 
 **Request Orchestration**:
 一组请求或建议之间的组合、选择、条件和顺序。

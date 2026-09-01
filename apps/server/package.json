@@ -14,7 +14,7 @@
     "db:verify": "tsx src/database-cli.ts verify",
     "reference-db": "tsx src/reference-database-cli.ts",
     "performance": "tsx src/performance-cli.ts",
-    "synthea-inventory": "tsx src/synthea-inventory-cli.ts",
+    "smoke:patient-brief:live": "tsx src/patient-brief-live-smoke.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -30,6 +30,7 @@
     "drizzle-orm": "0.45.2",
     "fast-xml-parser": "5.3.6",
     "hono": "catalog:",
+    "mdast-util-from-markdown": "2.0.3",
     "uuid": "13.0.0",
     "zod": "catalog:"
   },

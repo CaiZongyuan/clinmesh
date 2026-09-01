@@ -4,10 +4,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { serviceCatalogSearchSchema } from '@clinmesh/contracts/his'
-import { scenarioGenerationRequestSchema } from '@clinmesh/contracts/scenario'
+import {
+  referenceDiagnosisCatalogSearchSchema,
+  referenceLaboratoryCatalogSearchSchema,
+  referenceMedicationCatalogSearchSchema,
+} from '@clinmesh/contracts/reference-data'
 import Database from 'better-sqlite3'
 import { z } from 'zod'
 import { CommandExecutor, type ActorContext } from '../application/command-executor.ts'
+import { syntheticNhsaMedicationProductSnapshot } from '../application/scenario-data/medication-product-snapshot.ts'
 import {
   applyReferenceMigrations,
   importReferenceDataRelease,
@@ -81,8 +86,13 @@ function workloadResult(input: {
   }
 }
 
-async function createRuntime(databasePath: string, probe: SqlitePerformanceProbe) {
+async function createRuntime(
+  databasePath: string,
+  probe: SqlitePerformanceProbe,
+  options: { activeReferenceReleaseId?: string; referenceDatabasePath?: string } = {},
+) {
   return createClinMeshRuntime({
+    ...options,
     authBaseUrl: performanceOrigin,
     authSecret: 'synthetic-performance-auth-secret-123456789',
     cursorSecret: 'synthetic-performance-cursor-secret-123456',
@@ -90,6 +100,7 @@ async function createRuntime(databasePath: string, probe: SqlitePerformanceProbe
     demoPassword: performancePassword,
     migrationMode: 'apply',
     performanceObserver: probe,
+    referencePerformanceObserver: probe,
     trustedOrigins: [performanceOrigin],
   })
 }
@@ -177,6 +188,154 @@ async function runCatalogSearch(directory: string): Promise<PerformanceWorkloadR
       name: 'catalog-search-http',
       path: 'http',
       probe: snapshot,
+      queryPlan,
+      trace: readActionTraceMetrics(runtime.database),
+    })
+  } finally {
+    await runtime.close()
+  }
+}
+
+async function writeReferenceSearchFixture(directory: string): Promise<{
+  databasePath: string
+  releaseId: string
+}> {
+  await mkdir(directory, { recursive: true })
+  const releaseId = 'performance-reference-search-v1'
+  const concepts = ['diagnosis', 'laboratory'].flatMap(domain => (
+    Array.from({ length: 200 }, (_, index) => ({
+      code: `${domain === 'diagnosis' ? 'DX' : 'LAB'}-${String(index).padStart(4, '0')}`,
+      display: `性能${domain === 'diagnosis' ? '诊断' : '检验'} ${String(index).padStart(4, '0')}`,
+      domain,
+      id: `${domain}:performance-${index}`,
+      sourceLocator: `${domain}[${index}]`,
+      status: 'active',
+      system: `urn:clinmesh:performance:${domain}`,
+      version: 'synthetic-performance-v1',
+    }))
+  ))
+  const medicationTemplate = syntheticNhsaMedicationProductSnapshot[0]!
+  const medicationProducts = Array.from({ length: 200 }, (_, index) => ({
+    ...medicationTemplate,
+    approvalNumber: `SYNTHETIC-PERF-${String(index).padStart(4, '0')}`,
+    code: `MED-${String(index).padStart(4, '0')}`,
+    genericName: `性能药品 ${String(index).padStart(4, '0')}`,
+    id: `medication:performance-${index}`,
+    sourceLocator: `medications[${index}]`,
+  }))
+  const artifact = `${JSON.stringify({ concepts, medicationProducts, schemaVersion: '1' })}\n`
+  const artifactPath = join(directory, 'reference-search.json')
+  const manifestPath = join(directory, 'reference-search-release.json')
+  await writeFile(artifactPath, artifact)
+  await writeFile(manifestPath, `${JSON.stringify({
+    createdAt: '2026-08-30T00:00:00.000Z',
+    releaseId,
+    schemaVersion: '1',
+    sources: [{
+      acquisitionMethod: 'generated',
+      artifactPath: 'reference-search.json',
+      checksum: createHash('sha256').update(artifact).digest('hex'),
+      licenseId: 'CC0-1.0',
+      retrievedAt: '2026-08-30T00:00:00.000Z',
+      sourceId: 'synthetic-reference-search',
+      sourceUrl: 'https://example.test/clinmesh/reference-search',
+      upstreamVersion: 'synthetic-performance-v1',
+    }],
+  })}\n`)
+  const databasePath = join(directory, 'reference-search.sqlite')
+  const database = openReferenceDatabase({ busyTimeoutMs: 5_000, databasePath })
+  try {
+    applyReferenceMigrations(database)
+    importReferenceDataRelease(database, manifestPath)
+  } finally {
+    database.close()
+  }
+  return { databasePath, releaseId }
+}
+
+async function runReferenceCatalogSearch(directory: string): Promise<PerformanceWorkloadResult> {
+  const fixture = await writeReferenceSearchFixture(join(directory, 'reference-search'))
+  const probe = new SqlitePerformanceProbe()
+  const runtime = await createRuntime(join(directory, 'reference-search-operational.sqlite'), probe, {
+    activeReferenceReleaseId: fixture.releaseId,
+    referenceDatabasePath: fixture.databasePath,
+  })
+  try {
+    const cookie = await signInAdministrator(runtime, 'doctor@demo.clinmesh.local')
+    const unbounded = await runtime.app.request(
+      '/api/his/v1/reference-catalogs/diagnoses?page=1&pageSize=101',
+      { headers: { cookie } },
+    )
+    if (unbounded.status !== 400) {
+      throw new Error('Reference search performance workload accepted an unbounded page')
+    }
+    const searches = [{
+      path: 'diagnoses',
+      query: '性能诊断',
+      schema: referenceDiagnosisCatalogSearchSchema,
+    }, {
+      path: 'laboratory',
+      query: '性能检验',
+      schema: referenceLaboratoryCatalogSearchSchema,
+    }, {
+      path: 'medications',
+      query: '性能药品',
+      schema: referenceMedicationCatalogSearchSchema,
+    }] as const
+    probe.reset()
+    const beforeBytes = await databaseBytes(fixture.databasePath)
+    const latenciesMs: number[] = []
+    let errorCount = 0
+    const startedAt = performance.now()
+    for (let index = 0; index < 30; index += 1) {
+      const search = searches[index % searches.length]!
+      const sampleStartedAt = performance.now()
+      const response = await runtime.app.request(
+        `/api/his/v1/reference-catalogs/${search.path}?page=${index % 2 + 1}&pageSize=20&query=${encodeURIComponent(search.query)}`,
+        { headers: { cookie } },
+      )
+      latenciesMs.push(performance.now() - sampleStartedAt)
+      if (!response.ok) {
+        errorCount += 1
+        continue
+      }
+      search.schema.parse(await response.json())
+    }
+    const elapsedMs = performance.now() - startedAt
+    const queryDatabase = openReferenceDatabase({
+      busyTimeoutMs: 5_000,
+      databasePath: fixture.databasePath,
+      readonly: true,
+    })
+    let queryPlan: string[]
+    try {
+      queryPlan = [{ table: 'reference_concept', fts: 'reference_concept_fts' }, {
+        table: 'reference_medication_product',
+        fts: 'reference_medication_product_fts',
+      }].map(({ table, fts }) => (
+        (queryDatabase.driver.prepare(`
+          EXPLAIN QUERY PLAN
+          SELECT source.rowid FROM ${table} AS source
+          JOIN ${fts} ON ${fts}.rowid = source.rowid
+          WHERE source.release_id = ? AND ${fts} MATCH ?
+          LIMIT 20
+        `).all(fixture.releaseId, '"性能"') as Array<{ detail: string }>)
+          .map(row => row.detail)
+          .join('\n')
+      ))
+    } finally {
+      queryDatabase.close()
+    }
+    return workloadResult({
+      afterBytes: await databaseBytes(fixture.databasePath),
+      beforeBytes,
+      elapsedMs,
+      errorCount,
+      iterations: latenciesMs.length,
+      latenciesMs,
+      name: 'reference-catalog-search-http',
+      path: 'http',
+      probe: probe.snapshot(),
       queryPlan,
       trace: readActionTraceMetrics(runtime.database),
     })
@@ -458,6 +617,7 @@ export async function runCiPerformanceProfile() {
     const workloads = []
     workloads.push(await runReferenceImport(directory))
     workloads.push(await runCatalogSearch(directory))
+    workloads.push(await runReferenceCatalogSearch(directory))
     workloads.push(await runCommandWorkload(directory, 'ordinary'))
     workloads.push(await runTraceControl(directory))
     workloads.push(await runCommandWorkload(directory, 'heavy'))
@@ -482,11 +642,7 @@ export async function runTrajectoryPerformanceProfile() {
   const startedAt = new Date()
   const runtime = await createRuntime(databasePath, probe)
   try {
-    const administratorCookie = await signInAdministrator(runtime)
     const doctorCookie = await signInAdministrator(runtime, 'doctor@demo.clinmesh.local')
-    const administratorContext = (await runtime.identity.resolveSessionContext(
-      new Headers({ cookie: administratorCookie }),
-    )).actor
     probe.reset()
     const beforeBytes = await databaseBytes(databasePath)
     const latenciesMs: number[] = []
@@ -497,25 +653,6 @@ export async function runTrajectoryPerformanceProfile() {
       return result
     }
     const workloadStartedAt = performance.now()
-    const dataset = (await measure(() => runtime.scenarioData.generate({
-      context: administratorContext,
-      idempotencyKey: 'performance-trajectory-generate',
-      request: scenarioGenerationRequestSchema.parse({
-        modules: ['hypertension'],
-        name: '合成高血压性能轨迹',
-        population: { age: { maximum: 60, minimum: 60 }, count: 1, gender: 'female' },
-        providerId: 'builtin',
-        seeds: { clinical: 7331, population: 4242 },
-        timeRange: { end: '2026-08-01', start: '2020-01-01' },
-        timeZone: 'Asia/Shanghai',
-      }),
-    }))).data
-    await measure(() => runtime.scenarioData.install({
-      context: administratorContext,
-      datasetId: dataset.datasetId,
-      expectedVersion: dataset.version,
-      idempotencyKey: 'performance-trajectory-install',
-    }))
     const doctorContext = (await measure(() => runtime.identity.resolveSessionContext(
       new Headers({ cookie: doctorCookie }),
     ))).actor
@@ -537,7 +674,7 @@ export async function runTrajectoryPerformanceProfile() {
         [`Task/${started.queueTaskId}`]: '1',
       },
       idempotencyKey: 'performance-trajectory-question',
-      questionCode: 'symptom-dizziness',
+      questionCode: 'symptom-onset',
     }))
     const laboratoryDraft = (await measure(() => runtime.workflow.saveLaboratoryRequestDraft({
       catalogItemId: 'lab-cbc',
@@ -546,7 +683,7 @@ export async function runTrajectoryPerformanceProfile() {
       expectedDraftVersion: 0,
       expectedVersions: { [encounterReference]: '1' },
       idempotencyKey: 'performance-trajectory-lab-draft',
-      indicationCode: 'hypertension',
+      indicationCode: 'fever',
     }))).data
     const laboratory = (await measure(() => runtime.workflow.issueLaboratoryRequest({
       context: doctorContext,
@@ -667,7 +804,7 @@ export async function runTrajectoryPerformanceProfile() {
       elapsedMs,
       iterations: latenciesMs.length,
       latenciesMs,
-      name: 'hypertension-trajectory-application',
+      name: 'outpatient-trajectory-application',
       path: 'application',
       probe: snapshot,
       trace: readActionTraceMetrics(runtime.database),

@@ -11,6 +11,13 @@ const syntheaCommit = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
 const configHash = '81c9b79f5426b85244f42275f98d2f9e161a4c502980d9cde8d027cdda6ef103'
 const profileContentHash = 'd8a4ef19561434cb66c8a391aebfcf6a4dc5f14baf4d4171eac3b8c340b5dd12'
 const localization = syntheaCnLocalizationProvenanceSchema.parse({
+  clinicalDisplay: {
+    catalogSha256: 'd7a25fc414d4008cf59145fd8fc3448556635dd2d5ab8e1e7974bc236f825811',
+    language: 'zh-CN',
+    projectionId: 'synthea-zh-cn@2026-08-30.r1',
+    recordCount: 2180,
+    reviewMode: 'experimental-preview',
+  },
   dependencies: [{
     canonicalSha256: '3c632be160c5a3d6e3196b8e95a0b33a25e9f35bcee506b25d7305345c50957a',
     datasetId: 'geography-cn',
@@ -32,6 +39,21 @@ const localization = syntheaCnLocalizationProvenanceSchema.parse({
   profileId: 'synthea-cn@2026-08-29.r3',
   syntheaCommit,
 })
+const translationWarning = {
+  code: 'TRANSLATION_GAP' as const,
+  gapCount: 1,
+  gaps: [{
+    code: 'missing-code',
+    path: 'code.coding[0]',
+    resourceId: 'observation-1',
+    resourceType: 'Observation',
+    sourceDisplay: 'Untranslated display',
+    system: 'http://loinc.org',
+    version: null,
+  }],
+  message: 'The Synthea Bundle contains untranslated clinical displays' as const,
+  truncated: false,
+}
 const request = scenarioGenerationRequestSchema.parse({
   modules: ['fever'],
   name: 'Synthea 发热病史',
@@ -99,6 +121,10 @@ function patientBundle(extraResources: unknown[] = []) {
         code: localization.profileId,
         display: localization.profileContentHash,
         system: 'urn:cn-health-data:synthea-profile',
+      }, {
+        code: localization.clinicalDisplay.projectionId,
+        display: localization.clinicalDisplay.catalogSha256,
+        system: 'urn:cn-health-data:synthea-translation',
       }],
     },
     resourceType: 'Bundle',
@@ -147,17 +173,112 @@ function providerResponse(bundles: unknown[]) {
   }
 }
 
+function providerHealth() {
+  return {
+    localization,
+    modules: ['cardiovascular/hypertension', 'metabolic_syndrome_disease'],
+    status: 'ok',
+    syntheaCommit,
+  }
+}
+
 function providerFor(body: unknown, options: { maxResponseBytes?: number } = {}) {
   return new SyntheaScenarioGenerationProvider({
     baseUrl: 'http://synthea.internal:51878',
-    fetch: async () => Response.json(body),
+    fetch: async input => Response.json(
+      new URL(String(input)).pathname === '/health' ? providerHealth() : body,
+    ),
     maxResponseBytes: options.maxResponseBytes ?? 1_000_000,
     timeoutMs: 1_000,
   })
 }
 
 describe('Synthea Scenario generation Provider contract', () => {
-  it('accepts an owned R4 patient history and preserves complete reproduction metadata', async () => {
+  it('preserves bounded translation warnings for the matching patient artifact', async () => {
+    const body = providerResponse([patientBundle()])
+    const provider = providerFor({
+      ...body,
+      metadata: {
+        ...body.metadata,
+        translationWarnings: [{ ordinal: 0, warning: translationWarning }],
+      },
+    })
+
+    await expect(provider.generate(request)).resolves.toMatchObject({
+      sources: [{ translationWarning }],
+    })
+  })
+
+  it.each([
+    {
+      label: 'duplicate',
+      warnings: [
+        { ordinal: 0, warning: translationWarning },
+        { ordinal: 0, warning: translationWarning },
+      ],
+    },
+    {
+      label: 'out-of-range',
+      warnings: [{ ordinal: 1, warning: translationWarning }],
+    },
+  ])('rejects $label translation warning ordinals', async ({ warnings }) => {
+    const body = providerResponse([patientBundle()])
+    const provider = providerFor({
+      ...body,
+      metadata: { ...body.metadata, translationWarnings: warnings },
+    })
+
+    await expect(provider.generate(request)).rejects.toMatchObject({
+      code: 'FHIR_R4_BUNDLE_INVALID',
+    })
+  })
+
+  it('preserves a fail-closed clinical translation gap from the Provider', async () => {
+    const provider = new SyntheaScenarioGenerationProvider({
+      baseUrl: 'http://synthea.internal:51878',
+      fetch: async () => Response.json({
+        error: {
+          code: 'TRANSLATION_GAP',
+          message: 'The generated Synthea Bundle contains untranslated clinical displays',
+        },
+      }, { status: 422 }),
+      timeoutMs: 1_000,
+    })
+
+    await expect(provider.generate(request)).rejects.toMatchObject({
+      code: 'TRANSLATION_GAP',
+      message: 'The generated Synthea Bundle contains untranslated clinical displays',
+    })
+  })
+
+  it('sends explicit all-module mode without a module filter', async () => {
+    const { moduleMode: _moduleMode, modules: _modules, ...withoutModules } = request
+    const allModulesRequest = scenarioGenerationRequestSchema.parse(withoutModules)
+    let submittedBody: unknown
+    const responseBody = {
+      ...providerResponse([patientBundle()]),
+      metadata: {
+        ...providerResponse([]).metadata,
+        moduleMode: 'all',
+        modules: [],
+      },
+    }
+    const provider = new SyntheaScenarioGenerationProvider({
+      baseUrl: 'http://synthea.internal:51878',
+      fetch: async (_input, init) => {
+        submittedBody = JSON.parse(String(init?.body))
+        return Response.json(responseBody)
+      },
+      maxResponseBytes: 1_000_000,
+      timeoutMs: 1_000,
+    })
+
+    await provider.generate(allModulesRequest)
+
+    expect(submittedBody).toMatchObject({ moduleMode: 'all', modules: [] })
+  })
+
+  it('accepts an owned localized R4 patient history as an immutable source artifact', async () => {
     const bundle = patientBundle([{
       code: { text: 'Viral sinusitis' },
       id: 'condition-1',
@@ -169,40 +290,24 @@ describe('Synthea Scenario generation Provider contract', () => {
       lifecycleStatus: 'active',
       resourceType: 'Goal',
       subject: { reference: 'urn:uuid:patient-1' },
+    }, {
+      effectiveDateTime: '2026-07-01T09:00:00+08:00',
+      id: 'medication-administration-1',
+      resourceType: 'MedicationAdministration',
+      status: 'completed',
+      subject: { reference: 'urn:uuid:patient-1' },
     }])
     const provider = providerFor(providerResponse([bundle]))
 
     expect(await provider.capabilities()).toMatchObject({
-      modules: ['fever', 'type-2-diabetes', 'hypertension'],
+      available: true,
+      modules: ['cardiovascular/hypertension', 'metabolic_syndrome_disease'],
     })
 
     const corpus = await provider.generate(request)
 
-    expect(corpus.content.patients[0]).toMatchObject({
-      birthDate: '1988-03-16',
-      fhirHistory: [
-        expect.objectContaining({ resourceType: 'Encounter' }),
-        expect.objectContaining({ resourceType: 'Condition' }),
-      ],
-      gender: 'female',
-      id: 'synthea-patient-patient-1',
-      longitudinalHistory: expect.arrayContaining([
-        expect.objectContaining({ kind: 'condition', mappedCode: null }),
-      ]),
-      name: '合成患者 be1c7ce7',
-    })
-    expect(corpus.content.reproduction).toMatchObject({
-      catalogCompilation: { blockers: [], supported: true },
-      clinicalSeed: 7331,
-      configHash,
-      generator: 'synthea-fhir-r4',
-      generatorVersion: syntheaCommit,
-      modules: ['fever'],
-      populationSeed: 4242,
-      timeRange: { end: '2026-08-01', start: '2020-01-01' },
-      timeZone: 'Asia/Shanghai',
-    })
     expect(corpus).toMatchObject({
+      kind: 'synthea-r4',
       sources: [{
         format: 'fhir-r4-bundle',
         localization,
@@ -210,12 +315,6 @@ describe('Synthea Scenario generation Provider contract', () => {
         raw: bundle,
       }],
     })
-    expect(corpus.content.simulatorRules).toEqual([
-      { code: 'success', outcome: 'success', simulator: 'payment' },
-      { code: 'decline', outcome: 'declined', simulator: 'payment' },
-      { code: 'ambiguous', outcome: 'ambiguous', simulator: 'payment' },
-      { code: 'default-success', outcome: 'success', simulator: 'lis' },
-    ])
     expect(corpus.sources[0]?.hash).toMatch(/^[a-f0-9]{64}$/)
   })
 
@@ -318,6 +417,21 @@ describe('Synthea Scenario generation Provider contract', () => {
       maxResponseBytes: 100,
     }).generate(request)).rejects.toMatchObject({
       code: 'PROVIDER_RESPONSE_TOO_LARGE',
+    })
+  })
+
+  it('reports an unavailable optional Provider without throwing from capabilities', async () => {
+    const provider = new SyntheaScenarioGenerationProvider({
+      baseUrl: 'http://synthea.internal:51878',
+      fetch: async () => { throw new Error('synthetic connection failure') },
+      timeoutMs: 1_000,
+    })
+
+    await expect(provider.capabilities()).resolves.toMatchObject({
+      available: false,
+      modules: [],
+      providerId: 'synthea',
+      unavailableReason: 'Synthea Provider 不可用',
     })
   })
 })

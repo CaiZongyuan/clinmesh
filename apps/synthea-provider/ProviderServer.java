@@ -1,4 +1,5 @@
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -41,6 +42,8 @@ public final class ProviderServer {
       "81c9b79f5426b85244f42275f98d2f9e161a4c502980d9cde8d027cdda6ef103";
   private static final Path SYNTHEA_JAR = Path.of(
       System.getenv().getOrDefault("SYNTHEA_JAR_PATH", "/opt/synthea/synthea.jar"));
+  private static final Path SYNTHEA_MODULES = Path.of(
+      System.getenv().getOrDefault("SYNTHEA_MODULES_PATH", "/opt/synthea/modules.txt"));
   private static final Path SYNTHEA_CLASSPATH = Path.of(
       System.getenv().getOrDefault(
           "SYNTHEA_CLASSPATH_PATH", "/opt/cn-health/synthea-profile/classpath"));
@@ -53,6 +56,7 @@ public final class ProviderServer {
   private static final int MAX_REQUEST_BYTES = 64 * 1024;
   private static final int MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
   private static final Gson GSON = new Gson();
+  private static final Gson RESPONSE_GSON = new GsonBuilder().serializeNulls().create();
   private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
       .connectTimeout(Duration.ofSeconds(5))
       .build();
@@ -62,9 +66,11 @@ public final class ProviderServer {
       "type-2-diabetes", List.of(
           "metabolic_syndrome_disease", "metabolic_syndrome_care"));
   private static final List<String> MODULES = MODULE_PATTERNS.keySet().stream().sorted().toList();
+  private static List<String> availableModules = List.of();
   private static JsonObject verifiedLocalizationMetadata;
 
   private record GenerationRequest(
+      String moduleMode,
       List<String> modules,
       String name,
       int count,
@@ -77,10 +83,21 @@ public final class ProviderServer {
       LocalDate end,
       String timeZone) {}
 
+  private record LocalizedBundle(JsonObject bundle, JsonObject warning) {}
+
   private static final class RequestException extends Exception {
     private final String code;
 
     private RequestException(String code, String message) {
+      super(message);
+      this.code = code;
+    }
+  }
+
+  private static final class LocalizationException extends Exception {
+    private final String code;
+
+    private LocalizationException(String code, String message) {
       super(message);
       this.code = code;
     }
@@ -112,6 +129,20 @@ public final class ProviderServer {
   private static void validateRuntimeInputs() throws Exception {
     if (!Files.isRegularFile(SYNTHEA_JAR) || !Files.isReadable(SYNTHEA_JAR)) {
       throw new IOException("SYNTHEA_JAR_PATH must reference a readable regular file");
+    }
+    if (!Files.isRegularFile(SYNTHEA_MODULES) || !Files.isReadable(SYNTHEA_MODULES)) {
+      throw new IOException("SYNTHEA_MODULES_PATH must reference a readable regular file");
+    }
+    availableModules = Files.readAllLines(SYNTHEA_MODULES, StandardCharsets.UTF_8).stream()
+        .map(String::trim)
+        .filter(module -> !module.isEmpty())
+        .distinct()
+        .sorted()
+        .toList();
+    if (availableModules.isEmpty() || availableModules.stream().anyMatch(module ->
+        !module.matches("[A-Za-z0-9][A-Za-z0-9_./-]{0,127}")
+            || module.contains("..") || module.contains("//") || module.endsWith("/"))) {
+      throw new IOException("The Synthea module manifest is invalid");
     }
     if (!Files.isDirectory(SYNTHEA_CLASSPATH) || !Files.isReadable(SYNTHEA_CLASSPATH)) {
       throw new IOException("SYNTHEA_CLASSPATH_PATH must reference a readable directory");
@@ -158,8 +189,23 @@ public final class ProviderServer {
 
   private static void validateLocalizationMetadata(JsonObject metadata) throws IOException {
     if (!metadata.keySet().equals(Set.of(
-        "dependencies", "identityAlgorithm", "profileContentHash", "profileId", "syntheaCommit"))) {
+        "clinicalDisplay", "dependencies", "identityAlgorithm", "profileContentHash",
+        "profileId", "syntheaCommit"))) {
       throw new IOException("cn-health localization metadata fields are invalid");
+    }
+    if (!metadata.get("clinicalDisplay").isJsonObject()) {
+      throw new IOException("cn-health clinical display metadata is invalid");
+    }
+    JsonObject clinicalDisplay = metadata.getAsJsonObject("clinicalDisplay");
+    if (!clinicalDisplay.keySet().equals(Set.of(
+        "catalogSha256", "language", "projectionId", "recordCount", "reviewMode"))
+        || !clinicalDisplay.get("catalogSha256").getAsString().matches("[0-9a-f]{64}")
+        || !clinicalDisplay.get("language").getAsString().equals("zh-CN")
+        || !clinicalDisplay.get("projectionId").getAsString()
+            .matches("synthea-zh-cn@\\d{4}-\\d{2}-\\d{2}\\.r[1-9]\\d*")
+        || clinicalDisplay.get("recordCount").getAsInt() <= 0
+        || !clinicalDisplay.get("reviewMode").getAsString().equals("experimental-preview")) {
+      throw new IOException("cn-health clinical display metadata is invalid");
     }
     if (!metadata.get("identityAlgorithm").getAsString().equals("synthetic-identity-v1")
         || !metadata.get("syntheaCommit").getAsString().equals(SYNTHEA_COMMIT)
@@ -194,6 +240,7 @@ public final class ProviderServer {
     }
     JsonObject body = new JsonObject();
     body.add("localization", localizationMetadata().deepCopy());
+    body.add("modules", GSON.toJsonTree(availableModules));
     body.addProperty("status", "ok");
     body.addProperty("syntheaCommit", SYNTHEA_COMMIT);
     sendJson(exchange, 200, body);
@@ -216,7 +263,7 @@ public final class ProviderServer {
       }
       GenerationRequest request = parseRequest(new String(requestBytes, StandardCharsets.UTF_8));
       JsonObject response = generate(request);
-      byte[] responseBytes = GSON.toJson(response).getBytes(StandardCharsets.UTF_8);
+      byte[] responseBytes = RESPONSE_GSON.toJson(response).getBytes(StandardCharsets.UTF_8);
       if (responseBytes.length > MAX_RESPONSE_BYTES) {
         sendError(exchange, 413, "RESPONSE_TOO_LARGE", "Generated data exceeds 64 MiB");
         return;
@@ -224,6 +271,8 @@ public final class ProviderServer {
       sendJson(exchange, 200, responseBytes);
     } catch (RequestException error) {
       sendError(exchange, 400, error.code, error.getMessage());
+    } catch (LocalizationException error) {
+      sendError(exchange, 422, error.code, error.getMessage());
     } catch (Exception error) {
       System.err.printf("Synthea generation failed: %s%n", error.getMessage());
       sendError(exchange, 502, "GENERATION_FAILED", "Synthea generation failed");
@@ -238,23 +287,33 @@ public final class ProviderServer {
       throw new RequestException("REQUEST_INVALID", "The request must be a JSON object");
     }
     requireKeys(root, Set.of(
-        "modules", "name", "population", "providerId", "seeds", "timeRange", "timeZone"),
+        "moduleMode", "modules", "name", "population", "providerId", "seeds", "timeRange", "timeZone"),
         "request");
     requireString(root, "providerId", 1, 20, "synthea");
     String name = requireString(root, "name", 1, 120, null);
     String timeZone = requireString(root, "timeZone", 1, 40, "Asia/Shanghai");
 
-    JsonArray moduleValues = requireArray(root, "modules", 1, 3);
+    String moduleMode = requireString(root, "moduleMode", 1, 20, null);
+    if (!Set.of("all", "filter").contains(moduleMode)) {
+      throw new RequestException("REQUEST_INVALID", "moduleMode is unsupported");
+    }
+    JsonArray moduleValues = requireArray(root, "modules", 0, 32);
     List<String> modules = new ArrayList<>();
     for (JsonElement value : moduleValues) {
       if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
         throw new RequestException("REQUEST_INVALID", "modules must contain strings");
       }
       String module = value.getAsString();
-      if (!MODULES.contains(module) || modules.contains(module)) {
+      if (!module.matches("[A-Za-z0-9][A-Za-z0-9_./-]{0,127}")
+          || module.contains("..") || module.contains("//") || module.endsWith("/")
+          || modules.contains(module)) {
         throw new RequestException("REQUEST_INVALID", "modules contains an unsupported value");
       }
       modules.add(module);
+    }
+    if ((moduleMode.equals("all") && !modules.isEmpty())
+        || (moduleMode.equals("filter") && modules.isEmpty())) {
+      throw new RequestException("REQUEST_INVALID", "moduleMode and modules do not agree");
     }
 
     JsonObject population = requireObject(root, "population");
@@ -285,7 +344,7 @@ public final class ProviderServer {
       throw new RequestException("REQUEST_INVALID", "history start is after history end");
     }
     return new GenerationRequest(
-        modules, name, count, minimumAge, maximumAge, gender,
+        moduleMode, modules, name, count, minimumAge, maximumAge, gender,
         populationSeed, clinicalSeed, start, end, timeZone);
   }
 
@@ -317,8 +376,10 @@ public final class ProviderServer {
         command.add("-g");
         command.add(request.gender.equals("female") ? "F" : "M");
       }
-      command.add("-m");
-      command.add(String.join(File.pathSeparator, modulePatterns(request.modules)));
+      if (request.moduleMode.equals("filter")) {
+        command.add("-m");
+        command.add(String.join(File.pathSeparator, modulePatterns(request.modules)));
+      }
       command.add("--exporter.baseDirectory=" + outputDirectory);
       long historyDays = ChronoUnit.DAYS.between(request.start, request.end) + 1;
       command.add("--exporter.years_of_history=" + Math.max(1, (historyDays + 364) / 365));
@@ -338,6 +399,7 @@ public final class ProviderServer {
       }
 
       JsonArray bundles = new JsonArray();
+      JsonArray translationWarnings = new JsonArray();
       Path fhirDirectory = outputDirectory.resolve("fhir");
       if (!Files.isDirectory(fhirDirectory)) throw new IOException("FHIR output directory is missing");
       int ordinal = 0;
@@ -346,7 +408,14 @@ public final class ProviderServer {
           JsonElement value = JsonParser.parseString(Files.readString(path));
           if (isPatientBundle(value)) {
             JsonObject trimmed = trimBundleToTimeRange(value.getAsJsonObject(), request);
-            bundles.add(localizeBundle(trimmed, request, ordinal));
+            LocalizedBundle localized = localizeBundle(trimmed, request, ordinal);
+            bundles.add(localized.bundle());
+            if (localized.warning() != null) {
+              JsonObject item = new JsonObject();
+              item.addProperty("ordinal", ordinal);
+              item.add("warning", localized.warning());
+              translationWarnings.add(item);
+            }
             ordinal++;
           }
         }
@@ -359,9 +428,11 @@ public final class ProviderServer {
       metadata.addProperty("clinicalSeed", request.clinicalSeed);
       metadata.addProperty("configHash", generationConfigHash());
       metadata.add("localization", localizationMetadata().deepCopy());
+      metadata.addProperty("moduleMode", request.moduleMode);
       metadata.add("modules", GSON.toJsonTree(request.modules));
       metadata.addProperty("populationSeed", request.populationSeed);
       metadata.addProperty("syntheaCommit", SYNTHEA_COMMIT);
+      metadata.add("translationWarnings", translationWarnings);
       JsonObject timeRange = new JsonObject();
       timeRange.addProperty("end", request.end.toString());
       timeRange.addProperty("start", request.start.toString());
@@ -377,13 +448,13 @@ public final class ProviderServer {
   }
 
   private static List<String> modulePatterns(List<String> modules) {
-    return MODULES.stream()
-        .filter(modules::contains)
-        .flatMap(module -> MODULE_PATTERNS.get(module).stream())
+    return modules.stream()
+        .flatMap(module -> MODULE_PATTERNS.getOrDefault(module, List.of(module)).stream())
+        .distinct()
         .toList();
   }
 
-  private static JsonObject localizeBundle(
+  private static LocalizedBundle localizeBundle(
       JsonObject bundle, GenerationRequest request, int ordinal) throws Exception {
     JsonObject localizationRequest = new JsonObject();
     localizationRequest.add("bundle", bundle);
@@ -400,10 +471,24 @@ public final class ProviderServer {
     try (InputStream stream = response.body()) {
       body = parseBoundedJson(stream, MAX_RESPONSE_BYTES, "cn-health localization response");
     }
-    if (response.statusCode() != 200
-        || !body.keySet().equals(Set.of("bundle", "metadata"))
+    if (response.statusCode() != 200) {
+      JsonElement error = body.get("error");
+      if (response.statusCode() == 422 && error != null && error.isJsonObject()) {
+        JsonObject failure = error.getAsJsonObject();
+        if (failure.has("code") && failure.get("code").isJsonPrimitive()
+            && failure.get("code").getAsString().equals("TRANSLATION_GAP")) {
+          throw new LocalizationException(
+              "TRANSLATION_GAP",
+              "The generated Synthea Bundle contains untranslated clinical displays");
+        }
+      }
+      throw new IOException("cn-health localization failed: "
+          + (error == null ? "unknown" : GSON.toJson(error)));
+    }
+    if (!body.keySet().equals(Set.of("bundle", "metadata", "warnings"))
         || !body.get("bundle").isJsonObject()
-        || !body.get("metadata").isJsonObject()) {
+        || !body.get("metadata").isJsonObject()
+        || !body.get("warnings").isJsonArray()) {
       throw new IOException("cn-health localization response is invalid");
     }
     JsonObject metadata = body.getAsJsonObject("metadata");
@@ -413,7 +498,64 @@ public final class ProviderServer {
     }
     JsonObject localized = body.getAsJsonObject("bundle");
     validateLocalizedBundleTag(localized, metadata);
-    return localized;
+    JsonObject warning = validateTranslationWarning(body.getAsJsonArray("warnings"));
+    return new LocalizedBundle(localized, warning);
+  }
+
+  private static JsonObject validateTranslationWarning(JsonArray warnings) throws IOException {
+    if (warnings.isEmpty()) return null;
+    if (warnings.size() != 1 || !warnings.get(0).isJsonObject()) {
+      throw new IOException("cn-health translation warnings are invalid");
+    }
+    JsonObject warning = warnings.get(0).getAsJsonObject();
+    try {
+      if (!warning.keySet().equals(Set.of(
+          "code", "gapCount", "gaps", "message", "truncated"))
+          || !warning.get("code").getAsString().equals("TRANSLATION_GAP")
+          || !warning.get("message").getAsString()
+              .equals("The Synthea Bundle contains untranslated clinical displays")
+          || !warning.get("gapCount").isJsonPrimitive()
+          || !warning.get("gapCount").getAsJsonPrimitive().isNumber()
+          || !warning.get("gapCount").getAsString().matches("[1-9]\\d{0,5}")
+          || !warning.get("gaps").isJsonArray()
+          || !warning.get("truncated").isJsonPrimitive()
+          || !warning.get("truncated").getAsJsonPrimitive().isBoolean()) {
+        throw new IllegalArgumentException("invalid warning fields");
+      }
+      int gapCount = warning.get("gapCount").getAsInt();
+      JsonArray gaps = warning.getAsJsonArray("gaps");
+      boolean truncated = warning.get("truncated").getAsBoolean();
+      if (gapCount > 100_000 || gaps.isEmpty() || gaps.size() > 100
+          || gapCount < gaps.size() || (!truncated && gapCount != gaps.size())) {
+        throw new IllegalArgumentException("invalid warning bounds");
+      }
+      for (JsonElement value : gaps) {
+        if (!value.isJsonObject()) throw new IllegalArgumentException("invalid warning gap");
+        JsonObject gap = value.getAsJsonObject();
+        if (!gap.keySet().equals(Set.of(
+            "code", "path", "resourceId", "resourceType", "sourceDisplay", "system", "version"))
+            || !isBoundedString(gap.get("code"), 256)
+            || !isBoundedString(gap.get("path"), 1_000)
+            || !isBoundedString(gap.get("resourceId"), 256)
+            || !isBoundedString(gap.get("resourceType"), 128)
+            || !isBoundedString(gap.get("sourceDisplay"), 1_000)
+            || !isBoundedString(gap.get("system"), 1_000)
+            || !(gap.get("version").isJsonNull()
+                || isBoundedString(gap.get("version"), 256))) {
+          throw new IllegalArgumentException("invalid warning gap fields");
+        }
+      }
+    } catch (RuntimeException error) {
+      throw new IOException("cn-health translation warnings are invalid", error);
+    }
+    return warning.deepCopy();
+  }
+
+  private static boolean isBoundedString(JsonElement value, int maximumLength) {
+    if (value == null || !value.isJsonPrimitive()
+        || !value.getAsJsonPrimitive().isString()) return false;
+    String text = value.getAsString();
+    return !text.isEmpty() && text.length() <= maximumLength;
   }
 
   private static void validateLocalizedBundleTag(JsonObject bundle, JsonObject metadata)
@@ -425,23 +567,39 @@ public final class ProviderServer {
     if (!meta.has("tag") || !meta.get("tag").isJsonArray()) {
       throw new IOException("Localized Bundle has no profile tag");
     }
-    int matchingTags = 0;
+    int matchingProfileTags = 0;
+    int matchingTranslationTags = 0;
+    JsonObject clinicalDisplay = metadata.getAsJsonObject("clinicalDisplay");
     for (JsonElement value : meta.getAsJsonArray("tag")) {
       if (!value.isJsonObject()) continue;
       JsonObject tag = value.getAsJsonObject();
       if (tag.has("system")
           && tag.get("system").getAsString().equals("urn:cn-health-data:synthea-profile")) {
-        matchingTags++;
+        matchingProfileTags++;
         if (!tag.has("code") || !tag.has("display")
             || !tag.get("code").getAsString().equals(metadata.get("profileId").getAsString())
             || !tag.get("display").getAsString()
                 .equals(metadata.get("profileContentHash").getAsString())) {
           throw new IOException("Localized Bundle profile tag does not match metadata");
         }
+      } else if (tag.has("system")
+          && tag.get("system").getAsString()
+              .equals("urn:cn-health-data:synthea-translation")) {
+        matchingTranslationTags++;
+        if (!tag.has("code") || !tag.has("display")
+            || !tag.get("code").getAsString()
+                .equals(clinicalDisplay.get("projectionId").getAsString())
+            || !tag.get("display").getAsString()
+                .equals(clinicalDisplay.get("catalogSha256").getAsString())) {
+          throw new IOException("Localized Bundle translation tag does not match metadata");
+        }
       }
     }
-    if (matchingTags != 1) {
+    if (matchingProfileTags != 1) {
       throw new IOException("Localized Bundle must contain one cn-health profile tag");
+    }
+    if (matchingTranslationTags != 1) {
+      throw new IOException("Localized Bundle must contain one cn-health translation tag");
     }
   }
 
@@ -684,7 +842,7 @@ public final class ProviderServer {
 
   private static void sendJson(HttpExchange exchange, int status, JsonElement body)
       throws IOException {
-    sendJson(exchange, status, GSON.toJson(body).getBytes(StandardCharsets.UTF_8));
+    sendJson(exchange, status, RESPONSE_GSON.toJson(body).getBytes(StandardCharsets.UTF_8));
   }
 
   private static void sendJson(HttpExchange exchange, int status, byte[] body) throws IOException {
@@ -710,39 +868,19 @@ public final class ProviderServer {
   private static void smoke() throws Exception {
     int port = Integer.parseInt(System.getenv().getOrDefault("SYNTHEA_PROVIDER_PORT", "51878"));
     String body = """
-        {"modules":["fever"],"name":"Docker smoke","population":{"age":{"maximum":80,"minimum":20},"count":10,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1996-08-01"},"timeZone":"Asia/Shanghai"}
+        {"moduleMode":"all","modules":[],"name":"Docker all-module smoke","population":{"age":{"maximum":80,"minimum":20},"count":1,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1996-08-01"},"timeZone":"Asia/Shanghai"}
         """.trim();
     JsonObject result = generateForSmoke(port, body, "Synthea Provider smoke request failed");
-    if (result.getAsJsonArray("bundles").size() != 10
+    JsonObject metadata = result.getAsJsonObject("metadata");
+    if (result.getAsJsonArray("bundles").size() != 1
+        || !metadata.get("moduleMode").getAsString().equals("all")
+        || !metadata.getAsJsonArray("modules").isEmpty()
         || !result.getAsJsonObject("metadata").get("configHash").getAsString()
             .equals(GENERATION_CONFIG_HASH)
         || !result.getAsJsonObject("metadata").get("syntheaCommit").getAsString()
             .equals(SYNTHEA_COMMIT)
-        || !containsCode(result.getAsJsonArray("bundles"),
-            Set.of("444814009", "75498004", "36971009", "40055000"))) {
+        || !metadata.getAsJsonObject("localization").equals(localizationMetadata())) {
       throw new IOException("Synthea Provider smoke response is invalid");
-    }
-
-    String diabetesBody = """
-        {"modules":["type-2-diabetes"],"name":"Docker diabetes smoke","population":{"age":{"maximum":80,"minimum":65},"count":10,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1986-08-01"},"timeZone":"Asia/Shanghai"}
-        """.trim();
-    JsonObject diabetesResult = generateForSmoke(
-        port, diabetesBody, "Synthea Provider diabetes smoke request failed");
-    if (diabetesResult.getAsJsonArray("bundles").size() != 10
-        || !containsCode(diabetesResult.getAsJsonArray("bundles"),
-            Set.of("44054006", "237602007"))) {
-      throw new IOException("Synthea Provider diabetes smoke response is invalid");
-    }
-
-    String hypertensionBody = """
-        {"modules":["hypertension"],"name":"Docker hypertension smoke","population":{"age":{"maximum":80,"minimum":50},"count":10,"gender":"any"},"providerId":"synthea","seeds":{"clinical":7331,"population":4242},"timeRange":{"end":"2026-08-01","start":"1986-08-01"},"timeZone":"Asia/Shanghai"}
-        """.trim();
-    JsonObject hypertensionResult = generateForSmoke(
-        port, hypertensionBody, "Synthea Provider hypertension smoke request failed");
-    if (hypertensionResult.getAsJsonArray("bundles").size() != 10
-        || !containsCode(hypertensionResult.getAsJsonArray("bundles"),
-            Set.of("59621000"))) {
-      throw new IOException("Synthea Provider hypertension smoke response is invalid");
     }
     System.out.println("Synthea Provider smoke passed");
   }
@@ -759,23 +897,5 @@ public final class ProviderServer {
         .send(request, HttpResponse.BodyHandlers.ofString());
     if (response.statusCode() != 200) throw new IOException(errorMessage);
     return JsonParser.parseString(response.body()).getAsJsonObject();
-  }
-
-  private static boolean containsCode(JsonElement value, Set<String> expectedCodes) {
-    if (value.isJsonArray()) {
-      for (JsonElement item : value.getAsJsonArray()) {
-        if (containsCode(item, expectedCodes)) return true;
-      }
-      return false;
-    }
-    if (!value.isJsonObject()) return false;
-    JsonObject object = value.getAsJsonObject();
-    if (object.has("code") && object.get("code").isJsonPrimitive()
-        && object.getAsJsonPrimitive("code").isString()
-        && expectedCodes.contains(object.get("code").getAsString())) return true;
-    for (String key : object.keySet()) {
-      if (containsCode(object.get(key), expectedCodes)) return true;
-    }
-    return false;
   }
 }

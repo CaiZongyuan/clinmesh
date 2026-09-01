@@ -4,11 +4,16 @@ import { CommandExecutor, type ActorContext } from './application/command-execut
 import { ScenarioService } from './application/scenario-service.ts'
 import { ReferenceDataService } from './application/reference-data-service.ts'
 import { ScenarioDataService } from './application/scenario-data/scenario-data-service.ts'
+import { PatientBriefService } from './application/patient-brief-service.ts'
+import { SyntheticCaseVisitService } from './application/synthetic-case-visit-service.ts'
+import {
+  InvestigationService,
+  investigationFailure,
+} from './application/investigation-service.ts'
 import { UnavailableScenarioGenerationProvider } from './application/scenario-data/provider.ts'
 import { WorkflowService } from './application/workflow-service.ts'
 import { OutboxDispatcher } from './application/outbox-dispatcher.ts'
 import { z } from 'zod'
-import { scenarioModules } from '@clinmesh/contracts/scenario'
 import {
   applyMigrations,
   openClinMeshDatabase,
@@ -16,16 +21,21 @@ import {
 } from './infrastructure/sqlite/database.ts'
 import { FhirRepository } from './infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceRepository } from './infrastructure/sqlite/workspace-repository.ts'
-import { ScenarioDatasetRepository } from './infrastructure/sqlite/scenario-dataset-repository.ts'
 import { ScenarioGenerationJobRepository } from './infrastructure/sqlite/scenario-generation-job-repository.ts'
 import { SyntheticPatientProfileRepository } from './infrastructure/sqlite/synthetic-patient-profile-repository.ts'
+import { SyntheticCaseRepository } from './infrastructure/sqlite/synthetic-case-repository.ts'
+import { PatientBriefRepository } from './infrastructure/sqlite/patient-brief-repository.ts'
+import { InvestigationResultRepository } from './infrastructure/sqlite/investigation-result-repository.ts'
+import {
+  OpenAIChatCompletionsClient,
+  type JsonChatCompletionsProvider,
+} from './infrastructure/ai/openai-chat-completions.ts'
 import { SqliteReferenceDataRepository } from './infrastructure/sqlite/reference-data-repository.ts'
 import {
   openReferenceDatabase,
   verifyReferenceDatabase,
   type ReferenceDatabase,
 } from './infrastructure/sqlite/reference-database.ts'
-import { BuiltInScenarioGenerationProvider } from './infrastructure/scenario-generation/builtin-provider.ts'
 import { SyntheaScenarioGenerationProvider } from './infrastructure/scenario-generation/synthea-provider.ts'
 import { syntheticNhsaMedicationProductSnapshot } from './application/scenario-data/medication-product-snapshot.ts'
 import {
@@ -34,7 +44,6 @@ import {
 } from './application/scenario-data/medical-service-snapshot.ts'
 import type { ScenarioGenerationProvider } from './application/scenario-data/provider.ts'
 import type { SqlitePerformanceObserver } from './infrastructure/sqlite/performance-observer.ts'
-import type { ReferenceHospitalSelection } from './application/reference-hospital-selection.ts'
 
 function lisActorContext(event: {
   epoch: string
@@ -52,6 +61,15 @@ function lisActorContext(event: {
 }
 
 export interface CreateClinMeshRuntimeOptions {
+  activeReferenceReleaseId?: string
+  ai?: {
+    apiKey: string
+    baseUrl: string
+    briefModel: string
+    investigationModel: string
+    maxResponseBytes: number
+    timeoutMs: number
+  }
   authBaseUrl: string
   authSecret: string
   autoDispatchIntervalMs?: number
@@ -59,10 +77,13 @@ export interface CreateClinMeshRuntimeOptions {
   databasePath: string
   demoPassword: string
   migrationMode: 'apply' | 'verify'
+  chatCompletionsProvider?: JsonChatCompletionsProvider
+  investigationModel?: string
+  patientBriefModel?: string
   now?: () => Date
   performanceObserver?: SqlitePerformanceObserver
   referenceDatabasePath?: string
-  referenceSelection?: ReferenceHospitalSelection
+  referencePerformanceObserver?: SqlitePerformanceObserver
   syntheaProvider?: ScenarioGenerationProvider
   syntheaProviderUrl?: string
   trustedOrigins: string[]
@@ -103,74 +124,90 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       referenceDatabase = openReferenceDatabase({
         busyTimeoutMs: 5_000,
         databasePath: options.referenceDatabasePath,
+        ...(options.referencePerformanceObserver === undefined
+          ? {}
+          : { performanceObserver: options.referencePerformanceObserver }),
         readonly: true,
       })
       verifyReferenceDatabase(referenceDatabase)
     }
     const referenceData = new ReferenceDataService(
       referenceDatabase === undefined ? undefined : new SqliteReferenceDataRepository(referenceDatabase),
-      options.referenceSelection,
+      options.activeReferenceReleaseId,
     )
-    const hospitalReference = referenceData.hospitalReferenceSelection()
-    const scenarioReference = hospitalReference.bindings === undefined
-      ? hospitalReference
-      : {
-          products: syntheticNhsaMedicationProductSnapshot,
-          services: syntheticNhcMedicalServiceSnapshot,
-          valueSetEntries: syntheticWstValueSetSnapshot,
-        }
+    const generationJobs = new ScenarioGenerationJobRepository(database)
+    const syntheticPatientProfiles = new SyntheticPatientProfileRepository(database)
+    const syntheticCases = new SyntheticCaseRepository(database)
+    const patientBriefs = new PatientBriefRepository(database, syntheticCases)
+    const investigationResults = new InvestigationResultRepository(database)
+    const chatCompletions = options.chatCompletionsProvider
+      ?? (options.ai === undefined
+        ? undefined
+        : new OpenAIChatCompletionsClient({
+            apiKey: options.ai.apiKey,
+            baseUrl: options.ai.baseUrl,
+            maxResponseBytes: options.ai.maxResponseBytes,
+            timeoutMs: options.ai.timeoutMs,
+          }))
+    const patientBriefModel = options.patientBriefModel ?? options.ai?.briefModel
+    const investigationModel = options.investigationModel ?? options.ai?.investigationModel
+    const investigation = new InvestigationService({
+      cases: syntheticCases,
+      database,
+      ...(investigationModel === undefined ? {} : { model: investigationModel }),
+      profiles: syntheticPatientProfiles,
+      ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+      results: investigationResults,
+    })
+    const workflow = new WorkflowService(database, fhir, commands, {
+      investigation,
+      ...clockOptions,
+      referenceData,
+      tokenSecret: options.cursorSecret,
+    })
     const scenario = new ScenarioService(
       database,
       fhir,
       commands,
-      scenarioReference.products,
-      scenarioReference.services,
-      scenarioReference.valueSetEntries,
+      syntheticNhsaMedicationProductSnapshot,
+      syntheticNhcMedicalServiceSnapshot,
+      syntheticWstValueSetSnapshot,
+      { replaySyntheticCases: input => workflow.replaySyntheticCases(input) },
     )
-    const workflow = new WorkflowService(database, fhir, commands, {
-      ...clockOptions,
-      tokenSecret: options.cursorSecret,
-    })
     const syntheaProvider = options.syntheaProvider
       ?? (options.syntheaProviderUrl === undefined
         ? new UnavailableScenarioGenerationProvider({
             available: false,
             maxPopulation: 10,
-            modules: [...scenarioModules],
+            modules: [],
             providerId: 'synthea',
             providerName: 'Synthea',
             unavailableReason: '未配置 Synthea Provider',
           })
         : new SyntheaScenarioGenerationProvider({
             baseUrl: options.syntheaProviderUrl,
-            medicalServices: hospitalReference.services,
-            medicationProducts: hospitalReference.products,
-            valueSetEntries: hospitalReference.valueSetEntries,
-            ...(hospitalReference.bindings === undefined
-              ? {}
-              : { referenceSelection: hospitalReference.bindings }),
-            referenceConcepts: hospitalReference.concepts,
           }))
-    const generationJobs = new ScenarioGenerationJobRepository(database)
-    const syntheticPatientProfiles = new SyntheticPatientProfileRepository(database)
     generationJobs.requeueInterrupted(new Date().toISOString())
+    patientBriefs.requeueInterrupted(new Date().toISOString())
     const scenarioData = new ScenarioDataService({
+      cases: syntheticCases,
       commands,
       jobs: generationJobs,
-      providers: new Map([
-        ['builtin', new BuiltInScenarioGenerationProvider(
-          hospitalReference.products,
-          hospitalReference.services,
-          hospitalReference.valueSetEntries,
-          hospitalReference.bindings,
-          hospitalReference.concepts,
-        )],
-        ['synthea', syntheaProvider],
-      ]),
+      provider: syntheaProvider,
       profiles: syntheticPatientProfiles,
-      referenceData,
-      repository: new ScenarioDatasetRepository(database),
-      scenario,
+    })
+    const patientBrief = new PatientBriefService({
+      briefs: patientBriefs,
+      cases: syntheticCases,
+      commands,
+      ...(patientBriefModel === undefined ? {} : { model: patientBriefModel }),
+      profiles: syntheticPatientProfiles,
+      ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+    })
+    const caseVisits = new SyntheticCaseVisitService({
+      briefs: patientBriefs,
+      cases: syntheticCases,
+      profiles: syntheticPatientProfiles,
       workflow,
     })
     scenario.ensureInitialEpoch({
@@ -222,11 +259,35 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         },
         'laboratory.report-request': async event => {
           const payload = laboratoryRequestPayloadSchema.parse(event.payload)
-          workflow.reportLaboratoryRequest({
-            context: lisActorContext(event),
-            eventId: event.eventId,
-            requestId: payload.requestId,
-          })
+          const context = lisActorContext(event)
+          try {
+            const snapshot = await investigation.resolveForRequest(
+              event.workspaceId,
+              event.epoch,
+              payload.requestId,
+            )
+            workflow.reportLaboratoryRequest({
+              context,
+              eventId: event.eventId,
+              requestId: payload.requestId,
+              ...(snapshot === undefined
+                ? {}
+                : {
+                    resultSnapshot: {
+                      content: snapshot.content,
+                      snapshotId: snapshot.snapshotId,
+                      source: snapshot.source,
+                    },
+                  }),
+            })
+          } catch (error) {
+            workflow.failLaboratoryResultGeneration({
+              context,
+              error: investigationFailure(error),
+              eventId: event.eventId,
+              requestId: payload.requestId,
+            })
+          }
           return { status: 'completed' }
         },
         'lis.process-order': async event => {
@@ -251,6 +312,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     let closed = false
     let dispatchCycle: Promise<void> | undefined
     let generationCycle: Promise<void> | undefined
+    let patientBriefCycle: Promise<void> | undefined
     let closePromise: Promise<void> | undefined
     const generationAbort = new AbortController()
     const dispatchPending = (): Promise<void> => {
@@ -275,6 +337,16 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         })
       return generationCycle
     }
+    const dispatchPatientBriefJobs = (): Promise<void> => {
+      if (closed) return Promise.resolve()
+      if (patientBriefCycle !== undefined) return patientBriefCycle
+      patientBriefCycle = patientBrief.processNext(generationAbort.signal)
+        .then(() => undefined)
+        .finally(() => {
+          patientBriefCycle = undefined
+        })
+      return patientBriefCycle
+    }
     const dispatchTimer = options.autoDispatchIntervalMs === undefined
       ? undefined
       : setInterval(() => {
@@ -289,12 +361,22 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             console.error('ClinMesh Scenario generation dispatch cycle failed')
           })
         }, options.autoDispatchIntervalMs)
+    const patientBriefTimer = options.autoDispatchIntervalMs === undefined
+      ? undefined
+      : setInterval(() => {
+          void dispatchPatientBriefJobs().catch(() => {
+            console.error('ClinMesh Patient Brief dispatch cycle failed')
+          })
+        }, options.autoDispatchIntervalMs)
     const app = createApp({
       fhir: {
         repository: fhir,
         resolveContext: async request => (await identity.resolveSessionContext(request.headers)).actor,
       },
       identity,
+      investigation,
+      caseVisits,
+      patientBrief,
       referenceData,
       scenario,
       scenarioData,
@@ -308,9 +390,10 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         closed = true
         if (dispatchTimer !== undefined) clearInterval(dispatchTimer)
         if (generationTimer !== undefined) clearInterval(generationTimer)
+        if (patientBriefTimer !== undefined) clearInterval(patientBriefTimer)
         generationAbort.abort()
         closePromise = (async () => {
-          await Promise.all([dispatchCycle, generationCycle])
+          await Promise.all([dispatchCycle, generationCycle, patientBriefCycle])
           referenceDatabase?.close()
           referenceDatabase = undefined
           database.close()
@@ -320,9 +403,13 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       database,
       dispatchPending,
       dispatchScenarioGenerationJobs,
+      dispatchPatientBriefJobs,
       dispatcher,
       fhir,
       identity,
+      caseVisits,
+      investigation,
+      patientBrief,
       referenceData,
       scenario,
       scenarioData,

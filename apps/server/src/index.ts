@@ -1,24 +1,21 @@
-import { readFile } from 'node:fs/promises'
 import { mkdir } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readServerConfig, readServerEnvironment } from './config.ts'
 import { createClinMeshRuntime } from './runtime.ts'
 import { startServer } from './server.ts'
-import { parseReferenceHospitalSelection } from './application/reference-hospital-selection.ts'
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url))
 const config = readServerConfig(readServerEnvironment(process.env))
 const defaultWebRoot = resolve(moduleDirectory, '../../web/dist')
 const webRoot = resolve(config.webRoot ?? defaultWebRoot)
 const databasePath = resolve(config.databasePath)
-const referenceSelection = config.referenceSelectionPath === undefined
-  ? undefined
-  : parseReferenceHospitalSelection(JSON.parse(
-      await readFile(config.referenceSelectionPath, 'utf8'),
-    ))
 await mkdir(dirname(databasePath), { recursive: true })
 const runtime = await createClinMeshRuntime({
+  ...(config.ai === undefined ? {} : { ai: config.ai }),
+  ...(config.referenceReleaseId === undefined
+    ? {}
+    : { activeReferenceReleaseId: config.referenceReleaseId }),
   authBaseUrl: config.authBaseUrl,
   authSecret: config.authSecret,
   autoDispatchIntervalMs: 250,
@@ -29,7 +26,6 @@ const runtime = await createClinMeshRuntime({
   ...(config.referenceDatabasePath === undefined
     ? {}
     : { referenceDatabasePath: config.referenceDatabasePath }),
-  ...(referenceSelection === undefined ? {} : { referenceSelection }),
   ...(config.syntheaProviderUrl === undefined
     ? {}
     : { syntheaProviderUrl: config.syntheaProviderUrl }),
