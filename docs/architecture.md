@@ -683,7 +683,7 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 `packages/contracts/src/his-operations.ts` 导出的 `hisOperationCatalog` 是 Agent 操作面的唯一合同 owner。每项 operation 显式声明稳定 ID、版本、`cliPath`、`query/draft/preview/command` mode、输入/输出/错误 Zod schema、HTTP method/path adapter、唯一 handler owner、human/agent identity、岗位 allowlist、风险、幂等、expected version 与 preview token 要求；既有 Command 的持久 operation 名称不同时，Catalog 还保存 receipt adapter 名称。Catalog 不依赖 Hono、Node.js、环境变量或 handler。
 
-CLI 命令树、`operations list/schema`、服务端 Agent route matching、Grant 的 Catalog hash 和 Skill 命令示例测试都读取同一 Catalog。HIS route coverage test 要求每条 `/api/his/v1` route 恰好属于 canonical operation 或带原因的兼容排除项。FHIR 部分只投影 metadata、read、vread、instance history 和资源能力注册表允许的 search；资源类型与 SearchParameter 白名单和 CapabilityStatement 共用一份注册表。包括 metadata 在内的每个 FHIR 入口都先解析受信身份，Agent 还必须在 Grant allowlist 中拥有对应 operation。
+CLI 命令树、`operations list/schema`、服务端 Agent route matching、Grant 的 Catalog hash 和 Skill 命令示例测试都读取同一 Catalog。HIS route coverage test 要求每条 `/api/his/v1` route 恰好属于 canonical operation 或带原因的兼容排除项。医生病例级检验目录是独立 canonical query，返回当前 Case 的 Investigation Generation Capability；全局 Reference 检验目录不能替代这项开具前门禁。病例级查询没有 Reference 项目时可显式读取本院 clinical catalog，已有 Reference 项目返回 unsupported 时不能用本院同名项目绕过。FHIR 部分只投影 metadata、read、vread、instance history 和资源能力注册表允许的 search；资源类型与 SearchParameter 白名单和 CapabilityStatement 共用一份注册表。包括 metadata 在内的每个 FHIR 入口都先解析受信身份，Agent 还必须在 Grant allowlist 中拥有对应 operation。
 
 CLI 没有通用 invoke、任意 URL、method/path/body、SQL、JSON Patch、FHIR write 或 Bundle write。兼容组合 route 不进入命令树，Agent 使用独立 diagnosis、prescription、laboratory request、clinical document 和 Encounter Completion 生命周期。
 

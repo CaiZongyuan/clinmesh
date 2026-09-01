@@ -19,6 +19,8 @@ import {
   acknowledgeLaboratoryReportResponseSchema,
   askConsultationQuestionResponseSchema,
   billingQueueSchema,
+  caseLaboratoryCatalogSearchSchema,
+  clinicalCatalogSchema,
   clinicalDocumentDraftResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
   clinicalDocumentSignResponseSchema,
@@ -668,7 +670,9 @@ describe('clinmesh CLI process over real HTTP', () => {
     expect(triage.status).toBe('awaiting-doctor')
 
     const doctorToken = await mintGrant('outpatient-doctor', [
+      'catalog.clinical.read',
       'doctor.case.get',
+      'doctor.case.laboratory-catalog.search',
       'doctor.queue.list',
       'encounter.clinical-document.draft.set',
       'encounter.clinical-document.sign.preview',
@@ -722,13 +726,30 @@ describe('clinmesh CLI process over real HTTP', () => {
       doctorQueueSchema,
     ).items.find(item => item.encounterId === started.encounterId)
     if (activeDoctorItem === undefined) throw new Error('Consultation did not start the first visit')
+    const laboratoryCatalog = cliData(
+      await execute(doctorToken, [
+        'doctor', 'case', 'laboratory-catalog', 'search',
+        '--case-id', doctorItem.caseId,
+        '--query', '血常规',
+      ]),
+      'doctor.case.laboratory-catalog.search',
+      caseLaboratoryCatalogSearchSchema,
+    )
+    expect(laboratoryCatalog.items).toEqual([])
+    const clinicalCatalog = cliData(
+      await execute(doctorToken, ['catalog', 'clinical', 'get']),
+      'catalog.clinical.read',
+      clinicalCatalogSchema,
+    )
+    const laboratoryConcept = clinicalCatalog.laboratory.find(item => item.id === 'lab-cbc')
+    if (laboratoryConcept === undefined) throw new Error('Hospital clinical catalog has no CBC')
     const laboratoryDraft = cliData(
       await execute(doctorToken, [
         'encounter', 'laboratory-request', 'draft', 'set',
         '--input', '-',
         '--idempotency-key', 'cli-cross-role-lab-draft-1',
       ], {
-        catalogItemId: 'lab-cbc',
+        catalogItemId: laboratoryConcept.id,
         encounterId: doctorItem.encounterId,
         encounterVersion: activeDoctorItem.encounterVersion,
         expectedDraftVersion: 0,

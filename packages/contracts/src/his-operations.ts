@@ -11,6 +11,7 @@ import {
   askConsultationQuestionResponseSchema,
   billingQueueSchema,
   cancelLaboratoryRequestRequestSchema,
+  caseLaboratoryCatalogSearchSchema,
   clinicalCatalogSchema,
   clinicalDocumentContentSchema,
   clinicalDocumentDraftResponseSchema,
@@ -81,6 +82,7 @@ export const hisOperationIdentitySchema = z.enum(['agent', 'human'])
 export const hisOperationHandlerOwnerSchema = z.enum([
   'FhirCapabilities',
   'FhirRepository',
+  'InvestigationService',
   'ReferenceDataService',
   'SyntheticCaseVisitService',
   'WorkflowService',
@@ -221,6 +223,10 @@ const triageRecordInputSchema = z.object({
 
 const caseIdInputSchema = z.object({
   caseId: z.string().regex(/^[A-Za-z0-9.-]{1,64}$/),
+}).strict()
+
+const caseLaboratoryCatalogSearchInputSchema = referenceCatalogSearchInputSchema.extend({
+  caseId: caseIdInputSchema.shape.caseId,
 }).strict()
 
 const encounterIdInputSchema = z.object({
@@ -1028,6 +1034,25 @@ const operationDefinitions = [
     version: 1,
   },
   {
+    cliPath: ['doctor', 'case', 'laboratory-catalog', 'search'],
+    http: {
+      method: 'GET',
+      path: '/api/his/v1/doctor/cases/:caseId/reference-catalogs/laboratory',
+    },
+    id: 'doctor.case.laboratory-catalog.search',
+    input: caseLaboratoryCatalogSearchInputSchema,
+    mode: 'query',
+    output: caseLaboratoryCatalogSearchSchema,
+    requirements: {
+      expectedVersions: false,
+      idempotency: 'none',
+    },
+    risk: 'read',
+    roles: ['outpatient-doctor'],
+    summary: 'Search laboratory concepts and generation capability for one active case',
+    version: 1,
+  },
+  {
     cliPath: ['encounter', 'consultation', 'ask'],
     http: {
       method: 'POST',
@@ -1726,6 +1751,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   [clinicalDocumentOperationIds.revise]: 'clinmesh-doctor',
   'command.receipt.get': 'clinmesh-shared',
   'doctor.case.get': 'clinmesh-doctor',
+  'doctor.case.laboratory-catalog.search': 'clinmesh-doctor',
   'doctor.completed-cases.get': 'clinmesh-doctor',
   'doctor.completed-cases.list': 'clinmesh-doctor',
   'doctor.queue.list': 'clinmesh-doctor',
@@ -1781,6 +1807,7 @@ function handlerOwnerFor(
   if (operation.http.path.startsWith('/api/his/v1/reference-catalogs/')) {
     return 'ReferenceDataService'
   }
+  if (operation.id === 'doctor.case.laboratory-catalog.search') return 'InvestigationService'
   if (operation.id === 'registration.synthetic-case.start') return 'SyntheticCaseVisitService'
   return 'WorkflowService'
 }

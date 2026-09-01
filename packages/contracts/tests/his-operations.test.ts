@@ -164,6 +164,7 @@ describe('HIS operation catalog', () => {
       'doctor.completed-cases.list',
       'doctor.completed-cases.get',
       'doctor.case.get',
+      'doctor.case.laboratory-catalog.search',
       'encounter.consultation.ask',
       'encounter.completion.preview',
       'encounter.complete',
@@ -181,10 +182,62 @@ describe('HIS operation catalog', () => {
       { id: 'doctor.completed-cases.list', mode: 'query', risk: 'read', roles: ['outpatient-doctor'] },
       { id: 'doctor.completed-cases.get', mode: 'query', risk: 'read', roles: ['outpatient-doctor'] },
       { id: 'doctor.case.get', mode: 'query', risk: 'read', roles: ['outpatient-doctor'] },
+      {
+        id: 'doctor.case.laboratory-catalog.search',
+        mode: 'query',
+        risk: 'read',
+        roles: ['outpatient-doctor'],
+      },
       { id: 'encounter.consultation.ask', mode: 'command', risk: 'write', roles: ['outpatient-doctor'] },
       { id: 'encounter.completion.preview', mode: 'preview', risk: 'read', roles: ['outpatient-doctor'] },
       { id: 'encounter.complete', mode: 'command', risk: 'high-risk-write', roles: ['outpatient-doctor'] },
     ])
+  })
+
+  it('publishes the case-scoped laboratory catalog with result-generation capability', () => {
+    const operation = getHisOperation('doctor.case.laboratory-catalog.search')
+    expect(operation).toMatchObject({
+      cliPath: ['doctor', 'case', 'laboratory-catalog', 'search'],
+      handlerOwner: 'InvestigationService',
+      http: {
+        method: 'GET',
+        path: '/api/his/v1/doctor/cases/:caseId/reference-catalogs/laboratory',
+      },
+      skill: 'clinmesh-doctor',
+    })
+    expect(operation.input.parse({
+      caseId: 'case-1',
+      page: 2,
+      pageSize: 20,
+      query: '血常规',
+    })).toEqual({
+      caseId: 'case-1',
+      page: 2,
+      pageSize: 20,
+      query: '血常规',
+    })
+    expect(operation.output.parse({
+      items: [{
+        code: '6690-2',
+        display: '白细胞计数',
+        domain: 'laboratory',
+        id: 'laboratory:wbc',
+        resultGeneration: { source: 'synthea-exact', supported: true },
+        sourceLocator: 'concepts[0]',
+        status: 'active',
+        system: 'http://loinc.org',
+        version: '2.83',
+      }],
+      page: 2,
+      pageSize: 20,
+      releaseId: 'reference-release-current',
+      total: 21,
+    })).toMatchObject({
+      items: [{
+        id: 'laboratory:wbc',
+        resultGeneration: { source: 'synthea-exact', supported: true },
+      }],
+    })
   })
 
   it('publishes only the independent diagnosis draft and confirmation lifecycle', () => {
@@ -404,7 +457,7 @@ describe('HIS operation catalog', () => {
 
     expect(counts).toEqual({
       'clinmesh-billing': 3,
-      'clinmesh-doctor': 32,
+      'clinmesh-doctor': 33,
       'clinmesh-fhir': 5,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 6,

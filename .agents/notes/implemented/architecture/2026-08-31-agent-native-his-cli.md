@@ -8,7 +8,7 @@ ClinMesh 的 HIS 与 FHIR 接口已经拥有多岗位业务能力，但直接调
 
 ## Decision
 
-`packages/contracts` 中导出的 `hisOperationCatalog` 是 Agent 操作面的唯一合同 owner。每项 operation 显式拥有稳定 ID、版本、`cliPath`、mode、输入/输出/错误 schema、HTTP adapter、handler owner、identity、岗位、风险、幂等、expected version 与 preview token 要求；CLI 命令树、离线 discovery、服务端 Agent route matching、Grant Catalog hash 和 Skill 示例验证都投影这份合同。既有 Command receipt 使用不同持久 operation 名称时，Catalog 保存 adapter 名称，使 Agent 始终用公开 operation ID 恢复而不改写历史 receipt。
+`packages/contracts` 中导出的 `hisOperationCatalog` 是 Agent 操作面的唯一合同 owner。每项 operation 显式拥有稳定 ID、版本、`cliPath`、mode、输入/输出/错误 schema、HTTP adapter、handler owner、identity、岗位、风险、幂等、expected version 与 preview token 要求；CLI 命令树、离线 discovery、服务端 Agent route matching、Grant Catalog hash 和 Skill 示例验证都投影这份合同。病例级检验目录作为独立 operation 暴露当前 Case 的 Investigation Generation Capability，避免 Agent 用全局概念目录推测结果是否可生成。既有 Command receipt 使用不同持久 operation 名称时，Catalog 保存 adapter 名称，使 Agent 始终用公开 operation ID 恢复而不改写历史 receipt。
 
 `apps/cli` 发布 `clinmesh` 可执行入口。Human mode 使用本地 Better Auth profile，高风险 write 需要 `--yes`；Agent mode 只接受 runner 注入的短期 `cma_` token，不回退到 human profile。Agent Client 是稳定非人类 Actor，并与 Human Membership 一样投影到 `workspace_actor`；Agent Capability Grant 把它绑定到一个 Workspace、Epoch、Scenario Run、单一 Practitioner Role、operation allowlist、Catalog hash、policy version 和期限。Human 控制面要求当前选中的 Acting Practitioner Role 是 administrator，不能只凭账户拥有该岗位。控制面 mutation 复用 CommandExecutor 的幂等、审计和 Action Trace；Grant 原 token 只返回一次，receipt 脱敏且不能重放。控制面结果未知时先检查当前状态；Grant 创建结果未知时撤销可能已经创建的 Grant，再用新幂等键签发替代 Grant。服务端只保存 token SHA-256；撤销、过期、Client 禁用、Epoch reset、Scenario Run 关闭、岗位停用或版本变化都会使 Grant 失效。
 

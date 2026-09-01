@@ -13,6 +13,39 @@ function captureStream() {
 }
 
 describe('catalog-backed operation execution', () => {
+  it('queries the laboratory catalog in one authorized case context', async () => {
+    const stdout = captureStream()
+    const stderr = captureStream()
+    const execute = vi.fn().mockResolvedValue({
+      items: [],
+      page: 2,
+      pageSize: 20,
+      releaseId: 'reference-release-current',
+      total: 0,
+    })
+
+    const exitCode = await runCli([
+      'doctor', 'case', 'laboratory-catalog', 'search',
+      '--case-id', 'case-1',
+      '--query', '血常规',
+      '--page', '2',
+    ], { stderr: stderr.stream, stdout: stdout.stream }, { execute })
+
+    expect(exitCode).toBe(0)
+    expect(stderr.value()).toBe('')
+    expect(execute).toHaveBeenCalledWith('doctor.case.laboratory-catalog.search', {
+      caseId: 'case-1',
+      page: 2,
+      pageSize: 20,
+      query: '血常规',
+    })
+    expect(JSON.parse(stdout.value())).toMatchObject({
+      data: { items: [], page: 2, total: 0 },
+      ok: true,
+      operation: { id: 'doctor.case.laboratory-catalog.search', mode: 'query' },
+    })
+  })
+
   it('parses typed flags and validates the executor response', async () => {
     const stdout = captureStream()
     const stderr = captureStream()

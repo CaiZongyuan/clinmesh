@@ -17,7 +17,7 @@ clinmesh encounter consultation ask --input @question.json --idempotency-key <ke
 
 ## Clinical conclusions
 
-Diagnosis and medication conclusions are independent. Save a controlled diagnosis draft, confirm it only when exactly one entry is primary, then either issue a valid prescription or explicitly confirm no medication. A signed, undispensed prescription may be withdrawn through its own command.
+Diagnosis and medication conclusions are independent. Save a controlled diagnosis draft and confirm it only when exactly one entry is primary. When a diagnosis is already confirmed, saving and confirming a new draft creates a new revision; re-read the case before downstream medication or completion decisions. Then either issue a valid prescription or explicitly confirm no medication. A signed, undispensed prescription may be withdrawn through its own command.
 
 ```bash
 clinmesh encounter diagnosis draft set --input @diagnosis.json --idempotency-key <key>
@@ -30,9 +30,11 @@ clinmesh prescription withdraw --input @withdrawal.json --idempotency-key <key>
 
 ## Laboratory and services
 
-Laboratory draft, issue, cancellation, generation retry and report acknowledgement are separate states. Only acknowledge a signed current report. Report correction requires an administrator Grant and creates a new immutable report chain. Hospital Service order and completion use their current ServiceRequest versions.
+Laboratory draft, issue, cancellation, generation retry and report acknowledgement are separate states. Search the laboratory catalog in the current case before saving a draft. Select only an item whose result-generation capability is supported; an unsupported reason is a stop condition for that item. If the case query returns no Reference items, read the hospital clinical catalog and choose a local item instead. Do not use a local item to bypass an explicit unsupported Reference item. Only acknowledge a signed current report. Report correction requires an administrator Grant and creates a new immutable report chain. Hospital Service order and completion use their current ServiceRequest versions.
 
 ```bash
+clinmesh doctor case laboratory-catalog search --case-id <case-id> --query <term>
+clinmesh catalog clinical get
 clinmesh encounter laboratory-request draft set --input @laboratory.json --idempotency-key <key>
 clinmesh encounter laboratory-request issue --input @laboratory-issue.json --idempotency-key <key>
 clinmesh laboratory-request cancel --input @laboratory-cancel.json --idempotency-key <key>
