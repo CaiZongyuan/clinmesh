@@ -75,7 +75,7 @@ cp .env.example .env
 pnpm dev:server
 ```
 
-首次开发复制一次 `.env.example`；此后 Server 和数据库 CLI 自动读取仓库根 `.env`，显式 shell 环境变量拥有更高优先级。`pnpm dev:server` 会先构建 Web、迁移本地数据库，再启动监听进程。
+首次开发复制一次 `.env.example`；此后 Server 和数据库 CLI 自动读取仓库根 `.env`，显式 shell 环境变量拥有更高优先级。`pnpm dev:server` 会先构建 Web，迁移 operational SQLite 和 `.env` 中已配置的 Reference SQLite，再启动只验证 schema 的监听进程。
 
 默认地址：
 
