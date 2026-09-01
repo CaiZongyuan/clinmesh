@@ -3,7 +3,6 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  apiErrorSchema,
   caseLaboratoryCatalogSearchSchema,
   doctorCaseDetailSchema,
   issueLaboratoryRequestResponseSchema,
@@ -541,47 +540,6 @@ describe('Laboratory Service Publisher HTTP contract', () => {
           },
         },
       },
-    })
-    runtime.database.driver.prepare(`
-      UPDATE laboratory_request
-      SET generation_error_code = 'INVESTIGATION_OUTPUT_INVALID',
-        generation_error_message = 'Synthetic generation failure',
-        status = 'generation-failed', version = version + 1
-      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND request_id = ?
-    `).run(issued.data.request.id)
-    const duplicateDraftResponse = await runtime.app.request(
-      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
-      {
-        body: JSON.stringify({
-          expectedVersions: { [encounterReference]: '1' },
-          input: {
-            catalogItemId: publishedService.id,
-            expectedDraftVersion: issued.data.draftVersion,
-            indicationCode: 'clinical-evaluation',
-          },
-        }),
-        headers: mutationHeaders(),
-        method: 'PUT',
-      },
-    )
-    expect(duplicateDraftResponse.status).toBe(200)
-    const duplicateDraft = laboratoryRequestDraftResponseSchema.parse(
-      await duplicateDraftResponse.json(),
-    ).data
-    const duplicateIssueResponse = await runtime.app.request(
-      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
-      {
-        body: JSON.stringify({
-          expectedVersions: { [encounterReference]: '1' },
-          input: { expectedDraftVersion: duplicateDraft.draftVersion },
-        }),
-        headers: mutationHeaders(),
-        method: 'POST',
-      },
-    )
-    expect(duplicateIssueResponse.status).toBe(409)
-    expect(apiErrorSchema.parse(await duplicateIssueResponse.json())).toMatchObject({
-      error: { code: 'LABORATORY_REQUEST_DUPLICATE' },
     })
     expect(runtime.database.driver.prepare(`
       SELECT COUNT(*) AS count FROM hospital_service_catalog

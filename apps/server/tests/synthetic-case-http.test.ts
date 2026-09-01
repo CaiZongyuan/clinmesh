@@ -962,7 +962,8 @@ describe('Synthetic Case generation HTTP contract', () => {
     }), 'workspace-demo', caseId)
 
     const agentDraft = await saveLaboratoryDraft('lab-crp', 2)
-    const agentRequest = (await issueLaboratory(agentDraft.draftVersion)).request
+    const agentIssue = await issueLaboratory(agentDraft.draftVersion)
+    const agentRequest = agentIssue.request
     await runtime.dispatchPending()
     detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
       `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,
@@ -997,39 +998,22 @@ describe('Synthetic Case generation HTTP contract', () => {
     )
     expect(evidenceTimes).toEqual(evidenceTimes.toSorted().toReversed())
 
-    runtime.database.driver.prepare(`
-      UPDATE laboratory_request SET reference_json = ?
-      WHERE workspace_id = ? AND epoch = ? AND request_id = ?
-    `).run(
-      JSON.stringify(unsupportedAgentConcept),
-      'workspace-demo',
-      'epoch-1',
-      agentRequest.id,
-    )
-    const unsupportedRetryResponse = await runtime.app.request(
-      `/api/his/v1/laboratory-requests/${agentRequest.id}/actions/retry-generation`,
+    const duplicateDraft = await saveLaboratoryDraft('lab-crp', agentIssue.draftVersion)
+    const duplicateIssueResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/actions/issue`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Task/${agentRequest.taskId}`]: '4' },
-          input: { expectedRequestVersion: 4 },
+          expectedVersions: { [encounterReference]: '3' },
+          input: { expectedDraftVersion: duplicateDraft.draftVersion },
         }),
         headers: commandHeaders(),
         method: 'POST',
       },
     )
-    expect(unsupportedRetryResponse.status).toBe(409)
-    expect(apiErrorSchema.parse(await unsupportedRetryResponse.json())).toMatchObject({
-      error: { code: 'CATALOG_CONFLICT' },
+    expect(duplicateIssueResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await duplicateIssueResponse.json())).toMatchObject({
+      error: { code: 'LABORATORY_REQUEST_DUPLICATE' },
     })
-    runtime.database.driver.prepare(`
-      UPDATE laboratory_request SET reference_json = ?
-      WHERE workspace_id = ? AND epoch = ? AND request_id = ?
-    `).run(
-      JSON.stringify(agentConcept),
-      'workspace-demo',
-      'epoch-1',
-      agentRequest.id,
-    )
     const cancelFailedResponse = await runtime.app.request(
       `/api/his/v1/laboratory-requests/${agentRequest.id}/actions/cancel`,
       {
@@ -1052,8 +1036,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       await cancelFailedResponse.json(),
     ).data.request).toMatchObject({ status: 'cancelled' })
 
-    const secondAgentDraft = await saveLaboratoryDraft('lab-crp', 4)
-    const secondAgentRequest = (await issueLaboratory(secondAgentDraft.draftVersion)).request
+    const secondAgentRequest = (await issueLaboratory(duplicateDraft.draftVersion)).request
     await runtime.dispatchPending()
     detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
       `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,

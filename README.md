@@ -289,9 +289,31 @@ ClinMesh 的作者参考库是独立 SQLite，不是 HIS operational SQLite。�
     {
       "acquisitionMethod": "manual-download",
       "artifactFormat": "cn-health-candidate",
+      "artifactPath": "/absolute/path/to/nhc-icd10-clinical/releases/2022.r3/manifest.json",
+      "checksum": "<nhc-icd10-candidate-manifest-sha256>",
+      "licenseId": "LicenseRef-cn-health-source-terms",
+      "retrievedAt": "2026-09-01T00:00:00.000+08:00",
+      "sourceId": "cn-health-nhc-icd10-clinical",
+      "sourceUrl": "https://www.nhc.gov.cn/",
+      "upstreamVersion": "nhc-icd10-clinical@2022.r3"
+    },
+    {
+      "acquisitionMethod": "manual-download",
+      "artifactFormat": "cn-health-candidate",
+      "artifactPath": "/absolute/path/to/nhsa-drugs/releases/2026-01-09.r3/manifest.json",
+      "checksum": "<nhsa-drugs-candidate-manifest-sha256>",
+      "licenseId": "LicenseRef-cn-health-source-terms",
+      "retrievedAt": "2026-09-01T00:00:00.000+08:00",
+      "sourceId": "cn-health-nhsa-drugs",
+      "sourceUrl": "https://www.nhsa.gov.cn/",
+      "upstreamVersion": "nhsa-drugs@2026-01-09.r3"
+    },
+    {
+      "acquisitionMethod": "manual-download",
+      "artifactFormat": "cn-health-candidate",
       "artifactPath": "/absolute/path/to/loinc-zh-cn/releases/2.83.r1/manifest.json",
       "checksum": "<candidate-manifest-sha256>",
-      "licenseId": "LicenseRef-cn-health-source-terms",
+      "licenseId": "LOINC-5.8",
       "retrievedAt": "2026-09-01T00:00:00.000+08:00",
       "sourceId": "cn-health-loinc-zh-cn",
       "sourceUrl": "https://loinc.org/download/loinc-complete/",
@@ -324,7 +346,7 @@ Importer 会验证外层 checksum、Candidate manifest、`data.sqlite` SHA-256 �
 
 ```dotenv
 CLINMESH_REFERENCE_DATABASE_PATH=.data/clinmesh-reference.sqlite
-CLINMESH_REFERENCE_RELEASE_ID=clinmesh-cn-health-2026-08-30.r1
+CLINMESH_REFERENCE_RELEASE_ID=clinmesh-cn-health-2026-09-01.r1
 ```
 
 疾病、药品和完整 LOINC 行只存在于 Reference SQLite。医生诊断与药品选择器直接分页查询当前 Release；管理员从 orderable laboratory Reference candidates 中选择有界批次，通过 Catalog Enrichment 发布本院 Laboratory Service。医生检验选择器只查询当前 Workspace/Epoch 已发布服务，不接收 Reference Concept ID，也不显示模型或病例级生成 capability。诊断、处方和检验申请分别冻结选择时的 coding、产品或 Laboratory Service/report definition snapshot；切换 Reference Release 或重新发布服务不会改写既有医疗事实。Synthea 来源历史编码只用于展示外部合成病历和精确结果复用。挂载数据的来源条款不因 ClinMesh 软件许可证而改变。
