@@ -1,8 +1,11 @@
 import { extname } from 'node:path'
 import type { HealthResponse } from '@clinmesh/contracts/health'
 import {
+  createAgentCapabilityGrantInputSchema,
+  createAgentClientInputSchema,
+} from '@clinmesh/contracts/agent'
+import {
   acknowledgeLaboratoryReportRequestSchema,
-  caseLaboratoryCatalogSearchSchema,
   cancelLaboratoryRequestRequestSchema,
   completeHospitalServiceRequestSchema,
   completeEncounterRequestSchema,
@@ -24,6 +27,7 @@ import {
   signClinicalDocumentRequestSchema,
   withdrawPrescriptionRequestSchema,
 } from '@clinmesh/contracts/his'
+import { referenceDataItemIdSchema } from '@clinmesh/contracts/reference-data'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
@@ -40,6 +44,7 @@ import type { ReferenceDataService } from './application/reference-data-service.
 import { ReferenceDataError } from './application/reference-data-service.ts'
 import {
   CommandConflictError,
+  CommandReceiptNotFoundError,
   ExpectedVersionConflictError,
 } from './application/command-executor.ts'
 import type { ScenarioService } from './application/scenario-service.ts'
@@ -106,6 +111,7 @@ function apiErrorResponse(
     || error instanceof ScenarioDataError
     || error instanceof ScenarioError
     || error instanceof WorkflowError
+    || error instanceof CommandReceiptNotFoundError
   ) {
     return context.json({
       error: {
@@ -143,7 +149,7 @@ function fhirIssueCode(error: FhirRepositoryError): string {
 
 function fhirErrorResponse(context: Context, error: unknown) {
   if (error instanceof IdentityError) {
-    const code = error.code === 'AUTHENTICATION_REQUIRED' ? 'login' : 'forbidden'
+    const code = error.status === 401 ? 'login' : 'forbidden'
     return context.json(operationOutcome(code, error.message), error.status, {
       'Content-Type': 'application/fhir+json',
     })
@@ -183,6 +189,10 @@ function referenceCatalogQuery(context: Context): {
   }
 }
 
+function requestIdempotencyKey(context: Context): string {
+  return z.string().min(8).max(128).parse(context.req.header('idempotency-key'))
+}
+
 export function createApp(options: CreateAppOptions = {}): Hono {
   const app = new Hono()
 
@@ -219,6 +229,93 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           context.req.raw.headers,
           input.practitionerRoleId,
         ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/agent/v1/clients', async (context) => {
+      try {
+        return context.json(await identity.listAgentClients(context.req.raw.headers))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/agent/v1/clients/:agentClientId', async (context) => {
+      try {
+        const agentClientId = z.string().uuid().parse(context.req.param('agentClientId'))
+        return context.json(await identity.getAgentClient(context.req.raw.headers, agentClientId))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/agent/v1/clients', async (context) => {
+      try {
+        const input = createAgentClientInputSchema.parse(await context.req.json())
+        return context.json(await identity.createAgentClient(
+          context.req.raw.headers,
+          input,
+          requestIdempotencyKey(context),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/agent/v1/clients/:agentClientId/actions/disable', async (context) => {
+      try {
+        z.object({}).strict().parse(await context.req.json())
+        const agentClientId = z.string().uuid().parse(context.req.param('agentClientId'))
+        return context.json(await identity.disableAgentClient(
+          context.req.raw.headers,
+          agentClientId,
+          requestIdempotencyKey(context),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/agent/v1/grants', async (context) => {
+      try {
+        return context.json(await identity.listAgentGrants(context.req.raw.headers))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/agent/v1/grants/:grantId', async (context) => {
+      try {
+        const grantId = z.string().uuid().parse(context.req.param('grantId'))
+        return context.json(await identity.getAgentGrant(context.req.raw.headers, grantId))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/agent/v1/grants', async (context) => {
+      try {
+        const input = createAgentCapabilityGrantInputSchema.parse(await context.req.json())
+        return context.json(await identity.createAgentGrant(
+          context.req.raw.headers,
+          input,
+          requestIdempotencyKey(context),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/agent/v1/grants/:grantId/actions/revoke', async (context) => {
+      try {
+        z.object({}).strict().parse(await context.req.json())
+        const grantId = z.string().uuid().parse(context.req.param('grantId'))
+        return context.json(await identity.revokeAgentGrant(
+          context.req.raw.headers,
+          grantId,
+          requestIdempotencyKey(context),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/agent/v1/context', async (context) => {
+      try {
+        return context.json(await identity.resolveAgentCapabilityContext(context.req.raw.headers))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
@@ -288,9 +385,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
     app.get('/api/his/v1/reference-catalogs/diagnoses', async (context) => {
       try {
-        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const actor = await identity.resolveRequestActor(
+          context.req.raw.headers,
+          context.req.raw.method,
+          context.req.path,
+        )
         return context.json(referenceData.searchDiagnoses(
-          session.actor,
+          actor,
           referenceCatalogQuery(context),
         ))
       } catch (error) {
@@ -299,9 +400,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
     app.get('/api/his/v1/reference-catalogs/medications', async (context) => {
       try {
-        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const actor = await identity.resolveRequestActor(
+          context.req.raw.headers,
+          context.req.raw.method,
+          context.req.path,
+        )
         return context.json(referenceData.searchMedications(
-          session.actor,
+          actor,
           referenceCatalogQuery(context),
         ))
       } catch (error) {
@@ -310,9 +415,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
     app.get('/api/his/v1/reference-catalogs/laboratory', async (context) => {
       try {
-        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const actor = await identity.resolveRequestActor(
+          context.req.raw.headers,
+          context.req.raw.method,
+          context.req.path,
+        )
         return context.json(referenceData.searchLaboratory(
-          session.actor,
+          actor,
           referenceCatalogQuery(context),
         ))
       } catch (error) {
@@ -515,13 +624,17 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
         const request = startSyntheticCaseRequestSchema.parse(await context.req.json())
-        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const actor = await identity.resolveRequestActor(
+          context.req.raw.headers,
+          context.req.raw.method,
+          context.req.path,
+        )
         const idempotencyKey = z.string().min(8).max(128).parse(
           context.req.header('idempotency-key'),
         )
         return context.json(caseVisits.start({
           caseId: context.req.param('caseId'),
-          context: session.actor,
+          context: actor,
           idempotencyKey,
           request,
         }))
@@ -534,12 +647,35 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   if (options.identity !== undefined && options.workflow !== undefined) {
     const identity = options.identity
     const workflow = options.workflow
-    const actor = async (context: Context) => (
-      await identity.resolveSessionContext(context.req.raw.headers)
-    ).actor
+    const actor = async (context: Context) => identity.resolveRequestActor(
+      context.req.raw.headers,
+      context.req.raw.method,
+      context.req.path,
+    )
     const idempotencyKey = (context: Context) => z.string().min(8).max(128).parse(
       context.req.header('idempotency-key'),
     )
+
+    app.get('/api/his/v1/command-receipts', async (context) => {
+      try {
+        const query = z.object({
+          idempotencyKey: z.string().min(8).max(128),
+          operationId: z.string().min(1).max(128),
+        }).strict().parse(context.req.query())
+        return context.json(workflow.commandReceipt(
+          await identity.resolveReceiptActor(
+            context.req.raw.headers,
+            context.req.raw.method,
+            context.req.path,
+            query.operationId,
+          ),
+          query.operationId,
+          query.idempotencyKey,
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
 
     app.get('/api/his/v1/catalogs/registration', async (context) => {
       try {
@@ -743,7 +879,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         const query = z.object({
           completedFrom: z.iso.date().optional(),
           completedTo: z.iso.date().optional(),
-          diagnosisCatalogItemId: z.string().regex(/^[A-Za-z0-9.-]{1,64}$/).optional(),
+          diagnosisCatalogItemId: referenceDataItemIdSchema.optional(),
           page: z.coerce.number().int().min(1).default(1),
           pageSize: z.coerce.number().int().min(1).max(100).default(20),
           patientId: z.string().regex(/^[A-Za-z0-9.-]{1,64}$/).optional(),
@@ -811,32 +947,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       }
     })
     if (options.investigation !== undefined && options.referenceData !== undefined) {
-      const investigation = options.investigation
-      const referenceData = options.referenceData
       app.get('/api/his/v1/doctor/cases/:caseId/reference-catalogs/laboratory', async (context) => {
         try {
-          const actorContext = await actor(context)
-          const caseId = context.req.param('caseId')
-          workflow.doctorCaseDetail(actorContext, caseId)
-          const result = referenceData.searchLaboratory(
-            actorContext,
+          return context.json(workflow.caseLaboratoryCatalog(
+            await actor(context),
+            context.req.param('caseId'),
             referenceCatalogQuery(context),
-          )
-          return context.json(caseLaboratoryCatalogSearchSchema.parse({
-            ...result,
-            items: result.items.map((item) => {
-              const { domain: _domain, status: _status, ...concept } = item
-              return {
-                ...item,
-                resultGeneration: investigation.generationCapabilityForCase(
-                  actorContext.workspaceId,
-                  actorContext.epoch,
-                  caseId,
-                  concept,
-                ),
-              }
-            }),
-          }))
+          ))
         } catch (error) {
           return apiErrorResponse(context, error)
         }
@@ -1298,14 +1415,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         try {
           identity.assertTrustedMutation(context.req.raw.headers)
           const body = correctLaboratoryReportRequestSchema.parse(await context.req.json())
-          const session = await identity.resolveSessionContext(context.req.raw.headers)
-          if (!session.availableRoles.some(role => role.code === 'administrator')) {
-            throw new WorkflowError(
-              'ROLE_NOT_ALLOWED',
-              'Only an administrator can invoke the controlled laboratory report actor',
-            )
-          }
-          const authenticatedContext = session.actor
+          const authenticatedContext = await identity.resolveAdministratorActor(
+            context.req.raw.headers,
+            context.req.raw.method,
+            context.req.path,
+          )
           return context.json(workflow.correctLaboratoryReport({
             conclusion: body.input.conclusion,
             context: {
@@ -1490,11 +1604,18 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
   }
 
-  app.get('/fhir/R5/metadata', (context) => context.json(
-    createCapabilityStatement({ includeResources: options.fhir !== undefined }),
-    200,
-    { 'Content-Type': 'application/fhir+json' },
-  ))
+  app.get('/fhir/R5/metadata', async (context) => {
+    try {
+      await options.fhir?.resolveContext(context.req.raw)
+      return context.json(
+        createCapabilityStatement({ includeResources: options.fhir !== undefined }),
+        200,
+        { 'Content-Type': 'application/fhir+json' },
+      )
+    } catch (error) {
+      return fhirErrorResponse(context, error)
+    }
+  })
 
   if (options.fhir !== undefined) {
     const fhirRuntime = options.fhir

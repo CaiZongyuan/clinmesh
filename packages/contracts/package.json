@@ -4,9 +4,11 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./agent": "./src/agent.ts",
     "./fhir": "./src/fhir.ts",
     "./health": "./src/health.ts",
     "./his": "./src/his.ts",
+    "./his-operations": "./src/his-operations.ts",
     "./reference-data": "./src/reference-data.ts",
     "./scenario": "./src/scenario.ts"
   },

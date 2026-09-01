@@ -6,6 +6,7 @@ import { z } from 'zod'
 import {
   CommandConflictError,
   CommandExecutor,
+  CommandReceiptNotFoundError,
 } from '../src/application/command-executor.ts'
 import { AuditQuery } from '../src/application/audit-query.ts'
 import { OutboxRepository } from '../src/infrastructure/sqlite/outbox-repository.ts'
@@ -89,6 +90,17 @@ describe('CommandExecutor', () => {
     const replay = execute('合成患者甲')
 
     expect(replay).toEqual(first)
+    expect(executor.readReceipt(context, 'registration.register', 'register-001')).toEqual({
+      idempotencyKey: 'register-001',
+      operationId: 'registration.register',
+      response: first,
+      status: 'completed',
+    })
+    expect(() => executor.readReceipt(
+      { ...context, actorId: 'actor-other' },
+      'registration.register',
+      'register-001',
+    )).toThrowError(CommandReceiptNotFoundError)
     expect(fhirRepository.history(repositoryContext, 'Patient', 'patient-001')).toHaveLength(1)
     expect(new OutboxRepository(database).list(repositoryContext)).toHaveLength(1)
     expect(new AuditQuery(database).list(repositoryContext)).toHaveLength(1)
@@ -145,6 +157,65 @@ describe('CommandExecutor', () => {
     `).run('workspace-001', 'epoch-001', 'patient.create-synthetic', 'response-schema-001')
 
     expect(() => execute()).toThrow(z.ZodError)
+    database.close()
+  })
+
+  it('redacts a one-time credential receipt and rejects replay without reissuing it', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-command-one-time-'))
+    temporaryDirectories.push(directory)
+    const database = openClinMeshDatabase({
+      busyTimeoutMs: 5_000,
+      databasePath: join(directory, 'clinmesh.sqlite'),
+    })
+    applyMigrations(database)
+    const repositoryContext = { epoch: 'epoch-001', workspaceId: 'workspace-001' }
+    new WorkspaceRepository(database).install({
+      ...repositoryContext,
+      scenarioId: 'command-one-time-credential',
+      scenarioRunId: 'run-001',
+      workspaceName: '合成一次性凭据工作区',
+    })
+    const executor = new CommandExecutor(database, new FhirRepository(database))
+    const invocation = {
+      context: {
+        ...repositoryContext,
+        actorId: 'actor-administrator',
+        roleCode: 'administrator',
+        scenarioRunId: 'run-001',
+      },
+      dataSchema: z.object({ credentialId: z.string(), token: z.string() }),
+      expectedVersions: {},
+      idempotencyKey: 'one-time-credential-001',
+      input: { name: 'Synthetic task credential' },
+      operation: 'agent-grant.create',
+      replay: 'reject' as const,
+      storedResponse: (response: { data: { credentialId: string; token: string } }) => ({
+        ...response,
+        data: { credentialId: response.data.credentialId },
+      }),
+    }
+    let executions = 0
+    const execute = () => executor.execute(invocation, () => {
+      executions += 1
+      return {
+        data: { credentialId: 'credential-001', token: 'raw-task-token' },
+        effects: [],
+      }
+    })
+
+    expect(execute().data.token).toBe('raw-task-token')
+    const persisted = database.driver.prepare(`
+      SELECT response_json FROM command_receipt
+      WHERE workspace_id = ? AND epoch = ? AND operation = ? AND idempotency_key = ?
+    `).get(
+      'workspace-001',
+      'epoch-001',
+      'agent-grant.create',
+      'one-time-credential-001',
+    ) as { response_json: string }
+    expect(persisted.response_json).not.toContain('raw-task-token')
+    expect(() => execute()).toThrow(CommandConflictError)
+    expect(executions).toBe(1)
     database.close()
   })
 

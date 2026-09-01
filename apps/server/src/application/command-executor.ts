@@ -93,6 +93,8 @@ export interface CommandInvocation<Input, Data> {
   input: Input
   mapExpectedVersionConflict?: (error: ExpectedVersionConflictError) => Error
   operation: string
+  replay?: 'reject' | 'return'
+  storedResponse?: (response: CommandResponse<Data>) => unknown
 }
 
 interface EnqueueInput {
@@ -109,6 +111,11 @@ interface ReceiptRow {
   request_hash: string
   response_json: string | null
   status: string
+}
+
+export class CommandReceiptNotFoundError extends Error {
+  readonly code = 'COMMAND_RECEIPT_NOT_FOUND'
+  readonly status = 404
 }
 
 const virtualTimeRowSchema = z.object({
@@ -281,6 +288,9 @@ export class CommandExecutor {
         if (existing.status !== 'completed' || existing.response_json === null) {
           throw new CommandConflictError('The idempotent command has not reached a replayable result')
         }
+        if (invocation.replay === 'reject') {
+          throw new CommandConflictError('The one-time command result cannot be replayed')
+        }
         const response = storedCommandResponseSchema.extend({
           data: invocation.dataSchema,
         }).parse(JSON.parse(existing.response_json))
@@ -300,10 +310,20 @@ export class CommandExecutor {
       this.#checkExpectedVersions(context, invocation.expectedVersions)
       this.#database.driver.prepare(`
         INSERT INTO command_receipt (
-          workspace_id, epoch, actor_id, operation, idempotency_key,
+          workspace_id, epoch, actor_id, practitioner_role_id, operation, idempotency_key,
           request_hash, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'executing', ?, ?)
-      `).run(...receiptKey, requestHash, now, now)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'executing', ?, ?)
+      `).run(
+        context.workspaceId,
+        context.epoch,
+        context.actorId,
+        context.practitionerRoleId ?? null,
+        invocation.operation,
+        invocation.idempotencyKey,
+        requestHash,
+        now,
+        now,
+      )
 
       const result = handler(new CommandTransaction(this.#database, this.#fhir, context, this.#now))
       const auditId = uuidv7()
@@ -338,7 +358,7 @@ export class CommandExecutor {
         SET status = 'completed', response_json = ?, updated_at = ?
         WHERE workspace_id = ? AND epoch = ? AND actor_id = ?
           AND operation = ? AND idempotency_key = ?
-      `).run(JSON.stringify(response), now, ...receiptKey)
+      `).run(JSON.stringify(invocation.storedResponse?.(response) ?? response), now, ...receiptKey)
       this.#database.driver.exec('COMMIT')
       return response
     } catch (error) {
@@ -351,6 +371,35 @@ export class CommandExecutor {
         throw invocation.mapExpectedVersionConflict(error)
       }
       throw error
+    }
+  }
+
+  readReceipt(
+    context: ActorContext,
+    operationId: string,
+    idempotencyKey: string,
+  ) {
+    const row = this.#database.driver.prepare(`
+      SELECT response_json, status
+      FROM command_receipt
+      WHERE workspace_id = ? AND epoch = ? AND actor_id = ?
+        AND practitioner_role_id IS ? AND operation = ? AND idempotency_key = ?
+    `).get(
+      context.workspaceId,
+      context.epoch,
+      context.actorId,
+      context.practitionerRoleId ?? null,
+      operationId,
+      idempotencyKey,
+    ) as Pick<ReceiptRow, 'response_json' | 'status'> | undefined
+    if (row === undefined) {
+      throw new CommandReceiptNotFoundError('The Command receipt was not found')
+    }
+    return {
+      idempotencyKey,
+      operationId,
+      ...(row.response_json === null ? {} : { response: JSON.parse(row.response_json) as unknown }),
+      status: z.enum(['completed', 'executing']).parse(row.status),
     }
   }
 

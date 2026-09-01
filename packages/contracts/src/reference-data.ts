@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+export const referenceDataItemIdSchema = z.string().min(1).max(256)
+
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
 
 export function referenceCodingIdentity(input: {
@@ -47,7 +49,7 @@ export const referenceConceptSchema = z.object({
   code: z.string().min(1).max(256),
   display: z.string().min(1).max(1_000),
   domain: referenceDataDomainSchema,
-  id: z.string().min(1).max(256),
+  id: referenceDataItemIdSchema,
   laboratory: referenceLaboratoryMetadataSchema.optional(),
   sourceLocator: z.string().min(1).max(1_000),
   status: z.enum(['active', 'inactive']),

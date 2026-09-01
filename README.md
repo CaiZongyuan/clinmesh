@@ -29,6 +29,7 @@ FHIR 公开面固定为 R5 `5.0.0`，当前只声明并实现资源 read、vread
 apps/
   web/          Vite + React Web 工作台
   server/       Node.js Hono 后端、FHIR/HTTP adapter 和 Web 静态资源入口
+  cli/          Agent 原生 HIS CLI、human profile 与 Agent task runtime
   desktop/      Electron main、preload 和共享 React renderer
   mobile/       Expo / React Native 移动端
   docs/         VitePress 文档站配置和公开页面清单
@@ -110,6 +111,40 @@ pnpm docs:dev
 ```
 
 默认地址为 http://127.0.0.1:51898/
+
+## Agent CLI
+
+`clinmesh` 从同一 Operation Catalog 生成全部 canonical HIS 命令和只读 FHIR R5 命令。先离线发现 operation，再读取单项 schema；这两个命令不需要 Server 或凭据：
+
+```sh
+pnpm clinmesh operations list
+pnpm clinmesh operations schema encounter.diagnosis.draft.set
+```
+
+Human mode 使用 Better Auth profile，密码只从 stdin 读取。下面的环境变量只存在于当前 shell，不进入 argv 或 profile：
+
+```sh
+printf '%s\n' "$CLINMESH_DEMO_PASSWORD" | pnpm clinmesh auth login \
+  --profile doctor \
+  --server-url http://127.0.0.1:51868 \
+  --email doctor@demo.clinmesh.local \
+  --password-stdin
+pnpm clinmesh context show --profile doctor
+pnpm clinmesh doctor queue list --profile doctor
+```
+
+Agent runner 为每个任务注入 `CLINMESH_SERVER_URL`、`CLINMESH_TOKEN` 和 `CLINMESH_AGENT_TASK_ID`。Agent mode 只使用这个短期 Capability Grant，不读取 human profile；一个 token 只承担一个 Practitioner Role 和显式 operation allowlist。所有 write 都要求 `--idempotency-key`，修改既有事实还从 operation schema 取得 expected version 字段。write 返回 `ambiguous_outcome` 时，使用原 operation ID 和原 key 查询 receipt，不直接重发：
+
+```sh
+pnpm clinmesh context show
+pnpm clinmesh command receipt get \
+  --operation-id encounter.diagnosis.draft.set \
+  --idempotency-key <original-key>
+```
+
+成功默认输出 JSON；human mode 可显式使用 `--output table`。复杂诊断、处方、检验结果和结构化病历通过 `--input @<workspace-file>` 或 `--input -` 提交。CLI 不提供任意 URL、method/body、SQL、FHIR write、Bundle 或通用 operation invoke。
+
+七个 Agent Skills 位于 [`.agents/skills`](.agents/skills)，按 registration、triage、doctor、billing、pharmacy 和 FHIR 分域；`clinmesh-shared` 统一说明 context、schema、幂等和错误恢复。命令路径与 Skill 示例由同一测试约束。
 
 ## 质量检查
 

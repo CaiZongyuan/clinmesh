@@ -3,6 +3,7 @@ import { fhirResourceSchema } from './fhir.ts'
 import {
   referenceConceptSchema,
   referenceConceptSnapshotSchema,
+  referenceDataItemIdSchema,
   referenceMedicationProductSchema,
 } from './reference-data.ts'
 
@@ -1139,7 +1140,7 @@ const completedCaseLaboratoryReportSchema = z.object({
 
 export const completedCaseLaboratoryRequestSchema = z.object({
   catalogDisplay: z.string().min(1).optional(),
-  catalogItemId: z.string().regex(/^[A-Za-z0-9.-]{1,64}$/).optional(),
+  catalogItemId: referenceDataItemIdSchema.optional(),
   correctionSupported: z.boolean().default(false),
   id: z.string().min(1),
   indicationCode: z.string().min(1),

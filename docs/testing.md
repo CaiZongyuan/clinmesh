@@ -21,6 +21,8 @@ HTTP、FHIR、SQLite、文件持久卷、Electron IPC、浏览器存储和移动
 
 Server route 测试必须解析响应 schema。SQLite 正确性 Spike 使用真实临时数据库文件验证事务回滚、外键、WAL 写竞争、幂等竞争、expected-version 条件写、outbox 重启恢复、备份还原和 Epoch reset。
 
+Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/Skill 分类，Identity HTTP test 拥有 Grant hash、岗位、allowlist 与失效矩阵，CLI process test 拥有 argv/stdin/stdout/stderr/exit，HIS 场景测试拥有业务状态机，Skill test 把示例交给真实命令 parser，ambiguous test 在响应丢失后通过公开 receipt 观察唯一 Effect。上层不复制 Server 已有 Command 输入矩阵。
+
 ### Application composition
 
 共享业务视图在 `packages/views` 测试；Web 路由和平台 wiring 在 `apps/web` 测试。Desktop 或 Mobile 进入实际开发后在对应 app 增加平台证据。一个产品行为只有一个完整矩阵归属，其他层保留 wiring、可访问性和真实入口验证，不重复纯函数矩阵。
@@ -31,7 +33,9 @@ Mobile 只共享产品语义，不共享 DOM 测试。移动测试覆盖 Expo Ro
 
 E2E 从真实入口执行，并从外部观察结果：重新读取资源、数据库投影、页面或审计事件，不以 Agent 自己声称成功作为断言。
 
-核心病例轨迹见[系统架构](architecture.md#144-场景测试)。每次运行固定 app build、schema、Synthea commit、localization profile、生成参数与 Case Revision；未来实际发布 IG、policy 或 Agent tool schema 后再把对应版本加入固定输入。
+CLI E2E 先构建真实 bin，再启动 Node listener 与 file-backed SQLite，并从独立 `clinmesh` 子进程执行 human login 和 Agent operation。主场景从生成 Synthetic Case 与 Brief 的受控 setup 开始，由不同单岗位 Grant 依次完成挂号、分诊、问诊、检查与报告确认、诊断、处方、病历签署、完诊、药品支付、处方审核和发药。响应丢失场景必须先证明 Server 已提交，再用原 operation ID/idempotency key 查询 receipt，并通过正式 query 证明 Effect 没有重复。
+
+核心病例轨迹见[系统架构](architecture.md#144-场景测试)。每次运行固定 app build、数据库 schema、Operation Catalog hash、Workspace policy version、Synthea commit、localization profile、生成参数与 Case Revision；未来实际发布 IG 时再把对应版本加入固定输入。
 
 ## 测试设计
 
@@ -71,6 +75,7 @@ pnpm check              # 非 Mobile 主检查集合
 
 ```sh
 pnpm --filter @clinmesh/core test
+pnpm --filter @clinmesh/cli test
 pnpm --filter @clinmesh/server typecheck
 pnpm docs:check
 ```

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   caseLaboratoryCatalogSearchSchema,
+  completedCaseLaboratoryRequestSchema,
   clinicalCatalogSchema,
   completeEncounterRequestSchema,
   completedCaseClinicalDocumentSchema,
-  completedCaseLaboratoryRequestSchema,
   deletePrescriptionDraftRequestSchema,
   diagnosisConfirmationSchema,
   encounterCompletionPreviewSchema,
@@ -57,6 +57,22 @@ function completedCaseLaboratoryRequestFixture() {
 }
 
 describe('HIS contracts', () => {
+  it('accepts Reference IDs in completed-case laboratory facts', () => {
+    expect(completedCaseLaboratoryRequestSchema.parse({
+      catalogItemId: 'laboratory:white-cell-count',
+      correctionSupported: false,
+      id: 'laboratory-request-1',
+      indicationCode: 'clinical-evaluation',
+      previousReports: [],
+      serviceRequestId: 'service-request-1',
+      serviceRequestVersion: '1',
+      status: 'issued',
+      taskId: 'task-1',
+      taskVersion: '1',
+      version: 1,
+    }).catalogItemId).toBe('laboratory:white-cell-count')
+  })
+
   it('binds laboratory result-generation capability to case catalog items', () => {
     const item = {
       code: '6690-2',

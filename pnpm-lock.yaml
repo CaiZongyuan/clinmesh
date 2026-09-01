@@ -129,6 +129,34 @@ importers:
         specifier: 4.1.11
         version: 4.1.11(@types/node@26.2.0)(jsdom@30.0.1(@noble/hashes@2.3.0))(vite@8.2.2(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.50.0)(tsx@4.23.12)(yaml@2.9.0))
 
+  apps/cli:
+    dependencies:
+      '@clinmesh/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      commander:
+        specifier: 14.0.3
+        version: 14.0.3
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.2.0
+      tsx:
+        specifier: 'catalog:'
+        version: 4.23.12
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vite:
+        specifier: 'catalog:'
+        version: 7.3.6(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.50.0)(tsx@4.23.12)(yaml@2.9.0)
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@types/node@26.2.0)(jsdom@30.0.1(@noble/hashes@2.3.0))(vite@7.3.6(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.50.0)(tsx@4.23.12)(yaml@2.9.0))
+
   apps/desktop:
     dependencies:
       '@clinmesh/ui':
