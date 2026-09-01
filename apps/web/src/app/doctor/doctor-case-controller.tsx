@@ -1750,8 +1750,8 @@ function CaseDetail({
 
   return (
     <div className={contextRailOpen
-      ? 'grid min-w-0 overflow-hidden border bg-background 2xl:grid-cols-[minmax(0,1fr)_300px]'
-      : 'grid min-w-0 overflow-hidden border bg-background 2xl:grid-cols-[minmax(0,1fr)_2.75rem]'}>
+      ? 'grid min-w-0 overflow-hidden border bg-background xl:grid-cols-[minmax(0,1fr)_300px]'
+      : 'grid min-w-0 overflow-hidden border bg-background xl:grid-cols-[minmax(0,1fr)_2.75rem]'}>
       <div className="flex min-w-0 flex-col">
         <PatientBanner
           {...(clinicalReadOnly || detail.consultation === undefined

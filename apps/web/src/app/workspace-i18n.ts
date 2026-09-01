@@ -1,6 +1,7 @@
 const zhCN = {
-  appName: 'ClinMesh',
-  hospitalName: '仁和医院',
+  appName: '科灵脉智',
+  logoAlt: '科灵脉智标志',
+  productTagline: '医疗智能体平台',
   simulationBadge: '',
   navigationLabel: '岗位导航',
   navigationGroup: '岗位工作台',
@@ -38,7 +39,7 @@ const zhCN = {
   themeSystem: '跟随系统',
   themeLight: '亮色',
   themeDark: '暗色',
-  loginTitle: '登录 ClinMesh',
+  loginTitle: '登录科灵脉智',
   loginDescription: '使用受控合成账户进入岗位工作台',
   emailLabel: '账户邮箱',
   passwordLabel: '账户密码',
@@ -767,8 +768,9 @@ export type WorkspaceMessages = { [Key in WorkspaceMessageKey]: string }
 export type WorkspaceLocale = 'zh-CN' | 'en-US'
 
 const enUS = {
-  appName: 'ClinMesh',
-  hospitalName: 'Renhe Hospital',
+  appName: 'Clinmesh',
+  logoAlt: 'Clinmesh logo',
+  productTagline: 'Medical AI Agent Platform',
   simulationBadge: '',
   navigationLabel: 'Role navigation',
   navigationGroup: 'Role workspaces',
@@ -806,7 +808,7 @@ const enUS = {
   themeSystem: 'System',
   themeLight: 'Light',
   themeDark: 'Dark',
-  loginTitle: 'Sign in to ClinMesh',
+  loginTitle: 'Sign in to Clinmesh',
   loginDescription: 'Use a controlled synthetic account to enter a role workspace',
   emailLabel: 'Account email',
   passwordLabel: 'Account password',

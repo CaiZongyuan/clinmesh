@@ -220,7 +220,7 @@ export function DoctorCaseContextRail({
   return (
     <aside
       aria-label={messages.caseContext}
-      className="flex min-w-0 flex-col border-t bg-muted/15 2xl:border-t-0 2xl:border-l"
+      className="flex min-w-0 flex-col border-t bg-muted/15 xl:border-t-0 xl:border-l"
     >
       <div className="flex items-center gap-2 p-2">
         <Button
