@@ -2230,7 +2230,7 @@ describe('role workspaces', () => {
     const agentReferenceConcept = {
       code: '1988-5',
       display: 'C 反应蛋白',
-      id: 'laboratory:crp',
+      id: `laboratory:crp-${'x'.repeat(128)}`,
       sourceLocator: 'concepts[5]',
       system: 'http://loinc.org',
       version: '2.83',

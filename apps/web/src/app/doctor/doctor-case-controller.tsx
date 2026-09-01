@@ -1,3 +1,4 @@
+import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import {
   clinicalDocumentContentSchema,
   diagnosisDraftEntrySchema,
@@ -1256,18 +1257,17 @@ function DoctorCaseController({
           type: 'object' as const,
           properties: {
             catalogItemId: { type: 'string', maxLength: 512 },
-            indicationCode: { type: 'string', maxLength: 128 },
+            indicationCode: { type: 'string', maxLength: 64 },
           },
           required: ['catalogItemId', 'indicationCode'],
           additionalProperties: false,
         },
         execute: async (raw: unknown) => {
           const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const catalogItemId = doctorString(raw, 'catalogItemId', 128)
-          const nextIndication = doctorString(raw, 'indicationCode', 128)
-          if (!isLaboratoryRequestCatalogItemId(catalogItemId)) {
-            throw new TypeError('catalogItemId is not an independent laboratory request')
-          }
+          const {
+            catalogItemId,
+            indicationCode: nextIndication,
+          } = agentToolInputSchemas['outpatient.laboratory.draft.set'].parse(raw)
           const result = await saveLaboratoryRequestDraft({
             catalogItemId,
             encounterId: current.encounter.id,

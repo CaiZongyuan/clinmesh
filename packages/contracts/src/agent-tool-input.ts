@@ -2,8 +2,8 @@ import { z } from 'zod'
 import {
   clinicalDocumentContentSchema,
   diagnosisDraftContentSchema,
-  laboratoryRequestCatalogItemIdSchema,
   prescriptionDraftContentSchema,
+  saveLaboratoryRequestDraftRequestSchema,
 } from './his.ts'
 
 export const agentViewIdSchema = z.enum([
@@ -26,10 +26,8 @@ const firstVisitDraftInputSchema = z.object({
   assessment: z.string().trim().min(1).max(2_000),
   historyOfPresentIllness: z.string().trim().min(1).max(4_000),
 }).strict()
-const laboratoryDraftInputSchema = z.object({
-  catalogItemId: laboratoryRequestCatalogItemIdSchema,
-  indicationCode: z.string().trim().min(1).max(128),
-}).strict()
+const laboratoryDraftInputSchema = saveLaboratoryRequestDraftRequestSchema.shape.input
+  .pick({ catalogItemId: true, indicationCode: true })
 const revisitDraftInputSchema = z.object({
   diagnosis: z.object({
     code: z.string().trim().min(1).max(80),

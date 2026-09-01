@@ -169,6 +169,23 @@ describe('ClinMesh DSH Agent contracts', () => {
     )).toThrow()
   })
 
+  it('matches laboratory draft Tool lengths to the owning Command input', () => {
+    const maximumInput = {
+      catalogItemId: 'l'.repeat(512),
+      indicationCode: 'i'.repeat(64),
+    }
+    expect(parseAgentToolInput('outpatient.laboratory.draft.set', maximumInput))
+      .toEqual(maximumInput)
+    expect(() => parseAgentToolInput('outpatient.laboratory.draft.set', {
+      ...maximumInput,
+      catalogItemId: 'l'.repeat(513),
+    })).toThrow()
+    expect(() => parseAgentToolInput('outpatient.laboratory.draft.set', {
+      ...maximumInput,
+      indicationCode: 'i'.repeat(65),
+    })).toThrow()
+  })
+
   it('binds one execution proof and authorization request to an exact Tool call', () => {
     const proof = agentExecutionProofPayloadSchema.parse({
       version: 1,
