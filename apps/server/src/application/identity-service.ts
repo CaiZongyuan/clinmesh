@@ -473,6 +473,8 @@ export class IdentityService {
        AND run.epoch = grant.epoch
        AND run.scenario_run_id = grant.scenario_run_id
       WHERE grant.workspace_id = ? AND grant.grant_id = ?
+      ORDER BY grant.created_at DESC, grant.epoch DESC
+      LIMIT 1
     `).get(session.actor.workspaceId, grantId))
     if (row === undefined) {
       throw new IdentityError('AGENT_GRANT_NOT_FOUND', 'The Agent Capability Grant was not found')
@@ -666,8 +668,8 @@ export class IdentityService {
       const result = this.#database.driver.prepare(`
         UPDATE agent_capability_grant
         SET revoked_at = ?
-        WHERE grant_id = ? AND workspace_id = ? AND revoked_at IS NULL
-      `).run(revokedAt, grantId, session.actor.workspaceId)
+        WHERE workspace_id = ? AND epoch = ? AND grant_id = ? AND revoked_at IS NULL
+      `).run(revokedAt, session.actor.workspaceId, session.actor.epoch, grantId)
       if (result.changes !== 1) {
         throw new IdentityError('AGENT_TOKEN_INVALID', 'The Agent Capability Grant is not active')
       }

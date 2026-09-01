@@ -27,7 +27,6 @@ CREATE TABLE agent_capability_grant (
   created_by_actor_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, epoch, grant_id),
-  UNIQUE (grant_id),
   FOREIGN KEY (workspace_id, agent_client_id)
     REFERENCES agent_client (workspace_id, agent_client_id) ON DELETE RESTRICT,
   FOREIGN KEY (workspace_id, practitioner_role_id)
