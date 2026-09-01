@@ -26,7 +26,7 @@ const observationMappingSchema = z.object({
   }).strict(),
 }).strict()
 
-const codingPackageSchema = z.object({
+export const referenceCodingPackageSchema = z.object({
   loincVersion: z.literal('2.83'),
   observationMappings: z.array(observationMappingSchema),
   schemaVersion: z.literal('1'),
@@ -71,7 +71,27 @@ const codingPackageSchema = z.object({
         path: ['observationMappings', index, 'target', 'unitCode'],
       })
     }
+    if (
+      mapping.target.referenceMinimum !== undefined
+      && mapping.target.referenceMaximum !== undefined
+      && mapping.target.referenceMinimum > mapping.target.referenceMaximum
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Investigation reference range is inverted',
+        path: ['observationMappings', index, 'target', 'referenceMinimum'],
+      })
+    }
+    const sourceUnitCodes = new Set<string>()
     mapping.target.sourceUnits.forEach((sourceUnit, sourceUnitIndex) => {
+      if (sourceUnitCodes.has(sourceUnit.unitCode)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Investigation source unit was repeated',
+          path: ['observationMappings', index, 'target', 'sourceUnits', sourceUnitIndex, 'unitCode'],
+        })
+      }
+      sourceUnitCodes.add(sourceUnit.unitCode)
       if (!unitCodes.has(sourceUnit.unitCode)) {
         context.addIssue({
           code: 'custom',
@@ -83,7 +103,7 @@ const codingPackageSchema = z.object({
   })
 })
 
-const codingPackage = codingPackageSchema.parse(packageData)
+const codingPackage = referenceCodingPackageSchema.parse(packageData)
 const unitsByCode = new Map(codingPackage.units.map(unit => [unit.code, unit]))
 const unitsByDisplay = new Map(codingPackage.units.map(unit => [unit.display, unit]))
 const observationMappingCodes = new Set(

@@ -889,6 +889,19 @@ describe('Synthetic Case generation HTTP contract', () => {
         `既往处置 ${index + 1}`,
       )
     }
+    runtime.database.driver.prepare(`
+      UPDATE synthetic_case_truth
+      SET hidden_resources_json = json_insert(hidden_resources_json, '$[#]', json(?)),
+        hidden_resource_references_json = json_insert(
+          hidden_resource_references_json,
+          '$[#]',
+          'Patient/unrelated-agent-context'
+        )
+      WHERE workspace_id = ? AND case_id = ?
+    `).run(JSON.stringify({
+      resource: { id: 'unrelated-agent-context', resourceType: 'Patient' },
+      sourceReference: 'Patient/unrelated-agent-context',
+    }), 'workspace-demo', caseId)
 
     const agentDraft = await saveLaboratoryDraft('lab-crp', 2)
     const agentRequest = (await issueLaboratory(agentDraft.draftVersion)).request
@@ -911,11 +924,20 @@ describe('Synthetic Case generation HTTP contract', () => {
     `).get('workspace-demo', caseId)).toEqual({ count: 0 })
     expect(briefProvider.requests).toHaveLength(4)
     const firstAgentPayload = briefProvider.requests.at(-1)?.userPayload as {
-      privateCaseEvidence: unknown[]
-      visibleHistory: unknown[]
+      privateCaseEvidence: Array<{ clinicalTime?: string; resourceType: string }>
+      visibleHistory: Array<{ title: string }>
     }
     expect(firstAgentPayload.privateCaseEvidence.length).toBeLessThanOrEqual(20)
     expect(firstAgentPayload.visibleHistory.length).toBeLessThanOrEqual(20)
+    expect(firstAgentPayload.visibleHistory.at(0)?.title).toBe('既往处置 11')
+    expect(firstAgentPayload.visibleHistory.at(-1)?.title).toBe('既往处置 30')
+    expect(firstAgentPayload.privateCaseEvidence.every(item => (
+      ['Condition', 'Observation', 'Procedure'].includes(item.resourceType)
+    ))).toBe(true)
+    const evidenceTimes = firstAgentPayload.privateCaseEvidence.flatMap(
+      item => item.clinicalTime === undefined ? [] : [item.clinicalTime],
+    )
+    expect(evidenceTimes).toEqual(evidenceTimes.toSorted().toReversed())
 
     runtime.database.driver.prepare(`
       UPDATE laboratory_request SET reference_json = ?

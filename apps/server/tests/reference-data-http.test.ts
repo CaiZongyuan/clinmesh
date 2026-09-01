@@ -178,16 +178,25 @@ describe('Reference Data HTTP contract', () => {
           resultType: 'panel',
           specimen: 'blood',
         },
-        sourceLocator: 'concepts[3]',
+        sourceLocator: 'concepts[4]',
         status: 'active',
         system: 'http://loinc.org',
         version: '2.83',
+      }, {
+        code: '8310-5',
+        display: '体温（旧版本）',
+        domain: 'laboratory',
+        id: 'laboratory:body-temperature-legacy',
+        sourceLocator: 'concepts[3]',
+        status: 'active',
+        system: 'http://loinc.org',
+        version: '2.82',
       }, ...Array.from({ length: 120 }, (_, index) => ({
         code: `Z${String(index).padStart(3, '0')}`,
         display: `目录诊断 ${String(index).padStart(3, '0')}`,
         domain: 'diagnosis',
         id: `diagnosis:catalog-${String(index).padStart(3, '0')}`,
-        sourceLocator: `concepts[${index + 4}]`,
+        sourceLocator: `concepts[${index + 5}]`,
         status: 'active',
         system: 'urn:clinmesh:reference:nhsa-diagnosis',
         version: '2022',
@@ -258,7 +267,7 @@ describe('Reference Data HTTP contract', () => {
     })
     expect(administratorResponse.status).toBe(200)
     expect(referenceDataReleaseListSchema.parse(await administratorResponse.json())).toMatchObject({
-      items: [{ conceptCount: 124, releaseId: 'reference-http-test-v1', sourceCount: 1 }],
+      items: [{ conceptCount: 125, releaseId: 'reference-http-test-v1', sourceCount: 1 }],
     })
 
     const doctorResponse = await runtime.app.request('/api/sim/v1/reference-data/releases', {
@@ -339,6 +348,17 @@ describe('Reference Data HTTP contract', () => {
         releaseId: 'reference-http-test-v1',
         total: 1,
       })
+
+    const laboratoryPages = await Promise.all([1, 2].map(async page => (
+      referenceLaboratoryCatalogSearchSchema.parse(await (await runtime.app.request(
+        `/api/his/v1/reference-catalogs/laboratory?page=${page}&pageSize=1`,
+        { headers: { cookie: doctorCookie } },
+      )).json())
+    )))
+    expect(laboratoryPages.map(page => page.total)).toEqual([2, 2])
+    expect(new Set(laboratoryPages.flatMap(page => page.items.map(item => (
+      JSON.stringify([item.system, item.code])
+    )))).size).toBe(2)
 
     const twoCharacterLaboratoryQuery = await runtime.app.request(
       '/api/his/v1/reference-catalogs/laboratory?page=1&pageSize=20&query=%E8%A1%80%E5%B8%B8',

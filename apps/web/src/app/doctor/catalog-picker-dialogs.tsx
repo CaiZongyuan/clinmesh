@@ -142,18 +142,6 @@ function countLabel(template: string, count: number): string {
   return template.replace('{count}', String(count))
 }
 
-function uniqueCaseLaboratoryResults(items: CaseLaboratoryCatalogSearch['items']) {
-  const results = new Map<string, CaseLaboratoryCatalogSearch['items'][number]>()
-  for (const item of items) {
-    const key = JSON.stringify([item.system, item.code])
-    const current = results.get(key)
-    if (current === undefined || (!current.resultGeneration.supported && item.resultGeneration.supported)) {
-      results.set(key, item)
-    }
-  }
-  return [...results.values()]
-}
-
 function CatalogSearchForm({
   input,
   inputLabel,
@@ -521,8 +509,7 @@ export function LaboratoryCatalogDialog({
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<LaboratoryCatalogSelection>()
   const results = search
-  const remoteResults = results.data?.items ?? []
-  const visibleResults = uniqueCaseLaboratoryResults(remoteResults)
+  const visibleResults = results.data?.items ?? []
   const openDialog = () => {
     setInput('')
     setQuery('')

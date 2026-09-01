@@ -494,6 +494,78 @@ function ftsPhrase(query: string): string {
   return `"${query.replaceAll('"', '""')}"`
 }
 
+function searchReferenceLaboratoryCatalog(
+  database: ReferenceDatabase,
+  releaseId: string,
+  input: ReferenceCatalogSearchInput,
+): ReferenceCatalogSearchResult<ReferenceConcept> {
+  const parameters: unknown[] = [releaseId]
+  let source = 'reference_concept'
+  let queryCondition = ''
+  if (input.query !== undefined && input.query.length < 3) {
+    queryCondition = `
+      AND (
+        instr(lower(reference_concept.display), lower(?)) > 0
+        OR instr(lower(reference_concept.code), lower(?)) > 0
+      )
+    `
+    parameters.push(input.query, input.query)
+  } else if (input.query !== undefined) {
+    source += `
+      JOIN reference_concept_fts
+        ON reference_concept_fts.rowid = reference_concept.rowid
+    `
+    queryCondition = 'AND reference_concept_fts MATCH ?'
+    parameters.push(ftsPhrase(input.query))
+  }
+  const rankedConcepts = `
+    WITH ranked_concepts AS (
+      SELECT
+        reference_concept.concept_id,
+        reference_concept.domain,
+        reference_concept.system,
+        reference_concept.system_version,
+        reference_concept.code,
+        reference_concept.display,
+        reference_concept.status,
+        reference_concept.laboratory_metadata_json,
+        reference_concept.source_id,
+        reference_concept.source_locator,
+        ROW_NUMBER() OVER (
+          PARTITION BY reference_concept.system, reference_concept.code
+          ORDER BY
+            CASE WHEN reference_concept.status = 'active' THEN 0 ELSE 1 END,
+            reference_concept.source_id DESC,
+            reference_concept.system_version DESC,
+            reference_concept.concept_id
+        ) AS coding_rank
+      FROM ${source}
+      WHERE reference_concept.release_id = ?
+        AND reference_concept.domain = 'laboratory'
+        ${queryCondition}
+    )
+  `
+  const countSchema = z.object({ count: z.number().int().nonnegative() }).strict()
+  const total = countSchema.parse(database.driver.prepare(`
+    ${rankedConcepts}
+    SELECT COUNT(*) AS count FROM ranked_concepts WHERE coding_rank = 1
+  `).get(...parameters)).count
+  const offset = (input.page - 1) * input.pageSize
+  const rows = z.array(conceptDatabaseRowSchema).parse(database.driver.prepare(`
+    ${rankedConcepts}
+    SELECT concept_id, domain, system, system_version, code, display, status,
+      laboratory_metadata_json, source_id, source_locator
+    FROM ranked_concepts
+    WHERE coding_rank = 1
+    ORDER BY display, code, concept_id
+    LIMIT ? OFFSET ?
+  `).all(...parameters, input.pageSize, offset))
+  return {
+    items: rows.map(mapConceptRow).map(({ sourceId: _sourceId, ...concept }) => concept),
+    total,
+  }
+}
+
 export function searchReferenceConceptCatalog(
   database: ReferenceDatabase,
   releaseId: string,
@@ -501,6 +573,9 @@ export function searchReferenceConceptCatalog(
   input: ReferenceCatalogSearchInput,
 ): ReferenceCatalogSearchResult<ReferenceConcept> {
   verifyReferenceMigrations(database)
+  if (domain === 'laboratory') {
+    return searchReferenceLaboratoryCatalog(database, releaseId, input)
+  }
   const offset = (input.page - 1) * input.pageSize
   const countSchema = z.object({ count: z.number().int().nonnegative() }).strict()
   if (input.query === undefined) {
