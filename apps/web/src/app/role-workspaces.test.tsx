@@ -394,11 +394,11 @@ function boundDoctorToolInput(
   input: Record<string, unknown>,
 ): Record<string, unknown> {
   const parameters = tool.parameters as {
-    properties?: Record<string, { enum?: unknown[] }>
+    properties?: Record<string, { const?: unknown }>
   }
   return {
-    contextId: parameters.properties?.contextId?.enum?.[0],
-    scopeKey: parameters.properties?.scopeKey?.enum?.[0],
+    contextId: parameters.properties?.contextId?.const,
+    scopeKey: parameters.properties?.scopeKey?.const,
     ...input,
   }
 }

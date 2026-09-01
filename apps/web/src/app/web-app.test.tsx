@@ -49,8 +49,11 @@ function randomTestId(): string {
 }
 
 function boundToolValue(tool: WebSurfaceAgentTool, key: 'contextId' | 'scopeKey'): string {
-  const properties = tool.parameters.properties as Record<string, { enum?: unknown[] }> | undefined
-  const value = properties?.[key]?.enum?.[0]
+  const properties = tool.parameters.properties as Record<
+    string,
+    { const?: unknown }
+  > | undefined
+  const value = properties?.[key]?.const
   if (typeof value !== 'string') throw new Error(`Tool ${tool.name} has no bound ${key}`)
   return value
 }
@@ -191,6 +194,10 @@ describe('Web application shell', () => {
     expect(history.location.pathname).toBe('/registration')
     expect(window.location.pathname).toBe('/dsh-host')
     expect(requestedPaths).toContain('/clinmesh-api/auth/context')
+    expect(document.querySelector('[data-clinmesh-app="web"]')?.className).toContain('h-full')
+    expect(document.querySelector('[data-slot="sidebar-wrapper"]')?.className).toContain('h-full')
+    expect(document.querySelector('[data-clinmesh-workspace-panel]')?.className)
+      .toContain('overflow-y-auto')
   })
 
   it('scopes Surface appearance and feedback portals to the application root', async () => {
@@ -214,6 +221,20 @@ describe('Web application shell', () => {
     await user.click(screen.getByRole('button', { name: 'Delete order' }))
     const dialog = await screen.findByRole('alertdialog', { name: 'Confirm order deletion' })
     expect(portalRoot?.contains(dialog)).toBe(true)
+  })
+
+  it('follows the resolved DSH theme while Surface appearance is set to system', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/registration'] })
+    const runtime = (surfaceColorScheme: 'dark' | 'light'): WebRuntimeOptions => ({
+      mode: 'surface' as const,
+      surfaceColorScheme,
+    })
+    const rendered = await renderWebApp({ history, runtime: runtime('dark') })
+    const applicationRoot = document.querySelector<HTMLElement>('[data-clinmesh-app="web"]')!
+
+    await waitFor(() => expect(applicationRoot.classList.contains('dark')).toBe(true))
+    rendered.rerender(<WebApp history={history} runtime={runtime('light')} />)
+    await waitFor(() => expect(applicationRoot.classList.contains('dark')).toBe(false))
   })
 
   it('lets a Surface Agent fill a draft but requires human review before creating a Patient', async () => {

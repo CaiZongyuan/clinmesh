@@ -53,6 +53,7 @@ function useSidebar() {
 
 function SidebarProvider({
   defaultOpen = true,
+  heightMode = "viewport",
   open: openProp,
   onOpenChange: setOpenProp,
   className,
@@ -61,6 +62,7 @@ function SidebarProvider({
   ...props
 }: React.ComponentProps<"div"> & {
   defaultOpen?: boolean
+  heightMode?: "container" | "viewport"
   open?: boolean
   onOpenChange?: (open: boolean) => void
 }) {
@@ -136,7 +138,10 @@ function SidebarProvider({
           } as React.CSSProperties
         }
         className={cn(
-          "group/sidebar-wrapper flex min-h-svh w-full has-data-[variant=inset]:bg-sidebar",
+          "group/sidebar-wrapper flex w-full has-data-[variant=inset]:bg-sidebar",
+          heightMode === "container"
+            ? "h-full min-h-0 overflow-hidden"
+            : "min-h-svh",
           className
         )}
         {...props}

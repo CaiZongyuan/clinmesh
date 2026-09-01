@@ -25,6 +25,7 @@ export interface WebRuntimeOptions {
   surfaceActive?: boolean
   surfaceAgent?: WebSurfaceAgentController
   surfaceAgentStatus?: WebSurfaceAgentStatus
+  surfaceColorScheme?: 'dark' | 'light'
   surfaceSessionId?: string
 }
 
@@ -35,6 +36,7 @@ interface WebRuntimeValue {
   surfaceActive?: boolean
   surfaceAgent?: WebSurfaceAgentController
   surfaceAgentStatus?: WebSurfaceAgentStatus
+  surfaceColorScheme?: 'dark' | 'light'
   surfaceSessionId?: string
 }
 

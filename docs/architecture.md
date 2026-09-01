@@ -695,8 +695,8 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 - Surface 使用 Memory Router，应用位置不修改 DSH document pathname。
 - 每个 mount 创建独立 QueryClient；服务端状态仍只由 TanStack Query 拥有。
-- 主题和 locale 作用于 Surface root，所有浮层通过注入 Portal 留在 ShadowRoot。
-- 默认 `workspace` 布局，宽度不足时退化到 `full-frame`；隐藏时保留未提交 UI 状态。
+- DSH 保留外壳 branding 与 Light/Dark/System theme；ClinMesh 的 `system` 主题订阅 DSH resolved theme，显式 light/dark 只作用于 Surface root，所有浮层通过注入 Portal 留在 ShadowRoot。
+- 默认 `workspace` 布局，Surface 宽度不足 `1024px` 时退化到 `full-frame`；应用高度被约束到宿主，业务 panel 拥有纵向滚动，隐藏时保留未提交 UI 状态。
 - `/clinmesh-api` Host 代理只连接配置固定的 loopback Hono，保留 Cookie/Origin，限制路径、方法、请求体、响应体和超时，不记录患者正文。
 
 该模式只信任安装在同一 DSH Web Profile 的插件，并只处理合成数据。它不是不可信 marketplace 插件或真实患者数据的安全边界。
@@ -723,7 +723,7 @@ Claim 和 snapshot 不包含 DOM、Query cache、浏览器存储、任意页面 
 | `preview` | 调用既有只读 preview，不提交正式业务 Effect |
 | `proposal` | 打开 ClinMesh 原生人工审阅；Agent 不提交正式 Command |
 
-不提供通用 `execute_action`、任意 method/path/body、FHIR write、Bundle、SQL、URL、DOM selector、JavaScript、JSON Patch 或 `runAs`。DSH Tool runtime 只接受其强制 JSON Schema 子集；Surface adapter 投影 broker 支持的关键词，Web action 和 Hono 在 authorization 持久化前都使用同一 operation/input schema 执行完整长度、格式、数组和数值范围校验。
+不提供通用 `execute_action`、任意 method/path/body、FHIR write、Bundle、SQL、URL、DOM selector、JavaScript、JSON Patch 或 `runAs`。DSH Tool runtime 只接受其强制 JSON Schema 子集；当前 `contextId` 与 `scopeKey` 以单值 `const` 绑定，旧值仍在参数校验阶段失败。Surface adapter 投影 broker 支持的关键词，Web action 和 Hono 在 authorization 持久化前都使用同一 operation/input schema 执行完整长度、格式、数组和数值范围校验；action result 先按标准 JSON 语义省略对象中的 `undefined` 再验证，不可序列化结果仍失败且不能用超长二次错误覆盖原因。
 
 ### 7.4 Execution proof 与调用记录
 

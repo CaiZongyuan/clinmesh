@@ -207,6 +207,8 @@ export CLINMESH_TRUSTED_ORIGINS=http://127.0.0.1:51868,http://127.0.0.1:51888,ht
 pnpm dev:server
 ```
 
+在 git worktree 中运行时，`.env` 必须位于该 worktree 根目录。若配置只存在于另一个 checkout 并通过 shell 显式加载，使用 `pnpm --filter @clinmesh/server dev` 直接启动 Server；根 `pnpm dev:server` 经 Turborepo 启动，未声明转发的 `CLINMESH_AI_*` 变量不会进入子进程，Patient Brief 和 Investigation provider 会被视为未配置。
+
 另一个终端把同一个 secret 提供给 DSH Host；默认 upstream 是 `http://127.0.0.1:51868`，Server 使用其他端口时同时设置 `CLINMESH_DSH_UPSTREAM_ORIGIN`：
 
 ```sh
@@ -216,7 +218,7 @@ set +a
 dsh web
 ```
 
-从 DSH Web 侧栏的 React applications launcher 打开 ClinMesh。默认使用 `workspace` 并保留原生会话；空间不足时自动退化到 `full-frame`。Surface 使用 Memory Router，页面导航不会修改 DSH document pathname。当前模式只信任安装到同一 Web Profile 的插件，并只允许合成数据。
+从 DSH Web 侧栏的 React applications launcher 打开 ClinMesh。默认使用 `workspace` 并保留原生会话；Surface 宽度不足 `1024px` 时自动退化到 `full-frame`。DSH 保留外壳 branding 和 Light/Dark/System theme，ClinMesh 的 `system` 主题订阅 DSH resolved theme；业务主区在固定 Surface 高度内独立纵向滚动。Surface 使用 Memory Router，页面导航不会修改 DSH document pathname。当前模式只信任安装到同一 Web Profile 的插件，并只允许合成数据。
 
 ## 文档与决策
 

@@ -116,7 +116,7 @@ export function buildSurfaceAgentTools(
                 ok: true,
               })
             }
-            const result = z.json().parse(data)
+            const result = normalizeJsonValue(data)
             await input.complete({
               ok: true,
               receiptToken: authorization.receiptToken,
@@ -175,6 +175,14 @@ function contextReadAction(input: BuildSurfaceAgentToolsInput): SurfaceAgentPage
   }
 }
 
+function normalizeJsonValue(value: unknown) {
+  const serialized = JSON.stringify(value)
+  if (serialized === undefined) {
+    throw new TypeError('ClinMesh page action result must be JSON serializable')
+  }
+  return z.json().parse(JSON.parse(serialized))
+}
+
 function bindContextParameters(
   parameters: SurfaceAgentPageAction['parameters'],
   contextId: string,
@@ -183,8 +191,8 @@ function bindContextParameters(
   return projectDshToolSchema({
     type: 'object',
     properties: {
-      contextId: { type: 'string', enum: [contextId] },
-      scopeKey: { type: 'string', enum: [scopeKey] },
+      contextId: { type: 'string', const: contextId },
+      scopeKey: { type: 'string', const: scopeKey },
       ...parameters.properties,
     },
     required: ['contextId', 'scopeKey', ...(parameters.required ?? [])],

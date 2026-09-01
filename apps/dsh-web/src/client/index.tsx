@@ -16,6 +16,14 @@ interface ClientSessionsPort {
   }
 }
 
+interface ClientThemePort {
+  getTheme(): { active: { colorScheme: 'dark' | 'light' } }
+}
+
+interface ClientThemeContext {
+  on(event: 'theme/change', listener: () => void): () => void
+}
+
 function ClinMeshSurface({
   active,
   agent,
@@ -23,8 +31,12 @@ function ClinMeshSurface({
   close,
   location,
   navigate,
+  surfaceColorScheme,
   surfaceSessionId,
-}: ReactSurfaceProps & { surfaceSessionId?: string }): React.JSX.Element {
+}: ReactSurfaceProps & {
+  surfaceColorScheme: 'dark' | 'light'
+  surfaceSessionId?: string
+}): React.JSX.Element {
   const locationRef = useRef(location)
   const navigateRef = useRef(navigate)
   const closeRef = useRef(close)
@@ -59,6 +71,7 @@ function ClinMeshSurface({
         surfaceActive: active,
         surfaceAgent: agent,
         surfaceAgentStatus: capabilities.agent.status,
+        surfaceColorScheme,
         ...(surfaceSessionId === undefined ? {} : { surfaceSessionId }),
       }}
     />
@@ -69,18 +82,28 @@ function normalizeLocation(location: string): string {
   return location === '' ? '/' : location
 }
 
-function createDefinition(ctx: ClientContext): Readonly<ReactSurfaceDefinition> {
+export function createDefinition(ctx: ClientContext): Readonly<ReactSurfaceDefinition> {
   const sessions = ctx.get('sessions') as unknown as ClientSessionsPort
+  const theme = ctx.get('theme') as unknown as ClientThemePort
   const subscribe = (listener: () => void): (() => void) => sessions.list.subscribe(listener)
+  const subscribeTheme = (listener: () => void): (() => void) => (
+    ctx as unknown as ClientThemeContext
+  ).on('theme/change', listener)
   const getSnapshot = (): string | undefined => {
     const current = sessions.list.getSnapshot().current
     return current === undefined ? undefined : String(current)
   }
   function SessionBoundClinMeshSurface(props: ReactSurfaceProps): React.JSX.Element {
     const surfaceSessionId = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+    const surfaceColorScheme = useSyncExternalStore(
+      subscribeTheme,
+      () => theme.getTheme().active.colorScheme,
+      () => theme.getTheme().active.colorScheme,
+    )
     return (
       <ClinMeshSurface
         {...props}
+        surfaceColorScheme={surfaceColorScheme}
         {...(surfaceSessionId === undefined ? {} : { surfaceSessionId })}
       />
     )
@@ -89,18 +112,7 @@ function createDefinition(ctx: ClientContext): Readonly<ReactSurfaceDefinition> 
   branding: {
     colorScheme: 'system',
     identity: { mark: 'CM', name: 'ClinMesh' },
-    shell: 'surface',
-    tokens: {
-      accent: '#0b84e5',
-      accentForeground: '#ffffff',
-      background: '#ffffff',
-      border: '#e5e5e2',
-      elevated: '#f7f7f5',
-      foreground: '#242424',
-      mutedForeground: '#666666',
-      radius: '6px',
-      surface: '#ffffff',
-    },
+    shell: 'preserve',
   },
   component: SessionBoundClinMeshSurface,
   description: '中国公立医院仿真 HIS 工作台',
@@ -109,7 +121,7 @@ function createDefinition(ctx: ClientContext): Readonly<ReactSurfaceDefinition> 
   layout: {
     default: 'workspace',
     fallback: 'full-frame',
-    minSurfaceWidth: 680,
+    minSurfaceWidth: 1024,
     persist: true,
     resizable: true,
     supported: ['workspace', 'center', 'full-frame'],
@@ -121,7 +133,7 @@ function createDefinition(ctx: ClientContext): Readonly<ReactSurfaceDefinition> 
   })
 }
 
-export const inject = ['reactSurfaces', 'sessions']
+export const inject = ['reactSurfaces', 'sessions', 'theme']
 
 export function apply(ctx: ClientContext): void {
   const definition = createDefinition(ctx)

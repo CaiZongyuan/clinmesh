@@ -154,6 +154,10 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
       applyResolvedWebTheme(preferences.theme, root)
       return
     }
+    if (runtime.mode === 'surface' && runtime.surfaceColorScheme !== undefined) {
+      applyResolvedWebTheme(runtime.surfaceColorScheme, root)
+      return
+    }
 
     const mediaQuery = window.matchMedia(DARK_MODE_QUERY)
     const applySystemTheme = (): void => applyResolvedWebTheme(
@@ -165,7 +169,7 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
     mediaQuery.addEventListener('change', applySystemTheme)
 
     return () => mediaQuery.removeEventListener('change', applySystemTheme)
-  }, [preferences.theme, runtime.appearanceRoot, runtime.mode])
+  }, [preferences.theme, runtime.appearanceRoot, runtime.mode, runtime.surfaceColorScheme])
 
   if (session.isPending) {
     return (
@@ -464,6 +468,9 @@ export function WebApp({
     ...(runtimeOptions.surfaceAgentStatus === undefined
       ? {}
       : { surfaceAgentStatus: runtimeOptions.surfaceAgentStatus }),
+    ...(runtimeOptions.surfaceColorScheme === undefined
+      ? {}
+      : { surfaceColorScheme: runtimeOptions.surfaceColorScheme }),
     ...(runtimeOptions.surfaceSessionId === undefined
       ? {}
       : { surfaceSessionId: runtimeOptions.surfaceSessionId }),
@@ -473,13 +480,20 @@ export function WebApp({
     runtimeOptions.surfaceActive,
     runtimeOptions.surfaceAgent,
     runtimeOptions.surfaceAgentStatus,
+    runtimeOptions.surfaceColorScheme,
     runtimeOptions.surfaceSessionId,
   ])
 
   return (
     <WebRuntimeProvider value={runtime}>
       <PortalContainerProvider container={portalRoot}>
-        <div className="clinmesh-web-root" data-clinmesh-app="web" ref={applicationRoot}>
+        <div
+          className={runtime.mode === 'surface'
+            ? 'clinmesh-web-root h-full min-h-0 overflow-hidden'
+            : 'clinmesh-web-root'}
+          data-clinmesh-app="web"
+          ref={applicationRoot}
+        >
           <QueryClientProvider client={queryClient}>
             <AgentPageRegistryProvider>
               <AgentReviewProvider>

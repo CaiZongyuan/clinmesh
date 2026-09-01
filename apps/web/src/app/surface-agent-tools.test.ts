@@ -109,9 +109,9 @@ describe('ClinMesh Surface Agent tools', () => {
     ])
     expect(tools[1]?.parameters).toMatchObject({
       properties: {
-        contextId: { enum: ['context-1'] },
+        contextId: { const: 'context-1' },
         query: { type: 'string' },
-        scopeKey: { enum: ['clinmesh:registrar:registration'] },
+        scopeKey: { const: 'clinmesh:registrar:registration' },
         scores: { type: 'array', items: { type: 'number' } },
       },
     })
@@ -152,7 +152,10 @@ describe('ClinMesh Surface Agent tools', () => {
       complete: vi.fn(async () => ({ status: 'completed' as const })),
       definitions,
       issueProof: vi.fn(async () => 'proof-with-at-least-32-characters'),
-      readState: () => ({ selectedPatientId: 'patient-1' }),
+      readState: () => ({
+        provider: { available: true, unavailableReason: undefined },
+        selectedPatientId: 'patient-1',
+      }),
       review: vi.fn(async () => ({ decision: 'approved' })),
     })
     const read = tools.find(tool => tool.name === 'clinmesh_read_current_context')!
@@ -163,10 +166,14 @@ describe('ClinMesh Surface Agent tools', () => {
     expect(value).toMatchObject({
       ok: true,
       data: {
-        pageState: { selectedPatientId: 'patient-1' },
+        pageState: {
+          provider: { available: true },
+          selectedPatientId: 'patient-1',
+        },
         snapshot: { id: 'context-1' },
       },
     })
+    expect(JSON.stringify(value)).not.toContain('unavailableReason')
     expect(JSON.stringify(value)).not.toContain('hiddenFacts')
     await expect(read.execute(
       { contextId: 'context-1', scopeKey: 'clinmesh:forged' },
