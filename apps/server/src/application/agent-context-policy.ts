@@ -33,7 +33,7 @@ const doctorCaseRowSchema = z.object({
   has_prescription_draft: z.number().int(),
   has_reported_laboratory: z.number().int(),
   has_signed_document: z.number().int(),
-  has_issued_laboratory: z.number().int(),
+  has_cancellable_laboratory: z.number().int(),
   practitioner_role_id: z.string().nullable(),
   prescription_status: z.string().nullable(),
   status: z.string(),
@@ -239,7 +239,10 @@ function resolveSelection(
           AND prescription_draft_state.draft_json IS NOT NULL) AS has_prescription_draft,
         EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
           AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
-          AND laboratory_request.status = 'issued') AS has_issued_laboratory,
+          AND (laboratory_request.status = 'issued'
+            OR (laboratory_request.status = 'generation-failed'
+              AND laboratory_request.generation_error_code = 'INVESTIGATION_UNSUPPORTED')))
+          AS has_cancellable_laboratory,
         EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
           AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
           AND laboratory_request.status = 'reported') AS has_reported_laboratory,
@@ -430,7 +433,9 @@ function narrowOperations(
     if (selection.has_laboratory_draft === 1 || selection.status === 'first-visit') {
       operations.push('outpatient.laboratory.issue.propose')
     }
-    if (selection.has_issued_laboratory === 1) operations.push('outpatient.laboratory.cancel.propose')
+    if (selection.has_cancellable_laboratory === 1) {
+      operations.push('outpatient.laboratory.cancel.propose')
+    }
     if (selection.has_reported_laboratory === 1) operations.push('outpatient.report.acknowledge.propose')
     if (selection.has_correctable_laboratory === 1) operations.push('outpatient.report.correct.propose')
     if (selection.has_prescription_draft === 1) operations.push('outpatient.prescription.issue.propose')
@@ -505,11 +510,16 @@ function inputMatchesCurrentResources(
     || operationId === 'outpatient.report.correct.propose'
   ) {
     if (claim.selection?.kind !== 'case') return false
-    const statuses = operationId === 'outpatient.laboratory.cancel.propose'
-      ? ['issued']
-      : operationId === 'outpatient.report.correct.propose'
-        ? ['reported', 'acknowledged']
-        : ['reported']
+    if (operationId === 'outpatient.laboratory.cancel.propose') {
+      return exists(`SELECT 1 FROM laboratory_request WHERE workspace_id = ? AND epoch = ?
+        AND case_id = ? AND request_id = ?
+        AND (status = 'issued'
+          OR (status = 'generation-failed' AND generation_error_code = 'INVESTIGATION_UNSUPPORTED'))`,
+      ...scope, claim.selection.id, value.requestId)
+    }
+    const statuses = operationId === 'outpatient.report.correct.propose'
+      ? ['reported', 'acknowledged']
+      : ['reported']
     return exists(`SELECT 1 FROM laboratory_request WHERE workspace_id = ? AND epoch = ?
       AND case_id = ? AND request_id = ? AND status IN (${statuses.map(() => '?').join(', ')})`,
     ...scope, claim.selection.id, value.requestId, ...statuses)
