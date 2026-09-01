@@ -1028,6 +1028,28 @@ describe('DSH Agent Page Context HTTP contract', () => {
     expect(mixed.status).toBe(403)
     expect(await mixed.json()).toMatchObject({ error: { code: 'AGENT_OPERATION_NOT_ALLOWED' } })
 
+    runtime.database.driver.prepare(`
+      UPDATE command_receipt SET practitioner_role_id = 'practitioner-role-administrator'
+      WHERE audit_id = ? AND request_id = ?
+    `).run(first.auditId, first.requestId)
+    runtime.database.driver.prepare(`
+      UPDATE audit_log SET practitioner_role_id = 'practitioner-role-administrator'
+      WHERE audit_id = ?
+    `).run(first.auditId)
+    const wrongRole = await runtime.app.request('/api/agent/v1/tool-calls/result', {
+      body: JSON.stringify({
+        ok: true,
+        receiptToken: authorized.receiptToken,
+        result: { approved: true, data: first },
+      }),
+      headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' },
+      method: 'POST',
+    })
+    expect(wrongRole.status).toBe(403)
+    expect(await wrongRole.json()).toMatchObject({
+      error: { code: 'AGENT_OPERATION_NOT_ALLOWED' },
+    })
+
     const catalogResponse = await runtime.app.request('/api/his/v1/catalogs/registration', {
       headers: { cookie },
     })

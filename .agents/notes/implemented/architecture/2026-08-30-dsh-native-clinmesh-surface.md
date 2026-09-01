@@ -20,7 +20,7 @@ DSH 拥有模型 Session、transcript、Tool 调度和 Surface 宿主。ClinMesh
 
 每个岗位、页面和 operation 使用独立 Tool 名称与窄 object schema。DSH `browser-tools` broker 把 page scope 绑定到当前原生 Session；Host 从真实 `tools/pre-execute` 事件签发一次性 execution proof，绑定 Session、call ID、Tool、Page Context ID、scope 和真实时间过期。浏览器再用当前 context token 与 proof 向 Hono 授权，proof 与 token 的 Context ID 必须精确一致，且浏览器不能自报 Actor、岗位、Workspace、Epoch 或任意资源路径。DSH 支持的 JSON Schema 是强制子集；Surface adapter 只向 broker 投影受支持关键词，Web action 和 Hono authorization 在执行或持久化前都使用共享 Zod schema 恢复完整长度、格式、数组和数值范围校验。
 
-读取、导航、选择、表单填写、受控问诊、草稿保存和 preview 可以由 Agent 直接执行。正式医院状态变化只创建 proposal 并打开 ClinMesh 原生审阅框。proposal Tool 立即向 DSH 返回 `awaiting-human-review`，不占用 browser lease；Hono 保持 Tool call 与 proposal pending。人类点击决定时，Web 先调用 decision gate；Hono 重新验证 active context、DSH Session、当前资源和 Tool 后原子记录决定，成功后才允许 Web 以当前登录人类为最终 Actor 执行既有 Command。后台 completion 只接受同一个 Command receipt 中显式一致的 request、audit、trace 和允许 operation。明确拒绝记录人类 `rejected` decision；Surface 隐藏、Session/lease 失效、page scope、selection、资源版本、页面 revision 或 context 改变，以及超时或执行错误，会把尚未决定的 proposal 标记为 `stale`，不伪造人类拒绝，也不产生业务 Effect。
+读取、导航、选择、表单填写、受控问诊、草稿保存和 preview 可以由 Agent 直接执行。正式医院状态变化只创建 proposal 并打开 ClinMesh 原生审阅框。proposal Tool 立即向 DSH 返回 `awaiting-human-review`，不占用 browser lease；Hono 保持 Tool call 与 proposal pending。人类点击决定时，Web 先调用 decision gate；Hono 重新验证 active context、DSH Session、当前资源和 Tool 后原子记录决定，成功后才允许 Web 以当前登录人类为最终 Actor 执行既有 Command。后台 completion 只接受同一个 Command receipt 中显式一致的 request、audit、trace、允许 operation 和 Acting Practitioner Role。明确拒绝记录人类 `rejected` decision；Surface 隐藏、Session/lease 失效、page scope、selection、资源版本、页面 revision 或 context 改变，以及超时或执行错误，会把尚未决定的 proposal 标记为 `stale`，不伪造人类拒绝，也不产生业务 Effect。
 
 Host 代理只接受固定 loopback Hono origin，并限制路径、方法、请求体、响应体和超时；Cookie 与 Origin 语义保持同源。共享 bridge secret 只存在于 DSH Host 与 Hono 环境，不进入浏览器、日志、Tool result 或版本库。当前信任边界只覆盖安装在同一 DSH Web Profile 的受信插件和全合成 ClinMesh 数据。
 
@@ -46,7 +46,7 @@ Web 的服务端状态仍由 TanStack Query 拥有，Surface 隐藏时保留客�
 
 医生 Agent registration 位于共享 `DoctorCaseController`，使用当前 `consultation/record/laboratory/diagnosis/prescription` 页面 ID 和 controller 已有 mutations。Agent 草稿动作通过同一保存接口持久化并刷新 Query；成功后 controller 按病例和草稿种类递增水合 revision，只重建受影响的本地编辑器，检验草稿同时同步 controller 持有的项目与适应证选择，避免旧 autosave state 回写覆盖 Agent 结果。病例级检验 Reference Catalog 是分页动态集合，Tool 使用共享契约限定的 ID 字符串，Hono authorization 和 Command 再按当前病例、目录状态与结果生成能力解析并验证；正式动作继续复用 controller 的 Command mutation 与 detached review。
 
-Agent integration 增加 Page Context、Tool call、proposal 和 review decision 持久表，所有运行事实使用 Workspace/Epoch 复合隔离键。Command receipt 显式保存 request、audit 和 trace 标识，并用一个 query-shaped 复合索引保护 execution-link 三元组；completion 与 Audit、Action Trace、review decision 做同 operation、Actor、outcome 和时序联结。DSH transcript 不进入 SQLite；普通读取和草稿 Tool 记录调用结果，但不伪装成 Command、Audit Event 或 Provenance。
+Agent integration 增加 Page Context、Tool call、proposal 和 review decision 持久表，所有运行事实使用 Workspace/Epoch 复合隔离键。Command receipt 显式保存 request、audit 和 trace 标识，并用一个 query-shaped 复合索引保护 execution-link 三元组；completion 与 receipt、Audit、Action Trace、review decision 做同 operation、Actor、Acting Practitioner Role、outcome 和时序联结。DSH transcript 不进入 SQLite；普通读取和草稿 Tool 记录调用结果，但不伪装成 Command、Audit Event 或 Provenance。
 
 React Surface artifact 是一个 lazy-CJS 文件，React 与 DSH runtime 保持 external；构建验证拒绝动态 chunk、第二份 React、未服务资产和残留 `import.meta`。CI 递归 checkout submodule，并固定 Bun `1.4.0`。Desktop、Mobile、MCP、Agent OAuth/SMART、自治 Agent Run、Evaluation Spec 和评分不因该 Surface 存在而成为当前能力。
 

@@ -1499,6 +1499,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
               ...(authenticatedContext.organizationId === undefined ? {} : {
                 organizationId: authenticatedContext.organizationId,
               }),
+              ...(authenticatedContext.locationId === undefined ? {} : {
+                locationId: authenticatedContext.locationId,
+              }),
+              ...(authenticatedContext.practitionerId === undefined ? {} : {
+                practitionerId: authenticatedContext.practitionerId,
+              }),
+              ...(authenticatedContext.practitionerRoleId === undefined ? {} : {
+                practitionerRoleId: authenticatedContext.practitionerRoleId,
+              }),
               roleCode: 'lis-system',
               scenarioRunId: authenticatedContext.scenarioRunId,
               workspaceId: authenticatedContext.workspaceId,

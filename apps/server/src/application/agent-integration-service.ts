@@ -848,8 +848,10 @@ export class AgentIntegrationService {
        AND decision.proposal_id = ?
       WHERE receipt.workspace_id = ? AND receipt.epoch = ?
         AND receipt.actor_id = ? AND receipt.status = 'completed'
+        AND receipt.practitioner_role_id = ?
         AND receipt.audit_id = ? AND receipt.request_id = ?
         AND audit.actor_id = receipt.actor_id
+        AND audit.practitioner_role_id = receipt.practitioner_role_id
         AND audit.operation = receipt.operation AND audit.outcome = 'success'
         AND trace.actor_id = receipt.actor_id
         AND trace.operation = receipt.operation AND trace.outcome = 'success'
@@ -862,6 +864,7 @@ export class AgentIntegrationService {
       context.workspace.id,
       context.workspace.epoch,
       actor.actorId,
+      context.actor.practitionerRoleId,
       command.auditId,
       command.requestId,
     ) as {

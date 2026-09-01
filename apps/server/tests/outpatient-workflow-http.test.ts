@@ -5293,7 +5293,7 @@ describe('outpatient workflow HTTP contract', () => {
             [`DiagnosticReport/${request.report.diagnosticReportId}`]: '999',
           },
         }),
-        headers: commandHeaders(doctorCookie),
+        headers: commandHeaders(administratorCookie),
         method: 'POST',
       },
     )
