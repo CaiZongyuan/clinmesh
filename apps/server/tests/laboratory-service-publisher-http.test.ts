@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  apiErrorSchema,
   caseLaboratoryCatalogSearchSchema,
   doctorCaseDetailSchema,
   issueLaboratoryRequestResponseSchema,
@@ -19,6 +20,7 @@ import type {
   JsonChatCompletionInput,
   JsonChatCompletionsProvider,
 } from '../src/infrastructure/ai/openai-chat-completions.ts'
+import { openReferenceDatabase } from '../src/infrastructure/sqlite/reference-database.ts'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 
@@ -308,7 +310,20 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     return {
       administratorCookie: await signIn(runtime, password, 'admin@demo.clinmesh.local'),
       doctorCookie: await signIn(runtime, password, 'doctor@demo.clinmesh.local'),
+      referenceDatabasePath,
       runtime,
+    }
+  }
+
+  function editReferenceDatabase(
+    databasePath: string,
+    edit: (database: ReturnType<typeof openReferenceDatabase>) => void,
+  ): void {
+    const database = openReferenceDatabase({ busyTimeoutMs: 5_000, databasePath })
+    try {
+      edit(database)
+    } finally {
+      database.close()
     }
   }
 
@@ -514,7 +529,8 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       },
     )
     expect(issueResponse.status).toBe(200)
-    expect(issueLaboratoryRequestResponseSchema.parse(await issueResponse.json())).toMatchObject({
+    const issued = issueLaboratoryRequestResponseSchema.parse(await issueResponse.json())
+    expect(issued).toMatchObject({
       data: {
         request: {
           catalogItemId: publishedService.id,
@@ -526,11 +542,119 @@ describe('Laboratory Service Publisher HTTP contract', () => {
         },
       },
     })
+    runtime.database.driver.prepare(`
+      UPDATE laboratory_request
+      SET generation_error_code = 'INVESTIGATION_OUTPUT_INVALID',
+        generation_error_message = 'Synthetic generation failure',
+        status = 'generation-failed', version = version + 1
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND request_id = ?
+    `).run(issued.data.request.id)
+    const duplicateDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: '1' },
+          input: {
+            catalogItemId: publishedService.id,
+            expectedDraftVersion: issued.data.draftVersion,
+            indicationCode: 'clinical-evaluation',
+          },
+        }),
+        headers: mutationHeaders(),
+        method: 'PUT',
+      },
+    )
+    expect(duplicateDraftResponse.status).toBe(200)
+    const duplicateDraft = laboratoryRequestDraftResponseSchema.parse(
+      await duplicateDraftResponse.json(),
+    ).data
+    const duplicateIssueResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: '1' },
+          input: { expectedDraftVersion: duplicateDraft.draftVersion },
+        }),
+        headers: mutationHeaders(),
+        method: 'POST',
+      },
+    )
+    expect(duplicateIssueResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await duplicateIssueResponse.json())).toMatchObject({
+      error: { code: 'LABORATORY_REQUEST_DUPLICATE' },
+    })
     expect(runtime.database.driver.prepare(`
       SELECT COUNT(*) AS count FROM hospital_service_catalog
       WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
       AND json_extract(config_json, '$.laboratoryService.doctorOrderable') = 0
     `).get()).toEqual({ count: 1 })
+  })
+
+  it.each([
+    {
+      mutate: (databasePath: string) => {
+        editReferenceDatabase(databasePath, (database) => {
+          database.driver.prepare(`
+            INSERT INTO reference_laboratory_panel_member (
+              release_id, panel_concept_id, member_concept_id, member_order,
+              relationship, source_id, source_locator
+            ) VALUES (
+              'laboratory-service-reference-v1', 'loinc:synthetic:6690-2',
+              'loinc:synthetic:58410-2', 1, 'contains', 'synthetic-loinc',
+              'synthetic:test:cycle'
+            )
+          `).run()
+        })
+      },
+      scenario: 'a cyclic panel graph',
+    },
+    {
+      mutate: (databasePath: string) => {
+        editReferenceDatabase(databasePath, (database) => {
+          const insert = database.driver.prepare(`
+            INSERT INTO reference_laboratory_panel_member (
+              release_id, panel_concept_id, member_concept_id, member_order,
+              relationship, source_id, source_locator
+            ) VALUES (
+              'laboratory-service-reference-v1', 'loinc:synthetic:58410-2',
+              'loinc:synthetic:6690-2', ?, 'contains', 'synthetic-loinc', ?
+            )
+          `)
+          database.driver.transaction(() => {
+            for (let index = 0; index < 512; index += 1) {
+              insert.run(index + 2, `synthetic:test:edge-bound:${index}`)
+            }
+          })()
+        })
+      },
+      scenario: 'a panel graph above the edge bound',
+    },
+  ])('rejects $scenario before enrichment without partial services', async ({ mutate }) => {
+    const provider = new LaboratoryEnrichmentProvider()
+    const { administratorCookie, referenceDatabasePath, runtime } = await createRuntime(provider)
+    mutate(referenceDatabasePath)
+
+    const queued = await publishCbc(runtime, administratorCookie, 0)
+    expect(queued.response.status).toBe(200)
+    const jobId = publishLaboratoryServicesResponseSchema.parse(queued.value).data.jobId
+    await runtime.dispatchLaboratoryServicePublicationJobs()
+
+    const jobResponse = await runtime.app.request(
+      `/api/his/v1/admin/laboratory-services/jobs/${jobId}`,
+      { headers: { cookie: administratorCookie } },
+    )
+    expect(jobResponse.status).toBe(200)
+    expect(laboratoryServicePublicationJobSchema.parse(await jobResponse.json())).toMatchObject({
+      error: { code: 'LABORATORY_PANEL_INVALID' },
+      publishedServiceIds: [],
+      status: 'failed',
+    })
+    expect(provider.calls).toHaveLength(0)
+    expect(runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM hospital_service_catalog
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND json_extract(config_json, '$.laboratoryService.id') IS NOT NULL
+    `).get()).toEqual({ count: 0 })
   })
 
   it('publishes a codeable qualitative Laboratory Service from a nominal LOINC', async () => {

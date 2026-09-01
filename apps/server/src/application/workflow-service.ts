@@ -6899,7 +6899,8 @@ export class WorkflowService {
       const duplicate = this.#database.driver.prepare(`
         SELECT request_id FROM laboratory_request
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-          AND catalog_item_id = ? AND status IN ('issued', 'accepted', 'in-progress')
+          AND catalog_item_id = ?
+          AND status IN ('issued', 'accepted', 'in-progress', 'generation-failed')
       `).get(
         input.context.workspaceId,
         input.context.epoch,

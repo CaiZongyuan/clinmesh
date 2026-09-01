@@ -2362,7 +2362,6 @@ describe('role workspaces', () => {
   it('shows laboratory request statuses and exposes only valid correction actions', async () => {
     window.history.replaceState(null, '', '/consultation')
     let cancellationRequests = 0
-    let unsupportedCancellationRequests = 0
     let draftDeletionRequests = 0
     let draft: { catalogItemId: string; indicationCode: string } | undefined = {
       catalogItemId: 'lab-cbc',
@@ -2645,27 +2644,6 @@ describe('role workspaces', () => {
         requests = requests.map(request => request.id === cancelled.id ? cancelled : request)
         return Response.json(commandResponse({ request: cancelled }))
       }
-      if (url.pathname === '/api/his/v1/laboratory-requests/laboratory-request-8/actions/cancel') {
-        unsupportedCancellationRequests += 1
-        expect(JSON.parse(String(init?.body))).toEqual({
-          expectedVersions: {
-            'ServiceRequest/service-request-8': '1',
-            'Task/task-laboratory-8': '4',
-          },
-          input: { expectedRequestVersion: 4, reasonCode: 'no-longer-needed' },
-        })
-        const cancelled = {
-          ...unsupportedGenerationRequest,
-          generationError: undefined,
-          serviceRequestVersion: '2',
-          status: 'cancelled' as const,
-          taskVersion: '5',
-          version: 5,
-        }
-        const { generationError: _removed, ...withoutError } = cancelled
-        requests = requests.map(request => request.id === withoutError.id ? withoutError : request)
-        return Response.json(commandResponse({ request: withoutError }))
-      }
       if (url.pathname === '/api/his/v1/laboratory-requests/laboratory-request-4/reports/diagnostic-report-cbc-1/actions/acknowledge') {
         expect(JSON.parse(String(init?.body))).toEqual({
           expectedVersions: { 'DiagnosticReport/diagnostic-report-cbc-1': '1' },
@@ -2737,18 +2715,13 @@ describe('role workspaces', () => {
     expect(screen.getAllByText('医生已阅')).toHaveLength(2)
     expect(screen.getByText('等待检验结果')).toBeTruthy()
     expect(screen.getAllByText('结果生成失败')).toHaveLength(2)
-    expect(screen.getByText('结果生成失败，可重试。')).toBeTruthy()
-    expect(screen.getByText('该项目无法为当前病例生成结果，请取消后重新选择。')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /重试结果生成 血常规/ })).toBeNull()
-    await user.click(screen.getByRole('button', { name: '取消检验申请 血常规' }))
-    const unsupportedCancelDialog = await screen.findByRole('alertdialog', { name: '确认取消检验申请' })
-    await user.click(within(unsupportedCancelDialog).getByRole('button', { name: '确认取消' }))
-    expect(unsupportedCancellationRequests).toBe(1)
-    await waitFor(() => expect(screen.queryByText(
-      '该项目无法为当前病例生成结果，请取消后重新选择。',
-    )).toBeNull())
+    expect(screen.getAllByText('结果生成失败，可重试。')).toHaveLength(2)
+    expect(screen.getByRole('button', { name: /重试结果生成 血常规/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /重试结果生成 C 反应蛋白/ })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /重试结果生成 C 反应蛋白/ }))
-    await waitFor(() => expect(screen.queryByText('结果生成失败，可重试。')).toBeNull())
+    await waitFor(() => expect(screen.getAllByText('结果生成失败，可重试。')).toHaveLength(1))
+    expect(screen.getByRole('button', { name: /重试结果生成 血常规/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /重试结果生成 C 反应蛋白/ })).toBeNull()
     expect(screen.getByText('白细胞计数升高，其余血常规指标在参考范围内。')).toBeTruthy()
     expect(screen.getByRole('cell', { name: /11\.2 10\^9\/L/ })).toBeTruthy()
     expect(screen.getByRole('cell', { name: '3.5-9.5 x10^9/L' })).toBeTruthy()

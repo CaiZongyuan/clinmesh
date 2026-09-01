@@ -485,34 +485,24 @@ function LaboratoryRequestEditor({
                     : request.laboratoryService?.nameEn)
                   ?? request.referenceConcept?.display
                   ?? request.catalogItemId
-                const permanentlyUnsupported = request.generationError?.code === 'INVESTIGATION_UNSUPPORTED'
                 return (
                   <TableRow key={request.id}>
                     <TableCell className="break-words whitespace-normal font-medium">{itemName}</TableCell>
                     <TableCell className="break-words whitespace-normal">{indicationLabel(request.indicationCode, messages)}</TableCell>
-                    <TableCell className="break-words whitespace-normal"><Badge variant="outline">{laboratoryRequestStatusLabel(request, messages)}</Badge>{request.generationError === undefined ? null : <p className="mt-1 text-xs text-destructive">{generationErrorMessage(request, locale)}</p>}</TableCell>
+                    <TableCell className="break-words whitespace-normal"><Badge variant="outline">{laboratoryRequestStatusLabel(request, messages)}</Badge>{request.generationError === undefined ? null : <p className="mt-1 text-xs text-destructive">{generationErrorMessage(locale)}</p>}</TableCell>
                     <TableCell className="text-right">
                       {readOnly ? null : request.status === 'generation-failed' ? (
-                        permanentlyUnsupported ? (
-                          <CancelLaboratoryRequestButton
-                            action={actions.cancel}
-                            itemName={itemName}
-                            messages={messages}
-                            request={request}
-                          />
-                        ) : (
-                          <Button
-                            aria-label={`${locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'} ${itemName}`}
-                            disabled={actions.retry.pending}
-                            onClick={() => actions.retry.onSubmit(request)}
-                            size="icon-sm"
-                            title={locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'}
-                            type="button"
-                            variant="outline"
-                          >
-                            <RefreshCwIcon />
-                          </Button>
-                        )
+                        <Button
+                          aria-label={`${locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'} ${itemName}`}
+                          disabled={actions.retry.pending}
+                          onClick={() => actions.retry.onSubmit(request)}
+                          size="icon-sm"
+                          title={locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'}
+                          type="button"
+                          variant="outline"
+                        >
+                          <RefreshCwIcon />
+                        </Button>
                       ) : request.status !== 'issued' ? null : (
                         <CancelLaboratoryRequestButton
                           action={actions.cancel}
@@ -593,15 +583,7 @@ function LaboratoryRequestEditor({
   )
 }
 
-function generationErrorMessage(
-  request: LaboratoryRequest,
-  locale: WorkspaceLocale,
-): string {
-  if (request.generationError?.code === 'INVESTIGATION_UNSUPPORTED') {
-    return locale === 'zh-CN'
-      ? '该项目无法为当前病例生成结果，请取消后重新选择。'
-      : 'This item cannot generate a result for the current case. Cancel it and choose another item.'
-  }
+function generationErrorMessage(locale: WorkspaceLocale): string {
   return locale === 'zh-CN'
     ? '结果生成失败，可重试。'
     : 'Result generation failed. You can retry.'
