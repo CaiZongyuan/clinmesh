@@ -428,11 +428,13 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 
 ### 5.4 中国术语与参考数据策略
 
-独立 Reference SQLite 通过显式 CLI 一次性导入和验证版本固定的疾病、药品与检验来源。每个成功发布的 Reference Release 固定来源版本、许可、artifact checksum、记录数、导入诊断和 content hash；失败导入不改变当前 Release。Server 只读打开一个系统级全局当前 Release，使用索引和 FTS 为疾病、药品、检验提供有界分页搜索，不把全国目录载入内存或复制进 Workspace、Epoch 和 operational SQLite。医生打开选择器时默认浏览稳定排序的第一页；显式提交的两字符查询使用只读 substring 检索，至少三个字符时使用 trigram FTS，并从第一页开始。Reference 不可用或无查询目录为空时才回退到本院常用项。
+独立 Reference SQLite 通过显式 CLI 一次性导入和验证版本固定的疾病、药品与检验来源。每个成功发布的 Reference Release 固定来源版本、许可、artifact checksum、记录数、导入诊断和 content hash；失败导入不改变当前 Release。`loinc-zh-cn` Dataset Schema v2 把完整 LOINC 主表、单位、SYSTEM 标本关系和 panel 成员边保存在同一不可变 Release，Class Type 1 进入 laboratory domain，其他 Class Type 进入 `other`。Server 只读打开一个系统级全局当前 Release，使用索引和 FTS 提供有界分页查询，不把全国目录复制进 Workspace、Epoch 或 operational SQLite。
 
 目录搜索返回稳定的 `system + version + code + display`。诊断、医嘱等本院 R5 业务事实在创建时保存所选 coding/display 快照，因此切换全局当前 Release 不会改写既有病历。Synthea R4 来源 coding 仅用于呈现 Visible Source History 和解析同 LOINC 的隐藏 Observation；不以显示文本匹配，不建设 Synthea 到本院疾病或药品目录的通用映射。
 
-检验目录保存值类型、LOINC 和 UCUM 单位；参考范围来自项目 metadata 或版本固定的 LOINC 本院检验映射。全局 Reference 搜索只表达项目定义；医生开立前通过病例级检验目录读取 Investigation Generation Capability。完全相同的 LOINC system 与 code 能命中 Case Truth Observation 时使用 `synthea-exact`；未命中时，只有数值项目具备 UCUM 单位与受控合成参考范围且运行时配置了受限 Investigation Agent 才标记为 `investigation-agent` 可生成。Agent 输入最多包含最近 20 条 Visible History 和 20 条相关 Case Truth 证据。Web 展示查询结果，但只允许选择 capability 支持的项目，开具后的 ServiceRequest 与执行 Task 属于本院运行事实。两种成功路径都形成不可变 Investigation Result Snapshot；不得为缺少证据、生成 profile 或运行能力的项目制造正常 fallback。
+Reference Concept 只表达检验术语、分类、值类型候选、UCUM 单位、标本和 panel 关系，不表示医院已经开展。管理员从 active、Class Type 1、Order/Both 候选中选择最多 50 个根项目；Catalog Enrichment Agent 使用独立模型配置补齐并验证本院名称、合成价格、TAT、参考范围、定性值和报告闭包，随后把根服务与 dependency-only 成员原子发布到现有 `hospital_service_catalog`。失败候选保留结构化状态但不激活，医生路径不调用 enrichment。
+
+医生病例级检验目录只返回当前 Workspace/Epoch 中 active、doctor-orderable 的 Hospital Laboratory Service；所有可见项目都可保存草稿和正式开立，响应不含 Case Truth、模型或 Investigation Generation Capability。开立时冻结服务版本、根 LOINC 和完整 report definition。Simulator 对每个报告叶子优先复用精确 Case Truth Observation；完整 panel 全部命中时不调用模型，partial panel 只生成缺失叶子。Agent 输入最多包含最近 20 条 Visible History、20 条相关 Case Truth 证据，以及当前正式诊断和已有正式检验；输出必须保持编码闭包、值类型、单位、参考范围和判读一致。outbox 最多自动尝试三次，连续失败进入 `generation-failed` 且不创建临床资源。成功 snapshot 按 Case revision、服务/报告版本和申请前正式证据形成 evidence hash；相同 request 与 Reset 初始证据复用，复查在新增正式证据后生成新 snapshot。
 
 当前不发布 CodeSystem、ValueSet、ConceptMap 或 terminology operation；术语是接口兼容性的一部分，不是 UI 字典。
 
@@ -683,7 +685,7 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 `packages/contracts/src/his-operations.ts` 导出的 `hisOperationCatalog` 是 Agent 操作面的唯一合同 owner。每项 operation 显式声明稳定 ID、版本、`cliPath`、`query/draft/preview/command` mode、输入/输出/错误 Zod schema、HTTP method/path adapter、唯一 handler owner、human/agent identity、岗位 allowlist、风险、幂等、expected version 与 preview token 要求；既有 Command 的持久 operation 名称不同时，Catalog 还保存 receipt adapter 名称。Catalog 不依赖 Hono、Node.js、环境变量或 handler。
 
-CLI 命令树、`operations list/schema`、服务端 Agent route matching、Grant 的 Catalog hash 和 Skill 命令示例测试都读取同一 Catalog。HIS route coverage test 要求每条 `/api/his/v1` route 恰好属于 canonical operation 或带原因的兼容排除项。医生病例级检验目录是独立 canonical query，返回当前 Case 的 Investigation Generation Capability；全局 Reference 检验目录不能替代这项开具前门禁。病例级查询没有 Reference 项目时可显式读取本院 clinical catalog，已有 Reference 项目返回 unsupported 时不能用本院同名项目绕过。FHIR 部分只投影 metadata、read、vread、instance history 和资源能力注册表允许的 search；资源类型与 SearchParameter 白名单和 CapabilityStatement 共用一份注册表。包括 metadata 在内的每个 FHIR 入口都先解析受信身份，Agent 还必须在 Grant allowlist 中拥有对应 operation。
+CLI 命令树、`operations list/schema`、服务端 Agent route matching、Grant 的 Catalog hash 和 Skill 命令示例测试都读取同一 Catalog。HIS route coverage test 要求每条 `/api/his/v1` route 恰好属于 canonical operation 或带原因的兼容排除项。管理员 Laboratory Service 候选搜索、发布和 job 查询属于 `clinmesh-administrator`；医生病例级目录属于 `clinmesh-doctor`，只返回可开立 Hospital Service。全局 Reference 检验搜索不能替代服务发布，也不能把 Reference Concept ID 作为申请项目。FHIR 部分只投影 metadata、read、vread、instance history 和资源能力注册表允许的 search；资源类型与 SearchParameter 白名单和 CapabilityStatement 共用一份注册表。包括 metadata 在内的每个 FHIR 入口都先解析受信身份，Agent 还必须在 Grant allowlist 中拥有对应 operation。
 
 CLI 没有通用 invoke、任意 URL、method/path/body、SQL、JSON Patch、FHIR write 或 Bundle write。兼容组合 route 不进入命令树，Agent 使用独立 diagnosis、prescription、laboratory request、clinical document 和 Encounter Completion 生命周期。
 
@@ -757,9 +759,9 @@ Consultation 是病例级领域聚合，Consultation Record 是按序号追加�
 
 处方撤回使用不可变 `prescription_withdrawal` 事实表达，不删除或覆盖原 Prescription。只有未发生任何调剂的 signed 或 paid 处方可按 Prescription expected version 和全部 MedicationRequest expected versions 撤回；成功后各 MedicationRequest 进入 `cancelled` 并保留 FHIR history，Prescription 版本递增且读模型投影为 `withdrawn`。未收费的已撤回药品费用不再进入收费员待收费队列，已收费历史仍可查询且不会隐式退款；药房队列、审核、支付和发药入口都拒绝已撤回处方。
 
-带 Consultation 的病例使用独立检验申请 owner。`laboratory_request_state` 保存一个病例级草稿及单调递增版本；保存和删除都以当前 Encounter 与草稿版本做 CAS，删除或开具只清空草稿而不复用旧版本。病例级目录在全局当前 Reference Release 结果上投影 Investigation Generation Capability，Web 禁用但不隐藏当前病例不可生成的项目，只提交 capability 支持的项目；保存草稿、开立申请和重试生成的 Command 都重新校验同一 capability，不能通过绕过选择器提交不可生成项目。单一内部适应证 `clinical-evaluation` 不要求医生选择。没有病例责任人的 `awaiting-doctor` 病例必须先由接诊 Command 分配责任并推进状态，Web 才开放检验、诊断、处方和病历写入。开具时保存 coding/display 快照并创建 `ServiceRequest.status=active` 和 `Task.status=requested`，Task `focus` 指向该 ServiceRequest。该流程不创建 ChargeItem，也不推进 Encounter 或医生 Queue Task。
+带 Consultation 的病例使用独立检验申请 owner。`laboratory_request_state` 保存一个病例级草稿及单调递增版本；保存和删除都以当前 Encounter 与草稿版本做 CAS，删除或开具只清空草稿而不复用旧版本。保存草稿重新读取 active、doctor-orderable Hospital Service 并冻结 service/report snapshot；开立再次校验相同 service ID 和版本，直接提交 Reference Concept ID 返回目录冲突。单一内部适应证 `clinical-evaluation` 不要求医生选择。没有病例责任人的 `awaiting-doctor` 病例必须先由接诊 Command 分配责任并推进状态，Web 才开放检验、诊断、处方和病历写入。开具时保存本院服务 coding、根 LOINC 和报告定义，创建 `ServiceRequest.status=active` 与 `Task.status=requested`，Task `focus` 指向该 ServiceRequest。服务配置保留合成价格，但该流程不创建 ChargeItem，也不推进 Encounter 或医生 Queue Task。
 
-独立申请开具后由持久 outbox 绑定 `lis-system`，依次把领域状态和执行 Task 从 `issued/requested` 推进到 `accepted/accepted` 与 `in-progress/in-progress`。Simulator 优先复用同 LOINC 的隐藏来源结果，否则异步生成 Investigation Result Snapshot；失败进入可重试的 `generation-failed` 且不创建报告。成功后才创建 Specimen、Observation、DiagnosticReport 和 Provenance，并完成 ServiceRequest、执行 Task 与申请；重复投递返回同一冻结结果，不重复调用模型或创建资源。
+独立申请开具后由持久 outbox 绑定 `lis-system`，依次把领域状态和执行 Task 从 `issued/requested` 推进到 `accepted/accepted` 与 `in-progress/in-progress`。报告 consumer 对暂时失败和非法输出执行最多三次有界重试；前两次保持申请 `in-progress`，第三次失败才写入 `generation-failed`。成功后创建一个 Specimen、每个报告叶子一个 Observation、一个 DiagnosticReport 和 Provenance，并完成 ServiceRequest、执行 Task 与申请；同一 request 的重复投递返回已关联 snapshot，不重复调用模型或创建资源。
 
 Report Acknowledgement 是按报告版本独立保存的领域事实，只能由原检查申请的开具医生对当前 `DiagnosticReport.status=final` 且申请为 `reported` 的报告创建。成功确认把申请推进到 `acknowledged` 并递增申请版本，但不更新 DiagnosticReport 或其 FHIR `meta.versionId`；确认 Command 以 `ReportAcknowledgement/<id>` effect 进入审计和 Action Trace。每个报告版本至多有一条确认事实，不同幂等键的重复确认返回第一次确认的 ID、时间和当时的申请版本。
 
@@ -1404,7 +1406,7 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 
 ### 15.3 Web 与明确边界
 
-- Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员入口；管理员可生成 Synthetic Profile/Case、浏览 Visible Source History、生成并选择 Brief、直接开始病例和 reset/replay。医生工作台从全局 Reference Release 分页搜索诊断和药品，从病例级目录搜索可生成结果的检验；诊断、检验和处方有效修改自动保存，已创建事实固定 coding/display 快照。Investigation 区分永久不支持的取消和可恢复失败的重试。病例库继续提供责任范围内的已完诊 Encounter 与受控更正入口。服务端状态只由 TanStack Query 缓存，退出或跨账户登录会清除非 session 查询。
+- Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员入口；管理员可生成 Synthetic Profile/Case、浏览 Visible Source History、生成并选择 Brief、直接开始病例、reset/replay，以及搜索和发布 Laboratory Service。医生工作台从全局 Reference Release 分页搜索诊断和药品，从病例级目录搜索本院已发布检验服务；诊断、检验和处方有效修改自动保存，已创建事实固定对应 snapshot。Investigation 的系统执行异常支持受控重试，不向医生展示生成 capability。病例库继续提供责任范围内的已完诊 Encounter 与受控更正入口。服务端状态只由 TanStack Query 缓存，退出或跨账户登录会清除非 session 查询。
 - 可见字符串具有中文和英文 catalog；主题支持 system、light 与 dark。岗位页面具有分页、加载、空、错误、冲突、无权限和成功状态，并覆盖长中文文本与窄视口。
 - 首期不包含 Desktop/Mobile 产品行为、模型 runner、AG-UI/MCP、评分、附件、真实外部系统、完整医保/住院/库存、远程数据库、多实例或高可用。
 - 当前没有 FHIR generic write、自定义 FHIR Operation、正式 Profile/IG、官方 Validator、标准 compartment、metrics exporter 或公开在线 SLA。

@@ -89,7 +89,7 @@ _Avoid_: Case Truth, diagnosis note, chat transcript
 _Avoid_: Editable prompt output, Case revision, overwrite
 
 **Investigation Result Snapshot**:
-针对一个 Synthetic Case Instance 和一个固定检查编码首次成功解析或生成的不可变结构化结果。后续重试和新 Epoch 重放复用该结果，不再次调用外部模型。
+针对一个 Synthetic Case Instance、固定 Hospital Service 定义和申请前临床证据首次成功解析或生成的不可变结构化结果。同一申请的重试和证据相同的新 Epoch 重放复用该结果；新增正式证据后的复查形成新的 Snapshot。
 _Avoid_: Live laboratory result, mutable simulator response, normal fallback
 
 ## 身份与参与

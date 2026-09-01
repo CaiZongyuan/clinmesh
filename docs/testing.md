@@ -118,8 +118,8 @@ pnpm perf:full-import -- --manifest /absolute/path/to/release.json
 - Server HTTP 集成测试提交 generation request，等待异步任务并通过公开管理员 API观察 Profile、Case、provenance 与有界 translation warning；同时证明缺译保留来源 display 而结构错误仍失败、最多十次 Index Case 重试、失败不留部分资产、来源历史可分页/查看详情且猜测隐藏引用仍不可读取。
 - Brief 测试覆盖异步状态、严格 schema、诊断泄漏拒绝、成功 revision 不可变、失败不覆盖成功、显式选择和无活动 Brief 禁止开始。客户端不能覆盖 provider URL、model、header、key 或 body，日志和 DTO 不含凭证。
 - Direct start 测试证明一个 Case 正常流程只能开始一次，并原子创建本院 R5 Patient、Registration、Encounter 和 Queue Task；来源 R4 历史与全局 Reference rows 不得写入本院 R5/operational store。
-- 医生目录测试覆盖 Dialog 打开即分页、两字符显式搜索、无自动选中、药品产品区分、诊断多条草稿与二次确认、处方空初始状态，以及检验项目选择后再保存/开立；Reference 失败时继续覆盖本院常用 fallback。
-- Investigation 测试分别覆盖同 LOINC 隐藏 Observation 命中、fake provider 生成、schema/单位/范围拒绝、`generation-failed` 重试和首个成功 snapshot 冻结，不允许正常 fallback。
-- Reset/replay 测试在新 Epoch 重新物化同一 Case Revision，复用 Brief、Case Truth 与 Investigation Result Snapshot，断言 provider 调用计数不增加、旧 callback 不能写入新 Epoch。
+- 管理员 Laboratory Service 测试覆盖 orderable Reference 候选分页、expected candidate version、50 项批次上限、fake enrichment、panel 闭包、原子发布、失败状态和幂等 job；医生目录测试只接受 active、doctor-orderable Hospital Service，并覆盖无 capability 文案、明确选择、自动保存与正式开立。
+- Investigation 测试覆盖单项和完整 panel 的精确 Observation 命中、partial panel 只生成缺失叶子、数量与定性 strict output、单位/范围/闭包拒绝、outbox 三次自动尝试、首个成功 snapshot 冻结和复查新 evidence hash；连续失败不创建临床资源。
+- Reset/replay 测试在新 Epoch 重新物化同一 Case Revision，复用 Brief、Case Truth 与 evidence hash 相同的 Investigation Result Snapshot，断言 provider 调用计数不增加、旧 callback 不能写入新 Epoch。
 - Docker smoke 使用固定 Synthea commit、全部模块模式、中国 profile/localization provenance、非 root、只读文件系统和有界资源，从真实 HTTP 入口完成多患者 generation，并验证全部 Bundle 成功以及 translation warning 按 ordinal 关联，再继续覆盖 history、Brief、direct start、诊断、检查与 LIS 结果。
 - OpenAI-compatible live smoke 是开发者显式运行的单个合成 Brief 检查，读取本机启动配置，不进入 `pnpm test`、`pnpm check` 或 CI，且不输出 prompt、响应正文、API key 或 provider header。

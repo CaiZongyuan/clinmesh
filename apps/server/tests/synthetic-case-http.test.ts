@@ -22,6 +22,7 @@ import {
   doctorCaseDetailSchema,
   doctorQueueSchema,
   issueLaboratoryRequestResponseSchema,
+  laboratoryServiceSnapshotSchema,
   laboratoryRequestActionResponseSchema,
   laboratoryRequestDraftResponseSchema,
   registrationCatalogSchema,
@@ -142,6 +143,25 @@ function patientBundle(qualified: boolean, followUp = true) {
           value: 162,
         },
       },
+    }, {
+      fullUrl: 'urn:uuid:index-diastolic-observation',
+      resource: {
+        code: {
+          coding: [{ code: '8462-4', display: '舒张压', system: 'http://loinc.org' }],
+        },
+        effectiveDateTime: '2026-06-01T10:10:00+08:00',
+        encounter: { reference: 'urn:uuid:index-encounter' },
+        id: 'index-diastolic-observation',
+        resourceType: 'Observation',
+        status: 'final',
+        subject: { reference: 'urn:uuid:patient' },
+        valueQuantity: {
+          code: 'mm[Hg]',
+          system: 'http://unitsofmeasure.org',
+          unit: 'mmHg',
+          value: 96,
+        },
+      },
     })
   }
   return { entry: entries, resourceType: 'Bundle', type: 'collection' }
@@ -232,6 +252,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       databasePath: options.databasePath ?? join(directory!, 'clinmesh.sqlite'),
       demoPassword: 'Synthetic-Demo-Password-2026!',
       migrationMode: options.migrationMode ?? 'apply',
+      outboxRetryDelayMs: 0,
       ...(briefProvider === undefined
         ? {}
         : {
@@ -431,7 +452,44 @@ describe('Synthetic Case generation HTTP contract', () => {
       leakingBrief,
       secondBrief,
       { conclusion: 'C 反应蛋白升高。', interpretation: 'normal', value: 24 },
+      { conclusion: 'C 反应蛋白升高。', interpretation: 'normal', value: 24 },
+      { conclusion: 'C 反应蛋白升高。', interpretation: 'normal', value: 24 },
       { conclusion: 'C 反应蛋白升高。', interpretation: 'high', value: 24 },
+      { invalid: true },
+      { invalid: true },
+      {
+        conclusion: '血压与 C 反应蛋白组合结果已完成。',
+        results: [{
+          code: '1988-5',
+          interpretation: 'high',
+          referenceRange: { high: 10, low: 0, text: '0-10 mg/L' },
+          unit: { code: 'mg/L', display: 'mg/L', system: 'http://unitsofmeasure.org' },
+          value: 26,
+        }],
+      },
+      {
+        conclusion: '复查 C 反应蛋白仍升高。',
+        results: [{
+          code: '1988-5',
+          interpretation: 'high',
+          referenceRange: { high: 10, low: 0, text: '0-10 mg/L' },
+          unit: { code: 'mg/L', display: 'mg/L', system: 'http://unitsofmeasure.org' },
+          value: 28,
+        }],
+      },
+      {
+        conclusion: '合成定性检验为阴性。',
+        results: [{
+          code: '94500-6',
+          interpretation: 'normal',
+          referenceRange: { text: '阴性' },
+          value: {
+            code: 'negative',
+            display: '阴性',
+            system: 'urn:clinmesh:synthetic:laboratory-result',
+          },
+        }],
+      },
     ])
     const runtime = await createRuntime(
       new RetryingSyntheaProvider(1, false),
@@ -922,7 +980,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       SELECT COUNT(*) AS count FROM investigation_result_snapshot
       WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = 'lab-crp'
     `).get('workspace-demo', caseId)).toEqual({ count: 0 })
-    expect(briefProvider.requests).toHaveLength(4)
+    expect(briefProvider.requests).toHaveLength(6)
     const firstAgentPayload = briefProvider.requests.at(-1)?.userPayload as {
       privateCaseEvidence: Array<{ clinicalTime?: string; resourceType: string }>
       visibleHistory: Array<{ title: string }>
@@ -1021,7 +1079,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       },
       resourceType: 'DiagnosticReport',
     })
-    expect(briefProvider.requests).toHaveLength(5)
+    expect(briefProvider.requests).toHaveLength(7)
     expect(runtime.database.driver.prepare(`
       SELECT source, model_id FROM investigation_result_snapshot
       WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = 'lab-crp'
@@ -1034,7 +1092,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       'epoch-1',
       secondAgentRequest.id,
     )).resolves.toMatchObject({ source: 'investigation-agent' })
-    expect(briefProvider.requests).toHaveLength(5)
+    expect(briefProvider.requests).toHaveLength(7)
 
     const unsupportedDraftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/draft`,
@@ -1055,7 +1113,319 @@ describe('Synthetic Case generation HTTP contract', () => {
     expect(apiErrorSchema.parse(await unsupportedDraftResponse.json())).toMatchObject({
       error: { code: 'CATALOG_CONFLICT' },
     })
-    expect(briefProvider.requests).toHaveLength(5)
+    expect(briefProvider.requests).toHaveLength(7)
+
+    const panelService = laboratoryServiceSnapshotSchema.parse({
+      allowedIndicationCodes: ['clinical-evaluation'],
+      componentServiceIds: [
+        'hospital-laboratory-service-systolic-component',
+        'hospital-laboratory-service-crp-component',
+      ],
+      doctorOrderable: true,
+      executingDepartmentId: 'department-laboratory',
+      id: 'hospital-laboratory-service-panel-test',
+      localCode: 'CM-LAB-PANEL-TEST',
+      nameEn: 'Synthetic pressure and CRP panel',
+      nameZh: '合成血压与 C 反应蛋白组合',
+      priceFen: 3_300,
+      referenceConcept: {
+        code: '24323-8',
+        display: '合成血压与 C 反应蛋白组合',
+        id: 'loinc:synthetic:24323-8',
+        sourceLocator: 'synthetic:test:panel',
+        system: 'http://loinc.org',
+        version: '2.83',
+      },
+      referenceReleaseId: 'synthetic-reference-release',
+      reportDefinition: {
+        conclusionTemplate: '合成组合结果已完成。',
+        results: [{
+          referenceConcept: exactConcept,
+          referenceRange: { high: 140, low: 90, text: '90-140 mmHg' },
+          unit: {
+            code: 'mm[Hg]',
+            display: 'mmHg',
+            system: 'http://unitsofmeasure.org',
+          },
+          valueType: 'quantity',
+        }, {
+          referenceConcept: agentConcept,
+          referenceRange: { high: 10, low: 0, text: '0-10 mg/L' },
+          unit: {
+            code: 'mg/L',
+            display: 'mg/L',
+            system: 'http://unitsofmeasure.org',
+          },
+          valueType: 'quantity',
+        }],
+      },
+      specimen: { code: 'LP7057-5', display: '血液' },
+      serviceKind: 'laboratory',
+      tatMinutes: 20,
+      version: 1,
+    })
+    runtime.database.driver.prepare(`
+      INSERT INTO hospital_service_catalog (
+        workspace_id, epoch, service_id, code, name_zh, name_en,
+        version, active, config_json
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?)
+    `).run(
+      'workspace-demo',
+      'epoch-1',
+      panelService.id,
+      panelService.localCode,
+      panelService.nameZh,
+      panelService.nameEn,
+      JSON.stringify({ laboratoryService: panelService }),
+    )
+    const panelDraft = await saveLaboratoryDraft(panelService.id, 6)
+    const panelRequest = (await issueLaboratory(panelDraft.draftVersion)).request
+    await runtime.dispatchPending()
+    detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    const panelReported = detail.laboratoryRequests?.requests.find(item => (
+      item.id === panelRequest.id
+    ))
+    expect(panelReported).toMatchObject({
+      report: {
+        results: [{ code: '8480-6', value: 162 }, { code: '1988-5', value: 26 }],
+      },
+      status: 'reported',
+    })
+    expect(briefProvider.requests).toHaveLength(10)
+    expect(briefProvider.requests.at(-1)?.userPayload).toMatchObject({
+      exactResults: [{ code: '8480-6', value: 162 }],
+      requestedResults: [{ referenceConcept: { code: '1988-5' } }],
+    })
+    expect(runtime.database.driver.prepare(`
+      SELECT attempt, status FROM outbox_event
+      WHERE workspace_id = ? AND epoch = ? AND kind = 'laboratory.report-request'
+        AND json_extract(payload_json, '$.requestId') = ?
+    `).get('workspace-demo', 'epoch-1', panelRequest.id)).toEqual({
+      attempt: 3,
+      status: 'completed',
+    })
+    expect(runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM investigation_result_snapshot
+      WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = ?
+    `).get('workspace-demo', caseId, panelService.id)).toEqual({ count: 1 })
+    await expect(runtime.investigation.resolveForRequest(
+      'workspace-demo',
+      'epoch-1',
+      panelRequest.id,
+    )).resolves.toMatchObject({ source: 'investigation-agent' })
+    expect(briefProvider.requests).toHaveLength(10)
+
+    const repeatPanelDraft = await saveLaboratoryDraft(panelService.id, 8)
+    const repeatPanelRequest = (await issueLaboratory(repeatPanelDraft.draftVersion)).request
+    await runtime.dispatchPending()
+    detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    expect(detail.laboratoryRequests?.requests.find(item => (
+      item.id === repeatPanelRequest.id
+    ))).toMatchObject({
+      report: {
+        results: [{ code: '8480-6', value: 162 }, { code: '1988-5', value: 28 }],
+      },
+      status: 'reported',
+    })
+    expect(briefProvider.requests).toHaveLength(11)
+    expect(runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS count, COUNT(DISTINCT input_hash) AS hashes
+      FROM investigation_result_snapshot
+      WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = ?
+    `).get('workspace-demo', caseId, panelService.id)).toEqual({ count: 2, hashes: 2 })
+
+    const exactPanelService = laboratoryServiceSnapshotSchema.parse({
+      ...panelService,
+      componentServiceIds: [
+        'hospital-laboratory-service-systolic-exact',
+        'hospital-laboratory-service-diastolic-exact',
+      ],
+      id: 'hospital-laboratory-service-exact-panel-test',
+      localCode: 'CM-LAB-EXACT-PANEL-TEST',
+      nameEn: 'Synthetic blood pressure panel',
+      nameZh: '合成血压组合',
+      referenceConcept: {
+        code: '85354-9',
+        display: '合成血压组合',
+        id: 'loinc:synthetic:85354-9',
+        sourceLocator: 'synthetic:test:exact-panel',
+        system: 'http://loinc.org',
+        version: '2.83',
+      },
+      reportDefinition: {
+        conclusionTemplate: '合成血压组合结果已完成。',
+        results: [panelService.reportDefinition.results[0], {
+          referenceConcept: {
+            code: '8462-4',
+            display: '舒张压',
+            id: 'loinc:synthetic:8462-4',
+            sourceLocator: 'synthetic:test:diastolic-pressure',
+            system: 'http://loinc.org',
+            version: '2.83',
+          },
+          referenceRange: { high: 90, low: 60, text: '60-90 mmHg' },
+          unit: {
+            code: 'mm[Hg]',
+            display: 'mmHg',
+            system: 'http://unitsofmeasure.org',
+          },
+          valueType: 'quantity',
+        }],
+      },
+    })
+    runtime.database.driver.prepare(`
+      INSERT INTO hospital_service_catalog (
+        workspace_id, epoch, service_id, code, name_zh, name_en,
+        version, active, config_json
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?)
+    `).run(
+      'workspace-demo',
+      'epoch-1',
+      exactPanelService.id,
+      exactPanelService.localCode,
+      exactPanelService.nameZh,
+      exactPanelService.nameEn,
+      JSON.stringify({ laboratoryService: exactPanelService }),
+    )
+    const exactPanelDraft = await saveLaboratoryDraft(exactPanelService.id, 10)
+    const exactPanelRequest = (await issueLaboratory(exactPanelDraft.draftVersion)).request
+    await runtime.dispatchPending()
+    detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    expect(detail.laboratoryRequests?.requests.find(item => (
+      item.id === exactPanelRequest.id
+    ))).toMatchObject({
+      report: {
+        results: [{ code: '8480-6', value: 162 }, { code: '8462-4', value: 96 }],
+      },
+      status: 'reported',
+    })
+    expect(runtime.database.driver.prepare(`
+      SELECT source FROM investigation_result_snapshot
+      WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = ?
+    `).get('workspace-demo', caseId, exactPanelService.id)).toEqual({
+      source: 'synthea-exact',
+    })
+    expect(briefProvider.requests).toHaveLength(11)
+
+    const codeableService = laboratoryServiceSnapshotSchema.parse({
+      allowedIndicationCodes: ['clinical-evaluation'],
+      componentServiceIds: [],
+      doctorOrderable: true,
+      executingDepartmentId: 'department-laboratory',
+      id: 'hospital-laboratory-service-codeable-test',
+      localCode: 'CM-LAB-CODEABLE-TEST',
+      nameEn: 'Synthetic qualitative urine test',
+      nameZh: '合成尿液定性检验',
+      priceFen: 1_200,
+      referenceConcept: {
+        code: '94500-6',
+        display: '合成尿液定性检验',
+        id: 'loinc:synthetic:94500-6',
+        sourceLocator: 'synthetic:test:codeable',
+        system: 'http://loinc.org',
+        version: '2.83',
+      },
+      referenceReleaseId: 'synthetic-reference-release',
+      reportDefinition: {
+        conclusionTemplate: '合成尿液定性检验已完成。',
+        results: [{
+          allowedValues: [{
+            code: 'negative',
+            display: '阴性',
+            system: 'urn:clinmesh:synthetic:laboratory-result',
+          }, {
+            code: 'positive',
+            display: '阳性',
+            system: 'urn:clinmesh:synthetic:laboratory-result',
+          }],
+          referenceConcept: {
+            code: '94500-6',
+            display: '合成尿液定性检验',
+            id: 'loinc:synthetic:94500-6',
+            sourceLocator: 'synthetic:test:codeable',
+            system: 'http://loinc.org',
+            version: '2.83',
+          },
+          referenceRange: { text: '阴性' },
+          valueType: 'codeable',
+        }],
+      },
+      specimen: { code: 'LP7681-2', display: '尿液' },
+      serviceKind: 'laboratory',
+      tatMinutes: 30,
+      version: 1,
+    })
+    runtime.database.driver.prepare(`
+      INSERT INTO hospital_service_catalog (
+        workspace_id, epoch, service_id, code, name_zh, name_en,
+        version, active, config_json
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?)
+    `).run(
+      'workspace-demo',
+      'epoch-1',
+      codeableService.id,
+      codeableService.localCode,
+      codeableService.nameZh,
+      codeableService.nameEn,
+      JSON.stringify({ laboratoryService: codeableService }),
+    )
+    const codeableDraft = await saveLaboratoryDraft(codeableService.id, 12)
+    const codeableRequest = (await issueLaboratory(codeableDraft.draftVersion)).request
+    await runtime.dispatchPending()
+    detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    const codeableReported = detail.laboratoryRequests?.requests.find(item => (
+      item.id === codeableRequest.id
+    ))
+    expect(codeableReported).toMatchObject({
+      report: {
+        results: [{
+          code: '94500-6',
+          value: {
+            code: 'negative',
+            display: '阴性',
+            system: 'urn:clinmesh:synthetic:laboratory-result',
+          },
+        }],
+      },
+      status: 'reported',
+    })
+    const codeableResult = codeableReported?.report?.results[0]
+    const codeableSpecimenId = codeableReported?.report?.specimenId
+    expect(codeableResult).toBeDefined()
+    expect(codeableSpecimenId).toBeDefined()
+    expect(fhirResourceSchema.parse(await (await runtime.app.request(
+      `/fhir/R5/Observation/${codeableResult!.observationId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())).toMatchObject({
+      valueCodeableConcept: {
+        coding: [{
+          code: 'negative',
+          display: '阴性',
+          system: 'urn:clinmesh:synthetic:laboratory-result',
+        }],
+      },
+    })
+    expect(fhirResourceSchema.parse(await (await runtime.app.request(
+      `/fhir/R5/Specimen/${codeableSpecimenId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())).toMatchObject({
+      type: {
+        coding: [{ code: 'LP7681-2', display: '尿液', system: 'http://loinc.org' }],
+      },
+    })
+    expect(briefProvider.requests).toHaveLength(12)
 
     const snapshotBeforeReset = runtime.database.driver.prepare(`
       SELECT * FROM investigation_result_snapshot
@@ -1079,6 +1449,15 @@ describe('Synthetic Case generation HTTP contract', () => {
       epoch: 'epoch-2',
       scenarioRunId: 'scenario-run-2',
     })
+    expect(runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM hospital_service_catalog
+      WHERE workspace_id = ? AND epoch = 'epoch-2'
+        AND service_id IN (?, ?)
+    `).get(
+      'workspace-demo',
+      panelService.id,
+      exactPanelService.id,
+    )).toEqual({ count: 2 })
     const materializations = runtime.database.driver.prepare(`
       SELECT epoch, case_revision, brief_revision, patient_id, outpatient_case_id,
         registration_id, encounter_id, queue_task_id
@@ -1111,7 +1490,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       SELECT * FROM investigation_result_snapshot
       WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = 'lab-crp'
     `).get('workspace-demo', caseId)).toEqual(snapshotBeforeReset)
-    expect(briefProvider.requests).toHaveLength(5)
+    expect(briefProvider.requests).toHaveLength(12)
 
     const replayTriageResponse = await runtime.app.request(
       `/api/his/v1/encounters/${replayed.encounter_id}/actions/record-triage`,
@@ -1228,7 +1607,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       report: { results: [{ code: '1988-5', interpretation: 'high', value: 24 }] },
       status: 'reported',
     })
-    expect(briefProvider.requests).toHaveLength(5)
+    expect(briefProvider.requests).toHaveLength(12)
 
     const publicArtifacts = JSON.stringify({ beforeSelection, firstJob, leakingJob, secondJob })
     expect(publicArtifacts).not.toMatch(/privateEpisodeEvidence|index-condition|hiddenResourceReferences/)

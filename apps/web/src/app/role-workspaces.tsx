@@ -21,6 +21,7 @@ import { DoctorWorkspace } from './doctor-workspace.tsx'
 import { BillingWorkspace } from './billing-workspace.tsx'
 import { PharmacyWorkspace } from './pharmacy-workspace.tsx'
 import { ScenarioDataWorkspace } from './scenario-data-workspace.tsx'
+import { LaboratoryServiceWorkspace } from './laboratory-service-workspace.tsx'
 
 interface RoleWorkspaceProps {
   activeSection: WorkspaceSection
@@ -122,6 +123,7 @@ function AdminWorkspace({ locale, session }: Omit<RoleWorkspaceProps, 'activeSec
           </Alert>
         ) : null}
       </section>
+      <LaboratoryServiceWorkspace locale={locale} session={session} />
     </div>
   )
 }

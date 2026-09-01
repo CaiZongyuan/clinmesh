@@ -42,7 +42,28 @@ export class InvestigationResultRepository {
   ): InvestigationResultSnapshot | undefined {
     const row = this.#database.driver.prepare(`${selectSnapshot}
       WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = ?
+      ORDER BY created_at DESC, snapshot_id DESC
+      LIMIT 1
     `).get(workspaceId, caseId, catalogItemId)
+    return row === undefined ? undefined : this.#map(rowSchema.parse(row))
+  }
+
+  getByEvidence(
+    workspaceId: string,
+    caseId: string,
+    catalogItemId: string,
+    inputHash: string,
+  ): InvestigationResultSnapshot | undefined {
+    const row = this.#database.driver.prepare(`${selectSnapshot}
+      WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = ? AND input_hash = ?
+    `).get(workspaceId, caseId, catalogItemId, inputHash)
+    return row === undefined ? undefined : this.#map(rowSchema.parse(row))
+  }
+
+  getById(workspaceId: string, snapshotId: string): InvestigationResultSnapshot | undefined {
+    const row = this.#database.driver.prepare(`${selectSnapshot}
+      WHERE workspace_id = ? AND snapshot_id = ?
+    `).get(workspaceId, snapshotId)
     return row === undefined ? undefined : this.#map(rowSchema.parse(row))
   }
 
@@ -54,7 +75,7 @@ export class InvestigationResultRepository {
         requested_concept_json, result_json, source, model_id,
         prompt_version, prompt_hash, input_hash, output_hash, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT (workspace_id, case_id, catalog_item_id) DO NOTHING
+      ON CONFLICT (workspace_id, case_id, catalog_item_id, input_hash) DO NOTHING
     `).run(
       parsed.workspaceId,
       parsed.snapshotId,
@@ -70,7 +91,12 @@ export class InvestigationResultRepository {
       parsed.outputHash,
       parsed.createdAt,
     )
-    return this.getByCaseItem(parsed.workspaceId, parsed.caseId, parsed.catalogItemId)!
+    return this.getByEvidence(
+      parsed.workspaceId,
+      parsed.caseId,
+      parsed.catalogItemId,
+      parsed.inputHash,
+    )!
   }
 
   #map(row: z.infer<typeof rowSchema>): InvestigationResultSnapshot {

@@ -16,6 +16,8 @@ import {
   deletePrescriptionDraftRequestSchema,
   issueLaboratoryRequestRequestSchema,
   issuePrescriptionRequestSchema,
+  laboratoryServicePublicationJobSchema,
+  publishLaboratoryServicesRequestSchema,
   orderHospitalServiceRequestSchema,
   previewClinicalDocumentSignRequestSchema,
   reviseClinicalDocumentRequestSchema,
@@ -40,6 +42,10 @@ import {
 import type { IdentityService } from './application/identity-service.ts'
 import { IdentityError } from './application/identity-service.ts'
 import type { InvestigationService } from './application/investigation-service.ts'
+import type { LaboratoryServicePublisher } from './application/laboratory-service-publisher.ts'
+import {
+  LaboratoryServicePublisherError,
+} from './application/laboratory-service-publisher.ts'
 import type { ReferenceDataService } from './application/reference-data-service.ts'
 import { ReferenceDataError } from './application/reference-data-service.ts'
 import {
@@ -76,6 +82,7 @@ export interface CreateAppOptions {
   fhir?: FhirRuntime
   identity?: IdentityService
   investigation?: InvestigationService
+  laboratoryServicePublisher?: LaboratoryServicePublisher
   patientBrief?: PatientBriefService
   referenceData?: ReferenceDataService
   scenario?: ScenarioService
@@ -105,6 +112,7 @@ function apiErrorResponse(
   }
   if (
     error instanceof IdentityError
+    || error instanceof LaboratoryServicePublisherError
     || error instanceof PatientBriefError
     || error instanceof SyntheticCaseVisitError
     || error instanceof ReferenceDataError
@@ -423,6 +431,52 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(referenceData.searchLaboratory(
           actor,
           referenceCatalogQuery(context),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+  }
+
+  if (options.identity !== undefined && options.laboratoryServicePublisher !== undefined) {
+    const identity = options.identity
+    const publisher = options.laboratoryServicePublisher
+    const actor = (context: Context) => identity.resolveRequestActor(
+      context.req.raw.headers,
+      context.req.raw.method,
+      context.req.path,
+    )
+    app.get('/api/his/v1/admin/laboratory-services/candidates', async (context) => {
+      try {
+        return context.json(publisher.candidates(
+          await actor(context),
+          referenceCatalogQuery(context),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/admin/laboratory-services/actions/publish', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const request = publishLaboratoryServicesRequestSchema.parse(await context.req.json())
+        return context.json(publisher.enqueue({
+          context: await actor(context),
+          entries: request.input.entries,
+          idempotencyKey: requestIdempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error, 'The Laboratory Service publication request is invalid')
+      }
+    })
+    app.get('/api/his/v1/admin/laboratory-services/jobs/:jobId', async (context) => {
+      try {
+        const jobId = laboratoryServicePublicationJobSchema.shape.jobId.parse(
+          context.req.param('jobId'),
+        )
+        return context.json(publisher.getJob(
+          await actor(context),
+          jobId,
         ))
       } catch (error) {
         return apiErrorResponse(context, error)

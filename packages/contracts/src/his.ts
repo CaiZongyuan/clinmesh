@@ -1,9 +1,11 @@
 import { z } from 'zod'
 import { fhirResourceSchema } from './fhir.ts'
+import { investigationCodeableValueSchema } from './scenario.ts'
 import {
   referenceConceptSchema,
   referenceConceptSnapshotSchema,
   referenceDataItemIdSchema,
+  referenceLaboratoryDefinitionSchema,
   referenceMedicationProductSchema,
 } from './reference-data.ts'
 
@@ -314,14 +316,157 @@ export const investigationGenerationCapabilitySchema = z.discriminatedUnion('sup
   }).strict(),
 ])
 
-export const caseLaboratoryCatalogSearchSchema = z.object({
-  items: z.array(referenceConceptSchema.safeExtend({
-    domain: z.literal('laboratory'),
-    resultGeneration: investigationGenerationCapabilitySchema,
-  })),
+const laboratoryServiceResultDefinitionSchema = z.object({
+  allowedValues: z.array(z.union([
+    z.boolean(),
+    z.string().min(1).max(256),
+    investigationCodeableValueSchema,
+  ]))
+    .min(1)
+    .max(64)
+    .optional(),
+  referenceConcept: referenceConceptSnapshotSchema,
+  referenceRange: z.object({
+    high: z.number().finite().optional(),
+    low: z.number().finite().optional(),
+    text: z.string().min(1).max(500),
+  }).strict(),
+  unit: z.object({
+    code: z.string().min(1).max(128),
+    display: z.string().min(1).max(128),
+    system: z.literal('http://unitsofmeasure.org'),
+  }).strict().optional(),
+  valueType: z.enum(['boolean', 'codeable', 'quantity', 'string']),
+}).strict().superRefine((result, context) => {
+  const quantitative = result.valueType === 'quantity'
+  if (quantitative !== (result.unit !== undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Only a quantitative Laboratory Service result has a UCUM unit',
+      path: ['unit'],
+    })
+  }
+  if (quantitative && result.referenceRange.low === undefined
+    && result.referenceRange.high === undefined) {
+    context.addIssue({
+      code: 'custom',
+      message: 'A quantitative Laboratory Service result requires a numeric reference boundary',
+      path: ['referenceRange'],
+    })
+  }
+  if (!quantitative && result.allowedValues === undefined) {
+    context.addIssue({
+      code: 'custom',
+      message: 'A qualitative Laboratory Service result requires allowed values',
+      path: ['allowedValues'],
+    })
+  }
+  if (result.allowedValues !== undefined) {
+    const valuesMatchType = result.allowedValues.every((value) => {
+      if (result.valueType === 'boolean') return typeof value === 'boolean'
+      if (result.valueType === 'string') return typeof value === 'string'
+      if (result.valueType === 'codeable') return typeof value === 'object'
+      return false
+    })
+    if (!valuesMatchType) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Laboratory Service allowed values must match the result value type',
+        path: ['allowedValues'],
+      })
+    }
+  }
+})
+
+export const laboratoryServiceSnapshotSchema = z.object({
+  allowedIndicationCodes: z.array(z.string().min(1).max(64)).min(1),
+  componentServiceIds: z.array(z.string().min(1).max(512)),
+  doctorOrderable: z.boolean(),
+  executingDepartmentId: z.string().min(1).max(128),
+  id: z.string().min(1).max(512),
+  localCode: z.string().min(1).max(128),
+  nameEn: z.string().min(1).max(1_000),
+  nameZh: z.string().min(1).max(1_000),
+  priceFen: z.number().int().nonnegative(),
+  referenceConcept: referenceConceptSnapshotSchema,
+  referenceReleaseId: z.string().min(1).max(256),
+  reportDefinition: z.object({
+    conclusionTemplate: z.string().min(1).max(1_000),
+    results: z.array(laboratoryServiceResultDefinitionSchema).min(1).max(128),
+  }).strict().superRefine((report, context) => {
+    const ids = report.results.map(result => result.referenceConcept.id)
+    if (new Set(ids).size === ids.length) return
+    context.addIssue({
+      code: 'custom',
+      message: 'Laboratory Service report result concepts must be unique',
+      path: ['results'],
+    })
+  }),
+  specimen: z.object({
+    code: z.string().min(1).max(128),
+    display: z.string().min(1).max(1_000),
+  }).strict(),
+  serviceKind: z.literal('laboratory'),
+  tatMinutes: z.number().int().nonnegative(),
+  version: z.number().int().positive(),
+}).strict()
+
+export const laboratoryServiceCandidateSchema = z.object({
+  concept: referenceConceptSchema,
+  definition: referenceLaboratoryDefinitionSchema,
+  error: z.object({
+    code: z.string().min(1).max(128),
+    message: z.string().min(1).max(1_000),
+  }).strict().nullable(),
+  publishedServiceId: z.string().min(1).max(512).nullable(),
+  status: z.enum(['failed', 'published', 'publishing', 'unconfigured']),
+  version: z.number().int().nonnegative(),
+}).strict()
+
+export const laboratoryServiceCandidateSearchSchema = z.object({
+  items: z.array(laboratoryServiceCandidateSchema),
   page: z.number().int().positive(),
   pageSize: z.number().int().positive().max(50),
-  releaseId: z.string().min(1).max(256),
+  referenceReleaseId: z.string().min(1).max(256),
+  total: z.number().int().nonnegative(),
+}).strict()
+
+export const laboratoryServicePublicationJobSchema = z.object({
+  conceptIds: z.array(referenceDataItemIdSchema).min(1).max(50),
+  createdAt: z.iso.datetime({ offset: true }),
+  error: z.object({
+    code: z.string().min(1).max(128),
+    message: z.string().min(1).max(1_000),
+  }).strict().nullable(),
+  finishedAt: z.iso.datetime({ offset: true }).nullable(),
+  jobId: z.string().min(1).max(128),
+  publishedServiceIds: z.array(z.string().min(1).max(512)),
+  referenceReleaseId: z.string().min(1).max(256),
+  startedAt: z.iso.datetime({ offset: true }).nullable(),
+  status: z.enum(['failed', 'queued', 'running', 'succeeded']),
+  updatedAt: z.iso.datetime({ offset: true }),
+  workspaceId: z.string().min(1),
+}).strict()
+
+export const publishLaboratoryServicesRequestSchema = z.object({
+  input: z.object({
+    entries: z.array(z.object({
+      conceptId: referenceDataItemIdSchema,
+      expectedVersion: z.number().int().nonnegative(),
+    }).strict()).min(1).max(50),
+  }).strict(),
+}).strict()
+
+export const publishLaboratoryServicesResponseSchema = commandResponseSchema(
+  laboratoryServicePublicationJobSchema,
+)
+
+export const caseLaboratoryCatalogSearchSchema = z.object({
+  items: z.array(laboratoryServiceSnapshotSchema.safeExtend({
+    doctorOrderable: z.literal(true),
+  }).strict()),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive().max(50),
   total: z.number().int().nonnegative(),
 }).strict()
 
@@ -956,7 +1101,11 @@ const qualitativeLaboratoryResultSchema = z.object({
   interpretation: laboratoryResultInterpretationSchema,
   observationId: z.string().min(1),
   referenceRange: z.object({ text: z.string().min(1) }).strict(),
-  value: z.union([z.boolean(), z.string().min(1)]),
+  value: z.union([
+    z.boolean(),
+    z.string().min(1),
+    investigationCodeableValueSchema,
+  ]),
 }).strict()
 
 export const laboratoryResultSchema = z.union([
@@ -1097,6 +1246,7 @@ export const laboratoryRequestSchema = z.object({
   }).strict().optional(),
   id: z.string().min(1),
   indicationCode: z.string().min(1),
+  laboratoryService: laboratoryServiceSnapshotSchema.optional(),
   previousReports: z.array(laboratoryReportSchema).default([]),
   referenceConcept: referenceConceptSnapshotSchema.optional(),
   report: laboratoryReportSchema.optional(),
@@ -1121,7 +1271,12 @@ const completedCaseLaboratoryResultSchema = z.object({
     display: z.string().min(1),
     system: z.string().url().optional(),
   }).strict().optional(),
-  value: z.union([z.boolean(), z.number().finite(), z.string()]),
+  value: z.union([
+    z.boolean(),
+    z.number().finite(),
+    z.string(),
+    investigationCodeableValueSchema,
+  ]),
 }).strict()
 
 const completedCaseLaboratoryReportSchema = z.object({
@@ -1144,6 +1299,7 @@ export const completedCaseLaboratoryRequestSchema = z.object({
   correctionSupported: z.boolean().default(false),
   id: z.string().min(1),
   indicationCode: z.string().min(1),
+  laboratoryService: laboratoryServiceSnapshotSchema.optional(),
   previousReports: z.array(completedCaseLaboratoryReportSchema).default([]),
   referenceConcept: referenceConceptSnapshotSchema.optional(),
   report: completedCaseLaboratoryReportSchema.optional(),
@@ -1200,6 +1356,7 @@ export const laboratoryRequestStateSchema = z.object({
   draft: z.object({
     catalogItemId: laboratoryRequestCatalogItemIdSchema,
     indicationCode: z.string().min(1),
+    laboratoryService: laboratoryServiceSnapshotSchema.optional(),
     referenceConcept: referenceConceptSnapshotSchema.optional(),
   }).strict().optional(),
   draftVersion: z.number().int().nonnegative(),
@@ -1545,6 +1702,8 @@ export type EncounterCompletionTarget = z.infer<typeof encounterCompletionTarget
 export type LaboratoryRequestCatalogItemId = z.infer<typeof laboratoryRequestCatalogItemIdSchema>
 export type LaboratoryRequest = z.infer<typeof laboratoryRequestSchema>
 export type InvestigationGenerationCapability = z.infer<typeof investigationGenerationCapabilitySchema>
+export type LaboratoryServicePublicationJob = z.infer<typeof laboratoryServicePublicationJobSchema>
+export type LaboratoryServiceSnapshot = z.infer<typeof laboratoryServiceSnapshotSchema>
 export type LaboratoryReport = z.infer<typeof laboratoryReportSchema>
 export type BillingQueueItem = z.infer<typeof billingQueueSchema>['items'][number]
 export type PharmacyQueueItem = z.infer<typeof pharmacyQueueSchema>['items'][number]

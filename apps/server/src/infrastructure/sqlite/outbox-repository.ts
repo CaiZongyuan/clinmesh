@@ -155,7 +155,12 @@ export class OutboxRepository {
   complete(
     claim: OutboxClaim,
     completion: OutboxCompletion,
-    options: { maxAttempts: number; now: Date; retryDelayMs: number },
+    options: {
+      maxAttempts: number
+      maxRetryDelayMs: number
+      now: Date
+      retryDelayMs: number
+    },
   ): OutboxEventView {
     const now = options.now.toISOString()
     const retryable = completion === 'retryable-failed' && claim.attempt < options.maxAttempts
@@ -164,8 +169,12 @@ export class OutboxRepository {
       : completion === 'ambiguous'
         ? 'ambiguous'
         : 'failed'
+    const retryDelayMs = Math.min(
+      options.retryDelayMs * 2 ** Math.max(0, claim.attempt - 1),
+      options.maxRetryDelayMs,
+    )
     const nextAttemptAt = retryable
-      ? new Date(options.now.getTime() + options.retryDelayMs).toISOString()
+      ? new Date(options.now.getTime() + retryDelayMs).toISOString()
       : '9999-12-31T23:59:59.999Z'
 
     this.#database.driver.exec('BEGIN IMMEDIATE')

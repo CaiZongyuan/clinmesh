@@ -27,10 +27,13 @@ import {
   issuePrescriptionResponseSchema,
   laboratoryOrderResponseSchema,
   laboratoryRequestDraftResponseSchema,
+  laboratoryServiceCandidateSearchSchema,
+  laboratoryServicePublicationJobSchema,
   paymentPreviewResponseSchema,
   paymentResponseSchema,
   pharmacyQueueSchema,
   prescriptionDraftResponseSchema,
+  publishLaboratoryServicesResponseSchema,
   prescriptionReviewResponseSchema,
   dispenseResponseSchema,
   encounterCompletionPreviewSchema,
@@ -179,6 +182,40 @@ export function getReferenceDataReleases(signal?: AbortSignal) {
   return apiGet(
     '/api/sim/v1/reference-data/releases',
     referenceDataReleaseListSchema,
+    signal,
+  )
+}
+
+export function searchLaboratoryServiceCandidates(
+  query: string,
+  page = 1,
+  signal?: AbortSignal,
+) {
+  const parameters = new URLSearchParams({ page: String(page), pageSize: '20' })
+  if (query.length > 0) parameters.set('query', query)
+  return apiGet(
+    `/api/his/v1/admin/laboratory-services/candidates?${parameters.toString()}`,
+    laboratoryServiceCandidateSearchSchema,
+    signal,
+  )
+}
+
+export function publishLaboratoryServices(
+  entries: Array<{ conceptId: string; expectedVersion: number }>,
+  idempotencyKey: string,
+) {
+  return apiMutation(
+    '/api/his/v1/admin/laboratory-services/actions/publish',
+    publishLaboratoryServicesResponseSchema,
+    { input: { entries } },
+    { idempotencyKey },
+  )
+}
+
+export function getLaboratoryServicePublicationJob(jobId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/his/v1/admin/laboratory-services/jobs/${encodeURIComponent(jobId)}`,
+    laboratoryServicePublicationJobSchema,
     signal,
   )
 }

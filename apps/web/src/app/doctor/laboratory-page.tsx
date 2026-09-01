@@ -413,6 +413,9 @@ function LaboratoryRequestEditor({
                           <dt className="text-xs text-muted-foreground">{messages.laboratoryItem}</dt>
                           <dd className="mt-1 font-medium">
                             {(locale === 'zh-CN' ? draftItem?.nameZh : draftItem?.nameEn)
+                              ?? (locale === 'zh-CN'
+                                ? state.draft.laboratoryService?.nameZh
+                                : state.draft.laboratoryService?.nameEn)
                               ?? state.draft.referenceConcept?.display
                               ?? state.draft.catalogItemId}
                           </dd>
@@ -477,6 +480,9 @@ function LaboratoryRequestEditor({
               {state.requests.map((request) => {
                 const item = catalogById.get(request.catalogItemId)
                 const itemName = (locale === 'zh-CN' ? item?.nameZh : item?.nameEn)
+                  ?? (locale === 'zh-CN'
+                    ? request.laboratoryService?.nameZh
+                    : request.laboratoryService?.nameEn)
                   ?? request.referenceConcept?.display
                   ?? request.catalogItemId
                 const permanentlyUnsupported = request.generationError?.code === 'INVESTIGATION_UNSUPPORTED'
@@ -541,8 +547,11 @@ function LaboratoryRequestEditor({
               <RefreshCwIcon aria-hidden="true" className="animate-spin" />
               <AlertTitle>{messages.laboratoryResultPending}</AlertTitle>
               <AlertDescription>
-                {locale === 'zh-CN' ? item?.nameZh : item?.nameEn}
-                {item === undefined ? request.referenceConcept?.display : null}
+                {(locale === 'zh-CN' ? item?.nameZh : item?.nameEn)
+                  ?? (locale === 'zh-CN'
+                    ? request.laboratoryService?.nameZh
+                    : request.laboratoryService?.nameEn)
+                  ?? request.referenceConcept?.display}
               </AlertDescription>
             </Alert>
           )
@@ -554,7 +563,12 @@ function LaboratoryRequestEditor({
             <LaboratoryRequestReport
               action={actions.acknowledge}
               correctionAction={actions.correct}
-              itemName={(locale === 'zh-CN' ? item?.nameZh : item?.nameEn) ?? request.referenceConcept?.display ?? request.catalogItemId}
+              itemName={(locale === 'zh-CN' ? item?.nameZh : item?.nameEn)
+                ?? (locale === 'zh-CN'
+                  ? request.laboratoryService?.nameZh
+                  : request.laboratoryService?.nameEn)
+                ?? request.referenceConcept?.display
+                ?? request.catalogItemId}
               key={`report:${request.id}:${request.report.diagnosticReportId}`}
               locale={locale}
               messages={messages}
@@ -1019,12 +1033,13 @@ function laboratoryRequestStatusLabel(
 }
 
 function laboratoryResultValue(
-  value: boolean | number | string,
+  value: boolean | number | string | { code: string; display: string; system: string },
   unit: string | undefined,
   locale: WorkspaceLocale,
   messages: ReturnType<typeof getWorkspaceMessages>,
 ): string {
   if (typeof value === 'boolean') return value ? messages.positive : messages.negative
+  if (typeof value === 'object') return value.display
   const formatted = typeof value === 'number' ? new Intl.NumberFormat(locale).format(value) : value
   return unit === undefined ? formatted : `${formatted} ${unit}`
 }

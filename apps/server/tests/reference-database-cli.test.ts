@@ -72,8 +72,9 @@ describe('Reference Data database CLI', () => {
         '0006_cn-health-candidate-provenance.sql',
         '0007_reference-catalog-fts.sql',
         '0008_laboratory-metadata.sql',
+        '0009_laboratory-reference-relationships.sql',
       ],
-      schemaVersion: 8,
+      schemaVersion: 9,
     })
     const imported = await runReferenceDatabaseCli([
       'import', '--database', databasePath, '--manifest', manifestPath,
@@ -87,7 +88,7 @@ describe('Reference Data database CLI', () => {
     expect(imported).toHaveProperty('contentHash', expect.stringMatching(/^[a-f0-9]{64}$/))
     await expect(runReferenceDatabaseCli([
       'verify', '--database', databasePath,
-    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 8 })
+    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 9 })
     await expect(runReferenceDatabaseCli([
       'list', '--database', databasePath,
     ])).resolves.toEqual({ items: [expect.objectContaining({
@@ -255,7 +256,7 @@ describe('Reference Data database CLI', () => {
     })
     await expect(runReferenceDatabaseCli([
       'verify', '--database', databasePath,
-    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 8 })
+    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 9 })
 
     const tampered = openReferenceDatabase({ busyTimeoutMs: 5_000, databasePath })
     tampered.driver.prepare(`
@@ -384,6 +385,14 @@ describe('Reference Data database CLI', () => {
       applied: ['0008_laboratory-metadata.sql'],
       schemaVersion: 8,
     })
+    await copyFile(
+      join(sourceMigrationDirectory, '0009_laboratory-reference-relationships.sql'),
+      join(migrationDirectory, '0009_laboratory-reference-relationships.sql'),
+    )
+    expect(applyReferenceMigrations(database, migrationDirectory)).toEqual({
+      applied: ['0009_laboratory-reference-relationships.sql'],
+      schemaVersion: 9,
+    })
     expect(database.driver.pragma('foreign_key_check')).toEqual([])
     for (const table of [
       'reference_concept',
@@ -401,7 +410,7 @@ describe('Reference Data database CLI', () => {
     expect(verifyReferenceDatabase(database)).toEqual({
       integrity: 'ok',
       releaseCount: 1,
-      schemaVersion: 8,
+      schemaVersion: 9,
     })
     expect(listReferenceDataReleases(database).items[0]).toMatchObject({
       contentHash: oldContentHash,

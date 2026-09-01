@@ -5,6 +5,7 @@ import type {
 } from '@clinmesh/contracts/his'
 import type {
   ReferenceConcept,
+  ReferenceConceptSnapshot,
   ReferenceDiagnosisCatalogSearch,
   ReferenceMedicationCatalogSearch,
   ReferenceMedicationProduct,
@@ -78,8 +79,6 @@ const copy = {
     laboratoryDescription: 'Current laboratory catalog',
     laboratoryPlaceholder: 'Name or LOINC (2+ characters)',
     laboratorySearchInput: 'Search laboratory catalog',
-    laboratorySupported: 'Available',
-    laboratoryUnsupported: 'Unavailable for this case',
     localCatalog: 'Local common',
     medicationDescription: 'Current medication product catalog',
     medicationPlaceholder: 'Generic name, brand, manufacturer, or code',
@@ -114,8 +113,6 @@ const copy = {
     laboratoryDescription: '当前检验目录',
     laboratoryPlaceholder: '检验名称或 LOINC（至少 2 字）',
     laboratorySearchInput: '搜索检验目录',
-    laboratorySupported: '可开立',
-    laboratoryUnsupported: '当前病例不可生成',
     localCatalog: '本院常用',
     medicationDescription: '当前药品产品目录',
     medicationPlaceholder: '通用名、商品名、厂家或编码',
@@ -490,7 +487,7 @@ export interface LaboratoryCatalogSelection {
   catalogItemId: string
   code: string
   display: string
-  referenceConcept?: ReferenceConcept
+  referenceConcept?: ReferenceConceptSnapshot
 }
 
 export function LaboratoryCatalogDialog({
@@ -562,30 +559,34 @@ export function LaboratoryCatalogDialog({
                     <TableHead className="w-12"><span className="sr-only">{messages.choose}</span></TableHead>
                     <TableHead>{locale === 'zh-CN' ? '检验项目' : 'Laboratory item'}</TableHead>
                     <TableHead className="w-44">LOINC</TableHead>
-                    <TableHead className="w-36">{locale === 'zh-CN' ? '结果类型' : 'Result type'}</TableHead>
-                    <TableHead className="w-40">{locale === 'zh-CN' ? '当前病例' : 'Current case'}</TableHead>
+                    <TableHead className="w-36">{locale === 'zh-CN' ? '报告结构' : 'Report structure'}</TableHead>
+                    <TableHead className="w-32">{locale === 'zh-CN' ? '标本' : 'Specimen'}</TableHead>
+                    <TableHead className="w-24">TAT</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {visibleResults.map(item => {
                     const selection: LaboratoryCatalogSelection = {
                       catalogItemId: item.id,
-                      code: item.code,
-                      display: item.display,
-                      referenceConcept: item,
+                      code: item.referenceConcept.code,
+                      display: locale === 'zh-CN' ? item.nameZh : item.nameEn,
+                      referenceConcept: item.referenceConcept,
                     }
-                    const inactive = item.status !== 'active'
-                    const unavailable = inactive || !item.resultGeneration.supported
                     const label = `${messages.choose} ${selection.display} ${selection.code}`
+                    const resultStructure = item.reportDefinition.results.length > 1
+                      ? locale === 'zh-CN'
+                        ? `组合 · ${item.reportDefinition.results.length} 项`
+                        : `Panel · ${item.reportDefinition.results.length} items`
+                      : item.reportDefinition.results[0]?.valueType ?? '-'
                     return (
                       <TableRow
-                        className={cn(unavailable && 'opacity-50', selected?.catalogItemId === selection.catalogItemId && 'bg-muted/70')}
+                        className={cn(selected?.catalogItemId === selection.catalogItemId && 'bg-muted/70')}
                         key={selection.catalogItemId}
-                        onDoubleClick={() => { if (!unavailable) confirm(selection) }}
+                        onDoubleClick={() => confirm(selection)}
                       >
                         <TableCell>
                           <SelectionButton
-                            disabled={unavailable}
+                            disabled={false}
                             label={label}
                             onSelect={() => setSelected(selection)}
                             selected={selected?.catalogItemId === selection.catalogItemId}
@@ -593,14 +594,9 @@ export function LaboratoryCatalogDialog({
                         </TableCell>
                         <TableCell className="font-medium">{selection.display}</TableCell>
                         <TableCell className="font-mono text-xs">{selection.code}</TableCell>
-                        <TableCell>
-                          {item.laboratory?.resultType ?? '-'}
-                        </TableCell>
-                        <TableCell>
-                          {item.resultGeneration.supported
-                            ? messages.laboratorySupported
-                            : messages.laboratoryUnsupported}
-                        </TableCell>
+                        <TableCell>{resultStructure}</TableCell>
+                        <TableCell>{item.specimen.display}</TableCell>
+                        <TableCell className="tabular-nums">{item.tatMinutes} min</TableCell>
                       </TableRow>
                     )
                   })}

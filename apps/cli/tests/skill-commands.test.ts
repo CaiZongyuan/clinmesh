@@ -6,6 +6,7 @@ import { type Command, type Option } from 'commander'
 import { createCliProgram } from '../src/cli.ts'
 
 const expectedSkills = [
+  'clinmesh-administrator',
   'clinmesh-billing',
   'clinmesh-doctor',
   'clinmesh-fhir',

@@ -106,7 +106,7 @@ export const scenarioUcumUnitSchema = z.preprocess((value) => {
 }, canonicalUcumUnitSchema)
 
 export const scenarioLoincCodingSchema = z.object({
-  code: z.string().regex(/^\d{1,5}-\d$/),
+  code: z.string().regex(/^\d{1,6}-\d$/),
   display: z.string().min(1),
   system: z.literal('http://loinc.org'),
   version: z.literal('2.83'),
@@ -838,6 +838,12 @@ export const startSyntheticCaseResultSchema = z.object({
   syntheticCaseId: z.string().min(1).max(128),
 }).strict()
 
+export const investigationCodeableValueSchema = z.object({
+  code: z.string().min(1).max(256),
+  display: z.string().min(1).max(1_000),
+  system: z.string().url(),
+}).strict()
+
 export const investigationResultContentSchema = z.object({
   conclusion: z.string().trim().min(1).max(1_000),
   results: z.array(z.object({
@@ -854,10 +860,24 @@ export const investigationResultContentSchema = z.object({
       display: z.string().min(1).max(128),
       system: z.literal('http://unitsofmeasure.org'),
     }).strict().optional(),
-    value: z.union([z.boolean(), z.number().finite(), z.string().min(1).max(1_000)]),
-  }).strict()).length(1),
+    value: z.union([
+      z.boolean(),
+      z.number().finite(),
+      z.string().min(1).max(1_000),
+      investigationCodeableValueSchema,
+    ]),
+  }).strict()).min(1).max(128),
 }).strict().superRefine((content, context) => {
+  const codes = new Set<string>()
   content.results.forEach((result, index) => {
+    if (codes.has(result.code)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Investigation result codes must be unique',
+        path: ['results', index, 'code'],
+      })
+    }
+    codes.add(result.code)
     if (
       typeof result.value === 'number'
       && result.referenceRange.low === undefined

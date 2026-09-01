@@ -6,7 +6,7 @@ Ask only a `questionCode` returned by the current case. Each answer appends a Co
 
 ## Laboratory and services
 
-Search the case-scoped laboratory catalog and require a supported result-generation capability before selecting a Reference item. The global reference catalog defines concepts but cannot prove that the current case can produce a result. When the case query has no Reference items, use the hospital clinical catalog as the local fallback; an explicit unsupported capability cannot be bypassed this way. Save one laboratory request draft and issue it only from its current version. Payment and LIS processing belong to downstream actors. A failed Investigation generation may be retried through its explicit command. The responsible doctor acknowledges the latest final report; an administrator uses a separate Grant for the controlled correction command, which the server binds to `lis-system`.
+Search the case-scoped laboratory catalog and select one active Hospital Laboratory Service. The global Reference catalog defines terminology and cannot be submitted as a Clinical Request. Save one laboratory request draft and issue it only from its current version; the server freezes the service and report definition. Payment and LIS processing belong to downstream actors. A failed Investigation generation may be retried through its explicit command. The responsible doctor acknowledges the latest final report; an administrator uses a separate Grant for the controlled correction command, which the server binds to `lis-system`.
 
 Hospital Service order and completion are separate high-risk Commands and create normal ServiceRequest, Task, and ChargeItem facts.
 

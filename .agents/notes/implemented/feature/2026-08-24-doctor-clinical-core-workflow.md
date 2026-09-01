@@ -8,6 +8,8 @@ Status: implemented
 
 ClinMesh 同时保留既有多岗位发热闭环和医生直达核心临床链路。医生直达不能伪造分诊、收费或检验岗位行为，也不能破坏既有闭环资源和状态机，因此两类入口必须共享正式 FHIR 事实，并由各自领域 owner 管理草稿、命令和进度。
 
+本 Note 的医生主链和独立申请生命周期继续有效；检验目录、panel/定性报告、Catalog Enrichment、自动重试和 Snapshot 复查语义由[完整检验参考库与本院服务发布](../architecture/2026-09-01-laboratory-service-publication.md)取代。
+
 ## Decision
 
 普通门诊发热病例由连续的医生核心链路处理：选择 Virtual Patient、开始接诊、记录 Consultation Record、编辑并签署结构化病历、开具检查、接收和查看报告、确认诊断、开具处方或明确无需用药、完成 Encounter，并在已完诊病例中查看只读详情和统一业务时间线。一个 Encounter 贯穿整条诊疗链，不因检查等待、报告返回或再次进入医生工作台而新建 Encounter。
@@ -18,13 +20,13 @@ Virtual Patient 是独立于 Patient Identity 和 Encounter 的候选病例事�
 
 开始 Virtual Patient 接诊时同时建立病例级 Consultation。医生只能选择 Scenario 提供的受控问题，每次回答作为有序、不可变、带版本的 Consultation Record 追加；重试、并发冲突、规则保密与读取合同由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。问答记录与 `clinical_draft` 分别持久化，刷新后可恢复，但不会自动成为医生负责的正式病历。
 
-临床文书支持草稿、版本、签署和签署后 Clinical Document Revision。检查请求支持草稿、开具、受理、执行中、已报告和医生已阅；当前独立检查目录包含血常规和 C 反应蛋白。Observation 保存结构化结果，DiagnosticReport 保存可读报告并引用结果；已签发报告不可删除，更正创建新版本和替代关系。诊断与 Prescription 分别支持草稿和正式状态，不把页面切换当作签发。
+临床文书支持草稿、版本、签署和签署后 Clinical Document Revision。检查请求支持草稿、开具、受理、执行中、已报告和医生已阅；独立检验目录只包含本院已发布 Hospital Laboratory Service。Observation 保存数量或定性结构化结果，DiagnosticReport 保存可读报告并引用单项或 panel 结果；已签发报告不可删除，更正创建新版本和替代关系。诊断与 Prescription 分别支持草稿和正式状态，不把页面切换当作签发。
 
 带 Consultation 的医生病例由独立检查申请聚合拥有草稿版本和正式状态。草稿删除与开具都递增同一个单调版本，开具才创建 ServiceRequest 和以该请求为 `focus` 的执行 Task；同一病例中同项目只允许一个未取消申请。LIS 通过持久 outbox 推进受理与执行，只有尚未受理的 `issued` 申请可普通取消，晚到受理事件不能恢复已取消申请。详细生命周期和 FHIR 映射由[门诊闭环](../../../../docs/architecture.md#81-门诊闭环)拥有。
 
-执行中的独立申请由下一条持久 outbox 事件签发报告。确定性结果属于 Scenario Hidden Fact；LIS Command 为每个申请创建关联的 Specimen、数值 Observation、DiagnosticReport 和 Provenance，并完成 ServiceRequest 与执行 Task，但保留 Encounter、医生 Queue Task 和 Report Acknowledgement 的独立生命周期。申请只保存 DiagnosticReport 关联，医生读模型从已签发 FHIR 资源还原数值、UCUM 单位、参考范围、异常标识和结论，避免目录或后续模板变化改写历史报告。稳定资源 ID 与申请级终态检查共同覆盖同 event ID 重放和不同 event ID 重复投递。
+执行中的独立申请由持久 outbox 签发报告。LIS Command 为每个申请创建关联的 Specimen、结构化 Observation、DiagnosticReport 和 Provenance，并完成 ServiceRequest 与执行 Task，但保留 Encounter、医生 Queue Task 和 Report Acknowledgement 的独立生命周期。申请只保存 DiagnosticReport 关联，医生读模型从已签发 FHIR 资源还原值、单位、参考范围、异常标识和结论，避免目录或后续模板变化改写历史报告。稳定资源 ID、申请终态和 Investigation Result Snapshot 共同覆盖重复投递。
 
-既有多岗位发热闭环继续使用带收费的 `issue-laboratory-order` 兼容命令和发热检验组合。独立入口只接受血常规与 C 反应蛋白，不创建 ChargeItem，也不完成医生 Queue Task；两条路径共享 FHIR 资源类型，但不共享草稿、领域状态机或计费触发点。
+既有多岗位发热闭环继续使用带收费的 `issue-laboratory-order` 兼容命令和发热检验组合。独立入口只接受本院已发布 Hospital Laboratory Service，不创建 ChargeItem，也不完成医生 Queue Task；两条路径共享 FHIR 资源类型，但不共享草稿、领域状态机或计费触发点。
 
 Encounter Completion Policy 只汇总各 owner 已确认的事实，不复制其状态机。医生只有在主诊断已确认、病历已签署、必要检查已报告且完成 Report Acknowledgement、处方已开具或明确无需用药、没有未处理草稿、处置和随访完整时才能完成 Encounter。完诊后病例进入只读查询入口，展示 Consultation Record、病历版本、检查、报告、诊断、处方和业务时间线；更正通过原模块的受控命令产生新事实，不解锁并覆盖历史内容。
 

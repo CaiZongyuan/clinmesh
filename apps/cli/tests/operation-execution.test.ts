@@ -20,7 +20,6 @@ describe('catalog-backed operation execution', () => {
       items: [],
       page: 2,
       pageSize: 20,
-      releaseId: 'reference-release-current',
       total: 0,
     })
 

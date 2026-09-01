@@ -515,11 +515,11 @@ describe('Reference Data HTTP contract', () => {
       { headers: { cookie: doctorCookie } },
     )
     expect(caseLaboratoryCatalogResponse.status).toBe(200)
-    expect(caseLaboratoryCatalogSearchSchema.parse(
-      await caseLaboratoryCatalogResponse.json(),
-    ).items[0]?.resultGeneration).toEqual({
-      reason: 'no-case-source',
-      supported: false,
+    const caseLaboratoryCatalog = await caseLaboratoryCatalogResponse.json()
+    expect(JSON.stringify(caseLaboratoryCatalog)).not.toContain('resultGeneration')
+    expect(caseLaboratoryCatalogSearchSchema.parse(caseLaboratoryCatalog)).toMatchObject({
+      items: [],
+      total: 0,
     })
 
     const laboratoryDraftResponse = await first.runtime.app.request(
@@ -541,7 +541,7 @@ describe('Reference Data HTTP contract', () => {
     expect(apiErrorSchema.parse(await laboratoryDraftResponse.json())).toMatchObject({
       error: {
         code: 'CATALOG_CONFLICT',
-        message: 'The investigation cannot generate a result for this case and catalog item',
+        message: 'The catalog item is unavailable',
       },
     })
 

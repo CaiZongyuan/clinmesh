@@ -75,6 +75,54 @@ export const referenceConceptSnapshotSchema = z.object({
   version: z.string().min(1).max(256),
 }).strict()
 
+export const referenceLaboratoryDefinitionSchema = z.object({
+  classCode: z.string().min(1).max(128).nullable(),
+  classType: z.number().int().min(1).max(4).nullable(),
+  component: z.string().min(1).max(1_000).nullable(),
+  conceptId: referenceDataItemIdSchema,
+  methodType: z.string().min(1).max(1_000).nullable(),
+  orderObservation: z.enum(['Order', 'Observation', 'Both', 'Subset']).nullable(),
+  panelType: z.string().min(1).max(128).nullable(),
+  property: z.string().min(1).max(128).nullable(),
+  scaleType: z.string().min(1).max(128).nullable(),
+  sourceLocator: z.string().min(1).max(1_000),
+  system: z.string().min(1).max(1_000).nullable(),
+  timeAspect: z.string().min(1).max(128).nullable(),
+}).strict()
+
+export const referenceLaboratoryUnitSchema = z.object({
+  code: z.string().min(1).max(128),
+  conceptId: referenceDataItemIdSchema,
+  kind: z.literal('example'),
+  ordinal: z.number().int().positive(),
+  sourceLocator: z.string().min(1).max(1_000),
+}).strict()
+
+export const referenceLaboratorySpecimenSchema = z.object({
+  conceptId: referenceDataItemIdSchema,
+  display: z.string().min(1).max(1_000),
+  linkType: z.literal('Primary'),
+  partName: z.string().min(1).max(1_000),
+  partNumber: z.string().min(1).max(128),
+  sourceLocator: z.string().min(1).max(1_000),
+}).strict()
+
+export const referenceLaboratoryPanelMemberSchema = z.object({
+  memberConceptId: referenceDataItemIdSchema,
+  memberOrder: z.number().int().nonnegative(),
+  panelConceptId: referenceDataItemIdSchema,
+  relationship: z.literal('contains'),
+  sourceLocator: z.string().min(1).max(1_000),
+}).strict()
+
+export const referenceLaboratoryRecordSchema = z.object({
+  concept: referenceConceptSchema,
+  definition: referenceLaboratoryDefinitionSchema,
+  panelMembers: z.array(referenceLaboratoryPanelMemberSchema),
+  specimens: z.array(referenceLaboratorySpecimenSchema),
+  units: z.array(referenceLaboratoryUnitSchema),
+}).strict()
+
 export const referenceMedicationProductSchema = z.object({
   approvalNumber: z.string().min(1).max(256),
   brandName: z.string().min(1).max(500).nullable(),
@@ -116,6 +164,10 @@ export const referenceValueSetEntrySchema = z.object({
 
 export const referenceArtifactSchema = z.object({
   concepts: z.array(referenceConceptSchema),
+  laboratoryDefinitions: z.array(referenceLaboratoryDefinitionSchema).default([]),
+  laboratoryPanelMembers: z.array(referenceLaboratoryPanelMemberSchema).default([]),
+  laboratorySpecimens: z.array(referenceLaboratorySpecimenSchema).default([]),
+  laboratoryUnits: z.array(referenceLaboratoryUnitSchema).default([]),
   medicationProducts: z.array(referenceMedicationProductSchema).default([]),
   schemaVersion: z.literal('1'),
   services: z.array(referenceMedicalServiceSchema).default([]),
@@ -141,7 +193,7 @@ export const cnHealthCandidateProvenanceSchema = z.object({
     'nhc-icd10-clinical',
     'nhsa-drugs',
   ]),
-  datasetSchemaVersion: z.literal(1),
+  datasetSchemaVersion: z.union([z.literal(1), z.literal(2)]),
   recordCount: z.number().int().nonnegative(),
   releaseId: z.string().min(1).max(256),
   sourceVersion: z.string().min(1).max(256),
@@ -195,6 +247,10 @@ export const referenceDataReleaseSummarySchema = z.object({
   conceptCount: z.number().int().nonnegative(),
   contentHash: sha256Schema,
   createdAt: z.iso.datetime({ offset: true }),
+  laboratoryDefinitionCount: z.number().int().nonnegative().default(0),
+  laboratoryPanelMemberCount: z.number().int().nonnegative().default(0),
+  laboratorySpecimenCount: z.number().int().nonnegative().default(0),
+  laboratoryUnitCount: z.number().int().nonnegative().default(0),
   releaseId: z.string().min(1).max(256),
   medicationProductCount: z.number().int().nonnegative().default(0),
   serviceCount: z.number().int().nonnegative().default(0),
@@ -250,6 +306,7 @@ export type ReferenceArtifact = z.infer<typeof referenceArtifactSchema>
 export type ReferenceArtifactFormat = z.infer<typeof referenceArtifactFormatSchema>
 export type CnHealthCandidateProvenance = z.infer<typeof cnHealthCandidateProvenanceSchema>
 export type ReferenceConcept = z.infer<typeof referenceConceptSchema>
+export type ReferenceConceptSnapshot = z.infer<typeof referenceConceptSnapshotSchema>
 export type ReferenceDataProvenance = z.infer<typeof referenceDataProvenanceSchema>
 export type ReferenceDiagnosisCatalogSearch = z.infer<typeof referenceDiagnosisCatalogSearchSchema>
 export type ReferenceLaboratoryCatalogSearch = z.infer<typeof referenceLaboratoryCatalogSearchSchema>
@@ -258,6 +315,11 @@ export type ReferenceDataReleaseList = z.infer<typeof referenceDataReleaseListSc
 export type ReferenceDataReleaseSummary = z.infer<typeof referenceDataReleaseSummarySchema>
 export type ReferenceImportManifest = z.infer<typeof referenceImportManifestSchema>
 export type ReferenceImportDiagnostics = z.infer<typeof referenceImportDiagnosticsSchema>
+export type ReferenceLaboratoryDefinition = z.infer<typeof referenceLaboratoryDefinitionSchema>
+export type ReferenceLaboratoryPanelMember = z.infer<typeof referenceLaboratoryPanelMemberSchema>
+export type ReferenceLaboratoryRecord = z.infer<typeof referenceLaboratoryRecordSchema>
+export type ReferenceLaboratorySpecimen = z.infer<typeof referenceLaboratorySpecimenSchema>
+export type ReferenceLaboratoryUnit = z.infer<typeof referenceLaboratoryUnitSchema>
 export type ReferenceMedicationProduct = z.infer<typeof referenceMedicationProductSchema>
 export type ReferenceMappingPackageProvenance = z.infer<typeof referenceMappingPackageProvenanceSchema>
 export type ReferenceMedicalService = z.infer<typeof referenceMedicalServiceSchema>

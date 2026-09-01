@@ -5,7 +5,7 @@ import {
 import { describe, expect, it } from 'vitest'
 
 describe('Investigation Result Snapshot contract', () => {
-  it('freezes exactly one requested structured result with provenance', () => {
+  it('freezes a requested structured result with provenance', () => {
     expect(investigationResultSnapshotSchema.parse({
       caseId: 'synthetic-case-001',
       catalogItemId: 'laboratory:body-temperature',
@@ -45,6 +45,35 @@ describe('Investigation Result Snapshot contract', () => {
       source: 'investigation-agent',
       workspaceId: 'workspace-demo',
     }).content.results).toHaveLength(1)
+  })
+
+  it('accepts a complete panel and rejects repeated result codes', () => {
+    const result = {
+      code: '6690-2',
+      display: '白细胞计数',
+      interpretation: 'normal' as const,
+      referenceRange: { high: 10, low: 4, text: '4.0-10.0 x10^9/L' },
+      unit: {
+        code: '10*9/L',
+        display: '10*9/L',
+        system: 'http://unitsofmeasure.org' as const,
+      },
+      value: 7.5,
+    }
+    expect(investigationResultContentSchema.parse({
+      conclusion: '血常规结果已完成。',
+      results: [result, {
+        ...result,
+        code: '718-7',
+        display: '血红蛋白',
+        unit: { ...result.unit, code: 'g/L', display: 'g/L' },
+        value: 135,
+      }],
+    }).results).toHaveLength(2)
+    expect(() => investigationResultContentSchema.parse({
+      conclusion: '重复结果。',
+      results: [result, result],
+    })).toThrow('Investigation result codes must be unique')
   })
 
   it('rejects a quantitative result without numeric reference boundaries', () => {

@@ -703,6 +703,17 @@ export class ScenarioService {
       workspaceId: context.workspaceId,
     })
     this.#database.driver.prepare(`
+      INSERT OR REPLACE INTO hospital_service_catalog (
+        workspace_id, epoch, service_id, code, name_zh, name_en,
+        version, active, config_json
+      )
+      SELECT workspace_id, ?, service_id, code, name_zh, name_en,
+        version, active, config_json
+      FROM hospital_service_catalog
+      WHERE workspace_id = ? AND epoch = ?
+        AND json_type(config_json, '$.laboratoryService') = 'object'
+    `).run(epoch, context.workspaceId, context.epoch)
+    this.#database.driver.prepare(`
       UPDATE outbox_event
       SET status = 'abandoned', lease_owner = NULL, leased_until = NULL, updated_at = ?
       WHERE workspace_id = ? AND epoch = ? AND status IN ('queued', 'claimed')

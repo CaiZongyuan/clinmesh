@@ -30,7 +30,7 @@ clinmesh prescription withdraw --input @withdrawal.json --idempotency-key <key>
 
 ## Laboratory and services
 
-Laboratory draft, issue, cancellation, generation retry and report acknowledgement are separate states. Search the laboratory catalog in the current case before saving a draft. Select only an item whose result-generation capability is supported; an unsupported reason is a stop condition for that item. If the case query returns no Reference items, read the hospital clinical catalog and choose a local item instead. Do not use a local item to bypass an explicit unsupported Reference item. Only acknowledge a signed current report. Report correction requires an administrator Grant and creates a new immutable report chain. Hospital Service order and completion use their current ServiceRequest versions.
+Laboratory draft, issue, cancellation, generation retry and report acknowledgement are separate states. Search the current case laboratory catalog before saving a draft; every returned item is an active, doctor-orderable Hospital Laboratory Service. Use its Hospital Service ID and current versioned report definition. A global Reference Concept is terminology, not an orderable service, and cannot be submitted as the catalog item. Only acknowledge a signed current report. Report correction requires an administrator Grant and creates a new immutable report chain. Other Hospital Service order and completion operations use their current ServiceRequest versions.
 
 ```bash
 clinmesh doctor case laboratory-catalog search --case-id <case-id> --query <term>

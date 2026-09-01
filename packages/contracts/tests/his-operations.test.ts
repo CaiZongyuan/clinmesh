@@ -200,7 +200,7 @@ describe('HIS operation catalog', () => {
     })).toMatchObject({ diagnosisCatalogItemId: 'diagnosis:hypertension' })
   })
 
-  it('publishes the case-scoped laboratory catalog with result-generation capability', () => {
+  it('publishes the case-scoped Hospital Laboratory Service catalog', () => {
     const operation = getHisOperation('doctor.case.laboratory-catalog.search')
     expect(operation).toMatchObject({
       cliPath: ['doctor', 'case', 'laboratory-catalog', 'search'],
@@ -224,24 +224,56 @@ describe('HIS operation catalog', () => {
     })
     expect(operation.output.parse({
       items: [{
-        code: '6690-2',
-        display: '白细胞计数',
-        domain: 'laboratory',
-        id: 'laboratory:wbc',
-        resultGeneration: { source: 'synthea-exact', supported: true },
-        sourceLocator: 'concepts[0]',
-        status: 'active',
-        system: 'http://loinc.org',
-        version: '2.83',
+        allowedIndicationCodes: ['clinical-evaluation'],
+        componentServiceIds: [],
+        doctorOrderable: true,
+        executingDepartmentId: 'department-laboratory',
+        id: 'hospital-laboratory-service-wbc',
+        localCode: 'CM-LAB-6690-2',
+        nameEn: 'White blood cell count',
+        nameZh: '白细胞计数',
+        priceFen: 800,
+        referenceConcept: {
+          code: '6690-2',
+          display: '白细胞计数',
+          id: 'loinc:synthetic:6690-2',
+          sourceLocator: 'concepts[0]',
+          system: 'http://loinc.org',
+          version: '2.83',
+        },
+        referenceReleaseId: 'reference-release-current',
+        reportDefinition: {
+          conclusionTemplate: '白细胞计数结果已完成。',
+          results: [{
+            referenceConcept: {
+              code: '6690-2',
+              display: '白细胞计数',
+              id: 'loinc:synthetic:6690-2',
+              sourceLocator: 'concepts[0]',
+              system: 'http://loinc.org',
+              version: '2.83',
+            },
+            referenceRange: { high: 10, low: 4, text: '4.0-10.0 x10^9/L' },
+            unit: {
+              code: '10*9/L',
+              display: '10*9/L',
+              system: 'http://unitsofmeasure.org',
+            },
+            valueType: 'quantity',
+          }],
+        },
+        specimen: { code: 'LP7057-5', display: '血液' },
+        serviceKind: 'laboratory',
+        tatMinutes: 20,
+        version: 1,
       }],
       page: 2,
       pageSize: 20,
-      releaseId: 'reference-release-current',
       total: 21,
     })).toMatchObject({
       items: [{
-        id: 'laboratory:wbc',
-        resultGeneration: { source: 'synthea-exact', supported: true },
+        id: 'hospital-laboratory-service-wbc',
+        referenceConcept: { code: '6690-2' },
       }],
     })
   })
@@ -441,6 +473,7 @@ describe('HIS operation catalog', () => {
     expect(Object.fromEntries(writes
       .filter(candidate => candidate.commandOperation !== candidate.id)
       .map(candidate => [candidate.id, candidate.commandOperation]))).toEqual({
+      'admin.laboratory-services.publish': 'laboratory-service-publication.create',
       [clinicalDocumentOperationIds.draftSet]: clinicalDocumentOperationIds.saveDraft,
       [clinicalDocumentOperationIds.previewSign]: clinicalDocumentOperationIds.storedPreviewSign,
       [clinicalDocumentOperationIds.sign]: clinicalDocumentOperationIds.storedSign,
@@ -471,6 +504,7 @@ describe('HIS operation catalog', () => {
     }
 
     expect(counts).toEqual({
+      'clinmesh-administrator': 3,
       'clinmesh-billing': 3,
       'clinmesh-doctor': 33,
       'clinmesh-fhir': 5,

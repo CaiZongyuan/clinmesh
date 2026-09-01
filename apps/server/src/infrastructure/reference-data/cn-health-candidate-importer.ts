@@ -29,11 +29,16 @@ const candidateManifestSchema = z.object({
   }).passthrough()).min(1),
   canonical: z.object({
     recordCount: z.number().int().nonnegative(),
-    serialization: z.literal('canonical-ndjson-v1'),
+    serialization: z.enum(['canonical-ndjson-v1', 'canonical-table-hashes-v1']),
     sha256: sha256Schema,
+    tables: z.array(z.object({
+      recordCount: z.number().int().nonnegative(),
+      sha256: sha256Schema,
+      table: z.string().min(1),
+    }).strict()).optional(),
   }).passthrough(),
   dataset: z.object({
-    datasetSchemaVersion: z.literal(1),
+    datasetSchemaVersion: z.union([z.literal(1), z.literal(2)]),
     id: datasetIdSchema,
     sourceVersion: z.string().min(1).max(256),
   }).passthrough(),
@@ -49,6 +54,21 @@ const candidateManifestSchema = z.object({
       code: 'custom',
       message: 'Candidate Release ID does not match its Dataset',
       path: ['release', 'id'],
+    })
+  }
+  const isTableCandidate = manifest.canonical.serialization === 'canonical-table-hashes-v1'
+  if ((manifest.dataset.datasetSchemaVersion === 2) !== isTableCandidate) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Candidate Dataset Schema and canonical serialization are incompatible',
+      path: ['canonical', 'serialization'],
+    })
+  }
+  if (manifest.dataset.datasetSchemaVersion === 2 && manifest.dataset.id !== 'loinc-zh-cn') {
+    context.addIssue({
+      code: 'custom',
+      message: 'Candidate Dataset Schema v2 is supported only for loinc-zh-cn',
+      path: ['dataset', 'datasetSchemaVersion'],
     })
   }
 })
@@ -102,9 +122,71 @@ const loincColumns = [
   'scale_type',
   'method_type',
   'long_common_name',
+  'short_name',
+  'consumer_name',
+  'class',
+  'class_type',
+  'order_obs',
+  'status',
+  'status_reason',
+  'status_text',
+  'change_type',
+  'definition_description',
+  'version_first_released',
+  'version_last_changed',
+  'panel_type',
+  'zh_display',
+  'source_metadata_json',
+  'translation_metadata_json',
+  'source_row',
+  'translation_source_row',
+  'source_version',
+  'core_source_sha256',
+  'translation_source_sha256',
+] as const
+const legacyLoincColumns = [
+  'code',
+  'component',
+  'property',
+  'time_aspect',
+  'system',
+  'scale_type',
+  'method_type',
+  'long_common_name',
   'status',
   'zh_display',
   'source_version',
+  'source_sha256',
+] as const
+const loincUnitColumns = [
+  'loinc_code',
+  'ucum_unit',
+  'unit_kind',
+  'unit_ordinal',
+  'source_member',
+  'source_row',
+  'source_sha256',
+] as const
+const loincSpecimenColumns = [
+  'loinc_code',
+  'part_number',
+  'part_name',
+  'part_display_name',
+  'link_type',
+  'source_member',
+  'source_row',
+  'source_sha256',
+] as const
+const loincPanelMemberColumns = [
+  'parent_id',
+  'member_id',
+  'panel_code',
+  'member_code',
+  'member_order',
+  'relationship',
+  'source_metadata_json',
+  'source_member',
+  'source_row',
   'source_sha256',
 ] as const
 const laboratoryColumns = [
@@ -148,16 +230,69 @@ const drugRowSchema = z.object({
 }).passthrough()
 
 const loincRowSchema = z.object({
-  code: z.string().regex(/^\d{1,5}-\d$/),
+  class: z.string().nullable(),
+  class_type: z.number().int().min(1).max(4).nullable(),
+  code: z.string().regex(/^\d{1,6}-\d$/),
+  component: z.string().nullable(),
   long_common_name: z.string().min(1).max(1_000),
+  method_type: z.string().nullable(),
+  order_obs: z.enum(['Order', 'Observation', 'Both', 'Subset']).nullable(),
+  panel_type: z.string().nullable(),
+  property: z.string().nullable(),
+  scale_type: z.string().nullable(),
+  source_row: z.number().int().min(2),
   source_version: z.string().min(1).max(256),
-  status: z.string().nullable(),
+  status: z.enum(['ACTIVE', 'TRIAL', 'DEPRECATED', 'DISCOURAGED']),
+  system: z.string().nullable(),
+  time_aspect: z.string().nullable(),
   zh_display: z.string().nullable(),
+}).passthrough()
+
+const legacyLoincRowSchema = loincRowSchema.partial({
+  class: true,
+  class_type: true,
+  component: true,
+  method_type: true,
+  order_obs: true,
+  panel_type: true,
+  property: true,
+  scale_type: true,
+  source_row: true,
+  system: true,
+  time_aspect: true,
+})
+
+const loincUnitRowSchema = z.object({
+  loinc_code: z.string().regex(/^\d{1,6}-\d$/),
+  source_member: z.string().min(1),
+  source_row: z.number().int().min(2),
+  ucum_unit: z.string().min(1).max(128),
+  unit_kind: z.literal('example'),
+  unit_ordinal: z.number().int().positive(),
+}).passthrough()
+
+const loincSpecimenRowSchema = z.object({
+  link_type: z.literal('Primary'),
+  loinc_code: z.string().regex(/^\d{1,6}-\d$/),
+  part_display_name: z.string().nullable(),
+  part_name: z.string().min(1),
+  part_number: z.string().min(1).max(128),
+  source_member: z.string().min(1),
+  source_row: z.number().int().min(2),
+}).passthrough()
+
+const loincPanelMemberRowSchema = z.object({
+  member_code: z.string().regex(/^\d{1,6}-\d$/),
+  member_id: z.string().min(1),
+  member_order: z.number().int().nonnegative(),
+  panel_code: z.string().regex(/^\d{1,6}-\d$/),
+  parent_id: z.string().min(1),
+  relationship: z.literal('contains'),
 }).passthrough()
 
 const laboratoryRowSchema = z.object({
   category: z.enum(['chemistry', 'hematology', 'vital-sign']),
-  code: z.string().regex(/^\d{1,5}-\d$/),
+  code: z.string().regex(/^\d{1,6}-\d$/),
   display_zh: z.string().min(1).max(1_000),
   result_type: z.enum(['panel', 'quantity']),
   source_row: z.number().int().positive(),
@@ -261,24 +396,28 @@ function medicationArtifact(
   return referenceArtifactSchema.parse({ concepts: [], medicationProducts, schemaVersion: '1' })
 }
 
-function loincArtifact(
+function loincConceptId(releaseId: string, code: string): string {
+  return `loinc:${releaseId}:${code}`
+}
+
+function legacyLoincArtifact(
   database: Database.Database,
   releaseId: string,
   sourceVersion: string,
 ): ReferenceArtifact {
-  assertTableShape(database, 'loinc', loincColumns)
+  assertTableShape(database, 'loinc', legacyLoincColumns)
   const concepts = []
   for (const value of database.prepare(`
     SELECT code, long_common_name, status, zh_display, source_version
     FROM loinc ORDER BY code
   `).iterate()) {
-    const row = loincRowSchema.parse(value)
+    const row = legacyLoincRowSchema.parse(value)
     if (row.source_version !== sourceVersion) throw new Error('Candidate source version mismatch')
     concepts.push({
       code: row.code,
       display: row.zh_display?.trim() || row.long_common_name,
       domain: 'laboratory' as const,
-      id: `loinc:${releaseId}:${row.code}`,
+      id: loincConceptId(releaseId, row.code),
       sourceLocator: `cn-health:${releaseId}:loinc:${row.code}`,
       status: row.status === 'ACTIVE' ? 'active' as const : 'inactive' as const,
       system: 'http://loinc.org',
@@ -286,6 +425,165 @@ function loincArtifact(
     })
   }
   return referenceArtifactSchema.parse({ concepts, schemaVersion: '1' })
+}
+
+const loincCanonicalTableOrder = {
+  loinc: ['code'],
+  loinc_panel_member: ['parent_id', 'member_id'],
+  loinc_specimen: ['loinc_code', 'part_number', 'link_type'],
+  loinc_unit: ['loinc_code', 'unit_kind', 'source_member', 'source_row', 'unit_ordinal'],
+} as const
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (typeof value !== 'object' || value === null) return JSON.stringify(value) ?? 'null'
+  return `{${Object.entries(value)
+    .toSorted(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+    .join(',')}}`
+}
+
+function assertCanonicalTables(
+  database: Database.Database,
+  tables: readonly { recordCount: number; sha256: string; table: string }[],
+  canonicalSha256: string,
+): void {
+  const expectedTables = ['loinc', 'loinc_unit', 'loinc_specimen', 'loinc_panel_member']
+  const actualTables = tables.map(table => table.table)
+  if (actualTables.length !== expectedTables.length
+    || actualTables.some((table, index) => table !== expectedTables[index])) {
+    throw new Error('cn-health LOINC Candidate canonical tables are unsupported')
+  }
+  for (const table of tables) {
+    const order = loincCanonicalTableOrder[
+      table.table as keyof typeof loincCanonicalTableOrder
+    ]
+    const digest = createHash('sha256')
+    let recordCount = 0
+    for (const row of database.prepare(`
+      SELECT * FROM ${table.table} ORDER BY ${order.join(', ')}
+    `).iterate()) {
+      digest.update(canonicalJson(row))
+      digest.update('\n')
+      recordCount += 1
+    }
+    if (recordCount !== table.recordCount) {
+      throw new Error(`cn-health Candidate canonical record count mismatch: ${table.table}`)
+    }
+    if (digest.digest('hex') !== table.sha256) {
+      throw new Error(`cn-health Candidate canonical SHA256 mismatch: ${table.table}`)
+    }
+  }
+  if (createHash('sha256').update(canonicalJson({ tables })).digest('hex') !== canonicalSha256) {
+    throw new Error('cn-health Candidate canonical table set SHA256 mismatch')
+  }
+}
+
+function loincV2Artifact(
+  database: Database.Database,
+  releaseId: string,
+  sourceVersion: string,
+  tables: readonly { recordCount: number; sha256: string; table: string }[],
+  canonicalSha256: string,
+): ReferenceArtifact {
+  assertTableShape(database, 'loinc', loincColumns)
+  assertTableShape(database, 'loinc_unit', loincUnitColumns)
+  assertTableShape(database, 'loinc_specimen', loincSpecimenColumns)
+  assertTableShape(database, 'loinc_panel_member', loincPanelMemberColumns)
+  assertCanonicalTables(database, tables, canonicalSha256)
+
+  const concepts = []
+  const laboratoryDefinitions = []
+  for (const value of database.prepare(`
+    SELECT code, component, property, time_aspect, system, scale_type,
+      method_type, long_common_name, class, class_type, order_obs, status,
+      panel_type, zh_display, source_row, source_version
+    FROM loinc ORDER BY code
+  `).iterate()) {
+    const row = loincRowSchema.parse(value)
+    if (row.source_version !== sourceVersion) throw new Error('Candidate source version mismatch')
+    const conceptId = loincConceptId(releaseId, row.code)
+    concepts.push({
+      code: row.code,
+      display: row.zh_display?.trim() || row.long_common_name,
+      domain: row.class_type === 1 ? 'laboratory' as const : 'other' as const,
+      id: conceptId,
+      sourceLocator: `cn-health:${releaseId}:loinc:${row.code}`,
+      status: row.status === 'ACTIVE' ? 'active' as const : 'inactive' as const,
+      system: 'http://loinc.org',
+      version: sourceVersion,
+    })
+    laboratoryDefinitions.push({
+      classCode: row.class,
+      classType: row.class_type,
+      component: row.component,
+      conceptId,
+      methodType: row.method_type,
+      orderObservation: row.order_obs,
+      panelType: row.panel_type,
+      property: row.property,
+      scaleType: row.scale_type,
+      sourceLocator: `cn-health:${releaseId}:loinc-definition:${row.source_row}`,
+      system: row.system,
+      timeAspect: row.time_aspect,
+    })
+  }
+
+  const laboratoryUnits = z.array(loincUnitRowSchema).parse(database.prepare(`
+    SELECT loinc_code, ucum_unit, unit_kind, unit_ordinal,
+      source_member, source_row, source_sha256
+    FROM loinc_unit
+    ORDER BY loinc_code, unit_kind, source_member, source_row, unit_ordinal
+  `).all()).map(row => ({
+    code: row.ucum_unit,
+    conceptId: loincConceptId(releaseId, row.loinc_code),
+    kind: row.unit_kind,
+    ordinal: row.unit_ordinal,
+    sourceLocator: `cn-health:${releaseId}:loinc-unit:${row.source_member}:${row.source_row}:${row.unit_ordinal}`,
+  }))
+  const laboratorySpecimens = z.array(loincSpecimenRowSchema).parse(database.prepare(`
+    SELECT loinc_code, part_number, part_name, part_display_name, link_type,
+      source_member, source_row, source_sha256
+    FROM loinc_specimen
+    ORDER BY loinc_code, part_number, link_type
+  `).all()).map(row => ({
+    conceptId: loincConceptId(releaseId, row.loinc_code),
+    display: row.part_display_name?.trim() || row.part_name,
+    linkType: row.link_type,
+    partName: row.part_name,
+    partNumber: row.part_number,
+    sourceLocator: `cn-health:${releaseId}:loinc-specimen:${row.source_member}:${row.source_row}`,
+  }))
+  const laboratoryPanelMembers = z.array(loincPanelMemberRowSchema).parse(database.prepare(`
+    SELECT parent_id, member_id, panel_code, member_code, member_order,
+      relationship, source_metadata_json, source_member, source_row, source_sha256
+    FROM loinc_panel_member
+    ORDER BY panel_code, member_order, member_code, parent_id, member_id
+  `).all()).map(row => ({
+    memberConceptId: loincConceptId(releaseId, row.member_code),
+    memberOrder: row.member_order,
+    panelConceptId: loincConceptId(releaseId, row.panel_code),
+    relationship: row.relationship,
+    sourceLocator: `cn-health:${releaseId}:loinc-panel-member:${row.parent_id}:${row.member_id}`,
+  }))
+  return referenceArtifactSchema.parse({
+    concepts,
+    laboratoryDefinitions,
+    laboratoryPanelMembers,
+    laboratorySpecimens,
+    laboratoryUnits,
+    schemaVersion: '1',
+  })
+}
+
+function artifactRecordCount(artifact: ReferenceArtifact): number {
+  return artifact.concepts.length
+    + artifact.laboratoryPanelMembers.length
+    + artifact.laboratorySpecimens.length
+    + artifact.laboratoryUnits.length
+    + artifact.medicationProducts.length
+    + artifact.services.length
+    + artifact.valueSetEntries.length
 }
 
 function laboratoryArtifact(
@@ -368,8 +666,16 @@ export function parseCnHealthCandidateReferenceArtifact(manifestPath: string): {
         ? medicationArtifact(database, manifest.release.id, manifest.dataset.sourceVersion)
         : datasetId === 'laboratory-cn'
           ? laboratoryArtifact(database, manifest.release.id, manifest.dataset.sourceVersion)
-          : loincArtifact(database, manifest.release.id, manifest.dataset.sourceVersion)
-    const recordCount = artifact.concepts.length + artifact.medicationProducts.length
+          : manifest.dataset.datasetSchemaVersion === 2
+            ? loincV2Artifact(
+                database,
+                manifest.release.id,
+                manifest.dataset.sourceVersion,
+                manifest.canonical.tables ?? [],
+                manifest.canonical.sha256,
+              )
+            : legacyLoincArtifact(database, manifest.release.id, manifest.dataset.sourceVersion)
+    const recordCount = artifactRecordCount(artifact)
     if (recordCount !== manifest.canonical.recordCount) {
       throw new Error('cn-health Candidate canonical record count does not match SQLite')
     }

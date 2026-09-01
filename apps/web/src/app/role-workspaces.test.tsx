@@ -330,6 +330,15 @@ function stubAdministratorWorkspace() {
         workspaceId: 'workspace-demo',
       })
     }
+    if (path === '/api/his/v1/admin/laboratory-services/candidates') {
+      return Response.json({
+        items: [],
+        page: 1,
+        pageSize: 20,
+        referenceReleaseId: 'reference-http-test-v1',
+        total: 0,
+      })
+    }
     throw new Error(`Unexpected request: ${path}`)
   }))
 }
@@ -914,6 +923,113 @@ describe('role workspaces', () => {
     expect(screen.getByRole('button', { name: 'Load high-volume data' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Reset current data' })).toBeTruthy()
     expect(screen.getByRole('main').textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
+  })
+
+  it('publishes selected Laboratory Service candidates from the administrator workspace', async () => {
+    let published = false
+    let publishBody: unknown
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(administratorSession)
+      if (url.pathname === '/api/sim/v1/scenario-runs/current') {
+        return Response.json({
+          clinicalReview: null,
+          epoch: 'epoch-1',
+          initialStateHash: '0123456789abcdef',
+          kind: 'candidate',
+          scenarioId: 'candidate-fever-outpatient-v1',
+          scenarioRunId: 'scenario-run-1',
+          seed: 20260824,
+          status: 'active',
+          virtualTime: '2026-08-24T09:00:00+08:00',
+          workspaceId: 'workspace-demo',
+        })
+      }
+      if (url.pathname === '/api/his/v1/admin/laboratory-services/candidates') {
+        return Response.json({
+          items: [{
+            concept: {
+              code: '58410-2',
+              display: '血常规组合',
+              domain: 'laboratory',
+              id: 'loinc:synthetic:58410-2',
+              sourceLocator: 'synthetic:loinc:58410-2',
+              status: 'active',
+              system: 'http://loinc.org',
+              version: '2.83',
+            },
+            definition: {
+              classCode: 'PANEL.HEM',
+              classType: 1,
+              component: 'Complete blood count panel',
+              conceptId: 'loinc:synthetic:58410-2',
+              methodType: null,
+              orderObservation: 'Order',
+              panelType: 'Panel',
+              property: '-',
+              scaleType: '-',
+              sourceLocator: 'synthetic:definition:58410-2',
+              system: 'Blood',
+              timeAspect: 'Pt',
+            },
+            error: null,
+            publishedServiceId: published ? 'hospital-laboratory-service-cbc' : null,
+            status: published ? 'published' : 'unconfigured',
+            version: published ? 1 : 0,
+          }],
+          page: 1,
+          pageSize: 20,
+          referenceReleaseId: 'reference-http-test-v1',
+          total: 1,
+        })
+      }
+      if (url.pathname === '/api/his/v1/admin/laboratory-services/actions/publish') {
+        publishBody = JSON.parse(String(init?.body))
+        published = true
+        return Response.json(commandResponse({
+          conceptIds: ['loinc:synthetic:58410-2'],
+          createdAt: '2026-09-01T07:00:00.000Z',
+          error: null,
+          finishedAt: null,
+          jobId: 'laboratory-service-publication-1',
+          publishedServiceIds: [],
+          referenceReleaseId: 'reference-http-test-v1',
+          startedAt: null,
+          status: 'queued',
+          updatedAt: '2026-09-01T07:00:00.000Z',
+          workspaceId: 'workspace-demo',
+        }))
+      }
+      if (url.pathname === '/api/his/v1/admin/laboratory-services/jobs/laboratory-service-publication-1') {
+        return Response.json({
+          conceptIds: ['loinc:synthetic:58410-2'],
+          createdAt: '2026-09-01T07:00:00.000Z',
+          error: null,
+          finishedAt: '2026-09-01T07:00:01.000Z',
+          jobId: 'laboratory-service-publication-1',
+          publishedServiceIds: ['hospital-laboratory-service-cbc'],
+          referenceReleaseId: 'reference-http-test-v1',
+          startedAt: '2026-09-01T07:00:00.100Z',
+          status: 'succeeded',
+          updatedAt: '2026-09-01T07:00:01.000Z',
+          workspaceId: 'workspace-demo',
+        })
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    expect(await screen.findByRole('heading', { name: '检验服务配置' })).toBeTruthy()
+    await user.click(await screen.findByRole('checkbox', { name: '选择 血常规组合 58410-2' }))
+    await user.click(screen.getByRole('button', { name: '发布所选检验服务' }))
+
+    expect(publishBody).toEqual({
+      input: {
+        entries: [{ conceptId: 'loinc:synthetic:58410-2', expectedVersion: 0 }],
+      },
+    })
+    expect(await screen.findByText('已发布')).toBeTruthy()
   })
 
   it('does not expose synthetic data management to a non-administrator role', async () => {
@@ -1994,14 +2110,52 @@ describe('role workspaces', () => {
     const referenceConcept = {
       code: '58410-2',
       display: '血常规组合',
-      id: 'laboratory:cbc-panel',
+      id: 'loinc:synthetic:58410-2',
       sourceLocator: 'concepts[3]',
       system: 'http://loinc.org',
       version: '2.83',
     }
+    const laboratoryService = {
+      allowedIndicationCodes: ['clinical-evaluation'],
+      componentServiceIds: ['hospital-laboratory-service-wbc'],
+      doctorOrderable: true as const,
+      executingDepartmentId: 'department-laboratory',
+      id: 'hospital-laboratory-service-cbc',
+      localCode: 'CM-LAB-58410-2',
+      nameEn: 'Complete blood count',
+      nameZh: '血常规',
+      priceFen: 2500,
+      referenceConcept,
+      referenceReleaseId: 'reference-http-test-v1',
+      reportDefinition: {
+        conclusionTemplate: '血常规结果已完成。',
+        results: [{
+          referenceConcept: {
+            code: '6690-2',
+            display: '白细胞计数',
+            id: 'loinc:synthetic:6690-2',
+            sourceLocator: 'concepts[4]',
+            system: 'http://loinc.org',
+            version: '2.83',
+          },
+          referenceRange: { high: 10, low: 4, text: '4.0-10.0 x10^9/L' },
+          unit: {
+            code: '10*9/L',
+            display: '10*9/L',
+            system: 'http://unitsofmeasure.org' as const,
+          },
+          valueType: 'quantity' as const,
+        }],
+      },
+      specimen: { code: 'LP7057-5', display: '血液' },
+      serviceKind: 'laboratory' as const,
+      tatMinutes: 20,
+      version: 1,
+    }
     let draft: {
       catalogItemId: string
       indicationCode: string
+      laboratoryService?: typeof laboratoryService
       referenceConcept?: typeof referenceConcept
     } | undefined
     let draftVersion = 0
@@ -2009,6 +2163,7 @@ describe('role workspaces', () => {
       catalogItemId: string
       id: string
       indicationCode: string
+      laboratoryService?: typeof laboratoryService
       previousReports: []
       referenceConcept?: typeof referenceConcept
       serviceRequestId: string
@@ -2067,26 +2222,10 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/cases/case-virtual-1/reference-catalogs/laboratory') {
         laboratoryQueries.push(url.searchParams.get('query'))
         return Response.json({
-          items: [{
-            ...referenceConcept,
-            domain: 'laboratory',
-            resultGeneration: { source: 'synthea-exact', supported: true },
-            status: 'active',
-          }, {
-            code: '8310-5',
-            display: '体温',
-            domain: 'laboratory',
-            id: 'laboratory:temperature',
-            resultGeneration: { reason: 'agent-unavailable', supported: false },
-            sourceLocator: 'concepts[4]',
-            status: 'active',
-            system: 'http://loinc.org',
-            version: '2.83',
-          }],
+          items: [laboratoryService],
           page: 1,
           pageSize: 20,
-          releaseId: 'reference-http-test-v1',
-          total: 2,
+          total: 1,
         })
       }
       if (url.pathname === '/api/his/v1/doctor/queue') {
@@ -2133,14 +2272,15 @@ describe('role workspaces', () => {
         expect(body).toEqual({
           expectedVersions: { 'Encounter/encounter-virtual-1': '1' },
           input: {
-            catalogItemId: 'laboratory:cbc-panel',
+            catalogItemId: laboratoryService.id,
             expectedDraftVersion: 0,
             indicationCode: 'clinical-evaluation',
           },
         })
         draft = {
-          catalogItemId: 'laboratory:cbc-panel',
+          catalogItemId: laboratoryService.id,
           indicationCode: 'clinical-evaluation',
+          laboratoryService,
           referenceConcept,
         }
         draftVersion = 1
@@ -2158,9 +2298,10 @@ describe('role workspaces', () => {
         draft = undefined
         draftVersion = 2
         request = {
-          catalogItemId: 'laboratory:cbc-panel',
+          catalogItemId: laboratoryService.id,
           id: 'laboratory-request-crp-1',
           indicationCode: 'clinical-evaluation',
+          laboratoryService,
           previousReports: [],
           referenceConcept,
           serviceRequestId: 'service-request-crp-1',
@@ -2191,16 +2332,15 @@ describe('role workspaces', () => {
     await user.type(within(laboratoryDialog).getByLabelText('搜索检验目录'), '血常')
     await user.click(within(laboratoryDialog).getByRole('button', { name: '执行检验目录搜索' }))
     await waitFor(() => expect(laboratoryQueries).toContain('血常'))
-    const unavailableTemperature = within(laboratoryDialog).getByRole('button', {
-      name: '选择 体温 8310-5',
-    })
-    expect(unavailableTemperature.hasAttribute('disabled')).toBe(true)
-    expect(within(laboratoryDialog).getByText('当前病例不可生成')).toBeTruthy()
+    expect(within(laboratoryDialog).queryByText('当前病例')).toBeNull()
+    expect(within(laboratoryDialog).queryByText('当前病例不可生成')).toBeNull()
+    expect(within(laboratoryDialog).queryByText('可开立')).toBeNull()
+    expect(within(laboratoryDialog).queryByText('体温')).toBeNull()
     await user.click(await within(laboratoryDialog).findByRole('button', {
-      name: '选择 血常规组合 58410-2',
+      name: '选择 血常规 58410-2',
     }))
     await user.click(within(laboratoryDialog).getByRole('button', { name: '确定选择' }))
-    expect(await screen.findByText('血常规组合')).toBeTruthy()
+    expect(await screen.findByText('血常规')).toBeTruthy()
     expect(within(requestRegion).queryByRole('combobox', { name: '检验适应证' })).toBeNull()
     expect(within(requestRegion).getByText('临床评估')).toBeTruthy()
     expect(within(requestRegion).queryByRole('button', { name: '保存检验草稿' })).toBeNull()
@@ -2209,9 +2349,9 @@ describe('role workspaces', () => {
     expect(within(savedRequestRegion).getByText('草稿已自动保存')).toBeTruthy()
     await user.click(within(savedRequestRegion).getByRole('button', { name: '开具检验申请' }))
 
-    expect(await screen.findByRole('cell', { name: '血常规组合' })).toBeTruthy()
+    expect(await screen.findByRole('cell', { name: '血常规' })).toBeTruthy()
     const issuedResultsRegion = screen.getByRole('region', { name: '检验结果' })
-    expect(within(issuedResultsRegion).getByRole('cell', { name: '血常规组合' })).toBeTruthy()
+    expect(within(issuedResultsRegion).getByRole('cell', { name: '血常规' })).toBeTruthy()
     expect(within(issuedResultsRegion).getByText('已开具')).toBeTruthy()
     const contextRail = screen.getByRole('complementary', { name: '病例上下文' })
     expect(within(contextRail).getByRole('heading', { name: '检验概况' })).toBeTruthy()
