@@ -983,6 +983,11 @@ describe('role workspaces', () => {
               sourceStandard: 'WS/T 405-2012',
               sourceType: 'national-standard',
               sourceVersion: '2012',
+            }, {
+              sourceLocation: '表 2',
+              sourceStandard: 'WS/T 405-2012',
+              sourceType: 'national-standard',
+              sourceVersion: '2012',
             }],
             sourceDataset: {
               datasetId: 'laboratory-cn',
@@ -1045,7 +1050,7 @@ describe('role workspaces', () => {
     expect(screen.getByText('2 项')).toBeTruthy()
     expect(screen.getByText('全血')).toBeTruthy()
     expect(screen.getByText('成人：女性、男性')).toBeTruthy()
-    expect(screen.getByText('国家标准 · WS/T 405-2012 · 2012')).toBeTruthy()
+    expect(screen.getAllByText('国家标准 · WS/T 405-2012 · 2012')).toHaveLength(1)
     expect(screen.getByText('WS/T 886-2026 · 2026-11-01 前预览')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'laboratory-cn' }))
     await user.click(screen.getByRole('checkbox', { name: '仅组合' }))

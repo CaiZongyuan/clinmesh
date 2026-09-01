@@ -129,6 +129,15 @@ function referenceSourceLabel(
   return `${type} · ${source.sourceStandard} · ${source.sourceVersion}`
 }
 
+function displayedReferenceSources(candidate: LaboratoryServiceCandidate) {
+  const sources = new Map<string, LaboratoryServiceCandidate['referenceSources'][number]>()
+  for (const source of candidate.referenceSources) {
+    const key = `${source.sourceType}\0${source.sourceStandard}\0${source.sourceVersion}`
+    if (!sources.has(key)) sources.set(key, source)
+  }
+  return [...sources.values()]
+}
+
 function statusVariant(status: 'failed' | 'published' | 'publishing' | 'unconfigured') {
   if (status === 'published') return 'default' as const
   if (status === 'failed') return 'destructive' as const
@@ -310,6 +319,7 @@ export function LaboratoryServiceWorkspace({
                 const selected = selectedIds.has(item.concept.id)
                 const selectable = item.status !== 'publishing'
                 const adultApplicability = adultApplicabilityLabel(item, locale)
+                const referenceSources = displayedReferenceSources(item)
                 return (
                   <TableRow key={item.concept.id}>
                     <TableCell>
@@ -358,12 +368,12 @@ export function LaboratoryServiceWorkspace({
                       )}
                     </TableCell>
                     <TableCell>
-                      {item.referenceSources.length === 0
+                      {referenceSources.length === 0
                         ? <span className="text-sm text-muted-foreground">—</span>
-                        : item.referenceSources.map(source => (
+                        : referenceSources.map(source => (
                             <span
                               className="block max-w-72 text-xs text-muted-foreground"
-                              key={`${source.sourceType}:${source.sourceStandard}:${source.sourceVersion}:${source.sourceLocation}`}
+                              key={`${source.sourceType}:${source.sourceStandard}:${source.sourceVersion}`}
                             >
                               {referenceSourceLabel(source, locale)}
                             </span>
