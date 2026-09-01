@@ -218,6 +218,7 @@ describe('Web application shell', () => {
 
   it('lets a Surface Agent fill a draft but requires human review before creating a Patient', async () => {
     const history = createMemoryHistory({ initialEntries: ['/registration'] })
+    const user = userEvent.setup()
     let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
     let patientCreated = false
     const toolResults: unknown[] = []
@@ -389,6 +390,7 @@ describe('Web application shell', () => {
       }, new AbortController().signal)
     })
     expect(document.activeElement).toBe(document.querySelector('[data-clinmesh-workspace-panel]'))
+    await user.click(screen.getByRole('tab', { name: '新建合成患者' }))
     const fill = activeRegistration.tools.find(tool => tool.name === 'clinmesh_fill_patient_draft')!
     await act(async () => {
       await fill.execute({
@@ -400,6 +402,10 @@ describe('Web application shell', () => {
         name: '合成患者甲',
       }, new AbortController().signal)
     })
+    expect((screen.getByLabelText('姓名') as HTMLInputElement).value).toBe('合成患者甲')
+    expect((screen.getByLabelText('合成标识') as HTMLInputElement).value).toBe('CM-AGENT-001')
+    expect((screen.getByLabelText('出生日期') as HTMLInputElement).value).toBe('1990-01-01')
+    expect(screen.getByRole('combobox', { name: '性别' }).textContent).toContain('男')
     await waitFor(() => expect(pageClaims.at(-1)?.draft?.dirty).toBe(true))
     await waitFor(() => expect(registration?.tools.some(
       tool => tool.name === 'clinmesh_prepare_create_patient',
@@ -441,7 +447,7 @@ describe('Web application shell', () => {
     })
     expect(proposalResult).toContain('awaiting-human-review')
     expect(await screen.findByRole('alertdialog', { name: '创建患者' })).toBeTruthy()
-    await userEvent.setup().click(screen.getByRole('button', { name: '创建患者' }))
+    await user.click(screen.getByRole('button', { name: '创建患者' }))
     await waitFor(() => expect(patientCreated).toBe(true))
     await waitFor(() => expect(toolResults.at(-1)).toMatchObject({
       ok: true,
