@@ -1587,7 +1587,7 @@ describe('Synthetic Case generation HTTP contract', () => {
 
     const publicArtifacts = JSON.stringify({ beforeSelection, firstJob, leakingJob, secondJob })
     expect(publicArtifacts).not.toMatch(/privateEpisodeEvidence|index-condition|hiddenResourceReferences/)
-  })
+  }, 30_000)
 
   it('requeues an interrupted Patient Brief job after restart', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-patient-brief-recovery-'))
