@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  caseLaboratoryCatalogSearchSchema,
   clinicalCatalogSchema,
   completeEncounterRequestSchema,
   completedCaseClinicalDocumentSchema,
   completedCaseLaboratoryRequestSchema,
   deletePrescriptionDraftRequestSchema,
+  diagnosisConfirmationSchema,
   encounterCompletionPreviewSchema,
   encounterCompletionResponseSchema,
   laboratoryRequestSchema,
@@ -55,6 +57,56 @@ function completedCaseLaboratoryRequestFixture() {
 }
 
 describe('HIS contracts', () => {
+  it('binds laboratory result-generation capability to case catalog items', () => {
+    const item = {
+      code: '6690-2',
+      display: '白细胞计数',
+      domain: 'laboratory',
+      id: 'laboratory:wbc',
+      sourceLocator: 'concepts[0]',
+      status: 'active',
+      system: 'http://loinc.org',
+      version: '2.83',
+    }
+    const search = {
+      items: [{
+        ...item,
+        resultGeneration: { source: 'synthea-exact', supported: true },
+      }, {
+        ...item,
+        id: 'laboratory:wbc-unsupported',
+        resultGeneration: { reason: 'agent-unavailable', supported: false },
+      }],
+      page: 1,
+      pageSize: 20,
+      releaseId: 'release-1',
+      total: 2,
+    }
+    expect(caseLaboratoryCatalogSearchSchema.safeParse(search).success).toBe(true)
+    expect(caseLaboratoryCatalogSearchSchema.safeParse({
+      ...search,
+      items: [item],
+    }).success).toBe(false)
+  })
+
+  it('treats confirmations created before diagnosis revisions as revision one', () => {
+    const confirmation = diagnosisConfirmationSchema.parse({
+      confirmedAt: '2026-08-24T09:00:00+08:00',
+      entries: [{
+        catalogItemId: 'diagnosis-fever',
+        code: 'R50.9',
+        conditionId: 'condition-1',
+        conditionVersion: '1',
+        display: '发热，未特指',
+        role: 'primary',
+        system: 'http://hl7.org/fhir/sid/icd-10',
+      }],
+      id: 'confirmation-1',
+      provenanceId: 'provenance-1',
+    })
+    expect(confirmation.revisionNumber).toBe(1)
+  })
+
   it('requires every stable Encounter completion condition with a Chinese status and navigation target', () => {
     const preview = {
       canComplete: false,
@@ -242,7 +294,7 @@ describe('HIS contracts', () => {
     }).success).toBe(false)
   })
 
-  it('accepts dynamic laboratory catalog IDs and rejects malformed IDs', () => {
+  it('accepts dynamic laboratory catalog IDs, including external reference IDs', () => {
     expect(laboratoryRequestStateSchema.safeParse({
       draft: {
         catalogItemId: 'lab-fever-panel',
@@ -260,7 +312,7 @@ describe('HIS contracts', () => {
       draftVersion: 1,
       reportingSupported: true,
       requests: [],
-    }).success).toBe(false)
+    }).success).toBe(true)
   })
 
   it('requires an explicit Scenario reporting capability in the request read model', () => {

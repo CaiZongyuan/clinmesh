@@ -32,7 +32,7 @@ Mobile 只共享产品语义，不共享 DOM 测试。移动测试覆盖 Expo Ro
 
 E2E 从真实入口执行，并从外部观察结果：重新读取资源、数据库投影、页面或审计事件，不以 Agent 自己声称成功作为断言。DSH Web 验收从统一 launcher 打开 Surface，要求原生 Session 实际调用 browser Tool，并覆盖一个草稿 action 和一个 proposal → 人工批准 → Command Effect；Tool call、proposal、review、request、audit 和 trace 必须可关联。
 
-核心候选 Scenario 见[系统架构](architecture.md#144-场景测试)。当前 `candidate` 与 `density` 都没有临床审核元数据，不得称为 `golden`。每次运行固定 app build、schema 与 Scenario 版本；未来实际发布 IG、policy package 或 Agent tool schema 后再把对应版本加入固定输入。
+核心病例轨迹见[系统架构](architecture.md#144-场景测试)。每次运行固定 app build、schema、Synthea commit、localization profile、生成参数与 Case Revision；未来实际发布 IG、policy 或 Agent tool schema 后再把对应版本加入固定输入。
 
 ## 测试设计
 
@@ -87,6 +87,7 @@ pnpm docs:check
 - 真实提交时间、request ID、lease 和 duration 不进入 canonical state hash。
 - 测试自行创建和清理 workspace/epoch；旧 callback 不得写入新 epoch。
 - 敏感字段不出现在 snapshot、异常信息和 CI artifact。
+- 常规测试只使用 fake Synthea 和 fake Chat Completions provider，必须在没有模型 API key、没有外网和没有付费调用时通过。真实 provider 只进入显式 live smoke。
 
 ## 用户界面验证
 
@@ -98,7 +99,7 @@ Mobile 功能先列出与 Web/Desktop 必须一致的语义，再验证移动端
 
 ## 性能合同
 
-短性能门禁属于 `pnpm check`。它在隔离的 file-backed SQLite 上运行参考导入、本院目录 HTTP 查询、普通与重 Command、测试专用 Trace 对照和 Scenario install/reset；只 gate statement/query/write、rows written、数据库增长、Trace rows/bytes、错误和索引计划。Trace bytes 是 `action_trace` 全部持久化 TEXT 字段的 UTF-8 字节数，不代表 SQLite page allocation。P50/P95/P99、transaction time 和吞吐始终进入结果，但不作为跨机器 PR hard gate。SQLite 当前不提供可靠 rows-read，因此结果 schema 明确不声明该指标。
+短性能门禁属于 `pnpm check`。它在隔离的 file-backed SQLite 上运行 Reference Release 导入、独立 Reference SQLite 的疾病/药品/检验全文搜索、本院服务目录 HTTP 查询、普通与重 Command、测试专用 Trace 对照和内置 Scenario install/reset。门禁只 gate statement/query/write、rows written、数据库增长、Trace rows/bytes、错误和索引计划。Trace bytes 是 `action_trace` 全部持久化 TEXT 字段的 UTF-8 字节数，不代表 SQLite page allocation。P50/P95/P99、transaction time 和吞吐始终进入结果，但不作为跨机器 PR hard gate。SQLite 当前不提供可靠 rows-read，因此结果 schema 明确不声明该指标。
 
 ```sh
 pnpm perf:ci
@@ -107,4 +108,16 @@ pnpm perf:saturation
 pnpm perf:full-import -- --manifest /absolute/path/to/release.json
 ```
 
-`trajectory` 使用共享 application interfaces 完成固定高血压临床轨迹；`saturation` 以独立 Worker/SQLite sandbox 覆盖 1、5、10、25 actors，并报告 load runner 自身的 busy/retry；`full-import` 只读取调用者已合法取得的 manifest 和 artifact。所有 profile 只使用合成运行状态，不提供关闭 Audit Event 或 Action Trace 的运行开关。详细取舍见 [SQLite 性能工作负载与稳定门禁分离](../.agents/notes/implemented/testing/2026-08-28-sqlite-performance-contract.md)。
+`trajectory` 使用共享 application interfaces 从内置虚拟患者完成问诊、检验、诊断、处方、文书和完诊；Synthetic Case generation、历史、Brief、direct start、Investigation snapshot 与新 Epoch no-AI replay 由下述 Server HTTP 集成合同覆盖。`saturation` 以独立 Worker/SQLite sandbox 覆盖 1、5、10、25 actors，并报告 load runner 自身的 busy/retry；`full-import` 只读取调用者已合法取得的 manifest 和 artifact。所有 profile 只使用合成运行状态，不提供关闭 Audit Event 或 Action Trace 的运行开关。详细取舍见 [SQLite 性能工作负载与稳定门禁分离](../.agents/notes/implemented/testing/2026-08-28-sqlite-performance-contract.md)。
+
+## 合成病例合同
+
+- Transformation 测试覆盖 Index Encounter 合格性、确定性最后选择、new-problem/follow-up/preventive 推断、时间与引用闭包、Visible Source History 投影，以及当前隐藏资源泄漏阻断。
+- Server HTTP 集成测试提交 generation request，等待异步任务并通过公开管理员 API观察 Profile、Case、provenance 与有界 translation warning；同时证明缺译保留来源 display 而结构错误仍失败、最多十次 Index Case 重试、失败不留部分资产、来源历史可分页/查看详情且猜测隐藏引用仍不可读取。
+- Brief 测试覆盖异步状态、严格 schema、诊断泄漏拒绝、成功 revision 不可变、失败不覆盖成功、显式选择和无活动 Brief 禁止开始。客户端不能覆盖 provider URL、model、header、key 或 body，日志和 DTO 不含凭证。
+- Direct start 测试证明一个 Case 正常流程只能开始一次，并原子创建本院 R5 Patient、Registration、Encounter 和 Queue Task；来源 R4 历史与全局 Reference rows 不得写入本院 R5/operational store。
+- 医生目录测试覆盖 Dialog 打开即分页、两字符显式搜索、无自动选中、药品产品区分、诊断多条草稿与二次确认、处方空初始状态，以及检验项目选择后再保存/开立；Reference 失败时继续覆盖本院常用 fallback。
+- Investigation 测试分别覆盖同 LOINC 隐藏 Observation 命中、fake provider 生成、schema/单位/范围拒绝、`generation-failed` 重试和首个成功 snapshot 冻结，不允许正常 fallback。
+- Reset/replay 测试在新 Epoch 重新物化同一 Case Revision，复用 Brief、Case Truth 与 Investigation Result Snapshot，断言 provider 调用计数不增加、旧 callback 不能写入新 Epoch。
+- Docker smoke 使用固定 Synthea commit、全部模块模式、中国 profile/localization provenance、非 root、只读文件系统和有界资源，从真实 HTTP 入口完成多患者 generation，并验证全部 Bundle 成功以及 translation warning 按 ordinal 关联，再继续覆盖 history、Brief、direct start、诊断、检查与 LIS 结果。
+- OpenAI-compatible live smoke 是开发者显式运行的单个合成 Brief 检查，读取本机启动配置，不进入 `pnpm test`、`pnpm check` 或 CI，且不输出 prompt、响应正文、API key 或 provider header。

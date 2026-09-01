@@ -6,7 +6,6 @@ import {
   scenarioMedicationCatalogItemSchema,
   scenarioPhysiologyGeneratorSchema,
   scenarioUcumUnitSchema,
-  syntheticPatientMappingCatalogSchema,
 } from '../src/scenario.ts'
 
 const request = {
@@ -29,6 +28,38 @@ describe('Scenario generation request', () => {
     expect(scenarioGenerationRequestSchema.safeParse({
       ...request,
       population: { ...request.population, count: 11 },
+    }).success).toBe(false)
+  })
+
+  it('defaults Synthea generation to all modules and bounds advanced filters', () => {
+    const { modules: _legacyModules, ...withoutModules } = request
+
+    expect(scenarioGenerationRequestSchema.parse(withoutModules)).toMatchObject({
+      moduleMode: 'all',
+      modules: [],
+    })
+    expect(scenarioGenerationRequestSchema.parse({
+      ...withoutModules,
+      moduleMode: 'filter',
+      modules: ['cardiovascular/hypertension', 'metabolic_syndrome_disease'],
+    })).toMatchObject({
+      moduleMode: 'filter',
+      modules: ['cardiovascular/hypertension', 'metabolic_syndrome_disease'],
+    })
+    expect(scenarioGenerationRequestSchema.safeParse({
+      ...withoutModules,
+      moduleMode: 'all',
+      modules: ['hypertension'],
+    }).success).toBe(false)
+    expect(scenarioGenerationRequestSchema.safeParse({
+      ...withoutModules,
+      moduleMode: 'filter',
+      modules: [],
+    }).success).toBe(false)
+    expect(scenarioGenerationRequestSchema.safeParse({
+      ...withoutModules,
+      moduleMode: 'filter',
+      modules: ['../secrets'],
     }).success).toBe(false)
   })
 })
@@ -143,40 +174,5 @@ describe('Scenario medication compatibility', () => {
     }
 
     expect(scenarioMedicationCatalogItemSchema.parse(legacyMedication)).toEqual(legacyMedication)
-  })
-})
-
-describe('Synthetic Patient mapping catalog', () => {
-  it('publishes only resource types backed by a platform catalog', () => {
-    expect(syntheticPatientMappingCatalogSchema.parse({
-      items: [{
-        catalogItemId: 'diagnosis-acute-upper-respiratory-infection',
-        code: 'J06.9',
-        nameEn: 'Acute upper respiratory infection',
-        nameZh: '急性上呼吸道感染',
-        sourceResourceType: 'Condition',
-        system: 'http://hl7.org/fhir/sid/icd-10',
-        version: 1,
-      }, {
-        catalogItemId: 'encounter-class-ambulatory',
-        code: 'AMB',
-        nameEn: 'Ambulatory encounter',
-        nameZh: '门诊就诊',
-        sourceResourceType: 'Encounter',
-        system: 'http://terminology.hl7.org/CodeSystem/v3-ActCode',
-        version: 1,
-      }],
-    }).items).toHaveLength(2)
-    expect(syntheticPatientMappingCatalogSchema.safeParse({
-      items: [{
-        catalogItemId: 'allergy-penicillin',
-        code: 'ALLERGY-001',
-        nameEn: 'Allergy',
-        nameZh: '过敏',
-        sourceResourceType: 'AllergyIntolerance',
-        system: 'http://snomed.info/sct',
-        version: 1,
-      }],
-    }).success).toBe(false)
   })
 })

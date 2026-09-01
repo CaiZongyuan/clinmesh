@@ -8,6 +8,7 @@ import {
   agentToolCatalog,
   agentToolsForContext,
   agentViewsForRole,
+  parseAgentToolInput,
 } from '../src/agent.ts'
 
 describe('ClinMesh DSH Agent contracts', () => {
@@ -157,6 +158,15 @@ describe('ClinMesh DSH Agent contracts', () => {
       'scenario.providers.read',
       'scenario.generation.status.read',
     ])
+  })
+
+  it('uses the current doctor page ids for Agent section selection', () => {
+    expect(parseAgentToolInput('outpatient.section.select', { section: 'laboratory' }))
+      .toEqual({ section: 'laboratory' })
+    expect(() => parseAgentToolInput(
+      'outpatient.section.select',
+      { section: 'examination' },
+    )).toThrow()
   })
 
   it('binds one execution proof and authorization request to an exact Tool call', () => {

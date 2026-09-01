@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -7,7 +7,7 @@ import { z } from 'zod'
 import {
   scenarioGenerationRequestSchema,
   syntheaCnLocalizationProvenanceSchema,
-  type ScenarioDataset,
+  syntheaTranslationWarningSchema,
 } from '@clinmesh/contracts/scenario'
 import { runDatabaseCli } from '../src/database-cli.ts'
 import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
@@ -23,7 +23,6 @@ import {
 import { FhirRepository } from '../src/infrastructure/sqlite/fhir-repository.ts'
 import { SyntheticPatientProfileRepository } from '../src/infrastructure/sqlite/synthetic-patient-profile-repository.ts'
 import { WorkspaceRepository } from '../src/infrastructure/sqlite/workspace-repository.ts'
-import { BuiltInScenarioGenerationProvider } from '../src/infrastructure/scenario-generation/builtin-provider.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 
 function candidateDependency(
@@ -37,6 +36,119 @@ function candidateDependency(
     releaseId: `${datasetId}@${version}`,
     sqliteSha256: hashCharacter.repeat(64),
   }
+}
+
+const profileRequest = scenarioGenerationRequestSchema.parse({
+  moduleMode: 'filter',
+  modules: ['fever'],
+  name: 'Profile fixture',
+  population: { age: { maximum: 50, minimum: 30 }, count: 1, gender: 'any' },
+  providerId: 'synthea',
+  seeds: { clinical: 7331, population: 4242 },
+  timeRange: { end: '2026-08-01', start: '2016-08-01' },
+  timeZone: 'Asia/Shanghai',
+})
+const translationWarning = syntheaTranslationWarningSchema.parse({
+  code: 'TRANSLATION_GAP',
+  gapCount: 1,
+  gaps: [{
+    code: 'missing-code',
+    path: 'code.coding[0]',
+    resourceId: 'observation-1',
+    resourceType: 'Observation',
+    sourceDisplay: 'Untranslated display',
+    system: 'http://loinc.org',
+    version: null,
+  }],
+  message: 'The Synthea Bundle contains untranslated clinical displays',
+  truncated: false,
+})
+
+function profileBundle() {
+  return {
+    entry: [{
+      fullUrl: 'urn:uuid:patient-profile',
+      resource: {
+        address: [{
+          city: '渭南市',
+          country: 'CN',
+          line: ['陕西省渭南市合成路178号'],
+          postalCode: '715300',
+          state: '陕西省',
+          use: 'home',
+        }],
+        birthDate: '1980-01-01',
+        gender: 'female',
+        id: 'patient-profile',
+        identifier: [{
+          system: 'https://github.com/synthetichealth/synthea',
+          value: 'patient-profile',
+        }, {
+          system: 'urn:cn-health-data:synthetic-person',
+          value: 'urn:uuid:13b0d528-f28a-5bef-a5ad-1a3bdb700d9a',
+        }, {
+          system: 'urn:cn-health-data:synthetic-mrn',
+          value: 'CNH4E13CCB7CC71',
+        }, {
+          extension: [{ url: 'urn:cn-health-data:synthetic', valueBoolean: true }],
+          system: 'urn:cn-health-data:simulated-resident-id',
+          value: '990000198001010637',
+        }],
+        name: [{ family: '杨', given: ['秀珍'], text: '杨秀珍', use: 'official' }],
+        resourceType: 'Patient',
+        telecom: [{ system: 'phone', use: 'home', value: '10093284819' }, {
+          system: 'email',
+          use: 'home',
+          value: 'cnh4e13ccb7cc71@example.test',
+        }],
+      },
+    }],
+    resourceType: 'Bundle' as const,
+    type: 'collection' as const,
+  }
+}
+
+function createProfile(input: {
+  batchId: string
+  createdAt: string
+  localization?: ReturnType<typeof syntheaCnLocalizationProvenanceSchema.parse>
+  translationWarning?: ReturnType<typeof syntheaTranslationWarningSchema.parse>
+  workspaceId: string
+}) {
+  const baseBundle = profileBundle()
+  const raw = input.localization === undefined
+    ? baseBundle
+    : {
+        ...baseBundle,
+        meta: {
+          tag: [{
+            code: input.localization.profileId,
+            display: input.localization.profileContentHash,
+            system: 'urn:cn-health-data:synthea-profile',
+          }, {
+            code: input.localization.clinicalDisplay.projectionId,
+            display: input.localization.clinicalDisplay.catalogSha256,
+            system: 'urn:cn-health-data:synthea-translation',
+          }],
+        },
+      }
+  return createSyntheticPatientProfiles({
+    batchId: input.batchId,
+    batchName: profileRequest.name,
+    createdAt: input.createdAt,
+    request: profileRequest,
+    sources: [{
+      format: 'fhir-r4-bundle',
+      hash: canonicalJsonHash(raw),
+      ...(input.localization === undefined ? {} : { localization: input.localization }),
+      patientId: 'synthea-patient-patient-profile',
+      raw,
+      ...(input.translationWarning === undefined
+        ? {}
+        : { translationWarning: input.translationWarning }),
+    }],
+    workspaceId: input.workspaceId,
+  })[0]!
 }
 
 describe('SQLite lifecycle', () => {
@@ -59,7 +171,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 30,
+      schemaVersion: 40,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -92,35 +204,40 @@ describe('SQLite lifecycle', () => {
         '0026_profile-mapping-provenance.sql',
         '0027_service-catalog-search.sql',
         '0028_synthea-localization-provenance.sql',
-        '0029_dsh-agent-integration.sql',
+        '0029_synthetic-case.sql',
+        '0030_diagnosis-reference-snapshot.sql',
+        '0031_prescription-reference-snapshot.sql',
+        '0032_laboratory-reference-snapshot.sql',
+        '0033_patient-brief.sql',
+        '0034_synthetic-case-materialization.sql',
+        '0035_investigation-result-snapshot.sql',
+        '0036_retire-scenario-dataset.sql',
+        '0037_synthea-translation-warning.sql',
+        '0038_diagnosis-confirmation-revision.sql',
+        '0039_dsh-agent-integration.sql',
       ],
-      schemaVersion: 30,
+      schemaVersion: 40,
     })
     expect(first.driver.prepare(`
-      SELECT "from", "table", "to", on_delete
-      FROM pragma_foreign_key_list('scenario_generation_job')
-      WHERE "table" = 'scenario_dataset'
-      ORDER BY seq
-    `).all()).toEqual([{
-      from: 'dataset_workspace_id',
-      on_delete: 'SET NULL',
-      table: 'scenario_dataset',
-      to: 'workspace_id',
-    }, {
-      from: 'dataset_id',
-      on_delete: 'SET NULL',
-      table: 'scenario_dataset',
-      to: 'dataset_id',
-    }])
+      SELECT name FROM sqlite_schema
+      WHERE type = 'table' AND name IN ('scenario_dataset', 'scenario_package')
+    `).all()).toEqual([])
+    expect((first.driver.prepare('PRAGMA table_info(synthetic_patient_profile)').all() as Array<{
+      name: string
+    }>).map(column => column.name)).toEqual(expect.arrayContaining([
+      'demographics_json',
+      'generation_json',
+      'raw_source_json',
+    ]))
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 30 })
-    expect(reopened.diagnostics().schemaVersion).toBe(30)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 40 })
+    expect(reopened.diagnostics().schemaVersion).toBe(40)
     reopened.close()
   })
 
-  it('persists Synthea localization provenance in the Profile and its revision', async () => {
+  it('persists Synthea localization provenance and warnings in the Profile', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-profile-localization-'))
     temporaryDirectories.push(directory)
     const database = openClinMeshDatabase({
@@ -135,29 +252,14 @@ describe('SQLite lifecycle', () => {
       workspaceId: 'workspace-profile-localization',
       workspaceName: 'Profile localization',
     })
-    const request = scenarioGenerationRequestSchema.parse({
-      modules: ['fever'],
-      name: 'Profile localization',
-      population: { age: { maximum: 50, minimum: 30 }, count: 1, gender: 'any' },
-      providerId: 'builtin',
-      seeds: { clinical: 7331, population: 4242 },
-      timeRange: { end: '2026-08-01', start: '2016-08-01' },
-      timeZone: 'Asia/Shanghai',
-    })
-    const corpus = await new BuiltInScenarioGenerationProvider().generate(request)
-    const dataset: ScenarioDataset = {
-      content: corpus.content,
-      contentHash: canonicalJsonHash(corpus.content),
-      createdAt: '2026-08-30T00:00:00.000Z',
-      datasetId: 'dataset-profile-localization',
-      diagnostics: [],
-      name: request.name,
-      providerId: request.providerId,
-      updatedAt: '2026-08-30T00:00:00.000Z',
-      version: 1,
-      workspaceId: 'workspace-profile-localization',
-    }
     const localization = syntheaCnLocalizationProvenanceSchema.parse({
+      clinicalDisplay: {
+        catalogSha256: 'f'.repeat(64),
+        language: 'zh-CN',
+        projectionId: 'synthea-zh-cn@2026-08-30.r1',
+        recordCount: 2180,
+        reviewMode: 'experimental-preview',
+      },
       dependencies: [
         candidateDependency('geography-cn', '2026-08-29.r1', 'a'),
         candidateDependency('names-cn', '40.37.0.r1', 'b'),
@@ -168,42 +270,38 @@ describe('SQLite lifecycle', () => {
       profileId: 'synthea-cn@2026-08-29.r3',
       syntheaCommit: 'e'.repeat(40),
     })
-    const profile = createSyntheticPatientProfiles({ dataset, sources: corpus.sources })[0]!
-    const localizedProfile = {
-      ...profile,
-      source: { ...profile.source, localization },
-    }
+    const localizedProfile = createProfile({
+      batchId: 'batch-profile-localization',
+      createdAt: '2026-08-30T00:00:00.000Z',
+      localization,
+      translationWarning,
+      workspaceId: 'workspace-profile-localization',
+    })
     const repository = new SyntheticPatientProfileRepository(database)
     repository.createBatch([localizedProfile], 'actor-profile-localization')
 
     expect(repository.get(localizedProfile.workspaceId, localizedProfile.profileId)?.source.localization)
       .toEqual(localization)
-    expect(database.driver.prepare(`
-      SELECT localization_provenance_json
-      FROM synthetic_patient_profile_revision
-      WHERE workspace_id = ? AND profile_id = ? AND revision = 1
-    `).get(localizedProfile.workspaceId, localizedProfile.profileId)).toEqual({
-      localization_provenance_json: JSON.stringify(localization),
-    })
+    expect(repository.get(localizedProfile.workspaceId, localizedProfile.profileId)?.source.raw)
+      .toEqual(localizedProfile.source.raw)
+    expect(repository.getRevision(
+      localizedProfile.workspaceId,
+      localizedProfile.profileId,
+      1,
+    )?.source.localization).toEqual(localization)
+    expect(repository.get(localizedProfile.workspaceId, localizedProfile.profileId)
+      ?.source.translationWarning).toEqual(translationWarning)
     database.close()
   })
 
-  it('preserves existing Profile revisions when structured mapping provenance is added', async () => {
+  it('preserves immutable source and earlier demographics across Profile revisions', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-profile-mapping-provenance-'))
     temporaryDirectories.push(directory)
-    const databasePath = join(directory, 'clinmesh.sqlite')
-    const migrationDirectory = join(directory, 'migrations')
-    const sourceMigrationDirectory = join(process.cwd(), 'drizzle')
-    await mkdir(migrationDirectory)
-    const migrationFiles = (await readdir(sourceMigrationDirectory))
-      .filter(file => /^\d{4}_[a-z0-9-]+\.sql$/.test(file) && file <= '0025_reference-data-provenance.sql')
-      .toSorted()
-    for (const migration of migrationFiles) {
-      await copyFile(join(sourceMigrationDirectory, migration), join(migrationDirectory, migration))
-    }
-
-    const database = openClinMeshDatabase({ busyTimeoutMs: 5_000, databasePath })
-    expect(applyMigrations(database, migrationDirectory).schemaVersion).toBe(26)
+    const database = openClinMeshDatabase({
+      busyTimeoutMs: 5_000,
+      databasePath: join(directory, 'clinmesh.sqlite'),
+    })
+    applyMigrations(database)
     new WorkspaceRepository(database).install({
       epoch: 'epoch-profile-mapping',
       scenarioId: 'scenario-profile-mapping',
@@ -211,120 +309,29 @@ describe('SQLite lifecycle', () => {
       workspaceId: 'workspace-profile-mapping',
       workspaceName: 'Profile mapping migration',
     })
-    const request = scenarioGenerationRequestSchema.parse({
-      modules: ['fever'],
-      name: 'Profile mapping migration',
-      population: { age: { maximum: 50, minimum: 30 }, count: 1, gender: 'any' },
-      providerId: 'builtin',
-      seeds: { clinical: 7331, population: 4242 },
-      timeRange: { end: '2026-08-01', start: '2016-08-01' },
-      timeZone: 'Asia/Shanghai',
-    })
-    const corpus = await new BuiltInScenarioGenerationProvider().generate(request)
-    const dataset: ScenarioDataset = {
-      content: corpus.content,
-      contentHash: canonicalJsonHash(corpus.content),
+    const generated = createProfile({
+      batchId: 'batch-profile-revision',
       createdAt: '2026-08-28T00:00:00.000Z',
-      datasetId: 'dataset-profile-mapping',
-      diagnostics: [],
-      name: request.name,
-      providerId: request.providerId,
-      updatedAt: '2026-08-28T00:00:00.000Z',
-      version: 1,
       workspaceId: 'workspace-profile-mapping',
-    }
-    const generated = createSyntheticPatientProfiles({ dataset, sources: corpus.sources })[0]!
-    const legacyMappingVersion = 'builtin-case-truth-v1+overlay-r2'
-    database.driver.prepare(`
-      INSERT INTO synthetic_patient_profile (
-        workspace_id, profile_id, batch_id, batch_name, provider_id,
-        source_patient_id, revision, display_name, mrn, identity_json, mappings_json,
-        patient_json, source_format, source_hash, raw_source_json, compilation_json,
-        mapping_version, reference_data_json, created_by_actor_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
-    `).run(
-      generated.workspaceId,
-      generated.profileId,
-      generated.source.batchId,
-      generated.source.batchName,
-      generated.source.providerId,
-      generated.source.patientId,
-      generated.revision,
-      generated.identity.displayName,
-      generated.identity.mrn,
-      JSON.stringify(generated.identity),
-      JSON.stringify(generated.mappings),
-      JSON.stringify(generated.patient),
-      generated.source.format,
-      generated.source.hash,
-      generated.source.raw === null ? null : JSON.stringify(generated.source.raw),
-      generated.source.compilation === null ? null : JSON.stringify(generated.source.compilation),
-      legacyMappingVersion,
-      'actor-profile-mapping',
-      generated.createdAt,
-      generated.updatedAt,
-    )
-    database.driver.prepare(`
-      INSERT INTO synthetic_patient_profile_revision (
-        workspace_id, profile_id, revision, identity_json, mappings_json, patient_json,
-        mapping_version, reference_data_json, created_by_actor_id, created_at
-      ) VALUES (?, ?, 1, ?, ?, ?, ?, NULL, ?, ?)
-    `).run(
-      generated.workspaceId,
-      generated.profileId,
-      JSON.stringify(generated.identity),
-      JSON.stringify(generated.mappings),
-      JSON.stringify(generated.patient),
-      legacyMappingVersion,
-      'actor-profile-mapping',
-      generated.createdAt,
-    )
-    const revisionBefore = database.driver.prepare(`
-      SELECT mappings_json, patient_json, mapping_version
-      FROM synthetic_patient_profile_revision
-      WHERE workspace_id = ? AND profile_id = ? AND revision = 1
-    `).get(generated.workspaceId, generated.profileId)
-
-    for (const migration of [
-      '0026_profile-mapping-provenance.sql',
-      '0027_service-catalog-search.sql',
-      '0028_synthea-localization-provenance.sql',
-    ]) {
-      await copyFile(join(sourceMigrationDirectory, migration), join(migrationDirectory, migration))
-    }
-    expect(applyMigrations(database, migrationDirectory)).toEqual({
-      applied: [
-        '0026_profile-mapping-provenance.sql',
-        '0027_service-catalog-search.sql',
-        '0028_synthea-localization-provenance.sql',
-      ],
-      schemaVersion: 29,
     })
     const repository = new SyntheticPatientProfileRepository(database)
-    const migrated = repository.get(generated.workspaceId, generated.profileId)
-    expect(migrated).toBeDefined()
-    expect(migrated?.source).toMatchObject({ mappingVersion: legacyMappingVersion })
-    expect(migrated?.source).not.toHaveProperty('mappingProvenance')
-    expect(migrated?.source).not.toHaveProperty('localization')
+    repository.createBatch([generated], 'actor-profile-mapping')
     expect(repository.update({
-      ...migrated!,
-      identity: { ...migrated!.identity, displayName: 'Migrated profile' },
+      ...generated,
+      demographics: { ...generated.demographics, gender: 'unknown' },
+      identity: { ...generated.identity, displayName: 'Revised profile' },
       revision: 2,
       updatedAt: '2026-08-28T01:00:00.000Z',
     }, 1, 'actor-profile-mapping')).toBe(true)
-    expect(database.driver.prepare(`
-      SELECT mappings_json, patient_json, mapping_version
-      FROM synthetic_patient_profile_revision
-      WHERE workspace_id = ? AND profile_id = ? AND revision = 1
-    `).get(generated.workspaceId, generated.profileId)).toEqual(revisionBefore)
-    expect(database.driver.prepare(`
-      SELECT localization_provenance_json, mapping_provenance_json, mapping_version
-      FROM synthetic_patient_profile_revision
-      WHERE workspace_id = ? AND profile_id = ? AND revision = 2
-    `).get(generated.workspaceId, generated.profileId)).toEqual({
-      localization_provenance_json: null,
-      mapping_provenance_json: null,
-      mapping_version: legacyMappingVersion,
+    expect(repository.getRevision(generated.workspaceId, generated.profileId, 1)).toMatchObject({
+      demographics: generated.demographics,
+      identity: generated.identity,
+      source: generated.source,
+    })
+    expect(repository.getRevision(generated.workspaceId, generated.profileId, 2)).toMatchObject({
+      demographics: { ...generated.demographics, gender: 'unknown' },
+      identity: { ...generated.identity, displayName: 'Revised profile' },
+      source: generated.source,
     })
     database.close()
   })
@@ -1285,6 +1292,54 @@ describe('SQLite lifecycle', () => {
       context.epoch,
       '2026-08-24T09:03:00+08:00',
     )).toThrow(/FOREIGN KEY constraint failed/)
+    const remainingMigrations = [
+      '0020_scenario-dataset.sql',
+      '0021_scenario-generation-job.sql',
+      '0022_laboratory-request-repeat.sql',
+      '0023_consultation-second-ask.sql',
+      '0024_synthetic-patient-profile.sql',
+      '0025_reference-data-provenance.sql',
+      '0026_profile-mapping-provenance.sql',
+      '0027_service-catalog-search.sql',
+      '0028_synthea-localization-provenance.sql',
+      '0029_synthetic-case.sql',
+      '0030_diagnosis-reference-snapshot.sql',
+      '0031_prescription-reference-snapshot.sql',
+      '0032_laboratory-reference-snapshot.sql',
+      '0033_patient-brief.sql',
+      '0034_synthetic-case-materialization.sql',
+      '0035_investigation-result-snapshot.sql',
+      '0036_retire-scenario-dataset.sql',
+      '0037_synthea-translation-warning.sql',
+      '0038_diagnosis-confirmation-revision.sql',
+      '0039_dsh-agent-integration.sql',
+    ]
+    for (const migration of remainingMigrations) {
+      await copyFile(
+        join(process.cwd(), 'drizzle', migration),
+        join(legacyMigrationDirectory, migration),
+      )
+    }
+    expect(applyMigrations(database, legacyMigrationDirectory)).toEqual({
+      applied: remainingMigrations,
+      schemaVersion: 40,
+    })
+    expect(database.driver.prepare(`
+      SELECT confirmation_id, revision_number, supersedes_confirmation_id
+      FROM diagnosis_confirmation
+      WHERE workspace_id = ? AND epoch = ? AND case_id = 'case-legacy'
+    `).get(context.workspaceId, context.epoch)).toEqual({
+      confirmation_id: 'confirmation-legacy',
+      revision_number: 1,
+      supersedes_confirmation_id: null,
+    })
+    expect(database.driver.prepare(`
+      SELECT condition_id, coding_snapshot_json FROM diagnosis_entry
+      WHERE workspace_id = ? AND epoch = ? AND confirmation_id = 'confirmation-legacy'
+    `).get(context.workspaceId, context.epoch)).toMatchObject({
+      condition_id: 'condition-legacy-primary',
+      coding_snapshot_json: expect.stringContaining('J10.1'),
+    })
     expect(database.driver.pragma('foreign_key_check')).toEqual([])
     expect(database.driver.pragma('integrity_check', { simple: true })).toBe('ok')
     database.close()
@@ -1311,7 +1366,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(30)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(40)
     await runtime.close()
   })
 
@@ -1381,7 +1436,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 30,
+      schemaVersion: 40,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -1393,11 +1448,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 30,
+      expectedSchemaVersion: 40,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 30,
+      schemaVersion: 40,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -1581,7 +1636,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(30),
+      schemaVersion: z.literal(40),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -1610,27 +1665,37 @@ describe('SQLite lifecycle', () => {
       '0026_profile-mapping-provenance.sql',
       '0027_service-catalog-search.sql',
       '0028_synthea-localization-provenance.sql',
-      '0029_dsh-agent-integration.sql',
+      '0029_synthetic-case.sql',
+      '0030_diagnosis-reference-snapshot.sql',
+      '0031_prescription-reference-snapshot.sql',
+      '0032_laboratory-reference-snapshot.sql',
+      '0033_patient-brief.sql',
+      '0034_synthetic-case-materialization.sql',
+      '0035_investigation-result-snapshot.sql',
+      '0036_retire-scenario-dataset.sql',
+      '0037_synthea-translation-warning.sql',
+      '0038_diagnosis-confirmation-revision.sql',
+      '0039_dsh-agent-integration.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 30 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 40 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 30 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 40 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 30 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 40 })
   })
 })

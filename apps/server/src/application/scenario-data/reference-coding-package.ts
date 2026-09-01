@@ -26,7 +26,7 @@ const observationMappingSchema = z.object({
   }).strict(),
 }).strict()
 
-const codingPackageSchema = z.object({
+export const referenceCodingPackageSchema = z.object({
   loincVersion: z.literal('2.83'),
   observationMappings: z.array(observationMappingSchema),
   schemaVersion: z.literal('1'),
@@ -71,7 +71,27 @@ const codingPackageSchema = z.object({
         path: ['observationMappings', index, 'target', 'unitCode'],
       })
     }
+    if (
+      mapping.target.referenceMinimum !== undefined
+      && mapping.target.referenceMaximum !== undefined
+      && mapping.target.referenceMinimum > mapping.target.referenceMaximum
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Investigation reference range is inverted',
+        path: ['observationMappings', index, 'target', 'referenceMinimum'],
+      })
+    }
+    const sourceUnitCodes = new Set<string>()
     mapping.target.sourceUnits.forEach((sourceUnit, sourceUnitIndex) => {
+      if (sourceUnitCodes.has(sourceUnit.unitCode)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Investigation source unit was repeated',
+          path: ['observationMappings', index, 'target', 'sourceUnits', sourceUnitIndex, 'unitCode'],
+        })
+      }
+      sourceUnitCodes.add(sourceUnit.unitCode)
       if (!unitCodes.has(sourceUnit.unitCode)) {
         context.addIssue({
           code: 'custom',
@@ -83,7 +103,7 @@ const codingPackageSchema = z.object({
   })
 })
 
-const codingPackage = codingPackageSchema.parse(packageData)
+const codingPackage = referenceCodingPackageSchema.parse(packageData)
 const unitsByCode = new Map(codingPackage.units.map(unit => [unit.code, unit]))
 const unitsByDisplay = new Map(codingPackage.units.map(unit => [unit.display, unit]))
 const observationMappingCodes = new Set(
@@ -117,6 +137,37 @@ export function resolveObservationMapping(input: {
     && (input.display === undefined || input.display === mapping.coding.display)
     ? mapping
     : undefined
+}
+
+function rangeValue(value: number): number {
+  return Number(value.toFixed(4))
+}
+
+export function syntheticInvestigationReferenceRange(input: {
+  code: string
+  system: string
+  unitCode: string
+  unitDisplay: string
+  version: string
+}) {
+  const mapping = resolveObservationMapping(input)
+  const sourceUnit = mapping?.sourceUnits.find(unit => unit.unitCode === input.unitCode)
+  if (mapping === undefined || sourceUnit === undefined) return undefined
+  const low = mapping.referenceMinimum === undefined
+    ? undefined
+    : rangeValue(mapping.referenceMinimum / sourceUnit.multiplier)
+  const high = mapping.referenceMaximum === undefined
+    ? undefined
+    : rangeValue(mapping.referenceMaximum / sourceUnit.multiplier)
+  if (low === undefined && high === undefined) return undefined
+  const interval = low === undefined
+    ? `<=${high}`
+    : high === undefined ? `>=${low}` : `${low}-${high}`
+  return {
+    ...(high === undefined ? {} : { high }),
+    ...(low === undefined ? {} : { low }),
+    text: `合成成人演示范围 ${interval} ${input.unitDisplay}`,
+  }
 }
 
 export function isKnownObservationMappingCode(code: string): boolean {

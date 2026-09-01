@@ -5,12 +5,17 @@ services:
       dockerfile: Dockerfile.synthea-localizer
     cap_drop:
       - ALL
+    cpus: "1.0"
     environment:
       CN_HEALTH_GEOGRAPHY_RELEASE_PATH: /data/geography
       CN_HEALTH_NAMES_RELEASE_PATH: /data/names
       CN_HEALTH_POPULATION_RELEASE_PATH: /data/population
       CN_HEALTH_SYNTHEA_PROFILE_PATH: /data/profile
+      CN_HEALTH_SYNTHEA_TRANSLATION_CATALOG_PATH: /data/translation/catalog.jsonl
+      CN_HEALTH_SYNTHEA_CLINICAL_DISPLAY_PROJECTION_ID: synthea-zh-cn@2026-08-30.r1
+      CN_HEALTH_SYNTHEA_EXPECTED_CATALOG_SHA256: d7a25fc414d4008cf59145fd8fc3448556635dd2d5ab8e1e7974bc236f825811
     init: true
+    mem_limit: 1g
     pids_limit: 128
     read_only: true
     restart: unless-stopped
@@ -24,12 +29,14 @@ services:
       - ${CN_HEALTH_DATA_DIST:-../cn-health-data/dist}/names-cn/releases/40.37.0.r1:/data/names:ro
       - ${CN_HEALTH_DATA_DIST:-../cn-health-data/dist}/geography-cn/releases/2026-08-29.r1:/data/geography:ro
       - ${CN_HEALTH_DATA_DIST:-../cn-health-data/dist}/population-cn/releases/WPP2024.r1:/data/population:ro
+      - ${CN_HEALTH_DATA_CONTEXT:-../cn-health-data}/translations/synthea-zh-cn:/data/translation:ro
 
   synthea-provider:
     build:
       context: apps/synthea-provider
     cap_drop:
       - ALL
+    cpus: "2.0"
     depends_on:
       cn-health-localizer:
         condition: service_healthy
@@ -38,6 +45,7 @@ services:
       SYNTHEA_CLASSPATH_PATH: /opt/cn-health/synthea-profile/classpath
       SYNTHEA_CONFIG_PATH: /opt/cn-health/synthea-profile/synthea.properties
     init: true
+    mem_limit: 2g
     pids_limit: 256
     ports:
       - "127.0.0.1:${CLINMESH_SYNTHEA_PROVIDER_PORT:-51878}:51878"

@@ -1,29 +1,22 @@
 import type {
-  ScenarioDatasetContent,
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
   SyntheaCnLocalizationProvenance,
+  SyntheaTranslationWarning,
 } from '@clinmesh/contracts/scenario'
 import { canonicalJsonHash } from './canonical-json.ts'
 
-export const generatedScenarioSimulatorRules = [
-  { code: 'success', outcome: 'success', simulator: 'payment' },
-  { code: 'decline', outcome: 'declined', simulator: 'payment' },
-  { code: 'ambiguous', outcome: 'ambiguous', simulator: 'payment' },
-  { code: 'default-success', outcome: 'success', simulator: 'lis' },
-] satisfies ScenarioDatasetContent['simulatorRules']
-
 export interface SourcePatientArtifact {
-  format: 'clinmesh-template' | 'fhir-r4-bundle' | 'legacy-compiled-profile'
+  format: 'fhir-r4-bundle'
   hash: string
   localization?: SyntheaCnLocalizationProvenance
+  translationWarning?: SyntheaTranslationWarning
   patientId: string
-  raw: unknown | null
+  raw: unknown
 }
 
 export interface SourcePatientCorpus {
-  content: ScenarioDatasetContent
-  kind: 'case-truth'
+  kind: 'synthea-r4'
   sources: SourcePatientArtifact[]
 }
 

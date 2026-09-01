@@ -9,6 +9,16 @@ const httpUrlSchema = z.url().refine((value) => {
 }, 'URL must use HTTP or HTTPS')
 
 const serverEnvironmentSchema = z.object({
+  CLINMESH_AI_API_KEY: z.string().min(1).optional(),
+  CLINMESH_AI_BASE_URL: httpUrlSchema.optional(),
+  CLINMESH_AI_BRIEF_MODEL: z.string().trim().min(1).max(256).optional(),
+  CLINMESH_AI_INVESTIGATION_MODEL: z.string().trim().min(1).max(256).optional(),
+  CLINMESH_AI_MAX_RESPONSE_BYTES: z.string().regex(/^\d+$/)
+    .refine(value => Number(value) >= 1_024 && Number(value) <= 10 * 1_024 * 1_024)
+    .default('1048576'),
+  CLINMESH_AI_TIMEOUT_MS: z.string().regex(/^\d+$/)
+    .refine(value => Number(value) >= 100 && Number(value) <= 10 * 60 * 1_000)
+    .default('60000'),
   CLINMESH_AUTH_SECRET: z.string().min(32),
   CLINMESH_CURSOR_SECRET: z.string().min(32),
   CLINMESH_DATABASE_PATH: z.string().trim().min(1),
@@ -22,13 +32,35 @@ const serverEnvironmentSchema = z.object({
     .pipe(z.number().int().min(1).max(65_535)),
   CLINMESH_PUBLIC_ORIGIN: z.url().optional(),
   CLINMESH_REFERENCE_DATABASE_PATH: z.string().trim().min(1).optional(),
-  CLINMESH_REFERENCE_SELECTION_PATH: z.string().trim().min(1).optional(),
+  CLINMESH_REFERENCE_RELEASE_ID: z.string().trim().min(1).max(256).optional(),
   CLINMESH_SYNTHEA_PROVIDER_URL: httpUrlSchema.optional(),
   CLINMESH_TRUSTED_ORIGINS: z.string().trim().min(1).optional(),
   CLINMESH_WEB_ROOT: z.string().trim().min(1).optional(),
+}).superRefine((environment, context) => {
+  const values = [
+    environment.CLINMESH_AI_API_KEY,
+    environment.CLINMESH_AI_BASE_URL,
+    environment.CLINMESH_AI_BRIEF_MODEL,
+    environment.CLINMESH_AI_INVESTIGATION_MODEL,
+  ]
+  if (values.some(value => value !== undefined) && values.some(value => value === undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'AI base URL, API key, Brief model, and Investigation model must be configured together',
+      path: ['CLINMESH_AI_BASE_URL'],
+    })
+  }
 })
 
 export interface ServerConfig {
+  ai?: {
+    apiKey: string
+    baseUrl: string
+    briefModel: string
+    investigationModel: string
+    maxResponseBytes: number
+    timeoutMs: number
+  }
   authBaseUrl: string
   authSecret: string
   cursorSecret: string
@@ -38,7 +70,7 @@ export interface ServerConfig {
   hostname: string
   port: number
   referenceDatabasePath?: string
-  referenceSelectionPath?: string
+  referenceReleaseId?: string
   syntheaProviderUrl?: string
   trustedOrigins: string[]
   webRoot?: string
@@ -70,7 +102,6 @@ export function readServerEnvironment(
   for (const name of [
     'CLINMESH_DATABASE_PATH',
     'CLINMESH_REFERENCE_DATABASE_PATH',
-    'CLINMESH_REFERENCE_SELECTION_PATH',
     'CLINMESH_WEB_ROOT',
   ] as const) {
     const value = fromFile[name]
@@ -95,6 +126,18 @@ export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
     : parsed.CLINMESH_TRUSTED_ORIGINS.split(',').map(origin => z.url().parse(origin.trim()))
 
   return {
+    ...(parsed.CLINMESH_AI_BASE_URL === undefined
+      ? {}
+      : {
+          ai: {
+            apiKey: parsed.CLINMESH_AI_API_KEY!,
+            baseUrl: parsed.CLINMESH_AI_BASE_URL,
+            briefModel: parsed.CLINMESH_AI_BRIEF_MODEL!,
+            investigationModel: parsed.CLINMESH_AI_INVESTIGATION_MODEL!,
+            maxResponseBytes: Number(parsed.CLINMESH_AI_MAX_RESPONSE_BYTES),
+            timeoutMs: Number(parsed.CLINMESH_AI_TIMEOUT_MS),
+          },
+        }),
     authBaseUrl,
     authSecret: parsed.CLINMESH_AUTH_SECRET,
     cursorSecret: parsed.CLINMESH_CURSOR_SECRET,
@@ -108,9 +151,9 @@ export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
     ...(parsed.CLINMESH_REFERENCE_DATABASE_PATH === undefined
       ? {}
       : { referenceDatabasePath: parsed.CLINMESH_REFERENCE_DATABASE_PATH }),
-    ...(parsed.CLINMESH_REFERENCE_SELECTION_PATH === undefined
+    ...(parsed.CLINMESH_REFERENCE_RELEASE_ID === undefined
       ? {}
-      : { referenceSelectionPath: parsed.CLINMESH_REFERENCE_SELECTION_PATH }),
+      : { referenceReleaseId: parsed.CLINMESH_REFERENCE_RELEASE_ID }),
     ...(parsed.CLINMESH_SYNTHEA_PROVIDER_URL === undefined
       ? {}
       : { syntheaProviderUrl: parsed.CLINMESH_SYNTHEA_PROVIDER_URL }),

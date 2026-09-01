@@ -25,6 +25,7 @@ import {
   SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
+  useSidebar,
 } from '@clinmesh/ui/components/sidebar'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { TooltipProvider } from '@clinmesh/ui/components/tooltip'
@@ -37,7 +38,6 @@ import {
   ComponentIcon,
   DatabaseIcon,
   HeartPulseIcon,
-  HospitalIcon,
   LayoutDashboardIcon,
   LogOutIcon,
   MonitorIcon,
@@ -51,6 +51,8 @@ import {
   UserRoundIcon,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
+import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
+import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
 import { getWorkspaceMessages, type WorkspaceLocale, type WorkspaceMessageKey } from './workspace-i18n.ts'
 
 export type WorkspaceTheme = 'system' | 'light' | 'dark'
@@ -153,15 +155,34 @@ function firstValue<Value extends string>(values: Value[]): Value | undefined {
   return values[0]
 }
 
-function Brand({ appName, hospitalName }: { appName: string; hospitalName: string }): React.JSX.Element {
-  return (
-    <div className="flex min-w-0 items-center gap-2 px-1 py-1.5">
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-info text-info-foreground">
-        <HospitalIcon aria-hidden="true" />
+function Brand({
+  appName,
+  logoAlt,
+  productTagline,
+}: {
+  appName: string
+  logoAlt: string
+  productTagline: string
+}): React.JSX.Element {
+  const { isMobile, state } = useSidebar()
+
+  if (!isMobile && state === 'collapsed') {
+    return (
+      <div className="flex h-10 w-full items-center justify-center">
+        <img alt={logoAlt} className="size-8 shrink-0" src={clinmeshMarkUrl} />
       </div>
-      <div className="min-w-0 group-data-[collapsible=icon]:hidden">
-        <div className="truncate text-sm font-semibold">{appName}</div>
-        <div className="truncate text-xs text-muted-foreground">{hospitalName}</div>
+    )
+  }
+
+  return (
+    <div className="flex min-w-0 items-center gap-3 px-1 py-1">
+      <div className="flex w-16 shrink-0 flex-col items-center justify-center bg-white py-1">
+        <img alt={logoAlt} className="size-9 shrink-0" src={clinmeshMarkUrl} />
+        <img alt="Clinmesh" className="mt-0.5 h-auto w-14 shrink-0" src={clinmeshWordmarkUrl} />
+      </div>
+      <div className="min-w-0 whitespace-nowrap">
+        <div className="text-sm font-semibold">{appName}</div>
+        <div className="mt-1 text-[0.625rem] leading-none text-muted-foreground">{productTagline}</div>
       </div>
     </div>
   )
@@ -386,7 +407,11 @@ export function WorkspaceShell({
           variant="inset"
         >
           <SidebarHeader>
-            <Brand appName={messages.appName} hospitalName={messages.hospitalName} />
+            <Brand
+              appName={messages.appName}
+              logoAlt={messages.logoAlt}
+              productTagline={messages.productTagline}
+            />
           </SidebarHeader>
           <SidebarContent>
             {settingsMode ? (
@@ -489,13 +514,13 @@ export function WorkspaceShell({
               />
             </div>
           </header>
-          <main
+          <div
             className="flex flex-1 flex-col gap-5 bg-muted/40 p-4 outline-none sm:p-5"
             data-clinmesh-workspace-panel=""
             tabIndex={-1}
           >
             {children}
-          </main>
+          </div>
         </SidebarInset>
       </SidebarProvider>
     </TooltipProvider>

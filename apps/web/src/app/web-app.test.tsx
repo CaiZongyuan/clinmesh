@@ -141,6 +141,7 @@ describe('Web application shell', () => {
   })
 
   it('opens the active role workspace without a duplicate overview entry', async () => {
+    const user = userEvent.setup()
     await renderWebApp()
 
     expect(screen.getByRole('heading', { name: '门诊挂号' })).toBeTruthy()
@@ -149,12 +150,20 @@ describe('Web application shell', () => {
     expect(screen.getByRole('link', { name: '门诊挂号' })).toBeTruthy()
     expect(screen.queryByRole('link', { name: '工作台总览' })).toBeNull()
     expect(screen.queryByRole('link', { name: '门诊收费' })).toBeNull()
+    expect(screen.getByRole('img', { name: '科灵脉智标志' })).toBeTruthy()
+    expect(screen.getByRole('img', { name: 'Clinmesh' })).toBeTruthy()
+    expect(screen.getByText('科灵脉智')).toBeTruthy()
+    expect(screen.getByText('医疗智能体平台')).toBeTruthy()
     expect(screen.getByRole('button', { name: '通知' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '用户菜单' })).toBeTruthy()
     expect(screen.queryByText('外观')).toBeNull()
     expect(screen.queryByRole('button', { name: 'English' })).toBeNull()
     expect(await screen.findByText('暂无挂号记录')).toBeTruthy()
     expect(screen.queryByText(/Agent|AI|助手/i)).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: '切换导航栏' }))
+    expect(screen.getByRole('img', { name: '科灵脉智标志' })).toBeTruthy()
+    expect(screen.queryByRole('img', { name: 'Clinmesh' })).toBeNull()
   })
 
   it('uses an isolated API prefix and memory history in a DSH Surface', async () => {

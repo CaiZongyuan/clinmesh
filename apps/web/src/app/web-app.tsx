@@ -67,6 +67,8 @@ import {
 import { AgentPageRegistryProvider } from './agent-page-context.tsx'
 import { useSurfaceAgentPublisher } from './surface-agent-publisher.ts'
 import { AgentReviewProvider } from './agent-review.tsx'
+import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
+import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
 
 const DARK_MODE_QUERY = '(prefers-color-scheme: dark)'
 const IS_DEVELOPMENT = process.env.NODE_ENV !== 'production'
@@ -270,6 +272,16 @@ function SignInScreen({ locale }: { locale: 'en-US' | 'zh-CN' }): React.JSX.Elem
     <main className="flex min-h-svh items-center justify-center bg-muted/40 p-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
+          <div className="mb-3 flex min-w-0 flex-col items-center gap-2 text-center">
+            <div className="flex w-full items-center justify-center gap-3 bg-white px-3 py-2">
+              <img alt={messages.logoAlt} className="size-14 shrink-0" src={clinmeshMarkUrl} />
+              <img alt="Clinmesh" className="h-auto max-h-9 min-w-0 max-w-44" src={clinmeshWordmarkUrl} />
+            </div>
+            <div>
+              <div className="text-sm font-semibold">{messages.appName}</div>
+              <div className="text-xs text-muted-foreground">{messages.productTagline}</div>
+            </div>
+          </div>
           <CardTitle aria-level={1} role="heading">{messages.loginTitle}</CardTitle>
           <CardDescription>{messages.loginDescription}</CardDescription>
         </CardHeader>
@@ -350,8 +362,8 @@ const componentCatalogRoute = createRoute({
 
 const UiDevPage = IS_DEVELOPMENT
   ? lazy(async () => {
-      const module = await import('../ui-dev/ui-dev-page.tsx')
-      return { default: module.UiDevPage }
+      const module = await import('../ui-dev/doctor-workspace-lab-page.tsx')
+      return { default: module.DoctorWorkspaceLabPage }
     })
   : () => null
 
@@ -359,6 +371,13 @@ const DataGenerationLabPage = IS_DEVELOPMENT
   ? lazy(async () => {
       const module = await import('../ui-dev/data-generation-lab-page.tsx')
       return { default: module.DataGenerationLabPage }
+    })
+  : () => null
+
+const BrandLockupLabPage = IS_DEVELOPMENT
+  ? lazy(async () => {
+      const module = await import('../ui-dev/brand-lockup-lab-page.tsx')
+      return { default: module.BrandLockupLabPage }
     })
   : () => null
 
@@ -381,6 +400,15 @@ const developmentRoutes = IS_DEVELOPMENT
         ),
         getParentRoute: () => rootRoute,
         path: '/ui-dev/data-generation',
+      }),
+      createRoute({
+        component: () => (
+          <Suspense fallback={<main aria-label="正在加载品牌 UI Lab" className="min-h-svh bg-muted/30" />}>
+            <BrandLockupLabPage />
+          </Suspense>
+        ),
+        getParentRoute: () => rootRoute,
+        path: '/ui-dev/brand',
       }),
     ]
   : []

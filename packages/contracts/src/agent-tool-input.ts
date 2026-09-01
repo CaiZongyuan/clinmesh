@@ -110,7 +110,7 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.case.read': emptyInputSchema,
   'outpatient.case.select': z.object({ caseId: boundedIdSchema }).strict(),
   'outpatient.section.select': z.object({
-    section: z.enum(['record', 'diagnosis', 'prescription', 'examination']),
+    section: z.enum(['consultation', 'record', 'diagnosis', 'prescription', 'laboratory']),
   }).strict(),
   'outpatient.consultation.ask': z.object({ questionCode: boundedCodeSchema }).strict(),
   'outpatient.first-visit.draft.set': firstVisitDraftInputSchema,

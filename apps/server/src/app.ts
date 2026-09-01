@@ -2,6 +2,7 @@ import { extname } from 'node:path'
 import type { HealthResponse } from '@clinmesh/contracts/health'
 import {
   acknowledgeLaboratoryReportRequestSchema,
+  caseLaboratoryCatalogSearchSchema,
   cancelLaboratoryRequestRequestSchema,
   completeHospitalServiceRequestSchema,
   completeEncounterRequestSchema,
@@ -15,6 +16,7 @@ import {
   orderHospitalServiceRequestSchema,
   previewClinicalDocumentSignRequestSchema,
   reviseClinicalDocumentRequestSchema,
+  retryLaboratoryResultGenerationRequestSchema,
   saveClinicalDocumentDraftRequestSchema,
   saveDiagnosisDraftRequestSchema,
   saveLaboratoryRequestDraftRequestSchema,
@@ -26,14 +28,14 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
 import {
+  selectPatientBriefRevisionRequestSchema,
+  startSyntheticCaseRequestSchema,
   scenarioGenerationRequestSchema,
-  startSyntheticPatientVisitsRequestSchema,
   updateSyntheticPatientProfileRequestSchema,
-  updateSyntheticPatientMappingsRequestSchema,
-  updateScenarioDatasetRequestSchema,
 } from '@clinmesh/contracts/scenario'
 import type { IdentityService } from './application/identity-service.ts'
 import { IdentityError } from './application/identity-service.ts'
+import type { InvestigationService } from './application/investigation-service.ts'
 import type { ReferenceDataService } from './application/reference-data-service.ts'
 import { ReferenceDataError } from './application/reference-data-service.ts'
 import {
@@ -44,6 +46,10 @@ import type { ScenarioService } from './application/scenario-service.ts'
 import { ScenarioError } from './application/scenario-service.ts'
 import type { ScenarioDataService } from './application/scenario-data/scenario-data-service.ts'
 import { ScenarioDataError } from './application/scenario-data/scenario-data-service.ts'
+import type { PatientBriefService } from './application/patient-brief-service.ts'
+import { PatientBriefError } from './application/patient-brief-service.ts'
+import type { SyntheticCaseVisitService } from './application/synthetic-case-visit-service.ts'
+import { SyntheticCaseVisitError } from './application/synthetic-case-visit-service.ts'
 import type { WorkflowService } from './application/workflow-service.ts'
 import { WorkflowError } from './application/workflow-service.ts'
 import { createCapabilityStatement } from './fhir/capabilities.ts'
@@ -70,8 +76,11 @@ interface FhirRuntime {
 
 export interface CreateAppOptions {
   agentIntegration?: AgentIntegrationService
+  caseVisits?: SyntheticCaseVisitService
   fhir?: FhirRuntime
   identity?: IdentityService
+  investigation?: InvestigationService
+  patientBrief?: PatientBriefService
   referenceData?: ReferenceDataService
   scenario?: ScenarioService
   scenarioData?: ScenarioDataService
@@ -101,6 +110,8 @@ function apiErrorResponse(
   if (
     error instanceof IdentityError
     || error instanceof AgentIntegrationError
+    || error instanceof PatientBriefError
+    || error instanceof SyntheticCaseVisitError
     || error instanceof ReferenceDataError
     || error instanceof ScenarioDataError
     || error instanceof ScenarioError
@@ -161,6 +172,25 @@ function isServicePath(path: string): boolean {
 
 function isStaticAssetPath(path: string): boolean {
   return extname(path) !== ''
+}
+
+const referenceCatalogQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(50).default(20),
+  query: z.string().trim().min(2).max(100).optional(),
+}).strict()
+
+function referenceCatalogQuery(context: Context): {
+  page: number
+  pageSize: number
+  query?: string
+} {
+  const parsed = referenceCatalogQuerySchema.parse(context.req.query())
+  return {
+    page: parsed.page,
+    pageSize: parsed.pageSize,
+    ...(parsed.query === undefined ? {} : { query: parsed.query }),
+  }
 }
 
 export function createApp(options: CreateAppOptions = {}): Hono {
@@ -327,6 +357,39 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.get('/api/his/v1/reference-catalogs/diagnoses', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(referenceData.searchDiagnoses(
+          session.actor,
+          referenceCatalogQuery(context),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/reference-catalogs/medications', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(referenceData.searchMedications(
+          session.actor,
+          referenceCatalogQuery(context),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/his/v1/reference-catalogs/laboratory', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(referenceData.searchLaboratory(
+          session.actor,
+          referenceCatalogQuery(context),
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
   }
 
   if (options.identity !== undefined && options.scenarioData !== undefined) {
@@ -365,23 +428,6 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
-    app.get('/api/sim/v1/scenario-datasets', async (context) => {
-      try {
-        const session = await identity.resolveSessionContext(context.req.raw.headers)
-        const query = z.object({
-          page: z.coerce.number().int().min(1).default(1),
-          pageSize: z.coerce.number().int().min(1).max(100).default(20),
-          search: z.string().trim().min(1).max(120).optional(),
-        }).parse(context.req.query())
-        return context.json(scenarioData.list(session.actor, {
-          page: query.page,
-          pageSize: query.pageSize,
-          ...(query.search === undefined ? {} : { search: query.search }),
-        }))
-      } catch (error) {
-        return apiErrorResponse(context, error)
-      }
-    })
     app.get('/api/sim/v1/synthetic-patients', async (context) => {
       try {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
@@ -399,10 +445,44 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
-    app.get('/api/sim/v1/synthetic-patient-mapping-catalog', async (context) => {
+    app.get('/api/sim/v1/synthetic-cases/:caseId/history/detail', async (context) => {
       try {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
-        return context.json(scenarioData.syntheticPatientMappingCatalog(session.actor))
+        const query = z.object({
+          sourceReference: z.string().min(1).max(512),
+        }).parse(context.req.query())
+        return context.json(scenarioData.getSyntheticCaseHistoryDetail(
+          session.actor,
+          context.req.param('caseId'),
+          query.sourceReference,
+        ))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/sim/v1/synthetic-cases/:caseId/history', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const query = z.object({
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(20),
+        }).parse(context.req.query())
+        return context.json(scenarioData.listSyntheticCaseHistory(session.actor, {
+          caseId: context.req.param('caseId'),
+          page: query.page,
+          pageSize: query.pageSize,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/sim/v1/synthetic-cases/:caseId', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(scenarioData.getSyntheticCase(
+          session.actor,
+          context.req.param('caseId'),
+        ))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
@@ -437,123 +517,87 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error, 'The Synthetic Patient Profile update is invalid')
       }
     })
-    app.put('/api/sim/v1/synthetic-patients/:profileId/mappings', async (context) => {
+  }
+
+  if (options.identity !== undefined && options.patientBrief !== undefined) {
+    const identity = options.identity
+    const patientBrief = options.patientBrief
+    app.post('/api/sim/v1/synthetic-cases/:caseId/patient-brief-jobs', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
+        z.object({}).strict().parse(await context.req.json())
         const session = await identity.resolveSessionContext(context.req.raw.headers)
-        const body = updateSyntheticPatientMappingsRequestSchema.parse(await context.req.json())
         const idempotencyKey = z.string().min(8).max(128).parse(
           context.req.header('idempotency-key'),
         )
-        return context.json(scenarioData.updateSyntheticPatientMappings({
-          context: session.actor,
-          expectedRevision: body.expectedRevision,
-          idempotencyKey,
-          mappings: body.input,
-          profileId: context.req.param('profileId'),
-        }))
-      } catch (error) {
-        return apiErrorResponse(context, error, 'The Synthetic Patient mapping update is invalid')
-      }
-    })
-    app.post('/api/sim/v1/synthetic-patients/actions/start-outpatient-visits', async (context) => {
-      try {
-        identity.assertTrustedMutation(context.req.raw.headers)
-        const session = await identity.resolveSessionContext(context.req.raw.headers)
-        const request = startSyntheticPatientVisitsRequestSchema.parse(await context.req.json())
-        const idempotencyKey = z.string().min(8).max(128).parse(
-          context.req.header('idempotency-key'),
-        )
-        return context.json(scenarioData.startSyntheticPatientVisits({
+        return context.json(patientBrief.enqueue({
+          caseId: context.req.param('caseId'),
           context: session.actor,
           idempotencyKey,
-          request,
         }))
       } catch (error) {
-        return apiErrorResponse(context, error, 'The outpatient visit request is invalid')
+        return apiErrorResponse(context, error, 'The Patient Brief generation request is invalid')
       }
     })
-    app.post('/api/sim/v1/scenario-datasets/actions/generate', async (context) => {
-      try {
-        identity.assertTrustedMutation(context.req.raw.headers)
-        const session = await identity.resolveSessionContext(context.req.raw.headers)
-        const request = scenarioGenerationRequestSchema.parse(await context.req.json())
-        const idempotencyKey = z.string().min(8).max(128).parse(
-          context.req.header('idempotency-key'),
-        )
-        return context.json(await scenarioData.generate({
-          context: session.actor,
-          idempotencyKey,
-          request,
-        }))
-      } catch (error) {
-        return apiErrorResponse(context, error, 'The Scenario Dataset generation request is invalid')
-      }
-    })
-    app.get('/api/sim/v1/scenario-datasets/:datasetId', async (context) => {
+    app.get('/api/sim/v1/patient-brief-jobs/:jobId', async (context) => {
       try {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
-        return context.json(scenarioData.get(session.actor, context.req.param('datasetId')))
+        return context.json(patientBrief.getJob(session.actor, context.req.param('jobId')))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
     })
-    app.put('/api/sim/v1/scenario-datasets/:datasetId', async (context) => {
+    app.get('/api/sim/v1/synthetic-cases/:caseId/patient-brief-revisions', async (context) => {
       try {
-        identity.assertTrustedMutation(context.req.raw.headers)
         const session = await identity.resolveSessionContext(context.req.raw.headers)
-        const body = updateScenarioDatasetRequestSchema.parse(await context.req.json())
-        const idempotencyKey = z.string().min(8).max(128).parse(
-          context.req.header('idempotency-key'),
-        )
-        return context.json(scenarioData.update({
-          content: body.input.content,
-          context: session.actor,
-          datasetId: context.req.param('datasetId'),
-          expectedVersion: body.expectedVersion,
-          idempotencyKey,
-          name: body.input.name,
-        }))
+        return context.json(patientBrief.listRevisions(
+          session.actor,
+          context.req.param('caseId'),
+        ))
       } catch (error) {
-        return apiErrorResponse(context, error, 'The Scenario Dataset update request is invalid')
+        return apiErrorResponse(context, error)
       }
     })
-    app.delete('/api/sim/v1/scenario-datasets/:datasetId', async (context) => {
+    app.put('/api/sim/v1/synthetic-cases/:caseId/patient-brief-revisions/active', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
+        const body = selectPatientBriefRevisionRequestSchema.parse(await context.req.json())
         const session = await identity.resolveSessionContext(context.req.raw.headers)
-        const body = z.object({ expectedVersion: z.number().int().positive() }).strict()
-          .parse(await context.req.json())
         const idempotencyKey = z.string().min(8).max(128).parse(
           context.req.header('idempotency-key'),
         )
-        return context.json(scenarioData.delete({
+        return context.json(patientBrief.selectRevision({
+          briefRevision: body.briefRevision,
+          caseId: context.req.param('caseId'),
           context: session.actor,
-          datasetId: context.req.param('datasetId'),
-          expectedVersion: body.expectedVersion,
+          expectedCaseRevision: body.expectedCaseRevision,
           idempotencyKey,
         }))
       } catch (error) {
-        return apiErrorResponse(context, error, 'The Scenario Dataset deletion request is invalid')
+        return apiErrorResponse(context, error, 'The Patient Brief revision selection is invalid')
       }
     })
-    app.post('/api/sim/v1/scenario-datasets/:datasetId/actions/install', async (context) => {
+  }
+
+  if (options.identity !== undefined && options.caseVisits !== undefined) {
+    const identity = options.identity
+    const caseVisits = options.caseVisits
+    app.post('/api/his/v1/synthetic-cases/:caseId/actions/start-outpatient-visit', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
+        const request = startSyntheticCaseRequestSchema.parse(await context.req.json())
         const session = await identity.resolveSessionContext(context.req.raw.headers)
-        const body = z.object({ expectedVersion: z.number().int().positive() }).strict()
-          .parse(await context.req.json())
         const idempotencyKey = z.string().min(8).max(128).parse(
           context.req.header('idempotency-key'),
         )
-        return context.json(scenarioData.install({
+        return context.json(caseVisits.start({
+          caseId: context.req.param('caseId'),
           context: session.actor,
-          datasetId: context.req.param('datasetId'),
-          expectedVersion: body.expectedVersion,
           idempotencyKey,
+          request,
         }))
       } catch (error) {
-        return apiErrorResponse(context, error, 'The Scenario Dataset installation request is invalid')
+        return apiErrorResponse(context, error, 'The Synthetic Case visit request is invalid')
       }
     })
   }
@@ -837,6 +881,38 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    if (options.investigation !== undefined && options.referenceData !== undefined) {
+      const investigation = options.investigation
+      const referenceData = options.referenceData
+      app.get('/api/his/v1/doctor/cases/:caseId/reference-catalogs/laboratory', async (context) => {
+        try {
+          const actorContext = await actor(context)
+          const caseId = context.req.param('caseId')
+          workflow.doctorCaseDetail(actorContext, caseId)
+          const result = referenceData.searchLaboratory(
+            actorContext,
+            referenceCatalogQuery(context),
+          )
+          return context.json(caseLaboratoryCatalogSearchSchema.parse({
+            ...result,
+            items: result.items.map((item) => {
+              const { domain: _domain, status: _status, ...concept } = item
+              return {
+                ...item,
+                resultGeneration: investigation.generationCapabilityForCase(
+                  actorContext.workspaceId,
+                  actorContext.epoch,
+                  caseId,
+                  concept,
+                ),
+              }
+            }),
+          }))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+    }
     app.get('/api/his/v1/doctor/cases/:caseId', async (context) => {
       try {
         return context.json(workflow.doctorCaseDetail(
@@ -1247,6 +1323,21 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           expectedVersions: body.expectedVersions,
           idempotencyKey: idempotencyKey(context),
           reasonCode: body.input.reasonCode,
+          requestId: context.req.param('requestId'),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/laboratory-requests/:requestId/actions/retry-generation', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = retryLaboratoryResultGenerationRequestSchema.parse(await context.req.json())
+        return context.json(workflow.retryLaboratoryResultGeneration({
+          context: await actor(context),
+          expectedRequestVersion: body.input.expectedRequestVersion,
+          expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
           requestId: context.req.param('requestId'),
         }))
       } catch (error) {

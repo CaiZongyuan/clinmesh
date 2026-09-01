@@ -29,6 +29,7 @@ function getConflictStatus(
     case 'dispensing-started': return messages.conflictStatus_dispensingStarted
     case 'draft': return messages.conflictStatus_draft
     case 'empty': return messages.conflictStatus_empty
+    case 'generation-failed': return messages.laboratoryRequestStatus_generationFailed
     case 'in-progress': return messages.laboratoryRequestStatus_inProgress
     case 'issued': return messages.laboratoryRequestStatus_issued
     case 'missing': return messages.conflictStatus_missing

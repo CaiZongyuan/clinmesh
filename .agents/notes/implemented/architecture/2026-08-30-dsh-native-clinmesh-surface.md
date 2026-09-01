@@ -44,6 +44,8 @@ Host 代理只接受固定 loopback Hono origin，并限制路径、方法、请
 
 Web 的服务端状态仍由 TanStack Query 拥有，Surface 隐藏时保留客户端草稿；Memory Router 不修改 DSH document pathname。Dialog、Menu、Select、Sheet、Tooltip 和 Toast 通过注入的 Portal 留在 ShadowRoot。`workspace` 是默认布局，宽度不足时退化到 `full-frame`。
 
+医生 Agent registration 位于共享 `DoctorCaseController`，使用当前 `consultation/record/laboratory/diagnosis/prescription` 页面 ID 和 controller 已有 mutations。Agent 草稿动作通过同一保存接口持久化后由 Query 结果回填自动保存表单，不同时改写本地表单 state 和直接提交同一 expected version；正式动作继续复用 controller 的 Command mutation 与 detached review。
+
 Agent integration 增加 Page Context、Tool call、proposal 和 review decision 持久表，所有运行事实使用 Workspace/Epoch 复合隔离键。Command receipt 显式保存 request、audit 和 trace 标识，并用一个 query-shaped 复合索引保护 execution-link 三元组；completion 与 Audit、Action Trace、review decision 做同 operation、Actor、outcome 和时序联结。DSH transcript 不进入 SQLite；普通读取和草稿 Tool 记录调用结果，但不伪装成 Command、Audit Event 或 Provenance。
 
 React Surface artifact 是一个 lazy-CJS 文件，React 与 DSH runtime 保持 external；构建验证拒绝动态 chunk、第二份 React、未服务资产和残留 `import.meta`。CI 递归 checkout submodule，并固定 Bun `1.4.0`。Desktop、Mobile、MCP、Agent OAuth/SMART、自治 Agent Run、Evaluation Spec 和评分不因该 Surface 存在而成为当前能力。

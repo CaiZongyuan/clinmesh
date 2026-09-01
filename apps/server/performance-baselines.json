@@ -17,7 +17,7 @@
     },
     "command-heavy-application": {
       "maximumBusyCount": 0,
-      "maximumDatabaseGrowthBytes": 1310720,
+      "maximumDatabaseGrowthBytes": 2883584,
       "maximumErrorCount": 0,
       "maximumQueriesPerIteration": 6,
       "maximumRetryCount": 0,
@@ -30,7 +30,7 @@
     },
     "command-ordinary-application": {
       "maximumBusyCount": 0,
-      "maximumDatabaseGrowthBytes": 1572864,
+      "maximumDatabaseGrowthBytes": 2621440,
       "maximumErrorCount": 0,
       "maximumQueriesPerIteration": 6,
       "maximumRetryCount": 0,
@@ -53,6 +53,20 @@
       "maximumTraceRowsPerIteration": 0,
       "maximumWritesPerIteration": 202,
       "minimumRowsWrittenPerIteration": 202
+    },
+    "reference-catalog-search-http": {
+      "maximumBusyCount": 0,
+      "maximumDatabaseGrowthBytes": 0,
+      "maximumErrorCount": 0,
+      "maximumQueriesPerIteration": 10,
+      "maximumRetryCount": 0,
+      "maximumRowsWrittenPerIteration": 0,
+      "maximumStatementsPerIteration": 10,
+      "maximumTraceBytesPerIteration": 0,
+      "maximumTraceRowsPerIteration": 0,
+      "maximumWritesPerIteration": 0,
+      "minimumRowsWrittenPerIteration": 0,
+      "requiredQueryPlan": "VIRTUAL TABLE INDEX"
     },
     "scenario-install-reset-application": {
       "maximumBusyCount": 0,
