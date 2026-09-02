@@ -1,16 +1,33 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
+import { performance } from 'node:perf_hooks'
 import { promisify } from 'node:util'
 import { z } from 'zod'
 import { runReferenceDatabaseCli } from './reference-database-cli.ts'
 
 const executeFile = promisify(execFile)
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
-const repositoryRoot = resolve(import.meta.dirname, '../../..')
+const defaultRepositoryRoot = resolve(import.meta.dirname, '../../..')
+const cnHealthLauncherPath = (repositoryRoot: string): string =>
+  join(repositoryRoot, 'node_modules/cn-health/bin/cn-health.js')
+
+export interface CnHealthInvocation {
+  file: string
+  prefix: readonly string[]
+}
+
+export function cnHealthInvocation(input: {
+  cliPath?: string | undefined
+  execPath: string
+  repositoryRoot: string
+}): CnHealthInvocation {
+  if (input.cliPath !== undefined) return { file: input.cliPath, prefix: [] }
+  return { file: input.execPath, prefix: [cnHealthLauncherPath(input.repositoryRoot)] }
+}
 
 const referenceLockSchema = z.object({
   cli: z.object({
@@ -98,7 +115,24 @@ export interface ReferenceSyncOptions {
   cliPath?: string
   databasePath: string
   lockPath: string
+  onProgress?: (line: string) => void
+  repositoryRoot?: string
   runtimeDataDirectory?: string
+}
+
+function elapsedSeconds(start: number): string {
+  return `${((performance.now() - start) / 1000).toFixed(1)}s`
+}
+
+async function timedPhase<T>(input: {
+  label: string
+  onProgress?: ((line: string) => void) | undefined
+  run: () => Promise<T>
+}): Promise<T> {
+  const start = performance.now()
+  const result = await input.run()
+  input.onProgress?.(`${input.label} 完成 (${elapsedSeconds(start)})`)
+  return result
 }
 
 async function hashFile(path: string): Promise<{ sha256: string; sizeBytes: number }> {
@@ -131,6 +165,7 @@ function assertReceipt(input: {
 }
 
 export async function runReferenceSync(options: ReferenceSyncOptions) {
+  const repositoryRoot = resolve(options.repositoryRoot ?? defaultRepositoryRoot)
   const lockPath = resolve(options.lockPath)
   const lock = referenceLockSchema.parse(JSON.parse(await readFile(lockPath, 'utf8')))
   const publicKey = Buffer.from(lock.registry.publicKeyHex, 'hex')
@@ -141,18 +176,35 @@ export async function runReferenceSync(options: ReferenceSyncOptions) {
   }
   const staging = await mkdtemp(join(tmpdir(), 'clinmesh-reference-sync-'))
   const publicKeyPath = join(staging, 'registry.pub')
-  const cliPath = resolve(options.cliPath ?? join(repositoryRoot, 'node_modules/.bin/cn-health'))
+  const invocation = cnHealthInvocation({
+    cliPath: options.cliPath,
+    execPath: process.execPath,
+    repositoryRoot,
+  })
+  if (options.cliPath === undefined) {
+    const launcherPath = cnHealthLauncherPath(repositoryRoot)
+    try {
+      await access(launcherPath)
+    } catch {
+      throw new Error(`cn-health launcher not found at ${launcherPath}; run pnpm install first`)
+    }
+  }
   const runtimeDataDirectory = resolve(
     options.runtimeDataDirectory ?? join(repositoryRoot, '.data/cn-health-cache'),
   )
   await mkdir(runtimeDataDirectory, { recursive: true })
   await writeFile(publicKeyPath, publicKey)
   try {
-    const sources = []
-    const datasets = []
-    for (const dataset of lock.datasets) {
+    const report = (line: string) => {
+      options.onProgress?.(line)
+    }
+    const syncStart = performance.now()
+    const outcomes = await Promise.allSettled(lock.datasets.map(async (dataset, datasetIndex) => {
+      const datasetStart = performance.now()
+      report(`[${datasetIndex + 1}/${lock.datasets.length}] materialize ${dataset.releaseId}`)
       const outputDirectory = join(staging, dataset.datasetId)
-      const { stdout } = await executeFile(cliPath, [
+      const { stdout } = await executeFile(invocation.file, [
+        ...invocation.prefix,
         '--data-dir', runtimeDataDirectory,
         'dataset', 'materialize', dataset.datasetId, dataset.releaseId,
         '--registry', lock.registry.url,
@@ -190,36 +242,55 @@ export async function runReferenceSync(options: ReferenceSyncOptions) {
         || materializedManifest.dataset.datasetSchemaVersion !== dataset.datasetSchemaVersion) {
         throw new Error('Materialized Manifest Dataset identity does not match lock')
       }
-      datasets.push({
-        datasetId: dataset.datasetId,
-        datasetSchemaVersion: dataset.datasetSchemaVersion,
-        recordCount: materializedManifest.canonical.recordCount,
-        releaseId: dataset.releaseId,
-        tables: (materializedManifest.canonical.tables ?? []).map(table => ({
-          recordCount: table.recordCount,
-          table: table.table,
-        })),
-      })
-      sources.push({
-        acquisitionMethod: 'documented-api',
-        artifactFormat: 'cn-health-candidate',
-        artifactPath: relative(staging, manifestPath),
-        checksum: dataset.manifestSha256,
-        licenseId: dataset.licenseId,
-        materialization: {
-          cliVersion: receipt.cliVersion,
-          manifestSha256: receipt.manifest.sha256,
-          registryKeyId: receipt.registry.keyId,
-          registryUrl: receipt.registry.url,
-          sqliteSha256: receipt.sqlite.sha256,
-          sqliteSizeBytes: receipt.sqlite.sizeBytes,
+      report(`[${datasetIndex + 1}/${lock.datasets.length}] ${dataset.releaseId} 完成 `
+        + `(${(sqliteFile.sizeBytes / 1_000_000).toFixed(1)} MB, ${elapsedSeconds(datasetStart)})`)
+      return {
+        dataset: {
+          datasetId: dataset.datasetId,
+          datasetSchemaVersion: dataset.datasetSchemaVersion,
+          recordCount: materializedManifest.canonical.recordCount,
+          releaseId: dataset.releaseId,
+          tables: (materializedManifest.canonical.tables ?? []).map(table => ({
+            recordCount: table.recordCount,
+            table: table.table,
+          })),
         },
-        ...(dataset.publishedAt === undefined ? {} : { publishedAt: dataset.publishedAt }),
-        retrievedAt: lock.retrievedAt,
-        sourceId: dataset.sourceId,
-        sourceUrl: dataset.sourceUrl,
-        upstreamVersion: dataset.releaseId,
-      })
+        source: {
+          acquisitionMethod: 'documented-api',
+          artifactFormat: 'cn-health-candidate',
+          artifactPath: relative(staging, manifestPath),
+          checksum: dataset.manifestSha256,
+          licenseId: dataset.licenseId,
+          materialization: {
+            cliVersion: receipt.cliVersion,
+            manifestSha256: receipt.manifest.sha256,
+            registryKeyId: receipt.registry.keyId,
+            registryUrl: receipt.registry.url,
+            sqliteSha256: receipt.sqlite.sha256,
+            sqliteSizeBytes: receipt.sqlite.sizeBytes,
+          },
+          ...(dataset.publishedAt === undefined ? {} : { publishedAt: dataset.publishedAt }),
+          retrievedAt: lock.retrievedAt,
+          sourceId: dataset.sourceId,
+          sourceUrl: dataset.sourceUrl,
+          upstreamVersion: dataset.releaseId,
+        },
+      }
+    }))
+    const failures = outcomes.flatMap((outcome, index) => outcome.status === 'rejected'
+      ? [{ datasetId: lock.datasets[index]!.datasetId, reason: outcome.reason }]
+      : [])
+    if (failures.length > 0) {
+      const first = failures[0]!
+      throw new Error(`materialize 失败：${failures.map(failure => failure.datasetId).join(', ')}；`
+        + `首个错误：${first.reason instanceof Error ? first.reason.message : String(first.reason)}`)
+    }
+    const datasets = []
+    const sources = []
+    for (const outcome of outcomes) {
+      if (outcome.status !== 'fulfilled') continue
+      datasets.push(outcome.value.dataset)
+      sources.push(outcome.value.source)
     }
     const importManifestPath = join(staging, 'reference-release.json')
     await writeFile(importManifestPath, `${JSON.stringify({
@@ -230,11 +301,24 @@ export async function runReferenceSync(options: ReferenceSyncOptions) {
       ? join(staging, 'check-reference.sqlite')
       : resolve(options.databasePath)
     await mkdir(dirname(databasePath), { recursive: true })
-    await runReferenceDatabaseCli(['migrate', '--database', databasePath])
-    const release = await runReferenceDatabaseCli([
-      'import', '--database', databasePath, '--manifest', importManifestPath,
-    ])
-    await runReferenceDatabaseCli(['verify', '--database', databasePath])
+    await timedPhase({
+      label: 'migrate',
+      onProgress: options.onProgress,
+      run: () => runReferenceDatabaseCli(['migrate', '--database', databasePath]),
+    })
+    const release = await timedPhase({
+      label: `import ${lock.compositeRelease.releaseId}`,
+      onProgress: options.onProgress,
+      run: () => runReferenceDatabaseCli([
+        'import', '--database', databasePath, '--manifest', importManifestPath,
+      ]),
+    })
+    await timedPhase({
+      label: 'verify',
+      onProgress: options.onProgress,
+      run: () => runReferenceDatabaseCli(['verify', '--database', databasePath]),
+    })
+    report(`reference:sync 完成 (总耗时 ${elapsedSeconds(syncStart)})`)
     return { checkOnly: options.checkOnly, datasets, release }
   } finally {
     await rm(staging, { recursive: true })
@@ -250,8 +334,9 @@ function option(name: string): string | undefined {
 async function main(): Promise<void> {
   const result = await runReferenceSync({
     checkOnly: process.argv.includes('--check'),
-    databasePath: option('--database') ?? join(repositoryRoot, '.data/clinmesh-reference.sqlite'),
-    lockPath: option('--lock') ?? join(repositoryRoot, 'reference-data.lock.json'),
+    databasePath: option('--database') ?? join(defaultRepositoryRoot, '.data/clinmesh-reference.sqlite'),
+    lockPath: option('--lock') ?? join(defaultRepositoryRoot, 'reference-data.lock.json'),
+    onProgress: line => process.stderr.write(`${line}\n`),
   })
   process.stdout.write(`${JSON.stringify(result)}\n`)
 }

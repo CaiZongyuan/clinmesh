@@ -32,6 +32,7 @@
 - worktree 外部的 `.env` 通过 shell 加载时，根 `pnpm dev:server` 的 Turborepo 子进程不会自动获得未声明转发的 `CLINMESH_AI_*` 变量。需要复用外部配置时直接运行 `pnpm --filter @clinmesh/server dev`，并从实际 Server 进程核对变量名；只核对父 shell 会把 Brief provider 的未配置误判为产品错误。
 - SQLite perf gate 统计数据库、WAL 和 SHM 总增长；同一 Command completion 更新的多个 nullable 关联列若各建独立索引，会放大短事务 WAL pages。优先按真实验证查询建立一个复合索引，并用 `pnpm perf:ci` 证明增长，而不是放宽预算。
 - VitePress 构建把公开页面里裸写的 `http://localhost:*` URL 当作内部死链并使 `pnpm docs:check` 失败（`127.0.0.1` 不受影响）。进入文档站投影的页面中所有本机地址一律写成代码 span，不起链接。
+- pnpm 在 Windows 的 `node_modules/.bin` 只生成 `.cmd`/`.ps1` shim，且 Node 直接 `execFile` `.cmd` 会被拒绝。需要子进程调用 workspace 依赖的 CLI 时，用 `process.execPath` 加包内 JS launcher（如 `node_modules/cn-health/bin/cn-health.js`），不要拼 `.bin` 路径；Linux 测试传 `cliPath` 桩会掩盖该断裂，默认解析路径必须有独立测试。`cn-health dataset materialize` 支持多进程并行写同一 `--data-dir`（内部有锁），四个 Dataset 并行冷下载实测约 59s。
 
 ## 浏览器演示经验
 
