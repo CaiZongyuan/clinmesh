@@ -1,8 +1,12 @@
-import { randomUUID } from 'node:crypto'
+import { createHmac, randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fhirBundleSchema, fhirResourceSchema } from '@clinmesh/contracts/fhir'
+import {
+  agentPageContextBindingSchema,
+  agentToolAuthorizationResponseSchema,
+} from '@clinmesh/contracts/agent'
 import {
   patientBriefJobSchema,
   patientBriefRevisionListSchema,
@@ -56,6 +60,27 @@ const translationWarning = {
   }],
   message: 'The Synthea Bundle contains untranslated clinical displays' as const,
   truncated: false,
+}
+
+function agentExecutionProof(input: {
+  callId: string
+  contextId: string
+  dshSessionId: string
+  scopeKey: string
+  toolName: string
+}, now = new Date()): string {
+  const payload = {
+    ...input,
+    expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+    issuedAt: now.toISOString(),
+    version: 1,
+  }
+  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')
+  const signature = createHmac(
+    'sha256',
+    'test-dsh-bridge-secret-with-at-least-32-characters',
+  ).update(encoded).digest('base64url')
+  return `${encoded}.${signature}`
 }
 
 function patientBundle(qualified: boolean, followUp = true) {
@@ -269,6 +294,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
       databasePath: options.databasePath ?? join(directory!, 'clinmesh.sqlite'),
       demoPassword: 'Synthetic-Demo-Password-2026!',
+      dshBridgeSecret: 'test-dsh-bridge-secret-with-at-least-32-characters',
       migrationMode: options.migrationMode ?? 'apply',
       outboxRetryDelayMs: 0,
       ...(briefProvider === undefined
@@ -995,6 +1021,55 @@ describe('Synthetic Case generation HTTP contract', () => {
       status: 'generation-failed',
     })
     expect(failedRequest?.report).toBeUndefined()
+    if (failedRequest === undefined) throw new Error('Failed laboratory request was not found')
+    runtime.database.driver.prepare(`
+      UPDATE laboratory_request
+      SET generation_error_code = 'INVESTIGATION_UNSUPPORTED',
+        generation_error_message = 'Synthetic unsupported investigation for Agent policy verification'
+      WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+    `).run('workspace-demo', 'epoch-1', failedRequest.id)
+    const contextResponse = await runtime.app.request('/api/agent/v1/page-contexts', {
+      body: JSON.stringify({
+        claim: {
+          activeSection: 'laboratory',
+          selection: {
+            id: startedCommand.data.outpatientCaseId,
+            kind: 'case',
+            version: detail.encounter.versionId,
+          },
+          ui: { status: 'ready' },
+          version: 1,
+          viewId: 'consultation',
+          viewRevision: 'synthetic-case-generation-failed',
+        },
+        client: { id: 'synthetic-case-agent-test', revision: 1 },
+        dshSessionId: 'dsh-session-synthetic-case',
+      }),
+      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' },
+      method: 'POST',
+    })
+    expect(contextResponse.status).toBe(201)
+    const binding = agentPageContextBindingSchema.parse(await contextResponse.json())
+    expect(binding.snapshot.allowedOperationIds).toContain('outpatient.laboratory.cancel.propose')
+    const authorizeCancellation = await runtime.app.request('/api/agent/v1/tool-calls', {
+      body: JSON.stringify({
+        contextToken: binding.token,
+        executionProof: agentExecutionProof({
+          callId: 'call-cancel-generation-failed',
+          contextId: binding.snapshot.id,
+          dshSessionId: binding.snapshot.dshSessionId,
+          scopeKey: binding.snapshot.scopeKey,
+          toolName: 'clinmesh_prepare_cancel_laboratory',
+        }),
+        input: { requestId: failedRequest.id },
+        operationId: 'outpatient.laboratory.cancel.propose',
+      }),
+      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' },
+      method: 'POST',
+    })
+    expect(authorizeCancellation.status).toBe(201)
+    expect(agentToolAuthorizationResponseSchema.parse(await authorizeCancellation.json()))
+      .toMatchObject({ operationId: 'outpatient.laboratory.cancel.propose', status: 'authorized' })
     expect(runtime.database.driver.prepare(`
       SELECT COUNT(*) AS count FROM investigation_result_snapshot
       WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = 'lab-crp'

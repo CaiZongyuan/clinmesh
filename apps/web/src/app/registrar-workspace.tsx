@@ -17,7 +17,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckIcon, CircleAlertIcon, ClipboardPlusIcon, SearchIcon, UserPlusIcon } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   createSyntheticPatient,
   getRegistrationCatalog,
@@ -31,6 +31,8 @@ import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
+import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
+import { useAgentReview } from './agent-review.tsx'
 
 interface RegistrarWorkspaceProps {
   locale: WorkspaceLocale
@@ -41,6 +43,7 @@ const genderValues = ['male', 'female', 'other', 'unknown'] as const
 
 export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  const agentReview = useAgentReview()
   const queryClient = useQueryClient()
   const scope = [session.actor.workspaceId, session.actor.epoch] as const
   const [patientQuery, setPatientQuery] = useState('')
@@ -126,6 +129,213 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
     label: locale === 'zh-CN' ? item.nameZh : item.nameEn,
     value: item.id,
   })) ?? []
+
+  const agentPage = useMemo(() => ({
+    actions: {
+      'registration.patient.search': {
+        description: 'Search synthetic patients visible to the current registrar.',
+        parameters: {
+          type: 'object' as const,
+          properties: { query: { type: 'string', maxLength: 100 } },
+          required: ['query'],
+          additionalProperties: false,
+        },
+        execute: async (raw: unknown, signal: AbortSignal) => {
+          const query = agentString(raw, 'query', 100)
+          setPatientQuery(query)
+          setSubmittedQuery(query)
+          setPatientPage(1)
+          return searchPatients(query, signal, 1)
+        },
+      },
+      'registration.patient.select': {
+        description: 'Select one patient from the current registrar search result.',
+        enabled: (patients.data?.items.length ?? 0) > 0,
+        parameters: {
+          type: 'object' as const,
+          properties: { patientId: { type: 'string', maxLength: 128 } },
+          required: ['patientId'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown) => {
+          const patientId = agentString(raw, 'patientId', 128)
+          const patient = patients.data?.items.find(item => item.id === patientId)
+          if (patient === undefined) throw new Error('Patient is not in the current search result')
+          setSelectedPatient(patient)
+          return { patientId, selected: true }
+        },
+      },
+      'registration.patient.draft.set': {
+        description: 'Fill the synthetic patient draft without creating a Patient.',
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            birthDate: { type: 'string', format: 'date' },
+            gender: { type: 'string', enum: genderValues },
+            identifier: { type: 'string', maxLength: 80 },
+            name: { type: 'string', maxLength: 80 },
+          },
+          required: ['birthDate', 'gender', 'identifier', 'name'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown) => {
+          const values = agentRecord(raw)
+          const nextGender = values.gender
+          if (!genderValues.includes(nextGender as typeof genderValues[number])) {
+            throw new TypeError('gender is invalid')
+          }
+          setBirthDate(agentString(raw, 'birthDate', 10))
+          setGender(nextGender as typeof gender)
+          setIdentifier(agentString(raw, 'identifier', 80))
+          setName(agentString(raw, 'name', 80))
+          return { updated: true }
+        },
+      },
+      'registration.draft.set': {
+        description: 'Fill department, visit type, and location in the registration draft.',
+        enabled: catalog.data !== undefined
+          && catalog.data.departments.length > 0
+          && catalog.data.locations.length > 0
+          && catalog.data.visitTypes.length > 0,
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            departmentId: { type: 'string', maxLength: 128 },
+            locationId: { type: 'string', maxLength: 128 },
+            visitTypeId: { type: 'string', maxLength: 128 },
+          },
+          required: ['departmentId', 'locationId', 'visitTypeId'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown) => {
+          const nextDepartment = agentString(raw, 'departmentId', 128)
+          const nextLocation = agentString(raw, 'locationId', 128)
+          const nextVisitType = agentString(raw, 'visitTypeId', 128)
+          if (!catalog.data?.departments.some(item => item.id === nextDepartment)) {
+            throw new Error('Department is not available in the current registration catalog')
+          }
+          if (!catalog.data.locations.some(item => item.id === nextLocation)) {
+            throw new Error('Location is not available in the current registration catalog')
+          }
+          if (!catalog.data.visitTypes.some(item => item.id === nextVisitType)) {
+            throw new Error('Visit type is not available in the current registration catalog')
+          }
+          setDepartmentId(nextDepartment)
+          setLocationId(nextLocation)
+          setVisitTypeId(nextVisitType)
+          return { updated: true }
+        },
+      },
+      'registration.patient.create.propose': {
+        description: 'Open human review for the current synthetic patient draft.',
+        enabled: name.trim() !== '' && identifier.trim() !== '' && birthDate !== '',
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => agentReview.request({
+          confirmLabel: messages.createPatient,
+          description: `${name} · ${identifier} · ${birthDate}`,
+          onConfirm: () => createPatient.mutateAsync(),
+          signal,
+          title: messages.createPatient,
+        }),
+      },
+      'registration.outpatient.propose': {
+        description: 'Open human review for outpatient registration of the selected patient.',
+        enabled: selectedPatient !== undefined
+          && resolvedDepartmentId !== ''
+          && resolvedLocationId !== ''
+          && resolvedVisitTypeId !== '',
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => {
+          if (selectedPatient === undefined) throw new Error(messages.selectPatientFirst)
+          return agentReview.request({
+            confirmLabel: messages.confirmRegistration,
+            description: `${selectedPatient.name} · ${resolvedDepartmentId} · ${resolvedVisitTypeId}`,
+            onConfirm: () => register.mutateAsync(),
+            signal,
+            title: messages.registrationDetails,
+          })
+        },
+      },
+    },
+    claim: {
+      version: 1 as const,
+      viewId: 'registration' as const,
+      viewRevision: agentViewRevision({
+        birthDate,
+        departmentId: resolvedDepartmentId,
+        gender,
+        identifier,
+        locationId: resolvedLocationId,
+        name,
+        patientPage,
+        registrationPage,
+        selectedPatientId: selectedPatient?.id,
+        submittedQuery,
+        visitTypeId: resolvedVisitTypeId,
+      }),
+      ...(selectedPatient === undefined ? {} : {
+        selection: {
+          id: selectedPatient.id,
+          kind: 'patient' as const,
+          version: selectedPatient.versionId,
+        },
+      }),
+      draft: {
+        dirty: name !== '' || identifier !== '',
+        id: selectedPatient?.id ?? 'new-patient',
+        kind: selectedPatient === undefined ? 'patient' as const : 'registration' as const,
+        revision: agentViewRevision({ birthDate, gender, identifier, name }),
+      },
+      ui: {
+        status: catalog.isPending || registrations.isPending ? 'loading' as const
+          : catalog.isError || registrations.isError ? 'error' as const
+            : registrations.data?.items.length === 0 ? 'empty' as const : 'ready' as const,
+        ...(submittedQuery === '' ? {} : { search: submittedQuery }),
+      },
+    },
+    label: 'ClinMesh · 门诊挂号',
+    readState: () => ({
+      patientDraft: { birthDate, gender, identifier, name },
+      registrationDraft: {
+        departmentId: resolvedDepartmentId,
+        locationId: resolvedLocationId,
+        visitTypeId: resolvedVisitTypeId,
+      },
+      registrationCount: registrations.data?.total ?? 0,
+      selectedPatient: selectedPatient === undefined ? null : {
+        id: selectedPatient.id,
+        name: selectedPatient.name,
+        versionId: selectedPatient.versionId,
+      },
+    }),
+  }), [
+    agentReview,
+    birthDate,
+    catalog.data,
+    catalog.isError,
+    catalog.isPending,
+    createPatient.mutateAsync,
+    departmentId,
+    gender,
+    identifier,
+    locationId,
+    messages,
+    name,
+    patientPage,
+    patients.data,
+    register.mutateAsync,
+    registrationPage,
+    registrations.data,
+    registrations.isError,
+    registrations.isPending,
+    resolvedDepartmentId,
+    resolvedLocationId,
+    resolvedVisitTypeId,
+    selectedPatient,
+    submittedQuery,
+    visitTypeId,
+  ])
+  useRegisterAgentPage(agentPage)
 
   return (
     <div className="flex flex-col gap-6">
@@ -295,4 +505,19 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
       </section>
     </div>
   )
+}
+
+function agentRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Agent action input must be an object')
+  }
+  return value as Record<string, unknown>
+}
+
+function agentString(value: unknown, key: string, maximum: number): string {
+  const candidate = agentRecord(value)[key]
+  if (typeof candidate !== 'string' || candidate.trim() === '' || candidate.length > maximum) {
+    throw new TypeError(`${key} is invalid`)
+  }
+  return candidate.trim()
 }

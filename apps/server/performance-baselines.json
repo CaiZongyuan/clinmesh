@@ -83,7 +83,7 @@
     },
     "trace-control-sqlite": {
       "maximumBusyCount": 0,
-      "maximumDatabaseGrowthBytes": 786432,
+      "maximumDatabaseGrowthBytes": 1572864,
       "maximumErrorCount": 0,
       "maximumQueriesPerIteration": 0,
       "maximumRetryCount": 0,

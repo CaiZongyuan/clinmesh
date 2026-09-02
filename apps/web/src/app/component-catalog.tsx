@@ -138,18 +138,23 @@ import {
   writeWebPreferences,
 } from './preferences.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
+import { useWebRuntime } from './web-runtime.tsx'
 
-function currentDocumentTheme(): ResolvedWebTheme {
-  return document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+function currentTheme(root: HTMLElement | null): ResolvedWebTheme {
+  return (root ?? document.documentElement).classList.contains('dark') ? 'dark' : 'light'
 }
 
-function persistCatalogTheme(theme: ResolvedWebTheme): void {
-  applyResolvedWebTheme(theme)
+function persistCatalogTheme(theme: ResolvedWebTheme, root: HTMLElement | null): void {
+  applyResolvedWebTheme(theme, root ?? document.documentElement)
   writeWebPreferences({ ...readWebPreferences(), theme })
 }
 
 function ThemeControl({ messages }: { messages: ComponentCatalogMessages }): React.JSX.Element {
-  const [theme, setTheme] = useState(currentDocumentTheme)
+  const runtime = useWebRuntime()
+  const appearanceRoot = runtime.mode === 'surface'
+    ? runtime.appearanceRoot.current
+    : document.documentElement
+  const [theme, setTheme] = useState(() => currentTheme(appearanceRoot))
 
   return (
     <ToggleGroup
@@ -158,7 +163,7 @@ function ThemeControl({ messages }: { messages: ComponentCatalogMessages }): Rea
         const nextTheme = (values as ResolvedWebTheme[])[0]
         if (nextTheme === undefined) return
         setTheme(nextTheme)
-        persistCatalogTheme(nextTheme)
+        persistCatalogTheme(nextTheme, appearanceRoot)
       }}
       size="sm"
       spacing={0}
@@ -605,10 +610,14 @@ export function ComponentCatalog({
 }: ComponentCatalogProps = {}): React.JSX.Element {
   const locale = providedLocale ?? readWebPreferences().locale
   const messages = getComponentCatalogMessages(locale)
+  const runtime = useWebRuntime()
 
   useEffect(() => {
-    document.documentElement.lang = locale
-  }, [locale])
+    const root = runtime.mode === 'surface'
+      ? runtime.appearanceRoot.current
+      : document.documentElement
+    if (root !== null) root.lang = locale
+  }, [locale, runtime.appearanceRoot, runtime.mode])
 
   return (
     <main className={cn(

@@ -24,6 +24,7 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_CURSOR_SECRET: z.string().min(32),
   CLINMESH_DATABASE_PATH: z.string().trim().min(1),
   CLINMESH_DEMO_PASSWORD: z.string().min(12),
+  CLINMESH_DSH_BRIDGE_SECRET: z.string().min(32).optional(),
   CLINMESH_HOST: z.string().trim().min(1).default('127.0.0.1'),
   CLINMESH_PORT: z.string()
     .regex(/^\d+$/)
@@ -67,6 +68,7 @@ export interface ServerConfig {
   cursorSecret: string
   databasePath: string
   demoPassword: string
+  dshBridgeSecret?: string
   hostname: string
   port: number
   referenceDatabasePath?: string
@@ -146,6 +148,9 @@ export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
     cursorSecret: parsed.CLINMESH_CURSOR_SECRET,
     databasePath: parsed.CLINMESH_DATABASE_PATH,
     demoPassword: parsed.CLINMESH_DEMO_PASSWORD,
+    ...(parsed.CLINMESH_DSH_BRIDGE_SECRET === undefined
+      ? {}
+      : { dshBridgeSecret: parsed.CLINMESH_DSH_BRIDGE_SECRET }),
     hostname: parsed.CLINMESH_HOST,
     port: parsed.CLINMESH_PORT,
     ...(parsed.CLINMESH_REFERENCE_DATABASE_PATH === undefined

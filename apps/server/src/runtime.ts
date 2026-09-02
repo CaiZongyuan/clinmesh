@@ -48,6 +48,7 @@ import {
 } from './application/scenario-data/medical-service-snapshot.ts'
 import type { ScenarioGenerationProvider } from './application/scenario-data/provider.ts'
 import type { SqlitePerformanceObserver } from './infrastructure/sqlite/performance-observer.ts'
+import { AgentIntegrationService } from './application/agent-integration-service.ts'
 
 function lisActorContext(event: {
   epoch: string
@@ -81,6 +82,7 @@ export interface CreateClinMeshRuntimeOptions {
   cursorSecret: string
   databasePath: string
   demoPassword: string
+  dshBridgeSecret?: string
   migrationMode: 'apply' | 'verify'
   chatCompletionsProvider?: JsonChatCompletionsProvider
   investigationModel?: string
@@ -245,6 +247,12 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       password: options.demoPassword,
       workspaceId: 'workspace-demo',
     })
+    const agentIntegration = options.dshBridgeSecret === undefined
+      ? undefined
+      : new AgentIntegrationService(database, {
+          ...clockOptions,
+          secret: options.dshBridgeSecret,
+        })
     const lisPayloadSchema = z.object({
       caseId: z.string().min(1),
       encounterId: z.string().min(1),
@@ -417,6 +425,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           })
         }, options.autoDispatchIntervalMs)
     const app = createApp({
+      ...(agentIntegration === undefined ? {} : { agentIntegration }),
       fhir: {
         repository: fhir,
         resolveContext: request => identity.resolveRequestActor(

@@ -8,6 +8,10 @@
     "#hooks/*": "./src/hooks/*.ts",
     "#lib/*": "./src/lib/*.ts"
   },
+  "exports": {
+    "./application": "./src/app/web-app.tsx",
+    "./runtime": "./src/app/web-runtime.tsx"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 51888 --strictPort",
     "build": "vite build",

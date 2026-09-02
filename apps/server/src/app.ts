@@ -72,6 +72,14 @@ import {
   type RepositoryContext,
 } from './infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceContextError } from './infrastructure/sqlite/workspace-repository.ts'
+import type { AgentIntegrationService } from './application/agent-integration-service.ts'
+import { AgentIntegrationError } from './application/agent-integration-service.ts'
+import {
+  agentPageContextRequestSchema,
+  agentReviewDecisionRequestSchema,
+  agentToolAuthorizationRequestSchema,
+  agentToolResultRequestSchema,
+} from '@clinmesh/contracts/agent'
 
 interface FhirRuntime {
   repository: FhirRepository
@@ -79,6 +87,7 @@ interface FhirRuntime {
 }
 
 export interface CreateAppOptions {
+  agentIntegration?: AgentIntegrationService
   caseVisits?: SyntheticCaseVisitService
   fhir?: FhirRuntime
   identity?: IdentityService
@@ -111,9 +120,10 @@ function apiErrorResponse(
   if (error instanceof SyntaxError || error instanceof z.ZodError) {
     return invalidInputResponse(context, invalidInputMessage)
   }
-  if (
-    error instanceof IdentityError
-    || error instanceof LaboratoryServicePublisherError
+    if (
+      error instanceof IdentityError
+      || error instanceof AgentIntegrationError
+      || error instanceof LaboratoryServicePublisherError
     || error instanceof PatientBriefError
     || error instanceof SyntheticCaseVisitError
     || error instanceof ReferenceDataError
@@ -351,6 +361,67 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       }
     })
     app.all('/api/auth/*', context => identity.handle(context.req.raw))
+  }
+
+  if (options.agentIntegration !== undefined && options.identity !== undefined) {
+    const agentIntegration = options.agentIntegration
+    const identity = options.identity
+    app.post('/api/agent/v1/page-contexts', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const request = agentPageContextRequestSchema.parse(await context.req.json())
+        return context.json(agentIntegration.createPageContext({
+          actor: session.actor,
+          request,
+          userAccountId: session.user.id,
+        }), 201)
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/agent/v1/tool-calls', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const request = agentToolAuthorizationRequestSchema.parse(await context.req.json())
+        return context.json(agentIntegration.authorizeToolCall({
+          actor: session.actor,
+          request,
+          userAccountId: session.user.id,
+        }), 201)
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/agent/v1/tool-calls/result', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const request = agentToolResultRequestSchema.parse(await context.req.json())
+        return context.json(agentIntegration.completeToolCall({
+          actor: session.actor,
+          request,
+          userAccountId: session.user.id,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/agent/v1/tool-calls/review', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const request = agentReviewDecisionRequestSchema.parse(await context.req.json())
+        return context.json(agentIntegration.reviewToolCall({
+          actor: session.actor,
+          request,
+          userAccountId: session.user.id,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
   }
 
   if (options.identity !== undefined && options.scenario !== undefined) {
@@ -1503,6 +1574,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
               epoch: authenticatedContext.epoch,
               ...(authenticatedContext.organizationId === undefined ? {} : {
                 organizationId: authenticatedContext.organizationId,
+              }),
+              ...(authenticatedContext.locationId === undefined ? {} : {
+                locationId: authenticatedContext.locationId,
+              }),
+              ...(authenticatedContext.practitionerId === undefined ? {} : {
+                practitionerId: authenticatedContext.practitionerId,
+              }),
+              ...(authenticatedContext.practitionerRoleId === undefined ? {} : {
+                practitionerRoleId: authenticatedContext.practitionerRoleId,
               }),
               roleCode: 'lis-system',
               scenarioRunId: authenticatedContext.scenarioRunId,

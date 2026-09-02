@@ -55,7 +55,7 @@ import {
   TriangleAlertIcon,
   UserPlusIcon,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   enqueuePatientBrief,
   enqueueScenarioGenerationJob,
@@ -75,6 +75,7 @@ import {
   updateSyntheticPatientProfile,
 } from './api-client.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
+import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 
 const profileListKey = ['synthetic-patient-profiles'] as const
 const providerKey = ['scenario-providers'] as const
@@ -544,6 +545,70 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
   const providers = useQuery({ queryFn: ({ signal }) => getScenarioProviders(signal), queryKey: providerKey })
   const generate = useMutation({ mutationFn: (request: ScenarioGenerationRequest) => enqueueScenarioGenerationJob(request, newIdempotencyKey()), onSuccess: response => { setGenerationJobId(response.data.jobId); setGenerationOpen(false) } })
   const generationJob = useQuery({ enabled: generationJobId !== undefined, queryFn: ({ signal }) => generationJobId === undefined ? Promise.reject(new Error('No generation job')) : getScenarioGenerationJob(generationJobId, signal), queryKey: ['scenario-generation-job', generationJobId ?? 'none'], refetchInterval: query => ['queued', 'running'].includes(query.state.data?.status ?? '') ? 1_000 : false })
+  const agentPage = useMemo(() => ({
+    actions: {
+      'scenario.providers.read': {
+        description: 'Read configured Scenario generation Provider availability.',
+        execute: (_raw: unknown, signal: AbortSignal) => getScenarioProviders(signal),
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+      },
+      'scenario.generation.status.read': {
+        description: 'Read the current Scenario generation job status when one is selected.',
+        execute: (_raw: unknown, signal: AbortSignal) => generationJobId === undefined
+          ? { status: 'idle' as const }
+          : getScenarioGenerationJob(generationJobId, signal),
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+      },
+    },
+    claim: {
+      version: 1 as const,
+      viewId: 'scenarioData' as const,
+      viewRevision: agentViewRevision({
+        generationJobId,
+        generationStatus: generationJob.data?.status,
+        generationUpdatedAt: generationJob.data?.updatedAt,
+        providers: providers.data?.items.map(provider => ({
+          available: provider.available,
+          providerId: provider.providerId,
+        })),
+      }),
+      ...(generationJob.data === undefined ? {} : {
+        selection: {
+          id: generationJob.data.jobId,
+          kind: 'generation-job' as const,
+          version: generationJob.data.updatedAt,
+        },
+      }),
+      ui: {
+        status: providers.isPending || generationJob.isPending ? 'loading' as const
+          : providers.isError || generationJob.isError ? 'error' as const : 'ready' as const,
+      },
+    },
+    label: 'ClinMesh · 合成患者库',
+    readState: () => ({
+      generation: generationJob.data === undefined ? null : {
+        error: generationJob.data.error,
+        jobId: generationJob.data.jobId,
+        status: generationJob.data.status,
+        updatedAt: generationJob.data.updatedAt,
+      },
+      providers: providers.data?.items.map(provider => ({
+        available: provider.available,
+        providerId: provider.providerId,
+        providerName: provider.providerName,
+        unavailableReason: provider.unavailableReason,
+      })) ?? [],
+    }),
+  }), [
+    generationJob.data,
+    generationJob.isError,
+    generationJob.isPending,
+    generationJobId,
+    providers.data,
+    providers.isError,
+    providers.isPending,
+  ])
+  useRegisterAgentPage(agentPage)
   useEffect(() => {
     if (generationJob.data?.status !== 'succeeded') return
     const firstProfileId = generationJob.data.profileIds[0]

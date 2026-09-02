@@ -171,7 +171,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 47,
+      schemaVersion: 48,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -221,9 +221,10 @@ describe('SQLite lifecycle', () => {
         '0040_synthetic-case-consultation.sql',
         '0041_workspace-actor.sql',
         '0042_command-receipt-role.sql',
+        '0043_dsh-agent-integration.sql',
         '0043_investigation-generation-provenance.sql',
       ],
-      schemaVersion: 47,
+      schemaVersion: 48,
     })
     expect(first.driver.prepare(`
       SELECT name FROM sqlite_schema
@@ -239,8 +240,8 @@ describe('SQLite lifecycle', () => {
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 47 })
-    expect(reopened.diagnostics().schemaVersion).toBe(47)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 48 })
+    expect(reopened.diagnostics().schemaVersion).toBe(48)
     reopened.close()
   })
 
@@ -306,9 +307,10 @@ describe('SQLite lifecycle', () => {
     expect(applyMigrations(database)).toEqual({
       applied: [
         '0042_command-receipt-role.sql',
+        '0043_dsh-agent-integration.sql',
         '0043_investigation-generation-provenance.sql',
       ],
-      schemaVersion: 47,
+      schemaVersion: 48,
     })
     expect(database.driver.prepare(`
       SELECT practitioner_role_id FROM command_receipt
@@ -1399,6 +1401,11 @@ describe('SQLite lifecycle', () => {
       '0036_retire-scenario-dataset.sql',
       '0037_synthea-translation-warning.sql',
       '0038_diagnosis-confirmation-revision.sql',
+      '0039_agent-capability-grant.sql',
+      '0040_synthetic-case-consultation.sql',
+      '0041_workspace-actor.sql',
+      '0042_command-receipt-role.sql',
+      '0043_dsh-agent-integration.sql',
     ]
     for (const migration of remainingMigrations) {
       await copyFile(
@@ -1408,7 +1415,7 @@ describe('SQLite lifecycle', () => {
     }
     expect(applyMigrations(database, legacyMigrationDirectory)).toEqual({
       applied: remainingMigrations,
-      schemaVersion: 39,
+      schemaVersion: 44,
     })
     expect(database.driver.prepare(`
       SELECT confirmation_id, revision_number, supersedes_confirmation_id
@@ -1452,7 +1459,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(47)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(48)
     await runtime.close()
   })
 
@@ -1522,7 +1529,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 47,
+      schemaVersion: 48,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -1534,11 +1541,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 47,
+      expectedSchemaVersion: 48,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 47,
+      schemaVersion: 48,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -1722,7 +1729,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(47),
+      schemaVersion: z.literal(48),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -1768,6 +1775,7 @@ describe('SQLite lifecycle', () => {
       '0040_synthetic-case-consultation.sql',
       '0041_workspace-actor.sql',
       '0042_command-receipt-role.sql',
+      '0043_dsh-agent-integration.sql',
       '0043_investigation-generation-provenance.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
@@ -1775,20 +1783,20 @@ describe('SQLite lifecycle', () => {
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 47 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 48 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 47 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 48 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 47 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 48 })
   })
 })

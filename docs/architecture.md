@@ -1,15 +1,15 @@
 # 中国公立医院仿真 HIS 详细架构设计
 
-- 状态：首期 Web 发布已实现
-- 日期：2026-08-24
-- 适用范围：Web 产品演示、Agent CLI、技术验证
+- 状态：standalone Web、DSH React Surface 与 Agent CLI 已实现
+- 日期：2026-09-01
+- 适用范围：Web 产品演示、DSH 原生 Agent 协作、Agent CLI 与技术验证
 - 首期运行决策：[Web Demo 运行与部署架构](./demo-architecture.md)
 - 领域词汇：[ClinMesh 仿真医院领域](../CONTEXT.md)
 - 参考实现：`references/openhis-itai-pro/`、`references/medplum/`
 
 ## 0. 执行摘要
 
-本系统不是生产医院信息平台，也不是完整 FHIR Server 产品。它用可重复、可审计的合成医院场景，让人类岗位通过 Web、任务 Agent 通过 CLI 完成同一业务交接。首个发布证明多岗位普通门诊发热闭环和支撑该闭环的基础设施；CLI 只开放这些已经实现的业务能力。
+本系统不是生产医院信息平台，也不是完整 FHIR Server 产品。它用可重复、可审计的合成医院场景，让人类岗位通过 standalone Web 或 DSH React Surface、交互式 Agent 通过 DSH 页面 Tools、任务 Agent 通过 CLI 完成同一业务交接。当前发布证明多岗位普通门诊发热闭环、DSH Surface adapter、Agent CLI 和支撑这些能力的基础设施；Agent adapter 只开放已经实现的业务能力。
 
 首期是一个运行于 Node.js 的 TypeScript 模块化单体：
 
@@ -34,6 +34,10 @@ FHIR Resource Store   HIS Domain Tables
        +------ file-backed SQLite ------+
                          |
                          +-- persistent outbox
+
+DSH Web -- React Surface --> same React application/runtime
+        -- browser Tools --> /api/agent/v1/*
+        -- /clinmesh-api --> fixed loopback Hono
 ```
 
 核心决策如下：
@@ -42,19 +46,19 @@ FHIR Resource Store   HIS Domain Tables
 2. **标准接口和业务命令分层。** 当前 FHIR API 用于标准资源读取、版本历史和白名单搜索；所有业务写入由 `/api/his/v1` 或 `/api/sim/v1` 的显式 Command 完成。禁止让客户端通过多个通用 CRUD 自行编排挂号、医嘱签发、发药或支付。
 3. **按资源确定唯一权威数据源。** 标准临床和主数据以 FHIR JSON 为权威记录；库存、医保、收银交账、仿真运行等领域以规范化关系表为权威，并生成只读 FHIR 投影。禁止同一事实被两个模型双向修改。
 4. **不追求完整 FHIR Search。** 只实现资源能力注册表列出的 SearchParameter canonical，并由 CapabilityStatement 引用同一清单；本服务器首期固定采用严格处理，不支持的参数返回 `OperationOutcome`。
-5. **首期只交付 Web 和 SQLite。** Hono 在单个 Node.js 进程中运行，一个本地 SQLite 文件持久化所有业务状态；Desktop、React Native、Cloudflare/D1、PostgreSQL/Supabase 和多实例部署均后置。
+5. **首期只交付 Web 和 SQLite。** standalone Web 与 DSH React Surface 复用同一 Web application interface；Hono 在单个 Node.js 进程中运行，一个本地 SQLite 文件持久化所有业务状态。Desktop、React Native、Cloudflare/D1、PostgreSQL/Supabase 和多实例部署均后置。
 6. **仿真能力是一等领域，但评分不是首期基础设施。** 每个 Scenario Run 绑定 Workspace/Epoch、虚拟时钟、不可变 Synthetic Case Instance、私有 Case Truth、Patient Brief、冻结的 Investigation Result Snapshot 和 Action Trace；首期没有 Evaluation Spec、评分规则或 evaluator runtime。
 7. **SQLite 是首期真实数据库。** 所有关系约束、迁移、备份恢复、幂等竞争、outbox 恢复和 reset 都在 file-backed SQLite 上验证。未来数据库通过新 adapter 和显式迁移接入，不维护未使用的兼容路径。
 8. **一个 Encounter 贯穿首期门诊。** 结构化病历签署拥有独立生命周期，不推进 Encounter；带 Consultation 的病例由独立完诊门禁汇总正式临床事实，首期复诊兼容流仍可在尚无结构化签署根文书时组合签署与完诊。药品支付和发药随后发生，发药完成 Scenario Run，而不是再次推进 Encounter。
-9. **Agent CLI 不拥有第二套业务内核。** `clinmesh` 从业务 Operation Catalog 生成命令树，通过受信 Actor context 调用现有 Query 与 Command；后续 AG-UI、tool adapter 或 MCP 也只能投影同一 Catalog，不能绕过授权、状态机或审计。
+9. **Agent adapter 不拥有第二套业务内核。** DSH 拥有模型 Session、transcript、Tool 调度和 Surface 宿主，ClinMesh 拥有 Page Context、前端 action、proposal、人工审阅、共享 Command 和审计关联；`clinmesh` CLI 从业务 Operation Catalog 生成命令树，通过受信 Actor context 调用同一 Query 与 Command。两条入口都不能绕过授权、CAS/expected version、状态机、审计或各自声明的人工确认边界。
 
 ## 1. 背景与目标
 
 ### 1.1 产品定位
 
-当前消费者包括通过 Web 工作台扮演挂号员、分诊护士、门诊医生、收费员和药师的人类用户，以及通过 `clinmesh` CLI 使用单岗位短期授权的任务 Agent；LIS 作为受控系统 Actor 参与同一 Scenario Run。系统应有足够真实的中国医院业务约束，但不复制生产 HIS 的全部工程和监管复杂度。
+当前消费者包括通过 standalone Web 或 DSH Surface 扮演挂号员、分诊护士、门诊医生、收费员和药师的人类用户，以及通过 `clinmesh` CLI 使用单岗位短期授权的任务 Agent；LIS 作为受控系统 Actor 参与同一 Scenario Run。DSH 原生 Agent 可以读取当前页面状态、导航、填写草稿并准备正式动作，但最终医院 Command 仍由登录人类审阅和提交。任务 Agent 通过显式业务命令和只读 FHIR R5 操作执行 Grant 允许的受限动作。系统应有足够真实的中国医院业务约束，但不复制生产 HIS 的全部工程和监管复杂度。
 
-Agent 通过显式业务命令和只读 FHIR R5 操作执行同样的受限业务动作。CLI 只适配当前 Query、Command 与 FHIR read/search owner，不增加通用 HTTP、FHIR write 或数据库入口。
+当前不提供自治 Agent Run、评测或评分。DSH Session 中的交互式 Agent 只通过动态窄 Tools 使用当前人类岗位已有能力；CLI 只适配当前 Query、Command 与 FHIR read/search owner，不增加通用 HTTP、FHIR write 或数据库入口。
 
 ### 1.2 必须满足
 
@@ -82,7 +86,7 @@ Agent 通过显式业务命令和只读 FHIR R5 操作执行同样的受限业�
 
 - 生产级 HIS、真实诊疗、真实费用结算或真实个人健康信息存储。
 - Desktop、React Native Mobile、离线写入和多端语义 parity。
-- 模型 runner、AG-UI、MCP、OAuth/SMART Agent 凭证、Evaluation Spec 和评分基础设施。
+- 自治 Agent runtime、模型 runner、AG-UI Gateway thread、MCP、OAuth/SMART Agent 凭证、Evaluation Spec 和评分基础设施；DSH 原生 Session/browser Tool broker 与私有 Capability Grant CLI 是已实现例外。
 - Cloudflare Worker、D1、R2、Queues、Cron Trigger、Durable Objects、PostgreSQL、Supabase 和多数据库 adapter。
 - 全国各省医保协议的完整兼容。
 - 完整 LIS、RIS/PACS、DICOM 归档、手术麻醉、输血、院感、病理、ICU、消毒供应或财务 ERP。
@@ -191,15 +195,16 @@ Infrastructure
   - in-process outbox dispatcher
 ```
 
-### 3.2 三种接口、一个业务内核
+### 3.2 多种 adapter、一个业务内核
 
 | 接口 | 消费者 | 用途 | 是否作为业务权威入口 |
 | --- | --- | --- | --- |
 | FHIR R5 REST | 标准客户端、集成测试 | 标准资源读取、查询和历史 | 只读互操作面，不是业务写入口 |
 | HIS Command API | Web 工作台、内部编排 | FHIR 难以表达的业务聚合和动作 | 是 |
+| DSH React Surface + Agent API | DSH Web 原生 Session | 完整 Web 工作台、Page Context、受控前端 action 和 proposal 审阅 | adapter；正式写入仍调用 HIS Command |
 | `clinmesh` CLI | 人类运维、任务 Agent、合约测试 | Catalog 发现、HIS Query/Command、只读 FHIR 和 receipt 恢复 | 不是；适配现有 HTTP 与 Command owner |
 
-Web 页面和 CLI 最终调用相同的 Query 与 Command handler。当前不发布 FHIR Operation；未来若增加，必须调用同一个 handler，不能复制状态机或在路由层直接写库。后续 Agent Tool API、MCP 或 AG-UI 只能成为新的 adapter，同样调用已有查询与 Command，不成为业务权威入口。
+standalone Web、DSH Surface 和 CLI 最终调用相同的 Query 与 Command handler。当前不发布 FHIR Operation；未来若增加，必须调用同一个 handler，不能复制状态机或在路由层直接写库。后续 MCP 或其他 AG-UI adapter 同样只能调用已有查询与 Command，不成为业务权威入口。
 
 ### 3.3 权威数据所有权
 
@@ -245,6 +250,7 @@ D1、PostgreSQL 或 Supabase 只在出现公开托管、多实例、持续写竞
 - `ScenarioDataService`：拥有 Synthea 生成任务、Profile/Case 原子创建、患者库与来源历史授权读取。
 - `ScenarioService`：拥有 building/active Epoch 切换与 reset/replay 协调；病例物化委托给共享 Workflow 内核。
 - `WorkflowService`：拥有 Case direct start、首期门诊状态转换、预览 token、支付/LIS/文书/药房规则和岗位读模型。
+- `AgentIntegrationService`：隐藏 Page Context 签发、execution proof 校验、防重放、proposal/review 生命周期以及 Tool call 到 Command/Audit/Trace 的关联。
 - `OutboxRepository` 与 `OutboxDispatcher`：隐藏 claim/lease/retry/ambiguous/abandoned 恢复协议。
 
 当前没有通用 `PolicyEvaluator`、`ExternalOperationPort`、checkpoint/replay Runtime 或独立领域包；未来只有出现第二个实际策略/外部系统/数据库消费者时才提取相应 interface。
@@ -273,7 +279,7 @@ D1、PostgreSQL 或 Supabase 只在出现公开托管、多实例、持续写竞
 | Inventory | 首期最小发药移动；完整批号、效期、盘点和调拨 | domain native | 最小子集 |
 | Integration & Outbox | 模拟 LIS 与支付调用、恢复和幂等 | domain native | 必须 |
 | Audit & Provenance | 安全审计、事实来源和 Action Trace 引用 | audit_log 为 domain native 并投影 AuditEvent；Provenance 为 FHIR-native 新事件 | 必须 |
-| Agent Integration | CLI、Operation Catalog、Agent Capability Grant 与领域 Skills | 现有 Query/Command/FHIR read 的 adapter | 必须 |
+| Agent Integration | DSH React Surface、Page Context、窄 Tools、proposal/review/execution proof，以及 CLI、Operation Catalog、Capability Grant 与领域 Skills | Web action 和现有 Query/Command/FHIR read 的 adapter | 必须 |
 
 ## 5. FHIR R5 策略
 
@@ -537,9 +543,13 @@ Scenario 创建的 Patient 使用固定 `synthetic-data` extension 标记合成�
 | `/api/his/v1/*` | 非 FHIR 领域命令和查询 |
 | `/api/sim/v1/*` | 合成患者生成、Case/Brief 管理、Scenario Run 查询和管理员 reset/replay |
 | `/api/auth/*` | Web 登录、注销、会话和岗位上下文 |
-| `/api/agent/v1/*` | human-admin 管理 Agent Client/Grant，以及 Agent 读取受信 context |
+| `/api/agent/v1/page-contexts` | 从白名单 claim、DSH Session 和 client revision 签发短期受信 Page Context |
+| `/api/agent/v1/tool-calls` | 用 DSH execution proof 与 context token 授权一次 Tool call |
+| `/api/agent/v1/tool-calls/review` | 在正式 Command 前记录并线性化当前人类的 proposal 决定 |
+| `/api/agent/v1/tool-calls/result` | 完成 Tool call，并关联 proposal、review、Command、Audit 与 Trace |
+| `/api/agent/v1/clients*`、`/api/agent/v1/grants*` | human-admin 管理 Agent Client/Grant，以及 Agent 读取受信 context |
 
-当前路由表不包含 `/api/tools/v1`、`/mcp`、SMART discovery 或 Agent OAuth 端点。后续增加传输协议时按实际实现的版本和能力扩展，不能提前发布空路由或虚假元数据。
+当前路由表不包含通用 `/api/tools/v1`、`/mcp`、SMART discovery 或 Agent OAuth 端点。`/api/agent/v1` 同时拥有私有 Agent Client/Grant 控制面和同源 DSH Surface 的 Page Context/调用关联，不是开放 Tool Gateway；后续增加传输协议时按实际实现的版本和能力扩展，不能提前发布空路由或虚假元数据。
 
 ### 6.2 FHIR 写入策略
 
@@ -683,19 +693,78 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 提交验证 token、Actor context、Workspace/Epoch、过期时间和 expected versions，然后重新读取并校验依赖。客户端不能回传或修改预览 effects。发药使用 Prescription expected version 与库存批次条件写直接提交；退药、退款、医保、库存调拨、出院和病案归档不属于当前能力，也不宣称已有预览协议。
 
-## 7. Agent CLI 与 Skills
+## 7. Agent 适配器与能力边界
+
+当前 DSH 集成只服务 Web Profile 中的原生 Session。`dsh-react-surface` 提供 React Surface、布局和 Session-scoped capability lease，`dsh-ag-ui/browser-tools` 提供 always-on browser Tool broker；AG-UI Gateway 不参与该链路，也不需要单独的 model route 或 shared secret。DSH 拥有模型 transcript，ClinMesh 不复制 Assistant message 或 reasoning。
+
+### 7.1 Surface 与 Host 边界
+
+`apps/dsh-web` 把完整 `apps/web` application 作为第二个 adapter：
+
+- Surface 使用 Memory Router，应用位置不修改 DSH document pathname。
+- 每个 mount 创建独立 QueryClient；服务端状态仍只由 TanStack Query 拥有。
+- DSH 保留外壳 branding 与 Light/Dark/System theme；ClinMesh 的 `system` 主题订阅 DSH resolved theme，显式 light/dark 只作用于 Surface root，所有浮层通过注入 Portal 留在 ShadowRoot。
+- 默认 `workspace` 布局，Surface 宽度不足 `1024px` 时退化到 `full-frame`；应用高度被约束到宿主，业务 panel 拥有纵向滚动，隐藏时保留未提交 UI 状态。
+- `/clinmesh-api` Host 代理只连接配置固定的 loopback Hono，保留 Cookie/Origin，限制路径、方法、请求体、响应体和超时，不记录患者正文。
+
+该模式只信任安装在同一 DSH Web Profile 的插件，并只处理合成数据。它不是不可信 marketplace 插件或真实患者数据的安全边界。
+
+### 7.2 Page Context
+
+浏览器提交由 `packages/contracts` 验证的 `PageContextClaim`，以及当前 DSH Session、Surface client ID 和单调递增的 client revision。Claim 只包含 view、active section、单个选择、草稿引用、加载/错误状态和受限搜索文本。Hono 从当前 session 重新解析 User Account、Actor、Practitioner Role、Workspace/Epoch、Scenario Run 和岗位允许 view，并在同一个 SQLite 写事务中重新读取 selection、Patient/Encounter 版本和资源状态，再签发五分钟 `PageContextSnapshot` 与不可伪造 token。旧请求晚于新 revision 到达时返回 superseded，不撤销较新的 context。
+
+snapshot 包含短期 context ID、DSH Session 和 page scope。Actor、岗位、Workspace/Epoch、DSH Session、view、active section、selection 或受信资源版本变化会改变 scope 并移除旧 Tools；其他页面状态或 TTL 续签只替换 context，但同样关闭绑定旧 context 的 pending review。首次 Page Context 和 registration 不等待 capability status，因为 registration 是 DSH bridge 开始可用性探测和 lease 获取的前提。lease 曾进入 `active` 后，`contended`、`error`、`unavailable` 或 `idle` 会撤下当前 binding，并以同一 Surface client 的下一 revision 重签和重新注册；publisher 自身替换 registration 产生的 `connecting` 只关闭 pending review，不再次重签刚发布的 context。每条 Surface client revision 链只撤销自己的旧 context；浏览器 Web Lock 与 DSH lease 决定哪个 client 可以取得 execution proof，因此尚未取得 leadership 的 contender registration 不会撤销 leader context。前端在到期前一分钟携带 AbortSignal 续签，失败时有界重试，并在真实到期时主动注销 Tools。普通已授权 pending call 可以在旧 context 被正常替换后提交结果；人工批准必须先在线性化的 decision gate 中重新验证 active context、当前资源、当前人类身份和 active Epoch。
+
+Claim 和 snapshot 不包含 DOM、Query cache、浏览器存储、任意页面 dump、其他患者标签页、完整患者档案、Case Truth、Hidden Fact、Reveal Policy、Scenario authoring truth 或生成 prompt。
+
+### 7.3 Tool 目录与风险
+
+`packages/contracts/src/agent.ts` 是 Tool 名称、operation、岗位、view、模式和风险的可执行目录，`agent-tool-input.ts` 拥有每项 operation 的完整输入 schema。每个岗位动态获得不超过 32 个 Tools：通用读取/导航/真实聚焦，加上当前管理员、挂号、分诊、医生、收费或药房页面的窄动作。管理员只能读取 Scenario Run、Provider 可用性和当前 generation job 状态；导航 enum 只包含当前岗位主页和共享设置页。
+
+报告更正 Tool 只在当前账户通过服务端 membership 仍持有 active administrator role 时进入 outpatient-doctor Page Context；普通医生即使面对可更正报告也不会取得该 operation。管理员账户可在 acting-doctor 页面准备更正，Page Context 的当前 Practitioner Role 必须继续匹配最终 Command receipt 与 Audit Event。
+
+| 模式 | 当前行为 |
+| --- | --- |
+| `query` | 读取当前 Page Context、岗位队列或当前受权对象；不返回隐藏真值 |
+| `ui` | 在允许页面内导航、选择对象或聚焦区域 |
+| `draft` | 填写或保存未提交患者、分诊、临床、收费或药房草稿；页面 action 保留完整格式与范围校验 |
+| `preview` | 调用既有只读 preview，不提交正式业务 Effect |
+| `proposal` | 打开 ClinMesh 原生人工审阅；Agent 不提交正式 Command |
+
+不提供通用 `execute_action`、任意 method/path/body、FHIR write、Bundle、SQL、URL、DOM selector、JavaScript、JSON Patch 或 `runAs`。DSH Tool runtime 只接受其强制 JSON Schema 子集；当前 `contextId` 与 `scopeKey` 以单值 `const` 绑定，旧值仍在参数校验阶段失败。Surface adapter 投影 broker 支持的关键词，Web action 和 Hono 在 authorization 持久化前都使用同一 operation/input schema 执行完整长度、格式、数组和数值范围校验；action result 先按标准 JSON 语义省略对象中的 `undefined` 再验证，不可序列化结果仍失败且不能用超长二次错误覆盖原因。
+
+### 7.4 Execution proof 与调用记录
+
+DSH Host 监听真实 `tools/pre-execute` 事件，为一个 pending call 签发一次性 execution proof。proof 绑定 DSH Session、call ID、Tool 名、Page Context ID、page scope、签发时间和过期时间；浏览器不能自行签名。Hono 要求 proof 的 Context ID 与当前 token 精确一致，并同时验证 Tool catalog、岗位/view 允许 operation、防重放和当前人类 session，再创建 `agent_tool_call` 与可选 `agent_proposal`。
+
+读取、UI 和草稿动作完成后写入结构化 Tool result。proposal Tool 在打开审阅框后立即向 DSH 返回 `awaiting-human-review`，不让人工等待占用 browser lease；Hono 中的 Tool call 与 proposal 保持 pending。人类点击决定时，浏览器先用原 receipt 调用 decision gate；Hono 只在 context、DSH Session、当前资源和 Tool 仍有效时原子记录 `approved` 或 `rejected`，随后 Web 才能调用既有 Command。
+
+批准 completion 必须引用同一个已完成 Command receipt 中显式保存的 `requestId`、`auditId` 和 `traceId`。Hono 联结该 receipt、Audit、Action Trace 和 review decision，要求 Actor、Acting Practitioner Role、Workspace/Epoch、Scenario Run、operation、outcome、标识和决定时序全部一致；拼接两个 Command 的标识、切换岗位后执行 Command、使用 proposal 不允许的 operation 或引用决定前的 Command 都会被拒绝。持久表的主键和外键均携带 Workspace/Epoch，不保存 DSH transcript。
+
+### 7.5 人工审阅语义
+
+正式挂号、分诊、临床、支付、药房和 Scenario Command 始终由 ClinMesh 原生审阅框提交，最终 Actor 是登录人类，Agent 只记录为 proposal 来源。明确点击取消写入人类 `rejected` decision；批准执行既有 Command，并保留其 idempotency、expected version、preview token、审计和状态机语义。
+
+Surface 隐藏、DSH Session/lease 失效、page scope、selection、资源版本、页面 revision 或 context ID 改变，以及 context/receipt 过期或 action 错误，都会关闭尚未决定的 review，并把 proposal 标记为 `stale`，不伪造人类拒绝。签名有效且明确 `ok:false` 的 completion 可以越过 receipt 到期或旧 Epoch 只执行这项清理；它不能关联 Command 或产生 Effect。decision gate 是批准的线性化点；gate 失败时不会调用 Command。Agent call 已失败或 stale 时不能留下仍可提交的孤立审阅框。拒绝、stale、冲突和取消都不自动重放，也不产生正式业务 Effect。
+
+### 7.6 内容与能力边界
+
+病历、患者备注、术语 display、历史 Tool result、外部错误和模拟器消息都是不可信数据，不能改变 Tool catalog、岗位权限、page scope 或 Command 状态机。当前结果只返回完成动作所需的结构化可见事实，不返回 server prompt、secret、access token、reasoning 或仿真私有事实。
+
+共享 bridge secret 至少 32 bytes，只存在于 DSH Host 与 Hono 环境，不进入浏览器、日志、Tool result 或版本库。当前没有 MCP、Agent OAuth/SMART、自治 Agent Run、跨进程 DSH Session 恢复、Evaluation Spec、评分或 Agent 专用医院角色；这些能力不能从 React Surface 的存在推断出来。
+### 7.7 Agent CLI 与 Operation Catalog
 
 `apps/cli` 发布可安装的 `clinmesh` 命令。它是现有 HTTP/FHIR adapter 的 schema 驱动消费者，不直接访问 Repository、SQLite 或业务状态机。模型 runner、AG-UI、MCP、Agent OAuth/SMART、Evaluation Spec 和评分入口仍不属于当前能力。
 
-### 7.1 HIS Operation Catalog
+### 7.8 HIS Operation Catalog
 
-`packages/contracts/src/his-operations.ts` 导出的 `hisOperationCatalog` 是 Agent 操作面的唯一合同 owner。每项 operation 显式声明稳定 ID、版本、`cliPath`、`query/draft/preview/command` mode、输入/输出/错误 Zod schema、HTTP method/path adapter、唯一 handler owner、human/agent identity、岗位 allowlist、风险、幂等、expected version 与 preview token 要求；既有 Command 的持久 operation 名称不同时，Catalog 还保存 receipt adapter 名称。Catalog 不依赖 Hono、Node.js、环境变量或 handler。
+`packages/contracts/src/his-operations.ts` 导出的 `hisOperationCatalog` 是 CLI/Capability Grant 直接 HIS 操作面的唯一合同 owner。每项 operation 显式声明稳定 ID、版本、`cliPath`、`query/draft/preview/command` mode、输入/输出/错误 Zod schema、HTTP method/path adapter、唯一 handler owner、human/agent identity、岗位 allowlist、风险、幂等、expected version 与 preview token 要求；既有 Command 的持久 operation 名称不同时，Catalog 还保存 receipt adapter 名称。DSH 页面 Tools 由独立的 `agentToolCatalog` 拥有，并在当前人类 Session 内投影 UI action 与 proposal，不能作为 Capability Grant operation 使用。两个 Catalog 都不依赖 Hono、Node.js、环境变量或 handler。
 
 CLI 命令树、`operations list/schema`、服务端 Agent route matching、Grant 的 Catalog hash 和 Skill 命令示例测试都读取同一 Catalog。HIS route coverage test 要求每条 `/api/his/v1` route 恰好属于 canonical operation 或带原因的兼容排除项。管理员 Laboratory Service 候选搜索、发布和 job 查询属于 `clinmesh-administrator`；医生病例级目录属于 `clinmesh-doctor`，只返回可开立 Hospital Service。全局 Reference 检验搜索不能替代服务发布，也不能把 Reference Concept ID 作为申请项目。FHIR 部分只投影 metadata、read、vread、instance history 和资源能力注册表允许的 search；资源类型与 SearchParameter 白名单和 CapabilityStatement 共用一份注册表。包括 metadata 在内的每个 FHIR 入口都先解析受信身份，Agent 还必须在 Grant allowlist 中拥有对应 operation。
 
 CLI 没有通用 invoke、任意 URL、method/path/body、SQL、JSON Patch、FHIR write 或 Bundle write。兼容组合 route 不进入命令树，Agent 使用独立 diagnosis、prescription、laboratory request、clinical document 和 Encounter Completion 生命周期。
 
-### 7.2 输入、输出与恢复
+### 7.9 输入、输出与恢复
 
 标量、ID、分页和查询条件使用 typed flags；嵌套临床输入使用 `--input @<workspace-file>` 或 `--input -`。文件路径必须留在当前 workspace，单次输入上限为 1 MiB，同一 operation 不能同时使用 typed flags 和结构化输入。所有输入和服务端结果在边界通过 Catalog schema 验证。
 
@@ -703,7 +772,7 @@ CLI 没有通用 invoke、任意 URL、method/path/body、SQL、JSON Patch、FHI
 
 每个 write 要求调用者提供同一业务意图稳定复用的 idempotency key；修改既有事实还要提供 Catalog 声明的 expected versions。CLI 不自动重发 write。连接在结果返回前中断或 write 收到 5xx 时返回 `ambiguous_outcome`，调用者用公开 operation ID 和原 key 执行 `command receipt get`；服务端把公开 ID 映射到既有持久 Command receipt 名称，并保持 Actor、Acting Practitioner Role、Workspace 和 Epoch 隔离。receipt 示例只能指向实际产生 Command receipt 的 write operation。
 
-### 7.3 Human 与 Agent 身份
+### 7.10 Human 与 Agent 身份
 
 Human mode 使用 Better Auth profile。登录密码只从 stdin 读取，不进入 argv 或 profile；profile 只保存 Server origin 和 session cookie，配置目录使用 `0700`，文件通过同目录原子替换并保持 `0600`。human write 发送同源 `Origin`，高风险命令还要求本地显式 `--yes`；服务端仍重新执行岗位、状态与版本授权。
 
@@ -713,13 +782,13 @@ Agent task 由 runner 注入 `CLINMESH_SERVER_URL`、`CLINMESH_TOKEN` 和 task �
 
 Agent 高风险 command 不使用 `--yes` 作为授权；operation 必须在单岗位 Grant allowlist 中，Command handler 仍重新验证业务状态和 expected versions。跨岗位流程由 runner 签发多个不同 Grant，不能在一个 token 内切换 Practitioner Role。
 
-### 7.4 Agent Skills
+### 7.11 Agent Skills
 
 仓库提供七个 model-invoked Skills：`clinmesh-shared`、`clinmesh-registration`、`clinmesh-triage`、`clinmesh-doctor`、`clinmesh-billing`、`clinmesh-pharmacy` 和 `clinmesh-fhir`。`clinmesh-shared` 拥有 context、Catalog discovery、幂等、结构化错误和 ambiguous receipt 恢复；领域 Skills 只说明意图路由、前置状态、岗位交接、风险和反例，并在执行前读取 shared Skill。
 
 Skills 不复制 flags、输入 schema 或完整命令目录，Agent 对不熟悉的 operation 使用 `operations schema` 读取当前合同。临床 Skills 不包含 Agent Client/Grant 控制面。测试收集每个 bash 示例并要求其命令路径存在于真实 Catalog 或共享 CLI manifest，从而让命令重命名和文档漂移直接失败。
 
-### 7.5 后续 Agent 传输与内容安全
+### 7.12 后续 Agent 传输与内容安全
 
 后续嵌入式助手、AG-UI、tool adapter 或 MCP 只能投影同一 Catalog 并保留受信 context、幂等、expected version、receipt 与审计语义。MCP 是可选传输协议，不是业务领域模型；新增 adapter 不能提供比 CLI 更宽的 raw escape hatch。
 
@@ -771,7 +840,7 @@ Consultation 是病例级领域聚合，Consultation Record 是按序号追加�
 
 Report Acknowledgement 是按报告版本独立保存的领域事实，只能由原检查申请的开具医生对当前 `DiagnosticReport.status=final` 且申请为 `reported` 的报告创建。成功确认把申请推进到 `acknowledged` 并递增申请版本，但不更新 DiagnosticReport 或其 FHIR `meta.versionId`；确认 Command 以 `ReportAcknowledgement/<id>` effect 进入审计和 Action Trace。每个报告版本至多有一条确认事实，不同幂等键的重复确认返回第一次确认的 ID、时间和当时的申请版本。
 
-报告更正只接受当前 `reported` 或 `acknowledged` 报告、申请 expected version、原 DiagnosticReport expected version、原因、结论，以及覆盖既有结果代码全集且不重复的数值。每次更正为 DiagnosticReport 和全部 Observation 创建新的 logical ID，旧资源和旧 Report Acknowledgement 保持可读；新的 Provenance 以 `entity.role=revision` 引用被替代报告和结果，领域修订表以 latest-only 唯一约束维持线性链。更正后申请指向新报告并回到 `reported`，当前确认投影清空，医生必须对新版本重新确认；并发更正只有一次能通过申请 CAS。FHIR R5 DiagnosticReport 没有 Composition 式 `relatesTo`，因此替代关系由标准 Provenance 与领域修订链共同表达，不添加伪标准字段。公开 HTTP adapter 从受信 session 的 `availableRoles` 判断登录账户是否具有 administrator 能力，因此管理员可在当前 Acting Practitioner Context 为门诊医生时进入病例并发起更正；adapter 再把调用绑定为受信 `lis-system` context，普通医生和请求正文都不能声明或伪造该系统角色。
+报告更正只接受当前 `reported` 或 `acknowledged` 报告、申请 expected version、原 DiagnosticReport expected version、原因、结论，以及覆盖既有结果代码全集且不重复的数值。每次更正为 DiagnosticReport 和全部 Observation 创建新的 logical ID，旧资源和旧 Report Acknowledgement 保持可读；新的 Provenance 以 `entity.role=revision` 引用被替代报告和结果，领域修订表以 latest-only 唯一约束维持线性链。更正后申请指向新报告并回到 `reported`，当前确认投影清空，医生必须对新版本重新确认；并发更正只有一次能通过申请 CAS。FHIR R5 DiagnosticReport 没有 Composition 式 `relatesTo`，因此替代关系由标准 Provenance 与领域修订链共同表达，不添加伪标准字段。公开 HTTP adapter 只接受登录账户具有 administrator 能力的受信 session，再把调用绑定为受信 `lis-system` Command context，同时保留该 session 当前选择的 Practitioner、Practitioner Role 和 Location 供 receipt 与 Audit 关联；其他账户和请求正文不能声明或伪造该系统角色。
 
 `issued` 申请可由原开具医生取消；取消把 ServiceRequest 改为 `revoked`、执行 Task 改为 `cancelled`，并递增正式申请版本。取消与受理竞争时由版本和条件更新决定唯一结果，已取消申请收到晚到受理事件时以无副作用完成。`generation-failed` 表达统一的系统执行异常，人工重试基于冻结的 Laboratory Service 和报告定义开启新的三次尝试窗口，Doctor Case Controller 和 Web 都不解释内部错误码或病例级生成 capability。医生病例详情读取草稿版本、可选草稿和全部正式申请；报告 DTO 从已签发的 DiagnosticReport 和 Observation 还原，不从当前目录或结果模板重建。Web 对失败申请显示统一的可重试状态，对当前 `reported` 报告显示确认已阅；内部 Agent 错误文案不直接暴露给医生。
 
@@ -785,7 +854,7 @@ Report Acknowledgement 是按报告版本独立保存的领域事实，只能由
 
 医生通过 `GET /api/his/v1/doctor/completed-cases` 查询当前 Practitioner Role 负责且 `Encounter.status=completed`、具有 `actualPeriod.end` 的病例。查询支持 Patient logical ID、完诊业务日期闭区间和诊断目录项筛选，按 `actualPeriod.end` 降序、病例 ID 升序稳定分页。`GET /api/his/v1/doctor/completed-cases/{caseId}` 对未完诊、未分配或属于其他医生的病例统一返回业务冲突，只读取各 owner 的正式事实：Consultation Record、不可变 Clinical Document 修订链、检查申请与报告修订及确认、诊断确认、处方或无需用药结论、Patient 和已完成 Encounter；活动草稿、编辑版本和页面状态不进入病例库合同。
 
-病例库详情的业务时间线由服务端从各 owner 的正式事实和成功草稿删除 Action Trace 组装，按虚拟业务时间升序排列，相同时间依次按主资源引用和事件 kind 排序。活动草稿正文和编辑版本不进入病例库；只有 Effect 引用当前病例 `LaboratoryRequestDraft` 或 `PrescriptionDraft` 的成功删除 trace 进入时间线，以 ActionTrace 为主引用并关联对应 Draft。检查取消以 LaboratoryRequest 为主引用并关联 ServiceRequest 和执行 Task；处方撤回以 PrescriptionWithdrawal 为主引用并关联原 Prescription，因此原始开具与逆向事实分别形成事件。每个事件返回稳定 kind、主资源引用和关联资源引用；Web 只按响应顺序展示，不重新推断事件、当前版本或临床状态。医生工作台以“当前诊疗”和“已完诊病例”页签分隔写入与查询入口；病例库页只提供受控筛选、分页、只读事实展示和受控 owner 导航。详情为每个 Clinical Document 和检查申请返回 `correctionSupported`，为处方返回 `withdrawalSupported`，缺失字段按 `false` 处理；只有能在活动病例读模型中恢复并由现有 Command 执行的结构化病历和独立检查申请标记为可更正，只有当前 Epoch 支持独立用药结论且处方为 signed 或 paid、未发生任何调剂时才标记为可撤回，首期两字段病历与兼容检验事实继续可读但不显示更正导航。病历更正从病例库显式跳转后才显示最新版本修订表单，修订 Command 重新校验当前 Practitioner Role 是该病例的持久责任岗位；报告更正还要求当前登录 session 具有 administrator 能力，并使用结构化字段和提交前确认；处方撤回从病例库跳转到活动病例的用药结论区，复用对象预览和显式确认。三个动作都调用各自 owner 的受控 Command，成功后同时失效活动病例与病例库详情查询，使新版本和时间线从服务端正式事实重新读取；完诊成功还会失效病例库列表。任何动作都不能在病例库 DTO 上普通覆盖。
+病例库详情的业务时间线由服务端从各 owner 的正式事实和成功草稿删除 Action Trace 组装，按虚拟业务时间升序排列，相同时间依次按主资源引用和事件 kind 排序。活动草稿正文和编辑版本不进入病例库；只有 Effect 引用当前病例 `LaboratoryRequestDraft` 或 `PrescriptionDraft` 的成功删除 trace 进入时间线，以 ActionTrace 为主引用并关联对应 Draft。检查取消以 LaboratoryRequest 为主引用并关联 ServiceRequest 和执行 Task；处方撤回以 PrescriptionWithdrawal 为主引用并关联原 Prescription，因此原始开具与逆向事实分别形成事件。每个事件返回稳定 kind、主资源引用和关联资源引用；Web 只按响应顺序展示，不重新推断事件、当前版本或临床状态。医生工作台以“当前诊疗”和“已完诊病例”页签分隔写入与查询入口；病例库页只提供受控筛选、分页、只读事实展示和受控 owner 导航。详情为每个 Clinical Document 和检查申请返回 `correctionSupported`，为处方返回 `withdrawalSupported`，缺失字段按 `false` 处理；只有能在活动病例读模型中恢复并由现有 Command 执行的结构化病历和独立检查申请标记为可更正，只有当前 Epoch 支持独立用药结论且处方为 signed 或 paid、未发生任何调剂时才标记为可撤回，首期两字段病历与兼容检验事实继续可读但不显示更正导航。病历更正从病例库显式跳转后才显示最新版本修订表单，修订 Command 重新校验当前 Practitioner Role 是该病例的持久责任岗位；报告更正要求登录 session 具有 administrator 能力，可从当前 acting-doctor 页面使用结构化字段和提交前确认发起；处方撤回从病例库跳转到活动病例的用药结论区，复用对象预览和显式确认。三个动作都调用各自 owner 的受控 Command，成功后同时失效活动病例与病例库详情查询，使新版本和时间线从服务端正式事实重新读取；完诊成功还会失效病例库列表。任何动作都不能在病例库 DTO 上普通覆盖。
 
 医生工作台对未开具草稿删除、未受理检查取消、未调剂处方撤回、病历修订和报告更正统一采用对象预览、显式确认和结果反馈。页面只在 owner 读模型声明的可逆窗口显示入口，确认时仍提交当前 expected version 与新的幂等键；服务端独立重新校验岗位、责任、状态和资源版本。成功 Command 都生成 AuditEvent；病历和报告更正还创建新的正式资源、Provenance 与替代关系，原事实保持可读。冲突响应说明当前状态或版本，包括空草稿、已受理或执行中的检查、已撤回或已开始调剂的处方、已替代文书和并发报告版本；Web 刷新 owner 查询后只展示服务端当前事实。
 
@@ -1007,7 +1076,7 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 - 账务：Charge Record、Payment Preview 和 Payment Transaction。金额以整数分保存；当前没有退款、医保或收费员交账表。
 - 库存与发药：Inventory Lot、append-only Inventory Movement 和 Dispense。当前不实现预占、追溯码、盘点或调拨。
 - 文书：结构化 Clinical Document Draft、结构化与兼容 Clinical Sign Preview、Signed Clinical Document 关联和修订父链；签署的 Composition、document Bundle 和 Provenance 正文仍由 FHIR store 权威保存。
-- 平台与仿真：Workspace/Epoch、Scenario Run/State、Synthetic Profile/Case、Patient Brief、Investigation Result Snapshot、私有 Case Truth、Command Receipt/Effect、Audit、Action Trace 和 Outbox。
+- 平台与仿真：Workspace/Epoch、Scenario Run/State、Synthetic Profile/Case、Patient Brief、Investigation Result Snapshot、私有 Case Truth、Command Receipt/Effect、Audit、Action Trace、Outbox、Agent Page Context、Tool call、proposal 和 review decision。
 
 所有适用表、主键、唯一键、外键和岗位队列索引包含 `workspace_id + epoch`。新增 FHIR-native 辅助索引时必须可由权威资源重建；新增无法重建的事实时必须明确成为 domain aggregate，不能同时由 FHIR JSON 和领域表双向拥有。
 
@@ -1184,7 +1253,7 @@ Action Trace 按 Scenario Run 记录 Command 尝试、结果、Effect 引用和�
 
 每个受保护请求先验证浏览器会话，再由 ClinMesh Identity & Access 模块重新解析 active Workspace Membership、选择的 Practitioner Role、active Epoch、组织和地点，形成受信 Actor context。岗位切换通过服务端动作保存当前 session 的角色选择；后续业务 Command 以该 Actor context 写入审计。cookie 或请求体中的角色、Workspace 和 Epoch 不能替代数据库事实。
 
-当前不发布 OAuth/OIDC Provider、JWKS、SMART configuration 或 backend services。Agent 使用 ClinMesh 私有的短期 Capability Grant token，不将其声明为 OAuth、SMART 或可跨系统互操作的凭据；浏览器会话与 Grant 使用不同协议表面，但都解析为同一种 Actor context。
+当前不发布 OAuth/OIDC Provider、JWKS、SMART configuration 或 backend services。DSH 浏览器仍使用当前人类 Better Auth session，execution proof 只证明真实 Tool pipeline 调用，不能替代 Actor 认证；任务 Agent 使用 ClinMesh 私有的短期 Capability Grant token，不将其声明为 OAuth、SMART 或可跨系统互操作的凭据。浏览器会话与 Grant 使用不同协议表面，但都解析为同一种 Actor context。
 
 ### 11.2 授权模型
 
@@ -1223,14 +1292,14 @@ AND field policy
 - administrator
 - lis-system
 
-只有 `administrator` 能 reset Scenario 或管理 Agent Client/Grant。`lis-system` 不具有交互式登录或任意患者搜索能力；允许的检验结果 Command 只能由受控 outbox context 调用，报告更正还可由窄 HTTP adapter 在验证 administrator 后由服务端绑定同一系统 context。请求正文不能声明系统角色或提交任意 FHIR 内容。Agent 不新增岗位代码，而是通过一个 Grant 承担现有单一 Practitioner Role。
+只有 `administrator` 能 reset Scenario 或管理 Agent Client/Grant。`lis-system` 不具有交互式登录或任意患者搜索能力；允许的检验结果 Command 只能由受控 outbox context 调用，报告更正还可由窄 HTTP adapter 在验证 administrator 后由服务端绑定同一系统 context。请求正文不能声明系统角色或提交任意 FHIR 内容。DSH Agent 代表当前已登录人类岗位，任务 Agent 通过一个 Grant 承担现有单一 Practitioner Role；两者都不新增医院岗位代码。住院、医保、完整库存、病案和审计员角色在相应能力实施前不进入 seed、导航或授权矩阵。
 
 查询授权必须下推 SQL。不能先查 100 个患者，再在 JavaScript 中删掉 90 个；否则 total、排序、include 和时间差都可能泄漏信息。
 
 ### 11.3 字段级边界
 
 - Synthetic Patient Profile 保存明确标记为合成的身份证号、电话、邮箱、地址和保险展示文本；只有管理员详情接口返回完整 Profile，患者库列表不返回联系方式。Profile 物化后，普通岗位仍只通过岗位读模型或现有 FHIR Patient 权限读取完成业务所需字段，保险展示文本不是医保凭证且不参与结算。
-- 每个岗位使用独立的窄响应 schema，只返回完成当前工作所需字段；Agent CLI 复用这些岗位 DTO，不增加跨岗位聚合响应。
+- 每个岗位使用独立的窄响应 schema，只返回完成当前工作所需字段；DSH Agent 只能读取 Page Context 和当前页面 action 明确返回的进一步窄化结果，Agent CLI 复用岗位 DTO，不增加跨岗位聚合响应。
 - 普通岗位不能读取 session secret、外部原始凭证、Case Truth、Brief answer points 或其他 Scenario 私有状态。
 - read-only/hidden 边界由服务端路由和 Repository 强制，不能只靠前端隐藏。
 - 当前没有 break-glass；未来模拟时必须使用独立 Command、理由、短有效期和高等级审计。
@@ -1251,6 +1320,8 @@ Audit Event、Provenance、Action Trace 和应用日志职责分开：
 - Scenario Run ID、operation、success/failed outcome 和规范化 request hash
 
 Command Effect 引用和版本保存在 `command_effect` 与 Action Trace；AuditEvent 投影把 Effect 映射为 entity。当前审计不记录普通读取、duration、request ID、organization/location 字段、客户端、delegator 或错误码，也没有审计查询 UI。新增这些能力前不能宣称完整医疗审计覆盖。
+
+Agent Tool 读取和草稿动作不伪装成 AuditEvent。`agent_tool_call` 保存 DSH Session/call ID、context、operation、input hash 和结果；proposal/review 另表保存。人类批准产生正式 Command 时，Tool call 通过 Command `requestId`、`auditId` 和 `action_trace.request_id` 关联既有审计与 Effect，不复制 Command 状态机。
 
 `audit_head(workspace_id, epoch, audit_domain, sequence, hash, version)` 通过条件更新推进，sequence 唯一。并发冲突使整个关键业务事务回滚，服务端重新读取 head 并有界重试；禁止两个事件共享父 hash。若该成本不可接受，则取消线性链承诺，只保留独立不可变事件 hash，不能接受静默分叉。
 
@@ -1290,7 +1361,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 
 ### 12.4 可观测性
 
-当前成功 Command 响应返回 `requestId` 和 `auditId`，持久表通过 Workspace/Epoch、Scenario Run、idempotency key、Audit ID、Action Trace ID 和 outbox event ID 建立关联。`/api/health` 只报告服务状态与 FHIR 版本。
+当前成功 Command 响应返回 `requestId` 和 `auditId`，持久表通过 Workspace/Epoch、Scenario Run、idempotency key、Audit ID、Action Trace ID 和 outbox event ID 建立关联。Agent proposal 再通过 DSH Session/call ID、proposal ID、review decision 和同一 `requestId` 串联 Tool、Command、Audit 与 Trace。`/api/health` 只报告服务状态与 FHIR 版本。
 
 首期没有生产 metrics exporter、分布式 trace、request log 或管理仪表盘，因此不宣称在线采集 API latency、SQLite busy/transaction duration、Search 规模或 outbox backlog 指标。独立 performance runner 可以在临时 sandbox 重复执行固定工作负载并输出分位数、SQL/存储和 Trace 指标，但不改变生产请求或持久化路径。运行诊断仍依赖数据库 CLI、结构化 API 错误和持久审计/outbox 状态；任何后续日志或指标都不得把患者姓名、身份信息、完整临床正文、token 或自由文本作为标签。
 
@@ -1300,8 +1371,9 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 .
 ├── apps/
 │   ├── web/                 # Vite React SPA
+│   ├── dsh-web/             # DSH Host proxy、execution proof 与 React Surface adapter
 │   ├── server/
-│   │   ├── src/application/ # Identity、Scenario、Workflow、Command 与 Outbox
+│   │   ├── src/application/ # Identity、Scenario、Workflow、Command、Agent 与 Outbox
 │   │   ├── src/fhir/        # FHIR 能力注册表
 │   │   ├── src/infrastructure/sqlite/ # 数据库生命周期与 Repository
 │   │   └── drizzle/         # 有序 SQLite migration
@@ -1316,16 +1388,17 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 │   └── views/               # 当前 Desktop 工程壳；保留未来共享业务视图边界
 ├── docs/                    # canonical Markdown
 ├── scripts/                 # 文档投影、验证和 seed 工具
+├── vendor/dsh-react-surface/ # 固定 commit 的 React Surface submodule
 └── .agents/                 # skills 与 Agent Notes
 ```
 
-跨端包职责和未来 Mobile 共享限制见[跨端前端架构](frontend-architecture.md)。当前 Server 以少量深模块组织：`IdentityService` 解析受信 Actor context，`ScenarioService` 拥有 Epoch 转换，`WorkflowService` 拥有首期门诊状态流，`CommandExecutor` 统一事务/幂等/审计，FHIR/Workspace/Outbox Repository 封装 SQLite 读写。Insurance、住院、完整库存、IG 和外部 Scenario package 在进入实际范围时再增加。
+跨端包职责和未来 Mobile 共享限制见[跨端前端架构](frontend-architecture.md)。当前 Server 以少量深模块组织：`IdentityService` 解析受信 Actor context，`ScenarioService` 拥有 Epoch 转换，`WorkflowService` 拥有首期门诊状态流，`CommandExecutor` 统一事务/幂等/审计，`AgentIntegrationService` 拥有 Page Context 与 Tool/proposal/review 关联，FHIR/Workspace/Outbox Repository 封装 SQLite 读写。Insurance、住院、完整库存、IG 和外部 Scenario package 在进入实际范围时再增加。
 
 依赖规则：
 
-- Application 模块不依赖 Hono Request、React、CLI、Agent runner 或未来 MCP SDK；当前首期直接组合 SQLite Repository 与数据库事务，不宣称已有第二数据库的抽象实现。
+- Application 模块不依赖 Hono Request、React、DSH、CLI、Agent runner 或未来 MCP SDK；当前直接组合 SQLite Repository 与数据库事务，不宣称已有第二数据库的抽象实现。
 - Hono route 只解析/验证 HTTP 输入并调用应用服务，不能复制 Workflow 状态机。
-- Web 与 CLI adapter 调用应用层 Query/Command；未来 Tool/AG-UI adapter 同样只能调用应用层，不能直接访问 Repository。
+- standalone Web、DSH Surface 与 CLI adapter 调用应用层 Query/Command；Agent HTTP adapter 只签发/校验 context、Grant 和结果关联，不能直接访问业务 Repository 或复制状态机。未来 MCP 或其他 AG-UI adapter 同样只能调用应用层。
 - `packages/contracts` 不导出 SQLite driver、表定义或应用私有类型。
 - `contracts/core` 只放真正跨端的 schema、类型和纯函数，不形成无归属工具箱。
 
@@ -1336,6 +1409,7 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 - Hono 与真实临时 SQLite 的场景测试覆盖认证、角色、Scenario、挂号、分诊、医生首诊/复诊、签署/修订、支付三结局、LIS、发药和 Epoch 隔离。
 - Command 与 Repository 聚焦测试覆盖幂等、expected version、事务回滚、审计链、outbox lease/retry/ambiguous 和 SQLite 生命周期。
 - React 组件测试覆盖认证缓存隔离、五岗位 wiring、加载/空/错误/冲突/无权限状态、分页、支付拒绝重试、长中文文本和 locale/theme 控件。
+- DSH adapter 测试覆盖 proxy 限制、Cookie/Origin、proof 防重放、单文件 artifact、Page Context 续签、动态 Tool schema、detached review 和 ShadowRoot/Memory Router composition。
 
 ### 14.2 FHIR 合约测试
 
@@ -1365,11 +1439,19 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 
 首期病例轨迹从 generation、Visible Source History、Brief、direct start、分诊、首诊、Investigation、复诊、处方与文书签署、Encounter 完诊、药品支付到发药和 Scenario Run 完成。自动化故障矩阵覆盖无合格 Index Encounter、Brief 泄漏拒绝、重复开始、模型失败、过敏拦截、旧版本冲突、支付拒绝/ambiguous、LIS 重试、未支付处方禁止发药、已签文书禁止覆盖、部分发药和 reset 后晚到结果隔离。
 
-### 14.5 Agent CLI 安全测试
+### 14.5 Agent 安全测试
+
+当前自动化覆盖：
+
+- Page Context 严格 schema、岗位/view 不匹配、Hidden Fact/任意字段拒绝和 Epoch reset 失效。
+- execution proof 篡改、过期、Tool/operation/scope 不匹配、call replay 和重复 completion。
+- 动态岗位/view Tool 目录、32 Tool 上限、岗位导航收窄、DSH JSON Schema 子集和 context 到期注销。
+- 草稿 action 更新 context 但保持 page lease；proposal 立即返回 pending，明确批准关联 Command/Audit/Trace，取消或 scope 变化不产生 Effect。
+- 固定 loopback proxy、Cookie/Origin、body/response/timeout 限制和非 loopback 拒绝。
 
 Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、schema、canonical HIS route 覆盖和 FHIR 白名单。Identity seam 使用真实 SQLite 与 HTTP 验证 token hash、单岗位 allowlist、伪造 context header、Client 禁用、撤销、过期、Epoch reset、Catalog hash 和 policy version 失效。CLI process seam 验证 stdout/stderr/exit、stdin/file、human profile、Agent fail-closed 和 request shape；真实 Node listener 测试在服务端已提交但响应丢失后通过 receipt 恢复，并证明相同 idempotency key 不重复 Effect。Skill seam 要求每个命令示例存在于当前 Catalog。
 
-模型内容安全仍需在引入具体 runner 或嵌入式助手时增加针对 prompt injection、恶意病历、术语 display、附件/OCR、历史结果和出站网络的运行时测试；CLI 的结构化 schema 与服务端授权不能替代该层验证。
+当前没有附件/OCR、Agent OAuth、MCP、自治 Agent Run 或不可信插件。模型内容安全仍需在引入具体 runner 或嵌入式助手时增加针对 prompt injection、恶意病历、术语 display、附件/OCR、历史结果和出站网络的运行时测试；CLI 的结构化 schema、DSH Tool schema 与服务端授权不能替代该层验证。
 
 ## 15. 首期实现状态
 
@@ -1392,7 +1474,7 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 ### 15.1 运行与持久化
 
 - Node.js Hono 同时提供 Web SPA、认证、HIS/Scenario API、FHIR R5 只读 API 和健康检查。
-- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、门诊事实、结构化病历、诊断与处方、持久生成任务、Synthetic Patient Profile/Revision、Synthetic Case Instance、Brief Revision、Investigation Result Snapshot、来源 R4 artifact、Visible Source History 和 Epoch materialization。
+- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；四十四个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、门诊事实、结构化病历、诊断与处方、持久生成任务、Synthetic Patient Profile/Revision、Synthetic Case Instance、Brief Revision、Investigation Result Snapshot、来源 R4 artifact、Visible Source History、Epoch materialization、Agent Client/Grant/Workspace Actor/receipt role，以及 DSH Page Context/Tool/proposal/review 关联。
 - 数据库 CLI 提供 migrate、verify、reindex、backup 和 restore；已有旧版数据库执行 migrate 时先在同目录创建并验证升级前备份，Server 进程只验证 migration。
 - CommandExecutor 统一 `BEGIN IMMEDIATE`、expected versions、幂等 receipt、FHIR current/history/search、领域事实、AuditEvent、Action Trace 和 outbox 原子提交。
 - 同进程 dispatcher 持久化 claim/lease/attempt/correlation，支持失败重试、ambiguous、重复消费和旧 Epoch abandon。
@@ -1414,7 +1496,9 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 
 - Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员入口；管理员可生成 Synthetic Profile/Case、浏览 Visible Source History、生成并选择 Brief、直接开始病例、reset/replay，以及按 Dataset/panel 筛选并发布 Laboratory Service。候选列表显示 Release、成员数、标本、成人适用性和规则来源，并把项目整理来源与国家标准分开；未计价服务不显示为免费。医生工作台从全局 Reference Release 分页搜索诊断和药品，从病例级目录搜索本院已发布检验服务；诊断、检验和处方有效修改自动保存，已创建事实固定对应 snapshot。Investigation 的系统执行异常支持受控重试，不向医生展示生成 capability。病例库继续提供责任范围内的已完诊 Encounter 与受控更正入口。服务端状态只由 TanStack Query 缓存，退出或跨账户登录会清除非 session 查询。
 - 可见字符串具有中文和英文 catalog；主题支持 system、light 与 dark。岗位页面具有分页、加载、空、错误、冲突、无权限和成功状态，并覆盖长中文文本与窄视口。
-- 首期不包含 Desktop/Mobile 产品行为、模型 runner、AG-UI/MCP、评分、附件、真实外部系统、完整医保/住院/库存、远程数据库、多实例或高可用。
+- DSH Web 可从统一 launcher 打开同一完整工作台，使用 Memory Router、ShadowRoot 和动态岗位 Tools；Agent 可执行读取、导航、选择、草稿和 preview，正式动作只进入 detached 人工审阅。
+- `clinmesh` CLI 通过 Operation Catalog、单岗位 Capability Grant 和领域 Skills 开放当前 Query、Command 与只读 FHIR 能力。
+- 首期不包含 Desktop/Mobile 产品行为、模型 runner、AG-UI Gateway/MCP、自治 Agent、评分、附件、真实外部系统、完整医保/住院/库存、远程数据库、多实例或高可用。
 - 当前没有 FHIR generic write、自定义 FHIR Operation、正式 Profile/IG、官方 Validator、标准 compartment、metrics exporter 或公开在线 SLA。
 
 ## 16. 关键风险与缓解
@@ -1431,6 +1515,8 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 | Encounter 完成与 Scenario Run 完成混淆 | 药房错误修改临床状态 | 医生完成 Encounter，发药只终止 Scenario Run，分别测试 |
 | 原型内存状态被复用 | 授权、持久化和事务成为页面假象 | 正式切片按 Command 与真实 API 重写，不导入原型状态机 |
 | 场景数据互相污染 | 回放不可信、数据泄漏 | Workspace/Epoch SQL 强制过滤和跨 Workspace 测试 |
+| Agent context 或 lease 失效后仍可提交 | stale proposal 产生无责任归属 Effect | scope/TTL 失效关闭审阅，失败 proposal 标记 `stale`，正式 Command 始终重验人类 session |
+| DSH Tool schema 与 runtime 子集不一致 | Host lease 失败并形成重试风暴 | Surface adapter 投影受支持 schema，artifact 和真实 lease 验证 |
 | 术语版本和许可不清 | 接口不可复现或合规风险 | 版本化 terminology package，只放合法演示子集 |
 | OpenHIS 功能名造成过度承诺 | 误判业务完整度 | 以 executable scenario 和验收测试为唯一完成标准 |
 | Repository 被误解为零成本可移植 | 迁移时遗漏 SQL 与运维差异 | 每个新数据库单独设计 adapter、迁移和双端 contract tests |
@@ -1446,7 +1532,7 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 5. FHIR R5 版本固定为 `5.0.0`，项目 canonical base 固定为 `https://caizongyuan.github.io/clinmesh/fhir`。
 6. Registration 与 Prescription 是持久领域事实；挂号同事务创建 Account 和挂号 Charge Item。
 7. Synthetic Case Instance 固定 Case Truth、活动 Brief 和 Investigation snapshots；reset 在新 Epoch replay 同一 revision，Action Trace 与 Audit Event、Provenance 分开。
-8. 首期不实现模型 runner、AG-UI、Evaluation Spec、评分、附件、真实外部系统或真实患者数据；任务 Agent 只通过受控 CLI 行动。
+8. DSH 原生 Agent 只代表当前人类岗位执行页面 action 和 proposal，任务 Agent 只通过单岗位 Grant 的受控 CLI 行动；首期不实现模型 runner、AG-UI Gateway、MCP、自治 Agent Run、Agent OAuth、Evaluation Spec、评分、附件、真实外部系统或真实患者数据。
 
 ## 18. 当前架构保证
 
@@ -1465,8 +1551,10 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 - 挂号原子创建 Registration、Encounter、Queue Task、Account 和挂号 Charge Item；Prescription 稳定关联 MedicationRequest、费用、支付和发药。
 - Virtual Patient 直接接诊原子复用其合成 Patient；没有活动病例时建立 Registration、Encounter、Account 和医生 Queue Task，可进入首诊的活动病例则复用同一组事实，不伪造分诊或费用事实。
 - 五个人类岗位可以通过 Web/API、单岗位任务 Agent 可以通过 CLI 完成由 Synthetic Case 直接开始的 Scenario；生成库、来源历史和全局目录查询满足分页与交互基线。
+- standalone Web 与 DSH React Surface 复用同一 Web application；DSH 原生 Session 只能获得当前岗位/view 的窄 Tools，正式业务 Effect 需要人类审阅并可关联 Tool、proposal、review、Command、Audit 与 Trace。
+- `clinmesh` CLI 由同一 Operation Catalog 生成命令树，Capability Grant 绑定单一 Practitioner Role、Workspace/Epoch、Scenario Run、policy version 和真实过期时间。
 - Node.js 服务重启后从同一 SQLite 文件恢复；备份/恢复验证 schema、integrity 与 canonical state hash。
-- 首期没有 Desktop、Mobile、模型 runner、AG-UI、评分或附件入口；Agent 能力只声明当前 CLI、Capability Grant 和 Skills。
+- 首期没有 Desktop、Mobile、模型 runner、AG-UI Gateway、MCP、自治 Agent、评分或附件入口；Agent 能力只声明当前 DSH Surface Tools、CLI、Capability Grant 和 Skills。
 - 所有演示数据都有合成数据标记，不包含真实敏感信息或真实平台凭证。
 
 ## 19. 参考资料
@@ -1479,6 +1567,7 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 - [Node.js 与 SQLite Web 基础设施决策](../.agents/notes/implemented/architecture/2026-08-23-node-sqlite-web-foundation.md)
 - [多岗位发热门诊首期闭环决策](../.agents/notes/implemented/feature/2026-08-23-outpatient-fever-first-release.md)
 - [结构化临床文书独立生命周期决策](../.agents/notes/implemented/feature/2026-08-25-structured-clinical-document-lifecycle.md)
+- [DSH 原生 ClinMesh React Surface 决策](../.agents/notes/implemented/architecture/2026-08-30-dsh-native-clinmesh-surface.md)
 - OpenHIS 研究输入：`references/openhis-itai-pro/`
 - Medplum 研究输入：`references/medplum/`
 

@@ -10,12 +10,14 @@ import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckIcon, CircleAlertIcon, HeartPulseIcon, UserRoundCheckIcon } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { getTriageQueue, newIdempotencyKey, recordTriage } from './api-client.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
+import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
+import { useAgentReview } from './agent-review.tsx'
 
 interface TriageWorkspaceProps {
   locale: WorkspaceLocale
@@ -30,6 +32,7 @@ const acuities: TriageAcuity[] = ['level-1', 'level-2', 'level-3', 'level-4']
 
 export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  const agentReview = useAgentReview()
   const queryClient = useQueryClient()
   const scope = [session.actor.workspaceId, session.actor.epoch] as const
   const [status, setStatus] = useState<TriageStatus>('pending')
@@ -80,6 +83,170 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
       await queryClient.invalidateQueries({ queryKey: ['triage-queue', ...scope] })
     },
   })
+
+  const agentPage = useMemo(() => ({
+    actions: {
+      'triage.queue.read': {
+        description: 'Read the current authorized triage queue page.',
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => getTriageQueue(status, signal, page),
+      },
+      'triage.case.select': {
+        description: 'Select one case from the current triage queue.',
+        enabled: (queue.data?.items.length ?? 0) > 0,
+        parameters: {
+          type: 'object' as const,
+          properties: { caseId: { type: 'string', maxLength: 128 } },
+          required: ['caseId'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown) => {
+          const caseId = triageString(raw, 'caseId')
+          if (!queue.data?.items.some(item => item.caseId === caseId)) {
+            throw new Error('Case is not in the current triage queue')
+          }
+          setSelectedCaseId(caseId)
+          return { caseId, selected: true }
+        },
+      },
+      'triage.draft.set': {
+        description: 'Fill the current triage draft without submitting an Observation.',
+        enabled: selectedCase !== undefined,
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            acuityCode: { type: 'string', enum: acuities },
+            chiefComplaint: { type: 'string', maxLength: 500 },
+            diastolicMmHg: { type: 'number', minimum: 30, maximum: 180 },
+            oxygenSaturationPct: { type: 'number', minimum: 50, maximum: 100 },
+            pulseBpm: { type: 'number', minimum: 20, maximum: 250 },
+            respirationBpm: { type: 'number', minimum: 5, maximum: 80 },
+            systolicMmHg: { type: 'number', minimum: 50, maximum: 260 },
+            temperatureC: { type: 'number', minimum: 30, maximum: 45 },
+          },
+          required: [
+            'acuityCode', 'chiefComplaint', 'diastolicMmHg', 'oxygenSaturationPct',
+            'pulseBpm', 'respirationBpm', 'systolicMmHg', 'temperatureC',
+          ],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown) => {
+          const values = triageRecord(raw)
+          if (!acuities.includes(values.acuityCode as TriageAcuity)) {
+            throw new TypeError('acuityCode is invalid')
+          }
+          setAcuityCode(values.acuityCode as TriageAcuity)
+          setChiefComplaint(triageString(raw, 'chiefComplaint'))
+          setDiastolicMmHg(String(triageNumber(raw, 'diastolicMmHg')))
+          setOxygenSaturationPct(String(triageNumber(raw, 'oxygenSaturationPct')))
+          setPulseBpm(String(triageNumber(raw, 'pulseBpm')))
+          setRespirationBpm(String(triageNumber(raw, 'respirationBpm')))
+          setSystolicMmHg(String(triageNumber(raw, 'systolicMmHg')))
+          setTemperatureC(String(triageNumber(raw, 'temperatureC')))
+          return { updated: true }
+        },
+      },
+      'triage.record.propose': {
+        description: 'Open human review for the current triage draft.',
+        enabled: selectedCase !== undefined && chiefComplaint.trim() !== '',
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => {
+          if (selectedCase === undefined) throw new Error(messages.triageUnavailable)
+          return agentReview.request({
+            confirmLabel: messages.completeTriage,
+            description: `${selectedCase.patient.name} · ${temperatureC} C · ${acuityCode}`,
+            onConfirm: () => mutation.mutateAsync(),
+            signal,
+            title: messages.triageAssessment,
+          })
+        },
+      },
+    },
+    claim: {
+      version: 1 as const,
+      viewId: 'triage' as const,
+      viewRevision: agentViewRevision({
+        acuityCode,
+        chiefComplaint,
+        diastolicMmHg,
+        oxygenSaturationPct,
+        page,
+        pulseBpm,
+        respirationBpm,
+        selectedCaseId: selectedCase?.caseId,
+        status,
+        systolicMmHg,
+        temperatureC,
+      }),
+      activeSection: status,
+      ...(selectedCase === undefined ? {} : {
+        selection: {
+          id: selectedCase.caseId,
+          kind: 'triage-item' as const,
+          version: selectedCase.taskVersion,
+        },
+        draft: {
+          dirty: chiefComplaint !== '',
+          id: `${selectedCase.caseId}:triage`,
+          kind: 'triage' as const,
+          revision: agentViewRevision({
+            acuityCode,
+            chiefComplaint,
+            diastolicMmHg,
+            oxygenSaturationPct,
+            pulseBpm,
+            respirationBpm,
+            systolicMmHg,
+            temperatureC,
+          }),
+        },
+      }),
+      ui: {
+        status: queue.isPending ? 'loading' as const
+          : queue.isError ? 'error' as const
+            : queue.data?.items.length === 0 ? 'empty' as const : 'ready' as const,
+      },
+    },
+    label: 'ClinMesh · 门诊分诊',
+    readState: () => ({
+      draft: {
+        acuityCode,
+        chiefComplaint,
+        diastolicMmHg: Number(diastolicMmHg),
+        oxygenSaturationPct: Number(oxygenSaturationPct),
+        pulseBpm: Number(pulseBpm),
+        respirationBpm: Number(respirationBpm),
+        systolicMmHg: Number(systolicMmHg),
+        temperatureC: Number(temperatureC),
+      },
+      queueCount: queue.data?.total ?? 0,
+      selectedCase: selectedCase === undefined ? null : {
+        caseId: selectedCase.caseId,
+        encounterId: selectedCase.encounterId,
+        patientName: selectedCase.patient.name,
+      },
+      status,
+    }),
+  }), [
+    acuityCode,
+    agentReview,
+    chiefComplaint,
+    diastolicMmHg,
+    messages,
+    mutation.mutateAsync,
+    oxygenSaturationPct,
+    page,
+    pulseBpm,
+    queue.data,
+    queue.isError,
+    queue.isPending,
+    respirationBpm,
+    selectedCase,
+    status,
+    systolicMmHg,
+    temperatureC,
+  ])
+  useRegisterAgentPage(agentPage)
 
   return (
     <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(18rem,0.8fr)_minmax(28rem,1.2fr)]">
@@ -222,6 +389,29 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
       </section>
     </div>
   )
+}
+
+function triageRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Triage Agent input must be an object')
+  }
+  return value as Record<string, unknown>
+}
+
+function triageString(value: unknown, key: string): string {
+  const candidate = triageRecord(value)[key]
+  if (typeof candidate !== 'string' || candidate.trim() === '') {
+    throw new TypeError(`${key} must be a non-empty string`)
+  }
+  return candidate.trim()
+}
+
+function triageNumber(value: unknown, key: string): number {
+  const candidate = triageRecord(value)[key]
+  if (typeof candidate !== 'number' || !Number.isFinite(candidate)) {
+    throw new TypeError(`${key} must be a finite number`)
+  }
+  return candidate
 }
 
 function CaseRow({

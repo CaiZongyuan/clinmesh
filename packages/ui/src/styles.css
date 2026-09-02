@@ -138,7 +138,7 @@
   --sidebar-ring: oklch(0.7 0.11 166);
 }
 
-:root[data-clinmesh-app="web"] {
+[data-clinmesh-app="web"] {
   --text-sm: 0.8125rem;
   --text-sm--line-height: 1.5;
   --background: #ffffff;
@@ -182,17 +182,17 @@
   --sidebar-ring: #0b84e5;
 }
 
-:root[data-clinmesh-app="web"] body,
-:root[data-clinmesh-app="web"] body * {
+[data-clinmesh-app="web"],
+[data-clinmesh-app="web"] * {
   letter-spacing: 0;
 }
 
-:root[data-clinmesh-app="web"] body {
+[data-clinmesh-app="web"] {
   font-size: 0.8125rem;
   line-height: 1.5;
 }
 
-:root[data-clinmesh-app="web"].dark {
+[data-clinmesh-app="web"].dark {
   --background: oklch(0.1757 0.0043 128.74);
   --foreground: oklch(0.9612 0.0069 124.45);
   --card: oklch(0.2071 0.0042 128.69);
@@ -249,6 +249,14 @@
   select {
     font: inherit;
   }
+}
+
+.clinmesh-web-root {
+  min-height: 100%;
+  min-width: 20rem;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-ui);
 }
 
 /* Compatibility styles for the pre-prototype application shell. */

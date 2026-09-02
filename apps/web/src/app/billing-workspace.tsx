@@ -20,13 +20,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircleIcon, CircleAlertIcon, CreditCardIcon, ReceiptTextIcon } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { confirmPayment, getBillingQueue, newIdempotencyKey, previewPayment } from './api-client.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { formatFen } from './workspace-format.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
+import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
+import { useAgentReview } from './agent-review.tsx'
 
 interface BillingWorkspaceProps {
   locale: WorkspaceLocale
@@ -39,6 +41,7 @@ type SimulatorRule = 'ambiguous' | 'decline' | 'success'
 
 export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  const agentReview = useAgentReview()
   const queryClient = useQueryClient()
   const scope = [session.actor.workspaceId, session.actor.epoch] as const
   const [category, setCategory] = useState<BillingCategory>('laboratory')
@@ -111,6 +114,114 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     setSelectedChargeId(chargeItemId)
     clearPayment()
   }
+
+  const agentPage = useMemo(() => ({
+    actions: {
+      'billing.queue.read': {
+        description: 'Read the current authorized billing queue page.',
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => getBillingQueue(category, status, signal, page),
+      },
+      'billing.item.select': {
+        description: 'Select one charge from the current billing queue.',
+        enabled: (queue.data?.items.length ?? 0) > 0,
+        parameters: {
+          type: 'object' as const,
+          properties: { chargeItemId: { type: 'string', maxLength: 128 } },
+          required: ['chargeItemId'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown) => {
+          const chargeItemId = billingString(raw, 'chargeItemId')
+          if (!queue.data?.items.some(item => item.chargeItemId === chargeItemId)) {
+            throw new Error('Charge is not in the current billing queue')
+          }
+          selectCharge(chargeItemId)
+          return { chargeItemId, selected: true }
+        },
+      },
+      'billing.payment.preview': {
+        description: 'Generate a payment preview for the selected synthetic charge.',
+        enabled: selectedCharge !== undefined,
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: async () => {
+          if (selectedCharge === undefined) throw new Error(messages.paymentUnavailable)
+          return preview.mutateAsync()
+        },
+      },
+      'billing.payment.confirm.propose': {
+        description: 'Open human review for the current payment preview.',
+        enabled: preview.data !== undefined,
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => {
+          if (preview.data === undefined) throw new Error(messages.paymentUnavailable)
+          return agentReview.request({
+            confirmLabel: messages.submitPayment,
+            description: `${selectedCharge?.patient.name ?? ''} · ${formatFen(preview.data.data.amountFen, locale)}`,
+            onConfirm: () => confirm.mutateAsync(),
+            signal,
+            title: messages.confirmPaymentTitle,
+          })
+        },
+      },
+    },
+    claim: {
+      version: 1 as const,
+      viewId: 'billing' as const,
+      viewRevision: agentViewRevision({
+        category,
+        page,
+        previewId: preview.data?.data.previewId,
+        selectedChargeId: selectedCharge?.chargeItemId,
+        simulatorRule,
+        status,
+      }),
+      activeSection: `${category}:${status}`,
+      ...(selectedCharge === undefined ? {} : {
+        selection: {
+          id: selectedCharge.chargeItemId,
+          kind: 'billing-item' as const,
+          version: String(selectedCharge.chargeVersion),
+        },
+      }),
+      ui: {
+        status: queue.isPending ? 'loading' as const
+          : queue.isError ? 'error' as const
+            : queue.data?.items.length === 0 ? 'empty' as const : 'ready' as const,
+      },
+    },
+    label: 'ClinMesh · 门诊收费',
+    readState: () => ({
+      category,
+      preview: preview.data?.data ?? null,
+      queueCount: queue.data?.total ?? 0,
+      selectedCharge: selectedCharge === undefined ? null : {
+        amountFen: selectedCharge.amountFen,
+        category: selectedCharge.category,
+        chargeItemId: selectedCharge.chargeItemId,
+        patientName: selectedCharge.patient.name,
+      },
+      simulatorRule,
+      status,
+    }),
+  }), [
+    agentReview,
+    category,
+    confirm.mutateAsync,
+    locale,
+    messages,
+    page,
+    preview.data,
+    preview.mutateAsync,
+    preview.reset,
+    queue.data,
+    queue.isError,
+    queue.isPending,
+    selectedCharge,
+    simulatorRule,
+    status,
+  ])
+  useRegisterAgentPage(agentPage)
 
   return (
     <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(19rem,0.8fr)_minmax(28rem,1.2fr)]">
@@ -269,6 +380,17 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       </section>
     </div>
   )
+}
+
+function billingString(value: unknown, key: string): string {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Billing Agent input must be an object')
+  }
+  const candidate = (value as Record<string, unknown>)[key]
+  if (typeof candidate !== 'string' || candidate.trim() === '') {
+    throw new TypeError(`${key} must be a non-empty string`)
+  }
+  return candidate.trim()
 }
 
 function ChargeRow({ item, locale, messages, onSelect, selected }: {
