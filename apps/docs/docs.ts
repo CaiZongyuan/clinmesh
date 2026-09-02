@@ -21,6 +21,14 @@ export const docsPages: DocsPage[] = [
     order: 0,
   },
   {
+    source: 'docs/deployment.md',
+    route: 'guide/deployment.md',
+    label: '部署指南',
+    sidebar: 'guide',
+    section: 'Guide',
+    order: 1,
+  },
+  {
     source: 'docs/architecture.md',
     route: 'architecture/system.md',
     label: '系统架构',
