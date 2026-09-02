@@ -120,6 +120,7 @@ describe('Web application shell', () => {
     document.documentElement.className = ''
     document.documentElement.lang = 'zh-CN'
     document.documentElement.removeAttribute('data-theme')
+    document.documentElement.removeAttribute('data-font-size')
     window.history.replaceState(null, '', '/')
     vi.stubGlobal('matchMedia', vi.fn((query: string) => createMediaQueryList(query)))
     vi.stubGlobal('scrollTo', vi.fn())
@@ -202,6 +203,7 @@ describe('Web application shell', () => {
 
   it('scopes Surface appearance and feedback portals to the application root', async () => {
     localStorage.setItem('clinmesh.preferences:v1', JSON.stringify({
+      fontSize: 'large',
       locale: 'en-US',
       theme: 'light',
     }))
@@ -213,6 +215,8 @@ describe('Web application shell', () => {
     const portalRoot = applicationRoot?.querySelector<HTMLElement>('[data-clinmesh-portal-root]')
     expect(applicationRoot?.lang).toBe('en-US')
     expect(document.documentElement.lang).toBe('zh-CN')
+    expect(applicationRoot?.dataset.fontSize).toBe('large')
+    expect(document.documentElement.dataset.fontSize).toBeUndefined()
 
     await user.click(screen.getByRole('button', { name: 'Dark theme' }))
     expect(applicationRoot?.classList.contains('dark')).toBe(true)
@@ -825,6 +829,7 @@ describe('Web application shell', () => {
     expect(document.documentElement.dataset.theme).toBe('dark')
     expect(darkTheme.getAttribute('aria-pressed')).toBe('true')
     expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1') ?? '')).toEqual({
+      fontSize: 'standard',
       locale: 'zh-CN',
       theme: 'dark',
     })
@@ -871,6 +876,32 @@ describe('Web application shell', () => {
     expect(screen.queryByRole('tablist', { name: '组件分类' })).toBeNull()
   })
 
+  it('previews and persists the selected font size from appearance settings', async () => {
+    window.history.replaceState(null, '', '/settings')
+    const user = userEvent.setup()
+    const rendered = await renderWebApp()
+    const applicationRoot = document.querySelector<HTMLElement>('[data-clinmesh-app="web"]')
+
+    expect(applicationRoot?.dataset.fontSize).toBe('standard')
+    expect(screen.getByRole('group', { name: '字号' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '标准' }).getAttribute('aria-pressed')).toBe('true')
+
+    await user.click(screen.getByRole('button', { name: '较大' }))
+
+    expect(applicationRoot?.dataset.fontSize).toBe('larger')
+    expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1') ?? '')).toEqual({
+      fontSize: 'larger',
+      locale: 'zh-CN',
+      theme: 'system',
+    })
+
+    rendered.unmount()
+    await renderWebApp()
+    expect(document.querySelector<HTMLElement>('[data-clinmesh-app="web"]')?.dataset.fontSize)
+      .toBe('larger')
+    expect(screen.getByRole('button', { name: '较大' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
   it('localizes the mobile navigation dialog', async () => {
     vi.stubGlobal('matchMedia', vi.fn((query: string) => (
       createMediaQueryList(query, query === '(max-width: 767px)')
@@ -897,7 +928,12 @@ describe('Web application shell', () => {
     expect(screen.getByRole('button', { name: 'Notifications' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'User menu' })).toBeTruthy()
     expect(screen.getByRole('group', { name: 'Language' })).toBeTruthy()
+    expect(screen.getByRole('group', { name: 'Font size' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Standard' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Larger' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Large' })).toBeTruthy()
     expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1') ?? '')).toEqual({
+      fontSize: 'standard',
       locale: 'en-US',
       theme: 'system',
     })
@@ -930,6 +966,7 @@ describe('Web application shell', () => {
     await user.click(screen.getByRole('button', { name: '跟随系统' }))
     expect(document.documentElement.dataset.theme).toBe('light')
     expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1') ?? '')).toEqual({
+      fontSize: 'standard',
       locale: 'zh-CN',
       theme: 'system',
     })

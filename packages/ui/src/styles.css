@@ -139,8 +139,15 @@
 }
 
 [data-clinmesh-app="web"] {
-  --text-sm: 0.8125rem;
+  --clinmesh-font-scale: 1;
+  --text-xs: calc(0.75rem * var(--clinmesh-font-scale));
+  --text-sm: calc(0.8125rem * var(--clinmesh-font-scale));
   --text-sm--line-height: 1.5;
+  --text-base: calc(1rem * var(--clinmesh-font-scale));
+  --text-lg: calc(1.125rem * var(--clinmesh-font-scale));
+  --text-xl: calc(1.25rem * var(--clinmesh-font-scale));
+  --text-2xl: calc(1.5rem * var(--clinmesh-font-scale));
+  --text-3xl: calc(1.875rem * var(--clinmesh-font-scale));
   --background: #ffffff;
   --foreground: #242424;
   --card: #ffffff;
@@ -182,13 +189,22 @@
   --sidebar-ring: #0b84e5;
 }
 
+[data-clinmesh-app="web"][data-font-size="larger"] {
+  --clinmesh-font-scale: 1.125;
+}
+
+[data-clinmesh-app="web"][data-font-size="large"] {
+  --clinmesh-font-scale: 1.25;
+}
+
 [data-clinmesh-app="web"],
 [data-clinmesh-app="web"] * {
   letter-spacing: 0;
 }
 
-[data-clinmesh-app="web"] {
-  font-size: 0.8125rem;
+:root[data-clinmesh-app="web"] body,
+.clinmesh-web-root[data-clinmesh-app="web"] {
+  font-size: calc(0.8125rem * var(--clinmesh-font-scale));
   line-height: 1.5;
 }
 
@@ -276,13 +292,13 @@
 }
 
 .cm-brand {
-  font-size: 1.125rem;
+  font-size: calc(1.125rem * var(--clinmesh-font-scale));
   font-weight: 650;
 }
 
 .cm-platform {
   color: var(--muted-foreground);
-  font-size: 0.8125rem;
+  font-size: calc(0.8125rem * var(--clinmesh-font-scale));
 }
 
 .cm-main {
@@ -293,7 +309,7 @@
 
 .cm-heading {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: calc(1.5rem * var(--clinmesh-font-scale));
   line-height: 1.3;
 }
 
@@ -330,13 +346,13 @@
 
 .cm-status-title {
   margin: 0;
-  font-size: 0.875rem;
+  font-size: calc(0.875rem * var(--clinmesh-font-scale));
   font-weight: 650;
 }
 
 .cm-status-copy {
   margin: 0.5rem 0 0;
   color: var(--muted-foreground);
-  font-size: 0.8125rem;
+  font-size: calc(0.8125rem * var(--clinmesh-font-scale));
   line-height: 1.5;
 }
