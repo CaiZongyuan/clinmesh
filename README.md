@@ -1,3 +1,5 @@
+<p align="center"><img src="apps/web/src/assets/clinmesh-mark.webp" width="144" alt="ClinMesh 标志"></p>
+
 # ClinMesh
 
 ClinMesh 是面向 Agent 评测、产品验证和医疗信息系统研究的中国公立医院仿真 HIS。系统以 FHIR R5 作为标准互操作接口，以显式业务命令承载挂号、医嘱、药房、收费、医保、库存和病案等医院流程。

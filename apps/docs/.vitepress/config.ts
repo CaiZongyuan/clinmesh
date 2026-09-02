@@ -37,6 +37,7 @@ export default defineConfig({
   cacheDir: '.cache',
   outDir: '.dist',
   themeConfig: {
+    logo: '/clinmesh-mark.webp',
     nav: [
       { text: '架构', link: '/architecture/system' },
       { text: '工程', link: '/engineering/agent-development' },
