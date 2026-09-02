@@ -60,6 +60,7 @@ import {
   type ScenarioState,
   type SessionContext,
 } from '@clinmesh/contracts/his'
+import type { ReferenceLaboratorySourceDataset } from '@clinmesh/contracts/reference-data'
 import {
   patientBriefJobSchema,
   patientBriefRevisionListSchema,
@@ -189,10 +190,18 @@ export function getReferenceDataReleases(signal?: AbortSignal) {
 export function searchLaboratoryServiceCandidates(
   query: string,
   page = 1,
+  filters: {
+    panelOnly?: boolean
+    sourceDataset?: ReferenceLaboratorySourceDataset
+  } = {},
   signal?: AbortSignal,
 ) {
   const parameters = new URLSearchParams({ page: String(page), pageSize: '20' })
   if (query.length > 0) parameters.set('query', query)
+  if (filters.panelOnly === true) parameters.set('panelOnly', 'true')
+  if (filters.sourceDataset !== undefined) {
+    parameters.set('sourceDataset', filters.sourceDataset)
+  }
   return apiGet(
     `/api/his/v1/admin/laboratory-services/candidates?${parameters.toString()}`,
     laboratoryServiceCandidateSearchSchema,

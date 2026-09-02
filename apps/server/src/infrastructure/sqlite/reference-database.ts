@@ -22,6 +22,7 @@ import {
   type ReferenceLaboratoryPanelMember,
   type ReferenceLaboratoryRecord,
   type ReferenceLaboratorySpecimen,
+  type ReferenceLaboratorySourceDataset,
   type ReferenceLaboratoryUnit,
   type ReferenceMedicalService,
   type ReferenceMedicationProduct,
@@ -60,6 +61,11 @@ export interface ReferenceCatalogSearchInput {
   page: number
   pageSize: number
   query?: string
+}
+
+export interface ReferenceLaboratoryCandidateSearchInput extends ReferenceCatalogSearchInput {
+  panelOnly?: boolean
+  sourceDataset?: ReferenceLaboratorySourceDataset
 }
 
 export interface ReferenceCatalogSearchResult<Item> {
@@ -276,6 +282,7 @@ function sourceRows(database: ReferenceDatabase, releaseId: string): ReferenceSo
     checksum: z.string(),
     license_id: z.string(),
     import_diagnostics_json: z.string(),
+    materialization_json: z.string().nullable(),
     published_at: z.string().nullable(),
     record_count: z.number().int(),
     retrieved_at: z.string(),
@@ -285,7 +292,7 @@ function sourceRows(database: ReferenceDatabase, releaseId: string): ReferenceSo
   })).parse(database.driver.prepare(`
     SELECT source_id, upstream_version, published_at, retrieved_at, source_url,
       checksum, license_id, acquisition_method, artifact_format, record_count,
-      import_diagnostics_json, candidate_provenance_json
+      import_diagnostics_json, candidate_provenance_json, materialization_json
     FROM reference_source_manifest
     WHERE release_id = ?
     ORDER BY source_id
@@ -297,6 +304,9 @@ function sourceRows(database: ReferenceDatabase, releaseId: string): ReferenceSo
       : { candidate: JSON.parse(row.candidate_provenance_json) }),
     checksum: row.checksum,
     licenseId: row.license_id,
+    ...(row.materialization_json === null
+      ? {}
+      : { materialization: JSON.parse(row.materialization_json) }),
     ...(row.published_at === null ? {} : { publishedAt: row.published_at }),
     importDiagnostics: referenceImportDiagnosticsSchema.parse(JSON.parse(row.import_diagnostics_json)),
     recordCount: row.record_count,
@@ -360,42 +370,18 @@ function laboratoryDefinitionRows(
 ): SourcedLaboratoryDefinition[] {
   const parameters = conceptId === undefined ? [releaseId] : [releaseId, conceptId]
   return z.array(z.object({
-    class_code: z.string().nullable(),
-    class_type: z.number().int().nullable(),
-    component: z.string().nullable(),
     concept_id: z.string(),
-    method_type: z.string().nullable(),
-    order_observation: z.string().nullable(),
-    panel_type: z.string().nullable(),
-    property: z.string().nullable(),
-    scale_type: z.string().nullable(),
+    definition_json: z.string(),
     source_id: z.string(),
     source_locator: z.string(),
-    system_part: z.string().nullable(),
-    time_aspect: z.string().nullable(),
   }).strict()).parse(database.driver.prepare(`
-    SELECT concept_id, component, property, time_aspect, system_part, scale_type,
-      method_type, class_code, class_type, order_observation, panel_type,
-      source_id, source_locator
+    SELECT concept_id, definition_json, source_id, source_locator
     FROM reference_laboratory_definition
     WHERE release_id = ?
       ${conceptId === undefined ? '' : 'AND concept_id = ?'}
     ORDER BY source_id, concept_id
   `).all(...parameters)).map(row => ({
-    ...referenceLaboratoryDefinitionSchema.parse({
-      classCode: row.class_code,
-      classType: row.class_type,
-      component: row.component,
-      conceptId: row.concept_id,
-      methodType: row.method_type,
-      orderObservation: row.order_observation,
-      panelType: row.panel_type,
-      property: row.property,
-      scaleType: row.scale_type,
-      sourceLocator: row.source_locator,
-      system: row.system_part,
-      timeAspect: row.time_aspect,
-    }),
+    ...referenceLaboratoryDefinitionSchema.parse(JSON.parse(row.definition_json)),
     sourceId: row.source_id,
   }))
 }
@@ -845,7 +831,7 @@ export function searchReferenceConceptCatalog(
 export function searchReferenceLaboratoryRecords(
   database: ReferenceDatabase,
   releaseId: string,
-  input: ReferenceCatalogSearchInput,
+  input: ReferenceLaboratoryCandidateSearchInput,
 ): ReferenceCatalogSearchResult<ReferenceLaboratoryRecord> {
   verifyReferenceMigrations(database)
   const parameters: unknown[] = [releaseId]
@@ -856,6 +842,36 @@ export function searchReferenceLaboratoryRecords(
      AND reference_laboratory_definition.concept_id = reference_concept.concept_id
   `
   let queryCondition = ''
+  let filterCondition = ''
+  if (input.sourceDataset === 'laboratory-cn') {
+    filterCondition += `
+      AND json_extract(
+        reference_laboratory_definition.definition_json,
+        '$.kind'
+      ) = 'laboratory-cn-panel'
+    `
+  } else if (input.sourceDataset === 'loinc-zh-cn') {
+    filterCondition += `
+      AND json_extract(
+        reference_laboratory_definition.definition_json,
+        '$.kind'
+      ) = 'loinc'
+    `
+  }
+  if (input.panelOnly === true) {
+    filterCondition += `
+      AND (
+        json_extract(
+          reference_laboratory_definition.definition_json,
+          '$.kind'
+        ) = 'laboratory-cn-panel'
+        OR json_extract(
+          reference_laboratory_definition.definition_json,
+          '$.panelType'
+        ) IS NOT NULL
+      )
+    `
+  }
   if (input.query !== undefined && input.query.length < 3) {
     queryCondition = `
       AND (
@@ -876,8 +892,21 @@ export function searchReferenceLaboratoryRecords(
     WHERE reference_concept.release_id = ?
       AND reference_concept.domain = 'laboratory'
       AND reference_concept.status = 'active'
-      AND reference_laboratory_definition.class_type = 1
-      AND reference_laboratory_definition.order_observation IN ('Order', 'Both')
+      AND (
+        (
+          json_extract(reference_laboratory_definition.definition_json, '$.kind') = 'loinc'
+          AND json_extract(reference_laboratory_definition.definition_json, '$.classType') = 1
+          AND json_extract(
+            reference_laboratory_definition.definition_json,
+            '$.orderObservation'
+          ) IN ('Order', 'Both')
+        )
+        OR json_extract(
+          reference_laboratory_definition.definition_json,
+          '$.kind'
+        ) = 'laboratory-cn-panel'
+      )
+      ${filterCondition}
       ${queryCondition}
   `
   const total = z.object({ count: z.number().int().nonnegative() }).parse(
@@ -1147,6 +1176,14 @@ export function listReferenceDataReleases(database: ReferenceDatabase): Referenc
   return readReferenceDataReleases(database)
 }
 
+function laboratoryAdultRuleCount(artifact: ReferenceArtifact): number {
+  return artifact.laboratoryDefinitions.reduce((count, definition) => (
+    definition.kind === 'laboratory-cn-test'
+      ? count + definition.adultReferenceRules.length
+      : count
+  ), 0)
+}
+
 export function importReferenceDataRelease(
   database: ReferenceDatabase,
   manifestPath: string,
@@ -1191,9 +1228,11 @@ export function importReferenceDataRelease(
       ...(candidate === undefined ? {} : { candidate: candidate.provenance }),
       checksum: actualChecksum,
       licenseId: source.licenseId,
+      ...(source.materialization === undefined ? {} : { materialization: source.materialization }),
       ...(source.publishedAt === undefined ? {} : { publishedAt: source.publishedAt }),
       importDiagnostics: {
         acceptedCount: artifact.concepts.length
+          + laboratoryAdultRuleCount(artifact)
           + artifact.laboratoryPanelMembers.length
           + artifact.laboratorySpecimens.length
           + artifact.laboratoryUnits.length
@@ -1204,6 +1243,7 @@ export function importReferenceDataRelease(
         warnings: [],
       },
       recordCount: artifact.concepts.length
+        + laboratoryAdultRuleCount(artifact)
         + artifact.laboratoryPanelMembers.length
         + artifact.laboratorySpecimens.length
         + artifact.laboratoryUnits.length
@@ -1338,8 +1378,8 @@ export function importReferenceDataRelease(
       INSERT INTO reference_source_manifest (
         release_id, source_id, upstream_version, published_at, retrieved_at,
         source_url, checksum, license_id, acquisition_method, artifact_format, record_count,
-        import_diagnostics_json, candidate_provenance_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        import_diagnostics_json, candidate_provenance_json, materialization_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     for (const source of sources) {
       insertSource.run(
@@ -1356,6 +1396,7 @@ export function importReferenceDataRelease(
         source.recordCount,
         JSON.stringify(source.importDiagnostics),
         source.candidate === undefined ? null : JSON.stringify(source.candidate),
+        source.materialization === undefined ? null : JSON.stringify(source.materialization),
       )
     }
     const insertConcept = database.driver.prepare(`
@@ -1381,26 +1422,16 @@ export function importReferenceDataRelease(
     }
     const insertLaboratoryDefinition = database.driver.prepare(`
       INSERT INTO reference_laboratory_definition (
-        release_id, concept_id, component, property, time_aspect, system_part,
-        scale_type, method_type, class_code, class_type, order_observation,
-        panel_type, source_id, source_locator
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        release_id, concept_id, definition_json, source_id, source_locator
+      ) VALUES (?, ?, ?, ?, ?)
     `)
     for (const definition of laboratoryDefinitions) {
+      const { sourceId, ...value } = definition
       insertLaboratoryDefinition.run(
         manifest.releaseId,
         definition.conceptId,
-        definition.component,
-        definition.property,
-        definition.timeAspect,
-        definition.system,
-        definition.scaleType,
-        definition.methodType,
-        definition.classCode,
-        definition.classType,
-        definition.orderObservation,
-        definition.panelType,
-        definition.sourceId,
+        JSON.stringify(value),
+        sourceId,
         definition.sourceLocator,
       )
     }
@@ -1600,6 +1631,14 @@ export function verifyReferenceDatabase(database: ReferenceDatabase): ReferenceD
     const acceptedCountBySource = new Map<string, number>()
     for (const concept of concepts) {
       acceptedCountBySource.set(concept.sourceId, (acceptedCountBySource.get(concept.sourceId) ?? 0) + 1)
+    }
+    for (const definition of laboratoryDefinitions) {
+      if (definition.kind !== 'laboratory-cn-test') continue
+      acceptedCountBySource.set(
+        definition.sourceId,
+        (acceptedCountBySource.get(definition.sourceId) ?? 0)
+          + definition.adultReferenceRules.length,
+      )
     }
     for (const item of [
       ...laboratoryPanelMembers,

@@ -370,11 +370,15 @@ async function createLoincV2Candidate(root: string): Promise<{
   const sqliteSizeBytes = (await stat(databasePath)).size
   const manifest = {
     artifacts: [{
-      mediaType: 'application/vnd.sqlite3',
-      name: 'data.sqlite',
-      sha256: sqliteSha256,
-      sizeBytes: sqliteSizeBytes,
-      url: 'data.sqlite',
+      compression: 'zstd',
+      mediaType: 'application/zstd',
+      name: 'data.sqlite.zst',
+      sha256: 'e'.repeat(64),
+      sizeBytes: 1,
+      uncompressedName: 'data.sqlite',
+      uncompressedSha256: sqliteSha256,
+      uncompressedSizeBytes: sqliteSizeBytes,
+      url: 'data.sqlite.zst',
     }],
     canonical: {
       recordCount: 8,
@@ -409,7 +413,302 @@ async function createLoincV2Candidate(root: string): Promise<{
   }
 }
 
+async function createLaboratoryV2Candidate(root: string): Promise<{
+  canonicalSha256: string
+  manifestChecksum: string
+  manifestPath: string
+  releaseId: string
+}> {
+  const directory = join(root, 'laboratory-cn-v2')
+  const databasePath = join(directory, 'data.sqlite')
+  const manifestPath = join(directory, 'manifest.json')
+  const releaseId = 'laboratory-cn@2026-09-01.r1'
+  await mkdir(directory)
+  const database = new Database(databasePath)
+  database.pragma('application_id = 0x434e4844')
+  database.exec(`
+    CREATE TABLE laboratory_test (
+      code TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      analyte TEXT NOT NULL,
+      specimen TEXT NOT NULL,
+      scale TEXT NOT NULL,
+      result_kind TEXT NOT NULL,
+      unit_display TEXT,
+      unit_ucum TEXT,
+      precision INTEGER NOT NULL,
+      healthy_strategy TEXT NOT NULL,
+      loinc_code TEXT,
+      status TEXT NOT NULL,
+      source_version TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE laboratory_reference (
+      test_code TEXT NOT NULL REFERENCES laboratory_test(code),
+      sex TEXT NOT NULL,
+      reference_kind TEXT NOT NULL,
+      low_value REAL,
+      high_value REAL,
+      normal_value TEXT,
+      simulation_low REAL,
+      simulation_high REAL,
+      source_type TEXT NOT NULL,
+      source_standard TEXT NOT NULL,
+      source_version TEXT NOT NULL,
+      source_location TEXT NOT NULL,
+      notes TEXT NOT NULL,
+      PRIMARY KEY (test_code, sex)
+    ) STRICT;
+    CREATE TABLE laboratory_panel (
+      code TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      specimen TEXT NOT NULL,
+      status TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      source_location TEXT NOT NULL,
+      notes TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE laboratory_panel_member (
+      panel_code TEXT NOT NULL REFERENCES laboratory_panel(code),
+      test_code TEXT NOT NULL REFERENCES laboratory_test(code),
+      sort_order INTEGER NOT NULL,
+      PRIMARY KEY (panel_code, test_code),
+      UNIQUE (panel_code, sort_order)
+    ) STRICT;
+    INSERT INTO laboratory_test VALUES
+      ('0100101A', '白细胞计数', '血细胞分析', '白细胞(数量)', '全血', '定量',
+       'quantity', '×10^9/L', '10*9/L', 1, 'uniform', '6690-2', 'active', '2026-09-01'),
+      ('0100201A', '红细胞计数', '血细胞分析', '红细胞(数量)', '全血', '定量',
+       'quantity', '×10^12/L', '10*12/L', 1, 'uniform', '789-8', 'active', '2026-09-01'),
+      ('0600401A', 'C反应蛋白测定', '蛋白质测定', 'C反应蛋白', '血清', '定量',
+       'quantity', 'mg/L', 'mg/L', 1, 'uniform', '1988-5', 'active', '2026-09-01'),
+      ('9900001A', '合成尿液酸碱度', '尿液分析', '酸碱度', '尿液', '序数',
+       'ordinal', NULL, NULL, 0, 'fixed-normal', NULL, 'active', '2026-09-01');
+    INSERT INTO laboratory_reference VALUES
+      ('0100101A', 'all', 'range', 3.5, 9.5, NULL, 3.5, 9.5,
+       'national-standard', 'WS/T 405-2012', '2012', '表 1', '成人静脉血'),
+      ('0100201A', 'male', 'range', 4.3, 5.8, NULL, 4.3, 5.8,
+       'national-standard', 'WS/T 405-2012', '2012', '表 1', '成年男性静脉血'),
+      ('0100201A', 'female', 'range', 3.8, 5.1, NULL, 3.8, 5.1,
+       'national-standard', 'WS/T 405-2012', '2012', '表 1', '成年女性静脉血'),
+      ('0600401A', 'all', 'upper-bound', NULL, 8.0, NULL, 0.1, 7.9,
+       'project-curated', 'CN Health Data adult healthy baseline', '2026-09-01',
+       '0600401A/all', '成人健康模拟值'),
+      ('9900001A', 'all', 'ordinal', NULL, NULL, '5.0～8.0', NULL, NULL,
+       'project-curated', 'CN Health Data adult healthy baseline', '2026-09-01',
+       '9900001A/all', '固定正常字符串');
+    INSERT INTO laboratory_panel VALUES
+      ('CN-LAB-CBC', '合成血常规', '全血', 'active', 'project-authored',
+       'fixture/panel/1', '合成多叶子 panel'),
+      ('CN-LAB-URINE-PH', '合成尿液酸碱度', '尿液', 'active', 'project-authored',
+       'fixture/panel/2', '合成 fixed-normal panel');
+    INSERT INTO laboratory_panel_member VALUES
+      ('CN-LAB-CBC', '0100101A', 1),
+      ('CN-LAB-CBC', '0100201A', 2),
+      ('CN-LAB-URINE-PH', '9900001A', 1);
+  `)
+  const tables = [
+    canonicalTable(database, 'laboratory_test', ['code']),
+    canonicalTable(database, 'laboratory_reference', ['test_code', 'sex']),
+    canonicalTable(database, 'laboratory_panel', ['code']),
+    canonicalTable(database, 'laboratory_panel_member', ['panel_code', 'sort_order', 'test_code']),
+  ]
+  const canonicalSha256 = createHash('sha256')
+    .update(canonicalJson(tables))
+    .digest('hex')
+  database.close()
+  const sqliteSha256 = await sha256(databasePath)
+  const sqliteSizeBytes = (await stat(databasePath)).size
+  const manifest = {
+    artifacts: [{
+      compression: 'zstd',
+      mediaType: 'application/zstd',
+      name: 'data.sqlite.zst',
+      sha256: 'e'.repeat(64),
+      sizeBytes: 1,
+      uncompressedName: 'data.sqlite',
+      uncompressedSha256: sqliteSha256,
+      uncompressedSizeBytes: sqliteSizeBytes,
+      url: 'data.sqlite.zst',
+    }],
+    canonical: {
+      recordCount: 4,
+      serialization: 'canonical-multitable-ndjson-v1',
+      sha256: canonicalSha256,
+      tables,
+    },
+    dataset: {
+      datasetSchemaVersion: 2,
+      id: 'laboratory-cn',
+      sourceVersion: '2026-09-01',
+      status: 'beta',
+    },
+    release: {
+      buildRevision: 1,
+      createdAt: '2026-09-01T14:59:21Z',
+      id: releaseId,
+      revoked: false,
+      sequence: 3,
+      storageKey: '2026-09-01.r1',
+      supersedes: 'laboratory-cn@2026-08-30.r2',
+    },
+    schemaVersion: 1,
+    validation: { passed: true, report: 'validation.json', sha256: 'f'.repeat(64) },
+  }
+  await writeFile(manifestPath, `${JSON.stringify(manifest)}\n`)
+  return {
+    canonicalSha256,
+    manifestChecksum: await sha256(manifestPath),
+    manifestPath,
+    releaseId,
+  }
+}
+
 describe('cn-health Candidate importer', () => {
+  it('imports Schema v2 adult laboratory definitions, rules, and ordered panels', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-v2-candidate-'))
+    temporaryDirectories.push(directory)
+    const candidate = await createLaboratoryV2Candidate(directory)
+
+    expect(parseCnHealthCandidateReferenceArtifact(candidate.manifestPath)).toMatchObject({
+      artifact: {
+        concepts: expect.arrayContaining([
+          expect.objectContaining({
+            code: '0100101A',
+            id: 'wst-886:2026:0100101A',
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026',
+          }),
+          expect.objectContaining({
+            code: 'CN-LAB-CBC',
+            id: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn',
+          }),
+        ]),
+        laboratoryDefinitions: expect.arrayContaining([
+          expect.objectContaining({
+            adultReferenceRules: [expect.objectContaining({
+              high: 9.5,
+              low: 3.5,
+              referenceKind: 'range',
+              sex: 'all',
+              simulationHigh: 9.5,
+              simulationLow: 3.5,
+              sourceType: 'national-standard',
+            })],
+            alternateCodings: [{ code: '6690-2', system: 'http://loinc.org', version: '2.83' }],
+            conceptId: 'wst-886:2026:0100101A',
+            healthyStrategy: 'uniform',
+            kind: 'laboratory-cn-test',
+            precision: 1,
+            resultKind: 'quantity',
+            specimen: '全血',
+            unit: {
+              code: '10*9/L',
+              display: '×10^9/L',
+              system: 'http://unitsofmeasure.org',
+            },
+          }),
+          expect.objectContaining({
+            conceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+            kind: 'laboratory-cn-panel',
+            sourceType: 'project-authored',
+            specimen: '全血',
+          }),
+        ]),
+        laboratoryPanelMembers: expect.arrayContaining([
+          expect.objectContaining({
+            memberConceptId: 'wst-886:2026:0100101A',
+            memberOrder: 1,
+            panelConceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+          }),
+        ]),
+      },
+      provenance: {
+        canonicalSha256: candidate.canonicalSha256,
+        datasetId: 'laboratory-cn',
+        datasetSchemaVersion: 2,
+        recordCount: 4,
+        releaseId: candidate.releaseId,
+      },
+    })
+    const manifest = JSON.parse(await readFile(candidate.manifestPath, 'utf8')) as {
+      canonical: { recordCount: number }
+    }
+    manifest.canonical.recordCount += 1
+    await writeFile(candidate.manifestPath, `${JSON.stringify(manifest)}\n`)
+    expect(() => parseCnHealthCandidateReferenceArtifact(candidate.manifestPath))
+      .toThrow('primary record count')
+  })
+
+  it('publishes Schema v2 adult laboratory definitions through the Reference Database interface', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-v2-release-'))
+    temporaryDirectories.push(directory)
+    const candidate = await createLaboratoryV2Candidate(directory)
+    const manifestPath = join(directory, 'reference-release.json')
+    await writeFile(manifestPath, `${JSON.stringify({
+      createdAt: '2026-09-02T00:00:00.000Z',
+      releaseId: 'clinmesh-laboratory-v2-synthetic-fixture',
+      schemaVersion: '1',
+      sources: [{
+        acquisitionMethod: 'manual-download',
+        artifactFormat: 'cn-health-candidate',
+        artifactPath: candidate.manifestPath,
+        checksum: candidate.manifestChecksum,
+        licenseId: 'LicenseRef-Synthetic-Test',
+        retrievedAt: '2026-09-02T00:00:00.000Z',
+        sourceId: 'laboratory-cn-2026-09-01',
+        sourceUrl: 'https://example.test/laboratory-cn',
+        upstreamVersion: candidate.releaseId,
+      }],
+    })}\n`)
+    const databasePath = join(directory, 'reference.sqlite')
+
+    await runReferenceDatabaseCli(['migrate', '--database', databasePath])
+    await expect(runReferenceDatabaseCli([
+      'import', '--database', databasePath, '--manifest', manifestPath,
+    ])).resolves.toMatchObject({
+      conceptCount: 6,
+      laboratoryDefinitionCount: 6,
+      laboratoryPanelMemberCount: 3,
+    })
+    await expect(runReferenceDatabaseCli([
+      'list', '--database', databasePath,
+    ])).resolves.toMatchObject({
+      items: [{
+        sources: [{
+          importDiagnostics: { acceptedCount: 14, rejectedCount: 0, warnings: [] },
+          recordCount: 14,
+        }],
+      }],
+    })
+
+    const database = openReferenceDatabase({ busyTimeoutMs: 5_000, databasePath, readonly: true })
+    const repository = new SqliteReferenceDataRepository(database)
+    expect(repository.laboratoryRecord(
+      'clinmesh-laboratory-v2-synthetic-fixture',
+      'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+    )).toMatchObject({
+      definition: { kind: 'laboratory-cn-panel', sourceType: 'project-authored' },
+      panelMembers: [
+        { memberConceptId: 'wst-886:2026:0100101A', memberOrder: 1 },
+        { memberConceptId: 'wst-886:2026:0100201A', memberOrder: 2 },
+      ],
+    })
+    expect(repository.laboratoryRecord(
+      'clinmesh-laboratory-v2-synthetic-fixture',
+      'wst-886:2026:0100201A',
+    )).toMatchObject({
+      definition: {
+        adultReferenceRules: [
+          expect.objectContaining({ sex: 'female' }),
+          expect.objectContaining({ sex: 'male' }),
+        ],
+        kind: 'laboratory-cn-test',
+      },
+    })
+    database.close()
+  })
+
   it('imports a Schema v2 LOINC Candidate with laboratory relationships and excludes clinical observations from the laboratory domain', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-loinc-v2-candidate-'))
     temporaryDirectories.push(directory)
@@ -540,7 +839,7 @@ describe('cn-health Candidate importer', () => {
     database.close()
     await expect(runReferenceDatabaseCli([
       'verify', '--database', databasePath,
-    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 9 })
+    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 10 })
   })
 
   it('validates and converts diagnosis, medication and LOINC Candidate SQLite artifacts', async () => {
@@ -690,7 +989,7 @@ describe('cn-health Candidate importer', () => {
     await expect(runReferenceDatabaseCli(['verify', '--database', databasePath])).resolves.toMatchObject({
       integrity: 'ok',
       releaseCount: 1,
-      schemaVersion: 9,
+      schemaVersion: 10,
     })
     const published = new Database(databasePath, { readonly: true })
     expect(JSON.parse((published.prepare(`

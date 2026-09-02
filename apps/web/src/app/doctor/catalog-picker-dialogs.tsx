@@ -569,7 +569,7 @@ export function LaboratoryCatalogDialog({
                     const selection: LaboratoryCatalogSelection = {
                       catalogItemId: item.id,
                       code: item.referenceConcept.code,
-                      display: locale === 'zh-CN' ? item.nameZh : item.nameEn,
+                      display: locale === 'zh-CN' ? item.nameZh : (item.nameEn ?? item.nameZh),
                       referenceConcept: item.referenceConcept,
                     }
                     const label = `${messages.choose} ${selection.display} ${selection.code}`

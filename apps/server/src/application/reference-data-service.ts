@@ -8,6 +8,7 @@ import {
   type ReferenceDataReleaseList,
   type ReferenceDataReleaseSummary,
   type ReferenceLaboratoryRecord,
+  type ReferenceLaboratorySourceDataset,
   type ReferenceMedicalService,
   type ReferenceMedicationProduct,
   type ReferenceValueSetEntry,
@@ -50,7 +51,13 @@ export interface ReferenceDataReader {
   ): { items: ReferenceConcept[]; total: number }
   searchLaboratoryRecords?(
     releaseId: string,
-    input: { page: number; pageSize: number; query?: string },
+    input: {
+      page: number
+      pageSize: number
+      panelOnly?: boolean
+      query?: string
+      sourceDataset?: ReferenceLaboratorySourceDataset
+    },
   ): { items: ReferenceLaboratoryRecord[]; total: number }
   searchMedicationProducts?(
     releaseId: string,
@@ -235,7 +242,13 @@ export class ReferenceDataService {
 
   searchLaboratoryCandidates(
     context: ActorContext,
-    input: { page: number; pageSize: number; query?: string },
+    input: {
+      page: number
+      pageSize: number
+      panelOnly?: boolean
+      query?: string
+      sourceDataset?: ReferenceLaboratorySourceDataset
+    },
   ) {
     if (context.roleCode !== 'administrator') {
       throw new ReferenceDataError(

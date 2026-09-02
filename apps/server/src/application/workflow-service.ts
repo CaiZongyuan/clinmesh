@@ -86,18 +86,22 @@ import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts
 import type { ActorContext, CommandEffect, CommandResponse, CommandTransaction } from './command-executor.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
 import {
+  AdultReferenceApplicabilityError,
+  assertAdultReferenceServiceApplicable,
+} from './laboratory-adult-reference.ts'
+import {
   CommandExecutor,
   ExpectedVersionConflictError,
   provenanceAgents,
 } from './command-executor.ts'
 
 export class WorkflowError extends Error {
-  readonly code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
+  readonly code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_ADULT_REFERENCE_NOT_APPLICABLE' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
   readonly conflict: ApiConflict | undefined
   readonly status: 403 | 409
 
   constructor(
-    code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT',
+    code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_ADULT_REFERENCE_NOT_APPLICABLE' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT',
     message: string,
     conflict?: ApiConflict,
   ) {
@@ -701,11 +705,11 @@ const laboratoryObservationContentSchema = z.object({
   code: z.object({
     coding: z.array(z.object({
       code: z.string().min(1),
-      display: z.string().min(1),
+      display: z.string().min(1).optional(),
     }).loose()).min(1),
   }).loose(),
   interpretation: z.array(z.object({
-    coding: z.array(z.object({ code: z.enum(['N', 'H', 'L']) }).loose()).min(1),
+    coding: z.array(z.object({ code: z.enum(['N', 'A', 'H', 'L']) }).loose()).min(1),
   }).loose()).min(1),
   referenceRange: z.array(z.object({
     high: z.object({ value: z.number().finite() }).loose().optional(),
@@ -6672,6 +6676,15 @@ export class WorkflowService {
         input.catalogItemId,
       )
       const { config: catalogConfig, laboratoryService, referenceConcept } = selection
+      const now = this.#virtualTime(input.context)
+      if (laboratoryService !== undefined) {
+        this.#assertAdultLaboratoryServiceApplicable(
+          input.context,
+          outpatientCase.patient_id,
+          laboratoryService,
+          now,
+        )
+      }
       if (laboratoryService === undefined) {
         this.#assertInvestigationGenerationSupported(
           input.context,
@@ -6692,7 +6705,6 @@ export class WorkflowService {
         )
       }
       const nextVersion = currentVersion + 1
-      const now = this.#virtualTime(input.context)
       if (current === undefined) {
         this.#database.driver.prepare(`
           INSERT INTO laboratory_request_state (
@@ -6919,6 +6931,15 @@ export class WorkflowService {
       const laboratoryService = state.draft_service_snapshot_json === null
         ? undefined
         : laboratoryServiceSnapshotSchema.parse(JSON.parse(state.draft_service_snapshot_json))
+      const now = this.#virtualTime(input.context)
+      if (laboratoryService !== undefined) {
+        this.#assertAdultLaboratoryServiceApplicable(
+          input.context,
+          outpatientCase.patient_id,
+          laboratoryService,
+          now,
+        )
+      }
       const { catalog, config: catalogConfig } = this.#laboratorySelectionFromSnapshot(
         input.context,
         state.draft_catalog_item_id,
@@ -6944,7 +6965,6 @@ export class WorkflowService {
       const requestId = uuidv7()
       const serviceRequestId = uuidv7()
       const taskId = uuidv7()
-      const now = this.#virtualTime(input.context)
       const serviceRequest = transaction.fhir.create(input.context, {
         resourceType: 'ServiceRequest',
         id: serviceRequestId,
@@ -7359,8 +7379,14 @@ export class WorkflowService {
     requestId: string
     resultSnapshot?: {
       content: InvestigationResultContent
+      inputHash: string
+      provenance?: {
+        datasetReleaseId: string
+        generationPolicyVersion: string
+        referenceReleaseId: string
+      }
       snapshotId: string
-      source: 'investigation-agent' | 'synthea-exact'
+      source: 'adult-reference-baseline' | 'investigation-agent' | 'mixed' | 'synthea-exact'
     }
   }) {
     return this.#commands.execute({
@@ -7439,7 +7465,10 @@ export class WorkflowService {
             display: laboratoryService?.specimen.display ?? 'Blood specimen',
             system: laboratoryService === undefined
               ? 'http://snomed.info/sct'
-              : 'http://loinc.org',
+              : (laboratoryService.specimen.system ?? 'http://loinc.org'),
+            ...(laboratoryService?.specimen.version === undefined
+              ? {}
+              : { version: laboratoryService.specimen.version }),
           }],
           text: laboratoryService === undefined
             ? 'Synthetic blood specimen'
@@ -7470,7 +7499,9 @@ export class WorkflowService {
         const observationId = `obs-${result.code}-${request.service_request_id}`
         const interpretationCode = result.interpretation === 'normal'
           ? 'N'
-          : result.interpretation === 'high' ? 'H' : 'L'
+          : result.interpretation === 'abnormal'
+            ? 'A'
+            : result.interpretation === 'high' ? 'H' : 'L'
         const value = typeof result.value === 'number'
           ? result.unit === undefined
             ? { valueQuantity: { value: result.value } }
@@ -7503,7 +7534,11 @@ export class WorkflowService {
             }],
           }],
           code: {
-            coding: [resultCoding],
+            coding: [resultCoding, ...(resultDefinition?.alternateCodings ?? []).map(coding => ({
+              code: coding.code,
+              system: coding.system,
+              version: coding.version,
+            }))],
             text: result.display,
           },
           subject: { reference: `Patient/${request.patient_id}` },
@@ -7547,24 +7582,28 @@ export class WorkflowService {
       const reportName = input.resultSnapshot !== undefined
         ? `${requestedConcept.display}报告`
         : request.catalog_item_id === 'lab-cbc' ? '血常规报告' : 'C 反应蛋白报告'
-      const reportCoding = input.resultSnapshot === undefined
-        ? {
+      const reportCodings = input.resultSnapshot === undefined
+        ? [{
             code: request.catalog_item_id === 'lab-cbc' ? 'CBC' : 'CRP',
             display: reportName,
             system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-service',
-          }
-        : {
+          }]
+        : [{
+            code: laboratoryService?.localCode ?? requestedConcept.code,
+            display: laboratoryService?.nameZh ?? requestedConcept.display,
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-service',
+          }, {
             code: requestedConcept.code,
             display: requestedConcept.display,
             system: requestedConcept.system,
             version: requestedConcept.version,
-          }
+          }]
       const report = transaction.fhir.create(input.context, {
         resourceType: 'DiagnosticReport',
         id: diagnosticReportId,
         status: 'final',
         code: {
-          coding: [reportCoding],
+          coding: reportCodings,
           text: reportName,
         },
         subject: { reference: `Patient/${request.patient_id}` },
@@ -7610,6 +7649,32 @@ export class WorkflowService {
             : `Laboratory report issuance from ${input.resultSnapshot.source}`,
         },
         agent: provenanceAgents(input.context, 'Laboratory report issuer'),
+        ...(input.resultSnapshot?.provenance === undefined
+          ? {}
+          : {
+              entity: [{
+                role: 'source',
+                what: {
+                  identifier: {
+                    system: 'https://caizongyuan.github.io/clinmesh/identifier/investigation-result-snapshot',
+                    value: input.resultSnapshot.snapshotId,
+                  },
+                },
+              }, ...[
+                ['reference-release', input.resultSnapshot.provenance.referenceReleaseId],
+                ['dataset-release', input.resultSnapshot.provenance.datasetReleaseId],
+                ['generation-policy', input.resultSnapshot.provenance.generationPolicyVersion],
+                ['input-hash', input.resultSnapshot.inputHash],
+              ].map(([kind, value]) => ({
+                role: 'source',
+                what: {
+                  identifier: {
+                    system: `https://caizongyuan.github.io/clinmesh/identifier/${kind}`,
+                    value,
+                  },
+                },
+              }))],
+            }),
       })
       const update = this.#database.driver.prepare(`
         UPDATE laboratory_request
@@ -10846,6 +10911,25 @@ export class WorkflowService {
     `).get(context.workspaceId, context.epoch) !== undefined
   }
 
+  #assertAdultLaboratoryServiceApplicable(
+    context: ActorContext,
+    patientId: string,
+    service: z.infer<typeof laboratoryServiceSnapshotSchema>,
+    authoredAt: string,
+  ): void {
+    if (service.sourceDataset?.datasetId !== 'laboratory-cn') return
+    const patient = z.object({
+      birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      gender: z.enum(['female', 'male', 'other', 'unknown']),
+    }).passthrough().parse(this.#fhir.read(context, 'Patient', patientId))
+    try {
+      assertAdultReferenceServiceApplicable(service, patient, authoredAt)
+    } catch (error) {
+      if (!(error instanceof AdultReferenceApplicabilityError)) throw error
+      throw new WorkflowError('LABORATORY_ADULT_REFERENCE_NOT_APPLICABLE', error.message)
+    }
+  }
+
   #assertInvestigationGenerationSupported(
     context: ActorContext,
     outpatientCaseId: string,
@@ -11016,7 +11100,9 @@ export class WorkflowService {
           display: coding.display,
           interpretation: interpretationCode === 'N'
             ? 'normal' as const
-            : interpretationCode === 'H' ? 'high' as const : 'low' as const,
+            : interpretationCode === 'H'
+              ? 'high' as const
+              : interpretationCode === 'L' ? 'low' as const : 'abnormal' as const,
           observationId,
         }
         if (observation.valueQuantity !== undefined) {

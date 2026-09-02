@@ -21,6 +21,7 @@
     "perf:full-import": "pnpm --filter @clinmesh/server performance --profile full-import",
     "perf:saturation": "pnpm --filter @clinmesh/server performance --profile saturation",
     "perf:trajectory": "pnpm --filter @clinmesh/server performance --profile trajectory",
+    "reference:sync": "pnpm --filter @clinmesh/server reference:sync",
     "smoke:patient-brief:live": "pnpm --filter @clinmesh/server smoke:patient-brief:live",
     "build": "turbo run build --filter=!@clinmesh/mobile",
     "typecheck": "turbo run typecheck --filter=!@clinmesh/mobile",
@@ -39,6 +40,7 @@
   "devDependencies": {
     "@types/mdast": "^4.0.4",
     "@types/node": "^26.2.0",
+    "cn-health": "0.5.0",
     "mdast-util-from-markdown": "^2.0.3",
     "mdast-util-gfm": "^3.1.0",
     "micromark-extension-gfm": "^3.0.0",

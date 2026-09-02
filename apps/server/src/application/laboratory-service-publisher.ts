@@ -9,7 +9,9 @@ import {
 import { investigationCodeableValueSchema } from '@clinmesh/contracts/scenario'
 import {
   referenceConceptSnapshotSchema,
+  type ReferenceLaboratoryDefinition,
   type ReferenceLaboratoryRecord,
+  type ReferenceLaboratorySourceDataset,
 } from '@clinmesh/contracts/reference-data'
 import { z } from 'zod'
 import {
@@ -27,6 +29,10 @@ import type { ReferenceDataService } from './reference-data-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 
 const promptVersion = 'laboratory-service-enrichment-v1'
+const laboratoryCnPublicationPolicyVersion = 'clinmesh-laboratory-defaults-v1'
+const laboratoryCnConclusion = '本报告为 ClinMesh 合成检验结果，仅用于仿真。'
+const laboratorySpecimenSystem = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-specimen-cn'
+const wst886EffectiveOn = '2026-11-01'
 const maximumPanelDepth = 32
 const maximumPanelEdges = 512
 const maximumPanelNodes = 256
@@ -74,6 +80,26 @@ interface ResolvedRoot {
   root: ReferenceLaboratoryRecord
 }
 
+type LoincLaboratoryRecord = ReferenceLaboratoryRecord & {
+  definition: Extract<ReferenceLaboratoryDefinition, { kind: 'loinc' }>
+}
+
+type LaboratoryCnTestRecord = ReferenceLaboratoryRecord & {
+  definition: Extract<ReferenceLaboratoryDefinition, { kind: 'laboratory-cn-test' }>
+}
+
+function isLoincLaboratoryRecord(
+  record: ReferenceLaboratoryRecord,
+): record is LoincLaboratoryRecord {
+  return record.definition.kind === 'loinc'
+}
+
+function isLaboratoryCnTestRecord(
+  record: ReferenceLaboratoryRecord | undefined,
+): record is LaboratoryCnTestRecord {
+  return record?.definition.kind === 'laboratory-cn-test'
+}
+
 type ServiceDraft = Omit<LaboratoryServiceSnapshot, 'version'>
 
 export class LaboratoryServicePublisherError extends Error {
@@ -114,7 +140,13 @@ export class LaboratoryServicePublisher {
 
   candidates(
     context: ActorContext,
-    input: { page: number; pageSize: number; query?: string },
+    input: {
+      page: number
+      pageSize: number
+      panelOnly?: boolean
+      query?: string
+      sourceDataset?: ReferenceLaboratorySourceDataset
+    },
   ) {
     this.#assertAdministrator(context)
     const result = this.#referenceData.searchLaboratoryCandidates(context, input)
@@ -134,7 +166,9 @@ export class LaboratoryServicePublisher {
         const publishedServiceId = state?.publishedServiceId
           ?? publishedServices.get(item.concept.id)
           ?? null
+        const metadata = this.#candidateMetadata(context, item)
         return {
+          ...metadata,
           concept: item.concept,
           definition: item.definition,
           error: state?.error ?? null,
@@ -148,6 +182,83 @@ export class LaboratoryServicePublisher {
       referenceReleaseId: result.referenceReleaseId,
       total: result.total,
     })
+  }
+
+  #candidateMetadata(context: ActorContext, record: ReferenceLaboratoryRecord) {
+    if (record.definition.kind !== 'laboratory-cn-panel') {
+      const source = this.#referenceData.current().sources.find(item => (
+        item.candidate?.datasetId === 'loinc-zh-cn' || item.sourceId.includes('loinc')
+      ))
+      return {
+        adultApplicability: null,
+        memberCount: record.panelMembers.length,
+        referenceSources: [],
+        sourceDataset: {
+          datasetId: 'loinc-zh-cn' as const,
+          releaseId: source?.candidate?.releaseId ?? source?.upstreamVersion ?? record.concept.version,
+        },
+        specimen: record.specimens[0]?.display ?? null,
+        standardStatus: null,
+      }
+    }
+    const leaves = record.panelMembers.map(member => (
+      this.#referenceData.laboratoryRecord(context, member.memberConceptId)
+    )).filter(isLaboratoryCnTestRecord)
+    const patientSexes = (['female', 'male', 'other', 'unknown'] as const).filter(sex => (
+      leaves.length > 0 && leaves.every(leaf => (
+        leaf.definition.adultReferenceRules.some(rule => (
+          rule.sex === 'all' || rule.sex === sex
+        ))
+      ))
+    ))
+    const sources = new Map<string, {
+      sourceLocation: string
+      sourceStandard: string
+      sourceType: 'national-standard' | 'project-curated'
+      sourceVersion: string
+    }>()
+    for (const leaf of leaves) {
+      for (const rule of leaf.definition.adultReferenceRules) {
+        const source = {
+          sourceLocation: rule.sourceLocation,
+          sourceStandard: rule.sourceStandard,
+          sourceType: rule.sourceType,
+          sourceVersion: rule.sourceVersion,
+        }
+        sources.set(JSON.stringify(source), source)
+      }
+    }
+    return {
+      adultApplicability: patientSexes.length === 0
+        ? null
+        : { minimumAgeYears: 18 as const, patientSexes },
+      memberCount: record.panelMembers.length,
+      referenceSources: [...sources.values()].toSorted((left, right) => (
+        JSON.stringify(left).localeCompare(JSON.stringify(right))
+      )),
+      sourceDataset: {
+        datasetId: 'laboratory-cn' as const,
+        releaseId: record.definition.datasetReleaseId,
+      },
+      specimen: record.definition.specimen,
+      standardStatus: this.#laboratoryStandardStatus(context),
+    }
+  }
+
+  #laboratoryStandardStatus(context: ActorContext) {
+    const state = z.object({ virtual_time: z.iso.datetime({ offset: true }) }).parse(
+      this.#database.driver.prepare(`
+        SELECT virtual_time FROM scenario_epoch_state
+        WHERE workspace_id = ? AND epoch = ? AND scenario_run_id = ?
+      `).get(context.workspaceId, context.epoch, context.scenarioRunId),
+    )
+    return {
+      effectiveOn: wst886EffectiveOn,
+      mode: state.virtual_time.slice(0, 10) < wst886EffectiveOn
+        ? 'future-standard-preview'
+        : 'effective',
+      standard: 'WS/T 886-2026',
+    } as const
   }
 
   enqueue(input: {
@@ -239,46 +350,67 @@ export class LaboratoryServicePublisher {
   async processNext(signal?: AbortSignal): Promise<LaboratoryServicePublicationJob | undefined> {
     const claimed = this.#publications.claimNext(new Date().toISOString())
     if (claimed === undefined) return undefined
-    if (this.#provider === undefined || claimed.model === 'unconfigured') {
-      return this.#fail(claimed, {
-        code: 'CATALOG_ENRICHMENT_UNAVAILABLE',
-        message: 'Catalog Enrichment is not configured',
-      })
-    }
     try {
       const roots = claimed.conceptIds.map(conceptId => this.#resolveRoot(
         claimed.actorContext,
         claimed.referenceReleaseId,
         conceptId,
       ))
-      const payload = {
-        promptVersion,
-        referenceReleaseId: claimed.referenceReleaseId,
-        services: roots.map(item => ({
-          leaves: item.leaves.map(leaf => ({
-            concept: leaf.concept,
-            definition: leaf.definition,
-            specimens: leaf.specimens,
-            units: leaf.units,
-          })),
-          root: {
-            concept: item.root.concept,
-            definition: item.root.definition,
-            specimens: item.root.specimens,
-          },
-        })),
+      const laboratoryCnRoots = roots.filter(
+        item => item.root.definition.kind === 'laboratory-cn-panel',
+      )
+      const loincRoots = roots.filter(item => item.root.definition.kind === 'loinc')
+      const drafts = this.#laboratoryCnServiceDrafts(claimed, laboratoryCnRoots)
+      let output: unknown = {
+        policyVersion: laboratoryCnPublicationPolicyVersion,
+        roots: laboratoryCnRoots.map(item => item.root.concept.id),
       }
-      const completion = await this.#provider.completeJson({
-        jsonSchema: z.toJSONSchema(enrichmentResultSchema) as Record<string, unknown>,
-        model: claimed.model,
-        schemaName: 'laboratory_service_enrichment',
-        ...(signal === undefined ? {} : { signal }),
-        systemPrompt,
-        userPayload: payload,
-      })
-      const enriched = enrichmentResultSchema.parse(JSON.parse(completion.content))
-      const drafts = this.#serviceDrafts(claimed, roots, enriched.services)
-      const outputHash = canonicalJsonHash(enriched)
+      if (loincRoots.length > 0) {
+        if (this.#provider === undefined || claimed.model === 'unconfigured') {
+          throw new LaboratoryServicePublisherError(
+            'CATALOG_ENRICHMENT_UNAVAILABLE',
+            'Catalog Enrichment is not configured',
+            503,
+          )
+        }
+        const payload = {
+          promptVersion,
+          referenceReleaseId: claimed.referenceReleaseId,
+          services: loincRoots.map(item => ({
+            leaves: item.leaves.map(leaf => ({
+              concept: leaf.concept,
+              definition: leaf.definition,
+              specimens: leaf.specimens,
+              units: leaf.units,
+            })),
+            root: {
+              concept: item.root.concept,
+              definition: item.root.definition,
+              specimens: item.root.specimens,
+            },
+          })),
+        }
+        const completion = await this.#provider.completeJson({
+          jsonSchema: z.toJSONSchema(enrichmentResultSchema) as Record<string, unknown>,
+          model: claimed.model,
+          schemaName: 'laboratory_service_enrichment',
+          ...(signal === undefined ? {} : { signal }),
+          systemPrompt,
+          userPayload: payload,
+        })
+        const enriched = enrichmentResultSchema.parse(JSON.parse(completion.content))
+        drafts.push(...this.#serviceDrafts(claimed, loincRoots, enriched.services))
+        output = { enriched, laboratoryCn: output }
+      }
+      const serviceIds = drafts.map(item => item.draft.id)
+      if (new Set(serviceIds).size !== serviceIds.length) {
+        throw new LaboratoryServicePublisherError(
+          'LABORATORY_SERVICE_ID_CONFLICT',
+          'Laboratory Service publication produced duplicate service identities',
+          409,
+        )
+      }
+      const outputHash = canonicalJsonHash(output)
       return this.#commands.execute({
         context: claimed.actorContext,
         contextRequirement: 'known',
@@ -342,6 +474,13 @@ export class LaboratoryServicePublisher {
     const visited = new Set<string>()
     let edgeCount = 0
     const visit = (record: ReferenceLaboratoryRecord, depth: number): void => {
+      if (record.concept.status !== 'active') {
+        throw new LaboratoryServicePublisherError(
+          'LABORATORY_PANEL_INVALID',
+          'The selected laboratory panel contains an inactive member',
+          409,
+        )
+      }
       if (visiting.has(record.concept.id)) {
         throw new LaboratoryServicePublisherError(
           'LABORATORY_PANEL_INVALID',
@@ -396,7 +535,7 @@ export class LaboratoryServicePublisher {
       expanded.add(record.concept.id)
     }
     visit(root!, 0)
-    if (leaves.length === 0 || root!.specimens.length === 0) {
+    if (leaves.length === 0 || this.#specimen(root!) === undefined) {
       throw new LaboratoryServicePublisherError(
         'LABORATORY_SERVICE_METADATA_INCOMPLETE',
         'The selected laboratory item has no report leaves or specimen',
@@ -404,15 +543,188 @@ export class LaboratoryServicePublisher {
       )
     }
     for (const leaf of leaves) {
-      if (leaf.definition.scaleType === 'Qn' && leaf.units.length === 0) {
+      if (leaf.definition.kind === 'loinc'
+        && leaf.definition.scaleType === 'Qn'
+        && leaf.units.length === 0) {
         throw new LaboratoryServicePublisherError(
           'LABORATORY_SERVICE_METADATA_INCOMPLETE',
           'A quantitative laboratory result has no UCUM unit',
           409,
         )
       }
+      if (leaf.definition.kind === 'laboratory-cn-test') {
+        this.#assertLaboratoryCnLeaf(leaf)
+      }
+    }
+    const rootDefinition = root!.definition
+    if (rootDefinition.kind === 'laboratory-cn-panel' && leaves.some(leaf => (
+      leaf.definition.kind !== 'laboratory-cn-test'
+      || leaf.definition.specimen !== rootDefinition.specimen
+    ))) {
+      throw new LaboratoryServicePublisherError(
+        'LABORATORY_PANEL_INVALID',
+        'The laboratory-cn panel contains incompatible specimen definitions',
+        409,
+      )
     }
     return { leaves, root: root! }
+  }
+
+  #assertLaboratoryCnLeaf(record: ReferenceLaboratoryRecord): void {
+    if (record.definition.kind !== 'laboratory-cn-test') {
+      throw new LaboratoryServicePublisherError(
+        'LABORATORY_PANEL_INVALID',
+        'The laboratory-cn panel contains a non-test leaf',
+        409,
+      )
+    }
+    const definition = record.definition
+    if (definition.resultKind === 'quantity') {
+      if (definition.unit === undefined || definition.healthyStrategy !== 'uniform'
+        || definition.adultReferenceRules.some(rule => (
+          rule.simulationLow === undefined || rule.simulationHigh === undefined
+          || rule.referenceKind === 'coded' || rule.referenceKind === 'ordinal'
+        ))) {
+        throw new LaboratoryServicePublisherError(
+          'LABORATORY_SERVICE_METADATA_INCOMPLETE',
+          'A laboratory-cn Quantity result has incomplete generation metadata',
+          409,
+        )
+      }
+      return
+    }
+    if (definition.healthyStrategy !== 'fixed-normal'
+      || definition.adultReferenceRules.some(rule => (
+        rule.normalValue === undefined
+        || (rule.referenceKind !== 'coded' && rule.referenceKind !== 'ordinal')
+      ))) {
+      throw new LaboratoryServicePublisherError(
+        'LABORATORY_SERVICE_METADATA_INCOMPLETE',
+        'A laboratory-cn fixed result has no normal value',
+        409,
+      )
+    }
+  }
+
+  #specimen(record: ReferenceLaboratoryRecord) {
+    if (record.definition.kind === 'laboratory-cn-test'
+      || record.definition.kind === 'laboratory-cn-panel') {
+      return {
+        code: `CN-SP-${createHash('sha256')
+          .update(record.definition.specimen)
+          .digest('hex')
+          .slice(0, 12)}`,
+        display: record.definition.specimen,
+        system: laboratorySpecimenSystem,
+        version: '1',
+      }
+    }
+    const specimen = record.specimens[0]
+    return specimen === undefined
+      ? undefined
+      : { code: specimen.partNumber, display: specimen.display }
+  }
+
+  #laboratoryCnServiceDrafts(
+    job: ClaimedLaboratoryServicePublicationJob,
+    roots: ResolvedRoot[],
+  ): Array<{ draft: ServiceDraft; rootConceptId?: string }> {
+    const drafts: Array<{ draft: ServiceDraft; rootConceptId?: string }> = []
+    const standardStatus = this.#laboratoryStandardStatus(job.actorContext)
+    for (const resolved of roots) {
+      if (resolved.root.definition.kind !== 'laboratory-cn-panel'
+        || resolved.leaves.some(leaf => leaf.definition.kind !== 'laboratory-cn-test')) {
+        throw new LaboratoryServicePublisherError(
+          'LABORATORY_PANEL_INVALID',
+          'The selected laboratory-cn panel has an invalid closure',
+          409,
+        )
+      }
+      const rootDefinition = resolved.root.definition
+      const componentServiceIds = resolved.leaves.map(leaf => this.#stableServiceId(
+        `${resolved.root.concept.system}\0${resolved.root.concept.code}`
+          + `\0${leaf.concept.system}\0${leaf.concept.code}`,
+      ))
+      const reportResults = resolved.leaves.map((leaf) => {
+        if (leaf.definition.kind !== 'laboratory-cn-test') {
+          throw new LaboratoryServicePublisherError(
+            'LABORATORY_PANEL_INVALID',
+            'The selected laboratory-cn panel has an invalid leaf',
+            409,
+          )
+        }
+        const definition = leaf.definition
+        return {
+          adultReferenceRules: definition.adultReferenceRules,
+          alternateCodings: definition.alternateCodings,
+          healthyStrategy: definition.healthyStrategy,
+          precision: definition.precision,
+          referenceConcept: this.#snapshot(leaf),
+          referenceRange: { text: '按成人适用规则' },
+          ...(definition.unit === undefined ? {} : { unit: definition.unit }),
+          valueType: definition.resultKind === 'quantity' ? 'quantity' as const : 'string' as const,
+        }
+      })
+      const rootServiceId = this.#stableServiceId(
+        `${resolved.root.concept.system}\0${resolved.root.concept.code}`,
+      )
+      const sourceDataset = {
+        datasetId: 'laboratory-cn' as const,
+        releaseId: rootDefinition.datasetReleaseId,
+      }
+      drafts.push({
+        draft: {
+          allowedIndicationCodes: ['clinical-evaluation'],
+          componentServiceIds,
+          doctorOrderable: true,
+          executingDepartmentId: 'department-laboratory',
+          id: rootServiceId,
+          localCode: `CM-LAB-${resolved.root.concept.code}`,
+          nameZh: resolved.root.concept.display,
+          priceFen: 0,
+          publicationPolicyVersion: laboratoryCnPublicationPolicyVersion,
+          referenceConcept: this.#snapshot(resolved.root),
+          referenceReleaseId: job.referenceReleaseId,
+          reportDefinition: {
+            conclusionTemplate: laboratoryCnConclusion,
+            results: reportResults,
+          },
+          serviceKind: 'laboratory',
+          sourceDataset,
+          standardStatus,
+          specimen: this.#specimen(resolved.root)!,
+          tatMinutes: 180,
+        },
+        rootConceptId: resolved.root.concept.id,
+      })
+      resolved.leaves.forEach((leaf, index) => {
+        drafts.push({
+          draft: {
+            allowedIndicationCodes: ['clinical-evaluation'],
+            componentServiceIds: [],
+            doctorOrderable: false,
+            executingDepartmentId: 'department-laboratory',
+            id: componentServiceIds[index]!,
+            localCode: `CM-LAB-COMP-${resolved.root.concept.code}-${leaf.concept.code}`,
+            nameZh: leaf.concept.display,
+            priceFen: 0,
+            publicationPolicyVersion: laboratoryCnPublicationPolicyVersion,
+            referenceConcept: this.#snapshot(leaf),
+            referenceReleaseId: job.referenceReleaseId,
+            reportDefinition: {
+              conclusionTemplate: laboratoryCnConclusion,
+              results: [reportResults[index]!],
+            },
+            serviceKind: 'laboratory',
+            sourceDataset,
+            standardStatus,
+            specimen: this.#specimen(leaf)!,
+            tatMinutes: 180,
+          },
+        })
+      })
+    }
+    return drafts
   }
 
   #serviceDrafts(
@@ -430,6 +742,23 @@ export class LaboratoryServicePublisher {
     }
     const drafts: Array<{ draft: ServiceDraft; rootConceptId?: string }> = []
     for (const resolved of roots) {
+      if (resolved.root.definition.kind !== 'loinc') {
+        throw new LaboratoryServicePublisherError(
+          'LABORATORY_PANEL_INVALID',
+          'Catalog Enrichment accepts only LOINC roots',
+          409,
+        )
+      }
+      const leaves = resolved.leaves.map((leaf) => {
+        if (!isLoincLaboratoryRecord(leaf)) {
+          throw new LaboratoryServicePublisherError(
+            'LABORATORY_PANEL_INVALID',
+            'A LOINC panel contains a non-LOINC leaf',
+            409,
+          )
+        }
+        return leaf
+      })
       const enriched = enrichedByRoot.get(resolved.root.concept.id)
       if (enriched === undefined) {
         throw new LaboratoryServicePublisherError(
@@ -438,7 +767,7 @@ export class LaboratoryServicePublisher {
           409,
         )
       }
-      const expectedLeafIds = resolved.leaves.map(leaf => leaf.concept.id)
+      const expectedLeafIds = leaves.map(leaf => leaf.concept.id)
       const enrichedLeafIds = enriched.results.map(result => result.conceptId)
       if (new Set(enrichedLeafIds).size !== enrichedLeafIds.length
         || expectedLeafIds.length !== enrichedLeafIds.length
@@ -450,7 +779,7 @@ export class LaboratoryServicePublisher {
         )
       }
       const resultByConcept = new Map(enriched.results.map(result => [result.conceptId, result]))
-      const reportResults = resolved.leaves.map((leaf) => {
+      const reportResults = leaves.map((leaf) => {
         const result = resultByConcept.get(leaf.concept.id)!
         const quantitative = leaf.definition.scaleType === 'Qn'
         if (quantitative !== (result.valueType === 'quantity')) {
@@ -462,6 +791,7 @@ export class LaboratoryServicePublisher {
         }
         const unit = result.valueType === 'quantity' ? leaf.units[0] : undefined
         return {
+          alternateCodings: [],
           ...(result.allowedValues === undefined ? {} : { allowedValues: result.allowedValues }),
           referenceConcept: this.#snapshot(leaf),
           referenceRange: result.referenceRange,
@@ -479,7 +809,7 @@ export class LaboratoryServicePublisher {
       })
       const componentServiceIds = resolved.root.panelMembers.length === 0
         ? []
-        : resolved.leaves.map(leaf => this.#serviceId(
+        : leaves.map(leaf => this.#serviceId(
             job.referenceReleaseId,
             `${resolved.root.concept.id}:${leaf.concept.id}`,
           ))
@@ -509,7 +839,7 @@ export class LaboratoryServicePublisher {
         rootConceptId: resolved.root.concept.id,
       })
       if (resolved.root.panelMembers.length === 0) continue
-      resolved.leaves.forEach((leaf, index) => {
+      leaves.forEach((leaf, index) => {
         const leafSpecimen = leaf.specimens[0] ?? specimen
         drafts.push({
           draft: {
@@ -534,14 +864,6 @@ export class LaboratoryServicePublisher {
           },
         })
       })
-    }
-    const ids = drafts.map(item => item.draft.id)
-    if (new Set(ids).size !== ids.length) {
-      throw new LaboratoryServicePublisherError(
-        'LABORATORY_SERVICE_ID_CONFLICT',
-        'Laboratory Service publication produced duplicate service identities',
-        409,
-      )
     }
     return drafts
   }
@@ -617,7 +939,7 @@ export class LaboratoryServicePublisher {
           snapshot.id,
           snapshot.localCode,
           snapshot.nameZh,
-          snapshot.nameEn,
+          snapshot.nameEn ?? snapshot.nameZh,
           version,
           config,
         )
@@ -625,7 +947,7 @@ export class LaboratoryServicePublisher {
         const changed = update.run(
           snapshot.localCode,
           snapshot.nameZh,
-          snapshot.nameEn,
+          snapshot.nameEn ?? snapshot.nameZh,
           version,
           config,
           job.workspaceId,
@@ -668,6 +990,13 @@ export class LaboratoryServicePublisher {
       .slice(0, 32)}`
   }
 
+  #stableServiceId(identity: string): string {
+    return `hospital-laboratory-service-${createHash('sha256')
+      .update(`laboratory-cn\0${identity}`)
+      .digest('hex')
+      .slice(0, 32)}`
+  }
+
   #publishedServices(
     context: ActorContext,
     conceptIds: readonly string[],
@@ -698,6 +1027,11 @@ export class LaboratoryServicePublisher {
     if (record !== undefined
       && record.concept.status === 'active'
       && record.concept.domain === 'laboratory'
+      && record.definition.kind === 'laboratory-cn-panel') return
+    if (record !== undefined
+      && record.concept.status === 'active'
+      && record.concept.domain === 'laboratory'
+      && record.definition.kind === 'loinc'
       && record.definition.classType === 1
       && (record.definition.orderObservation === 'Order'
         || record.definition.orderObservation === 'Both')) return

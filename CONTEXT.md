@@ -90,7 +90,11 @@ _Avoid_: Editable prompt output, Case revision, overwrite
 
 **Investigation Result Snapshot**:
 针对一个 Synthetic Case Instance、固定 Hospital Service 定义和申请前临床证据首次成功解析或生成的不可变结构化结果。同一申请的重试和证据相同的新 Epoch 重放复用该结果；新增正式证据后的复查形成新的 Snapshot。
-_Avoid_: Live laboratory result, mutable simulator response, normal fallback
+_Avoid_: Live laboratory result, mutable simulator response, unsourced normal fallback
+
+**Adult Reference Baseline**:
+由 Hospital Service 冻结的版本化成人参考规则为适用患者确定性生成的合成健康检验结果。它只在没有精确 Case Truth 时使用，不兼容事实、患者不适用或规则缺失都会失败。
+_Avoid_: Unsourced normal fallback, hospital LIS reference interval, disease model
 
 ## 身份与参与
 

@@ -298,6 +298,10 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
                 : {
                     resultSnapshot: {
                       content: snapshot.content,
+                      inputHash: snapshot.inputHash,
+                      ...(snapshot.provenance === undefined
+                        ? {}
+                        : { provenance: snapshot.provenance }),
                       snapshotId: snapshot.snapshotId,
                       source: snapshot.source,
                     },

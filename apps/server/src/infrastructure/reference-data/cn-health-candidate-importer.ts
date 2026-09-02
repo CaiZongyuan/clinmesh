@@ -25,11 +25,18 @@ const candidateManifestSchema = z.object({
     name: z.string().min(1),
     sha256: sha256Schema,
     sizeBytes: z.number().int().nonnegative(),
+    uncompressedName: z.string().min(1).optional(),
+    uncompressedSha256: sha256Schema.optional(),
+    uncompressedSizeBytes: z.number().int().nonnegative().optional(),
     url: z.string().min(1),
   }).passthrough()).min(1),
   canonical: z.object({
     recordCount: z.number().int().nonnegative(),
-    serialization: z.enum(['canonical-ndjson-v1', 'canonical-table-hashes-v1']),
+    serialization: z.enum([
+      'canonical-ndjson-v1',
+      'canonical-table-hashes-v1',
+      'canonical-multitable-ndjson-v1',
+    ]),
     sha256: sha256Schema,
     tables: z.array(z.object({
       recordCount: z.number().int().nonnegative(),
@@ -56,18 +63,26 @@ const candidateManifestSchema = z.object({
       path: ['release', 'id'],
     })
   }
-  const isTableCandidate = manifest.canonical.serialization === 'canonical-table-hashes-v1'
-  if ((manifest.dataset.datasetSchemaVersion === 2) !== isTableCandidate) {
+  const expectedSerialization = manifest.dataset.datasetSchemaVersion === 1
+    ? 'canonical-ndjson-v1'
+    : manifest.dataset.id === 'loinc-zh-cn'
+      ? 'canonical-table-hashes-v1'
+      : manifest.dataset.id === 'laboratory-cn'
+        ? 'canonical-multitable-ndjson-v1'
+        : undefined
+  if (manifest.canonical.serialization !== expectedSerialization) {
     context.addIssue({
       code: 'custom',
       message: 'Candidate Dataset Schema and canonical serialization are incompatible',
       path: ['canonical', 'serialization'],
     })
   }
-  if (manifest.dataset.datasetSchemaVersion === 2 && manifest.dataset.id !== 'loinc-zh-cn') {
+  if (manifest.dataset.datasetSchemaVersion === 2
+    && manifest.dataset.id !== 'loinc-zh-cn'
+    && manifest.dataset.id !== 'laboratory-cn') {
     context.addIssue({
       code: 'custom',
-      message: 'Candidate Dataset Schema v2 is supported only for loinc-zh-cn',
+      message: 'Candidate Dataset Schema v2 is unsupported for this Dataset',
       path: ['dataset', 'datasetSchemaVersion'],
     })
   }
@@ -204,6 +219,22 @@ const laboratoryColumns = [
   'source_version',
   'source_sha256',
 ] as const
+const laboratoryTestV2Columns = [
+  'code', 'name', 'category', 'analyte', 'specimen', 'scale', 'result_kind',
+  'unit_display', 'unit_ucum', 'precision', 'healthy_strategy', 'loinc_code',
+  'status', 'source_version',
+] as const
+const laboratoryReferenceV2Columns = [
+  'test_code', 'sex', 'reference_kind', 'low_value', 'high_value', 'normal_value',
+  'simulation_low', 'simulation_high', 'source_type', 'source_standard',
+  'source_version', 'source_location', 'notes',
+] as const
+const laboratoryPanelV2Columns = [
+  'code', 'name', 'specimen', 'status', 'source_type', 'source_location', 'notes',
+] as const
+const laboratoryPanelMemberV2Columns = [
+  'panel_code', 'test_code', 'sort_order',
+] as const
 
 const diagnosisRowSchema = z.object({
   code: z.string().min(1).max(256),
@@ -303,6 +334,55 @@ const laboratoryRowSchema = z.object({
   specimen: z.enum(['blood', 'body']),
   ucum_unit: z.string().min(1).max(128).nullable(),
 }).passthrough()
+
+const laboratoryTestV2RowSchema = z.object({
+  analyte: z.string().min(1).max(1_000),
+  category: z.string().min(1).max(1_000),
+  code: z.string().regex(/^[A-Za-z0-9]{8}$/),
+  healthy_strategy: z.enum(['uniform', 'fixed-normal']),
+  loinc_code: z.string().regex(/^\d{1,6}-\d$/).nullable(),
+  name: z.string().min(1).max(1_000),
+  precision: z.number().int().min(0).max(4),
+  result_kind: z.enum(['quantity', 'qualitative', 'ordinal', 'named']),
+  scale: z.string().min(1).max(256),
+  source_version: z.string().min(1).max(256),
+  specimen: z.string().min(1).max(1_000),
+  status: z.enum(['active', 'inactive']),
+  unit_display: z.string().min(1).max(128).nullable(),
+  unit_ucum: z.string().min(1).max(128).nullable(),
+}).strict()
+
+const laboratoryReferenceV2RowSchema = z.object({
+  high_value: z.number().finite().nullable(),
+  low_value: z.number().finite().nullable(),
+  normal_value: z.string().min(1).max(256).nullable(),
+  notes: z.string().max(1_000),
+  reference_kind: z.enum(['range', 'upper-bound', 'lower-bound', 'coded', 'ordinal']),
+  sex: z.enum(['all', 'male', 'female']),
+  simulation_high: z.number().finite().nullable(),
+  simulation_low: z.number().finite().nullable(),
+  source_location: z.string().min(1).max(1_000),
+  source_standard: z.string().min(1).max(1_000),
+  source_type: z.enum(['national-standard', 'project-curated']),
+  source_version: z.string().min(1).max(256),
+  test_code: z.string().regex(/^[A-Za-z0-9]{8}$/),
+}).strict()
+
+const laboratoryPanelV2RowSchema = z.object({
+  code: z.string().min(1).max(256),
+  name: z.string().min(1).max(1_000),
+  notes: z.string().max(1_000),
+  source_location: z.string().min(1).max(1_000),
+  source_type: z.literal('project-authored'),
+  specimen: z.string().min(1).max(1_000),
+  status: z.enum(['active', 'inactive']),
+}).strict()
+
+const laboratoryPanelMemberV2RowSchema = z.object({
+  panel_code: z.string().min(1).max(256),
+  sort_order: z.number().int().positive(),
+  test_code: z.string().regex(/^[A-Za-z0-9]{8}$/),
+}).strict()
 
 function hashFile(path: string): { sha256: string; sizeBytes: number } {
   const descriptor = openSync(path, 'r')
@@ -429,9 +509,15 @@ function legacyLoincArtifact(
 
 const loincCanonicalTableOrder = {
   loinc: ['code'],
-  loinc_panel_member: ['parent_id', 'member_id'],
-  loinc_specimen: ['loinc_code', 'part_number', 'link_type'],
   loinc_unit: ['loinc_code', 'unit_kind', 'source_member', 'source_row', 'unit_ordinal'],
+  loinc_specimen: ['loinc_code', 'part_number', 'link_type'],
+  loinc_panel_member: ['parent_id', 'member_id'],
+} as const
+const laboratoryCanonicalTableOrder = {
+  laboratory_test: ['code'],
+  laboratory_reference: ['test_code', 'sex'],
+  laboratory_panel: ['code'],
+  laboratory_panel_member: ['panel_code', 'sort_order', 'test_code'],
 } as const
 
 function canonicalJson(value: unknown): string {
@@ -447,17 +533,18 @@ function assertCanonicalTables(
   database: Database.Database,
   tables: readonly { recordCount: number; sha256: string; table: string }[],
   canonicalSha256: string,
+  expectedOrder: Record<string, readonly string[]> = loincCanonicalTableOrder,
+  aggregateShape: 'array' | 'object' = 'object',
 ): void {
-  const expectedTables = ['loinc', 'loinc_unit', 'loinc_specimen', 'loinc_panel_member']
+  const expectedTables = Object.keys(expectedOrder)
   const actualTables = tables.map(table => table.table)
   if (actualTables.length !== expectedTables.length
     || actualTables.some((table, index) => table !== expectedTables[index])) {
     throw new Error('cn-health LOINC Candidate canonical tables are unsupported')
   }
   for (const table of tables) {
-    const order = loincCanonicalTableOrder[
-      table.table as keyof typeof loincCanonicalTableOrder
-    ]
+    const order = expectedOrder[table.table]
+    if (order === undefined) throw new Error(`cn-health Candidate table is unsupported: ${table.table}`)
     const digest = createHash('sha256')
     let recordCount = 0
     for (const row of database.prepare(`
@@ -474,7 +561,8 @@ function assertCanonicalTables(
       throw new Error(`cn-health Candidate canonical SHA256 mismatch: ${table.table}`)
     }
   }
-  if (createHash('sha256').update(canonicalJson({ tables })).digest('hex') !== canonicalSha256) {
+  const aggregate = aggregateShape === 'array' ? tables : { tables }
+  if (createHash('sha256').update(canonicalJson(aggregate)).digest('hex') !== canonicalSha256) {
     throw new Error('cn-health Candidate canonical table set SHA256 mismatch')
   }
 }
@@ -514,6 +602,7 @@ function loincV2Artifact(
       version: sourceVersion,
     })
     laboratoryDefinitions.push({
+      kind: 'loinc',
       classCode: row.class,
       classType: row.class_type,
       component: row.component,
@@ -572,6 +661,152 @@ function loincV2Artifact(
     laboratoryPanelMembers,
     laboratorySpecimens,
     laboratoryUnits,
+    schemaVersion: '1',
+  })
+}
+
+const wst886System = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026'
+const laboratoryPanelSystem = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn'
+
+function wst886ConceptId(code: string): string {
+  return `wst-886:2026:${code}`
+}
+
+function laboratoryPanelConceptId(sourceVersion: string, code: string): string {
+  return `laboratory-panel-cn:${sourceVersion}:${code}`
+}
+
+function laboratoryV2Artifact(
+  database: Database.Database,
+  releaseId: string,
+  sourceVersion: string,
+  tables: readonly { recordCount: number; sha256: string; table: string }[],
+  canonicalSha256: string,
+): ReferenceArtifact {
+  assertTableShape(database, 'laboratory_test', laboratoryTestV2Columns)
+  assertTableShape(database, 'laboratory_reference', laboratoryReferenceV2Columns)
+  assertTableShape(database, 'laboratory_panel', laboratoryPanelV2Columns)
+  assertTableShape(database, 'laboratory_panel_member', laboratoryPanelMemberV2Columns)
+  assertCanonicalTables(
+    database,
+    tables,
+    canonicalSha256,
+    laboratoryCanonicalTableOrder,
+    'array',
+  )
+  const references = z.array(laboratoryReferenceV2RowSchema).parse(database.prepare(`
+    SELECT * FROM laboratory_reference ORDER BY test_code, sex
+  `).all())
+  const referencesByTest = new Map<
+    string,
+    Array<z.infer<typeof laboratoryReferenceV2RowSchema>>
+  >()
+  for (const reference of references) {
+    const values = referencesByTest.get(reference.test_code) ?? []
+    values.push(reference)
+    referencesByTest.set(reference.test_code, values)
+  }
+  const concepts = []
+  const laboratoryDefinitions = []
+  for (const value of database.prepare(`
+    SELECT * FROM laboratory_test ORDER BY code
+  `).iterate()) {
+    const row = laboratoryTestV2RowSchema.parse(value)
+    if (row.source_version !== sourceVersion) throw new Error('Candidate source version mismatch')
+    const conceptId = wst886ConceptId(row.code)
+    concepts.push({
+      code: row.code,
+      display: row.name,
+      domain: 'laboratory' as const,
+      id: conceptId,
+      sourceLocator: `cn-health:${releaseId}:laboratory-test:${row.code}`,
+      status: row.status,
+      system: wst886System,
+      version: '2026',
+    })
+    laboratoryDefinitions.push({
+      adultReferenceRules: (referencesByTest.get(row.code) ?? []).map(rule => ({
+        ...(rule.high_value === null ? {} : { high: rule.high_value }),
+        ...(rule.low_value === null ? {} : { low: rule.low_value }),
+        ...(rule.normal_value === null ? {} : { normalValue: rule.normal_value }),
+        notes: rule.notes,
+        referenceKind: rule.reference_kind,
+        sex: rule.sex,
+        ...(rule.simulation_high === null ? {} : { simulationHigh: rule.simulation_high }),
+        ...(rule.simulation_low === null ? {} : { simulationLow: rule.simulation_low }),
+        sourceLocation: rule.source_location,
+        sourceStandard: rule.source_standard,
+        sourceType: rule.source_type,
+        sourceVersion: rule.source_version,
+      })),
+      alternateCodings: row.loinc_code === null
+        ? []
+        : [{ code: row.loinc_code, system: 'http://loinc.org' as const, version: '2.83' }],
+      analyte: row.analyte,
+      category: row.category,
+      conceptId,
+      datasetReleaseId: releaseId,
+      healthyStrategy: row.healthy_strategy,
+      kind: 'laboratory-cn-test' as const,
+      precision: row.precision,
+      resultKind: row.result_kind,
+      scale: row.scale,
+      sourceLocator: `cn-health:${releaseId}:laboratory-test:${row.code}`,
+      sourceVersion,
+      specimen: row.specimen,
+      ...(row.unit_ucum === null || row.unit_display === null
+        ? {}
+        : {
+            unit: {
+              code: row.unit_ucum,
+              display: row.unit_display,
+              system: 'http://unitsofmeasure.org' as const,
+            },
+          }),
+    })
+  }
+  for (const value of database.prepare(`
+    SELECT * FROM laboratory_panel ORDER BY code
+  `).iterate()) {
+    const row = laboratoryPanelV2RowSchema.parse(value)
+    const conceptId = laboratoryPanelConceptId(sourceVersion, row.code)
+    concepts.push({
+      code: row.code,
+      display: row.name,
+      domain: 'laboratory' as const,
+      id: conceptId,
+      sourceLocator: `cn-health:${releaseId}:laboratory-panel:${row.code}`,
+      status: row.status,
+      system: laboratoryPanelSystem,
+      version: sourceVersion,
+    })
+    laboratoryDefinitions.push({
+      conceptId,
+      datasetReleaseId: releaseId,
+      kind: 'laboratory-cn-panel' as const,
+      notes: row.notes,
+      sourceLocation: row.source_location,
+      sourceLocator: `cn-health:${releaseId}:laboratory-panel:${row.code}`,
+      sourceType: row.source_type,
+      sourceVersion,
+      specimen: row.specimen,
+    })
+  }
+  const laboratoryPanelMembers = z.array(laboratoryPanelMemberV2RowSchema).parse(
+    database.prepare(`
+      SELECT * FROM laboratory_panel_member ORDER BY panel_code, sort_order, test_code
+    `).all(),
+  ).map(row => ({
+    memberConceptId: wst886ConceptId(row.test_code),
+    memberOrder: row.sort_order,
+    panelConceptId: laboratoryPanelConceptId(sourceVersion, row.panel_code),
+    relationship: 'contains' as const,
+    sourceLocator: `cn-health:${releaseId}:laboratory-panel-member:${row.panel_code}:${row.sort_order}`,
+  }))
+  return referenceArtifactSchema.parse({
+    concepts,
+    laboratoryDefinitions,
+    laboratoryPanelMembers,
     schemaVersion: '1',
   })
 }
@@ -636,18 +871,33 @@ export function parseCnHealthCandidateReferenceArtifact(manifestPath: string): {
   const manifest = candidateManifestSchema.parse(JSON.parse(
     readManifest(manifestPath),
   ))
-  const sqliteArtifacts = manifest.artifacts.filter(artifact => (
+  const directSqliteArtifacts = manifest.artifacts.filter(artifact => (
     artifact.name === 'data.sqlite'
     && artifact.mediaType === 'application/vnd.sqlite3'
     && artifact.url === 'data.sqlite'
   ))
-  if (sqliteArtifacts.length !== 1) {
-    throw new Error('cn-health Candidate must declare one data.sqlite artifact')
+  const compressedSqliteArtifacts = manifest.artifacts.filter(artifact => (
+    artifact.name === 'data.sqlite.zst'
+    && artifact.mediaType === 'application/zstd'
+    && artifact.url === 'data.sqlite.zst'
+    && artifact.uncompressedName === 'data.sqlite'
+    && artifact.uncompressedSha256 !== undefined
+    && artifact.uncompressedSizeBytes !== undefined
+  ))
+  if (directSqliteArtifacts.length + compressedSqliteArtifacts.length !== 1) {
+    throw new Error('cn-health Candidate must declare one materializable data.sqlite artifact')
   }
-  const sqliteArtifact = sqliteArtifacts[0]!
+  const directSqlite = directSqliteArtifacts[0]
+  const compressedSqlite = compressedSqliteArtifacts[0]
+  const expectedSqlite = directSqlite === undefined
+    ? {
+        sha256: compressedSqlite!.uncompressedSha256!,
+        sizeBytes: compressedSqlite!.uncompressedSizeBytes!,
+      }
+    : { sha256: directSqlite.sha256, sizeBytes: directSqlite.sizeBytes }
   const databasePath = resolve(dirname(resolve(manifestPath)), 'data.sqlite')
   const actual = hashFile(databasePath)
-  if (actual.sha256 !== sqliteArtifact.sha256 || actual.sizeBytes !== sqliteArtifact.sizeBytes) {
+  if (actual.sha256 !== expectedSqlite.sha256 || actual.sizeBytes !== expectedSqlite.sizeBytes) {
     throw new Error('cn-health Candidate SQLite SHA256 or size does not match Manifest')
   }
   const database = new Database(databasePath, { fileMustExist: true, readonly: true })
@@ -665,7 +915,15 @@ export function parseCnHealthCandidateReferenceArtifact(manifestPath: string): {
       : datasetId === 'nhsa-drugs'
         ? medicationArtifact(database, manifest.release.id, manifest.dataset.sourceVersion)
         : datasetId === 'laboratory-cn'
-          ? laboratoryArtifact(database, manifest.release.id, manifest.dataset.sourceVersion)
+          ? manifest.dataset.datasetSchemaVersion === 2
+            ? laboratoryV2Artifact(
+                database,
+                manifest.release.id,
+                manifest.dataset.sourceVersion,
+                manifest.canonical.tables ?? [],
+                manifest.canonical.sha256,
+              )
+            : laboratoryArtifact(database, manifest.release.id, manifest.dataset.sourceVersion)
           : manifest.dataset.datasetSchemaVersion === 2
             ? loincV2Artifact(
                 database,
@@ -675,7 +933,15 @@ export function parseCnHealthCandidateReferenceArtifact(manifestPath: string): {
                 manifest.canonical.sha256,
               )
             : legacyLoincArtifact(database, manifest.release.id, manifest.dataset.sourceVersion)
-    const recordCount = artifactRecordCount(artifact)
+    const laboratoryPrimaryCount = manifest.dataset.id === 'laboratory-cn'
+      && manifest.dataset.datasetSchemaVersion === 2
+      ? manifest.canonical.tables?.find(table => table.table === 'laboratory_test')?.recordCount
+      : undefined
+    if (laboratoryPrimaryCount !== undefined
+      && laboratoryPrimaryCount !== manifest.canonical.recordCount) {
+      throw new Error('cn-health Candidate primary record count does not match laboratory_test')
+    }
+    const recordCount = laboratoryPrimaryCount ?? artifactRecordCount(artifact)
     if (recordCount !== manifest.canonical.recordCount) {
       throw new Error('cn-health Candidate canonical record count does not match SQLite')
     }

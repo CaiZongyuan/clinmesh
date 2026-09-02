@@ -112,7 +112,19 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     )))
   })
 
-  async function createReferenceDatabase(directory: string): Promise<string> {
+  async function createReferenceDatabase(
+    directory: string,
+    options: {
+      laboratoryDatasetReleaseId?: string
+      laboratorySourceVersion?: string
+      referenceReleaseId?: string
+    } = {},
+  ): Promise<string> {
+    const laboratoryDatasetReleaseId = options.laboratoryDatasetReleaseId
+      ?? 'laboratory-cn@2026-09-01.r1'
+    const laboratorySourceVersion = options.laboratorySourceVersion ?? '2026-09-01'
+    const laboratoryPanelConceptId = `laboratory-panel-cn:${laboratorySourceVersion}:CN-LAB-CBC`
+    const referenceReleaseId = options.referenceReleaseId ?? 'laboratory-service-reference-v1'
     const databasePath = join(directory, 'reference.sqlite')
     const artifact = {
       concepts: [{
@@ -151,6 +163,33 @@ describe('Laboratory Service Publisher HTTP contract', () => {
         status: 'active',
         system: 'http://loinc.org',
         version: '2.83',
+      }, {
+        code: '0100101A',
+        display: '白细胞计数',
+        domain: 'laboratory',
+        id: 'wst-886:2026:0100101A',
+        sourceLocator: 'synthetic:laboratory-cn:test:0100101A',
+        status: 'active',
+        system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026',
+        version: '2026',
+      }, {
+        code: '0100201A',
+        display: '红细胞计数',
+        domain: 'laboratory',
+        id: 'wst-886:2026:0100201A',
+        sourceLocator: 'synthetic:laboratory-cn:test:0100201A',
+        status: 'active',
+        system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026',
+        version: '2026',
+      }, {
+        code: 'CN-LAB-CBC',
+        display: '合成血常规',
+        domain: 'laboratory',
+        id: laboratoryPanelConceptId,
+        sourceLocator: 'synthetic:laboratory-cn:panel:CN-LAB-CBC',
+        status: 'active',
+        system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn',
+        version: laboratorySourceVersion,
       }],
       laboratoryDefinitions: [{
         classCode: 'PANEL.HEM',
@@ -204,6 +243,92 @@ describe('Laboratory Service Publisher HTTP contract', () => {
         sourceLocator: 'synthetic:definition:94500-6',
         system: 'Urine',
         timeAspect: 'Pt',
+      }, {
+        adultReferenceRules: [{
+          high: 9.5,
+          low: 3.5,
+          notes: '成人静脉血',
+          referenceKind: 'range',
+          sex: 'all',
+          simulationHigh: 9.5,
+          simulationLow: 3.5,
+          sourceLocation: '表 1',
+          sourceStandard: 'WS/T 405-2012',
+          sourceType: 'national-standard',
+          sourceVersion: '2012',
+        }],
+        alternateCodings: [{ code: '6690-2', system: 'http://loinc.org', version: '2.83' }],
+        analyte: '白细胞(数量)',
+        category: '血细胞分析',
+        conceptId: 'wst-886:2026:0100101A',
+        datasetReleaseId: laboratoryDatasetReleaseId,
+        healthyStrategy: 'uniform',
+        kind: 'laboratory-cn-test',
+        precision: 1,
+        resultKind: 'quantity',
+        scale: '定量',
+        sourceLocator: 'synthetic:laboratory-cn:test:0100101A',
+        sourceVersion: laboratorySourceVersion,
+        specimen: '全血',
+        unit: {
+          code: '10*9/L',
+          display: '×10^9/L',
+          system: 'http://unitsofmeasure.org',
+        },
+      }, {
+        adultReferenceRules: [{
+          high: 5.8,
+          low: 4.3,
+          notes: '成年男性静脉血',
+          referenceKind: 'range',
+          sex: 'male',
+          simulationHigh: 5.8,
+          simulationLow: 4.3,
+          sourceLocation: '表 1',
+          sourceStandard: 'WS/T 405-2012',
+          sourceType: 'national-standard',
+          sourceVersion: '2012',
+        }, {
+          high: 5.1,
+          low: 3.8,
+          notes: '成年女性静脉血',
+          referenceKind: 'range',
+          sex: 'female',
+          simulationHigh: 5.1,
+          simulationLow: 3.8,
+          sourceLocation: '表 1',
+          sourceStandard: 'WS/T 405-2012',
+          sourceType: 'national-standard',
+          sourceVersion: '2012',
+        }],
+        alternateCodings: [{ code: '789-8', system: 'http://loinc.org', version: '2.83' }],
+        analyte: '红细胞(数量)',
+        category: '血细胞分析',
+        conceptId: 'wst-886:2026:0100201A',
+        datasetReleaseId: laboratoryDatasetReleaseId,
+        healthyStrategy: 'uniform',
+        kind: 'laboratory-cn-test',
+        precision: 1,
+        resultKind: 'quantity',
+        scale: '定量',
+        sourceLocator: 'synthetic:laboratory-cn:test:0100201A',
+        sourceVersion: laboratorySourceVersion,
+        specimen: '全血',
+        unit: {
+          code: '10*12/L',
+          display: '×10^12/L',
+          system: 'http://unitsofmeasure.org',
+        },
+      }, {
+        conceptId: laboratoryPanelConceptId,
+        datasetReleaseId: laboratoryDatasetReleaseId,
+        kind: 'laboratory-cn-panel',
+        notes: '合成多叶子 panel',
+        sourceLocation: 'fixture/panel/1',
+        sourceLocator: 'synthetic:laboratory-cn:panel:CN-LAB-CBC',
+        sourceType: 'project-authored',
+        sourceVersion: laboratorySourceVersion,
+        specimen: '全血',
       }],
       laboratoryPanelMembers: [{
         memberConceptId: 'loinc:synthetic:6690-2',
@@ -211,6 +336,18 @@ describe('Laboratory Service Publisher HTTP contract', () => {
         panelConceptId: 'loinc:synthetic:58410-2',
         relationship: 'contains',
         sourceLocator: 'synthetic:panel:58410-2:6690-2',
+      }, {
+        memberConceptId: 'wst-886:2026:0100101A',
+        memberOrder: 1,
+        panelConceptId: laboratoryPanelConceptId,
+        relationship: 'contains',
+        sourceLocator: 'synthetic:laboratory-cn:panel:CN-LAB-CBC:1',
+      }, {
+        memberConceptId: 'wst-886:2026:0100201A',
+        memberOrder: 2,
+        panelConceptId: laboratoryPanelConceptId,
+        relationship: 'contains',
+        sourceLocator: 'synthetic:laboratory-cn:panel:CN-LAB-CBC:2',
       }],
       laboratorySpecimens: [{
         conceptId: 'loinc:synthetic:58410-2',
@@ -249,7 +386,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     await writeFile(artifactPath, artifactJson)
     await writeFile(manifestPath, `${JSON.stringify({
       createdAt: '2026-09-01T07:00:00.000Z',
-      releaseId: 'laboratory-service-reference-v1',
+      releaseId: referenceReleaseId,
       schemaVersion: '1',
       sources: [{
         acquisitionMethod: 'generated',
@@ -287,6 +424,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-laboratory-publisher-'))
     temporaryDirectories.push(directory)
     const referenceDatabasePath = await createReferenceDatabase(directory)
+    const operationalDatabasePath = join(directory, 'operational.sqlite')
     const password = `Test-${randomUUID()}-Aa1!`
     const runtime = await createClinMeshRuntime({
       activeReferenceReleaseId: 'laboratory-service-reference-v1',
@@ -299,7 +437,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
             chatCompletionsProvider: provider,
           }),
       cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
-      databasePath: join(directory, 'operational.sqlite'),
+      databasePath: operationalDatabasePath,
       demoPassword: password,
       migrationMode: 'apply',
       referenceDatabasePath,
@@ -308,7 +446,10 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     runtimes.push(runtime)
     return {
       administratorCookie: await signIn(runtime, password, 'admin@demo.clinmesh.local'),
+      directory,
       doctorCookie: await signIn(runtime, password, 'doctor@demo.clinmesh.local'),
+      operationalDatabasePath,
+      password,
       referenceDatabasePath,
       runtime,
     }
@@ -352,6 +493,91 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     return { response, value: await response.clone().json() }
   }
 
+  async function publishLaboratoryCnPanel(
+    runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>,
+    administratorCookie: string,
+    conceptId = 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+  ) {
+    const response = await runtime.app.request(
+      '/api/his/v1/admin/laboratory-services/actions/publish',
+      {
+        body: JSON.stringify({
+          input: { entries: [{ conceptId, expectedVersion: 0 }] },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: administratorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(response.status).toBe(200)
+    await runtime.dispatchLaboratoryServicePublicationJobs()
+  }
+
+  async function issuePublishedLaboratoryService(
+    runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>,
+    doctorCookie: string,
+    serviceId: string,
+  ) {
+    const patient = virtualPatientListSchema.parse(await (await runtime.app.request(
+      '/api/his/v1/doctor/virtual-patients',
+      { headers: { cookie: doctorCookie } },
+    )).json()).items[0]!
+    const started = startVirtualPatientResponseSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/virtual-patients/${patient.id}/actions/start`,
+      {
+        body: JSON.stringify({ expectedVersions: {}, input: { expectedVersion: patient.version } }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: doctorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )).json()).data
+    const encounterReference = `Encounter/${started.encounterId}`
+    const draft = laboratoryRequestDraftResponseSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: '1' },
+          input: {
+            catalogItemId: serviceId,
+            expectedDraftVersion: 0,
+            indicationCode: 'clinical-evaluation',
+          },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: doctorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'PUT',
+      },
+    )).json()).data
+    return issueLaboratoryRequestResponseSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: '1' },
+          input: { expectedDraftVersion: draft.draftVersion },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: doctorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )).json()).data.request
+  }
+
   it('paginates orderable Laboratory Service candidates', async () => {
     const { administratorCookie, runtime } = await createRuntime()
     const candidatePages = await Promise.all([1, 2].map(async page => (
@@ -360,9 +586,323 @@ describe('Laboratory Service Publisher HTTP contract', () => {
         { headers: { cookie: administratorCookie } },
       )).json())
     )))
-    expect(candidatePages.map(page => page.total)).toEqual([3, 3])
+    expect(candidatePages.map(page => page.total)).toEqual([4, 4])
     expect(new Set(candidatePages.flatMap(page => page.items.map(item => item.concept.id))).size)
       .toBe(2)
+  })
+
+  it('filters laboratory-cn panel candidates and exposes their publication provenance', async () => {
+    const { administratorCookie, runtime } = await createRuntime()
+    const response = await runtime.app.request(
+      '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20'
+        + '&sourceDataset=laboratory-cn&panelOnly=true',
+      { headers: { cookie: administratorCookie } },
+    )
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      items: [{
+        adultApplicability: {
+          minimumAgeYears: 18,
+          patientSexes: ['female', 'male'],
+        },
+        concept: {
+          code: 'CN-LAB-CBC',
+          id: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+        },
+        memberCount: 2,
+        referenceSources: [{
+          sourceStandard: 'WS/T 405-2012',
+          sourceType: 'national-standard',
+          sourceVersion: '2012',
+        }],
+        sourceDataset: {
+          datasetId: 'laboratory-cn',
+          releaseId: 'laboratory-cn@2026-09-01.r1',
+        },
+        specimen: '全血',
+        standardStatus: {
+          effectiveOn: '2026-11-01',
+          mode: 'future-standard-preview',
+          standard: 'WS/T 886-2026',
+        },
+      }],
+      total: 1,
+    })
+  })
+
+  it('publishes a laboratory-cn panel deterministically without an AI provider', async () => {
+    const { administratorCookie, runtime } = await createRuntime()
+    const response = await runtime.app.request(
+      '/api/his/v1/admin/laboratory-services/actions/publish',
+      {
+        body: JSON.stringify({
+          input: {
+            entries: [{
+              conceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+              expectedVersion: 0,
+            }],
+          },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: administratorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(response.status).toBe(200)
+    const jobId = publishLaboratoryServicesResponseSchema.parse(await response.json()).data.jobId
+    await runtime.dispatchLaboratoryServicePublicationJobs()
+
+    expect(laboratoryServicePublicationJobSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/admin/laboratory-services/jobs/${jobId}`,
+      { headers: { cookie: administratorCookie } },
+    )).json())).toMatchObject({
+      publishedServiceIds: expect.arrayContaining([
+        expect.stringMatching(/^hospital-laboratory-service-/),
+      ]),
+      status: 'succeeded',
+    })
+    const rows = runtime.database.driver.prepare(`
+      SELECT service_id, config_json FROM hospital_service_catalog
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND json_extract(config_json, '$.laboratoryService.sourceDataset.datasetId') = 'laboratory-cn'
+      ORDER BY json_extract(config_json, '$.laboratoryService.doctorOrderable') DESC, service_id
+    `).all() as Array<{ config_json: string; service_id: string }>
+    expect(rows).toHaveLength(3)
+    const rootService = laboratoryServiceSnapshotSchema.parse(
+      JSON.parse(rows[0]!.config_json).laboratoryService,
+    )
+    expect(rootService).toMatchObject({
+      componentServiceIds: expect.arrayContaining([rows[1]!.service_id, rows[2]!.service_id]),
+      doctorOrderable: true,
+      nameZh: '合成血常规',
+      priceFen: 0,
+      publicationPolicyVersion: 'clinmesh-laboratory-defaults-v1',
+      reportDefinition: {
+        conclusionTemplate: '本报告为 ClinMesh 合成检验结果，仅用于仿真。',
+        results: [
+          expect.objectContaining({
+            adultReferenceRules: [expect.objectContaining({ sex: 'all' })],
+            alternateCodings: [{ code: '6690-2', system: 'http://loinc.org', version: '2.83' }],
+            healthyStrategy: 'uniform',
+            precision: 1,
+          }),
+          expect.objectContaining({
+            adultReferenceRules: [
+              expect.objectContaining({ sex: 'male' }),
+              expect.objectContaining({ sex: 'female' }),
+            ],
+          }),
+        ],
+      },
+      sourceDataset: {
+        datasetId: 'laboratory-cn',
+        releaseId: 'laboratory-cn@2026-09-01.r1',
+      },
+      standardStatus: {
+        effectiveOn: '2026-11-01',
+        mode: 'future-standard-preview',
+        standard: 'WS/T 886-2026',
+      },
+      tatMinutes: 180,
+    })
+    expect(rootService.reportDefinition.results.map(result => result.referenceConcept.code))
+      .toEqual(['0100101A', '0100201A'])
+
+    const republishCandidates = laboratoryServiceCandidateSearchSchema.parse(
+      await (await runtime.app.request(
+        '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20'
+          + '&sourceDataset=laboratory-cn&panelOnly=true',
+        { headers: { cookie: administratorCookie } },
+      )).json(),
+    )
+    expect(republishCandidates.items[0]).toMatchObject({
+      publishedServiceId: rootService.id,
+      status: 'published',
+      version: 1,
+    })
+    const republishResponse = await runtime.app.request(
+      '/api/his/v1/admin/laboratory-services/actions/publish',
+      {
+        body: JSON.stringify({
+          input: {
+            entries: [{
+              conceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+              expectedVersion: 1,
+            }],
+          },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: administratorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(republishResponse.status).toBe(200)
+    await runtime.dispatchLaboratoryServicePublicationJobs()
+    const republishedRows = runtime.database.driver.prepare(`
+      SELECT service_id, version FROM hospital_service_catalog
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND json_extract(config_json, '$.laboratoryService.sourceDataset.datasetId') = 'laboratory-cn'
+      ORDER BY service_id
+    `).all() as Array<{ service_id: string; version: number }>
+    expect(republishedRows).toHaveLength(3)
+    expect(republishedRows.find(row => row.service_id === rootService.id)).toMatchObject({
+      service_id: rootService.id,
+      version: 2,
+    })
+
+  })
+
+  it('keeps a panel service identity across Reference Releases without changing an issued snapshot', async () => {
+    const first = await createRuntime()
+    await publishLaboratoryCnPanel(first.runtime, first.administratorCookie)
+    const firstRow = first.runtime.database.driver.prepare(`
+      SELECT service_id, version, config_json FROM hospital_service_catalog
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND json_extract(config_json, '$.laboratoryService.sourceDataset.datasetId') = 'laboratory-cn'
+        AND json_extract(config_json, '$.laboratoryService.doctorOrderable') = 1
+    `).get() as { config_json: string; service_id: string; version: number }
+    const firstService = laboratoryServiceSnapshotSchema.parse(
+      JSON.parse(firstRow.config_json).laboratoryService,
+    )
+    const issued = await issuePublishedLaboratoryService(
+      first.runtime,
+      first.doctorCookie,
+      firstService.id,
+    )
+    const issuedSnapshotJson = (first.runtime.database.driver.prepare(`
+      SELECT service_snapshot_json FROM laboratory_request
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND request_id = ?
+    `).get(issued.id) as { service_snapshot_json: string }).service_snapshot_json
+
+    await first.runtime.close()
+    runtimes.splice(runtimes.indexOf(first.runtime), 1)
+    await createReferenceDatabase(first.directory, {
+      laboratoryDatasetReleaseId: 'laboratory-cn@2026-10-01.r1',
+      laboratorySourceVersion: '2026-10-01',
+      referenceReleaseId: 'laboratory-service-reference-v2',
+    })
+    const secondRuntime = await createClinMeshRuntime({
+      activeReferenceReleaseId: 'laboratory-service-reference-v2',
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: first.operationalDatabasePath,
+      demoPassword: first.password,
+      migrationMode: 'apply',
+      referenceDatabasePath: first.referenceDatabasePath,
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(secondRuntime)
+    const secondAdministratorCookie = await signIn(
+      secondRuntime,
+      first.password,
+      'admin@demo.clinmesh.local',
+    )
+    await publishLaboratoryCnPanel(
+      secondRuntime,
+      secondAdministratorCookie,
+      'laboratory-panel-cn:2026-10-01:CN-LAB-CBC',
+    )
+
+    const secondRow = secondRuntime.database.driver.prepare(`
+      SELECT service_id, version, config_json FROM hospital_service_catalog
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND json_extract(config_json, '$.laboratoryService.sourceDataset.datasetId') = 'laboratory-cn'
+        AND json_extract(config_json, '$.laboratoryService.doctorOrderable') = 1
+    `).get() as { config_json: string; service_id: string; version: number }
+    const secondService = laboratoryServiceSnapshotSchema.parse(
+      JSON.parse(secondRow.config_json).laboratoryService,
+    )
+    expect(secondRow).toMatchObject({ service_id: firstRow.service_id, version: 2 })
+    expect(secondService).toMatchObject({
+      id: firstService.id,
+      referenceConcept: { id: 'laboratory-panel-cn:2026-10-01:CN-LAB-CBC' },
+      referenceReleaseId: 'laboratory-service-reference-v2',
+      sourceDataset: { releaseId: 'laboratory-cn@2026-10-01.r1' },
+    })
+    const persistedIssuedSnapshotJson = (secondRuntime.database.driver.prepare(`
+      SELECT service_snapshot_json FROM laboratory_request
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND request_id = ?
+    `).get(issued.id) as { service_snapshot_json: string }).service_snapshot_json
+    expect(persistedIssuedSnapshotJson).toBe(issuedSnapshotJson)
+    expect(laboratoryServiceSnapshotSchema.parse(JSON.parse(persistedIssuedSnapshotJson)))
+      .toMatchObject({
+        id: firstService.id,
+        referenceReleaseId: 'laboratory-service-reference-v1',
+        sourceDataset: { releaseId: 'laboratory-cn@2026-09-01.r1' },
+        version: 1,
+      })
+  })
+
+  it.each([
+    {
+      mutate: (databasePath: string) => {
+        editReferenceDatabase(databasePath, database => {
+          database.driver.prepare(`
+            UPDATE reference_concept SET status = 'inactive'
+            WHERE release_id = 'laboratory-service-reference-v1'
+              AND concept_id = 'wst-886:2026:0100101A'
+          `).run()
+        })
+      },
+      scenario: 'an inactive panel member',
+    },
+    {
+      mutate: (databasePath: string) => {
+        editReferenceDatabase(databasePath, database => {
+          database.driver.prepare(`
+            UPDATE reference_laboratory_definition
+            SET definition_json = json_set(definition_json, '$.specimen', '血清')
+            WHERE release_id = 'laboratory-service-reference-v1'
+              AND concept_id = 'wst-886:2026:0100101A'
+          `).run()
+        })
+      },
+      scenario: 'a panel specimen conflict',
+    },
+  ])('rejects $scenario before publishing laboratory-cn services', async ({ mutate }) => {
+    const { administratorCookie, referenceDatabasePath, runtime } = await createRuntime()
+    mutate(referenceDatabasePath)
+    const response = await runtime.app.request(
+      '/api/his/v1/admin/laboratory-services/actions/publish',
+      {
+        body: JSON.stringify({
+          input: {
+            entries: [{
+              conceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+              expectedVersion: 0,
+            }],
+          },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: administratorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(response.status).toBe(200)
+    const jobId = publishLaboratoryServicesResponseSchema.parse(await response.json()).data.jobId
+    await runtime.dispatchLaboratoryServicePublicationJobs()
+    expect(laboratoryServicePublicationJobSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/admin/laboratory-services/jobs/${jobId}`,
+      { headers: { cookie: administratorCookie } },
+    )).json())).toMatchObject({
+      error: { code: 'LABORATORY_PANEL_INVALID' },
+      publishedServiceIds: [],
+      status: 'failed',
+    })
   })
 
   it('publishes an enriched panel atomically and exposes only its orderable root to doctors', async () => {
@@ -370,7 +910,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     const { administratorCookie, doctorCookie, runtime } = await createRuntime(provider)
 
     const candidatesResponse = await runtime.app.request(
-      '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20&query=%E8%A1%80%E5%B8%B8',
+      '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20&query=58410-2',
       { headers: { cookie: administratorCookie } },
     )
     if (candidatesResponse.status !== 200) {
@@ -712,7 +1252,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       status: 'failed',
     })
     expect(laboratoryServiceCandidateSearchSchema.parse(await (await runtime.app.request(
-      '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20&query=%E8%A1%80%E5%B8%B8',
+      '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20&query=58410-2',
       { headers: { cookie: administratorCookie } },
     )).json())).toMatchObject({
       items: [{

@@ -5,7 +5,9 @@ import {
   referenceConceptSchema,
   referenceConceptSnapshotSchema,
   referenceDataItemIdSchema,
+  referenceLaboratoryAdultRuleSchema,
   referenceLaboratoryDefinitionSchema,
+  referenceLaboratorySourceDatasetSchema,
   referenceMedicationProductSchema,
 } from './reference-data.ts'
 
@@ -317,6 +319,7 @@ export const investigationGenerationCapabilitySchema = z.discriminatedUnion('sup
 ])
 
 const laboratoryServiceResultDefinitionSchema = z.object({
+  adultReferenceRules: z.array(referenceLaboratoryAdultRuleSchema).min(1).max(3).optional(),
   allowedValues: z.array(z.union([
     z.boolean(),
     z.string().min(1).max(256),
@@ -325,6 +328,13 @@ const laboratoryServiceResultDefinitionSchema = z.object({
     .min(1)
     .max(64)
     .optional(),
+  alternateCodings: z.array(z.object({
+    code: z.string().min(1).max(256),
+    system: z.literal('http://loinc.org'),
+    version: z.string().min(1).max(256),
+  }).strict()).max(4).default([]),
+  healthyStrategy: z.enum(['uniform', 'fixed-normal']).optional(),
+  precision: z.number().int().min(0).max(4).optional(),
   referenceConcept: referenceConceptSnapshotSchema,
   referenceRange: z.object({
     high: z.number().finite().optional(),
@@ -346,15 +356,17 @@ const laboratoryServiceResultDefinitionSchema = z.object({
       path: ['unit'],
     })
   }
-  if (quantitative && result.referenceRange.low === undefined
-    && result.referenceRange.high === undefined) {
+  if (quantitative && result.adultReferenceRules === undefined
+    && result.referenceRange.low === undefined && result.referenceRange.high === undefined) {
     context.addIssue({
       code: 'custom',
       message: 'A quantitative Laboratory Service result requires a numeric reference boundary',
       path: ['referenceRange'],
     })
   }
-  if (!quantitative && result.allowedValues === undefined) {
+  if (!quantitative && result.allowedValues === undefined
+    && !(result.healthyStrategy === 'fixed-normal'
+      && result.adultReferenceRules !== undefined)) {
     context.addIssue({
       code: 'custom',
       message: 'A qualitative Laboratory Service result requires allowed values',
@@ -385,9 +397,10 @@ export const laboratoryServiceSnapshotSchema = z.object({
   executingDepartmentId: z.string().min(1).max(128),
   id: z.string().min(1).max(512),
   localCode: z.string().min(1).max(128),
-  nameEn: z.string().min(1).max(1_000),
+  nameEn: z.string().min(1).max(1_000).optional(),
   nameZh: z.string().min(1).max(1_000),
   priceFen: z.number().int().nonnegative(),
+  publicationPolicyVersion: z.string().min(1).max(128).optional(),
   referenceConcept: referenceConceptSnapshotSchema,
   referenceReleaseId: z.string().min(1).max(256),
   reportDefinition: z.object({
@@ -405,22 +418,58 @@ export const laboratoryServiceSnapshotSchema = z.object({
   specimen: z.object({
     code: z.string().min(1).max(128),
     display: z.string().min(1).max(1_000),
+    system: z.string().url().optional(),
+    version: z.string().min(1).max(128).optional(),
   }).strict(),
+  sourceDataset: z.object({
+    datasetId: z.literal('laboratory-cn'),
+    releaseId: z.string().min(1).max(256),
+  }).strict().optional(),
+  standardStatus: z.object({
+    effectiveOn: z.literal('2026-11-01'),
+    mode: z.enum(['effective', 'future-standard-preview']),
+    standard: z.literal('WS/T 886-2026'),
+  }).strict().optional(),
   serviceKind: z.literal('laboratory'),
   tatMinutes: z.number().int().nonnegative(),
   version: z.number().int().positive(),
 }).strict()
 
 export const laboratoryServiceCandidateSchema = z.object({
+  adultApplicability: z.object({
+    minimumAgeYears: z.literal(18),
+    patientSexes: z.array(z.enum(['female', 'male', 'other', 'unknown'])).min(1).max(4),
+  }).strict().nullable(),
   concept: referenceConceptSchema,
   definition: referenceLaboratoryDefinitionSchema,
   error: z.object({
     code: z.string().min(1).max(128),
     message: z.string().min(1).max(1_000),
   }).strict().nullable(),
+  memberCount: z.number().int().nonnegative(),
   publishedServiceId: z.string().min(1).max(512).nullable(),
+  referenceSources: z.array(z.object({
+    sourceLocation: z.string().min(1).max(1_000),
+    sourceStandard: z.string().min(1).max(1_000),
+    sourceType: z.enum(['national-standard', 'project-curated']),
+    sourceVersion: z.string().min(1).max(256),
+  }).strict()).max(20),
+  sourceDataset: z.object({
+    datasetId: referenceLaboratorySourceDatasetSchema,
+    releaseId: z.string().min(1).max(256),
+  }).strict(),
+  specimen: z.string().min(1).max(1_000).nullable(),
+  standardStatus: laboratoryServiceSnapshotSchema.shape.standardStatus.unwrap().nullable(),
   status: z.enum(['failed', 'published', 'publishing', 'unconfigured']),
   version: z.number().int().nonnegative(),
+}).strict()
+
+export const laboratoryServiceCandidateSearchInputSchema = z.object({
+  page: z.number().int().positive().default(1),
+  pageSize: z.number().int().positive().max(50).default(20),
+  panelOnly: z.boolean().default(false),
+  query: z.string().trim().min(2).max(100).optional(),
+  sourceDataset: referenceLaboratorySourceDatasetSchema.optional(),
 }).strict()
 
 export const laboratoryServiceCandidateSearchSchema = z.object({
@@ -1034,7 +1083,7 @@ export const laboratoryRequestStatusSchema = z.enum([
   'cancelled',
 ])
 
-export const laboratoryResultInterpretationSchema = z.enum(['normal', 'high', 'low'])
+export const laboratoryResultInterpretationSchema = z.enum(['normal', 'abnormal', 'high', 'low'])
 
 const quantitativeLaboratoryReferenceRangeSchema = z.object({
   high: z.number().finite().optional(),

@@ -928,6 +928,7 @@ describe('role workspaces', () => {
   it('publishes selected Laboratory Service candidates from the administrator workspace', async () => {
     let published = false
     let publishBody: unknown
+    const candidateQueries: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(administratorSession)
@@ -946,34 +947,58 @@ describe('role workspaces', () => {
         })
       }
       if (url.pathname === '/api/his/v1/admin/laboratory-services/candidates') {
+        candidateQueries.push(url.search)
         return Response.json({
           items: [{
+            adultApplicability: {
+              minimumAgeYears: 18,
+              patientSexes: ['female', 'male'],
+            },
             concept: {
-              code: '58410-2',
-              display: '血常规组合',
+              code: 'CN-LAB-CBC',
+              display: '合成血常规',
               domain: 'laboratory',
-              id: 'loinc:synthetic:58410-2',
-              sourceLocator: 'synthetic:loinc:58410-2',
+              id: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+              sourceLocator: 'synthetic:laboratory-cn:panel:CN-LAB-CBC',
               status: 'active',
-              system: 'http://loinc.org',
-              version: '2.83',
+              system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn',
+              version: '2026-09-01',
             },
             definition: {
-              classCode: 'PANEL.HEM',
-              classType: 1,
-              component: 'Complete blood count panel',
-              conceptId: 'loinc:synthetic:58410-2',
-              methodType: null,
-              orderObservation: 'Order',
-              panelType: 'Panel',
-              property: '-',
-              scaleType: '-',
-              sourceLocator: 'synthetic:definition:58410-2',
-              system: 'Blood',
-              timeAspect: 'Pt',
+              conceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+              datasetReleaseId: 'laboratory-cn@2026-09-01.r1',
+              kind: 'laboratory-cn-panel',
+              notes: '合成多叶子 panel',
+              sourceLocation: 'fixture/panel/1',
+              sourceLocator: 'synthetic:laboratory-cn:panel:CN-LAB-CBC',
+              sourceType: 'project-authored',
+              sourceVersion: '2026-09-01',
+              specimen: '全血',
             },
             error: null,
+            memberCount: 2,
             publishedServiceId: published ? 'hospital-laboratory-service-cbc' : null,
+            referenceSources: [{
+              sourceLocation: '表 1',
+              sourceStandard: 'WS/T 405-2012',
+              sourceType: 'national-standard',
+              sourceVersion: '2012',
+            }, {
+              sourceLocation: '表 2',
+              sourceStandard: 'WS/T 405-2012',
+              sourceType: 'national-standard',
+              sourceVersion: '2012',
+            }],
+            sourceDataset: {
+              datasetId: 'laboratory-cn',
+              releaseId: 'laboratory-cn@2026-09-01.r1',
+            },
+            specimen: '全血',
+            standardStatus: {
+              effectiveOn: '2026-11-01',
+              mode: 'future-standard-preview',
+              standard: 'WS/T 886-2026',
+            },
             status: published ? 'published' : 'unconfigured',
             version: published ? 1 : 0,
           }],
@@ -987,7 +1012,7 @@ describe('role workspaces', () => {
         publishBody = JSON.parse(String(init?.body))
         published = true
         return Response.json(commandResponse({
-          conceptIds: ['loinc:synthetic:58410-2'],
+          conceptIds: ['laboratory-panel-cn:2026-09-01:CN-LAB-CBC'],
           createdAt: '2026-09-01T07:00:00.000Z',
           error: null,
           finishedAt: null,
@@ -1002,7 +1027,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/admin/laboratory-services/jobs/laboratory-service-publication-1') {
         return Response.json({
-          conceptIds: ['loinc:synthetic:58410-2'],
+          conceptIds: ['laboratory-panel-cn:2026-09-01:CN-LAB-CBC'],
           createdAt: '2026-09-01T07:00:00.000Z',
           error: null,
           finishedAt: '2026-09-01T07:00:01.000Z',
@@ -1021,12 +1046,25 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     expect(await screen.findByRole('heading', { name: '检验服务配置' })).toBeTruthy()
-    await user.click(await screen.findByRole('checkbox', { name: '选择 血常规组合 58410-2' }))
+    expect(await screen.findByText('laboratory-cn@2026-09-01.r1')).toBeTruthy()
+    expect(screen.getByText('2 项')).toBeTruthy()
+    expect(screen.getByText('全血')).toBeTruthy()
+    expect(screen.getByText('成人：女性、男性')).toBeTruthy()
+    expect(screen.getAllByText('国家标准 · WS/T 405-2012 · 2012')).toHaveLength(1)
+    expect(screen.getByText('WS/T 886-2026 · 2026-11-01 前预览')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'laboratory-cn' }))
+    await user.click(screen.getByRole('checkbox', { name: '仅组合' }))
+    await waitFor(() => expect(candidateQueries.at(-1)).toContain('sourceDataset=laboratory-cn'))
+    expect(candidateQueries.at(-1)).toContain('panelOnly=true')
+    await user.click(await screen.findByRole('checkbox', { name: '选择 合成血常规 CN-LAB-CBC' }))
     await user.click(screen.getByRole('button', { name: '发布所选检验服务' }))
 
     expect(publishBody).toEqual({
       input: {
-        entries: [{ conceptId: 'loinc:synthetic:58410-2', expectedVersion: 0 }],
+        entries: [{
+          conceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+          expectedVersion: 0,
+        }],
       },
     })
     expect(await screen.findByText('已发布')).toBeTruthy()

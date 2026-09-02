@@ -162,6 +162,24 @@ function patientBundle(qualified: boolean, followUp = true) {
           value: 96,
         },
       },
+    }, {
+      fullUrl: 'urn:uuid:index-qualitative-observation',
+      resource: {
+        code: {
+          coding: [{
+            code: '9900002A',
+            display: '合成定性检验',
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026',
+          }],
+        },
+        effectiveDateTime: '2026-06-01T10:12:00+08:00',
+        encounter: { reference: 'urn:uuid:index-encounter' },
+        id: 'index-qualitative-observation',
+        resourceType: 'Observation',
+        status: 'final',
+        subject: { reference: 'urn:uuid:patient' },
+        valueString: '阳性',
+      },
     })
   }
   return { entry: entries, resourceType: 'Bundle', type: 'collection' }
@@ -1051,7 +1069,16 @@ describe('Synthetic Case generation HTTP contract', () => {
     expect(agentDiagnosticReportResponse.status).toBe(200)
     expect(fhirResourceSchema.parse(await agentDiagnosticReportResponse.json())).toMatchObject({
       code: {
-        coding: [{ code: '1988-5', display: 'C 反应蛋白', system: 'http://loinc.org', version: '2.83' }],
+        coding: [{
+          code: '1988-5',
+          display: 'C 反应蛋白',
+          system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-service',
+        }, {
+          code: '1988-5',
+          display: 'C 反应蛋白',
+          system: 'http://loinc.org',
+          version: '2.83',
+        }],
       },
       resourceType: 'DiagnosticReport',
     })
@@ -1070,6 +1097,421 @@ describe('Synthetic Case generation HTTP contract', () => {
     )).resolves.toMatchObject({ source: 'investigation-agent' })
     expect(briefProvider.requests).toHaveLength(7)
 
+    const adultPanelService = laboratoryServiceSnapshotSchema.parse({
+      allowedIndicationCodes: ['clinical-evaluation'],
+      componentServiceIds: [
+        'hospital-laboratory-service-adult-wbc',
+        'hospital-laboratory-service-adult-rbc',
+        'hospital-laboratory-service-adult-exact-fixed',
+        'hospital-laboratory-service-adult-baseline-fixed',
+      ],
+      doctorOrderable: true,
+      executingDepartmentId: 'department-laboratory',
+      id: 'hospital-laboratory-service-adult-cbc',
+      localCode: 'CM-LAB-CN-LAB-CBC',
+      nameZh: '合成成人血常规',
+      priceFen: 0,
+      publicationPolicyVersion: 'clinmesh-laboratory-defaults-v1',
+      referenceConcept: {
+        code: 'CN-LAB-CBC',
+        display: '合成成人血常规',
+        id: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+        sourceLocator: 'synthetic:laboratory-cn:panel:CN-LAB-CBC',
+        system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn',
+        version: '2026-09-01',
+      },
+      referenceReleaseId: 'clinmesh-cn-health-2026-09-02.r1',
+      reportDefinition: {
+        conclusionTemplate: '本报告为 ClinMesh 合成检验结果，仅用于仿真。',
+        results: [{
+          adultReferenceRules: [{
+            high: 9.5,
+            low: 3.5,
+            notes: '成人静脉血',
+            referenceKind: 'range',
+            sex: 'all',
+            simulationHigh: 9.5,
+            simulationLow: 3.5,
+            sourceLocation: '表 1',
+            sourceStandard: 'WS/T 405-2012',
+            sourceType: 'national-standard',
+            sourceVersion: '2012',
+          }],
+          alternateCodings: [{ code: '6690-2', system: 'http://loinc.org', version: '2.83' }],
+          healthyStrategy: 'uniform',
+          precision: 1,
+          referenceConcept: {
+            code: '0100101A',
+            display: '白细胞计数',
+            id: 'wst-886:2026:0100101A',
+            sourceLocator: 'synthetic:laboratory-cn:test:0100101A',
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026',
+            version: '2026',
+          },
+          referenceRange: { text: '按成人适用规则' },
+          unit: {
+            code: '10*9/L',
+            display: '×10^9/L',
+            system: 'http://unitsofmeasure.org',
+          },
+          valueType: 'quantity',
+        }, {
+          adultReferenceRules: [{
+            high: 5.8,
+            low: 4.3,
+            notes: '成年男性静脉血',
+            referenceKind: 'range',
+            sex: 'male',
+            simulationHigh: 5.8,
+            simulationLow: 4.3,
+            sourceLocation: '表 1',
+            sourceStandard: 'WS/T 405-2012',
+            sourceType: 'national-standard',
+            sourceVersion: '2012',
+          }, {
+            high: 5.1,
+            low: 3.8,
+            notes: '成年女性静脉血',
+            referenceKind: 'range',
+            sex: 'female',
+            simulationHigh: 5.1,
+            simulationLow: 3.8,
+            sourceLocation: '表 1',
+            sourceStandard: 'WS/T 405-2012',
+            sourceType: 'national-standard',
+            sourceVersion: '2012',
+          }],
+          alternateCodings: [{ code: '789-8', system: 'http://loinc.org', version: '2.83' }],
+          healthyStrategy: 'uniform',
+          precision: 1,
+          referenceConcept: {
+            code: '0100201A',
+            display: '红细胞计数',
+            id: 'wst-886:2026:0100201A',
+            sourceLocator: 'synthetic:laboratory-cn:test:0100201A',
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026',
+            version: '2026',
+          },
+          referenceRange: { text: '按成人适用规则' },
+          unit: {
+            code: '10*12/L',
+            display: '×10^12/L',
+            system: 'http://unitsofmeasure.org',
+          },
+          valueType: 'quantity',
+        }, {
+          adultReferenceRules: [{
+            normalValue: '阴性',
+            notes: '成人固定正常值',
+            referenceKind: 'coded',
+            sex: 'all',
+            sourceLocation: 'fixture/fixed/1',
+            sourceStandard: 'CN Health Data adult healthy baseline',
+            sourceType: 'project-curated',
+            sourceVersion: '2026-09-01',
+          }],
+          alternateCodings: [],
+          healthyStrategy: 'fixed-normal',
+          precision: 0,
+          referenceConcept: {
+            code: '9900002A',
+            display: '合成定性检验',
+            id: 'wst-886:2026:9900002A',
+            sourceLocator: 'synthetic:laboratory-cn:test:9900002A',
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026',
+            version: '2026',
+          },
+          referenceRange: { text: '按成人适用规则' },
+          valueType: 'string',
+        }, {
+          adultReferenceRules: [{
+            normalValue: '正常',
+            notes: '成人固定正常值',
+            referenceKind: 'ordinal',
+            sex: 'all',
+            sourceLocation: 'fixture/fixed/2',
+            sourceStandard: 'CN Health Data adult healthy baseline',
+            sourceType: 'project-curated',
+            sourceVersion: '2026-09-01',
+          }],
+          alternateCodings: [],
+          healthyStrategy: 'fixed-normal',
+          precision: 0,
+          referenceConcept: {
+            code: '9900003A',
+            display: '合成序数检验',
+            id: 'wst-886:2026:9900003A',
+            sourceLocator: 'synthetic:laboratory-cn:test:9900003A',
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026',
+            version: '2026',
+          },
+          referenceRange: { text: '按成人适用规则' },
+          valueType: 'string',
+        }],
+      },
+      serviceKind: 'laboratory',
+      sourceDataset: {
+        datasetId: 'laboratory-cn',
+        releaseId: 'laboratory-cn@2026-09-01.r1',
+      },
+      specimen: {
+        code: 'CN-SP-WHOLE-BLOOD',
+        display: '全血',
+        system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-specimen-cn',
+        version: '1',
+      },
+      tatMinutes: 180,
+      version: 1,
+    })
+    runtime.database.driver.prepare(`
+      INSERT INTO hospital_service_catalog (
+        workspace_id, epoch, service_id, code, name_zh, name_en,
+        version, active, config_json
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?)
+    `).run(
+      'workspace-demo',
+      'epoch-1',
+      adultPanelService.id,
+      adultPanelService.localCode,
+      adultPanelService.nameZh,
+      adultPanelService.nameZh,
+      JSON.stringify({ laboratoryService: adultPanelService }),
+    )
+    const maleOnlyService = laboratoryServiceSnapshotSchema.parse({
+      ...adultPanelService,
+      id: 'hospital-laboratory-service-adult-male-only',
+      localCode: 'CM-LAB-ADULT-MALE-ONLY',
+      nameZh: '合成仅男性成人检验',
+      reportDefinition: {
+        ...adultPanelService.reportDefinition,
+        results: adultPanelService.reportDefinition.results.map(result => ({
+          ...result,
+          adultReferenceRules: [{
+            ...(result.adultReferenceRules?.find(rule => rule.sex === 'male')
+              ?? result.adultReferenceRules![0]!),
+            sex: 'male' as const,
+          }],
+        })),
+      },
+    })
+    runtime.database.driver.prepare(`
+      INSERT INTO hospital_service_catalog (
+        workspace_id, epoch, service_id, code, name_zh, name_en,
+        version, active, config_json
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?)
+    `).run(
+      'workspace-demo',
+      'epoch-1',
+      maleOnlyService.id,
+      maleOnlyService.localCode,
+      maleOnlyService.nameZh,
+      maleOnlyService.nameZh,
+      JSON.stringify({ laboratoryService: maleOnlyService }),
+    )
+    const serviceRequestCountBeforeRejection = runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM fhir_resource
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND resource_type = 'ServiceRequest'
+    `).get()
+    const inapplicableDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [encounterReference]: '3' },
+          input: {
+            catalogItemId: maleOnlyService.id,
+            expectedDraftVersion: duplicateDraft.draftVersion,
+            indicationCode: 'clinical-evaluation',
+          },
+        }),
+        headers: commandHeaders(),
+        method: 'PUT',
+      },
+    )
+    expect(inapplicableDraftResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await inapplicableDraftResponse.json())).toMatchObject({
+      error: { code: 'LABORATORY_ADULT_REFERENCE_NOT_APPLICABLE' },
+    })
+    expect(runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM fhir_resource
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND resource_type = 'ServiceRequest'
+    `).get()).toEqual(serviceRequestCountBeforeRejection)
+    const adultDraft = await saveLaboratoryDraft(
+      adultPanelService.id,
+      duplicateDraft.draftVersion,
+    )
+    const adultIssue = await issueLaboratory(adultDraft.draftVersion)
+    const adultSnapshot = await runtime.investigation.resolveForRequest(
+      'workspace-demo',
+      'epoch-1',
+      adultIssue.request.id,
+    )
+    expect(adultSnapshot).toMatchObject({
+      content: {
+        results: [{
+          code: '0100101A',
+          referenceRange: { high: 9.5, low: 3.5 },
+          source: 'adult-reference-baseline',
+        }, {
+          code: '0100201A',
+          referenceRange: { high: 5.1, low: 3.8 },
+          source: 'adult-reference-baseline',
+        }, {
+          code: '9900002A',
+          referenceRange: { text: '阴性' },
+          source: 'case-truth-exact',
+          value: '阳性',
+        }, {
+          code: '9900003A',
+          referenceRange: { text: '正常' },
+          source: 'adult-reference-baseline',
+          value: '正常',
+        }],
+      },
+      provenance: {
+        datasetReleaseId: 'laboratory-cn@2026-09-01.r1',
+        generationPolicyVersion: 'clinmesh-adult-reference-v1',
+        referenceReleaseId: 'clinmesh-cn-health-2026-09-02.r1',
+        rules: [
+          expect.objectContaining({ conceptId: 'wst-886:2026:0100101A', sex: 'all' }),
+          expect.objectContaining({
+            conceptId: 'wst-886:2026:0100201A',
+            high: 5.1,
+            low: 3.8,
+            referenceKind: 'range',
+            sex: 'female',
+            simulationHigh: 5.1,
+            simulationLow: 3.8,
+          }),
+          expect.objectContaining({
+            conceptId: 'wst-886:2026:9900002A',
+            normalValue: '阴性',
+            referenceKind: 'coded',
+            sex: 'all',
+          }),
+          expect.objectContaining({
+            conceptId: 'wst-886:2026:9900003A',
+            normalValue: '正常',
+            referenceKind: 'ordinal',
+            sex: 'all',
+          }),
+        ],
+      },
+      source: 'mixed',
+    })
+    await runtime.dispatchPending()
+    const adultDetailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(adultDetailResponse.status, await adultDetailResponse.clone().text()).toBe(200)
+    detail = doctorCaseDetailSchema.parse(await adultDetailResponse.json())
+    const adultReported = detail.laboratoryRequests?.requests.find(item => (
+      item.id === adultIssue.request.id
+    ))
+    expect(adultReported).toMatchObject({
+      report: {
+        results: [
+          { code: '0100101A' },
+          { code: '0100201A' },
+          { code: '9900002A', interpretation: 'abnormal', value: '阳性' },
+          { code: '9900003A', interpretation: 'normal', value: '正常' },
+        ],
+      },
+      status: 'reported',
+    })
+    expect(adultReported!.report!.results[0]!.value).toBeGreaterThanOrEqual(3.5)
+    expect(adultReported!.report!.results[0]!.value).toBeLessThanOrEqual(9.5)
+    expect(adultReported!.report!.results[1]!.value).toBeGreaterThanOrEqual(3.8)
+    expect(adultReported!.report!.results[1]!.value).toBeLessThanOrEqual(5.1)
+    const adultServiceRequest = fhirResourceSchema.parse(await (await runtime.app.request(
+      `/fhir/R5/ServiceRequest/${adultIssue.request.serviceRequestId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    expect(adultServiceRequest).toMatchObject({
+      code: { concept: { coding: [
+        { code: adultPanelService.localCode },
+        {
+          code: 'CN-LAB-CBC',
+          system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn',
+        },
+      ] } },
+    })
+    const adultObservations = await Promise.all(adultReported!.report!.results.map(async result => (
+      fhirResourceSchema.parse(await (await runtime.app.request(
+        `/fhir/R5/Observation/${result.observationId}`,
+        { headers: { cookie: doctorCookie } },
+      )).json())
+    )))
+    expect(adultObservations[0]).toMatchObject({
+      code: { coding: [
+        {
+          code: '0100101A',
+          system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026',
+        },
+        { code: '6690-2', system: 'http://loinc.org', version: '2.83' },
+      ] },
+    })
+    expect(adultObservations[1]).toMatchObject({
+      code: { coding: [
+        { code: '0100201A' },
+        { code: '789-8', system: 'http://loinc.org', version: '2.83' },
+      ] },
+      referenceRange: [{ high: { value: 5.1 }, low: { value: 3.8 } }],
+    })
+    expect(adultObservations[2]).toMatchObject({
+      code: { coding: [{ code: '9900002A' }] },
+      referenceRange: [{ text: '阴性' }],
+      valueString: '阳性',
+      interpretation: [{ coding: [{ code: 'A' }] }],
+    })
+    expect(adultObservations[3]).toMatchObject({
+      code: { coding: [{ code: '9900003A' }] },
+      referenceRange: [{ text: '正常' }],
+      valueString: '正常',
+      interpretation: [{ coding: [{ code: 'N' }] }],
+    })
+    expect(fhirResourceSchema.parse(await (await runtime.app.request(
+      `/fhir/R5/Specimen/${adultReported!.report!.specimenId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())).toMatchObject({
+      type: { coding: [{
+        code: 'CN-SP-WHOLE-BLOOD',
+        system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-specimen-cn',
+        version: '1',
+      }] },
+    })
+    expect(fhirResourceSchema.parse(await (await runtime.app.request(
+      `/fhir/R5/DiagnosticReport/${adultReported!.report!.diagnosticReportId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())).toMatchObject({
+      code: { coding: [
+        { code: adultPanelService.localCode },
+        {
+          code: 'CN-LAB-CBC',
+          system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn',
+        },
+      ] },
+      result: adultReported!.report!.results.map(result => ({
+        reference: `Observation/${result.observationId}`,
+      })),
+    })
+    const adultProvenance = fhirResourceSchema.parse(await (await runtime.app.request(
+      `/fhir/R5/Provenance/prov-${adultIssue.request.serviceRequestId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    expect((adultProvenance.entity as Array<{
+      what?: { identifier?: { value?: string } }
+    }>).map(entity => entity.what?.identifier?.value)).toEqual(expect.arrayContaining([
+      adultSnapshot!.snapshotId,
+      'clinmesh-cn-health-2026-09-02.r1',
+      'laboratory-cn@2026-09-01.r1',
+      'clinmesh-adult-reference-v1',
+      adultSnapshot!.inputHash,
+    ]))
+    expect(briefProvider.requests).toHaveLength(7)
+
     const unsupportedDraftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/draft`,
       {
@@ -1077,7 +1519,7 @@ describe('Synthetic Case generation HTTP contract', () => {
           expectedVersions: { [encounterReference]: '3' },
           input: {
             catalogItemId: 'lab-fever-panel',
-            expectedDraftVersion: duplicateDraft.draftVersion,
+            expectedDraftVersion: adultIssue.draftVersion,
             indicationCode: 'clinical-evaluation',
           },
         }),
@@ -1154,7 +1596,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       panelService.nameEn,
       JSON.stringify({ laboratoryService: panelService }),
     )
-    const panelDraft = await saveLaboratoryDraft(panelService.id, duplicateDraft.draftVersion)
+    const panelDraft = await saveLaboratoryDraft(panelService.id, adultIssue.draftVersion)
     const panelRequest = (await issueLaboratory(panelDraft.draftVersion)).request
     await runtime.dispatchPending()
     detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
@@ -1191,10 +1633,10 @@ describe('Synthetic Case generation HTTP contract', () => {
       'workspace-demo',
       'epoch-1',
       panelRequest.id,
-    )).resolves.toMatchObject({ source: 'investigation-agent' })
+    )).resolves.toMatchObject({ source: 'mixed' })
     expect(briefProvider.requests).toHaveLength(10)
 
-    const repeatPanelDraft = await saveLaboratoryDraft(panelService.id, 7)
+    const repeatPanelDraft = await saveLaboratoryDraft(panelService.id, 9)
     const repeatPanelRequest = (await issueLaboratory(repeatPanelDraft.draftVersion)).request
     await runtime.dispatchPending()
     detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
@@ -1269,7 +1711,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       exactPanelService.nameEn,
       JSON.stringify({ laboratoryService: exactPanelService }),
     )
-    const exactPanelDraft = await saveLaboratoryDraft(exactPanelService.id, 9)
+    const exactPanelDraft = await saveLaboratoryDraft(exactPanelService.id, 11)
     const exactPanelRequest = (await issueLaboratory(exactPanelDraft.draftVersion)).request
     await runtime.dispatchPending()
     detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
@@ -1354,7 +1796,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       codeableService.nameEn,
       JSON.stringify({ laboratoryService: codeableService }),
     )
-    const codeableDraft = await saveLaboratoryDraft(codeableService.id, 11)
+    const codeableDraft = await saveLaboratoryDraft(codeableService.id, 13)
     const codeableRequest = (await issueLaboratory(codeableDraft.draftVersion)).request
     await runtime.dispatchPending()
     detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
@@ -1527,7 +1969,64 @@ describe('Synthetic Case generation HTTP contract', () => {
       contraindicatedAllergyCodes: [],
       referenceConcept: agentConcept,
     }))
+    runtime.database.driver.prepare(`
+      UPDATE outpatient_catalog SET config_json = ?
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-2'
+        AND kind = 'laboratory' AND item_id = 'lab-cbc'
+    `).run(JSON.stringify({
+      allowedIndicationCodes: ['clinical-evaluation'],
+      contraindicatedAllergyCodes: [],
+      referenceConcept: exactConcept,
+    }))
     const replayEncounterReference = `Encounter/${replayed.encounter_id}`
+    const replayExactDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${replayed.encounter_id}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [replayEncounterReference]: '3' },
+          input: {
+            catalogItemId: 'lab-cbc',
+            expectedDraftVersion: 0,
+            indicationCode: 'clinical-evaluation',
+          },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: doctorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'PUT',
+      },
+    )
+    expect(
+      replayExactDraftResponse.status,
+      await replayExactDraftResponse.clone().text(),
+    ).toBe(200)
+    const replayExactDraft = laboratoryRequestDraftResponseSchema.parse(
+      await replayExactDraftResponse.json(),
+    ).data
+    const replayExactIssueResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${replayed.encounter_id}/laboratory-request/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [replayEncounterReference]: '3' },
+          input: { expectedDraftVersion: replayExactDraft.draftVersion },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: doctorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(replayExactIssueResponse.status).toBe(200)
+    const replayExactIssue = issueLaboratoryRequestResponseSchema.parse(
+      await replayExactIssueResponse.json(),
+    ).data
+    await runtime.dispatchPending()
     const replayDraftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${replayed.encounter_id}/laboratory-request/draft`,
       {
@@ -1535,7 +2034,7 @@ describe('Synthetic Case generation HTTP contract', () => {
           expectedVersions: { [replayEncounterReference]: '3' },
           input: {
             catalogItemId: 'lab-crp',
-            expectedDraftVersion: 0,
+            expectedDraftVersion: replayExactIssue.draftVersion,
             indicationCode: 'clinical-evaluation',
           },
         }),
@@ -1569,9 +2068,10 @@ describe('Synthetic Case generation HTTP contract', () => {
       },
     )
     expect(replayIssueResponse.status).toBe(200)
-    const replayRequest = issueLaboratoryRequestResponseSchema.parse(
+    const replayIssue = issueLaboratoryRequestResponseSchema.parse(
       await replayIssueResponse.json(),
-    ).data.request
+    ).data
+    const replayRequest = replayIssue.request
     await runtime.dispatchPending()
     const replayDetail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
       `/api/his/v1/doctor/cases/${replayed.outpatient_case_id}`,
@@ -1583,6 +2083,70 @@ describe('Synthetic Case generation HTTP contract', () => {
       report: { results: [{ code: '1988-5', interpretation: 'high', value: 24 }] },
       status: 'reported',
     })
+    expect(briefProvider.requests).toHaveLength(12)
+
+    const replayAdultDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${replayed.encounter_id}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [replayEncounterReference]: '3' },
+          input: {
+            catalogItemId: adultPanelService.id,
+            expectedDraftVersion: replayIssue.draftVersion,
+            indicationCode: 'clinical-evaluation',
+          },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: doctorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'PUT',
+      },
+    )
+    expect(replayAdultDraftResponse.status).toBe(200)
+    const replayAdultDraft = laboratoryRequestDraftResponseSchema.parse(
+      await replayAdultDraftResponse.json(),
+    ).data
+    const replayAdultIssueResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${replayed.encounter_id}/laboratory-request/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [replayEncounterReference]: '3' },
+          input: { expectedDraftVersion: replayAdultDraft.draftVersion },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: doctorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(replayAdultIssueResponse.status).toBe(200)
+    const replayAdultRequest = issueLaboratoryRequestResponseSchema.parse(
+      await replayAdultIssueResponse.json(),
+    ).data.request
+    await expect(runtime.investigation.resolveForRequest(
+      'workspace-demo',
+      'epoch-2',
+      replayAdultRequest.id,
+    )).resolves.toMatchObject({
+      inputHash: adultSnapshot!.inputHash,
+      outputHash: adultSnapshot!.outputHash,
+      snapshotId: adultSnapshot!.snapshotId,
+      source: 'mixed',
+    })
+    await runtime.dispatchPending()
+    const replayAdultDetail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${replayed.outpatient_case_id}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    expect(replayAdultDetail.laboratoryRequests?.requests.find(item => (
+      item.id === replayAdultRequest.id
+    ))).toMatchObject({ status: 'reported' })
     expect(briefProvider.requests).toHaveLength(12)
 
     const publicArtifacts = JSON.stringify({ beforeSelection, firstJob, leakingJob, secondJob })

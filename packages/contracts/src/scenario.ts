@@ -1,5 +1,8 @@
 import { z } from 'zod'
-import { referenceConceptSnapshotSchema } from './reference-data.ts'
+import {
+  referenceConceptSnapshotSchema,
+  referenceLaboratoryAdultRuleSchema,
+} from './reference-data.ts'
 
 const localDateSchema = z.iso.date()
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
@@ -849,12 +852,17 @@ export const investigationResultContentSchema = z.object({
   results: z.array(z.object({
     code: z.string().min(1).max(256),
     display: z.string().min(1).max(1_000),
-    interpretation: z.enum(['normal', 'high', 'low']),
+    interpretation: z.enum(['normal', 'abnormal', 'high', 'low']),
     referenceRange: z.object({
       high: z.number().finite().optional(),
       low: z.number().finite().optional(),
       text: z.string().min(1).max(500),
     }).strict(),
+    source: z.enum([
+      'adult-reference-baseline',
+      'case-truth-exact',
+      'investigation-agent',
+    ]).optional(),
     unit: z.object({
       code: z.string().min(1).max(128),
       display: z.string().min(1).max(128),
@@ -913,9 +921,22 @@ export const investigationResultSnapshotSchema = z.object({
   outputHash: z.string().regex(/^[a-f0-9]{64}$/),
   promptHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   promptVersion: z.string().min(1).max(128).nullable(),
+  provenance: z.object({
+    datasetReleaseId: z.string().min(1).max(256),
+    generationPolicyVersion: z.string().min(1).max(128),
+    referenceReleaseId: z.string().min(1).max(256),
+    rules: z.array(referenceLaboratoryAdultRuleSchema.extend({
+      conceptId: z.string().min(1).max(256),
+    })).min(1).max(128),
+  }).strict().optional(),
   requestedConcept: referenceConceptSnapshotSchema,
   snapshotId: z.string().min(1).max(128),
-  source: z.enum(['synthea-exact', 'investigation-agent']),
+  source: z.enum([
+    'adult-reference-baseline',
+    'investigation-agent',
+    'mixed',
+    'synthea-exact',
+  ]),
   workspaceId: z.string().min(1),
 }).strict()
 
