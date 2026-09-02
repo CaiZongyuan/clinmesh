@@ -1,15 +1,15 @@
-import { execFile } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
-import { promisify } from 'node:util'
+import { createInterface } from 'node:readline'
 import { z } from 'zod'
 import { runReferenceDatabaseCli } from './reference-database-cli.ts'
 
-const executeFile = promisify(execFile)
+const maxCliOutputBytes = 2 * 1024 * 1024
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
 const defaultRepositoryRoot = resolve(import.meta.dirname, '../../..')
 const cnHealthLauncherPath = (repositoryRoot: string): string =>
@@ -142,6 +142,50 @@ async function hashFile(path: string): Promise<{ sha256: string; sizeBytes: numb
   return { sha256: hash.digest('hex'), sizeBytes: (await stat(path)).size }
 }
 
+/**
+ * Runs the cn-health CLI, returning its stdout and forwarding each stderr
+ * line to `onProgress`; the CLI reports download and verification progress
+ * on stderr while keeping stdout JSON-only.
+ */
+function executeCli(input: {
+  args: readonly string[]
+  file: string
+  onProgress?: ((line: string) => void) | undefined
+}): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(input.file, input.args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    const stdout: Buffer[] = []
+    let stdoutBytes = 0
+    let settled = false
+    const finish = (run: () => void) => {
+      if (settled) return
+      settled = true
+      run()
+    }
+    createInterface({ input: child.stderr })
+      .on('line', line => input.onProgress?.(line))
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdoutBytes += chunk.length
+      if (stdoutBytes <= maxCliOutputBytes) {
+        stdout.push(chunk)
+        return
+      }
+      child.kill()
+      finish(() => reject(new Error('cn-health CLI stdout exceeded the size limit')))
+    })
+    child.on('error', error => finish(() => reject(error)))
+    child.on('close', (code, signal) => finish(() => {
+      const output = Buffer.concat(stdout).toString('utf8')
+      if (code === 0) {
+        resolve(output)
+        return
+      }
+      const detail = output.trim().slice(0, 500)
+      reject(new Error(`cn-health CLI exited with ${signal ?? code}${detail === '' ? '' : `: ${detail}`}`))
+    }))
+  })
+}
+
 function assertReceipt(input: {
   dataset: z.infer<typeof referenceLockSchema>['datasets'][number]
   lock: z.infer<typeof referenceLockSchema>
@@ -203,15 +247,19 @@ export async function runReferenceSync(options: ReferenceSyncOptions) {
       const datasetStart = performance.now()
       report(`[${datasetIndex + 1}/${lock.datasets.length}] materialize ${dataset.releaseId}`)
       const outputDirectory = join(staging, dataset.datasetId)
-      const { stdout } = await executeFile(invocation.file, [
-        ...invocation.prefix,
-        '--data-dir', runtimeDataDirectory,
-        'dataset', 'materialize', dataset.datasetId, dataset.releaseId,
-        '--registry', lock.registry.url,
-        '--public-key', publicKeyPath,
-        '--output', outputDirectory,
-        '--json',
-      ], { maxBuffer: 2 * 1024 * 1024 })
+      const stdout = await executeCli({
+        args: [
+          ...invocation.prefix,
+          '--data-dir', runtimeDataDirectory,
+          'dataset', 'materialize', dataset.datasetId, dataset.releaseId,
+          '--registry', lock.registry.url,
+          '--public-key', publicKeyPath,
+          '--output', outputDirectory,
+          '--json',
+        ],
+        file: invocation.file,
+        onProgress: options.onProgress,
+      })
       const receipt = materializationReceiptSchema.parse(JSON.parse(stdout))
       const persistedReceipt = materializationReceiptSchema.parse(JSON.parse(
         await readFile(join(outputDirectory, 'materialization.json'), 'utf8'),

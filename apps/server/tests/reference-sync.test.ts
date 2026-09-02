@@ -120,6 +120,7 @@ const plan = ${JSON.stringify(plans.map(plan => ({
 if (plan === undefined || plan.releaseId !== args[5]) process.exit(3)
 const output = value('--output')
 mkdirSync(output)
+process.stderr.write('[' + plan.datasetId + '@fixture.r1] download 1/1 B (100%)\\n')
 writeFileSync(${JSON.stringify(markers)} + '/started-' + plan.datasetId, '')
 if (plan.failExitCode !== 0) process.exit(plan.failExitCode)
 const candidate = ${JSON.stringify(candidates)}[plan.datasetId]
@@ -299,6 +300,7 @@ describe('reference sync', () => {
 
     expect(lines.some(line => line.includes('materialize') && line.includes('laboratory-cn@fixture.r1'))).toBe(true)
     expect(lines.some(line => line.includes('laboratory-cn@fixture.r1') && line.includes('完成'))).toBe(true)
+    expect(lines.some(line => line.includes('download 1/1 B (100%)'))).toBe(true)
     expect(lines.some(line => line.includes('migrate'))).toBe(true)
     expect(lines.some(line => line.includes('import'))).toBe(true)
     expect(lines.some(line => line.includes('verify'))).toBe(true)
