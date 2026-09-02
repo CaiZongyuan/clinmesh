@@ -1,7 +1,7 @@
 {
   "cli": {
     "package": "cn-health",
-    "version": "0.5.1"
+    "version": "0.5.2"
   },
   "compositeRelease": {
     "createdAt": "2026-09-02T00:00:00.000Z",
