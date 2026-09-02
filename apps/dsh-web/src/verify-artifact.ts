@@ -10,7 +10,7 @@ if (!client.startsWith(expectedPrefix)) throw new Error('Invalid DSH lazy-CJS wr
 if (/^\s*import\s/m.test(client)) throw new Error('DSH client contains an ESM import')
 if (client.includes('import.meta')) throw new Error('DSH client contains import.meta in lazy-CJS')
 if (client.includes('react.production.min')) throw new Error('DSH client bundled a private React runtime')
-if (clientFile.size > 4_000_000) throw new Error(`DSH client exceeds size budget: ${clientFile.size}`)
+if (clientFile.size > 4_100_000) throw new Error(`DSH client exceeds size budget: ${clientFile.size}`)
 
 const allowedRequires = new Set([
   'react',

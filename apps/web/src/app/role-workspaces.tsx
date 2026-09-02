@@ -22,6 +22,7 @@ import { DoctorWorkspace } from './doctor-workspace.tsx'
 import { BillingWorkspace } from './billing-workspace.tsx'
 import { PharmacyWorkspace } from './pharmacy-workspace.tsx'
 import { ScenarioDataWorkspace } from './scenario-data-workspace.tsx'
+import { LaboratoryServiceWorkspace } from './laboratory-service-workspace.tsx'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useAgentReview } from './agent-review.tsx'
 
@@ -198,6 +199,7 @@ function AdminWorkspace({ locale, session }: Omit<RoleWorkspaceProps, 'activeSec
           </Alert>
         ) : null}
       </section>
+      <LaboratoryServiceWorkspace locale={locale} session={session} />
     </div>
   )
 }

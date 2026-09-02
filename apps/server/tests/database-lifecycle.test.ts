@@ -171,7 +171,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 44,
+      schemaVersion: 48,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -211,16 +211,20 @@ describe('SQLite lifecycle', () => {
         '0033_patient-brief.sql',
         '0034_synthetic-case-materialization.sql',
         '0035_investigation-result-snapshot.sql',
+        '0036_laboratory-service-publication.sql',
         '0036_retire-scenario-dataset.sql',
+        '0037_laboratory-service-snapshot.sql',
         '0037_synthea-translation-warning.sql',
         '0038_diagnosis-confirmation-revision.sql',
+        '0038_investigation-evidence-snapshot.sql',
         '0039_agent-capability-grant.sql',
         '0040_synthetic-case-consultation.sql',
         '0041_workspace-actor.sql',
         '0042_command-receipt-role.sql',
         '0043_dsh-agent-integration.sql',
+        '0043_investigation-generation-provenance.sql',
       ],
-      schemaVersion: 44,
+      schemaVersion: 48,
     })
     expect(first.driver.prepare(`
       SELECT name FROM sqlite_schema
@@ -236,8 +240,8 @@ describe('SQLite lifecycle', () => {
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 44 })
-    expect(reopened.diagnostics().schemaVersion).toBe(44)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 48 })
+    expect(reopened.diagnostics().schemaVersion).toBe(48)
     reopened.close()
   })
 
@@ -248,15 +252,13 @@ describe('SQLite lifecycle', () => {
     const previousMigrationDirectory = join(directory, 'previous-migrations')
     await mkdir(previousMigrationDirectory)
     const migrationFiles = (await readdir(join(process.cwd(), 'drizzle')))
-      .filter(file => /^\d{4}_.+\.sql$/.test(file)
-        && file !== '0042_command-receipt-role.sql'
-        && file !== '0043_dsh-agent-integration.sql')
+      .filter(file => /^\d{4}_.+\.sql$/.test(file) && file < '0042_command-receipt-role.sql')
     await Promise.all(migrationFiles.map(file => copyFile(
       join(process.cwd(), 'drizzle', file),
       join(previousMigrationDirectory, file),
     )))
     const database = openClinMeshDatabase({ busyTimeoutMs: 5_000, databasePath })
-    expect(applyMigrations(database, previousMigrationDirectory).schemaVersion).toBe(42)
+    expect(applyMigrations(database, previousMigrationDirectory).schemaVersion).toBe(45)
     new WorkspaceRepository(database).install({
       epoch: 'epoch-command-receipt-role',
       scenarioId: 'scenario-command-receipt-role',
@@ -303,8 +305,12 @@ describe('SQLite lifecycle', () => {
     )
 
     expect(applyMigrations(database)).toEqual({
-      applied: ['0042_command-receipt-role.sql', '0043_dsh-agent-integration.sql'],
-      schemaVersion: 44,
+      applied: [
+        '0042_command-receipt-role.sql',
+        '0043_dsh-agent-integration.sql',
+        '0043_investigation-generation-provenance.sql',
+      ],
+      schemaVersion: 48,
     })
     expect(database.driver.prepare(`
       SELECT practitioner_role_id FROM command_receipt
@@ -1453,7 +1459,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(44)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(48)
     await runtime.close()
   })
 
@@ -1523,7 +1529,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 44,
+      schemaVersion: 48,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -1535,11 +1541,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 44,
+      expectedSchemaVersion: 48,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 44,
+      schemaVersion: 48,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -1723,7 +1729,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(44),
+      schemaVersion: z.literal(48),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -1759,34 +1765,38 @@ describe('SQLite lifecycle', () => {
       '0033_patient-brief.sql',
       '0034_synthetic-case-materialization.sql',
       '0035_investigation-result-snapshot.sql',
+      '0036_laboratory-service-publication.sql',
       '0036_retire-scenario-dataset.sql',
+      '0037_laboratory-service-snapshot.sql',
       '0037_synthea-translation-warning.sql',
       '0038_diagnosis-confirmation-revision.sql',
+      '0038_investigation-evidence-snapshot.sql',
       '0039_agent-capability-grant.sql',
       '0040_synthetic-case-consultation.sql',
       '0041_workspace-actor.sql',
       '0042_command-receipt-role.sql',
       '0043_dsh-agent-integration.sql',
+      '0043_investigation-generation-provenance.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 44 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 48 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 44 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 48 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 44 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 48 })
   })
 })

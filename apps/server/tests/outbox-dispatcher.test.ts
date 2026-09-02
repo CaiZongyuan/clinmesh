@@ -125,7 +125,7 @@ describe('persistent outbox dispatcher', () => {
     const dispatcher = new OutboxDispatcher(database, {
       handlers: {
         ambiguous: async () => ({ status: 'ambiguous' }),
-        retry: async () => ({ status: ++retryAttempts === 1 ? 'retryable-failed' : 'completed' }),
+        retry: async () => ({ status: ++retryAttempts < 3 ? 'retryable-failed' : 'completed' }),
       },
       leaseDurationMs: 30_000,
       leaseOwner: 'worker-a',
@@ -141,9 +141,13 @@ describe('persistent outbox dispatcher', () => {
     ]))
     expect(await dispatcher.dispatchOnce()).toBeUndefined()
     now = new Date('2026-08-24T01:00:01.000Z')
-    expect(await dispatcher.dispatchOnce()).toMatchObject({ attempt: 2, kind: 'retry', status: 'completed' })
+    expect(await dispatcher.dispatchOnce()).toMatchObject({ attempt: 2, kind: 'retry', status: 'failed' })
     expect(await dispatcher.dispatchOnce()).toBeUndefined()
-    expect(retryAttempts).toBe(2)
+    now = new Date('2026-08-24T01:00:02.999Z')
+    expect(await dispatcher.dispatchOnce()).toBeUndefined()
+    now = new Date('2026-08-24T01:00:03.000Z')
+    expect(await dispatcher.dispatchOnce()).toMatchObject({ attempt: 3, kind: 'retry', status: 'completed' })
+    expect(retryAttempts).toBe(3)
     database.close()
   })
 

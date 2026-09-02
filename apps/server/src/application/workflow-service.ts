@@ -57,6 +57,7 @@ import {
   laboratoryRequestDraftResponseSchema,
   laboratoryRequestSchema,
   laboratoryResultMeasurementSchema,
+  laboratoryServiceSnapshotSchema,
   type LaboratoryRequestCatalogItemId,
   type InvestigationGenerationCapability,
   paymentPreviewResponseSchema,
@@ -85,18 +86,22 @@ import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts
 import type { ActorContext, CommandEffect, CommandResponse, CommandTransaction } from './command-executor.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
 import {
+  AdultReferenceApplicabilityError,
+  assertAdultReferenceServiceApplicable,
+} from './laboratory-adult-reference.ts'
+import {
   CommandExecutor,
   ExpectedVersionConflictError,
   provenanceAgents,
 } from './command-executor.ts'
 
 export class WorkflowError extends Error {
-  readonly code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
+  readonly code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_ADULT_REFERENCE_NOT_APPLICABLE' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
   readonly conflict: ApiConflict | undefined
   readonly status: 403 | 409
 
   constructor(
-    code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT',
+    code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_ADULT_REFERENCE_NOT_APPLICABLE' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT',
     message: string,
     conflict?: ApiConflict,
   ) {
@@ -126,7 +131,11 @@ const serviceCatalogConfigSchema = scenarioHospitalServiceCatalogItemSchema.omit
   organizationId: true,
   priceFen: true,
   status: true,
-})
+}).passthrough()
+
+const laboratoryServiceConfigSchema = z.object({
+  laboratoryService: laboratoryServiceSnapshotSchema,
+}).passthrough()
 
 const diagnosisCatalogRowSchema = z.object({
   code: z.string().min(1),
@@ -448,6 +457,7 @@ const laboratoryRequestRowSchema = z.object({
   generation_error_message: z.string().min(1).nullable(),
   indication_code: z.string().min(1),
   reference_json: z.string().min(1),
+  service_snapshot_json: z.string().min(1).nullable(),
   result_snapshot_id: z.string().min(1).nullable(),
   request_id: z.string().min(1),
   service_request_id: z.string().min(1),
@@ -505,6 +515,7 @@ const laboratoryRequestStateRowSchema = z.object({
   draft_catalog_item_id: laboratoryRequestSchema.shape.catalogItemId.nullable(),
   draft_indication_code: z.string().min(1).nullable(),
   draft_reference_json: z.string().min(1).nullable(),
+  draft_service_snapshot_json: z.string().min(1).nullable(),
   version: z.number().int().positive(),
 }).strict().refine(
   row => (row.draft_catalog_item_id === null) === (row.draft_indication_code === null)
@@ -666,6 +677,13 @@ const observationResultContentSchema = z.object({
   }).loose()).optional(),
   referenceRange: z.array(z.object({ text: z.string().optional() }).loose()).optional(),
   valueBoolean: z.boolean().optional(),
+  valueCodeableConcept: z.object({
+    coding: z.array(z.object({
+      code: z.string().min(1),
+      display: z.string().min(1),
+      system: z.string().url(),
+    }).loose()).min(1),
+  }).loose().optional(),
   valueQuantity: z.object({
     unit: z.string().optional(),
     value: z.number().optional(),
@@ -687,11 +705,11 @@ const laboratoryObservationContentSchema = z.object({
   code: z.object({
     coding: z.array(z.object({
       code: z.string().min(1),
-      display: z.string().min(1),
+      display: z.string().min(1).optional(),
     }).loose()).min(1),
   }).loose(),
   interpretation: z.array(z.object({
-    coding: z.array(z.object({ code: z.enum(['N', 'H', 'L']) }).loose()).min(1),
+    coding: z.array(z.object({ code: z.enum(['N', 'A', 'H', 'L']) }).loose()).min(1),
   }).loose()).min(1),
   referenceRange: z.array(z.object({
     high: z.object({ value: z.number().finite() }).loose().optional(),
@@ -700,6 +718,13 @@ const laboratoryObservationContentSchema = z.object({
   }).loose()).min(1),
   specimen: z.object({ reference: z.string().min(1) }).loose(),
   valueBoolean: z.boolean().optional(),
+  valueCodeableConcept: z.object({
+    coding: z.array(z.object({
+      code: z.string().min(1),
+      display: z.string().min(1),
+      system: z.string().url(),
+    }).loose()).min(1),
+  }).loose().optional(),
   valueQuantity: z.object({
     code: z.string().min(1),
     system: z.literal('http://unitsofmeasure.org'),
@@ -709,6 +734,7 @@ const laboratoryObservationContentSchema = z.object({
   valueString: z.string().min(1).optional(),
 }).loose().refine(value => (
   Number(value.valueBoolean !== undefined)
+  + Number(value.valueCodeableConcept !== undefined)
   + Number(value.valueQuantity !== undefined)
   + Number(value.valueString !== undefined)
 ) === 1, { message: 'Laboratory Observation must contain exactly one supported value' })
@@ -1044,6 +1070,13 @@ const completedCaseObservationSchema = z.object({
   }).loose()).optional(),
   resourceType: z.literal('Observation'),
   valueBoolean: z.boolean().optional(),
+  valueCodeableConcept: z.object({
+    coding: z.array(z.object({
+      code: z.string().min(1),
+      display: z.string().min(1),
+      system: z.string().url(),
+    }).loose()).min(1),
+  }).loose().optional(),
   valueQuantity: z.object({
     code: z.string().min(1).optional(),
     system: z.string().url().optional(),
@@ -3072,25 +3105,45 @@ export class WorkflowService {
     input: { page: number; pageSize: number; query?: string },
   ) {
     this.doctorCaseDetail(context, caseId)
-    if (this.#referenceData === undefined || this.#investigation === undefined) {
-      throw new WorkflowError('CATALOG_CONFLICT', 'The case laboratory catalog is unavailable')
-    }
-    const investigation = this.#investigation
-    const result = this.#referenceData.searchLaboratory(context, input)
+    const query = input.query ?? null
+    const bindings = [context.workspaceId, context.epoch, query, query, query, query]
+    const total = z.object({ count: z.number().int().nonnegative() }).parse(
+      this.#database.driver.prepare(`
+        SELECT COUNT(*) AS count
+        FROM hospital_service_catalog
+        WHERE workspace_id = ? AND epoch = ? AND active = 1
+          AND json_extract(config_json, '$.laboratoryService.doctorOrderable') = 1
+          AND (
+            ? IS NULL
+            OR instr(lower(code), lower(?)) > 0
+            OR instr(lower(name_zh), lower(?)) > 0
+            OR instr(lower(name_en), lower(?)) > 0
+          )
+      `).get(...bindings),
+    ).count
+    const rows = z.array(z.object({ config_json: z.string() }).strict()).parse(
+      this.#database.driver.prepare(`
+        SELECT config_json
+        FROM hospital_service_catalog
+        WHERE workspace_id = ? AND epoch = ? AND active = 1
+          AND json_extract(config_json, '$.laboratoryService.doctorOrderable') = 1
+          AND (
+            ? IS NULL
+            OR instr(lower(code), lower(?)) > 0
+            OR instr(lower(name_zh), lower(?)) > 0
+            OR instr(lower(name_en), lower(?)) > 0
+          )
+        ORDER BY name_zh, code, service_id
+        LIMIT ? OFFSET ?
+      `).all(...bindings, input.pageSize, (input.page - 1) * input.pageSize),
+    )
     return caseLaboratoryCatalogSearchSchema.parse({
-      ...result,
-      items: result.items.map((item) => {
-        const { domain: _domain, status: _status, ...concept } = item
-        return {
-          ...item,
-          resultGeneration: investigation.generationCapabilityForCase(
-            context.workspaceId,
-            context.epoch,
-            caseId,
-            concept,
-          ),
-        }
-      }),
+      items: rows.map(row => laboratoryServiceConfigSchema.parse(
+        JSON.parse(row.config_json),
+      ).laboratoryService),
+      page: input.page,
+      pageSize: input.pageSize,
+      total,
     })
   }
 
@@ -3355,6 +3408,13 @@ export class WorkflowService {
                 draft: {
                   catalogItemId: laboratoryRequestState.draft_catalog_item_id,
                   indicationCode: laboratoryRequestState.draft_indication_code,
+                  ...(laboratoryRequestState.draft_service_snapshot_json === null
+                    ? {}
+                    : {
+                        laboratoryService: laboratoryServiceSnapshotSchema.parse(JSON.parse(
+                          laboratoryRequestState.draft_service_snapshot_json,
+                        )),
+                      }),
                   referenceConcept: referenceConceptSnapshotSchema.parse(
                     JSON.parse(laboratoryRequestState.draft_reference_json),
                   ),
@@ -6614,15 +6674,25 @@ export class WorkflowService {
       const selection = this.#resolvedLaboratorySelection(
         input.context,
         input.catalogItemId,
-        input.indicationCode,
       )
-      const { config: catalogConfig, referenceConcept } = selection
-      this.#assertInvestigationGenerationSupported(
-        input.context,
-        outpatientCase.case_id,
-        input.catalogItemId,
-        referenceConcept,
-      )
+      const { config: catalogConfig, laboratoryService, referenceConcept } = selection
+      const now = this.#virtualTime(input.context)
+      if (laboratoryService !== undefined) {
+        this.#assertAdultLaboratoryServiceApplicable(
+          input.context,
+          outpatientCase.patient_id,
+          laboratoryService,
+          now,
+        )
+      }
+      if (laboratoryService === undefined) {
+        this.#assertInvestigationGenerationSupported(
+          input.context,
+          outpatientCase.case_id,
+          input.catalogItemId,
+          referenceConcept,
+        )
+      }
       if (!catalogConfig.allowedIndicationCodes.includes(input.indicationCode)) {
         throw new WorkflowError('CATALOG_CONFLICT', 'The indication is not allowed for this laboratory request')
       }
@@ -6635,13 +6705,13 @@ export class WorkflowService {
         )
       }
       const nextVersion = currentVersion + 1
-      const now = this.#virtualTime(input.context)
       if (current === undefined) {
         this.#database.driver.prepare(`
           INSERT INTO laboratory_request_state (
             workspace_id, epoch, case_id, version, draft_catalog_item_id,
-            draft_indication_code, draft_reference_json, updated_by, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            draft_indication_code, draft_reference_json, draft_service_snapshot_json,
+            updated_by, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           input.context.workspaceId,
           input.context.epoch,
@@ -6650,6 +6720,7 @@ export class WorkflowService {
           input.catalogItemId,
           input.indicationCode,
           JSON.stringify(referenceConcept),
+          laboratoryService === undefined ? null : JSON.stringify(laboratoryService),
           input.context.actorId,
           now,
         )
@@ -6657,7 +6728,7 @@ export class WorkflowService {
         const update = this.#database.driver.prepare(`
           UPDATE laboratory_request_state
           SET version = ?, draft_catalog_item_id = ?, draft_indication_code = ?,
-            draft_reference_json = ?,
+            draft_reference_json = ?, draft_service_snapshot_json = ?,
             updated_by = ?, updated_at = ?
           WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
         `).run(
@@ -6665,6 +6736,7 @@ export class WorkflowService {
           input.catalogItemId,
           input.indicationCode,
           JSON.stringify(referenceConcept),
+          laboratoryService === undefined ? null : JSON.stringify(laboratoryService),
           input.context.actorId,
           now,
           input.context.workspaceId,
@@ -6771,7 +6843,7 @@ export class WorkflowService {
       const update = this.#database.driver.prepare(`
         UPDATE laboratory_request_state
         SET version = ?, draft_catalog_item_id = NULL, draft_indication_code = NULL,
-          draft_reference_json = NULL,
+          draft_reference_json = NULL, draft_service_snapshot_json = NULL,
           updated_by = ?, updated_at = ?
         WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
           AND draft_catalog_item_id IS NOT NULL
@@ -6839,7 +6911,8 @@ export class WorkflowService {
       const duplicate = this.#database.driver.prepare(`
         SELECT request_id FROM laboratory_request
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-          AND catalog_item_id = ? AND status IN ('issued', 'accepted', 'in-progress')
+          AND catalog_item_id = ?
+          AND status IN ('issued', 'accepted', 'in-progress', 'generation-failed')
       `).get(
         input.context.workspaceId,
         input.context.epoch,
@@ -6855,18 +6928,33 @@ export class WorkflowService {
       const referenceConcept = referenceConceptSnapshotSchema.parse(
         JSON.parse(state.draft_reference_json),
       )
-      this.#assertInvestigationGenerationSupported(
-        input.context,
-        outpatientCase.case_id,
-        state.draft_catalog_item_id,
-        referenceConcept,
-      )
+      const laboratoryService = state.draft_service_snapshot_json === null
+        ? undefined
+        : laboratoryServiceSnapshotSchema.parse(JSON.parse(state.draft_service_snapshot_json))
+      const now = this.#virtualTime(input.context)
+      if (laboratoryService !== undefined) {
+        this.#assertAdultLaboratoryServiceApplicable(
+          input.context,
+          outpatientCase.patient_id,
+          laboratoryService,
+          now,
+        )
+      }
       const { catalog, config: catalogConfig } = this.#laboratorySelectionFromSnapshot(
         input.context,
         state.draft_catalog_item_id,
         referenceConcept,
         state.draft_indication_code,
+        laboratoryService,
       )
+      if (laboratoryService === undefined) {
+        this.#assertInvestigationGenerationSupported(
+          input.context,
+          outpatientCase.case_id,
+          state.draft_catalog_item_id,
+          referenceConcept,
+        )
+      }
       if (!catalogConfig.allowedIndicationCodes.includes(state.draft_indication_code)) {
         throw new WorkflowError('CATALOG_CONFLICT', 'The indication is not allowed for this laboratory request')
       }
@@ -6877,7 +6965,6 @@ export class WorkflowService {
       const requestId = uuidv7()
       const serviceRequestId = uuidv7()
       const taskId = uuidv7()
-      const now = this.#virtualTime(input.context)
       const serviceRequest = transaction.fhir.create(input.context, {
         resourceType: 'ServiceRequest',
         id: serviceRequestId,
@@ -6924,9 +7011,9 @@ export class WorkflowService {
       this.#database.driver.prepare(`
         INSERT INTO laboratory_request (
           workspace_id, epoch, request_id, case_id, catalog_item_id,
-          reference_json, indication_code, service_request_id, execution_task_id, status,
-          version, authored_by, authored_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', 1, ?, ?)
+          reference_json, service_snapshot_json, indication_code,
+          service_request_id, execution_task_id, status, version, authored_by, authored_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', 1, ?, ?)
       `).run(
         input.context.workspaceId,
         input.context.epoch,
@@ -6934,6 +7021,7 @@ export class WorkflowService {
         outpatientCase.case_id,
         state.draft_catalog_item_id,
         JSON.stringify(referenceConcept),
+        laboratoryService === undefined ? null : JSON.stringify(laboratoryService),
         state.draft_indication_code,
         serviceRequestId,
         taskId,
@@ -6944,7 +7032,7 @@ export class WorkflowService {
       const update = this.#database.driver.prepare(`
         UPDATE laboratory_request_state
         SET version = ?, draft_catalog_item_id = NULL, draft_indication_code = NULL,
-          draft_reference_json = NULL,
+          draft_reference_json = NULL, draft_service_snapshot_json = NULL,
           updated_by = ?, updated_at = ?
         WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
       `).run(
@@ -6976,6 +7064,7 @@ export class WorkflowService {
             id: requestId,
             indicationCode: state.draft_indication_code,
             previousReports: [],
+            ...(laboratoryService === undefined ? {} : { laboratoryService }),
             referenceConcept,
             serviceRequestId,
             serviceRequestVersion: serviceRequest.meta?.versionId ?? '1',
@@ -7290,8 +7379,14 @@ export class WorkflowService {
     requestId: string
     resultSnapshot?: {
       content: InvestigationResultContent
+      inputHash: string
+      provenance?: {
+        datasetReleaseId: string
+        generationPolicyVersion: string
+        referenceReleaseId: string
+      }
       snapshotId: string
-      source: 'investigation-agent' | 'synthea-exact'
+      source: 'adult-reference-baseline' | 'investigation-agent' | 'mixed' | 'synthea-exact'
     }
   }) {
     return this.#commands.execute({
@@ -7338,6 +7433,12 @@ export class WorkflowService {
         }
       }
       const requestedConcept = referenceConceptSnapshotSchema.parse(JSON.parse(request.reference_json))
+      const laboratoryService = request.service_snapshot_json === null
+        ? undefined
+        : laboratoryServiceSnapshotSchema.parse(JSON.parse(request.service_snapshot_json))
+      const resultDefinitions = new Map(laboratoryService?.reportDefinition.results.map(
+        definition => [definition.referenceConcept.code, definition],
+      ))
       const serviceRequest = transaction.fhir.read(
         input.context,
         'ServiceRequest',
@@ -7360,11 +7461,18 @@ export class WorkflowService {
         status: 'available',
         type: {
           coding: [{
-            code: '119297000',
-            display: 'Blood specimen',
-            system: 'http://snomed.info/sct',
+            code: laboratoryService?.specimen.code ?? '119297000',
+            display: laboratoryService?.specimen.display ?? 'Blood specimen',
+            system: laboratoryService === undefined
+              ? 'http://snomed.info/sct'
+              : (laboratoryService.specimen.system ?? 'http://loinc.org'),
+            ...(laboratoryService?.specimen.version === undefined
+              ? {}
+              : { version: laboratoryService.specimen.version }),
           }],
-          text: 'Synthetic blood specimen',
+          text: laboratoryService === undefined
+            ? 'Synthetic blood specimen'
+            : laboratoryService.specimen.display,
         },
         subject: { reference: `Patient/${request.patient_id}` },
         request: [{ reference: `ServiceRequest/${request.service_request_id}` }],
@@ -7372,18 +7480,28 @@ export class WorkflowService {
         receivedTime: now,
       })
       const observations = laboratoryResultFact.results.map((result) => {
+        const resultDefinition = resultDefinitions.get(result.code)
+        if (laboratoryService !== undefined && resultDefinition === undefined) {
+          throw new WorkflowError(
+            'WORKFLOW_CONFLICT',
+            'The laboratory result is outside the frozen report definition',
+          )
+        }
+        const resultConcept = resultDefinition?.referenceConcept ?? requestedConcept
         const resultCoding = {
           code: result.code,
           display: result.display,
           system: input.resultSnapshot === undefined
             ? 'http://loinc.org'
-            : requestedConcept.system,
-          ...(input.resultSnapshot === undefined ? {} : { version: requestedConcept.version }),
+            : resultConcept.system,
+          ...(input.resultSnapshot === undefined ? {} : { version: resultConcept.version }),
         }
         const observationId = `obs-${result.code}-${request.service_request_id}`
         const interpretationCode = result.interpretation === 'normal'
           ? 'N'
-          : result.interpretation === 'high' ? 'H' : 'L'
+          : result.interpretation === 'abnormal'
+            ? 'A'
+            : result.interpretation === 'high' ? 'H' : 'L'
         const value = typeof result.value === 'number'
           ? result.unit === undefined
             ? { valueQuantity: { value: result.value } }
@@ -7397,7 +7515,14 @@ export class WorkflowService {
               }
           : typeof result.value === 'boolean'
             ? { valueBoolean: result.value }
-            : { valueString: result.value }
+            : typeof result.value === 'string'
+              ? { valueString: result.value }
+              : {
+                  valueCodeableConcept: {
+                    coding: [result.value],
+                    text: result.value.display,
+                  },
+                }
         return transaction.fhir.create(input.context, {
           resourceType: 'Observation',
           id: observationId,
@@ -7409,7 +7534,11 @@ export class WorkflowService {
             }],
           }],
           code: {
-            coding: [resultCoding],
+            coding: [resultCoding, ...(resultDefinition?.alternateCodings ?? []).map(coding => ({
+              code: coding.code,
+              system: coding.system,
+              version: coding.version,
+            }))],
             text: result.display,
           },
           subject: { reference: `Patient/${request.patient_id}` },
@@ -7453,24 +7582,28 @@ export class WorkflowService {
       const reportName = input.resultSnapshot !== undefined
         ? `${requestedConcept.display}报告`
         : request.catalog_item_id === 'lab-cbc' ? '血常规报告' : 'C 反应蛋白报告'
-      const reportCoding = input.resultSnapshot === undefined
-        ? {
+      const reportCodings = input.resultSnapshot === undefined
+        ? [{
             code: request.catalog_item_id === 'lab-cbc' ? 'CBC' : 'CRP',
             display: reportName,
             system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-service',
-          }
-        : {
+          }]
+        : [{
+            code: laboratoryService?.localCode ?? requestedConcept.code,
+            display: laboratoryService?.nameZh ?? requestedConcept.display,
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-service',
+          }, {
             code: requestedConcept.code,
             display: requestedConcept.display,
             system: requestedConcept.system,
             version: requestedConcept.version,
-          }
+          }]
       const report = transaction.fhir.create(input.context, {
         resourceType: 'DiagnosticReport',
         id: diagnosticReportId,
         status: 'final',
         code: {
-          coding: [reportCoding],
+          coding: reportCodings,
           text: reportName,
         },
         subject: { reference: `Patient/${request.patient_id}` },
@@ -7516,6 +7649,32 @@ export class WorkflowService {
             : `Laboratory report issuance from ${input.resultSnapshot.source}`,
         },
         agent: provenanceAgents(input.context, 'Laboratory report issuer'),
+        ...(input.resultSnapshot?.provenance === undefined
+          ? {}
+          : {
+              entity: [{
+                role: 'source',
+                what: {
+                  identifier: {
+                    system: 'https://caizongyuan.github.io/clinmesh/identifier/investigation-result-snapshot',
+                    value: input.resultSnapshot.snapshotId,
+                  },
+                },
+              }, ...[
+                ['reference-release', input.resultSnapshot.provenance.referenceReleaseId],
+                ['dataset-release', input.resultSnapshot.provenance.datasetReleaseId],
+                ['generation-policy', input.resultSnapshot.provenance.generationPolicyVersion],
+                ['input-hash', input.resultSnapshot.inputHash],
+              ].map(([kind, value]) => ({
+                role: 'source',
+                what: {
+                  identifier: {
+                    system: `https://caizongyuan.github.io/clinmesh/identifier/${kind}`,
+                    value,
+                  },
+                },
+              }))],
+            }),
       })
       const update = this.#database.driver.prepare(`
         UPDATE laboratory_request
@@ -7661,12 +7820,6 @@ export class WorkflowService {
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory generation cannot be retried')
       }
-      this.#assertInvestigationGenerationSupported(
-        input.context,
-        request.case_id,
-        request.catalog_item_id,
-        referenceConceptSnapshotSchema.parse(JSON.parse(request.reference_json)),
-      )
       this.#assertExpectedVersions(input.expectedVersions, [`Task/${request.execution_task_id}`])
       const task = transaction.fhir.read(input.context, 'Task', request.execution_task_id)
       const now = this.#virtualTime(input.context)
@@ -10224,7 +10377,7 @@ export class WorkflowService {
     return laboratoryRequestStateRowSchema.optional().parse(
       this.#database.driver.prepare(`
         SELECT version, draft_catalog_item_id, draft_indication_code,
-          draft_reference_json
+          draft_reference_json, draft_service_snapshot_json
         FROM laboratory_request_state
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
       `).get(context.workspaceId, context.epoch, caseId),
@@ -10319,6 +10472,7 @@ export class WorkflowService {
       this.#database.driver.prepare(`
         SELECT request_id, catalog_item_id, indication_code, service_request_id,
           execution_task_id, diagnostic_report_id, reference_json,
+          service_snapshot_json,
           result_snapshot_id, generation_error_code, generation_error_message,
           status, version
         FROM laboratory_request
@@ -10353,6 +10507,13 @@ export class WorkflowService {
               },
             }),
         previousReports: reportVersions.slice(0, -1),
+        ...(request.service_snapshot_json === null
+          ? {}
+          : {
+              laboratoryService: laboratoryServiceSnapshotSchema.parse(
+                JSON.parse(request.service_snapshot_json),
+              ),
+            }),
         referenceConcept: referenceConceptSnapshotSchema.parse(JSON.parse(request.reference_json)),
         ...(reportVersions.length === 0 ? {} : { report: reportVersions.at(-1) }),
         serviceRequestId: request.service_request_id,
@@ -10410,9 +10571,11 @@ export class WorkflowService {
         this.#fhir.read(context, 'Observation', observationId),
       )
       const coding = observation.code.coding[0]
+      const codeableValue = observation.valueCodeableConcept?.coding[0]
       const value = observation.valueBoolean
         ?? observation.valueQuantity?.value
         ?? observation.valueString
+        ?? codeableValue
       if (coding === undefined || value === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The completed laboratory result is incomplete')
       }
@@ -10748,6 +10911,25 @@ export class WorkflowService {
     `).get(context.workspaceId, context.epoch) !== undefined
   }
 
+  #assertAdultLaboratoryServiceApplicable(
+    context: ActorContext,
+    patientId: string,
+    service: z.infer<typeof laboratoryServiceSnapshotSchema>,
+    authoredAt: string,
+  ): void {
+    if (service.sourceDataset?.datasetId !== 'laboratory-cn') return
+    const patient = z.object({
+      birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      gender: z.enum(['female', 'male', 'other', 'unknown']),
+    }).passthrough().parse(this.#fhir.read(context, 'Patient', patientId))
+    try {
+      assertAdultReferenceServiceApplicable(service, patient, authoredAt)
+    } catch (error) {
+      if (!(error instanceof AdultReferenceApplicabilityError)) throw error
+      throw new WorkflowError('LABORATORY_ADULT_REFERENCE_NOT_APPLICABLE', error.message)
+    }
+  }
+
   #assertInvestigationGenerationSupported(
     context: ActorContext,
     outpatientCaseId: string,
@@ -10918,7 +11100,9 @@ export class WorkflowService {
           display: coding.display,
           interpretation: interpretationCode === 'N'
             ? 'normal' as const
-            : interpretationCode === 'H' ? 'high' as const : 'low' as const,
+            : interpretationCode === 'H'
+              ? 'high' as const
+              : interpretationCode === 'L' ? 'low' as const : 'abnormal' as const,
           observationId,
         }
         if (observation.valueQuantity !== undefined) {
@@ -10940,7 +11124,9 @@ export class WorkflowService {
             value: observation.valueQuantity.value,
           }
         }
-        const qualitativeValue = observation.valueBoolean ?? observation.valueString
+        const qualitativeValue = observation.valueBoolean
+          ?? observation.valueString
+          ?? observation.valueCodeableConcept?.coding[0]
         if (qualitativeValue === undefined) {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The qualitative laboratory result is incomplete')
         }
@@ -10962,7 +11148,7 @@ export class WorkflowService {
       this.#database.driver.prepare(`
         SELECT laboratory_request.request_id, laboratory_request.case_id,
           laboratory_request.catalog_item_id, laboratory_request.indication_code,
-          laboratory_request.reference_json,
+          laboratory_request.reference_json, laboratory_request.service_snapshot_json,
           laboratory_request.result_snapshot_id,
           laboratory_request.generation_error_code,
           laboratory_request.generation_error_message,
@@ -11027,49 +11213,60 @@ export class WorkflowService {
   #resolvedLaboratorySelection(
     context: ActorContext,
     itemId: string,
-    indicationCode: string,
   ) {
-    const reference = this.#referenceData?.laboratoryById(context, itemId)
-    if (reference !== undefined) {
-      const referenceConcept = referenceConceptSnapshotSchema.parse({
-        code: reference.code,
-        display: reference.display,
-        id: reference.id,
-        ...(reference.laboratory === undefined ? {} : { laboratory: reference.laboratory }),
-        sourceLocator: reference.sourceLocator,
-        system: reference.system,
-        version: reference.version,
+    const row = z.object({
+      code: z.string(),
+      config_json: z.string(),
+      name_en: z.string(),
+      name_zh: z.string(),
+      service_id: z.string(),
+      version: z.number().int().positive(),
+    }).optional().parse(this.#database.driver.prepare(`
+      SELECT service_id, code, name_zh, name_en, version, config_json
+      FROM hospital_service_catalog
+      WHERE workspace_id = ? AND epoch = ? AND service_id = ? AND active = 1
+        AND json_extract(config_json, '$.laboratoryService.doctorOrderable') = 1
+    `).get(context.workspaceId, context.epoch, itemId))
+    if (row === undefined) {
+      const catalog = this.#catalogItem(context, itemId, 'laboratory')
+      const config = laboratoryCatalogConfigSchema.parse(
+        JSON.parse(catalog.config_json ?? '{}') as unknown,
+      )
+      const referenceConcept = config.referenceConcept ?? referenceConceptSnapshotSchema.parse({
+        code: catalog.code,
+        display: catalog.name_zh,
+        id: catalog.item_id,
+        sourceLocator: 'operational:outpatient_catalog',
+        system: 'urn:clinmesh:operational:laboratory',
+        version: String(catalog.version),
       })
-      return {
-        catalog: {
-          code: reference.code,
-          item_id: reference.id,
-          name_en: reference.display,
-          name_zh: reference.display,
-          price_fen: 0,
-          version: 1,
-        },
-        config: laboratoryCatalogConfigSchema.parse({
-          allowedIndicationCodes: [indicationCode],
-          contraindicatedAllergyCodes: [],
-          referenceConcept,
-        }),
-        referenceConcept,
-      }
+      return { catalog, config, laboratoryService: undefined, referenceConcept }
     }
-    const catalog = this.#catalogItem(context, itemId, 'laboratory')
-    const config = laboratoryCatalogConfigSchema.parse(
-      JSON.parse(catalog.config_json ?? '{}') as unknown,
-    )
-    const referenceConcept = config.referenceConcept ?? referenceConceptSnapshotSchema.parse({
-      code: catalog.code,
-      display: catalog.name_zh,
-      id: catalog.item_id,
-      sourceLocator: 'operational:outpatient_catalog',
-      system: 'urn:clinmesh:operational:laboratory',
-      version: String(catalog.version),
+    const laboratoryService = laboratoryServiceConfigSchema.parse(
+      JSON.parse(row.config_json),
+    ).laboratoryService
+    if (laboratoryService.id !== row.service_id || laboratoryService.version !== row.version) {
+      throw new WorkflowError('CATALOG_CONFLICT', 'The Laboratory Service snapshot is inconsistent')
+    }
+    const catalog = {
+      code: row.code,
+      item_id: row.service_id,
+      name_en: row.name_en,
+      name_zh: row.name_zh,
+      price_fen: laboratoryService.priceFen,
+      version: row.version,
+    }
+    const config = laboratoryCatalogConfigSchema.parse({
+      allowedIndicationCodes: laboratoryService.allowedIndicationCodes,
+      contraindicatedAllergyCodes: [],
+      referenceConcept: laboratoryService.referenceConcept,
     })
-    return { catalog, config, referenceConcept }
+    return {
+      catalog,
+      config,
+      laboratoryService,
+      referenceConcept: laboratoryService.referenceConcept,
+    }
   }
 
   #laboratorySelectionFromSnapshot(
@@ -11077,7 +11274,20 @@ export class WorkflowService {
     itemId: string,
     referenceConcept: z.infer<typeof referenceConceptSnapshotSchema>,
     indicationCode: string,
+    laboratoryService?: z.infer<typeof laboratoryServiceSnapshotSchema>,
   ) {
+    if (laboratoryService !== undefined) {
+      const current = this.#resolvedLaboratorySelection(context, itemId)
+      if (current.laboratoryService === undefined
+        || current.laboratoryService.version !== laboratoryService.version
+        || JSON.stringify(current.laboratoryService) !== JSON.stringify(laboratoryService)) {
+        throw new WorkflowError(
+          'CATALOG_CONFLICT',
+          'The Laboratory Service changed after the draft was saved',
+        )
+      }
+      return current
+    }
     const local = this.#database.driver.prepare(`
       SELECT item_id, code, name_zh, name_en, price_fen, version, config_json
       FROM outpatient_catalog

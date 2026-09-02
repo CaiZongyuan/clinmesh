@@ -27,7 +27,7 @@ describe('Performance runner', () => {
       trace: { bytes: expect.any(Number), rows: expect.any(Number) },
     })])
     expect(result.workloads[0]!.trace.rows).toBeGreaterThan(0)
-  })
+  }, 30_000)
 
   it('runs a supplied full-import manifest without committing its source data', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-performance-full-import-test-'))

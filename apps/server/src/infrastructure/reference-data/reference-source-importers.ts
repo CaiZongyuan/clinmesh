@@ -16,7 +16,7 @@ type TextReferenceArtifactFormat = Exclude<ReferenceArtifactFormat, 'cn-health-c
 const loincRecordSchema = z.object({
   record: z.object({
     LONG_COMMON_NAME: z.string().trim().min(1),
-    LOINC_NUM: z.string().regex(/^\d{1,5}-\d$/),
+    LOINC_NUM: z.string().regex(/^\d{1,6}-\d$/),
     STATUS: z.enum(['ACTIVE', 'DEPRECATED', 'DISCOURAGED', 'TRIAL']),
   }).passthrough(),
   info: z.object({ lines: z.number().int().positive() }).passthrough(),

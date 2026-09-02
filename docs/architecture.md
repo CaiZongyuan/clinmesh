@@ -434,11 +434,19 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 
 ### 5.4 中国术语与参考数据策略
 
-独立 Reference SQLite 通过显式 CLI 一次性导入和验证版本固定的疾病、药品与检验来源。每个成功发布的 Reference Release 固定来源版本、许可、artifact checksum、记录数、导入诊断和 content hash；失败导入不改变当前 Release。Server 只读打开一个系统级全局当前 Release，使用索引和 FTS 为疾病、药品、检验提供有界分页搜索，不把全国目录载入内存或复制进 Workspace、Epoch 和 operational SQLite。医生打开选择器时默认浏览稳定排序的第一页；显式提交的两字符查询使用只读 substring 检索，至少三个字符时使用 trigram FTS，并从第一页开始。Reference 不可用或无查询目录为空时才回退到本院常用项。
+独立 Reference SQLite 通过 `reference-data.lock.json` 和 `pnpm reference:sync` 获取、验证并导入版本固定的疾病、药品与检验来源。项目内锁固定 `cn-health` 版本、Registry URL、Ed25519 信任根、Dataset Release、Manifest hash 和复合 Release 身份；`cn-health dataset materialize` 只在显式同步时访问 Registry，并把签名已验证的 Manifest、SQLite 和 receipt 原子交给 ClinMesh。ClinMesh 再校验 receipt、hash、SQLite、Schema 和 canonical 表不变量。check-only 使用临时 Reference SQLite，正式同步失败不留下部分 Release，也不切换 Server 当前 Release。运行中的 Server 只读 ClinMesh Reference SQLite，不调用 `cn-health`、GitHub 或 Registry。
+
+每个成功发布的 Reference Release 固定来源版本、许可、artifact checksum、materialization provenance、记录数、导入诊断和 content hash。`loinc-zh-cn` Dataset Schema v2 把完整 LOINC 主表、单位、SYSTEM 标本关系和 panel 成员边保存在同一不可变 Release，Class Type 1 进入 laboratory domain，其他 Class Type 进入 `other`。`laboratory-cn` Schema v2 在同一 Release 中保存 WS/T 886 原子项目、全部成人参考规则、项目整理 panel 和有序成员边；首个锁定 Release 的四张表分别有 84、96、15 和 88 条记录。Server 使用索引和 FTS 提供有界分页查询，不把全国目录复制进 Workspace、Epoch 或 operational SQLite。
 
 目录搜索返回稳定的 `system + version + code + display`。诊断、医嘱等本院 R5 业务事实在创建时保存所选 coding/display 快照，因此切换全局当前 Release 不会改写既有病历。Synthea R4 来源 coding 仅用于呈现 Visible Source History 和解析同 LOINC 的隐藏 Observation；不以显示文本匹配，不建设 Synthea 到本院疾病或药品目录的通用映射。
 
-检验目录保存值类型、LOINC 和 UCUM 单位；参考范围来自项目 metadata 或版本固定的 LOINC 本院检验映射。全局 Reference 搜索只表达项目定义；医生开立前通过病例级检验目录读取 Investigation Generation Capability。完全相同的 LOINC system 与 code 能命中 Case Truth Observation 时使用 `synthea-exact`；未命中时，只有数值项目具备 UCUM 单位与受控合成参考范围且运行时配置了受限 Investigation Agent 才标记为 `investigation-agent` 可生成。Agent 输入最多包含最近 20 条 Visible History 和 20 条相关 Case Truth 证据。Web 展示查询结果，但只允许选择 capability 支持的项目，开具后的 ServiceRequest 与执行 Task 属于本院运行事实。两种成功路径都形成不可变 Investigation Result Snapshot；不得为缺少证据、生成 profile 或运行能力的项目制造正常 fallback。
+Reference Concept 只表达检验术语、分类、值类型、UCUM 单位、标本、成人规则和 panel 关系，不表示医院已经开展。管理员按 Dataset 来源和 panel 状态搜索候选，候选同时返回 Dataset Release、成员数、标本、成人适用性和规则来源。LOINC active Class Type 1 Order/Both 根仍由 Catalog Enrichment Agent 补齐本院运营字段；`laboratory-cn` 只把 Dataset panel 根作为候选，并以确定性 policy 直接冻结单位、precision、成人规则、健康生成策略、TAT 180 分钟和未计价状态，不调用模型。每批最多选择 50 个根，根服务与 dependency-only 成员原子发布到唯一的 `hospital_service_catalog`；同一 `laboratory-cn` panel 跨 Reference Release 保持 Hospital Service ID 并递增版本。失败候选不激活，医生路径不调用 enrichment。
+
+医生病例级检验目录只返回当前 Workspace/Epoch 中 active、doctor-orderable 的 Hospital Laboratory Service；dependency-only 叶子不会单独出现。所有可见项目都可保存草稿和正式开立，响应不含 Case Truth、模型或 Investigation Generation Capability。开立时冻结服务版本、source coding 和完整 report definition；成人规则按 Virtual Time 计算年龄，男/女规则优先于 `all`，其他或未知性别只使用 `all`。不足 18 岁或任一叶子没有适用规则时，保存和开立都以稳定领域错误失败。
+
+Simulator 对每个冻结报告叶子先复用编码、值类型和单位均兼容的精确 Case Truth Observation；存在精确但不兼容的事实时失败，不生成正常值。缺少精确事实且存在适用的 `laboratory-cn` 规则时，generation policy v1 从 input hash、服务版本和 concept ID 的 SHA-256 固定位生成均匀值，使用独立 simulation bounds、precision 舍入和夹紧；fixed-normal 直接使用冻结字符串。其余 LOINC 叶子才进入 Investigation Agent。一个 panel 可以混合精确结果和 Adult Reference Baseline，每个结果记录来源；单侧临床范围只进入报告语义，不作为随机边界。outbox 最多自动尝试三次，连续失败进入 `generation-failed` 且报告事务不创建部分 Specimen、Observation、DiagnosticReport 或 Provenance。Snapshot 按 Case revision、冻结服务/报告版本和申请前证据形成 input hash；相同请求、重试和 Reset 初始证据复用，新正式证据产生新 Snapshot。
+
+`laboratory-cn` 的 Observation 以 ClinMesh-owned WS/T 886 system 为主并附可用 LOINC crosswalk，Quantity 使用 UCUM，fixed-normal 使用 `valueString`。Specimen 使用本地 specimen system；ServiceRequest 和 DiagnosticReport 同时保留本院服务与 source panel coding。Provenance 关联 Investigation Result Snapshot、ClinMesh Reference Release、Dataset Release、generation policy 和 input hash。WS/T 886—2026 在 2026-11-01 实施；更早的 Hospital Baseline 只能以明确 future-standard preview 方式启用，不能描述为已生效标准。
 
 当前不发布 CodeSystem、ValueSet、ConceptMap 或 terminology operation；术语是接口兼容性的一部分，不是 UI 字典。
 
@@ -752,7 +760,7 @@ Surface 隐藏、DSH Session/lease 失效、page scope、selection、资源版�
 
 `packages/contracts/src/his-operations.ts` 导出的 `hisOperationCatalog` 是 CLI/Capability Grant 直接 HIS 操作面的唯一合同 owner。每项 operation 显式声明稳定 ID、版本、`cliPath`、`query/draft/preview/command` mode、输入/输出/错误 Zod schema、HTTP method/path adapter、唯一 handler owner、human/agent identity、岗位 allowlist、风险、幂等、expected version 与 preview token 要求；既有 Command 的持久 operation 名称不同时，Catalog 还保存 receipt adapter 名称。DSH 页面 Tools 由独立的 `agentToolCatalog` 拥有，并在当前人类 Session 内投影 UI action 与 proposal，不能作为 Capability Grant operation 使用。两个 Catalog 都不依赖 Hono、Node.js、环境变量或 handler。
 
-CLI 命令树、`operations list/schema`、服务端 Agent route matching、Grant 的 Catalog hash 和 Skill 命令示例测试都读取同一 Catalog。HIS route coverage test 要求每条 `/api/his/v1` route 恰好属于 canonical operation 或带原因的兼容排除项。医生病例级检验目录是独立 canonical query，返回当前 Case 的 Investigation Generation Capability；全局 Reference 检验目录不能替代这项开具前门禁。病例级查询没有 Reference 项目时可显式读取本院 clinical catalog，已有 Reference 项目返回 unsupported 时不能用本院同名项目绕过。FHIR 部分只投影 metadata、read、vread、instance history 和资源能力注册表允许的 search；资源类型与 SearchParameter 白名单和 CapabilityStatement 共用一份注册表。包括 metadata 在内的每个 FHIR 入口都先解析受信身份，Agent 还必须在 Grant allowlist 中拥有对应 operation。
+CLI 命令树、`operations list/schema`、服务端 Agent route matching、Grant 的 Catalog hash 和 Skill 命令示例测试都读取同一 Catalog。HIS route coverage test 要求每条 `/api/his/v1` route 恰好属于 canonical operation 或带原因的兼容排除项。管理员 Laboratory Service 候选搜索、发布和 job 查询属于 `clinmesh-administrator`；医生病例级目录属于 `clinmesh-doctor`，只返回可开立 Hospital Service。全局 Reference 检验搜索不能替代服务发布，也不能把 Reference Concept ID 作为申请项目。FHIR 部分只投影 metadata、read、vread、instance history 和资源能力注册表允许的 search；资源类型与 SearchParameter 白名单和 CapabilityStatement 共用一份注册表。包括 metadata 在内的每个 FHIR 入口都先解析受信身份，Agent 还必须在 Grant allowlist 中拥有对应 operation。
 
 CLI 没有通用 invoke、任意 URL、method/path/body、SQL、JSON Patch、FHIR write 或 Bundle write。兼容组合 route 不进入命令树，Agent 使用独立 diagnosis、prescription、laboratory request、clinical document 和 Encounter Completion 生命周期。
 
@@ -826,15 +834,15 @@ Consultation 是病例级领域聚合，Consultation Record 是按序号追加�
 
 处方撤回使用不可变 `prescription_withdrawal` 事实表达，不删除或覆盖原 Prescription。只有未发生任何调剂的 signed 或 paid 处方可按 Prescription expected version 和全部 MedicationRequest expected versions 撤回；成功后各 MedicationRequest 进入 `cancelled` 并保留 FHIR history，Prescription 版本递增且读模型投影为 `withdrawn`。未收费的已撤回药品费用不再进入收费员待收费队列，已收费历史仍可查询且不会隐式退款；药房队列、审核、支付和发药入口都拒绝已撤回处方。
 
-带 Consultation 的病例使用独立检验申请 owner。`laboratory_request_state` 保存一个病例级草稿及单调递增版本；保存和删除都以当前 Encounter 与草稿版本做 CAS，删除或开具只清空草稿而不复用旧版本。病例级目录在全局当前 Reference Release 结果上投影 Investigation Generation Capability，Web 禁用但不隐藏当前病例不可生成的项目，只提交 capability 支持的项目；保存草稿、开立申请和重试生成的 Command 都重新校验同一 capability，不能通过绕过选择器提交不可生成项目。单一内部适应证 `clinical-evaluation` 不要求医生选择。没有病例责任人的 `awaiting-doctor` 病例必须先由接诊 Command 分配责任并推进状态，Web 才开放检验、诊断、处方和病历写入。开具时保存 coding/display 快照并创建 `ServiceRequest.status=active` 和 `Task.status=requested`，Task `focus` 指向该 ServiceRequest。该流程不创建 ChargeItem，也不推进 Encounter 或医生 Queue Task。
+带 Consultation 的病例使用独立检验申请 owner。`laboratory_request_state` 保存一个病例级草稿及单调递增版本；保存和删除都以当前 Encounter 与草稿版本做 CAS，删除或开具只清空草稿而不复用旧版本。保存草稿重新读取 active、doctor-orderable Hospital Service 并冻结 service/report snapshot；开立再次校验相同 service ID 和版本，直接提交 Reference Concept ID 返回目录冲突。单一内部适应证 `clinical-evaluation` 不要求医生选择。没有病例责任人的 `awaiting-doctor` 病例必须先由接诊 Command 分配责任并推进状态，Web 才开放检验、诊断、处方和病历写入。开具时保存本院服务 coding、根 LOINC 和报告定义，创建 `ServiceRequest.status=active` 与 `Task.status=requested`，Task `focus` 指向该 ServiceRequest。服务配置保留合成价格，但该流程不创建 ChargeItem，也不推进 Encounter 或医生 Queue Task。
 
-独立申请开具后由持久 outbox 绑定 `lis-system`，依次把领域状态和执行 Task 从 `issued/requested` 推进到 `accepted/accepted` 与 `in-progress/in-progress`。Simulator 优先复用同 LOINC 的隐藏来源结果，否则异步生成 Investigation Result Snapshot；失败进入可重试的 `generation-failed` 且不创建报告。成功后才创建 Specimen、Observation、DiagnosticReport 和 Provenance，并完成 ServiceRequest、执行 Task 与申请；重复投递返回同一冻结结果，不重复调用模型或创建资源。
+独立申请开具后由持久 outbox 绑定 `lis-system`，依次把领域状态和执行 Task 从 `issued/requested` 推进到 `accepted/accepted` 与 `in-progress/in-progress`。报告 consumer 对暂时失败和非法输出执行最多三次有界重试；前两次保持申请 `in-progress`，第三次失败才写入 `generation-failed`。成功后创建一个 Specimen、每个报告叶子一个 Observation、一个 DiagnosticReport 和 Provenance，并完成 ServiceRequest、执行 Task 与申请；同一 request 的重复投递返回已关联 snapshot，不重复调用模型或创建资源。
 
 Report Acknowledgement 是按报告版本独立保存的领域事实，只能由原检查申请的开具医生对当前 `DiagnosticReport.status=final` 且申请为 `reported` 的报告创建。成功确认把申请推进到 `acknowledged` 并递增申请版本，但不更新 DiagnosticReport 或其 FHIR `meta.versionId`；确认 Command 以 `ReportAcknowledgement/<id>` effect 进入审计和 Action Trace。每个报告版本至多有一条确认事实，不同幂等键的重复确认返回第一次确认的 ID、时间和当时的申请版本。
 
 报告更正只接受当前 `reported` 或 `acknowledged` 报告、申请 expected version、原 DiagnosticReport expected version、原因、结论，以及覆盖既有结果代码全集且不重复的数值。每次更正为 DiagnosticReport 和全部 Observation 创建新的 logical ID，旧资源和旧 Report Acknowledgement 保持可读；新的 Provenance 以 `entity.role=revision` 引用被替代报告和结果，领域修订表以 latest-only 唯一约束维持线性链。更正后申请指向新报告并回到 `reported`，当前确认投影清空，医生必须对新版本重新确认；并发更正只有一次能通过申请 CAS。FHIR R5 DiagnosticReport 没有 Composition 式 `relatesTo`，因此替代关系由标准 Provenance 与领域修订链共同表达，不添加伪标准字段。公开 HTTP adapter 只接受登录账户具有 administrator 能力的受信 session，再把调用绑定为受信 `lis-system` Command context，同时保留该 session 当前选择的 Practitioner、Practitioner Role 和 Location 供 receipt 与 Audit 关联；其他账户和请求正文不能声明或伪造该系统角色。
 
-`issued` 申请和永久 `INVESTIGATION_UNSUPPORTED` 的 `generation-failed` 申请可由原开具医生取消；取消把 ServiceRequest 改为 `revoked`、执行 Task 改为 `cancelled`，并递增正式申请版本。取消与受理竞争时由版本和条件更新决定唯一结果，已取消申请收到晚到受理事件时以无副作用完成。医生病例详情读取草稿版本、可选草稿和全部正式申请；报告 DTO 从已签发的 DiagnosticReport 和 Observation 还原，不从当前目录或结果模板重建。Web 对永久不支持显示取消和重新选择，对瞬时或输出校验失败显示重试，对当前 `reported` 报告显示确认已阅；内部 Agent 错误文案不直接暴露给医生。
+`issued` 申请可由原开具医生取消；取消把 ServiceRequest 改为 `revoked`、执行 Task 改为 `cancelled`，并递增正式申请版本。取消与受理竞争时由版本和条件更新决定唯一结果，已取消申请收到晚到受理事件时以无副作用完成。`generation-failed` 表达统一的系统执行异常，人工重试基于冻结的 Laboratory Service 和报告定义开启新的三次尝试窗口，Doctor Case Controller 和 Web 都不解释内部错误码或病例级生成 capability。医生病例详情读取草稿版本、可选草稿和全部正式申请；报告 DTO 从已签发的 DiagnosticReport 和 Observation 还原，不从当前目录或结果模板重建。Web 对失败申请显示统一的可重试状态，对当前 `reported` 报告显示确认已阅；内部 Agent 错误文案不直接暴露给医生。
 
 没有 Consultation 的既有挂号病例继续由 Web 使用 `issue-laboratory-order` 兼容入口和 `lab-fever-panel`，该命令绑定首诊草稿、Encounter 与医生 Queue Task，创建 ServiceRequest、ChargeItem 和待缴状态。独立草稿入口的请求 schema 不接受 `lab-fever-panel`；两条路径不共享草稿版本、正式申请领域状态或执行 Task 状态机。
 
@@ -1215,7 +1223,7 @@ clock_revision
 ### 10.4 确定性与故障注入
 
 - 生成请求固定 Provider commit、profile/localization hash、模块模式、人口参数和 seed；相同来源 Bundle 的 Index Encounter 选择、历史/真值闭包和 case type 保持确定。
-- Investigation resolver 先匹配 Case Truth 中完全相同 LOINC 的 Observation；缺失时才调用受限模型。首次验证成功的结果按 input hash 冻结，重试、reset 和 replay 复用 snapshot。
+- Investigation resolver 先匹配 Case Truth 中完全兼容的冻结 coding；缺失时按冻结 Adult Reference Baseline 确定性生成，只有没有该规则的 LOINC 叶子才调用受限模型。首次验证成功的结果按 input hash 冻结，重试、reset 和 replay 复用 snapshot。
 - 支付规则可确定地产生 success、declined 或 ambiguous；LIS 规则确定地产生结构化报告。outbox 通过测试 handler 验证 retryable failure、lease 恢复、重复消费和结果未知。
 - 数据库备份的 canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引、schema migration 和 runtime metadata 外的全部持久领域表；`*_json` 按 JSON 值规范化，递归排除 FHIR `lastUpdated` 和存放 hash 自身的列。它用于同一 schema 下的备份/恢复等价校验，不宣称是跨版本 replay hash。
 - 当前 replay 是 Case Revision 到新 Epoch 的重新物化，不是 command-log replay；当前没有逐步 state hash 或通用故障编排 API。
@@ -1486,7 +1494,7 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 
 ### 15.3 Web 与明确边界
 
-- Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员入口；管理员可生成 Synthetic Profile/Case、浏览 Visible Source History、生成并选择 Brief、直接开始病例和 reset/replay。医生工作台从全局 Reference Release 分页搜索诊断和药品，从病例级目录搜索可生成结果的检验；诊断、检验和处方有效修改自动保存，已创建事实固定 coding/display 快照。Investigation 区分永久不支持的取消和可恢复失败的重试。病例库继续提供责任范围内的已完诊 Encounter 与受控更正入口。服务端状态只由 TanStack Query 缓存，退出或跨账户登录会清除非 session 查询。
+- Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员入口；管理员可生成 Synthetic Profile/Case、浏览 Visible Source History、生成并选择 Brief、直接开始病例、reset/replay，以及按 Dataset/panel 筛选并发布 Laboratory Service。候选列表显示 Release、成员数、标本、成人适用性和规则来源，并把项目整理来源与国家标准分开；未计价服务不显示为免费。医生工作台从全局 Reference Release 分页搜索诊断和药品，从病例级目录搜索本院已发布检验服务；诊断、检验和处方有效修改自动保存，已创建事实固定对应 snapshot。Investigation 的系统执行异常支持受控重试，不向医生展示生成 capability。病例库继续提供责任范围内的已完诊 Encounter 与受控更正入口。服务端状态只由 TanStack Query 缓存，退出或跨账户登录会清除非 session 查询。
 - 可见字符串具有中文和英文 catalog；主题支持 system、light 与 dark。岗位页面具有分页、加载、空、错误、冲突、无权限和成功状态，并覆盖长中文文本与窄视口。
 - DSH Web 可从统一 launcher 打开同一完整工作台，使用 Memory Router、ShadowRoot 和动态岗位 Tools；Agent 可执行读取、导航、选择、草稿和 preview，正式动作只进入 detached 人工审阅。
 - `clinmesh` CLI 通过 Operation Catalog、单岗位 Capability Grant 和领域 Skills 开放当前 Query、Command 与只读 FHIR 能力。

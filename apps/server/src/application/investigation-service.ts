@@ -1,12 +1,17 @@
 import { createHash } from 'node:crypto'
 import {
+  investigationCodeableValueSchema,
   investigationResultContentSchema,
   investigationResultSnapshotSchema,
   type InvestigationResultContent,
   type InvestigationResultSnapshot,
 } from '@clinmesh/contracts/scenario'
 import { referenceConceptSnapshotSchema } from '@clinmesh/contracts/reference-data'
-import type { InvestigationGenerationCapability } from '@clinmesh/contracts/his'
+import {
+  laboratoryServiceSnapshotSchema,
+  type InvestigationGenerationCapability,
+  type LaboratoryServiceSnapshot,
+} from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { InvestigationResultRepository } from '../infrastructure/sqlite/investigation-result-repository.ts'
@@ -18,6 +23,15 @@ import {
 } from '../infrastructure/ai/openai-chat-completions.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import { syntheticInvestigationReferenceRange } from './scenario-data/reference-coding-package.ts'
+import {
+  AdultReferenceApplicabilityError,
+  adultReferenceGenerationPolicyVersion,
+  adultReferenceRange,
+  adultRuleProvenance,
+  exactAdultReferenceScalarResult,
+  generateAdultReferenceResult,
+  selectAdultReferenceRule,
+} from './laboratory-adult-reference.ts'
 
 const promptVersion = 'investigation-result-v1'
 const systemPrompt = [
@@ -27,6 +41,18 @@ const systemPrompt = [
   '不得修改项目编码、单位或参考范围，不得添加其他项目。',
 ].join('\n')
 const promptHash = canonicalJsonHash({ promptVersion, systemPrompt })
+const servicePromptVersion = 'investigation-result-v2'
+const serviceSystemPrompt = [
+  '你是中国门诊结构化检验结果生成器。',
+  '只返回符合 JSON Schema 的 JSON，不要返回 Markdown。',
+  '只生成 requestedResults 中缺失的项目，不得增加、删除或替换编码。',
+  '逐项原样返回输入给定的单位和参考范围，并返回值、normal/high/low 判读和总结。',
+  '结合正式诊断、已有正式检验、可见病史和私有病例证据生成相互一致的结果。',
+].join('\n')
+const servicePromptHash = canonicalJsonHash({
+  promptVersion: servicePromptVersion,
+  systemPrompt: serviceSystemPrompt,
+})
 const maximumAgentEvidenceItems = 20
 const agentEvidenceResourceTypes = new Set(['Condition', 'Observation', 'Procedure'])
 const agentOutputSchema = z.object({
@@ -35,11 +61,40 @@ const agentOutputSchema = z.object({
   value: z.number().finite(),
 }).strict()
 
+const serviceAgentOutputSchema = z.object({
+  conclusion: z.string().trim().min(1).max(1_000),
+  results: z.array(z.object({
+    code: z.string().min(1).max(256),
+    interpretation: z.enum(['normal', 'high', 'low']),
+    referenceRange: z.object({
+      high: z.number().finite().optional(),
+      low: z.number().finite().optional(),
+      text: z.string().min(1).max(500),
+    }).strict(),
+    unit: z.object({
+      code: z.string().min(1).max(128),
+      display: z.string().min(1).max(128),
+      system: z.literal('http://unitsofmeasure.org'),
+    }).strict().optional(),
+    value: z.union([
+      z.boolean(),
+      z.number().finite(),
+      z.string().min(1).max(1_000),
+      investigationCodeableValueSchema,
+    ]),
+  }).strict()).min(1).max(128),
+}).strict()
+
 const requestRowSchema = z.object({
+  authored_at: z.iso.datetime({ offset: true }),
   catalog_item_id: z.string().min(1),
+  encounter_id: z.string().min(1),
+  patient_id: z.string().min(1),
   profile_id: z.string().min(1),
   profile_revision: z.number().int().positive(),
   reference_json: z.string().min(1),
+  result_snapshot_id: z.string().min(1).nullable(),
+  service_snapshot_json: z.string().min(1).nullable(),
   synthetic_case_id: z.string().min(1),
   synthetic_case_revision: z.number().int().positive(),
 }).strict()
@@ -55,6 +110,8 @@ const investigationResourceSchema = z.object({
 
 type Resource = z.infer<typeof investigationResourceSchema>
 type RequestedConcept = z.infer<typeof referenceConceptSnapshotSchema>
+type RequestRow = z.infer<typeof requestRowSchema>
+type ServiceResultDefinition = LaboratoryServiceSnapshot['reportDefinition']['results'][number]
 type RequestedLaboratory = NonNullable<RequestedConcept['laboratory']>
 type AgentLaboratoryMetadata = RequestedLaboratory & {
   referenceRange: NonNullable<RequestedLaboratory['referenceRange']>
@@ -137,6 +194,29 @@ function quantity(value: unknown) {
     system: typeof candidate.system === 'string' ? candidate.system : undefined,
     value: candidate.value,
   }
+}
+
+function scalarValue(
+  resource: Resource,
+): boolean | string | z.infer<typeof investigationCodeableValueSchema> | undefined {
+  if (typeof resource.valueBoolean === 'boolean') return resource.valueBoolean
+  if (typeof resource.valueString === 'string') return resource.valueString
+  if (typeof resource.valueCodeableConcept !== 'object' || resource.valueCodeableConcept === null) {
+    return undefined
+  }
+  const concept = resource.valueCodeableConcept as Record<string, unknown>
+  const coding = Array.isArray(concept.coding)
+    ? concept.coding.find(item => typeof item === 'object' && item !== null)
+    : undefined
+  if (typeof coding === 'object' && coding !== null) {
+    const code = (coding as Record<string, unknown>).code
+    const display = (coding as Record<string, unknown>).display
+    const system = (coding as Record<string, unknown>).system
+    if (typeof code === 'string' && typeof display === 'string' && typeof system === 'string') {
+      return investigationCodeableValueSchema.parse({ code, display, system })
+    }
+  }
+  return typeof concept.text === 'string' ? concept.text : undefined
 }
 
 function sourceReferenceRange(resource: Resource) {
@@ -227,6 +307,21 @@ function exactObservation(
     .filter(resource => conceptCodings(resource).some(coding => (
       coding.system === requestedConcept.system && coding.code === requestedConcept.code
     )))
+    .toSorted((left, right) => (
+      clinicalTimestamp(right) - clinicalTimestamp(left) || left.id.localeCompare(right.id)
+    ))[0]
+}
+
+function exactObservationForDefinition(
+  hiddenResources: Resource[],
+  definition: ServiceResultDefinition,
+): Resource | undefined {
+  const codings = [definition.referenceConcept, ...definition.alternateCodings]
+  return hiddenResources
+    .filter(resource => resource.resourceType === 'Observation')
+    .filter(resource => conceptCodings(resource).some(coding => codings.some(candidate => (
+      coding.system === candidate.system && coding.code === candidate.code
+    ))))
     .toSorted((left, right) => (
       clinicalTimestamp(right) - clinicalTimestamp(left) || left.id.localeCompare(right.id)
     ))[0]
@@ -323,7 +418,9 @@ export class InvestigationService {
     signal?: AbortSignal,
   ): Promise<InvestigationResultSnapshot | undefined> {
     const row = requestRowSchema.optional().parse(this.#database.driver.prepare(`
-      SELECT request.catalog_item_id, request.reference_json,
+      SELECT request.authored_at, request.catalog_item_id, request.reference_json,
+        request.result_snapshot_id, request.service_snapshot_json,
+        outpatient_case.encounter_id, outpatient_case.patient_id,
         materialization.case_id AS synthetic_case_id,
         materialization.case_revision AS synthetic_case_revision,
         materialization.profile_id, materialization.profile_revision
@@ -332,9 +429,25 @@ export class InvestigationService {
         ON materialization.workspace_id = request.workspace_id
        AND materialization.epoch = request.epoch
        AND materialization.outpatient_case_id = request.case_id
+      JOIN outpatient_case
+        ON outpatient_case.workspace_id = request.workspace_id
+       AND outpatient_case.epoch = request.epoch
+       AND outpatient_case.case_id = request.case_id
       WHERE request.workspace_id = ? AND request.epoch = ? AND request.request_id = ?
     `).get(workspaceId, epoch, requestId))
     if (row === undefined) return undefined
+    if (row.result_snapshot_id !== null) {
+      return this.#results.getById(workspaceId, row.result_snapshot_id)
+    }
+    if (row.service_snapshot_json !== null) {
+      return this.#resolvePublishedService(
+        workspaceId,
+        epoch,
+        row,
+        laboratoryServiceSnapshotSchema.parse(JSON.parse(row.service_snapshot_json)),
+        signal,
+      )
+    }
     const existing = this.#results.getByCaseItem(
       workspaceId,
       row.synthetic_case_id,
@@ -435,6 +548,353 @@ export class InvestigationService {
       source: 'investigation-agent',
       workspaceId,
     })
+  }
+
+  async #resolvePublishedService(
+    workspaceId: string,
+    epoch: string,
+    row: RequestRow,
+    service: LaboratoryServiceSnapshot,
+    signal?: AbortSignal,
+  ): Promise<InvestigationResultSnapshot> {
+    const syntheticCase = this.#cases.get(workspaceId, row.synthetic_case_id)
+    const truth = this.#cases.getTruthForSimulator(workspaceId, row.synthetic_case_id)
+    const profile = this.#profiles.getRevision(workspaceId, row.profile_id, row.profile_revision)
+    if (syntheticCase === undefined || truth === undefined || profile === undefined) {
+      throw new InvestigationGenerationError(
+        'INVESTIGATION_OUTPUT_INVALID',
+        'The Synthetic Case context is incomplete',
+      )
+    }
+    const hiddenResources = truth.hiddenResources.map(item => (
+      investigationResourceSchema.parse(item.resource)
+    ))
+    const adultRules = new Map<
+      string,
+      ReturnType<typeof selectAdultReferenceRule>
+    >()
+    if (service.sourceDataset?.datasetId === 'laboratory-cn') {
+      try {
+        for (const definition of service.reportDefinition.results) {
+          adultRules.set(definition.referenceConcept.id, selectAdultReferenceRule(
+            definition,
+            profile.demographics,
+            row.authored_at,
+          ))
+        }
+      } catch (error) {
+        if (!(error instanceof AdultReferenceApplicabilityError)) throw error
+        throw new InvestigationGenerationError('INVESTIGATION_OUTPUT_INVALID', error.message)
+      }
+    }
+    const exactResults = new Map<string, InvestigationResultContent['results'][number]>()
+    for (const definition of service.reportDefinition.results) {
+      const exact = exactObservationForDefinition(hiddenResources, definition)
+      if (exact === undefined) continue
+      const exactResult = this.#contentFromServiceObservation(
+        definition,
+        exact,
+        adultRules.get(definition.referenceConcept.id),
+      )
+      exactResults.set(definition.referenceConcept.code, service.sourceDataset === undefined
+        ? exactResult
+        : { ...exactResult, source: 'case-truth-exact' })
+    }
+    const formalEvidence = this.#formalEvidence(
+      workspaceId,
+      epoch,
+      row.patient_id,
+      row.encounter_id,
+    )
+    const missing = service.reportDefinition.results.filter(
+      definition => !exactResults.has(definition.referenceConcept.code),
+    )
+    const basePayload = {
+      caseRevision: row.synthetic_case_revision,
+      demographics: {
+        birthDate: profile.demographics.birthDate,
+        gender: profile.demographics.gender,
+      },
+      authoredAt: row.authored_at,
+      exactResults: [...exactResults.values()],
+      formalEvidence,
+      requestedService: service,
+      selectedAdultRules: [...adultRules.entries()],
+      sourceHash: syntheticCase.sourceHash,
+    }
+    const agentMissing = missing.filter(
+      definition => !adultRules.has(definition.referenceConcept.id),
+    )
+    if (agentMissing.length === 0) {
+      const inputHash = canonicalJsonHash(basePayload)
+      const existing = this.#results.getByEvidence(
+        workspaceId,
+        row.synthetic_case_id,
+        row.catalog_item_id,
+        inputHash,
+      )
+      if (existing !== undefined) return existing
+      const baselineResults = new Map(missing.map((definition) => {
+        const rule = adultRules.get(definition.referenceConcept.id)!
+        return [definition.referenceConcept.code, generateAdultReferenceResult({
+          definition,
+          inputHash,
+          rule,
+          serviceVersion: service.version,
+        })] as const
+      }))
+      const baselineCount = baselineResults.size
+      const exactCount = exactResults.size
+      return this.#freeze({
+        caseId: row.synthetic_case_id,
+        catalogItemId: row.catalog_item_id,
+        content: investigationResultContentSchema.parse({
+          conclusion: service.reportDefinition.conclusionTemplate,
+          results: service.reportDefinition.results.map(definition => (
+            exactResults.get(definition.referenceConcept.code)
+            ?? baselineResults.get(definition.referenceConcept.code)!
+          )),
+        }),
+        inputHash,
+        model: null,
+        promptHash: null,
+        promptVersion: null,
+        ...(service.sourceDataset === undefined
+          ? {}
+          : {
+              provenance: {
+                datasetReleaseId: service.sourceDataset.releaseId,
+                generationPolicyVersion: adultReferenceGenerationPolicyVersion,
+                referenceReleaseId: service.referenceReleaseId,
+                rules: service.reportDefinition.results.map(definition => adultRuleProvenance(
+                  definition.referenceConcept.id,
+                  adultRules.get(definition.referenceConcept.id)!,
+                )),
+              },
+            }),
+        requestedConcept: service.referenceConcept,
+        source: baselineCount === 0
+          ? 'synthea-exact'
+          : exactCount === 0 ? 'adult-reference-baseline' : 'mixed',
+        workspaceId,
+      })
+    }
+    if (this.#provider === undefined || this.#model === undefined) {
+      throw new InvestigationGenerationError(
+        'INVESTIGATION_UNSUPPORTED',
+        'The structured Investigation Agent is not configured',
+      )
+    }
+    const payload = {
+      ...basePayload,
+      privateCaseEvidence: evidence(hiddenResources),
+      requestedResults: agentMissing,
+      visibleHistory: this.#cases.listRecentVisibleHistory({
+        caseId: row.synthetic_case_id,
+        limit: maximumAgentEvidenceItems,
+        workspaceId,
+      }),
+    }
+    const inputHash = canonicalJsonHash(payload)
+    const existing = this.#results.getByEvidence(
+      workspaceId,
+      row.synthetic_case_id,
+      row.catalog_item_id,
+      inputHash,
+    )
+    if (existing !== undefined) return existing
+    const completion = await this.#provider.completeJson({
+      jsonSchema: z.toJSONSchema(serviceAgentOutputSchema) as Record<string, unknown>,
+      model: this.#model,
+      schemaName: 'investigation_service_result',
+      ...(signal === undefined ? {} : { signal }),
+      systemPrompt: serviceSystemPrompt,
+      userPayload: payload,
+    })
+    const output = serviceAgentOutputSchema.parse(JSON.parse(completion.content))
+    const outputByCode = new Map(output.results.map(result => [result.code, result]))
+    if (outputByCode.size !== output.results.length
+      || output.results.length !== agentMissing.length
+      || agentMissing.some(definition => !outputByCode.has(definition.referenceConcept.code))) {
+      throw new InvestigationGenerationError(
+        'INVESTIGATION_OUTPUT_INVALID',
+        'The Investigation Agent changed the requested report closure',
+      )
+    }
+    const generatedResults = new Map(agentMissing.map((definition) => {
+      const generated = outputByCode.get(definition.referenceConcept.code)!
+      return [definition.referenceConcept.code, this.#validatedServiceAgentResult(
+        definition,
+        generated,
+      )] as const
+    }))
+    const baselineResults = new Map(missing.flatMap((definition) => {
+      const rule = adultRules.get(definition.referenceConcept.id)
+      return rule === undefined
+        ? []
+        : [[definition.referenceConcept.code, generateAdultReferenceResult({
+            definition,
+            inputHash,
+            rule,
+            serviceVersion: service.version,
+          })] as const]
+    }))
+    const content = investigationResultContentSchema.parse({
+      conclusion: output.conclusion,
+      results: service.reportDefinition.results.map(definition => (
+        exactResults.get(definition.referenceConcept.code)
+        ?? baselineResults.get(definition.referenceConcept.code)
+        ?? generatedResults.get(definition.referenceConcept.code)
+      )),
+    })
+    return this.#freeze({
+      caseId: row.synthetic_case_id,
+      catalogItemId: row.catalog_item_id,
+      content,
+      inputHash,
+      model: completion.model,
+      promptHash: servicePromptHash,
+      promptVersion: servicePromptVersion,
+      requestedConcept: service.referenceConcept,
+      source: exactResults.size > 0 || baselineResults.size > 0 ? 'mixed' : 'investigation-agent',
+      workspaceId,
+    })
+  }
+
+  #contentFromServiceObservation(
+    definition: ServiceResultDefinition,
+    observation: Resource,
+    adultRule?: ReturnType<typeof selectAdultReferenceRule>,
+  ): InvestigationResultContent['results'][number] {
+    if (definition.valueType === 'quantity') {
+      const result = quantity(observation.valueQuantity)
+      if (result === undefined || definition.unit === undefined
+        || result.code !== definition.unit.code
+        || result.system !== definition.unit.system) {
+        throw new InvestigationGenerationError(
+          'INVESTIGATION_OUTPUT_INVALID',
+          'The exact Case Truth Observation conflicts with the Laboratory Service unit',
+        )
+      }
+      const referenceRange = adultRule === undefined
+        ? definition.referenceRange
+        : adultReferenceRange(adultRule, definition.unit)
+      return {
+        code: definition.referenceConcept.code,
+        display: definition.referenceConcept.display,
+        interpretation: interpretationFor(result.value, referenceRange),
+        referenceRange,
+        unit: definition.unit,
+        value: result.value,
+      }
+    }
+    const value = scalarValue(observation)
+    if (adultRule !== undefined && definition.healthyStrategy === 'fixed-normal') {
+      try {
+        return exactAdultReferenceScalarResult({ definition, rule: adultRule, value })
+      } catch (error) {
+        if (!(error instanceof AdultReferenceApplicabilityError)) throw error
+        throw new InvestigationGenerationError('INVESTIGATION_OUTPUT_INVALID', error.message)
+      }
+    }
+    if (value === undefined || definition.allowedValues?.some(
+      item => canonicalJsonHash(item) === canonicalJsonHash(value),
+    ) !== true) {
+      throw new InvestigationGenerationError(
+        'INVESTIGATION_OUTPUT_INVALID',
+        'The exact Case Truth Observation conflicts with the Laboratory Service value definition',
+      )
+    }
+    return {
+      code: definition.referenceConcept.code,
+      display: definition.referenceConcept.display,
+      interpretation: 'normal',
+      referenceRange: definition.referenceRange,
+      value,
+    }
+  }
+
+  #validatedServiceAgentResult(
+    definition: ServiceResultDefinition,
+    generated: z.infer<typeof serviceAgentOutputSchema>['results'][number],
+  ): InvestigationResultContent['results'][number] {
+    if (canonicalJsonHash(generated.referenceRange)
+      !== canonicalJsonHash(definition.referenceRange)
+      || canonicalJsonHash(generated.unit ?? null) !== canonicalJsonHash(definition.unit ?? null)) {
+      throw new InvestigationGenerationError(
+        'INVESTIGATION_OUTPUT_INVALID',
+        'The Investigation Agent changed the Laboratory Service unit or reference range',
+      )
+    }
+    if (definition.valueType === 'quantity') {
+      if (typeof generated.value !== 'number'
+        || generated.interpretation !== interpretationFor(
+          generated.value,
+          definition.referenceRange,
+        )) {
+        throw new InvestigationGenerationError(
+          'INVESTIGATION_OUTPUT_INVALID',
+          'The Investigation Agent value conflicts with the quantitative report definition',
+        )
+      }
+    } else {
+      const valueMatchesType = definition.valueType === 'boolean'
+        ? typeof generated.value === 'boolean'
+        : definition.valueType === 'string'
+          ? typeof generated.value === 'string'
+          : typeof generated.value === 'object'
+      const allowed = definition.allowedValues?.some(
+        value => canonicalJsonHash(value) === canonicalJsonHash(generated.value),
+      ) === true
+      if (!valueMatchesType || !allowed) {
+        throw new InvestigationGenerationError(
+          'INVESTIGATION_OUTPUT_INVALID',
+          'The Investigation Agent value conflicts with the qualitative report definition',
+        )
+      }
+    }
+    return investigationResultContentSchema.shape.results.element.parse({
+      code: definition.referenceConcept.code,
+      display: definition.referenceConcept.display,
+      interpretation: generated.interpretation,
+      referenceRange: generated.referenceRange,
+      ...(generated.unit === undefined ? {} : { unit: generated.unit }),
+      value: generated.value,
+    })
+  }
+
+  #formalEvidence(
+    workspaceId: string,
+    epoch: string,
+    patientId: string,
+    encounterId: string,
+  ) {
+    const rows = z.array(z.object({ content_json: z.string() }).strict()).parse(
+      this.#database.driver.prepare(`
+        SELECT content_json
+        FROM fhir_resource
+        WHERE workspace_id = ? AND epoch = ? AND deleted = 0
+          AND resource_type IN ('Condition', 'Observation')
+          AND (
+            json_extract(content_json, '$.encounter.reference') = ?
+            OR (
+              resource_type = 'Condition'
+              AND json_extract(content_json, '$.subject.reference') = ?
+            )
+          )
+        ORDER BY last_updated DESC, resource_type, resource_id
+        LIMIT ?
+      `).all(
+        workspaceId,
+        epoch,
+        `Encounter/${encounterId}`,
+        `Patient/${patientId}`,
+        maximumAgentEvidenceItems,
+      ),
+    )
+    return evidence(rows.map(row => investigationResourceSchema.parse(
+      JSON.parse(row.content_json),
+    )))
   }
 
   #contentFromExactObservation(

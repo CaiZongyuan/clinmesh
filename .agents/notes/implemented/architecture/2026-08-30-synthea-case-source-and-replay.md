@@ -38,7 +38,7 @@ Operational migration 是有意的开发期破坏性边界：存在旧 Dataset�
 
 Case Truth 的私有边界和 Visible Source History 的 allowlist 必须随新资源类型继续做负向测试。任何新 Agent 工具只能读取已授权历史或本院事实，不能接受任意来源 reference、Bundle、SQL 或 truth 查询。
 
-Reference Release 可以独立升级；既有诊断、处方和检验请求保留创建时的 coding/display snapshot。Synthea 来源编码只用于显示原病历，不声称已经映射为中国国家或本院编码。
+Reference Release 可以独立升级；既有诊断、处方和检验请求保留创建时的 coding、产品或 Hospital Service/report definition snapshot。Synthea 来源编码只用于显示原病历和精确 Investigation 结果复用，不声称已经映射为中国国家或本院编码。Snapshot 的复查复用规则由[完整检验参考库与本院服务发布](./2026-09-01-laboratory-service-publication.md)拥有。
 
 重放产生新的本院业务和 FHIR 标识，因此跨 Epoch 比较必须按 Case/Profile/Brief/snapshot revision 关联，而不能要求 operational ID 相同。Reset Command 的审计属于关闭中的旧 Epoch；新 Epoch FHIR 事实不作为旧 Epoch AuditEvent 的本地 FHIR reference effects 返回。
 

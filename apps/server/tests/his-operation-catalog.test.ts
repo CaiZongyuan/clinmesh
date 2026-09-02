@@ -27,7 +27,7 @@ describe('HIS operation route coverage', () => {
     ))
     const excludedRoutes = excludedHisRoutes.map(route => routeKey(route.method, route.path))
 
-    expect(operations).toHaveLength(48)
+    expect(operations).toHaveLength(51)
     expect(excludedHisRoutes).toHaveLength(9)
     expect(new Set(operations.map(operation => operation.id)).size).toBe(operations.length)
     expect(new Set(operations.map(operation => operation.cliPath.join(' '))).size).toBe(operations.length)

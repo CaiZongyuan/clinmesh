@@ -13,8 +13,10 @@ import {
   listReferenceMedicationProducts,
   listReferenceValueSetEntries,
   searchReferenceConceptCatalog,
+  searchReferenceLaboratoryRecords,
   searchReferenceMedicationCatalog,
   getReferenceConceptById,
+  getReferenceLaboratoryRecord,
   getReferenceMedicationProductById,
   type ReferenceCatalogSearchInput,
   type ReferenceDatabase,
@@ -65,6 +67,10 @@ export class SqliteReferenceDataRepository implements ReferenceDataReader {
     return searchReferenceMedicationCatalog(this.#database, releaseId, input)
   }
 
+  searchLaboratoryRecords(releaseId: string, input: ReferenceCatalogSearchInput) {
+    return searchReferenceLaboratoryRecords(this.#database, releaseId, input)
+  }
+
   conceptById(
     releaseId: string,
     domain: 'diagnosis' | 'laboratory',
@@ -75,5 +81,9 @@ export class SqliteReferenceDataRepository implements ReferenceDataReader {
 
   medicationProductById(releaseId: string, productId: string) {
     return getReferenceMedicationProductById(this.#database, releaseId, productId)
+  }
+
+  laboratoryRecord(releaseId: string, conceptId: string) {
+    return getReferenceLaboratoryRecord(this.#database, releaseId, conceptId)
   }
 }

@@ -43,10 +43,15 @@ import {
   issueLaboratoryRequestResponseSchema,
   laboratoryRequestActionResponseSchema,
   laboratoryRequestDraftResponseSchema,
+  laboratoryServiceCandidateSearchInputSchema,
+  laboratoryServiceCandidateSearchSchema,
+  laboratoryServicePublicationJobSchema,
   orderHospitalServiceResponseSchema,
   patientSearchSchema,
   paymentPreviewResponseSchema,
   paymentResponseSchema,
+  publishLaboratoryServicesRequestSchema,
+  publishLaboratoryServicesResponseSchema,
   pharmacyQueueSchema,
   previewClinicalDocumentSignRequestSchema,
   registrationCatalogSchema,
@@ -83,11 +88,13 @@ export const hisOperationIdentitySchema = z.enum(['agent', 'human'])
 export const hisOperationHandlerOwnerSchema = z.enum([
   'FhirCapabilities',
   'FhirRepository',
+  'LaboratoryServicePublisher',
   'ReferenceDataService',
   'SyntheticCaseVisitService',
   'WorkflowService',
 ])
 export const hisOperationSkillSchema = z.enum([
+  'clinmesh-administrator',
   'clinmesh-billing',
   'clinmesh-doctor',
   'clinmesh-fhir',
@@ -228,6 +235,13 @@ const caseIdInputSchema = z.object({
 const caseLaboratoryCatalogSearchInputSchema = referenceCatalogSearchInputSchema.extend({
   caseId: caseIdInputSchema.shape.caseId,
 }).strict()
+
+const laboratoryServicePublicationJobInputSchema = z.object({
+  jobId: z.string().min(1).max(128),
+}).strict()
+
+const publishLaboratoryServicesOperationInputSchema
+  = publishLaboratoryServicesRequestSchema.shape.input
 
 const encounterIdInputSchema = z.object({
   encounterId: z.string().min(1),
@@ -505,6 +519,9 @@ function commandBody(
 }
 
 const bodyEncoders = {
+  'admin.laboratory-services.publish': (rawInput: unknown) => ({
+    input: publishLaboratoryServicesOperationInputSchema.parse(rawInput),
+  }),
   'patient.create': (rawInput: unknown) => commandBody(
     {},
     patientCreateInputSchema.parse(rawInput),
@@ -710,6 +727,63 @@ const bodyEncoders = {
 } satisfies Record<string, (input: unknown) => unknown>
 
 const operationDefinitions = [
+  {
+    cliPath: ['admin', 'laboratory-services', 'candidates', 'search'],
+    http: {
+      method: 'GET',
+      path: '/api/his/v1/admin/laboratory-services/candidates',
+    },
+    id: 'admin.laboratory-services.candidates.search',
+    input: laboratoryServiceCandidateSearchInputSchema,
+    mode: 'query',
+    output: laboratoryServiceCandidateSearchSchema,
+    requirements: {
+      expectedVersions: false,
+      idempotency: 'none',
+    },
+    risk: 'read',
+    roles: ['administrator'],
+    summary: 'Search laboratory publication candidates by source and panel status',
+    version: 2,
+  },
+  {
+    cliPath: ['admin', 'laboratory-services', 'publish'],
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/admin/laboratory-services/actions/publish',
+    },
+    id: 'admin.laboratory-services.publish',
+    input: publishLaboratoryServicesOperationInputSchema,
+    mode: 'command',
+    output: publishLaboratoryServicesResponseSchema,
+    requirements: {
+      expectedVersions: false,
+      idempotency: 'required',
+    },
+    risk: 'write',
+    roles: ['administrator'],
+    summary: 'Queue one bounded Laboratory Service publication batch',
+    version: 1,
+  },
+  {
+    cliPath: ['admin', 'laboratory-services', 'job', 'get'],
+    http: {
+      method: 'GET',
+      path: '/api/his/v1/admin/laboratory-services/jobs/:jobId',
+    },
+    id: 'admin.laboratory-services.job.get',
+    input: laboratoryServicePublicationJobInputSchema,
+    mode: 'query',
+    output: laboratoryServicePublicationJobSchema,
+    requirements: {
+      expectedVersions: false,
+      idempotency: 'none',
+    },
+    risk: 'read',
+    roles: ['administrator'],
+    summary: 'Read one Laboratory Service publication job',
+    version: 1,
+  },
   {
     cliPath: ['reference', 'diagnoses', 'search'],
     http: {
@@ -1049,7 +1123,7 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Search laboratory concepts and generation capability for one active case',
+    summary: 'Search active orderable Laboratory Services for one doctor case',
     version: 1,
   },
   {
@@ -1722,6 +1796,7 @@ const operationDefinitions = [
 ] as const satisfies readonly HisOperationDeclaration[]
 
 const commandOperationAliases: Readonly<Record<string, string>> = {
+  'admin.laboratory-services.publish': 'laboratory-service-publication.create',
   [clinicalDocumentOperationIds.draftSet]: clinicalDocumentOperationIds.saveDraft,
   [clinicalDocumentOperationIds.previewSign]: clinicalDocumentOperationIds.storedPreviewSign,
   [clinicalDocumentOperationIds.sign]: clinicalDocumentOperationIds.storedSign,
@@ -1744,6 +1819,9 @@ const commandOperationAliases: Readonly<Record<string, string>> = {
 }
 
 const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillSchema>>> = {
+  'admin.laboratory-services.candidates.search': 'clinmesh-administrator',
+  'admin.laboratory-services.job.get': 'clinmesh-administrator',
+  'admin.laboratory-services.publish': 'clinmesh-administrator',
   'billing.queue.list': 'clinmesh-billing',
   'catalog.clinical.read': 'clinmesh-doctor',
   'catalog.registration.read': 'clinmesh-registration',
@@ -1806,6 +1884,9 @@ function handlerOwnerFor(
   if (operation.http.path.startsWith('/fhir/R5/')) return 'FhirRepository'
   if (operation.http.path.startsWith('/api/his/v1/reference-catalogs/')) {
     return 'ReferenceDataService'
+  }
+  if (operation.http.path.startsWith('/api/his/v1/admin/laboratory-services/')) {
+    return 'LaboratoryServicePublisher'
   }
   if (operation.id === 'registration.synthetic-case.start') return 'SyntheticCaseVisitService'
   return 'WorkflowService'

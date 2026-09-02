@@ -7,6 +7,8 @@ import {
   type ReferenceConcept,
   type ReferenceDataReleaseList,
   type ReferenceDataReleaseSummary,
+  type ReferenceLaboratoryRecord,
+  type ReferenceLaboratorySourceDataset,
   type ReferenceMedicalService,
   type ReferenceMedicationProduct,
   type ReferenceValueSetEntry,
@@ -32,6 +34,7 @@ export interface ReferenceDataReader {
     codings: readonly { code: string; system: string; version: string }[],
   ): ReferenceConcept[]
   list(): ReferenceDataReleaseList
+  laboratoryRecord?(releaseId: string, conceptId: string): ReferenceLaboratoryRecord | undefined
   medicalServices(releaseId: string): ReferenceMedicalService[]
   medicationProducts(
     releaseId: string,
@@ -46,6 +49,16 @@ export interface ReferenceDataReader {
     domain: 'diagnosis' | 'laboratory',
     input: { page: number; pageSize: number; query?: string },
   ): { items: ReferenceConcept[]; total: number }
+  searchLaboratoryRecords?(
+    releaseId: string,
+    input: {
+      page: number
+      pageSize: number
+      panelOnly?: boolean
+      query?: string
+      sourceDataset?: ReferenceLaboratorySourceDataset
+    },
+  ): { items: ReferenceLaboratoryRecord[]; total: number }
   searchMedicationProducts?(
     releaseId: string,
     input: { page: number; pageSize: number; query?: string },
@@ -198,6 +211,56 @@ export class ReferenceDataService {
       pageSize: input.pageSize,
       releaseId: release.releaseId,
     })
+  }
+
+  laboratoryRecord(context: ActorContext, conceptId: string): ReferenceLaboratoryRecord | undefined {
+    this.#assertCatalogReader(context)
+    const release = this.#catalogRelease()
+    return this.#reader?.laboratoryRecord?.(release.releaseId, conceptId)
+  }
+
+  laboratoryRecordFromRelease(
+    context: ActorContext,
+    releaseId: string,
+    conceptId: string,
+  ): ReferenceLaboratoryRecord | undefined {
+    if (context.roleCode !== 'administrator') {
+      throw new ReferenceDataError(
+        'ROLE_NOT_ALLOWED',
+        'Only an administrator can configure Laboratory Services',
+      )
+    }
+    const releaseExists = this.#releases().items.some(item => item.releaseId === releaseId)
+    if (!releaseExists) {
+      throw new ReferenceDataError(
+        'REFERENCE_RELEASE_NOT_FOUND',
+        'The Laboratory Service publication Reference Release was not found',
+      )
+    }
+    return this.#reader?.laboratoryRecord?.(releaseId, conceptId)
+  }
+
+  searchLaboratoryCandidates(
+    context: ActorContext,
+    input: {
+      page: number
+      pageSize: number
+      panelOnly?: boolean
+      query?: string
+      sourceDataset?: ReferenceLaboratorySourceDataset
+    },
+  ) {
+    if (context.roleCode !== 'administrator') {
+      throw new ReferenceDataError(
+        'ROLE_NOT_ALLOWED',
+        'Only an administrator can configure Laboratory Services',
+      )
+    }
+    const release = this.#catalogRelease()
+    const result = this.#reader?.searchLaboratoryRecords === undefined
+      ? { items: [], total: 0 }
+      : this.#reader.searchLaboratoryRecords(release.releaseId, input)
+    return { ...result, referenceReleaseId: release.releaseId }
   }
 
   searchMedications(

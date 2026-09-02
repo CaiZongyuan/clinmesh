@@ -8,12 +8,22 @@ import {
   referenceDataReleaseSummarySchema,
   referenceImportDiagnosticsSchema,
   referenceImportManifestSchema,
+  referenceLaboratoryDefinitionSchema,
+  referenceLaboratoryPanelMemberSchema,
+  referenceLaboratorySpecimenSchema,
+  referenceLaboratoryUnitSchema,
   referenceMedicationProductSchema,
   type ReferenceArtifact,
   type ReferenceConcept,
   type ReferenceDataReleaseList,
   type ReferenceDataReleaseSummary,
   type ReferenceImportManifest,
+  type ReferenceLaboratoryDefinition,
+  type ReferenceLaboratoryPanelMember,
+  type ReferenceLaboratoryRecord,
+  type ReferenceLaboratorySpecimen,
+  type ReferenceLaboratorySourceDataset,
+  type ReferenceLaboratoryUnit,
   type ReferenceMedicalService,
   type ReferenceMedicationProduct,
   type ReferenceSourceManifest,
@@ -53,10 +63,20 @@ export interface ReferenceCatalogSearchInput {
   query?: string
 }
 
+export interface ReferenceLaboratoryCandidateSearchInput extends ReferenceCatalogSearchInput {
+  panelOnly?: boolean
+  sourceDataset?: ReferenceLaboratorySourceDataset
+}
+
 export interface ReferenceCatalogSearchResult<Item> {
   items: Item[]
   total: number
 }
+
+type SourcedLaboratoryDefinition = ReferenceLaboratoryDefinition & { sourceId: string }
+type SourcedLaboratoryPanelMember = ReferenceLaboratoryPanelMember & { sourceId: string }
+type SourcedLaboratorySpecimen = ReferenceLaboratorySpecimen & { sourceId: string }
+type SourcedLaboratoryUnit = ReferenceLaboratoryUnit & { sourceId: string }
 
 export class ReferenceDatabase {
   readonly driver: Database.Database
@@ -90,6 +110,10 @@ function canonicalize(value: unknown): unknown {
 
 function contentHash(input: {
   concepts: Array<ReferenceConcept & { sourceId: string }>
+  laboratoryDefinitions: SourcedLaboratoryDefinition[]
+  laboratoryPanelMembers: SourcedLaboratoryPanelMember[]
+  laboratorySpecimens: SourcedLaboratorySpecimen[]
+  laboratoryUnits: SourcedLaboratoryUnit[]
   medicationProducts: Array<ReferenceMedicationProduct & { sourceId: string }>
   release: Pick<ReferenceImportManifest, 'createdAt' | 'releaseId' | 'schemaVersion'>
   services: Array<ReferenceMedicalService & { sourceId: string }>
@@ -112,6 +136,34 @@ function contentHash(input: {
     ...(input.medicationProducts.length === 0 ? {} : {
       medicationProducts: input.medicationProducts.toSorted((left, right) => (
         left.sourceId.localeCompare(right.sourceId) || left.id.localeCompare(right.id)
+      )),
+    }),
+    ...(input.laboratoryDefinitions.length === 0 ? {} : {
+      laboratoryDefinitions: input.laboratoryDefinitions.toSorted((left, right) => (
+        left.sourceId.localeCompare(right.sourceId) || left.conceptId.localeCompare(right.conceptId)
+      )),
+    }),
+    ...(input.laboratoryUnits.length === 0 ? {} : {
+      laboratoryUnits: input.laboratoryUnits.toSorted((left, right) => (
+        left.sourceId.localeCompare(right.sourceId)
+        || left.conceptId.localeCompare(right.conceptId)
+        || left.sourceLocator.localeCompare(right.sourceLocator)
+      )),
+    }),
+    ...(input.laboratorySpecimens.length === 0 ? {} : {
+      laboratorySpecimens: input.laboratorySpecimens.toSorted((left, right) => (
+        left.sourceId.localeCompare(right.sourceId)
+        || left.conceptId.localeCompare(right.conceptId)
+        || left.partNumber.localeCompare(right.partNumber)
+      )),
+    }),
+    ...(input.laboratoryPanelMembers.length === 0 ? {} : {
+      laboratoryPanelMembers: input.laboratoryPanelMembers.toSorted((left, right) => (
+        left.sourceId.localeCompare(right.sourceId)
+        || left.panelConceptId.localeCompare(right.panelConceptId)
+        || left.memberOrder - right.memberOrder
+        || left.memberConceptId.localeCompare(right.memberConceptId)
+        || left.sourceLocator.localeCompare(right.sourceLocator)
       )),
     }),
     ...(input.services.length === 0 ? {} : {
@@ -230,6 +282,7 @@ function sourceRows(database: ReferenceDatabase, releaseId: string): ReferenceSo
     checksum: z.string(),
     license_id: z.string(),
     import_diagnostics_json: z.string(),
+    materialization_json: z.string().nullable(),
     published_at: z.string().nullable(),
     record_count: z.number().int(),
     retrieved_at: z.string(),
@@ -239,7 +292,7 @@ function sourceRows(database: ReferenceDatabase, releaseId: string): ReferenceSo
   })).parse(database.driver.prepare(`
     SELECT source_id, upstream_version, published_at, retrieved_at, source_url,
       checksum, license_id, acquisition_method, artifact_format, record_count,
-      import_diagnostics_json, candidate_provenance_json
+      import_diagnostics_json, candidate_provenance_json, materialization_json
     FROM reference_source_manifest
     WHERE release_id = ?
     ORDER BY source_id
@@ -251,6 +304,9 @@ function sourceRows(database: ReferenceDatabase, releaseId: string): ReferenceSo
       : { candidate: JSON.parse(row.candidate_provenance_json) }),
     checksum: row.checksum,
     licenseId: row.license_id,
+    ...(row.materialization_json === null
+      ? {}
+      : { materialization: JSON.parse(row.materialization_json) }),
     ...(row.published_at === null ? {} : { publishedAt: row.published_at }),
     importDiagnostics: referenceImportDiagnosticsSchema.parse(JSON.parse(row.import_diagnostics_json)),
     recordCount: row.record_count,
@@ -305,6 +361,126 @@ function conceptRows(
     WHERE release_id = ?
     ORDER BY source_id, concept_id
   `).all(releaseId)).map(mapConceptRow)
+}
+
+function laboratoryDefinitionRows(
+  database: ReferenceDatabase,
+  releaseId: string,
+  conceptId?: string,
+): SourcedLaboratoryDefinition[] {
+  const parameters = conceptId === undefined ? [releaseId] : [releaseId, conceptId]
+  return z.array(z.object({
+    concept_id: z.string(),
+    definition_json: z.string(),
+    source_id: z.string(),
+    source_locator: z.string(),
+  }).strict()).parse(database.driver.prepare(`
+    SELECT concept_id, definition_json, source_id, source_locator
+    FROM reference_laboratory_definition
+    WHERE release_id = ?
+      ${conceptId === undefined ? '' : 'AND concept_id = ?'}
+    ORDER BY source_id, concept_id
+  `).all(...parameters)).map(row => ({
+    ...referenceLaboratoryDefinitionSchema.parse(JSON.parse(row.definition_json)),
+    sourceId: row.source_id,
+  }))
+}
+
+function laboratoryUnitRows(
+  database: ReferenceDatabase,
+  releaseId: string,
+  conceptId?: string,
+): SourcedLaboratoryUnit[] {
+  const parameters = conceptId === undefined ? [releaseId] : [releaseId, conceptId]
+  return z.array(z.object({
+    code: z.string(),
+    concept_id: z.string(),
+    kind: z.string(),
+    ordinal: z.number().int(),
+    source_id: z.string(),
+    source_locator: z.string(),
+  }).strict()).parse(database.driver.prepare(`
+    SELECT concept_id, code, kind, ordinal, source_id, source_locator
+    FROM reference_laboratory_unit
+    WHERE release_id = ?
+      ${conceptId === undefined ? '' : 'AND concept_id = ?'}
+    ORDER BY source_id, concept_id, ordinal, code, source_locator
+  `).all(...parameters)).map(row => ({
+    ...referenceLaboratoryUnitSchema.parse({
+      code: row.code,
+      conceptId: row.concept_id,
+      kind: row.kind,
+      ordinal: row.ordinal,
+      sourceLocator: row.source_locator,
+    }),
+    sourceId: row.source_id,
+  }))
+}
+
+function laboratorySpecimenRows(
+  database: ReferenceDatabase,
+  releaseId: string,
+  conceptId?: string,
+): SourcedLaboratorySpecimen[] {
+  const parameters = conceptId === undefined ? [releaseId] : [releaseId, conceptId]
+  return z.array(z.object({
+    concept_id: z.string(),
+    display: z.string(),
+    link_type: z.string(),
+    part_name: z.string(),
+    part_number: z.string(),
+    source_id: z.string(),
+    source_locator: z.string(),
+  }).strict()).parse(database.driver.prepare(`
+    SELECT concept_id, part_number, part_name, display, link_type,
+      source_id, source_locator
+    FROM reference_laboratory_specimen
+    WHERE release_id = ?
+      ${conceptId === undefined ? '' : 'AND concept_id = ?'}
+    ORDER BY source_id, concept_id, part_number, link_type
+  `).all(...parameters)).map(row => ({
+    ...referenceLaboratorySpecimenSchema.parse({
+      conceptId: row.concept_id,
+      display: row.display,
+      linkType: row.link_type,
+      partName: row.part_name,
+      partNumber: row.part_number,
+      sourceLocator: row.source_locator,
+    }),
+    sourceId: row.source_id,
+  }))
+}
+
+function laboratoryPanelMemberRows(
+  database: ReferenceDatabase,
+  releaseId: string,
+  panelConceptId?: string,
+): SourcedLaboratoryPanelMember[] {
+  const parameters = panelConceptId === undefined ? [releaseId] : [releaseId, panelConceptId]
+  return z.array(z.object({
+    member_concept_id: z.string(),
+    member_order: z.number().int(),
+    panel_concept_id: z.string(),
+    relationship: z.string(),
+    source_id: z.string(),
+    source_locator: z.string(),
+  }).strict()).parse(database.driver.prepare(`
+    SELECT panel_concept_id, member_concept_id, member_order, relationship,
+      source_id, source_locator
+    FROM reference_laboratory_panel_member
+    WHERE release_id = ?
+      ${panelConceptId === undefined ? '' : 'AND panel_concept_id = ?'}
+    ORDER BY source_id, panel_concept_id, member_order, member_concept_id, source_locator
+  `).all(...parameters)).map(row => ({
+    ...referenceLaboratoryPanelMemberSchema.parse({
+      memberConceptId: row.member_concept_id,
+      memberOrder: row.member_order,
+      panelConceptId: row.panel_concept_id,
+      relationship: row.relationship,
+      sourceLocator: row.source_locator,
+    }),
+    sourceId: row.source_id,
+  }))
 }
 
 const medicationProductDatabaseRowSchema = z.object({
@@ -652,6 +828,116 @@ export function searchReferenceConceptCatalog(
   }
 }
 
+export function searchReferenceLaboratoryRecords(
+  database: ReferenceDatabase,
+  releaseId: string,
+  input: ReferenceLaboratoryCandidateSearchInput,
+): ReferenceCatalogSearchResult<ReferenceLaboratoryRecord> {
+  verifyReferenceMigrations(database)
+  const parameters: unknown[] = [releaseId]
+  let source = `
+    reference_concept
+    JOIN reference_laboratory_definition
+      ON reference_laboratory_definition.release_id = reference_concept.release_id
+     AND reference_laboratory_definition.concept_id = reference_concept.concept_id
+  `
+  let queryCondition = ''
+  let filterCondition = ''
+  if (input.sourceDataset === 'laboratory-cn') {
+    filterCondition += `
+      AND json_extract(
+        reference_laboratory_definition.definition_json,
+        '$.kind'
+      ) = 'laboratory-cn-panel'
+    `
+  } else if (input.sourceDataset === 'loinc-zh-cn') {
+    filterCondition += `
+      AND json_extract(
+        reference_laboratory_definition.definition_json,
+        '$.kind'
+      ) = 'loinc'
+    `
+  }
+  if (input.panelOnly === true) {
+    filterCondition += `
+      AND (
+        json_extract(
+          reference_laboratory_definition.definition_json,
+          '$.kind'
+        ) = 'laboratory-cn-panel'
+        OR json_extract(
+          reference_laboratory_definition.definition_json,
+          '$.panelType'
+        ) IS NOT NULL
+      )
+    `
+  }
+  if (input.query !== undefined && input.query.length < 3) {
+    queryCondition = `
+      AND (
+        instr(lower(reference_concept.display), lower(?)) > 0
+        OR instr(lower(reference_concept.code), lower(?)) > 0
+      )
+    `
+    parameters.push(input.query, input.query)
+  } else if (input.query !== undefined) {
+    source += `
+      JOIN reference_concept_fts
+        ON reference_concept_fts.rowid = reference_concept.rowid
+    `
+    queryCondition = 'AND reference_concept_fts MATCH ?'
+    parameters.push(ftsPhrase(input.query))
+  }
+  const where = `
+    WHERE reference_concept.release_id = ?
+      AND reference_concept.domain = 'laboratory'
+      AND reference_concept.status = 'active'
+      AND (
+        (
+          json_extract(reference_laboratory_definition.definition_json, '$.kind') = 'loinc'
+          AND json_extract(reference_laboratory_definition.definition_json, '$.classType') = 1
+          AND json_extract(
+            reference_laboratory_definition.definition_json,
+            '$.orderObservation'
+          ) IN ('Order', 'Both')
+        )
+        OR json_extract(
+          reference_laboratory_definition.definition_json,
+          '$.kind'
+        ) = 'laboratory-cn-panel'
+      )
+      ${filterCondition}
+      ${queryCondition}
+  `
+  const total = z.object({ count: z.number().int().nonnegative() }).parse(
+    database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM ${source} ${where}
+    `).get(...parameters),
+  ).count
+  const rows = z.array(z.object({ concept_id: z.string() }).strict()).parse(
+    database.driver.prepare(`
+      SELECT reference_concept.concept_id
+      FROM ${source}
+      ${where}
+      ORDER BY reference_concept.display, reference_concept.code,
+        reference_concept.concept_id
+      LIMIT ? OFFSET ?
+    `).all(
+      ...parameters,
+      input.pageSize,
+      (input.page - 1) * input.pageSize,
+    ),
+  )
+  return {
+    items: rows.map(row => referenceLaboratoryRecord(
+      database,
+      releaseId,
+      row.concept_id,
+    )).filter((record): record is ReferenceLaboratoryRecord => record !== undefined),
+    total,
+  }
+}
+
 export function searchReferenceMedicationCatalog(
   database: ReferenceDatabase,
   releaseId: string,
@@ -761,13 +1047,12 @@ export function searchReferenceMedicationCatalog(
   }
 }
 
-export function getReferenceConceptById(
+function referenceConceptById(
   database: ReferenceDatabase,
   releaseId: string,
   domain: 'diagnosis' | 'laboratory',
   conceptId: string,
 ): ReferenceConcept | undefined {
-  verifyReferenceMigrations(database)
   const row = database.driver.prepare(`
     SELECT concept_id, domain, system, system_version, code, display, status,
       laboratory_metadata_json,
@@ -778,6 +1063,47 @@ export function getReferenceConceptById(
   if (row === undefined) return undefined
   const { sourceId: _sourceId, ...concept } = mapConceptRow(conceptDatabaseRowSchema.parse(row))
   return concept
+}
+
+export function getReferenceConceptById(
+  database: ReferenceDatabase,
+  releaseId: string,
+  domain: 'diagnosis' | 'laboratory',
+  conceptId: string,
+): ReferenceConcept | undefined {
+  verifyReferenceMigrations(database)
+  return referenceConceptById(database, releaseId, domain, conceptId)
+}
+
+function referenceLaboratoryRecord(
+  database: ReferenceDatabase,
+  releaseId: string,
+  conceptId: string,
+): ReferenceLaboratoryRecord | undefined {
+  const concept = referenceConceptById(database, releaseId, 'laboratory', conceptId)
+  if (concept === undefined) return undefined
+  const sourcedDefinition = laboratoryDefinitionRows(database, releaseId, conceptId)[0]
+  if (sourcedDefinition === undefined) return undefined
+  const { sourceId: _sourceId, ...definition } = sourcedDefinition
+  return {
+    concept,
+    definition,
+    panelMembers: laboratoryPanelMemberRows(database, releaseId, conceptId)
+      .map(({ sourceId: _sourceId, ...item }) => item),
+    specimens: laboratorySpecimenRows(database, releaseId, conceptId)
+      .map(({ sourceId: _sourceId, ...item }) => item),
+    units: laboratoryUnitRows(database, releaseId, conceptId)
+      .map(({ sourceId: _sourceId, ...item }) => item),
+  }
+}
+
+export function getReferenceLaboratoryRecord(
+  database: ReferenceDatabase,
+  releaseId: string,
+  conceptId: string,
+): ReferenceLaboratoryRecord | undefined {
+  verifyReferenceMigrations(database)
+  return referenceLaboratoryRecord(database, releaseId, conceptId)
 }
 
 export function getReferenceMedicationProductById(
@@ -805,6 +1131,10 @@ function readReferenceDataReleases(database: ReferenceDatabase): ReferenceDataRe
     concept_count: z.number().int(),
     content_hash: z.string(),
     created_at: z.string(),
+    laboratory_definition_count: z.number().int(),
+    laboratory_panel_member_count: z.number().int(),
+    laboratory_specimen_count: z.number().int(),
+    laboratory_unit_count: z.number().int(),
     release_id: z.string(),
     medication_product_count: z.number().int(),
     service_count: z.number().int(),
@@ -815,7 +1145,8 @@ function readReferenceDataReleases(database: ReferenceDatabase): ReferenceDataRe
   })).parse(database.driver.prepare(`
     SELECT release_id, schema_version, status, created_at, content_hash,
       source_count, concept_count, medication_product_count, service_count,
-      value_set_entry_count
+      value_set_entry_count, laboratory_definition_count, laboratory_unit_count,
+      laboratory_specimen_count, laboratory_panel_member_count
     FROM reference_release
     ORDER BY created_at DESC, release_id
   `).all())
@@ -824,6 +1155,10 @@ function readReferenceDataReleases(database: ReferenceDatabase): ReferenceDataRe
       conceptCount: row.concept_count,
       contentHash: row.content_hash,
       createdAt: row.created_at,
+      laboratoryDefinitionCount: row.laboratory_definition_count,
+      laboratoryPanelMemberCount: row.laboratory_panel_member_count,
+      laboratorySpecimenCount: row.laboratory_specimen_count,
+      laboratoryUnitCount: row.laboratory_unit_count,
       medicationProductCount: row.medication_product_count,
       releaseId: row.release_id,
       serviceCount: row.service_count,
@@ -841,6 +1176,14 @@ export function listReferenceDataReleases(database: ReferenceDatabase): Referenc
   return readReferenceDataReleases(database)
 }
 
+function laboratoryAdultRuleCount(artifact: ReferenceArtifact): number {
+  return artifact.laboratoryDefinitions.reduce((count, definition) => (
+    definition.kind === 'laboratory-cn-test'
+      ? count + definition.adultReferenceRules.length
+      : count
+  ), 0)
+}
+
 export function importReferenceDataRelease(
   database: ReferenceDatabase,
   manifestPath: string,
@@ -850,6 +1193,10 @@ export function importReferenceDataRelease(
   const manifestDirectory = dirname(resolve(manifestPath))
   const sources: ReferenceSourceManifest[] = []
   const concepts: Array<ReferenceConcept & { sourceId: string }> = []
+  const laboratoryDefinitions: SourcedLaboratoryDefinition[] = []
+  const laboratoryPanelMembers: SourcedLaboratoryPanelMember[] = []
+  const laboratorySpecimens: SourcedLaboratorySpecimen[] = []
+  const laboratoryUnits: SourcedLaboratoryUnit[] = []
   const medicationProducts: Array<ReferenceMedicationProduct & { sourceId: string }> = []
   const services: Array<ReferenceMedicalService & { sourceId: string }> = []
   const valueSetEntries: Array<ReferenceValueSetEntry & { sourceId: string }> = []
@@ -881,9 +1228,14 @@ export function importReferenceDataRelease(
       ...(candidate === undefined ? {} : { candidate: candidate.provenance }),
       checksum: actualChecksum,
       licenseId: source.licenseId,
+      ...(source.materialization === undefined ? {} : { materialization: source.materialization }),
       ...(source.publishedAt === undefined ? {} : { publishedAt: source.publishedAt }),
       importDiagnostics: {
         acceptedCount: artifact.concepts.length
+          + laboratoryAdultRuleCount(artifact)
+          + artifact.laboratoryPanelMembers.length
+          + artifact.laboratorySpecimens.length
+          + artifact.laboratoryUnits.length
           + artifact.medicationProducts.length
           + artifact.services.length
           + artifact.valueSetEntries.length,
@@ -891,6 +1243,10 @@ export function importReferenceDataRelease(
         warnings: [],
       },
       recordCount: artifact.concepts.length
+        + laboratoryAdultRuleCount(artifact)
+        + artifact.laboratoryPanelMembers.length
+        + artifact.laboratorySpecimens.length
+        + artifact.laboratoryUnits.length
         + artifact.medicationProducts.length
         + artifact.services.length
         + artifact.valueSetEntries.length,
@@ -901,6 +1257,18 @@ export function importReferenceDataRelease(
     })
     for (const concept of artifact.concepts) {
       concepts.push({ ...concept, sourceId: source.sourceId })
+    }
+    for (const definition of artifact.laboratoryDefinitions) {
+      laboratoryDefinitions.push({ ...definition, sourceId: source.sourceId })
+    }
+    for (const member of artifact.laboratoryPanelMembers) {
+      laboratoryPanelMembers.push({ ...member, sourceId: source.sourceId })
+    }
+    for (const specimen of artifact.laboratorySpecimens) {
+      laboratorySpecimens.push({ ...specimen, sourceId: source.sourceId })
+    }
+    for (const unit of artifact.laboratoryUnits) {
+      laboratoryUnits.push({ ...unit, sourceId: source.sourceId })
     }
     for (const product of artifact.medicationProducts) {
       medicationProducts.push({ ...product, sourceId: source.sourceId })
@@ -950,6 +1318,10 @@ export function importReferenceDataRelease(
   }
   const hash = contentHash({
     concepts,
+    laboratoryDefinitions,
+    laboratoryPanelMembers,
+    laboratorySpecimens,
+    laboratoryUnits,
     medicationProducts,
     release: manifest,
     services,
@@ -967,6 +1339,10 @@ export function importReferenceDataRelease(
       conceptCount: concepts.length,
       contentHash: hash,
       created: false,
+      laboratoryDefinitionCount: laboratoryDefinitions.length,
+      laboratoryPanelMemberCount: laboratoryPanelMembers.length,
+      laboratorySpecimenCount: laboratorySpecimens.length,
+      laboratoryUnitCount: laboratoryUnits.length,
       medicationProductCount: medicationProducts.length,
       releaseId: manifest.releaseId,
       serviceCount: services.length,
@@ -980,14 +1356,20 @@ export function importReferenceDataRelease(
     database.driver.prepare(`
       INSERT INTO reference_release (
         release_id, schema_version, status, created_at, content_hash, source_count,
-        concept_count, medication_product_count, service_count, value_set_entry_count
-      ) VALUES (?, '1', 'published', ?, ?, ?, ?, ?, ?, ?)
+        concept_count, laboratory_definition_count, laboratory_unit_count,
+        laboratory_specimen_count, laboratory_panel_member_count,
+        medication_product_count, service_count, value_set_entry_count
+      ) VALUES (?, '1', 'published', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       manifest.releaseId,
       manifest.createdAt,
       hash,
       sources.length,
       concepts.length,
+      laboratoryDefinitions.length,
+      laboratoryUnits.length,
+      laboratorySpecimens.length,
+      laboratoryPanelMembers.length,
       medicationProducts.length,
       services.length,
       valueSetEntries.length,
@@ -996,8 +1378,8 @@ export function importReferenceDataRelease(
       INSERT INTO reference_source_manifest (
         release_id, source_id, upstream_version, published_at, retrieved_at,
         source_url, checksum, license_id, acquisition_method, artifact_format, record_count,
-        import_diagnostics_json, candidate_provenance_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        import_diagnostics_json, candidate_provenance_json, materialization_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     for (const source of sources) {
       insertSource.run(
@@ -1014,6 +1396,7 @@ export function importReferenceDataRelease(
         source.recordCount,
         JSON.stringify(source.importDiagnostics),
         source.candidate === undefined ? null : JSON.stringify(source.candidate),
+        source.materialization === undefined ? null : JSON.stringify(source.materialization),
       )
     }
     const insertConcept = database.driver.prepare(`
@@ -1035,6 +1418,72 @@ export function importReferenceDataRelease(
         concept.sourceId,
         concept.sourceLocator,
         concept.laboratory === undefined ? null : JSON.stringify(concept.laboratory),
+      )
+    }
+    const insertLaboratoryDefinition = database.driver.prepare(`
+      INSERT INTO reference_laboratory_definition (
+        release_id, concept_id, definition_json, source_id, source_locator
+      ) VALUES (?, ?, ?, ?, ?)
+    `)
+    for (const definition of laboratoryDefinitions) {
+      const { sourceId, ...value } = definition
+      insertLaboratoryDefinition.run(
+        manifest.releaseId,
+        definition.conceptId,
+        JSON.stringify(value),
+        sourceId,
+        definition.sourceLocator,
+      )
+    }
+    const insertLaboratoryUnit = database.driver.prepare(`
+      INSERT INTO reference_laboratory_unit (
+        release_id, concept_id, code, kind, ordinal, source_id, source_locator
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+    for (const unit of laboratoryUnits) {
+      insertLaboratoryUnit.run(
+        manifest.releaseId,
+        unit.conceptId,
+        unit.code,
+        unit.kind,
+        unit.ordinal,
+        unit.sourceId,
+        unit.sourceLocator,
+      )
+    }
+    const insertLaboratorySpecimen = database.driver.prepare(`
+      INSERT INTO reference_laboratory_specimen (
+        release_id, concept_id, part_number, part_name, display, link_type,
+        source_id, source_locator
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    for (const specimen of laboratorySpecimens) {
+      insertLaboratorySpecimen.run(
+        manifest.releaseId,
+        specimen.conceptId,
+        specimen.partNumber,
+        specimen.partName,
+        specimen.display,
+        specimen.linkType,
+        specimen.sourceId,
+        specimen.sourceLocator,
+      )
+    }
+    const insertLaboratoryPanelMember = database.driver.prepare(`
+      INSERT INTO reference_laboratory_panel_member (
+        release_id, panel_concept_id, member_concept_id, member_order,
+        relationship, source_id, source_locator
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+    for (const member of laboratoryPanelMembers) {
+      insertLaboratoryPanelMember.run(
+        manifest.releaseId,
+        member.panelConceptId,
+        member.memberConceptId,
+        member.memberOrder,
+        member.relationship,
+        member.sourceId,
+        member.sourceLocator,
       )
     }
     const insertMedicationProduct = database.driver.prepare(`
@@ -1113,6 +1562,10 @@ export function importReferenceDataRelease(
     conceptCount: concepts.length,
     contentHash: hash,
     created: true,
+    laboratoryDefinitionCount: laboratoryDefinitions.length,
+    laboratoryPanelMemberCount: laboratoryPanelMembers.length,
+    laboratorySpecimenCount: laboratorySpecimens.length,
+    laboratoryUnitCount: laboratoryUnits.length,
     medicationProductCount: medicationProducts.length,
     releaseId: manifest.releaseId,
     serviceCount: services.length,
@@ -1141,6 +1594,10 @@ export function verifyReferenceDatabase(database: ReferenceDatabase): ReferenceD
   for (const release of releases.items) {
     referenceDataReleaseSummarySchema.parse(release)
     const concepts = conceptRows(database, release.releaseId)
+    const laboratoryDefinitions = laboratoryDefinitionRows(database, release.releaseId)
+    const laboratoryPanelMembers = laboratoryPanelMemberRows(database, release.releaseId)
+    const laboratorySpecimens = laboratorySpecimenRows(database, release.releaseId)
+    const laboratoryUnits = laboratoryUnitRows(database, release.releaseId)
     const medicationProducts = medicationProductRows(database, release.releaseId)
     const services = medicalServiceRows(database, release.releaseId)
     const valueSetEntries = valueSetEntryRows(database, release.releaseId)
@@ -1153,6 +1610,18 @@ export function verifyReferenceDatabase(database: ReferenceDatabase): ReferenceD
     if (release.medicationProductCount !== medicationProducts.length) {
       throw new Error(`Reference Data Release medication product count mismatch: ${release.releaseId}`)
     }
+    if (release.laboratoryDefinitionCount !== laboratoryDefinitions.length) {
+      throw new Error(`Reference Data Release laboratory definition count mismatch: ${release.releaseId}`)
+    }
+    if (release.laboratoryPanelMemberCount !== laboratoryPanelMembers.length) {
+      throw new Error(`Reference Data Release laboratory panel member count mismatch: ${release.releaseId}`)
+    }
+    if (release.laboratorySpecimenCount !== laboratorySpecimens.length) {
+      throw new Error(`Reference Data Release laboratory specimen count mismatch: ${release.releaseId}`)
+    }
+    if (release.laboratoryUnitCount !== laboratoryUnits.length) {
+      throw new Error(`Reference Data Release laboratory unit count mismatch: ${release.releaseId}`)
+    }
     if (release.serviceCount !== services.length) {
       throw new Error(`Reference Data Release service count mismatch: ${release.releaseId}`)
     }
@@ -1162,6 +1631,21 @@ export function verifyReferenceDatabase(database: ReferenceDatabase): ReferenceD
     const acceptedCountBySource = new Map<string, number>()
     for (const concept of concepts) {
       acceptedCountBySource.set(concept.sourceId, (acceptedCountBySource.get(concept.sourceId) ?? 0) + 1)
+    }
+    for (const definition of laboratoryDefinitions) {
+      if (definition.kind !== 'laboratory-cn-test') continue
+      acceptedCountBySource.set(
+        definition.sourceId,
+        (acceptedCountBySource.get(definition.sourceId) ?? 0)
+          + definition.adultReferenceRules.length,
+      )
+    }
+    for (const item of [
+      ...laboratoryPanelMembers,
+      ...laboratorySpecimens,
+      ...laboratoryUnits,
+    ]) {
+      acceptedCountBySource.set(item.sourceId, (acceptedCountBySource.get(item.sourceId) ?? 0) + 1)
     }
     for (const product of medicationProducts) {
       acceptedCountBySource.set(product.sourceId, (acceptedCountBySource.get(product.sourceId) ?? 0) + 1)
@@ -1179,6 +1663,10 @@ export function verifyReferenceDatabase(database: ReferenceDatabase): ReferenceD
     }
     const actualHash = contentHash({
       concepts,
+      laboratoryDefinitions,
+      laboratoryPanelMembers,
+      laboratorySpecimens,
+      laboratoryUnits,
       medicationProducts,
       release,
       services,

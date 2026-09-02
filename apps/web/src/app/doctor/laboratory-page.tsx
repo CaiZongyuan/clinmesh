@@ -33,7 +33,7 @@ import {
 } from 'lucide-react'
 import { useMemo, useState, type FormEvent } from 'react'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
-import { formatFen } from '../workspace-format.ts'
+import { formatLaboratoryPrice } from '../workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import {
@@ -151,7 +151,7 @@ export function LaboratoryPage({
 }): React.JSX.Element {
   const firstVisitDraft = detail.drafts?.firstVisit
   const laboratoryItems = laboratoryCatalog.map(item => ({
-    label: `${locale === 'zh-CN' ? item.nameZh : item.nameEn} · ${formatFen(item.priceFen ?? 0, locale)}`,
+    label: `${locale === 'zh-CN' ? item.nameZh : item.nameEn} · ${formatLaboratoryPrice(item.priceFen ?? 0, locale)}`,
     value: item.id,
   }))
   const indicationItems = laboratoryCatalog
@@ -413,6 +413,9 @@ function LaboratoryRequestEditor({
                           <dt className="text-xs text-muted-foreground">{messages.laboratoryItem}</dt>
                           <dd className="mt-1 font-medium">
                             {(locale === 'zh-CN' ? draftItem?.nameZh : draftItem?.nameEn)
+                              ?? (locale === 'zh-CN'
+                                ? state.draft.laboratoryService?.nameZh
+                                : state.draft.laboratoryService?.nameEn)
                               ?? state.draft.referenceConcept?.display
                               ?? state.draft.catalogItemId}
                           </dd>
@@ -477,36 +480,29 @@ function LaboratoryRequestEditor({
               {state.requests.map((request) => {
                 const item = catalogById.get(request.catalogItemId)
                 const itemName = (locale === 'zh-CN' ? item?.nameZh : item?.nameEn)
+                  ?? (locale === 'zh-CN'
+                    ? request.laboratoryService?.nameZh
+                    : request.laboratoryService?.nameEn)
                   ?? request.referenceConcept?.display
                   ?? request.catalogItemId
-                const permanentlyUnsupported = request.generationError?.code === 'INVESTIGATION_UNSUPPORTED'
                 return (
                   <TableRow key={request.id}>
                     <TableCell className="break-words whitespace-normal font-medium">{itemName}</TableCell>
                     <TableCell className="break-words whitespace-normal">{indicationLabel(request.indicationCode, messages)}</TableCell>
-                    <TableCell className="break-words whitespace-normal"><Badge variant="outline">{laboratoryRequestStatusLabel(request, messages)}</Badge>{request.generationError === undefined ? null : <p className="mt-1 text-xs text-destructive">{generationErrorMessage(request, locale)}</p>}</TableCell>
+                    <TableCell className="break-words whitespace-normal"><Badge variant="outline">{laboratoryRequestStatusLabel(request, messages)}</Badge>{request.generationError === undefined ? null : <p className="mt-1 text-xs text-destructive">{generationErrorMessage(locale)}</p>}</TableCell>
                     <TableCell className="text-right">
                       {readOnly ? null : request.status === 'generation-failed' ? (
-                        permanentlyUnsupported ? (
-                          <CancelLaboratoryRequestButton
-                            action={actions.cancel}
-                            itemName={itemName}
-                            messages={messages}
-                            request={request}
-                          />
-                        ) : (
-                          <Button
-                            aria-label={`${locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'} ${itemName}`}
-                            disabled={actions.retry.pending}
-                            onClick={() => actions.retry.onSubmit(request)}
-                            size="icon-sm"
-                            title={locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'}
-                            type="button"
-                            variant="outline"
-                          >
-                            <RefreshCwIcon />
-                          </Button>
-                        )
+                        <Button
+                          aria-label={`${locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'} ${itemName}`}
+                          disabled={actions.retry.pending}
+                          onClick={() => actions.retry.onSubmit(request)}
+                          size="icon-sm"
+                          title={locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'}
+                          type="button"
+                          variant="outline"
+                        >
+                          <RefreshCwIcon />
+                        </Button>
                       ) : request.status !== 'issued' ? null : (
                         <CancelLaboratoryRequestButton
                           action={actions.cancel}
@@ -541,8 +537,11 @@ function LaboratoryRequestEditor({
               <RefreshCwIcon aria-hidden="true" className="animate-spin" />
               <AlertTitle>{messages.laboratoryResultPending}</AlertTitle>
               <AlertDescription>
-                {locale === 'zh-CN' ? item?.nameZh : item?.nameEn}
-                {item === undefined ? request.referenceConcept?.display : null}
+                {(locale === 'zh-CN' ? item?.nameZh : item?.nameEn)
+                  ?? (locale === 'zh-CN'
+                    ? request.laboratoryService?.nameZh
+                    : request.laboratoryService?.nameEn)
+                  ?? request.referenceConcept?.display}
               </AlertDescription>
             </Alert>
           )
@@ -554,7 +553,12 @@ function LaboratoryRequestEditor({
             <LaboratoryRequestReport
               action={actions.acknowledge}
               correctionAction={actions.correct}
-              itemName={(locale === 'zh-CN' ? item?.nameZh : item?.nameEn) ?? request.referenceConcept?.display ?? request.catalogItemId}
+              itemName={(locale === 'zh-CN' ? item?.nameZh : item?.nameEn)
+                ?? (locale === 'zh-CN'
+                  ? request.laboratoryService?.nameZh
+                  : request.laboratoryService?.nameEn)
+                ?? request.referenceConcept?.display
+                ?? request.catalogItemId}
               key={`report:${request.id}:${request.report.diagnosticReportId}`}
               locale={locale}
               messages={messages}
@@ -579,15 +583,7 @@ function LaboratoryRequestEditor({
   )
 }
 
-function generationErrorMessage(
-  request: LaboratoryRequest,
-  locale: WorkspaceLocale,
-): string {
-  if (request.generationError?.code === 'INVESTIGATION_UNSUPPORTED') {
-    return locale === 'zh-CN'
-      ? '该项目无法为当前病例生成结果，请取消后重新选择。'
-      : 'This item cannot generate a result for the current case. Cancel it and choose another item.'
-  }
+function generationErrorMessage(locale: WorkspaceLocale): string {
   return locale === 'zh-CN'
     ? '结果生成失败，可重试。'
     : 'Result generation failed. You can retry.'
@@ -1019,12 +1015,13 @@ function laboratoryRequestStatusLabel(
 }
 
 function laboratoryResultValue(
-  value: boolean | number | string,
+  value: boolean | number | string | { code: string; display: string; system: string },
   unit: string | undefined,
   locale: WorkspaceLocale,
   messages: ReturnType<typeof getWorkspaceMessages>,
 ): string {
   if (typeof value === 'boolean') return value ? messages.positive : messages.negative
+  if (typeof value === 'object') return value.display
   const formatted = typeof value === 'number' ? new Intl.NumberFormat(locale).format(value) : value
   return unit === undefined ? formatted : `${formatted} ${unit}`
 }

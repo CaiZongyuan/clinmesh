@@ -8,7 +8,7 @@ Status: implemented
 
 全局 Reference 检验目录表达项目定义，不保证某个 Synthetic Case 能产生该项目的结果。Doctor Case 曾只声明整个病例接入了报告流程，Web 因而允许开具无法命中 Case Truth、缺少生成 metadata 或没有可用 Investigation Agent 的项目，最终形成不可恢复的 `generation-failed`。
 
-本决策修订[医生临床目录选择与草稿确认](../feature/2026-08-31-doctor-clinical-catalog-dialogs.md)中的手动保存和确认后只读规则，并补充[门诊医生工作台 UI 重构](./2026-08-31-doctor-workspace-ui-refactor.md)的草稿与检验能力合同。任务来源是 [issue #65](https://github.com/CaiZongyuan/clinmesh/issues/65)。
+本决策修订[医生临床目录选择与草稿确认](../feature/2026-08-31-doctor-clinical-catalog-dialogs.md)中的手动保存和确认后只读规则，并补充[门诊医生工作台 UI 重构](./2026-08-31-doctor-workspace-ui-refactor.md)的草稿合同。病例级检验 capability 与永久失败恢复决策已经由[完整检验参考库与本院服务发布](./2026-09-01-laboratory-service-publication.md)取代。任务来源是 [issue #65](https://github.com/CaiZongyuan/clinmesh/issues/65)。
 
 ## Decision
 
@@ -16,9 +16,7 @@ Status: implemented
 
 诊断确认是不可覆盖的 revision，不是本次 Encounter 的编辑锁。已确认诊断仍可重新打开为草稿；再次确认创建新的 `diagnosis_confirmation` 和 Condition 集合，以递增 `revision_number` 和 `supersedes_confirmation_id` 连接上一确认。旧 Condition 保持可读并改为 `verificationStatus=entered-in-error`，Encounter 当前诊断引用只指向最新 Condition；每次确认创建独立 Provenance。完诊门禁只接受没有待处理诊断草稿的最新确认。
 
-`InvestigationService` 通过 `generationCapabilityForCase` 统一判断一个病例与检验概念能否产生结果。完全匹配 Case Truth 的 Observation 使用 `synthea-exact`；数值项目具备 UCUM 单位，并从 Reference metadata 或受控 LOINC 本院检验映射取得合成参考范围，且运行时配置结构化模型时使用 `investigation-agent`；其余情况返回稳定的不可生成原因。Agent payload 只包含最近 20 条 Visible History 和按临床时间选择的最多 20 条 Condition、Observation 或 Procedure 证据，避免无界病例上下文破坏结构化响应。病例级检验目录携带 capability，Web 展示查询到的唯一项目并禁用 `supported=false` 的行，不复制 Case Truth、模型或 profile 判断；`WorkflowService` 在保存草稿、正式开立和重试生成时重新调用同一判断，绕过 picker 不能提交不可生成项目。
-
-Reference 检验项目当前只有内部适应证 `clinical-evaluation`，Web 将单一适应证显示为只读“临床评估”；只有目录真实提供多个合法适应证时才显示选择控件。永久 `INVESTIGATION_UNSUPPORTED` 失败不再提供无效重试，医生可以取消该申请并重新选择；瞬时或输出校验失败仍可重试。
+Reference 检验项目当前只有内部适应证 `clinical-evaluation`，Web 将单一适应证显示为只读“临床评估”；只有目录真实提供多个合法适应证时才显示选择控件。检验目录、冻结报告定义、Agent payload、病例证据和失败恢复的当前合同由[完整检验参考库与本院服务发布](./2026-09-01-laboratory-service-publication.md)拥有。
 
 ## Alternatives considered
 
@@ -38,4 +36,4 @@ Reference 检验项目当前只有内部适应证 `clinical-evaluation`，Web �
 
 一个病例可以拥有多条诊断确认历史，但 Doctor Case、处方适应规则、病例库筛选和 Encounter 当前诊断只读取最高 revision。旧 Command receipt 缺少 revision 字段时按 revision 1 解析，升级前确认记录由 migration 赋值为 revision 1。
 
-病例级检验目录保留全局 Reference 项目的可发现性，但只有 Case Truth 精确结果或受控生成 profile 与可用 Investigation Agent 支持的项目可以选择。既有永久失败申请可以取消，不再阻塞完诊，但失败事实和取消审计继续保留。
+诊断修订和三个临床编辑器的自动保存行为不依赖检验目录的后续发布与失败恢复决策。

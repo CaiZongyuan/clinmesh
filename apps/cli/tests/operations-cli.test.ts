@@ -34,17 +34,17 @@ describe('clinmesh operations', () => {
     })
     expect(envelope.data.operations).toHaveLength(listHisOperations().length)
     expect(envelope.data.operations[0]).toEqual({
-      cliPath: ['reference', 'diagnoses', 'search'],
-      handlerOwner: 'ReferenceDataService',
-      id: 'reference.diagnoses.search',
+      cliPath: ['admin', 'laboratory-services', 'candidates', 'search'],
+      handlerOwner: 'LaboratoryServicePublisher',
+      id: 'admin.laboratory-services.candidates.search',
       identities: ['agent', 'human'],
       mode: 'query',
       previewToken: 'none',
       risk: 'read',
-      roles: ['administrator', 'outpatient-doctor'],
-      skill: 'clinmesh-doctor',
-      summary: 'Search the active diagnosis reference catalog',
-      version: 1,
+      roles: ['administrator'],
+      skill: 'clinmesh-administrator',
+      summary: 'Search laboratory publication candidates by source and panel status',
+      version: 2,
     })
   })
 

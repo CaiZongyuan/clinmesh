@@ -8,17 +8,19 @@ Status: implemented
 
 本决策交付[门诊医生工作台 UI 重构](../architecture/2026-08-31-doctor-workspace-ui-refactor.md)的检验、诊断和处方切片，并取代 [Synthea 缺译告警与全量目录默认浏览](../bug-fix/2026-08-31-synthea-translation-warning-and-catalog-browse.md)中“少于三个字符只浏览、三个字符以上才搜索”的目录交互。后者的 Synthea warning、随机 seed、Reference owner 和 fallback 决策继续有效。
 
+其中检验选择器直接展示 Reference Concept 和病例级 capability 的决策已由[完整检验参考库与本院服务发布](../architecture/2026-09-01-laboratory-service-publication.md)取代；本 Note 继续拥有诊断、药品和通用 Dialog 交互。
+
 草稿保存和诊断确认后的编辑规则已由[医生草稿自动保存与诊断确认修订](../architecture/2026-08-31-doctor-draft-autosave-and-diagnosis-revision.md)取代；本 Note 继续拥有目录 Dialog、搜索、分页和明确选择的决策。
 
 ## Decision
 
-诊断、药品和检验分别使用 app-private 目录 Dialog。Dialog 打开后才启用 TanStack Query，默认读取当前 Reference Release 的第一页；搜索由表单提交或 Enter 显式触发，不随每次键入请求。两字符关键词使用只读 SQLite substring 查询，三字符以上继续使用 trigram FTS；所有结果保持 20 行有界分页，一字符请求仍在 HTTP 边界拒绝。翻页或重新搜索清空当前选择，不自动选择第一行；inactive 或已加入项目可见但不可选择。Reference 不可用或无查询目录为空时才显示本院常用项。
+诊断、药品和检验分别使用 app-private 目录 Dialog。Dialog 打开后才启用 TanStack Query；诊断和药品默认读取当前 Reference Release 的第一页，检验读取当前 Workspace/Epoch 已发布 Hospital Laboratory Service。搜索由表单提交或 Enter 显式触发，不随每次键入请求；结果保持 20 行有界分页，翻页或重新搜索清空当前选择，不自动选择第一行。诊断和药品的两字符关键词使用只读 SQLite substring 查询，三字符以上使用 trigram FTS；检验按本院名称、本院编码和根 LOINC 查询。
 
 诊断 picker 每次选择一条并加入当前草稿列表，列表最多八条，支持替换、删除、主次切换和逐条备注。有效修改自动保存到 Diagnosis Draft；确认只针对已保存且没有本地改动的草稿，并经过展示全部主次诊断的确认框。确认版本不可覆盖，但本次 Encounter 完成前可以继续编辑并创建新 revision。
 
 处方初始不自动加入任何药品。药品 picker 用通用名、规格、剂型、包装、生产企业和批准文号区分产品；选中后才创建医嘱行。医嘱行支持替换、删除以及剂量、频次、疗程和数量编辑，缺少必要值时不自动保存。正式开具只针对已自动保存且没有本地改动的草稿，并经过处方明细确认框；已开具处方继续按现有撤回和下游状态规则只读。
 
-检验编辑器只显示一个已选项目摘要、目录入口、真实存在的多选适应证和开立动作。病例级目录只展示当前病例可生成结果的项目，单一内部适应证显示为只读文字，选择后自动保存草稿；正式申请、取消、生成重试、报告、已阅和修订仍由 `LaboratoryRequest` 状态机拥有。
+检验编辑器只显示一个已选项目摘要、目录入口、真实存在的多选适应证和开立动作。病例级目录只展示本院已发布、doctor-orderable 的 Laboratory Service，单一内部适应证显示为只读文字，选择后自动保存草稿；正式申请、取消、生成重试、报告、已阅和修订仍由 `LaboratoryRequest` 状态机拥有。
 
 三个 picker 共享 `packages/ui` 的通用 Dialog primitive，但不共享一个含大量可选字段的目录行类型。诊断概念、检验概念和药品产品分别验证并渲染，避免把不同领域合同压成浅层通用组件。
 

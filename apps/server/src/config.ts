@@ -12,6 +12,7 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_AI_API_KEY: z.string().min(1).optional(),
   CLINMESH_AI_BASE_URL: httpUrlSchema.optional(),
   CLINMESH_AI_BRIEF_MODEL: z.string().trim().min(1).max(256).optional(),
+  CLINMESH_AI_CATALOG_ENRICHMENT_MODEL: z.string().trim().min(1).max(256).optional(),
   CLINMESH_AI_INVESTIGATION_MODEL: z.string().trim().min(1).max(256).optional(),
   CLINMESH_AI_MAX_RESPONSE_BYTES: z.string().regex(/^\d+$/)
     .refine(value => Number(value) >= 1_024 && Number(value) <= 10 * 1_024 * 1_024)
@@ -57,6 +58,7 @@ export interface ServerConfig {
     apiKey: string
     baseUrl: string
     briefModel: string
+    catalogEnrichmentModel?: string
     investigationModel: string
     maxResponseBytes: number
     timeoutMs: number
@@ -133,6 +135,9 @@ export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
             apiKey: parsed.CLINMESH_AI_API_KEY!,
             baseUrl: parsed.CLINMESH_AI_BASE_URL,
             briefModel: parsed.CLINMESH_AI_BRIEF_MODEL!,
+            ...(parsed.CLINMESH_AI_CATALOG_ENRICHMENT_MODEL === undefined
+              ? {}
+              : { catalogEnrichmentModel: parsed.CLINMESH_AI_CATALOG_ENRICHMENT_MODEL }),
             investigationModel: parsed.CLINMESH_AI_INVESTIGATION_MODEL!,
             maxResponseBytes: Number(parsed.CLINMESH_AI_MAX_RESPONSE_BYTES),
             timeoutMs: Number(parsed.CLINMESH_AI_TIMEOUT_MS),

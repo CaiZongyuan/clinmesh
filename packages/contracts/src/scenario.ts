@@ -1,5 +1,8 @@
 import { z } from 'zod'
-import { referenceConceptSnapshotSchema } from './reference-data.ts'
+import {
+  referenceConceptSnapshotSchema,
+  referenceLaboratoryAdultRuleSchema,
+} from './reference-data.ts'
 
 const localDateSchema = z.iso.date()
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
@@ -106,7 +109,7 @@ export const scenarioUcumUnitSchema = z.preprocess((value) => {
 }, canonicalUcumUnitSchema)
 
 export const scenarioLoincCodingSchema = z.object({
-  code: z.string().regex(/^\d{1,5}-\d$/),
+  code: z.string().regex(/^\d{1,6}-\d$/),
   display: z.string().min(1),
   system: z.literal('http://loinc.org'),
   version: z.literal('2.83'),
@@ -838,26 +841,51 @@ export const startSyntheticCaseResultSchema = z.object({
   syntheticCaseId: z.string().min(1).max(128),
 }).strict()
 
+export const investigationCodeableValueSchema = z.object({
+  code: z.string().min(1).max(256),
+  display: z.string().min(1).max(1_000),
+  system: z.string().url(),
+}).strict()
+
 export const investigationResultContentSchema = z.object({
   conclusion: z.string().trim().min(1).max(1_000),
   results: z.array(z.object({
     code: z.string().min(1).max(256),
     display: z.string().min(1).max(1_000),
-    interpretation: z.enum(['normal', 'high', 'low']),
+    interpretation: z.enum(['normal', 'abnormal', 'high', 'low']),
     referenceRange: z.object({
       high: z.number().finite().optional(),
       low: z.number().finite().optional(),
       text: z.string().min(1).max(500),
     }).strict(),
+    source: z.enum([
+      'adult-reference-baseline',
+      'case-truth-exact',
+      'investigation-agent',
+    ]).optional(),
     unit: z.object({
       code: z.string().min(1).max(128),
       display: z.string().min(1).max(128),
       system: z.literal('http://unitsofmeasure.org'),
     }).strict().optional(),
-    value: z.union([z.boolean(), z.number().finite(), z.string().min(1).max(1_000)]),
-  }).strict()).length(1),
+    value: z.union([
+      z.boolean(),
+      z.number().finite(),
+      z.string().min(1).max(1_000),
+      investigationCodeableValueSchema,
+    ]),
+  }).strict()).min(1).max(128),
 }).strict().superRefine((content, context) => {
+  const codes = new Set<string>()
   content.results.forEach((result, index) => {
+    if (codes.has(result.code)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Investigation result codes must be unique',
+        path: ['results', index, 'code'],
+      })
+    }
+    codes.add(result.code)
     if (
       typeof result.value === 'number'
       && result.referenceRange.low === undefined
@@ -893,9 +921,22 @@ export const investigationResultSnapshotSchema = z.object({
   outputHash: z.string().regex(/^[a-f0-9]{64}$/),
   promptHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   promptVersion: z.string().min(1).max(128).nullable(),
+  provenance: z.object({
+    datasetReleaseId: z.string().min(1).max(256),
+    generationPolicyVersion: z.string().min(1).max(128),
+    referenceReleaseId: z.string().min(1).max(256),
+    rules: z.array(referenceLaboratoryAdultRuleSchema.extend({
+      conceptId: z.string().min(1).max(256),
+    })).min(1).max(128),
+  }).strict().optional(),
   requestedConcept: referenceConceptSnapshotSchema,
   snapshotId: z.string().min(1).max(128),
-  source: z.enum(['synthea-exact', 'investigation-agent']),
+  source: z.enum([
+    'adult-reference-baseline',
+    'investigation-agent',
+    'mixed',
+    'synthea-exact',
+  ]),
   workspaceId: z.string().min(1),
 }).strict()
 

@@ -733,7 +733,7 @@ function LaboratoryReportView({ current, locale, report }: {
                           ? messages.abnormalHigh
                           : result.interpretation === 'low'
                             ? messages.abnormalLow
-                            : result.interpretation}
+                            : messages.abnormal}
                     </Badge>
                   )}
                 </TableCell>

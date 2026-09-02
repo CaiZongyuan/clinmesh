@@ -27,6 +27,7 @@ interface OutboxDispatcherOptions {
   leaseDurationMs: number
   leaseOwner: string
   maxAttempts?: number
+  maxRetryDelayMs?: number
   now?: () => Date
   retryDelayMs?: number
 }
@@ -36,6 +37,7 @@ export class OutboxDispatcher {
   readonly #leaseDurationMs: number
   readonly #leaseOwner: string
   readonly #maxAttempts: number
+  readonly #maxRetryDelayMs: number
   readonly #now: () => Date
   readonly #outbox: OutboxRepository
   readonly #retryDelayMs: number
@@ -45,6 +47,7 @@ export class OutboxDispatcher {
     this.#leaseDurationMs = options.leaseDurationMs
     this.#leaseOwner = options.leaseOwner
     this.#maxAttempts = options.maxAttempts ?? 3
+    this.#maxRetryDelayMs = options.maxRetryDelayMs ?? 30_000
     this.#now = options.now ?? (() => new Date())
     this.#outbox = new OutboxRepository(database)
     this.#retryDelayMs = options.retryDelayMs ?? 1_000
@@ -74,6 +77,7 @@ export class OutboxDispatcher {
           workspaceId: claim.workspaceId,
         }).catch(() => ({ status: 'retryable-failed' as const }))
     return this.#outbox.complete(claim, completion.status, {
+      maxRetryDelayMs: this.#maxRetryDelayMs,
       maxAttempts: this.#maxAttempts,
       now: this.#now(),
       retryDelayMs: this.#retryDelayMs,

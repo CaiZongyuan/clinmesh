@@ -13,6 +13,7 @@ import {
   laboratoryRequestStateSchema,
   laboratoryResultSchema,
   prescriptionDraftContentSchema,
+  publishLaboratoryServicesRequestSchema,
 } from '../src/his.ts'
 
 function completedCaseLaboratoryRequestFixture() {
@@ -73,35 +74,67 @@ describe('HIS contracts', () => {
     }).catalogItemId).toBe('laboratory:white-cell-count')
   })
 
-  it('binds laboratory result-generation capability to case catalog items', () => {
-    const item = {
+  it('binds the case laboratory catalog to published Hospital Services', () => {
+    const referenceConcept = {
       code: '6690-2',
       display: '白细胞计数',
-      domain: 'laboratory',
-      id: 'laboratory:wbc',
+      id: 'loinc:synthetic:6690-2',
       sourceLocator: 'concepts[0]',
-      status: 'active',
       system: 'http://loinc.org',
       version: '2.83',
     }
+    const item = {
+      allowedIndicationCodes: ['clinical-evaluation'],
+      componentServiceIds: [],
+      doctorOrderable: true,
+      executingDepartmentId: 'department-laboratory',
+      id: 'hospital-laboratory-service-wbc',
+      localCode: 'CM-LAB-6690-2',
+      nameEn: 'White blood cell count',
+      nameZh: '白细胞计数',
+      priceFen: 800,
+      referenceConcept,
+      referenceReleaseId: 'release-1',
+      reportDefinition: {
+        conclusionTemplate: '白细胞计数结果已完成。',
+        results: [{
+          referenceConcept,
+          referenceRange: { high: 10, low: 4, text: '4.0-10.0 x10^9/L' },
+          unit: {
+            code: '10*9/L',
+            display: '10*9/L',
+            system: 'http://unitsofmeasure.org',
+          },
+          valueType: 'quantity',
+        }],
+      },
+      specimen: { code: 'LP7057-5', display: '血液' },
+      serviceKind: 'laboratory',
+      tatMinutes: 20,
+      version: 1,
+    }
     const search = {
-      items: [{
-        ...item,
-        resultGeneration: { source: 'synthea-exact', supported: true },
-      }, {
-        ...item,
-        id: 'laboratory:wbc-unsupported',
-        resultGeneration: { reason: 'agent-unavailable', supported: false },
-      }],
+      items: [item],
       page: 1,
       pageSize: 20,
-      releaseId: 'release-1',
-      total: 2,
+      total: 1,
     }
     expect(caseLaboratoryCatalogSearchSchema.safeParse(search).success).toBe(true)
     expect(caseLaboratoryCatalogSearchSchema.safeParse({
       ...search,
-      items: [item],
+      items: [referenceConcept],
+    }).success).toBe(false)
+  })
+
+  it('bounds one Laboratory Service publication batch at fifty roots', () => {
+    const entries = Array.from({ length: 50 }, (_, index) => ({
+      conceptId: `loinc:synthetic:${index}`,
+      expectedVersion: 0,
+    }))
+    expect(publishLaboratoryServicesRequestSchema.safeParse({ input: { entries } }).success)
+      .toBe(true)
+    expect(publishLaboratoryServicesRequestSchema.safeParse({
+      input: { entries: [...entries, { conceptId: 'loinc:synthetic:overflow', expectedVersion: 0 }] },
     }).success).toBe(false)
   })
 

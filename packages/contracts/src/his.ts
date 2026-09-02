@@ -1,9 +1,13 @@
 import { z } from 'zod'
 import { fhirResourceSchema } from './fhir.ts'
+import { investigationCodeableValueSchema } from './scenario.ts'
 import {
   referenceConceptSchema,
   referenceConceptSnapshotSchema,
   referenceDataItemIdSchema,
+  referenceLaboratoryAdultRuleSchema,
+  referenceLaboratoryDefinitionSchema,
+  referenceLaboratorySourceDatasetSchema,
   referenceMedicationProductSchema,
 } from './reference-data.ts'
 
@@ -314,14 +318,204 @@ export const investigationGenerationCapabilitySchema = z.discriminatedUnion('sup
   }).strict(),
 ])
 
-export const caseLaboratoryCatalogSearchSchema = z.object({
-  items: z.array(referenceConceptSchema.safeExtend({
-    domain: z.literal('laboratory'),
-    resultGeneration: investigationGenerationCapabilitySchema,
-  })),
+const laboratoryServiceResultDefinitionSchema = z.object({
+  adultReferenceRules: z.array(referenceLaboratoryAdultRuleSchema).min(1).max(3).optional(),
+  allowedValues: z.array(z.union([
+    z.boolean(),
+    z.string().min(1).max(256),
+    investigationCodeableValueSchema,
+  ]))
+    .min(1)
+    .max(64)
+    .optional(),
+  alternateCodings: z.array(z.object({
+    code: z.string().min(1).max(256),
+    system: z.literal('http://loinc.org'),
+    version: z.string().min(1).max(256),
+  }).strict()).max(4).default([]),
+  healthyStrategy: z.enum(['uniform', 'fixed-normal']).optional(),
+  precision: z.number().int().min(0).max(4).optional(),
+  referenceConcept: referenceConceptSnapshotSchema,
+  referenceRange: z.object({
+    high: z.number().finite().optional(),
+    low: z.number().finite().optional(),
+    text: z.string().min(1).max(500),
+  }).strict(),
+  unit: z.object({
+    code: z.string().min(1).max(128),
+    display: z.string().min(1).max(128),
+    system: z.literal('http://unitsofmeasure.org'),
+  }).strict().optional(),
+  valueType: z.enum(['boolean', 'codeable', 'quantity', 'string']),
+}).strict().superRefine((result, context) => {
+  const quantitative = result.valueType === 'quantity'
+  if (quantitative !== (result.unit !== undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Only a quantitative Laboratory Service result has a UCUM unit',
+      path: ['unit'],
+    })
+  }
+  if (quantitative && result.adultReferenceRules === undefined
+    && result.referenceRange.low === undefined && result.referenceRange.high === undefined) {
+    context.addIssue({
+      code: 'custom',
+      message: 'A quantitative Laboratory Service result requires a numeric reference boundary',
+      path: ['referenceRange'],
+    })
+  }
+  if (!quantitative && result.allowedValues === undefined
+    && !(result.healthyStrategy === 'fixed-normal'
+      && result.adultReferenceRules !== undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'A qualitative Laboratory Service result requires allowed values',
+      path: ['allowedValues'],
+    })
+  }
+  if (result.allowedValues !== undefined) {
+    const valuesMatchType = result.allowedValues.every((value) => {
+      if (result.valueType === 'boolean') return typeof value === 'boolean'
+      if (result.valueType === 'string') return typeof value === 'string'
+      if (result.valueType === 'codeable') return typeof value === 'object'
+      return false
+    })
+    if (!valuesMatchType) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Laboratory Service allowed values must match the result value type',
+        path: ['allowedValues'],
+      })
+    }
+  }
+})
+
+export const laboratoryServiceSnapshotSchema = z.object({
+  allowedIndicationCodes: z.array(z.string().min(1).max(64)).min(1),
+  componentServiceIds: z.array(z.string().min(1).max(512)),
+  doctorOrderable: z.boolean(),
+  executingDepartmentId: z.string().min(1).max(128),
+  id: z.string().min(1).max(512),
+  localCode: z.string().min(1).max(128),
+  nameEn: z.string().min(1).max(1_000).optional(),
+  nameZh: z.string().min(1).max(1_000),
+  priceFen: z.number().int().nonnegative(),
+  publicationPolicyVersion: z.string().min(1).max(128).optional(),
+  referenceConcept: referenceConceptSnapshotSchema,
+  referenceReleaseId: z.string().min(1).max(256),
+  reportDefinition: z.object({
+    conclusionTemplate: z.string().min(1).max(1_000),
+    results: z.array(laboratoryServiceResultDefinitionSchema).min(1).max(128),
+  }).strict().superRefine((report, context) => {
+    const ids = report.results.map(result => result.referenceConcept.id)
+    if (new Set(ids).size === ids.length) return
+    context.addIssue({
+      code: 'custom',
+      message: 'Laboratory Service report result concepts must be unique',
+      path: ['results'],
+    })
+  }),
+  specimen: z.object({
+    code: z.string().min(1).max(128),
+    display: z.string().min(1).max(1_000),
+    system: z.string().url().optional(),
+    version: z.string().min(1).max(128).optional(),
+  }).strict(),
+  sourceDataset: z.object({
+    datasetId: z.literal('laboratory-cn'),
+    releaseId: z.string().min(1).max(256),
+  }).strict().optional(),
+  standardStatus: z.object({
+    effectiveOn: z.literal('2026-11-01'),
+    mode: z.enum(['effective', 'future-standard-preview']),
+    standard: z.literal('WS/T 886-2026'),
+  }).strict().optional(),
+  serviceKind: z.literal('laboratory'),
+  tatMinutes: z.number().int().nonnegative(),
+  version: z.number().int().positive(),
+}).strict()
+
+export const laboratoryServiceCandidateSchema = z.object({
+  adultApplicability: z.object({
+    minimumAgeYears: z.literal(18),
+    patientSexes: z.array(z.enum(['female', 'male', 'other', 'unknown'])).min(1).max(4),
+  }).strict().nullable(),
+  concept: referenceConceptSchema,
+  definition: referenceLaboratoryDefinitionSchema,
+  error: z.object({
+    code: z.string().min(1).max(128),
+    message: z.string().min(1).max(1_000),
+  }).strict().nullable(),
+  memberCount: z.number().int().nonnegative(),
+  publishedServiceId: z.string().min(1).max(512).nullable(),
+  referenceSources: z.array(z.object({
+    sourceLocation: z.string().min(1).max(1_000),
+    sourceStandard: z.string().min(1).max(1_000),
+    sourceType: z.enum(['national-standard', 'project-curated']),
+    sourceVersion: z.string().min(1).max(256),
+  }).strict()).max(20),
+  sourceDataset: z.object({
+    datasetId: referenceLaboratorySourceDatasetSchema,
+    releaseId: z.string().min(1).max(256),
+  }).strict(),
+  specimen: z.string().min(1).max(1_000).nullable(),
+  standardStatus: laboratoryServiceSnapshotSchema.shape.standardStatus.unwrap().nullable(),
+  status: z.enum(['failed', 'published', 'publishing', 'unconfigured']),
+  version: z.number().int().nonnegative(),
+}).strict()
+
+export const laboratoryServiceCandidateSearchInputSchema = z.object({
+  page: z.number().int().positive().default(1),
+  pageSize: z.number().int().positive().max(50).default(20),
+  panelOnly: z.boolean().default(false),
+  query: z.string().trim().min(2).max(100).optional(),
+  sourceDataset: referenceLaboratorySourceDatasetSchema.optional(),
+}).strict()
+
+export const laboratoryServiceCandidateSearchSchema = z.object({
+  items: z.array(laboratoryServiceCandidateSchema),
   page: z.number().int().positive(),
   pageSize: z.number().int().positive().max(50),
-  releaseId: z.string().min(1).max(256),
+  referenceReleaseId: z.string().min(1).max(256),
+  total: z.number().int().nonnegative(),
+}).strict()
+
+export const laboratoryServicePublicationJobSchema = z.object({
+  conceptIds: z.array(referenceDataItemIdSchema).min(1).max(50),
+  createdAt: z.iso.datetime({ offset: true }),
+  error: z.object({
+    code: z.string().min(1).max(128),
+    message: z.string().min(1).max(1_000),
+  }).strict().nullable(),
+  finishedAt: z.iso.datetime({ offset: true }).nullable(),
+  jobId: z.string().min(1).max(128),
+  publishedServiceIds: z.array(z.string().min(1).max(512)),
+  referenceReleaseId: z.string().min(1).max(256),
+  startedAt: z.iso.datetime({ offset: true }).nullable(),
+  status: z.enum(['failed', 'queued', 'running', 'succeeded']),
+  updatedAt: z.iso.datetime({ offset: true }),
+  workspaceId: z.string().min(1),
+}).strict()
+
+export const publishLaboratoryServicesRequestSchema = z.object({
+  input: z.object({
+    entries: z.array(z.object({
+      conceptId: referenceDataItemIdSchema,
+      expectedVersion: z.number().int().nonnegative(),
+    }).strict()).min(1).max(50),
+  }).strict(),
+}).strict()
+
+export const publishLaboratoryServicesResponseSchema = commandResponseSchema(
+  laboratoryServicePublicationJobSchema,
+)
+
+export const caseLaboratoryCatalogSearchSchema = z.object({
+  items: z.array(laboratoryServiceSnapshotSchema.safeExtend({
+    doctorOrderable: z.literal(true),
+  }).strict()),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive().max(50),
   total: z.number().int().nonnegative(),
 }).strict()
 
@@ -889,7 +1083,7 @@ export const laboratoryRequestStatusSchema = z.enum([
   'cancelled',
 ])
 
-export const laboratoryResultInterpretationSchema = z.enum(['normal', 'high', 'low'])
+export const laboratoryResultInterpretationSchema = z.enum(['normal', 'abnormal', 'high', 'low'])
 
 const quantitativeLaboratoryReferenceRangeSchema = z.object({
   high: z.number().finite().optional(),
@@ -956,7 +1150,11 @@ const qualitativeLaboratoryResultSchema = z.object({
   interpretation: laboratoryResultInterpretationSchema,
   observationId: z.string().min(1),
   referenceRange: z.object({ text: z.string().min(1) }).strict(),
-  value: z.union([z.boolean(), z.string().min(1)]),
+  value: z.union([
+    z.boolean(),
+    z.string().min(1),
+    investigationCodeableValueSchema,
+  ]),
 }).strict()
 
 export const laboratoryResultSchema = z.union([
@@ -1097,6 +1295,7 @@ export const laboratoryRequestSchema = z.object({
   }).strict().optional(),
   id: z.string().min(1),
   indicationCode: z.string().min(1),
+  laboratoryService: laboratoryServiceSnapshotSchema.optional(),
   previousReports: z.array(laboratoryReportSchema).default([]),
   referenceConcept: referenceConceptSnapshotSchema.optional(),
   report: laboratoryReportSchema.optional(),
@@ -1121,7 +1320,12 @@ const completedCaseLaboratoryResultSchema = z.object({
     display: z.string().min(1),
     system: z.string().url().optional(),
   }).strict().optional(),
-  value: z.union([z.boolean(), z.number().finite(), z.string()]),
+  value: z.union([
+    z.boolean(),
+    z.number().finite(),
+    z.string(),
+    investigationCodeableValueSchema,
+  ]),
 }).strict()
 
 const completedCaseLaboratoryReportSchema = z.object({
@@ -1144,6 +1348,7 @@ export const completedCaseLaboratoryRequestSchema = z.object({
   correctionSupported: z.boolean().default(false),
   id: z.string().min(1),
   indicationCode: z.string().min(1),
+  laboratoryService: laboratoryServiceSnapshotSchema.optional(),
   previousReports: z.array(completedCaseLaboratoryReportSchema).default([]),
   referenceConcept: referenceConceptSnapshotSchema.optional(),
   report: completedCaseLaboratoryReportSchema.optional(),
@@ -1200,6 +1405,7 @@ export const laboratoryRequestStateSchema = z.object({
   draft: z.object({
     catalogItemId: laboratoryRequestCatalogItemIdSchema,
     indicationCode: z.string().min(1),
+    laboratoryService: laboratoryServiceSnapshotSchema.optional(),
     referenceConcept: referenceConceptSnapshotSchema.optional(),
   }).strict().optional(),
   draftVersion: z.number().int().nonnegative(),
@@ -1545,6 +1751,8 @@ export type EncounterCompletionTarget = z.infer<typeof encounterCompletionTarget
 export type LaboratoryRequestCatalogItemId = z.infer<typeof laboratoryRequestCatalogItemIdSchema>
 export type LaboratoryRequest = z.infer<typeof laboratoryRequestSchema>
 export type InvestigationGenerationCapability = z.infer<typeof investigationGenerationCapabilitySchema>
+export type LaboratoryServicePublicationJob = z.infer<typeof laboratoryServicePublicationJobSchema>
+export type LaboratoryServiceSnapshot = z.infer<typeof laboratoryServiceSnapshotSchema>
 export type LaboratoryReport = z.infer<typeof laboratoryReportSchema>
 export type BillingQueueItem = z.infer<typeof billingQueueSchema>['items'][number]
 export type PharmacyQueueItem = z.infer<typeof pharmacyQueueSchema>['items'][number]

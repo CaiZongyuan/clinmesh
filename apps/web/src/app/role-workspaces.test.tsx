@@ -434,6 +434,15 @@ function stubAdministratorWorkspace() {
         workspaceId: 'workspace-demo',
       })
     }
+    if (path === '/api/his/v1/admin/laboratory-services/candidates') {
+      return Response.json({
+        items: [],
+        page: 1,
+        pageSize: 20,
+        referenceReleaseId: 'reference-http-test-v1',
+        total: 0,
+      })
+    }
     throw new Error(`Unexpected request: ${path}`)
   }))
 }
@@ -1049,6 +1058,151 @@ describe('role workspaces', () => {
     expect(screen.getByRole('button', { name: 'Load high-volume data' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Reset current data' })).toBeTruthy()
     expect(screen.getByRole('main').textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
+  })
+
+  it('publishes selected Laboratory Service candidates from the administrator workspace', async () => {
+    let published = false
+    let publishBody: unknown
+    const candidateQueries: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(administratorSession)
+      if (url.pathname === '/api/sim/v1/scenario-runs/current') {
+        return Response.json({
+          clinicalReview: null,
+          epoch: 'epoch-1',
+          initialStateHash: '0123456789abcdef',
+          kind: 'candidate',
+          scenarioId: 'candidate-fever-outpatient-v1',
+          scenarioRunId: 'scenario-run-1',
+          seed: 20260824,
+          status: 'active',
+          virtualTime: '2026-08-24T09:00:00+08:00',
+          workspaceId: 'workspace-demo',
+        })
+      }
+      if (url.pathname === '/api/his/v1/admin/laboratory-services/candidates') {
+        candidateQueries.push(url.search)
+        return Response.json({
+          items: [{
+            adultApplicability: {
+              minimumAgeYears: 18,
+              patientSexes: ['female', 'male'],
+            },
+            concept: {
+              code: 'CN-LAB-CBC',
+              display: '合成血常规',
+              domain: 'laboratory',
+              id: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+              sourceLocator: 'synthetic:laboratory-cn:panel:CN-LAB-CBC',
+              status: 'active',
+              system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn',
+              version: '2026-09-01',
+            },
+            definition: {
+              conceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+              datasetReleaseId: 'laboratory-cn@2026-09-01.r1',
+              kind: 'laboratory-cn-panel',
+              notes: '合成多叶子 panel',
+              sourceLocation: 'fixture/panel/1',
+              sourceLocator: 'synthetic:laboratory-cn:panel:CN-LAB-CBC',
+              sourceType: 'project-authored',
+              sourceVersion: '2026-09-01',
+              specimen: '全血',
+            },
+            error: null,
+            memberCount: 2,
+            publishedServiceId: published ? 'hospital-laboratory-service-cbc' : null,
+            referenceSources: [{
+              sourceLocation: '表 1',
+              sourceStandard: 'WS/T 405-2012',
+              sourceType: 'national-standard',
+              sourceVersion: '2012',
+            }, {
+              sourceLocation: '表 2',
+              sourceStandard: 'WS/T 405-2012',
+              sourceType: 'national-standard',
+              sourceVersion: '2012',
+            }],
+            sourceDataset: {
+              datasetId: 'laboratory-cn',
+              releaseId: 'laboratory-cn@2026-09-01.r1',
+            },
+            specimen: '全血',
+            standardStatus: {
+              effectiveOn: '2026-11-01',
+              mode: 'future-standard-preview',
+              standard: 'WS/T 886-2026',
+            },
+            status: published ? 'published' : 'unconfigured',
+            version: published ? 1 : 0,
+          }],
+          page: 1,
+          pageSize: 20,
+          referenceReleaseId: 'reference-http-test-v1',
+          total: 1,
+        })
+      }
+      if (url.pathname === '/api/his/v1/admin/laboratory-services/actions/publish') {
+        publishBody = JSON.parse(String(init?.body))
+        published = true
+        return Response.json(commandResponse({
+          conceptIds: ['laboratory-panel-cn:2026-09-01:CN-LAB-CBC'],
+          createdAt: '2026-09-01T07:00:00.000Z',
+          error: null,
+          finishedAt: null,
+          jobId: 'laboratory-service-publication-1',
+          publishedServiceIds: [],
+          referenceReleaseId: 'reference-http-test-v1',
+          startedAt: null,
+          status: 'queued',
+          updatedAt: '2026-09-01T07:00:00.000Z',
+          workspaceId: 'workspace-demo',
+        }))
+      }
+      if (url.pathname === '/api/his/v1/admin/laboratory-services/jobs/laboratory-service-publication-1') {
+        return Response.json({
+          conceptIds: ['laboratory-panel-cn:2026-09-01:CN-LAB-CBC'],
+          createdAt: '2026-09-01T07:00:00.000Z',
+          error: null,
+          finishedAt: '2026-09-01T07:00:01.000Z',
+          jobId: 'laboratory-service-publication-1',
+          publishedServiceIds: ['hospital-laboratory-service-cbc'],
+          referenceReleaseId: 'reference-http-test-v1',
+          startedAt: '2026-09-01T07:00:00.100Z',
+          status: 'succeeded',
+          updatedAt: '2026-09-01T07:00:01.000Z',
+          workspaceId: 'workspace-demo',
+        })
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    expect(await screen.findByRole('heading', { name: '检验服务配置' })).toBeTruthy()
+    expect(await screen.findByText('laboratory-cn@2026-09-01.r1')).toBeTruthy()
+    expect(screen.getByText('2 项')).toBeTruthy()
+    expect(screen.getByText('全血')).toBeTruthy()
+    expect(screen.getByText('成人：女性、男性')).toBeTruthy()
+    expect(screen.getAllByText('国家标准 · WS/T 405-2012 · 2012')).toHaveLength(1)
+    expect(screen.getByText('WS/T 886-2026 · 2026-11-01 前预览')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'laboratory-cn' }))
+    await user.click(screen.getByRole('checkbox', { name: '仅组合' }))
+    await waitFor(() => expect(candidateQueries.at(-1)).toContain('sourceDataset=laboratory-cn'))
+    expect(candidateQueries.at(-1)).toContain('panelOnly=true')
+    await user.click(await screen.findByRole('checkbox', { name: '选择 合成血常规 CN-LAB-CBC' }))
+    await user.click(screen.getByRole('button', { name: '发布所选检验服务' }))
+
+    expect(publishBody).toEqual({
+      input: {
+        entries: [{
+          conceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
+          expectedVersion: 0,
+        }],
+      },
+    })
+    expect(await screen.findByText('已发布')).toBeTruthy()
   })
 
   it('does not expose synthetic data management to a non-administrator role', async () => {
@@ -2222,22 +2376,84 @@ describe('role workspaces', () => {
     const referenceConcept = {
       code: '58410-2',
       display: '血常规组合',
-      id: 'laboratory:cbc-panel',
+      id: 'loinc:synthetic:58410-2',
       sourceLocator: 'concepts[3]',
       system: 'http://loinc.org',
       version: '2.83',
     }
+    const laboratoryService = {
+      allowedIndicationCodes: ['clinical-evaluation'],
+      componentServiceIds: ['hospital-laboratory-service-wbc'],
+      doctorOrderable: true as const,
+      executingDepartmentId: 'department-laboratory',
+      id: 'hospital-laboratory-service-cbc',
+      localCode: 'CM-LAB-58410-2',
+      nameEn: 'Complete blood count',
+      nameZh: '血常规',
+      priceFen: 2500,
+      referenceConcept,
+      referenceReleaseId: 'reference-http-test-v1',
+      reportDefinition: {
+        conclusionTemplate: '血常规结果已完成。',
+        results: [{
+          referenceConcept: {
+            code: '6690-2',
+            display: '白细胞计数',
+            id: 'loinc:synthetic:6690-2',
+            sourceLocator: 'concepts[4]',
+            system: 'http://loinc.org',
+            version: '2.83',
+          },
+          referenceRange: { high: 10, low: 4, text: '4.0-10.0 x10^9/L' },
+          unit: {
+            code: '10*9/L',
+            display: '10*9/L',
+            system: 'http://unitsofmeasure.org' as const,
+          },
+          valueType: 'quantity' as const,
+        }],
+      },
+      specimen: { code: 'LP7057-5', display: '血液' },
+      serviceKind: 'laboratory' as const,
+      tatMinutes: 20,
+      version: 1,
+    }
     const agentReferenceConcept = {
       code: '1988-5',
       display: 'C 反应蛋白',
-      id: `laboratory:crp-${'x'.repeat(128)}`,
+      id: 'loinc:synthetic:1988-5',
       sourceLocator: 'concepts[5]',
       system: 'http://loinc.org',
       version: '2.83',
     }
+    const agentLaboratoryService = {
+      ...laboratoryService,
+      componentServiceIds: [],
+      id: 'hospital-laboratory-service-crp',
+      localCode: 'CM-LAB-1988-5',
+      nameEn: 'C-reactive protein',
+      nameZh: 'C 反应蛋白',
+      priceFen: 4300,
+      referenceConcept: agentReferenceConcept,
+      reportDefinition: {
+        conclusionTemplate: 'C 反应蛋白结果已完成。',
+        results: [{
+          referenceConcept: agentReferenceConcept,
+          referenceRange: { high: 8, low: 0, text: '0-8 mg/L' },
+          unit: {
+            code: 'mg/L',
+            display: 'mg/L',
+            system: 'http://unitsofmeasure.org' as const,
+          },
+          valueType: 'quantity' as const,
+        }],
+      },
+      specimen: { code: 'LP7567-4', display: '血清' },
+    }
     let draft: {
       catalogItemId: string
       indicationCode: string
+      laboratoryService: typeof laboratoryService
       referenceConcept: typeof referenceConcept
     } | undefined
     let draftVersion = 0
@@ -2247,6 +2463,7 @@ describe('role workspaces', () => {
       catalogItemId: string
       id: string
       indicationCode: string
+      laboratoryService: typeof laboratoryService
       previousReports: []
       referenceConcept: typeof referenceConcept
       serviceRequestId: string
@@ -2296,30 +2513,9 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/cases/case-virtual-1/reference-catalogs/laboratory') {
         laboratoryQueries.push(url.searchParams.get('query'))
         return Response.json({
-          items: [{
-            ...referenceConcept,
-            domain: 'laboratory',
-            resultGeneration: { source: 'synthea-exact', supported: true },
-            status: 'active',
-          }, {
-            ...agentReferenceConcept,
-            domain: 'laboratory',
-            resultGeneration: { source: 'investigation-agent', supported: true },
-            status: 'active',
-          }, {
-            code: '8310-5',
-            display: '体温',
-            domain: 'laboratory',
-            id: 'laboratory:temperature',
-            resultGeneration: { reason: 'agent-unavailable', supported: false },
-            sourceLocator: 'concepts[4]',
-            status: 'active',
-            system: 'http://loinc.org',
-            version: '2.83',
-          }],
+          items: [laboratoryService, agentLaboratoryService],
           page: 1,
           pageSize: 20,
-          releaseId: 'reference-http-test-v1',
           total: 2,
         })
       }
@@ -2371,14 +2567,15 @@ describe('role workspaces', () => {
         expect(init?.method).toBe('PUT')
         expect(body.expectedVersions).toEqual({ 'Encounter/encounter-virtual-1': '1' })
         expect(body.input.expectedDraftVersion).toBe(draftVersion)
-        const selectedReference = [referenceConcept, agentReferenceConcept].find(candidate => (
+        const selectedService = [laboratoryService, agentLaboratoryService].find(candidate => (
           candidate.id === body.input.catalogItemId
         ))
-        if (selectedReference === undefined) throw new Error('Reference laboratory item was not found')
+        if (selectedService === undefined) throw new Error('Hospital Laboratory Service was not found')
         draft = {
           catalogItemId: body.input.catalogItemId,
           indicationCode: body.input.indicationCode,
-          referenceConcept: selectedReference,
+          laboratoryService: selectedService,
+          referenceConcept: selectedService.referenceConcept,
         }
         draftVersion += 1
         return Response.json(commandResponse({ caseId: 'case-virtual-1', draftVersion }))
@@ -2398,6 +2595,7 @@ describe('role workspaces', () => {
           catalogItemId: issuedDraft.catalogItemId,
           id: 'laboratory-request-crp-1',
           indicationCode: issuedDraft.indicationCode,
+          laboratoryService: issuedDraft.laboratoryService,
           previousReports: [],
           referenceConcept: issuedDraft.referenceConcept,
           serviceRequestId: 'service-request-crp-1',
@@ -2433,16 +2631,15 @@ describe('role workspaces', () => {
     await user.type(within(laboratoryDialog).getByLabelText('搜索检验目录'), '血常')
     await user.click(within(laboratoryDialog).getByRole('button', { name: '执行检验目录搜索' }))
     await waitFor(() => expect(laboratoryQueries).toContain('血常'))
-    const unavailableTemperature = within(laboratoryDialog).getByRole('button', {
-      name: '选择 体温 8310-5',
-    })
-    expect(unavailableTemperature.hasAttribute('disabled')).toBe(true)
-    expect(within(laboratoryDialog).getByText('当前病例不可生成')).toBeTruthy()
+    expect(within(laboratoryDialog).queryByText('当前病例')).toBeNull()
+    expect(within(laboratoryDialog).queryByText('当前病例不可生成')).toBeNull()
+    expect(within(laboratoryDialog).queryByText('可开立')).toBeNull()
+    expect(within(laboratoryDialog).queryByText('体温')).toBeNull()
     await user.click(await within(laboratoryDialog).findByRole('button', {
-      name: '选择 血常规组合 58410-2',
+      name: '选择 血常规 58410-2',
     }))
     await user.click(within(laboratoryDialog).getByRole('button', { name: '确定选择' }))
-    expect(await screen.findByText('血常规组合')).toBeTruthy()
+    expect(await screen.findByText('血常规')).toBeTruthy()
     expect(within(requestRegion).queryByRole('combobox', { name: '检验适应证' })).toBeNull()
     expect(within(requestRegion).getByText('临床评估')).toBeTruthy()
     expect(within(requestRegion).queryByRole('button', { name: '保存检验草稿' })).toBeNull()
@@ -2464,13 +2661,13 @@ describe('role workspaces', () => {
     }).properties.catalogItemId).toEqual({ type: 'string' })
     await act(async () => {
       await fillLaboratory.execute(boundDoctorToolInput(fillLaboratory, {
-        catalogItemId: agentReferenceConcept.id,
+        catalogItemId: agentLaboratoryService.id,
         indicationCode: 'clinical-evaluation',
       }), new AbortController().signal)
     })
     expect(await screen.findByText(agentReferenceConcept.display)).toBeTruthy()
     await act(async () => new Promise(resolve => setTimeout(resolve, 900)))
-    expect(draft).toMatchObject({ catalogItemId: agentReferenceConcept.id })
+    expect(draft).toMatchObject({ catalogItemId: agentLaboratoryService.id })
     expect(draftSaves).toBe(2)
     const hydratedRequestRegion = screen.getByRole('region', { name: '检验申请' })
     await user.click(within(hydratedRequestRegion).getByRole('button', { name: '开具检验申请' }))
@@ -2497,7 +2694,6 @@ describe('role workspaces', () => {
       },
     }
     let cancellationRequests = 0
-    let unsupportedCancellationRequests = 0
     let draftDeletionRequests = 0
     let draft: { catalogItemId: string; indicationCode: string } | undefined = {
       catalogItemId: 'lab-cbc',
@@ -2782,27 +2978,6 @@ describe('role workspaces', () => {
         requests = requests.map(request => request.id === cancelled.id ? cancelled : request)
         return Response.json(commandResponse({ request: cancelled }))
       }
-      if (url.pathname === '/api/his/v1/laboratory-requests/laboratory-request-8/actions/cancel') {
-        unsupportedCancellationRequests += 1
-        expect(JSON.parse(String(init?.body))).toEqual({
-          expectedVersions: {
-            'ServiceRequest/service-request-8': '1',
-            'Task/task-laboratory-8': '4',
-          },
-          input: { expectedRequestVersion: 4, reasonCode: 'no-longer-needed' },
-        })
-        const cancelled = {
-          ...unsupportedGenerationRequest,
-          generationError: undefined,
-          serviceRequestVersion: '2',
-          status: 'cancelled' as const,
-          taskVersion: '5',
-          version: 5,
-        }
-        const { generationError: _removed, ...withoutError } = cancelled
-        requests = requests.map(request => request.id === withoutError.id ? withoutError : request)
-        return Response.json(commandResponse({ request: withoutError }))
-      }
       if (url.pathname === '/api/his/v1/laboratory-requests/laboratory-request-4/reports/diagnostic-report-cbc-1/actions/acknowledge') {
         expect(JSON.parse(String(init?.body))).toEqual({
           expectedVersions: { 'DiagnosticReport/diagnostic-report-cbc-1': '1' },
@@ -2879,37 +3054,13 @@ describe('role workspaces', () => {
     expect(screen.getAllByText('医生已阅')).toHaveLength(2)
     expect(screen.getByText('等待检验结果')).toBeTruthy()
     expect(screen.getAllByText('结果生成失败')).toHaveLength(2)
-    expect(screen.getByText('结果生成失败，可重试。')).toBeTruthy()
-    expect(screen.getByText('该项目无法为当前病例生成结果，请取消后重新选择。')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /重试结果生成 血常规/ })).toBeNull()
-    await waitFor(() => expect(registration?.tools.some(tool => (
-      tool.name === 'clinmesh_prepare_cancel_laboratory'
-    ))).toBe(true))
-    const prepareCancel = registration!.tools.find(tool => (
-      tool.name === 'clinmesh_prepare_cancel_laboratory'
-    ))!
-    let proposalResult = ''
-    await act(async () => {
-      proposalResult = await prepareCancel.execute(boundDoctorToolInput(prepareCancel, {
-        requestId: unsupportedGenerationRequest.id,
-      }), new AbortController().signal)
-    })
-    expect(proposalResult).toContain('awaiting-human-review')
-    const agentCancelDialog = await screen.findByRole('alertdialog', { name: '确认取消检验申请' })
-    await user.click(within(agentCancelDialog).getByRole('button', { name: '取消' }))
-    await waitFor(() => expect(screen.queryByRole('alertdialog', {
-      name: '确认取消检验申请',
-    })).toBeNull())
-    expect(unsupportedCancellationRequests).toBe(0)
-    await user.click(screen.getByRole('button', { name: '取消检验申请 血常规' }))
-    const unsupportedCancelDialog = await screen.findByRole('alertdialog', { name: '确认取消检验申请' })
-    await user.click(within(unsupportedCancelDialog).getByRole('button', { name: '确认取消' }))
-    expect(unsupportedCancellationRequests).toBe(1)
-    await waitFor(() => expect(screen.queryByText(
-      '该项目无法为当前病例生成结果，请取消后重新选择。',
-    )).toBeNull())
+    expect(screen.getAllByText('结果生成失败，可重试。')).toHaveLength(2)
+    expect(screen.getByRole('button', { name: /重试结果生成 血常规/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /重试结果生成 C 反应蛋白/ })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /重试结果生成 C 反应蛋白/ }))
-    await waitFor(() => expect(screen.queryByText('结果生成失败，可重试。')).toBeNull())
+    await waitFor(() => expect(screen.getAllByText('结果生成失败，可重试。')).toHaveLength(1))
+    expect(screen.getByRole('button', { name: /重试结果生成 血常规/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /重试结果生成 C 反应蛋白/ })).toBeNull()
     expect(screen.getByText('白细胞计数升高，其余血常规指标在参考范围内。')).toBeTruthy()
     expect(screen.getByRole('cell', { name: /11\.2 10\^9\/L/ })).toBeTruthy()
     expect(screen.getByRole('cell', { name: '3.5-9.5 x10^9/L' })).toBeTruthy()

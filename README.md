@@ -85,7 +85,7 @@ cp .env.example .env
 pnpm dev:server
 ```
 
-首次开发复制一次 `.env.example`；此后 Server 和数据库 CLI 自动读取仓库根 `.env`，显式 shell 环境变量拥有更高优先级。`pnpm dev:server` 会先构建 Web、迁移本地数据库，再启动监听进程。
+首次开发复制一次 `.env.example`；此后 Server 和数据库 CLI 自动读取仓库根 `.env`，显式 shell 环境变量拥有更高优先级。`pnpm dev:server` 会先构建 Web，迁移 operational SQLite 和 `.env` 中已配置的 Reference SQLite，再启动只验证 schema 的监听进程。
 
 默认地址：
 
@@ -323,62 +323,36 @@ docker compose -f compose.synthea-provider.yaml exec -T synthea-provider \
 docker compose -f compose.synthea-provider.yaml stop
 ```
 
-### 导入 cn-health Candidate 到 Reference SQLite
+### 同步 cn-health Reference Release
 
-ClinMesh 的作者参考库是独立 SQLite，不是 HIS operational SQLite。它可以直接读取 `cn-health-data` 的疾病、药品和检验 Candidate，无需先导出中间 CSV。外层 Reference Release manifest 选择一组固定来源；每个 Candidate source 指向自己的 `manifest.json`，`checksum` 是该 Manifest 文件的 SHA-256，`upstreamVersion` 必须等于 Candidate Release ID：
+ClinMesh 的参考目录位于独立 Reference SQLite，不在 HIS operational SQLite 中。仓库提交的 `reference-data.lock.json` 固定项目内 `cn-health` 版本、Registry 与公钥、四个 Dataset Release、Manifest hash 和目标复合 Reference Release。同步只在开发、构建或运维阶段访问 Registry；Server 运行时不执行 `cn-health`，也不访问 GitHub 或 Registry。
 
-```json
-{
-  "createdAt": "2026-08-30T00:00:00.000+08:00",
-  "releaseId": "clinmesh-cn-health-2026-08-30.r1",
-  "schemaVersion": "1",
-  "sources": [
-    {
-      "acquisitionMethod": "manual-download",
-      "artifactFormat": "cn-health-candidate",
-      "artifactPath": "/absolute/path/to/nhc-icd10-clinical/release/manifest.json",
-      "checksum": "<candidate-manifest-sha256>",
-      "licenseId": "LicenseRef-cn-health-source-terms",
-      "retrievedAt": "2026-08-30T00:00:00.000+08:00",
-      "sourceId": "cn-health-nhc-icd10-clinical",
-      "sourceUrl": "https://github.com/CaiZongyuan/cn-health-data",
-      "upstreamVersion": "nhc-icd10-clinical@2022.r3"
-    }
-  ]
-}
-```
-
-Reference SQLite 只需在准备或更新目录 Release 时导入，不参与患者生成。首次导入从仓库根目录执行 migration、import、verify 和 list：
+先运行 check-only。它按 lock materialize 每个精确 Release，交叉验证 receipt、Manifest、SQLite、Schema 和 canonical hash，在临时 Reference SQLite 中完成导入与 verify，结束后不写正式数据库：
 
 ```sh
-REFERENCE_DATABASE="$PWD/.data/clinmesh-reference.sqlite"
-REFERENCE_MANIFEST="$PWD/.data/cn-health-reference-release.json"
-
-pnpm --filter @clinmesh/server reference-db migrate \
-  --database "$REFERENCE_DATABASE"
-pnpm --filter @clinmesh/server reference-db import \
-  --database "$REFERENCE_DATABASE" \
-  --manifest "$REFERENCE_MANIFEST"
-pnpm --filter @clinmesh/server reference-db verify \
-  --database "$REFERENCE_DATABASE"
-pnpm --filter @clinmesh/server reference-db list \
-  --database "$REFERENCE_DATABASE"
+pnpm reference:sync -- --check
 ```
 
-Importer 会验证外层 checksum、Candidate manifest 层级、`data.sqlite` SHA-256 与大小、SQLite integrity/application ID、主表列和 canonical record count，再在一个事务中发布 ClinMesh Reference Release。发布摘要保存 Candidate Release ID、source version、canonical hash、SQLite hash/size 和记录数；任一来源失败时不留下部分 Release。当前疾病、药品和项目自有 `laboratory-cn` Candidate 均可直接使用。`laboratory-cn` 是当前病例所需概念的精选中文目录，不是官方完整 LOINC 中文语言包；调用方提供 `loinc-zh-cn` Candidate 时仍通过同一 reference concept 边界导入。
+输出的 `datasets` 逐项列出 Dataset/Release、Schema、canonical record count 和多表计数。当前 `laboratory-cn@2026-09-01.r1` 应报告 `laboratory_test=84`、`laboratory_reference=96`、`laboratory_panel=15` 和 `laboratory_panel_member=88`。任一签名、身份、hash、SQLite 或表不变量不匹配都会失败。
 
-在 `.env` 中启用只读 Reference SQLite，并显式选择一个全系统共用的当前 Release；数据库含多个 Release 时 `CLINMESH_REFERENCE_RELEASE_ID` 必填：
+确认 check-only 结果后执行正式同步：
+
+```sh
+pnpm reference:sync
+```
+
+正式同步写入 `.data/clinmesh-reference.sqlite`，相同 lock 重复执行返回幂等成功。materialized staging 在导入后删除，Reference Release 保留 Registry key、Manifest/SQLite hash 和导入诊断。同步不会修改 `.env` 或热切换已启动 Server；数据库中存在多个 Release 时仍需显式选择全系统当前 Release：
 
 ```dotenv
 CLINMESH_REFERENCE_DATABASE_PATH=.data/clinmesh-reference.sqlite
-CLINMESH_REFERENCE_RELEASE_ID=clinmesh-cn-health-2026-08-30.r1
+CLINMESH_REFERENCE_RELEASE_ID=clinmesh-cn-health-2026-09-02.r1
 ```
 
-疾病、药品和检验目录的完整行只存在于 Reference SQLite。医生打开诊断、药品或检验选择器时直接看到当前 Release 的第一页并可翻页；显式提交两字符关键词时使用 substring 检索，至少三个字符时使用 trigram FTS。Reference 不可用或空目录时才显示少量本院常用项，不按病例预选目录，也不把全国目录复制到 operational SQLite。诊断先加入多条草稿再最终确认；处方初始为空，同名产品按规格、剂型、包装、厂家和批准文号区分；检验先选择项目再保存或开立。新建诊断、医嘱和检验申请会保存当时的 `system + version + code + display` 业务快照；以后切换当前 Release 不会改写既有医疗事实。Synthea 来源历史编码只用于展示外部合成病历，不要求映射到当前中国参考目录。挂载数据的来源条款不因 ClinMesh 软件许可证而改变。
+疾病、药品、完整 LOINC 和 `laboratory-cn` 行只存在于 Reference SQLite。医生诊断与药品选择器分页查询当前 Release；管理员按来源与 panel 状态选择有界 Laboratory Service 批次。`laboratory-cn` panel 直接使用数据集定义发布，不需要 Catalog Enrichment；LOINC 候选仍使用模型补齐本院运营字段。医生检验选择器只查询当前 Workspace/Epoch 已发布且可开立的 Hospital Service，不接收 Reference Concept ID，也不显示模型或病例级生成 capability。诊断、处方和检验申请冻结选择时的 coding、产品或 Laboratory Service/report definition snapshot；切换 Reference Release 或重新发布服务不会改写既有医疗事实。Synthea 来源历史编码只用于展示外部合成病历和精确结果复用。数据来源条款不因 ClinMesh 软件许可证而改变。
 
 ### 可选：验证真实 Patient Brief Provider
 
-配置 `.env` 中完整的 `CLINMESH_AI_BASE_URL`、`CLINMESH_AI_API_KEY`、`CLINMESH_AI_BRIEF_MODEL` 和 `CLINMESH_AI_INVESTIGATION_MODEL` 后，可以显式运行一次本地 live smoke：
+配置 `.env` 中完整的 `CLINMESH_AI_BASE_URL`、`CLINMESH_AI_API_KEY`、`CLINMESH_AI_BRIEF_MODEL` 和 `CLINMESH_AI_INVESTIGATION_MODEL` 后，可以显式运行一次本地 live smoke。管理员使用 Catalog Enrichment 时另外配置 `CLINMESH_AI_CATALOG_ENRICHMENT_MODEL`；未配置时已有服务仍可执行，但不能发布新服务。
 
 ```sh
 pnpm smoke:patient-brief:live
