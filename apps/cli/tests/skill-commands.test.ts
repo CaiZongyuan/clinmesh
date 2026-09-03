@@ -97,6 +97,25 @@ function inspectExample(program: Command, line: string) {
 }
 
 describe('ClinMesh CLI Agent Skills', () => {
+  it('keeps correlation recovery guidance aligned with the Catalog error schema', async () => {
+    const sharedSkill = await readFile(resolve(
+      import.meta.dirname,
+      '../../../.agents/skills/clinmesh-shared/SKILL.md',
+    ), 'utf8')
+    const error = getHisOperation('patient.create').error.parse({
+      code: 'ambiguous_outcome',
+      correlationId: '01991234-7abc-7def-8abc-0123456789ab',
+      message: 'Inspect the Command receipt before retrying',
+      operationId: 'patient.create',
+      outcome: 'ambiguous',
+      retryable: false,
+      type: 'api',
+    })
+
+    expect(sharedSkill).toContain('error.correlationId')
+    expect(error.correlationId).toBe('01991234-7abc-7def-8abc-0123456789ab')
+  })
+
   it('keeps every documented clinical command on a real Catalog path', async () => {
     const skillsRoot = resolve(import.meta.dirname, '../../../.agents/skills')
     const skillNames = (await readdir(skillsRoot, { withFileTypes: true }))

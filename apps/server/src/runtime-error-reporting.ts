@@ -25,8 +25,14 @@ interface RuntimeErrorReportInput {
 }
 
 function errorName(error: unknown): string {
-  if (!(error instanceof Error) || !safeErrorNames.has(error.name)) return 'UnknownError'
-  return error.name
+  if (!(error instanceof Error)) return 'UnknownError'
+  let name: unknown
+  try {
+    name = error.name
+  } catch {
+    return 'UnknownError'
+  }
+  return typeof name === 'string' && safeErrorNames.has(name) ? name : 'UnknownError'
 }
 
 function createRuntimeErrorReport(input: RuntimeErrorReportInput) {

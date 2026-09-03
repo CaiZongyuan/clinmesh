@@ -63,7 +63,13 @@ describe('runtime HTTP errors', () => {
   it('does not log an untrusted error name or injected stack line', async () => {
     const errorOutput = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const failure = new Error('credential-secret\nat clinical-body-secret')
-    failure.name = 'PatientSecret'
+    let nameReads = 0
+    Object.defineProperty(failure, 'name', {
+      get() {
+        nameReads += 1
+        return nameReads === 1 ? 'Error' : 'credential-secret'
+      },
+    })
     const identity = {
       resolveSessionContext() {
         throw failure
@@ -73,9 +79,35 @@ describe('runtime HTTP errors', () => {
     await createApp({ identity }).request('/api/auth/context')
 
     const report = JSON.parse(String(errorOutput.mock.calls[0]?.[0])) as unknown
-    expect(report).toMatchObject({ error: { name: 'UnknownError' } })
+    expect(report).toMatchObject({ error: { name: 'Error' } })
+    expect(nameReads).toBe(1)
     expect(JSON.stringify(report)).not.toContain('credential-secret')
     expect(JSON.stringify(report)).not.toContain('clinical-body-secret')
+  })
+
+  it('keeps the structured failure response when reading the error name throws', async () => {
+    const errorOutput = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const failure = new Error('private failure')
+    Object.defineProperty(failure, 'name', {
+      get() {
+        throw new Error('credential-secret')
+      },
+    })
+    const identity = {
+      resolveSessionContext() {
+        throw failure
+      },
+    } as unknown as IdentityService
+
+    const response = await createApp({ identity }).request('/api/auth/context')
+
+    expect(response.status).toBe(500)
+    expect(apiErrorSchema.parse(await response.json())).toMatchObject({
+      error: { code: 'INTERNAL_ERROR' },
+    })
+    const report = JSON.parse(String(errorOutput.mock.calls[0]?.[0])) as unknown
+    expect(report).toMatchObject({ error: { name: 'UnknownError' } })
+    expect(JSON.stringify(report)).not.toContain('credential-secret')
   })
 
   it('returns a correlated FHIR OperationOutcome for an unexpected FHIR failure', async () => {
