@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { renderInHeadlessChrome } from '../../../../scripts/headless-browser.ts'
+import { readJsonFromHeadlessChrome } from '../../../../scripts/headless-browser.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
 
 const surfaceMetricsSchema = z.object({
@@ -18,7 +18,7 @@ function testDocument(surfaceStyles: string): string {
   return `<!doctype html>
 <html>
   <head><meta charset="UTF-8"></head>
-  <body>
+  <body style="font-size: 17px">
     <div id="surface-host"></div>
     <script>
       const host = document.querySelector('#surface-host')
@@ -50,11 +50,8 @@ function testDocument(surfaceStyles: string): string {
 }
 
 async function readSurfaceMetrics(): Promise<SurfaceMetrics> {
-  const rendered = await renderInHeadlessChrome(testDocument(await buildSurfaceStyles()))
-  const encodedMetrics = /<title>([^<]+)<\/title>/.exec(rendered)?.[1]
-  if (encodedMetrics === undefined) throw new Error('Chrome did not return Surface font-size metrics.')
-  return surfaceMetricsSchema.parse(JSON.parse(
-    Buffer.from(encodedMetrics, 'base64').toString('utf8'),
+  return surfaceMetricsSchema.parse(await readJsonFromHeadlessChrome(
+    testDocument(await buildSurfaceStyles()),
   ))
 }
 
@@ -68,7 +65,7 @@ describe('DSH Surface font-size browser contract', () => {
   it('scales ClinMesh typography inside ShadowRoot without scaling the host', () => {
     expect(metrics).toEqual({
       application: '16.25px',
-      host: '16px',
+      host: '17px',
       iconWidth: '16px',
       paddingLeft: '16px',
       textSm: '16.25px',

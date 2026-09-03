@@ -3,7 +3,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { build } from 'vite'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { renderInHeadlessChrome } from '../../../../scripts/headless-browser.ts'
+import { readJsonFromHeadlessChrome } from '../../../../scripts/headless-browser.ts'
 
 const fontMetricsSchema = z.object({
   application: z.string(),
@@ -106,11 +106,8 @@ function testDocument(clinmeshStyles: string): string {
 }
 
 async function readBrowserMetrics(): Promise<BrowserMetrics> {
-  const rendered = await renderInHeadlessChrome(testDocument(await buildClinmeshStyles()))
-  const encodedMetrics = /<title>([^<]+)<\/title>/.exec(rendered)?.[1]
-  if (encodedMetrics === undefined) throw new Error('Chrome did not return font-size metrics.')
-  return browserMetricsSchema.parse(JSON.parse(
-    Buffer.from(encodedMetrics, 'base64').toString('utf8'),
+  return browserMetricsSchema.parse(await readJsonFromHeadlessChrome(
+    testDocument(await buildClinmeshStyles()),
   ))
 }
 

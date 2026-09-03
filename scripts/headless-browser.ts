@@ -34,7 +34,7 @@ function findChrome(): string {
   return chromePath
 }
 
-export async function renderInHeadlessChrome(documentContent: string): Promise<string> {
+async function renderInHeadlessChrome(documentContent: string): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-browser-contract-'))
   const htmlPath = join(directory, 'index.html')
   const profilePath = join(directory, 'chrome-profile')
@@ -53,4 +53,11 @@ export async function renderInHeadlessChrome(documentContent: string): Promise<s
   } finally {
     await rm(directory, { force: true, recursive: true })
   }
+}
+
+export async function readJsonFromHeadlessChrome(documentContent: string): Promise<unknown> {
+  const rendered = await renderInHeadlessChrome(documentContent)
+  const encodedResult = /<title>([^<]+)<\/title>/.exec(rendered)?.[1]
+  if (encodedResult === undefined) throw new Error('Chrome did not return browser contract results.')
+  return JSON.parse(Buffer.from(encodedResult, 'base64').toString('utf8'))
 }
