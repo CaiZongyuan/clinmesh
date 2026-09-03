@@ -14,6 +14,16 @@ const health = {
   status: 'ok',
   syntheaCommit: 'd9d07a6eef91ee5144293b42ab64224d84d124f8',
 }
+const removeRuntimeArguments = [
+  'compose',
+  '--file',
+  'compose.synthea-provider.yaml',
+  'rm',
+  '--force',
+  '--stop',
+  'synthea-provider',
+  'cn-health-localizer',
+]
 
 function dependencies(): SyntheaRuntimeDependencies & {
   output: string[]
@@ -43,7 +53,7 @@ describe('Synthea runtime command', () => {
     expect(manifest.scripts.test).toContain('scripts/synthea-runtime.spec.ts')
   })
 
-  it('starts only the two pinned services and waits for health', async () => {
+  it('starts only the two pinned services, waits for health, and prints the address', async () => {
     const runtime = dependencies()
 
     await runSyntheaRuntimeCommand('up', runtime)
@@ -68,8 +78,20 @@ describe('Synthea runtime command', () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
     expect(runtime.output).toEqual([
-      'Synthea Provider 已就绪：Synthea d9d07a6eef91ee5144293b42ab64224d84d124f8，synthea-cn@2026-08-29.r4，2 个模块。',
+      'Synthea Provider 已就绪：http://127.0.0.1:51878（Synthea d9d07a6eef91ee5144293b42ab64224d84d124f8，synthea-cn@2026-08-29.r4，2 个模块）。',
     ])
+  })
+
+  it('remains idempotent when startup is repeated', async () => {
+    const runtime = dependencies()
+
+    await runSyntheaRuntimeCommand('up', runtime)
+    await runSyntheaRuntimeCommand('up', runtime)
+
+    expect(runtime.runDocker).toHaveBeenCalledTimes(2)
+    expect(runtime.runDocker.mock.calls[0]).toEqual(runtime.runDocker.mock.calls[1])
+    expect(runtime.fetch).toHaveBeenCalledTimes(2)
+    expect(runtime.output).toHaveLength(2)
   })
 
   it('stops and removes only the two Synthea runtime services', async () => {
@@ -77,16 +99,7 @@ describe('Synthea runtime command', () => {
 
     await runSyntheaRuntimeCommand('down', runtime)
 
-    expect(runtime.runDocker).toHaveBeenCalledWith([
-      'compose',
-      '--file',
-      'compose.synthea-provider.yaml',
-      'rm',
-      '--force',
-      '--stop',
-      'synthea-provider',
-      'cn-health-localizer',
-    ])
+    expect(runtime.runDocker).toHaveBeenCalledWith(removeRuntimeArguments)
     expect(runtime.runDocker.mock.calls.flat()).not.toContain('down')
     expect(runtime.runDocker.mock.calls.flat()).not.toContain('--volumes')
     expect(runtime.fetch).not.toHaveBeenCalled()
@@ -102,16 +115,18 @@ describe('Synthea runtime command', () => {
       'port is already allocated',
     )
     expect(runtime.runDocker).toHaveBeenCalledTimes(2)
-    expect(runtime.runDocker.mock.calls[1]?.[0]).toEqual([
-      'compose',
-      '--file',
-      'compose.synthea-provider.yaml',
-      'rm',
-      '--force',
-      '--stop',
-      'synthea-provider',
-      'cn-health-localizer',
-    ])
+    expect(runtime.runDocker.mock.calls[1]?.[0]).toEqual(removeRuntimeArguments)
+  })
+
+  it('removes a partial runtime when post-start health validation fails', async () => {
+    const runtime = dependencies()
+    runtime.fetch = vi.fn(async () => Response.json({ status: 'starting' }))
+
+    await expect(runSyntheaRuntimeCommand('up', runtime)).rejects.toThrow(
+      'Synthea Provider 健康响应无效',
+    )
+    expect(runtime.runDocker).toHaveBeenCalledTimes(2)
+    expect(runtime.runDocker.mock.calls[1]?.[0]).toEqual(removeRuntimeArguments)
   })
 
   it('checks bounded health before running the full Provider smoke', async () => {

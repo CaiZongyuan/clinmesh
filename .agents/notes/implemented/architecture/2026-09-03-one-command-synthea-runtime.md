@@ -14,7 +14,7 @@ Synthea 患者生成依赖固定 Java 生成器、中国 profile、姓名/地理
 
 Compose 只消费不可变镜像 digest。cn-health localizer 固定为 `ghcr.io/caizongyuan/cn-health-synthea-localizer@sha256:8b716811d6912b4502168bd23e2cf5f8c25b2f7dcc64caae6706eb1b45262448`，来源是上游 [`synthea-cn-2026-08-29.r4-preview.1`](https://github.com/CaiZongyuan/cn-health-data/releases/tag/synthea-cn-2026-08-29.r4-preview.1)，内置 `synthea-cn@2026-08-29.r4`、匹配的三个 r2 Candidate 和 `experimental-preview` 临床显示目录。ClinMesh Provider 固定为 `ghcr.io/caizongyuan/clinmesh-synthea-provider@sha256:5ce7fe5f7223a21a31a58794a504fa94f058812d8815ee2448eb0592184910f8`，内置相同 profile、固定 Synthea JAR、模块清单、ProviderServer 以及上游 LICENSE 和 DATA-NOTICE。两者以非 root、只读文件系统和有界 tmpfs 运行，宿主不挂载 profile、Candidate、翻译目录或 Docker socket。
 
-Provider 镜像只发布当前部署支持的 `linux/amd64`，构建 workflow 不启用 QEMU。Provider build stage 在发布阶段下载固定 Synthea 源码与上游 profile 归档并校验 SHA-256；运行时不访问 GitHub、Registry 或其他构建来源。Provider 镜像 workflow 可在 pull request 上构建和组合 smoke，维护者显式 dispatch 才向 GHCR 发布并附加 SBOM 与 build provenance。
+Provider 镜像只发布当前部署支持的 `linux/amd64`，并在原生 amd64 runner 上构建。Provider build stage 在发布阶段下载固定 Synthea 源码与上游 profile 归档并校验 SHA-256；运行时不访问 GitHub、Registry 或其他构建来源。Provider 镜像 workflow 可在 pull request 上构建和组合 smoke，维护者显式 dispatch 才把同一份已验证镜像发布到 GHCR，并附加 SBOM 与 build provenance。
 
 ClinMesh Server 只通过 `CLINMESH_SYNTHEA_PROVIDER_URL` 消费 Provider HTTP 接口；本地默认地址是 `http://127.0.0.1:51878`，完整 Compose 使用容器 DNS。Server 启动不等待 Provider，Provider 缺失、停止或失败只影响新的患者生成任务。生成请求、持久任务、重启重排队、Profile/Case 原子保存、Patient Brief 和开始门诊就诊合同不因部署收敛而改变。
 

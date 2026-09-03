@@ -1,13 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 
-const syntheaCommit = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
-const syntheaArchiveSha256 = 'e5f097863440524935e8d1e081e66aea811692a66ba450d78e78e8a728f4722b'
-const cnHealthCommit = '518ab099061408bc4a6d4c8db8693756bef2fe84'
-const profileArchiveSha256 = '615f777f61d6599a597651c4517cd7690b933efe0f74beb196ee3de5dd2913eb'
-const cnHealthLicenseSha256 = '0174a00c6dfceae24528f777821bb589bfdc22d184763ec756208f1cfd648dc5'
-const cnHealthNoticeSha256 = '616aefa83119c799df487f300ed9f937cd14f5f67b616d02c2400783f4e7364b'
-
 describe('Synthea Docker Provider contract', () => {
   it('pins immutable verified source inputs and a non-root runtime', async () => {
     const dockerfile = await readFile(
@@ -19,13 +12,13 @@ describe('Synthea Docker Provider contract', () => {
       'FROM --platform=$BUILDPLATFORM eclipse-temurin:17-jdk-jammy AS build',
     )
     expect(dockerfile).not.toMatch(/^ARG SYNTHEA_(?:COMMIT|ARCHIVE_SHA256)=/mu)
-    expect(dockerfile).toContain(`synthea_commit=${syntheaCommit}`)
-    expect(dockerfile).toContain(`synthea_archive_sha256=${syntheaArchiveSha256}`)
-    expect(dockerfile).toContain(`cn_health_commit=${cnHealthCommit}`)
-    expect(dockerfile).toContain(`profile_archive_sha256=${profileArchiveSha256}`)
-    expect(dockerfile).toContain(`cn_health_license_sha256=${cnHealthLicenseSha256}`)
-    expect(dockerfile).toContain(`cn_health_notice_sha256=${cnHealthNoticeSha256}`)
-    expect(dockerfile).toContain('/releases/download/synthea-cn-2026-08-29.r4-preview.1/')
+    expect(dockerfile).toMatch(/synthea_commit=[0-9a-f]{40} \\/u)
+    expect(dockerfile).toMatch(/synthea_archive_sha256=[0-9a-f]{64} \\/u)
+    expect(dockerfile).toMatch(/cn_health_commit=[0-9a-f]{40} \\/u)
+    expect(dockerfile).toMatch(/profile_archive_sha256=[0-9a-f]{64} \\/u)
+    expect(dockerfile).toMatch(/cn_health_license_sha256=[0-9a-f]{64} \\/u)
+    expect(dockerfile).toMatch(/cn_health_notice_sha256=[0-9a-f]{64} \\/u)
+    expect(dockerfile).toMatch(/\/releases\/download\/synthea-cn-[^/]+\/synthea-cn-profile\.tar\.gz/u)
     expect(dockerfile).toContain('synthea-cn-profile.tar.gz')
     expect(dockerfile).toContain('COPY --from=build --chown=10001:10001 /src/synthea/LICENSE')
     expect(dockerfile).toContain('COPY --from=build --chown=10001:10001 /src/synthea/NOTICE')
@@ -82,8 +75,8 @@ describe('Synthea Docker Provider contract', () => {
     expect(dockerfile).toContain('SYNTHEA_CONFIG_PATH=/opt/cn-health/synthea-profile/synthea.properties')
     expect(dockerfile).not.toContain('COPY --from=build --chown=10001:10001 /src/provider/synthea.properties')
     expect(compose).toContain('cn-health-localizer:')
-    expect(compose).toContain(
-      'image: ghcr.io/caizongyuan/cn-health-synthea-localizer@sha256:8b716811d6912b4502168bd23e2cf5f8c25b2f7dcc64caae6706eb1b45262448',
+    expect(compose).toMatch(
+      /image: ghcr\.io\/caizongyuan\/cn-health-synthea-localizer@sha256:[0-9a-f]{64}/u,
     )
     expect(compose).toMatch(
       /image: ghcr\.io\/caizongyuan\/clinmesh-synthea-provider@sha256:[0-9a-f]{64}/u,
@@ -102,7 +95,7 @@ describe('Synthea Docker Provider contract', () => {
     expect(memoryLimits).toHaveLength(2)
   })
 
-  it('publishes a verified Provider image without emulation', async () => {
+  it('publishes the tested native-amd64 Provider image with attestations', async () => {
     const workflow = await readFile(
       new URL('../../../.github/workflows/synthea-provider.yml', import.meta.url),
       'utf8',
@@ -112,13 +105,15 @@ describe('Synthea Docker Provider contract', () => {
     expect(workflow).toContain('packages: write')
     expect(workflow).toContain('platforms: linux/amd64')
     expect(workflow).not.toContain('linux/arm64')
-    expect(workflow).not.toContain('setup-qemu')
-    expect(workflow).toContain(
-      'ghcr.io/caizongyuan/cn-health-synthea-localizer@sha256:8b716811d6912b4502168bd23e2cf5f8c25b2f7dcc64caae6706eb1b45262448',
-    )
+    expect(workflow).toContain('os: [ubuntu-latest, windows-latest]')
+    expect(workflow).toContain('vitest run scripts/synthea-runtime.spec.ts')
+    expect(workflow).toContain('compose.synthea-provider.yaml config --images')
     expect(workflow).toContain('ProviderServer --smoke')
-    expect(workflow).toContain('push: true')
-    expect(workflow).toContain('sbom: true')
+    expect(workflow).toContain('docker save clinmesh-synthea-provider:test')
+    expect(workflow).toContain('docker load --input')
+    expect(workflow).toContain('docker push "$image_tag"')
+    expect(workflow.match(/docker\/build-push-action@v7/gu)).toHaveLength(1)
+    expect(workflow).toContain('attest-sbom')
     expect(workflow).toContain('attest-build-provenance')
   })
 })

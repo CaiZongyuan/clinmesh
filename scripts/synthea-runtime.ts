@@ -142,7 +142,7 @@ export async function runSyntheaRuntimeCommand(
       throw error
     }
     dependencies.write(
-      `Synthea Provider 已就绪：Synthea ${health.syntheaCommit}，${health.profileId}，${health.moduleCount} 个模块。`,
+      `Synthea Provider 已就绪：${dependencies.providerUrl}（Synthea ${health.syntheaCommit}，${health.profileId}，${health.moduleCount} 个模块）。`,
     )
     return
   }
