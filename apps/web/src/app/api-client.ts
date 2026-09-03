@@ -12,6 +12,7 @@ import {
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
   commandResponseSchema,
+  correlationIdSchema,
   confirmNoMedicationResponseSchema,
   confirmDiagnosisResponseSchema,
   correctLaboratoryReportResponseSchema,
@@ -138,7 +139,7 @@ export class ApiClientError extends Error {
 }
 
 function responseCorrelationId(response: Response): string | undefined {
-  const parsed = z.uuid().safeParse(response.headers.get('x-correlation-id'))
+  const parsed = correlationIdSchema.safeParse(response.headers.get('x-correlation-id'))
   return parsed.success ? parsed.data : undefined
 }
 

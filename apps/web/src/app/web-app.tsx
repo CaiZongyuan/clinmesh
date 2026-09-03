@@ -445,13 +445,15 @@ export function createWebQueryClient(): QueryClient {
   })
 }
 
-export function WebApp({
-  history,
-  runtime: runtimeOptions = {},
-}: {
+interface WebAppProps {
   history?: RouterHistory
   runtime?: WebRuntimeOptions
-} = {}): React.JSX.Element {
+}
+
+function WebApplication({
+  history,
+  runtime: runtimeOptions = {},
+}: WebAppProps = {}): React.JSX.Element {
   const [router] = useState(() => createWebRouter(history))
   const [queryClient] = useState(createWebQueryClient)
   const applicationRoot = useRef<HTMLDivElement>(null)
@@ -486,31 +488,33 @@ export function WebApp({
   ])
 
   return (
-    <RuntimeErrorBoundary>
-      <WebRuntimeProvider value={runtime}>
-        <PortalContainerProvider container={portalRoot}>
-          <div
-            className={runtime.mode === 'surface'
-              ? 'clinmesh-web-root h-full min-h-0 overflow-hidden'
-              : 'clinmesh-web-root'}
-            data-clinmesh-app="web"
-            ref={applicationRoot}
-          >
-            <QueryClientProvider client={queryClient}>
-              <AgentPageRegistryProvider>
-                <AgentReviewProvider>
-                  <Toaster>
-                    <RouterProvider router={router} />
-                  </Toaster>
-                </AgentReviewProvider>
-              </AgentPageRegistryProvider>
-            </QueryClientProvider>
-            <div data-clinmesh-portal-root="" ref={portalRoot} />
-          </div>
-        </PortalContainerProvider>
-      </WebRuntimeProvider>
-    </RuntimeErrorBoundary>
+    <WebRuntimeProvider value={runtime}>
+      <PortalContainerProvider container={portalRoot}>
+        <div
+          className={runtime.mode === 'surface'
+            ? 'clinmesh-web-root h-full min-h-0 overflow-hidden'
+            : 'clinmesh-web-root'}
+          data-clinmesh-app="web"
+          ref={applicationRoot}
+        >
+          <QueryClientProvider client={queryClient}>
+            <AgentPageRegistryProvider>
+              <AgentReviewProvider>
+                <Toaster>
+                  <RouterProvider router={router} />
+                </Toaster>
+              </AgentReviewProvider>
+            </AgentPageRegistryProvider>
+          </QueryClientProvider>
+          <div data-clinmesh-portal-root="" ref={portalRoot} />
+        </div>
+      </PortalContainerProvider>
+    </WebRuntimeProvider>
   )
+}
+
+export function WebApp(props: WebAppProps = {}): React.JSX.Element {
+  return <RuntimeErrorBoundary><WebApplication {...props} /></RuntimeErrorBoundary>
 }
 
 export type { WebRuntimeOptions } from './web-runtime.tsx'

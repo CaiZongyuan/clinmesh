@@ -274,7 +274,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       correlationId,
       error,
       method: context.req.method,
-      path: context.req.path,
+      route: context.req.routePath,
       scope: 'http',
     })
     context.header('X-Correlation-Id', correlationId)

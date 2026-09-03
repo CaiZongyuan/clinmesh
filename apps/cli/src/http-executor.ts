@@ -1,5 +1,5 @@
 import { getHisOperation } from '@clinmesh/contracts/his-operations'
-import { apiErrorSchema } from '@clinmesh/contracts/his'
+import { apiErrorSchema, correlationIdSchema } from '@clinmesh/contracts/his'
 import { operationOutcomeSchema } from '@clinmesh/contracts/fhir'
 import { z } from 'zod'
 
@@ -62,7 +62,7 @@ function ambiguousRecoveryMessage(operationId: string): string {
 }
 
 function responseCorrelationId(response: Response): string | undefined {
-  const parsed = z.uuid().safeParse(response.headers.get('x-correlation-id'))
+  const parsed = correlationIdSchema.safeParse(response.headers.get('x-correlation-id'))
   return parsed.success ? parsed.data : undefined
 }
 

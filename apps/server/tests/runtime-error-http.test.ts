@@ -18,6 +18,17 @@ describe('runtime HTTP errors', () => {
     vi.restoreAllMocks()
   })
 
+  it('generates a trusted correlation ID for a successful request', async () => {
+    const supplied = '01991234-7abc-7def-8abc-0123456789ab'
+    const response = await createApp().request('/api/health', {
+      headers: { 'X-Correlation-Id': supplied },
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('x-correlation-id')).toMatch(/^[0-9a-f-]{36}$/)
+    expect(response.headers.get('x-correlation-id')).not.toBe(supplied)
+  })
+
   it('returns and logs a correlated, redacted JSON error for an unexpected HIS failure', async () => {
     const errorOutput = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const response = await createApp({
@@ -43,14 +54,32 @@ describe('runtime HTTP errors', () => {
       error: { name: 'Error' },
       event: 'runtime.error',
       method: 'GET',
-      path: '/api/auth/context',
+      route: '/api/auth/context',
       scope: 'http',
     })
     expect(JSON.stringify(report)).not.toContain('patient secret')
   })
 
+  it('does not log an untrusted error name or injected stack line', async () => {
+    const errorOutput = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const failure = new Error('credential-secret\nat clinical-body-secret')
+    failure.name = 'PatientSecret'
+    const identity = {
+      resolveSessionContext() {
+        throw failure
+      },
+    } as unknown as IdentityService
+
+    await createApp({ identity }).request('/api/auth/context')
+
+    const report = JSON.parse(String(errorOutput.mock.calls[0]?.[0])) as unknown
+    expect(report).toMatchObject({ error: { name: 'UnknownError' } })
+    expect(JSON.stringify(report)).not.toContain('credential-secret')
+    expect(JSON.stringify(report)).not.toContain('clinical-body-secret')
+  })
+
   it('returns a correlated FHIR OperationOutcome for an unexpected FHIR failure', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const errorOutput = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const response = await createApp({
       fhir: {
         repository: {} as FhirRepository,
@@ -58,7 +87,7 @@ describe('runtime HTTP errors', () => {
           throw new Error('FHIR internal detail must remain private')
         },
       },
-    }).request('/fhir/R5/Patient')
+    }).request('/fhir/R5/Patient/private-patient-reference')
 
     expect(response.status).toBe(500)
     expect(response.headers.get('content-type')).toContain('application/fhir+json')
@@ -71,6 +100,9 @@ describe('runtime HTTP errors', () => {
       }],
       resourceType: 'OperationOutcome',
     })
+    const report = JSON.parse(String(errorOutput.mock.calls[0]?.[0])) as unknown
+    expect(report).toMatchObject({ route: '/fhir/R5/:resourceType/:resourceId' })
+    expect(JSON.stringify(report)).not.toContain('private-patient-reference')
   })
 
   it('adds the response correlation ID to a known HIS error without logging it as unexpected', async () => {

@@ -20,6 +20,8 @@ export const roleCodeSchema = z.enum([
   'triage-nurse',
 ])
 
+export const correlationIdSchema = z.uuid()
+
 export const apiConflictSchema = z.object({
   currentStatus: z.enum([
     'accepted',
@@ -57,7 +59,7 @@ export const apiErrorSchema = z.object({
   error: z.object({
     code: z.string().min(1),
     conflict: apiConflictSchema.optional(),
-    correlationId: z.uuid().optional(),
+    correlationId: correlationIdSchema.optional(),
     message: z.string().min(1),
   }),
 })
