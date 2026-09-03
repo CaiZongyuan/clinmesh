@@ -183,7 +183,7 @@ function Brand({
       </div>
       <div className="min-w-0 whitespace-nowrap">
         <div className="text-sm font-semibold">{appName}</div>
-        <div className="mt-1 text-[0.625rem] leading-none text-muted-foreground">{productTagline}</div>
+        <div className="mt-1 text-[length:var(--text-2xs)] leading-none text-muted-foreground">{productTagline}</div>
       </div>
     </div>
   )
