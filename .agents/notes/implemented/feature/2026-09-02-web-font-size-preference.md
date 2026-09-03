@@ -28,6 +28,6 @@ Canonical implementation contract 是 [GitHub issue #72](https://github.com/CaiZ
 
 ## Consequences
 
-Tailwind 语义字号和 UI primitives 的非标准小字号都必须消费应用级字号 token；新增固定 `rem` 字号时需要同时证明三档行为。尺寸和 spacing token 不消费字号比例。
+Tailwind 语义字号和 UI primitives 的非标准小字号都消费应用级字号 token；新增字号语义时需要同时证明三档行为。尺寸和 spacing token 不消费字号比例。
 
-jsdom 用户交互测试验证偏好、可访问控件和应用根作用域；样式源合同测试保护 standalone 根字号与三档 token，Vite 构建验证生产样式可编译，真实浏览器验证三档 computed font-size、长中文和窄视口布局。DSH 样式构建必须继续保留应用根作用域，不能把字号提升到宿主根。
+jsdom 用户交互测试验证偏好、可访问控件和应用根作用域；浏览器合同通过现有 Vite/Tailwind 构建链生成生产 CSS，并在无头 Chrome 中验证三档 computed font-size、布局 token 和宿主隔离。真实入口验证继续覆盖首屏、长中文和窄视口布局。DSH 样式构建必须保留应用根作用域，不能把字号提升到宿主根。

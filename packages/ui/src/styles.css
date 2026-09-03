@@ -140,7 +140,9 @@
 
 [data-clinmesh-app="web"] {
   --clinmesh-font-scale: 1;
+  --text-2xs: calc(0.625rem * var(--clinmesh-font-scale));
   --text-xs: calc(0.75rem * var(--clinmesh-font-scale));
+  --text-control-sm: calc(0.8rem * var(--clinmesh-font-scale));
   --text-sm: calc(0.8125rem * var(--clinmesh-font-scale));
   --text-sm--line-height: 1.5;
   --text-base: calc(1rem * var(--clinmesh-font-scale));
