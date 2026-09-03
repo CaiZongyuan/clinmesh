@@ -1757,9 +1757,16 @@ describe('role workspaces', () => {
     expect(await screen.findByRole('tab', { name: '待挂号病例' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '临时患者建档' })).toBeTruthy()
     expect(screen.queryByRole('tab', { name: '新建合成患者' })).toBeNull()
-    await user.click(await screen.findByRole('button', { name: '选择病例 张琴' }))
+    const selectCase = await screen.findByRole('button', { name: '选择病例 张琴' })
+    expect(selectCase.textContent).toContain('选择')
+    expect(selectCase.getAttribute('aria-pressed')).toBe('false')
+    await user.click(selectCase)
+    expect(screen.getByRole('button', { name: '已选择病例 张琴' }).getAttribute('aria-pressed'))
+      .toBe('true')
     expect(await screen.findByText('已选择：张琴')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '确认挂号' }))
+    const confirmRegistration = screen.getByRole('button', { name: '确认挂号' })
+    expect(confirmRegistration.hasAttribute('disabled')).toBe(false)
+    await user.click(confirmRegistration)
 
     expect(await screen.findByText('CM-OP-20260903-0001')).toBeTruthy()
     await waitFor(() => {

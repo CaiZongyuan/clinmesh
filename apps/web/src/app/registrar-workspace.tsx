@@ -532,26 +532,32 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
                     <Table>
                       <TableHeader><TableRow><TableHead>{messages.patient}</TableHead><TableHead>{messages.mrn}</TableHead><TableHead>{messages.caseType}</TableHead><TableHead>{messages.birthDate}</TableHead><TableHead><span className="sr-only">{messages.selectCase}</span></TableHead></TableRow></TableHeader>
                       <TableBody>
-                        {waitingCases.data.items.map(item => (
-                          <TableRow key={item.caseId}>
+                        {waitingCases.data.items.map(item => {
+                          const selected = selection?.kind === 'synthetic-case'
+                            && selection.syntheticCase.caseId === item.caseId
+                          return (
+                          <TableRow data-state={selected ? 'selected' : undefined} key={item.caseId}>
                             <TableCell><div className="font-medium">{item.name}</div><div className="text-xs text-muted-foreground">{messages[`gender_${item.gender}`]}</div></TableCell>
                             <TableCell>{item.mrn}</TableCell>
                             <TableCell>{caseTypeLabels[item.caseType]}</TableCell>
                             <TableCell>{item.birthDate}</TableCell>
                             <TableCell className="text-right">
                               <Button
-                                aria-label={`${messages.selectCase} ${item.name}`}
+                                aria-label={`${selected ? messages.selectedCaseAction : messages.selectCase} ${item.name}`}
+                                aria-pressed={selected}
+                                className="min-w-20"
                                 onClick={() => setSelection({
                                   kind: 'synthetic-case',
                                   syntheticCase: item,
                                 })}
-                                size="icon-sm"
+                                size="sm"
                                 type="button"
-                                variant="ghost"
-                              ><CheckIcon /></Button>
+                                variant={selected ? 'secondary' : 'outline'}
+                              >{selected ? <CheckIcon data-icon="inline-start" /> : null}{selected ? messages.selectedAction : messages.selectAction}</Button>
                             </TableCell>
                           </TableRow>
-                        ))}
+                          )
+                        })}
                       </TableBody>
                     </Table>
                   </div>
@@ -611,21 +617,27 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
                     <Table>
                       <TableHeader><TableRow><TableHead>{messages.patient}</TableHead><TableHead>{messages.identifier}</TableHead><TableHead><span className="sr-only">{messages.selectPatient}</span></TableHead></TableRow></TableHeader>
                       <TableBody>
-                        {patients.data.items.map(patient => (
-                          <TableRow key={patient.id}>
+                        {patients.data.items.map(patient => {
+                          const selected = selection?.kind === 'patient'
+                            && selection.patient.id === patient.id
+                          return (
+                          <TableRow data-state={selected ? 'selected' : undefined} key={patient.id}>
                             <TableCell>{patient.name}</TableCell>
                             <TableCell>{patient.identifier}</TableCell>
                             <TableCell className="text-right">
                               <Button
-                                aria-label={`${messages.selectPatient} ${patient.name}`}
+                                aria-label={`${selected ? messages.selectedPatientAction : messages.selectPatient} ${patient.name}`}
+                                aria-pressed={selected}
+                                className="min-w-20"
                                 onClick={() => setSelection({ kind: 'patient', patient })}
-                                size="icon-sm"
+                                size="sm"
                                 type="button"
-                                variant="ghost"
-                              ><CheckIcon /></Button>
+                                variant={selected ? 'secondary' : 'outline'}
+                              >{selected ? <CheckIcon data-icon="inline-start" /> : null}{selected ? messages.selectedAction : messages.selectAction}</Button>
                             </TableCell>
                           </TableRow>
-                        ))}
+                          )
+                        })}
                       </TableBody>
                     </Table>
                     <PaginationControls
@@ -662,13 +674,6 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
               </form>
             </TabsContent>
           </Tabs>
-          {selectedName === undefined ? null : (
-            <Alert>
-              <CheckIcon aria-hidden="true" />
-              <AlertTitle>{messages.selectedPatient}</AlertTitle>
-              <AlertDescription>{messages.selectedPrefix}{selectedName}</AlertDescription>
-            </Alert>
-          )}
         </section>
 
         <section aria-labelledby="registration-form-heading" className="flex min-w-0 flex-col gap-4">
@@ -691,7 +696,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
               </Field>
               <Field><FieldLabel>{messages.visitDate}</FieldLabel><Input disabled value={catalog.data.virtualDate} /></Field>
               <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 border-t bg-background py-3">
-                <span className="text-sm text-muted-foreground">{selectedName ?? messages.selectPatientFirst}</span>
+                <strong className="min-w-0 text-sm font-medium">{selectedName === undefined ? messages.selectPatientFirst : `${messages.selectedPrefix}${selectedName}`}</strong>
                 <Button disabled={selectedName === undefined || submitRegistration.isPending} onClick={() => submitRegistration.mutate()} type="button"><ClipboardPlusIcon data-icon="inline-start" />{messages.confirmRegistration}</Button>
               </div>
               {submitRegistration.isSuccess ? <Alert><CheckIcon aria-hidden="true" /><AlertTitle>{messages.registrationCompleted}</AlertTitle><AlertDescription>{messages.awaitingTriage}</AlertDescription></Alert> : null}
