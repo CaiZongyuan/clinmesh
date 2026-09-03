@@ -15,6 +15,9 @@ describe('Synthea Docker Provider contract', () => {
       'utf8',
     )
 
+    expect(dockerfile).toContain(
+      'FROM --platform=$BUILDPLATFORM eclipse-temurin:17-jdk-jammy AS build',
+    )
     expect(dockerfile).not.toMatch(/^ARG SYNTHEA_(?:COMMIT|ARCHIVE_SHA256)=/mu)
     expect(dockerfile).toContain(`synthea_commit=${syntheaCommit}`)
     expect(dockerfile).toContain(`synthea_archive_sha256=${syntheaArchiveSha256}`)
@@ -51,11 +54,12 @@ describe('Synthea Docker Provider contract', () => {
     expect(providerSource).toContain('pruneDanglingReferences(bundle)')
   })
 
-  it('runs the mounted cn-health profile and localizes every Bundle before returning it', async () => {
-    const [dockerfile, providerSource, compose] = await Promise.all([
+  it('runs pinned self-contained images and localizes every Bundle before returning it', async () => {
+    const [dockerfile, providerSource, compose, environmentExample] = await Promise.all([
       readFile(new URL('../../synthea-provider/Dockerfile', import.meta.url), 'utf8'),
       readFile(new URL('../../synthea-provider/ProviderServer.java', import.meta.url), 'utf8'),
       readFile(new URL('../../../compose.synthea-provider.yaml', import.meta.url), 'utf8'),
+      readFile(new URL('../../../.env.example', import.meta.url), 'utf8'),
     ])
 
     expect(providerSource).toContain('SYNTHEA_CLASSPATH')
@@ -78,17 +82,19 @@ describe('Synthea Docker Provider contract', () => {
     expect(dockerfile).toContain('SYNTHEA_CONFIG_PATH=/opt/cn-health/synthea-profile/synthea.properties')
     expect(dockerfile).not.toContain('COPY --from=build --chown=10001:10001 /src/provider/synthea.properties')
     expect(compose).toContain('cn-health-localizer:')
-    expect(compose).toContain('Dockerfile.synthea-localizer')
-    expect(compose).toContain('CN_HEALTH_DATA_RUN_AS')
-    expect(compose).toContain('/data/profile:ro')
-    expect(compose).toContain('/data/names:ro')
-    expect(compose).toContain('/data/geography:ro')
-    expect(compose).toContain('/data/population:ro')
-    expect(compose).toContain('/data/translation:ro')
-    expect(compose).toContain('CN_HEALTH_SYNTHEA_TRANSLATION_CATALOG_PATH')
-    expect(compose).toContain('CN_HEALTH_SYNTHEA_CLINICAL_DISPLAY_PROJECTION_ID')
-    expect(compose).toContain('CN_HEALTH_SYNTHEA_EXPECTED_CATALOG_SHA256')
-    expect(compose).toContain('d7a25fc414d4008cf59145fd8fc3448556635dd2d5ab8e1e7974bc236f825811')
+    expect(compose).toContain(
+      'image: ghcr.io/caizongyuan/cn-health-synthea-localizer@sha256:8b716811d6912b4502168bd23e2cf5f8c25b2f7dcc64caae6706eb1b45262448',
+    )
+    expect(compose).toMatch(
+      /image: ghcr\.io\/caizongyuan\/clinmesh-synthea-provider@sha256:[0-9a-f]{64}/u,
+    )
+    expect(compose).not.toContain('build:')
+    expect(compose).not.toContain('volumes:')
+    expect(compose).not.toContain('CN_HEALTH_DATA_')
+    expect(compose).not.toContain('CN_HEALTH_SYNTHEA_')
+    expect(environmentExample).not.toContain('CN_HEALTH_DATA_')
+    expect(environmentExample).toContain('CLINMESH_SYNTHEA_PROVIDER_URL=http://127.0.0.1:51878')
+    expect(environmentExample).toContain('CLINMESH_SYNTHEA_PROVIDER_PORT=51878')
     expect(compose).toContain('condition: service_healthy')
     const cpuLimits = compose.match(/^    cpus: /gmu) ?? []
     const memoryLimits = compose.match(/^    mem_limit: /gmu) ?? []
@@ -96,7 +102,7 @@ describe('Synthea Docker Provider contract', () => {
     expect(memoryLimits).toHaveLength(2)
   })
 
-  it('publishes a verified multi-platform Provider image', async () => {
+  it('publishes a verified Provider image without emulation', async () => {
     const workflow = await readFile(
       new URL('../../../.github/workflows/synthea-provider.yml', import.meta.url),
       'utf8',
@@ -104,7 +110,9 @@ describe('Synthea Docker Provider contract', () => {
 
     expect(workflow).toContain('ghcr.io/caizongyuan/clinmesh-synthea-provider')
     expect(workflow).toContain('packages: write')
-    expect(workflow).toContain('linux/amd64,linux/arm64')
+    expect(workflow).toContain('platforms: linux/amd64')
+    expect(workflow).not.toContain('linux/arm64')
+    expect(workflow).not.toContain('setup-qemu')
     expect(workflow).toContain(
       'ghcr.io/caizongyuan/cn-health-synthea-localizer@sha256:8b716811d6912b4502168bd23e2cf5f8c25b2f7dcc64caae6706eb1b45262448',
     )

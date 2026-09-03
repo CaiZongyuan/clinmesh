@@ -8,12 +8,6 @@ on:
       - "apps/server/src/infrastructure/scenario-generation/synthea-provider.ts"
       - "apps/server/tests/synthea-docker-contract.test.ts"
       - "apps/server/tests/synthea-generation-provider.test.ts"
-  push:
-    branches:
-      - "issue-76-synthea-deployment"
-    paths:
-      - ".github/workflows/synthea-provider.yml"
-      - "apps/synthea-provider/**"
   workflow_dispatch:
     inputs:
       publish:
@@ -82,7 +76,7 @@ jobs:
             java -cp /opt/provider:/opt/synthea/synthea.jar ProviderServer --smoke
 
   publish-image:
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
     needs: test-image
     runs-on: ubuntu-latest
     timeout-minutes: 30

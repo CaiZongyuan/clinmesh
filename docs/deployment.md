@@ -11,7 +11,7 @@
 | 基础运行（步骤 1–2、5） | Node.js `^22.19.0` 或 `>=24.0.0`、pnpm `11.17.0`、Git |
 | 完整参考目录（步骤 3） | 同上，加可访问 cn-health Registry 的网络 |
 | 患者梗概与就诊闭环（步骤 4） | 同上，加一个 OpenAI-compatible Provider 及 API key |
-| Synthea 患者生成（步骤 6） | Docker Engine 与 `docker compose`；当前还需要 Rust、`uv` 和 cn-health-data 贡献者工具链（见 6.2） |
+| Synthea 患者生成（步骤 6） | x86-64 主机上的 Docker Engine 与 `docker compose` |
 | 全量检查与生产构建 | Bun `1.4.0`（DSH React Surface artifact 构建使用 `bun`） |
 | DSH Web 原生入口 | DSH CLI `0.1.1-rc.2` |
 | Mobile 原生目标 | Xcode 或 Android Studio |
@@ -109,74 +109,35 @@ pnpm dev:server
 
 ## 6. Synthea 患者生成
 
-### 6.1 运行方式与数据来源
+Synthea Provider 与中国化 localizer 由固定 digest 的预构建镜像提供。镜像内已经包含固定 Synthea JAR、`synthea-cn@2026-08-29.r4` profile、匹配的姓名/地理/人口 Release 与实验性中文显示目录；宿主机不需要 JDK、Python、Rust、`uv`、第二个源码仓库或数据挂载。
 
-Synthea Provider 由 `compose.synthea-provider.yaml` 提供两个容器：`synthea-provider` 在 Docker 构建阶段下载固定 commit 的 Synthea 源码（校验 SHA-256 后用 gradle 构建），宿主机不需要 JDK；`cn-health-localizer` 在启动时验证 profile Manifest、文件哈希、SQLite integrity 与 Candidate 依赖，并为每个生成 Bundle 完成中文身份与临床显示投影。两者只读文件系统、以非 root 运行，Candidate 与翻译目录只读挂载，不复制进 ClinMesh 仓库或镜像。
+当前 Provider 镜像只发布 `linux/amd64`。arm64 主机不自动启用模拟运行，必须等待对应的原生镜像发行。
 
-### 6.2 当前对外部用户的限制
-
-公共 Registry（`cn-health-data` 仓库 `distribution/registry.json`）目前不提供 Synthea Provider 所需的两类产物，纯 Registry 路径无法启动 Provider：
-
-- `synthea-cn-profile` 不在 Registry 的 Dataset 清单中，只能用 `cn-health-build` 在本地构建；
-- compose 挂载的 r1 身份 Candidate（`names-cn@40.37.0.r1`、`geography-cn@2026-08-29.r1`、`population-cn@WPP2024.r1`）已不在 Registry，`cn-health init` 只安装 r2；且本地已有的 profile `2026-08-29.r3` 是用 r1 输入构建的，与 r2 Candidate 的依赖校验不匹配。
-
-因此外部部署需要按 6.3 用 r2 Candidate 重建 profile 并调整 compose 挂载路径；维护者本地 `dist/` 已含 r1 与 profile r3 时可直接启动。Server 对 Provider provenance 的校验是结构性的（Synthea commit、profile 身份与各 Release 之间的一致性），不硬编码具体 Release ID，切换到 r2 与新 profile revision 不需要修改 Server。
-
-### 6.3 本地构建 profile 并启动
-
-默认目录结构要求两个仓库同级，`cn-health-data` 从 [公开仓库](https://github.com/CaiZongyuan/cn-health-data) clone：
-
-```text
-backend/
-  clinmesh/
-  cn-health-data/
-```
-
-安装 cn-health CLI 并初始化 Candidate（下载约 75MiB，解压约 785MiB，幂等）：
+启动两个内部容器并等待健康检查：
 
 ```sh
-npm install --global cn-health@0.5.0
-cd ../cn-health-data
-cn-health init
+pnpm synthea:up
 ```
 
-构建 profile 需要 Rust 工具链与 `uv`（cn-health-data 贡献者环境）。用 r2 Candidate 路径构建新 revision（`--build-revision` 递增，命令在 cn-health-data 仓库根执行）：
+命令幂等拉取镜像，只启动 `cn-health-localizer` 与 `synthea-provider`，并在 Provider 真正健康后返回。需要执行一次完整的全模块单患者生成诊断时运行：
 
 ```sh
-uv run cn-health-build synthea profile \
-  --geography-release dist/geography-cn/releases/2026-08-29.r2 \
-  --names-release dist/names-cn/releases/40.37.0.r2 \
-  --population-release dist/population-cn/releases/WPP2024.r2 \
-  --output-root dist/synthea-cn-profile/releases \
-  --profile-version 2026-08-29 \
-  --build-revision 4 \
-  --reference-year 2026 \
-  --synthea-commit d9d07a6eef91ee5144293b42ab64224d84d124f8
+pnpm synthea:doctor
 ```
 
-随后把 `compose.synthea-provider.yaml` 中四处挂载路径从 r1 改为 r2、profile 路径改为新建的 revision（本地修改 compose，或以环境变量覆盖 `CN_HEALTH_DATA_DIST` 后使用调整过的 compose 文件）。宿主账户不是 `1000:1000` 时先设置：
+`doctor` 只打印版本、profile、模块数和 smoke 结果，不打印生成的 FHIR Bundle、模型内容或凭证。临床显示目录明确属于 `experimental-preview`；结构与 provenance 错误失败关闭，缺失翻译保留来源英文并在患者来源页显示“翻译待确认”。
+
+访问管理员模拟数据页面 `http://127.0.0.1:51868/scenario-data`，在“合成患者库”中点击“生成患者”；默认选择全部 Synthea 模块，每次打开都会产生新的双 seed，高级设置可手动修改以复现。生成完成后选择患者，可在“来源”页查看完整来源病史。
+
+在“来源历史”中打开任一条目的 R4 详情，点击“生成患者梗概”（要求步骤 4 已配置）。Brief 成功且已有当前 revision 后点击“开始门诊就诊”，选择科室、地点和门诊类型；系统直接创建普通 HIS 的 Patient、Registration、Encounter 和 Queue Task，随后即可继续岗位流程。
+
+停止并只移除两个 Synthea 容器：
 
 ```sh
-export CN_HEALTH_DATA_RUN_AS="$(id -u):$(id -g)"
+pnpm synthea:down
 ```
 
-启动并验证：
-
-```sh
-cd ../clinmesh
-docker compose -f compose.synthea-provider.yaml up -d --build
-curl --fail http://127.0.0.1:51878/health
-docker compose -f compose.synthea-provider.yaml exec -T synthea-provider \
-  java -cp /opt/provider:/opt/synthea/synthea.jar ProviderServer --smoke
-```
-
-`/health` 返回固定 Synthea commit、全部可用模块、profile ID、内容哈希、身份算法、姓名/地理/人口 Release provenance，以及中文 display projection ID、catalog SHA-256、记录数和 review mode。`--smoke` 以 `moduleMode=all` 生成一名患者并校验完整 localization provenance。
-
-### 6.4 生成患者并开始就诊
-
-访问管理员模拟数据页面 `http://127.0.0.1:51888/scenario-data` ，在"合成患者库"中点击"生成患者"；默认选择全部 Synthea 模块，每次打开都会产生新的双 seed，高级设置可手动修改以复现。生成完成后选择患者，标题中的"翻译待确认"表示患者可以继续使用，并可在"来源"页查看保留英文的名称、编码和 FHIR 位置。
-
-在"来源历史"中打开任一条目的 R4 详情，点击"生成患者梗概"（要求步骤 4 已配置）。Brief 成功且已有当前 revision 后点击"开始门诊就诊"，选择科室、地点和门诊类型；系统直接创建普通 HIS 的 Patient、Registration、Encounter 和 Queue Task，随后即可继续挂号、分诊、医生接诊、收费、检验、药房等岗位流程。停止 Provider 但保留容器使用 `docker compose -f compose.synthea-provider.yaml stop`。
+该命令不删除 ClinMesh SQLite、业务数据、Docker volume 或其他服务。Provider 未启动、不可达或停止时，ClinMesh 普通 HIS 与已经生成的病例继续运行；只有新的患者生成任务不可用。运行与发行边界见 [一键 Synthea 运行时](../.agents/notes/implemented/architecture/2026-09-03-one-command-synthea-runtime.md)。
 
 ## 7. 可选运行方式
 
