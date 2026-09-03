@@ -17,7 +17,7 @@ import {
 } from '@clinmesh/ui/components/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CheckIcon, CircleAlertIcon, ClipboardListIcon, ClipboardPlusIcon, SearchIcon, UserPlusIcon } from 'lucide-react'
+import { CheckIcon, CircleAlertIcon, ClipboardListIcon, ClipboardPlusIcon, SearchIcon, UserPlusIcon, XIcon } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import {
   createSyntheticPatient,
@@ -546,10 +546,9 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
                                 aria-label={`${selected ? messages.selectedCaseAction : messages.selectCase} ${item.name}`}
                                 aria-pressed={selected}
                                 className="min-w-20"
-                                onClick={() => setSelection({
-                                  kind: 'synthetic-case',
-                                  syntheticCase: item,
-                                })}
+                                onClick={() => setSelection(selected
+                                  ? undefined
+                                  : { kind: 'synthetic-case', syntheticCase: item })}
                                 size="sm"
                                 type="button"
                                 variant={selected ? 'secondary' : 'outline'}
@@ -629,7 +628,9 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
                                 aria-label={`${selected ? messages.selectedPatientAction : messages.selectPatient} ${patient.name}`}
                                 aria-pressed={selected}
                                 className="min-w-20"
-                                onClick={() => setSelection({ kind: 'patient', patient })}
+                                onClick={() => setSelection(selected
+                                  ? undefined
+                                  : { kind: 'patient', patient })}
                                 size="sm"
                                 type="button"
                                 variant={selected ? 'secondary' : 'outline'}
@@ -696,7 +697,14 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
               </Field>
               <Field><FieldLabel>{messages.visitDate}</FieldLabel><Input disabled value={catalog.data.virtualDate} /></Field>
               <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 border-t bg-background py-3">
-                <strong className="min-w-0 text-sm font-medium">{selectedName === undefined ? messages.selectPatientFirst : `${messages.selectedPrefix}${selectedName}`}</strong>
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <strong className="min-w-0 text-sm font-medium">{selectedName === undefined ? messages.selectPatientFirst : `${messages.selectedPrefix}${selectedName}`}</strong>
+                  {selection === undefined ? null : (
+                    <Button onClick={() => setSelection(undefined)} size="sm" type="button" variant="ghost">
+                      <XIcon data-icon="inline-start" />{messages.clearSelection}
+                    </Button>
+                  )}
+                </div>
                 <Button disabled={selectedName === undefined || submitRegistration.isPending} onClick={() => submitRegistration.mutate()} type="button"><ClipboardPlusIcon data-icon="inline-start" />{messages.confirmRegistration}</Button>
               </div>
               {submitRegistration.isSuccess ? <Alert><CheckIcon aria-hidden="true" /><AlertTitle>{messages.registrationCompleted}</AlertTitle><AlertDescription>{messages.awaitingTriage}</AlertDescription></Alert> : null}

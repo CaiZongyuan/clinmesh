@@ -1761,10 +1761,17 @@ describe('role workspaces', () => {
     expect(selectCase.textContent).toContain('选择')
     expect(selectCase.getAttribute('aria-pressed')).toBe('false')
     await user.click(selectCase)
-    expect(screen.getByRole('button', { name: '已选择病例 张琴' }).getAttribute('aria-pressed'))
-      .toBe('true')
+    const selectedCase = screen.getByRole('button', { name: '已选择病例 张琴' })
+    expect(selectedCase.getAttribute('aria-pressed')).toBe('true')
     expect(await screen.findByText('已选择：张琴')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '取消选择' })).toBeTruthy()
     const confirmRegistration = screen.getByRole('button', { name: '确认挂号' })
+    expect(confirmRegistration.hasAttribute('disabled')).toBe(false)
+    await user.click(selectedCase)
+    expect(screen.getByRole('button', { name: '选择病例 张琴' }).getAttribute('aria-pressed'))
+      .toBe('false')
+    expect(confirmRegistration.hasAttribute('disabled')).toBe(true)
+    await user.click(screen.getByRole('button', { name: '选择病例 张琴' }))
     expect(confirmRegistration.hasAttribute('disabled')).toBe(false)
     await user.click(confirmRegistration)
 
@@ -1947,6 +1954,7 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: '创建临时患者' }))
 
     expect(await screen.findByText('已选择：合成患者周明')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '取消选择' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '确认挂号' }))
 
     expect(await screen.findByText('挂号完成')).toBeTruthy()
