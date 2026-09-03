@@ -223,7 +223,7 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
                 <button
                   aria-controls={contentId}
                   aria-expanded={expanded}
-                  className="flex w-full items-center gap-2 bg-muted/30 px-3 py-2 text-left text-xs font-semibold text-muted-foreground hover:bg-muted/50"
+                  className="flex min-h-11 w-full items-center gap-2 bg-muted/30 px-3 py-3 text-left text-xs font-semibold text-muted-foreground hover:bg-muted/50"
                   onClick={() => setExpandedDates((current) => {
                     const next = new Set(current)
                     if (next.has(group.businessDate)) next.delete(group.businessDate)
