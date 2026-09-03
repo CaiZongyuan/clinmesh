@@ -128,7 +128,10 @@ describe('Web application shell', () => {
       const path = new URL(String(input), 'http://localhost').pathname
       if (path === '/api/auth/context') return Response.json(registrarSession)
       if (path === '/api/his/v1/catalogs/registration') {
-        return Response.json({ departments: [], virtualDate: '2026-08-24', visitTypes: [] })
+        return Response.json({ departments: [], locations: [], virtualDate: '2026-08-24', visitTypes: [] })
+      }
+      if (path === '/api/his/v1/registration/synthetic-cases') {
+        return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
       }
       if (path === '/api/his/v1/registrations') {
         return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
@@ -179,7 +182,10 @@ describe('Web application shell', () => {
       requestedPaths.push(path)
       if (path === '/clinmesh-api/auth/context') return Response.json(registrarSession)
       if (path === '/clinmesh-api/his/v1/catalogs/registration') {
-        return Response.json({ departments: [], virtualDate: '2026-08-24', visitTypes: [] })
+        return Response.json({ departments: [], locations: [], virtualDate: '2026-08-24', visitTypes: [] })
+      }
+      if (path === '/clinmesh-api/his/v1/registration/synthetic-cases') {
+        return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
       }
       if (path === '/clinmesh-api/his/v1/registrations') {
         return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
@@ -273,6 +279,9 @@ describe('Web application shell', () => {
       }
       if (path === '/clinmesh-api/his/v1/registrations') {
         return registrationQueue
+      }
+      if (path === '/clinmesh-api/his/v1/registration/synthetic-cases') {
+        return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
       }
       if (path === '/clinmesh-api/agent/v1/page-contexts') {
         const request = JSON.parse(String(init?.body)) as {
@@ -415,7 +424,7 @@ describe('Web application shell', () => {
       }, new AbortController().signal)
     })
     expect(document.activeElement).toBe(document.querySelector('[data-clinmesh-workspace-panel]'))
-    await user.click(screen.getByRole('tab', { name: '新建合成患者' }))
+    await user.click(screen.getByRole('tab', { name: '临时患者建档' }))
     const fill = activeRegistration.tools.find(tool => tool.name === 'clinmesh_fill_patient_draft')!
     await act(async () => {
       await fill.execute({
@@ -428,7 +437,7 @@ describe('Web application shell', () => {
       }, new AbortController().signal)
     })
     expect((screen.getByLabelText('姓名') as HTMLInputElement).value).toBe('合成患者甲')
-    expect((screen.getByLabelText('合成标识') as HTMLInputElement).value).toBe('CM-AGENT-001')
+    expect((screen.getByLabelText('临时患者标识') as HTMLInputElement).value).toBe('CM-AGENT-001')
     expect((screen.getByLabelText('出生日期') as HTMLInputElement).value).toBe('1990-01-01')
     expect(screen.getByRole('combobox', { name: '性别' }).textContent).toContain('男')
     await waitFor(() => expect(pageClaims.at(-1)?.draft?.dirty).toBe(true))
@@ -452,11 +461,11 @@ describe('Web application shell', () => {
     })
 
     expect(proposalResult).toContain('awaiting-human-review')
-    expect(await screen.findByRole('alertdialog', { name: '创建患者' })).toBeTruthy()
+    expect(await screen.findByRole('alertdialog', { name: '创建临时患者' })).toBeTruthy()
     expect(patientCreated).toBe(false)
 
     rendered.rerender(<WebApp history={history} runtime={runtimeFor('connecting')} />)
-    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: '创建患者' })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: '创建临时患者' })).toBeNull())
     await waitFor(() => expect(toolResults.at(-1)).toMatchObject({ ok: false }))
     expect(patientCreated).toBe(false)
 
@@ -471,8 +480,8 @@ describe('Web application shell', () => {
       )
     })
     expect(proposalResult).toContain('awaiting-human-review')
-    expect(await screen.findByRole('alertdialog', { name: '创建患者' })).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '创建患者' }))
+    expect(await screen.findByRole('alertdialog', { name: '创建临时患者' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '创建临时患者' }))
     await waitFor(() => expect(patientCreated).toBe(true))
     await waitFor(() => expect(toolResults.at(-1)).toMatchObject({
       ok: true,
