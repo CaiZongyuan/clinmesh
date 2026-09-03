@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest'
 
 const syntheaCommit = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
 const syntheaArchiveSha256 = 'e5f097863440524935e8d1e081e66aea811692a66ba450d78e78e8a728f4722b'
+const cnHealthCommit = '518ab099061408bc4a6d4c8db8693756bef2fe84'
+const profileArchiveSha256 = '615f777f61d6599a597651c4517cd7690b933efe0f74beb196ee3de5dd2913eb'
+const cnHealthLicenseSha256 = '0174a00c6dfceae24528f777821bb589bfdc22d184763ec756208f1cfd648dc5'
+const cnHealthNoticeSha256 = '616aefa83119c799df487f300ed9f937cd14f5f67b616d02c2400783f4e7364b'
 
 describe('Synthea Docker Provider contract', () => {
   it('pins immutable verified source inputs and a non-root runtime', async () => {
@@ -14,8 +18,18 @@ describe('Synthea Docker Provider contract', () => {
     expect(dockerfile).not.toMatch(/^ARG SYNTHEA_(?:COMMIT|ARCHIVE_SHA256)=/mu)
     expect(dockerfile).toContain(`synthea_commit=${syntheaCommit}`)
     expect(dockerfile).toContain(`synthea_archive_sha256=${syntheaArchiveSha256}`)
+    expect(dockerfile).toContain(`cn_health_commit=${cnHealthCommit}`)
+    expect(dockerfile).toContain(`profile_archive_sha256=${profileArchiveSha256}`)
+    expect(dockerfile).toContain(`cn_health_license_sha256=${cnHealthLicenseSha256}`)
+    expect(dockerfile).toContain(`cn_health_notice_sha256=${cnHealthNoticeSha256}`)
+    expect(dockerfile).toContain('/releases/download/synthea-cn-2026-08-29.r4-preview.1/')
+    expect(dockerfile).toContain('synthea-cn-profile.tar.gz')
     expect(dockerfile).toContain('COPY --from=build --chown=10001:10001 /src/synthea/LICENSE')
     expect(dockerfile).toContain('COPY --from=build --chown=10001:10001 /src/synthea/NOTICE')
+    expect(dockerfile).toContain('COPY --from=build --chown=10001:10001 /tmp/synthea-profile')
+    expect(dockerfile).toContain('/opt/cn-health/synthea-profile')
+    expect(dockerfile).toContain('/opt/licenses/CN-HEALTH-DATA-LICENSE')
+    expect(dockerfile).toContain('/opt/licenses/CN-HEALTH-DATA-NOTICE')
     expect(dockerfile).toContain('USER 10001:10001')
     expect(dockerfile).toContain('HEALTHCHECK')
     expect(dockerfile).toContain('/tmp/synthea-modules.txt')
@@ -80,5 +94,23 @@ describe('Synthea Docker Provider contract', () => {
     const memoryLimits = compose.match(/^    mem_limit: /gmu) ?? []
     expect(cpuLimits).toHaveLength(2)
     expect(memoryLimits).toHaveLength(2)
+  })
+
+  it('publishes a verified multi-platform Provider image', async () => {
+    const workflow = await readFile(
+      new URL('../../../.github/workflows/synthea-provider.yml', import.meta.url),
+      'utf8',
+    )
+
+    expect(workflow).toContain('ghcr.io/caizongyuan/clinmesh-synthea-provider')
+    expect(workflow).toContain('packages: write')
+    expect(workflow).toContain('linux/amd64,linux/arm64')
+    expect(workflow).toContain(
+      'ghcr.io/caizongyuan/cn-health-synthea-localizer@sha256:8b716811d6912b4502168bd23e2cf5f8c25b2f7dcc64caae6706eb1b45262448',
+    )
+    expect(workflow).toContain('ProviderServer --smoke')
+    expect(workflow).toContain('push: true')
+    expect(workflow).toContain('sbom: true')
+    expect(workflow).toContain('attest-build-provenance')
   })
 })

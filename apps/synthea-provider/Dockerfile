@@ -16,6 +16,29 @@ RUN synthea_commit=d9d07a6eef91ee5144293b42ab64224d84d124f8 \
   && mkdir synthea \
   && tar --extract --gzip --file /tmp/synthea.tar.gz --directory synthea --strip-components=1 \
   && rm /tmp/synthea.tar.gz
+RUN cn_health_commit=518ab099061408bc4a6d4c8db8693756bef2fe84 \
+  && profile_archive_sha256=615f777f61d6599a597651c4517cd7690b933efe0f74beb196ee3de5dd2913eb \
+  && cn_health_license_sha256=0174a00c6dfceae24528f777821bb589bfdc22d184763ec756208f1cfd648dc5 \
+  && cn_health_notice_sha256=616aefa83119c799df487f300ed9f937cd14f5f67b616d02c2400783f4e7364b \
+  && curl --fail --location --silent --show-error \
+    "https://github.com/CaiZongyuan/cn-health-data/releases/download/synthea-cn-2026-08-29.r4-preview.1/synthea-cn-profile.tar.gz" \
+    --output /tmp/synthea-cn-profile.tar.gz \
+  && curl --fail --location --silent --show-error \
+    "https://raw.githubusercontent.com/CaiZongyuan/cn-health-data/${cn_health_commit}/LICENSE" \
+    --output /tmp/CN-HEALTH-DATA-LICENSE \
+  && curl --fail --location --silent --show-error \
+    "https://raw.githubusercontent.com/CaiZongyuan/cn-health-data/${cn_health_commit}/DATA-NOTICE.md" \
+    --output /tmp/CN-HEALTH-DATA-NOTICE \
+  && echo "${profile_archive_sha256}  /tmp/synthea-cn-profile.tar.gz" \
+    | sha256sum --check - \
+  && echo "${cn_health_license_sha256}  /tmp/CN-HEALTH-DATA-LICENSE" \
+    | sha256sum --check - \
+  && echo "${cn_health_notice_sha256}  /tmp/CN-HEALTH-DATA-NOTICE" \
+    | sha256sum --check - \
+  && mkdir /tmp/synthea-profile \
+  && tar --extract --gzip --file /tmp/synthea-cn-profile.tar.gz \
+    --directory /tmp/synthea-profile --strip-components=1 \
+  && rm /tmp/synthea-cn-profile.tar.gz
 
 WORKDIR /src/synthea
 RUN ./gradlew --no-daemon shadowJar \
@@ -43,13 +66,16 @@ WORKDIR /opt/provider
 
 RUN groupadd --gid 10001 synthea-provider \
   && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent synthea-provider \
-  && mkdir -p /opt/synthea /opt/licenses \
+  && mkdir -p /opt/cn-health/synthea-profile /opt/synthea /opt/licenses \
   && chown -R 10001:10001 /opt/provider /opt/synthea /opt/licenses
 COPY --from=build --chown=10001:10001 /tmp/provider-classes/ ./
 COPY --from=build --chown=10001:10001 /tmp/synthea.jar /opt/synthea/synthea.jar
 COPY --from=build --chown=10001:10001 /tmp/synthea-modules.txt /opt/synthea/modules.txt
 COPY --from=build --chown=10001:10001 /src/synthea/LICENSE /opt/licenses/SYNTHEA-LICENSE
 COPY --from=build --chown=10001:10001 /src/synthea/NOTICE /opt/licenses/SYNTHEA-NOTICE
+COPY --from=build --chown=10001:10001 /tmp/synthea-profile /opt/cn-health/synthea-profile
+COPY --from=build --chown=10001:10001 /tmp/CN-HEALTH-DATA-LICENSE /opt/licenses/CN-HEALTH-DATA-LICENSE
+COPY --from=build --chown=10001:10001 /tmp/CN-HEALTH-DATA-NOTICE /opt/licenses/CN-HEALTH-DATA-NOTICE
 
 USER 10001:10001
 EXPOSE 51878
