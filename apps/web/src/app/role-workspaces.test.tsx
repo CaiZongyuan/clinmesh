@@ -512,7 +512,7 @@ function stubScenarioDataWorkspace(options: {
       sourceHash: profile.source.hash,
       status: caseStarted ? 'started' as const : briefGenerated ? 'brief-ready' as const : 'brief-pending' as const,
       updatedAt: profile.updatedAt,
-      visibleHistoryCount: 1,
+      visibleHistoryCount: 2,
       workspaceId: profile.workspaceId,
     },
     createdAt: profile.createdAt,
@@ -575,7 +575,7 @@ function stubScenarioDataWorkspace(options: {
           birthDate: profile.demographics.birthDate,
           createdAt: profile.createdAt,
           gender: profile.demographics.gender,
-          historyCount: 1,
+          historyCount: 2,
           mrn: profile.identity.mrn,
           name: profile.identity.displayName,
           profileId: profile.profileId,
@@ -686,10 +686,18 @@ function stubScenarioDataWorkspace(options: {
     if (url.pathname === `/api/sim/v1/synthetic-cases/${caseId}/history`) {
       return Response.json({
         items: [{
-          clinicalDate: '2026-07-01T08:00:00+08:00',
-          resourceType: 'Condition',
-          sourceReference: 'urn:uuid:prior-condition',
-          title: '发热',
+          businessDate: '2026-07-01',
+          items: [{
+            clinicalDate: '2026-07-01T08:00:00+08:00',
+            resourceType: 'Condition',
+            sourceReference: 'urn:uuid:prior-condition',
+            title: '发热',
+          }, {
+            clinicalDate: '2026-07-01T08:10:00+08:00',
+            resourceType: 'Observation',
+            sourceReference: 'urn:uuid:prior-observation',
+            title: '体温',
+          }],
         }],
         page: 1,
         pageSize: 20,
@@ -1398,9 +1406,34 @@ describe('role workspaces', () => {
     await user.click(within(editSheet).getByRole('button', { name: '保存档案' }))
     expect((await screen.findAllByText('合成患者新姓名')).length).toBeGreaterThan(0)
 
-    await user.click(await screen.findByRole('button', { name: /2026-07-01.*发热.*Condition/ }))
+    await user.click(await screen.findByRole('button', { name: /2026-07-01.*2 条记录/ }))
+    await user.click(await screen.findByRole('button', { name: /发热.*Condition/ }))
     expect(await screen.findByText(/prior-condition/)).toBeTruthy()
     expect(document.body.textContent).not.toContain('index-condition')
+  })
+
+  it('expands and collapses source history events by business date', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ profileAvailable: true })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    const dateColumn = await screen.findByRole('button', { name: /2026-07-01.*2 条记录/ })
+    expect(dateColumn.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('button', { name: /发热.*Condition/ })).toBeNull()
+
+    await user.click(dateColumn)
+    expect(dateColumn.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('button', { name: /发热.*Condition/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /体温.*Observation/ })).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: /发热.*Condition/ }))
+    expect(await screen.findByText(/prior-condition/)).toBeTruthy()
+
+    await user.click(dateColumn)
+    expect(dateColumn.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('button', { name: /发热.*Condition/ })).toBeNull()
   })
 
   it('keeps a profile edit conflict visible in the patient library', async () => {
@@ -1425,7 +1458,8 @@ describe('role workspaces', () => {
 
     render(<WebApp />)
 
-    await user.click(await screen.findByRole('button', { name: /2026-07-01.*发热.*Condition/ }))
+    await user.click(await screen.findByRole('button', { name: /2026-07-01.*2 条记录/ }))
+    await user.click(await screen.findByRole('button', { name: /发热.*Condition/ }))
 
     expect(await screen.findByText(/"resourceType": "Condition"/)).toBeTruthy()
     expect(document.body.textContent).not.toContain('index-condition')

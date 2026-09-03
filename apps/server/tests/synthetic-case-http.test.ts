@@ -14,7 +14,7 @@ import {
   startSyntheticCaseResultSchema,
   syntheticCaseInstanceSchema,
   syntheticPatientProfileDetailSchema,
-  syntheticSourceHistoryListSchema,
+  syntheticSourceHistoryGroupListSchema,
   syntheticSourceResourceDetailSchema,
   type ScenarioGenerationRequest,
   type ScenarioProviderCapabilities,
@@ -417,10 +417,18 @@ describe('Synthetic Case generation HTTP contract', () => {
       { headers: { cookie } },
     )
     expect(historyResponse.status).toBe(200)
-    expect(syntheticSourceHistoryListSchema.parse(await historyResponse.json()).items).toEqual([
-      expect.objectContaining({ sourceReference: 'urn:uuid:prior-encounter' }),
-      expect.objectContaining({ sourceReference: 'urn:uuid:prior-condition' }),
-    ])
+    expect(syntheticSourceHistoryGroupListSchema.parse(await historyResponse.json())).toEqual({
+      items: [{
+        businessDate: '2025-01-10',
+        items: [
+          expect.objectContaining({ sourceReference: 'urn:uuid:prior-encounter' }),
+          expect.objectContaining({ sourceReference: 'urn:uuid:prior-condition' }),
+        ],
+      }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    })
     const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
     const inaccessibleHistory = await runtime.app.request(
       `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/history?page=1&pageSize=20`,

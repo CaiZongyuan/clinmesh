@@ -69,7 +69,7 @@ import {
   scenarioProviderCapabilitiesListSchema,
   startSyntheticCaseResultSchema,
   syntheticPatientProfileDetailSchema,
-  syntheticSourceHistoryListSchema,
+  syntheticSourceHistoryGroupListSchema,
   syntheticSourceResourceDetailSchema,
   syntheticCaseInstanceSchema,
   syntheticPatientProfileListSchema,
@@ -431,7 +431,7 @@ export function getSyntheticCaseHistory(caseId: string, signal?: AbortSignal, pa
   const parameters = new URLSearchParams({ page: String(page), pageSize: '20' })
   return apiGet(
     `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/history?${parameters.toString()}`,
-    syntheticSourceHistoryListSchema,
+    syntheticSourceHistoryGroupListSchema,
     signal,
   )
 }

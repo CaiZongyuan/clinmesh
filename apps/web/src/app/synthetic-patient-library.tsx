@@ -92,7 +92,7 @@ const copy = {
     emptyTitle: 'No synthetic patients yet', externalHistory: 'External synthetic R4 history',
     filterModules: 'Limit Synthea modules', generate: 'Generate patients',
     generationFailed: 'Patient generation failed', generationSucceeded: 'Profiles and cases are ready',
-    history: 'Source history', historyStart: 'History start', identity: 'Identity',
+    history: 'Source history', historyEntries: '{count} records', historyStart: 'History start', identity: 'Identity',
     insurance: 'Simulated insurance', libraryDescription: 'Localized source history and immutable current cases.',
     libraryTitle: 'Synthetic patient library', mrn: 'MRN', name: 'Display name',
     nationalId: 'Synthetic national ID', next: 'Next', noCase: 'No usable current case',
@@ -108,7 +108,7 @@ const copy = {
     email: '电子邮箱', emptyDescription: '生成完整中文 Synthea 纵向病历，每批最多 10 人。',
     emptyTitle: '还没有合成患者', externalHistory: '外部合成 R4 历史', filterModules: '限制 Synthea 模块',
     generate: '生成患者', generationFailed: '患者生成失败', generationSucceeded: '患者档案与病例已生成',
-    history: '来源历史', historyStart: '历史起始日期', identity: '身份信息', insurance: '模拟保险',
+    history: '来源历史', historyEntries: '{count} 条记录', historyStart: '历史起始日期', identity: '身份信息', insurance: '模拟保险',
     libraryDescription: '中文来源病史与不可变本次病例。', libraryTitle: '合成患者库', mrn: 'MRN',
     name: '展示姓名', nationalId: '模拟身份证', next: '下一页', noCase: '没有可用的本次病例',
     noHistory: '没有可见来源历史', patientCount: '患者人数', phone: '手机号码', populationSeed: '人口 seed',
@@ -195,6 +195,7 @@ function TranslationWarningPanel({ locale, warning }: {
 function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLocale }) {
   const messages = copy[locale]
   const [page, setPage] = useState(1)
+  const [expandedDates, setExpandedDates] = useState<Set<string>>(() => new Set())
   const [selectedReference, setSelectedReference] = useState<string>()
   const history = useQuery({
     queryFn: ({ signal }) => getSyntheticCaseHistory(caseId, signal, page),
@@ -210,7 +211,84 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
   if (history.isPending) return <Skeleton className="h-72 w-full" />
   if (history.isError) return <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert>
   if (history.data.items.length === 0) return <p className="py-8 text-sm text-muted-foreground">{messages.noHistory}</p>
-  return <div className="grid min-h-[360px] lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)]"><div className="border-r">{history.data.items.map(item => <button className={cn('grid w-full grid-cols-[104px_minmax(0,1fr)_24px] items-center gap-3 border-b px-3 py-3 text-left', selectedReference === item.sourceReference && 'bg-muted/50')} key={item.sourceReference} onClick={() => setSelectedReference(item.sourceReference)} type="button"><span className="text-xs text-muted-foreground">{item.clinicalDate.slice(0, 10)}</span><span className="min-w-0"><strong className="block truncate text-sm">{item.title}</strong><span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.resourceType}</span></span><ChevronRightIcon className="size-4 text-muted-foreground" /></button>)}<div className="flex justify-between p-2"><Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="ghost">{messages.previous}</Button><Button disabled={page * history.data.pageSize >= history.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="ghost">{messages.next}</Button></div></div><section className="min-w-0 p-3"><h4 className="flex items-center gap-2 text-sm font-semibold"><FileJsonIcon className="size-4" />{messages.resourceDetail}</h4>{selectedReference === undefined ? <p className="mt-4 text-sm text-muted-foreground">{messages.externalHistory}</p> : detail.isPending ? <Skeleton className="mt-3 h-64 w-full" /> : detail.isError ? <Alert className="mt-3" variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : <pre className="mt-3 max-h-[420px] overflow-auto border bg-muted/20 p-3 text-xs">{JSON.stringify(detail.data.resource, null, 2)}</pre>}</section></div>
+  return (
+    <div className="grid min-h-[360px] lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)]">
+      <div className="lg:border-r">
+        {history.data.items.map((group) => {
+          const expanded = expandedDates.has(group.businessDate)
+          const contentId = `source-history-${caseId}-${group.businessDate}`
+          return (
+            <section className="border-b" key={group.businessDate}>
+              <h5>
+                <button
+                  aria-controls={contentId}
+                  aria-expanded={expanded}
+                  className="flex w-full items-center gap-2 bg-muted/30 px-3 py-2 text-left text-xs font-semibold text-muted-foreground hover:bg-muted/50"
+                  onClick={() => setExpandedDates((current) => {
+                    const next = new Set(current)
+                    if (next.has(group.businessDate)) next.delete(group.businessDate)
+                    else next.add(group.businessDate)
+                    return next
+                  })}
+                  type="button"
+                >
+                  <ChevronRightIcon className={cn('size-4 transition-transform', expanded && 'rotate-90')} />
+                  <span className="min-w-0 flex-1">{group.businessDate}</span>
+                  <span className="font-normal">
+                    {translationCount(messages.historyEntries, group.items.length)}
+                  </span>
+                </button>
+              </h5>
+              {expanded ? (
+                <div className="divide-y" id={contentId}>
+                  {group.items.map(item => (
+                    <button
+                      className={cn(
+                        'grid w-full grid-cols-[minmax(0,1fr)_24px] items-center gap-3 py-3 pl-9 pr-3 text-left',
+                        selectedReference === item.sourceReference && 'bg-muted/50',
+                      )}
+                      key={item.sourceReference}
+                      onClick={() => setSelectedReference(item.sourceReference)}
+                      type="button"
+                    >
+                      <span className="min-w-0">
+                        <strong className="block truncate text-sm">{item.title}</strong>
+                        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                          {item.resourceType}
+                        </span>
+                      </span>
+                      <ChevronRightIcon className="size-4 text-muted-foreground" />
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          )
+        })}
+        <div className="flex justify-between p-2">
+          <Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="ghost">
+            {messages.previous}
+          </Button>
+          <Button disabled={page * history.data.pageSize >= history.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="ghost">
+            {messages.next}
+          </Button>
+        </div>
+      </div>
+      <section className="min-w-0 border-t p-3 lg:border-t-0">
+        <h4 className="flex items-center gap-2 text-sm font-semibold">
+          <FileJsonIcon className="size-4" />
+          {messages.resourceDetail}
+        </h4>
+        {selectedReference === undefined
+          ? <p className="mt-4 text-sm text-muted-foreground">{messages.externalHistory}</p>
+          : detail.isPending
+            ? <Skeleton className="mt-3 h-64 w-full" />
+            : detail.isError
+              ? <Alert className="mt-3" variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert>
+              : <pre className="mt-3 max-h-[420px] overflow-auto border bg-muted/20 p-3 text-xs">{JSON.stringify(detail.data.resource, null, 2)}</pre>}
+      </section>
+    </div>
+  )
 }
 
 function StartCaseVisitSheet({ locale, onOpenChange, open, profileId, syntheticCase }: {

@@ -709,8 +709,45 @@ export const syntheticSourceHistoryItemSchema = z.object({
   title: z.string().min(1).max(500),
 }).strict()
 
+const shanghaiDateFormatter = new Intl.DateTimeFormat('en-US', {
+  day: '2-digit',
+  month: '2-digit',
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+})
+
+export function shanghaiBusinessDate(value: string): string {
+  const parts = Object.fromEntries(shanghaiDateFormatter.formatToParts(new Date(value)).map(part => [
+    part.type,
+    part.value,
+  ]))
+  return `${parts.year}-${parts.month}-${parts.day}`
+}
+
+export const syntheticSourceHistoryGroupSchema = z.object({
+  businessDate: localDateSchema,
+  items: z.array(syntheticSourceHistoryItemSchema).min(1),
+}).strict().superRefine((group, context) => {
+  group.items.forEach((item, index) => {
+    if (shanghaiBusinessDate(item.clinicalDate) !== group.businessDate) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Source-history item must match the group business date',
+        path: ['items', index, 'clinicalDate'],
+      })
+    }
+  })
+})
+
 export const syntheticSourceHistoryListSchema = z.object({
   items: z.array(syntheticSourceHistoryItemSchema),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive().max(100),
+  total: z.number().int().nonnegative(),
+}).strict()
+
+export const syntheticSourceHistoryGroupListSchema = z.object({
+  items: z.array(syntheticSourceHistoryGroupSchema),
   page: z.number().int().positive(),
   pageSize: z.number().int().positive().max(100),
   total: z.number().int().nonnegative(),
@@ -975,5 +1012,7 @@ export type SyntheticPatientProfileList = z.infer<typeof syntheticPatientProfile
 export type SyntheticPatientProfileSummary = z.infer<typeof syntheticPatientProfileSummarySchema>
 export type SyntheticCaseInstance = z.infer<typeof syntheticCaseInstanceSchema>
 export type SyntheticSourceHistoryItem = z.infer<typeof syntheticSourceHistoryItemSchema>
+export type SyntheticSourceHistoryGroup = z.infer<typeof syntheticSourceHistoryGroupSchema>
 export type SyntheticSourceHistoryList = z.infer<typeof syntheticSourceHistoryListSchema>
+export type SyntheticSourceHistoryGroupList = z.infer<typeof syntheticSourceHistoryGroupListSchema>
 export type SyntheticSourceResourceDetail = z.infer<typeof syntheticSourceResourceDetailSchema>

@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto'
 import {
+  shanghaiBusinessDate,
   syntheticCaseInstanceSchema,
   syntheticPatientProfileSchema,
+  syntheticSourceHistoryGroupListSchema,
   syntheticSourceHistoryListSchema,
   syntheticSourceResourceDetailSchema,
   type SyntheticCaseInstance,
   type SyntheticPatientProfile,
+  type SyntheticSourceHistoryGroupList,
   type SyntheticSourceHistoryList,
   type SyntheticSourceResourceDetail,
 } from '@clinmesh/contracts/scenario'
@@ -340,6 +343,43 @@ export class SyntheticCaseRepository {
       page: input.page,
       pageSize: input.pageSize,
       total,
+    })
+  }
+
+  listVisibleHistoryGroups(input: {
+    caseId: string
+    page: number
+    pageSize: number
+    workspaceId: string
+  }): SyntheticSourceHistoryGroupList {
+    const rows = z.array(historyRowSchema).parse(this.#database.driver.prepare(`
+      SELECT source_reference, resource_type, clinical_date, title
+      FROM synthetic_case_visible_history
+      WHERE workspace_id = ? AND case_id = ?
+      ORDER BY sequence
+    `).all(
+      input.workspaceId,
+      input.caseId,
+    ))
+    const groups: SyntheticSourceHistoryGroupList['items'] = []
+    rows.forEach((row) => {
+      const businessDate = shanghaiBusinessDate(row.clinical_date)
+      const current = groups.at(-1)
+      if (current?.businessDate === businessDate) {
+        current.items.push(visibleHistoryItem(row))
+        return
+      }
+      groups.push({
+        businessDate,
+        items: [visibleHistoryItem(row)],
+      })
+    })
+    const offset = (input.page - 1) * input.pageSize
+    return syntheticSourceHistoryGroupListSchema.parse({
+      items: groups.slice(offset, offset + input.pageSize),
+      page: input.page,
+      pageSize: input.pageSize,
+      total: groups.length,
     })
   }
 
