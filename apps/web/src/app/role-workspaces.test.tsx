@@ -389,7 +389,7 @@ function doctorSurfaceAgentResponse(
   return undefined
 }
 
-function boundDoctorToolInput(
+function boundAgentToolInput(
   tool: WebSurfaceAgentTool,
   input: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -780,6 +780,9 @@ function stubEmptyRegistrarWorkspace() {
     if (path === '/api/auth/context') return Response.json(registrarSession)
     if (path === '/api/his/v1/catalogs/registration') {
       return Response.json({ departments: [], locations: [], virtualDate: '2026-08-24', visitTypes: [] })
+    }
+    if (path === '/api/his/v1/registration/synthetic-cases') {
+      return Response.json({ items: [], ...pagination(0) })
     }
     if (path === '/api/his/v1/registrations') {
       return Response.json({ items: [], ...pagination(0) })
@@ -1478,6 +1481,376 @@ describe('role workspaces', () => {
     expect(screen.getByRole('main').textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
   })
 
+  it('publishes registrar Synthetic Case search, selection, and review Tools', async () => {
+    let started = false
+    const caseSearches: string[] = []
+    const reviewedDecisions: string[] = []
+    const completedOperations: string[] = []
+    const readyCase = {
+      activeBriefRevision: 2,
+      birthDate: '1970-01-01',
+      caseId: 'synthetic-case-agent-001',
+      caseRevision: 3,
+      caseType: 'follow-up',
+      gender: 'female',
+      mrn: 'CMSYNAGENT001',
+      name: '张琴',
+      profileRevision: 1,
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      const path = url.pathname
+      if (path === '/api/auth/context') return Response.json(registrarSession)
+      if (path === '/api/his/v1/catalogs/registration') {
+        return Response.json({
+          departments: [{ id: 'department-general-medicine', nameEn: 'General Medicine', nameZh: '全科医学科', version: 1 }],
+          locations: [{ id: 'location-outpatient', nameEn: 'Outpatient clinic', nameZh: '门诊诊区', version: 1 }],
+          virtualDate: '2026-09-03',
+          visitTypes: [{ id: 'visit-general', nameEn: 'General outpatient', nameZh: '普通门诊', priceFen: 2000, version: 1 }],
+        })
+      }
+      if (path === '/api/his/v1/registration/synthetic-cases') {
+        caseSearches.push(url.searchParams.get('search') ?? '')
+        return Response.json({
+          items: started ? [] : [readyCase],
+          ...pagination(started ? 0 : 1),
+        })
+      }
+      if (path === '/api/his/v1/registrations') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (path === '/api/agent/v1/page-contexts') {
+        const request = JSON.parse(String(init?.body)) as {
+          claim: Record<string, unknown>
+          dshSessionId: string
+        }
+        const issuedAt = new Date()
+        return Response.json({
+          snapshot: {
+            actor: {
+              actorId: registrarSession.actor.actorId,
+              practitionerRoleId: registrarSession.actor.practitionerRoleId,
+              roleCode: registrarSession.actor.roleCode,
+            },
+            allowedOperationIds: agentToolsForContext('registrar', 'registration')
+              .map(tool => tool.operationId),
+            claim: request.claim,
+            dshSessionId: request.dshSessionId,
+            expiresAt: new Date(issuedAt.getTime() + 5 * 60_000).toISOString(),
+            id: `context-${String(request.claim.viewRevision)}`,
+            issuedAt: issuedAt.toISOString(),
+            scopeKey: 'clinmesh:registrar:registration',
+            version: 1,
+            workspace: {
+              epoch: registrarSession.actor.epoch,
+              id: registrarSession.actor.workspaceId,
+              scenarioRunId: registrarSession.actor.scenarioRunId,
+            },
+          },
+          token: 'context-token-with-at-least-32-characters',
+        }, { status: 201 })
+      }
+      if (path === '/clinmesh-agent-proof') {
+        return Response.json({ data: { proof: 'proof-with-at-least-32-characters' } })
+      }
+      if (path === '/api/agent/v1/tool-calls') {
+        const request = JSON.parse(String(init?.body)) as { operationId: string }
+        const issuedAt = new Date()
+        return Response.json({
+          callId: `call-${request.operationId}`,
+          context: {
+            actor: {
+              actorId: registrarSession.actor.actorId,
+              practitionerRoleId: registrarSession.actor.practitionerRoleId,
+              roleCode: registrarSession.actor.roleCode,
+            },
+            allowedOperationIds: [request.operationId],
+            claim: {
+              ui: { status: 'ready' },
+              version: 1,
+              viewId: 'registration',
+              viewRevision: `authorized-${request.operationId}`,
+            },
+            dshSessionId: 'dsh-session-1',
+            expiresAt: new Date(issuedAt.getTime() + 5 * 60_000).toISOString(),
+            id: `context-authorized-${request.operationId}`,
+            issuedAt: issuedAt.toISOString(),
+            scopeKey: 'clinmesh:registrar:registration',
+            version: 1,
+            workspace: {
+              epoch: registrarSession.actor.epoch,
+              id: registrarSession.actor.workspaceId,
+              scenarioRunId: registrarSession.actor.scenarioRunId,
+            },
+          },
+          dshSessionId: 'dsh-session-1',
+          operationId: request.operationId,
+          ...(request.operationId.endsWith('.propose')
+            ? { proposalId: 'registrar-synthetic-case-proposal' }
+            : {}),
+          receiptToken: 'receipt-token-with-at-least-32-characters',
+          status: 'authorized',
+        }, { status: 201 })
+      }
+      if (path === '/api/agent/v1/tool-calls/review') {
+        const request = JSON.parse(String(init?.body)) as { decision: string }
+        reviewedDecisions.push(request.decision)
+        return Response.json({
+          decidedAt: '2026-09-03T09:00:01.000Z',
+          decision: request.decision,
+          proposalId: 'registrar-synthetic-case-proposal',
+        })
+      }
+      if (path === '/api/agent/v1/tool-calls/result') {
+        const request = JSON.parse(String(init?.body)) as { ok: boolean }
+        completedOperations.push(request.ok ? 'completed' : 'failed')
+        return Response.json({ status: 'completed' })
+      }
+      if (path === '/api/his/v1/synthetic-cases/synthetic-case-agent-001/actions/start-outpatient-visit') {
+        expect(reviewedDecisions).toEqual(['approved'])
+        started = true
+        return Response.json(commandResponse({
+          encounterId: 'encounter-agent-001',
+          outpatientCaseId: 'outpatient-case-agent-001',
+          patientId: 'patient-agent-001',
+          queueTaskId: 'task-triage-agent-001',
+          registrationId: 'registration-agent-001',
+          status: 'awaiting-triage',
+          syntheticCaseId: readyCase.caseId,
+        }))
+      }
+      throw new Error(`Unexpected request: ${path}`)
+    }))
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registration = value
+        return () => {
+          if (registration === value) registration = undefined
+        }
+      },
+    }
+
+    render(<WebApp runtime={{
+      mode: 'surface',
+      surfaceAgent,
+      surfaceAgentStatus: 'active',
+      surfaceSessionId: 'dsh-session-1',
+    }} />)
+
+    await waitFor(() => expect(registration?.tools.map(tool => tool.name)).toEqual(
+      expect.arrayContaining([
+        'clinmesh_search_registration_cases',
+        'clinmesh_select_registration_case',
+      ]),
+    ))
+    expect(registration?.tools.map(tool => tool.name))
+      .not.toContain('clinmesh_prepare_start_registration_case')
+
+    const signal = new AbortController().signal
+    const searchTool = registration?.tools.find(tool => tool.name === 'clinmesh_search_registration_cases')
+    if (searchTool === undefined) throw new Error('Synthetic Case search Tool is unavailable')
+    await searchTool.execute(boundAgentToolInput(searchTool, { query: readyCase.mrn }), signal)
+    expect(caseSearches).toContain(readyCase.mrn)
+    const selectTool = registration?.tools.find(tool => tool.name === 'clinmesh_select_registration_case')
+    if (selectTool === undefined) throw new Error('Synthetic Case selection Tool is unavailable')
+    await selectTool.execute(boundAgentToolInput(selectTool, { caseId: readyCase.caseId }), signal)
+    await waitFor(() => expect(registration?.tools.map(tool => tool.name))
+      .toContain('clinmesh_prepare_start_registration_case'))
+    const proposal = registration?.tools.find(
+      tool => tool.name === 'clinmesh_prepare_start_registration_case',
+    )
+    if (proposal === undefined) throw new Error('Synthetic Case proposal Tool is unavailable')
+    expect(JSON.parse(String(await proposal.execute(boundAgentToolInput(proposal, {}), signal))))
+      .toMatchObject({ data: { status: 'awaiting-human-review' }, ok: true })
+    const review = await screen.findByRole('alertdialog', { name: '挂号信息' })
+    await userEvent.click(within(review).getByRole('button', { name: '确认挂号' }))
+    await waitFor(() => {
+      expect(started).toBe(true)
+      expect(completedOperations).toContain('completed')
+    })
+  })
+
+  it('starts a ready Synthetic Case from the default registrar queue and refreshes both queues', async () => {
+    let started = false
+    let waitingReads = 0
+    let registrationReads = 0
+    const readyCase = {
+      activeBriefRevision: 2,
+      birthDate: '1970-01-01',
+      caseId: 'synthetic-case-001',
+      caseRevision: 3,
+      caseType: 'follow-up',
+      gender: 'female',
+      mrn: 'CMSYN000001',
+      name: '张琴',
+      profileRevision: 1,
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
+      if (url.pathname === '/api/his/v1/catalogs/registration') {
+        return Response.json({
+          departments: [{ id: 'department-general-medicine', nameEn: 'General Medicine', nameZh: '全科医学科', version: 1 }],
+          locations: [{ id: 'location-outpatient', nameEn: 'Outpatient clinic', nameZh: '门诊诊区', version: 1 }],
+          virtualDate: '2026-09-03',
+          visitTypes: [{ id: 'visit-general', nameEn: 'General outpatient', nameZh: '普通门诊', priceFen: 2000, version: 1 }],
+        })
+      }
+      if (url.pathname === '/api/his/v1/registration/synthetic-cases') {
+        waitingReads += 1
+        return Response.json({ items: started ? [] : [readyCase], ...pagination(started ? 0 : 1) })
+      }
+      if (url.pathname === '/api/his/v1/registrations') {
+        registrationReads += 1
+        return Response.json(started ? {
+          items: [{
+            arrivedAt: '2026-09-03T09:00:00+08:00',
+            caseId: 'outpatient-case-001',
+            encounterId: 'encounter-001',
+            encounterVersion: '1',
+            patient: {
+              birthDate: readyCase.birthDate,
+              gender: readyCase.gender,
+              id: 'patient-001',
+              identifier: readyCase.mrn,
+              name: readyCase.name,
+              synthetic: true,
+              versionId: '1',
+            },
+            registrationId: 'registration-001',
+            registrationNumber: 'CM-OP-20260903-0001',
+            registrationStatus: 'registered',
+            status: 'awaiting-triage',
+            taskId: 'task-triage-001',
+            taskVersion: '1',
+          }],
+          ...pagination(1),
+        } : { items: [], ...pagination(0) })
+      }
+      if (url.pathname === '/api/his/v1/synthetic-cases/synthetic-case-001/actions/start-outpatient-visit') {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          activeBriefRevision: 2,
+          departmentId: 'department-general-medicine',
+          expectedCaseRevision: 3,
+          locationId: 'location-outpatient',
+          visitDate: '2026-09-03',
+          visitTypeId: 'visit-general',
+        })
+        started = true
+        return Response.json(commandResponse({
+          encounterId: 'encounter-001',
+          outpatientCaseId: 'outpatient-case-001',
+          patientId: 'patient-001',
+          queueTaskId: 'task-triage-001',
+          registrationId: 'registration-001',
+          status: 'awaiting-triage',
+          syntheticCaseId: readyCase.caseId,
+        }))
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    expect(await screen.findByRole('tab', { name: '待挂号病例' })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '临时患者建档' })).toBeTruthy()
+    expect(screen.queryByRole('tab', { name: '新建合成患者' })).toBeNull()
+    const selectCase = await screen.findByRole('button', { name: '选择病例 张琴' })
+    expect(selectCase.textContent).toContain('选择')
+    expect(selectCase.getAttribute('aria-pressed')).toBe('false')
+    await user.click(selectCase)
+    const selectedCase = screen.getByRole('button', { name: '已选择病例 张琴' })
+    expect(selectedCase.getAttribute('aria-pressed')).toBe('true')
+    expect(await screen.findByText('已选择：张琴')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '取消选择' })).toBeTruthy()
+    const confirmRegistration = screen.getByRole('button', { name: '确认挂号' })
+    expect(confirmRegistration.hasAttribute('disabled')).toBe(false)
+    await user.click(selectedCase)
+    expect(screen.getByRole('button', { name: '选择病例 张琴' }).getAttribute('aria-pressed'))
+      .toBe('false')
+    expect(confirmRegistration.hasAttribute('disabled')).toBe(true)
+    await user.click(screen.getByRole('button', { name: '选择病例 张琴' }))
+    expect(confirmRegistration.hasAttribute('disabled')).toBe(false)
+    await user.click(confirmRegistration)
+
+    expect(await screen.findByText('CM-OP-20260903-0001')).toBeTruthy()
+    await waitFor(() => {
+      expect(waitingReads).toBeGreaterThan(1)
+      expect(registrationReads).toBeGreaterThan(1)
+    })
+    expect(screen.queryByRole('button', { name: '选择病例 张琴' })).toBeNull()
+  })
+
+  it('clears a stale Synthetic Case selection and refreshes queues after a start conflict', async () => {
+    let caseTaken = false
+    let startRequests = 0
+    let waitingReads = 0
+    let registrationReads = 0
+    const readyCase = {
+      activeBriefRevision: 1,
+      birthDate: '1982-04-12',
+      caseId: 'synthetic-case-conflict-001',
+      caseRevision: 2,
+      caseType: 'new-problem',
+      gender: 'male',
+      mrn: 'CMSYNCONFLICT01',
+      name: '并发病例患者',
+      profileRevision: 1,
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
+      if (url.pathname === '/api/his/v1/catalogs/registration') {
+        return Response.json({
+          departments: [{ id: 'department-general-medicine', nameEn: 'General Medicine', nameZh: '全科医学科', version: 1 }],
+          locations: [{ id: 'location-outpatient', nameEn: 'Outpatient clinic', nameZh: '门诊诊区', version: 1 }],
+          virtualDate: '2026-09-03',
+          visitTypes: [{ id: 'visit-general', nameEn: 'General outpatient', nameZh: '普通门诊', priceFen: 2000, version: 1 }],
+        })
+      }
+      if (url.pathname === '/api/his/v1/registration/synthetic-cases') {
+        waitingReads += 1
+        return Response.json({
+          items: caseTaken ? [] : [readyCase],
+          ...pagination(caseTaken ? 0 : 1),
+        })
+      }
+      if (url.pathname === '/api/his/v1/registrations') {
+        registrationReads += 1
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (url.pathname.includes('/actions/start-outpatient-visit')) {
+        startRequests += 1
+        caseTaken = true
+        return Response.json({
+          error: {
+            code: 'WORKFLOW_CONFLICT',
+            message: 'The Synthetic Case changed while starting',
+          },
+        }, { status: 409 })
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('button', { name: `选择病例 ${readyCase.name}` }))
+    const confirm = screen.getByRole('button', { name: '确认挂号' })
+    await waitFor(() => expect(confirm.hasAttribute('disabled')).toBe(false))
+    await user.click(confirm)
+
+    await waitFor(() => {
+      expect(startRequests).toBe(1)
+      expect(waitingReads).toBeGreaterThan(1)
+      expect(registrationReads).toBeGreaterThan(1)
+      expect(screen.queryByText(`已选择：${readyCase.name}`)).toBeNull()
+    }, { timeout: 3_000 })
+    expect(await screen.findByText('操作冲突')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '确认挂号' }).hasAttribute('disabled')).toBe(true)
+  })
+
   it('creates a synthetic patient and registers the selected patient from server catalogs', async () => {
     let registered = false
     const patient = {
@@ -1492,6 +1865,9 @@ describe('role workspaces', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
+      if (url.pathname === '/api/his/v1/registration/synthetic-cases') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
       if (url.pathname === '/api/his/v1/catalogs/registration') {
         return Response.json({
           departments: [{
@@ -1568,16 +1944,17 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     await screen.findByText('普通门诊挂号费 · ¥20.00')
-    await user.click(screen.getByRole('tab', { name: '新建合成患者' }))
+    await user.click(screen.getByRole('tab', { name: '临时患者建档' }))
     expect((await screen.findByRole('combobox', { name: '性别' })).textContent).toContain('男')
     expect((await screen.findByRole('combobox', { name: '科室' })).textContent).toContain('全科医学科')
     expect(screen.getByRole('combobox', { name: '号别' }).textContent).toContain('普通门诊挂号费 · ¥20.00')
     expect(screen.getByRole('combobox', { name: '就诊地点' }).textContent).toContain('发热门诊')
     await user.type(screen.getByLabelText('姓名'), '合成患者周明')
-    await user.type(screen.getByLabelText('合成标识'), 'CM-SYN-001')
-    await user.click(screen.getByRole('button', { name: '创建患者' }))
+    await user.type(screen.getByLabelText('临时患者标识'), 'CM-SYN-001')
+    await user.click(screen.getByRole('button', { name: '创建临时患者' }))
 
     expect(await screen.findByText('已选择：合成患者周明')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '取消选择' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '确认挂号' }))
 
     expect(await screen.findByText('挂号完成')).toBeTruthy()
@@ -1593,6 +1970,9 @@ describe('role workspaces', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
+      if (url.pathname === '/api/his/v1/registration/synthetic-cases') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
       if (url.pathname === '/api/his/v1/catalogs/registration') {
         return Response.json({ departments: [], locations: [], virtualDate: '2026-08-24', visitTypes: [] })
       }
@@ -1605,6 +1985,7 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
+    await user.click(await screen.findByRole('tab', { name: '检索患者' }))
     await user.type(await screen.findByLabelText('姓名、门诊号或合成标识'), 'CM-SYN-404')
     await user.click(screen.getByRole('button', { name: '搜索' }))
 
@@ -1633,6 +2014,9 @@ describe('role workspaces', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
+      if (url.pathname === '/api/his/v1/registration/synthetic-cases') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
       if (url.pathname === '/api/his/v1/catalogs/registration') {
         return Response.json({
           departments: [{
@@ -1676,6 +2060,7 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
+    await user.click(await screen.findByRole('tab', { name: '检索患者' }))
     await user.type(await screen.findByLabelText('姓名、门诊号或合成标识'), patient.identifier)
     await user.click(screen.getByRole('button', { name: '搜索' }))
     await user.click(await screen.findByRole('button', { name: `选择患者 ${patient.name}` }))
@@ -1691,6 +2076,9 @@ describe('role workspaces', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
+      if (url.pathname === '/api/his/v1/registration/synthetic-cases') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
       if (url.pathname === '/api/his/v1/catalogs/registration') {
         return Response.json({ departments: [], locations: [], virtualDate: '2026-08-24', visitTypes: [] })
       }
@@ -1714,6 +2102,7 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
+    await user.click(await screen.findByRole('tab', { name: '检索患者' }))
     await user.type(await screen.findByLabelText('姓名、门诊号或合成标识'), 'CM-SYN-LONG-NAME')
     await user.click(screen.getByRole('button', { name: '搜索' }))
     await user.click(await screen.findByRole('button', { name: `选择患者 ${longName}` }))
@@ -1726,6 +2115,9 @@ describe('role workspaces', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
+      if (url.pathname === '/api/his/v1/registration/synthetic-cases') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
       if (url.pathname === '/api/his/v1/catalogs/registration') {
         return Response.json({
           departments: [{
@@ -2651,7 +3043,7 @@ describe('role workspaces', () => {
         candidate.name === 'clinmesh_fill_laboratory_draft'
       ))
       expect(tool).toBeDefined()
-      expect(boundDoctorToolInput(tool!, {}).contextId).toBe(persistedDraftContextId)
+      expect(boundAgentToolInput(tool!, {}).contextId).toBe(persistedDraftContextId)
     })
     const fillLaboratory = registration!.tools.find(candidate => (
       candidate.name === 'clinmesh_fill_laboratory_draft'
@@ -2660,7 +3052,7 @@ describe('role workspaces', () => {
       properties: Record<string, unknown>
     }).properties.catalogItemId).toEqual({ type: 'string' })
     await act(async () => {
-      await fillLaboratory.execute(boundDoctorToolInput(fillLaboratory, {
+      await fillLaboratory.execute(boundAgentToolInput(fillLaboratory, {
         catalogItemId: agentLaboratoryService.id,
         indicationCode: 'clinical-evaluation',
       }), new AbortController().signal)
@@ -4012,7 +4404,7 @@ describe('role workspaces', () => {
       tool.name === 'clinmesh_fill_diagnosis_draft'
     ))!
     await act(async () => {
-      await fillDiagnosis.execute(boundDoctorToolInput(fillDiagnosis, {
+      await fillDiagnosis.execute(boundAgentToolInput(fillDiagnosis, {
         entries: [{ catalogItemId: 'diagnosis-fever', role: 'primary' }],
       }), new AbortController().signal)
     })

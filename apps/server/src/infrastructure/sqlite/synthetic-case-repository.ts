@@ -1,10 +1,15 @@
 import { createHash } from 'node:crypto'
 import {
   syntheticCaseInstanceSchema,
+  syntheticCaseRegistrationListSchema,
+  syntheticCaseRegistrationSummarySchema,
+  syntheticPatientIdentitySchema,
   syntheticPatientProfileSchema,
   syntheticSourceHistoryListSchema,
   syntheticSourceResourceDetailSchema,
   type SyntheticCaseInstance,
+  type SyntheticCaseRegistrationList,
+  type SyntheticCaseRegistrationSummary,
   type SyntheticPatientProfile,
   type SyntheticSourceHistoryList,
   type SyntheticSourceResourceDetail,
@@ -56,6 +61,41 @@ const caseRowSchema = z.object({
 }).strict()
 
 const countRowSchema = z.object({ count: z.number().int().nonnegative() }).strict()
+
+const registrationCaseRowSchema = z.object({
+  active_brief_revision: z.number().int().positive(),
+  case_id: z.string().min(1),
+  case_type: z.enum(['new-problem', 'follow-up', 'preventive']),
+  demographics_json: z.string(),
+  identity_json: z.string(),
+  profile_revision: z.number().int().positive(),
+  revision: z.number().int().positive(),
+}).strict()
+
+const registrationCaseRevisionRowSchema = z.object({
+  revision: z.number().int().positive(),
+}).strict()
+
+const registrationCaseColumns = `
+  synthetic_case.case_id, synthetic_case.revision,
+  synthetic_case.case_type, synthetic_case.profile_revision,
+  synthetic_case.active_brief_revision,
+  profile_revision.identity_json, profile_revision.demographics_json
+`
+
+const registrationCaseSource = `
+  FROM synthetic_case_instance AS synthetic_case
+  JOIN synthetic_patient_profile_revision AS profile_revision
+    ON profile_revision.workspace_id = synthetic_case.workspace_id
+   AND profile_revision.profile_id = synthetic_case.profile_id
+   AND profile_revision.revision = synthetic_case.profile_revision
+  JOIN patient_brief_revision AS active_brief
+    ON active_brief.workspace_id = synthetic_case.workspace_id
+   AND active_brief.case_id = synthetic_case.case_id
+   AND active_brief.revision = synthetic_case.active_brief_revision
+  WHERE synthetic_case.workspace_id = ?
+    AND synthetic_case.status = 'brief-ready'
+`
 
 const historyRowSchema = z.object({
   clinical_date: z.iso.datetime({ offset: true }),
@@ -122,6 +162,26 @@ function visibleHistoryItem(row: z.infer<typeof historyRowSchema>) {
     sourceReference: row.source_reference,
     title: row.title,
   }
+}
+
+function registrationCaseSummary(
+  row: z.infer<typeof registrationCaseRowSchema>,
+): SyntheticCaseRegistrationSummary {
+  const identity = syntheticPatientIdentitySchema.parse(JSON.parse(row.identity_json))
+  const demographics = syntheticPatientProfileSchema.shape.demographics.parse(
+    JSON.parse(row.demographics_json),
+  )
+  return syntheticCaseRegistrationSummarySchema.parse({
+    activeBriefRevision: row.active_brief_revision,
+    birthDate: demographics.birthDate,
+    caseId: row.case_id,
+    caseRevision: row.revision,
+    caseType: row.case_type,
+    gender: demographics.gender,
+    mrn: identity.mrn,
+    name: identity.displayName,
+    profileRevision: row.profile_revision,
+  })
 }
 
 function caseId(profile: SyntheticPatientProfile): string {
@@ -310,6 +370,56 @@ export class SyntheticCaseRepository {
       LIMIT 1
     `).get(workspaceId, profileId)
     return row === undefined ? undefined : this.#mapCase(caseRowSchema.parse(row))
+  }
+
+  getRegistrationCandidateRevision(
+    workspaceId: string,
+    caseIdValue: string,
+  ): number | undefined {
+    const row = this.#database.driver.prepare(`
+      SELECT synthetic_case.revision
+      ${registrationCaseSource}
+        AND synthetic_case.case_id = ?
+    `).get(workspaceId, caseIdValue)
+    return row === undefined ? undefined : registrationCaseRevisionRowSchema.parse(row).revision
+  }
+
+  listForRegistration(input: {
+    page: number
+    pageSize: number
+    search?: string
+    workspaceId: string
+  }): SyntheticCaseRegistrationList {
+    const query = input.search ?? null
+    const filterBindings = [input.workspaceId, query, query, query] as const
+    const fromAndFilter = `
+      ${registrationCaseSource}
+        AND (
+          ? IS NULL
+          OR instr(lower(json_extract(profile_revision.identity_json, '$.displayName')), lower(?)) > 0
+          OR instr(lower(json_extract(profile_revision.identity_json, '$.mrn')), lower(?)) > 0
+        )
+    `
+    const total = countRowSchema.parse(this.#database.driver.prepare(`
+      SELECT COUNT(*) AS count
+      ${fromAndFilter}
+    `).get(...filterBindings)).count
+    const rows = z.array(registrationCaseRowSchema).parse(this.#database.driver.prepare(`
+      SELECT ${registrationCaseColumns}
+      ${fromAndFilter}
+      ORDER BY synthetic_case.updated_at DESC, synthetic_case.case_id
+      LIMIT ? OFFSET ?
+    `).all(
+      ...filterBindings,
+      input.pageSize,
+      (input.page - 1) * input.pageSize,
+    ))
+    return syntheticCaseRegistrationListSchema.parse({
+      items: rows.map(registrationCaseSummary),
+      page: input.page,
+      pageSize: input.pageSize,
+      total,
+    })
   }
 
   listVisibleHistory(input: {

@@ -135,6 +135,98 @@ describe('DSH Agent Page Context HTTP contract', () => {
     expect(await stale.json()).toMatchObject({ error: { code: 'AGENT_CONTEXT_STALE' } })
   })
 
+  it('binds registrar Synthetic Case proposals to one ready Case revision', async () => {
+    const { cookie, runtime } = await setup()
+    const caseId = 'synthetic-case-agent-001'
+    const profileId = 'synthetic-profile-agent-001'
+    const now = '2026-09-03T09:00:00.000+08:00'
+    const identity = JSON.stringify({ displayName: '张琴', mrn: 'CMSYNAGENT001' })
+    const demographics = JSON.stringify({ birthDate: '1970-01-01', gender: 'female' })
+    runtime.database.driver.prepare(`
+      INSERT INTO synthetic_patient_profile (
+        workspace_id, profile_id, batch_id, batch_name, source_patient_id,
+        revision, display_name, mrn, identity_json, demographics_json,
+        source_hash, raw_source_json, generation_json,
+        created_by_actor_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'workspace-demo', profileId, 'batch-agent', 'Agent 测试批次', 'source-patient-agent',
+      1, '张琴', 'CMSYNAGENT001', identity, demographics,
+      'a'.repeat(64), '{}', '{}', 'actor-administrator', now, now,
+    )
+    runtime.database.driver.prepare(`
+      INSERT INTO synthetic_patient_profile_revision (
+        workspace_id, profile_id, revision, identity_json, demographics_json,
+        created_by_actor_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('workspace-demo', profileId, 1, identity, demographics, 'actor-administrator', now)
+    runtime.database.driver.prepare(`
+      INSERT INTO synthetic_case_instance (
+        workspace_id, case_id, profile_id, profile_revision, revision,
+        case_type, status, active_brief_revision, source_hash,
+        visible_history_count, created_by_actor_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'workspace-demo', caseId, profileId, 1, 3, 'follow-up', 'brief-ready', 1,
+      'a'.repeat(64), 0, 'actor-administrator', now, now,
+    )
+    runtime.database.driver.prepare(`
+      INSERT INTO patient_brief_revision (
+        workspace_id, case_id, revision, content_json, model_id,
+        prompt_version, prompt_hash, input_hash, output_hash, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'workspace-demo', caseId, 1, '{}', 'test-model', 'test-prompt-v1',
+      'b'.repeat(64), 'c'.repeat(64), 'd'.repeat(64), now,
+    )
+    const claim = {
+      version: 1 as const,
+      viewId: 'registration' as const,
+      viewRevision: 'registration-synthetic-case-1',
+      selection: { id: caseId, kind: 'synthetic-case' as const, version: '3' },
+      draft: {
+        dirty: false,
+        id: caseId,
+        kind: 'registration' as const,
+        revision: 'registration-draft-1',
+      },
+      ui: { status: 'ready' as const },
+    }
+
+    const response = await createContext(runtime, cookie, claim)
+    expect(response.status).toBe(201)
+    const binding = agentPageContextBindingSchema.parse(await response.json())
+    expect(binding.snapshot.allowedOperationIds).toEqual(expect.arrayContaining([
+      'registration.synthetic-case.search',
+      'registration.synthetic-case.select',
+      'registration.synthetic-case.start.propose',
+    ]))
+    expect(binding.snapshot.allowedOperationIds).not.toContain('registration.outpatient.propose')
+
+    runtime.database.driver.prepare(`
+      UPDATE synthetic_case_instance SET active_brief_revision = NULL
+      WHERE workspace_id = ? AND case_id = ?
+    `).run('workspace-demo', caseId)
+    const missingBrief = await createContext(runtime, cookie, {
+      ...claim,
+      viewRevision: 'registration-synthetic-case-missing-brief',
+    })
+    expect(missingBrief.status).toBe(409)
+    expect(await missingBrief.json()).toMatchObject({ error: { code: 'AGENT_CONTEXT_STALE' } })
+
+    runtime.database.driver.prepare(`
+      UPDATE synthetic_case_instance
+      SET active_brief_revision = 1, status = 'started', revision = 4
+      WHERE workspace_id = ? AND case_id = ?
+    `).run('workspace-demo', caseId)
+    const stale = await createContext(runtime, cookie, {
+      ...claim,
+      viewRevision: 'registration-synthetic-case-stale',
+    })
+    expect(stale.status).toBe(409)
+    expect(await stale.json()).toMatchObject({ error: { code: 'AGENT_CONTEXT_STALE' } })
+  })
+
   it('re-signs a selected Encounter from its current triage state and version', async () => {
     const { cookie, password, runtime } = await setup()
     const mutationHeaders = {

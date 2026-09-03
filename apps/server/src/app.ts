@@ -1,5 +1,6 @@
 import { extname } from 'node:path'
 import type { HealthResponse } from '@clinmesh/contracts/health'
+import { syntheticCaseRegistrationListInputSchema } from '@clinmesh/contracts/his-operations'
 import {
   createAgentCapabilityGrantInputSchema,
   createAgentClientInputSchema,
@@ -767,6 +768,24 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   if (options.identity !== undefined && options.caseVisits !== undefined) {
     const identity = options.identity
     const caseVisits = options.caseVisits
+    app.get('/api/his/v1/registration/synthetic-cases', async (context) => {
+      try {
+        const query = syntheticCaseRegistrationListInputSchema.parse(context.req.query())
+        const actor = await identity.resolveRequestActor(
+          context.req.raw.headers,
+          context.req.raw.method,
+          context.req.path,
+        )
+        return context.json(caseVisits.listReadyForRegistration({
+          context: actor,
+          page: query.page,
+          pageSize: query.pageSize,
+          ...(query.search === undefined ? {} : { search: query.search }),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
     app.post('/api/his/v1/synthetic-cases/:caseId/actions/start-outpatient-visit', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
