@@ -10,15 +10,12 @@ import {
 } from '@clinmesh/contracts/agent'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
+import type { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic-case-repository.ts'
 import type { ActorContext } from './command-executor.ts'
 
 const versionRowSchema = z.object({ version: z.union([z.number(), z.string()]) }).strict()
 const scenarioRowSchema = z.object({ status: z.string(), version: z.string() }).strict()
 const generationJobRowSchema = z.object({ status: z.string(), version: z.string() }).strict()
-const syntheticCaseRowSchema = z.object({
-  status: z.enum(['brief-pending', 'brief-ready', 'started', 'completed', 'retired']),
-  version: z.number().int().positive(),
-}).strict()
 const triageCaseRowSchema = z.object({
   encounter_id: z.string(),
   has_triage: z.number().int(),
@@ -92,13 +89,14 @@ const commonOperations = new Set<AgentOperationId>([
 
 export function resolveAgentPageContext(
   database: ClinMeshDatabase,
+  cases: SyntheticCaseRepository,
   actor: ActorContext,
   userAccountId: string,
   claim: AgentPageContextClaim,
 ): ResolvedAgentPageContext | undefined {
   const roleCode = agentHumanRoleCodeSchema.safeParse(actor.roleCode)
   if (!roleCode.success || !agentViewsForRole(roleCode.data).includes(claim.viewId)) return undefined
-  const selection = resolveSelection(database, actor, claim)
+  const selection = resolveSelection(database, cases, actor, claim)
   if (selection === undefined || !draftMatchesSelection(claim, selection)) return undefined
   const allowed = new Set(agentToolsForContext(roleCode.data, claim.viewId)
     .map(definition => definition.operationId))
@@ -111,6 +109,7 @@ export function resolveAgentPageContext(
 
 export function validateAgentToolInputForContext(
   database: ClinMeshDatabase,
+  cases: SyntheticCaseRepository,
   context: AgentPageContextSnapshot,
   userAccountId: string,
   operationId: AgentOperationId,
@@ -130,9 +129,11 @@ export function validateAgentToolInputForContext(
     scenarioRunId: context.workspace.scenarioRunId,
     workspaceId: context.workspace.id,
   }
-  const current = resolveAgentPageContext(database, actor, userAccountId, context.claim)
+  const current = resolveAgentPageContext(database, cases, actor, userAccountId, context.claim)
   if (current === undefined || !current.allowedOperationIds.includes(operationId)) return undefined
-  if (!inputMatchesCurrentResources(database, actor, context.claim, operationId, input)) return undefined
+  if (!inputMatchesCurrentResources(database, cases, actor, context.claim, operationId, input)) {
+    return undefined
+  }
   return input
 }
 
@@ -165,6 +166,7 @@ export const proposalCommandOperations: Readonly<Record<string, readonly string[
 
 function resolveSelection(
   database: ClinMeshDatabase,
+  cases: SyntheticCaseRepository,
   actor: ActorContext,
   claim: AgentPageContextClaim,
 ): ResolvedSelection | undefined {
@@ -193,23 +195,12 @@ function resolveSelection(
     return { id: selection.id, kind: selection.kind, status: row.status }
   }
   if (selection.kind === 'synthetic-case') {
-    const row = syntheticCaseRowSchema.optional().parse(database.driver.prepare(`
-      SELECT revision AS version, status
-      FROM synthetic_case_instance AS synthetic_case
-      WHERE workspace_id = ? AND case_id = ?
-        AND EXISTS (
-          SELECT 1 FROM patient_brief_revision AS active_brief
-          WHERE active_brief.workspace_id = synthetic_case.workspace_id
-            AND active_brief.case_id = synthetic_case.case_id
-            AND active_brief.revision = synthetic_case.active_brief_revision
-        )
-    `).get(actor.workspaceId, selection.id))
+    const revision = cases.getRegistrationCandidateRevision(actor.workspaceId, selection.id)
     if (
-      row === undefined
-      || row.status !== 'brief-ready'
-      || String(row.version) !== selection.version
+      revision === undefined
+      || String(revision) !== selection.version
     ) return undefined
-    return { id: selection.id, kind: selection.kind, status: row.status }
+    return { id: selection.id, kind: selection.kind, status: 'brief-ready' }
   }
   if (selection.kind === 'patient') {
     const row = versionRowSchema.optional().parse(database.driver.prepare(`
@@ -532,6 +523,7 @@ function accountHasAdministratorRole(
 
 function inputMatchesCurrentResources(
   database: ClinMeshDatabase,
+  cases: SyntheticCaseRepository,
   actor: ActorContext,
   claim: AgentPageContextClaim,
   operationId: AgentOperationId,
@@ -553,15 +545,7 @@ function inputMatchesCurrentResources(
       AND resource_type = 'Patient' AND resource_id = ? AND deleted = 0`, ...scope, value.patientId)
   }
   if (operationId === 'registration.synthetic-case.select') {
-    return exists(`SELECT 1 FROM synthetic_case_instance AS synthetic_case
-      WHERE workspace_id = ? AND case_id = ? AND status = 'brief-ready'
-        AND EXISTS (
-          SELECT 1 FROM patient_brief_revision AS active_brief
-          WHERE active_brief.workspace_id = synthetic_case.workspace_id
-            AND active_brief.case_id = synthetic_case.case_id
-            AND active_brief.revision = synthetic_case.active_brief_revision
-        )`,
-    actor.workspaceId, value.caseId)
+    return cases.getRegistrationCandidateRevision(actor.workspaceId, String(value.caseId)) !== undefined
   }
   if (operationId === 'registration.draft.set') {
     return exists(`SELECT 1 FROM outpatient_catalog WHERE workspace_id = ? AND epoch = ?

@@ -204,7 +204,19 @@ describe('DSH Agent Page Context HTTP contract', () => {
     expect(binding.snapshot.allowedOperationIds).not.toContain('registration.outpatient.propose')
 
     runtime.database.driver.prepare(`
-      UPDATE synthetic_case_instance SET status = 'started', revision = 4
+      UPDATE synthetic_case_instance SET active_brief_revision = NULL
+      WHERE workspace_id = ? AND case_id = ?
+    `).run('workspace-demo', caseId)
+    const missingBrief = await createContext(runtime, cookie, {
+      ...claim,
+      viewRevision: 'registration-synthetic-case-missing-brief',
+    })
+    expect(missingBrief.status).toBe(409)
+    expect(await missingBrief.json()).toMatchObject({ error: { code: 'AGENT_CONTEXT_STALE' } })
+
+    runtime.database.driver.prepare(`
+      UPDATE synthetic_case_instance
+      SET active_brief_revision = 1, status = 'started', revision = 4
       WHERE workspace_id = ? AND case_id = ?
     `).run('workspace-demo', caseId)
     const stale = await createContext(runtime, cookie, {
