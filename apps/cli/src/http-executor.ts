@@ -27,6 +27,7 @@ export class HttpOperationError extends Error {
   readonly problem: {
     code: string
     conflict?: unknown
+    correlationId?: string
     idempotencyKey?: string
     message: string
     operationId: string
@@ -60,14 +61,21 @@ function ambiguousRecoveryMessage(operationId: string): string {
   return 'The request may have reached ClinMesh; query the Command receipt before retrying'
 }
 
+function responseCorrelationId(response: Response): string | undefined {
+  const parsed = z.uuid().safeParse(response.headers.get('x-correlation-id'))
+  return parsed.success ? parsed.data : undefined
+}
+
 export function transportError(
   operationId: string,
   write: boolean,
   execution: HttpExecutionContext | undefined,
   cause: unknown,
+  correlationId?: string,
 ): HttpOperationError {
   return new HttpOperationError(write ? 7 : 4, {
     code: write ? 'ambiguous_outcome' : 'transport_error',
+    ...(correlationId === undefined ? {} : { correlationId }),
     ...(execution?.idempotencyKey === undefined
       ? {}
       : { idempotencyKey: execution.idempotencyKey }),
@@ -86,9 +94,11 @@ export function invalidResponseError(
   write: boolean,
   execution: HttpExecutionContext | undefined,
   cause: unknown,
+  correlationId?: string,
 ): HttpOperationError {
   return new HttpOperationError(write ? 7 : 8, {
     code: 'invalid_response',
+    ...(correlationId === undefined ? {} : { correlationId }),
     ...(execution?.idempotencyKey === undefined
       ? {}
       : { idempotencyKey: execution.idempotencyKey }),
@@ -109,9 +119,14 @@ function httpResponseError(
   write: boolean,
   execution?: HttpExecutionContext,
 ): HttpOperationError {
+  const parsed = apiErrorSchema.safeParse(payload)
+  const correlationId = parsed.success
+    ? parsed.data.error.correlationId ?? responseCorrelationId(response)
+    : responseCorrelationId(response)
   if (write && response.status >= 500) {
     return new HttpOperationError(7, {
       code: 'ambiguous_outcome',
+      ...(correlationId === undefined ? {} : { correlationId }),
       ...(execution?.idempotencyKey === undefined
         ? {}
         : { idempotencyKey: execution.idempotencyKey }),
@@ -122,7 +137,6 @@ function httpResponseError(
       type: 'api',
     })
   }
-  const parsed = apiErrorSchema.safeParse(payload)
   const plainError = plainHttpErrorSchema.safeParse(payload)
   const operationOutcome = operationOutcomeSchema.safeParse(payload)
   const fhirIssue = operationOutcome.success ? operationOutcome.data.issue[0] : undefined
@@ -150,6 +164,7 @@ function httpResponseError(
           : { exitCode: 1, type: 'api' }
   return new HttpOperationError(classification.exitCode, {
     code: serverError.code,
+    ...(correlationId === undefined ? {} : { correlationId }),
     ...('conflict' in serverError && serverError.conflict !== undefined
       ? { conflict: serverError.conflict }
       : {}),
@@ -172,20 +187,21 @@ export async function parseHttpResponse<Schema extends z.ZodType>(
   execution?: HttpExecutionContext,
   bodyFailure: 'protocol' | 'transport' = 'protocol',
 ): Promise<z.infer<Schema>> {
+  const correlationId = responseCorrelationId(response)
   let payload: unknown
   try {
     payload = await response.json() as unknown
   } catch (cause) {
     throw bodyFailure === 'transport'
-      ? transportError(operationId, write, execution, cause)
-      : invalidResponseError(operationId, write, execution, cause)
+      ? transportError(operationId, write, execution, cause, correlationId)
+      : invalidResponseError(operationId, write, execution, cause, correlationId)
   }
   if (!response.ok) {
     throw httpResponseError(response, payload, operationId, write, execution)
   }
   const parsed = schema.safeParse(payload)
   if (!parsed.success) {
-    throw invalidResponseError(operationId, write, execution, parsed.error)
+    throw invalidResponseError(operationId, write, execution, parsed.error, correlationId)
   }
   return parsed.data
 }

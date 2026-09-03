@@ -69,6 +69,7 @@ import { useSurfaceAgentPublisher } from './surface-agent-publisher.ts'
 import { AgentReviewProvider } from './agent-review.tsx'
 import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
 import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
+import { RuntimeErrorBoundary } from './runtime-error-boundary.tsx'
 
 const DARK_MODE_QUERY = '(prefers-color-scheme: dark)'
 const IS_DEVELOPMENT = process.env.NODE_ENV !== 'production'
@@ -485,28 +486,30 @@ export function WebApp({
   ])
 
   return (
-    <WebRuntimeProvider value={runtime}>
-      <PortalContainerProvider container={portalRoot}>
-        <div
-          className={runtime.mode === 'surface'
-            ? 'clinmesh-web-root h-full min-h-0 overflow-hidden'
-            : 'clinmesh-web-root'}
-          data-clinmesh-app="web"
-          ref={applicationRoot}
-        >
-          <QueryClientProvider client={queryClient}>
-            <AgentPageRegistryProvider>
-              <AgentReviewProvider>
-                <Toaster>
-                  <RouterProvider router={router} />
-                </Toaster>
-              </AgentReviewProvider>
-            </AgentPageRegistryProvider>
-          </QueryClientProvider>
-          <div data-clinmesh-portal-root="" ref={portalRoot} />
-        </div>
-      </PortalContainerProvider>
-    </WebRuntimeProvider>
+    <RuntimeErrorBoundary>
+      <WebRuntimeProvider value={runtime}>
+        <PortalContainerProvider container={portalRoot}>
+          <div
+            className={runtime.mode === 'surface'
+              ? 'clinmesh-web-root h-full min-h-0 overflow-hidden'
+              : 'clinmesh-web-root'}
+            data-clinmesh-app="web"
+            ref={applicationRoot}
+          >
+            <QueryClientProvider client={queryClient}>
+              <AgentPageRegistryProvider>
+                <AgentReviewProvider>
+                  <Toaster>
+                    <RouterProvider router={router} />
+                  </Toaster>
+                </AgentReviewProvider>
+              </AgentPageRegistryProvider>
+            </QueryClientProvider>
+            <div data-clinmesh-portal-root="" ref={portalRoot} />
+          </div>
+        </PortalContainerProvider>
+      </WebRuntimeProvider>
+    </RuntimeErrorBoundary>
   )
 }
 

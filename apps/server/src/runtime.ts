@@ -49,6 +49,7 @@ import {
 import type { ScenarioGenerationProvider } from './application/scenario-data/provider.ts'
 import type { SqlitePerformanceObserver } from './infrastructure/sqlite/performance-observer.ts'
 import { AgentIntegrationService } from './application/agent-integration-service.ts'
+import { reportRuntimeError } from './runtime-error-reporting.ts'
 
 function lisActorContext(event: {
   epoch: string
@@ -399,29 +400,29 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const dispatchTimer = options.autoDispatchIntervalMs === undefined
       ? undefined
       : setInterval(() => {
-          void dispatchPending().catch(() => {
-            console.error('ClinMesh outbox dispatch cycle failed')
+          void dispatchPending().catch(error => {
+            reportRuntimeError({ error, scope: 'outbox-dispatch' })
           })
         }, options.autoDispatchIntervalMs)
     const generationTimer = options.autoDispatchIntervalMs === undefined
       ? undefined
       : setInterval(() => {
-          void dispatchScenarioGenerationJobs().catch(() => {
-            console.error('ClinMesh Scenario generation dispatch cycle failed')
+          void dispatchScenarioGenerationJobs().catch(error => {
+            reportRuntimeError({ error, scope: 'scenario-generation-dispatch' })
           })
         }, options.autoDispatchIntervalMs)
     const patientBriefTimer = options.autoDispatchIntervalMs === undefined
       ? undefined
       : setInterval(() => {
-          void dispatchPatientBriefJobs().catch(() => {
-            console.error('ClinMesh Patient Brief dispatch cycle failed')
+          void dispatchPatientBriefJobs().catch(error => {
+            reportRuntimeError({ error, scope: 'patient-brief-dispatch' })
           })
         }, options.autoDispatchIntervalMs)
     const laboratoryServicePublicationTimer = options.autoDispatchIntervalMs === undefined
       ? undefined
       : setInterval(() => {
-          void dispatchLaboratoryServicePublicationJobs().catch(() => {
-            console.error('ClinMesh Laboratory Service publication dispatch cycle failed')
+          void dispatchLaboratoryServicePublicationJobs().catch(error => {
+            reportRuntimeError({ error, scope: 'laboratory-service-publication-dispatch' })
           })
         }, options.autoDispatchIntervalMs)
     const app = createApp({

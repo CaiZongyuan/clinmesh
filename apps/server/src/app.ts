@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { extname } from 'node:path'
 import type { HealthResponse } from '@clinmesh/contracts/health'
 import {
@@ -72,6 +73,7 @@ import {
   type RepositoryContext,
 } from './infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceContextError } from './infrastructure/sqlite/workspace-repository.ts'
+import { reportRuntimeError } from './runtime-error-reporting.ts'
 import type { AgentIntegrationService } from './application/agent-integration-service.ts'
 import { AgentIntegrationError } from './application/agent-integration-service.ts'
 import {
@@ -101,6 +103,16 @@ export interface CreateAppOptions {
   webRoot?: string
 }
 
+const requestCorrelationIds = new WeakMap<Request, string>()
+
+function requestCorrelationId(context: Context): string {
+  const existing = requestCorrelationIds.get(context.req.raw)
+  if (existing !== undefined) return existing
+  const correlationId = randomUUID()
+  requestCorrelationIds.set(context.req.raw, correlationId)
+  return correlationId
+}
+
 function operationOutcome(code: string, diagnostics: string) {
   return {
     resourceType: 'OperationOutcome' as const,
@@ -108,8 +120,24 @@ function operationOutcome(code: string, diagnostics: string) {
   }
 }
 
+function apiErrorBody(
+  context: Context,
+  code: string,
+  message: string,
+  conflict?: unknown,
+) {
+  return {
+    error: {
+      code,
+      ...(conflict === undefined ? {} : { conflict }),
+      correlationId: requestCorrelationId(context),
+      message,
+    },
+  }
+}
+
 function invalidInputResponse(context: Context, message = 'The request is invalid') {
-  return context.json({ error: { code: 'INVALID_INPUT', message } }, 400)
+  return context.json(apiErrorBody(context, 'INVALID_INPUT', message), 400)
 }
 
 function apiErrorResponse(
@@ -132,15 +160,12 @@ function apiErrorResponse(
     || error instanceof WorkflowError
     || error instanceof CommandReceiptNotFoundError
   ) {
-    return context.json({
-      error: {
-        code: error.code,
-        ...(error instanceof WorkflowError && error.conflict !== undefined
-          ? { conflict: error.conflict }
-          : {}),
-        message: error.message,
-      },
-    }, error.status)
+    return context.json(apiErrorBody(
+      context,
+      error.code,
+      error.message,
+      error instanceof WorkflowError ? error.conflict : undefined,
+    ), error.status)
   }
   if (
     error instanceof CommandConflictError
@@ -148,7 +173,7 @@ function apiErrorResponse(
     || error instanceof FhirRepositoryError
     || error instanceof WorkspaceContextError
   ) {
-    return context.json({ error: { code: error.code, message: error.message } }, 409)
+    return context.json(apiErrorBody(context, error.code, error.message), 409)
   }
   throw error
 }
@@ -236,6 +261,39 @@ function requestIdempotencyKey(context: Context): string {
 export function createApp(options: CreateAppOptions = {}): Hono {
   const app = new Hono()
 
+  app.use('*', async (context, next) => {
+    const correlationId = randomUUID()
+    requestCorrelationIds.set(context.req.raw, correlationId)
+    await next()
+    context.header('X-Correlation-Id', correlationId)
+  })
+
+  app.onError((error, context) => {
+    const correlationId = requestCorrelationId(context)
+    reportRuntimeError({
+      correlationId,
+      error,
+      method: context.req.method,
+      path: context.req.path,
+      scope: 'http',
+    })
+    context.header('X-Correlation-Id', correlationId)
+    if (context.req.path === '/fhir' || context.req.path.startsWith('/fhir/')) {
+      return context.json(
+        operationOutcome('exception', 'The FHIR request could not be completed'),
+        500,
+        { 'Content-Type': 'application/fhir+json' },
+      )
+    }
+    return context.json({
+      error: {
+        code: 'INTERNAL_ERROR',
+        correlationId,
+        message: 'The ClinMesh request could not be completed',
+      },
+    }, 500)
+  })
+
   app.get('/api/health', (context) => {
     const response: HealthResponse = {
       service: 'clinmesh-server',
@@ -247,12 +305,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   if (options.identity !== undefined) {
     const identity = options.identity
-    app.post('/api/auth/sign-up/email', context => context.json({
-      error: {
-        code: 'PUBLIC_SIGN_UP_DISABLED',
-        message: 'Public account registration is disabled',
-      },
-    }, 403))
+    app.post('/api/auth/sign-up/email', context => context.json(apiErrorBody(
+      context,
+      'PUBLIC_SIGN_UP_DISABLED',
+      'Public account registration is disabled',
+    ), 403))
     app.get('/api/auth/context', async (context) => {
       try {
         return context.json(await identity.resolveSessionContext(context.req.raw.headers))

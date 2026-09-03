@@ -1361,9 +1361,11 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 
 ### 12.4 可观测性
 
-当前成功 Command 响应返回 `requestId` 和 `auditId`，持久表通过 Workspace/Epoch、Scenario Run、idempotency key、Audit ID、Action Trace ID 和 outbox event ID 建立关联。Agent proposal 再通过 DSH Session/call ID、proposal ID、review decision 和同一 `requestId` 串联 Tool、Command、Audit 与 Trace。`/api/health` 只报告服务状态与 FHIR 版本。
+每个 HTTP 请求由 Server 生成不可由客户端指定的 correlation ID，并通过 `X-Correlation-Id` 响应头返回。HIS JSON 错误同时返回可选 `error.correlationId`；FHIR R5 保持标准 `OperationOutcome`，只通过响应头关联。未知异常返回稳定通用诊断，原始 message、请求正文、查询内容和认证信息不进入响应。Server 为未知请求异常和后台 dispatch failure 输出结构化 stderr 记录，字段限制为时间、受控 scope、HTTP method/path、correlation ID、错误类型和不含首行 message 的 stack frame。
 
-首期没有生产 metrics exporter、分布式 trace、request log 或管理仪表盘，因此不宣称在线采集 API latency、SQLite busy/transaction duration、Search 规模或 outbox backlog 指标。独立 performance runner 可以在临时 sandbox 重复执行固定工作负载并输出分位数、SQL/存储和 Trace 指标，但不改变生产请求或持久化路径。运行诊断仍依赖数据库 CLI、结构化 API 错误和持久审计/outbox 状态；任何后续日志或指标都不得把患者姓名、身份信息、完整临床正文、token 或自由文本作为标签。
+成功 Command 响应返回 `requestId` 和 `auditId`，持久表通过 Workspace/Epoch、Scenario Run、idempotency key、Audit ID、Action Trace ID 和 outbox event ID 建立关联。Agent proposal 再通过 DSH Session/call ID、proposal ID、review decision 和同一 `requestId` 串联 Tool、Command、Audit 与 Trace。CLI 在结构化错误中保留服务端 correlation ID，但该 ID 不表示 Command 已经提交，写操作的恢复仍以 idempotency key、ambiguous outcome 和 receipt 为准。`/api/health` 只报告服务状态与 FHIR 版本。
+
+首期没有生产 metrics exporter、分布式 trace、成功 request log 或管理仪表盘，因此不宣称在线采集 API latency、SQLite busy/transaction duration、Search 规模或 outbox backlog 指标。独立 performance runner 可以在临时 sandbox 重复执行固定工作负载并输出分位数、SQL/存储和 Trace 指标，但不改变生产请求或持久化路径。运行诊断仍依赖 database CLI、correlation ID、结构化错误、失败日志和持久审计/outbox 状态；任何后续日志或指标都不得把患者姓名、身份信息、完整临床正文、token 或自由文本作为标签。
 
 ## 13. 代码结构
 

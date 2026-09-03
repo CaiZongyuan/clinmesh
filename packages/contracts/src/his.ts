@@ -57,6 +57,7 @@ export const apiErrorSchema = z.object({
   error: z.object({
     code: z.string().min(1),
     conflict: apiConflictSchema.optional(),
+    correlationId: z.uuid().optional(),
     message: z.string().min(1),
   }),
 })

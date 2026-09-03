@@ -118,14 +118,63 @@ function resolveApiPath(path: string): string {
 export class ApiClientError extends Error {
   readonly code: string
   readonly conflict: ApiConflict | undefined
+  readonly correlationId: string | undefined
   readonly status: number
 
-  constructor(status: number, code: string, message: string, conflict?: ApiConflict) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    conflict?: ApiConflict,
+    correlationId?: string,
+  ) {
     super(message)
     this.name = 'ApiClientError'
     this.code = code
     this.conflict = conflict
+    this.correlationId = correlationId
     this.status = status
+  }
+}
+
+function responseCorrelationId(response: Response): string | undefined {
+  const parsed = z.uuid().safeParse(response.headers.get('x-correlation-id'))
+  return parsed.success ? parsed.data : undefined
+}
+
+async function requestApi<Schema extends z.ZodType>(
+  path: string,
+  init: RequestInit,
+  schema: Schema,
+): Promise<z.infer<Schema>> {
+  const callerSignal = init.signal ?? undefined
+  const requestController = new AbortController()
+  let timedOut = false
+  const abortFromCaller = () => requestController.abort()
+  if (callerSignal?.aborted === true) {
+    abortFromCaller()
+  } else {
+    callerSignal?.addEventListener('abort', abortFromCaller, { once: true })
+  }
+  const timeout = setTimeout(() => {
+    timedOut = true
+    requestController.abort()
+  }, 30_000)
+  try {
+    const response = await fetch(resolveApiPath(path), { ...init, signal: requestController.signal })
+    return await parseResponse(response, schema)
+  } catch (error) {
+    if (timedOut) {
+      throw new ApiClientError(0, 'REQUEST_TIMEOUT', 'The ClinMesh request timed out')
+    }
+    if (callerSignal?.aborted === true) {
+      throw new ApiClientError(0, 'REQUEST_CANCELLED', 'The ClinMesh request was cancelled')
+    }
+    if (error instanceof ApiClientError) throw error
+    throw new ApiClientError(0, 'NETWORK_ERROR', 'ClinMesh could not be reached')
+  } finally {
+    clearTimeout(timeout)
+    callerSignal?.removeEventListener('abort', abortFromCaller)
   }
 }
 
@@ -133,7 +182,19 @@ async function parseResponse<Schema extends z.ZodType>(
   response: Response,
   schema: Schema,
 ): Promise<z.infer<Schema>> {
-  const body: unknown = await response.json()
+  const correlationId = responseCorrelationId(response)
+  let body: unknown
+  try {
+    body = await response.json() as unknown
+  } catch {
+    throw new ApiClientError(
+      response.status,
+      'UNEXPECTED_RESPONSE',
+      'ClinMesh returned an unreadable response',
+      undefined,
+      correlationId,
+    )
+  }
   if (!response.ok) {
     const parsed = apiErrorSchema.safeParse(body)
     throw new ApiClientError(
@@ -141,9 +202,20 @@ async function parseResponse<Schema extends z.ZodType>(
       parsed.success ? parsed.data.error.code : 'UNEXPECTED_RESPONSE',
       parsed.success ? parsed.data.error.message : `Request failed with status ${response.status}`,
       parsed.success ? parsed.data.error.conflict : undefined,
+      parsed.success ? parsed.data.error.correlationId ?? correlationId : correlationId,
     )
   }
-  return schema.parse(body)
+  const parsed = schema.safeParse(body)
+  if (!parsed.success) {
+    throw new ApiClientError(
+      response.status,
+      'UNEXPECTED_RESPONSE',
+      'ClinMesh returned a response that does not match the expected contract',
+      undefined,
+      correlationId,
+    )
+  }
+  return parsed.data
 }
 
 export async function apiGet<Schema extends z.ZodType>(
@@ -151,12 +223,11 @@ export async function apiGet<Schema extends z.ZodType>(
   schema: Schema,
   signal?: AbortSignal,
 ): Promise<z.infer<Schema>> {
-  const response = await fetch(resolveApiPath(path), {
+  return requestApi(path, {
     credentials: 'same-origin',
     headers: { accept: 'application/json' },
     ...(signal === undefined ? {} : { signal }),
-  })
-  return parseResponse(response, schema)
+  }, schema)
 }
 
 export async function apiMutation<Schema extends z.ZodType>(
@@ -176,14 +247,13 @@ export async function apiMutation<Schema extends z.ZodType>(
   if (options.idempotencyKey !== undefined) {
     headers['idempotency-key'] = options.idempotencyKey
   }
-  const response = await fetch(resolveApiPath(path), {
+  return requestApi(path, {
     body: JSON.stringify(body ?? {}),
     credentials: 'same-origin',
     headers,
     method: options.method ?? 'POST',
     ...(options.signal === undefined ? {} : { signal: options.signal }),
-  })
-  return parseResponse(response, schema)
+  }, schema)
 }
 
 export function getSession(signal?: AbortSignal): Promise<SessionContext> {
@@ -252,7 +322,7 @@ export async function issueAgentExecutionProof(input: {
   signal?: AbortSignal
   toolName: string
 }): Promise<string> {
-  const response = await fetch('/clinmesh-agent-proof', {
+  const value = await requestApi('/clinmesh-agent-proof', {
     body: JSON.stringify({
       contextId: input.contextId,
       scopeKey: input.scopeKey,
@@ -261,11 +331,7 @@ export async function issueAgentExecutionProof(input: {
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     method: 'POST',
     ...(input.signal === undefined ? {} : { signal: input.signal }),
-  })
-  const value = await parseResponse(
-    response,
-    z.object({ data: z.object({ proof: z.string().min(32) }).strict() }).strict(),
-  )
+  }, z.object({ data: z.object({ proof: z.string().min(32) }).strict() }).strict())
   return value.data.proof
 }
 

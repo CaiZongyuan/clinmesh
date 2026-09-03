@@ -315,6 +315,7 @@ describe('clinmesh error contract', () => {
   })
 
   it('preserves a server version conflict as a structured non-retryable error', async () => {
+    const correlationId = '01991234-7abc-7def-8abc-0123456789ab'
     const stdout = captureStream()
     const stderr = captureStream()
     const fetch = vi.fn().mockResolvedValue(Response.json({
@@ -328,7 +329,10 @@ describe('clinmesh error contract', () => {
         },
         message: 'The draft version changed',
       },
-    }, { status: 409 }))
+    }, {
+      headers: { 'X-Correlation-Id': correlationId },
+      status: 409,
+    }))
     const execute = createHttpExecutor({
       baseUrl: 'http://127.0.0.1:51868',
       credential: { kind: 'agent', token: 'cma_secret_task_token_00000000000000000000' },
@@ -355,6 +359,7 @@ describe('clinmesh error contract', () => {
     expect(JSON.parse(stderr.value())).toMatchObject({
       error: {
         code: 'EXPECTED_VERSION_CONFLICT',
+        correlationId,
         conflict: {
           currentVersion: '4',
           expectedVersion: '3',

@@ -22,6 +22,8 @@ HTTP、FHIR、SQLite、文件持久卷、Electron IPC、浏览器存储、DSH Ho
 
 Server route 测试必须解析响应 schema。SQLite 正确性 Spike 使用真实临时数据库文件验证事务回滚、外键、WAL 写竞争、幂等竞争、expected-version 条件写、outbox 重启恢复、备份还原和 Epoch reset。
 
+运行时错误测试按 owner 分层：Server HTTP adapter 注入未知 HIS/FHIR 异常并断言结构化响应、correlation ID 和脱敏日志；Web HTTP adapter mock network 与 response stream，断言 timeout、cancellation、非 JSON 和 schema mismatch 分类；Web composition 让子树抛出渲染异常，断言 Error Boundary fallback 和重新挂载；CLI process/HTTP adapter 断言 correlation ID 不改变退出码、retryable 或 ambiguous 语义。
+
 Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/Skill 分类，Identity HTTP test 拥有 Grant hash、岗位、allowlist 与失效矩阵，CLI process test 拥有 argv/stdin/stdout/stderr/exit，HIS 场景测试拥有业务状态机，Skill test 把示例交给真实命令 parser，ambiguous test 在响应丢失后通过公开 receipt 观察唯一 Effect。上层不复制 Server 已有 Command 输入矩阵。
 
 ### Application composition
