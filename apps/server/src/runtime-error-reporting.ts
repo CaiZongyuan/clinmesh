@@ -25,9 +25,9 @@ interface RuntimeErrorReportInput {
 }
 
 function errorName(error: unknown): string {
-  if (!(error instanceof Error)) return 'UnknownError'
   let name: unknown
   try {
+    if (!(error instanceof Error)) return 'UnknownError'
     name = error.name
   } catch {
     return 'UnknownError'

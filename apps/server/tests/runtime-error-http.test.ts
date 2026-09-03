@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../src/app.ts'
 import { IdentityError, type IdentityService } from '../src/application/identity-service.ts'
 import type { FhirRepository } from '../src/infrastructure/sqlite/fhir-repository.ts'
+import { reportRuntimeError } from '../src/runtime-error-reporting.ts'
 
 function failingIdentity(message: string): IdentityService {
   return {
@@ -105,6 +106,21 @@ describe('runtime HTTP errors', () => {
     expect(apiErrorSchema.parse(await response.json())).toMatchObject({
       error: { code: 'INTERNAL_ERROR' },
     })
+    const report = JSON.parse(String(errorOutput.mock.calls[0]?.[0])) as unknown
+    expect(report).toMatchObject({ error: { name: 'UnknownError' } })
+    expect(JSON.stringify(report)).not.toContain('credential-secret')
+  })
+
+  it('redacts an unknown value when error type inspection throws', () => {
+    const errorOutput = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const failure = new Proxy({}, {
+      getPrototypeOf() {
+        throw new Error('credential-secret')
+      },
+    })
+
+    reportRuntimeError({ error: failure, scope: 'http' })
+
     const report = JSON.parse(String(errorOutput.mock.calls[0]?.[0])) as unknown
     expect(report).toMatchObject({ error: { name: 'UnknownError' } })
     expect(JSON.stringify(report)).not.toContain('credential-secret')
