@@ -1,6 +1,7 @@
 import { createAvatar } from '@dicebear/core'
 import * as lorelei from '@dicebear/lorelei'
 import type {
+  PatientBriefJob,
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
   SyntheticPatientIdentity,
@@ -48,6 +49,7 @@ import {
   DatabaseIcon,
   FileJsonIcon,
   ListFilterIcon,
+  LoaderCircleIcon,
   PencilIcon,
   PlusIcon,
   SearchIcon,
@@ -80,44 +82,99 @@ import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.ts
 const profileListKey = ['synthetic-patient-profiles'] as const
 const providerKey = ['scenario-providers'] as const
 const currentScenarioKey = ['scenario-current'] as const
+const currentGenerationJobKey = ['scenario-generation-current-job'] as const
 const maximumScenarioSeed = 2_147_483_647
 const avatarCache = new Map<string, string>()
+
+function currentPatientBriefJobKey(caseId: string) {
+  return ['patient-brief-current-job', caseId] as const
+}
 
 const copy = {
   'en-US': {
     address: 'Address', advanced: 'Advanced settings', allModules: 'All Synthea modules',
-    batch: 'Generation batch', brief: 'Patient Brief', briefFailed: 'Brief generation failed', briefGenerate: 'Generate Brief', caseType: 'Case type', clinicalSeed: 'Clinical seed',
+    batch: 'Generation batch', brief: 'Patient Brief', briefFailed: 'Brief generation failed', briefGenerate: 'Generate Brief',
+    briefStatus: {
+      failed: 'Patient Brief generation failed',
+      queued: 'Patient Brief queued',
+      running: 'Generating Patient Brief',
+      succeeded: 'Patient Brief complete',
+    },
+    caseType: 'Case type', clinicalSeed: 'Clinical seed',
     contact: 'Contact', editProfile: 'Edit profile', email: 'Email',
     emptyDescription: 'Generate localized longitudinal Synthea records for up to ten patients.',
     emptyTitle: 'No synthetic patients yet', externalHistory: 'External synthetic R4 history',
     filterModules: 'Limit Synthea modules', generate: 'Generate patients',
-    generationFailed: 'Patient generation failed', generationSucceeded: 'Profiles and cases are ready',
+    generationFailed: 'Patient generation failed',
+    generationStatus: {
+      failed: 'Patient generation failed',
+      queued: 'Patient generation queued',
+      running: 'Generating patients',
+      succeeded: 'Profiles and cases are ready',
+    },
     history: 'Source history', historyEntries: '{count} records', historyStart: 'History start', identity: 'Identity',
     insurance: 'Simulated insurance', libraryDescription: 'Localized source history and immutable current cases.',
     libraryTitle: 'Synthetic patient library', mrn: 'MRN', name: 'Display name',
     nationalId: 'Synthetic national ID', next: 'Next', noCase: 'No usable current case',
     noHistory: 'No visible source history', patientCount: 'Patient count', phone: 'Phone',
-    populationSeed: 'Population seed', previous: 'Previous', queued: 'Generation request accepted',
+    populationSeed: 'Population seed', previous: 'Previous',
     resourceDetail: 'R4 resource detail', save: 'Save profile', saveFailed: 'Failed to save profile', search: 'Search patients', source: 'Source', startVisit: 'Start outpatient visit',
     translationReview: 'Translation review {count}', translationWarningDescription: 'The patient is still usable. These English clinical names need later medical or pharmacy review.',
     translationWarningTitle: '{count} clinical names remain in English', translationWarningTruncated: 'Only the first retained items are shown.',
   },
   'zh-CN': {
     address: '地址', advanced: '高级设置', allModules: '全部 Synthea 模块', batch: '生成批次', brief: '患者梗概', briefFailed: '梗概生成失败', briefGenerate: '生成患者梗概',
+    briefStatus: {
+      failed: '患者梗概生成失败',
+      queued: '患者梗概排队中',
+      running: '患者梗概生成中',
+      succeeded: '患者梗概已完成',
+    },
     caseType: '病例类型', clinicalSeed: '临床 seed', contact: '联系方式', editProfile: '编辑档案',
     email: '电子邮箱', emptyDescription: '生成完整中文 Synthea 纵向病历，每批最多 10 人。',
     emptyTitle: '还没有合成患者', externalHistory: '外部合成 R4 历史', filterModules: '限制 Synthea 模块',
-    generate: '生成患者', generationFailed: '患者生成失败', generationSucceeded: '患者档案与病例已生成',
+    generate: '生成患者', generationFailed: '患者生成失败',
+    generationStatus: {
+      failed: '患者生成失败',
+      queued: '患者生成排队中',
+      running: '患者生成中',
+      succeeded: '患者档案与病例已生成',
+    },
     history: '来源历史', historyEntries: '{count} 条记录', historyStart: '历史起始日期', identity: '身份信息', insurance: '模拟保险',
     libraryDescription: '中文来源病史与不可变本次病例。', libraryTitle: '合成患者库', mrn: 'MRN',
     name: '展示姓名', nationalId: '模拟身份证', next: '下一页', noCase: '没有可用的本次病例',
     noHistory: '没有可见来源历史', patientCount: '患者人数', phone: '手机号码', populationSeed: '人口 seed',
-    previous: '上一页', queued: '生成请求已提交', resourceDetail: 'R4 资源详情', save: '保存档案', saveFailed: '保存失败',
+    previous: '上一页', resourceDetail: 'R4 资源详情', save: '保存档案', saveFailed: '保存失败',
     search: '搜索患者', source: '来源', startVisit: '开始门诊就诊',
     translationReview: '翻译待确认 {count}', translationWarningDescription: '患者仍可使用；这些英文临床名称需要后续医学或药学校对。',
     translationWarningTitle: '{count} 个临床名称保留英文', translationWarningTruncated: '这里只显示已保留的前几项。',
   },
 } as const
+
+function JobStatusNotice({ error, label, status }: {
+  error: string | undefined
+  label: string
+  status: PatientBriefJob['status']
+}) {
+  const inProgress = status === 'queued' || status === 'running'
+  const StatusIcon = status === 'failed'
+    ? CircleAlertIcon
+    : inProgress
+      ? LoaderCircleIcon
+      : SparklesIcon
+  return (
+    <Alert
+      aria-label={label}
+      className="mt-3"
+      role={status === 'failed' ? 'alert' : 'status'}
+      variant={status === 'failed' ? 'destructive' : 'default'}
+    >
+      <StatusIcon className={inProgress ? 'animate-spin' : undefined} />
+      <AlertTitle>{label}</AlertTitle>
+      {error === undefined ? null : <AlertDescription>{error}</AlertDescription>}
+    </Alert>
+  )
+}
 
 const genderItems = [
   { label: '不限', value: 'any' },
@@ -363,7 +420,9 @@ function PatientBriefPanel({ locale, profileId, syntheticCase }: {
 }) {
   const messages = copy[locale]
   const queryClient = useQueryClient()
-  const [jobId, setJobId] = useState<string>()
+  const [jobId, setJobId] = useState<string | undefined>(() => (
+    queryClient.getQueryData(currentPatientBriefJobKey(syntheticCase.caseId))
+  ))
   const [visitOpen, setVisitOpen] = useState(false)
   const revisions = useQuery({
     queryFn: ({ signal }) => getPatientBriefRevisions(syntheticCase.caseId, signal),
@@ -371,7 +430,14 @@ function PatientBriefPanel({ locale, profileId, syntheticCase }: {
   })
   const generate = useMutation({
     mutationFn: () => enqueuePatientBrief(syntheticCase.caseId, newIdempotencyKey()),
-    onSuccess: response => setJobId(response.data.jobId),
+    onSuccess: response => {
+      queryClient.setQueryData(
+        currentPatientBriefJobKey(syntheticCase.caseId),
+        response.data.jobId,
+      )
+      queryClient.setQueryData(['patient-brief-job', response.data.jobId], response.data)
+      setJobId(response.data.jobId)
+    },
   })
   const job = useQuery({
     enabled: jobId !== undefined,
@@ -426,12 +492,13 @@ function PatientBriefPanel({ locale, profileId, syntheticCase }: {
           <AlertDescription>{generate.error instanceof Error ? generate.error.message : String(generate.error)}</AlertDescription>
         </Alert>
       )}
-      {job.data?.status === 'failed' ? (
-        <Alert className="mt-3" variant="destructive">
-          <CircleAlertIcon /><AlertTitle>{messages.briefFailed}</AlertTitle>
-          <AlertDescription>{job.data.error?.message}</AlertDescription>
-        </Alert>
-      ) : null}
+      {job.data === undefined ? null : (
+        <JobStatusNotice
+          error={job.data.error?.message}
+          label={messages.briefStatus[job.data.status]}
+          status={job.data.status}
+        />
+      )}
       {running ? <Skeleton className="mt-3 h-20 w-full" /> : null}
       {revisions.isPending ? (
         <Skeleton className="mt-3 h-64 w-full" />
@@ -533,11 +600,11 @@ function ProfileDetails({ locale, onEdit, profile, referenceDate }: {
         <TabsContent value="history">
           {profile.case === null
             ? <p className="p-4 text-sm text-muted-foreground">{messages.noHistory}</p>
-            : <SourceHistory caseId={profile.case.caseId} locale={locale} />}
+            : <SourceHistory caseId={profile.case.caseId} key={profile.case.caseId} locale={locale} />}
         </TabsContent>
         {profile.case === null ? null : (
           <TabsContent value="brief">
-            <PatientBriefPanel locale={locale} profileId={profile.profileId} syntheticCase={profile.case} />
+            <PatientBriefPanel key={profile.case.caseId} locale={locale} profileId={profile.profileId} syntheticCase={profile.case} />
           </TabsContent>
         )}
         <TabsContent className="p-4" value="source">
@@ -613,7 +680,9 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
   const [submittedSearch, setSubmittedSearch] = useState('')
   const [selectedProfileId, setSelectedProfileId] = useState<string>()
   const [generationOpen, setGenerationOpen] = useState(false)
-  const [generationJobId, setGenerationJobId] = useState<string>()
+  const [generationJobId, setGenerationJobId] = useState<string | undefined>(() => (
+    queryClient.getQueryData(currentGenerationJobKey)
+  ))
   const [editOpen, setEditOpen] = useState(false)
   const profiles = useQuery({ queryFn: ({ signal }) => getSyntheticPatientProfiles(signal, page, submittedSearch), queryKey: [...profileListKey, page, submittedSearch] })
   const scenario = useQuery({ queryFn: ({ signal }) => getCurrentScenario(signal), queryKey: currentScenarioKey })
@@ -621,7 +690,18 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
   const effectiveProfileId = selectedProfileId ?? profiles.data?.items[0]?.profileId
   const profile = useQuery({ enabled: effectiveProfileId !== undefined, queryFn: ({ signal }) => effectiveProfileId === undefined ? Promise.reject(new Error('No profile selected')) : getSyntheticPatientProfile(effectiveProfileId, signal), queryKey: ['synthetic-patient-profile', effectiveProfileId ?? 'none'] })
   const providers = useQuery({ queryFn: ({ signal }) => getScenarioProviders(signal), queryKey: providerKey })
-  const generate = useMutation({ mutationFn: (request: ScenarioGenerationRequest) => enqueueScenarioGenerationJob(request, newIdempotencyKey()), onSuccess: response => { setGenerationJobId(response.data.jobId); setGenerationOpen(false) } })
+  const generate = useMutation({
+    mutationFn: (request: ScenarioGenerationRequest) => enqueueScenarioGenerationJob(
+      request,
+      newIdempotencyKey(),
+    ),
+    onSuccess: response => {
+      queryClient.setQueryData(currentGenerationJobKey, response.data.jobId)
+      queryClient.setQueryData(['scenario-generation-job', response.data.jobId], response.data)
+      setGenerationJobId(response.data.jobId)
+      setGenerationOpen(false)
+    },
+  })
   const generationJob = useQuery({ enabled: generationJobId !== undefined, queryFn: ({ signal }) => generationJobId === undefined ? Promise.reject(new Error('No generation job')) : getScenarioGenerationJob(generationJobId, signal), queryKey: ['scenario-generation-job', generationJobId ?? 'none'], refetchInterval: query => ['queued', 'running'].includes(query.state.data?.status ?? '') ? 1_000 : false })
   const agentPage = useMemo(() => ({
     actions: {
@@ -695,5 +775,5 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
   }, [generationJob.data?.profileIds, generationJob.data?.status, queryClient])
   const updateProfile = useMutation({ mutationFn: (identity: SyntheticPatientIdentity) => { if (profile.data === undefined) throw new Error('No profile selected'); return updateSyntheticPatientProfile({ expectedRevision: profile.data.revision, identity, profileId: profile.data.profileId }, newIdempotencyKey()) }, onSuccess: async response => { queryClient.setQueryData(['synthetic-patient-profile', response.data.profileId], response.data); await queryClient.invalidateQueries({ queryKey: profileListKey }); setEditOpen(false) } })
   const mutationError = generate.error ?? updateProfile.error
-  return <section aria-labelledby="synthetic-patient-library-heading" className="flex min-w-0 flex-col gap-4"><div className="flex flex-wrap items-start gap-3"><div><h2 className="text-base font-semibold" id="synthetic-patient-library-heading">{messages.libraryTitle}</h2><p className="mt-1 text-sm text-muted-foreground">{messages.libraryDescription}</p></div><Button className="ml-auto" onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></div>{mutationError !== null ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{mutationError instanceof Error ? mutationError.message : String(mutationError)}</AlertDescription></Alert> : null}{generationJob.data !== undefined ? <Alert variant={generationJob.data.status === 'failed' ? 'destructive' : 'default'}><SparklesIcon /><AlertTitle>{generationJob.data.status === 'succeeded' ? messages.generationSucceeded : generationJob.data.status === 'failed' ? messages.generationFailed : messages.queued}</AlertTitle><AlertDescription>{generationJob.data.error?.message}</AlertDescription></Alert> : null}{profiles.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profiles.isPending ? <Skeleton className="h-[680px] w-full" /> : null}{profiles.data?.items.length === 0 ? <Empty className="min-h-96 border"><EmptyHeader><EmptyMedia variant="icon"><DatabaseIcon /></EmptyMedia><EmptyTitle>{messages.emptyTitle}</EmptyTitle><EmptyDescription>{messages.emptyDescription}</EmptyDescription></EmptyHeader><EmptyContent><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></EmptyContent></Empty> : null}{profiles.data !== undefined && profiles.data.items.length > 0 ? <div className="grid min-h-[680px] border lg:grid-cols-[280px_minmax(0,1fr)]"><aside className="flex min-h-0 flex-col border-r bg-background"><form className="flex items-center gap-2 border-b p-3" onSubmit={event => { event.preventDefault(); setPage(1); setSubmittedSearch(search.trim()) }}><InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={`${messages.name}、${messages.mrn}、${messages.batch}`} value={search} /></InputGroup><Button aria-label={messages.search} size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon /></Button></form><div className="border-b px-3 py-2 text-xs text-muted-foreground">{profiles.data.total} 名患者</div><div className="min-h-0 flex-1 overflow-y-auto p-2">{profiles.data.items.map(item => <button className={cn('flex w-full items-center gap-3 border-b px-2 py-2 text-left', item.profileId === effectiveProfileId && 'border border-primary/30 bg-primary/5')} key={item.profileId} onClick={() => setSelectedProfileId(item.profileId)} type="button"><ProfileAvatar name={item.name} profileId={item.profileId} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="truncate text-sm">{item.name}</strong><span className="text-xs text-muted-foreground">{age(item.birthDate, referenceDate)} 岁</span></span><span className="mt-1 block truncate text-xs text-muted-foreground">{item.mrn}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.batchName} · {item.providerId === 'synthea' ? 'Synthea' : 'ClinMesh'}</span></span></button>)}</div>{profiles.data.total > profiles.data.pageSize ? <div className="flex justify-between border-t p-2"><Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="ghost">{messages.previous}</Button><Button disabled={page * profiles.data.pageSize >= profiles.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="ghost">{messages.next}</Button></div> : null}</aside>{profile.isPending ? <Skeleton className="h-full w-full" /> : null}{profile.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profile.data !== undefined ? <ProfileDetails locale={locale} onEdit={() => setEditOpen(true)} profile={profile.data} referenceDate={referenceDate} /> : null}</div> : null}<GenerationSheet error={generate.error} locale={locale} onGenerate={request => generate.mutate(request)} onOpenChange={setGenerationOpen} open={generationOpen} pending={generate.isPending} providers={providers.data?.items ?? []} />{profile.data !== undefined ? <EditProfileSheet error={updateProfile.error} key={`${profile.data.profileId}:${profile.data.revision}`} locale={locale} onOpenChange={setEditOpen} onSave={identity => updateProfile.mutate(identity)} open={editOpen} pending={updateProfile.isPending} profile={profile.data} /> : null}</section>
+  return <section aria-labelledby="synthetic-patient-library-heading" className="flex min-w-0 flex-col gap-4"><div className="flex flex-wrap items-start gap-3"><div><h2 className="text-base font-semibold" id="synthetic-patient-library-heading">{messages.libraryTitle}</h2><p className="mt-1 text-sm text-muted-foreground">{messages.libraryDescription}</p></div><Button className="ml-auto" onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></div>{mutationError !== null ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{mutationError instanceof Error ? mutationError.message : String(mutationError)}</AlertDescription></Alert> : null}{generationJob.data === undefined ? null : <JobStatusNotice error={generationJob.data.error?.message} label={messages.generationStatus[generationJob.data.status]} status={generationJob.data.status} />}{profiles.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profiles.isPending ? <Skeleton className="h-[680px] w-full" /> : null}{profiles.data?.items.length === 0 ? <Empty className="min-h-96 border"><EmptyHeader><EmptyMedia variant="icon"><DatabaseIcon /></EmptyMedia><EmptyTitle>{messages.emptyTitle}</EmptyTitle><EmptyDescription>{messages.emptyDescription}</EmptyDescription></EmptyHeader><EmptyContent><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></EmptyContent></Empty> : null}{profiles.data !== undefined && profiles.data.items.length > 0 ? <div className="grid min-h-[680px] border lg:grid-cols-[280px_minmax(0,1fr)]"><aside className="flex min-h-0 flex-col border-r bg-background"><form className="flex items-center gap-2 border-b p-3" onSubmit={event => { event.preventDefault(); setPage(1); setSubmittedSearch(search.trim()) }}><InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={`${messages.name}、${messages.mrn}、${messages.batch}`} value={search} /></InputGroup><Button aria-label={messages.search} size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon /></Button></form><div className="border-b px-3 py-2 text-xs text-muted-foreground">{profiles.data.total} 名患者</div><div className="min-h-0 flex-1 overflow-y-auto p-2">{profiles.data.items.map(item => <button className={cn('flex w-full items-center gap-3 border-b px-2 py-2 text-left', item.profileId === effectiveProfileId && 'border border-primary/30 bg-primary/5')} key={item.profileId} onClick={() => setSelectedProfileId(item.profileId)} type="button"><ProfileAvatar name={item.name} profileId={item.profileId} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="truncate text-sm">{item.name}</strong><span className="text-xs text-muted-foreground">{age(item.birthDate, referenceDate)} 岁</span></span><span className="mt-1 block truncate text-xs text-muted-foreground">{item.mrn}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.batchName} · {item.providerId === 'synthea' ? 'Synthea' : 'ClinMesh'}</span></span></button>)}</div>{profiles.data.total > profiles.data.pageSize ? <div className="flex justify-between border-t p-2"><Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="ghost">{messages.previous}</Button><Button disabled={page * profiles.data.pageSize >= profiles.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="ghost">{messages.next}</Button></div> : null}</aside>{profile.isPending ? <Skeleton className="h-full w-full" /> : null}{profile.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profile.data !== undefined ? <ProfileDetails locale={locale} onEdit={() => setEditOpen(true)} profile={profile.data} referenceDate={referenceDate} /> : null}</div> : null}<GenerationSheet error={generate.error} locale={locale} onGenerate={request => generate.mutate(request)} onOpenChange={setGenerationOpen} open={generationOpen} pending={generate.isPending} providers={providers.data?.items ?? []} />{profile.data !== undefined ? <EditProfileSheet error={updateProfile.error} key={`${profile.data.profileId}:${profile.data.revision}`} locale={locale} onOpenChange={setEditOpen} onSave={identity => updateProfile.mutate(identity)} open={editOpen} pending={updateProfile.isPending} profile={profile.data} /> : null}</section>
 }

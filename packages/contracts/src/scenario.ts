@@ -749,9 +749,21 @@ export const syntheticSourceHistoryListSchema = z.object({
 export const syntheticSourceHistoryGroupListSchema = z.object({
   items: z.array(syntheticSourceHistoryGroupSchema),
   page: z.number().int().positive(),
-  pageSize: z.number().int().positive().max(100),
+  pageSize: z.number().int().positive().max(20),
   total: z.number().int().nonnegative(),
-}).strict()
+}).strict().superRefine((list, context) => {
+  const dates = new Set<string>()
+  list.items.forEach((group, index) => {
+    if (dates.has(group.businessDate)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Source-history business dates must be unique',
+        path: ['items', index, 'businessDate'],
+      })
+    }
+    dates.add(group.businessDate)
+  })
+})
 
 export const syntheticSourceResourceDetailSchema = z.object({
   caseId: z.string().min(1).max(128),

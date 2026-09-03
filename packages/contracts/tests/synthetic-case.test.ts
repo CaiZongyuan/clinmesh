@@ -93,4 +93,32 @@ describe('Synthetic Case contracts', () => {
       }],
     }).success).toBe(false)
   })
+
+  it('limits a source-history page to twenty business dates', () => {
+    expect(syntheticSourceHistoryGroupListSchema.safeParse({
+      items: [],
+      page: 1,
+      pageSize: 21,
+      total: 21,
+    }).success).toBe(false)
+  })
+
+  it('rejects duplicate business dates in one source-history page', () => {
+    const group = {
+      businessDate: '2025-01-10',
+      items: [{
+        clinicalDate: '2025-01-10T09:00:00+08:00',
+        resourceType: 'Condition',
+        sourceReference: 'urn:uuid:prior-condition',
+        title: '高血压（疾病）',
+      }],
+    }
+
+    expect(syntheticSourceHistoryGroupListSchema.safeParse({
+      items: [group, group],
+      page: 1,
+      pageSize: 20,
+      total: 2,
+    }).success).toBe(false)
+  })
 })

@@ -650,7 +650,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
         const query = z.object({
           page: z.coerce.number().int().min(1).default(1),
-          pageSize: z.coerce.number().int().min(1).max(100).default(20),
+          pageSize: z.coerce.number().int().min(1).max(20).default(20),
         }).parse(context.req.query())
         return context.json(scenarioData.listSyntheticCaseHistory(session.actor, {
           caseId: context.req.param('caseId'),

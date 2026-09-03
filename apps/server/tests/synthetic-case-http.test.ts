@@ -429,6 +429,11 @@ describe('Synthetic Case generation HTTP contract', () => {
       pageSize: 20,
       total: 1,
     })
+    const oversizedHistoryPage = await runtime.app.request(
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/history?page=1&pageSize=21`,
+      { headers: { cookie } },
+    )
+    expect(oversizedHistoryPage.status).toBe(400)
     const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
     const inaccessibleHistory = await runtime.app.request(
       `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/history?page=1&pageSize=20`,
