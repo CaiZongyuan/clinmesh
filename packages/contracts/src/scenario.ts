@@ -738,6 +738,25 @@ export const syntheticCaseInstanceSchema = z.object({
   workspaceId: z.string().min(1),
 }).strict()
 
+export const syntheticCaseRegistrationSummarySchema = z.object({
+  activeBriefRevision: z.number().int().positive(),
+  birthDate: localDateSchema,
+  caseId: z.string().min(1).max(128),
+  caseRevision: z.number().int().positive(),
+  caseType: z.enum(['new-problem', 'follow-up', 'preventive']),
+  gender: z.enum(['female', 'male', 'other', 'unknown']),
+  mrn: z.string().min(1).max(64),
+  name: z.string().min(1).max(100),
+  profileRevision: z.number().int().positive(),
+}).strict()
+
+export const syntheticCaseRegistrationListSchema = z.object({
+  items: z.array(syntheticCaseRegistrationSummarySchema),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive().max(100),
+  total: z.number().int().nonnegative(),
+}).strict()
+
 export const syntheticPatientProfileDetailSchema = z.object({
   birthDate: localDateSchema,
   case: syntheticCaseInstanceSchema.nullable(),
@@ -974,6 +993,8 @@ export type SyntheticPatientProfileDetail = z.infer<typeof syntheticPatientProfi
 export type SyntheticPatientProfileList = z.infer<typeof syntheticPatientProfileListSchema>
 export type SyntheticPatientProfileSummary = z.infer<typeof syntheticPatientProfileSummarySchema>
 export type SyntheticCaseInstance = z.infer<typeof syntheticCaseInstanceSchema>
+export type SyntheticCaseRegistrationList = z.infer<typeof syntheticCaseRegistrationListSchema>
+export type SyntheticCaseRegistrationSummary = z.infer<typeof syntheticCaseRegistrationSummarySchema>
 export type SyntheticSourceHistoryItem = z.infer<typeof syntheticSourceHistoryItemSchema>
 export type SyntheticSourceHistoryList = z.infer<typeof syntheticSourceHistoryListSchema>
 export type SyntheticSourceResourceDetail = z.infer<typeof syntheticSourceResourceDetailSchema>

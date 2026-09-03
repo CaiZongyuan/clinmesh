@@ -12,6 +12,7 @@ import {
   patientBriefRevisionListSchema,
   scenarioGenerationJobSchema,
   startSyntheticCaseResultSchema,
+  syntheticCaseRegistrationListSchema,
   syntheticCaseInstanceSchema,
   syntheticPatientProfileDetailSchema,
   syntheticSourceHistoryListSchema,
@@ -30,8 +31,10 @@ import {
   laboratoryRequestActionResponseSchema,
   laboratoryRequestDraftResponseSchema,
   registrationCatalogSchema,
+  registrationQueueSchema,
   scenarioCommandResponseSchema,
   startVisitResponseSchema,
+  triageQueueSchema,
   triageResponseSchema,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -469,6 +472,244 @@ describe('Synthetic Case generation HTTP contract', () => {
       expect(runtime.database.driver.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get())
         .toEqual({ count: 0 })
     }
+  })
+
+  it('lists only the fixed Synthetic Case identity fields needed by the registrar', async () => {
+    const brief: PatientBriefContent = {
+      chiefComplaint: '反复头晕一周',
+      knownHistorySummary: '既往有高血压病史。',
+      openingStatement: '医生您好，我最近一周经常头晕。',
+      symptomTopics: [{
+        answerPoints: ['一周前开始。', '起身时更明显。'],
+        id: 'dizziness-onset',
+        name: '头晕经过',
+      }],
+    }
+    const runtime = await createRuntime(
+      new RetryingSyntheaProvider(1),
+      new ControlledBriefProvider([brief]),
+    )
+    const administratorCookie = await signIn(runtime)
+    await enqueue(runtime, administratorCookie)
+    const generation = await runtime.scenarioData.processNextGenerationJob()
+    const caseId = generation?.caseIds[0] ?? ''
+    const profileId = generation?.profileIds[0] ?? ''
+    expect(generation).toMatchObject({ status: 'succeeded' })
+    await enqueueBrief(runtime, administratorCookie, caseId)
+    expect(await runtime.patientBrief.processNext()).toMatchObject({
+      resultRevision: 1,
+      status: 'succeeded',
+    })
+    const profile = syntheticPatientProfileDetailSchema.parse(await (await runtime.app.request(
+      `/api/sim/v1/synthetic-patients/${encodeURIComponent(profileId)}`,
+      { headers: { cookie: administratorCookie } },
+    )).json())
+
+    const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local')
+    const response = await runtime.app.request(
+      `/api/his/v1/registration/synthetic-cases?page=1&pageSize=20&search=${encodeURIComponent(profile.identity.displayName)}`,
+      { headers: { cookie: registrarCookie } },
+    )
+
+    expect(response.status).toBe(200)
+    expect(syntheticCaseRegistrationListSchema.parse(await response.json())).toEqual({
+      items: [{
+        activeBriefRevision: 1,
+        birthDate: profile.birthDate,
+        caseId,
+        caseRevision: 2,
+        caseType: 'follow-up',
+        gender: profile.gender,
+        mrn: profile.identity.mrn,
+        name: profile.identity.displayName,
+        profileRevision: 1,
+      }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    })
+  })
+
+  it('keeps registration search pinned to the Profile Revision owned by the Case', async () => {
+    const brief: PatientBriefContent = {
+      chiefComplaint: '反复头晕一周',
+      knownHistorySummary: '既往有高血压病史。',
+      openingStatement: '医生您好，我最近一周经常头晕。',
+      symptomTopics: [{
+        answerPoints: ['一周前开始。'],
+        id: 'dizziness-onset',
+        name: '头晕经过',
+      }],
+    }
+    const runtime = await createRuntime(
+      new RetryingSyntheaProvider(1),
+      new ControlledBriefProvider([brief]),
+    )
+    const administratorCookie = await signIn(runtime)
+    await enqueue(runtime, administratorCookie)
+    const generation = await runtime.scenarioData.processNextGenerationJob()
+    const caseId = generation?.caseIds[0] ?? ''
+    const profileId = generation?.profileIds[0] ?? ''
+    await enqueueBrief(runtime, administratorCookie, caseId)
+    await runtime.patientBrief.processNext()
+    const original = syntheticPatientProfileDetailSchema.parse(await (await runtime.app.request(
+      `/api/sim/v1/synthetic-patients/${encodeURIComponent(profileId)}`,
+      { headers: { cookie: administratorCookie } },
+    )).json())
+    const updateResponse = await runtime.app.request(
+      `/api/sim/v1/synthetic-patients/${encodeURIComponent(profileId)}`,
+      {
+        body: JSON.stringify({
+          expectedRevision: original.revision,
+          input: {
+            ...original.identity,
+            displayName: '后来修订的张琴',
+            mrn: 'CMSYNREVISION02',
+          },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: administratorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'PUT',
+      },
+    )
+    expect(updateResponse.status).toBe(200)
+
+    const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local')
+    const search = async (query: string) => syntheticCaseRegistrationListSchema.parse(
+      await (await runtime.app.request(
+        `/api/his/v1/registration/synthetic-cases?page=1&pageSize=20&search=${encodeURIComponent(query)}`,
+        { headers: { cookie: registrarCookie } },
+      )).json(),
+    )
+
+    expect(await search('后来修订的张琴')).toMatchObject({ items: [], total: 0 })
+    expect(await search(original.identity.mrn)).toMatchObject({
+      items: [{
+        caseId,
+        mrn: original.identity.mrn,
+        name: original.identity.displayName,
+        profileRevision: 1,
+      }],
+      total: 1,
+    })
+  })
+
+  it('rejects non-registrar access to Synthetic Cases awaiting registration', async () => {
+    const runtime = await createRuntime(new RetryingSyntheaProvider(1))
+    const administratorCookie = await signIn(runtime)
+    const triageCookie = await signIn(runtime, 'triage@demo.clinmesh.local')
+
+    for (const cookie of [administratorCookie, triageCookie]) {
+      const response = await runtime.app.request(
+        '/api/his/v1/registration/synthetic-cases?page=1&pageSize=20',
+        { headers: { cookie } },
+      )
+      expect(response.status).toBe(403)
+      expect(apiErrorSchema.parse(await response.json())).toMatchObject({
+        error: { code: 'ROLE_NOT_ALLOWED' },
+      })
+    }
+  })
+
+  it('allows only one registrar to start a ready Case and hands it to triage once', async () => {
+    const brief: PatientBriefContent = {
+      chiefComplaint: '反复头晕一周',
+      knownHistorySummary: '既往有高血压病史。',
+      openingStatement: '医生您好，我最近一周经常头晕。',
+      symptomTopics: [{
+        answerPoints: ['一周前开始。', '起身时更明显。'],
+        id: 'dizziness-onset',
+        name: '头晕经过',
+      }],
+    }
+    const runtime = await createRuntime(
+      new RetryingSyntheaProvider(1),
+      new ControlledBriefProvider([brief]),
+    )
+    const administratorCookie = await signIn(runtime)
+    await enqueue(runtime, administratorCookie)
+    const generation = await runtime.scenarioData.processNextGenerationJob()
+    const caseId = generation?.caseIds[0] ?? ''
+    await enqueueBrief(runtime, administratorCookie, caseId)
+    await runtime.patientBrief.processNext()
+    const readyCase = syntheticCaseInstanceSchema.parse(await (await runtime.app.request(
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}`,
+      { headers: { cookie: administratorCookie } },
+    )).json())
+    const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local')
+    const catalog = registrationCatalogSchema.parse(await (await runtime.app.request(
+      '/api/his/v1/catalogs/registration',
+      { headers: { cookie: registrarCookie } },
+    )).json())
+    const requestStart = () => runtime.app.request(
+      `/api/his/v1/synthetic-cases/${encodeURIComponent(caseId)}/actions/start-outpatient-visit`,
+      {
+        body: JSON.stringify({
+          activeBriefRevision: readyCase.activeBriefRevision,
+          departmentId: catalog.departments[0]!.id,
+          expectedCaseRevision: readyCase.revision,
+          locationId: catalog.locations[0]!.id,
+          visitDate: catalog.virtualDate,
+          visitTypeId: catalog.visitTypes[0]!.id,
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: registrarCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+
+    const responses = await Promise.all([requestStart(), requestStart()])
+    expect(responses.map(response => response.status).toSorted()).toEqual([200, 409])
+    const successful = responses.find(response => response.status === 200)
+    const conflict = responses.find(response => response.status === 409)
+    const started = commandResponseSchema(startSyntheticCaseResultSchema).parse(
+      await successful!.json(),
+    ).data
+    expect(apiErrorSchema.parse(await conflict!.json())).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
+    const waitingCases = syntheticCaseRegistrationListSchema.parse(await (await runtime.app.request(
+      '/api/his/v1/registration/synthetic-cases?page=1&pageSize=20',
+      { headers: { cookie: registrarCookie } },
+    )).json())
+    expect(waitingCases).toMatchObject({ items: [], total: 0 })
+    const registrations = registrationQueueSchema.parse(await (await runtime.app.request(
+      '/api/his/v1/registrations?page=1&pageSize=20',
+      { headers: { cookie: registrarCookie } },
+    )).json())
+    expect(registrations.items).toHaveLength(1)
+    expect(registrations.items[0]).toMatchObject({
+      encounterId: started.encounterId,
+      registrationId: started.registrationId,
+      status: 'awaiting-triage',
+      taskId: started.queueTaskId,
+    })
+    const triageCookie = await signIn(runtime, 'triage@demo.clinmesh.local')
+    const triageQueue = triageQueueSchema.parse(await (await runtime.app.request(
+      '/api/his/v1/triage/queue?page=1&pageSize=20&status=pending',
+      { headers: { cookie: triageCookie } },
+    )).json())
+    expect(triageQueue.items).toHaveLength(1)
+    expect(triageQueue.items[0]).toMatchObject({
+      encounterId: started.encounterId,
+      taskId: started.queueTaskId,
+    })
+    expect(runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM synthetic_case_materialization
+      WHERE workspace_id = ? AND case_id = ?
+    `).get('workspace-demo', caseId)).toEqual({ count: 1 })
+    expect(runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM consultation_question_rule
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get('workspace-demo', 'epoch-1', started.outpatientCaseId)).toEqual({ count: 1 })
   })
 
   it('keeps successful Brief revisions immutable and rejects hidden diagnosis leakage', async () => {

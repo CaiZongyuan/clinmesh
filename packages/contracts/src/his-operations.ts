@@ -80,6 +80,7 @@ import {
 import {
   startSyntheticCaseRequestSchema,
   startSyntheticCaseResultSchema,
+  syntheticCaseRegistrationListSchema,
 } from './scenario.ts'
 
 export const hisOperationModeSchema = z.enum(['query', 'draft', 'preview', 'command'])
@@ -185,6 +186,10 @@ const paginationInputSchema = z.object({
 
 const patientSearchInputSchema = paginationInputSchema.extend({
   query: z.string().trim().min(1),
+}).strict()
+
+const syntheticCaseRegistrationListInputSchema = paginationInputSchema.extend({
+  search: z.string().trim().min(1).max(120).optional(),
 }).strict()
 
 const patientCreateInputSchema = z.object({
@@ -972,6 +977,25 @@ const operationDefinitions = [
     risk: 'write',
     roles: ['registrar'],
     summary: 'Register a patient for an outpatient visit',
+    version: 1,
+  },
+  {
+    cliPath: ['registration', 'synthetic-case', 'list'],
+    http: {
+      method: 'GET',
+      path: '/api/his/v1/registration/synthetic-cases',
+    },
+    id: 'registration.synthetic-case.list',
+    input: syntheticCaseRegistrationListInputSchema,
+    mode: 'query',
+    output: syntheticCaseRegistrationListSchema,
+    requirements: {
+      expectedVersions: false,
+      idempotency: 'none',
+    },
+    risk: 'read',
+    roles: ['registrar'],
+    summary: 'List ready Synthetic Cases awaiting outpatient registration',
     version: 1,
   },
   {
@@ -1870,6 +1894,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'reference.medications.search': 'clinmesh-doctor',
   'registration.create': 'clinmesh-registration',
   'registration.list': 'clinmesh-registration',
+  'registration.synthetic-case.list': 'clinmesh-registration',
   'registration.synthetic-case.start': 'clinmesh-registration',
   'service.complete': 'clinmesh-doctor',
   'service.order': 'clinmesh-doctor',
@@ -1888,7 +1913,7 @@ function handlerOwnerFor(
   if (operation.http.path.startsWith('/api/his/v1/admin/laboratory-services/')) {
     return 'LaboratoryServicePublisher'
   }
-  if (operation.id === 'registration.synthetic-case.start') return 'SyntheticCaseVisitService'
+  if (operation.id.startsWith('registration.synthetic-case.')) return 'SyntheticCaseVisitService'
   return 'WorkflowService'
 }
 
