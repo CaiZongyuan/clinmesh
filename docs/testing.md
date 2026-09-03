@@ -98,7 +98,7 @@ pnpm docs:check
 
 用户界面修改在 standalone Web 与受影响的 DSH Surface 真实入口验证。布局需要覆盖长中文文本、窄宽度、缩放和空/错误/加载状态；DSH `workspace` 同时显示原生会话与 Surface，并验证宽度不足时退化到 `full-frame`。用户可见的 Web PR 使用 `agent-browser` 走真实应用入口并录制绑定精确 commit 的原生 WebM；成片使用 3–4 倍速、步骤字幕和真实点击高亮，在临床文字仍可读的前提下压缩体积。WebM 不替代自动回归测试。Desktop 进入实际开发后再增加真实 renderer 证据。
 
-Web 字号浏览器合同使用现有 Vite/Tailwind 构建链生成生产 CSS，并在无头 Chrome 中断言 computed font-size、布局尺寸和宿主隔离。测试运行机必须安装 Chrome、Chromium 或 Edge；未安装在默认位置时通过 `CHROME_PATH` 指向可执行文件。
+字号浏览器合同使用现有 Vite/Tailwind 构建链生成生产 CSS：Web 合同断言 standalone computed font-size、布局尺寸和 Desktop 默认 token，DSH 合同在 ShadowRoot 中断言 Surface 字号和宿主隔离。测试运行机必须安装 Chrome、Chromium 或 Edge；未安装在默认位置时通过 `CHROME_PATH` 指向可执行文件。
 
 录制只使用合成医院场景和隔离的 workspace、epoch 与客户端状态。画面不得包含真实患者信息、医保或支付凭证、平台密钥、无关浏览器标签或通知。
 

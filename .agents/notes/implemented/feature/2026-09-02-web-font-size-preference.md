@@ -12,7 +12,7 @@ Canonical implementation contract 是 [GitHub issue #72](https://github.com/CaiZ
 
 `WebPreferences` 拥有设备本地的 `fontSize` 偏好，并继续使用 `clinmesh.preferences:v1`。`standard`、`larger` 和 `large` 分别表示 `100%`、`112.5%` 和 `125%`；缺少或无法识别的字号值按 `standard` 读取，同时保留有效的语言和主题。
 
-`WebApp` 在首次渲染前同步读取偏好，并通过 React Context 向岗位页面和组件目录提供唯一的客户端状态。ClinMesh 应用根携带当前字号档位，`packages/ui/src/styles.css` 在该作用域内调整语义字体 token。standalone 文档根保持 `16px`，应用基础字号只作用于 `body` 和 `.clinmesh-web-root`；Surface 只修改自己的应用根。
+`WebApp` 在首次渲染前同步读取偏好，并通过 React Context 向岗位页面和组件目录提供唯一的客户端状态。ClinMesh 应用根携带当前字号档位，`packages/ui/src/styles.css` 在该作用域内调整语义字体 token；共享根提供标准档默认 token，保证 Desktop primitives 不依赖 Web 属性。standalone 文档根保持 `16px`，应用基础字号只作用于 `body` 和 `.clinmesh-web-root`；Surface 只修改自己的应用根。
 
 设置页提供固定三档单选并即时持久化。字号变化不修改 spacing、图标尺寸、控件高度、浏览器缩放或 DSH 宿主文档根。
 
@@ -30,4 +30,4 @@ Canonical implementation contract 是 [GitHub issue #72](https://github.com/CaiZ
 
 Tailwind 语义字号和 UI primitives 的非标准小字号都消费应用级字号 token；新增字号语义时需要同时证明三档行为。尺寸和 spacing token 不消费字号比例。
 
-jsdom 用户交互测试验证偏好、可访问控件和应用根作用域；浏览器合同通过现有 Vite/Tailwind 构建链生成生产 CSS，并在无头 Chrome 中验证三档 computed font-size、布局 token 和宿主隔离。真实入口验证继续覆盖首屏、长中文和窄视口布局。DSH 样式构建必须保留应用根作用域，不能把字号提升到宿主根。
+jsdom 用户交互测试验证偏好、可访问控件和应用根作用域；Web 与 DSH 浏览器合同通过现有 Vite/Tailwind 构建链生成生产 CSS，并在无头 Chrome 中验证三档 computed font-size、Desktop 默认 token、布局 token 和 ShadowRoot 宿主隔离。真实入口验证继续覆盖首屏、长中文和窄视口布局。DSH 样式构建必须保留应用根作用域，不能把字号提升到宿主根。

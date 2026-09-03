@@ -1,16 +1,9 @@
-import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
-import { promisify } from 'node:util'
+import { fileURLToPath } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import { build } from 'vite'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-
-const execFileAsync = promisify(execFile)
+import { renderInHeadlessChrome } from '../../../../scripts/headless-browser.ts'
 
 const fontMetricsSchema = z.object({
   application: z.string(),
@@ -23,41 +16,16 @@ const fontMetricsSchema = z.object({
   textXs: z.string(),
 })
 const browserMetricsSchema = z.object({
+  desktopBrand: z.string(),
+  desktopControlSm: z.string(),
+  desktopPlatform: z.string(),
   modes: z.object({
     large: fontMetricsSchema,
     larger: fontMetricsSchema,
     standard: fontMetricsSchema,
   }),
-  surfaceApp: z.string(),
-  surfaceHost: z.string(),
 })
 type BrowserMetrics = z.infer<typeof browserMetricsSchema>
-
-function findChrome(): string {
-  const configuredPath = process.env.CHROME_PATH
-  const candidates = [
-    configuredPath,
-    ...(process.platform === 'win32'
-      ? [
-          'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-          'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-          'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-        ]
-      : process.platform === 'darwin'
-        ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']
-        : [
-            '/usr/bin/google-chrome-stable',
-            '/usr/bin/google-chrome',
-            '/usr/bin/chromium',
-            '/usr/bin/chromium-browser',
-          ]),
-  ]
-  const chromePath = candidates.find(candidate => candidate !== undefined && existsSync(candidate))
-  if (chromePath === undefined) {
-    throw new Error('Chrome is required for the Web font-size browser test; set CHROME_PATH.')
-  }
-  return chromePath
-}
 
 async function buildClinmeshStyles(): Promise<string> {
   const result = await build({
@@ -103,8 +71,10 @@ function testDocument(clinmeshStyles: string): string {
       <span id="icon" class="size-4"></span>
       <span id="spacing" class="block p-4"></span>
     </div>
-    <div id="surface-host" style="font-size: 17px">
-      <div id="surface-app" class="clinmesh-web-root" data-clinmesh-app="web" data-font-size="large">Surface</div>
+    <div id="desktop">
+      <span id="desktop-brand" class="cm-brand">Desktop</span>
+      <span id="desktop-control-sm" class="text-[length:var(--text-control-sm)]">Control</span>
+      <span id="desktop-platform" class="cm-platform">Platform</span>
     </div>
     <script>
       const applicationRoot = document.querySelector('#standalone')
@@ -123,10 +93,12 @@ function testDocument(clinmeshStyles: string): string {
         applicationRoot.dataset.fontSize = fontSize
         modes[fontSize] = read()
       }
+      document.documentElement.removeAttribute('data-clinmesh-app')
       document.title = btoa(JSON.stringify({
+        desktopBrand: getComputedStyle(document.querySelector('#desktop-brand')).fontSize,
+        desktopControlSm: getComputedStyle(document.querySelector('#desktop-control-sm')).fontSize,
+        desktopPlatform: getComputedStyle(document.querySelector('#desktop-platform')).fontSize,
         modes,
-        surfaceApp: getComputedStyle(document.querySelector('#surface-app')).fontSize,
-        surfaceHost: getComputedStyle(document.querySelector('#surface-host')).fontSize,
       }))
     </script>
   </body>
@@ -134,28 +106,12 @@ function testDocument(clinmeshStyles: string): string {
 }
 
 async function readBrowserMetrics(): Promise<BrowserMetrics> {
-  const directory = await mkdtemp(join(tmpdir(), 'clinmesh-font-size-'))
-  const htmlPath = join(directory, 'index.html')
-  const profilePath = join(directory, 'chrome-profile')
-  try {
-    await writeFile(htmlPath, testDocument(await buildClinmeshStyles()), 'utf8')
-    const { stdout } = await execFileAsync(findChrome(), [
-      '--headless=new',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--no-first-run',
-      `--user-data-dir=${profilePath}`,
-      '--dump-dom',
-      pathToFileURL(htmlPath).href,
-    ], { maxBuffer: 10 * 1024 * 1024, timeout: 20_000 })
-    const encodedMetrics = /<title>([^<]+)<\/title>/.exec(stdout)?.[1]
-    if (encodedMetrics === undefined) throw new Error('Chrome did not return font-size metrics.')
-    return browserMetricsSchema.parse(JSON.parse(
-      Buffer.from(encodedMetrics, 'base64').toString('utf8'),
-    ))
-  } finally {
-    await rm(directory, { force: true, recursive: true })
-  }
+  const rendered = await renderInHeadlessChrome(testDocument(await buildClinmeshStyles()))
+  const encodedMetrics = /<title>([^<]+)<\/title>/.exec(rendered)?.[1]
+  if (encodedMetrics === undefined) throw new Error('Chrome did not return font-size metrics.')
+  return browserMetricsSchema.parse(JSON.parse(
+    Buffer.from(encodedMetrics, 'base64').toString('utf8'),
+  ))
 }
 
 describe('Web font-size browser contract', () => {
@@ -165,7 +121,10 @@ describe('Web font-size browser contract', () => {
     metrics = await readBrowserMetrics()
   }, 30_000)
 
-  it('scales rendered typography without scaling the document, layout tokens, or Surface host', () => {
+  it('scales Web typography without changing layout tokens or shared Desktop defaults', () => {
+    expect(metrics.desktopBrand).toBe('18px')
+    expect(metrics.desktopControlSm).toBe('12.8px')
+    expect(metrics.desktopPlatform).toBe('13px')
     expect(metrics.modes.standard).toEqual({
       application: '13px',
       controlSm: '12.8px',
@@ -196,7 +155,5 @@ describe('Web font-size browser contract', () => {
       textSm: '16.25px',
       textXs: '15px',
     })
-    expect(metrics.surfaceApp).toBe('16.25px')
-    expect(metrics.surfaceHost).toBe('17px')
   })
 })

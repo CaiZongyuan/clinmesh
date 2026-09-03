@@ -53,7 +53,7 @@ ClinMesh Web 与 Desktop 共享一套面向临床工作的界面语言：安静�
 | 常规控件圆角 | 6px | Button、Input、Select、Tabs |
 | 业务表面圆角 | 最大 8px | 独立重复项、弹层和真正的工具容器 |
 
-“设置 → 外观”的字号偏好提供“标准 / 较大 / 大”三档，分别按 `100% / 112.5% / 125%` 调整 ClinMesh 应用内容的语义字号。“标准”同时承担重置功能；选择即时生效并作为设备本地 Web 偏好持久化。
+Web“设置 → 外观”的字号偏好提供“标准 / 较大 / 大”三档，分别按 `100% / 112.5% / 125%` 调整 ClinMesh 应用内容的语义字号。“标准”同时承担重置功能；选择即时生效并作为设备本地 Web 偏好持久化。Desktop 消费标准档 token，不拥有该 Web 本地偏好。
 
 字号比例只进入语义字体 token。图标、控件高度、间距和页面几何尺寸保持不变；standalone Web 的文档根字号保持 `16px`，DSH Surface 不修改宿主根元素。持久化和作用域取舍见 [Web 应用级字号偏好](../../.agents/notes/implemented/feature/2026-09-02-web-font-size-preference.md)。
 
