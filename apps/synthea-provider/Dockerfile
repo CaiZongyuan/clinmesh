@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM eclipse-temurin:17-jdk-jammy AS build
+FROM --platform=$BUILDPLATFORM eclipse-temurin:17-jdk-jammy AS build
 
 WORKDIR /src
 
