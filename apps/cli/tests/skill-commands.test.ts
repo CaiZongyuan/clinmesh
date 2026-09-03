@@ -114,6 +114,11 @@ describe('ClinMesh CLI Agent Skills', () => {
       const markdown = await readFile(resolve(skillsRoot, skillName, 'SKILL.md'), 'utf8')
       const commands = commandLines(markdown)
       expect(commands.length, `${skillName} has no executable examples`).toBeGreaterThan(0)
+      if (skillName === 'clinmesh-registration') {
+        expect(commands).toContain(
+          'clinmesh registration synthetic-case list --search <name-or-mrn>',
+        )
+      }
       expect(commands.some(command => command.includes('agent client') || command.includes('agent grant'))).toBe(false)
       for (const line of commands) {
         const { commandPath, operation } = inspectExample(program, line)

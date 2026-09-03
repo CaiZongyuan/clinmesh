@@ -101,6 +101,11 @@ export const agentToolInputSchemas = Object.freeze({
   }).strict(),
   'registration.patient.create.propose': emptyInputSchema,
   'registration.outpatient.propose': emptyInputSchema,
+  'registration.synthetic-case.search': z.object({
+    query: z.string().trim().min(1).max(100),
+  }).strict(),
+  'registration.synthetic-case.select': z.object({ caseId: boundedIdSchema }).strict(),
+  'registration.synthetic-case.start.propose': emptyInputSchema,
   'triage.queue.read': emptyInputSchema,
   'triage.case.select': z.object({ caseId: boundedIdSchema }).strict(),
   'triage.draft.set': triageDraftInputSchema,

@@ -68,6 +68,7 @@ import {
   scenarioGenerationRequestSchema,
   scenarioProviderCapabilitiesListSchema,
   startSyntheticCaseResultSchema,
+  syntheticCaseRegistrationListSchema,
   syntheticPatientProfileDetailSchema,
   syntheticSourceHistoryListSchema,
   syntheticSourceResourceDetailSchema,
@@ -538,6 +539,20 @@ export function getRegistrationCatalog(signal?: AbortSignal) {
 export function getRegistrationQueue(signal?: AbortSignal, page = 1) {
   const search = new URLSearchParams({ page: String(page), pageSize: '20' })
   return apiGet(`/api/his/v1/registrations?${search.toString()}`, registrationQueueSchema, signal)
+}
+
+export function getSyntheticCasesAwaitingRegistration(
+  signal?: AbortSignal,
+  page = 1,
+  search?: string,
+) {
+  const parameters = new URLSearchParams({ page: String(page), pageSize: '20' })
+  if (search !== undefined && search !== '') parameters.set('search', search)
+  return apiGet(
+    `/api/his/v1/registration/synthetic-cases?${parameters.toString()}`,
+    syntheticCaseRegistrationListSchema,
+    signal,
+  )
 }
 
 export function searchPatients(query: string, signal?: AbortSignal, page = 1) {
