@@ -389,7 +389,7 @@ function doctorSurfaceAgentResponse(
   return undefined
 }
 
-function boundDoctorToolInput(
+function boundAgentToolInput(
   tool: WebSurfaceAgentTool,
   input: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -1650,18 +1650,18 @@ describe('role workspaces', () => {
     const signal = new AbortController().signal
     const searchTool = registration?.tools.find(tool => tool.name === 'clinmesh_search_registration_cases')
     if (searchTool === undefined) throw new Error('Synthetic Case search Tool is unavailable')
-    await searchTool.execute(boundDoctorToolInput(searchTool, { query: readyCase.mrn }), signal)
+    await searchTool.execute(boundAgentToolInput(searchTool, { query: readyCase.mrn }), signal)
     expect(caseSearches).toContain(readyCase.mrn)
     const selectTool = registration?.tools.find(tool => tool.name === 'clinmesh_select_registration_case')
     if (selectTool === undefined) throw new Error('Synthetic Case selection Tool is unavailable')
-    await selectTool.execute(boundDoctorToolInput(selectTool, { caseId: readyCase.caseId }), signal)
+    await selectTool.execute(boundAgentToolInput(selectTool, { caseId: readyCase.caseId }), signal)
     await waitFor(() => expect(registration?.tools.map(tool => tool.name))
       .toContain('clinmesh_prepare_start_registration_case'))
     const proposal = registration?.tools.find(
       tool => tool.name === 'clinmesh_prepare_start_registration_case',
     )
     if (proposal === undefined) throw new Error('Synthetic Case proposal Tool is unavailable')
-    expect(JSON.parse(String(await proposal.execute(boundDoctorToolInput(proposal, {}), signal))))
+    expect(JSON.parse(String(await proposal.execute(boundAgentToolInput(proposal, {}), signal))))
       .toMatchObject({ data: { status: 'awaiting-human-review' }, ok: true })
     const review = await screen.findByRole('alertdialog', { name: '挂号信息' })
     await userEvent.click(within(review).getByRole('button', { name: '确认挂号' }))
@@ -3028,7 +3028,7 @@ describe('role workspaces', () => {
         candidate.name === 'clinmesh_fill_laboratory_draft'
       ))
       expect(tool).toBeDefined()
-      expect(boundDoctorToolInput(tool!, {}).contextId).toBe(persistedDraftContextId)
+      expect(boundAgentToolInput(tool!, {}).contextId).toBe(persistedDraftContextId)
     })
     const fillLaboratory = registration!.tools.find(candidate => (
       candidate.name === 'clinmesh_fill_laboratory_draft'
@@ -3037,7 +3037,7 @@ describe('role workspaces', () => {
       properties: Record<string, unknown>
     }).properties.catalogItemId).toEqual({ type: 'string' })
     await act(async () => {
-      await fillLaboratory.execute(boundDoctorToolInput(fillLaboratory, {
+      await fillLaboratory.execute(boundAgentToolInput(fillLaboratory, {
         catalogItemId: agentLaboratoryService.id,
         indicationCode: 'clinical-evaluation',
       }), new AbortController().signal)
@@ -4389,7 +4389,7 @@ describe('role workspaces', () => {
       tool.name === 'clinmesh_fill_diagnosis_draft'
     ))!
     await act(async () => {
-      await fillDiagnosis.execute(boundDoctorToolInput(fillDiagnosis, {
+      await fillDiagnosis.execute(boundAgentToolInput(fillDiagnosis, {
         entries: [{ catalogItemId: 'diagnosis-fever', role: 'primary' }],
       }), new AbortController().signal)
     })

@@ -46,6 +46,9 @@ const genderValues = ['male', 'female', 'other', 'unknown'] as const
 type RegistrationMutationResult =
   | Awaited<ReturnType<typeof registerOutpatient>>
   | Awaited<ReturnType<typeof startSyntheticCaseVisit>>
+type RegistrationSelection =
+  | { kind: 'patient'; patient: PatientSummary }
+  | { kind: 'synthetic-case'; syntheticCase: SyntheticCaseRegistrationSummary }
 
 export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
@@ -59,8 +62,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
   const [submittedCaseQuery, setSubmittedCaseQuery] = useState('')
   const [casePage, setCasePage] = useState(1)
   const [registrationPage, setRegistrationPage] = useState(1)
-  const [selectedPatient, setSelectedPatient] = useState<PatientSummary>()
-  const [selectedCase, setSelectedCase] = useState<SyntheticCaseRegistrationSummary>()
+  const [selection, setSelection] = useState<RegistrationSelection>()
   const [name, setName] = useState('')
   const [identifier, setIdentifier] = useState('')
   const [birthDate, setBirthDate] = useState('1990-01-01')
@@ -96,15 +98,14 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
   const createPatient = useMutation({
     mutationFn: () => createSyntheticPatient({ birthDate, gender, identifier, name }, newIdempotencyKey()),
     onSuccess: response => {
-      setSelectedPatient(response.data.patient)
-      setSelectedCase(undefined)
+      setSelection({ kind: 'patient', patient: response.data.patient })
       setName('')
       setIdentifier('')
     },
   })
   const submitRegistration = useMutation<RegistrationMutationResult>({
     mutationFn: () => {
-      if ((selectedPatient === undefined && selectedCase === undefined) || catalog.data === undefined) {
+      if (selection === undefined || catalog.data === undefined) {
         throw new Error(messages.registrationUnavailable)
       }
       const resolvedDepartmentId = departmentId || catalog.data.departments[0]?.id
@@ -117,27 +118,27 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
       ) {
         throw new Error(messages.registrationUnavailable)
       }
-      return selectedCase === undefined
+      return selection.kind === 'patient'
         ? registerOutpatient({
             departmentId: resolvedDepartmentId,
             locationId: resolvedLocationId,
-            patientId: selectedPatient!.id,
-            patientVersion: selectedPatient!.versionId,
+            patientId: selection.patient.id,
+            patientVersion: selection.patient.versionId,
             visitDate: catalog.data.virtualDate,
             visitTypeId: resolvedVisitTypeId,
           }, newIdempotencyKey())
         : startSyntheticCaseVisit({
-            activeBriefRevision: selectedCase.activeBriefRevision,
-            caseId: selectedCase.caseId,
+            activeBriefRevision: selection.syntheticCase.activeBriefRevision,
+            caseId: selection.syntheticCase.caseId,
             departmentId: resolvedDepartmentId,
-            expectedCaseRevision: selectedCase.caseRevision,
+            expectedCaseRevision: selection.syntheticCase.caseRevision,
             locationId: resolvedLocationId,
             visitDate: catalog.data.virtualDate,
             visitTypeId: resolvedVisitTypeId,
           }, newIdempotencyKey())
     },
     onError: () => {
-      if (selectedCase !== undefined) setSelectedCase(undefined)
+      if (selection?.kind === 'synthetic-case') setSelection(undefined)
     },
     onSettled: async () => {
       await Promise.all([
@@ -146,15 +147,16 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
       ])
     },
     onSuccess: () => {
-      setSelectedCase(undefined)
-      setSelectedPatient(undefined)
+      setSelection(undefined)
     },
   })
 
   const resolvedDepartmentId = departmentId || catalog.data?.departments[0]?.id || ''
   const resolvedLocationId = locationId || catalog.data?.locations[0]?.id || ''
   const resolvedVisitTypeId = visitTypeId || catalog.data?.visitTypes[0]?.id || ''
-  const selectedName = selectedCase?.name ?? selectedPatient?.name
+  const selectedName = selection?.kind === 'patient'
+    ? selection.patient.name
+    : selection?.syntheticCase.name
   const genderItems = genderValues.map(value => ({
     label: messages[`gender_${value}`],
     value,
@@ -210,8 +212,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
           if (selected === undefined) {
             throw new Error('Synthetic Case is not in the current registrar result')
           }
-          setSelectedCase(selected)
-          setSelectedPatient(undefined)
+          setSelection({ kind: 'synthetic-case', syntheticCase: selected })
           return { caseId, selected: true }
         },
       },
@@ -244,8 +245,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
           const patientId = agentString(raw, 'patientId', 128)
           const patient = patients.data?.items.find(item => item.id === patientId)
           if (patient === undefined) throw new Error('Patient is not in the current search result')
-          setSelectedPatient(patient)
-          setSelectedCase(undefined)
+          setSelection({ kind: 'patient', patient })
           return { patientId, selected: true }
         },
       },
@@ -324,16 +324,16 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
       },
       'registration.outpatient.propose': {
         description: 'Open human review for outpatient registration of the selected patient.',
-        enabled: selectedPatient !== undefined
+        enabled: selection?.kind === 'patient'
           && resolvedDepartmentId !== ''
           && resolvedLocationId !== ''
           && resolvedVisitTypeId !== '',
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: (_raw: unknown, signal: AbortSignal) => {
-          if (selectedPatient === undefined) throw new Error(messages.selectPatientFirst)
+          if (selection?.kind !== 'patient') throw new Error(messages.selectPatientFirst)
           return agentReview.request({
             confirmLabel: messages.confirmRegistration,
-            description: `${selectedPatient.name} · ${resolvedDepartmentId} · ${resolvedVisitTypeId}`,
+            description: `${selection.patient.name} · ${resolvedDepartmentId} · ${resolvedVisitTypeId}`,
             onConfirm: () => submitRegistration.mutateAsync(),
             signal,
             title: messages.registrationDetails,
@@ -342,16 +342,16 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
       },
       'registration.synthetic-case.start.propose': {
         description: 'Open human review for outpatient registration of the selected Synthetic Case.',
-        enabled: selectedCase !== undefined
+        enabled: selection?.kind === 'synthetic-case'
           && resolvedDepartmentId !== ''
           && resolvedLocationId !== ''
           && resolvedVisitTypeId !== '',
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: (_raw: unknown, signal: AbortSignal) => {
-          if (selectedCase === undefined) throw new Error(messages.selectPatientFirst)
+          if (selection?.kind !== 'synthetic-case') throw new Error(messages.selectPatientFirst)
           return agentReview.request({
             confirmLabel: messages.confirmRegistration,
-            description: `${selectedCase.name} · ${resolvedDepartmentId} · ${resolvedVisitTypeId}`,
+            description: `${selection.syntheticCase.name} · ${resolvedDepartmentId} · ${resolvedVisitTypeId}`,
             onConfirm: () => submitRegistration.mutateAsync(),
             signal,
             title: messages.registrationDetails,
@@ -372,33 +372,33 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
         casePage,
         patientPage,
         registrationPage,
-        selectedCaseId: selectedCase?.caseId,
-        selectedPatientId: selectedPatient?.id,
+        selectedCaseId: selection?.kind === 'synthetic-case' ? selection.syntheticCase.caseId : undefined,
+        selectedPatientId: selection?.kind === 'patient' ? selection.patient.id : undefined,
         submittedCaseQuery,
         submittedQuery,
         visitTypeId: resolvedVisitTypeId,
       }),
-      ...(selectedCase !== undefined
+      ...(selection?.kind === 'synthetic-case'
         ? {
             selection: {
-              id: selectedCase.caseId,
+              id: selection.syntheticCase.caseId,
               kind: 'synthetic-case' as const,
-              version: String(selectedCase.caseRevision),
+              version: String(selection.syntheticCase.caseRevision),
             },
           }
-        : selectedPatient === undefined ? {} : {
+        : selection?.kind !== 'patient' ? {} : {
             selection: {
-              id: selectedPatient.id,
+              id: selection.patient.id,
               kind: 'patient' as const,
-              version: selectedPatient.versionId,
+              version: selection.patient.versionId,
             },
           }),
       draft: {
         dirty: name !== '' || identifier !== '',
-        id: selectedCase?.caseId ?? selectedPatient?.id ?? 'new-patient',
-        kind: selectedCase === undefined && selectedPatient === undefined
-          ? 'patient' as const
-          : 'registration' as const,
+        id: selection?.kind === 'synthetic-case'
+          ? selection.syntheticCase.caseId
+          : selection?.kind === 'patient' ? selection.patient.id : 'new-patient',
+        kind: selection === undefined ? 'patient' as const : 'registration' as const,
         revision: agentViewRevision({
           birthDate,
           departmentId: resolvedDepartmentId,
@@ -432,12 +432,14 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
       },
       registrationCount: registrations.data?.total ?? 0,
       syntheticCases: waitingCases.data?.items ?? [],
-      selectedSyntheticCase: selectedCase ?? null,
-      selectedPatient: selectedPatient === undefined ? null : {
-        id: selectedPatient.id,
-        name: selectedPatient.name,
-        versionId: selectedPatient.versionId,
-      },
+      selectedSyntheticCase: selection?.kind === 'synthetic-case'
+        ? selection.syntheticCase
+        : null,
+      selectedPatient: selection?.kind === 'patient' ? {
+        id: selection.patient.id,
+        name: selection.patient.name,
+        versionId: selection.patient.versionId,
+      } : null,
     }),
   }), [
     agentReview,
@@ -463,8 +465,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
     resolvedDepartmentId,
     resolvedLocationId,
     resolvedVisitTypeId,
-    selectedCase,
-    selectedPatient,
+    selection,
     submittedCaseQuery,
     submittedQuery,
     visitTypeId,
@@ -540,10 +541,10 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
                             <TableCell className="text-right">
                               <Button
                                 aria-label={`${messages.selectCase} ${item.name}`}
-                                onClick={() => {
-                                  setSelectedCase(item)
-                                  setSelectedPatient(undefined)
-                                }}
+                                onClick={() => setSelection({
+                                  kind: 'synthetic-case',
+                                  syntheticCase: item,
+                                })}
                                 size="icon-sm"
                                 type="button"
                                 variant="ghost"
@@ -617,10 +618,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
                             <TableCell className="text-right">
                               <Button
                                 aria-label={`${messages.selectPatient} ${patient.name}`}
-                                onClick={() => {
-                                  setSelectedPatient(patient)
-                                  setSelectedCase(undefined)
-                                }}
+                                onClick={() => setSelection({ kind: 'patient', patient })}
                                 size="icon-sm"
                                 type="button"
                                 variant="ghost"

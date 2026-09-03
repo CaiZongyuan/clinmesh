@@ -528,6 +528,105 @@ describe('Synthetic Case generation HTTP contract', () => {
       pageSize: 20,
       total: 1,
     })
+    const unknownParameter = await runtime.app.request(
+      '/api/his/v1/registration/synthetic-cases?page=1&pageSize=20&includeSource=true',
+      { headers: { cookie: registrarCookie } },
+    )
+    expect(unknownParameter.status).toBe(400)
+    expect(apiErrorSchema.parse(await unknownParameter.json())).toMatchObject({
+      error: { code: 'INVALID_INPUT' },
+    })
+  })
+
+  it('paginates only ready Cases with an existing active Brief', async () => {
+    const runtime = await createRuntime(new RetryingSyntheaProvider())
+    const now = '2026-09-03T09:00:00.000+08:00'
+    const insertCase = (input: {
+      activeBriefRevision: number | null
+      caseId: string
+      includeBrief: boolean
+      name: string
+      status: 'brief-pending' | 'brief-ready' | 'started' | 'completed' | 'retired'
+    }) => {
+      const profileId = `profile-${input.caseId}`
+      const mrn = `MRN-${input.caseId}`
+      const identity = JSON.stringify({
+        address: '虚构测试地址 1 号',
+        displayName: input.name,
+        email: `${input.caseId}@example.test`,
+        insuranceDisplay: '合成医疗保障',
+        mrn,
+        nationalId: '11010119700101001X',
+        phone: '10000000001',
+      })
+      const demographics = JSON.stringify({ birthDate: '1970-01-01', gender: 'female' })
+      runtime.database.driver.prepare(`
+        INSERT INTO synthetic_patient_profile (
+          workspace_id, profile_id, batch_id, batch_name, source_patient_id,
+          revision, display_name, mrn, identity_json, demographics_json,
+          source_hash, raw_source_json, generation_json,
+          created_by_actor_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        'workspace-demo', profileId, `batch-${input.caseId}`, '分页测试批次',
+        `source-${input.caseId}`, 1, input.name, mrn, identity, demographics,
+        'a'.repeat(64), '{}', '{}', 'actor-administrator', now, now,
+      )
+      runtime.database.driver.prepare(`
+        INSERT INTO synthetic_patient_profile_revision (
+          workspace_id, profile_id, revision, identity_json, demographics_json,
+          created_by_actor_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run('workspace-demo', profileId, 1, identity, demographics, 'actor-administrator', now)
+      runtime.database.driver.prepare(`
+        INSERT INTO synthetic_case_instance (
+          workspace_id, case_id, profile_id, profile_revision, revision,
+          case_type, status, active_brief_revision, source_hash,
+          visible_history_count, created_by_actor_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        'workspace-demo', input.caseId, profileId, 1, 2, 'follow-up', input.status,
+        input.activeBriefRevision, 'a'.repeat(64), 0, 'actor-administrator', now, now,
+      )
+      if (input.includeBrief) {
+        runtime.database.driver.prepare(`
+          INSERT INTO patient_brief_revision (
+            workspace_id, case_id, revision, content_json, model_id,
+            prompt_version, prompt_hash, input_hash, output_hash, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          'workspace-demo', input.caseId, input.activeBriefRevision, '{}', 'test-model',
+          'test-prompt-v1', 'b'.repeat(64), 'c'.repeat(64), 'd'.repeat(64), now,
+        )
+      }
+    }
+    insertCase({ activeBriefRevision: 1, caseId: 'case-ready-a', includeBrief: true, name: '就绪病例甲', status: 'brief-ready' })
+    insertCase({ activeBriefRevision: 1, caseId: 'case-ready-b', includeBrief: true, name: '就绪病例乙', status: 'brief-ready' })
+    insertCase({ activeBriefRevision: null, caseId: 'case-brief-pending', includeBrief: false, name: '待梗概病例', status: 'brief-pending' })
+    insertCase({ activeBriefRevision: 1, caseId: 'case-missing-brief', includeBrief: false, name: '缺失活动梗概', status: 'brief-ready' })
+    insertCase({ activeBriefRevision: 1, caseId: 'case-started', includeBrief: true, name: '已开始病例', status: 'started' })
+    insertCase({ activeBriefRevision: 1, caseId: 'case-completed', includeBrief: true, name: '已完成病例', status: 'completed' })
+    insertCase({ activeBriefRevision: 1, caseId: 'case-retired', includeBrief: true, name: '已停用病例', status: 'retired' })
+    const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local')
+    const list = async (page: number) => syntheticCaseRegistrationListSchema.parse(
+      await (await runtime.app.request(
+        `/api/his/v1/registration/synthetic-cases?page=${page}&pageSize=1`,
+        { headers: { cookie: registrarCookie } },
+      )).json(),
+    )
+
+    expect(await list(1)).toMatchObject({
+      items: [{ caseId: 'case-ready-a', name: '就绪病例甲' }],
+      page: 1,
+      pageSize: 1,
+      total: 2,
+    })
+    expect(await list(2)).toMatchObject({
+      items: [{ caseId: 'case-ready-b', name: '就绪病例乙' }],
+      page: 2,
+      pageSize: 1,
+      total: 2,
+    })
   })
 
   it('keeps registration search pinned to the Profile Revision owned by the Case', async () => {
