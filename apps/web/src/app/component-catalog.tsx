@@ -133,10 +133,9 @@ import {
 } from './component-catalog-i18n.ts'
 import {
   applyResolvedWebTheme,
-  readWebPreferences,
   type ResolvedWebTheme,
-  writeWebPreferences,
 } from './preferences.ts'
+import { useWebPreferences } from './preferences-context.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { useWebRuntime } from './web-runtime.tsx'
 
@@ -144,13 +143,9 @@ function currentTheme(root: HTMLElement | null): ResolvedWebTheme {
   return (root ?? document.documentElement).classList.contains('dark') ? 'dark' : 'light'
 }
 
-function persistCatalogTheme(theme: ResolvedWebTheme, root: HTMLElement | null): void {
-  applyResolvedWebTheme(theme, root ?? document.documentElement)
-  writeWebPreferences({ ...readWebPreferences(), theme })
-}
-
 function ThemeControl({ messages }: { messages: ComponentCatalogMessages }): React.JSX.Element {
   const runtime = useWebRuntime()
+  const { setPreferences } = useWebPreferences()
   const appearanceRoot = runtime.mode === 'surface'
     ? runtime.appearanceRoot.current
     : document.documentElement
@@ -163,7 +158,8 @@ function ThemeControl({ messages }: { messages: ComponentCatalogMessages }): Rea
         const nextTheme = (values as ResolvedWebTheme[])[0]
         if (nextTheme === undefined) return
         setTheme(nextTheme)
-        persistCatalogTheme(nextTheme, appearanceRoot)
+        applyResolvedWebTheme(nextTheme, appearanceRoot ?? document.documentElement)
+        setPreferences(current => ({ ...current, theme: nextTheme }))
       }}
       size="sm"
       spacing={0}
@@ -608,7 +604,8 @@ export function ComponentCatalog({
   embedded = false,
   locale: providedLocale,
 }: ComponentCatalogProps = {}): React.JSX.Element {
-  const locale = providedLocale ?? readWebPreferences().locale
+  const { preferences } = useWebPreferences()
+  const locale = providedLocale ?? preferences.locale
   const messages = getComponentCatalogMessages(locale)
   const runtime = useWebRuntime()
 

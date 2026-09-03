@@ -2,8 +2,10 @@ import type { WorkspaceLocale } from './workspace-i18n.ts'
 
 export type ThemePreference = 'system' | 'light' | 'dark'
 export type ResolvedWebTheme = Exclude<ThemePreference, 'system'>
+export type FontSizePreference = 'standard' | 'larger' | 'large'
 
 export interface WebPreferences {
+  fontSize: FontSizePreference
   locale: WorkspaceLocale
   theme: ThemePreference
 }
@@ -11,6 +13,7 @@ export interface WebPreferences {
 export const WEB_PREFERENCES_KEY = 'clinmesh.preferences:v1'
 
 const defaultPreferences: WebPreferences = {
+  fontSize: 'standard',
   locale: 'zh-CN',
   theme: 'system',
 }
@@ -27,6 +30,10 @@ function isThemePreference(value: unknown): value is ThemePreference {
   return value === 'system' || value === 'light' || value === 'dark'
 }
 
+function isFontSizePreference(value: unknown): value is FontSizePreference {
+  return value === 'standard' || value === 'larger' || value === 'large'
+}
+
 export function readWebPreferences(): WebPreferences {
   try {
     const stored = localStorage.getItem(WEB_PREFERENCES_KEY)
@@ -37,7 +44,11 @@ export function readWebPreferences(): WebPreferences {
       return defaultPreferences
     }
 
-    return { locale: parsed.locale, theme: parsed.theme }
+    return {
+      fontSize: isFontSizePreference(parsed.fontSize) ? parsed.fontSize : 'standard',
+      locale: parsed.locale,
+      theme: parsed.theme,
+    }
   } catch {
     return defaultPreferences
   }

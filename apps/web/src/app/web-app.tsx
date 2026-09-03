@@ -44,6 +44,7 @@ import {
   readWebPreferences,
   writeWebPreferences,
 } from './preferences.ts'
+import { useWebPreferences, WebPreferencesProvider } from './preferences-context.tsx'
 import {
   ApiClientError,
   getSession,
@@ -92,7 +93,7 @@ function SurfaceAgentBinding({
 }
 
 function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.JSX.Element {
-  const [preferences, setPreferences] = useState(readWebPreferences)
+  const { preferences, setPreferences } = useWebPreferences()
   const messages = getWorkspaceMessages(preferences.locale)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -143,8 +144,7 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
       ? runtime.appearanceRoot.current
       : document.documentElement
     if (root !== null) root.lang = preferences.locale
-    writeWebPreferences(preferences)
-  }, [preferences, runtime.appearanceRoot, runtime.mode])
+  }, [preferences.locale, runtime.appearanceRoot, runtime.mode])
 
   useEffect(() => {
     const root = runtime.mode === 'surface'
@@ -242,7 +242,9 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
       {isSettingsSection(effectiveSection) ? (
         <SettingsWorkspace
           activeSection={effectiveSection}
+          fontSize={preferences.fontSize}
           locale={preferences.locale}
+          onFontSizeChange={fontSize => setPreferences(current => ({ ...current, fontSize }))}
           onLocaleChange={locale => setPreferences(current => ({ ...current, locale }))}
           onThemeChange={theme => setPreferences(current => ({ ...current, theme }))}
           theme={preferences.theme}
@@ -456,6 +458,7 @@ function WebApplication({
 }: WebAppProps = {}): React.JSX.Element {
   const [router] = useState(() => createWebRouter(history))
   const [queryClient] = useState(createWebQueryClient)
+  const [preferences, setPreferences] = useState(readWebPreferences)
   const applicationRoot = useRef<HTMLDivElement>(null)
   const portalRoot = useRef<HTMLDivElement>(null)
   const [apiConfiguration] = useState(() => ({
@@ -486,30 +489,35 @@ function WebApplication({
     runtimeOptions.surfaceColorScheme,
     runtimeOptions.surfaceSessionId,
   ])
+  const preferencesContext = useMemo(() => ({ preferences, setPreferences }), [preferences])
+  useEffect(() => writeWebPreferences(preferences), [preferences])
 
   return (
-    <WebRuntimeProvider value={runtime}>
-      <PortalContainerProvider container={portalRoot}>
-        <div
-          className={runtime.mode === 'surface'
-            ? 'clinmesh-web-root h-full min-h-0 overflow-hidden'
-            : 'clinmesh-web-root'}
-          data-clinmesh-app="web"
-          ref={applicationRoot}
-        >
-          <QueryClientProvider client={queryClient}>
-            <AgentPageRegistryProvider>
-              <AgentReviewProvider>
-                <Toaster>
-                  <RouterProvider router={router} />
-                </Toaster>
-              </AgentReviewProvider>
-            </AgentPageRegistryProvider>
-          </QueryClientProvider>
-          <div data-clinmesh-portal-root="" ref={portalRoot} />
-        </div>
-      </PortalContainerProvider>
-    </WebRuntimeProvider>
+    <WebPreferencesProvider value={preferencesContext}>
+      <WebRuntimeProvider value={runtime}>
+        <PortalContainerProvider container={portalRoot}>
+          <div
+            className={runtime.mode === 'surface'
+              ? 'clinmesh-web-root h-full min-h-0 overflow-hidden'
+              : 'clinmesh-web-root'}
+            data-clinmesh-app="web"
+            data-font-size={preferences.fontSize}
+            ref={applicationRoot}
+          >
+            <QueryClientProvider client={queryClient}>
+              <AgentPageRegistryProvider>
+                <AgentReviewProvider>
+                  <Toaster>
+                    <RouterProvider router={router} />
+                  </Toaster>
+                </AgentReviewProvider>
+              </AgentPageRegistryProvider>
+            </QueryClientProvider>
+            <div data-clinmesh-portal-root="" ref={portalRoot} />
+          </div>
+        </PortalContainerProvider>
+      </WebRuntimeProvider>
+    </WebPreferencesProvider>
   )
 }
 
