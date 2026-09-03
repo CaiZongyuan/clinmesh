@@ -19,6 +19,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DoctorWorkspace } from './doctor-workspace.tsx'
+import { useSyntheticPatientLibraryViewStore } from './synthetic-patient-library-view-store.ts'
 import { WebApp } from './web-app.tsx'
 import type { WebSurfaceAgentController, WebSurfaceAgentTool } from './web-runtime.tsx'
 
@@ -1067,6 +1068,7 @@ function stubDoctorCompletedCaseLibrary(options: {
 describe('role workspaces', () => {
   beforeEach(() => {
     localStorage.clear()
+    useSyntheticPatientLibraryViewStore.getState().reset()
     window.history.replaceState(null, '', '/')
     vi.stubGlobal('matchMedia', vi.fn((query: string) => createMediaQueryList(query)))
     vi.stubGlobal('scrollTo', vi.fn())
@@ -1521,6 +1523,29 @@ describe('role workspaces', () => {
     await user.click(dateColumn)
     expect(dateColumn.getAttribute('aria-expanded')).toBe('false')
     expect(screen.queryByRole('button', { name: /发热.*Condition/ })).toBeNull()
+  })
+
+  it('aligns the right-side resource detail with the selected history row', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ profileAvailable: true })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('button', { name: /2026-07-01.*2 条记录/ }))
+    const historyList = screen.getByRole('group', { name: '来源历史' })
+    const condition = screen.getByRole('button', { name: /发热.*Condition/ })
+    const observation = screen.getByRole('button', { name: /体温.*Observation/ })
+    vi.spyOn(historyList, 'getBoundingClientRect').mockReturnValue({ top: 100 } as DOMRect)
+    vi.spyOn(condition, 'getBoundingClientRect').mockReturnValue({ top: 180 } as DOMRect)
+    vi.spyOn(observation, 'getBoundingClientRect').mockReturnValue({ top: 236 } as DOMRect)
+
+    await user.click(condition)
+    const detail = await screen.findByRole('region', { name: 'R4 资源详情' })
+    expect(detail.style.getPropertyValue('--source-history-detail-offset')).toBe('80px')
+
+    await user.click(observation)
+    expect(detail.style.getPropertyValue('--source-history-detail-offset')).toBe('136px')
   })
 
   it('starts another patient source history with every date collapsed', async () => {

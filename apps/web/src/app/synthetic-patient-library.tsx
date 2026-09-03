@@ -57,7 +57,7 @@ import {
   TriangleAlertIcon,
   UserPlusIcon,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   enqueuePatientBrief,
   enqueueScenarioGenerationJob,
@@ -78,17 +78,13 @@ import {
 } from './api-client.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
+import { useSyntheticPatientLibraryViewStore } from './synthetic-patient-library-view-store.ts'
 
 const profileListKey = ['synthetic-patient-profiles'] as const
 const providerKey = ['scenario-providers'] as const
 const currentScenarioKey = ['scenario-current'] as const
-const currentGenerationJobKey = ['scenario-generation-current-job'] as const
 const maximumScenarioSeed = 2_147_483_647
 const avatarCache = new Map<string, string>()
-
-function currentPatientBriefJobKey(caseId: string) {
-  return ['patient-brief-current-job', caseId] as const
-}
 
 const copy = {
   'en-US': {
@@ -253,7 +249,9 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
   const messages = copy[locale]
   const [page, setPage] = useState(1)
   const [expandedDates, setExpandedDates] = useState<Set<string>>(() => new Set())
-  const [selectedReference, setSelectedReference] = useState<string>()
+  const [selection, setSelection] = useState<{ offset: number; reference: string }>()
+  const historyListRef = useRef<HTMLDivElement>(null)
+  const selectedReference = selection?.reference
   const history = useQuery({
     queryFn: ({ signal }) => getSyntheticCaseHistory(caseId, signal, page),
     queryKey: ['synthetic-case-history', caseId, page],
@@ -270,7 +268,7 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
   if (history.data.items.length === 0) return <p className="py-8 text-sm text-muted-foreground">{messages.noHistory}</p>
   return (
     <div className="grid min-h-[360px] lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)]">
-      <div className="lg:border-r">
+      <div aria-label={messages.history} className="lg:border-r" ref={historyListRef} role="group">
         {history.data.items.map((group) => {
           const expanded = expandedDates.has(group.businessDate)
           const contentId = `source-history-${caseId}-${group.businessDate}`
@@ -281,12 +279,15 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
                   aria-controls={contentId}
                   aria-expanded={expanded}
                   className="flex min-h-11 w-full items-center gap-2 bg-muted/30 px-3 py-3 text-left text-xs font-semibold text-muted-foreground hover:bg-muted/50"
-                  onClick={() => setExpandedDates((current) => {
-                    const next = new Set(current)
-                    if (next.has(group.businessDate)) next.delete(group.businessDate)
-                    else next.add(group.businessDate)
-                    return next
-                  })}
+                  onClick={() => {
+                    setSelection(undefined)
+                    setExpandedDates((current) => {
+                      const next = new Set(current)
+                      if (next.has(group.businessDate)) next.delete(group.businessDate)
+                      else next.add(group.businessDate)
+                      return next
+                    })
+                  }}
                   type="button"
                 >
                   <ChevronRightIcon className={cn('size-4 transition-transform', expanded && 'rotate-90')} />
@@ -305,7 +306,15 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
                         selectedReference === item.sourceReference && 'bg-muted/50',
                       )}
                       key={item.sourceReference}
-                      onClick={() => setSelectedReference(item.sourceReference)}
+                      onClick={(event) => {
+                        const itemTop = event.currentTarget.getBoundingClientRect().top
+                        const listTop = historyListRef.current?.getBoundingClientRect().top
+                          ?? itemTop
+                        setSelection({
+                          offset: Math.max(0, itemTop - listTop),
+                          reference: item.sourceReference,
+                        })
+                      }}
                       type="button"
                     >
                       <span className="min-w-0">
@@ -323,16 +332,22 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
           )
         })}
         <div className="flex justify-between p-2">
-          <Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="ghost">
+          <Button disabled={page === 1} onClick={() => { setSelection(undefined); setPage(current => current - 1) }} size="sm" variant="ghost">
             {messages.previous}
           </Button>
-          <Button disabled={page * history.data.pageSize >= history.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="ghost">
+          <Button disabled={page * history.data.pageSize >= history.data.total} onClick={() => { setSelection(undefined); setPage(current => current + 1) }} size="sm" variant="ghost">
             {messages.next}
           </Button>
         </div>
       </div>
-      <section className="min-w-0 border-t p-3 lg:border-t-0">
-        <h4 className="flex items-center gap-2 text-sm font-semibold">
+      <section
+        aria-labelledby={`source-history-detail-heading-${caseId}`}
+        className="min-w-0 border-t p-3 lg:mt-(--source-history-detail-offset) lg:border-t-0"
+        style={{
+          '--source-history-detail-offset': `${selection?.offset ?? 0}px`,
+        } as CSSProperties}
+      >
+        <h4 className="flex items-center gap-2 text-sm font-semibold" id={`source-history-detail-heading-${caseId}`}>
           <FileJsonIcon className="size-4" />
           {messages.resourceDetail}
         </h4>
@@ -420,9 +435,12 @@ function PatientBriefPanel({ locale, profileId, syntheticCase }: {
 }) {
   const messages = copy[locale]
   const queryClient = useQueryClient()
-  const [jobId, setJobId] = useState<string | undefined>(() => (
-    queryClient.getQueryData(currentPatientBriefJobKey(syntheticCase.caseId))
-  ))
+  const jobId = useSyntheticPatientLibraryViewStore(
+    state => state.patientBriefJobIds[syntheticCase.caseId],
+  )
+  const setPatientBriefJob = useSyntheticPatientLibraryViewStore(
+    state => state.setPatientBriefJob,
+  )
   const [visitOpen, setVisitOpen] = useState(false)
   const revisions = useQuery({
     queryFn: ({ signal }) => getPatientBriefRevisions(syntheticCase.caseId, signal),
@@ -431,12 +449,8 @@ function PatientBriefPanel({ locale, profileId, syntheticCase }: {
   const generate = useMutation({
     mutationFn: () => enqueuePatientBrief(syntheticCase.caseId, newIdempotencyKey()),
     onSuccess: response => {
-      queryClient.setQueryData(
-        currentPatientBriefJobKey(syntheticCase.caseId),
-        response.data.jobId,
-      )
       queryClient.setQueryData(['patient-brief-job', response.data.jobId], response.data)
-      setJobId(response.data.jobId)
+      setPatientBriefJob(syntheticCase.caseId, response.data.jobId)
     },
   })
   const job = useQuery({
@@ -680,9 +694,12 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
   const [submittedSearch, setSubmittedSearch] = useState('')
   const [selectedProfileId, setSelectedProfileId] = useState<string>()
   const [generationOpen, setGenerationOpen] = useState(false)
-  const [generationJobId, setGenerationJobId] = useState<string | undefined>(() => (
-    queryClient.getQueryData(currentGenerationJobKey)
-  ))
+  const scenarioGenerationJobIds = useSyntheticPatientLibraryViewStore(
+    state => state.scenarioGenerationJobIds,
+  )
+  const setScenarioGenerationJob = useSyntheticPatientLibraryViewStore(
+    state => state.setScenarioGenerationJob,
+  )
   const [editOpen, setEditOpen] = useState(false)
   const profiles = useQuery({ queryFn: ({ signal }) => getSyntheticPatientProfiles(signal, page, submittedSearch), queryKey: [...profileListKey, page, submittedSearch] })
   const scenario = useQuery({ queryFn: ({ signal }) => getCurrentScenario(signal), queryKey: currentScenarioKey })
@@ -690,15 +707,17 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
   const effectiveProfileId = selectedProfileId ?? profiles.data?.items[0]?.profileId
   const profile = useQuery({ enabled: effectiveProfileId !== undefined, queryFn: ({ signal }) => effectiveProfileId === undefined ? Promise.reject(new Error('No profile selected')) : getSyntheticPatientProfile(effectiveProfileId, signal), queryKey: ['synthetic-patient-profile', effectiveProfileId ?? 'none'] })
   const providers = useQuery({ queryFn: ({ signal }) => getScenarioProviders(signal), queryKey: providerKey })
+  const generationJobId = scenario.data === undefined
+    ? undefined
+    : scenarioGenerationJobIds[scenario.data.workspaceId]
   const generate = useMutation({
     mutationFn: (request: ScenarioGenerationRequest) => enqueueScenarioGenerationJob(
       request,
       newIdempotencyKey(),
     ),
     onSuccess: response => {
-      queryClient.setQueryData(currentGenerationJobKey, response.data.jobId)
       queryClient.setQueryData(['scenario-generation-job', response.data.jobId], response.data)
-      setGenerationJobId(response.data.jobId)
+      setScenarioGenerationJob(response.data.workspaceId, response.data.jobId)
       setGenerationOpen(false)
     },
   })

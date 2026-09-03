@@ -747,7 +747,7 @@ export const syntheticSourceHistoryListSchema = z.object({
 }).strict()
 
 export const syntheticSourceHistoryGroupListSchema = z.object({
-  items: z.array(syntheticSourceHistoryGroupSchema),
+  items: z.array(syntheticSourceHistoryGroupSchema).max(20),
   page: z.number().int().positive(),
   pageSize: z.number().int().positive().max(20),
   total: z.number().int().nonnegative(),
