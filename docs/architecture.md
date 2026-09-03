@@ -248,7 +248,6 @@ D1、PostgreSQL 或 Supabase 只在出现公开托管、多实例、持续写竞
 - `CommandExecutor`：以受信 context 执行强类型 Command，内部隐藏事务、幂等、expected version、审计、Action Trace 和 Effect receipt。
 - `FhirRepository`：提供内部创建/更新与公开 read、history、受控 search；首期只有 SQLite 实现，不伪造第二数据库 adapter。
 - `ScenarioDataService`：拥有 Synthea 生成任务、Profile/Case 原子创建、患者库与来源历史授权读取。
-- `SyntheticCaseVisitService`：向挂号员投影固定 Profile/Brief revision 的待挂号病例，并把管理员或挂号员确认的 Case 开始请求交给共享 Workflow 内核。
 - `ScenarioService`：拥有 building/active Epoch 切换与 reset/replay 协调；病例物化委托给共享 Workflow 内核。
 - `WorkflowService`：拥有 Case direct start、首期门诊状态转换、预览 token、支付/LIS/文书/药房规则和岗位读模型。
 - `AgentIntegrationService`：隐藏 Page Context 签发、execution proof 校验、防重放、proposal/review 生命周期以及 Tool call 到 Command/Audit/Trace 的关联。
@@ -634,11 +633,8 @@ POST /api/sim/v1/synthetic-cases/{id}/patient-brief-jobs
 GET  /api/sim/v1/patient-brief-jobs/{id}
 GET  /api/sim/v1/synthetic-cases/{id}/patient-brief-revisions
 PUT  /api/sim/v1/synthetic-cases/{id}/patient-brief-revisions/active
-GET  /api/his/v1/registration/synthetic-cases
 POST /api/his/v1/synthetic-cases/{id}/actions/start-outpatient-visit
 ```
-
-`GET /api/his/v1/registration/synthetic-cases` 只允许挂号员读取同一 Workspace 中 `brief-ready`、具有活动 Patient Brief 且尚未开始的病例，支持按姓名或病历号分页检索。响应从 Case 固定的 Profile Revision 投影病例 ID、Case/Profile/Brief revision、病例类型、姓名、病历号、性别和出生日期；不读取当前 Profile，也不返回 Case Truth、来源 Bundle、生成配置或来源历史详情。
 
 `GET /api/his/v1/doctor/virtual-patients` 按 `page/pageSize` 分页，只返回当前 Workspace/Epoch 中仍可接诊的 Virtual Patient 名称、性别、出生日期、临床可见摘要、协议 ID 和固定长度的 opaque `version`。姓名、性别和出生日期读取自绑定的 `fhir-native` Patient，Virtual Patient 领域表不重复保存 Patient Identity；响应不返回 Patient logical ID、Case Truth、病原体、运行时状态、底层资源引用或确定性回答规则。`version` 的绑定和冲突语义由[门诊闭环](#81-门诊闭环)定义。
 
@@ -803,8 +799,6 @@ Skills 不复制 flags、输入 schema 或完整命令目录，Agent 对不熟�
 ### 8.1 门诊闭环
 
 ```text
-管理员生成 Synthetic Case + 选定 Patient Brief
-  -> 挂号员读取待挂号病例 + 选择科室/号别/地点
 Registration + Encounter + Account + 挂号 Charge Item
   -> 分诊 Observation + Queue Task ready
   -> 医生受控问诊 + 首诊 + 独立检验 ServiceRequest/Task，或兼容 ServiceRequest/ChargeItem
@@ -819,8 +813,6 @@ Registration + Encounter + Account + 挂号 Charge Item
 ```
 
 首期只实现现场普通门诊。Registration 是持久领域事实；挂号 Command 在同一事务中创建或关联 Registration、Encounter、Queue Task、Account 和挂号 Charge Item。Appointment 表达未来预约承诺，Slot 表达可预约时段，不承担挂号事实、排队序号或挂号费语义，二者不属于首期闭环。
-
-管理员生成 Synthetic Case 并选定 Patient Brief 后，挂号员从待挂号列表选择 Case 与挂号目录项，复用 `registration.synthetic-case.start` 对应的共享物化内核原子创建 Patient、Registration、Encounter、Queue Task、Consultation 与 Case materialization。成功结果是 `awaiting-triage`，同时从待挂号列表移除并进入挂号记录与分诊待处理队列；两个挂号员以不同幂等键并发提交同一 Case 时只有一个 revision 条件更新成功，失败方收到受控冲突并刷新队列。管理员仍可直接开始 ready Case。临时患者建档只创建普通 HIS Patient Identity，不推导 Synthetic Case、Case Truth 或 Patient Brief。
 
 门诊医生也可从版本固定的 Virtual Patient 直接建立接诊上下文。候选列表返回的 opaque `version` 由服务端认证加密并固定长度，绑定 Workspace、Epoch、Virtual Patient ID、内部版本，以及列表读取时已有活动病例的 Encounter 和可用 Queue Task 引用与版本。`virtual-patient.start-consultation` 在进入 `CommandExecutor` 前解密并校验该引用，以 Virtual Patient 版本、依赖版本与可用状态作为前置条件；篡改、跨上下文、旧候选或依赖已变化都返回稳定冲突，客户端不能解码技术状态或自行提交底层 expected versions。
 

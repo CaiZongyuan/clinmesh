@@ -145,13 +145,6 @@ describe('HIS operation catalog', () => {
         roles: ['registrar'],
       },
       {
-        id: 'registration.synthetic-case.list',
-        mode: 'query',
-        requirements: { expectedVersions: false, idempotency: 'none' },
-        risk: 'read',
-        roles: ['registrar'],
-      },
-      {
         id: 'registration.synthetic-case.start',
         mode: 'command',
         requirements: { expectedVersions: true, idempotency: 'required' },
@@ -159,16 +152,6 @@ describe('HIS operation catalog', () => {
         roles: ['administrator', 'registrar'],
       },
     ])
-    const waitingCases = getHisOperation('registration.synthetic-case.list')
-    expect(waitingCases).toMatchObject({
-      cliPath: ['registration', 'synthetic-case', 'list'],
-      http: { method: 'GET', path: '/api/his/v1/registration/synthetic-cases' },
-    })
-    expect(waitingCases.input.parse({ search: '张琴' })).toEqual({
-      page: 1,
-      pageSize: 20,
-      search: '张琴',
-    })
     expect(listHisOperations().some(operation => operation.id.includes('virtual-patient'))).toBe(false)
   })
 
@@ -546,7 +529,7 @@ describe('HIS operation catalog', () => {
       'clinmesh-doctor': 33,
       'clinmesh-fhir': 5,
       'clinmesh-pharmacy': 3,
-      'clinmesh-registration': 7,
+      'clinmesh-registration': 6,
       'clinmesh-shared': 1,
       'clinmesh-triage': 2,
     })
@@ -571,8 +554,6 @@ describe('HIS operation catalog', () => {
     ])
     expect(getHisOperation('reference.diagnoses.search').handlerOwner).toBe('ReferenceDataService')
     expect(getHisOperation('registration.synthetic-case.start').handlerOwner)
-      .toBe('SyntheticCaseVisitService')
-    expect(getHisOperation('registration.synthetic-case.list').handlerOwner)
       .toBe('SyntheticCaseVisitService')
     expect(getHisOperation('fhir.metadata.read').handlerOwner).toBe('FhirCapabilities')
     expect(getHisOperation('fhir.resource.search').handlerOwner).toBe('FhirRepository')

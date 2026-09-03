@@ -3,7 +3,6 @@ import {
   agentPageContextClaimSchema,
   agentPageContextRequestSchema,
   agentPageContextSnapshotSchema,
-  agentSelectionKindSchema,
   agentExecutionProofPayloadSchema,
   agentToolAuthorizationRequestSchema,
   agentToolCatalog,
@@ -126,21 +125,6 @@ describe('ClinMesh DSH Agent contracts', () => {
         expect(tool.viewIds).toContain(viewId)
       }
     }
-  })
-
-  it('publishes registrar Synthetic Case search, selection, and human-review actions', () => {
-    expect(agentSelectionKindSchema.parse('synthetic-case')).toBe('synthetic-case')
-    expect(agentToolsForContext('registrar', 'registration').map(tool => tool.operationId))
-      .toEqual(expect.arrayContaining([
-        'registration.synthetic-case.search',
-        'registration.synthetic-case.select',
-        'registration.synthetic-case.start.propose',
-      ]))
-    expect(parseAgentToolInput('registration.synthetic-case.search', { query: '张琴' }))
-      .toEqual({ query: '张琴' })
-    expect(parseAgentToolInput('registration.synthetic-case.select', {
-      caseId: 'synthetic-case-001',
-    })).toEqual({ caseId: 'synthetic-case-001' })
   })
 
   it('limits navigation destinations to the current role and shared settings', () => {

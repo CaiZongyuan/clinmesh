@@ -33,7 +33,6 @@ export const agentSelectionKindSchema = z.enum([
   'patient',
   'prescription',
   'scenario-run',
-  'synthetic-case',
   'triage-item',
 ])
 
@@ -267,9 +266,6 @@ export const agentToolCatalog: readonly AgentToolDefinition[] = Object.freeze([
   tool('registration.draft.set', 'clinmesh_fill_registration_draft', 'draft', 'draft-only', registrar, ['registration']),
   tool('registration.patient.create.propose', 'clinmesh_prepare_create_patient', 'proposal', 'human-review', registrar, ['registration']),
   tool('registration.outpatient.propose', 'clinmesh_prepare_register_outpatient', 'proposal', 'human-review', registrar, ['registration']),
-  tool('registration.synthetic-case.search', 'clinmesh_search_registration_cases', 'query', 'read-only', registrar, ['registration']),
-  tool('registration.synthetic-case.select', 'clinmesh_select_registration_case', 'ui', 'ui-only', registrar, ['registration']),
-  tool('registration.synthetic-case.start.propose', 'clinmesh_prepare_start_registration_case', 'proposal', 'human-review', registrar, ['registration']),
 
   tool('triage.queue.read', 'clinmesh_read_triage_queue', 'query', 'read-only', triage, ['triage']),
   tool('triage.case.select', 'clinmesh_select_triage_case', 'ui', 'ui-only', triage, ['triage']),

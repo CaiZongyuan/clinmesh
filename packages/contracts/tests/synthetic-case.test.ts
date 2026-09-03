@@ -1,6 +1,5 @@
 import {
   syntheticCaseInstanceSchema,
-  syntheticCaseRegistrationListSchema,
   syntheticSourceHistoryItemSchema,
 } from '@clinmesh/contracts/scenario'
 import { describe, expect, it } from 'vitest'
@@ -42,33 +41,5 @@ describe('Synthetic Case contracts', () => {
       sourceReference: 'urn:uuid:prior-condition',
       title: '高血压（疾病）',
     })
-  })
-
-  it('exposes only the fixed case and identity fields needed for registration', () => {
-    const list = {
-      items: [{
-        activeBriefRevision: 2,
-        birthDate: '1970-01-01',
-        caseId: 'synthetic-case-001',
-        caseRevision: 3,
-        caseType: 'follow-up',
-        gender: 'female',
-        mrn: 'MRN-000001',
-        name: '张琴',
-        profileRevision: 1,
-      }],
-      page: 1,
-      pageSize: 20,
-      total: 1,
-    }
-
-    expect(syntheticCaseRegistrationListSchema.parse(list)).toEqual(list)
-    expect(() => syntheticCaseRegistrationListSchema.parse({
-      ...list,
-      items: [{
-        ...list.items[0],
-        source: { raw: { resourceType: 'Bundle' } },
-      }],
-    })).toThrow()
   })
 })

@@ -15,10 +15,6 @@ import type { ActorContext } from './command-executor.ts'
 const versionRowSchema = z.object({ version: z.union([z.number(), z.string()]) }).strict()
 const scenarioRowSchema = z.object({ status: z.string(), version: z.string() }).strict()
 const generationJobRowSchema = z.object({ status: z.string(), version: z.string() }).strict()
-const syntheticCaseRowSchema = z.object({
-  status: z.enum(['brief-pending', 'brief-ready', 'started', 'completed', 'retired']),
-  version: z.number().int().positive(),
-}).strict()
 const triageCaseRowSchema = z.object({
   encounter_id: z.string(),
   has_triage: z.number().int(),
@@ -60,7 +56,6 @@ type ResolvedSelection =
   | { kind: 'scenario-run'; id: string; status: string }
   | { kind: 'generation-job'; id: string; status: string }
   | { kind: 'patient'; id: string }
-  | { kind: 'synthetic-case'; id: string; status: 'brief-ready' }
   | { kind: 'triage-item'; id: string; encounterId: string; status: string }
   | ({ kind: 'case'; id: string } & z.infer<typeof doctorCaseRowSchema>)
   | ({ kind: 'billing-item'; id: string } & z.infer<typeof chargeRowSchema>)
@@ -77,7 +72,7 @@ const selectionKindsByView = {
   consultation: ['case', 'encounter'],
   overview: ['scenario-run'],
   pharmacy: ['prescription'],
-  registration: ['patient', 'synthetic-case'],
+  registration: ['patient'],
   scenarioData: ['generation-job'],
   settingsGeneral: [],
   triage: ['triage-item'],
@@ -141,7 +136,6 @@ export const proposalCommandOperations: Readonly<Record<string, readonly string[
   'scenario.reset.propose': ['scenario.reset'],
   'registration.patient.create.propose': ['patient.create-synthetic'],
   'registration.outpatient.propose': ['registration.register'],
-  'registration.synthetic-case.start.propose': ['synthetic-case.start-outpatient-visit'],
   'triage.record.propose': ['encounter.record-triage'],
   'outpatient.visit.start.propose': ['encounter.start-first-visit', 'encounter.start-revisit'],
   'outpatient.diagnosis.confirm.propose': ['encounter.confirm-diagnosis'],
@@ -190,25 +184,6 @@ function resolveSelection(
       WHERE workspace_id = ? AND job_id = ?
     `).get(actor.workspaceId, selection.id))
     if (row === undefined || row.version !== selection.version) return undefined
-    return { id: selection.id, kind: selection.kind, status: row.status }
-  }
-  if (selection.kind === 'synthetic-case') {
-    const row = syntheticCaseRowSchema.optional().parse(database.driver.prepare(`
-      SELECT revision AS version, status
-      FROM synthetic_case_instance AS synthetic_case
-      WHERE workspace_id = ? AND case_id = ?
-        AND EXISTS (
-          SELECT 1 FROM patient_brief_revision AS active_brief
-          WHERE active_brief.workspace_id = synthetic_case.workspace_id
-            AND active_brief.case_id = synthetic_case.case_id
-            AND active_brief.revision = synthetic_case.active_brief_revision
-        )
-    `).get(actor.workspaceId, selection.id))
-    if (
-      row === undefined
-      || row.status !== 'brief-ready'
-      || String(row.version) !== selection.version
-    ) return undefined
     return { id: selection.id, kind: selection.kind, status: row.status }
   }
   if (selection.kind === 'patient') {
@@ -383,10 +358,9 @@ function draftMatchesSelection(
   const draft = claim.draft
   if (draft === undefined) return true
   if (claim.viewId === 'registration') {
-    if (selection.kind === 'none') return draft.kind === 'patient' && draft.id === 'new-patient'
-    return (selection.kind === 'patient' || selection.kind === 'synthetic-case')
-      && draft.kind === 'registration'
-      && draft.id === selection.id
+    return selection.kind === 'none'
+      ? draft.kind === 'patient' && draft.id === 'new-patient'
+      : selection.kind === 'patient' && draft.kind === 'registration' && draft.id === selection.id
   }
   if (claim.viewId === 'triage' && selection.kind === 'triage-item') {
     return draft.kind === 'triage' && draft.id === `${selection.id}:triage`
@@ -419,16 +393,11 @@ function narrowOperations(
       'registration.patient.select',
       'registration.patient.draft.set',
       'registration.draft.set',
-      'registration.synthetic-case.search',
-      'registration.synthetic-case.select',
     ]
     if (claim.draft?.kind === 'patient' && claim.draft.dirty) {
       operations.push('registration.patient.create.propose')
     }
     if (selection.kind === 'patient') operations.push('registration.outpatient.propose')
-    if (selection.kind === 'synthetic-case') {
-      operations.push('registration.synthetic-case.start.propose')
-    }
     retain(operations)
     return
   }
@@ -551,17 +520,6 @@ function inputMatchesCurrentResources(
   if (operationId === 'registration.patient.select') {
     return exists(`SELECT 1 FROM fhir_resource WHERE workspace_id = ? AND epoch = ?
       AND resource_type = 'Patient' AND resource_id = ? AND deleted = 0`, ...scope, value.patientId)
-  }
-  if (operationId === 'registration.synthetic-case.select') {
-    return exists(`SELECT 1 FROM synthetic_case_instance AS synthetic_case
-      WHERE workspace_id = ? AND case_id = ? AND status = 'brief-ready'
-        AND EXISTS (
-          SELECT 1 FROM patient_brief_revision AS active_brief
-          WHERE active_brief.workspace_id = synthetic_case.workspace_id
-            AND active_brief.case_id = synthetic_case.case_id
-            AND active_brief.revision = synthetic_case.active_brief_revision
-        )`,
-    actor.workspaceId, value.caseId)
   }
   if (operationId === 'registration.draft.set') {
     return exists(`SELECT 1 FROM outpatient_catalog WHERE workspace_id = ? AND epoch = ?

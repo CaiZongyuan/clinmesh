@@ -17,11 +17,10 @@ clinmesh registration create --input @registration.json --idempotency-key <key>
 clinmesh registration list
 ```
 
-For a generated case with an active successful Patient Brief, search the registrar queue by name or medical record number, then start the normal outpatient flow. The queue returns the identity and Case/Brief/Profile revisions required for registration; it does not expose Case Truth, source Bundles, or generation configuration. Do not use the retired Virtual Patient or Scenario Dataset entrypoints.
+For a generated case with an active successful Patient Brief, start the normal outpatient flow directly. Do not use the retired Virtual Patient or Scenario Dataset entrypoints.
 
 ```bash
-clinmesh registration synthetic-case list --search <name-or-mrn>
 clinmesh registration synthetic-case start --input @case-start.json --idempotency-key <key>
 ```
 
-The ordinary and Synthetic Case paths converge on the same Registration, Encounter, and triage Queue Task. After a conflict, refresh the Synthetic Case queue before forming a new intent. Registration work is complete only when `registration list` returns those references; hand them to a triage-nurse Grant and stop acting as registrar.
+The ordinary and Synthetic Case paths converge on the same Registration, Encounter, and triage Queue Task. Registration work is complete only when `registration list` returns those references; hand them to a triage-nurse Grant and stop acting as registrar.

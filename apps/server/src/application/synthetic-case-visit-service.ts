@@ -46,26 +46,6 @@ export class SyntheticCaseVisitService {
     this.#workflow = input.workflow
   }
 
-  listReadyForRegistration(input: {
-    context: ActorContext
-    page: number
-    pageSize: number
-    search?: string
-  }) {
-    if (input.context.roleCode !== 'registrar') {
-      throw new SyntheticCaseVisitError(
-        'ROLE_NOT_ALLOWED',
-        'Only a registrar can list Synthetic Cases awaiting registration',
-      )
-    }
-    return this.#cases.listForRegistration({
-      page: input.page,
-      pageSize: input.pageSize,
-      ...(input.search === undefined ? {} : { search: input.search }),
-      workspaceId: input.context.workspaceId,
-    })
-  }
-
   start(input: {
     caseId: string
     context: ActorContext
