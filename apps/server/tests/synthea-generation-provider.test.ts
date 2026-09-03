@@ -8,7 +8,7 @@ import {
 } from '../src/infrastructure/scenario-generation/synthea-provider.ts'
 
 const syntheaCommit = 'd9d07a6eef91ee5144293b42ab64224d84d124f8'
-const configHash = '81c9b79f5426b85244f42275f98d2f9e161a4c502980d9cde8d027cdda6ef103'
+const configHash = '98e57bac3d32469ed900ea4d1b7a47086cb2aed18659a37cf7779be3dce14e0e'
 const profileContentHash = 'd8a4ef19561434cb66c8a391aebfcf6a4dc5f14baf4d4171eac3b8c340b5dd12'
 const localization = syntheaCnLocalizationProvenanceSchema.parse({
   clinicalDisplay: {
