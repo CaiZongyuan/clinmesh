@@ -12,7 +12,7 @@ Canonical implementation contract 是 [GitHub issue #60](https://github.com/CaiZ
 
 ## Decision
 
-保留 standalone Web，并把 DSH Web 作为第二个应用 adapter。`apps/dsh-web` 使用固定的 DSH `0.1.5-alpha.1`、`dsh-ag-ui@25cf0e04303fde90de64c663796b4a2f63b4cc3a` 和 `dsh-react-surface@2917fd0ff5572f0840f536cccdb5a8382bb04535`；后者以 git submodule 固定。pnpm 继续拥有仓库 workspace，内部样式生成由 pnpm/tsx 执行，Bun 只运行上游 React Surface builder 和 artifact verifier。
+保留 standalone Web，并把 DSH Web 作为第二个应用 adapter。`apps/dsh-web` 使用固定的 DSH `0.1.5-rc.1`、`dsh-ag-ui@25cf0e04303fde90de64c663796b4a2f63b4cc3a` 和 `dsh-react-surface@2917fd0ff5572f0840f536cccdb5a8382bb04535`；后者以 git submodule 固定。上游的 alpha.1 peer 声明由 ClinMesh workspace 中仅匹配 React Surface 的精确 RC overrides 适配；升级边界由 [issue #79](https://github.com/CaiZongyuan/clinmesh/issues/79) 拥有，不扩大其他插件的兼容声明。pnpm 继续拥有仓库 workspace，内部样式生成由 pnpm/tsx 执行，Bun 只运行上游 React Surface builder 和 artifact verifier。
 
 DSH 拥有模型 Session、transcript、Tool 调度、Surface 宿主、外壳 branding 和 resolved theme。ClinMesh 拥有页面上下文、前端 action、proposal、人工审阅、Command receipt、Audit Event 和 Action Trace 关联。Surface 复用 `apps/web` 的 application/runtime seam，使用 Memory Router、独立 QueryClient、作用域主题、ShadowRoot Portal 和 `/clinmesh-api` 同源代理；ClinMesh `system` 主题订阅 DSH theme，显式 light/dark 保持 Surface-local，standalone Web 保持 Browser History、系统主题与原有 API base。
 

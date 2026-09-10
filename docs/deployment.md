@@ -13,7 +13,7 @@
 | 患者梗概与就诊闭环（步骤 4） | 同上，加一个 OpenAI-compatible Provider 及 API key |
 | Synthea 患者生成（步骤 6） | x86-64 主机上的 Docker Engine 与 `docker compose` |
 | 全量检查与生产构建 | Bun `1.4.0`（DSH React Surface artifact 构建使用 `bun`） |
-| DSH Web 原生入口 | DSH CLI `0.1.5-alpha.1` |
+| DSH Web 原生入口 | DSH CLI `0.1.5-rc.1` |
 | Mobile 原生目标 | Xcode 或 Android Studio |
 
 pnpm 版本由根 `package.json` 的 `packageManager` 字段固定，可使用 corepack 自动切换。
@@ -174,7 +174,7 @@ pnpm dev:lan
 
 ### DSH Web 原生入口
 
-DSH CLI 与插件依赖固定为 `0.1.5-alpha.1`；先用 `dsh --version` 核对。首次安装或更新子模块后，构建 runtime 与 ClinMesh，再安装到同一个 Web Profile：
+DSH CLI 与插件依赖固定为 `0.1.5-rc.1`；先用 `dsh --version` 核对。React Surface 和 AG-UI 的固定上游源码仍声明 `0.1.5-alpha.1`；ClinMesh workspace 对 React Surface 的 DSH peer 使用精确 `0.1.5-rc.1` overrides，不修改上游源码或放宽所有 peer 校验。首次安装或更新子模块后，构建 runtime 与 ClinMesh，再安装到同一个 Web Profile：
 
 ```sh
 bun install --cwd vendor/dsh-react-surface --frozen-lockfile
