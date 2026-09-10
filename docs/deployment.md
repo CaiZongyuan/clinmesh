@@ -13,7 +13,7 @@
 | 患者梗概与就诊闭环（步骤 4） | 同上，加一个 OpenAI-compatible Provider 及 API key |
 | Synthea 患者生成（步骤 6） | x86-64 主机上的 Docker Engine 与 `docker compose` |
 | 全量检查与生产构建 | Bun `1.4.0`（DSH React Surface artifact 构建使用 `bun`） |
-| DSH Web 原生入口 | DSH CLI `0.1.1-rc.2` |
+| DSH Web 原生入口 | DSH CLI `0.1.5-rc.1` |
 | Mobile 原生目标 | Xcode 或 Android Studio |
 
 pnpm 版本由根 `package.json` 的 `packageManager` 字段固定，可使用 corepack 自动切换。
@@ -174,11 +174,13 @@ pnpm dev:lan
 
 ### DSH Web 原生入口
 
-首次准备固定依赖与 Web Profile：
+目标 DSH CLI 与 ClinMesh workspace 的 DSH 依赖固定为 `0.1.5-rc.1`；先用 `dsh --version` 核对。React Surface 的固定上游源码直接声明 RC 支持；AG-UI 的固定版本仍保留其 alpha 依赖，兼容验证覆盖它与 RC Host 的实际组合。首次安装或更新子模块后，构建 runtime 与 ClinMesh，再安装到同一个 Web Profile：
 
 ```sh
+bun install --cwd vendor/dsh-react-surface --frozen-lockfile
+bun run --cwd vendor/dsh-react-surface build:runtime
 pnpm --filter @clinmesh/dsh-web build
-dsh plugin --profile web add github:CaiZongyuan/dsh-ag-ui#0c0b7e3608ac012dc2b053043fd0460d101b5db3
+dsh plugin --profile web add github:CaiZongyuan/dsh-ag-ui#25cf0e04303fde90de64c663796b4a2f63b4cc3a
 dsh plugin --profile web add "$PWD/vendor/dsh-react-surface/packages/runtime"
 dsh plugin --profile web add "$PWD/apps/dsh-web"
 ```
@@ -199,7 +201,7 @@ set +a
 dsh web
 ```
 
-从 DSH Web 侧栏的 React applications launcher 打开 ClinMesh。默认使用 `workspace` 模式并保留原生会话；Surface 宽度不足 `1024px` 时自动退化到 `full-frame`，页面导航使用 Memory Router，不修改 DSH document pathname。当前模式只信任安装到同一 Web Profile 的插件，并只允许合成数据。
+重新启动 DSH Web 后，从侧栏的 React applications launcher 打开 ClinMesh；Profile 只有一个 Surface 时直接打开，多个 Surface 时显示选择器。默认使用 `workspace` 模式并保留原生会话；Surface 宽度不足 `1024px` 时自动退化到 `full-frame`，页面导航使用 Memory Router，不修改 DSH document pathname。当前模式只信任安装到同一 Web Profile 的插件，并只允许合成数据。
 
 经 Turborepo 的根 `pnpm dev:server` 不转发未声明的 `CLINMESH_AI_*` 变量；在 worktree 或需要显式加载 `.env` 的场景使用 `pnpm --filter @clinmesh/server dev` 直接启动，否则 Patient Brief 和 Investigation provider 会被视为未配置。
 
