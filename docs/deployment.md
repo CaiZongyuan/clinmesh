@@ -174,7 +174,7 @@ pnpm dev:lan
 
 ### DSH Web 原生入口
 
-目标 DSH CLI 与 ClinMesh workspace 的 DSH 依赖固定为 `0.1.5-rc.1`；先用 `dsh --version` 核对。React Surface 和 AG-UI 的固定上游源码仍声明 `0.1.5-alpha.1`；ClinMesh workspace 对 React Surface 的 DSH peer 使用精确 `0.1.5-rc.1` overrides，不修改上游源码或放宽所有 peer 校验。上游 runtime 和 AG-UI 的独立安装保留各自的 alpha 依赖，workspace overrides 不传播到 DSH Profile；兼容验证须覆盖它们与 RC Host 的实际组合。首次安装或更新子模块后，构建 runtime 与 ClinMesh，再安装到同一个 Web Profile：
+目标 DSH CLI 与 ClinMesh workspace 的 DSH 依赖固定为 `0.1.5-rc.1`；先用 `dsh --version` 核对。React Surface 的固定上游源码直接声明 RC 支持；AG-UI 的固定版本仍保留其 alpha 依赖，兼容验证覆盖它与 RC Host 的实际组合。首次安装或更新子模块后，构建 runtime 与 ClinMesh，再安装到同一个 Web Profile：
 
 ```sh
 bun install --cwd vendor/dsh-react-surface --frozen-lockfile
