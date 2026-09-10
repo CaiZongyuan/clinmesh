@@ -34,7 +34,7 @@ function findChrome(): string {
   return chromePath
 }
 
-async function renderInHeadlessChrome(documentContent: string): Promise<string> {
+async function renderInHeadlessChrome(documentContent: string, virtualTimeBudgetMs?: number): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-browser-contract-'))
   const htmlPath = join(directory, 'index.html')
   const profilePath = join(directory, 'chrome-profile')
@@ -47,6 +47,7 @@ async function renderInHeadlessChrome(documentContent: string): Promise<string> 
       '--no-first-run',
       `--user-data-dir=${profilePath}`,
       '--dump-dom',
+      ...(virtualTimeBudgetMs === undefined ? [] : [`--virtual-time-budget=${virtualTimeBudgetMs}`]),
       pathToFileURL(htmlPath).href,
     ], { maxBuffer: 10 * 1024 * 1024, timeout: 20_000 })
     return stdout
@@ -55,8 +56,8 @@ async function renderInHeadlessChrome(documentContent: string): Promise<string> 
   }
 }
 
-export async function readJsonFromHeadlessChrome(documentContent: string): Promise<unknown> {
-  const rendered = await renderInHeadlessChrome(documentContent)
+export async function readJsonFromHeadlessChrome(documentContent: string, virtualTimeBudgetMs?: number): Promise<unknown> {
+  const rendered = await renderInHeadlessChrome(documentContent, virtualTimeBudgetMs)
   const encodedResult = /<title>([^<]+)<\/title>/.exec(rendered)?.[1]
   if (encodedResult === undefined) throw new Error('Chrome did not return browser contract results.')
   return JSON.parse(Buffer.from(encodedResult, 'base64').toString('utf8'))
