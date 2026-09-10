@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { WebApp } from '@clinmesh/web/application'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { createMemoryHistory } from '@tanstack/react-router'
 import {
   defineReactSurface,
