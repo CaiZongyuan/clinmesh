@@ -25,6 +25,7 @@ declare module 'dsh-react-surface/client' {
       }
     }
     close(): void
+    layout: 'workspace' | 'full-frame' | 'center' | 'right-panel' | 'bottom-panel'
     location: string
     navigate(location: string): void
   }
@@ -35,6 +36,15 @@ declare module 'dsh-react-surface/client' {
     component: import('react').ComponentType<ReactSurfaceProps>
     [key: string]: unknown
   }
+
+  export interface ReactSurfaceRegistry {
+    setLayout(id: string, layout: ReactSurfaceProps['layout']): void
+    register(definition: ReactSurfaceDefinition): () => void
+    open(id: string, location?: string): void
+    close(): void
+  }
+
+  export function apply(ctx: import('@deepseek-ai/cordis').Context): void
 
   export function defineReactSurface(
     definition: ReactSurfaceDefinition,

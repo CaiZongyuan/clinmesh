@@ -356,7 +356,7 @@ export function DiagnosisPage({ actions, catalog, elementId, locale, messages, r
           >
             <CheckCircleIcon data-icon="inline-start" />{messages.confirmDiagnosis}
           </AlertDialogTrigger>
-          <AlertDialogContent className="sm:max-w-lg">
+          <AlertDialogContent className="@min-[640px]/case-content:max-w-lg">
             <AlertDialogHeader>
               <AlertDialogTitle>{locale === 'zh-CN' ? '确认诊断版本' : 'Confirm diagnosis revision'}</AlertDialogTitle>
               <AlertDialogDescription>

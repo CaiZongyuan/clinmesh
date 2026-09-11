@@ -338,7 +338,7 @@ function ClinicalRecordEditor({ content, idPrefix, messages, onChange }: {
         const id = `${idPrefix}-${field}`
         const value = content[field] ?? ''
         return (
-          <Field className="grid gap-2 border-b px-3 py-2.5 last:border-b-0 sm:grid-cols-[6rem_minmax(0,1fr)] sm:items-start" key={field}>
+          <Field className="grid gap-2 border-b px-3 py-2.5 last:border-b-0 @min-[640px]/case-content:grid-cols-[6rem_minmax(0,1fr)] @min-[640px]/case-content:items-start" key={field}>
             <FieldLabel className="pt-2" htmlFor={id}>{label}</FieldLabel>
             {multiline ? (
               <Textarea
@@ -406,8 +406,8 @@ function ClinicalDocumentForm({
         }, String(data.get('revisionReason') ?? ''))
       }}
     >
-      <FieldGroup className="grid grid-cols-1 gap-0 overflow-hidden rounded-md border md:grid-cols-2">
-        <Field className="border-b p-3 md:col-span-2">
+      <FieldGroup className="grid grid-cols-1 gap-0 overflow-hidden rounded-md border @min-[768px]/case-content:grid-cols-2">
+        <Field className="border-b p-3 @min-[768px]/case-content:col-span-2">
           <FieldLabel htmlFor={`${idPrefix}-chief-complaint`}>{messages.chiefComplaint}</FieldLabel>
           <Textarea
             defaultValue={content.chiefComplaint}
@@ -418,7 +418,7 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field className="border-b p-3 md:col-span-2">
+        <Field className="border-b p-3 @min-[768px]/case-content:col-span-2">
           <FieldLabel htmlFor={`${idPrefix}-history`}>{messages.historyOfPresentIllness}</FieldLabel>
           <Textarea
             className="min-h-24"
@@ -430,7 +430,7 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field className="border-b p-3 md:col-span-2">
+        <Field className="border-b p-3 @min-[768px]/case-content:col-span-2">
           <FieldLabel htmlFor={`${idPrefix}-prior-history`}>{messages.priorMedicalHistory}</FieldLabel>
           <Textarea
             defaultValue={content.priorMedicalHistory}
@@ -441,7 +441,7 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field className="border-b p-3 md:col-span-2">
+        <Field className="border-b p-3 @min-[768px]/case-content:col-span-2">
           <FieldLabel htmlFor={`${idPrefix}-examination`}>{messages.physicalExamination}</FieldLabel>
           <Textarea
             defaultValue={content.physicalExamination}
@@ -452,7 +452,7 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field className="border-b p-3 md:col-span-2">
+        <Field className="border-b p-3 @min-[768px]/case-content:col-span-2">
           <FieldLabel htmlFor={`${idPrefix}-auxiliary`}>{messages.auxiliaryExamination}</FieldLabel>
           <Textarea
             defaultValue={content.auxiliaryExamination}
@@ -463,7 +463,7 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field className="border-b p-3 md:border-r">
+        <Field className="border-b p-3 @min-[768px]/case-content:border-r">
           <FieldLabel htmlFor={`${idPrefix}-assessment`}>{messages.assessment}</FieldLabel>
           <Textarea
             defaultValue={content.assessment}
@@ -485,7 +485,7 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
-        <Field className="border-b p-3 md:col-span-2">
+        <Field className="border-b p-3 @min-[768px]/case-content:col-span-2">
           <FieldLabel htmlFor={`${idPrefix}-follow-up`}>{messages.followUp}</FieldLabel>
           <Textarea
             defaultValue={content.followUp}
@@ -497,7 +497,7 @@ function ClinicalDocumentForm({
           />
         </Field>
         {includeRevisionReason ? (
-          <Field className="border-b p-3 md:col-span-2">
+          <Field className="border-b p-3 @min-[768px]/case-content:col-span-2">
             <FieldLabel htmlFor={`${idPrefix}-reason`}>{messages.revisionReason}</FieldLabel>
             <Textarea
               id={`${idPrefix}-reason`}
@@ -508,7 +508,7 @@ function ClinicalDocumentForm({
             />
           </Field>
         ) : null}
-        <Field className="items-end p-3 md:col-span-2">
+        <Field className="items-end p-3 @min-[768px]/case-content:col-span-2">
           <Button disabled={pending} type="submit">
             {pending
               ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
@@ -536,7 +536,7 @@ function ClinicalDocumentContentView({ content, messages }: {
     [messages.followUp, content.followUp],
   ]
   return (
-    <dl className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
+    <dl className="grid grid-cols-1 gap-3 text-sm @min-[768px]/case-content:grid-cols-2">
       {fields.flatMap(([label, value]) => value === undefined ? [] : [(
         <div key={label}>
           <dt className="text-muted-foreground">{label}</dt>

@@ -173,6 +173,75 @@ describe('Web application shell', () => {
     expect(screen.queryByRole('img', { name: 'Clinmesh' })).toBeNull()
   })
 
+  it('places the Surface display control in the application sidebar', async () => {
+    const toggle = vi.fn()
+    const user = userEvent.setup()
+    const history = createMemoryHistory({ initialEntries: ['/'] })
+    const rendered = await renderWebApp({ history, runtime: {
+      mode: 'surface', surfaceDisplay: { fullscreen: false, toggle },
+    } })
+    const enter = screen.getByRole('button', { name: '全屏 ClinMesh' })
+    expect(enter.closest('[data-slot="sidebar-footer"]')).not.toBeNull()
+    expect(screen.queryByRole('toolbar', { name: 'ClinMesh 显示模式' })).toBeNull()
+    await user.click(enter)
+    expect(toggle).toHaveBeenCalledTimes(1)
+    rendered.rerender(<WebApp history={history} runtime={{
+      mode: 'surface', surfaceDisplay: { fullscreen: true, toggle },
+    }} />)
+    const exit = screen.getByRole('button', { name: '返回 DSH 分屏' })
+    expect(exit.closest('[data-slot="sidebar-footer"]')).not.toBeNull()
+    await user.click(exit)
+    expect(toggle).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the fullscreen return control in the narrow navigation drawer', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 360, 600))
+    const toggle = vi.fn()
+    const user = userEvent.setup()
+    await renderWebApp({ runtime: { mode: 'surface', surfaceDisplay: { fullscreen: true, toggle } } })
+    expect(screen.queryByRole('button', { name: '返回 DSH 分屏' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: '切换导航栏' }))
+    const exit = await screen.findByRole('button', { name: '返回 DSH 分屏' })
+    expect(exit.closest('[role="dialog"]')).not.toBeNull()
+    await user.click(exit)
+    expect(toggle).toHaveBeenCalledOnce()
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '岗位导航' })).toBeNull())
+  })
+
+  it('keeps a fullscreen exit in the sign-in card when no sidebar is available', async () => {
+    vi.mocked(fetch).mockResolvedValue(Response.json({
+      error: { code: 'AUTHENTICATION_REQUIRED', message: 'Authentication required' },
+    }, { status: 401 }))
+    const toggle = vi.fn()
+    const user = userEvent.setup()
+    await renderWebApp({ runtime: { mode: 'surface', surfaceDisplay: { fullscreen: true, toggle } } })
+    const exit = screen.getByRole('button', { name: '返回 DSH 分屏' })
+    expect(exit.closest('[data-slot="card-footer"]')).not.toBeNull()
+    await user.click(exit)
+    expect(toggle).toHaveBeenCalledOnce()
+  })
+
+  it('keeps fullscreen escapable while session loading fails without a sidebar', async () => {
+    const toggle = vi.fn()
+    const user = userEvent.setup()
+    vi.mocked(fetch).mockResolvedValue(Response.json({
+      error: { code: 'INTERNAL_ERROR', message: 'Service unavailable' },
+    }, { status: 500 }))
+    render(<WebApp runtime={{ mode: 'surface', surfaceDisplay: { fullscreen: true, toggle } }} />)
+    await screen.findByRole('alert')
+    await user.click(screen.getByRole('button', { name: '返回 DSH 分屏' }))
+    expect(toggle).toHaveBeenCalledOnce()
+  })
+
+  it('keeps fullscreen escapable before the session request completes', async () => {
+    vi.mocked(fetch).mockImplementation(() => new Promise(() => {}))
+    const toggle = vi.fn()
+    const user = userEvent.setup()
+    render(<WebApp runtime={{ mode: 'surface', surfaceDisplay: { fullscreen: true, toggle } }} />)
+    await user.click(await screen.findByRole('button', { name: '返回 DSH 分屏' }))
+    expect(toggle).toHaveBeenCalledOnce()
+  })
+
   it('uses an isolated API prefix and memory history in a DSH Surface', async () => {
     window.history.replaceState(null, '', '/dsh-host')
     const history = createMemoryHistory({ initialEntries: ['/'] })

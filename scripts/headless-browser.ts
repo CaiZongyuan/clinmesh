@@ -8,7 +8,7 @@ import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 
-function findChrome(): string {
+export function findChrome(): string {
   const configuredPath = process.env.CHROME_PATH
   const candidates = [
     configuredPath,

@@ -58,6 +58,7 @@ import { getWorkspaceMessages } from './workspace-i18n.ts'
 import { RoleWorkspace } from './role-workspaces.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { ComponentCatalog } from './component-catalog.tsx'
+import { SurfaceFullscreenExit } from './surface-display-control.tsx'
 import { SettingsWorkspace } from './settings-workspace.tsx'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import {
@@ -177,6 +178,7 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
       <main aria-label={messages.loading} className="mx-auto flex min-h-svh w-full max-w-lg flex-col justify-center gap-3 p-6">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-24 w-full" />
+        <SurfaceFullscreenExit locale={preferences.locale} />
       </main>
     )
   }
@@ -187,12 +189,13 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
 
   if (session.isError) {
     return (
-      <main className="mx-auto flex min-h-svh w-full max-w-lg items-center p-6">
+      <main className="mx-auto flex min-h-svh w-full max-w-lg flex-col justify-center gap-3 p-6">
         <Alert variant="destructive">
           <CircleAlertIcon aria-hidden="true" />
           <AlertTitle>{getWorkspaceErrorTitle(session.error, messages, messages.serviceError)}</AlertTitle>
           <AlertDescription>{getWorkspaceErrorMessage(session.error, messages)}</AlertDescription>
         </Alert>
+        <SurfaceFullscreenExit locale={preferences.locale} />
       </main>
     )
   }
@@ -334,6 +337,7 @@ function SignInScreen({ locale }: { locale: 'en-US' | 'zh-CN' }): React.JSX.Elem
           </form>
         </CardContent>
         <CardFooter>
+          <SurfaceFullscreenExit locale={locale} />
           <Button className="ml-auto" disabled={mutation.isPending} form="clinmesh-sign-in" type="submit">
             <LogInIcon data-icon="inline-start" />
             {mutation.isPending ? messages.signingIn : messages.signIn}
@@ -470,6 +474,7 @@ function WebApplication({
   }))
   useEffect(() => apiConfiguration.release, [apiConfiguration])
   const runtime = useMemo(() => ({
+    ...(runtimeOptions.surfaceDisplay === undefined ? {} : { surfaceDisplay: runtimeOptions.surfaceDisplay }),
     appearanceRoot: applicationRoot,
     mode: runtimeOptions.mode ?? 'standalone',
     ...(runtimeOptions.onExit === undefined ? {} : { onExit: runtimeOptions.onExit }),
@@ -486,6 +491,7 @@ function WebApplication({
       : { surfaceSessionId: runtimeOptions.surfaceSessionId }),
   }), [
     runtimeOptions.mode,
+    runtimeOptions.surfaceDisplay,
     runtimeOptions.onExit,
     runtimeOptions.surfaceActive,
     runtimeOptions.surfaceAgent,

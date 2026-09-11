@@ -6,8 +6,10 @@ import {
   defineReactSurface,
   type ReactSurfaceDefinition,
   type ReactSurfaceProps,
+  type ReactSurfaceRegistry,
 } from 'dsh-react-surface/client'
 import { clinMeshStyles } from './styles.generated.ts'
+import { registerProfileBrand } from './profile-brand.tsx'
 
 interface ClientSessionsPort {
   list: {
@@ -33,7 +35,9 @@ function ClinMeshSurface({
   navigate,
   surfaceColorScheme,
   surfaceSessionId,
+  surfaceDisplay,
 }: ReactSurfaceProps & {
+  surfaceDisplay: { fullscreen: boolean; toggle(): void }
   surfaceColorScheme: 'dark' | 'light'
   surfaceSessionId?: string
 }): React.JSX.Element {
@@ -72,6 +76,7 @@ function ClinMeshSurface({
         surfaceAgent: agent,
         surfaceAgentStatus: capabilities.agent.status,
         surfaceColorScheme,
+        surfaceDisplay,
         ...(surfaceSessionId === undefined ? {} : { surfaceSessionId }),
       }}
     />
@@ -85,6 +90,7 @@ function normalizeLocation(location: string): string {
 export function createDefinition(ctx: ClientContext): Readonly<ReactSurfaceDefinition> {
   const sessions = ctx.get('sessions') as unknown as ClientSessionsPort
   const theme = ctx.get('theme') as unknown as ClientThemePort
+  const surfaces = ctx.get('reactSurfaces') as unknown as ReactSurfaceRegistry
   const subscribe = (listener: () => void): (() => void) => sessions.list.subscribe(listener)
   const subscribeTheme = (listener: () => void): (() => void) => (
     ctx as unknown as ClientThemeContext
@@ -103,6 +109,10 @@ export function createDefinition(ctx: ClientContext): Readonly<ReactSurfaceDefin
     return (
       <ClinMeshSurface
         {...props}
+        surfaceDisplay={{
+          fullscreen: props.layout === 'full-frame',
+          toggle: () => surfaces.setLayout('clinmesh.his', props.layout === 'full-frame' ? 'workspace' : 'full-frame'),
+        }}
         surfaceColorScheme={surfaceColorScheme}
         {...(surfaceSessionId === undefined ? {} : { surfaceSessionId })}
       />
@@ -120,11 +130,11 @@ export function createDefinition(ctx: ClientContext): Readonly<ReactSurfaceDefin
   initialLocation: '/',
   layout: {
     default: 'workspace',
-    fallback: 'full-frame',
-    minSurfaceWidth: 1024,
+    fallback: 'shrink',
+    minSurfaceWidth: 360,
     persist: true,
     resizable: true,
-    supported: ['workspace', 'center', 'full-frame'],
+    supported: ['workspace', 'full-frame'],
   },
   lifecycle: { mount: 'lazy', retention: 'keep-alive' },
   order: 10,
@@ -133,9 +143,10 @@ export function createDefinition(ctx: ClientContext): Readonly<ReactSurfaceDefin
   })
 }
 
-export const inject = ['reactSurfaces', 'sessions', 'theme']
+export const inject = ['reactSurfaces', 'sessions', 'theme', 'slots', 'locale']
 
 export function apply(ctx: ClientContext): void {
+  ctx.effect(() => registerProfileBrand(ctx), 'clinmesh-dsh-web: register Profile identity')
   const definition = createDefinition(ctx)
   const reactSurfaces = (ctx as ClientContext & {
     reactSurfaces: {

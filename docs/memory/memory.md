@@ -12,6 +12,10 @@
 - 用户询问合成演示账号或密码时，从当前 Scenario 或 seed owner 直接给出可试用信息；真实凭证、平台密钥和患者信息永不写入本文或公开 artifact。
 - 快速 UI 探索默认只在隔离的 `/ui-dev` 原型入口生成界面，使用 mock 数据承载必要状态和交互，不接生产业务、不补测试，也不启动完整交付流程；根据用户的视觉反馈直接迭代，只有用户明确选定方案并要求落地后才进入正式实现。
 
+- ClinMesh 与 DSH 会话保持左右分屏，不因窄窗口改为上下排列或自动全屏。全屏由用户手动切换，并必须提供无需刷新即可返回 DSH 分屏的明确入口。切换按钮放在 ClinMesh 左侧导航栏内，不在顶部额外占一行。
+
+- 当前 DSH 环境作为 ClinMesh 工作台使用：宿主左侧栏的 Logo 与名称固定显示 ClinMesh，不随应用打开或关闭切回 DSH；使用官方品牌插槽和项目现有标志。新会话中央也使用该标志与项目产品标语，不保留鲸鱼和“探索未至之境”。
+
 ## 产品参考优先级
 
 - 中国公立医院 HIS 的业务语义、岗位交接、正向流程和逆向状态以 OpenHIS 为首要参考；FHIR Repository、history、Search、授权和审计基础设施以 Medplum 为首要参考。两者是长期业务与技术参照，但不授权复制其物理架构或未实际闭环的菜单和占位实现。
@@ -39,6 +43,8 @@
 - Windows checkout 若把仓库中的 CLAUDE.md 符号链接物化为链接目标文本，文档换行检查会误报；CLI 的 POSIX 权限与文件符号链接测试也不能由该 checkout 证明。使用 Linux 文件系统上的独立 Git 检出验证，并把 Linux Node、pnpm 与 Bun 放在 PATH 前端，避免子进程拾取 Windows pnpm shim。跨命令复用的 WSL 验证副本和产物使用持久目录，避免重启清理 `/tmp`。
 
 - Linux 中 Chrome for Testing 的独立 profile 若启动后不返回 `--dump-dom`，可将 `CHROME_PATH` 指向同版本 Chrome Headless Shell。容器或 root 环境由外部 wrapper 提供必要启动参数，保持测试文档、断言与超时不变；通过 Turbo 运行时需显式转发该环境变量。
+
+- WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。
 
 ## 浏览器演示经验
 

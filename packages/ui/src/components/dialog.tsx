@@ -6,6 +6,7 @@ import { XIcon } from "lucide-react"
 
 import { Button } from "#components/button"
 import { cn } from "#lib/utils"
+import { usePortalContainer } from "#components/portal-context"
 
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
@@ -19,8 +20,16 @@ function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
 }
 
-function DialogPortal({ ...props }: DialogPrimitive.Portal.Props) {
-  return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />
+function DialogPortal({ container, ...props }: DialogPrimitive.Portal.Props) {
+  const runtimeContainer = usePortalContainer()
+  const resolvedContainer = container ?? runtimeContainer
+  return (
+    <DialogPrimitive.Portal
+      data-slot="dialog-portal"
+      {...(resolvedContainer === null ? {} : { container: resolvedContainer })}
+      {...props}
+    />
+  )
 }
 
 function DialogOverlay({ className, ...props }: DialogPrimitive.Backdrop.Props) {
