@@ -373,7 +373,7 @@ export function DiagnosisCatalogDialog({
         mode={mode}
         onClick={openDialog}
       />
-      <DialogContent className="h-[min(680px,calc(100svh-2rem))] @min-[640px]/case-content:max-w-4xl">
+      <DialogContent className="h-[min(680px,calc(100svh-2rem))] sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>{messages.chooseDiagnosis}</DialogTitle>
           <DialogDescription>{messages.diagnosisDescription}</DialogDescription>
@@ -523,7 +523,7 @@ export function LaboratoryCatalogDialog({
   return (
     <Dialog onOpenChange={setOpen} open={open}>
       <CatalogTriggerButton label={messages.selectLaboratory} mode="select" onClick={openDialog} />
-      <DialogContent className="h-[min(640px,calc(100svh-2rem))] @min-[640px]/case-content:max-w-4xl">
+      <DialogContent className="h-[min(640px,calc(100svh-2rem))] sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>{messages.chooseLaboratory}</DialogTitle>
           <DialogDescription>{messages.laboratoryDescription}</DialogDescription>
@@ -728,7 +728,7 @@ export function MedicationCatalogDialog({
         mode={mode}
         onClick={openDialog}
       />
-      <DialogContent className="h-[min(720px,calc(100svh-2rem))] @min-[640px]/case-content:max-w-6xl">
+      <DialogContent className="h-[min(720px,calc(100svh-2rem))] sm:max-w-6xl">
         <DialogHeader>
           <DialogTitle>{messages.chooseMedication}</DialogTitle>
           <DialogDescription>{messages.medicationDescription}</DialogDescription>

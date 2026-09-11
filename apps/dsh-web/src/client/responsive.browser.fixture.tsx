@@ -1,3 +1,4 @@
+import { MedicationCatalogDialog } from '../../../web/src/app/doctor/catalog-picker-dialogs.tsx'
 import {
   DoctorWorkspaceLayout,
   DoctorCaseLayout,
@@ -50,6 +51,22 @@ async function run() {
           </Sidebar>
           <div style={{ minWidth: 0, flex: 1 }}>
             <Content />
+            <div data-catalog>
+              <MedicationCatalogDialog
+                excludedIds={new Set()}
+                localCatalog={[]}
+                locale="en-US"
+                onSelect={() => {}}
+                search={{
+                  data: undefined,
+                  error: null,
+                  isError: false,
+                  isFetching: false,
+                  isPending: false,
+                  onSearch: () => {},
+                }}
+              />
+            </div>
             <DoctorWorkspaceLayout
               selectedCaseId="case-1"
               queueLabel="Queue"
@@ -87,12 +104,26 @@ async function run() {
       ),
     })
   }
+  host.style.width = '1400px'
+  await settle()
+  shadow.querySelector<HTMLButtonElement>('[data-catalog] button')!.click()
+  await settle()
+  const catalog = shadow.querySelector('[role=dialog]')!
+  const catalogWidth = catalog.getBoundingClientRect().width
+  catalog.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }),
+  )
+  await new Promise((resolve) => setTimeout(resolve, 200))
   host.style.width = '360px'
   await settle()
   shadow.querySelector<HTMLButtonElement>('button[aria-label="Navigation"]')?.click()
   await new Promise((resolve) => setTimeout(resolve, 200))
   document.title = btoa(
-    JSON.stringify({ steps, navigationVisible: shadow.querySelector('[role="dialog"]') !== null }),
+    JSON.stringify({
+      steps,
+      catalogWidth,
+      navigationVisible: shadow.querySelector('[role="dialog"]') !== null,
+    }),
   )
 }
 void run().catch((error) => {

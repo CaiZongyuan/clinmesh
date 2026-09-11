@@ -54,6 +54,7 @@ it('adapts navigation to the Surface width and retains edits across resize', asy
         }),
       ),
       navigationVisible: z.boolean(),
+      catalogWidth: z.number(),
     })
     .parse(response)
   expect(actual.steps.map(({ width, compact, draft }) => ({ width, compact, draft }))).toEqual(
@@ -68,5 +69,6 @@ it('adapts navigation to the Surface width and retains edits across resize', asy
     expect(step.queueSwitch).toBe(true)
     expect(step.contextSwitch).toBe(true)
   }
+  expect(actual.catalogWidth).toBeGreaterThan(1000)
   expect(actual.navigationVisible).toBe(true)
 }, 30_000)

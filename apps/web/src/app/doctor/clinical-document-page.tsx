@@ -189,7 +189,7 @@ export function ClinicalDocumentPage({
                 }}
                 open={revisionPreview !== undefined}
               >
-                <AlertDialogContent className="@min-[640px]/case-content:max-w-2xl">
+                <AlertDialogContent className="sm:max-w-2xl">
                   <AlertDialogHeader>
                     <AlertDialogTitle>{messages.confirmClinicalDocumentRevision}</AlertDialogTitle>
                     <AlertDialogDescription>
@@ -272,7 +272,7 @@ export function ClinicalDocumentPage({
             }}
             open={currentPreview !== undefined}
           >
-            <AlertDialogContent className="@min-[640px]/case-content:max-w-2xl">
+            <AlertDialogContent className="sm:max-w-2xl">
               <AlertDialogHeader>
                 <AlertDialogTitle>{messages.confirmClinicalRecordSign}</AlertDialogTitle>
                 <AlertDialogDescription>{messages.clinicalDocumentSignDescription}</AlertDialogDescription>
