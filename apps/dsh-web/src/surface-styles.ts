@@ -48,6 +48,24 @@ export async function buildSurfaceStyles(): Promise<string> {
   const source = typeof asset.source === 'string' ? asset.source : Buffer.from(asset.source).toString()
   const stylesheet = postcss.parse(source)
 
+  // Chromium does not register @property rules inside a ShadowRoot. Initialize
+  // non-inherited Tailwind properties there without registering them on the host.
+  const defaults = postcss.rule({ selector: '*, ::before, ::after, ::backdrop' })
+  stylesheet.walkAtRules('property', property => {
+    let initialValue: string | undefined
+    let inherits: string | undefined
+    property.walkDecls(declaration => {
+      if (declaration.prop === 'initial-value') initialValue = declaration.value
+      if (declaration.prop === 'inherits') inherits = declaration.value
+    })
+    if (inherits === 'false' && initialValue !== undefined) {
+      defaults.append(postcss.decl({ prop: property.params, value: initialValue }))
+    }
+  })
+  const propertiesLayer = postcss.atRule({ name: 'layer', params: 'properties' })
+  propertiesLayer.append(defaults)
+  stylesheet.append(propertiesLayer)
+
   stylesheet.walkRules(rule => {
     if (rule.selector === undefined) return
     rule.selector = selectorParser(selectors => {

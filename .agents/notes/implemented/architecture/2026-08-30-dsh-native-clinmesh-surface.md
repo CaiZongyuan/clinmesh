@@ -42,6 +42,8 @@ Host 代理只接受固定 loopback Hono origin，并限制路径、方法、请
 
 ## Consequences
 
+ShadowRoot 样式初始值及 React 18/19 菜单引用兼容见 [Surface 边框与菜单引用](../bug-fix/2026-09-10-dsh-surface-borders-and-menu-refs.md)。
+
 Web 的服务端状态仍由 TanStack Query 拥有，Surface 隐藏时保留客户端草稿；Memory Router 不修改 DSH document pathname。Dialog、Menu、Select、Sheet、Tooltip 和 Toast 通过注入的 Portal 留在 ShadowRoot。`workspace` 是默认布局，Surface 小于 `1024px` 时退化到 `full-frame`；应用高度受宿主约束，业务 panel 是纵向滚动 owner，长患者历史不会被 DSH layer 裁剪。
 
 医生 Agent registration 位于共享 `DoctorCaseController`，使用当前 `consultation/record/laboratory/diagnosis/prescription` 页面 ID 和 controller 已有 mutations。Agent 草稿动作通过同一保存接口持久化并刷新 Query；成功后 controller 按病例和草稿种类递增水合 revision，只重建受影响的本地编辑器，检验草稿同时同步 controller 持有的项目与适应证选择，避免旧 autosave state 回写覆盖 Agent 结果。病例级检验 Reference Catalog 是分页动态集合，Tool 使用共享契约限定的 ID 字符串，Hono authorization 和 Command 再按当前病例、目录状态与结果生成能力解析并验证。报告更正 Tool 还要求当前账户通过服务端 membership 持有 active administrator role，普通医生不会取得该 operation；正式动作继续复用 controller 的 Command mutation 与 detached review。
