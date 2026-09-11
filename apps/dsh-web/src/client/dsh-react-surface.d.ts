@@ -41,6 +41,7 @@ declare module 'dsh-react-surface/client' {
     setLayout(id: string, layout: ReactSurfaceProps['layout']): void
     register(definition: ReactSurfaceDefinition): () => void
     open(id: string, location?: string): void
+    close(): void
   }
 
   export function apply(ctx: import('@deepseek-ai/cordis').Context): void

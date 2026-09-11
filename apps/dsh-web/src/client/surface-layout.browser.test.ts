@@ -64,6 +64,8 @@ it('returns from manual fullscreen to the retained native split without remounti
         restored: state,
         resized: z.array(state),
         returnVisible: z.boolean(),
+        brandsBeforeOpen: z.array(z.string()),
+        brandsAfterClose: z.array(z.string()),
       })
       .parse(response)
     expect(actual.initial).toMatchObject({
@@ -83,6 +85,8 @@ it('returns from manual fullscreen to the retained native split without remounti
       ),
     ).toBe(true)
     expect(actual.resized.at(-1)).toEqual(actual.initial)
+    expect(actual.brandsBeforeOpen).toEqual(['sidebar.brand.mark', 'sidebar.brand.name'])
+    expect(actual.brandsAfterClose).toEqual(actual.brandsBeforeOpen)
   } finally {
     await browser.close()
   }

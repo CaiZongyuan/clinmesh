@@ -3,14 +3,18 @@ import * as React from 'react'
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import type { Context } from '@deepseek-ai/cordis'
-import { createDefinition } from './index.tsx'
+import { apply as applyClinMesh } from './index.tsx'
 
 async function run() {
   const reset = document.createElement('style')
   reset.textContent = '* { box-sizing: border-box; }'
   document.head.append(reset)
   const provided: { registry?: ReactSurfaceRegistry; host?: React.ComponentType } = {}
+  const brandSlots = new Set<string>()
   const ctx = {
+    get reactSurfaces() {
+      return provided.registry
+    },
     get(name: string) {
       if (name === 'reactSurfaces') return provided.registry
       if (name === 'theme') return { getTheme: () => ({ active: { colorScheme: 'light' } }) }
@@ -29,14 +33,18 @@ async function run() {
       inject: (_name: string, callback: () => () => void) => callback(),
       register: (entry: { name: string }, component: React.ComponentType) => {
         if (entry.name === 'shell.overlay') provided.host = component
-        return () => {}
+        if (entry.name.startsWith('sidebar.brand.')) brandSlots.add(entry.name)
+        return () => {
+          brandSlots.delete(entry.name)
+        }
       },
     },
   }
   applySurfaceRuntime(ctx as unknown as Context)
   const { registry, host: SurfaceHost } = provided
   if (!registry || !SurfaceHost) throw new Error('Surface runtime did not provide its host')
-  registry.register(createDefinition(ctx as unknown as Context))
+  applyClinMesh(ctx as unknown as Context)
+  const brandsBeforeOpen = [...brandSlots]
   const frame = document.createElement('div')
   frame.style.cssText =
     'position:relative;display:grid;grid-template-columns:280px 1fr 300px;width:2048px;height:800px'
@@ -55,7 +63,8 @@ async function run() {
   const draft = shadow.querySelector<HTMLInputElement>('input')!
   draft.value = 'kept clinical draft'
   const snapshot = () => ({
-    controlInSidebar: shadow.querySelector('button')?.closest('[data-slot="sidebar-footer"]') !== null,
+    controlInSidebar:
+      shadow.querySelector('button')?.closest('[data-slot="sidebar-footer"]') !== null,
     hasTopToolbar: shadow.querySelector('[role="toolbar"]') !== null,
     mode: frame.getAttribute('data-dsh-react-surface-layout'),
     hiddenNative: frame.querySelector('[data-pane="conversation"]')!.hasAttribute('inert'),
@@ -81,7 +90,19 @@ async function run() {
     await settle()
     resized.push(snapshot())
   }
-  document.title = btoa(JSON.stringify({ initial, fullscreen, restored, resized, returnVisible }))
+  flushSync(() => registry.close())
+  const brandsAfterClose = [...brandSlots]
+  document.title = btoa(
+    JSON.stringify({
+      initial,
+      fullscreen,
+      restored,
+      resized,
+      returnVisible,
+      brandsBeforeOpen,
+      brandsAfterClose,
+    }),
+  )
 }
 void run().catch((error) => {
   document.title = btoa(JSON.stringify({ error: String(error) }))

@@ -9,6 +9,7 @@ import {
   type ReactSurfaceRegistry,
 } from 'dsh-react-surface/client'
 import { clinMeshStyles } from './styles.generated.ts'
+import { registerProfileBrand } from './profile-brand.tsx'
 
 interface ClientSessionsPort {
   list: {
@@ -142,9 +143,10 @@ export function createDefinition(ctx: ClientContext): Readonly<ReactSurfaceDefin
   })
 }
 
-export const inject = ['reactSurfaces', 'sessions', 'theme']
+export const inject = ['reactSurfaces', 'sessions', 'theme', 'slots']
 
 export function apply(ctx: ClientContext): void {
+  ctx.effect(() => registerProfileBrand(ctx), 'clinmesh-dsh-web: register Profile identity')
   const definition = createDefinition(ctx)
   const reactSurfaces = (ctx as ClientContext & {
     reactSurfaces: {
