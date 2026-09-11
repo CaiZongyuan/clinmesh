@@ -38,7 +38,11 @@ describe('ClinMesh React Surface definition', () => {
     }
     apply(ctx as unknown as ClientContext)
     expect(registered).toBe(true)
-    expect([...occupants.keys()]).toEqual(['sidebar.brand.mark', 'sidebar.brand.name'])
+    expect([...occupants.keys()]).toEqual([
+      'sidebar.brand.mark',
+      'sidebar.brand.name',
+      'conversation.hero.brand.mark',
+    ])
     const Mark = occupants.get('sidebar.brand.mark')!
     const Name = occupants.get('sidebar.brand.name')!
     expect(renderToStaticMarkup(createElement(Name, { size: 28 }))).toContain('ClinMesh')

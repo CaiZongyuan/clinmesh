@@ -143,7 +143,7 @@ export function createDefinition(ctx: ClientContext): Readonly<ReactSurfaceDefin
   })
 }
 
-export const inject = ['reactSurfaces', 'sessions', 'theme', 'slots']
+export const inject = ['reactSurfaces', 'sessions', 'theme', 'slots', 'locale']
 
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => registerProfileBrand(ctx), 'clinmesh-dsh-web: register Profile identity')
