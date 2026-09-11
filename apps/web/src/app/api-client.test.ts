@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { apiGet } from './api-client.ts'
+import { apiGet, getSyntheticCaseHistory } from './api-client.ts'
 
 describe('Web API client errors', () => {
   afterEach(() => {
@@ -57,6 +57,30 @@ describe('Web API client errors', () => {
       message: 'ClinMesh could not be reached',
       name: 'ApiClientError',
       status: 0,
+    })
+  })
+
+  it('preserves response diagnostics when source history contains an invalid date', async () => {
+    const correlationId = '01991234-7abc-7def-8abc-0123456789ab'
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({
+      items: [{
+        businessDate: '2025-01-10',
+        items: [{
+          clinicalDate: 'invalid',
+          resourceType: 'Condition',
+          sourceReference: 'urn:uuid:prior-condition',
+          title: '合成病史',
+        }],
+      }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    }, { headers: { 'X-Correlation-Id': correlationId } })))
+
+    await expect(getSyntheticCaseHistory('synthetic-case-001')).rejects.toMatchObject({
+      code: 'UNEXPECTED_RESPONSE',
+      correlationId,
+      status: 200,
     })
   })
 

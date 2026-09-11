@@ -427,7 +427,11 @@ const routeTree = rootRoute.addChildren([
 ])
 
 export function createWebRouter(history?: RouterHistory): ReturnType<typeof createRouter<typeof routeTree>> {
-  return createRouter({ routeTree, ...(history === undefined ? {} : { history }) })
+  return createRouter({
+    disableGlobalCatchBoundary: true,
+    routeTree,
+    ...(history === undefined ? {} : { history }),
+  })
 }
 
 type WebRouter = ReturnType<typeof createWebRouter>

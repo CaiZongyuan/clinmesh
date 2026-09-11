@@ -729,6 +729,8 @@ export const syntheticSourceHistoryGroupSchema = z.object({
   items: z.array(syntheticSourceHistoryItemSchema).min(1),
 }).strict().superRefine((group, context) => {
   group.items.forEach((item, index) => {
+    // Format validation can fail before Zod runs this cross-field refinement.
+    if (!Number.isFinite(Date.parse(item.clinicalDate))) return
     if (shanghaiBusinessDate(item.clinicalDate) !== group.businessDate) {
       context.addIssue({
         code: 'custom',

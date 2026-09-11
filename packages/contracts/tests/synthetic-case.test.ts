@@ -104,6 +104,18 @@ describe('Synthetic Case contracts', () => {
     }).success).toBe(false)
   })
 
+  it('reports an invalid clinical date as a schema failure', () => {
+    expect(syntheticSourceHistoryGroupSchema.safeParse({
+      businessDate: '2025-01-10',
+      items: [{
+        clinicalDate: 'invalid',
+        resourceType: 'Condition',
+        sourceReference: 'urn:uuid:prior-condition',
+        title: '高血压（疾病）',
+      }],
+    }).success).toBe(false)
+  })
+
   it('rejects duplicate business dates in one source-history page', () => {
     const group = {
       businessDate: '2025-01-10',
