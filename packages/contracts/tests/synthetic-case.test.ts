@@ -1,5 +1,6 @@
 import {
   syntheticCaseInstanceSchema,
+  syntheticCaseRegistrationListSchema,
   syntheticSourceHistoryGroupSchema,
   syntheticSourceHistoryGroupListSchema,
   syntheticSourceHistoryItemSchema,
@@ -142,5 +143,32 @@ describe('Synthetic Case contracts', () => {
       pageSize: 20,
       total: 21,
     }).success).toBe(false)
+  })
+  it('exposes only the fixed case and identity fields needed for registration', () => {
+    const list = {
+      items: [{
+        activeBriefRevision: 2,
+        birthDate: '1970-01-01',
+        caseId: 'synthetic-case-001',
+        caseRevision: 3,
+        caseType: 'follow-up',
+        gender: 'female',
+        mrn: 'MRN-000001',
+        name: '张琴',
+        profileRevision: 1,
+      }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    }
+
+    expect(syntheticCaseRegistrationListSchema.parse(list)).toEqual(list)
+    expect(() => syntheticCaseRegistrationListSchema.parse({
+      ...list,
+      items: [{
+        ...list.items[0],
+        source: { raw: { resourceType: 'Bundle' } },
+      }],
+    })).toThrow()
   })
 })

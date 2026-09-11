@@ -6,6 +6,8 @@ Status: implemented
 
 Synthea 能提供纵向合成病史，但需要 Java、中国地域输入和 FHIR R4 exporter。把它放入 ClinMesh 主镜像或 Server 启动门禁，会让生成器的构建、网络、超时和输出故障影响现有岗位流程。同步 HTTP 生成还无法在 Server 重启后恢复长任务，也可能在 Profile、Case 与任务完成之间留下不一致状态。本决策由 [issue 38](https://github.com/CaiZongyuan/clinmesh/issues/38) 交付。
 
+其中本地镜像构建与运行入口后来由[一键 Synthea 运行时](./2026-09-03-one-command-synthea-runtime.md)取代；任务协议、HTTP Provider、失败隔离和持久化语义不变。
+
 ## Decision
 
 Synthea 固定在 commit `d9d07a6eef91ee5144293b42ab64224d84d124f8`。推荐开发拓扑通过 standalone `compose.synthea-provider.yaml` 只启动非 root Java 容器，本地 Web 与 Server 分别运行在 `51888` 和 `51868`；Provider 在宿主与容器内统一使用 `51878`，并只绑定宿主回环地址。不使用 Docker 时，同一 Provider 接受显式 JAR、配置和监听端口路径，可由本机 JDK 17 启动。完整容器部署使用 `compose.synthea.yaml` 复用 standalone 服务，并把 Server 指向容器内 URL。源码归档在 Docker 构建时校验 SHA-256，运行镜像保留上游 Apache LICENSE 和 NOTICE，使用只读文件系统且不访问 Docker socket。默认 Compose、ClinMesh 主镜像和 Server 启动不依赖该容器；`CLINMESH_SYNTHEA_PROVIDER_URL` 只启用生成能力，不执行启动健康门禁。

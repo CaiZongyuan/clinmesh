@@ -1,0 +1,167 @@
+name: Synthea Provider image
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/synthea-provider.yml"
+      - "apps/synthea-provider/**"
+      - "apps/server/src/infrastructure/scenario-generation/synthea-provider.ts"
+      - "apps/server/tests/synthea-docker-contract.test.ts"
+      - "apps/server/tests/synthea-generation-provider.test.ts"
+      - "compose.synthea-provider.yaml"
+      - "package.json"
+      - "scripts/synthea-runtime.spec.ts"
+      - "scripts/synthea-runtime.ts"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified image to GHCR
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/caizongyuan/clinmesh-synthea-provider
+
+jobs:
+  runtime-commands:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec vitest run scripts/synthea-runtime.spec.ts
+
+  test-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - name: Resolve pinned localizer image
+        run: |
+          set -euo pipefail
+          localizer_image="$(docker compose --file compose.synthea-provider.yaml config --images \
+            | grep -E '^ghcr\.io/caizongyuan/cn-health-synthea-localizer@sha256:[0-9a-f]{64}$')"
+          test "$(printf '%s\n' "$localizer_image" | wc -l)" -eq 1
+          echo "LOCALIZER_IMAGE=$localizer_image" >> "$GITHUB_ENV"
+      - uses: docker/build-push-action@v7
+        with:
+          context: apps/synthea-provider
+          file: apps/synthea-provider/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: clinmesh-synthea-provider:test
+          cache-from: type=gha,scope=synthea-provider
+          cache-to: type=gha,mode=max,scope=synthea-provider
+      - name: Verify Provider and localizer together
+        run: |
+          set -euo pipefail
+          network=clinmesh-synthea-provider-test
+          docker network create "$network"
+          docker run --rm --detach \
+            --name cn-health-localizer \
+            --network "$network" \
+            --read-only \
+            --tmpfs /tmp:size=64m,mode=1777 \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            "$LOCALIZER_IMAGE"
+          docker run --rm --detach \
+            --name synthea-provider \
+            --network "$network" \
+            --read-only \
+            --tmpfs /tmp:size=1g,mode=1777 \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --publish 127.0.0.1:51878:51878 \
+            clinmesh-synthea-provider:test
+          trap 'docker rm --force synthea-provider cn-health-localizer >/dev/null 2>&1 || true; docker network rm "$network" >/dev/null 2>&1 || true' EXIT
+          curl --fail --retry 60 --retry-all-errors --retry-delay 1 \
+            http://127.0.0.1:51878/health > /tmp/synthea-provider-health.json
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          health = json.loads(Path('/tmp/synthea-provider-health.json').read_text())
+          assert health['status'] == 'ok'
+          assert re.fullmatch(r'[0-9a-f]{40}', health['syntheaCommit'])
+          assert re.fullmatch(r'synthea-cn@[^\s]+', health['localization']['profileId'])
+          PY
+          docker exec synthea-provider \
+            java -cp /opt/provider:/opt/synthea/synthea.jar ProviderServer --smoke
+      - name: Export verified image
+        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        run: docker save clinmesh-synthea-provider:test --output /tmp/clinmesh-synthea-provider.tar
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        with:
+          name: verified-synthea-provider-image
+          path: /tmp/clinmesh-synthea-provider.tar
+          compression-level: 0
+          retention-days: 1
+
+  publish-image:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    needs: [runtime-commands, test-image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-synthea-provider-image
+          path: /tmp
+      - name: Load verified image
+        run: docker load --input /tmp/clinmesh-synthea-provider.tar
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish verified image
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_tag="${IMAGE_NAME}:sha-${GITHUB_SHA}"
+          docker tag clinmesh-synthea-provider:test "$image_tag"
+          docker push "$image_tag" 2>&1 | tee /tmp/docker-push.log
+          digest="$(sed -nE 's/^.*digest: (sha256:[0-9a-f]{64}).*$/\1/p' /tmp/docker-push.log | tail -n 1)"
+          test -n "$digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - uses: anchore/sbom-action@v0
+        with:
+          image: clinmesh-synthea-provider:test
+          format: spdx-json
+          output-file: /tmp/synthea-provider.spdx.json
+          upload-artifact: false
+      - uses: actions/attest-sbom@v3
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          sbom-path: /tmp/synthea-provider.spdx.json
+          push-to-registry: true
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true

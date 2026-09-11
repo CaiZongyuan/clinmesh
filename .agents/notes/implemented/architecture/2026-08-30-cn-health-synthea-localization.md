@@ -8,6 +8,8 @@ ClinMesh 的 Synthetic Patient Profile 曾从少量姓名、地址、固定行�
 
 本决策由 [issue 42](https://github.com/CaiZongyuan/clinmesh/issues/42) 交付，并扩展[可选 Synthea 生成 Provider](./2026-08-26-optional-synthea-provider.md)。
 
+其中宿主 Candidate/profile 挂载与 UID/GID 配置后来由[一键 Synthea 运行时](./2026-09-03-one-command-synthea-runtime.md)取代；cn-health-data 所有权、身份算法、临床显示和 provenance 校验不变。
+
 ## Decision
 
 `cn-health-data` 拥有 `geography-cn`、`population-cn`、`names-cn`、确定性 synthetic identity、Synthea profile 和 FHIR R4 Bundle localizer。ClinMesh Compose 以两个只读非 root 服务运行固定 Synthea 与 cn-health localizer；Provider 使用 profile classpath、外部配置和“中国”地域，启动时验证 profile 与三个 Candidate，逐 Bundle 核对 localizer metadata 和 `urn:cn-health-data:synthea-profile` tag。

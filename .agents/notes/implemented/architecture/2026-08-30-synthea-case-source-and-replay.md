@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-Synthea 的本地化 FHIR R4 Bundle、参与者待诊断的本次病例、本院实际产生的诊疗事实和中国临床参考目录具有不同生命周期与可见性。把它们编译为可安装 Dataset/Package 会让生成患者依赖三病种手写真值、术语映射和目录闭包，也会把外部病史误表示为本院 FHIR R5 活动。Reset 若重新调用 Synthea 或外部模型，又无法保证同一病例、患者表现和检查结果可重复。本决策由 [issue #52](https://github.com/CaiZongyuan/clinmesh/issues/52) 交付，并保留[可选 Synthea 生成 Provider](./2026-08-26-optional-synthea-provider.md)与[cn-health 数据和 Synthea 中国本地化](./2026-08-30-cn-health-synthea-localization.md)仍然有效的来源边界。
+Synthea 的本地化 FHIR R4 Bundle、参与者待诊断的本次病例、本院实际产生的诊疗事实和中国临床参考目录具有不同生命周期与可见性。把它们编译为可安装 Dataset/Package 会让生成患者依赖三病种手写真值、术语映射和目录闭包，也会把外部病史误表示为本院 FHIR R5 活动。Reset 若重新调用 Synthea 或外部模型，又无法保证同一病例、患者表现和检查结果可重复。本决策由 [issue #52](https://github.com/CaiZongyuan/clinmesh/issues/52) 建立来源与重放边界，[issue #73](https://github.com/CaiZongyuan/clinmesh/issues/73) 建立管理员准备、挂号员消费和分诊接收的角色交接，并保留[可选 Synthea 生成 Provider](./2026-08-26-optional-synthea-provider.md)与[cn-health 数据和 Synthea 中国本地化](./2026-08-30-cn-health-synthea-localization.md)仍然有效的来源边界。
 
 ## Decision
 
@@ -16,7 +16,7 @@ Index Encounter 是来源时间线上最后一个具有 Condition、Observation�
 
 其中 translation gap 的失败策略后来由 [Synthea 缺译告警与全量目录默认浏览](../bug-fix/2026-08-31-synthea-translation-warning-and-catalog-browse.md)局部取代；Profile/Case owner、原子提交和 Index Encounter 重试语义不变。
 
-Patient Brief 使用 Server 固定模型、prompt 和 strict Zod schema异步生成，成功结果形成不可变 Brief Revision；诊断泄漏或无效输出不会覆盖已有 revision。普通开始要求显式选择成功 Brief，并通过共享物化内核创建新的 Patient、Registration、Encounter、Queue Task 和 Case materialization；来源历史不会随开始动作写入本院 FHIR。普通 Case 只能开始一次。
+Patient Brief 使用 Server 固定模型、prompt 和 strict Zod schema异步生成，成功结果形成不可变 Brief Revision；诊断泄漏或无效输出不会覆盖已有 revision。管理员选定成功 Brief 后，挂号员专用列表只返回 `brief-ready`、具有活动 Brief 且尚未开始的 Case，并从 Case 固定的 Profile Revision 投影挂号所需身份；该列表不返回 Case Truth、来源 Bundle、生成配置或来源历史详情。挂号员选择目录项后与管理员直接开始能力共用 `registration.synthetic-case.start` 和物化内核，原子创建新的 Patient、Registration、Encounter、Queue Task、Consultation question rules 和 Case materialization；来源历史不会随开始动作写入本院 FHIR。普通 Case 只能开始一次，Case revision、活动 Brief revision、状态条件更新和 materialization 唯一约束使并发开始只有一个成功。
 
 检验模拟先按请求的精确 LOINC coding 查找 Case Truth Observation，缺失时才调用 Investigation Agent。首次成功结果连同请求 coding、模型和 prompt provenance 保存为 workspace-global Investigation Result Snapshot；失败进入可重试状态且不生成正常兜底。管理员 Reset 关闭旧 Epoch、创建新 Epoch，并通过同一病例物化内核重建上一 Epoch 已开始的 Synthetic Case。新物化继续引用相同 Case revision、Profile revision、Brief revision、Case Truth 和 Investigation snapshot，但 Patient、Registration、Encounter 与 Queue Task 使用新 ID；Reset 和新 Epoch 下再次申请同一检验都不调用外部模型，也不改变 workspace-global Case 生命周期。
 
@@ -32,9 +32,11 @@ Operational migration 是有意的开发期破坏性边界：存在旧 Dataset�
 
 **为管理员复制一套无门禁开始流程。** 这会让正常开始与重放的 Patient/Registration/Encounter/Task 结构逐渐分叉；当前实现只把一次性状态推进留在普通 Command，两条路径共享同一个物化内核。
 
+**让挂号员读取管理员患者库或从临时 Patient Identity 推导病例。** 前者会暴露来源 Bundle、生成配置和私有病例边界，后者无法恢复不可变 Case Truth、Patient Brief 与检验生成上下文；因此挂号员只读取窄的待挂号投影，临时患者继续进入不具备完整模拟病例能力的普通 HIS 流程。
+
 ## Consequences
 
-患者生成只依赖可选 Synthea/localizer 服务，不依赖 Reference SQLite、映射文件或活动 Epoch；Provider 不可用只影响生成能力。患者库成为管理员唯一模拟数据入口，生成、历史详情、Brief 和直接接诊不再要求理解安装概念。
+患者生成只依赖可选 Synthea/localizer 服务，不依赖 Reference SQLite、映射文件或活动 Epoch；Provider 不可用只影响生成能力。患者库是管理员准备模拟数据、查看来源历史和管理 Brief 的入口；挂号员工作台消费 ready Case 的固定窄投影，成功后把同一业务事实交给分诊队列。管理员保留直接开始能力。
 
 Case Truth 的私有边界和 Visible Source History 的 allowlist 必须随新资源类型继续做负向测试。任何新 Agent 工具只能读取已授权历史或本院事实，不能接受任意来源 reference、Bundle、SQL 或 truth 查询。
 

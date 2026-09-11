@@ -39,7 +39,7 @@ public final class ProviderServer {
   private static final String SYNTHEA_COMMIT =
       "d9d07a6eef91ee5144293b42ab64224d84d124f8";
   private static final String GENERATION_CONFIG_HASH =
-      "81c9b79f5426b85244f42275f98d2f9e161a4c502980d9cde8d027cdda6ef103";
+      "98e57bac3d32469ed900ea4d1b7a47086cb2aed18659a37cf7779be3dce14e0e";
   private static final Path SYNTHEA_JAR = Path.of(
       System.getenv().getOrDefault("SYNTHEA_JAR_PATH", "/opt/synthea/synthea.jar"));
   private static final Path SYNTHEA_MODULES = Path.of(

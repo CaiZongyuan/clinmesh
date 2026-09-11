@@ -251,6 +251,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const agentIntegration = options.dshBridgeSecret === undefined
       ? undefined
       : new AgentIntegrationService(database, {
+          cases: syntheticCases,
           ...clockOptions,
           secret: options.dshBridgeSecret,
         })

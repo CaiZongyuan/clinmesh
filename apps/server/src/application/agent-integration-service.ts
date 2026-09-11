@@ -20,6 +20,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import type { ActorContext } from './command-executor.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
+import type { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic-case-repository.ts'
 import {
   proposalCommandOperations,
   resolveAgentPageContext,
@@ -69,6 +70,7 @@ interface CreatePageContextInput {
 }
 
 interface AgentIntegrationServiceOptions {
+  cases: SyntheticCaseRepository
   now?: () => Date
   secret: string
 }
@@ -94,11 +96,13 @@ export class AgentIntegrationError extends Error {
 }
 
 export class AgentIntegrationService {
+  readonly #cases: SyntheticCaseRepository
   readonly #database: ClinMeshDatabase
   readonly #now: () => Date
   readonly #secret: string
 
   constructor(database: ClinMeshDatabase, options: AgentIntegrationServiceOptions) {
+    this.#cases = options.cases
     this.#database = database
     this.#now = options.now ?? (() => new Date())
     this.#secret = options.secret
@@ -135,6 +139,7 @@ export class AgentIntegrationService {
     const snapshot = this.#database.driver.transaction(() => {
       const resolved = resolveAgentPageContext(
         this.#database,
+        this.#cases,
         input.actor,
         input.userAccountId,
         claim,
@@ -353,6 +358,7 @@ export class AgentIntegrationService {
     }
     const parsedInput = validateAgentToolInputForContext(
       this.#database,
+      this.#cases,
       context,
       input.userAccountId,
       definition.operationId,
@@ -461,6 +467,7 @@ export class AgentIntegrationService {
     if (context.dshSessionId !== receipt.dshSessionId) throw this.#callNotPending()
     const resolved = resolveAgentPageContext(
       this.#database,
+      this.#cases,
       input.actor,
       input.userAccountId,
       context.claim,

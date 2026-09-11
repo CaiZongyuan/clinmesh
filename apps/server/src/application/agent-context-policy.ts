@@ -10,6 +10,7 @@ import {
 } from '@clinmesh/contracts/agent'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
+import type { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic-case-repository.ts'
 import type { ActorContext } from './command-executor.ts'
 
 const versionRowSchema = z.object({ version: z.union([z.number(), z.string()]) }).strict()
@@ -56,6 +57,7 @@ type ResolvedSelection =
   | { kind: 'scenario-run'; id: string; status: string }
   | { kind: 'generation-job'; id: string; status: string }
   | { kind: 'patient'; id: string }
+  | { kind: 'synthetic-case'; id: string; status: 'brief-ready' }
   | { kind: 'triage-item'; id: string; encounterId: string; status: string }
   | ({ kind: 'case'; id: string } & z.infer<typeof doctorCaseRowSchema>)
   | ({ kind: 'billing-item'; id: string } & z.infer<typeof chargeRowSchema>)
@@ -72,7 +74,7 @@ const selectionKindsByView = {
   consultation: ['case', 'encounter'],
   overview: ['scenario-run'],
   pharmacy: ['prescription'],
-  registration: ['patient'],
+  registration: ['patient', 'synthetic-case'],
   scenarioData: ['generation-job'],
   settingsGeneral: [],
   triage: ['triage-item'],
@@ -87,13 +89,14 @@ const commonOperations = new Set<AgentOperationId>([
 
 export function resolveAgentPageContext(
   database: ClinMeshDatabase,
+  cases: SyntheticCaseRepository,
   actor: ActorContext,
   userAccountId: string,
   claim: AgentPageContextClaim,
 ): ResolvedAgentPageContext | undefined {
   const roleCode = agentHumanRoleCodeSchema.safeParse(actor.roleCode)
   if (!roleCode.success || !agentViewsForRole(roleCode.data).includes(claim.viewId)) return undefined
-  const selection = resolveSelection(database, actor, claim)
+  const selection = resolveSelection(database, cases, actor, claim)
   if (selection === undefined || !draftMatchesSelection(claim, selection)) return undefined
   const allowed = new Set(agentToolsForContext(roleCode.data, claim.viewId)
     .map(definition => definition.operationId))
@@ -106,6 +109,7 @@ export function resolveAgentPageContext(
 
 export function validateAgentToolInputForContext(
   database: ClinMeshDatabase,
+  cases: SyntheticCaseRepository,
   context: AgentPageContextSnapshot,
   userAccountId: string,
   operationId: AgentOperationId,
@@ -125,9 +129,11 @@ export function validateAgentToolInputForContext(
     scenarioRunId: context.workspace.scenarioRunId,
     workspaceId: context.workspace.id,
   }
-  const current = resolveAgentPageContext(database, actor, userAccountId, context.claim)
+  const current = resolveAgentPageContext(database, cases, actor, userAccountId, context.claim)
   if (current === undefined || !current.allowedOperationIds.includes(operationId)) return undefined
-  if (!inputMatchesCurrentResources(database, actor, context.claim, operationId, input)) return undefined
+  if (!inputMatchesCurrentResources(database, cases, actor, context.claim, operationId, input)) {
+    return undefined
+  }
   return input
 }
 
@@ -136,6 +142,7 @@ export const proposalCommandOperations: Readonly<Record<string, readonly string[
   'scenario.reset.propose': ['scenario.reset'],
   'registration.patient.create.propose': ['patient.create-synthetic'],
   'registration.outpatient.propose': ['registration.register'],
+  'registration.synthetic-case.start.propose': ['synthetic-case.start-outpatient-visit'],
   'triage.record.propose': ['encounter.record-triage'],
   'outpatient.visit.start.propose': ['encounter.start-first-visit', 'encounter.start-revisit'],
   'outpatient.diagnosis.confirm.propose': ['encounter.confirm-diagnosis'],
@@ -159,6 +166,7 @@ export const proposalCommandOperations: Readonly<Record<string, readonly string[
 
 function resolveSelection(
   database: ClinMeshDatabase,
+  cases: SyntheticCaseRepository,
   actor: ActorContext,
   claim: AgentPageContextClaim,
 ): ResolvedSelection | undefined {
@@ -185,6 +193,14 @@ function resolveSelection(
     `).get(actor.workspaceId, selection.id))
     if (row === undefined || row.version !== selection.version) return undefined
     return { id: selection.id, kind: selection.kind, status: row.status }
+  }
+  if (selection.kind === 'synthetic-case') {
+    const revision = cases.getRegistrationCandidateRevision(actor.workspaceId, selection.id)
+    if (
+      revision === undefined
+      || String(revision) !== selection.version
+    ) return undefined
+    return { id: selection.id, kind: selection.kind, status: 'brief-ready' }
   }
   if (selection.kind === 'patient') {
     const row = versionRowSchema.optional().parse(database.driver.prepare(`
@@ -358,9 +374,10 @@ function draftMatchesSelection(
   const draft = claim.draft
   if (draft === undefined) return true
   if (claim.viewId === 'registration') {
-    return selection.kind === 'none'
-      ? draft.kind === 'patient' && draft.id === 'new-patient'
-      : selection.kind === 'patient' && draft.kind === 'registration' && draft.id === selection.id
+    if (selection.kind === 'none') return draft.kind === 'patient' && draft.id === 'new-patient'
+    return (selection.kind === 'patient' || selection.kind === 'synthetic-case')
+      && draft.kind === 'registration'
+      && draft.id === selection.id
   }
   if (claim.viewId === 'triage' && selection.kind === 'triage-item') {
     return draft.kind === 'triage' && draft.id === `${selection.id}:triage`
@@ -393,11 +410,16 @@ function narrowOperations(
       'registration.patient.select',
       'registration.patient.draft.set',
       'registration.draft.set',
+      'registration.synthetic-case.search',
+      'registration.synthetic-case.select',
     ]
     if (claim.draft?.kind === 'patient' && claim.draft.dirty) {
       operations.push('registration.patient.create.propose')
     }
     if (selection.kind === 'patient') operations.push('registration.outpatient.propose')
+    if (selection.kind === 'synthetic-case') {
+      operations.push('registration.synthetic-case.start.propose')
+    }
     retain(operations)
     return
   }
@@ -501,6 +523,7 @@ function accountHasAdministratorRole(
 
 function inputMatchesCurrentResources(
   database: ClinMeshDatabase,
+  cases: SyntheticCaseRepository,
   actor: ActorContext,
   claim: AgentPageContextClaim,
   operationId: AgentOperationId,
@@ -520,6 +543,9 @@ function inputMatchesCurrentResources(
   if (operationId === 'registration.patient.select') {
     return exists(`SELECT 1 FROM fhir_resource WHERE workspace_id = ? AND epoch = ?
       AND resource_type = 'Patient' AND resource_id = ? AND deleted = 0`, ...scope, value.patientId)
+  }
+  if (operationId === 'registration.synthetic-case.select') {
+    return cases.getRegistrationCandidateRevision(actor.workspaceId, String(value.caseId)) !== undefined
   }
   if (operationId === 'registration.draft.set') {
     return exists(`SELECT 1 FROM outpatient_catalog WHERE workspace_id = ? AND epoch = ?
