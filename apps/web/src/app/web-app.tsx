@@ -177,6 +177,7 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
       <main aria-label={messages.loading} className="mx-auto flex min-h-svh w-full max-w-lg flex-col justify-center gap-3 p-6">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-24 w-full" />
+        <SurfaceFullscreenExit locale={preferences.locale} />
       </main>
     )
   }
@@ -187,12 +188,13 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
 
   if (session.isError) {
     return (
-      <main className="mx-auto flex min-h-svh w-full max-w-lg items-center p-6">
+      <main className="mx-auto flex min-h-svh w-full max-w-lg flex-col justify-center gap-3 p-6">
         <Alert variant="destructive">
           <CircleAlertIcon aria-hidden="true" />
           <AlertTitle>{getWorkspaceErrorTitle(session.error, messages, messages.serviceError)}</AlertTitle>
           <AlertDescription>{getWorkspaceErrorMessage(session.error, messages)}</AlertDescription>
         </Alert>
+        <SurfaceFullscreenExit locale={preferences.locale} />
       </main>
     )
   }

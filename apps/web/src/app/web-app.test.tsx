@@ -221,6 +221,27 @@ describe('Web application shell', () => {
     expect(toggle).toHaveBeenCalledOnce()
   })
 
+  it('keeps fullscreen escapable while session loading fails without a sidebar', async () => {
+    const toggle = vi.fn()
+    const user = userEvent.setup()
+    vi.mocked(fetch).mockResolvedValue(Response.json({
+      error: { code: 'INTERNAL_ERROR', message: 'Service unavailable' },
+    }, { status: 500 }))
+    render(<WebApp runtime={{ mode: 'surface', surfaceDisplay: { fullscreen: true, toggle } }} />)
+    await screen.findByRole('alert')
+    await user.click(screen.getByRole('button', { name: '返回 DSH 分屏' }))
+    expect(toggle).toHaveBeenCalledOnce()
+  })
+
+  it('keeps fullscreen escapable before the session request completes', async () => {
+    vi.mocked(fetch).mockImplementation(() => new Promise(() => {}))
+    const toggle = vi.fn()
+    const user = userEvent.setup()
+    render(<WebApp runtime={{ mode: 'surface', surfaceDisplay: { fullscreen: true, toggle } }} />)
+    await user.click(await screen.findByRole('button', { name: '返回 DSH 分屏' }))
+    expect(toggle).toHaveBeenCalledOnce()
+  })
+
   it('uses an isolated API prefix and memory history in a DSH Surface', async () => {
     window.history.replaceState(null, '', '/dsh-host')
     const history = createMemoryHistory({ initialEntries: ['/'] })
