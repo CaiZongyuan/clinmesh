@@ -1,31 +1,42 @@
+import { apply as applySurfaceRuntime, type ReactSurfaceRegistry } from 'dsh-react-surface/client'
 import * as React from 'react'
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import type { Context } from '@deepseek-ai/cordis'
-import { ReactSurfaceRegistryImpl } from '../../../../vendor/dsh-react-surface/packages/runtime/src/client/registry.ts'
-import { ReactSurfaceHost } from '../../../../vendor/dsh-react-surface/packages/runtime/src/client/surface-host.tsx'
 import { createDefinition } from './index.tsx'
 
 async function run() {
   const reset = document.createElement('style')
   reset.textContent = '* { box-sizing: border-box; }'
   document.head.append(reset)
-  const registry = new ReactSurfaceRegistryImpl()
-  registry.preferences.setSize('clinmesh.his', 'conversation', 400)
+  const provided: { registry?: ReactSurfaceRegistry; host?: React.ComponentType } = {}
   const ctx = {
     get(name: string) {
-      if (name === 'reactSurfaces') return registry
+      if (name === 'reactSurfaces') return provided.registry
       if (name === 'theme') return { getTheme: () => ({ active: { colorScheme: 'light' } }) }
       return { list: { getSnapshot: () => ({ current: 'session-1' }), subscribe: () => () => {} } }
     },
     on: () => () => {},
+    effect: (callback: () => () => void) => callback(),
+    inject: () => ({ dispose() {} }),
+    reflect: {
+      provide: (_name: string, registry: ReactSurfaceRegistry) => {
+        provided.registry = registry
+        return () => {}
+      },
+    },
+    slots: {
+      inject: (_name: string, callback: () => () => void) => callback(),
+      register: (entry: { name: string }, component: React.ComponentType) => {
+        if (entry.name === 'shell.overlay') provided.host = component
+        return () => {}
+      },
+    },
   }
-  // The fixture composes the React 18 runtime declaration with the React 19 app declaration.
-  registry.register(
-    createDefinition(ctx as unknown as Context) as unknown as Parameters<
-      typeof registry.register
-    >[0],
-  )
+  applySurfaceRuntime(ctx as unknown as Context)
+  const { registry, host: SurfaceHost } = provided
+  if (!registry || !SurfaceHost) throw new Error('Surface runtime did not provide its host')
+  registry.register(createDefinition(ctx as unknown as Context))
   const frame = document.createElement('div')
   frame.style.cssText =
     'position:relative;display:grid;grid-template-columns:280px 1fr 300px;width:2048px;height:800px'
@@ -33,7 +44,7 @@ async function run() {
     '<aside data-pane="sidebar">DSH navigation</aside><main data-pane="conversation">DSH conversation</main><aside data-rightbar-col>DSH files</aside><div data-shell-overlay style="position:absolute;inset:0;pointer-events:none"></div>'
   document.body.append(frame)
   const overlay = frame.querySelector('[data-shell-overlay]')!
-  flushSync(() => createRoot(overlay).render(<ReactSurfaceHost registry={registry} />))
+  flushSync(() => createRoot(overlay).render(<SurfaceHost />))
   const settle = () =>
     new Promise<void>((resolve) =>
       requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 50))),
@@ -49,6 +60,11 @@ async function run() {
     draft: shadow.querySelector<HTMLInputElement>('input')?.value,
     conversationWidth: frame.querySelector('main')!.getBoundingClientRect().width,
   })
+  const handle = frame.querySelector('[role=separator]')!
+  for (let i = 0; i < 3; i++) {
+    handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    await settle()
+  }
   const initial = snapshot()
   shadow.querySelector<HTMLButtonElement>('button')!.click()
   await settle()

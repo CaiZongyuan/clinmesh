@@ -19,7 +19,7 @@ it('returns from manual fullscreen to the retained native split without remounti
         ),
         'dsh-react-surface/client': fileURLToPath(
           new URL(
-            '../../../../vendor/dsh-react-surface/packages/runtime/src/client/contracts.ts',
+            '../../../../vendor/dsh-react-surface/packages/runtime/src/client/index.tsx',
             import.meta.url,
           ),
         ),
@@ -67,7 +67,7 @@ it('returns from manual fullscreen to the retained native split without remounti
     expect(actual.initial).toMatchObject({
       mode: 'workspace',
       hiddenNative: false,
-      conversationWidth: 400,
+      conversationWidth: 392,
     })
     expect(actual.fullscreen).toMatchObject({ mode: 'full-frame', hiddenNative: true })
     expect(actual.returnVisible).toBe(true)
