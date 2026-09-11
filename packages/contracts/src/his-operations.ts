@@ -20,6 +20,7 @@ import {
   clinicalDocumentSignResponseSchema,
   commandResponseSchema,
   completeHospitalServiceResponseSchema,
+  correlationIdSchema,
   confirmDiagnosisRequestSchema,
   confirmDiagnosisResponseSchema,
   confirmNoMedicationRequestSchema,
@@ -108,6 +109,7 @@ export const hisOperationSkillSchema = z.enum([
 export const hisOperationErrorSchema = z.object({
   code: z.string().min(1),
   conflict: z.unknown().optional(),
+  correlationId: correlationIdSchema.optional(),
   idempotencyKey: z.string().min(1).optional(),
   message: z.string().min(1),
   operationId: z.string().min(1).optional(),

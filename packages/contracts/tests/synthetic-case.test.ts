@@ -1,6 +1,8 @@
 import {
   syntheticCaseInstanceSchema,
   syntheticCaseRegistrationListSchema,
+  syntheticSourceHistoryGroupSchema,
+  syntheticSourceHistoryGroupListSchema,
   syntheticSourceHistoryItemSchema,
 } from '@clinmesh/contracts/scenario'
 import { describe, expect, it } from 'vitest'
@@ -44,6 +46,116 @@ describe('Synthetic Case contracts', () => {
     })
   })
 
+  it('groups visible source-history events by business date', () => {
+    const group = {
+      businessDate: '2025-01-10',
+      items: [{
+        clinicalDate: '2025-01-10T09:00:00+08:00',
+        resourceType: 'Condition',
+        sourceReference: 'urn:uuid:prior-condition',
+        title: '高血压（疾病）',
+      }],
+    }
+
+    expect(syntheticSourceHistoryGroupSchema.parse(group)).toEqual(group)
+  })
+
+  it('paginates visible source history as business-date groups', () => {
+    const response = {
+      items: [{
+        businessDate: '2025-01-10',
+        items: [{
+          clinicalDate: '2025-01-10T09:00:00+08:00',
+          resourceType: 'Condition',
+          sourceReference: 'urn:uuid:prior-condition',
+          title: '高血压（疾病）',
+        }],
+      }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    }
+
+    expect(syntheticSourceHistoryGroupListSchema.parse(response)).toEqual(response)
+  })
+
+  it('rejects empty or cross-date source-history groups', () => {
+    expect(syntheticSourceHistoryGroupSchema.safeParse({
+      businessDate: '2025-01-10',
+      items: [],
+    }).success).toBe(false)
+    expect(syntheticSourceHistoryGroupSchema.safeParse({
+      businessDate: '2025-01-09',
+      items: [{
+        clinicalDate: '2025-01-09T17:30:00Z',
+        resourceType: 'Condition',
+        sourceReference: 'urn:uuid:prior-condition',
+        title: '高血压（疾病）',
+      }],
+    }).success).toBe(false)
+  })
+
+  it('limits a source-history page to twenty business dates', () => {
+    expect(syntheticSourceHistoryGroupListSchema.safeParse({
+      items: [],
+      page: 1,
+      pageSize: 21,
+      total: 21,
+    }).success).toBe(false)
+  })
+
+  it('reports an invalid clinical date as a schema failure', () => {
+    expect(syntheticSourceHistoryGroupSchema.safeParse({
+      businessDate: '2025-01-10',
+      items: [{
+        clinicalDate: 'invalid',
+        resourceType: 'Condition',
+        sourceReference: 'urn:uuid:prior-condition',
+        title: '高血压（疾病）',
+      }],
+    }).success).toBe(false)
+  })
+
+  it('rejects duplicate business dates in one source-history page', () => {
+    const group = {
+      businessDate: '2025-01-10',
+      items: [{
+        clinicalDate: '2025-01-10T09:00:00+08:00',
+        resourceType: 'Condition',
+        sourceReference: 'urn:uuid:prior-condition',
+        title: '高血压（疾病）',
+      }],
+    }
+
+    expect(syntheticSourceHistoryGroupListSchema.safeParse({
+      items: [group, group],
+      page: 1,
+      pageSize: 20,
+      total: 2,
+    }).success).toBe(false)
+  })
+
+  it('rejects more than twenty business-date groups in one page', () => {
+    const items = Array.from({ length: 21 }, (_, index) => {
+      const day = String(index + 1).padStart(2, '0')
+      return {
+        businessDate: `2025-01-${day}`,
+        items: [{
+          clinicalDate: `2025-01-${day}T09:00:00+08:00`,
+          resourceType: 'Condition',
+          sourceReference: `urn:uuid:condition-${day}`,
+          title: '高血压（疾病）',
+        }],
+      }
+    })
+
+    expect(syntheticSourceHistoryGroupListSchema.safeParse({
+      items,
+      page: 1,
+      pageSize: 20,
+      total: 21,
+    }).success).toBe(false)
+  })
   it('exposes only the fixed case and identity fields needed for registration', () => {
     const list = {
       items: [{

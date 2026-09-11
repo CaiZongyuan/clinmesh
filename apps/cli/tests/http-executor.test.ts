@@ -194,6 +194,7 @@ describe('HIS HTTP operation executor', () => {
   })
 
   it('treats a write HTTP 5xx response as ambiguous', async () => {
+    const correlationId = '01991234-7abc-7def-8abc-0123456789ab'
     const execute = createHttpExecutor({
       baseUrl: 'http://127.0.0.1:51868',
       credential: { kind: 'agent', token: 'cma_synthetic_task_token' },
@@ -202,7 +203,10 @@ describe('HIS HTTP operation executor', () => {
           code: 'INTERNAL_ERROR',
           message: 'The Server failed after accepting the request',
         },
-      }, { status: 503 })),
+      }, {
+        headers: { 'X-Correlation-Id': correlationId },
+        status: 503,
+      })),
     })
 
     await expect(execute('patient.create', {
@@ -214,6 +218,7 @@ describe('HIS HTTP operation executor', () => {
       exitCode: 7,
       problem: {
         code: 'ambiguous_outcome',
+        correlationId,
         idempotencyKey: 'patient-write-5xx-1',
         operationId: 'patient.create',
         outcome: 'ambiguous',

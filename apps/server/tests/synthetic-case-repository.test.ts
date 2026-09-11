@@ -32,6 +32,24 @@ function sourceBundle() {
         resourceType: 'Patient',
       },
     }, {
+      fullUrl: 'urn:uuid:older-observation',
+      resource: {
+        code: {
+          coding: [{ code: '8310-5', display: '体温', system: 'http://loinc.org' }],
+        },
+        effectiveDateTime: '1988-07-01T15:30:00Z',
+        id: 'older-observation',
+        resourceType: 'Observation',
+        status: 'final',
+        subject: { reference: 'urn:uuid:patient' },
+        valueQuantity: {
+          code: 'Cel',
+          system: 'http://unitsofmeasure.org',
+          unit: '°C',
+          value: 36.8,
+        },
+      },
+    }, {
       fullUrl: 'urn:uuid:prior-encounter',
       resource: {
         id: 'prior-encounter',
@@ -52,7 +70,7 @@ function sourceBundle() {
         },
         encounter: { reference: 'urn:uuid:prior-encounter' },
         id: 'prior-condition',
-        recordedDate: '2025-01-10T09:05:00+08:00',
+        recordedDate: '2025-01-10T01:05:00Z',
         resourceType: 'Condition',
         subject: { reference: 'urn:uuid:patient' },
       },
@@ -172,12 +190,55 @@ describe('Synthetic Case SQLite boundary', () => {
       workspaceId: profile.workspaceId,
     })).toEqual({
       items: [{
-        clinicalDate: '2025-01-10T09:00:00+08:00',
-        resourceType: 'Encounter',
-        sourceReference: 'urn:uuid:prior-encounter',
-        title: '就诊',
+        clinicalDate: '1988-07-01T15:30:00Z',
+        resourceType: 'Observation',
+        sourceReference: 'urn:uuid:older-observation',
+        title: '体温',
       }],
       page: 1,
+      pageSize: 1,
+      total: 3,
+    })
+    expect(repository.listVisibleHistoryGroups({
+      caseId: created.caseId,
+      page: 1,
+      pageSize: 1,
+      workspaceId: profile.workspaceId,
+    })).toEqual({
+      items: [{
+        businessDate: '1988-07-02',
+        items: [{
+          clinicalDate: '1988-07-01T15:30:00Z',
+          resourceType: 'Observation',
+          sourceReference: 'urn:uuid:older-observation',
+          title: '体温',
+        }],
+      }],
+      page: 1,
+      pageSize: 1,
+      total: 2,
+    })
+    expect(repository.listVisibleHistoryGroups({
+      caseId: created.caseId,
+      page: 2,
+      pageSize: 1,
+      workspaceId: profile.workspaceId,
+    })).toEqual({
+      items: [{
+        businessDate: '2025-01-10',
+        items: [{
+          clinicalDate: '2025-01-10T09:00:00+08:00',
+          resourceType: 'Encounter',
+          sourceReference: 'urn:uuid:prior-encounter',
+          title: '就诊',
+        }, {
+          clinicalDate: '2025-01-10T01:05:00Z',
+          resourceType: 'Condition',
+          sourceReference: 'urn:uuid:prior-condition',
+          title: '高血压（疾病）',
+        }],
+      }],
+      page: 2,
       pageSize: 1,
       total: 2,
     })

@@ -19,6 +19,24 @@ const clinicalDocumentOperationIds = {
 } as const
 
 describe('HIS operation catalog', () => {
+  it('publishes correlation IDs in the shared structured error contract', () => {
+    const error = getHisOperation('patient.create').error.parse({
+      code: 'ambiguous_outcome',
+      correlationId: '01991234-7abc-7def-8abc-0123456789ab',
+      message: 'Inspect the Command receipt before retrying',
+      operationId: 'patient.create',
+      outcome: 'ambiguous',
+      retryable: false,
+      type: 'api',
+    })
+
+    expect(error.correlationId).toBe('01991234-7abc-7def-8abc-0123456789ab')
+    expect(() => getHisOperation('patient.create').error.parse({
+      ...error,
+      correlationId: 'untrusted-correlation',
+    })).toThrow()
+  })
+
   it('describes source and panel filters for Laboratory Service candidates', () => {
     const operation = getHisOperation('admin.laboratory-services.candidates.search')
 

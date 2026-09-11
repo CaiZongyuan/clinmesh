@@ -58,6 +58,7 @@ class CliProblem extends Error {
   readonly problem: {
     code: string
     conflict?: unknown
+    correlationId?: string
     message: string
     outcome: 'ambiguous' | 'definitely_not_sent'
     retryable: boolean
@@ -187,6 +188,7 @@ function writeError(
   stream: WritableStream,
   error: {
     code: string
+    correlationId?: string
     idempotencyKey?: string
     message: string
     operationId?: string

@@ -343,7 +343,7 @@ export class ScenarioDataService {
     input: { caseId: string; page: number; pageSize: number },
   ) {
     this.getSyntheticCase(context, input.caseId)
-    return this.#cases.listVisibleHistory({ ...input, workspaceId: context.workspaceId })
+    return this.#cases.listVisibleHistoryGroups({ ...input, workspaceId: context.workspaceId })
   }
 
   getSyntheticCaseHistoryDetail(

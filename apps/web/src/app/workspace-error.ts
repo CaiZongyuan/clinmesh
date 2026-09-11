@@ -100,7 +100,7 @@ export function getWorkspaceErrorMessage(
   messages: WorkspaceMessages,
   fallback = messages.serviceErrorDescription,
 ): string {
-  if (!(error instanceof ApiClientError)) return error.message
+  if (!(error instanceof ApiClientError)) return fallback
   if (error.status === 401 || error.code === 'AUTHENTICATION_REQUIRED') {
     return messages.authenticationRequiredDescription
   }
@@ -108,11 +108,17 @@ export function getWorkspaceErrorMessage(
     return messages.permissionDeniedDescription
   }
   if (error.code === 'INVALID_INPUT') return messages.invalidInputDescription
+  if (error.code === 'NETWORK_ERROR') return messages.networkErrorDescription
+  if (error.code === 'REQUEST_TIMEOUT') return messages.requestTimeoutDescription
+  if (error.code === 'UNEXPECTED_RESPONSE') return messages.unexpectedResponseDescription
   if (error.code === 'CATALOG_CONFLICT') return messages.catalogConflictDescription
   if (error.code === 'DIAGNOSIS_PRIMARY_REQUIRED') {
     return messages.diagnosisPrimaryRequiredDescription
   }
   if (error.code === 'DUPLICATE_PATIENT') return messages.duplicatePatientDescription
+  if (error.code === 'PROFILE_VERSION_CONFLICT') {
+    return messages.profileVersionConflictDescription
+  }
   if (error.code === 'LABORATORY_REQUEST_DUPLICATE') {
     return messages.laboratoryRequestDuplicateDescription
   }

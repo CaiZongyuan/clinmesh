@@ -1,6 +1,7 @@
 import { createAvatar } from '@dicebear/core'
 import * as lorelei from '@dicebear/lorelei'
 import type {
+  PatientBriefJob,
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
   SyntheticPatientIdentity,
@@ -48,6 +49,7 @@ import {
   DatabaseIcon,
   FileJsonIcon,
   ListFilterIcon,
+  LoaderCircleIcon,
   PencilIcon,
   PlusIcon,
   SearchIcon,
@@ -55,7 +57,7 @@ import {
   TriangleAlertIcon,
   UserPlusIcon,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   enqueuePatientBrief,
   enqueueScenarioGenerationJob,
@@ -74,8 +76,10 @@ import {
   startSyntheticCaseVisit,
   updateSyntheticPatientProfile,
 } from './api-client.ts'
-import type { WorkspaceLocale } from './workspace-i18n.ts'
+import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
+import { useSyntheticPatientLibraryViewStore } from './synthetic-patient-library-view-store.ts'
+import { getWorkspaceErrorMessage } from './workspace-error.ts'
 
 const profileListKey = ['synthetic-patient-profiles'] as const
 const providerKey = ['scenario-providers'] as const
@@ -86,38 +90,88 @@ const avatarCache = new Map<string, string>()
 const copy = {
   'en-US': {
     address: 'Address', advanced: 'Advanced settings', allModules: 'All Synthea modules',
-    batch: 'Generation batch', brief: 'Patient Brief', briefFailed: 'Brief generation failed', briefGenerate: 'Generate Brief', caseType: 'Case type', clinicalSeed: 'Clinical seed',
+    batch: 'Generation batch', brief: 'Patient Brief', briefFailed: 'Brief generation failed', briefGenerate: 'Generate Brief',
+    briefStatus: {
+      failed: 'Patient Brief generation failed',
+      queued: 'Patient Brief queued',
+      running: 'Generating Patient Brief',
+      succeeded: 'Patient Brief complete',
+    },
+    caseType: 'Case type', clinicalSeed: 'Clinical seed',
     contact: 'Contact', editProfile: 'Edit profile', email: 'Email',
     emptyDescription: 'Generate localized longitudinal Synthea records for up to ten patients.',
     emptyTitle: 'No synthetic patients yet', externalHistory: 'External synthetic R4 history',
     filterModules: 'Limit Synthea modules', generate: 'Generate patients',
-    generationFailed: 'Patient generation failed', generationSucceeded: 'Profiles and cases are ready',
-    history: 'Source history', historyStart: 'History start', identity: 'Identity',
+    generationFailed: 'Patient generation failed',
+    generationStatus: {
+      failed: 'Patient generation failed',
+      queued: 'Patient generation queued',
+      running: 'Generating patients',
+      succeeded: 'Profiles and cases are ready',
+    },
+    history: 'Source history', historyEntries: '{count} records', historyStart: 'History start', identity: 'Identity',
     insurance: 'Simulated insurance', libraryDescription: 'Localized source history and immutable current cases.',
     libraryTitle: 'Synthetic patient library', mrn: 'MRN', name: 'Display name',
     nationalId: 'Synthetic national ID', next: 'Next', noCase: 'No usable current case',
     noHistory: 'No visible source history', patientCount: 'Patient count', phone: 'Phone',
-    populationSeed: 'Population seed', previous: 'Previous', queued: 'Generation request accepted',
+    populationSeed: 'Population seed', previous: 'Previous',
     resourceDetail: 'R4 resource detail', save: 'Save profile', saveFailed: 'Failed to save profile', search: 'Search patients', source: 'Source', startVisit: 'Start outpatient visit',
     translationReview: 'Translation review {count}', translationWarningDescription: 'The patient is still usable. These English clinical names need later medical or pharmacy review.',
     translationWarningTitle: '{count} clinical names remain in English', translationWarningTruncated: 'Only the first retained items are shown.',
   },
   'zh-CN': {
     address: '地址', advanced: '高级设置', allModules: '全部 Synthea 模块', batch: '生成批次', brief: '患者梗概', briefFailed: '梗概生成失败', briefGenerate: '生成患者梗概',
+    briefStatus: {
+      failed: '患者梗概生成失败',
+      queued: '患者梗概排队中',
+      running: '患者梗概生成中',
+      succeeded: '患者梗概已完成',
+    },
     caseType: '病例类型', clinicalSeed: '临床 seed', contact: '联系方式', editProfile: '编辑档案',
     email: '电子邮箱', emptyDescription: '生成完整中文 Synthea 纵向病历，每批最多 10 人。',
     emptyTitle: '还没有合成患者', externalHistory: '外部合成 R4 历史', filterModules: '限制 Synthea 模块',
-    generate: '生成患者', generationFailed: '患者生成失败', generationSucceeded: '患者档案与病例已生成',
-    history: '来源历史', historyStart: '历史起始日期', identity: '身份信息', insurance: '模拟保险',
+    generate: '生成患者', generationFailed: '患者生成失败',
+    generationStatus: {
+      failed: '患者生成失败',
+      queued: '患者生成排队中',
+      running: '患者生成中',
+      succeeded: '患者档案与病例已生成',
+    },
+    history: '来源历史', historyEntries: '{count} 条记录', historyStart: '历史起始日期', identity: '身份信息', insurance: '模拟保险',
     libraryDescription: '中文来源病史与不可变本次病例。', libraryTitle: '合成患者库', mrn: 'MRN',
     name: '展示姓名', nationalId: '模拟身份证', next: '下一页', noCase: '没有可用的本次病例',
     noHistory: '没有可见来源历史', patientCount: '患者人数', phone: '手机号码', populationSeed: '人口 seed',
-    previous: '上一页', queued: '生成请求已提交', resourceDetail: 'R4 资源详情', save: '保存档案', saveFailed: '保存失败',
+    previous: '上一页', resourceDetail: 'R4 资源详情', save: '保存档案', saveFailed: '保存失败',
     search: '搜索患者', source: '来源', startVisit: '开始门诊就诊',
     translationReview: '翻译待确认 {count}', translationWarningDescription: '患者仍可使用；这些英文临床名称需要后续医学或药学校对。',
     translationWarningTitle: '{count} 个临床名称保留英文', translationWarningTruncated: '这里只显示已保留的前几项。',
   },
 } as const
+
+function JobStatusNotice({ error, label, status }: {
+  error: string | undefined
+  label: string
+  status: PatientBriefJob['status']
+}) {
+  const inProgress = status === 'queued' || status === 'running'
+  const StatusIcon = status === 'failed'
+    ? CircleAlertIcon
+    : inProgress
+      ? LoaderCircleIcon
+      : SparklesIcon
+  return (
+    <Alert
+      aria-label={label}
+      className="mt-3"
+      role={status === 'failed' ? 'alert' : 'status'}
+      variant={status === 'failed' ? 'destructive' : 'default'}
+    >
+      <StatusIcon className={inProgress ? 'animate-spin' : undefined} />
+      <AlertTitle>{label}</AlertTitle>
+      {error === undefined ? null : <AlertDescription>{error}</AlertDescription>}
+    </Alert>
+  )
+}
 
 const genderItems = [
   { label: '不限', value: 'any' },
@@ -135,6 +189,13 @@ function avatarUri(seed: string): string {
 
 function randomScenarioSeed(): number {
   return Math.floor(Math.random() * (maximumScenarioSeed + 1))
+}
+
+function runtimeErrorMessage(error: unknown, locale: WorkspaceLocale): string {
+  return getWorkspaceErrorMessage(
+    error instanceof Error ? error : new Error('Unclassified runtime failure'),
+    getWorkspaceMessages(locale),
+  )
 }
 
 function ProfileAvatar({ className, name, profileId }: {
@@ -195,7 +256,10 @@ function TranslationWarningPanel({ locale, warning }: {
 function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLocale }) {
   const messages = copy[locale]
   const [page, setPage] = useState(1)
-  const [selectedReference, setSelectedReference] = useState<string>()
+  const [expandedDates, setExpandedDates] = useState<Set<string>>(() => new Set())
+  const [selection, setSelection] = useState<{ offset: number; reference: string }>()
+  const historyListRef = useRef<HTMLDivElement>(null)
+  const selectedReference = selection?.reference
   const history = useQuery({
     queryFn: ({ signal }) => getSyntheticCaseHistory(caseId, signal, page),
     queryKey: ['synthetic-case-history', caseId, page],
@@ -210,7 +274,101 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
   if (history.isPending) return <Skeleton className="h-72 w-full" />
   if (history.isError) return <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert>
   if (history.data.items.length === 0) return <p className="py-8 text-sm text-muted-foreground">{messages.noHistory}</p>
-  return <div className="grid min-h-[360px] lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)]"><div className="border-r">{history.data.items.map(item => <button className={cn('grid w-full grid-cols-[104px_minmax(0,1fr)_24px] items-center gap-3 border-b px-3 py-3 text-left', selectedReference === item.sourceReference && 'bg-muted/50')} key={item.sourceReference} onClick={() => setSelectedReference(item.sourceReference)} type="button"><span className="text-xs text-muted-foreground">{item.clinicalDate.slice(0, 10)}</span><span className="min-w-0"><strong className="block truncate text-sm">{item.title}</strong><span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.resourceType}</span></span><ChevronRightIcon className="size-4 text-muted-foreground" /></button>)}<div className="flex justify-between p-2"><Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="ghost">{messages.previous}</Button><Button disabled={page * history.data.pageSize >= history.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="ghost">{messages.next}</Button></div></div><section className="min-w-0 p-3"><h4 className="flex items-center gap-2 text-sm font-semibold"><FileJsonIcon className="size-4" />{messages.resourceDetail}</h4>{selectedReference === undefined ? <p className="mt-4 text-sm text-muted-foreground">{messages.externalHistory}</p> : detail.isPending ? <Skeleton className="mt-3 h-64 w-full" /> : detail.isError ? <Alert className="mt-3" variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : <pre className="mt-3 max-h-[420px] overflow-auto border bg-muted/20 p-3 text-xs">{JSON.stringify(detail.data.resource, null, 2)}</pre>}</section></div>
+  return (
+    <div className="grid min-h-[360px] lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)]">
+      <div aria-label={messages.history} className="lg:border-r" ref={historyListRef} role="group">
+        {history.data.items.map((group) => {
+          const expanded = expandedDates.has(group.businessDate)
+          const contentId = `source-history-${caseId}-${group.businessDate}`
+          return (
+            <section className="border-b" key={group.businessDate}>
+              <h5>
+                <button
+                  aria-controls={contentId}
+                  aria-expanded={expanded}
+                  className="flex min-h-[44px] w-full items-center gap-2 bg-muted/30 px-3 py-[12px] text-left text-xs font-semibold text-muted-foreground hover:bg-muted/50"
+                  onClick={() => {
+                    setSelection(undefined)
+                    setExpandedDates((current) => {
+                      const next = new Set(current)
+                      if (next.has(group.businessDate)) next.delete(group.businessDate)
+                      else next.add(group.businessDate)
+                      return next
+                    })
+                  }}
+                  type="button"
+                >
+                  <ChevronRightIcon className={cn('size-4 transition-transform', expanded && 'rotate-90')} />
+                  <span className="min-w-0 flex-1">{group.businessDate}</span>
+                  <span className="font-normal">
+                    {translationCount(messages.historyEntries, group.items.length)}
+                  </span>
+                </button>
+              </h5>
+              {expanded ? (
+                <div className="divide-y" id={contentId}>
+                  {group.items.map(item => (
+                    <button
+                      className={cn(
+                        'grid w-full grid-cols-[minmax(0,1fr)_24px] items-center gap-3 py-3 pl-9 pr-3 text-left',
+                        selectedReference === item.sourceReference && 'bg-muted/50',
+                      )}
+                      key={item.sourceReference}
+                      onClick={(event) => {
+                        const itemTop = event.currentTarget.getBoundingClientRect().top
+                        const listTop = historyListRef.current?.getBoundingClientRect().top
+                          ?? itemTop
+                        setSelection({
+                          offset: Math.max(0, itemTop - listTop),
+                          reference: item.sourceReference,
+                        })
+                      }}
+                      type="button"
+                    >
+                      <span className="min-w-0">
+                        <strong className="block truncate text-sm">{item.title}</strong>
+                        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                          {item.resourceType}
+                        </span>
+                      </span>
+                      <ChevronRightIcon className="size-4 text-muted-foreground" />
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          )
+        })}
+        <div className="flex justify-between p-2">
+          <Button disabled={page === 1} onClick={() => { setSelection(undefined); setPage(current => current - 1) }} size="sm" variant="ghost">
+            {messages.previous}
+          </Button>
+          <Button disabled={page * history.data.pageSize >= history.data.total} onClick={() => { setSelection(undefined); setPage(current => current + 1) }} size="sm" variant="ghost">
+            {messages.next}
+          </Button>
+        </div>
+      </div>
+      <section
+        aria-labelledby={`source-history-detail-heading-${caseId}`}
+        className="min-w-0 border-t p-3 lg:mt-(--source-history-detail-offset) lg:border-t-0"
+        style={{
+          '--source-history-detail-offset': `${selection?.offset ?? 0}px`,
+        } as CSSProperties}
+      >
+        <h4 className="flex items-center gap-2 text-sm font-semibold" id={`source-history-detail-heading-${caseId}`}>
+          <FileJsonIcon className="size-4" />
+          {messages.resourceDetail}
+        </h4>
+        {selectedReference === undefined
+          ? <p className="mt-4 text-sm text-muted-foreground">{messages.externalHistory}</p>
+          : detail.isPending
+            ? <Skeleton className="mt-3 h-64 w-full" />
+            : detail.isError
+              ? <Alert className="mt-3" variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert>
+              : <pre className="mt-3 max-h-[420px] overflow-auto border bg-muted/20 p-3 text-xs">{JSON.stringify(detail.data.resource, null, 2)}</pre>}
+      </section>
+    </div>
+  )
 }
 
 function StartCaseVisitSheet({ locale, onOpenChange, open, profileId, syntheticCase }: {
@@ -270,7 +428,7 @@ function StartCaseVisitSheet({ locale, onOpenChange, open, profileId, syntheticC
               <Field><FieldLabel htmlFor="case-visit-type">{locale === 'zh-CN' ? '门诊类型' : 'Visit type'}</FieldLabel><Select items={catalog.data.visitTypes.map(item => ({ label: locale === 'zh-CN' ? item.nameZh : item.nameEn, value: item.id }))} onValueChange={value => setVisitTypeId(value ?? '')} value={effectiveVisitTypeId}><SelectTrigger className="w-full" id="case-visit-type"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{catalog.data.visitTypes.map(item => <SelectItem key={item.id} value={item.id}>{locale === 'zh-CN' ? item.nameZh : item.nameEn}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>
             </FieldGroup>
           )}
-          {start.error === null ? null : <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{start.error instanceof Error ? start.error.message : String(start.error)}</AlertDescription></Alert>}
+          {start.error === null ? null : <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(start.error, locale)}</AlertDescription></Alert>}
         </div>
         <SheetFooter><Button disabled={catalog.data === undefined || start.isPending || effectiveDepartmentId === '' || effectiveLocationId === '' || effectiveVisitTypeId === ''} onClick={() => start.mutate()}><UserPlusIcon data-icon="inline-start" />{messages.startVisit}</Button></SheetFooter>
       </SheetContent>
@@ -285,7 +443,12 @@ function PatientBriefPanel({ locale, profileId, syntheticCase }: {
 }) {
   const messages = copy[locale]
   const queryClient = useQueryClient()
-  const [jobId, setJobId] = useState<string>()
+  const jobId = useSyntheticPatientLibraryViewStore(
+    state => state.patientBriefJobIds[syntheticCase.caseId],
+  )
+  const setPatientBriefJob = useSyntheticPatientLibraryViewStore(
+    state => state.setPatientBriefJob,
+  )
   const [visitOpen, setVisitOpen] = useState(false)
   const revisions = useQuery({
     queryFn: ({ signal }) => getPatientBriefRevisions(syntheticCase.caseId, signal),
@@ -293,7 +456,10 @@ function PatientBriefPanel({ locale, profileId, syntheticCase }: {
   })
   const generate = useMutation({
     mutationFn: () => enqueuePatientBrief(syntheticCase.caseId, newIdempotencyKey()),
-    onSuccess: response => setJobId(response.data.jobId),
+    onSuccess: response => {
+      queryClient.setQueryData(['patient-brief-job', response.data.jobId], response.data)
+      setPatientBriefJob(syntheticCase.caseId, response.data.jobId)
+    },
   })
   const job = useQuery({
     enabled: jobId !== undefined,
@@ -345,15 +511,16 @@ function PatientBriefPanel({ locale, profileId, syntheticCase }: {
       {generate.error === null ? null : (
         <Alert className="mt-3" variant="destructive">
           <CircleAlertIcon /><AlertTitle>{messages.briefFailed}</AlertTitle>
-          <AlertDescription>{generate.error instanceof Error ? generate.error.message : String(generate.error)}</AlertDescription>
+          <AlertDescription>{runtimeErrorMessage(generate.error, locale)}</AlertDescription>
         </Alert>
       )}
-      {job.data?.status === 'failed' ? (
-        <Alert className="mt-3" variant="destructive">
-          <CircleAlertIcon /><AlertTitle>{messages.briefFailed}</AlertTitle>
-          <AlertDescription>{job.data.error?.message}</AlertDescription>
-        </Alert>
-      ) : null}
+      {job.data === undefined ? null : (
+        <JobStatusNotice
+          error={job.data.error?.message}
+          label={messages.briefStatus[job.data.status]}
+          status={job.data.status}
+        />
+      )}
       {running ? <Skeleton className="mt-3 h-20 w-full" /> : null}
       {revisions.isPending ? (
         <Skeleton className="mt-3 h-64 w-full" />
@@ -385,7 +552,7 @@ function PatientBriefPanel({ locale, profileId, syntheticCase }: {
         </div>
       )}
       {select.error === null ? null : (
-        <Alert className="mt-3" variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.briefFailed}</AlertTitle><AlertDescription>{select.error instanceof Error ? select.error.message : String(select.error)}</AlertDescription></Alert>
+        <Alert className="mt-3" variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.briefFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(select.error, locale)}</AlertDescription></Alert>
       )}
       <StartCaseVisitSheet
         locale={locale}
@@ -455,11 +622,11 @@ function ProfileDetails({ locale, onEdit, profile, referenceDate }: {
         <TabsContent value="history">
           {profile.case === null
             ? <p className="p-4 text-sm text-muted-foreground">{messages.noHistory}</p>
-            : <SourceHistory caseId={profile.case.caseId} locale={locale} />}
+            : <SourceHistory caseId={profile.case.caseId} key={profile.case.caseId} locale={locale} />}
         </TabsContent>
         {profile.case === null ? null : (
           <TabsContent value="brief">
-            <PatientBriefPanel locale={locale} profileId={profile.profileId} syntheticCase={profile.case} />
+            <PatientBriefPanel key={profile.case.caseId} locale={locale} profileId={profile.profileId} syntheticCase={profile.case} />
           </TabsContent>
         )}
         <TabsContent className="p-4" value="source">
@@ -509,7 +676,7 @@ function GenerationSheet({ error, locale, onGenerate, onOpenChange, open, pendin
   const filtered = request.moduleMode === 'filter'
   const updatePopulation = (next: Partial<ScenarioGenerationRequest['population']>) => setRequest(current => ({ ...current, population: { ...current.population, ...next } }))
   const updateModule = (module: string, checked: boolean) => setRequest(current => ({ ...current, modules: checked ? [...new Set([...current.modules, module])] : current.modules.length === 1 ? current.modules : current.modules.filter(item => item !== module) }))
-  return <Sheet onOpenChange={onOpenChange} open={open}><SheetContent className="w-full sm:max-w-lg" side="right"><SheetHeader><SheetTitle>{messages.generate}</SheetTitle><SheetDescription>{messages.emptyDescription}</SheetDescription></SheetHeader><div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4"><div className="border-b pb-3"><p className="text-sm font-semibold">Synthea</p><p className="mt-1 text-xs text-muted-foreground">{messages.allModules}</p></div><FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="patient-batch-name">{messages.batch}</FieldLabel><Input id="patient-batch-name" maxLength={120} onChange={event => setRequest(current => ({ ...current, name: event.target.value }))} value={request.name} /></Field><Field><FieldLabel htmlFor="patient-count">{messages.patientCount}</FieldLabel><Input id="patient-count" max={10} min={1} onChange={event => updatePopulation({ count: Number(event.target.value) })} type="number" value={request.population.count} /></Field><Field><FieldLabel htmlFor="patient-min-age">最小年龄</FieldLabel><Input id="patient-min-age" max={120} min={0} onChange={event => updatePopulation({ age: { ...request.population.age, minimum: Number(event.target.value) } })} type="number" value={request.population.age.minimum} /></Field><Field><FieldLabel htmlFor="patient-max-age">最大年龄</FieldLabel><Input id="patient-max-age" max={120} min={0} onChange={event => updatePopulation({ age: { ...request.population.age, maximum: Number(event.target.value) } })} type="number" value={request.population.age.maximum} /></Field></FieldGroup><Field><FieldLabel htmlFor="patient-gender">性别</FieldLabel><Select items={genderItems} onValueChange={value => { if (value !== null) updatePopulation({ gender: value }) }} value={request.population.gender}><SelectTrigger className="w-full" id="patient-gender"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{genderItems.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent></Select></Field><details className="border-t pt-4"><summary className="cursor-pointer text-sm font-medium">{messages.advanced}</summary><FieldGroup className="mt-4"><Field orientation="horizontal"><Checkbox checked={filtered} disabled={availableModules.length === 0} id="patient-filter-modules" onCheckedChange={checked => setRequest(current => ({ ...current, moduleMode: checked === true ? 'filter' : 'all', modules: checked === true ? availableModules.slice(0, 1) : [] }))} /><FieldLabel htmlFor="patient-filter-modules">{messages.filterModules}</FieldLabel></Field>{filtered ? <FieldSet><FieldLegend variant="label">Synthea modules</FieldLegend><FieldGroup>{availableModules.map(module => <Field key={module} orientation="horizontal"><Checkbox checked={request.modules.includes(module)} id={`patient-module-${module}`} onCheckedChange={checked => updateModule(module, checked === true)} /><FieldLabel htmlFor={`patient-module-${module}`}>{module}</FieldLabel></Field>)}</FieldGroup></FieldSet> : null}<FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="patient-population-seed">{messages.populationSeed}</FieldLabel><Input id="patient-population-seed" max={maximumScenarioSeed} min={0} onChange={event => setRequest(current => ({ ...current, seeds: { ...current.seeds, population: Number(event.target.value) } }))} type="number" value={request.seeds.population} /></Field><Field><FieldLabel htmlFor="patient-clinical-seed">{messages.clinicalSeed}</FieldLabel><Input id="patient-clinical-seed" max={maximumScenarioSeed} min={0} onChange={event => setRequest(current => ({ ...current, seeds: { ...current.seeds, clinical: Number(event.target.value) } }))} type="number" value={request.seeds.clinical} /></Field><Field className="sm:col-span-2"><FieldLabel htmlFor="patient-history-start">{messages.historyStart}</FieldLabel><Input id="patient-history-start" onChange={event => setRequest(current => ({ ...current, timeRange: { ...current.timeRange, start: event.target.value } }))} type="date" value={request.timeRange.start} /></Field></FieldGroup></FieldGroup></details>{provider?.available === false ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{provider.unavailableReason}</AlertTitle></Alert> : null}{error === null ? null : <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{error instanceof Error ? error.message : String(error)}</AlertDescription></Alert>}</div><SheetFooter><Button disabled={pending || provider?.available !== true} onClick={() => onGenerate(request)}><SparklesIcon data-icon="inline-start" />{messages.generate}</Button></SheetFooter></SheetContent></Sheet>
+  return <Sheet onOpenChange={onOpenChange} open={open}><SheetContent className="w-full sm:max-w-lg" side="right"><SheetHeader><SheetTitle>{messages.generate}</SheetTitle><SheetDescription>{messages.emptyDescription}</SheetDescription></SheetHeader><div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4"><div className="border-b pb-3"><p className="text-sm font-semibold">Synthea</p><p className="mt-1 text-xs text-muted-foreground">{messages.allModules}</p></div><FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="patient-batch-name">{messages.batch}</FieldLabel><Input id="patient-batch-name" maxLength={120} onChange={event => setRequest(current => ({ ...current, name: event.target.value }))} value={request.name} /></Field><Field><FieldLabel htmlFor="patient-count">{messages.patientCount}</FieldLabel><Input id="patient-count" max={10} min={1} onChange={event => updatePopulation({ count: Number(event.target.value) })} type="number" value={request.population.count} /></Field><Field><FieldLabel htmlFor="patient-min-age">最小年龄</FieldLabel><Input id="patient-min-age" max={120} min={0} onChange={event => updatePopulation({ age: { ...request.population.age, minimum: Number(event.target.value) } })} type="number" value={request.population.age.minimum} /></Field><Field><FieldLabel htmlFor="patient-max-age">最大年龄</FieldLabel><Input id="patient-max-age" max={120} min={0} onChange={event => updatePopulation({ age: { ...request.population.age, maximum: Number(event.target.value) } })} type="number" value={request.population.age.maximum} /></Field></FieldGroup><Field><FieldLabel htmlFor="patient-gender">性别</FieldLabel><Select items={genderItems} onValueChange={value => { if (value !== null) updatePopulation({ gender: value }) }} value={request.population.gender}><SelectTrigger className="w-full" id="patient-gender"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{genderItems.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent></Select></Field><details className="border-t pt-4"><summary className="cursor-pointer text-sm font-medium">{messages.advanced}</summary><FieldGroup className="mt-4"><Field orientation="horizontal"><Checkbox checked={filtered} disabled={availableModules.length === 0} id="patient-filter-modules" onCheckedChange={checked => setRequest(current => ({ ...current, moduleMode: checked === true ? 'filter' : 'all', modules: checked === true ? availableModules.slice(0, 1) : [] }))} /><FieldLabel htmlFor="patient-filter-modules">{messages.filterModules}</FieldLabel></Field>{filtered ? <FieldSet><FieldLegend variant="label">Synthea modules</FieldLegend><FieldGroup>{availableModules.map(module => <Field key={module} orientation="horizontal"><Checkbox checked={request.modules.includes(module)} id={`patient-module-${module}`} onCheckedChange={checked => updateModule(module, checked === true)} /><FieldLabel htmlFor={`patient-module-${module}`}>{module}</FieldLabel></Field>)}</FieldGroup></FieldSet> : null}<FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="patient-population-seed">{messages.populationSeed}</FieldLabel><Input id="patient-population-seed" max={maximumScenarioSeed} min={0} onChange={event => setRequest(current => ({ ...current, seeds: { ...current.seeds, population: Number(event.target.value) } }))} type="number" value={request.seeds.population} /></Field><Field><FieldLabel htmlFor="patient-clinical-seed">{messages.clinicalSeed}</FieldLabel><Input id="patient-clinical-seed" max={maximumScenarioSeed} min={0} onChange={event => setRequest(current => ({ ...current, seeds: { ...current.seeds, clinical: Number(event.target.value) } }))} type="number" value={request.seeds.clinical} /></Field><Field className="sm:col-span-2"><FieldLabel htmlFor="patient-history-start">{messages.historyStart}</FieldLabel><Input id="patient-history-start" onChange={event => setRequest(current => ({ ...current, timeRange: { ...current.timeRange, start: event.target.value } }))} type="date" value={request.timeRange.start} /></Field></FieldGroup></FieldGroup></details>{provider?.available === false ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{provider.unavailableReason}</AlertTitle></Alert> : null}{error === null ? null : <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(error, locale)}</AlertDescription></Alert>}</div><SheetFooter><Button disabled={pending || provider?.available !== true} onClick={() => onGenerate(request)}><SparklesIcon data-icon="inline-start" />{messages.generate}</Button></SheetFooter></SheetContent></Sheet>
 }
 
 function EditProfileSheet({ error, locale, onOpenChange, onSave, open, pending, profile }: {
@@ -524,7 +691,7 @@ function EditProfileSheet({ error, locale, onOpenChange, onSave, open, pending, 
   const messages = copy[locale]
   const [identity, setIdentity] = useState(profile.identity)
   const update = (next: Partial<SyntheticPatientIdentity>) => setIdentity(current => ({ ...current, ...next }))
-  return <Sheet onOpenChange={onOpenChange} open={open}><SheetContent className="w-full sm:max-w-lg" side="right"><SheetHeader><SheetTitle>{messages.editProfile}</SheetTitle><SheetDescription>{profile.identity.displayName}</SheetDescription></SheetHeader><FieldGroup className="overflow-y-auto px-4"><Field><FieldLabel htmlFor="profile-name">{messages.name}</FieldLabel><Input id="profile-name" onChange={event => update({ displayName: event.target.value })} value={identity.displayName} /></Field><Field><FieldLabel htmlFor="profile-mrn">{messages.mrn}</FieldLabel><Input id="profile-mrn" onChange={event => update({ mrn: event.target.value })} value={identity.mrn} /></Field><Field><FieldLabel htmlFor="profile-national-id">{messages.nationalId}</FieldLabel><Input id="profile-national-id" onChange={event => update({ nationalId: event.target.value })} value={identity.nationalId} /></Field><Field><FieldLabel htmlFor="profile-phone">{messages.phone}</FieldLabel><Input id="profile-phone" onChange={event => update({ phone: event.target.value })} value={identity.phone} /></Field><Field><FieldLabel htmlFor="profile-email">{messages.email}</FieldLabel><Input id="profile-email" onChange={event => update({ email: event.target.value })} type="email" value={identity.email} /></Field><Field><FieldLabel htmlFor="profile-address">{messages.address}</FieldLabel><Input id="profile-address" onChange={event => update({ address: event.target.value })} value={identity.address} /></Field><Field><FieldLabel htmlFor="profile-insurance">{messages.insurance}</FieldLabel><Input id="profile-insurance" onChange={event => update({ insuranceDisplay: event.target.value })} value={identity.insuranceDisplay} /></Field></FieldGroup>{error === null ? null : <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.saveFailed}</AlertTitle><AlertDescription>{error instanceof Error ? error.message : String(error)}</AlertDescription></Alert>}<SheetFooter><Button disabled={pending} onClick={() => onSave(identity)}><SparklesIcon data-icon="inline-start" />{messages.save}</Button></SheetFooter></SheetContent></Sheet>
+  return <Sheet onOpenChange={onOpenChange} open={open}><SheetContent className="w-full sm:max-w-lg" side="right"><SheetHeader><SheetTitle>{messages.editProfile}</SheetTitle><SheetDescription>{profile.identity.displayName}</SheetDescription></SheetHeader><FieldGroup className="overflow-y-auto px-4"><Field><FieldLabel htmlFor="profile-name">{messages.name}</FieldLabel><Input id="profile-name" onChange={event => update({ displayName: event.target.value })} value={identity.displayName} /></Field><Field><FieldLabel htmlFor="profile-mrn">{messages.mrn}</FieldLabel><Input id="profile-mrn" onChange={event => update({ mrn: event.target.value })} value={identity.mrn} /></Field><Field><FieldLabel htmlFor="profile-national-id">{messages.nationalId}</FieldLabel><Input id="profile-national-id" onChange={event => update({ nationalId: event.target.value })} value={identity.nationalId} /></Field><Field><FieldLabel htmlFor="profile-phone">{messages.phone}</FieldLabel><Input id="profile-phone" onChange={event => update({ phone: event.target.value })} value={identity.phone} /></Field><Field><FieldLabel htmlFor="profile-email">{messages.email}</FieldLabel><Input id="profile-email" onChange={event => update({ email: event.target.value })} type="email" value={identity.email} /></Field><Field><FieldLabel htmlFor="profile-address">{messages.address}</FieldLabel><Input id="profile-address" onChange={event => update({ address: event.target.value })} value={identity.address} /></Field><Field><FieldLabel htmlFor="profile-insurance">{messages.insurance}</FieldLabel><Input id="profile-insurance" onChange={event => update({ insuranceDisplay: event.target.value })} value={identity.insuranceDisplay} /></Field></FieldGroup>{error === null ? null : <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.saveFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(error, locale)}</AlertDescription></Alert>}<SheetFooter><Button disabled={pending} onClick={() => onSave(identity)}><SparklesIcon data-icon="inline-start" />{messages.save}</Button></SheetFooter></SheetContent></Sheet>
 }
 
 export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale }): React.JSX.Element {
@@ -535,7 +702,12 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
   const [submittedSearch, setSubmittedSearch] = useState('')
   const [selectedProfileId, setSelectedProfileId] = useState<string>()
   const [generationOpen, setGenerationOpen] = useState(false)
-  const [generationJobId, setGenerationJobId] = useState<string>()
+  const scenarioGenerationJobIds = useSyntheticPatientLibraryViewStore(
+    state => state.scenarioGenerationJobIds,
+  )
+  const setScenarioGenerationJob = useSyntheticPatientLibraryViewStore(
+    state => state.setScenarioGenerationJob,
+  )
   const [editOpen, setEditOpen] = useState(false)
   const profiles = useQuery({ queryFn: ({ signal }) => getSyntheticPatientProfiles(signal, page, submittedSearch), queryKey: [...profileListKey, page, submittedSearch] })
   const scenario = useQuery({ queryFn: ({ signal }) => getCurrentScenario(signal), queryKey: currentScenarioKey })
@@ -543,7 +715,20 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
   const effectiveProfileId = selectedProfileId ?? profiles.data?.items[0]?.profileId
   const profile = useQuery({ enabled: effectiveProfileId !== undefined, queryFn: ({ signal }) => effectiveProfileId === undefined ? Promise.reject(new Error('No profile selected')) : getSyntheticPatientProfile(effectiveProfileId, signal), queryKey: ['synthetic-patient-profile', effectiveProfileId ?? 'none'] })
   const providers = useQuery({ queryFn: ({ signal }) => getScenarioProviders(signal), queryKey: providerKey })
-  const generate = useMutation({ mutationFn: (request: ScenarioGenerationRequest) => enqueueScenarioGenerationJob(request, newIdempotencyKey()), onSuccess: response => { setGenerationJobId(response.data.jobId); setGenerationOpen(false) } })
+  const generationJobId = scenario.data === undefined
+    ? undefined
+    : scenarioGenerationJobIds[scenario.data.workspaceId]
+  const generate = useMutation({
+    mutationFn: (request: ScenarioGenerationRequest) => enqueueScenarioGenerationJob(
+      request,
+      newIdempotencyKey(),
+    ),
+    onSuccess: response => {
+      queryClient.setQueryData(['scenario-generation-job', response.data.jobId], response.data)
+      setScenarioGenerationJob(response.data.workspaceId, response.data.jobId)
+      setGenerationOpen(false)
+    },
+  })
   const generationJob = useQuery({ enabled: generationJobId !== undefined, queryFn: ({ signal }) => generationJobId === undefined ? Promise.reject(new Error('No generation job')) : getScenarioGenerationJob(generationJobId, signal), queryKey: ['scenario-generation-job', generationJobId ?? 'none'], refetchInterval: query => ['queued', 'running'].includes(query.state.data?.status ?? '') ? 1_000 : false })
   const agentPage = useMemo(() => ({
     actions: {
@@ -617,5 +802,5 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
   }, [generationJob.data?.profileIds, generationJob.data?.status, queryClient])
   const updateProfile = useMutation({ mutationFn: (identity: SyntheticPatientIdentity) => { if (profile.data === undefined) throw new Error('No profile selected'); return updateSyntheticPatientProfile({ expectedRevision: profile.data.revision, identity, profileId: profile.data.profileId }, newIdempotencyKey()) }, onSuccess: async response => { queryClient.setQueryData(['synthetic-patient-profile', response.data.profileId], response.data); await queryClient.invalidateQueries({ queryKey: profileListKey }); setEditOpen(false) } })
   const mutationError = generate.error ?? updateProfile.error
-  return <section aria-labelledby="synthetic-patient-library-heading" className="flex min-w-0 flex-col gap-4"><div className="flex flex-wrap items-start gap-3"><div><h2 className="text-base font-semibold" id="synthetic-patient-library-heading">{messages.libraryTitle}</h2><p className="mt-1 text-sm text-muted-foreground">{messages.libraryDescription}</p></div><Button className="ml-auto" onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></div>{mutationError !== null ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{mutationError instanceof Error ? mutationError.message : String(mutationError)}</AlertDescription></Alert> : null}{generationJob.data !== undefined ? <Alert variant={generationJob.data.status === 'failed' ? 'destructive' : 'default'}><SparklesIcon /><AlertTitle>{generationJob.data.status === 'succeeded' ? messages.generationSucceeded : generationJob.data.status === 'failed' ? messages.generationFailed : messages.queued}</AlertTitle><AlertDescription>{generationJob.data.error?.message}</AlertDescription></Alert> : null}{profiles.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profiles.isPending ? <Skeleton className="h-[680px] w-full" /> : null}{profiles.data?.items.length === 0 ? <Empty className="min-h-96 border"><EmptyHeader><EmptyMedia variant="icon"><DatabaseIcon /></EmptyMedia><EmptyTitle>{messages.emptyTitle}</EmptyTitle><EmptyDescription>{messages.emptyDescription}</EmptyDescription></EmptyHeader><EmptyContent><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></EmptyContent></Empty> : null}{profiles.data !== undefined && profiles.data.items.length > 0 ? <div className="grid min-h-[680px] border lg:grid-cols-[280px_minmax(0,1fr)]"><aside className="flex min-h-0 flex-col border-r bg-background"><form className="flex items-center gap-2 border-b p-3" onSubmit={event => { event.preventDefault(); setPage(1); setSubmittedSearch(search.trim()) }}><InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={`${messages.name}、${messages.mrn}、${messages.batch}`} value={search} /></InputGroup><Button aria-label={messages.search} size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon /></Button></form><div className="border-b px-3 py-2 text-xs text-muted-foreground">{profiles.data.total} 名患者</div><div className="min-h-0 flex-1 overflow-y-auto p-2">{profiles.data.items.map(item => <button className={cn('flex w-full items-center gap-3 border-b px-2 py-2 text-left', item.profileId === effectiveProfileId && 'border border-primary/30 bg-primary/5')} key={item.profileId} onClick={() => setSelectedProfileId(item.profileId)} type="button"><ProfileAvatar name={item.name} profileId={item.profileId} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="truncate text-sm">{item.name}</strong><span className="text-xs text-muted-foreground">{age(item.birthDate, referenceDate)} 岁</span></span><span className="mt-1 block truncate text-xs text-muted-foreground">{item.mrn}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.batchName} · {item.providerId === 'synthea' ? 'Synthea' : 'ClinMesh'}</span></span></button>)}</div>{profiles.data.total > profiles.data.pageSize ? <div className="flex justify-between border-t p-2"><Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="ghost">{messages.previous}</Button><Button disabled={page * profiles.data.pageSize >= profiles.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="ghost">{messages.next}</Button></div> : null}</aside>{profile.isPending ? <Skeleton className="h-full w-full" /> : null}{profile.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profile.data !== undefined ? <ProfileDetails locale={locale} onEdit={() => setEditOpen(true)} profile={profile.data} referenceDate={referenceDate} /> : null}</div> : null}<GenerationSheet error={generate.error} locale={locale} onGenerate={request => generate.mutate(request)} onOpenChange={setGenerationOpen} open={generationOpen} pending={generate.isPending} providers={providers.data?.items ?? []} />{profile.data !== undefined ? <EditProfileSheet error={updateProfile.error} key={`${profile.data.profileId}:${profile.data.revision}`} locale={locale} onOpenChange={setEditOpen} onSave={identity => updateProfile.mutate(identity)} open={editOpen} pending={updateProfile.isPending} profile={profile.data} /> : null}</section>
+  return <section aria-labelledby="synthetic-patient-library-heading" className="flex min-w-0 flex-col gap-4"><div className="flex flex-wrap items-start gap-3"><div><h2 className="text-base font-semibold" id="synthetic-patient-library-heading">{messages.libraryTitle}</h2><p className="mt-1 text-sm text-muted-foreground">{messages.libraryDescription}</p></div><Button className="ml-auto" onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></div>{mutationError !== null ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(mutationError, locale)}</AlertDescription></Alert> : null}{generationJob.data === undefined ? null : <JobStatusNotice error={generationJob.data.error?.message} label={messages.generationStatus[generationJob.data.status]} status={generationJob.data.status} />}{profiles.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profiles.isPending ? <Skeleton className="h-[680px] w-full" /> : null}{profiles.data?.items.length === 0 ? <Empty className="min-h-96 border"><EmptyHeader><EmptyMedia variant="icon"><DatabaseIcon /></EmptyMedia><EmptyTitle>{messages.emptyTitle}</EmptyTitle><EmptyDescription>{messages.emptyDescription}</EmptyDescription></EmptyHeader><EmptyContent><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></EmptyContent></Empty> : null}{profiles.data !== undefined && profiles.data.items.length > 0 ? <div className="grid min-h-[680px] border lg:grid-cols-[280px_minmax(0,1fr)]"><aside className="flex min-h-0 flex-col border-r bg-background"><form className="flex items-center gap-2 border-b p-3" onSubmit={event => { event.preventDefault(); setPage(1); setSubmittedSearch(search.trim()) }}><InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={`${messages.name}、${messages.mrn}、${messages.batch}`} value={search} /></InputGroup><Button aria-label={messages.search} size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon /></Button></form><div className="border-b px-3 py-2 text-xs text-muted-foreground">{profiles.data.total} 名患者</div><div className="min-h-0 flex-1 overflow-y-auto p-2">{profiles.data.items.map(item => <button className={cn('flex w-full items-center gap-3 border-b px-2 py-2 text-left', item.profileId === effectiveProfileId && 'border border-primary/30 bg-primary/5')} key={item.profileId} onClick={() => setSelectedProfileId(item.profileId)} type="button"><ProfileAvatar name={item.name} profileId={item.profileId} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="truncate text-sm">{item.name}</strong><span className="text-xs text-muted-foreground">{age(item.birthDate, referenceDate)} 岁</span></span><span className="mt-1 block truncate text-xs text-muted-foreground">{item.mrn}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.batchName} · {item.providerId === 'synthea' ? 'Synthea' : 'ClinMesh'}</span></span></button>)}</div>{profiles.data.total > profiles.data.pageSize ? <div className="flex justify-between border-t p-2"><Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="ghost">{messages.previous}</Button><Button disabled={page * profiles.data.pageSize >= profiles.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="ghost">{messages.next}</Button></div> : null}</aside>{profile.isPending ? <Skeleton className="h-full w-full" /> : null}{profile.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profile.data !== undefined ? <ProfileDetails locale={locale} onEdit={() => setEditOpen(true)} profile={profile.data} referenceDate={referenceDate} /> : null}</div> : null}<GenerationSheet error={generate.error} locale={locale} onGenerate={request => generate.mutate(request)} onOpenChange={setGenerationOpen} open={generationOpen} pending={generate.isPending} providers={providers.data?.items ?? []} />{profile.data !== undefined ? <EditProfileSheet error={updateProfile.error} key={`${profile.data.profileId}:${profile.data.revision}`} locale={locale} onOpenChange={setEditOpen} onSave={identity => updateProfile.mutate(identity)} open={editOpen} pending={updateProfile.isPending} profile={profile.data} /> : null}</section>
 }

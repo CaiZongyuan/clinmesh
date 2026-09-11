@@ -19,6 +19,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DoctorWorkspace } from './doctor-workspace.tsx'
+import { useSyntheticPatientLibraryViewStore } from './synthetic-patient-library-view-store.ts'
 import { WebApp } from './web-app.tsx'
 import type { WebSurfaceAgentController, WebSurfaceAgentTool } from './web-runtime.tsx'
 
@@ -448,17 +449,23 @@ function stubAdministratorWorkspace() {
 }
 
 function stubScenarioDataWorkspace(options: {
+  briefJobFails?: boolean
+  briefJobDelayMs?: number
+  generationJobFails?: boolean
+  generationJobDelayMs?: number
   onGenerate?: (request: ScenarioGenerationRequest) => void
   onCaseStart?: () => void
   profileAvailable?: boolean
   profileUpdateConflict?: boolean
   providerModules?: string[]
+  secondProfileAvailable?: boolean
   syntheaAvailable?: boolean
   translationWarning?: boolean
 } = {}) {
   let generated = false
   let briefGenerated = false
   let caseStarted = false
+  let briefJobReads = 0
   let jobReads = 0
   let profile: SyntheticPatientProfile = {
     createdAt: '2026-08-26T09:00:00+08:00',
@@ -499,6 +506,8 @@ function stubScenarioDataWorkspace(options: {
     workspaceId: 'workspace-demo',
   }
   const caseId = 'synthetic-case-001'
+  const secondCaseId = 'synthetic-case-002'
+  const secondProfileId = 'synthetic-patient-profile-002'
   const publicProfile = () => ({
     birthDate: profile.demographics.birthDate,
     case: {
@@ -512,7 +521,7 @@ function stubScenarioDataWorkspace(options: {
       sourceHash: profile.source.hash,
       status: caseStarted ? 'started' as const : briefGenerated ? 'brief-ready' as const : 'brief-pending' as const,
       updatedAt: profile.updatedAt,
-      visibleHistoryCount: 1,
+      visibleHistoryCount: 2,
       workspaceId: profile.workspaceId,
     },
     createdAt: profile.createdAt,
@@ -534,6 +543,23 @@ function stubScenarioDataWorkspace(options: {
     updatedAt: profile.updatedAt,
     workspaceId: profile.workspaceId,
   })
+  const secondPublicProfile = () => {
+    const first = publicProfile()
+    return {
+      ...first,
+      case: {
+        ...first.case,
+        caseId: secondCaseId,
+        profileId: secondProfileId,
+      },
+      identity: {
+        ...first.identity,
+        displayName: '第二位合成患者',
+        mrn: 'CMSYN000002',
+      },
+      profileId: secondProfileId,
+    }
+  }
   generated = options.profileAvailable === true
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost')
@@ -567,25 +593,35 @@ function stubScenarioDataWorkspace(options: {
       })
     }
     if (url.pathname === '/api/sim/v1/synthetic-patients') {
+      const firstSummary = {
+        activeVisit: false,
+        batchId: profile.source.batchId,
+        batchName: profile.source.batchName,
+        birthDate: profile.demographics.birthDate,
+        createdAt: profile.createdAt,
+        gender: profile.demographics.gender,
+        historyCount: 2,
+        mrn: profile.identity.mrn,
+        name: profile.identity.displayName,
+        profileId: profile.profileId,
+        providerId: 'synthea',
+        revision: profile.revision,
+        updatedAt: profile.updatedAt,
+      }
+      const summaries = [firstSummary]
+      if (options.secondProfileAvailable === true) {
+        summaries.push({
+          ...firstSummary,
+          mrn: 'CMSYN000002',
+          name: '第二位合成患者',
+          profileId: secondProfileId,
+        })
+      }
       return Response.json({
-        items: generated ? [{
-          activeVisit: false,
-          batchId: profile.source.batchId,
-          batchName: profile.source.batchName,
-          birthDate: profile.demographics.birthDate,
-          createdAt: profile.createdAt,
-          gender: profile.demographics.gender,
-          historyCount: 1,
-          mrn: profile.identity.mrn,
-          name: profile.identity.displayName,
-          profileId: profile.profileId,
-          providerId: 'synthea',
-          revision: profile.revision,
-          updatedAt: profile.updatedAt,
-        }] : [],
+        items: generated ? summaries : [],
         page: 1,
         pageSize: 20,
-        total: generated ? 1 : 0,
+        total: generated ? summaries.length : 0,
       })
     }
     if (url.pathname === `/api/sim/v1/synthetic-cases/${caseId}/history/detail`) {
@@ -621,17 +657,21 @@ function stubScenarioDataWorkspace(options: {
       }))
     }
     if (url.pathname === '/api/sim/v1/patient-brief-jobs/patient-brief-job-001') {
-      briefGenerated = true
+      await new Promise(resolve => setTimeout(resolve, options.briefJobDelayMs ?? 0))
+      briefJobReads += 1
+      const failed = options.briefJobFails === true
+      const succeeded = !failed && briefJobReads > 1
+      if (succeeded) briefGenerated = true
       return Response.json({
         caseId,
         createdAt: '2026-08-30T08:00:00+08:00',
-        error: null,
-        finishedAt: '2026-08-30T08:00:01+08:00',
+        error: failed ? { code: 'BRIEF_GENERATION_FAILED', message: '患者梗概服务暂时不可用' } : null,
+        finishedAt: failed || succeeded ? '2026-08-30T08:00:01+08:00' : null,
         jobId: 'patient-brief-job-001',
-        resultRevision: 1,
+        resultRevision: succeeded ? 1 : null,
         startedAt: '2026-08-30T08:00:00+08:00',
-        status: 'succeeded',
-        updatedAt: '2026-08-30T08:00:01+08:00',
+        status: failed ? 'failed' : succeeded ? 'succeeded' : 'running',
+        updatedAt: failed || succeeded ? '2026-08-30T08:00:01+08:00' : '2026-08-30T08:00:00+08:00',
         workspaceId: 'workspace-demo',
       })
     }
@@ -683,13 +723,24 @@ function stubScenarioDataWorkspace(options: {
         syntheticCaseId: caseId,
       }))
     }
-    if (url.pathname === `/api/sim/v1/synthetic-cases/${caseId}/history`) {
+    if (
+      url.pathname === `/api/sim/v1/synthetic-cases/${caseId}/history`
+      || url.pathname === `/api/sim/v1/synthetic-cases/${secondCaseId}/history`
+    ) {
       return Response.json({
         items: [{
-          clinicalDate: '2026-07-01T08:00:00+08:00',
-          resourceType: 'Condition',
-          sourceReference: 'urn:uuid:prior-condition',
-          title: '发热',
+          businessDate: '2026-07-01',
+          items: [{
+            clinicalDate: '2026-07-01T08:00:00+08:00',
+            resourceType: 'Condition',
+            sourceReference: 'urn:uuid:prior-condition',
+            title: '发热',
+          }, {
+            clinicalDate: '2026-07-01T08:10:00+08:00',
+            resourceType: 'Observation',
+            sourceReference: 'urn:uuid:prior-observation',
+            title: '体温',
+          }],
         }],
         page: 1,
         pageSize: 20,
@@ -711,6 +762,9 @@ function stubScenarioDataWorkspace(options: {
     }
     if (url.pathname === `/api/sim/v1/synthetic-patients/${profile.profileId}`) {
       return Response.json(publicProfile())
+    }
+    if (url.pathname === `/api/sim/v1/synthetic-patients/${secondProfileId}`) {
+      return Response.json(secondPublicProfile())
     }
     if (url.pathname === '/api/his/v1/catalogs/registration') {
       return Response.json({
@@ -745,14 +799,16 @@ function stubScenarioDataWorkspace(options: {
       }))
     }
     if (url.pathname === '/api/sim/v1/scenario-generation-jobs/scenario-generation-job-001') {
+      await new Promise(resolve => setTimeout(resolve, options.generationJobDelayMs ?? 0))
       jobReads += 1
-      const succeeded = jobReads > 1
+      const failed = options.generationJobFails === true
+      const succeeded = !failed && jobReads > 1
       if (succeeded) generated = true
       return Response.json({
         caseIds: succeeded ? [caseId] : [],
         createdAt: '2026-08-26T09:00:00+08:00',
-        error: null,
-        finishedAt: succeeded ? '2026-08-26T09:00:02+08:00' : null,
+        error: failed ? { code: 'PROVIDER_FAILED', message: 'Synthea 服务暂时不可用' } : null,
+        finishedAt: failed || succeeded ? '2026-08-26T09:00:02+08:00' : null,
         jobId: 'scenario-generation-job-001',
         profileIds: succeeded ? [profile.profileId] : [],
         request: {
@@ -765,8 +821,8 @@ function stubScenarioDataWorkspace(options: {
           timeZone: 'Asia/Shanghai',
         },
         startedAt: '2026-08-26T09:00:01+08:00',
-        status: succeeded ? 'succeeded' : 'running',
-        updatedAt: succeeded ? '2026-08-26T09:00:02+08:00' : '2026-08-26T09:00:01+08:00',
+        status: failed ? 'failed' : succeeded ? 'succeeded' : 'running',
+        updatedAt: failed || succeeded ? '2026-08-26T09:00:02+08:00' : '2026-08-26T09:00:01+08:00',
         workspaceId: 'workspace-demo',
       })
     }
@@ -1015,6 +1071,7 @@ function stubDoctorCompletedCaseLibrary(options: {
 describe('role workspaces', () => {
   beforeEach(() => {
     localStorage.clear()
+    useSyntheticPatientLibraryViewStore.getState().reset()
     window.history.replaceState(null, '', '/')
     vi.stubGlobal('matchMedia', vi.fn((query: string) => createMediaQueryList(query)))
     vi.stubGlobal('scrollTo', vi.fn())
@@ -1370,6 +1427,46 @@ describe('role workspaces', () => {
     await waitFor(() => expect(submitted?.seeds).toEqual({ clinical, population }))
   })
 
+  it('reports each Synthea patient generation state instead of leaving it unknown', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ generationJobDelayMs: 250, syntheaAvailable: true })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    const sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    await user.click(within(sheet).getByRole('button', { name: '生成患者' }))
+
+    expect(await screen.findByRole('status', { name: '患者生成排队中' })).toBeTruthy()
+    expect(await screen.findByRole(
+      'status',
+      { name: '患者生成中' },
+      { timeout: 2_500 },
+    )).toBeTruthy()
+    await user.click(screen.getByRole('link', { name: '工作台总览' }))
+    await user.click(await screen.findByRole('link', { name: '模拟数据' }))
+    expect(await screen.findByRole('status', { name: '患者生成中' })).toBeTruthy()
+    expect(await screen.findByRole(
+      'status',
+      { name: '患者档案与病例已生成' },
+      { timeout: 2_500 },
+    )).toBeTruthy()
+  })
+
+  it('reports a failed Synthea patient generation with its error', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ generationJobFails: true, syntheaAvailable: true })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    const sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    await user.click(within(sheet).getByRole('button', { name: '生成患者' }))
+
+    expect(await screen.findByRole('alert', { name: '患者生成失败' })).toBeTruthy()
+    expect(screen.getByText('Synthea 服务暂时不可用')).toBeTruthy()
+  })
+
   it('keeps profiles usable while exposing untranslated clinical displays for review', async () => {
     window.history.replaceState(null, '', '/scenario-data')
     stubScenarioDataWorkspace({ profileAvailable: true, translationWarning: true })
@@ -1401,9 +1498,74 @@ describe('role workspaces', () => {
     await user.click(within(editSheet).getByRole('button', { name: '保存档案' }))
     expect((await screen.findAllByText('合成患者新姓名')).length).toBeGreaterThan(0)
 
-    await user.click(await screen.findByRole('button', { name: /2026-07-01.*发热.*Condition/ }))
+    await user.click(await screen.findByRole('button', { name: /2026-07-01.*2 条记录/ }))
+    await user.click(await screen.findByRole('button', { name: /发热.*Condition/ }))
     expect(await screen.findByText(/prior-condition/)).toBeTruthy()
     expect(document.body.textContent).not.toContain('index-condition')
+  })
+
+  it('expands and collapses source history events by business date', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ profileAvailable: true })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    const dateColumn = await screen.findByRole('button', { name: /2026-07-01.*2 条记录/ })
+    expect(dateColumn.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('button', { name: /发热.*Condition/ })).toBeNull()
+
+    await user.click(dateColumn)
+    expect(dateColumn.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('button', { name: /发热.*Condition/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /体温.*Observation/ })).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: /发热.*Condition/ }))
+    expect(await screen.findByText(/prior-condition/)).toBeTruthy()
+
+    await user.click(dateColumn)
+    expect(dateColumn.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('button', { name: /发热.*Condition/ })).toBeNull()
+  })
+
+  it('aligns the right-side resource detail with the selected history row', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ profileAvailable: true })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('button', { name: /2026-07-01.*2 条记录/ }))
+    const historyList = screen.getByRole('group', { name: '来源历史' })
+    const condition = screen.getByRole('button', { name: /发热.*Condition/ })
+    const observation = screen.getByRole('button', { name: /体温.*Observation/ })
+    vi.spyOn(historyList, 'getBoundingClientRect').mockReturnValue({ top: 100 } as DOMRect)
+    vi.spyOn(condition, 'getBoundingClientRect').mockReturnValue({ top: 180 } as DOMRect)
+    vi.spyOn(observation, 'getBoundingClientRect').mockReturnValue({ top: 236 } as DOMRect)
+
+    await user.click(condition)
+    const detail = await screen.findByRole('region', { name: 'R4 资源详情' })
+    expect(detail.style.getPropertyValue('--source-history-detail-offset')).toBe('80px')
+
+    await user.click(observation)
+    expect(detail.style.getPropertyValue('--source-history-detail-offset')).toBe('136px')
+  })
+
+  it('starts another patient source history with every date collapsed', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ profileAvailable: true, secondProfileAvailable: true })
+    const user = userEvent.setup()
+
+    render(<WebApp />)
+
+    const firstDateColumn = await screen.findByRole('button', { name: /2026-07-01.*2 条记录/ })
+    await user.click(firstDateColumn)
+    expect(firstDateColumn.getAttribute('aria-expanded')).toBe('true')
+
+    await user.click(screen.getByRole('button', { name: /第二位合成患者/ }))
+    expect(await screen.findByRole('heading', { name: '第二位合成患者' })).toBeTruthy()
+    const secondDateColumn = await screen.findByRole('button', { name: /2026-07-01.*2 条记录/ })
+    expect(secondDateColumn.getAttribute('aria-expanded')).toBe('false')
   })
 
   it('keeps a profile edit conflict visible in the patient library', async () => {
@@ -1428,7 +1590,8 @@ describe('role workspaces', () => {
 
     render(<WebApp />)
 
-    await user.click(await screen.findByRole('button', { name: /2026-07-01.*发热.*Condition/ }))
+    await user.click(await screen.findByRole('button', { name: /2026-07-01.*2 条记录/ }))
+    await user.click(await screen.findByRole('button', { name: /发热.*Condition/ }))
 
     expect(await screen.findByText(/"resourceType": "Condition"/)).toBeTruthy()
     expect(document.body.textContent).not.toContain('index-condition')
@@ -1438,6 +1601,7 @@ describe('role workspaces', () => {
     window.history.replaceState(null, '', '/scenario-data')
     let caseStarts = 0
     stubScenarioDataWorkspace({
+      briefJobDelayMs: 250,
       onCaseStart: () => { caseStarts += 1 },
       profileAvailable: true,
       syntheaAvailable: true,
@@ -1450,6 +1614,20 @@ describe('role workspaces', () => {
     expect(await screen.findByText('尚未生成患者梗概')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '生成患者梗概' }))
 
+    expect(await screen.findByRole('status', { name: '患者梗概排队中' })).toBeTruthy()
+    expect(await screen.findByRole(
+      'status',
+      { name: '患者梗概生成中' },
+      { timeout: 2_500 },
+    )).toBeTruthy()
+    await user.click(screen.getByRole('tab', { name: '来源' }))
+    await user.click(screen.getByRole('tab', { name: '患者梗概' }))
+    expect(await screen.findByRole('status', { name: '患者梗概生成中' })).toBeTruthy()
+    expect(await screen.findByRole(
+      'status',
+      { name: '患者梗概已完成' },
+      { timeout: 2_500 },
+    )).toBeTruthy()
     expect(await screen.findByText('反复头晕一周')).toBeTruthy()
     expect(screen.getByText('医生您好，我最近总是头晕。')).toBeTruthy()
     expect(screen.getByText('Active')).toBeTruthy()
@@ -1457,6 +1635,57 @@ describe('role workspaces', () => {
     const visitSheet = await screen.findByRole('dialog', { name: '开始门诊就诊' })
     await user.click(within(visitSheet).getByRole('button', { name: '开始门诊就诊' }))
     await waitFor(() => expect(caseStarts).toBe(1))
+  })
+
+  it('does not carry an active Patient Brief job into another patient', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({
+      briefJobDelayMs: 2_500,
+      profileAvailable: true,
+      secondProfileAvailable: true,
+      syntheaAvailable: true,
+    })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('button', { name: /第二位合成患者.*CMSYN000002/ }))
+    expect(await screen.findByRole('heading', { name: '第二位合成患者' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /林晓.*CMSYN000001/ }))
+    expect(await screen.findByRole('heading', { name: '林晓' })).toBeTruthy()
+    await user.click(await screen.findByRole('tab', { name: '患者梗概' }))
+    await user.click(screen.getByRole('button', { name: '生成患者梗概' }))
+    expect(await screen.findByRole(
+      'status',
+      { name: '患者梗概生成中' },
+      { timeout: 3_500 },
+    )).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: /第二位合成患者.*CMSYN000002/ }))
+    expect(await screen.findByRole('heading', { name: '第二位合成患者' })).toBeTruthy()
+    await user.click(screen.getByRole('tab', { name: '患者梗概' }))
+    expect(screen.queryByRole('status', { name: '患者梗概生成中' })).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: /林晓.*CMSYN000001/ }))
+    expect(await screen.findByRole('heading', { name: '林晓' })).toBeTruthy()
+    await user.click(screen.getByRole('tab', { name: '患者梗概' }))
+    expect(await screen.findByRole('status', { name: '患者梗概生成中' })).toBeTruthy()
+  })
+
+  it('reports a failed Patient Brief generation with its error', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({
+      briefJobFails: true,
+      profileAvailable: true,
+      syntheaAvailable: true,
+    })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('tab', { name: '患者梗概' }))
+    await user.click(screen.getByRole('button', { name: '生成患者梗概' }))
+
+    expect(await screen.findByRole('alert', { name: '患者梗概生成失败' })).toBeTruthy()
+    expect(screen.getByText('患者梗概服务暂时不可用')).toBeTruthy()
   })
 
   it('uses clinical operator language for the registrar empty state', async () => {

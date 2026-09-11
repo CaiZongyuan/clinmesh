@@ -1206,6 +1206,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(response.status).toBe(400)
     expect(apiErrorSchema.parse(await response.json())).toEqual({
       error: {
+        correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         code: 'INVALID_INPUT',
         message: 'The request is invalid',
       },
@@ -2231,6 +2232,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(response.status).toBe(403)
     expect(apiErrorSchema.parse(await response.json())).toEqual({
       error: {
+        correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         code: 'ROLE_NOT_ALLOWED',
         message: 'The active Practitioner Role cannot perform this action',
       },
@@ -2268,6 +2270,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(response.status).toBe(409)
     expect(apiErrorSchema.parse(await response.json())).toEqual({
       error: {
+        correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         code: 'WORKFLOW_CONFLICT',
         message: `Expected versions must contain only Encounter/${started.encounterId}`,
       },
@@ -2494,6 +2497,7 @@ describe('outpatient workflow HTTP contract', () => {
       expect(response.status).toBe(409)
       expect(apiErrorSchema.parse(await response.json())).toEqual({
         error: {
+          correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
           code: 'ENCOUNTER_COMPLETION_BLOCKED',
           message: `完诊条件未满足：${testCase.expectedStatusTexts.join('；')}`,
         },
@@ -2940,6 +2944,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(staleResponse.status).toBe(409)
     expect(apiErrorSchema.parse(await staleResponse.json())).toEqual({
       error: {
+        correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         code: 'WORKFLOW_CONFLICT',
         message: 'The Clinical Document draft version has changed',
       },
@@ -3260,6 +3265,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(signResponse.status).toBe(409)
     expect(apiErrorSchema.parse(await signResponse.json())).toEqual({
       error: {
+        correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         code: 'WORKFLOW_CONFLICT',
         message: 'The Clinical Document signing preview context has changed',
       },
@@ -3335,6 +3341,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(signResponse.status).toBe(409)
     expect(apiErrorSchema.parse(await signResponse.json())).toEqual({
       error: {
+        correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         code: 'WORKFLOW_CONFLICT',
         message: 'The Clinical Document signing preview context has changed',
       },
@@ -3403,6 +3410,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(signResponse.status).toBe(409)
     expect(apiErrorSchema.parse(await signResponse.json())).toEqual({
       error: {
+        correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         code: 'WORKFLOW_CONFLICT',
         message: 'The Clinical Document signing preview is unavailable',
       },
@@ -3494,6 +3502,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(combinedPreviewResponse.status).toBe(409)
     expect(apiErrorSchema.parse(await combinedPreviewResponse.json())).toEqual({
       error: {
+        correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         code: 'WORKFLOW_CONFLICT',
         message: 'The Clinical Document is already signed',
       },
@@ -3736,6 +3745,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(response.status).toBe(409)
     expect(apiErrorSchema.parse(await response.json())).toEqual({
       error: {
+        correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         code: 'WORKFLOW_CONFLICT',
         message: 'The structured Clinical Document requires structured revision content',
       },
@@ -3800,6 +3810,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(staleResponse.status).toBe(409)
     expect(await staleResponse.json()).toEqual({
       error: {
+        correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         code: 'WORKFLOW_CONFLICT',
         message: 'The Consultation Record version has changed',
       },
@@ -3920,6 +3931,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(forbiddenResponse.status).toBe(403)
     expect(await forbiddenResponse.json()).toEqual({
       error: {
+        correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         code: 'ROLE_NOT_ALLOWED',
         message: 'The active Practitioner Role cannot perform this action',
       },
@@ -3986,6 +3998,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(response.status).toBe(409)
     expect(await response.json()).toEqual({
       error: {
+        correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         code: 'WORKFLOW_CONFLICT',
         message: 'The Encounter is not available for consultation',
       },
@@ -6111,6 +6124,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(conflictResponse.status).toBe(409)
     expect(await conflictResponse.json()).toEqual({
       error: {
+        correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         code: 'WORKFLOW_CONFLICT',
         message: 'The Virtual Patient version has changed',
       },
@@ -7564,6 +7578,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(confirmResponse.status).toBe(409)
     expect(apiErrorSchema.parse(await confirmResponse.json())).toEqual({
       error: {
+        correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         code: 'DIAGNOSIS_PRIMARY_REQUIRED',
         message: 'Exactly one primary diagnosis is required',
       },

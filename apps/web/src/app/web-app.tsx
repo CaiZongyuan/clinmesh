@@ -70,6 +70,7 @@ import { useSurfaceAgentPublisher } from './surface-agent-publisher.ts'
 import { AgentReviewProvider } from './agent-review.tsx'
 import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
 import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
+import { RuntimeErrorBoundary } from './runtime-error-boundary.tsx'
 
 const DARK_MODE_QUERY = '(prefers-color-scheme: dark)'
 const IS_DEVELOPMENT = process.env.NODE_ENV !== 'production'
@@ -426,7 +427,11 @@ const routeTree = rootRoute.addChildren([
 ])
 
 export function createWebRouter(history?: RouterHistory): ReturnType<typeof createRouter<typeof routeTree>> {
-  return createRouter({ routeTree, ...(history === undefined ? {} : { history }) })
+  return createRouter({
+    disableGlobalCatchBoundary: true,
+    routeTree,
+    ...(history === undefined ? {} : { history }),
+  })
 }
 
 type WebRouter = ReturnType<typeof createWebRouter>
@@ -446,13 +451,15 @@ export function createWebQueryClient(): QueryClient {
   })
 }
 
-export function WebApp({
-  history,
-  runtime: runtimeOptions = {},
-}: {
+interface WebAppProps {
   history?: RouterHistory
   runtime?: WebRuntimeOptions
-} = {}): React.JSX.Element {
+}
+
+function WebApplication({
+  history,
+  runtime: runtimeOptions = {},
+}: WebAppProps = {}): React.JSX.Element {
   const [router] = useState(() => createWebRouter(history))
   const [queryClient] = useState(createWebQueryClient)
   const [preferences, setPreferences] = useState(readWebPreferences)
@@ -516,6 +523,10 @@ export function WebApp({
       </WebRuntimeProvider>
     </WebPreferencesProvider>
   )
+}
+
+export function WebApp(props: WebAppProps = {}): React.JSX.Element {
+  return <RuntimeErrorBoundary><WebApplication {...props} /></RuntimeErrorBoundary>
 }
 
 export type { WebRuntimeOptions } from './web-runtime.tsx'
