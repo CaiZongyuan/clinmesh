@@ -1,0 +1,13 @@
+{
+    "commit":  "4abf616663fa2109d6e218b30a15841f9ddb2f4d",
+    "entry":  "DSH Web / ClinMesh React Surface",
+    "scenario":  "已有合成普通门诊病例（林晓），未生成或重置业务数据",
+    "dshVersion":  "0.1.5-rc.1",
+    "sourceViewport":  "1600x1000; intermediate 1280x900",
+    "output":  "1440x900 VP9 WebM",
+    "durationSeconds":  75.55,
+    "speed":  4,
+    "sizeBytes":  1238972,
+    "sha256":  "6c726a8880c74e5c3737e156ad262d45f32339419d5b6eeed4f71c339dcdec2b",
+    "evidence":  "原生连续 WebM；实际 pointerdown 高亮与步骤字幕；裁掉初始化前导画面"
+}
