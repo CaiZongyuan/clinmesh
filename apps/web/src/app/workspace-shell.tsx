@@ -1,4 +1,5 @@
 import { ResponsiveSidebarProvider } from './responsive-sidebar.tsx'
+import { SurfaceDisplayMenu } from './surface-display-control.tsx'
 import { Avatar, AvatarFallback } from '@clinmesh/ui/components/avatar'
 import { Button } from '@clinmesh/ui/components/button'
 import {
@@ -486,6 +487,7 @@ export function WorkspaceShell({
             )}
           </SidebarContent>
           <SidebarFooter>
+            <SurfaceDisplayMenu locale={locale} />
             <AppearanceControls
               locale={locale}
               messages={messages}

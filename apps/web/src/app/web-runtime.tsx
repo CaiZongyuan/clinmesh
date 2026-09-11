@@ -19,6 +19,7 @@ export interface WebSurfaceAgentController {
 }
 
 export interface WebRuntimeOptions {
+  surfaceDisplay?: WebSurfaceDisplay
   apiBasePath?: string
   mode?: WebRuntimeMode
   onExit?: () => void
@@ -30,6 +31,7 @@ export interface WebRuntimeOptions {
 }
 
 interface WebRuntimeValue {
+  surfaceDisplay?: WebSurfaceDisplay
   appearanceRoot: RefObject<HTMLElement | null>
   mode: WebRuntimeMode
   onExit?: () => void
@@ -41,6 +43,11 @@ interface WebRuntimeValue {
 }
 
 const WebRuntimeContext = createContext<WebRuntimeValue | null>(null)
+
+export interface WebSurfaceDisplay {
+  fullscreen: boolean
+  toggle(): void
+}
 
 export function WebRuntimeProvider({
   children,

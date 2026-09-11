@@ -55,6 +55,8 @@ async function run() {
   const draft = shadow.querySelector<HTMLInputElement>('input')!
   draft.value = 'kept clinical draft'
   const snapshot = () => ({
+    controlInSidebar: shadow.querySelector('button')?.closest('[data-slot="sidebar-footer"]') !== null,
+    hasTopToolbar: shadow.querySelector('[role="toolbar"]') !== null,
     mode: frame.getAttribute('data-dsh-react-surface-layout'),
     hiddenNative: frame.querySelector('[data-pane="conversation"]')!.hasAttribute('inert'),
     draft: shadow.querySelector<HTMLInputElement>('input')?.value,

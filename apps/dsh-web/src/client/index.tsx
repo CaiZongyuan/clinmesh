@@ -9,7 +9,6 @@ import {
   type ReactSurfaceRegistry,
 } from 'dsh-react-surface/client'
 import { clinMeshStyles } from './styles.generated.ts'
-import { SurfaceFrame } from './surface-frame.tsx'
 
 interface ClientSessionsPort {
   list: {
@@ -35,7 +34,9 @@ function ClinMeshSurface({
   navigate,
   surfaceColorScheme,
   surfaceSessionId,
+  surfaceDisplay,
 }: ReactSurfaceProps & {
+  surfaceDisplay: { fullscreen: boolean; toggle(): void }
   surfaceColorScheme: 'dark' | 'light'
   surfaceSessionId?: string
 }): React.JSX.Element {
@@ -74,6 +75,7 @@ function ClinMeshSurface({
         surfaceAgent: agent,
         surfaceAgentStatus: capabilities.agent.status,
         surfaceColorScheme,
+        surfaceDisplay,
         ...(surfaceSessionId === undefined ? {} : { surfaceSessionId }),
       }}
     />
@@ -104,16 +106,15 @@ export function createDefinition(ctx: ClientContext): Readonly<ReactSurfaceDefin
       () => theme.getTheme().active.colorScheme,
     )
     return (
-      <SurfaceFrame
-        fullscreen={props.layout === 'full-frame'}
-        onToggle={() => surfaces.setLayout('clinmesh.his', props.layout === 'full-frame' ? 'workspace' : 'full-frame')}
-      >
       <ClinMeshSurface
         {...props}
+        surfaceDisplay={{
+          fullscreen: props.layout === 'full-frame',
+          toggle: () => surfaces.setLayout('clinmesh.his', props.layout === 'full-frame' ? 'workspace' : 'full-frame'),
+        }}
         surfaceColorScheme={surfaceColorScheme}
         {...(surfaceSessionId === undefined ? {} : { surfaceSessionId })}
       />
-      </SurfaceFrame>
     )
   }
   return defineReactSurface({
