@@ -54,6 +54,7 @@ function useSidebar() {
 function SidebarProvider({
   defaultOpen = true,
   heightMode = "viewport",
+  compact,
   open: openProp,
   onOpenChange: setOpenProp,
   className,
@@ -63,10 +64,12 @@ function SidebarProvider({
 }: React.ComponentProps<"div"> & {
   defaultOpen?: boolean
   heightMode?: "container" | "viewport"
+  compact?: boolean
   open?: boolean
   onOpenChange?: (open: boolean) => void
 }) {
-  const isMobile = useIsMobile()
+  const viewportMobile = useIsMobile()
+  const isMobile = compact ?? viewportMobile
   const [openMobile, setOpenMobile] = React.useState(false)
 
   // This is the internal state of the sidebar.

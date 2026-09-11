@@ -1,3 +1,4 @@
+import { DoctorWorkspaceLayout, DoctorCaseLayout } from './responsive-layout.tsx'
 import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import {
   clinicalDocumentContentSchema,
@@ -287,7 +288,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
   }, [session.actor.epoch, session.actor.workspaceId])
   return (
     <Tabs onValueChange={value => setActiveTab(value as 'active' | 'completed')} value={activeTab}>
-      <TabsList aria-label={messages.consultation} className="w-full sm:w-fit" variant="line">
+      <TabsList aria-label={messages.consultation} className="w-full @min-[640px]/case-content:w-fit" variant="line">
         <TabsTrigger className="min-w-0 px-3" value="active">
           <StethoscopeIcon data-icon="inline-start" />
           {messages.doctorActiveCases}
@@ -1881,7 +1882,7 @@ function DoctorCaseController({
   ])
   useRegisterAgentPage(agentPage)
   return (
-    <div className="grid min-h-[calc(100svh-9.5rem)] min-w-0 grid-cols-1 border bg-background xl:grid-cols-[300px_minmax(0,1fr)]">
+    <DoctorWorkspaceLayout selectedCaseId={activeCaseId} queueLabel={messages.waitingPatients} detailLabel={messages.caseDetail} queue={showDetail => (
       <DoctorQueueModule
         activeCaseId={activeCaseId}
         messages={messages}
@@ -1889,7 +1890,7 @@ function DoctorCaseController({
           setPage(nextPage)
           onSelectedCaseIdChange(undefined)
         }}
-        onSelectCase={onSelectedCaseIdChange}
+        onSelectCase={caseId => { onSelectedCaseIdChange(caseId); showDetail() }}
         onSelectVirtualPatient={(patient) => {
           startCandidate.reset()
           setSelectedVirtualPatientId(patient.id)
@@ -1909,6 +1910,7 @@ function DoctorCaseController({
         virtualPatientError={virtualPatients.error}
         virtualPatientPending={virtualPatients.isPending}
       />
+      )}>
       <section aria-labelledby="case-detail-heading" className="flex min-w-0 flex-col gap-3 p-3">
         <h2 className="sr-only" id="case-detail-heading">{messages.caseDetail}</h2>
         {issueOrder.isSuccess && issueOrder.variables.caseId === activeCaseId ? (
@@ -2265,7 +2267,7 @@ function DoctorCaseController({
           />
         )}
       </section>
-    </div>
+    </DoctorWorkspaceLayout>
   )
 }
 
@@ -2382,7 +2384,6 @@ function CaseDetail({
   const visitNotStarted = detail.status === 'awaiting-doctor'
   const clinicalReadOnly = readOnly || visitNotStarted
   const [activeSection, setActiveSection] = useState<DoctorCaseSection>('record')
-  const [contextRailOpen, setContextRailOpen] = useState(true)
   const [pendingNavigation, setPendingNavigation] = useState<{
     source: 'checklist' | 'correction'
     target: EncounterCompletionTarget
@@ -2555,7 +2556,7 @@ function CaseDetail({
                 <h3 className="text-sm font-semibold" id="clinical-sign-heading">
                   {messages.clinicalSignPreview}
                 </h3>
-                <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                <dl className="grid grid-cols-1 gap-3 text-sm @min-[640px]/case-content:grid-cols-2">
                   <div>
                     <dt className="text-muted-foreground">{messages.diagnosis}</dt>
                     <dd className="font-medium">
@@ -2614,9 +2615,18 @@ function CaseDetail({
     )
 
   return (
-    <div className={contextRailOpen
-      ? 'grid min-w-0 overflow-hidden border bg-background xl:grid-cols-[minmax(0,1fr)_300px]'
-      : 'grid min-w-0 overflow-hidden border bg-background xl:grid-cols-[minmax(0,1fr)_2.75rem]'}>
+    <DoctorCaseLayout contextLabel={messages.caseContext} rail={(expanded, onExpandedChange) => (
+      <DoctorCaseContextRail
+        completion={completion.data}
+        detail={detail}
+        expanded={expanded}
+        locale={locale}
+        messages={messages}
+        onExpandedChange={onExpandedChange}
+        section={activeSection}
+        statusText={doctorCaseStatusLabel(detail.status, messages)}
+      />
+    )}>
       <div className="flex min-w-0 flex-col">
         <PatientBanner
           {...(clinicalReadOnly || detail.consultation === undefined
@@ -2768,17 +2778,8 @@ function CaseDetail({
         </Tabs>
       </div>
 
-      <DoctorCaseContextRail
-        completion={completion.data}
-        detail={detail}
-        expanded={contextRailOpen}
-        locale={locale}
-        messages={messages}
-        onExpandedChange={setContextRailOpen}
-        section={activeSection}
-        statusText={doctorCaseStatusLabel(detail.status, messages)}
-      />
-    </div>
+
+    </DoctorCaseLayout>
   )
 }
 
@@ -2959,7 +2960,7 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
     >
       <FieldGroup>
         <h3 className="text-sm font-semibold">{messages.revisitRecord}</h3>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 @min-[640px]/case-content:grid-cols-2">
           <Field><FieldLabel htmlFor="revisit-diagnosis-code">{messages.diagnosisCode}</FieldLabel><Input id="revisit-diagnosis-code" onChange={event => setDiagnosisCode(event.currentTarget.value)} required value={diagnosisCode} /></Field>
           <Field><FieldLabel htmlFor="revisit-diagnosis-display">{messages.diagnosisDisplay}</FieldLabel><Input id="revisit-diagnosis-display" onChange={event => setDiagnosisDisplay(event.currentTarget.value)} required value={diagnosisDisplay} /></Field>
         </div>
@@ -2977,7 +2978,7 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
           const doseItems = selectedMedication?.allowedDoseTexts.map(value => ({ label: value, value })) ?? []
           const frequencyItems = selectedMedication?.allowedFrequencyCodes.map(value => ({ label: value, value })) ?? []
           return (
-            <div className="grid grid-cols-1 gap-3 border-b pb-4 lg:grid-cols-[minmax(12rem,1.5fr)_minmax(7rem,0.8fr)_minmax(7rem,0.8fr)_6rem_auto]" key={line.key}>
+            <div className="grid grid-cols-1 gap-3 border-b pb-4 @min-[1024px]/case-content:grid-cols-[minmax(12rem,1.5fr)_minmax(7rem,0.8fr)_minmax(7rem,0.8fr)_6rem_auto]" key={line.key}>
               <Field>
                 <FieldLabel htmlFor={`medication-${index}`}>{messages.medication}{suffix}</FieldLabel>
                 <WorkspaceSelect

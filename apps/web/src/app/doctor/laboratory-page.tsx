@@ -767,7 +767,7 @@ function LaboratoryReportCorrectionForm({ action, itemName, messages, report, re
           </Field>
           <FieldSet>
             <FieldLegend variant="label">{messages.result}</FieldLegend>
-            <FieldGroup className="grid gap-3 sm:grid-cols-2">
+            <FieldGroup className="grid gap-3 @min-[640px]/case-content:grid-cols-2">
               {quantitativeResults.map(result => (
                 <Field key={result.code}>
                   <FieldLabel htmlFor={`laboratory-report-correction-${request.id}-${result.code}`}>

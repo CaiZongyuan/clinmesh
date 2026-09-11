@@ -708,7 +708,7 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 - Surface 使用 Memory Router，应用位置不修改 DSH document pathname。
 - 每个 mount 创建独立 QueryClient；服务端状态仍只由 TanStack Query 拥有。
 - DSH 保留外壳 branding 与 Light/Dark/System theme；ClinMesh 的 `system` 主题订阅 DSH resolved theme，显式 light/dark 只作用于 Surface root，所有浮层通过注入 Portal 留在 ShadowRoot。
-- 默认 `workspace` 布局，Surface 宽度不足 `1024px` 时退化到 `full-frame`；应用高度被约束到宿主，业务 panel 拥有纵向滚动，隐藏时保留未提交 UI 状态。
+- 默认 `workspace` 左右分屏，窄空间按比例收缩并由应用内部响应式适配；全屏仅由用户手动选择，应用顶部提供返回分屏入口。切换保留原生侧栏状态、分栏偏好与应用草稿，详见[手动全屏与容器响应式](../.agents/notes/implemented/bug-fix/2026-09-11-surface-responsive-layout.md)。
 - `/clinmesh-api` Host 代理只连接配置固定的 loopback Hono，保留 Cookie/Origin，限制路径、方法、请求体、响应体和超时，不记录患者正文。
 
 该模式只信任安装在同一 DSH Web Profile 的插件，并只处理合成数据。它不是不可信 marketplace 插件或真实患者数据的安全边界。

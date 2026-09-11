@@ -5,7 +5,7 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { createDefinition } from './index.tsx'
 
 describe('ClinMesh React Surface definition', () => {
-  it('preserves DSH appearance and falls back before ClinMesh content is compressed', () => {
+  it('preserves DSH appearance and keeps narrow workspaces side by side', () => {
     const sessions = {
       list: {
         getSnapshot: () => ({ current: undefined }),
@@ -16,11 +16,12 @@ describe('ClinMesh React Surface definition', () => {
       get: () => sessions,
     } as unknown as ClientContext) as unknown as {
       branding: { shell: string; tokens?: Record<string, string> }
-      layout: { minSurfaceWidth: number }
+      layout: { fallback: string; supported: string[] }
     }
 
     expect(definition.branding.shell).toBe('preserve')
     expect(definition.branding.tokens).toBeUndefined()
-    expect(definition.layout.minSurfaceWidth).toBeGreaterThanOrEqual(1024)
+    expect(definition.layout.fallback).toBe('shrink')
+    expect(definition.layout.supported).toEqual(['workspace', 'full-frame'])
   })
 })

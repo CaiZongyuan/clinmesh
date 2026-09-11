@@ -83,7 +83,7 @@ export function PatientBanner({
   const readOnly = detail.encounter.status !== 'in-progress'
   const age = patientAge(detail.patient.birthDate)
   return (
-    <section aria-label={messages.selectedPatient} className="overflow-hidden border-b bg-background">
+    <section aria-label={messages.selectedPatient} className="@container/patient-banner min-w-0 border-b bg-background [overflow-wrap:anywhere]">
       <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
         <div className="flex min-w-0 items-center gap-3">
           <PatientAvatar label={`${detail.patient.name} ${messages.patient}`} name={detail.patient.name} />
@@ -101,7 +101,7 @@ export function PatientBanner({
             </div>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           {detail.allergies.slice(0, 1).map(allergy => (
             <Badge key={`${allergy.code}:${allergy.display}`} variant="destructive">
               {messages.allergySummary} · {allergy.display}
@@ -116,7 +116,7 @@ export function PatientBanner({
           ) : completionAction}
         </div>
       </div>
-      <dl className="grid grid-cols-2 gap-px border-t bg-border sm:grid-cols-3 lg:grid-cols-5 [&>div]:bg-background [&>div]:px-3 [&>div]:py-2.5">
+      <dl className="grid grid-cols-2 gap-px border-t bg-border @min-[400px]/patient-banner:grid-cols-3 @min-[680px]/patient-banner:grid-cols-5 [&>div]:bg-background [&>div]:px-3 [&>div]:py-2.5">
         <VitalSummary label="T" value={`${presentation.vitalSigns.temperatureC} °C`} />
         <VitalSummary label="P" value={`${presentation.vitalSigns.pulseBpm} 次/分`} />
         <VitalSummary label="R" value={`${presentation.vitalSigns.respirationBpm} 次/分`} />

@@ -81,6 +81,7 @@
     "@types/react-dom": "catalog:",
     "dsh-react-surface": "file:../../vendor/dsh-react-surface/packages/runtime",
     "dsh-react-surface-build": "file:../../vendor/dsh-react-surface/packages/build",
+    "playwright-core": "1.62.1",
     "postcss": "8.5.6",
     "postcss-selector-parser": "7.1.0",
     "react-dom": "catalog:",

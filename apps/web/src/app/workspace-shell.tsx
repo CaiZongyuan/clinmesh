@@ -1,3 +1,4 @@
+import { ResponsiveSidebarProvider } from './responsive-sidebar.tsx'
 import { Avatar, AvatarFallback } from '@clinmesh/ui/components/avatar'
 import { Button } from '@clinmesh/ui/components/button'
 import {
@@ -23,7 +24,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarProvider,
   SidebarTrigger,
   useSidebar,
 } from '@clinmesh/ui/components/sidebar'
@@ -289,7 +289,7 @@ function UserMenu({
             <UserRoundIcon aria-hidden="true" />
           </AvatarFallback>
         </Avatar>
-        <span className="truncate text-xs font-medium">{activeRoleLabel}</span>
+        <span className="hidden truncate text-xs font-medium @min-[480px]/workspace-header:inline">{activeRoleLabel}</span>
         <ChevronDownIcon aria-hidden="true" data-icon="inline-end" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-64">
@@ -396,7 +396,7 @@ export function WorkspaceShell({
 
   return (
     <TooltipProvider>
-      <SidebarProvider
+      <ResponsiveSidebarProvider
         heightMode={runtime.mode === 'surface' ? 'container' : 'viewport'}
         style={{
           '--sidebar-width': '13.75rem',
@@ -498,7 +498,7 @@ export function WorkspaceShell({
           </SidebarFooter>
         </Sidebar>
         <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
-          <header className="sticky top-0 z-10 flex h-[3.375rem] shrink-0 items-center gap-2 border-b bg-background px-3 sm:px-4">
+          <header className="@container/workspace-header sticky top-0 z-10 flex h-[3.375rem] shrink-0 items-center gap-2 border-b bg-background px-3 sm:px-4">
             <SidebarTrigger aria-label={messages.sidebarToggle} title={messages.sidebarToggle} />
             <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
               {messages[activeSection]}
@@ -525,7 +525,7 @@ export function WorkspaceShell({
             {children}
           </div>
         </SidebarInset>
-      </SidebarProvider>
+      </ResponsiveSidebarProvider>
     </TooltipProvider>
   )
 }

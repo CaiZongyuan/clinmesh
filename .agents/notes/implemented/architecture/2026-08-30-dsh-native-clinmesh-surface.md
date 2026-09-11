@@ -12,7 +12,7 @@ Canonical implementation contract 是 [GitHub issue #60](https://github.com/CaiZ
 
 ## Decision
 
-保留 standalone Web，并把 DSH Web 作为第二个应用 adapter。`apps/dsh-web` 使用固定的 DSH `0.1.5-rc.1`、`dsh-ag-ui@25cf0e04303fde90de64c663796b4a2f63b4cc3a` 和 `dsh-react-surface@8fb30822981384649aef58f30c456307ce774dba`；后者以 git submodule 固定。React Surface 直接声明 RC peer，ClinMesh 不覆盖上游依赖声明；升级边界由 [issue #79](https://github.com/CaiZongyuan/clinmesh/issues/79) 拥有。pnpm 继续拥有仓库 workspace，内部样式生成由 pnpm/tsx 执行，Bun 只运行上游 React Surface builder 和 artifact verifier。
+保留 standalone Web，并把 DSH Web 作为第二个应用 adapter。`apps/dsh-web` 使用固定的 DSH `0.1.5-rc.1`、`dsh-ag-ui@25cf0e04303fde90de64c663796b4a2f63b4cc3a` 和 `dsh-react-surface@bfe3ba90a205b3877c5f58c9044f152a369be24f`；后者以 git submodule 固定。React Surface 直接声明 RC peer，ClinMesh 不覆盖上游依赖声明；升级边界由 [issue #79](https://github.com/CaiZongyuan/clinmesh/issues/79) 拥有。pnpm 继续拥有仓库 workspace，内部样式生成由 pnpm/tsx 执行，Bun 只运行上游 React Surface builder 和 artifact verifier。
 
 DSH 拥有模型 Session、transcript、Tool 调度、Surface 宿主、外壳 branding 和 resolved theme。ClinMesh 拥有页面上下文、前端 action、proposal、人工审阅、Command receipt、Audit Event 和 Action Trace 关联。Surface 复用 `apps/web` 的 application/runtime seam，使用 Memory Router、独立 QueryClient、作用域主题、ShadowRoot Portal 和 `/clinmesh-api` 同源代理；ClinMesh `system` 主题订阅 DSH theme，显式 light/dark 保持 Surface-local，standalone Web 保持 Browser History、系统主题与原有 API base。
 
@@ -44,7 +44,7 @@ Host 代理只接受固定 loopback Hono origin，并限制路径、方法、请
 
 ShadowRoot 样式初始值及 React 18/19 菜单引用兼容见 [Surface 边框与菜单引用](../bug-fix/2026-09-10-dsh-surface-borders-and-menu-refs.md)。
 
-Web 的服务端状态仍由 TanStack Query 拥有，Surface 隐藏时保留客户端草稿；Memory Router 不修改 DSH document pathname。Dialog、Menu、Select、Sheet、Tooltip 和 Toast 通过注入的 Portal 留在 ShadowRoot。`workspace` 是默认布局，Surface 小于 `1024px` 时退化到 `full-frame`；应用高度受宿主约束，业务 panel 是纵向滚动 owner，长患者历史不会被 DSH layer 裁剪。
+Web 的服务端状态仍由 TanStack Query 拥有，Surface 隐藏时保留客户端草稿；Memory Router 不修改 DSH document pathname。Dialog、Menu、Select、Sheet、Tooltip 和 Toast 通过注入的 Portal 留在 ShadowRoot。`workspace` 是默认左右分屏布局；自动全屏回退由[手动全屏与容器响应式](../bug-fix/2026-09-11-surface-responsive-layout.md)取代；应用高度受宿主约束，业务 panel 是纵向滚动 owner，长患者历史不会被 DSH layer 裁剪。
 
 医生 Agent registration 位于共享 `DoctorCaseController`，使用当前 `consultation/record/laboratory/diagnosis/prescription` 页面 ID 和 controller 已有 mutations。Agent 草稿动作通过同一保存接口持久化并刷新 Query；成功后 controller 按病例和草稿种类递增水合 revision，只重建受影响的本地编辑器，检验草稿同时同步 controller 持有的项目与适应证选择，避免旧 autosave state 回写覆盖 Agent 结果。病例级检验 Reference Catalog 是分页动态集合，Tool 使用共享契约限定的 ID 字符串，Hono authorization 和 Command 再按当前病例、目录状态与结果生成能力解析并验证。报告更正 Tool 还要求当前账户通过服务端 membership 持有 active administrator role，普通医生不会取得该 operation；正式动作继续复用 controller 的 Command mutation 与 detached review。
 

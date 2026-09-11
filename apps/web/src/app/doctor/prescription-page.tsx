@@ -576,7 +576,7 @@ export function PrescriptionPage({
                       >
                         <PillIcon data-icon="inline-start" />{messages.issuePrescription}
                       </AlertDialogTrigger>
-                      <AlertDialogContent className="sm:max-w-lg">
+                      <AlertDialogContent className="@min-[640px]/case-content:max-w-lg">
                         <AlertDialogHeader>
                           <AlertDialogTitle>
                             {locale === 'zh-CN' ? '确认正式开具处方' : 'Confirm prescription issuance'}

@@ -25,6 +25,7 @@ declare module 'dsh-react-surface/client' {
       }
     }
     close(): void
+    layout: 'workspace' | 'full-frame' | 'center' | 'right-panel' | 'bottom-panel'
     location: string
     navigate(location: string): void
   }
@@ -34,6 +35,10 @@ declare module 'dsh-react-surface/client' {
     title: string
     component: import('react').ComponentType<ReactSurfaceProps>
     [key: string]: unknown
+  }
+
+  export interface ReactSurfaceRegistry {
+    setLayout(id: string, layout: ReactSurfaceProps['layout']): void
   }
 
   export function defineReactSurface(
