@@ -18,6 +18,7 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { SidebarFooterActionOwnerProps } from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { ReactSurfaceRegistry } from 'dsh-react-surface/client'
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
+import { workspaceRoutes, settingsRoutes } from '../../../web/src/app/workspace-shell.tsx'
 import clinmeshMarkUrl from '../../../web/src/assets/clinmesh-mark.webp'
 import { clinMeshStyles } from './styles.generated.ts'
 
@@ -61,6 +62,21 @@ export function createWorkspaceNavigation() {
 
 type Navigation = ReturnType<typeof createWorkspaceNavigation>
 
+function isSettingsPath(path: string) {
+  return settingsRoutes.some((route) => route.path === path)
+}
+
+function createStyledRoot(host: HTMLElement) {
+  const shadow = host.shadowRoot ?? host.attachShadow({ mode: 'open' })
+  const style = document.createElement('style')
+  style.textContent = clinMeshStyles
+  const root = document.createElement('div')
+  root.className = 'clinmesh-web-root'
+  root.style.cssText = 'min-height:0;min-width:0;background:transparent;'
+  shadow.append(style, root)
+  return { root, dispose: () => { root.remove(); style.remove() } }
+}
+
 export function WorkspaceNavigation({
   navigation,
   wide,
@@ -80,32 +96,74 @@ export function WorkspaceNavigation({
 }) {
   const host = useRef<HTMLDivElement>(null)
   const [container, setContainer] = useState<HTMLDivElement | null>(null)
+  const [routeContainer, setRouteContainer] = useState<HTMLDivElement | null>(null)
   const state = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   useLayoutEffect(() => {
     if (!host.current) return
-    const shadow = host.current.shadowRoot ?? host.current.attachShadow({ mode: 'open' })
-    const style = document.createElement('style')
-    style.textContent = clinMeshStyles
-    const root = document.createElement('div')
-    root.className = 'clinmesh-web-root'
-    root.style.cssText = 'min-height:0;min-width:0;background:transparent;'
-    shadow.append(style, root)
+    const { root, dispose } = createStyledRoot(host.current)
     setContainer(root)
+    return dispose
+  }, [])
+  useLayoutEffect(() => {
+    const sidebar = host.current?.closest('[data-slot="sidebar"]')
+    if (!sidebar) return
+    const routes = document.createElement('div')
+    routes.dataset.clinmeshHostRoutes = ''
+    routes.style.cssText = 'flex-shrink:0;max-height:40%;overflow-y:auto;'
+    const { root, dispose } = createStyledRoot(routes)
+    // DSH 0.1.5-rc.1 has no section slot here. Anchor beside its workspace
+    // region without replacing, moving, or remounting the native browser.
+    const place = () => {
+      const region = sidebar.querySelector('[data-slot="sidebar.workspaces"]')?.parentElement
+      if (!region || region === sidebar || !region.parentElement) {
+        routes.remove()
+        return
+      }
+      if (routes.nextElementSibling !== region) region.before(routes)
+    }
+    place()
+    const observer = new MutationObserver(place)
+    observer.observe(sidebar, { childList: true, subtree: true })
+    setRouteContainer(root)
     return () => {
-      root.remove()
-      style.remove()
+      observer.disconnect()
+      routes.remove()
+      dispose()
     }
   }, [])
   useLayoutEffect(() => {
-    if (!container) return
-    container.classList.toggle('dark', colorScheme === 'dark')
-    container.style.colorScheme = colorScheme
-  }, [colorScheme, container])
+    for (const root of [container, routeContainer]) {
+      if (!root) continue
+      root.classList.toggle('dark', colorScheme === 'dark')
+      root.style.colorScheme = colorScheme
+    }
+  }, [colorScheme, container, routeContainer])
   const locale = state?.locale ?? hostLocale
   const label = locale === 'zh-CN' ? '医院工作台' : 'Hospital workspace'
   const messages = getWorkspaceMessages(locale)
   return (
     <div ref={host} data-clinmesh-host-navigation="" style={{ width: wide ? '100%' : 36, minWidth: 36 }}>
+      {routeContainer && state && createPortal(
+        <nav aria-label={messages.navigationLabel} className="flex flex-col gap-1 py-2">
+          {state.items.filter((item) => !isSettingsPath(item.path)).map((item) => {
+            const Icon = workspaceRoutes.find((route) => route.path === item.path)?.icon
+            return (
+              <Button
+                key={item.path}
+                variant={state.activePath === item.path ? 'secondary' : 'ghost'}
+                className={wide ? 'w-full justify-start' : 'w-full'}
+                aria-label={item.label}
+                title={item.label}
+                aria-current={state.activePath === item.path ? 'page' : undefined}
+                onClick={() => { open(); state.navigate(item.path) }}
+              >
+                {Icon && <Icon aria-hidden="true" />}
+                {wide && <span className="truncate">{item.label}</span>}
+              </Button>
+            )
+          })}
+        </nav>, routeContainer,
+      )}
       {container &&
         createPortal(
           <PortalContainerProvider container={container}>
@@ -122,7 +180,7 @@ export function WorkspaceNavigation({
                 <DropdownMenuGroup>
                   <DropdownMenuLabel>{label}</DropdownMenuLabel>
                   {state ? (
-                    state.items.map((item) => (
+                    state.items.filter((item) => isSettingsPath(item.path)).map((item) => (
                       <DropdownMenuItem
                         key={item.path}
                         aria-current={state.activePath === item.path ? 'page' : undefined}

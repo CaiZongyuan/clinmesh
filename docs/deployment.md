@@ -201,7 +201,7 @@ set +a
 dsh web
 ```
 
-重新启动 DSH Web 后，左侧栏顶端显示 ClinMesh Logo 和名称；应用尚未打开或已经关闭时仍保留该 Profile 品牌。新会话中央同样显示 ClinMesh Logo，中文标题为“医疗智能体平台”，英文为“Medical AI Agent Platform”。禁用或卸载 ClinMesh 插件后恢复宿主的品牌显示。从侧栏底部“医院工作台”菜单打开 ClinMesh；登录后该菜单提供当前岗位、设置与主题入口，其他已注册 Surface 位于“其他应用”分组。ClinMesh 在 DSH 内不显示自己的左侧栏，默认使用 `workspace` 左右分屏并保留原生会话；现有页头的“全屏 ClinMesh”与“返回 DSH 分屏”按钮可往返切换，无需刷新。全屏时先返回分屏再使用宿主导航。窗口缩小或侧栏开关不自动全屏，应用内部按容器宽度适配。页面导航使用 Memory Router，不修改 DSH document pathname。独立 Web 保留原侧栏。当前模式只信任安装到同一 Web Profile 的插件，并只允许合成数据。
+重新启动 DSH Web 后，左侧栏顶端显示 ClinMesh Logo 和名称；应用尚未打开或已经关闭时仍保留该 Profile 品牌。新会话中央同样显示 ClinMesh Logo，中文标题为“医疗智能体平台”，英文为“Medical AI Agent Platform”。禁用或卸载 ClinMesh 插件后恢复宿主的品牌显示。从侧栏底部“医院工作台”菜单打开 ClinMesh；登录后岗位导航直接显示在宿主侧栏的新会话与工作区之间，底部菜单保留设置与主题入口，其他已注册 Surface 位于“其他应用”分组。ClinMesh 在 DSH 内不显示自己的左侧栏，默认使用 `workspace` 左右分屏并保留原生会话；现有页头的“全屏 ClinMesh”与“返回 DSH 分屏”按钮可往返切换，无需刷新。全屏时先返回分屏再使用宿主导航。窗口缩小或侧栏开关不自动全屏，应用内部按容器宽度适配。页面导航使用 Memory Router，不修改 DSH document pathname。独立 Web 保留原侧栏。当前模式只信任安装到同一 Web Profile 的插件，并只允许合成数据。
 
 经 Turborepo 的根 `pnpm dev:server` 不转发未声明的 `CLINMESH_AI_*` 变量；在 worktree 或需要显式加载 `.env` 的场景使用 `pnpm --filter @clinmesh/server dev` 直接启动，否则 Patient Brief 和 Investigation provider 会被视为未配置。
 

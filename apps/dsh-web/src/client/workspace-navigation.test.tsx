@@ -34,7 +34,7 @@ it('uses one official launcher cell and restores the native launcher on unload',
   expect(slots.entriesOfSlot('sidebar.footer.action')[0]?.component).toBe(original)
 })
 
-it('opens the application from the collapsed host menu and revokes obsolete actions', async () => {
+it('places authorized routes above workspaces, keeps settings in the footer, and cleans up on unload', async () => {
   const navigation = createWorkspaceNavigation()
   const open = vi.fn()
   const openOther = vi.fn()
@@ -42,7 +42,16 @@ it('opens the application from the collapsed host menu and revokes obsolete acti
   const navigate = vi.fn()
   const setTheme = vi.fn()
   const element = document.createElement('div')
-  document.body.append(element)
+  const sidebar = document.createElement('div')
+  sidebar.dataset.slot = 'sidebar'
+  const newSession = document.createElement('button')
+  newSession.textContent = '新会话'
+  const workspaceRegion = document.createElement('div')
+  const workspaces = document.createElement('div')
+  workspaces.dataset.slot = 'sidebar.workspaces'
+  workspaceRegion.append(workspaces)
+  sidebar.append(newSession, workspaceRegion, element)
+  document.body.append(sidebar)
   const root = createRoot(element)
   try {
     await act(() =>
@@ -95,19 +104,40 @@ it('opens the application from the collapsed host menu and revokes obsolete acti
     })
     await act(() => trigger.click())
     const items = [...shadow.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    expect(items.some((item) => item.textContent === '门诊挂号')).toBe(false)
+    const routeHost = sidebar.querySelector('[data-clinmesh-host-routes]')!
+    expect(newSession.nextElementSibling).toBe(routeHost)
+    expect(routeHost.nextElementSibling).toBe(workspaceRegion)
+    const route = routeHost.shadowRoot!.querySelector<HTMLButtonElement>('button')!
+    expect(route.getAttribute('aria-label')).toBe('门诊挂号')
+    expect(route.getAttribute('aria-current')).toBe('page')
+    await act(() => route.click())
+    expect(navigate).toHaveBeenCalledWith('/registration')
     const settings = items.find((item) => item.textContent === '通用')!
     await act(() => settings.click())
     expect(navigate).toHaveBeenCalledWith('/settings')
+    await act(() => root.render(<WorkspaceNavigation navigation={navigation} wide open={open} />))
+    expect(routeHost.shadowRoot!.textContent).toContain('门诊挂号')
+    const replacementRegion = document.createElement('div')
+    await act(() => {
+      replacementRegion.append(workspaces)
+      workspaceRegion.replaceWith(replacementRegion)
+    })
+    expect(routeHost.nextElementSibling).toBe(replacementRegion)
+    expect(replacementRegion.contains(workspaces)).toBe(true)
     const oldState = navigation.getSnapshot()!
     await act(() => release())
     oldState.navigate('/registration')
     oldState.setTheme('dark')
-    expect(navigate).toHaveBeenCalledTimes(1)
+    expect(navigate).toHaveBeenCalledTimes(2)
     expect(setTheme).not.toHaveBeenCalled()
     await act(() => trigger.click())
     expect(shadow.textContent).not.toContain('门诊挂号')
+    expect(routeHost.shadowRoot!.querySelector('button')).toBeNull()
   } finally {
     await act(() => root.unmount())
-    element.remove()
+    expect(sidebar.querySelector('[data-clinmesh-host-routes]')).toBeNull()
+    expect(sidebar.contains(workspaces)).toBe(true)
+    sidebar.remove()
   }
 })
