@@ -42,6 +42,7 @@ describe('ClinMesh React Surface definition', () => {
       'sidebar.brand.mark',
       'sidebar.brand.name',
       'conversation.hero.brand.mark',
+      'sidebar.footer.action',
     ])
     const Mark = occupants.get('sidebar.brand.mark')!
     const Name = occupants.get('sidebar.brand.name')!

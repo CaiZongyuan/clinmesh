@@ -1,4 +1,19 @@
 import { createContext, useContext, type ReactNode, type RefObject } from 'react'
+import type { WebPreferences } from './preferences.ts'
+
+/** Local presentation and actions; the application retains session and route ownership. */
+export interface WebSurfaceNavigationState {
+  items: readonly { path: string; label: string }[]
+  activePath: string
+  locale: WebPreferences['locale']
+  theme: WebPreferences['theme']
+  navigate(path: string): void
+  setTheme(theme: WebPreferences['theme']): void
+}
+
+export interface WebSurfaceNavigation {
+  register(state: WebSurfaceNavigationState): () => void
+}
 
 export type WebRuntimeMode = 'standalone' | 'surface'
 export type WebSurfaceAgentStatus = 'unavailable' | 'idle' | 'connecting' | 'active' | 'contended' | 'error'
@@ -19,6 +34,7 @@ export interface WebSurfaceAgentController {
 }
 
 export interface WebRuntimeOptions {
+  surfaceNavigation?: WebSurfaceNavigation
   surfaceDisplay?: WebSurfaceDisplay
   apiBasePath?: string
   mode?: WebRuntimeMode
@@ -31,6 +47,7 @@ export interface WebRuntimeOptions {
 }
 
 interface WebRuntimeValue {
+  surfaceNavigation?: WebSurfaceNavigation
   surfaceDisplay?: WebSurfaceDisplay
   appearanceRoot: RefObject<HTMLElement | null>
   mode: WebRuntimeMode
