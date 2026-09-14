@@ -82,6 +82,7 @@ export function WorkspaceNavigation({
   wide,
   open,
   close,
+  active = false,
   colorScheme = 'light',
   locale: hostLocale = 'zh-CN',
   applications = [],
@@ -90,6 +91,7 @@ export function WorkspaceNavigation({
   wide: boolean
   open(): void
   close?: () => void
+  active?: boolean
   colorScheme?: 'light' | 'dark'
   locale?: 'zh-CN' | 'en-US'
   applications?: readonly { id: string; title: string; open(): void }[]
@@ -179,7 +181,14 @@ export function WorkspaceNavigation({
               <DropdownMenuContent side="right" align="end" className="min-w-56" aria-label={label}>
                 <DropdownMenuGroup>
                   <DropdownMenuLabel>{label}</DropdownMenuLabel>
-                  {state ? (
+                  {!active && (
+                    <DropdownMenuItem onClick={open}>
+                      {state
+                        ? (locale === 'zh-CN' ? '返回 HIS 页面' : 'Return to HIS')
+                        : (locale === 'zh-CN' ? '打开 ClinMesh' : 'Open ClinMesh')}
+                    </DropdownMenuItem>
+                  )}
+                  {state && (
                     state.items.filter((item) => isSettingsPath(item.path)).map((item) => (
                       <DropdownMenuItem
                         key={item.path}
@@ -192,10 +201,6 @@ export function WorkspaceNavigation({
                         {item.label}
                       </DropdownMenuItem>
                     ))
-                  ) : (
-                    <DropdownMenuItem onClick={open}>
-                      {locale === 'zh-CN' ? '打开 ClinMesh' : 'Open ClinMesh'}
-                    </DropdownMenuItem>
                   )}
                 </DropdownMenuGroup>
                 {state && (
@@ -278,6 +283,7 @@ export function registerWorkspaceNavigation(ctx: ClientContext, navigation: Navi
         colorScheme={colorScheme}
         locale={language.startsWith('zh') ? 'zh-CN' : 'en-US'}
         open={() => surfaces.open('clinmesh.his')}
+        active={snapshot.activeId === 'clinmesh.his'}
         {...(snapshot.activeId === null ? {} : { close: () => surfaces.close() })}
         applications={snapshot.surfaces
           .filter((surface) => surface.definition.id !== 'clinmesh.his')
