@@ -10,7 +10,7 @@ DSH 的侧栏与 ClinMesh Surface 内部侧栏同时占用横向空间。岗位�
 
 岗位入口的位置由[DSH 侧栏平铺岗位导航](2026-09-14-dsh-inline-workspace-routes.md)取代；本记录保留宿主承接、权限注册、全屏与生命周期的决策依据。
 
-DSH adapter 通过官方 `sidebar.footer.action` 插槽注册“医院工作台”菜单，以较低 priority 承接 `dsh-react-surface-launcher` cell，避免折叠侧栏同时挤入两个启动按钮；卸载时恢复原入口。其他已注册 Surface 保留在菜单的“其他应用”分组。ClinMesh 应用发布当前可见路由、页面、语言、主题及受限回调；菜单不获取完整 Session、不复制 Query cache，也不拥有第二套路由或岗位权限。岗位变化、会话失效和应用卸载会替换或撤销注册，过期回调不再执行。应用尚未登录或尚未挂载时，不显示医院业务路由，仅提供打开 ClinMesh 的入口。
+DSH adapter 通过官方 `sidebar.footer.action` 插槽注册“医院工作台设置”菜单，以较低 priority 承接 `dsh-react-surface-launcher` cell，避免折叠侧栏同时挤入两个启动按钮；卸载时恢复原入口。其他已注册 Surface 保留在菜单的“其他应用”分组。ClinMesh 应用发布当前可见路由、页面、语言、主题及受限回调；菜单不获取完整 Session、不复制 Query cache，也不拥有第二套路由或岗位权限。岗位变化、会话失效和应用卸载会替换或撤销注册，过期回调不再执行。应用尚未登录或尚未挂载时，不显示医院业务路由，仅提供打开 ClinMesh 的入口。
 
 菜单在独立 ShadowRoot 中复用 ClinMesh 菜单组件与作用域样式，跟随 DSH 外观，浮层留在该根内。宿主侧栏的展开与折叠决定按钮展示文字或标志。点击路由先显示保留的 Surface，再调用应用自己的白名单导航；内部导航仍使用 Memory Router，不修改 DSH URL。主题操作仍更新应用偏好，宿主菜单不写 DSH 主题。
 

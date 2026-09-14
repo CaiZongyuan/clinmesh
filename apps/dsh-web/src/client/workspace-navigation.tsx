@@ -141,7 +141,7 @@ export function WorkspaceNavigation({
     }
   }, [colorScheme, container, routeContainer])
   const locale = state?.locale ?? hostLocale
-  const label = locale === 'zh-CN' ? '医院工作台' : 'Hospital workspace'
+  const label = locale === 'zh-CN' ? '医院工作台设置' : 'Hospital workspace settings'
   const messages = getWorkspaceMessages(locale)
   return (
     <div ref={host} data-clinmesh-host-navigation="" style={{ width: wide ? '100%' : 36, minWidth: 36 }}>
@@ -308,7 +308,7 @@ export function registerWorkspaceNavigation(ctx: ClientContext, navigation: Navi
         id: 'dsh-react-surface-launcher',
         priority: -100,
         order: 100,
-        label: '医院工作台',
+        label: '医院工作台设置',
         registrant: 'clinmesh-workspace-navigation',
       },
       Entry,
