@@ -53,6 +53,7 @@ import {
   signIn,
   signOut,
   configureApiBasePath,
+  onAuthenticationFailure,
 } from './api-client.ts'
 import { getWorkspaceMessages } from './workspace-i18n.ts'
 import { RoleWorkspace } from './role-workspaces.tsx'
@@ -466,6 +467,12 @@ function WebApplication({
 }: WebAppProps = {}): React.JSX.Element {
   const [router] = useState(() => createWebRouter(history))
   const [queryClient] = useState(createWebQueryClient)
+  useEffect(() => onAuthenticationFailure(error => {
+    const sessionQuery = queryClient.getQueryCache().find({ queryKey: sessionQueryKey, exact: true })
+    if (!sessionQuery?.state.data) return
+    void queryClient.cancelQueries({ queryKey: sessionQueryKey, exact: true })
+    sessionQuery.setState({ error, status: 'error', fetchStatus: 'idle' })
+  }), [queryClient])
   const [preferences, setPreferences] = useState(readWebPreferences)
   const applicationRoot = useRef<HTMLDivElement>(null)
   const portalRoot = useRef<HTMLDivElement>(null)

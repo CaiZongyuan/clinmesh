@@ -6,6 +6,7 @@ import { createMemoryHistory, type RouterHistory } from '@tanstack/react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebApp, type WebRuntimeOptions } from './web-app.tsx'
 import { agentToolsForContext } from '@clinmesh/contracts/agent'
+import { getRegistrationQueue } from './api-client.ts'
 import type { WebSurfaceAgentController, WebSurfaceAgentTool, WebSurfaceNavigationState } from './web-runtime.tsx'
 
 const registrarSession = {
@@ -285,6 +286,61 @@ describe('Web application shell', () => {
     await user.click(await screen.findByRole('menuitem', { name: '退出登录' }))
     await screen.findByRole('heading', { name: '登录科灵脉智' })
     expect(latestRelease).toHaveBeenCalled()
+  })
+
+  it('retracts host navigation when a business request reports an expired session', async () => {
+    const initialFetch = vi.mocked(fetch).getMockImplementation()!
+    const register = vi.fn((_state: WebSurfaceNavigationState) => vi.fn())
+    await renderWebApp({
+      history: createMemoryHistory({ initialEntries: ['/registration'] }),
+      runtime: { mode: 'surface', surfaceNavigation: { register } },
+    })
+    await waitFor(() => expect(register).toHaveBeenCalled())
+    const release = register.mock.results.at(-1)?.value
+    vi.mocked(fetch).mockResolvedValue(Response.json({
+      error: { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in' },
+    }, { status: 401 }))
+
+    await act(async () => {
+      await expect(getRegistrationQueue()).rejects.toMatchObject({ status: 401 })
+    })
+
+    expect(await screen.findByRole('heading', { name: '登录科灵脉智' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: '门诊挂号' })).toBeNull()
+    expect(release).toHaveBeenCalled()
+
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input) === '/api/auth/sign-in/email') return Response.json({ user: { id: registrarSession.user.id } })
+      return initialFetch(input, init)
+    })
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('账户邮箱'), registrarSession.user.email)
+    await user.type(screen.getByLabelText('账户密码'), 'synthetic-test-password')
+    await user.click(screen.getByRole('button', { name: '登录' }))
+    expect(await screen.findByRole('heading', { name: '门诊挂号' })).toBeTruthy()
+    expect(register.mock.results.at(-1)?.value).not.toBe(release)
+  })
+
+  it.each([0, 403, 500])('keeps the session and host navigation after a business error with status %s', async status => {
+    const register = vi.fn((_state: WebSurfaceNavigationState) => vi.fn())
+    await renderWebApp({
+      history: createMemoryHistory({ initialEntries: ['/registration'] }),
+      runtime: { mode: 'surface', surfaceNavigation: { register } },
+    })
+    await waitFor(() => expect(register).toHaveBeenCalled())
+    const release = register.mock.results.at(-1)?.value
+    if (status === 0) vi.mocked(fetch).mockRejectedValue(new TypeError('Failed to fetch'))
+    else vi.mocked(fetch).mockResolvedValue(Response.json({
+      error: { code: 'REQUEST_FAILED', message: 'Request failed' },
+    }, { status }))
+
+    await act(async () => {
+      await expect(getRegistrationQueue()).rejects.toMatchObject({ status })
+    })
+
+    expect(screen.getByRole('heading', { name: '门诊挂号' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: '登录科灵脉智' })).toBeNull()
+    expect(release).not.toHaveBeenCalled()
   })
 
   it('keeps a fullscreen exit in the sign-in card when no sidebar is available', async () => {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { apiGet, getSyntheticCaseHistory } from './api-client.ts'
+import { apiGet, getSyntheticCaseHistory, onAuthenticationFailure } from './api-client.ts'
 
 describe('Web API client errors', () => {
   afterEach(() => {
@@ -28,6 +28,39 @@ describe('Web API client errors', () => {
       status: 500,
     })
   })
+
+  it('does not deliver a disposed application request to a new authentication listener', async () => {
+    let respond: (response: Response) => void = () => undefined
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { respond = resolve })))
+    const oldHandler = vi.fn()
+    const release = onAuthenticationFailure(oldHandler)
+    const request = apiGet('/api/his/v1/registrations', z.unknown())
+    release()
+    const nextHandler = vi.fn()
+    const releaseNext = onAuthenticationFailure(nextHandler)
+    try {
+      respond(new Response(null, { status: 401 }))
+      await expect(request).rejects.toMatchObject({ status: 401 })
+      expect(oldHandler).not.toHaveBeenCalled()
+      expect(nextHandler).not.toHaveBeenCalled()
+    } finally {
+      releaseNext()
+    }
+  })
+
+  it.each(['/api/auth/sign-in/email', '/api/auth/context', '/clinmesh-agent-proof'])(
+    'leaves authentication failures from %s to their owner', async path => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 401 })))
+      const handler = vi.fn()
+      const release = onAuthenticationFailure(handler)
+      try {
+        await expect(apiGet(path, z.unknown())).rejects.toMatchObject({ status: 401 })
+        expect(handler).not.toHaveBeenCalled()
+      } finally {
+        release()
+      }
+    },
+  )
 
   it('normalizes a successful response that violates its schema', async () => {
     const correlationId = '01991234-7abc-7def-8abc-0123456789ab'
