@@ -403,7 +403,7 @@ describe('Reference Data HTTP contract', () => {
       system: 'urn:synthetic:diagnosis', version: '1', sourceLocator: 'synthetic:test', status: 'active',
     }
     const referenceDatabasePath = await createReferenceDatabase(directory, undefined, [
-      { ...concept, id: 'verbose', code: 'AAA', display: '合成测试诊断伴复杂表现的较长描述' }, concept,
+      { ...concept, id: 'verbose', code: 'AAA', display: 'A合成测试诊断伴复杂表现的较长描述' }, concept,
     ])
     const { password, runtime } = await createRuntime({ referenceDatabasePath })
     const cookie = await signIn(runtime, password, 'doctor@demo.clinmesh.local')
@@ -425,7 +425,7 @@ describe('Reference Data HTTP contract', () => {
     temporaryDirectories.push(directory)
     const base = syntheticNhsaMedicationProductSnapshot[0]!
     const referenceDatabasePath = await createReferenceDatabase(directory, [
-      { ...base, id: 'verbose', code: 'AAA', genericName: '合成测试药片扩展名称用于相关度排序', manufacturer: '合成药厂' },
+      { ...base, id: 'verbose', code: 'AAA', genericName: 'A合成测试药片扩展名称用于相关度排序', manufacturer: '合成药厂' },
       { ...base, id: 'concise', code: 'ZZZ', genericName: '合成测试药片', manufacturer: '合成药厂' },
       { ...base, id: 'other', code: 'BBB', genericName: '合成测试药片', manufacturer: '其他工厂' },
     ])
