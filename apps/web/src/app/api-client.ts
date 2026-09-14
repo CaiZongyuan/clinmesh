@@ -102,6 +102,7 @@ import { z } from 'zod'
 export const sessionQueryKey = ['session-context'] as const
 
 let configuredApiBasePath = ''
+let authenticationRevision = 0
 let authenticationFailureHandler: ((error: ApiClientError) => void) | undefined
 
 /** Bind authentication failures to the mounted application; disposed requests cannot notify a new owner. */
@@ -162,6 +163,7 @@ async function requestApi<Schema extends z.ZodType>(
   schema: Schema,
 ): Promise<z.infer<Schema>> {
   const notifyAuthenticationFailure = authenticationFailureHandler
+  const requestAuthenticationRevision = authenticationRevision
   const callerSignal = init.signal ?? undefined
   const requestController = new AbortController()
   let timedOut = false
@@ -177,7 +179,9 @@ async function requestApi<Schema extends z.ZodType>(
   }, 30_000)
   try {
     const response = await fetch(resolveApiPath(path), { ...init, signal: requestController.signal })
-    return await parseResponse(response, schema)
+    const result = await parseResponse(response, schema)
+    if (path === '/api/auth/sign-in/email' || path === '/api/auth/sign-out') authenticationRevision += 1
+    return result
   } catch (error) {
     if (timedOut) {
       throw new ApiClientError(0, 'REQUEST_TIMEOUT', 'The ClinMesh request timed out')
@@ -187,7 +191,7 @@ async function requestApi<Schema extends z.ZodType>(
     }
     if (error instanceof ApiClientError) {
       // The DSH execution-proof endpoint has a separate host session.
-      if (error.status === 401 && path.startsWith('/api/')
+      if (error.status === 401 && requestAuthenticationRevision === authenticationRevision && path.startsWith('/api/')
         && path !== '/api/auth/context' && path !== '/api/auth/sign-in/email') {
         notifyAuthenticationFailure?.(error)
       }

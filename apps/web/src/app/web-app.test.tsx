@@ -297,6 +297,9 @@ describe('Web application shell', () => {
     })
     await waitFor(() => expect(register).toHaveBeenCalled())
     const release = register.mock.results.at(-1)?.value
+    let respondToOldRequest: (response: Response) => void = () => undefined
+    vi.mocked(fetch).mockImplementationOnce(() => new Promise<Response>(resolve => { respondToOldRequest = resolve }))
+    const oldRequest = getRegistrationQueue()
     vi.mocked(fetch).mockResolvedValue(Response.json({
       error: { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in' },
     }, { status: 401 }))
@@ -319,6 +322,14 @@ describe('Web application shell', () => {
     await user.click(screen.getByRole('button', { name: '登录' }))
     expect(await screen.findByRole('heading', { name: '门诊挂号' })).toBeTruthy()
     expect(register.mock.results.at(-1)?.value).not.toBe(release)
+
+    await act(async () => {
+      respondToOldRequest(Response.json({ error: { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in' } }, { status: 401 }))
+      await expect(oldRequest).rejects.toMatchObject({ status: 401 })
+      // TanStack Query batches observer notifications onto the next task.
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+    expect(screen.getByRole('heading', { name: '门诊挂号' })).toBeTruthy()
   })
 
   it.each([0, 403, 500])('keeps the session and host navigation after a business error with status %s', async status => {
