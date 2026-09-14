@@ -406,6 +406,7 @@ export function WorkspaceShell({
     })
   }, [activeSection, locale, messages, navigate, onThemeChange, runtime.mode, runtime.surfaceNavigation, theme, visibleRoutes])
   const settingsMode = isSettingsSection(activeSection)
+  const activeIcon = [...workspaceRoutes, ...settingsRoutes].find(route => route.key === activeSection)?.icon ?? LayoutDashboardIcon
   const navigationLabel = settingsMode ? messages.settingsNavigation : messages.navigationLabel
   const mobileDescription = settingsMode
     ? messages.mobileSettingsNavigationDescription
@@ -415,7 +416,7 @@ export function WorkspaceShell({
     <>
       <header className="@container/workspace-header sticky top-0 z-10 flex h-[3.375rem] shrink-0 items-center gap-2 border-b bg-background px-3 sm:px-4">
         {runtime.mode === 'surface'
-          ? <SurfaceDisplayButton locale={locale} />
+          ? <SurfaceDisplayButton locale={locale} icon={activeIcon} />
           : <SidebarTrigger aria-label={messages.sidebarToggle} title={messages.sidebarToggle} />}
         <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
           {messages[activeSection]}

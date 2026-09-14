@@ -181,6 +181,7 @@ describe('Web application shell', () => {
       mode: 'surface', surfaceDisplay: { fullscreen: false, toggle },
     } })
     const enter = screen.getByRole('button', { name: '全屏 ClinMesh' })
+    expect(enter.querySelector('.lucide-clipboard-plus')).not.toBeNull()
     expect(enter.closest('header')).not.toBeNull()
     expect(screen.queryByRole('navigation', { name: '岗位导航' })).toBeNull()
     expect(screen.queryByRole('button', { name: '切换导航栏' })).toBeNull()
@@ -191,6 +192,7 @@ describe('Web application shell', () => {
       mode: 'surface', surfaceDisplay: { fullscreen: true, toggle },
     }} />)
     const exit = screen.getByRole('button', { name: '返回 DSH 分屏' })
+    expect(exit.querySelector('.lucide-clipboard-plus')).not.toBeNull()
     expect(exit.closest('header')).not.toBeNull()
     await user.click(exit)
     expect(toggle).toHaveBeenCalledTimes(2)
@@ -201,7 +203,7 @@ describe('Web application shell', () => {
     const register = vi.fn((_state: WebSurfaceNavigationState) => release)
     const history = createMemoryHistory({ initialEntries: ['/'] })
     const rendered = await renderWebApp({ history, runtime: {
-      mode: 'surface', surfaceNavigation: { register },
+      mode: 'surface', surfaceNavigation: { register }, surfaceDisplay: { fullscreen: false, toggle: vi.fn() },
     } })
     await waitFor(() => expect(register).toHaveBeenCalled())
     const navigation = register.mock.lastCall?.[0]
@@ -210,11 +212,13 @@ describe('Web application shell', () => {
     expect(navigation.activePath).toBe('/registration')
     await act(() => navigation.navigate('/settings'))
     expect(await screen.findByRole('heading', { name: '通用', level: 1 })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '全屏 ClinMesh' }).querySelector('.lucide-sliders-horizontal')).not.toBeNull()
     expect(history.location.pathname).toBe('/settings')
     expect(window.location.pathname).toBe('/')
     const current = register.mock.lastCall?.[0]
     if (!current) throw new Error('Missing current host navigation')
     await act(() => current.navigate('/registration'))
+    await waitFor(() => expect(screen.getByRole('button', { name: '全屏 ClinMesh' }).querySelector('.lucide-clipboard-plus')).not.toBeNull())
     expect(await screen.findByRole('heading', { name: '门诊挂号', level: 1 })).toBeTruthy()
     release.mockClear()
     rendered.unmount()

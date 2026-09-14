@@ -1,4 +1,4 @@
-import { MonitorIcon } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { Button } from '@clinmesh/ui/components/button'
 import { useWebRuntime, type WebSurfaceDisplay } from './web-runtime.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
@@ -8,13 +8,13 @@ function displayLabel(fullscreen: boolean, locale: WorkspaceLocale): string {
   return fullscreen ? '返回 DSH 分屏' : '全屏 ClinMesh'
 }
 
-export function SurfaceDisplayButton({ locale }: { locale: WorkspaceLocale }) {
+export function SurfaceDisplayButton({ locale, icon: Icon }: { locale: WorkspaceLocale; icon: LucideIcon }) {
   const { surfaceDisplay } = useWebRuntime()
   if (!surfaceDisplay) return null
   const label = displayLabel(surfaceDisplay.fullscreen, locale)
   return (
     <Button aria-label={label} title={label} variant="ghost" size="icon" onClick={surfaceDisplay.toggle}>
-      <MonitorIcon aria-hidden="true" />
+      <Icon aria-hidden="true" />
     </Button>
   )
 }
