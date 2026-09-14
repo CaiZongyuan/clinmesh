@@ -1,0 +1,513 @@
+{
+  "commit": "a9831c4b9437699a02b4aa70913cf80d3ed8b759",
+  "synthetic": true,
+  "entry": "http://127.0.0.1:3091",
+  "workspaceId": "workspace-demo",
+  "epoch": "epoch-1",
+  "scenarioRunId": "scenario-run-1",
+  "caseId": "01a09eee-1afd-73fd-80b8-948331345b2f",
+  "patientId": "01a09eeb-482b-70cf-af44-fa77aace6db5",
+  "encounter": {
+    "id": "01a09eee-1afd-73fd-80b8-9c1d5e7eada5",
+    "status": "completed",
+    "versionId": 7
+  },
+  "caseStatus": "completed",
+  "registration": {
+    "registration_id": "01a09eee-1afd-73fd-80b8-98ca29f072da",
+    "encounter_id": "01a09eee-1afd-73fd-80b8-9c1d5e7eada5",
+    "status": "completed"
+  },
+  "triage": {
+    "triage_id": "01a09ef0-b272-730f-bded-0aed431e6984",
+    "encounter_id": "01a09eee-1afd-73fd-80b8-9c1d5e7eada5",
+    "acuity_code": "level-3"
+  },
+  "prescription": {
+    "prescription_id": "01a09f60-432b-752c-9eae-086d4351c5e1",
+    "status": "dispensed"
+  },
+  "items": [
+    {
+      "medication_request_id": "01a09f60-432c-7089-892c-673529e0fbb2",
+      "medication_id": "medication-oseltamivir",
+      "quantity": 10,
+      "dispensed_quantity": 10
+    }
+  ],
+  "payments": [
+    {
+      "payment_id": "01a09f5e-5e09-7529-bf8f-ca7912681f85",
+      "category": "laboratory",
+      "amount_fen": 6800,
+      "outcome": "success",
+      "preview_id": "01a09f5e-167d-75b9-8c67-03a24ebfd3c8"
+    },
+    {
+      "payment_id": "01a09f61-e5e7-7498-ba04-3032f2f3dda2",
+      "category": "medication",
+      "amount_fen": 7600,
+      "outcome": "success",
+      "preview_id": "01a09f61-b48b-730b-bcf0-092db2c995e2"
+    }
+  ],
+  "reviews": [
+    {
+      "review_id": "01a09f62-879e-7145-8d85-3c2140aa0b67",
+      "status": "approved"
+    }
+  ],
+  "dispenses": [
+    {
+      "dispense_id": "01a09f62-a8c1-701f-91a4-9be9cb0fd223",
+      "medication_dispense_id": "01a09f62-a8c0-74ac-901a-1a506ce5287b",
+      "status": "completed"
+    }
+  ],
+  "inventory": [
+    {
+      "movement_id": "01a09f62-a8c0-74ac-901a-158cbdcf690e",
+      "lot_id": "lot-oseltamivir-202608",
+      "quantity": 10,
+      "quantity_on_hand": 990,
+      "version": 2
+    }
+  ],
+  "commands": [
+    {
+      "operation": "registration.register",
+      "roleCode": "registrar",
+      "realTimestamp": "2026-09-14T07:59:59.738Z",
+      "requestId": "01a09eee-1b01-7179-bedc-6475053da20c",
+      "auditId": "01a09eee-1b01-7179-bedc-62251f3fcbd4",
+      "traceId": "01a09eee-1b02-755a-a255-6f6caf242c7a",
+      "status": "completed",
+      "auditCount": 1,
+      "traceCount": 1,
+      "effects": [
+        {
+          "kind": "created",
+          "reference": "Encounter/01a09eee-1afd-73fd-80b8-9c1d5e7eada5",
+          "version_id": "1"
+        },
+        {
+          "kind": "created",
+          "reference": "Task/01a09eee-1afd-73fd-80b8-a14abb1ec0a3",
+          "version_id": "1"
+        },
+        {
+          "kind": "created",
+          "reference": "Account/01a09eee-1afd-73fd-80b8-a6dcecd5be63",
+          "version_id": "1"
+        },
+        {
+          "kind": "created",
+          "reference": "ChargeItem/01a09eee-1afd-73fd-80b8-a8a432e67ffd",
+          "version_id": "1"
+        }
+      ]
+    },
+    {
+      "operation": "encounter.record-triage",
+      "roleCode": "triage-nurse",
+      "realTimestamp": "2026-09-14T08:02:49.584Z",
+      "requestId": "01a09ef0-b276-714c-b372-296ebfdc2920",
+      "auditId": "01a09ef0-b276-714c-b372-24d876439036",
+      "traceId": "01a09ef0-b277-75ed-81e1-8de84c64e2e4",
+      "status": "completed",
+      "auditCount": 1,
+      "traceCount": 1,
+      "effects": [
+        {
+          "kind": "created",
+          "reference": "Observation/01a09ef0-b272-730f-bded-02bbd849249c",
+          "version_id": "1"
+        },
+        {
+          "kind": "updated",
+          "reference": "Encounter/01a09eee-1afd-73fd-80b8-9c1d5e7eada5",
+          "version_id": "2"
+        },
+        {
+          "kind": "updated",
+          "reference": "Task/01a09eee-1afd-73fd-80b8-a14abb1ec0a3",
+          "version_id": "2"
+        },
+        {
+          "kind": "created",
+          "reference": "Task/01a09ef0-b272-730f-bded-0740fbc3b432",
+          "version_id": "1"
+        }
+      ]
+    },
+    {
+      "operation": "encounter.start-first-visit",
+      "roleCode": "outpatient-doctor",
+      "realTimestamp": "2026-09-14T08:22:16.779Z",
+      "requestId": "01a09f02-81d0-7051-bbbb-a1b9d2235051",
+      "auditId": "01a09f02-81d0-7051-bbbb-9ccbf7da26cb",
+      "traceId": "01a09f02-81d1-730b-b325-fdbbb62259ab",
+      "status": "completed",
+      "auditCount": 1,
+      "traceCount": 1,
+      "effects": [
+        {
+          "kind": "updated",
+          "reference": "Encounter/01a09eee-1afd-73fd-80b8-9c1d5e7eada5",
+          "version_id": "3"
+        },
+        {
+          "kind": "updated",
+          "reference": "Task/01a09ef0-b272-730f-bded-0740fbc3b432",
+          "version_id": "2"
+        }
+      ]
+    },
+    {
+      "operation": "encounter.issue-laboratory-order",
+      "roleCode": "outpatient-doctor",
+      "realTimestamp": "2026-09-14T09:06:18.766Z",
+      "requestId": "01a09f2a-d214-7366-949e-cdf7c2fad4af",
+      "auditId": "01a09f2a-d214-7366-949e-cac237280dbc",
+      "traceId": "01a09f2a-d215-77f0-87ea-41d38bc80d0a",
+      "status": "completed",
+      "auditCount": 1,
+      "traceCount": 1,
+      "effects": [
+        {
+          "kind": "created",
+          "reference": "ServiceRequest/01a09f2a-d211-76e7-828d-9f9810998ac0",
+          "version_id": "1"
+        },
+        {
+          "kind": "created",
+          "reference": "ChargeItem/01a09f2a-d211-76e7-828d-a2fcb0578172",
+          "version_id": "1"
+        },
+        {
+          "kind": "updated",
+          "reference": "Encounter/01a09eee-1afd-73fd-80b8-9c1d5e7eada5",
+          "version_id": "4"
+        },
+        {
+          "kind": "updated",
+          "reference": "Task/01a09ef0-b272-730f-bded-0740fbc3b432",
+          "version_id": "3"
+        }
+      ]
+    },
+    {
+      "operation": "payment.preview",
+      "roleCode": "cashier",
+      "realTimestamp": "2026-09-14T10:02:18.619Z",
+      "requestId": "01a09f5e-167d-75b9-8c67-0938849cd82d",
+      "auditId": "01a09f5e-167d-75b9-8c67-045478ceb536",
+      "traceId": "01a09f5e-167e-72e5-a431-01f530630a14",
+      "status": "completed",
+      "auditCount": 1,
+      "traceCount": 1,
+      "effects": [
+        {
+          "kind": "created",
+          "reference": "PaymentPreview/01a09f5e-167d-75b9-8c67-03a24ebfd3c8",
+          "version_id": "1"
+        }
+      ]
+    },
+    {
+      "operation": "payment.confirm",
+      "roleCode": "cashier",
+      "realTimestamp": "2026-09-14T10:02:36.936Z",
+      "requestId": "01a09f5e-5e0a-729c-bf2f-f05abf3d00c6",
+      "auditId": "01a09f5e-5e0a-729c-bf2f-ec46b886a8b0",
+      "traceId": "01a09f5e-5e0b-763e-b788-9a88a6d67068",
+      "status": "completed",
+      "auditCount": 1,
+      "traceCount": 1,
+      "effects": [
+        {
+          "kind": "created",
+          "reference": "PaymentTransaction/01a09f5e-5e09-7529-bf8f-ca7912681f85",
+          "version_id": "1"
+        },
+        {
+          "kind": "updated",
+          "reference": "ChargeItem/01a09f2a-d211-76e7-828d-a2fcb0578172",
+          "version_id": "2"
+        }
+      ]
+    },
+    {
+      "operation": "lis.process-order",
+      "roleCode": "lis-system",
+      "realTimestamp": "2026-09-14T10:02:36.997Z",
+      "requestId": "01a09f5e-5e4d-753d-8e66-7ab9728176bd",
+      "auditId": "01a09f5e-5e4d-753d-8e66-75a457feb2d8",
+      "traceId": "01a09f5e-5e4f-7709-a8e8-5e92cef1f5ce",
+      "status": "completed",
+      "auditCount": 1,
+      "traceCount": 1,
+      "effects": [
+        {
+          "kind": "created",
+          "reference": "Specimen/sp-01a09f2a-d211-76e7-828d-9f9810998ac0",
+          "version_id": "1"
+        },
+        {
+          "kind": "created",
+          "reference": "Observation/obs-flu-01a09f2a-d211-76e7-828d-9f9810998ac0",
+          "version_id": "1"
+        },
+        {
+          "kind": "created",
+          "reference": "Observation/obs-wbc-01a09f2a-d211-76e7-828d-9f9810998ac0",
+          "version_id": "1"
+        },
+        {
+          "kind": "created",
+          "reference": "DiagnosticReport/dr-01a09f2a-d211-76e7-828d-9f9810998ac0",
+          "version_id": "1"
+        },
+        {
+          "kind": "created",
+          "reference": "Task/task-rv-01a09f2a-d211-76e7-828d-9f9810998ac0",
+          "version_id": "1"
+        },
+        {
+          "kind": "updated",
+          "reference": "ServiceRequest/01a09f2a-d211-76e7-828d-9f9810998ac0",
+          "version_id": "2"
+        },
+        {
+          "kind": "updated",
+          "reference": "Encounter/01a09eee-1afd-73fd-80b8-9c1d5e7eada5",
+          "version_id": "5"
+        }
+      ]
+    },
+    {
+      "operation": "encounter.start-revisit",
+      "roleCode": "outpatient-doctor",
+      "realTimestamp": "2026-09-14T10:03:27.718Z",
+      "requestId": "01a09f5f-246a-7428-86e3-4200b08007ef",
+      "auditId": "01a09f5f-246a-7428-86e3-3fe6ebaa8b29",
+      "traceId": "01a09f5f-246b-77f7-abdc-2ec0af00005c",
+      "status": "completed",
+      "auditCount": 1,
+      "traceCount": 1,
+      "effects": [
+        {
+          "kind": "updated",
+          "reference": "Encounter/01a09eee-1afd-73fd-80b8-9c1d5e7eada5",
+          "version_id": "6"
+        },
+        {
+          "kind": "updated",
+          "reference": "Task/task-rv-01a09f2a-d211-76e7-828d-9f9810998ac0",
+          "version_id": "2"
+        }
+      ]
+    },
+    {
+      "operation": "encounter.save-revisit-draft",
+      "roleCode": "outpatient-doctor",
+      "realTimestamp": "2026-09-14T10:04:41.129Z",
+      "requestId": "01a09f60-432d-74a8-a87c-69dc5f7f0132",
+      "auditId": "01a09f60-432d-74a8-a87c-66532624872b",
+      "traceId": "01a09f60-432e-75f8-bc55-a13a41b4c772",
+      "status": "completed",
+      "auditCount": 1,
+      "traceCount": 1,
+      "effects": [
+        {
+          "kind": "created",
+          "reference": "Condition/01a09f60-432b-752c-9eae-05b436d48b19",
+          "version_id": "1"
+        },
+        {
+          "kind": "created",
+          "reference": "MedicationRequest/01a09f60-432c-7089-892c-673529e0fbb2",
+          "version_id": "1"
+        }
+      ]
+    },
+    {
+      "operation": "encounter.preview-clinical-sign",
+      "roleCode": "outpatient-doctor",
+      "realTimestamp": "2026-09-14T10:04:49.890Z",
+      "requestId": "01a09f60-6568-769e-a7c3-e73c5cebfcb0",
+      "auditId": "01a09f60-6568-769e-a7c3-e3d193983c67",
+      "traceId": "01a09f60-656a-70a8-a0cf-3af1179da0e5",
+      "status": "completed",
+      "auditCount": 1,
+      "traceCount": 1,
+      "effects": [
+        {
+          "kind": "created",
+          "reference": "ClinicalSignPreview/01a09f60-6567-71ee-943d-e1b0a24e7469",
+          "version_id": "1"
+        }
+      ]
+    },
+    {
+      "operation": "encounter.sign-and-complete",
+      "roleCode": "outpatient-doctor",
+      "realTimestamp": "2026-09-14T10:04:57.119Z",
+      "requestId": "01a09f60-81b3-70bb-b112-591a48b35b06",
+      "auditId": "01a09f60-81b3-70bb-b112-55deec937dbb",
+      "traceId": "01a09f60-81b6-70e9-9631-8ac53b9170a8",
+      "status": "completed",
+      "auditCount": 1,
+      "traceCount": 1,
+      "effects": [
+        {
+          "kind": "created",
+          "reference": "ChargeItem/01a09f60-81a7-76dc-a957-484ae233a17f",
+          "version_id": "1"
+        },
+        {
+          "kind": "created",
+          "reference": "Composition/01a09f60-81a9-747d-802d-dffb2605f86e",
+          "version_id": "1"
+        },
+        {
+          "kind": "created",
+          "reference": "Bundle/01a09f60-81aa-7706-aebe-be009f1e273f",
+          "version_id": "1"
+        },
+        {
+          "kind": "created",
+          "reference": "Provenance/01a09f60-81ae-7719-b964-f6919fce2a5d",
+          "version_id": "1"
+        },
+        {
+          "kind": "updated",
+          "reference": "Condition/01a09f60-432b-752c-9eae-05b436d48b19",
+          "version_id": "2"
+        },
+        {
+          "kind": "updated",
+          "reference": "MedicationRequest/01a09f60-432c-7089-892c-673529e0fbb2",
+          "version_id": "2"
+        },
+        {
+          "kind": "updated",
+          "reference": "Encounter/01a09eee-1afd-73fd-80b8-9c1d5e7eada5",
+          "version_id": "7"
+        },
+        {
+          "kind": "updated",
+          "reference": "Task/task-rv-01a09f2a-d211-76e7-828d-9f9810998ac0",
+          "version_id": "3"
+        }
+      ]
+    },
+    {
+      "operation": "payment.preview",
+      "roleCode": "cashier",
+      "realTimestamp": "2026-09-14T10:06:15.690Z",
+      "requestId": "01a09f61-b48b-730b-bcf0-111c25c2f6e9",
+      "auditId": "01a09f61-b48b-730b-bcf0-0c08a3298580",
+      "traceId": "01a09f61-b48d-7713-90a5-b0a35bcb12eb",
+      "status": "completed",
+      "auditCount": 1,
+      "traceCount": 1,
+      "effects": [
+        {
+          "kind": "created",
+          "reference": "PaymentPreview/01a09f61-b48b-730b-bcf0-092db2c995e2",
+          "version_id": "1"
+        }
+      ]
+    },
+    {
+      "operation": "payment.confirm",
+      "roleCode": "cashier",
+      "realTimestamp": "2026-09-14T10:06:28.326Z",
+      "requestId": "01a09f61-e5e8-76b1-a107-abcacf444a67",
+      "auditId": "01a09f61-e5e8-76b1-a107-a6267d4bfc78",
+      "traceId": "01a09f61-e5e9-73bc-9dd5-06cbde900274",
+      "status": "completed",
+      "auditCount": 1,
+      "traceCount": 1,
+      "effects": [
+        {
+          "kind": "created",
+          "reference": "PaymentTransaction/01a09f61-e5e7-7498-ba04-3032f2f3dda2",
+          "version_id": "1"
+        },
+        {
+          "kind": "updated",
+          "reference": "ChargeItem/01a09f60-81a7-76dc-a957-484ae233a17f",
+          "version_id": "2"
+        }
+      ]
+    },
+    {
+      "operation": "prescription.review",
+      "roleCode": "pharmacist",
+      "realTimestamp": "2026-09-14T10:07:09.725Z",
+      "requestId": "01a09f62-879f-716b-8e21-bdec68893288",
+      "auditId": "01a09f62-879f-716b-8e21-b9d586fe8a9d",
+      "traceId": "01a09f62-879f-716b-8e21-c3f5ac4db2c8",
+      "status": "completed",
+      "auditCount": 1,
+      "traceCount": 1,
+      "effects": [
+        {
+          "kind": "created",
+          "reference": "PrescriptionReview/01a09f62-879e-7145-8d85-3c2140aa0b67",
+          "version_id": "1"
+        }
+      ]
+    },
+    {
+      "operation": "prescription.dispense",
+      "roleCode": "pharmacist",
+      "realTimestamp": "2026-09-14T10:07:18.204Z",
+      "requestId": "01a09f62-a8c1-701f-91a4-a325bef60070",
+      "auditId": "01a09f62-a8c1-701f-91a4-9ca698733d36",
+      "traceId": "01a09f62-a8c3-70ee-9d1e-e0244082b284",
+      "status": "completed",
+      "auditCount": 1,
+      "traceCount": 1,
+      "effects": [
+        {
+          "kind": "created",
+          "reference": "MedicationDispense/01a09f62-a8c0-74ac-901a-1a506ce5287b",
+          "version_id": "1"
+        },
+        {
+          "kind": "created",
+          "reference": "InventoryMovement/01a09f62-a8c0-74ac-901a-158cbdcf690e",
+          "version_id": "1"
+        },
+        {
+          "kind": "updated",
+          "reference": "InventoryItem/lot-oseltamivir-202608",
+          "version_id": "2"
+        },
+        {
+          "kind": "updated",
+          "reference": "Prescription/01a09f60-432b-752c-9eae-086d4351c5e1",
+          "version_id": "5"
+        },
+        {
+          "kind": "updated",
+          "reference": "ScenarioRun/scenario-run-1",
+          "version_id": "2"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "sameEncounter": true,
+    "requiredOperationsPresent": true,
+    "oneAuditAndTracePerCommand": true,
+    "allMedicationDispensed": true
+  },
+  "media": {
+    "newRecording": false,
+    "note": "本次补充使用真实界面最终截图和只读数据库审计；未生成新录像。此前 WebM 保留原有范围。"
+  }
+}
