@@ -26,6 +26,8 @@ Host 代理只接受固定 loopback Hono origin，并限制路径、方法、请
 
 ## Alternatives considered
 
+**只固定 DSH CLI 顶层版本。** 宿主包和 Web Profile 独立解析依赖，内部版本范围可使相同 CLI 版本得到不同运行组合。因此两层分别保留可消费的 npm/pnpm 安装锁；Profile 的本地插件链接使用稳定相对位置，再由部署绑定到精确源码 checkout。锁只用于复现和审计，持续升级策略由独立任务维护。
+
 **删除 standalone Web，只保留 DSH。** 这会把医院产品入口和 DSH 宿主生命周期耦合，也会破坏现有部署与浏览器测试，因此保留两个 adapter。
 
 **使用 iframe 或复制一套 DSH 页面。** iframe 增加认证、尺寸、焦点和样式协调边界；复制页面会分叉状态所有权。原生 React Surface 直接复用同一 Web application interface。

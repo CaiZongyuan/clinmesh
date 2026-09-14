@@ -185,6 +185,8 @@ export DSHVM_BIN_DIR="$CLINMESH_DSH_SANDBOX/bin"
 npm install --prefix "$CLINMESH_DSH_SANDBOX/tooling" @dsh-so/dshvm@0.1.1
 DSHVM_CLI="$CLINMESH_DSH_SANDBOX/tooling/node_modules/@dsh-so/dshvm/bin/dshvm.js"
 node "$DSHVM_CLI" install 0.1.5-rc.2
+cp deployment/dsh/host/package*.json "$DSHVM_HOME/dsh-0.1.5-rc.2/"
+npm ci --prefix "$DSHVM_HOME/dsh-0.1.5-rc.2"
 node "$DSHVM_CLI" isolate 0.1.5-rc.2
 node "$DSHVM_CLI" use 0.1.5-rc.2
 node "$DSHVM_CLI" which 0.1.5-rc.2
@@ -193,7 +195,7 @@ export DSH_HOME="$DSHVM_HOME/isolate/0.1.5-rc.2"
 DSH_CLI="$DSHVM_HOME/dsh-0.1.5-rc.2/node_modules/@deepseek-ai/dsh/lib/bin.js"
 ```
 
-`which` 应指向该隔离槽位，`exec --version` 应返回锁定版本。不要对已有共享槽位使用 `setup` 或 `isolate --copy` 来建立干净验收环境。Windows PowerShell 使用 `$env:DSHVM_HOME`、`$env:DSHVM_BIN_DIR` 和 `$env:DSH_HOME` 设置相同目录，普通路径变量使用 `$变量名`；Node CLI 的参数相同。新终端需要重新提供这些变量。DSH Provider 在隔离宿主设置页单独配置，密钥不写入 Profile 仓库或公开记录。
+`which` 应指向该隔离槽位，`exec --version` 应返回锁定版本。宿主安装必须在停止状态下使用 [`deployment/dsh/host/package-lock.json`](../deployment/dsh/host/package-lock.json) 执行 `npm ci`；dshvm 的初始安装用于建立槽位登记，不能代替锁文件恢复，因为 DSH 顶层版本的内部依赖仍使用版本范围。不要对已有共享槽位使用 `setup` 或 `isolate --copy` 来建立干净验收环境。Windows PowerShell 使用 `$env:DSHVM_HOME`、`$env:DSHVM_BIN_DIR` 和 `$env:DSH_HOME` 设置相同目录，普通路径变量使用 `$变量名`；Node CLI 的参数相同。新终端需要重新提供这些变量。DSH Provider 在隔离宿主设置页单独配置，密钥不写入 Profile 仓库或公开记录。
 
 先按上游锁文件构建 React Surface 与 ClinMesh，再构建并安装 AG-UI。AG-UI 安装使用公开支持分支的精确 commit，合并后仍可按同一 commit 重建：
 
@@ -205,12 +207,18 @@ git clone https://github.com/keaideppk/dsh-ag-ui.git "$CLINMESH_DSH_SANDBOX/ag-u
 git -C "$CLINMESH_DSH_SANDBOX/ag-ui" checkout 521740953be41cc37bd770ecf41b36bd7b0824d9
 pnpm --dir "$CLINMESH_DSH_SANDBOX/ag-ui" install --frozen-lockfile
 pnpm --dir "$CLINMESH_DSH_SANDBOX/ag-ui" build
-node "$DSH_CLI" plugin --profile web add "$CLINMESH_DSH_SANDBOX/ag-ui"
-node "$DSH_CLI" plugin --profile web add "$PWD/vendor/dsh-react-surface/packages/runtime"
-node "$DSH_CLI" plugin --profile web add "$PWD/apps/dsh-web"
+DSH_PROFILE="$DSH_HOME/profiles/web"
+mkdir -p "$DSH_PROFILE/plugins"
+cp deployment/dsh/profile/* "$DSH_PROFILE/"
+ln -s "$CLINMESH_DSH_SANDBOX/ag-ui" "$DSH_PROFILE/plugins/ag-ui"
+ln -s "$PWD/vendor/dsh-react-surface/packages/runtime" "$DSH_PROFILE/plugins/react-surface"
+ln -s "$PWD/apps/dsh-web" "$DSH_PROFILE/plugins/clinmesh"
+pnpm --dir "$DSH_PROFILE" install --frozen-lockfile
 ```
 
-Profile 应只包含 `@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-web-app` 与上述三个插件。插件管理直接调用 `DSH_CLI`：dshvm `0.1.1` 会把 `plugin --profile web` 误判为 Web 启动，并在默认端口被占用时附加插件命令不接受的 `--port`。dshvm 连接器也会按 active-data 覆盖显式 `DSH_HOME`；测试自行管理数据目录时应使用对应槽位的实际 bin。链接安装不替插件安装其源码依赖，因此不能省略各 workspace 的安装与构建。
+[`deployment/dsh/profile`](../deployment/dsh/profile/package.json) 只加载 `@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-web-app` 与上述三个插件；其 pnpm lock 固定 Profile 的独立依赖闭包，本地插件使用相对 `link:`。Windows 可用 `New-Item -ItemType Junction -Path <Profile/plugins/名称> -Target <对应源码绝对目录>` 代替三个 `ln -s`。模板只用于新建的专用 Profile，不覆盖已有 Profile；再次安装使用已有链接和 `--frozen-lockfile`。链接安装不替插件安装源码依赖，因此不能省略各 workspace 的安装与构建。
+
+需要查看或修改插件时直接调用 `node "$DSH_CLI" plugin --profile web ...`：dshvm `0.1.1` 会把 `plugin --profile web` 误判为 Web 启动，并在默认端口被占用时附加插件命令不接受的 `--port`。dshvm 连接器也会按 active-data 覆盖显式 `DSH_HOME`；测试自行管理数据目录时应使用对应槽位的实际 bin。插件变更后重新验证并更新 Profile lock，日常运行不要用无锁安装替换已验证组合。
 
 在 `.env` 中为 Hono 配置至少 32 bytes 的 `CLINMESH_DSH_BRIDGE_SECRET`，并把实际 DSH Web origin 加入 `CLINMESH_TRUSTED_ORIGINS`（DSH 默认开发端口 `3080`；使用 `--port` 时必须同步替换该 origin，否则登录和 mutation 的 CSRF 校验会拒绝）：
 

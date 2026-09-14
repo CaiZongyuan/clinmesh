@@ -1,5 +1,7 @@
 {
   "schemaVersion": 1,
+  "hostDependencyLock": "deployment/dsh/host/package-lock.json",
+  "profileDependencyLock": "deployment/dsh/profile/pnpm-lock.yaml",
   "components": [
     {
       "name": "@deepseek-ai/dsh",

@@ -4632,6 +4632,18 @@ describe('role workspaces', () => {
     const fillDiagnosis = registration!.tools.find(tool => (
       tool.name === 'clinmesh_fill_diagnosis_draft'
     ))!
+    for (const name of ['clinmesh_fill_diagnosis_draft', 'clinmesh_prepare_confirm_diagnosis']) {
+      const diagnosisTool = registration!.tools.find(tool => tool.name === name)
+      expect(diagnosisTool?.parameters).toMatchObject({
+        properties: {
+          entries: {
+            items: {
+              properties: { role: { type: 'string', enum: ['primary', 'secondary'] } },
+            },
+          },
+        },
+      })
+    }
     await act(async () => {
       await fillDiagnosis.execute(boundAgentToolInput(fillDiagnosis, {
         entries: [{ catalogItemId: 'diagnosis-fever', role: 'primary' }],
