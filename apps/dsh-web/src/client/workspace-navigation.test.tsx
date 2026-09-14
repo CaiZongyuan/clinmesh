@@ -124,6 +124,7 @@ it('places authorized routes above workspaces, keeps settings in the footer, and
     const returnToHis = [...shadow.querySelectorAll<HTMLElement>('[role="menuitem"]')]
       .find((item) => item.textContent === '返回 HIS 页面')
     expect(returnToHis).toBeDefined()
+    expect([...shadow.querySelectorAll('[role^="menuitem"]')].at(-1)?.textContent).toBe('返回 HIS 页面')
     await act(() => returnToHis!.click())
     expect(open).toHaveBeenCalledOnce()
     expect(navigate).not.toHaveBeenCalled()

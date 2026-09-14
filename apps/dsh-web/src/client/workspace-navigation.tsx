@@ -181,11 +181,9 @@ export function WorkspaceNavigation({
               <DropdownMenuContent side="right" align="end" className="min-w-56" aria-label={label}>
                 <DropdownMenuGroup>
                   <DropdownMenuLabel>{label}</DropdownMenuLabel>
-                  {!active && (
+                  {!active && !state && (
                     <DropdownMenuItem onClick={open}>
-                      {state
-                        ? (locale === 'zh-CN' ? '返回 HIS 页面' : 'Return to HIS')
-                        : (locale === 'zh-CN' ? '打开 ClinMesh' : 'Open ClinMesh')}
+                      {locale === 'zh-CN' ? '打开 ClinMesh' : 'Open ClinMesh'}
                     </DropdownMenuItem>
                   )}
                   {state && (
@@ -237,13 +235,20 @@ export function WorkspaceNavigation({
                     </DropdownMenuGroup>
                   </>
                 )}
-                {close && (
+                {((state && !active) || close) && (
                   <>
                     <DropdownMenuSeparator />
                     <DropdownMenuGroup>
-                      <DropdownMenuItem onClick={close}>
-                        {locale === 'zh-CN' ? '返回 DSH 会话' : 'Return to DSH conversation'}
-                      </DropdownMenuItem>
+                      {state && !active && (
+                        <DropdownMenuItem onClick={open}>
+                          {locale === 'zh-CN' ? '返回 HIS 页面' : 'Return to HIS'}
+                        </DropdownMenuItem>
+                      )}
+                      {close && (
+                        <DropdownMenuItem onClick={close}>
+                          {locale === 'zh-CN' ? '返回 DSH 会话' : 'Return to DSH conversation'}
+                        </DropdownMenuItem>
+                      )}
                     </DropdownMenuGroup>
                   </>
                 )}
