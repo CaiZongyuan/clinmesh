@@ -1,0 +1,82 @@
+{
+  "commit": "a9831c4b9437699a02b4aa70913cf80d3ed8b759",
+  "native": {
+    "dsh_session_id": "session-c9b87423-24bf-4980-9597-3c81484d77e4",
+    "call_id": "call_0c0e903fd57641d8abf752f9",
+    "operation_id": "outpatient.laboratory.issue.propose",
+    "proposal_id": "01a09f2a-775c-75b2-b91d-0a07d22bb402",
+    "status": "completed",
+    "request_id": "01a09f2a-d214-7366-949e-cdf7c2fad4af",
+    "audit_id": "01a09f2a-d214-7366-949e-cac237280dbc",
+    "trace_id": "01a09f2a-d215-77f0-87ea-41d38bc80d0a",
+    "decision": "approved",
+    "operation": "encounter.issue-laboratory-order",
+    "effects": [
+      {
+        "kind": "created",
+        "reference": "ServiceRequest/01a09f2a-d211-76e7-828d-9f9810998ac0",
+        "versionId": "1"
+      },
+      {
+        "kind": "created",
+        "reference": "ChargeItem/01a09f2a-d211-76e7-828d-a2fcb0578172",
+        "versionId": "1"
+      },
+      {
+        "kind": "updated",
+        "reference": "Encounter/01a09eee-1afd-73fd-80b8-9c1d5e7eada5",
+        "versionId": "4"
+      },
+      {
+        "kind": "updated",
+        "reference": "Task/01a09ef0-b272-730f-bded-0740fbc3b432",
+        "versionId": "3"
+      }
+    ],
+    "commandCount": 1,
+    "auditCount": 1,
+    "traceCount": 1
+  },
+  "payment": [
+    {
+      "case_id": "01a09f05-5b3c-71da-a2e4-d9962f8fd901",
+      "category": "medication",
+      "amount_fen": 720,
+      "outcome": "success"
+    }
+  ],
+  "inventory": {
+    "lot_id": "lot-acetaminophen-202608",
+    "quantity_on_hand": 994,
+    "version": 2
+  },
+  "dispense": [
+    {
+      "prescription_id": "01a09f1b-d0f1-71ce-8a96-c14f9c870083",
+      "lot_id": "lot-acetaminophen-202608",
+      "quantity": 6
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "01a09eee-1afd-73fd-80b8-948331345b2f",
+      "patient_id": "01a09eeb-482b-70cf-af44-fa77aace6db5",
+      "registration_id": "01a09eee-1afd-73fd-80b8-98ca29f072da",
+      "status": "awaiting-lab-payment"
+    },
+    {
+      "case_id": "01a09f05-5b3c-71da-a2e4-d9962f8fd901",
+      "patient_id": "candidate-patient-001",
+      "registration_id": "01a09f05-5b3c-71da-a2e4-dcc28dae692e",
+      "status": "completed"
+    }
+  ],
+  "cancelledProposals": [
+    {
+      "proposal_id": "01a09f29-bc37-766b-9be7-ec5eb191da8e",
+      "status": "completed",
+      "decision": "rejected",
+      "command_request_id": null
+    }
+  ]
+}
