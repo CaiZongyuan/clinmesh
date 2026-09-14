@@ -966,61 +966,33 @@ export function searchReferenceMedicationCatalog(
       total,
     }
   }
-  if (input.query.length < 3) {
-    const total = countSchema.parse(database.driver.prepare(`
-      SELECT COUNT(*) AS count
-      FROM reference_medication_product
-      WHERE release_id = ?
-        AND (
-          instr(lower(generic_name), lower(?)) > 0
-          OR instr(lower(COALESCE(brand_name, '')), lower(?)) > 0
-          OR instr(lower(manufacturer), lower(?)) > 0
-          OR instr(lower(code), lower(?)) > 0
-        )
-    `).get(
-      releaseId,
-      input.query,
-      input.query,
-      input.query,
-      input.query,
-    )).count
-    const rows = z.array(medicationProductDatabaseRowSchema).parse(database.driver.prepare(`
-      SELECT product_id, system, system_version, code, generic_name, brand_name,
-        dosage_form, strength, package_description, manufacturer, approval_number,
-        status, source_id, source_locator
-      FROM reference_medication_product
-      WHERE release_id = ?
-        AND (
-          instr(lower(generic_name), lower(?)) > 0
-          OR instr(lower(COALESCE(brand_name, '')), lower(?)) > 0
-          OR instr(lower(manufacturer), lower(?)) > 0
-          OR instr(lower(code), lower(?)) > 0
-        )
-      ORDER BY generic_name, code, product_id
-      LIMIT ? OFFSET ?
-    `).all(
-      releaseId,
-      input.query,
-      input.query,
-      input.query,
-      input.query,
-      input.pageSize,
-      offset,
-    ))
-    return {
-      items: rows.map(mapMedicationProductRow).map(({ sourceId: _sourceId, ...product }) => product),
-      total,
-    }
+  const terms = input.query.trim().split(/\s+/).filter(Boolean)
+  const indexedTerms = terms.filter(term => [...term].length >= 3)
+  const shortTerms = terms.filter(term => [...term].length < 3)
+  const parameters: string[] = [releaseId]
+  const conditions = ['reference_medication_product.release_id = ?']
+  if (indexedTerms.length > 0) {
+    conditions.push('reference_medication_product_fts MATCH ?')
+    parameters.push(indexedTerms.map(ftsPhrase).join(' AND '))
   }
-  const match = ftsPhrase(input.query)
-  const total = countSchema.parse(database.driver.prepare(`
-    SELECT COUNT(*) AS count
-    FROM reference_medication_product
+  for (const term of shortTerms) {
+    conditions.push(`(
+      instr(lower(reference_medication_product.generic_name), lower(?)) > 0
+      OR instr(lower(COALESCE(reference_medication_product.brand_name, '')), lower(?)) > 0
+      OR instr(lower(reference_medication_product.manufacturer), lower(?)) > 0
+      OR instr(lower(reference_medication_product.code), lower(?)) > 0
+    )`)
+    parameters.push(term, term, term, term)
+  }
+  const source = indexedTerms.length === 0 ? 'reference_medication_product' : `
+    reference_medication_product
     JOIN reference_medication_product_fts
       ON reference_medication_product_fts.rowid = reference_medication_product.rowid
-    WHERE reference_medication_product.release_id = ?
-      AND reference_medication_product_fts MATCH ?
-  `).get(releaseId, match)).count
+  `
+  const where = conditions.join(' AND ')
+  const total = countSchema.parse(database.driver.prepare(`
+    SELECT COUNT(*) AS count FROM ${source} WHERE ${where}
+  `).get(...parameters)).count
   const rows = z.array(medicationProductDatabaseRowSchema).parse(database.driver.prepare(`
     SELECT reference_medication_product.product_id,
       reference_medication_product.system, reference_medication_product.system_version,
@@ -1032,15 +1004,12 @@ export function searchReferenceMedicationCatalog(
       reference_medication_product.approval_number,
       reference_medication_product.status, reference_medication_product.source_id,
       reference_medication_product.source_locator
-    FROM reference_medication_product
-    JOIN reference_medication_product_fts
-      ON reference_medication_product_fts.rowid = reference_medication_product.rowid
-    WHERE reference_medication_product.release_id = ?
-      AND reference_medication_product_fts MATCH ?
-    ORDER BY reference_medication_product.generic_name,
+    FROM ${source} WHERE ${where}
+    ORDER BY ${indexedTerms.length > 0 ? 'bm25(reference_medication_product_fts),' : ''}
+      reference_medication_product.generic_name,
       reference_medication_product.code, reference_medication_product.product_id
     LIMIT ? OFFSET ?
-  `).all(releaseId, match, input.pageSize, offset))
+  `).all(...parameters, input.pageSize, offset))
   return {
     items: rows.map(mapMedicationProductRow).map(({ sourceId: _sourceId, ...product }) => product),
     total,

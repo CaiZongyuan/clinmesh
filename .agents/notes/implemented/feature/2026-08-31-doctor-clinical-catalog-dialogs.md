@@ -14,7 +14,7 @@ Status: implemented
 
 ## Decision
 
-诊断、药品和检验分别使用 app-private 目录 Dialog。Dialog 打开后才启用 TanStack Query；诊断和药品默认读取当前 Reference Release 的第一页，检验读取当前 Workspace/Epoch 已发布 Hospital Laboratory Service。搜索由表单提交或 Enter 显式触发，不随每次键入请求；结果保持 20 行有界分页，翻页或重新搜索清空当前选择，不自动选择第一行。诊断和药品的两字符关键词使用只读 SQLite substring 查询，三字符以上使用 trigram FTS；检验按本院名称、本院编码和根 LOINC 查询。
+诊断、药品和检验分别使用 app-private 目录 Dialog。Dialog 打开后才启用 TanStack Query；诊断和药品默认读取当前 Reference Release 的第一页，检验读取当前 Workspace/Epoch 已发布 Hospital Laboratory Service。诊断和检验搜索由表单提交或 Enter 显式触发；药品搜索遵循[底账门禁与药品选择反馈](2026-09-14-laboratory-evidence-and-medication-picker.md)的防抖、分词与排序决策；结果保持 20 行有界分页，翻页或重新搜索清空当前选择，不自动选择第一行。诊断和药品的两字符关键词使用只读 SQLite substring 查询，三字符以上使用 trigram FTS；检验按本院名称、本院编码和根 LOINC 查询。
 
 诊断 picker 每次选择一条并加入当前草稿列表，列表最多八条，支持替换、删除、主次切换和逐条备注。有效修改自动保存到 Diagnosis Draft；确认只针对已保存且没有本地改动的草稿，并经过展示全部主次诊断的确认框。确认版本不可覆盖，但本次 Encounter 完成前可以继续编辑并创建新 revision。
 
@@ -28,7 +28,7 @@ Status: implemented
 
 **继续使用行内搜索结果。** 代码改动少，但每条诊断会复制目录列表，药品产品与医嘱输入混在一起，页面高度和交互焦点都不稳定。
 
-**键入时自动搜索。** 反馈更即时，但两字药品 substring 查询需要扫描当前 26 万条产品；显式提交能避免无意的重复扫描，同时保留清晰 loading 状态。
+**每次键入立即请求。** 两字药品 substring 查询需要扫描当前 26 万条产品；当前药品入口采用后续决策的防抖，避免每次按键重复扫描。
 
 **自动选择第一页第一条。** 可以少一次点击，却会把排序结果误当医生选择。所有 picker 必须由用户明确选行。
 
@@ -38,7 +38,7 @@ Status: implemented
 
 ## Consequences
 
-目录只在用户打开 picker 时请求和渲染，隐藏页面不再维护 20 行结果。真实 Reference Release 上，两字查询实测约为诊断 23 ms、检验 2 ms、药品 391 ms；药品查询由显式提交触发，不进入按键热路径。三字以上查询继续使用 FTS 性能合同。
+目录只在用户打开 picker 时请求和渲染，隐藏页面不再维护 20 行结果。真实 Reference Release 上，两字查询实测约为诊断 23 ms、检验 2 ms、药品 391 ms；药品查询使用后续决策的防抖入口，短词扫描仍需保持有界。三字以上查询继续使用 FTS 性能合同。
 
 医生现在能明确看到多诊断草稿、同名药品产品差异和已选检验项目。新增 Dialog primitive 需要持续覆盖命名、焦点恢复、关闭和窄屏滚动；生产 picker 仍由真实 API 与 Command 驱动，不读取 `/ui-dev` mock 状态。
 

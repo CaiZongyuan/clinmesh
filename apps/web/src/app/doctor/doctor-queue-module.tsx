@@ -243,11 +243,11 @@ export function DoctorQueueModule({
                   <div className="flex flex-col gap-3 border-t pt-3">
                     <p className="text-sm">{selectedVirtualPatient.presentation.summary}</p>
                     <dl className="grid grid-cols-3 gap-x-3 gap-y-2 text-xs">
-                      <VitalSummary label="T" value={selectedVirtualPatient.presentation.vitalSigns.temperatureC} />
-                      <VitalSummary label="P" value={selectedVirtualPatient.presentation.vitalSigns.pulseBpm} />
-                      <VitalSummary label="R" value={selectedVirtualPatient.presentation.vitalSigns.respirationBpm} />
-                      <VitalSummary label="BP" value={`${selectedVirtualPatient.presentation.vitalSigns.bloodPressure.systolicMmHg}/${selectedVirtualPatient.presentation.vitalSigns.bloodPressure.diastolicMmHg}`} />
-                      <VitalSummary label="SpO2" value={selectedVirtualPatient.presentation.vitalSigns.oxygenSaturationPct} />
+                      <VitalSummary label={messages.temperatureC} value={selectedVirtualPatient.presentation.vitalSigns.temperatureC} />
+                      <VitalSummary label={messages.pulseBpm} value={selectedVirtualPatient.presentation.vitalSigns.pulseBpm} />
+                      <VitalSummary label={messages.respirationBpm} value={selectedVirtualPatient.presentation.vitalSigns.respirationBpm} />
+                      <VitalSummary label={messages.bloodPressure} value={`${selectedVirtualPatient.presentation.vitalSigns.bloodPressure.systolicMmHg}/${selectedVirtualPatient.presentation.vitalSigns.bloodPressure.diastolicMmHg}`} />
+                      <VitalSummary label={messages.oxygenSaturationPct} value={selectedVirtualPatient.presentation.vitalSigns.oxygenSaturationPct} />
                     </dl>
                     {startError === null ? null : (
                       <ErrorAlert error={startError} fallbackTitle={messages.operationFailed} messages={messages} />

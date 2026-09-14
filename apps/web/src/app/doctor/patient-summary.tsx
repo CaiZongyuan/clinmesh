@@ -117,11 +117,11 @@ export function PatientBanner({
         </div>
       </div>
       <dl className="grid grid-cols-2 gap-px border-t bg-border @min-[400px]/patient-banner:grid-cols-3 @min-[680px]/patient-banner:grid-cols-5 [&>div]:bg-background [&>div]:px-3 [&>div]:py-2.5">
-        <VitalSummary label="T" value={`${presentation.vitalSigns.temperatureC} °C`} />
-        <VitalSummary label="P" value={`${presentation.vitalSigns.pulseBpm} 次/分`} />
-        <VitalSummary label="R" value={`${presentation.vitalSigns.respirationBpm} 次/分`} />
-        <VitalSummary label="BP" value={`${presentation.vitalSigns.bloodPressure.systolicMmHg}/${presentation.vitalSigns.bloodPressure.diastolicMmHg} mmHg`} />
-        <VitalSummary label="SpO₂" value={`${presentation.vitalSigns.oxygenSaturationPct}%`} />
+        <VitalSummary label={messages.temperatureC} value={presentation.vitalSigns.temperatureC} />
+        <VitalSummary label={messages.pulseBpm} value={presentation.vitalSigns.pulseBpm} />
+        <VitalSummary label={messages.respirationBpm} value={presentation.vitalSigns.respirationBpm} />
+        <VitalSummary label={messages.bloodPressure} value={`${presentation.vitalSigns.bloodPressure.systolicMmHg}/${presentation.vitalSigns.bloodPressure.diastolicMmHg}`} />
+        <VitalSummary label={messages.oxygenSaturationPct} value={presentation.vitalSigns.oxygenSaturationPct} />
       </dl>
     </section>
   )

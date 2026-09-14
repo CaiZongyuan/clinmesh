@@ -23,6 +23,7 @@ import {
   DialogTitle,
 } from '@clinmesh/ui/components/dialog'
 import { Input } from '@clinmesh/ui/components/input'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@clinmesh/ui/components/select'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { cn } from '@clinmesh/ui/lib/utils'
@@ -38,7 +39,7 @@ import {
   PlusIcon,
   SearchIcon,
 } from 'lucide-react'
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useEffectEvent, useMemo, useState, type FormEvent } from 'react'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
 
 type TriggerMode = 'add' | 'replace' | 'select'
@@ -85,7 +86,6 @@ const copy = {
     medicationSearchInput: 'Search medication catalog',
     next: 'Next page',
     noResults: 'No matching records',
-    packageVariants: '{count} package variants',
     previous: 'Previous page',
     replaceDiagnosis: 'Replace diagnosis',
     replaceMedication: 'Replace medication',
@@ -119,7 +119,6 @@ const copy = {
     medicationSearchInput: '搜索药品目录',
     next: '下一页',
     noResults: '没有匹配记录',
-    packageVariants: '{count} 个包装',
     previous: '上一页',
     replaceDiagnosis: '更换诊断',
     replaceMedication: '更换药品',
@@ -133,10 +132,6 @@ const copy = {
 
 function totalLabel(template: string, total: number): string {
   return template.replace('{total}', String(total))
-}
-
-function countLabel(template: string, count: number): string {
-  return template.replace('{count}', String(count))
 }
 
 function CatalogSearchForm({
@@ -662,6 +657,63 @@ function groupMedicationProducts(products: ReferenceMedicationProduct[]): Medica
   return [...groups.values()]
 }
 
+function MedicationProductRow({ group, excludedIds, locale, selectionId, onSelect, onConfirm }: {
+  group: MedicationProductGroup
+  excludedIds: ReadonlySet<string>
+  locale: WorkspaceLocale
+  selectionId: string | undefined
+  onSelect: (selection: MedicationCatalogSelection) => void
+  onConfirm: (selection: MedicationCatalogSelection) => void
+}) {
+  const [packageId, setPackageId] = useState<string>()
+  const available = (item: ReferenceMedicationProduct) => item.status === 'active' && !excludedIds.has(item.id)
+  const item = group.variants.find(variant => variant.id === packageId && available(variant))
+    ?? group.variants.find(available)
+    ?? group.product
+  const unavailable = !available(item)
+  const selection: MedicationCatalogSelection = { kind: 'reference', product: item }
+  const selected = group.variants.some(variant => variant.id === selectionId)
+  const messages = copy[locale]
+  return (
+    <TableRow className={cn(unavailable && 'opacity-50', selected && 'bg-muted/70')}
+      onDoubleClick={() => { if (!unavailable) onConfirm(selection) }}>
+      <TableCell>
+        <SelectionButton disabled={unavailable}
+          label={`${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`}
+          onSelect={() => onSelect(selection)} selected={selected} />
+      </TableCell>
+      <TableCell className="font-medium">{item.genericName}</TableCell>
+      <TableCell>{item.strength}</TableCell>
+      <TableCell>{item.dosageForm}</TableCell>
+      <TableCell>{item.manufacturer}</TableCell>
+      <TableCell className="font-mono text-xs">{item.approvalNumber}</TableCell>
+      <TableCell onDoubleClick={event => event.stopPropagation()}>
+        <Select disabled={unavailable} value={item.id} onValueChange={value => {
+          const next = group.variants.find(variant => variant.id === value && available(variant))
+          if (next === undefined) return
+          setPackageId(next.id)
+          if (selected) onSelect({ kind: 'reference', product: next })
+        }}>
+          <SelectTrigger aria-label={`${locale === 'zh-CN' ? '包装' : 'Package'} ${item.genericName} ${item.manufacturer}`}>
+            <SelectValue>{item.packageDescription}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {group.variants.map(variant => (
+                <SelectItem disabled={!available(variant)} key={variant.id} value={variant.id}>
+                  {variant.packageDescription}
+                  {excludedIds.has(variant.id) ? (locale === 'zh-CN' ? ' · 已添加' : ' · Added')
+                    : variant.status !== 'active' ? (locale === 'zh-CN' ? ' · 停用' : ' · Inactive') : ''}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </TableCell>
+    </TableRow>
+  )
+}
+
 export function MedicationCatalogDialog({
   disabled,
   excludedIds,
@@ -685,15 +737,26 @@ export function MedicationCatalogDialog({
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<MedicationCatalogSelection>()
+  const searchLatest = useEffectEvent((value: string) => search.onSearch(value, 1))
+  useEffect(() => {
+    const nextQuery = input.trim()
+    if (!open || nextQuery.length === 1 || nextQuery === query) return
+    const timer = setTimeout(() => {
+      setPage(1)
+      setSelected(undefined)
+      setQuery(nextQuery)
+      searchLatest(nextQuery)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [input, open, query])
   const results = search
   const remoteResults = results.data?.items ?? []
   const useLocal = results.isError
     || (query.length === 0 && results.data !== undefined && remoteResults.length === 0)
-  const normalizedLocalQuery = query.toLocaleLowerCase()
+  const localTerms = query.toLocaleLowerCase().split(/\s+/).filter(Boolean)
   const localResults = localCatalog.filter(item => {
     const display = locale === 'zh-CN' ? item.nameZh : item.nameEn
-    return normalizedLocalQuery.length === 0
-      || display.toLocaleLowerCase().includes(normalizedLocalQuery)
+    return localTerms.every(term => display.toLocaleLowerCase().includes(term))
   })
   const referenceGroups = useMemo(
     () => results.data === undefined ? [] : groupMedicationProducts(results.data.items),
@@ -749,14 +812,14 @@ export function MedicationCatalogDialog({
           placeholder={messages.medicationPlaceholder}
         />
         {results.isPending ? <Skeleton className="mx-4 min-h-0 flex-1" /> : (
-          <div className="mx-4 min-h-0 flex-1 overflow-auto border">
+          <div className="mx-4 min-h-0 flex-1 overflow-x-scroll overflow-y-auto border">
             {results.isError && localResults.length > 0 ? (
               <Alert className="m-2"><CircleAlertIcon /><AlertTitle>{messages.catalogUnavailable}</AlertTitle></Alert>
             ) : null}
             {(useLocal ? localResults : remoteResults).length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
             ) : (
-              <Table>
+              <Table singleScrollContainer>
                 <TableHeader className="sticky top-0 z-10 bg-popover">
                   <TableRow>
                     <TableHead className="w-12"><span className="sr-only">{messages.choose}</span></TableHead>
@@ -792,52 +855,15 @@ export function MedicationCatalogDialog({
                         <TableCell>-</TableCell>
                         <TableCell>{messages.localCatalog}</TableCell>
                         <TableCell>-</TableCell>
-                        <TableCell className="font-mono text-xs">{excluded ? (locale === 'zh-CN' ? '已添加' : 'Added') : '-'}</TableCell>
                         <TableCell>-</TableCell>
+                        <TableCell>{excluded ? <Badge variant="secondary">{locale === 'zh-CN' ? '已添加' : 'Added'}</Badge> : '-'}</TableCell>
                       </TableRow>
                     )
-                  }) : referenceGroups.flatMap(group => group.variants.map((item, index) => {
-                    const selection: MedicationCatalogSelection = { kind: 'reference', product: item }
-                    const inactive = item.status !== 'active'
-                    const excluded = excludedIds.has(item.id)
-                    const unavailable = inactive || excluded
-                    const label = `${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`
-                    return (
-                      <TableRow
-                        className={cn(unavailable && 'opacity-50', selectionId === item.id && 'bg-muted/70')}
-                        key={item.id}
-                        onDoubleClick={() => { if (!unavailable) confirm(selection) }}
-                      >
-                        <TableCell>
-                          <SelectionButton
-                            disabled={unavailable}
-                            label={label}
-                            onSelect={() => setSelected(selection)}
-                            selected={selectionId === item.id}
-                          />
-                        </TableCell>
-                        {index === 0 ? (
-                          <>
-                            <TableCell className="align-top font-medium" rowSpan={group.variants.length}>
-                              <div className="flex items-center gap-2">
-                                <span>{group.product.genericName}</span>
-                                {group.variants.length > 1 ? (
-                                  <Badge variant="secondary">
-                                    {countLabel(messages.packageVariants, group.variants.length)}
-                                  </Badge>
-                                ) : null}
-                              </div>
-                            </TableCell>
-                            <TableCell className="align-top" rowSpan={group.variants.length}>{group.product.strength}</TableCell>
-                            <TableCell className="align-top" rowSpan={group.variants.length}>{group.product.dosageForm}</TableCell>
-                            <TableCell className="align-top" rowSpan={group.variants.length}>{group.product.manufacturer}</TableCell>
-                            <TableCell className="align-top font-mono text-xs" rowSpan={group.variants.length}>{group.product.approvalNumber}</TableCell>
-                          </>
-                        ) : null}
-                        <TableCell>{item.packageDescription}</TableCell>
-                      </TableRow>
-                    )
-                  }))}
+                  }) : referenceGroups.map(group => (
+                    <MedicationProductRow key={medicationProductGroupKey(group.product)}
+                      group={group} excludedIds={excludedIds} locale={locale}
+                      selectionId={selectionId} onSelect={setSelected} onConfirm={confirm} />
+                  ))}
                 </TableBody>
               </Table>
             )}

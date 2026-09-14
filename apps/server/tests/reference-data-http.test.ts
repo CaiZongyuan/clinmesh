@@ -138,7 +138,10 @@ describe('Reference Data HTTP contract', () => {
     ])
   }
 
-  async function createReferenceDatabase(directory: string): Promise<string> {
+  async function createReferenceDatabase(
+    directory: string,
+    medicationProducts = syntheticNhsaMedicationProductSnapshot,
+  ): Promise<string> {
     const databasePath = join(directory, 'reference.sqlite')
     const artifactJson = `${JSON.stringify({
       concepts: [{
@@ -201,7 +204,7 @@ describe('Reference Data HTTP contract', () => {
         system: 'urn:clinmesh:reference:nhsa-diagnosis',
         version: '2022',
       }))],
-      medicationProducts: syntheticNhsaMedicationProductSnapshot,
+      medicationProducts,
       schemaVersion: '1',
       services: syntheticNhcMedicalServiceSnapshot,
       valueSetEntries: syntheticWstValueSetSnapshot,
@@ -388,6 +391,31 @@ describe('Reference Data HTTP contract', () => {
       { headers: { cookie: doctorCookie } },
     )
     expect(clientRelease.status).toBe(400)
+  })
+
+  it('matches every medication search term and ranks concise matches before verbose matches', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-medication-search-'))
+    temporaryDirectories.push(directory)
+    const base = syntheticNhsaMedicationProductSnapshot[0]!
+    const referenceDatabasePath = await createReferenceDatabase(directory, [
+      { ...base, id: 'verbose', code: 'AAA', genericName: '合成测试药片扩展名称用于相关度排序', manufacturer: '合成药厂' },
+      { ...base, id: 'concise', code: 'ZZZ', genericName: '合成测试药片', manufacturer: '合成药厂' },
+      { ...base, id: 'other', code: 'BBB', genericName: '合成测试药片', manufacturer: '其他工厂' },
+    ])
+    const { password, runtime } = await createRuntime({ referenceDatabasePath })
+    const cookie = await signIn(runtime, password, 'doctor@demo.clinmesh.local')
+    const search = async (query: string) => {
+      const response = await runtime.app.request(
+        `/api/his/v1/reference-catalogs/medications?page=1&pageSize=20&query=${encodeURIComponent(query)}`,
+        { headers: { cookie } },
+      )
+      expect(response.status).toBe(200)
+      return referenceMedicationCatalogSearchSchema.parse(await response.json())
+    }
+    expect((await search('测试药片 合成药厂')).items.map(item => item.id)).toEqual(['concise', 'verbose'])
+    expect((await search('测试 药厂')).items.map(item => item.id).sort()).toEqual(['concise', 'verbose'])
+    expect((await search('测试药片 不存在')).total).toBe(0)
+    expect((await search('测试药片 "')).total).toBe(0)
   })
 
   it('freezes selected Reference coding when the system current release changes', async () => {

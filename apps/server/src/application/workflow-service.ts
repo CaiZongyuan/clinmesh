@@ -96,12 +96,12 @@ import {
 } from './command-executor.ts'
 
 export class WorkflowError extends Error {
-  readonly code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_ADULT_REFERENCE_NOT_APPLICABLE' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
+  readonly code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_ADULT_REFERENCE_NOT_APPLICABLE' | 'LABORATORY_GENERATION_UNSUPPORTED' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
   readonly conflict: ApiConflict | undefined
   readonly status: 403 | 409
 
   constructor(
-    code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_ADULT_REFERENCE_NOT_APPLICABLE' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT',
+    code: WorkflowError['code'],
     message: string,
     conflict?: ApiConflict,
   ) {
@@ -6692,6 +6692,11 @@ export class WorkflowService {
           input.catalogItemId,
           referenceConcept,
         )
+      } else {
+        this.#assertLaboratoryServiceGenerationSupported(
+          input.context,
+          outpatientCase.case_id,
+        )
       }
       if (!catalogConfig.allowedIndicationCodes.includes(input.indicationCode)) {
         throw new WorkflowError('CATALOG_CONFLICT', 'The indication is not allowed for this laboratory request')
@@ -6953,6 +6958,11 @@ export class WorkflowService {
           outpatientCase.case_id,
           state.draft_catalog_item_id,
           referenceConcept,
+        )
+      } else {
+        this.#assertLaboratoryServiceGenerationSupported(
+          input.context,
+          outpatientCase.case_id,
         )
       }
       if (!catalogConfig.allowedIndicationCodes.includes(state.draft_indication_code)) {
@@ -10911,6 +10921,21 @@ export class WorkflowService {
     `).get(context.workspaceId, context.epoch) !== undefined
   }
 
+  #assertLaboratoryServiceGenerationSupported(
+    context: ActorContext,
+    outpatientCaseId: string,
+  ): void {
+    const materialized = this.#database.driver.prepare(`
+      SELECT 1 AS present FROM synthetic_case_materialization
+      WHERE workspace_id = ? AND epoch = ? AND outpatient_case_id = ?
+    `).get(context.workspaceId, context.epoch, outpatientCaseId) !== undefined
+    if (materialized) return
+    throw new WorkflowError(
+      'LABORATORY_GENERATION_UNSUPPORTED',
+      'The case has no synthetic case materialization to generate this laboratory service from',
+    )
+  }
+
   #assertAdultLaboratoryServiceApplicable(
     context: ActorContext,
     patientId: string,
@@ -10951,7 +10976,7 @@ export class WorkflowService {
         ).supported === true
     if (supported) return
     throw new WorkflowError(
-      'CATALOG_CONFLICT',
+      materialized ? 'CATALOG_CONFLICT' : 'LABORATORY_GENERATION_UNSUPPORTED',
       'The investigation cannot generate a result for this case and catalog item',
     )
   }

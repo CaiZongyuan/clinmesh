@@ -318,10 +318,14 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
                   }),
             })
           } catch (error) {
-            if (event.attempt < 3) return { status: 'retryable-failed' }
+            const failure = investigationFailure(error)
+            // 无底账属于确定性失败，重试不会改变结果，直接落为生成失败。
+            if (failure.code !== 'INVESTIGATION_UNSUPPORTED' && event.attempt < 3) {
+              return { status: 'retryable-failed' }
+            }
             workflow.failLaboratoryResultGeneration({
               context,
-              error: investigationFailure(error),
+              error: failure,
               eventId: event.eventId,
               requestId: payload.requestId,
             })

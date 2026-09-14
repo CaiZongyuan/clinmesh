@@ -147,11 +147,23 @@ function statusVariant(status: 'failed' | 'published' | 'publishing' | 'unconfig
 function publicationErrorMessage(code: string, locale: WorkspaceLocale): string {
   const messages = {
     'en-US': {
+      AI_REQUEST_FAILED: 'The catalog enrichment request failed. Please retry later.',
+      AI_TIMEOUT: 'The catalog enrichment service timed out. Please retry.',
+      AI_REQUEST_TOO_LARGE: 'The service definition exceeds the generation input limit.',
+      AI_RESPONSE_TOO_LARGE: 'The generated service definition exceeds the size limit.',
+      AI_RESPONSE_INVALID: 'The service returned an invalid response. Please retry.',
+      CATALOG_ENRICHMENT_FAILED: 'Catalog enrichment failed. Please retry later.',
       CATALOG_ENRICHMENT_INVALID: 'The generated service definition did not pass validation.',
       CATALOG_ENRICHMENT_UNAVAILABLE: 'Catalog Enrichment is not configured.',
       default: 'Publication failed. Review the candidate and retry.',
     },
     'zh-CN': {
+      AI_REQUEST_FAILED: '目录补全服务请求失败，请稍后重试。',
+      AI_TIMEOUT: '目录补全服务响应超时，请重试。',
+      AI_REQUEST_TOO_LARGE: '检验项目资料超出生成服务输入限制。',
+      AI_RESPONSE_TOO_LARGE: '生成的服务定义超出大小限制。',
+      AI_RESPONSE_INVALID: '目录补全服务返回内容无效，请重试。',
+      CATALOG_ENRICHMENT_FAILED: '目录补全失败，请稍后重试。',
       CATALOG_ENRICHMENT_INVALID: '生成的服务定义未通过校验。',
       CATALOG_ENRICHMENT_UNAVAILABLE: '尚未配置目录补全服务。',
       default: '发布失败，请检查候选配置后重试。',
