@@ -157,7 +157,7 @@ export function WorkspaceNavigation({
                 aria-current={state.activePath === item.path ? 'page' : undefined}
                 onClick={() => { open(); state.navigate(item.path) }}
               >
-                {Icon && <Icon aria-hidden="true" />}
+                {Icon && <Icon aria-hidden="true" data-icon="inline-start" />}
                 {wide && <span className="truncate">{item.label}</span>}
               </Button>
             )
