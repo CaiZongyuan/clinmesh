@@ -141,7 +141,8 @@ export function WorkspaceNavigation({
     }
   }, [colorScheme, container, routeContainer])
   const locale = state?.locale ?? hostLocale
-  const label = locale === 'zh-CN' ? '医院工作台设置' : 'Hospital workspace settings'
+  const label = locale === 'zh-CN' ? '医院工作台' : 'Hospital workspace'
+  const menuLabel = locale === 'zh-CN' ? '医院工作台设置' : 'Hospital workspace settings'
   const messages = getWorkspaceMessages(locale)
   return (
     <div ref={host} data-clinmesh-host-navigation="" style={{ width: wide ? '100%' : 36, minWidth: 36 }}>
@@ -178,9 +179,9 @@ export function WorkspaceNavigation({
                 <img alt="" src={clinmeshMarkUrl} width={24} height={24} />
                 {wide ? <span className="truncate">{label}</span> : null}
               </DropdownMenuTrigger>
-              <DropdownMenuContent side="right" align="end" className="min-w-56" aria-label={label}>
+              <DropdownMenuContent side="right" align="end" className="min-w-56" aria-label={menuLabel}>
                 <DropdownMenuGroup>
-                  <DropdownMenuLabel>{label}</DropdownMenuLabel>
+                  <DropdownMenuLabel>{menuLabel}</DropdownMenuLabel>
                   {!active && !state && (
                     <DropdownMenuItem onClick={open}>
                       {locale === 'zh-CN' ? '打开 ClinMesh' : 'Open ClinMesh'}
@@ -308,7 +309,7 @@ export function registerWorkspaceNavigation(ctx: ClientContext, navigation: Navi
         id: 'dsh-react-surface-launcher',
         priority: -100,
         order: 100,
-        label: '医院工作台设置',
+        label: '医院工作台',
         registrant: 'clinmesh-workspace-navigation',
       },
       Entry,

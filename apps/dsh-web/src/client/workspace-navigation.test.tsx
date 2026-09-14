@@ -28,7 +28,7 @@ it('uses one official launcher cell and restores the native launcher on unload',
   }
   const dispose = registerWorkspaceNavigation(ctx as unknown as Context, createWorkspaceNavigation())
   expect(slots.entriesOfSlot('sidebar.footer.action')).toHaveLength(1)
-  expect(slots.entriesOfSlot('sidebar.footer.action')[0]?.options.label).toBe('医院工作台设置')
+  expect(slots.entriesOfSlot('sidebar.footer.action')[0]?.options.label).toBe('医院工作台')
   dispose()
   expect(slots.entriesOfSlot('sidebar.footer.action')).toHaveLength(1)
   expect(slots.entriesOfSlot('sidebar.footer.action')[0]?.component).toBe(original)
@@ -68,8 +68,9 @@ it('places authorized routes above workspaces, keeps settings in the footer, and
     const shadow = element.querySelector('[data-clinmesh-host-navigation]')?.shadowRoot
     if (!shadow) throw new Error('Missing host navigation')
     const trigger = shadow.querySelector<HTMLButtonElement>('button')!
-    expect(trigger.getAttribute('aria-label')).toBe('医院工作台设置')
+    expect(trigger.getAttribute('aria-label')).toBe('医院工作台')
     await act(() => trigger.click())
+    expect(shadow.querySelector('[role="menu"]')?.getAttribute('aria-label')).toBe('医院工作台设置')
     const opener = shadow.querySelector<HTMLElement>('[role="menuitem"]')!
     expect(opener.textContent).toContain('打开 ClinMesh')
     await act(() => opener.click())
