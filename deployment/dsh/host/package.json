@@ -1,0 +1,8 @@
+{
+  "name": "dshvm-slot-0.1.5-rc.2",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.1.5-rc.2"
+  }
+}

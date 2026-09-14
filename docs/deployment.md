@@ -13,7 +13,7 @@
 | 患者梗概与就诊闭环（步骤 4） | 同上，加一个 OpenAI-compatible Provider 及 API key |
 | Synthea 患者生成（步骤 6） | x86-64 主机上的 Docker Engine 与 `docker compose` |
 | 全量检查与生产构建 | Bun `1.4.0`（DSH React Surface artifact 构建使用 `bun`） |
-| DSH Web 原生入口 | DSH CLI `0.1.5-rc.1` |
+| DSH Web 原生入口 | DSH CLI `0.1.5-rc.2`、`@dsh-so/dshvm@0.1.1` |
 | Mobile 原生目标 | Xcode 或 Android Studio |
 
 pnpm 版本由根 `package.json` 的 `packageManager` 字段固定，可使用 corepack 自动切换。
@@ -174,16 +174,51 @@ pnpm dev:lan
 
 ### DSH Web 原生入口
 
-目标 DSH CLI 与 ClinMesh workspace 的 DSH 依赖固定为 `0.1.5-rc.1`；先用 `dsh --version` 核对。React Surface 的固定上游源码直接声明 RC 支持；AG-UI 的固定版本仍保留其 alpha 依赖，兼容验证覆盖它与 RC Host 的实际组合。首次安装或更新子模块后，构建 runtime 与 ClinMesh，再安装到同一个 Web Profile：
+ClinMesh 只要求 DSH、React Surface 和 AG-UI。精确来源、版本、commit、依赖关系及维护归属由 [`dsh-upstreams.lock.json`](../dsh-upstreams.lock.json) 记录；React Surface 与 AG-UI 均直接声明当前 RC 依赖。其他插件与旧 HIS Demo 不属于此组合，不需要升级或逐项验收，也不应覆盖它们的配置和数据。跟进公开正式版和 RC 时更新经过验证的精确输入，不把 `latest` 当作可复现版本。
+
+以下 Bash 示例建立独立工具、连接器和数据目录，不接管日常 DSH。`CLINMESH_DSH_SANDBOX` 应使用仓库外尚未使用的绝对目录：
+
+```sh
+export CLINMESH_DSH_SANDBOX="$(cd .. && pwd)/clinmesh-dsh-runtime"
+export DSHVM_HOME="$CLINMESH_DSH_SANDBOX/versions"
+export DSHVM_BIN_DIR="$CLINMESH_DSH_SANDBOX/bin"
+npm install --prefix "$CLINMESH_DSH_SANDBOX/tooling" @dsh-so/dshvm@0.1.1
+DSHVM_CLI="$CLINMESH_DSH_SANDBOX/tooling/node_modules/@dsh-so/dshvm/bin/dshvm.js"
+node "$DSHVM_CLI" install 0.1.5-rc.2
+cp deployment/dsh/host/package*.json "$DSHVM_HOME/dsh-0.1.5-rc.2/"
+npm ci --prefix "$DSHVM_HOME/dsh-0.1.5-rc.2"
+node "$DSHVM_CLI" isolate 0.1.5-rc.2
+node "$DSHVM_CLI" use 0.1.5-rc.2
+node "$DSHVM_CLI" which 0.1.5-rc.2
+node "$DSHVM_CLI" exec --version
+export DSH_HOME="$DSHVM_HOME/isolate/0.1.5-rc.2"
+DSH_CLI="$DSHVM_HOME/dsh-0.1.5-rc.2/node_modules/@deepseek-ai/dsh/lib/bin.js"
+```
+
+`which` 应指向该隔离槽位，`exec --version` 应返回锁定版本。宿主安装必须在停止状态下使用 [`deployment/dsh/host/package-lock.json`](../deployment/dsh/host/package-lock.json) 执行 `npm ci`；dshvm 的初始安装用于建立槽位登记，不能代替锁文件恢复，因为 DSH 顶层版本的内部依赖仍使用版本范围。不要对已有共享槽位使用 `setup` 或 `isolate --copy` 来建立干净验收环境。Windows PowerShell 使用 `$env:DSHVM_HOME`、`$env:DSHVM_BIN_DIR` 和 `$env:DSH_HOME` 设置相同目录，普通路径变量使用 `$变量名`；Node CLI 的参数相同。新终端需要重新提供这些变量。DSH Provider 在隔离宿主设置页单独配置，密钥不写入 Profile 仓库或公开记录。
+
+先按上游锁文件构建 React Surface 与 ClinMesh，再构建并安装 AG-UI。AG-UI 安装使用公开支持分支的精确 commit，合并后仍可按同一 commit 重建：
 
 ```sh
 bun install --cwd vendor/dsh-react-surface --frozen-lockfile
 bun run --cwd vendor/dsh-react-surface build:runtime
 pnpm --filter @clinmesh/dsh-web build
-dsh plugin --profile web add github:CaiZongyuan/dsh-ag-ui#25cf0e04303fde90de64c663796b4a2f63b4cc3a
-dsh plugin --profile web add "$PWD/vendor/dsh-react-surface/packages/runtime"
-dsh plugin --profile web add "$PWD/apps/dsh-web"
+git clone https://github.com/keaideppk/dsh-ag-ui.git "$CLINMESH_DSH_SANDBOX/ag-ui"
+git -C "$CLINMESH_DSH_SANDBOX/ag-ui" checkout 521740953be41cc37bd770ecf41b36bd7b0824d9
+pnpm --dir "$CLINMESH_DSH_SANDBOX/ag-ui" install --frozen-lockfile
+pnpm --dir "$CLINMESH_DSH_SANDBOX/ag-ui" build
+DSH_PROFILE="$DSH_HOME/profiles/web"
+mkdir -p "$DSH_PROFILE/plugins"
+cp deployment/dsh/profile/* "$DSH_PROFILE/"
+ln -s "$CLINMESH_DSH_SANDBOX/ag-ui" "$DSH_PROFILE/plugins/ag-ui"
+ln -s "$PWD/vendor/dsh-react-surface/packages/runtime" "$DSH_PROFILE/plugins/react-surface"
+ln -s "$PWD/apps/dsh-web" "$DSH_PROFILE/plugins/clinmesh"
+pnpm --dir "$DSH_PROFILE" install --frozen-lockfile
 ```
+
+[`deployment/dsh/profile`](../deployment/dsh/profile/package.json) 只加载 `@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-web-app` 与上述三个插件；其 pnpm lock 固定 Profile 的独立依赖闭包，本地插件使用相对 `link:`。Windows 可用 `New-Item -ItemType Junction -Path <Profile/plugins/名称> -Target <对应源码绝对目录>` 代替三个 `ln -s`。模板只用于新建的专用 Profile，不覆盖已有 Profile；再次安装使用已有链接和 `--frozen-lockfile`。链接安装不替插件安装源码依赖，因此不能省略各 workspace 的安装与构建。
+
+需要查看或修改插件时直接调用 `node "$DSH_CLI" plugin --profile web ...`：dshvm `0.1.1` 会把 `plugin --profile web` 误判为 Web 启动，并在默认端口被占用时附加插件命令不接受的 `--port`。dshvm 连接器也会按 active-data 覆盖显式 `DSH_HOME`；测试自行管理数据目录时应使用对应槽位的实际 bin。插件变更后重新验证并更新 Profile lock，日常运行不要用无锁安装替换已验证组合。
 
 在 `.env` 中为 Hono 配置至少 32 bytes 的 `CLINMESH_DSH_BRIDGE_SECRET`，并把实际 DSH Web origin 加入 `CLINMESH_TRUSTED_ORIGINS`（DSH 默认开发端口 `3080`；使用 `--port` 时必须同步替换该 origin，否则登录和 mutation 的 CSRF 校验会拒绝）：
 
@@ -198,8 +233,22 @@ pnpm dev:server
 set -a
 . ./.env
 set +a
-dsh web
+node "$DSHVM_CLI" exec web --port 3080 --no-open
 ```
+
+无桌面交互的浏览器验收可在隔离 Profile 的 `cordis.patch.yml` 使用官方目录选择器替换点，避免工作区选择触发不可操作的 Windows 原生对话框：
+
+```yaml
+- id: directory-picker
+  disabled: true
+- insert:
+    - id: directory-picker-browse
+      name: '@deepseek-ai/dsh-host-directory-picker-browse'
+    - id: ui-directory-picker-browse
+      name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
+```
+
+该替换同时加载 host 与 client 两半，不能与自动选择器同时启用；保存后重启隔离 DSH。可交互桌面的普通运行无需此覆盖。
 
 重新启动 DSH Web 后，左侧栏顶端显示 ClinMesh Logo 和名称；应用尚未打开或已经关闭时仍保留该 Profile 品牌。新会话中央同样显示 ClinMesh Logo，中文标题为“医疗智能体平台”，英文为“Medical AI Agent Platform”。禁用或卸载 ClinMesh 插件后恢复宿主的品牌显示。从侧栏底部“医院工作台”菜单打开 ClinMesh；登录后岗位导航直接显示在宿主侧栏的新会话与工作区之间，底部菜单保留设置与主题入口，其他已注册 Surface 位于“其他应用”分组。ClinMesh 在 DSH 内不显示自己的左侧栏，默认使用 `workspace` 左右分屏并保留原生会话；现有页头的“全屏 ClinMesh”与“返回 DSH 分屏”按钮可往返切换，无需刷新。全屏时先返回分屏再使用宿主导航。窗口缩小或侧栏开关不自动全屏，应用内部按容器宽度适配。页面导航使用 Memory Router，不修改 DSH document pathname。独立 Web 保留原侧栏。当前模式只信任安装到同一 Web Profile 的插件，并只允许合成数据。
 

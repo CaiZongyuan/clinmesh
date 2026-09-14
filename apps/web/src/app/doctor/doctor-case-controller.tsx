@@ -1229,7 +1229,7 @@ function DoctorCaseController({
                 properties: {
                   catalogItemId: { type: 'string' },
                   note: { type: 'string', maxLength: 500 },
-                  role: { type: 'string', enum: ['principal', 'secondary'] },
+                  role: { type: 'string', enum: diagnosisDraftEntrySchema.shape.role.options },
                 },
                 required: ['catalogItemId', 'role'],
                 additionalProperties: false,
@@ -1463,7 +1463,7 @@ function DoctorCaseController({
                 properties: {
                   catalogItemId: { type: 'string' },
                   note: { type: 'string', maxLength: 500 },
-                  role: { type: 'string', enum: ['principal', 'secondary'] },
+                  role: { type: 'string', enum: diagnosisDraftEntrySchema.shape.role.options },
                 },
                 required: ['catalogItemId', 'role'],
                 additionalProperties: false,

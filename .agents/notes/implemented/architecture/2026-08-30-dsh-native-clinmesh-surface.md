@@ -12,7 +12,7 @@ Canonical implementation contract 是 [GitHub issue #60](https://github.com/CaiZ
 
 ## Decision
 
-保留 standalone Web，并把 DSH Web 作为第二个应用 adapter。`apps/dsh-web` 使用固定的 DSH `0.1.5-rc.1`、`dsh-ag-ui@25cf0e04303fde90de64c663796b4a2f63b4cc3a` 和 `dsh-react-surface@bfe3ba90a205b3877c5f58c9044f152a369be24f`；后者以 git submodule 固定。React Surface 直接声明 RC peer，ClinMesh 不覆盖上游依赖声明；升级边界由 [issue #79](https://github.com/CaiZongyuan/clinmesh/issues/79) 拥有。pnpm 继续拥有仓库 workspace，内部样式生成由 pnpm/tsx 执行，Bun 只运行上游 React Surface builder 和 artifact verifier。
+保留 standalone Web，并把 DSH Web 作为第二个应用 adapter。`apps/dsh-web` 的必要组件及精确来源由 [`dsh-upstreams.lock.json`](../../../../dsh-upstreams.lock.json) 记录；React Surface 同时以 git submodule 固定，React Surface 与 AG-UI 直接声明 RC 依赖，ClinMesh 不覆盖上游依赖声明。[issue #91](https://github.com/CaiZongyuan/clinmesh/issues/91) 的兼容组合只覆盖 ClinMesh、React Surface、AG-UI 与必要 DSH/dshvm，不要求升级其他已安装插件或旧 HIS Demo。pnpm 继续拥有仓库 workspace，内部样式生成由 pnpm/tsx 执行，Bun 只运行上游 React Surface builder 和 artifact verifier。隔离部署步骤由[部署指南](../../../../docs/deployment.md#dsh-web-原生入口)拥有，升级验收不接管日常 Profile 或迁移已有数据。
 
 DSH 拥有模型 Session、transcript、Tool 调度、Surface 宿主和 resolved theme。ClinMesh Client 在插件生命周期内通过官方品牌插槽固定 Profile 左侧栏的 Logo 与名称，不依赖 Surface 激活状态；插件卸载时释放插槽。此身份替换不覆盖 DSH 主题 token，也不改变侧栏按钮和原生会话操作。固定 Profile 品牌的合同见 [issue #85](https://github.com/CaiZongyuan/clinmesh/issues/85)。新会话标志使用独立的官方 Hero 插槽；RC Host 的标题没有插槽且语言字典不允许重复注册，因此 Client 仅在该标志插槽相邻的标题文本节点上应用可撤销适配。适配跟随宿主语言，保留预览标记、工作区选择与输入框，卸载时断开局部观察并恢复最近的宿主标题。兼容范围固定为当前 RC 的 Hero 结构，结构变化由专门测试及真实入口验证覆盖。ClinMesh 拥有页面上下文、前端 action、proposal、人工审阅、Command receipt、Audit Event 和 Action Trace 关联。Surface 复用 `apps/web` 的 application/runtime seam，使用 Memory Router、独立 QueryClient、作用域主题、ShadowRoot Portal 和 `/clinmesh-api` 同源代理；ClinMesh `system` 主题订阅 DSH theme，显式 light/dark 保持 Surface-local，standalone Web 保持 Browser History、系统主题与原有 API base。
 
@@ -25,6 +25,8 @@ DSH 拥有模型 Session、transcript、Tool 调度、Surface 宿主和 resolved
 Host 代理只接受固定 loopback Hono origin，并限制路径、方法、请求体、响应体和超时；Cookie 与 Origin 语义保持同源。共享 bridge secret 只存在于 DSH Host 与 Hono 环境，不进入浏览器、日志、Tool result 或版本库。当前信任边界只覆盖安装在同一 DSH Web Profile 的受信插件和全合成 ClinMesh 数据。
 
 ## Alternatives considered
+
+**只固定 DSH CLI 顶层版本。** 宿主包和 Web Profile 独立解析依赖，内部版本范围可使相同 CLI 版本得到不同运行组合。因此两层分别保留可消费的 npm/pnpm 安装锁；Profile 的本地插件链接使用稳定相对位置，再由部署绑定到精确源码 checkout。锁只用于复现和审计，持续升级策略由独立任务维护。
 
 **删除 standalone Web，只保留 DSH。** 这会把医院产品入口和 DSH 宿主生命周期耦合，也会破坏现有部署与浏览器测试，因此保留两个 adapter。
 
