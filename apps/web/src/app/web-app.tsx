@@ -534,7 +534,7 @@ function WebApplication({
 }
 
 export function WebApp(props: WebAppProps = {}): React.JSX.Element {
-  return <RuntimeErrorBoundary><WebApplication {...props} /></RuntimeErrorBoundary>
+  return <RuntimeErrorBoundary surfaceDisplay={props.runtime?.surfaceDisplay}><WebApplication {...props} /></RuntimeErrorBoundary>
 }
 
 export type { WebRuntimeOptions } from './web-runtime.tsx'

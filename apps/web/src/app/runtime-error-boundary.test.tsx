@@ -65,13 +65,18 @@ describe('RuntimeErrorBoundary', () => {
       return <p>岗位页面已恢复</p>
     }
     rootRoute.update({ component: RecoverableRoute })
+    const toggle = vi.fn()
 
     try {
-      render(<WebApp history={createMemoryHistory({ initialEntries: ['/'] })} />)
+      render(<WebApp history={createMemoryHistory({ initialEntries: ['/'] })} runtime={{
+        surfaceDisplay: { fullscreen: true, toggle },
+      }} />)
 
       expect((await screen.findByRole('alert')).textContent).toContain('工作台发生错误')
       expect(screen.queryByText('private route failure detail')).toBeNull()
       expect(screen.queryByText('Show Error')).toBeNull()
+      await userEvent.click(screen.getByRole('button', { name: '返回 DSH 分屏' }))
+      expect(toggle).toHaveBeenCalledOnce()
       shouldFail = false
       await userEvent.click(screen.getByRole('button', { name: '重试' }))
       expect(await screen.findByText('岗位页面已恢复')).toBeTruthy()

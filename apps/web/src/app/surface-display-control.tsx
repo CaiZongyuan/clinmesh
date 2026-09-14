@@ -1,6 +1,6 @@
 import { MonitorIcon } from 'lucide-react'
 import { Button } from '@clinmesh/ui/components/button'
-import { useWebRuntime } from './web-runtime.tsx'
+import { useWebRuntime, type WebSurfaceDisplay } from './web-runtime.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
 function displayLabel(fullscreen: boolean, locale: WorkspaceLocale): string {
@@ -21,6 +21,13 @@ export function SurfaceDisplayButton({ locale }: { locale: WorkspaceLocale }) {
 
 export function SurfaceFullscreenExit({ locale }: { locale: WorkspaceLocale }) {
   const { surfaceDisplay } = useWebRuntime()
+  return <SurfaceFullscreenExitAction locale={locale} surfaceDisplay={surfaceDisplay} />
+}
+
+export function SurfaceFullscreenExitAction({ locale, surfaceDisplay }: {
+  locale: WorkspaceLocale
+  surfaceDisplay: WebSurfaceDisplay | undefined
+}) {
   if (!surfaceDisplay?.fullscreen) return null
   return (
     <Button variant="ghost" size="sm" type="button" onClick={surfaceDisplay.toggle}>
