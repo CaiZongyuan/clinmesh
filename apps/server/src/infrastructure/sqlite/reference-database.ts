@@ -670,6 +670,35 @@ function ftsPhrase(query: string): string {
   return `"${query.replaceAll('"', '""')}"`
 }
 
+function referenceCatalogTextSearch(
+  table: 'reference_concept' | 'reference_medication_product',
+  query: string,
+) {
+  const terms = query.trim().split(/\s+/).filter(Boolean)
+  const indexedTerms = terms.filter(term => [...term].length >= 3)
+  const shortTerms = terms.filter(term => [...term].length < 3)
+  const columns = table === 'reference_concept'
+    ? ['display', 'code']
+    : ['generic_name', 'brand_name', 'manufacturer', 'code']
+  const conditions: string[] = []
+  const parameters: string[] = []
+  if (indexedTerms.length > 0) {
+    conditions.push(`${table}_fts MATCH ?`)
+    parameters.push(indexedTerms.map(ftsPhrase).join(' AND '))
+  }
+  for (const term of shortTerms) {
+    conditions.push(`(${columns.map(column => `instr(lower(${table}.${column}), lower(?)) > 0`).join(' OR ')})`)
+    parameters.push(...columns.map(() => term))
+  }
+  return {
+    condition: conditions.length === 0 ? '' : `AND ${conditions.join(' AND ')}`,
+    parameters,
+    rankOrder: indexedTerms.length === 0 ? '' : `bm25(${table}_fts),`,
+    source: indexedTerms.length === 0 ? table : `${table}
+      JOIN ${table}_fts ON ${table}_fts.rowid = ${table}.rowid`,
+  }
+}
+
 function searchReferenceLaboratoryCatalog(
   database: ReferenceDatabase,
   releaseId: string,
@@ -774,54 +803,24 @@ export function searchReferenceConceptCatalog(
       total,
     }
   }
-  if (input.query.length < 3) {
-    const total = countSchema.parse(database.driver.prepare(`
-      SELECT COUNT(*) AS count
-      FROM reference_concept
-      WHERE release_id = ? AND domain = ?
-        AND (
-          instr(lower(display), lower(?)) > 0
-          OR instr(lower(code), lower(?)) > 0
-        )
-    `).get(releaseId, domain, input.query, input.query)).count
-    const rows = z.array(conceptDatabaseRowSchema).parse(database.driver.prepare(`
-      SELECT concept_id, domain, system, system_version, code, display, status,
-        laboratory_metadata_json, source_id, source_locator
-      FROM reference_concept
-      WHERE release_id = ? AND domain = ?
-        AND (
-          instr(lower(display), lower(?)) > 0
-          OR instr(lower(code), lower(?)) > 0
-        )
-      ORDER BY display, code, concept_id
-      LIMIT ? OFFSET ?
-    `).all(releaseId, domain, input.query, input.query, input.pageSize, offset))
-    return {
-      items: rows.map(mapConceptRow).map(({ sourceId: _sourceId, ...concept }) => concept),
-      total,
-    }
-  }
-  const match = ftsPhrase(input.query)
+  const search = referenceCatalogTextSearch('reference_concept', input.query)
+  const parameters = [releaseId, domain, ...search.parameters]
+  const source = search.source
+  const where = 'reference_concept.release_id = ? AND reference_concept.domain = ?' + ` ${search.condition}`
   const total = countSchema.parse(database.driver.prepare(`
-    SELECT COUNT(*) AS count
-    FROM reference_concept
-    JOIN reference_concept_fts ON reference_concept_fts.rowid = reference_concept.rowid
-    WHERE reference_concept.release_id = ? AND reference_concept.domain = ?
-      AND reference_concept_fts MATCH ?
-  `).get(releaseId, domain, match)).count
+    SELECT COUNT(*) AS count FROM ${source} WHERE ${where}
+  `).get(...parameters)).count
   const rows = z.array(conceptDatabaseRowSchema).parse(database.driver.prepare(`
     SELECT reference_concept.concept_id, reference_concept.domain,
       reference_concept.system, reference_concept.system_version,
       reference_concept.code, reference_concept.display, reference_concept.status,
       reference_concept.laboratory_metadata_json,
       reference_concept.source_id, reference_concept.source_locator
-    FROM reference_concept
-    JOIN reference_concept_fts ON reference_concept_fts.rowid = reference_concept.rowid
-    WHERE reference_concept.release_id = ? AND reference_concept.domain = ?
-      AND reference_concept_fts MATCH ?
-    ORDER BY reference_concept.display, reference_concept.code, reference_concept.concept_id
+    FROM ${source} WHERE ${where}
+    ORDER BY ${search.rankOrder}
+      reference_concept.display, reference_concept.code, reference_concept.concept_id
     LIMIT ? OFFSET ?
-  `).all(releaseId, domain, match, input.pageSize, offset))
+  `).all(...parameters, input.pageSize, offset))
   return {
     items: rows.map(mapConceptRow).map(({ sourceId: _sourceId, ...concept }) => concept),
     total,
@@ -966,30 +965,10 @@ export function searchReferenceMedicationCatalog(
       total,
     }
   }
-  const terms = input.query.trim().split(/\s+/).filter(Boolean)
-  const indexedTerms = terms.filter(term => [...term].length >= 3)
-  const shortTerms = terms.filter(term => [...term].length < 3)
-  const parameters: string[] = [releaseId]
-  const conditions = ['reference_medication_product.release_id = ?']
-  if (indexedTerms.length > 0) {
-    conditions.push('reference_medication_product_fts MATCH ?')
-    parameters.push(indexedTerms.map(ftsPhrase).join(' AND '))
-  }
-  for (const term of shortTerms) {
-    conditions.push(`(
-      instr(lower(reference_medication_product.generic_name), lower(?)) > 0
-      OR instr(lower(COALESCE(reference_medication_product.brand_name, '')), lower(?)) > 0
-      OR instr(lower(reference_medication_product.manufacturer), lower(?)) > 0
-      OR instr(lower(reference_medication_product.code), lower(?)) > 0
-    )`)
-    parameters.push(term, term, term, term)
-  }
-  const source = indexedTerms.length === 0 ? 'reference_medication_product' : `
-    reference_medication_product
-    JOIN reference_medication_product_fts
-      ON reference_medication_product_fts.rowid = reference_medication_product.rowid
-  `
-  const where = conditions.join(' AND ')
+  const search = referenceCatalogTextSearch('reference_medication_product', input.query)
+  const parameters = [releaseId, ...search.parameters]
+  const source = search.source
+  const where = 'reference_medication_product.release_id = ?' + ` ${search.condition}`
   const total = countSchema.parse(database.driver.prepare(`
     SELECT COUNT(*) AS count FROM ${source} WHERE ${where}
   `).get(...parameters)).count
@@ -1005,7 +984,7 @@ export function searchReferenceMedicationCatalog(
       reference_medication_product.status, reference_medication_product.source_id,
       reference_medication_product.source_locator
     FROM ${source} WHERE ${where}
-    ORDER BY ${indexedTerms.length > 0 ? 'bm25(reference_medication_product_fts),' : ''}
+    ORDER BY ${search.rankOrder}
       reference_medication_product.generic_name,
       reference_medication_product.code, reference_medication_product.product_id
     LIMIT ? OFFSET ?

@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  type ReferenceConcept,
   referenceDiagnosisCatalogSearchSchema,
   referenceDataReleaseListSchema,
   referenceLaboratoryCatalogSearchSchema,
@@ -141,6 +142,7 @@ describe('Reference Data HTTP contract', () => {
   async function createReferenceDatabase(
     directory: string,
     medicationProducts = syntheticNhsaMedicationProductSnapshot,
+    extraConcepts: ReferenceConcept[] = [],
   ): Promise<string> {
     const databasePath = join(directory, 'reference.sqlite')
     const artifactJson = `${JSON.stringify({
@@ -203,7 +205,7 @@ describe('Reference Data HTTP contract', () => {
         status: 'active',
         system: 'urn:clinmesh:reference:nhsa-diagnosis',
         version: '2022',
-      }))],
+      })), ...extraConcepts],
       medicationProducts,
       schemaVersion: '1',
       services: syntheticNhcMedicalServiceSnapshot,
@@ -391,6 +393,31 @@ describe('Reference Data HTTP contract', () => {
       { headers: { cookie: doctorCookie } },
     )
     expect(clientRelease.status).toBe(400)
+  })
+
+  it('matches every diagnosis term and orders FTS results by relevance', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-diagnosis-search-'))
+    temporaryDirectories.push(directory)
+    const concept: ReferenceConcept = {
+      id: 'concise', code: 'ZZZ', display: '合成测试诊断', domain: 'diagnosis',
+      system: 'urn:synthetic:diagnosis', version: '1', sourceLocator: 'synthetic:test', status: 'active',
+    }
+    const referenceDatabasePath = await createReferenceDatabase(directory, undefined, [
+      { ...concept, id: 'verbose', code: 'AAA', display: '合成测试诊断伴复杂表现的较长描述' }, concept,
+    ])
+    const { password, runtime } = await createRuntime({ referenceDatabasePath })
+    const cookie = await signIn(runtime, password, 'doctor@demo.clinmesh.local')
+    const search = async (query: string) => {
+      const response = await runtime.app.request(
+        `/api/his/v1/reference-catalogs/diagnoses?page=1&pageSize=20&query=${encodeURIComponent(query)}`,
+        { headers: { cookie } },
+      )
+      expect(response.status).toBe(200)
+      return referenceDiagnosisCatalogSearchSchema.parse(await response.json())
+    }
+    expect((await search('测试诊断 合成')).items.map(item => item.id)).toEqual(['concise', 'verbose'])
+    expect((await search('测试 ZZZ')).items.map(item => item.id)).toEqual(['concise'])
+    expect((await search('测试 不存在')).total).toBe(0)
   })
 
   it('matches every medication search term and ranks concise matches before verbose matches', async () => {

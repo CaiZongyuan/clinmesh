@@ -28,7 +28,7 @@
 
 - 本地项目目录迁移后，DSH Profile 的 `link:` 插件依赖仍可能指向旧绝对路径。先备份 Profile 的 `package.json`，核对新目录后更新链接并运行 `dsh plugin --profile web install`；插件自身的依赖也必须在各自 workspace 按锁文件恢复，Profile 安装不会替本地链接包安装依赖。启动顺序与环境变量见[部署指南](../deployment.md)。
 
-- pnpm 11 默认的 `verifyDepsBeforeRun=install` 会在脚本前自动安装，可能重解析锁文件并给 file dependency 的 bin 源文件增加可执行权限。验证前先执行 `pnpm install --frozen-lockfile`，验证进程使用 `pnpm_config_verify_deps_before_run=error`，发现不一致时显式处理；安装后检查锁文件和子模块权限。全局 pnpm 与仓库指定版本不一致且启动器卡在联网解析时，可直接调用已缓存的精确版本，并让子进程 PATH 使用同一版本。
+- pnpm 11 默认的 `verifyDepsBeforeRun=install` 会在脚本前自动安装，可能重解析锁文件并给 file dependency 的 bin 源文件增加可执行权限。验证前先执行 `pnpm install --frozen-lockfile`，验证进程使用 `pnpm_config_verify_deps_before_run=error`，发现不一致时显式处理；安装后检查锁文件和子模块权限。全局 pnpm 与仓库指定版本不一致且启动器卡在联网解析时，可直接调用已缓存的精确版本，并让子进程 PATH 使用同一版本。缓存中的 `pnpm.cjs` 可能没有可执行位，仅把其目录或符号链接放进 PATH 不会生效；使用可执行的 shell wrapper 通过 `node` 调用该文件。
 
 - 当前 Web 交付使用 Node.js 真实入口即可证明运行时和数据库生命周期；没有明确容器验收条件时，不安装、不启动也不要求 Docker。
 - 验证必须对应 outgoing diff。纯 Markdown、设计资产或 PR 媒体变更不触发代码单元测试、全量 `pnpm test` 或 `pnpm check`；只运行 owning 文档检查、媒体解码或发布可达性检查。

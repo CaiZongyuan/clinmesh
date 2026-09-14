@@ -3105,20 +3105,20 @@ export class WorkflowService {
     input: { page: number; pageSize: number; query?: string },
   ) {
     this.doctorCaseDetail(context, caseId)
-    const query = input.query ?? null
-    const bindings = [context.workspaceId, context.epoch, query, query, query, query]
+    const terms = input.query?.trim().split(/\s+/).filter(Boolean) ?? []
+    const bindings = [context.workspaceId, context.epoch, ...terms.flatMap(term => [term, term, term])]
+    const searchCondition = terms.map(() => `AND (
+      instr(lower(code), lower(?)) > 0
+      OR instr(lower(name_zh), lower(?)) > 0
+      OR instr(lower(name_en), lower(?)) > 0
+    )`).join(' ')
     const total = z.object({ count: z.number().int().nonnegative() }).parse(
       this.#database.driver.prepare(`
         SELECT COUNT(*) AS count
         FROM hospital_service_catalog
         WHERE workspace_id = ? AND epoch = ? AND active = 1
           AND json_extract(config_json, '$.laboratoryService.doctorOrderable') = 1
-          AND (
-            ? IS NULL
-            OR instr(lower(code), lower(?)) > 0
-            OR instr(lower(name_zh), lower(?)) > 0
-            OR instr(lower(name_en), lower(?)) > 0
-          )
+          ${searchCondition}
       `).get(...bindings),
     ).count
     const rows = z.array(z.object({ config_json: z.string() }).strict()).parse(
@@ -3127,12 +3127,7 @@ export class WorkflowService {
         FROM hospital_service_catalog
         WHERE workspace_id = ? AND epoch = ? AND active = 1
           AND json_extract(config_json, '$.laboratoryService.doctorOrderable') = 1
-          AND (
-            ? IS NULL
-            OR instr(lower(code), lower(?)) > 0
-            OR instr(lower(name_zh), lower(?)) > 0
-            OR instr(lower(name_en), lower(?)) > 0
-          )
+          ${searchCondition}
         ORDER BY name_zh, code, service_id
         LIMIT ? OFFSET ?
       `).all(...bindings, input.pageSize, (input.page - 1) * input.pageSize),

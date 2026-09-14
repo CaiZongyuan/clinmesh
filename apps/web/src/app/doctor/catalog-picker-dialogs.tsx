@@ -135,6 +135,8 @@ function totalLabel(template: string, total: number): string {
 }
 
 function CatalogSearchForm({
+  active,
+  query,
   input,
   inputLabel,
   label,
@@ -143,6 +145,8 @@ function CatalogSearchForm({
   pending,
   placeholder,
 }: {
+  active: boolean
+  query: string
   input: string
   inputLabel: string
   label: string
@@ -151,6 +155,13 @@ function CatalogSearchForm({
   pending: boolean
   placeholder: string
 }) {
+  const searchLatest = useEffectEvent(onSearch)
+  useEffect(() => {
+    const nextQuery = input.trim()
+    if (!active || nextQuery.length === 1 || nextQuery === query) return
+    const timer = setTimeout(searchLatest, 300)
+    return () => clearTimeout(timer)
+  }, [active, input, query])
   const invalidLength = input.trim().length === 1
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -336,14 +347,11 @@ export function DiagnosisCatalogDialog({
   const remoteResults = results.data?.items ?? []
   const useLocal = results.isError
     || (query.length === 0 && results.data !== undefined && remoteResults.length === 0)
-  const normalizedLocalQuery = query.toLocaleLowerCase()
+  const localTerms = query.toLocaleLowerCase().split(/\s+/).filter(Boolean)
   const localResults = localCatalog.flatMap(item => {
     const display = locale === 'zh-CN' ? item.nameZh : item.nameEn
-    if (
-      normalizedLocalQuery.length > 0
-      && !display.toLocaleLowerCase().includes(normalizedLocalQuery)
-      && !item.code.toLocaleLowerCase().includes(normalizedLocalQuery)
-    ) return []
+    if (!localTerms.every(term => display.toLocaleLowerCase().includes(term)
+      || item.code.toLocaleLowerCase().includes(term))) return []
     return [{ catalogItemId: item.id, code: item.code, display }]
   })
   const openDialog = () => {
@@ -374,6 +382,8 @@ export function DiagnosisCatalogDialog({
           <DialogDescription>{messages.diagnosisDescription}</DialogDescription>
         </DialogHeader>
         <CatalogSearchForm
+          active={open}
+          query={query}
           input={input}
           inputLabel={messages.diagnosisSearchInput}
           label={messages.searchDiagnosis}
@@ -524,6 +534,8 @@ export function LaboratoryCatalogDialog({
           <DialogDescription>{messages.laboratoryDescription}</DialogDescription>
         </DialogHeader>
         <CatalogSearchForm
+          active={open}
+          query={query}
           input={input}
           inputLabel={messages.laboratorySearchInput}
           label={messages.searchLaboratory}
@@ -737,18 +749,6 @@ export function MedicationCatalogDialog({
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<MedicationCatalogSelection>()
-  const searchLatest = useEffectEvent((value: string) => search.onSearch(value, 1))
-  useEffect(() => {
-    const nextQuery = input.trim()
-    if (!open || nextQuery.length === 1 || nextQuery === query) return
-    const timer = setTimeout(() => {
-      setPage(1)
-      setSelected(undefined)
-      setQuery(nextQuery)
-      searchLatest(nextQuery)
-    }, 300)
-    return () => clearTimeout(timer)
-  }, [input, open, query])
   const results = search
   const remoteResults = results.data?.items ?? []
   const useLocal = results.isError
@@ -797,6 +797,8 @@ export function MedicationCatalogDialog({
           <DialogDescription>{messages.medicationDescription}</DialogDescription>
         </DialogHeader>
         <CatalogSearchForm
+          active={open}
+          query={query}
           input={input}
           inputLabel={messages.medicationSearchInput}
           label={messages.searchMedication}

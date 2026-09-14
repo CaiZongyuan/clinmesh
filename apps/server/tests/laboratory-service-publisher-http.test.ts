@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   caseLaboratoryCatalogSearchSchema,
+  commandResponseSchema,
+  registrationCatalogSchema,
+  triageResponseSchema,
   doctorCaseDetailSchema,
   issueLaboratoryRequestResponseSchema,
   laboratoryServiceCandidateSearchSchema,
@@ -11,9 +14,9 @@ import {
   laboratoryServiceSnapshotSchema,
   laboratoryRequestDraftResponseSchema,
   publishLaboratoryServicesResponseSchema,
-  startVirtualPatientResponseSchema,
-  virtualPatientListSchema,
 } from '@clinmesh/contracts/his'
+import { startSyntheticCaseResultSchema, syntheticCaseInstanceSchema } from '@clinmesh/contracts/scenario'
+import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 import { afterEach, describe, expect, it } from 'vitest'
 import type {
   JsonChatCompletionInput,
@@ -434,8 +437,28 @@ describe('Laboratory Service Publisher HTTP contract', () => {
         ? {}
         : {
             catalogEnrichmentModel: 'catalog-test-model',
-            chatCompletionsProvider: provider,
           }),
+      patientBriefModel: 'brief-fixture',
+      chatCompletionsProvider: {
+        completeJson: async input => {
+          if (input.model !== 'brief-fixture' && provider !== undefined) return provider.completeJson(input)
+          return { model: 'brief-fixture', content: JSON.stringify({
+            chiefComplaint: '咽痛两天', knownHistorySummary: '既往体健。', openingStatement: '医生您好，我咽痛两天了。',
+            symptomTopics: [{ id: 'onset', name: '咽痛经过', answerPoints: ['两天前开始。'] }],
+          }) }
+        },
+      },
+      syntheaProvider: {
+        capabilities: async () => ({ available: true, maxPopulation: 1, modules: [], providerId: 'synthea', providerName: 'Synthea' }),
+        generate: async () => {
+          const bundle = { resourceType: 'Bundle', type: 'collection', entry: [
+            { fullUrl: 'urn:uuid:patient', resource: { resourceType: 'Patient', id: 'patient', birthDate: '1970-01-01', gender: 'female', name: [{ text: '合成检验患者' }] } },
+            { fullUrl: 'urn:uuid:encounter', resource: { resourceType: 'Encounter', id: 'encounter', status: 'finished', subject: { reference: 'urn:uuid:patient' }, period: { start: '2026-06-01T10:00:00+08:00', end: '2026-06-01T10:30:00+08:00' }, reasonCode: [{ text: '咽痛' }] } },
+            { fullUrl: 'urn:uuid:condition', resource: { resourceType: 'Condition', id: 'condition', subject: { reference: 'urn:uuid:patient' }, encounter: { reference: 'urn:uuid:encounter' }, code: { coding: [{ code: '195662009', display: '急性病毒性咽炎', system: 'http://snomed.info/sct' }] }, recordedDate: '2026-06-01T10:05:00+08:00' } },
+          ] }
+          return { kind: 'synthea-r4', sources: [{ format: 'fhir-r4-bundle', hash: sourceArtifactHash(bundle), patientId: 'patient', raw: bundle }] }
+        },
+      },
       cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
       databasePath: operationalDatabasePath,
       demoPassword: password,
@@ -448,6 +471,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       administratorCookie: await signIn(runtime, password, 'admin@demo.clinmesh.local'),
       directory,
       doctorCookie: await signIn(runtime, password, 'doctor@demo.clinmesh.local'),
+      triageCookie: await signIn(runtime, password, 'triage@demo.clinmesh.local'),
       operationalDatabasePath,
       password,
       referenceDatabasePath,
@@ -517,34 +541,66 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     await runtime.dispatchLaboratoryServicePublicationJobs()
   }
 
+  async function startMaterializedCase(fixture: Awaited<ReturnType<typeof createRuntime>>) {
+    const { runtime, administratorCookie, triageCookie, doctorCookie } = fixture
+    const post = async (path: string, cookie: string, body: unknown) => {
+      const response = await runtime.app.request(path, {
+        method: 'POST', body: JSON.stringify(body), headers: {
+          'content-type': 'application/json', cookie, 'idempotency-key': randomUUID(), origin: 'http://localhost',
+        },
+      })
+      expect(response.status, await response.clone().text()).toBe(200)
+      return response.json()
+    }
+    await post('/api/sim/v1/scenario-generation-jobs', administratorCookie, {
+      name: '合成检验病例', population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
+      providerId: 'synthea', seeds: { clinical: 7331, population: 4242 },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' }, timeZone: 'Asia/Shanghai',
+    })
+    const generation = await runtime.scenarioData.processNextGenerationJob()
+    expect(generation?.status).toBe('succeeded')
+    const caseId = generation!.caseIds[0]!
+    await post(`/api/sim/v1/synthetic-cases/${caseId}/patient-brief-jobs`, administratorCookie, {})
+    expect((await runtime.patientBrief.processNext())?.status).toBe('succeeded')
+    const syntheticCase = syntheticCaseInstanceSchema.parse(await (await runtime.app.request(
+      `/api/sim/v1/synthetic-cases/${caseId}`, { headers: { cookie: administratorCookie } },
+    )).json())
+    const catalog = registrationCatalogSchema.parse(await (await runtime.app.request(
+      '/api/his/v1/catalogs/registration', { headers: { cookie: administratorCookie } },
+    )).json())
+    const started = commandResponseSchema(startSyntheticCaseResultSchema).parse(await post(
+      `/api/his/v1/synthetic-cases/${caseId}/actions/start-outpatient-visit`, administratorCookie, {
+        activeBriefRevision: syntheticCase.activeBriefRevision, expectedCaseRevision: syntheticCase.revision,
+        departmentId: catalog.departments[0]!.id, locationId: catalog.locations[0]!.id,
+        visitDate: catalog.virtualDate, visitTypeId: catalog.visitTypes[0]!.id,
+      },
+    )).data
+    const triage = triageResponseSchema.parse(await post(
+      `/api/his/v1/encounters/${started.encounterId}/actions/record-triage`, triageCookie, {
+        expectedVersions: { [`Encounter/${started.encounterId}`]: '1', [`Task/${started.queueTaskId}`]: '1' },
+        input: { acuityCode: 'level-3', chiefComplaint: '咽痛两天', temperatureC: 36.6,
+          pulseBpm: 84, respirationBpm: 18, oxygenSaturationPct: 98,
+          bloodPressure: { diastolicMmHg: 82, systolicMmHg: 128 } },
+      },
+    )).data
+    await post(`/api/his/v1/encounters/${started.encounterId}/actions/start-first-visit`, doctorCookie, {
+      expectedVersions: { [`Encounter/${started.encounterId}`]: '2', [`Task/${triage.doctorTaskId}`]: '1' }, input: {},
+    })
+    return { ...started, caseId: started.outpatientCaseId }
+  }
+
   async function issuePublishedLaboratoryService(
-    runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>,
-    doctorCookie: string,
+    fixture: Awaited<ReturnType<typeof createRuntime>>,
     serviceId: string,
   ) {
-    const patient = virtualPatientListSchema.parse(await (await runtime.app.request(
-      '/api/his/v1/doctor/virtual-patients',
-      { headers: { cookie: doctorCookie } },
-    )).json()).items[0]!
-    const started = startVirtualPatientResponseSchema.parse(await (await runtime.app.request(
-      `/api/his/v1/doctor/virtual-patients/${patient.id}/actions/start`,
-      {
-        body: JSON.stringify({ expectedVersions: {}, input: { expectedVersion: patient.version } }),
-        headers: {
-          'content-type': 'application/json',
-          cookie: doctorCookie,
-          'idempotency-key': randomUUID(),
-          origin: 'http://localhost',
-        },
-        method: 'POST',
-      },
-    )).json()).data
+    const { runtime, doctorCookie } = fixture
+    const started = await startMaterializedCase(fixture)
     const encounterReference = `Encounter/${started.encounterId}`
     const draft = laboratoryRequestDraftResponseSchema.parse(await (await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [encounterReference]: '1' },
+          expectedVersions: { [encounterReference]: '3' },
           input: {
             catalogItemId: serviceId,
             expectedDraftVersion: 0,
@@ -564,7 +620,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
       {
         body: JSON.stringify({
-          expectedVersions: { [encounterReference]: '1' },
+          expectedVersions: { [encounterReference]: '3' },
           input: { expectedDraftVersion: draft.draftVersion },
         }),
         headers: {
@@ -774,8 +830,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       JSON.parse(firstRow.config_json).laboratoryService,
     )
     const issued = await issuePublishedLaboratoryService(
-      first.runtime,
-      first.doctorCookie,
+      first,
       firstService.id,
     )
     const issuedSnapshotJson = (first.runtime.database.driver.prepare(`
@@ -907,7 +962,8 @@ describe('Laboratory Service Publisher HTTP contract', () => {
 
   it('publishes an enriched panel atomically and exposes only its orderable root to doctors', async () => {
     const provider = new LaboratoryEnrichmentProvider()
-    const { administratorCookie, doctorCookie, runtime } = await createRuntime(provider)
+    const fixture = await createRuntime(provider)
+    const { administratorCookie, doctorCookie, runtime } = fixture
 
     const candidatesResponse = await runtime.app.request(
       '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20&query=58410-2',
@@ -957,24 +1013,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     })
     expect(provider.calls).toHaveLength(1)
 
-    const virtualPatients = virtualPatientListSchema.parse(await (await runtime.app.request(
-      '/api/his/v1/doctor/virtual-patients',
-      { headers: { cookie: doctorCookie } },
-    )).json())
-    const patient = virtualPatients.items[0]!
-    const started = startVirtualPatientResponseSchema.parse(await (await runtime.app.request(
-      `/api/his/v1/doctor/virtual-patients/${patient.id}/actions/start`,
-      {
-        body: JSON.stringify({ expectedVersions: {}, input: { expectedVersion: patient.version } }),
-        headers: {
-          'content-type': 'application/json',
-          cookie: doctorCookie,
-          'idempotency-key': randomUUID(),
-          origin: 'http://localhost',
-        },
-        method: 'POST',
-      },
-    )).json()).data
+    const started = await startMaterializedCase(fixture)
     const doctorCatalogResponse = await runtime.app.request(
       `/api/his/v1/doctor/cases/${started.caseId}/reference-catalogs/laboratory?page=1&pageSize=20`,
       { headers: { cookie: doctorCookie } },
@@ -1001,6 +1040,17 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       }],
       total: 1,
     })
+    const searchCatalog = async (query: string) => {
+      const response = await runtime.app.request(
+        `/api/his/v1/doctor/cases/${started.caseId}/reference-catalogs/laboratory?page=1&pageSize=20&query=${encodeURIComponent(query)}`,
+        { headers: { cookie: doctorCookie } },
+      )
+      expect(response.status).toBe(200)
+      return caseLaboratoryCatalogSearchSchema.parse(await response.json())
+    }
+    expect((await searchCatalog('血常规 血')).total).toBe(1)
+    expect((await searchCatalog('血常规 不存在')).total).toBe(0)
+
     const publishedService = doctorCatalog.items[0]!
     const encounterReference = `Encounter/${started.encounterId}`
     const mutationHeaders = () => ({
@@ -1013,7 +1063,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [encounterReference]: '1' },
+          expectedVersions: { [encounterReference]: '3' },
           input: {
             catalogItemId: 'loinc:synthetic:58410-2',
             expectedDraftVersion: 0,
@@ -1030,7 +1080,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [encounterReference]: '1' },
+          expectedVersions: { [encounterReference]: '3' },
           input: {
             catalogItemId: publishedService.id,
             expectedDraftVersion: 0,
@@ -1060,7 +1110,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
       {
         body: JSON.stringify({
-          expectedVersions: { [encounterReference]: '1' },
+          expectedVersions: { [encounterReference]: '3' },
           input: { expectedDraftVersion: draft.draftVersion },
         }),
         headers: mutationHeaders(),

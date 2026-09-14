@@ -3,7 +3,7 @@ import { cleanup, render, screen, within, waitFor } from '@testing-library/react
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
-import { MedicationCatalogDialog } from './catalog-picker-dialogs.tsx'
+import { DiagnosisCatalogDialog, LaboratoryCatalogDialog, MedicationCatalogDialog } from './catalog-picker-dialogs.tsx'
 
 const product: ReferenceMedicationProduct = {
   brandName: null, id: 'product-1', code: 'SYN-1', genericName: '合成测试片',
@@ -58,5 +58,24 @@ describe('medication catalog picker', () => {
     await user.click(screen.getByRole('button', { name: '取消' }))
     await new Promise(resolve => setTimeout(resolve, 400))
     expect(onSearch).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('diagnosis and laboratory catalog search', () => {
+  it.each(['diagnosis', 'laboratory'])('debounces %s input without a submit click', async kind => {
+    const user = userEvent.setup()
+    const onSearch = vi.fn()
+    const search = { data: { items: [], page: 1, pageSize: 20, total: 0, releaseId: 'synthetic' },
+      error: null, isError: false, isFetching: false, isPending: false, onSearch }
+    if (kind === 'diagnosis') {
+      render(<DiagnosisCatalogDialog excludedIds={new Set()} localCatalog={[]} locale="zh-CN" onSelect={vi.fn()} search={search} />)
+    } else {
+      render(<LaboratoryCatalogDialog locale="zh-CN" onSelect={vi.fn()} search={search} />)
+    }
+    await user.click(screen.getByRole('button', { name: kind === 'diagnosis' ? '添加诊断' : '选择检验项目' }))
+    onSearch.mockClear()
+    await user.type(screen.getByLabelText(kind === 'diagnosis' ? '搜索疾病目录' : '搜索检验目录'), '合成 项目')
+    expect(onSearch).not.toHaveBeenCalled()
+    await waitFor(() => expect(onSearch).toHaveBeenCalledExactlyOnceWith('合成 项目', 1))
   })
 })
