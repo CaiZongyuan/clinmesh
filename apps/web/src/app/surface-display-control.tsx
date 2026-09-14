@@ -1,11 +1,5 @@
 import { MonitorIcon } from 'lucide-react'
 import { Button } from '@clinmesh/ui/components/button'
-import {
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  useSidebar,
-} from '@clinmesh/ui/components/sidebar'
 import { useWebRuntime } from './web-runtime.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
@@ -14,27 +8,14 @@ function displayLabel(fullscreen: boolean, locale: WorkspaceLocale): string {
   return fullscreen ? '返回 DSH 分屏' : '全屏 ClinMesh'
 }
 
-export function SurfaceDisplayMenu({ locale }: { locale: WorkspaceLocale }) {
+export function SurfaceDisplayButton({ locale }: { locale: WorkspaceLocale }) {
   const { surfaceDisplay } = useWebRuntime()
-  const { setOpenMobile } = useSidebar()
   if (!surfaceDisplay) return null
   const label = displayLabel(surfaceDisplay.fullscreen, locale)
   return (
-    <SidebarMenu>
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          aria-label={label}
-          tooltip={label}
-          onClick={() => {
-            setOpenMobile(false)
-            surfaceDisplay.toggle()
-          }}
-        >
-          <MonitorIcon aria-hidden="true" />
-          <span>{label}</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    </SidebarMenu>
+    <Button aria-label={label} title={label} variant="ghost" size="icon" onClick={surfaceDisplay.toggle}>
+      <MonitorIcon aria-hidden="true" />
+    </Button>
   )
 }
 

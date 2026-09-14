@@ -474,6 +474,7 @@ function WebApplication({
   }))
   useEffect(() => apiConfiguration.release, [apiConfiguration])
   const runtime = useMemo(() => ({
+    ...(runtimeOptions.surfaceNavigation === undefined ? {} : { surfaceNavigation: runtimeOptions.surfaceNavigation }),
     ...(runtimeOptions.surfaceDisplay === undefined ? {} : { surfaceDisplay: runtimeOptions.surfaceDisplay }),
     appearanceRoot: applicationRoot,
     mode: runtimeOptions.mode ?? 'standalone',
@@ -491,6 +492,7 @@ function WebApplication({
       : { surfaceSessionId: runtimeOptions.surfaceSessionId }),
   }), [
     runtimeOptions.mode,
+    runtimeOptions.surfaceNavigation,
     runtimeOptions.surfaceDisplay,
     runtimeOptions.onExit,
     runtimeOptions.surfaceActive,

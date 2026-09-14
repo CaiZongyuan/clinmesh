@@ -38,6 +38,16 @@ declare module 'dsh-react-surface/client' {
   }
 
   export interface ReactSurfaceRegistry {
+    subscribe(listener: () => void): () => void
+    getSnapshot(): {
+      readonly activeId: string | null
+      readonly surfaces: readonly {
+        readonly definition: Readonly<ReactSurfaceDefinition>
+        readonly location: string
+        readonly layout: ReactSurfaceProps['layout']
+        readonly mounted: boolean
+      }[]
+    }
     setLayout(id: string, layout: ReactSurfaceProps['layout']): void
     register(definition: ReactSurfaceDefinition): () => void
     open(id: string, location?: string): void

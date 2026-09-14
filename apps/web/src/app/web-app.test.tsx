@@ -6,7 +6,7 @@ import { createMemoryHistory, type RouterHistory } from '@tanstack/react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebApp, type WebRuntimeOptions } from './web-app.tsx'
 import { agentToolsForContext } from '@clinmesh/contracts/agent'
-import type { WebSurfaceAgentController, WebSurfaceAgentTool } from './web-runtime.tsx'
+import type { WebSurfaceAgentController, WebSurfaceAgentTool, WebSurfaceNavigationState } from './web-runtime.tsx'
 
 const registrarSession = {
   actor: {
@@ -173,7 +173,7 @@ describe('Web application shell', () => {
     expect(screen.queryByRole('img', { name: 'Clinmesh' })).toBeNull()
   })
 
-  it('places the Surface display control in the application sidebar', async () => {
+  it('places the Surface display control in the existing header without an inner sidebar', async () => {
     const toggle = vi.fn()
     const user = userEvent.setup()
     const history = createMemoryHistory({ initialEntries: ['/'] })
@@ -181,7 +181,9 @@ describe('Web application shell', () => {
       mode: 'surface', surfaceDisplay: { fullscreen: false, toggle },
     } })
     const enter = screen.getByRole('button', { name: '全屏 ClinMesh' })
-    expect(enter.closest('[data-slot="sidebar-footer"]')).not.toBeNull()
+    expect(enter.closest('header')).not.toBeNull()
+    expect(screen.queryByRole('navigation', { name: '岗位导航' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '切换导航栏' })).toBeNull()
     expect(screen.queryByRole('toolbar', { name: 'ClinMesh 显示模式' })).toBeNull()
     await user.click(enter)
     expect(toggle).toHaveBeenCalledTimes(1)
@@ -189,23 +191,96 @@ describe('Web application shell', () => {
       mode: 'surface', surfaceDisplay: { fullscreen: true, toggle },
     }} />)
     const exit = screen.getByRole('button', { name: '返回 DSH 分屏' })
-    expect(exit.closest('[data-slot="sidebar-footer"]')).not.toBeNull()
+    expect(exit.closest('header')).not.toBeNull()
     await user.click(exit)
     expect(toggle).toHaveBeenCalledTimes(2)
   })
 
-  it('keeps the fullscreen return control in the narrow navigation drawer', async () => {
+  it('publishes authorized host navigation and retracts it on unmount', async () => {
+    const release = vi.fn()
+    const register = vi.fn((_state: WebSurfaceNavigationState) => release)
+    const history = createMemoryHistory({ initialEntries: ['/'] })
+    const rendered = await renderWebApp({ history, runtime: {
+      mode: 'surface', surfaceNavigation: { register },
+    } })
+    await waitFor(() => expect(register).toHaveBeenCalled())
+    const navigation = register.mock.lastCall?.[0]
+    if (!navigation) throw new Error('Missing host navigation')
+    expect(navigation.items.map(item => item.label)).toEqual(['门诊挂号', '通用', 'UI 组件'])
+    expect(navigation.activePath).toBe('/registration')
+    await act(() => navigation.navigate('/settings'))
+    expect(await screen.findByRole('heading', { name: '通用', level: 1 })).toBeTruthy()
+    expect(history.location.pathname).toBe('/settings')
+    expect(window.location.pathname).toBe('/')
+    const current = register.mock.lastCall?.[0]
+    if (!current) throw new Error('Missing current host navigation')
+    await act(() => current.navigate('/registration'))
+    expect(await screen.findByRole('heading', { name: '门诊挂号', level: 1 })).toBeTruthy()
+    release.mockClear()
+    rendered.unmount()
+    expect(release).toHaveBeenCalled()
+  })
+
+  it('keeps the fullscreen return control directly accessible in a narrow Surface', async () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 360, 600))
     const toggle = vi.fn()
     const user = userEvent.setup()
     await renderWebApp({ runtime: { mode: 'surface', surfaceDisplay: { fullscreen: true, toggle } } })
-    expect(screen.queryByRole('button', { name: '返回 DSH 分屏' })).toBeNull()
-    await user.click(screen.getByRole('button', { name: '切换导航栏' }))
     const exit = await screen.findByRole('button', { name: '返回 DSH 分屏' })
-    expect(exit.closest('[role="dialog"]')).not.toBeNull()
+    expect(exit.closest('header')).not.toBeNull()
     await user.click(exit)
     expect(toggle).toHaveBeenCalledOnce()
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '岗位导航' })).toBeNull())
+  })
+
+  it('refreshes host routes after a role change and removes them after sign-out', async () => {
+    const register = vi.fn((_state: WebSurfaceNavigationState) => vi.fn())
+    const initialFetch = vi.mocked(fetch).getMockImplementation()!
+    let signedOut = false
+    let registrar = false
+    vi.mocked(fetch).mockImplementation(async input => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/auth/role') {
+        registrar = true
+        return Response.json(registrarSession)
+      }
+      if (path === '/api/auth/sign-out') {
+        signedOut = true
+        return Response.json({})
+      }
+      if (path === '/api/auth/context') {
+        if (signedOut) return Response.json({ error: { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in' } }, { status: 401 })
+        if (registrar) return Response.json(registrarSession)
+        return Response.json({
+          ...registrarSession,
+          actor: { ...registrarSession.actor, roleCode: 'administrator', practitionerRoleId: 'administrator-role' },
+          availableRoles: [
+            ...registrarSession.availableRoles,
+            { ...registrarSession.availableRoles[0], id: 'administrator-role', code: 'administrator' },
+          ],
+        })
+      }
+      return initialFetch(input)
+    })
+    const user = userEvent.setup()
+    await renderWebApp({
+      history: createMemoryHistory({ initialEntries: ['/settings'] }),
+      runtime: { mode: 'surface', surfaceNavigation: { register } },
+    })
+    expect(register.mock.lastCall?.[0].items.map(item => item.path)).toEqual([
+      '/', '/scenario-data', '/settings', '/settings/developer/components',
+    ])
+    await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: '挂号员 · 挂号员' }))
+    await screen.findByRole('heading', { name: '门诊挂号', level: 1 })
+    expect(register.mock.lastCall?.[0].items.map(item => item.path)).toEqual([
+      '/registration', '/settings', '/settings/developer/components',
+    ])
+    const latestRelease = register.mock.results.at(-1)?.value
+    await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    await user.click(await screen.findByRole('menuitem', { name: '退出登录' }))
+    await screen.findByRole('heading', { name: '登录科灵脉智' })
+    expect(latestRelease).toHaveBeenCalled()
   })
 
   it('keeps a fullscreen exit in the sign-in card when no sidebar is available', async () => {
@@ -271,7 +346,7 @@ describe('Web application shell', () => {
     expect(window.location.pathname).toBe('/dsh-host')
     expect(requestedPaths).toContain('/clinmesh-api/auth/context')
     expect(document.querySelector('[data-clinmesh-app="web"]')?.className).toContain('h-full')
-    expect(document.querySelector('[data-slot="sidebar-wrapper"]')?.className).toContain('h-full')
+    expect(document.querySelector('[data-slot="sidebar-wrapper"]')).toBeNull()
     expect(document.querySelector('[data-clinmesh-workspace-panel]')?.className)
       .toContain('overflow-y-auto')
   })

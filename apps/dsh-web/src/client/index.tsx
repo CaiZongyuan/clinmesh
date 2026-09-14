@@ -10,6 +10,8 @@ import {
 } from 'dsh-react-surface/client'
 import { clinMeshStyles } from './styles.generated.ts'
 import { registerProfileBrand } from './profile-brand.tsx'
+import { createWorkspaceNavigation, registerWorkspaceNavigation } from './workspace-navigation.tsx'
+import type { WebSurfaceNavigation } from '@clinmesh/web/runtime'
 
 interface ClientSessionsPort {
   list: {
@@ -36,7 +38,9 @@ function ClinMeshSurface({
   surfaceColorScheme,
   surfaceSessionId,
   surfaceDisplay,
+  surfaceNavigation,
 }: ReactSurfaceProps & {
+  surfaceNavigation: WebSurfaceNavigation
   surfaceDisplay: { fullscreen: boolean; toggle(): void }
   surfaceColorScheme: 'dark' | 'light'
   surfaceSessionId?: string
@@ -77,6 +81,7 @@ function ClinMeshSurface({
         surfaceAgentStatus: capabilities.agent.status,
         surfaceColorScheme,
         surfaceDisplay,
+        surfaceNavigation,
         ...(surfaceSessionId === undefined ? {} : { surfaceSessionId }),
       }}
     />
@@ -87,7 +92,10 @@ function normalizeLocation(location: string): string {
   return location === '' ? '/' : location
 }
 
-export function createDefinition(ctx: ClientContext): Readonly<ReactSurfaceDefinition> {
+export function createDefinition(
+  ctx: ClientContext,
+  navigation = createWorkspaceNavigation(),
+): Readonly<ReactSurfaceDefinition> {
   const sessions = ctx.get('sessions') as unknown as ClientSessionsPort
   const theme = ctx.get('theme') as unknown as ClientThemePort
   const surfaces = ctx.get('reactSurfaces') as unknown as ReactSurfaceRegistry
@@ -109,6 +117,7 @@ export function createDefinition(ctx: ClientContext): Readonly<ReactSurfaceDefin
     return (
       <ClinMeshSurface
         {...props}
+        surfaceNavigation={navigation}
         surfaceDisplay={{
           fullscreen: props.layout === 'full-frame',
           toggle: () => surfaces.setLayout('clinmesh.his', props.layout === 'full-frame' ? 'workspace' : 'full-frame'),
@@ -147,7 +156,9 @@ export const inject = ['reactSurfaces', 'sessions', 'theme', 'slots', 'locale']
 
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => registerProfileBrand(ctx), 'clinmesh-dsh-web: register Profile identity')
-  const definition = createDefinition(ctx)
+  const navigation = createWorkspaceNavigation()
+  ctx.effect(() => registerWorkspaceNavigation(ctx, navigation), 'clinmesh-dsh-web: register hospital navigation')
+  const definition = createDefinition(ctx, navigation)
   const reactSurfaces = (ctx as ClientContext & {
     reactSurfaces: {
       register(value: typeof definition): () => void

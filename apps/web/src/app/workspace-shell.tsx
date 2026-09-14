@@ -1,5 +1,5 @@
 import { ResponsiveSidebarProvider } from './responsive-sidebar.tsx'
-import { SurfaceDisplayMenu } from './surface-display-control.tsx'
+import { SurfaceDisplayButton } from './surface-display-control.tsx'
 import { Avatar, AvatarFallback } from '@clinmesh/ui/components/avatar'
 import { Button } from '@clinmesh/ui/components/button'
 import {
@@ -30,7 +30,7 @@ import {
 } from '@clinmesh/ui/components/sidebar'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { TooltipProvider } from '@clinmesh/ui/components/tooltip'
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import {
   BellIcon,
@@ -51,7 +51,7 @@ import {
   SunIcon,
   UserRoundIcon,
 } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useEffect, useMemo, type ReactNode } from 'react'
 import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
 import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
 import { useWebRuntime } from './web-runtime.tsx'
@@ -384,21 +384,80 @@ export function WorkspaceShell({
 }: WorkspaceShellProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
   const runtime = useWebRuntime()
+  const navigate = useNavigate()
   const activeRoleSection = roleSections[session.actor.roleCode]
-  const visibleRoutes = workspaceRoutes.filter(route => (
+  const visibleRoutes = useMemo(() => workspaceRoutes.filter(route => (
     route.key === activeRoleSection
     || (session.actor.roleCode === 'administrator' && route.key === 'scenarioData')
-  ))
+  )), [activeRoleSection, session.actor.roleCode])
+  useEffect(() => {
+    if (runtime.mode !== 'surface' || !runtime.surfaceNavigation) return
+    const routes = [...visibleRoutes, ...settingsRoutes]
+    return runtime.surfaceNavigation.register({
+      items: routes.map(route => ({ path: route.path, label: messages[route.key] })),
+      activePath: routes.find(route => route.key === activeSection)?.path ?? '/',
+      locale,
+      theme,
+      navigate(path) {
+        const target = routes.find(route => route.path === path)
+        if (target) void navigate({ to: target.path })
+      },
+      setTheme: onThemeChange,
+    })
+  }, [activeSection, locale, messages, navigate, onThemeChange, runtime.mode, runtime.surfaceNavigation, theme, visibleRoutes])
   const settingsMode = isSettingsSection(activeSection)
   const navigationLabel = settingsMode ? messages.settingsNavigation : messages.navigationLabel
   const mobileDescription = settingsMode
     ? messages.mobileSettingsNavigationDescription
     : messages.mobileNavigationDescription
 
+  const content = (
+    <>
+      <header className="@container/workspace-header sticky top-0 z-10 flex h-[3.375rem] shrink-0 items-center gap-2 border-b bg-background px-3 sm:px-4">
+        {runtime.mode === 'surface'
+          ? <SurfaceDisplayButton locale={locale} />
+          : <SidebarTrigger aria-label={messages.sidebarToggle} title={messages.sidebarToggle} />}
+        <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
+          {messages[activeSection]}
+        </h1>
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          <NotificationsMenu messages={messages} />
+          <UserMenu
+            messages={messages}
+            onRoleChange={onRoleChange}
+            onSignOut={onSignOut}
+            onThemeChange={onThemeChange}
+            roleChangePending={roleChangePending}
+            session={session}
+            signOutPending={signOutPending}
+            theme={theme}
+          />
+        </div>
+      </header>
+      <div
+        className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto bg-muted/40 p-4 outline-none sm:p-5"
+        data-clinmesh-workspace-panel=""
+        tabIndex={-1}
+      >
+        {children}
+      </div>
+    </>
+  )
+
+  if (runtime.mode === 'surface') {
+    return (
+      <TooltipProvider>
+        <main className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+          {content}
+        </main>
+      </TooltipProvider>
+    )
+  }
+
   return (
     <TooltipProvider>
       <ResponsiveSidebarProvider
-        heightMode={runtime.mode === 'surface' ? 'container' : 'viewport'}
+        heightMode="viewport"
         style={{
           '--sidebar-width': '13.75rem',
           '--sidebar-width-icon': '3rem',
@@ -487,7 +546,6 @@ export function WorkspaceShell({
             )}
           </SidebarContent>
           <SidebarFooter>
-            <SurfaceDisplayMenu locale={locale} />
             <AppearanceControls
               locale={locale}
               messages={messages}
@@ -500,32 +558,7 @@ export function WorkspaceShell({
           </SidebarFooter>
         </Sidebar>
         <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
-          <header className="@container/workspace-header sticky top-0 z-10 flex h-[3.375rem] shrink-0 items-center gap-2 border-b bg-background px-3 sm:px-4">
-            <SidebarTrigger aria-label={messages.sidebarToggle} title={messages.sidebarToggle} />
-            <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
-              {messages[activeSection]}
-            </h1>
-            <div className="ml-auto flex shrink-0 items-center gap-1">
-              <NotificationsMenu messages={messages} />
-              <UserMenu
-                messages={messages}
-                onRoleChange={onRoleChange}
-                onSignOut={onSignOut}
-                onThemeChange={onThemeChange}
-                roleChangePending={roleChangePending}
-                session={session}
-                signOutPending={signOutPending}
-                theme={theme}
-              />
-            </div>
-          </header>
-          <div
-            className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto bg-muted/40 p-4 outline-none sm:p-5"
-            data-clinmesh-workspace-panel=""
-            tabIndex={-1}
-          >
-            {children}
-          </div>
+          {content}
         </SidebarInset>
       </ResponsiveSidebarProvider>
     </TooltipProvider>

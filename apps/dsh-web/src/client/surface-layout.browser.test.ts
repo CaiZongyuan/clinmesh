@@ -50,7 +50,7 @@ it('returns from manual fullscreen to the retained native split without remounti
     const failure = z.object({ error: z.string() }).safeParse(response)
     if (failure.success) throw new Error(failure.data.error)
     const state = z.object({
-      controlInSidebar: z.boolean(),
+      controlInHeader: z.boolean(),
       hasTopToolbar: z.boolean(),
       mode: z.string(),
       hiddenNative: z.boolean(),
@@ -69,7 +69,7 @@ it('returns from manual fullscreen to the retained native split without remounti
       })
       .parse(response)
     expect(actual.initial).toMatchObject({
-      controlInSidebar: true,
+      controlInHeader: true,
       hasTopToolbar: false,
       mode: 'workspace',
       hiddenNative: false,
