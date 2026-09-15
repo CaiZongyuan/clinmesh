@@ -70,8 +70,10 @@ it('returns from manual fullscreen to the retained native split without remounti
         retainedCollapse: z.boolean(),
         expanded: state.extend({ nativeDraft: z.string(), selectedFile: z.string(), scrollTop: z.number(), nativeVisible: z.boolean() }),
         closedRestored: z.boolean(),
-        collapseReachableWithFullscreenFile: z.boolean(),
-        collapseReachableWithFloatingFile: z.boolean(),
+        menuAboveWorkspace: z.boolean(),
+        fullscreenFileAboveWorkspace: z.boolean(),
+        floatingFileAboveWorkspace: z.boolean(),
+        collapseReachableAfterFileExit: z.boolean(),
         floatsHidden: z.boolean(),
         floatsRestored: z.boolean(),
         floatsReleased: z.boolean(),
@@ -102,8 +104,10 @@ it('returns from manual fullscreen to the retained native split without remounti
     expect(actual.retainedCollapse).toBe(true)
     expect(actual.expanded).toMatchObject({ ...actual.initial, nativeDraft: 'kept native draft', selectedFile: 'synthetic.txt', scrollTop: 120, nativeVisible: true })
     expect(actual.closedRestored).toBe(true)
-    expect(actual.collapseReachableWithFullscreenFile).toBe(true)
-    expect(actual.collapseReachableWithFloatingFile).toBe(true)
+    expect(actual.menuAboveWorkspace).toBe(true)
+    expect(actual.fullscreenFileAboveWorkspace).toBe(true)
+    expect(actual.floatingFileAboveWorkspace).toBe(true)
+    expect(actual.collapseReachableAfterFileExit).toBe(true)
     expect(actual.floatsHidden).toBe(true)
     expect(actual.floatsRestored).toBe(true)
     expect(actual.floatsReleased).toBe(true)

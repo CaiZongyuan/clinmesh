@@ -35,7 +35,7 @@
     },
     {
       "name": "dsh-react-surface",
-      "commit": "692944a04491016bed47bda78535fcfe234554ae",
+      "commit": "195bff0d64c0d8f8cf3d8ea2da8d528e3978cb94",
       "source": "https://github.com/CaiZongyuan/dsh-react-surface.git",
       "owner": "https://github.com/CaiZongyuan/dsh-react-surface",
       "supportPullRequest": "https://github.com/CaiZongyuan/dsh-react-surface/pull/12",

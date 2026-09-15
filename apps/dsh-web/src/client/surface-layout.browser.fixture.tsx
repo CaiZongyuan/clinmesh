@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import type { Context } from '@deepseek-ai/cordis'
 import { apply as applyClinMesh } from './index.tsx'
+import { createWorkspaceNavigation, WorkspaceNavigation } from './workspace-navigation.tsx'
 
 async function run() {
   const reset = document.createElement('style')
@@ -62,6 +63,19 @@ async function run() {
   flushSync(() => registry.open('clinmesh.his'))
   await settle()
   const shadow = frame.querySelector('[data-surface-id]')!.shadowRoot!
+  const sidebar = frame.querySelector<HTMLElement>('[data-pane="sidebar"]')!
+  const navigationHost = document.createElement('div')
+  sidebar.append(navigationHost)
+  const navigationRoot = createRoot(navigationHost)
+  flushSync(() => navigationRoot.render(<WorkspaceNavigation navigation={createWorkspaceNavigation()} wide open={() => {}} />))
+  const navigationShadow = navigationHost.querySelector('[data-clinmesh-host-navigation]')!.shadowRoot!
+  navigationShadow.querySelector<HTMLButtonElement>('button')!.click()
+  await settle()
+  const menuItem = navigationShadow.querySelector<HTMLElement>('[role="menuitem"]')!
+  const menuRect = menuItem.getBoundingClientRect()
+  const menuAboveWorkspace = document.elementFromPoint(menuRect.x + menuRect.width / 2, menuRect.y + menuRect.height / 2) === navigationShadow.host
+  menuItem.click()
+  await settle()
   const draft = shadow.querySelector<HTMLInputElement>('input')!
   draft.value = 'kept clinical draft'
   const snapshot = () => ({
@@ -106,11 +120,11 @@ async function run() {
   await settle()
   const rect = collapse.getBoundingClientRect()
   const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
-  let collapseReachableWithFullscreenFile = hit === frame.querySelector('[data-surface-id]')
+  let fullscreenFileAboveWorkspace = hit === fullscreenFile
   frame.style.width = '680px'
   await settle()
   const narrowRect = collapse.getBoundingClientRect()
-  collapseReachableWithFullscreenFile &&= document.elementFromPoint(narrowRect.x + narrowRect.width / 2, narrowRect.y + narrowRect.height / 2) === frame.querySelector('[data-surface-id]')
+  fullscreenFileAboveWorkspace &&= document.elementFromPoint(narrowRect.x + narrowRect.width / 2, narrowRect.y + narrowRect.height / 2) === fullscreenFile
   frame.style.width = '2048px'
   await settle()
   const floatingFile = document.createElement('div')
@@ -119,7 +133,12 @@ async function run() {
   floatingFile.innerHTML = '<input value="floating synthetic.txt">'
   document.body.append(floatingFile)
   await settle()
-  const collapseReachableWithFloatingFile = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2) === frame.querySelector('[data-surface-id]')
+  const floatingFileAboveWorkspace = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2) === floatingFile
+  // Exit native fullscreen and move the float away before using the HIS control.
+  fullscreenFile.style.cssText = 'visibility:visible'
+  floatingFile.style.left = '1800px'
+  await settle()
+  const collapseReachableAfterFileExit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2) === frame.querySelector('[data-surface-id]')
   collapse.click()
   await settle()
   const lateFloat = document.createElement('div')
@@ -165,6 +184,7 @@ async function run() {
   floatingFile.remove()
   lateFloat.remove()
   const brandsAfterClose = [...brandSlots]
+  flushSync(() => navigationRoot.unmount())
   document.title = btoa(
     JSON.stringify({
       initial,
@@ -178,8 +198,10 @@ async function run() {
       retainedCollapse,
       expanded,
       closedRestored,
-      collapseReachableWithFullscreenFile,
-      collapseReachableWithFloatingFile,
+      menuAboveWorkspace,
+      fullscreenFileAboveWorkspace,
+      floatingFileAboveWorkspace,
+      collapseReachableAfterFileExit,
       floatsHidden,
       floatsRestored,
       floatsReleased,
