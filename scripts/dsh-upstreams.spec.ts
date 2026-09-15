@@ -5,7 +5,7 @@ import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { candidatePath, discoveryPath, discoverUpstreams, publishCandidate } from './dsh-upstreams.ts'
+import { candidatePath, discoveryPath, discoverUpstreams, lockDigest, parseLock, publishCandidate } from './dsh-upstreams.ts'
 
 const baseline = {
   schemaVersion: 1,
@@ -99,24 +99,75 @@ describe('DSH 上游发现入口', () => {
 })
 
 describe('发现 CLI process 合同', () => {
-  it('无更新但候选已撤销时，CLI 保存待适配证据且不调度安装', async () => {
+  it.each(['可读取', '读取失败'])('目标分支基线%s：发布不采用本地升级锁', async availability => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-upstream-base-'))
+    try {
+      const local = structuredClone(baseline)
+      local.components[0] = { ...local.components[0]!, version: '1.1.0', source: release('1.1.0').dist.tarball }
+      const localText = JSON.stringify(local)
+      await writeFile(join(directory, 'dsh-upstreams.lock.json'), localText)
+      const fixture = join(directory, 'network.mjs')
+      await writeFile(fixture, `
+        import { writeFileSync } from 'node:fs';
+        const baseline = ${JSON.stringify(baseline)};
+        globalThis.fetch = async (url, init = {}) => {
+          const parsed = new URL(url);
+          const path = parsed.pathname.replace('/repos/example/repo/', '');
+          if (parsed.origin === 'https://registry.npmjs.org') return Response.json(${JSON.stringify({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0') } })});
+          if (path === 'git/ref/heads/main') return Response.json({ object: { sha: 'b'.repeat(40) } });
+          if (path === 'contents/dsh-upstreams.lock.json' && ${availability === '读取失败'}) return new Response('', { status: 503 });
+          if (path === 'contents/dsh-upstreams.lock.json' && parsed.searchParams.get('ref') === 'b'.repeat(40)) return Response.json({ encoding: 'base64', content: Buffer.from(JSON.stringify(baseline)).toString('base64') });
+          if (path === 'pulls' && (init.method ?? 'GET') === 'GET') { writeFileSync('lookup.json', JSON.stringify({ head: parsed.searchParams.get('head'), base: parsed.searchParams.get('base') })); return Response.json([]); }
+          throw new Error('不应读取其他基线或创建 PR：' + url);
+        };
+      `)
+      const entry = fileURLToPath(new URL('./dsh-upstreams-cli.ts', import.meta.url))
+      const loader = new URL('../node_modules/tsx/dist/loader.mjs', import.meta.url).href
+      const execution = promisify(execFile)(process.execPath, ['--import', loader, '--import', pathToFileURL(fixture).href, entry, '--publish'], {
+        cwd: directory, env: { ...process.env, GH_TOKEN: '', GITHUB_REPOSITORY: 'example/repo', UPSTREAM_BASE: 'main' },
+      })
+      if (availability === '读取失败') {
+        await expect(execution).rejects.toThrow('HTTP 503')
+        await expect(access(join(directory, 'lookup.json'))).rejects.toThrow()
+        await expect(access(join(directory, 'dsh-upstreams.discovery.json'))).rejects.toThrow()
+        expect(await readFile(join(directory, 'dsh-upstreams.lock.json'), 'utf8')).toBe(localText)
+        return
+      }
+      const result = await execution
+      expect(JSON.parse(result.stdout)).toMatchObject({ status: 'no-update' })
+      const report = JSON.parse(await readFile(join(directory, 'dsh-upstreams.discovery.json'), 'utf8'))
+      expect(report.target.components[0].version).toBe('1.0.0')
+      expect(JSON.parse(await readFile(join(directory, 'lookup.json'), 'utf8'))).toEqual({ head: `example:automation/dsh-upstreams-0d6e4079-${report.baselineDigest.slice(0, 12)}`, base: 'main' })
+      expect(await readFile(join(directory, 'dsh-upstreams.lock.json'), 'utf8')).toBe(localText)
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  })
+
+  it.each(['仅候选撤销', '基线与候选共用的版本撤销'])('%s 时，CLI 保存待适配证据且不调度安装', async scenario => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-upstream-withdrawn-'))
     try {
-      const active = await discoverUpstreams(baseline, async () => Response.json({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0'), '1.1.0': release('1.1.0') } }))
-      const baselineText = JSON.stringify(baseline)
+      const input = { ...baseline, components: [...baseline.components, { name: 'bridge', source: 'https://github.com/example/bridge.git', owner: 'https://github.com/example/bridge', role: '桥接', commit: 'c'.repeat(40) }] }
+      const target = parseLock(input)
+      if (scenario === '仅候选撤销') Object.assign(target.components[0]!, { version: '1.1.0', source: release('1.1.0').dist.tarball })
+      target.components[1]!.commit = 'd'.repeat(40)
+      const active = { schemaVersion: 1, baselineDigest: lockDigest(parseLock(input)), target, changes: [{ name: 'bridge', from: 'c'.repeat(40), to: 'd'.repeat(40) }] }
+      const baselineText = JSON.stringify(input)
       await writeFile(join(directory, 'dsh-upstreams.lock.json'), baselineText)
       const fixture = join(directory, 'network.mjs')
       await writeFile(fixture, `
         import { writeFileSync } from 'node:fs';
         const active = ${JSON.stringify(active)};
-        const registry = ${JSON.stringify({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0') } })};
+        const baseline = ${JSON.stringify(input)};
+        const registry = ${JSON.stringify({ name: '@deepseek-ai/dsh', versions: scenario === '仅候选撤销' ? { '1.0.0': release('1.0.0') } : {} })};
         const head = 'a'.repeat(40);
         globalThis.fetch = async (url, init = {}) => {
           if (String(url).startsWith('https://registry.npmjs.org/')) return Response.json(registry);
+          if (String(url) === 'https://api.github.com/repos/example/bridge') return Response.json({ default_branch: 'main' });
+          if (String(url) === 'https://api.github.com/repos/example/bridge/commits/main') return Response.json({ sha: 'c'.repeat(40) });
           const path = new URL(url).pathname.replace('/repos/example/repo/', '');
           const method = init.method ?? 'GET';
           if (path === 'pulls' && method === 'GET') return Response.json([{ number: 7, body: '人工说明', html_url: 'https://github.com/example/repo/pull/7' }]);
           if (path.startsWith('git/ref/') && method === 'GET') return Response.json({ object: { sha: head } });
+          if (path === 'contents/dsh-upstreams.lock.json' && method === 'GET') return Response.json({ encoding: 'base64', content: Buffer.from(JSON.stringify(baseline)).toString('base64') });
           if (path === 'contents/deployment/dsh/candidate.json' && method === 'GET') return Response.json({ encoding: 'base64', content: Buffer.from(JSON.stringify(active)).toString('base64') });
           if (path === 'statuses/' + head && method === 'POST') { writeFileSync('observed-status.json', init.body); return Response.json({}); }
           if (path === 'pulls/7' && method === 'PATCH') return Response.json({});
@@ -131,6 +182,9 @@ describe('发现 CLI process 合同', () => {
       expect(JSON.parse(result.stdout)).toMatchObject({ status: 'awaiting-adaptation', invalidatedHead: 'a'.repeat(40) })
       expect(JSON.parse(await readFile(join(directory, 'observed-status.json'), 'utf8'))).toMatchObject({ state: 'failure' })
       expect(JSON.parse(await readFile(join(directory, 'dsh-upstreams.discovery.json'), 'utf8'))).toMatchObject({ result: { status: 'awaiting-adaptation', reason: expect.stringContaining('已撤销') } })
+      if (scenario !== '仅候选撤销') {
+        expect(JSON.parse(await readFile(join(directory, 'dsh-upstreams.discovery.json'), 'utf8'))).toMatchObject({ discoveryError: '已验证版本被撤销：@deepseek-ai/dsh@1.0.0' })
+      }
       expect(await readFile(join(directory, 'outputs'), 'utf8')).toBe('status=awaiting-adaptation\nhead=\nbranch=\n')
       expect(await readFile(join(directory, 'dsh-upstreams.lock.json'), 'utf8')).toBe(baselineText)
     } finally { await rm(directory, { recursive: true, force: true }) }

@@ -215,16 +215,16 @@ function replaceManagedBody(previous: unknown, body: string) {
     : `${text}\n\n${body}`
 }
 
-export async function publishCandidate(candidate: Candidate, options: {
+type PublicationOptions = {
   repository: string
   base: string
   fetch: Fetch
-}) {
-  const scope = createHash('sha256').update(options.base).digest('hex').slice(0, 8)
-  const upgradeBranch = `automation/dsh-upstreams-${scope}-${candidate.baselineDigest.slice(0, 12)}`
+}
+
+function githubRequest(options: PublicationOptions) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(options.repository) || !/^[\w./-]+$/.test(options.base)) throw new Error('非法 GitHub 仓库或分支')
   const api = `https://api.github.com/repos/${options.repository}`
-  async function request(path: string, method = 'GET', body?: unknown, missing = false): Promise<unknown> {
+  return async function request(path: string, method = 'GET', body?: unknown, missing = false): Promise<unknown> {
     const response = await options.fetch(`${api}/${path}`, {
       method, headers: { 'Content-Type': 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000),
@@ -239,12 +239,25 @@ export async function publishCandidate(candidate: Candidate, options: {
     if (response.status === 204) return undefined
     return response.json()
   }
+}
+
+export async function readPublishedBaseline(options: PublicationOptions): Promise<UpstreamLock> {
+  const request = githubRequest(options)
+  const ref = object(await request(`git/ref/heads/${options.base}`))
+  const head = sha(object(ref.object).sha)
+  const file = object(await request(`contents/dsh-upstreams.lock.json?ref=${head}`))
+  if (file.encoding !== 'base64') throw new Error('非法基线文件编码')
+  return parseLock(JSON.parse(Buffer.from(string(file.content), 'base64').toString('utf8')))
+}
+
+async function openPublication(baselineDigest: string, options: PublicationOptions) {
+  const request = githubRequest(options)
+  const scope = createHash('sha256').update(options.base).digest('hex').slice(0, 8)
+  const upgradeBranch = `automation/dsh-upstreams-${scope}-${baselineDigest.slice(0, 12)}`
   const pulls = await request(`pulls?state=open&head=${encodeURIComponent(`${options.repository.split('/')[0]}:${upgradeBranch}`)}&base=${encodeURIComponent(options.base)}`)
   if (!Array.isArray(pulls) || pulls.length > 1) throw new Error('活动升级 PR 响应不唯一')
   const pull = pulls[0] === undefined ? undefined : object(pulls[0])
-  if (!pull && !candidate.changes.length) return { status: 'no-update' as const }
   if (pull && !Number.isSafeInteger(pull.number)) throw new Error('非法 PR 编号')
-  const branch = await request(`git/ref/heads/${upgradeBranch}`, 'GET', undefined, true)
   async function readCandidate(path: string, head: string) {
     const response = await request(`contents/${path}?ref=${encodeURIComponent(head)}`, 'GET', undefined, true)
     if (response === undefined) return undefined
@@ -252,13 +265,9 @@ export async function publishCandidate(candidate: Candidate, options: {
     if (file.encoding !== 'base64') throw new Error('非法候选文件编码')
     return parseCandidate(JSON.parse(Buffer.from(string(file.content), 'base64').toString('utf8')))
   }
-  async function protectManualTarget(head: string) {
-    const current = await readCandidate(candidatePath, head)
-    const discovered = await readCandidate(discoveryPath, head)
-    if ((current || pull) && !discovered) throw new Error('缺少自动发现记录，保留旧候选；请人工核对目标后建立 discovery.json')
-    if (JSON.stringify(current) !== JSON.stringify(discovered)) throw new Error('保留人工候选目标：candidate.json 与上次自动发现结果不同；请协调目标后再恢复自动更新')
-  }
-  if (pull) {
+  async function reconcile() {
+    if (!pull) return undefined
+    const branch = await request(`git/ref/heads/${upgradeBranch}`, 'GET', undefined, true)
     if (branch === undefined) throw new Error('活动候选分支不存在，请人工协调')
     const head = sha(object(object(branch).object).sha)
     const current = await readCandidate(candidatePath, head)
@@ -275,8 +284,28 @@ export async function publishCandidate(candidate: Candidate, options: {
       await request(`pulls/${pull.number}`, 'PATCH', { body: replaceManagedBody(pull.body, candidateBody(current, options.base, problem)) })
       return { status: 'awaiting-adaptation' as const, invalidatedHead: head, pullRequest, reason: problem }
     }
+    return undefined
   }
+  return { request, upgradeBranch, pull, readCandidate, reconcile }
+}
+
+export async function reconcileActiveCandidate(baseline: UpstreamLock, options: PublicationOptions) {
+  return (await openPublication(lockDigest(baseline), options)).reconcile()
+}
+
+export async function publishCandidate(candidate: Candidate, options: PublicationOptions) {
+  const publication = await openPublication(candidate.baselineDigest, options)
+  const invalidated = await publication.reconcile()
+  if (invalidated) return invalidated
   if (!candidate.changes.length) return { status: 'no-update' as const }
+  const { request, upgradeBranch, pull, readCandidate } = publication
+  const branch = await request(`git/ref/heads/${upgradeBranch}`, 'GET', undefined, true)
+  async function protectManualTarget(head: string) {
+    const current = await readCandidate(candidatePath, head)
+    const discovered = await readCandidate(discoveryPath, head)
+    if ((current || pull) && !discovered) throw new Error('缺少自动发现记录，保留旧候选；请人工核对目标后建立 discovery.json')
+    if (JSON.stringify(current) !== JSON.stringify(discovered)) throw new Error('保留人工候选目标：candidate.json 与上次自动发现结果不同；请协调目标后再恢复自动更新')
+  }
   let head: string
   if (branch === undefined) {
     const base = object(await request(`git/ref/heads/${options.base}`))
