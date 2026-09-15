@@ -90,14 +90,21 @@ const requestRowSchema = z.object({
   catalog_item_id: z.string().min(1),
   encounter_id: z.string().min(1),
   patient_id: z.string().min(1),
-  profile_id: z.string().min(1),
-  profile_revision: z.number().int().positive(),
+  profile_id: z.string().min(1).nullable(),
+  profile_revision: z.number().int().positive().nullable(),
   reference_json: z.string().min(1),
   result_snapshot_id: z.string().min(1).nullable(),
   service_snapshot_json: z.string().min(1).nullable(),
+  synthetic_case_id: z.string().min(1).nullable(),
+  synthetic_case_revision: z.number().int().positive().nullable(),
+}).strict()
+
+const materializedRequestRowSchema = requestRowSchema.extend({
+  profile_id: z.string().min(1),
+  profile_revision: z.number().int().positive(),
   synthetic_case_id: z.string().min(1),
   synthetic_case_revision: z.number().int().positive(),
-}).strict()
+})
 
 const caseMaterializationRowSchema = z.object({
   synthetic_case_id: z.string().min(1),
@@ -110,7 +117,7 @@ const investigationResourceSchema = z.object({
 
 type Resource = z.infer<typeof investigationResourceSchema>
 type RequestedConcept = z.infer<typeof referenceConceptSnapshotSchema>
-type RequestRow = z.infer<typeof requestRowSchema>
+type RequestRow = z.infer<typeof materializedRequestRowSchema>
 type ServiceResultDefinition = LaboratoryServiceSnapshot['reportDefinition']['results'][number]
 type RequestedLaboratory = NonNullable<RequestedConcept['laboratory']>
 type AgentLaboratoryMetadata = RequestedLaboratory & {
@@ -425,7 +432,7 @@ export class InvestigationService {
         materialization.case_revision AS synthetic_case_revision,
         materialization.profile_id, materialization.profile_revision
       FROM laboratory_request AS request
-      JOIN synthetic_case_materialization AS materialization
+      LEFT JOIN synthetic_case_materialization AS materialization
         ON materialization.workspace_id = request.workspace_id
        AND materialization.epoch = request.epoch
        AND materialization.outpatient_case_id = request.case_id
@@ -439,25 +446,39 @@ export class InvestigationService {
     if (row.result_snapshot_id !== null) {
       return this.#results.getById(workspaceId, row.result_snapshot_id)
     }
-    if (row.service_snapshot_json !== null) {
+    if (row.synthetic_case_id === null) {
+      if (row.service_snapshot_json !== null) {
+        throw new InvestigationGenerationError(
+          'INVESTIGATION_UNSUPPORTED',
+          'The case has no synthetic case materialization to generate this laboratory service from',
+        )
+      }
+      return undefined
+    }
+    const materializedRow = materializedRequestRowSchema.parse(row)
+    if (materializedRow.service_snapshot_json !== null) {
       return this.#resolvePublishedService(
         workspaceId,
         epoch,
-        row,
-        laboratoryServiceSnapshotSchema.parse(JSON.parse(row.service_snapshot_json)),
+        materializedRow,
+        laboratoryServiceSnapshotSchema.parse(JSON.parse(materializedRow.service_snapshot_json)),
         signal,
       )
     }
     const existing = this.#results.getByCaseItem(
       workspaceId,
-      row.synthetic_case_id,
-      row.catalog_item_id,
+      materializedRow.synthetic_case_id,
+      materializedRow.catalog_item_id,
     )
     if (existing !== undefined) return existing
-    const requestedConcept = referenceConceptSnapshotSchema.parse(JSON.parse(row.reference_json))
-    const syntheticCase = this.#cases.get(workspaceId, row.synthetic_case_id)
-    const truth = this.#cases.getTruthForSimulator(workspaceId, row.synthetic_case_id)
-    const profile = this.#profiles.getRevision(workspaceId, row.profile_id, row.profile_revision)
+    const requestedConcept = referenceConceptSnapshotSchema.parse(JSON.parse(materializedRow.reference_json))
+    const syntheticCase = this.#cases.get(workspaceId, materializedRow.synthetic_case_id)
+    const truth = this.#cases.getTruthForSimulator(workspaceId, materializedRow.synthetic_case_id)
+    const profile = this.#profiles.getRevision(
+      workspaceId,
+      materializedRow.profile_id,
+      materializedRow.profile_revision,
+    )
     if (syntheticCase === undefined || truth === undefined || profile === undefined) {
       throw new InvestigationGenerationError('INVESTIGATION_OUTPUT_INVALID', 'The Synthetic Case context is incomplete')
     }
@@ -466,7 +487,7 @@ export class InvestigationService {
     ))
     const exact = exactObservation(hiddenResources, requestedConcept)
     const baseInput = {
-      caseRevision: row.synthetic_case_revision,
+      caseRevision: materializedRow.synthetic_case_revision,
       demographics: {
         birthDate: profile.demographics.birthDate,
         gender: profile.demographics.gender,
@@ -477,8 +498,8 @@ export class InvestigationService {
     if (exact !== undefined) {
       const content = this.#contentFromExactObservation(requestedConcept, exact)
       return this.#freeze({
-        caseId: row.synthetic_case_id,
-        catalogItemId: row.catalog_item_id,
+        caseId: materializedRow.synthetic_case_id,
+        catalogItemId: materializedRow.catalog_item_id,
         content,
         inputHash: canonicalJsonHash(baseInput),
         model: null,
@@ -504,7 +525,7 @@ export class InvestigationService {
       resultType: metadata.resultType,
       unit: metadata.unit,
       visibleHistory: this.#cases.listRecentVisibleHistory({
-        caseId: row.synthetic_case_id,
+        caseId: materializedRow.synthetic_case_id,
         limit: maximumAgentEvidenceItems,
         workspaceId,
       }),
@@ -537,8 +558,8 @@ export class InvestigationService {
       }],
     })
     return this.#freeze({
-      caseId: row.synthetic_case_id,
-      catalogItemId: row.catalog_item_id,
+      caseId: materializedRow.synthetic_case_id,
+      catalogItemId: materializedRow.catalog_item_id,
       content,
       inputHash,
       model: completion.model,

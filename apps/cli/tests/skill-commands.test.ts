@@ -116,6 +116,23 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(error.correlationId).toBe('01991234-7abc-7def-8abc-0123456789ab')
   })
 
+  it('documents non-retryable laboratory evidence errors on both order operations', async () => {
+    const doctorSkill = await readFile(resolve(
+      import.meta.dirname, '../../../.agents/skills/clinmesh-doctor/SKILL.md',
+    ), 'utf8')
+    for (const id of ['encounter.laboratory-request.draft.set', 'encounter.laboratory-request.issue']) {
+      const operation = getHisOperation(id)
+      expect(operation.summary).toContain('LABORATORY_GENERATION_UNSUPPORTED')
+      expect(operation.error.parse({
+        code: 'LABORATORY_GENERATION_UNSUPPORTED', message: '缺少结果底账',
+        operationId: id, outcome: 'definitely_not_sent', retryable: false, type: 'conflict',
+      }).retryable).toBe(false)
+    }
+    expect(doctorSkill).toContain('LABORATORY_GENERATION_UNSUPPORTED')
+    expect(doctorSkill).toContain('INVESTIGATION_UNSUPPORTED')
+    expect(doctorSkill).toContain('AI_REQUEST_FAILED')
+  })
+
   it('keeps every documented clinical command on a real Catalog path', async () => {
     const skillsRoot = resolve(import.meta.dirname, '../../../.agents/skills')
     const skillNames = (await readdir(skillsRoot, { withFileTypes: true }))

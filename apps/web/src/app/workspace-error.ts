@@ -111,6 +111,9 @@ export function getWorkspaceErrorMessage(
   if (error.code === 'NETWORK_ERROR') return messages.networkErrorDescription
   if (error.code === 'REQUEST_TIMEOUT') return messages.requestTimeoutDescription
   if (error.code === 'UNEXPECTED_RESPONSE') return messages.unexpectedResponseDescription
+  if (error.code === 'LABORATORY_GENERATION_UNSUPPORTED') {
+    return messages.laboratoryGenerationUnsupportedDescription
+  }
   if (error.code === 'CATALOG_CONFLICT') return messages.catalogConflictDescription
   if (error.code === 'DIAGNOSIS_PRIMARY_REQUIRED') {
     return messages.diagnosisPrimaryRequiredDescription

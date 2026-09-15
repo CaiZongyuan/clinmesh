@@ -1437,7 +1437,7 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Save the version-protected laboratory request draft',
+    summary: '保存版本受保护的检验草稿；缺少结果底账时以 LABORATORY_GENERATION_UNSUPPORTED 拒绝，不可重试',
     version: 1,
   },
   {
@@ -1475,7 +1475,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Issue the current laboratory request draft',
+    summary: '签发当前检验草稿；缺少结果底账时以 LABORATORY_GENERATION_UNSUPPORTED 拒绝，不可重试',
     version: 1,
   },
   {

@@ -4,6 +4,7 @@
 
 ## 协作与交付偏好
 
+- 不使用 superpowers 插件及其 skills；开发与交付遵循仓库自身工作流。
 - ClinMesh 与实际必需的 DSH 桥接组件（React Surface、AG-UI）持续适配最新公开正式版和 RC，不跟踪 alpha。升级范围按实际需要确定，不因插件已安装就升级或逐项验收全部插件；其他插件保留原配置和数据。接口或行为变化时主动更新 ClinMesh 和必要组件，不以长期停留旧版本或修改 DSH 来迁就旧实现作为维护方案；仅在确认上游自身缺陷或缺少必要扩展能力时向上游贡献修复。必要组件未及时适配时优先贡献修复，必要时维护 fork。依赖锁用于复现已验证组合，不代表停止跟进上游。持续升级自动创建 PR，由用户决定合并。
 - 已批准的 spec、测试 seam 和拆票结构没有未决分支时，直接实施，不重复展示最终待发布全文，也不逐项请求内容批准。
 - 用户要求“完整整个 issue”时，一口气完成全部 tickets，最终只提一个集成 PR。Tickets 用于执行和追踪，不自动等于一个 ticket 一个 PR。
@@ -27,7 +28,7 @@
 
 - 本地项目目录迁移后，DSH Profile 的 `link:` 插件依赖仍可能指向旧绝对路径。先备份 Profile 的 `package.json`，核对新目录后更新链接并运行 `dsh plugin --profile web install`；插件自身的依赖也必须在各自 workspace 按锁文件恢复，Profile 安装不会替本地链接包安装依赖。启动顺序与环境变量见[部署指南](../deployment.md)。
 
-- pnpm 11 默认的 `verifyDepsBeforeRun=install` 会在脚本前自动安装，可能重解析锁文件并给 file dependency 的 bin 源文件增加可执行权限。验证前先执行 `pnpm install --frozen-lockfile`，验证进程使用 `pnpm_config_verify_deps_before_run=error`，发现不一致时显式处理；安装后检查锁文件和子模块权限。全局 pnpm 与仓库指定版本不一致且启动器卡在联网解析时，可直接调用已缓存的精确版本，并让子进程 PATH 使用同一版本。
+- pnpm 11 默认的 `verifyDepsBeforeRun=install` 会在脚本前自动安装，可能重解析锁文件并给 file dependency 的 bin 源文件增加可执行权限。验证前先执行 `pnpm install --frozen-lockfile`，验证进程使用 `pnpm_config_verify_deps_before_run=error`，发现不一致时显式处理；安装后检查锁文件和子模块权限。全局 pnpm 与仓库指定版本不一致且启动器卡在联网解析时，可直接调用已缓存的精确版本，并让子进程 PATH 使用同一版本。缓存中的 `pnpm.cjs` 可能没有可执行位，仅把其目录或符号链接放进 PATH 不会生效；使用可执行的 shell wrapper 通过 `node` 调用该文件。
 
 - 当前 Web 交付使用 Node.js 真实入口即可证明运行时和数据库生命周期；没有明确容器验收条件时，不安装、不启动也不要求 Docker。
 - 验证必须对应 outgoing diff。纯 Markdown、设计资产或 PR 媒体变更不触发代码单元测试、全量 `pnpm test` 或 `pnpm check`；只运行 owning 文档检查、媒体解码或发布可达性检查。

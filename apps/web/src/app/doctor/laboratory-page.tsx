@@ -489,9 +489,9 @@ function LaboratoryRequestEditor({
                   <TableRow key={request.id}>
                     <TableCell className="break-words whitespace-normal font-medium">{itemName}</TableCell>
                     <TableCell className="break-words whitespace-normal">{indicationLabel(request.indicationCode, messages)}</TableCell>
-                    <TableCell className="break-words whitespace-normal"><Badge variant="outline">{laboratoryRequestStatusLabel(request, messages)}</Badge>{request.generationError === undefined ? null : <p className="mt-1 text-xs text-destructive">{generationErrorMessage(locale)}</p>}</TableCell>
+                    <TableCell className="break-words whitespace-normal"><Badge variant="outline">{laboratoryRequestStatusLabel(request, messages)}</Badge>{request.generationError === undefined ? null : <p className="mt-1 text-xs text-destructive">{generationErrorMessage(request.generationError.code, locale)}</p>}</TableCell>
                     <TableCell className="text-right">
-                      {readOnly ? null : request.status === 'generation-failed' ? (
+                      {readOnly ? null : request.status === 'generation-failed' && request.generationError?.code !== 'INVESTIGATION_UNSUPPORTED' ? (
                         <Button
                           aria-label={`${locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'} ${itemName}`}
                           disabled={actions.retry.pending}
@@ -583,10 +583,28 @@ function LaboratoryRequestEditor({
   )
 }
 
-function generationErrorMessage(locale: WorkspaceLocale): string {
-  return locale === 'zh-CN'
+function generationErrorMessage(code: string, locale: WorkspaceLocale): string {
+  const messages: Record<string, { 'zh-CN': string; 'en-US': string }> = {
+    INVESTIGATION_UNSUPPORTED: {
+      'zh-CN': '该病例缺少此检验的合成结果底账，无法生成结果。',
+      'en-US': 'This case has no synthetic result evidence for this laboratory item.',
+    },
+    INVESTIGATION_OUTPUT_INVALID: {
+      'zh-CN': '生成结果未通过校验，请重试。',
+      'en-US': 'The generated result did not pass validation. Please retry.',
+    },
+    AI_TIMEOUT: {
+      'zh-CN': '结果生成服务响应超时，请重试。',
+      'en-US': 'The result generation service timed out. Please retry.',
+    },
+    AI_REQUEST_FAILED: {
+      'zh-CN': '无法连接结果生成服务，请稍后重试。',
+      'en-US': 'The result generation service request failed. Please retry later.',
+    },
+  }
+  return messages[code]?.[locale] ?? (locale === 'zh-CN'
     ? '结果生成失败，可重试。'
-    : 'Result generation failed. You can retry.'
+    : 'Result generation failed. You can retry.')
 }
 
 function CancelLaboratoryRequestButton({ action, itemName, messages, request }: {

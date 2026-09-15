@@ -32,6 +32,8 @@ clinmesh prescription withdraw --input @withdrawal.json --idempotency-key <key>
 
 Laboratory draft, issue, cancellation, generation retry and report acknowledgement are separate states. Search the current case laboratory catalog before saving a draft; every returned item is an active, doctor-orderable Hospital Laboratory Service. Use its Hospital Service ID and current versioned report definition. A global Reference Concept is terminology, not an orderable service, and cannot be submitted as the catalog item. Only acknowledge a signed current report. Report correction requires an administrator Grant and creates a new immutable report chain. Other Hospital Service order and completion operations use their current ServiceRequest versions.
 
+保存草稿或签发返回 `LABORATORY_GENERATION_UNSUPPORTED` 时，该病例缺少所选检验的结果底账，不要重复提交同一开单。已有申请的 `generationError.code` 为 `INVESTIGATION_UNSUPPORTED` 时无法通过重试恢复；`INVESTIGATION_OUTPUT_INVALID`、`AI_TIMEOUT` 和 `AI_REQUEST_FAILED` 可按当前申请版本重试生成。
+
 ```bash
 clinmesh doctor case laboratory-catalog search --case-id <case-id> --query <term>
 clinmesh catalog clinical get

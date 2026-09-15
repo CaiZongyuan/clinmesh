@@ -2581,6 +2581,349 @@ describe('Synthetic Case generation HTTP contract', () => {
     expect(publicArtifacts).not.toMatch(/privateEpisodeEvidence|index-condition|hiddenResourceReferences/)
   }, 30_000)
 
+  it('rejects ledger-less laboratory service orders and fails generation fast', async () => {
+    const safeBrief: PatientBriefContent = {
+      chiefComplaint: '咽痛两天',
+      knownHistorySummary: '既往体健。',
+      openingStatement: '医生您好，我咽痛两天了。',
+      symptomTopics: [{
+        answerPoints: ['两天前开始。', '吞咽时更痛。'],
+        id: 'sore-throat-onset',
+        name: '咽痛经过',
+      }],
+    }
+    const briefProvider = new ControlledBriefProvider([safeBrief])
+    const runtime = await createRuntime(new RetryingSyntheaProvider(1, false), briefProvider)
+    const cookie = await signIn(runtime)
+    await enqueue(runtime, cookie)
+    const generation = await runtime.scenarioData.processNextGenerationJob()
+    const caseId = generation?.caseIds[0] ?? ''
+    expect(generation).toMatchObject({ status: 'succeeded' })
+    await enqueueBrief(runtime, cookie, caseId)
+    expect(await runtime.patientBrief.processNext()).toMatchObject({ status: 'succeeded' })
+    const caseInstance = syntheticCaseInstanceSchema.parse(await (await runtime.app.request(
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}`,
+      { headers: { cookie } },
+    )).json())
+    const registrationCatalog = registrationCatalogSchema.parse(await (await runtime.app.request(
+      '/api/his/v1/catalogs/registration',
+      { headers: { cookie } },
+    )).json())
+    const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local')
+    const startedResponse = await runtime.app.request(
+      `/api/his/v1/synthetic-cases/${encodeURIComponent(caseId)}/actions/start-outpatient-visit`,
+      {
+        body: JSON.stringify({
+          activeBriefRevision: caseInstance.activeBriefRevision,
+          departmentId: registrationCatalog.departments[0]!.id,
+          expectedCaseRevision: caseInstance.revision,
+          locationId: registrationCatalog.locations[0]!.id,
+          visitDate: registrationCatalog.virtualDate,
+          visitTypeId: registrationCatalog.visitTypes[0]!.id,
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: registrarCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(startedResponse.status).toBe(200)
+    const startedCommand = commandResponseSchema(startSyntheticCaseResultSchema)
+      .parse(await startedResponse.json())
+    const triageCookie = await signIn(runtime, 'triage@demo.clinmesh.local')
+    const triageResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${startedCommand.data.encounterId}/actions/record-triage`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${startedCommand.data.encounterId}`]: '1',
+            [`Task/${startedCommand.data.queueTaskId}`]: '1',
+          },
+          input: {
+            acuityCode: 'level-3',
+            bloodPressure: { diastolicMmHg: 82, systolicMmHg: 128 },
+            chiefComplaint: safeBrief.chiefComplaint,
+            oxygenSaturationPct: 98,
+            pulseBpm: 84,
+            respirationBpm: 18,
+            temperatureC: 36.6,
+          },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: triageCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(triageResponse.status).toBe(200)
+    const triage = triageResponseSchema.parse(await triageResponse.json()).data
+    const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
+    const startVisit = await runtime.app.request(
+      `/api/his/v1/encounters/${startedCommand.data.encounterId}/actions/start-first-visit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${startedCommand.data.encounterId}`]: '2',
+            [`Task/${triage.doctorTaskId}`]: '1',
+          },
+          input: {},
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: doctorCookie,
+          'idempotency-key': randomUUID(),
+          origin: 'http://localhost',
+        },
+        method: 'POST',
+      },
+    )
+    expect(startVisit.status).toBe(200)
+    const commandHeaders = () => ({
+      'content-type': 'application/json',
+      cookie: doctorCookie,
+      'idempotency-key': randomUUID(),
+      origin: 'http://localhost',
+    })
+    const saveLaboratoryDraft = async (catalogItemId: string, expectedDraftVersion: number) => {
+      const response = await runtime.app.request(
+        `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/draft`,
+        {
+          body: JSON.stringify({
+            expectedVersions: { [`Encounter/${startedCommand.data.encounterId}`]: '3' },
+            input: {
+              catalogItemId,
+              expectedDraftVersion,
+              indicationCode: 'clinical-evaluation',
+            },
+          }),
+          headers: commandHeaders(),
+          method: 'PUT',
+        },
+      )
+      expect(response.status).toBe(200)
+      return laboratoryRequestDraftResponseSchema.parse(await response.json()).data
+    }
+    const issueLaboratory = async (expectedDraftVersion: number) => {
+      const response = await runtime.app.request(
+        `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/actions/issue`,
+        {
+          body: JSON.stringify({
+            expectedVersions: { [`Encounter/${startedCommand.data.encounterId}`]: '3' },
+            input: { expectedDraftVersion },
+          }),
+          headers: commandHeaders(),
+          method: 'POST',
+        },
+      )
+      expect(response.status).toBe(200)
+      return issueLaboratoryRequestResponseSchema.parse(await response.json()).data
+    }
+    const publishedService = laboratoryServiceSnapshotSchema.parse({
+      allowedIndicationCodes: ['clinical-evaluation'],
+      componentServiceIds: [],
+      doctorOrderable: true,
+      executingDepartmentId: 'department-laboratory',
+      id: 'hospital-laboratory-service-ledger-test-wbc',
+      localCode: 'CM-LAB-LEDGER-TEST-WBC',
+      nameZh: '合成无底账白细胞检验',
+      priceFen: 0,
+      publicationPolicyVersion: 'clinmesh-laboratory-defaults-v1',
+      referenceConcept: {
+        code: 'CN-LAB-WBC',
+        display: '合成无底账白细胞检验',
+        id: 'laboratory-panel-cn:2026-09-01:CN-LAB-WBC',
+        sourceLocator: 'synthetic:laboratory-cn:panel:CN-LAB-WBC',
+        system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn',
+        version: '2026-09-01',
+      },
+      referenceReleaseId: 'clinmesh-cn-health-2026-09-02.r1',
+      specimen: { code: 'blood', display: '静脉血' },
+      serviceKind: 'laboratory' as const,
+      tatMinutes: 30,
+      version: 1,
+      reportDefinition: {
+        conclusionTemplate: '本报告为 ClinMesh 合成检验结果，仅用于仿真。',
+        results: [{
+          adultReferenceRules: [{
+            high: 9.5,
+            low: 3.5,
+            notes: '成人静脉血',
+            referenceKind: 'range',
+            sex: 'all',
+            simulationHigh: 9.5,
+            simulationLow: 3.5,
+            sourceLocation: '表 1',
+            sourceStandard: 'WS/T 405-2012',
+            sourceType: 'national-standard',
+            sourceVersion: '2012',
+          }],
+          alternateCodings: [{ code: '6690-2', system: 'http://loinc.org', version: '2.83' }],
+          healthyStrategy: 'uniform',
+          precision: 1,
+          referenceConcept: {
+            code: '0100101A',
+            display: '白细胞计数',
+            id: 'wst-886:2026:0100101A',
+            sourceLocator: 'synthetic:laboratory-cn:test:0100101A',
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026',
+            version: '2026',
+          },
+          referenceRange: { text: '按成人适用规则' },
+          unit: {
+            code: '10*9/L',
+            display: '×10^9/L',
+            system: 'http://unitsofmeasure.org',
+          },
+          valueType: 'quantity',
+        }],
+      },
+    })
+    runtime.database.driver.prepare(`
+      INSERT INTO hospital_service_catalog (
+        workspace_id, epoch, service_id, code, name_zh, name_en,
+        version, active, config_json
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?)
+    `).run(
+      'workspace-demo',
+      'epoch-1',
+      publishedService.id,
+      publishedService.localCode,
+      publishedService.nameZh,
+      publishedService.nameZh,
+      JSON.stringify({ laboratoryService: publishedService }),
+    )
+    const publishedDraft = await saveLaboratoryDraft(publishedService.id, 0)
+    const publishedRequest = (await issueLaboratory(publishedDraft.draftVersion)).request
+
+    runtime.database.driver.prepare(`
+      UPDATE outpatient_catalog SET config_json = ?
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND kind = 'laboratory' AND item_id = 'lab-cbc'
+    `).run(JSON.stringify({
+      allowedIndicationCodes: ['clinical-evaluation'],
+      contraindicatedAllergyCodes: [],
+      referenceConcept: {
+        code: '8480-6',
+        display: '收缩压',
+        id: 'laboratory:synthetic-systolic-pressure',
+        laboratory: {
+          category: 'vital-sign',
+          referenceRange: { high: 140, low: 90, text: '90-140 mmHg' },
+          resultType: 'quantity',
+          specimen: 'body',
+          unit: {
+            code: 'mm[Hg]',
+            display: 'mmHg',
+            system: 'http://unitsofmeasure.org',
+          },
+        },
+        sourceLocator: 'synthetic:test:systolic-pressure',
+        system: 'http://loinc.org',
+        version: '2.83',
+      },
+    }))
+    const legacyDraft = await saveLaboratoryDraft('lab-cbc', 2)
+    const legacyRequest = (await issueLaboratory(legacyDraft.draftVersion)).request
+
+    const secondService = { ...publishedService, id: `${publishedService.id}-second`, localCode: 'CM-LAB-LEDGER-SECOND' }
+    runtime.database.driver.prepare(`
+      INSERT INTO hospital_service_catalog (
+        workspace_id, epoch, service_id, code, name_zh, name_en, version, active, config_json
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?)
+    `).run('workspace-demo', 'epoch-1', secondService.id, secondService.localCode,
+      secondService.nameZh, secondService.nameZh, JSON.stringify({ laboratoryService: secondService }))
+    await saveLaboratoryDraft(secondService.id, 4)
+
+    // 模拟底账入库功能上线之前建立的病例：接诊与在途开单在，物化底账不在。
+    runtime.database.driver.prepare(`
+      DELETE FROM synthetic_case_materialization
+      WHERE workspace_id = ? AND epoch = ? AND outpatient_case_id = ?
+    `).run('workspace-demo', 'epoch-1', startedCommand.data.outpatientCaseId)
+
+    const rejectedDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${startedCommand.data.encounterId}`]: '3' },
+          input: {
+            catalogItemId: publishedService.id,
+            expectedDraftVersion: 5,
+            indicationCode: 'clinical-evaluation',
+          },
+        }),
+        headers: commandHeaders(),
+        method: 'PUT',
+      },
+    )
+    expect(rejectedDraftResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await rejectedDraftResponse.json())).toMatchObject({
+      error: { code: 'LABORATORY_GENERATION_UNSUPPORTED' },
+    })
+
+    const rejectedIssueResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${startedCommand.data.encounterId}/laboratory-request/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${startedCommand.data.encounterId}`]: '3' },
+          input: { expectedDraftVersion: 5 },
+        }),
+        headers: commandHeaders(),
+        method: 'POST',
+      },
+    )
+    expect(rejectedIssueResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await rejectedIssueResponse.json())).toMatchObject({
+      error: { code: 'LABORATORY_GENERATION_UNSUPPORTED' },
+    })
+    await expect(runtime.investigation.resolveForRequest(
+      'workspace-demo', 'epoch-1', 'missing-request',
+    )).resolves.toBeUndefined()
+
+    await expect(runtime.investigation.resolveForRequest(
+      'workspace-demo',
+      'epoch-1',
+      publishedRequest.id,
+    )).rejects.toMatchObject({ code: 'INVESTIGATION_UNSUPPORTED' })
+    await expect(runtime.investigation.resolveForRequest(
+      'workspace-demo',
+      'epoch-1',
+      legacyRequest.id,
+    )).resolves.toBeUndefined()
+
+    const events = []
+    for (let index = 0; index < 20; index += 1) {
+      const event = await runtime.dispatcher.dispatchOnce()
+      if (event === undefined) break
+      events.push(event)
+    }
+    expect(events).toEqual(expect.arrayContaining([expect.objectContaining({
+      attempt: 1,
+      kind: 'laboratory.report-request',
+      payload: expect.objectContaining({ requestId: publishedRequest.id }),
+      status: 'completed',
+    })]))
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(detailResponse.status).toBe(200)
+    const detail = doctorCaseDetailSchema.parse(await detailResponse.json())
+    expect(detail.laboratoryRequests?.requests).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: publishedRequest.id,
+        generationError: { code: 'INVESTIGATION_UNSUPPORTED', message: expect.any(String) },
+        status: 'generation-failed',
+      }),
+      expect.objectContaining({ id: legacyRequest.id, status: 'reported' }),
+    ]))
+  }, 30_000)
+
   it('requeues an interrupted Patient Brief job after restart', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-patient-brief-recovery-'))
     temporaryDirectories.push(directory)

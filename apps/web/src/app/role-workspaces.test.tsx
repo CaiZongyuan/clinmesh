@@ -1120,7 +1120,10 @@ describe('role workspaces', () => {
     expect(screen.getByRole('main').textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
   })
 
-  it('publishes selected Laboratory Service candidates from the administrator workspace', async () => {
+  it.each([
+    ['AI_REQUEST_FAILED', '目录补全服务请求失败，请稍后重试。'],
+    ['AI_TIMEOUT', '目录补全服务响应超时，请重试。'],
+  ])('retries failed Laboratory Service publication with %s feedback', async (errorCode, errorMessage) => {
     let published = false
     let publishBody: unknown
     const candidateQueries: string[] = []
@@ -1170,7 +1173,7 @@ describe('role workspaces', () => {
               sourceVersion: '2026-09-01',
               specimen: '全血',
             },
-            error: null,
+            error: published ? null : { code: errorCode, message: 'private provider detail' },
             memberCount: 2,
             publishedServiceId: published ? 'hospital-laboratory-service-cbc' : null,
             referenceSources: [{
@@ -1194,7 +1197,7 @@ describe('role workspaces', () => {
               mode: 'future-standard-preview',
               standard: 'WS/T 886-2026',
             },
-            status: published ? 'published' : 'unconfigured',
+            status: published ? 'published' : 'failed',
             version: published ? 1 : 0,
           }],
           page: 1,
@@ -1242,6 +1245,8 @@ describe('role workspaces', () => {
 
     expect(await screen.findByRole('heading', { name: '检验服务配置' })).toBeTruthy()
     expect(await screen.findByText('laboratory-cn@2026-09-01.r1')).toBeTruthy()
+    expect(screen.getByText(errorMessage)).toBeTruthy()
+    expect(screen.queryByText('private provider detail')).toBeNull()
     expect(screen.getByText('2 项')).toBeTruthy()
     expect(screen.getByText('全血')).toBeTruthy()
     expect(screen.getByText('成人：女性、男性')).toBeTruthy()
@@ -3675,12 +3680,13 @@ describe('role workspaces', () => {
     expect(screen.getAllByText('医生已阅')).toHaveLength(2)
     expect(screen.getByText('等待检验结果')).toBeTruthy()
     expect(screen.getAllByText('结果生成失败')).toHaveLength(2)
-    expect(screen.getAllByText('结果生成失败，可重试。')).toHaveLength(2)
-    expect(screen.getByRole('button', { name: /重试结果生成 血常规/ })).toBeTruthy()
+    expect(screen.getByText('该病例缺少此检验的合成结果底账，无法生成结果。')).toBeTruthy()
+    expect(screen.getByText('生成结果未通过校验，请重试。')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /重试结果生成 血常规/ })).toBeNull()
     expect(screen.getByRole('button', { name: /重试结果生成 C 反应蛋白/ })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /重试结果生成 C 反应蛋白/ }))
-    await waitFor(() => expect(screen.getAllByText('结果生成失败，可重试。')).toHaveLength(1))
-    expect(screen.getByRole('button', { name: /重试结果生成 血常规/ })).toBeTruthy()
+    await waitFor(() => expect(screen.queryByText('生成结果未通过校验，请重试。')).toBeNull())
+    expect(screen.queryByRole('button', { name: /重试结果生成 血常规/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /重试结果生成 C 反应蛋白/ })).toBeNull()
     expect(screen.getByText('白细胞计数升高，其余血常规指标在参考范围内。')).toBeTruthy()
     expect(screen.getByRole('cell', { name: /11\.2 10\^9\/L/ })).toBeTruthy()
@@ -3912,10 +3918,11 @@ describe('role workspaces', () => {
     expect(await screen.findByText('门诊医生 · 门诊医生')).toBeTruthy()
     expect(await screen.findByRole('button', { name: '选择病例 合成患者周明' })).toBeTruthy()
     const caseDetail = await screen.findByRole('region', { name: '病例详情' })
-    expect(within(caseDetail).getByText('102 次/分')).toBeTruthy()
-    expect(within(caseDetail).getByText('20 次/分')).toBeTruthy()
-    expect(within(caseDetail).getByText('118/76 mmHg')).toBeTruthy()
-    expect(within(caseDetail).getByText('98%')).toBeTruthy()
+    expect(within(caseDetail).getByText('脉搏（次/分）')).toBeTruthy()
+    expect(within(caseDetail).getByText('102')).toBeTruthy()
+    expect(within(caseDetail).getByText('20')).toBeTruthy()
+    expect(within(caseDetail).getByText('118/76')).toBeTruthy()
+    expect(within(caseDetail).getByText('98')).toBeTruthy()
     await user.click(await screen.findByRole('tab', { name: '检验' }))
     expect(screen.queryByRole('combobox', { name: '检验项目' })).toBeNull()
     await user.click(screen.getByRole('button', { name: '开始首诊' }))
@@ -4773,7 +4780,7 @@ describe('role workspaces', () => {
     expect(screen.getByRole('button', { name: '收起右侧边栏' }).getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByRole('heading', { name: '过敏提示' })).toBeTruthy()
     expect(within(contextRail).getByRole('heading', { name: '生命体征' })).toBeTruthy()
-    expect(within(contextRail).getByText('T 38.2 °C · P 102 · R 20 · BP 118/76 · SpO₂ 98%')).toBeTruthy()
+    expect(within(contextRail).getByText('体温（°C）38.2 · 脉搏（次/分）102 · 呼吸（次/分）20 · 血压（mmHg）118/76 · 血氧饱和度（%）98')).toBeTruthy()
     expect(within(contextRail).getByRole('heading', { name: '完诊清单' })).toBeTruthy()
     expect(within(contextRail).getByText('已满足 2 / 7')).toBeTruthy()
     await user.click(screen.getByRole('tab', { name: '问诊记录' }))
@@ -5366,9 +5373,12 @@ describe('role workspaces', () => {
     await user.type(within(medicationDialog).getByLabelText('搜索药品目录'), '奥司')
     await user.click(within(medicationDialog).getByRole('button', { name: '执行药品目录搜索' }))
     await waitFor(() => expect(medicationQueries).toContain('奥司'))
-    expect(await within(medicationDialog).findByText('2 个包装')).toBeTruthy()
+    expect(within(medicationDialog).queryByText('2 个包装')).toBeNull()
+    expect(within(medicationDialog).getAllByRole('row')).toHaveLength(3)
     expect(within(medicationDialog).getAllByText('合成制药有限公司')).toHaveLength(1)
     expect(within(medicationDialog).getByText('另一合成制药有限公司')).toBeTruthy()
+    await user.click(within(medicationDialog).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }))
+    await user.click(screen.getByRole('option', { name: '12粒/盒' }))
     await user.click(within(medicationDialog).getByRole('button', {
       name: '选择 磷酸奥司他韦胶囊 75 mg 12粒/盒 合成制药有限公司 国药准字H20260001',
     }))
@@ -5398,6 +5408,8 @@ describe('role workspaces', () => {
     expect(draftDeletionRequests).toBe(1)
     await user.click(screen.getByRole('button', { name: '添加药品' }))
     const reopenedMedicationDialog = await screen.findByRole('dialog', { name: '选择药品' })
+    await user.click(within(reopenedMedicationDialog).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }))
+    await user.click(screen.getByRole('option', { name: '12粒/盒' }))
     await user.click(await within(reopenedMedicationDialog).findByRole('button', {
       name: '选择 磷酸奥司他韦胶囊 75 mg 12粒/盒 合成制药有限公司 国药准字H20260001',
     }))

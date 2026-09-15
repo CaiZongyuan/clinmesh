@@ -50,6 +50,13 @@ describe('workspace conflict messages', () => {
     )).toBe('服务返回了无法识别的数据，请稍后重试。')
   })
 
+  it('explains why a laboratory order cannot generate results', () => {
+    expect(getWorkspaceErrorMessage(
+      new ApiClientError(409, 'LABORATORY_GENERATION_UNSUPPORTED', 'private detail'),
+      getWorkspaceMessages('zh-CN'),
+    )).toBe('该病例缺少此检验的合成结果底账，无法开具检验。')
+  })
+
   it('does not expose an unclassified runtime error message', () => {
     expect(getWorkspaceErrorMessage(
       new Error('private implementation detail'),

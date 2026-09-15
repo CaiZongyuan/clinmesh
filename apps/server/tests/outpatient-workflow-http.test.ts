@@ -4116,7 +4116,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(response.status).toBe(409)
     expect(apiErrorSchema.parse(await response.json())).toMatchObject({
       error: {
-        code: 'CATALOG_CONFLICT',
+        code: 'LABORATORY_GENERATION_UNSUPPORTED',
         message: 'The investigation cannot generate a result for this case and catalog item',
       },
     })
@@ -5033,6 +5033,22 @@ describe('outpatient workflow HTTP contract', () => {
       WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
         AND fact_code = 'laboratory-results'
     `).run()
+
+    const issueResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          input: { expectedDraftVersion: 1 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(issueResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await issueResponse.json())).toMatchObject({
+      error: { code: 'LABORATORY_GENERATION_UNSUPPORTED' },
+    })
 
     const detailResponse = await runtime.app.request(
       `/api/his/v1/doctor/cases/${started.caseId}`,

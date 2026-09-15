@@ -279,9 +279,9 @@ export function DoctorCaseContextRail({
               {labels.vitalSigns}
             </h3>
             <p className="mt-2 text-sm font-medium tabular-nums">
-              T {vitalSigns.temperatureC} °C · P {vitalSigns.pulseBpm} · R {vitalSigns.respirationBpm}
-              {' · '}BP {vitalSigns.bloodPressure.systolicMmHg}/{vitalSigns.bloodPressure.diastolicMmHg}
-              {' · '}SpO₂ {vitalSigns.oxygenSaturationPct}%
+              {messages.temperatureC}{vitalSigns.temperatureC} · {messages.pulseBpm}{vitalSigns.pulseBpm} · {messages.respirationBpm}{vitalSigns.respirationBpm}
+              {' · '}{messages.bloodPressure}{vitalSigns.bloodPressure.systolicMmHg}/{vitalSigns.bloodPressure.diastolicMmHg}
+              {' · '}{messages.oxygenSaturationPct}{vitalSigns.oxygenSaturationPct}
             </p>
           </section>
           {completion === undefined ? null : (
