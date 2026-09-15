@@ -79,6 +79,10 @@ it('returns from manual fullscreen to the retained native split without remounti
         floatsReleased: z.boolean(),
         overlayRestored: z.boolean(),
         unmountedRestored: z.boolean(),
+        firstFileWidth: z.number(),
+        retainedFileWidth: z.number(),
+        preexistingFileWidth: z.number(),
+        fullscreenFileWidth: z.number(),
       })
       .parse(response)
     expect(actual.initial).toMatchObject({
@@ -113,6 +117,10 @@ it('returns from manual fullscreen to the retained native split without remounti
     expect(actual.floatsReleased).toBe(true)
     expect(actual.overlayRestored).toBe(true)
     expect(actual.unmountedRestored).toBe(true)
+    expect(actual.firstFileWidth).toBe(360)
+    expect(actual.retainedFileWidth).toBe(410)
+    expect(actual.preexistingFileWidth).toBe(922)
+    expect(actual.fullscreenFileWidth).toBe(922)
   } finally {
     await browser.close()
   }

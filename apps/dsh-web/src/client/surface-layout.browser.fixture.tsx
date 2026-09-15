@@ -7,10 +7,26 @@ import { apply as applyClinMesh } from './index.tsx'
 import { createWorkspaceNavigation, WorkspaceNavigation } from './workspace-navigation.tsx'
 
 async function run() {
+  let nativeLayout = { rightbar: null as number | null, rightbarShown: false, rightbarFullscreen: false, viewportWidth: 2048 }
+  let nativeSnapshot = { layoutInfo: nativeLayout }
+  const nativeListeners = new Set<() => void>()
+  const nativeStore = { create() { throw new Error('The slot renderer owns store creation') } }
+  const updateNative = (patch: Partial<typeof nativeLayout>) => {
+    nativeLayout = { ...nativeLayout, ...patch }
+    nativeSnapshot = { layoutInfo: nativeLayout }
+    for (const listener of nativeListeners) listener()
+  }
+  const nativeProps = {
+    useStore: <T,>(selector: (state: unknown) => T) => selector(React.useSyncExternalStore(
+      (listener) => { nativeListeners.add(listener); return () => { nativeListeners.delete(listener) } },
+      () => nativeSnapshot,
+    )),
+    actions: { setRightbar: (width: number) => updateNative({ rightbar: width }) },
+  }
   const reset = document.createElement('style')
   reset.textContent = '* { box-sizing: border-box; }'
   document.head.append(reset)
-  const provided: { registry?: ReactSurfaceRegistry; host?: React.ComponentType } = {}
+  const provided: { registry?: ReactSurfaceRegistry; host?: React.ComponentType<typeof nativeProps> } = {}
   const brandSlots = new Set<string>()
   const ctx = {
     get reactSurfaces() {
@@ -31,9 +47,13 @@ async function run() {
       },
     },
     slots: {
+      entries: () => [{ store: nativeStore }],
       inject: (_name: string, callback: () => () => void) => callback(),
-      register: (entry: { name: string }, component: React.ComponentType) => {
-        if (entry.name === 'shell.overlay') provided.host = component
+      register: (entry: { name: string; store?: unknown }, component: React.ComponentType<typeof nativeProps>) => {
+        if (entry.name === 'shell.overlay') {
+          if (entry.store !== nativeStore) throw new Error('Surface must share the native root store')
+          provided.host = component
+        }
         if (entry.name.startsWith('sidebar.brand.')) brandSlots.add(entry.name)
         return () => {
           brandSlots.delete(entry.name)
@@ -55,7 +75,7 @@ async function run() {
   const overlay = frame.querySelector('[data-shell-overlay]')!
   ;(overlay as HTMLElement).style.zIndex = '20'
   const hostRoot = createRoot(overlay)
-  flushSync(() => hostRoot.render(<SurfaceHost />))
+  flushSync(() => hostRoot.render(<SurfaceHost {...nativeProps} />))
   const settle = () =>
     new Promise<void>((resolve) =>
       requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 50))),
@@ -178,6 +198,43 @@ async function run() {
   const overlayRestored = (overlay as HTMLElement).style.zIndex === '20'
   flushSync(() => registry.open('clinmesh.his'))
   await settle()
+  registry.setConversationCollapsed('clinmesh.his', false)
+  await settle()
+  updateNative({ rightbar: Math.round(2048 * 0.45), rightbarShown: true })
+  await settle()
+  const firstFileWidth = nativeLayout.rightbar
+  updateNative({ rightbar: 410 })
+  updateNative({ rightbarShown: false })
+  await settle()
+  updateNative({ rightbarShown: true })
+  await settle()
+  const retainedFileWidth = nativeLayout.rightbar
+  registry.close()
+  updateNative({ rightbar: null, rightbarShown: false })
+  await settle()
+  updateNative({ rightbar: 922, rightbarShown: true })
+  await settle()
+  registry.open('clinmesh.his')
+  await settle()
+  const preexistingFileWidth = nativeLayout.rightbar
+  updateNative({ rightbar: null, rightbarShown: false })
+  await settle()
+  updateNative({ rightbar: 922, rightbarShown: true, rightbarFullscreen: true })
+  await settle()
+  const fullscreenFileWidth = nativeLayout.rightbar
+  updateNative({ rightbar: null, rightbarShown: false, rightbarFullscreen: false })
+  registry.setConversationCollapsed('clinmesh.his', true)
+  await settle()
+  updateNative({ rightbar: 922, rightbarShown: true })
+  await settle()
+  if (nativeLayout.rightbar !== 922) throw new Error('Collapsed conversation changed native width')
+  updateNative({ rightbar: null, rightbarShown: false })
+  registry.setConversationCollapsed('clinmesh.his', false)
+  registry.setLayout('clinmesh.his', 'full-frame')
+  await settle()
+  updateNative({ rightbar: 922, rightbarShown: true })
+  await settle()
+  if (nativeLayout.rightbar !== 922) throw new Error('Fullscreen application changed native width')
   flushSync(() => hostRoot.unmount())
   await settle()
   const unmountedRestored = !conversation.inert && !details.inert && !floatingFile.inert && !lateFloat.inert && (overlay as HTMLElement).style.zIndex === '20'
@@ -207,6 +264,10 @@ async function run() {
       floatsReleased,
       overlayRestored,
       unmountedRestored,
+      firstFileWidth,
+      retainedFileWidth,
+      preexistingFileWidth,
+      fullscreenFileWidth,
     }),
   )
 }
