@@ -33,6 +33,7 @@ describe('ClinMesh React Surface definition', () => {
     const { component } = createDefinition(ctx as unknown as ClientContext)
     const props = {
       active: true,
+      conversationCollapsed: false,
       agent: { register: () => () => {} },
       capabilities: { agent: { available: false, status: 'unavailable' as const } },
       close() {}, layout: 'workspace' as const, location: '/components', navigate() {},

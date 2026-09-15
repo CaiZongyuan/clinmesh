@@ -199,6 +199,34 @@ describe('Web application shell', () => {
     expect(toggle).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps conversation recovery in the header independently of fullscreen', async () => {
+    const toggle = vi.fn()
+    const toggleConversation = vi.fn()
+    const user = userEvent.setup()
+    const history = createMemoryHistory({ initialEntries: ['/'] })
+    const rendered = await renderWebApp({ history, runtime: {
+      mode: 'surface', surfaceDisplay: { fullscreen: false, toggle, conversation: { collapsed: false, toggle: toggleConversation } },
+    } })
+    const collapse = screen.getByRole('button', { name: '收起会话' })
+    expect(collapse.closest('header')).not.toBeNull()
+    expect(collapse.getAttribute('aria-expanded')).toBe('true')
+    collapse.focus()
+    await user.keyboard('{Enter}')
+    expect(toggleConversation).toHaveBeenCalledTimes(1)
+    expect(toggle).not.toHaveBeenCalled()
+    rendered.rerender(<WebApp history={history} runtime={{ mode: 'surface', surfaceDisplay: {
+      fullscreen: false, toggle, conversation: { collapsed: true, toggle: toggleConversation },
+    } }} />)
+    expect(screen.getByRole('button', { name: '展开会话' }).getAttribute('aria-expanded')).toBe('false')
+    await user.click(screen.getByRole('button', { name: '展开会话' }))
+    expect(toggleConversation).toHaveBeenCalledTimes(2)
+    rendered.rerender(<WebApp history={history} runtime={{ mode: 'surface', surfaceDisplay: {
+      fullscreen: true, toggle, conversation: { collapsed: true, toggle: toggleConversation },
+    } }} />)
+    expect(screen.queryByRole('button', { name: '展开会话' })).toBeNull()
+    expect(screen.getByRole('button', { name: '返回 DSH 分屏' })).toBeTruthy()
+  })
+
   it('publishes authorized host navigation and retracts it on unmount', async () => {
     const release = vi.fn()
     const register = vi.fn((_state: WebSurfaceNavigationState) => release)

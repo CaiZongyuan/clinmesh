@@ -60,6 +60,7 @@ interface WebRuntimeValue {
 const WebRuntimeContext = createContext<WebRuntimeValue | null>(null)
 
 export interface WebSurfaceDisplay {
+  conversation?: { collapsed: boolean; toggle(): void }
   fullscreen: boolean
   toggle(): void
 }

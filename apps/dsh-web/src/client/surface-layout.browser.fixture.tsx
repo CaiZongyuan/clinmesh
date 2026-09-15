@@ -90,7 +90,42 @@ async function run() {
     await settle()
     resized.push(snapshot())
   }
+  const conversation = frame.querySelector<HTMLElement>('main')!
+  conversation.innerHTML = '<input aria-label="Native draft" value="kept native draft"><div style="height:1500px">Messages</div>'
+  conversation.style.overflow = 'auto'
+  conversation.scrollTop = 120
+  const details = frame.querySelector<HTMLElement>('[data-rightbar-col]')!
+  details.innerHTML = '<div style="visibility:visible"><input aria-label="Selected file" value="synthetic.txt"></div>'
+  const collapse = shadow.querySelector<HTMLButtonElement>('[aria-label="收起会话"]')
+  if (!collapse) throw new Error('Missing collapse conversation control')
+  collapse.click()
+  await settle()
+  const collapsed = {
+    hidden: conversation.inert && details.inert && getComputedStyle(conversation).visibility === 'hidden' && getComputedStyle(details).visibility === 'hidden',
+    sidebarActive: !frame.querySelector<HTMLElement>('aside')!.inert,
+    right: frame.querySelector<HTMLElement>('[data-dsh-react-surface-layer]')!.style.right,
+    expandable: shadow.querySelector('[aria-label="展开会话"]') !== null,
+    fileHidden: !details.querySelector('input')!.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }),
+  }
+  shadow.querySelector<HTMLButtonElement>('[aria-label="全屏 ClinMesh"]')!.click()
+  await settle()
+  shadow.querySelector<HTMLButtonElement>('[aria-label="返回 DSH 分屏"]')!.click()
+  await settle()
+  const retainedCollapse = conversation.inert && details.inert
+  shadow.querySelector<HTMLButtonElement>('[aria-label="展开会话"]')!.click()
+  await settle()
+  const expanded = {
+    ...snapshot(),
+    nativeDraft: conversation.querySelector('input')!.value,
+    selectedFile: details.querySelector('input')!.value,
+    scrollTop: conversation.scrollTop,
+    nativeVisible: !conversation.inert && !details.inert && getComputedStyle(conversation).visibility === 'visible' && getComputedStyle(details).visibility === 'visible',
+  }
+  shadow.querySelector<HTMLButtonElement>('[aria-label="收起会话"]')!.click()
+  await settle()
   flushSync(() => registry.close())
+  await settle()
+  const closedRestored = !conversation.inert && !details.inert && getComputedStyle(conversation).visibility === 'visible' && getComputedStyle(details).visibility === 'visible'
   const brandsAfterClose = [...brandSlots]
   document.title = btoa(
     JSON.stringify({
@@ -101,6 +136,10 @@ async function run() {
       returnVisible,
       brandsBeforeOpen,
       brandsAfterClose,
+      collapsed,
+      retainedCollapse,
+      expanded,
+      closedRestored,
     }),
   )
 }

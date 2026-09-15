@@ -3,7 +3,7 @@ import { Button } from '@clinmesh/ui/components/button'
 import { CircleAlertIcon, RefreshCwIcon } from 'lucide-react'
 import { Component, type ReactNode } from 'react'
 import { readWebPreferences } from './preferences.ts'
-import { SurfaceFullscreenExitAction } from './surface-display-control.tsx'
+import { SurfaceDisplayFallbackAction } from './surface-display-control.tsx'
 import type { WebSurfaceDisplay } from './web-runtime.tsx'
 import { getWorkspaceMessages } from './workspace-i18n.ts'
 
@@ -36,7 +36,7 @@ export class RuntimeErrorBoundary extends Component<
           <CircleAlertIcon aria-hidden="true" />
           <AlertTitle>{messages.runtimeErrorTitle}</AlertTitle>
           <AlertDescription>{messages.runtimeErrorDescription}</AlertDescription>
-          <SurfaceFullscreenExitAction locale={locale} surfaceDisplay={this.props.surfaceDisplay} />
+          <SurfaceDisplayFallbackAction locale={locale} surfaceDisplay={this.props.surfaceDisplay} />
           <Button className="mt-4" onClick={() => this.setState({ failed: false })} variant="outline">
             <RefreshCwIcon data-icon="inline-start" />
             {messages.retry}

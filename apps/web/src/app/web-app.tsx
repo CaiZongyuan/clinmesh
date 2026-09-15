@@ -59,7 +59,7 @@ import { getWorkspaceMessages } from './workspace-i18n.ts'
 import { RoleWorkspace } from './role-workspaces.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { ComponentCatalog } from './component-catalog.tsx'
-import { SurfaceFullscreenExit } from './surface-display-control.tsx'
+import { SurfaceDisplayFallback } from './surface-display-control.tsx'
 import { SettingsWorkspace } from './settings-workspace.tsx'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import {
@@ -153,7 +153,7 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
       <main aria-label={messages.loading} className="mx-auto flex min-h-svh w-full max-w-lg flex-col justify-center gap-3 p-6">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-24 w-full" />
-        <SurfaceFullscreenExit locale={preferences.locale} />
+        <SurfaceDisplayFallback locale={preferences.locale} />
       </main>
     )
   }
@@ -170,7 +170,7 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
           <AlertTitle>{getWorkspaceErrorTitle(session.error, messages, messages.serviceError)}</AlertTitle>
           <AlertDescription>{getWorkspaceErrorMessage(session.error, messages)}</AlertDescription>
         </Alert>
-        <SurfaceFullscreenExit locale={preferences.locale} />
+        <SurfaceDisplayFallback locale={preferences.locale} />
       </main>
     )
   }
@@ -312,7 +312,7 @@ function SignInScreen({ locale }: { locale: 'en-US' | 'zh-CN' }): React.JSX.Elem
           </form>
         </CardContent>
         <CardFooter>
-          <SurfaceFullscreenExit locale={locale} />
+          <SurfaceDisplayFallback locale={locale} />
           <Button className="ml-auto" disabled={mutation.isPending} form="clinmesh-sign-in" type="submit">
             <LogInIcon data-icon="inline-start" />
             {mutation.isPending ? messages.signingIn : messages.signIn}

@@ -16,6 +16,7 @@ declare module 'dsh-react-surface/client' {
 
   export interface ReactSurfaceProps {
     active: boolean
+    conversationCollapsed: boolean
     agent: ReactSurfaceAgentController
     capabilities: {
       agent: {
@@ -46,9 +47,11 @@ declare module 'dsh-react-surface/client' {
         readonly location: string
         readonly layout: ReactSurfaceProps['layout']
         readonly mounted: boolean
+        readonly conversationCollapsed: boolean
       }[]
     }
     setLayout(id: string, layout: ReactSurfaceProps['layout']): void
+    setConversationCollapsed(id: string, collapsed: boolean): void
     register(definition: ReactSurfaceDefinition): () => void
     open(id: string, location?: string): void
     close(): void
