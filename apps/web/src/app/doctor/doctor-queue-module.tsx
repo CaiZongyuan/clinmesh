@@ -148,7 +148,7 @@ export function DoctorQueueModule({
   const [selectedView, setSelectedView] = useState<'queue' | 'candidates'>()
   const view = selectedView ?? (!queuePending && queueData?.total === 0 ? 'candidates' : 'queue')
   return (
-    <aside aria-label={messages.consultationQueue} className="min-w-0 border-b bg-background xl:border-r xl:border-b-0">
+    <aside aria-label={messages.consultationQueue} className="h-full min-h-0 min-w-0 border-b bg-background xl:border-r xl:border-b-0">
       <Tabs
         className="h-full min-w-0 gap-0"
         onValueChange={(value) => {
@@ -213,8 +213,8 @@ export function DoctorQueueModule({
           </section>
         </TabsContent>
 
-        <TabsContent className="p-3" value="candidates">
-          <section aria-labelledby="virtual-patient-heading" className="flex min-w-0 flex-col gap-3">
+        <TabsContent className="flex min-h-0 flex-col p-3" value="candidates">
+          <section aria-labelledby="virtual-patient-heading" className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
             <h3 className="sr-only" id="virtual-patient-heading">{messages.virtualPatientCandidates}</h3>
             {virtualPatientPending ? <Skeleton className="h-44 w-full" /> : virtualPatientError !== null ? (
               <ErrorAlert error={virtualPatientError} fallbackTitle={messages.virtualPatientsUnavailable} messages={messages} />
@@ -228,7 +228,7 @@ export function DoctorQueueModule({
               </Empty>
             ) : (
               <>
-                <ul className="flex max-h-[calc(100svh-29rem)] flex-col gap-2 overflow-y-auto pr-1">
+                <ul className="flex min-h-[max(10rem,calc(100svh-19rem))] flex-1 flex-col gap-2 overflow-y-auto pr-1 [contain:size]">
                   {virtualPatientData.items.map(item => (
                     <VirtualPatientRow
                       item={item}
