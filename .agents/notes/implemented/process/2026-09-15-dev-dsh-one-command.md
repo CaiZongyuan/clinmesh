@@ -19,6 +19,7 @@ DSH Web 原生入口的搭建与启动散落在部署指南约二十条手工命
 - Server 以 `pnpm --filter @clinmesh/server dev` 直启绕过 Turborepo，`CLINMESH_AI_*` 直接生效；数据源就绪复用 `dev-lan.ts` 的 `ensureDataSourcesReady`，口径与 [dev:lan 数据源就绪门控](2026-09-15-dev-lan-data-source-gating.md) 一致。直启前由 `createDshDevelopmentPlan` 把 `CLINMESH_DATABASE_PATH`、`CLINMESH_REFERENCE_DATABASE_PATH` 与 `CLINMESH_WEB_ROOT` 按 `.env` 所在目录绝对化：Server 自身对 `.env` 相对路径执行同一规则，但进程环境里的原始相对值会覆盖该结果并按进程工作目录（apps/server）解析——Turborepo 的环境过滤恰好滤掉这些变量，因此该陷阱只暴露给直启路径。
 - dshvm 的 `use` 每次启动无条件执行：`which <version>` 只回答槽位位置，不证明 active 选择，而 `exec web` 依赖 active 状态；`use` 幂等且廉价，执行后再用 `which` 断言槽位正确。
 - 启动前探测 `3080` 端口，被占用即失败：DSH 遇端口占用会静默改用其他端口，而 trusted origins 与登录 CSRF 校验绑定 `3080`，静默漂移会产生难以定位的登录失败。
+- 启动输出分"DSH 运行时 / 数据源 / 启动"三节：探测命令（bun 版本、git rev-parse、dshvm use/which）静默执行、失败时回显输出尾部；子进程日志经共享进程模块以 `[Server]`/`[DSH]` 前缀转发。`awaitDshReadiness` 轮询 Server 健康与 Host 日志捕获的 `dsh web: <url>` 行，两者齐备打印就绪横幅——DSH Web 的真实入口是带本次启动 token 的地址，无 token 访问返回 authentication required，横幅地址可直接打开。
 
 进程组管理从 `dev-lan.ts` 抽取为共享 `development-processes.ts`（`DevelopmentProcess.command` 可选，默认 pnpm），dev:lan 行为不变，其活体监督测试继续拥有同退语义。CI 候选验收（`dsh-upstreams-verify.ts`）保持独立的临时目录流程：两者序列事实同源于部署指南，但验收需要全量执行并回写锁与 manifests，开发需要幂等跳过且绝不写仓库文件，不共享组装代码。
 

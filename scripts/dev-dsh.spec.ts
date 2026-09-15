@@ -1,14 +1,16 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { parseLock } from './dsh-upstreams.ts'
 import {
+  awaitDshReadiness,
   createDshDevelopmentPlan,
   ensureDshRuntimeReady,
   extractRuntimeVersions,
   resolveDshSandboxPaths,
   resolveDshTrustedOrigins,
   type DshEnsureDependencies,
+  type DshReadinessDependencies,
 } from './dev-dsh.ts'
 
 const upstreamLock = parseLock(
@@ -106,6 +108,7 @@ describe('createDshDevelopmentPlan', () => {
           CLINMESH_REFERENCE_DATABASE_PATH: '/repo/.data/clinmesh-reference.sqlite',
           CLINMESH_WEB_ROOT: '/absolute/web-root',
         },
+        output: { prefix: '[Server]' },
       },
       {
         name: 'DSH Host',
@@ -117,9 +120,10 @@ describe('createDshDevelopmentPlan', () => {
           DSH_HOME: paths.dshHome,
           CLINMESH_DSH_BRIDGE_SECRET: 'bridge-secret-value',
         },
+        output: { prefix: '[DSH]' },
       },
     ])
-    expect(plan.urls).toEqual(['http://127.0.0.1:3080/', 'http://127.0.0.1:51869/api/health'])
+    expect(plan.urls).toEqual(['http://127.0.0.1:51869/api/health'])
   })
 
   it('omits server path overrides that the environment does not define', () => {
@@ -133,6 +137,62 @@ describe('createDshDevelopmentPlan', () => {
 
     const server = plan.processes[0]!
     expect(Object.keys(server.environment)).toEqual(['CLINMESH_TRUSTED_ORIGINS'])
+  })
+})
+
+describe('awaitDshReadiness', () => {
+  function createReadinessDependencies(
+    overrides: Partial<DshReadinessDependencies> = {},
+  ): DshReadinessDependencies {
+    return {
+      fetchServerHealth: async () => false,
+      hostUrl: () => undefined,
+      isStopped: () => false,
+      intervalMs: 0,
+      timeoutMs: 30,
+      sleep: async () => {},
+      write: () => {},
+      ...overrides,
+    }
+  }
+
+  it('resolves once the server health passes and the host token URL is captured', async () => {
+    let healthCalls = 0
+    const result = await awaitDshReadiness(createReadinessDependencies({
+      fetchServerHealth: async () => {
+        healthCalls += 1
+        return healthCalls >= 2
+      },
+      hostUrl: () => 'http://127.0.0.1:3080/?token=abc',
+    }))
+
+    expect(result).toEqual({
+      serverReady: true,
+      hostUrl: 'http://127.0.0.1:3080/?token=abc',
+    })
+  })
+
+  it('returns early without waiting when the processes already stopped', async () => {
+    const fetchServerHealth = vi.fn(async () => false)
+    const result = await awaitDshReadiness(createReadinessDependencies({
+      fetchServerHealth,
+      isStopped: () => true,
+    }))
+
+    expect(result.serverReady).toBe(false)
+    expect(fetchServerHealth).not.toHaveBeenCalled()
+  })
+
+  it('reports partial readiness after the timeout instead of hanging', async () => {
+    const write = vi.fn()
+    const result = await awaitDshReadiness(createReadinessDependencies({
+      fetchServerHealth: async () => true,
+      hostUrl: () => undefined,
+      write,
+    }))
+
+    expect(result).toEqual({ serverReady: true, hostUrl: undefined })
+    expect(write).toHaveBeenCalledWith(expect.stringContaining('未能在'))
   })
 })
 
