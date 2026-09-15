@@ -199,6 +199,7 @@ export function AppearanceControls({
   showLocale = true,
   theme,
 }: PreferenceControlProps): React.JSX.Element {
+  const runtime = useWebRuntime()
   return (
     <div className="flex flex-col gap-2 group-data-[collapsible=icon]:hidden">
       {showLabel ? (
@@ -224,28 +225,30 @@ export function AppearanceControls({
             ))}
           </ToggleGroup>
         ) : null}
-        <ToggleGroup
-          aria-label={messages.themeLabel}
-          onValueChange={values => {
-            const value = firstValue(values as WorkspaceTheme[])
-            if (value !== undefined) onThemeChange(value)
-          }}
-          size="sm"
-          spacing={0}
-          value={[theme]}
-          variant="outline"
-        >
-          {themeOptions.map(option => (
-            <ToggleGroupItem
-              aria-label={messages[option.label]}
-              key={option.value}
-              title={messages[option.label]}
-              value={option.value}
-            >
-              <option.icon aria-hidden="true" />
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
+        {runtime.mode === 'standalone' ? (
+          <ToggleGroup
+            aria-label={messages.themeLabel}
+            onValueChange={values => {
+              const value = firstValue(values as WorkspaceTheme[])
+              if (value !== undefined) onThemeChange(value)
+            }}
+            size="sm"
+            spacing={0}
+            value={[theme]}
+            variant="outline"
+          >
+            {themeOptions.map(option => (
+              <ToggleGroupItem
+                aria-label={messages[option.label]}
+                key={option.value}
+                title={messages[option.label]}
+                value={option.value}
+              >
+                <option.icon aria-hidden="true" />
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        ) : null}
       </div>
     </div>
   )
@@ -267,6 +270,7 @@ function UserMenu({
   session: SessionContext
   signOutPending: boolean
 }): React.JSX.Element {
+  const runtime = useWebRuntime()
   const activeRole = session.availableRoles.find(role => role.id === session.actor.practitionerRoleId)
   const activeRoleLabel = activeRole === undefined
     ? messages[roleMessageKeys[session.actor.roleCode]]
@@ -325,21 +329,25 @@ function UserMenu({
             ))}
           </DropdownMenuRadioGroup>
         </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>{messages.themeLabel}</DropdownMenuLabel>
-          <DropdownMenuRadioGroup
-            onValueChange={value => onThemeChange(value as WorkspaceTheme)}
-            value={theme}
-          >
-            {themeOptions.map(option => (
-              <DropdownMenuRadioItem key={option.value} value={option.value}>
-                <option.icon aria-hidden="true" />
-                {messages[option.label]}
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-        </DropdownMenuGroup>
+        {runtime.mode === 'standalone' ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>{messages.themeLabel}</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                onValueChange={value => onThemeChange(value as WorkspaceTheme)}
+                value={theme}
+              >
+                {themeOptions.map(option => (
+                  <DropdownMenuRadioItem key={option.value} value={option.value}>
+                    <option.icon aria-hidden="true" />
+                    {messages[option.label]}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuGroup>
+          </>
+        ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem disabled={signOutPending} onClick={onSignOut}>
           <LogOutIcon aria-hidden="true" />
@@ -397,14 +405,12 @@ export function WorkspaceShell({
       items: routes.map(route => ({ path: route.path, label: messages[route.key] })),
       activePath: routes.find(route => route.key === activeSection)?.path ?? '/',
       locale,
-      theme,
       navigate(path) {
         const target = routes.find(route => route.path === path)
         if (target) void navigate({ to: target.path })
       },
-      setTheme: onThemeChange,
     })
-  }, [activeSection, locale, messages, navigate, onThemeChange, runtime.mode, runtime.surfaceNavigation, theme, visibleRoutes])
+  }, [activeSection, locale, messages, navigate, runtime.mode, runtime.surfaceNavigation, visibleRoutes])
   const settingsMode = isSettingsSection(activeSection)
   const activeIcon = [...workspaceRoutes, ...settingsRoutes].find(route => route.key === activeSection)?.icon ?? LayoutDashboardIcon
   const navigationLabel = settingsMode ? messages.settingsNavigation : messages.navigationLabel

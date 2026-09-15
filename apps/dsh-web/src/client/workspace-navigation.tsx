@@ -8,8 +8,6 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@clinmesh/ui/components/dropdown-menu'
@@ -41,9 +39,6 @@ export function createWorkspaceNavigation() {
         ...state,
         navigate(path) {
           if (current === registration) state.navigate(path)
-        },
-        setTheme(theme) {
-          if (current === registration) state.setTheme(theme)
         },
       }
       current = registration
@@ -142,7 +137,7 @@ export function WorkspaceNavigation({
   }, [colorScheme, container, routeContainer])
   const locale = state?.locale ?? hostLocale
   const label = locale === 'zh-CN' ? '医院工作台' : 'Hospital workspace'
-  const menuLabel = locale === 'zh-CN' ? '医院工作台设置' : 'Hospital workspace settings'
+  const menuLabel = locale === 'zh-CN' ? '设置' : 'Settings'
   const messages = getWorkspaceMessages(locale)
   return (
     <div ref={host} data-clinmesh-host-navigation="" style={{ width: wide ? '100%' : 36, minWidth: 36 }}>
@@ -202,25 +197,6 @@ export function WorkspaceNavigation({
                     ))
                   )}
                 </DropdownMenuGroup>
-                {state && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuGroup>
-                      <DropdownMenuLabel>{messages.themeLabel}</DropdownMenuLabel>
-                      <DropdownMenuRadioGroup
-                        value={state.theme}
-                        onValueChange={(value) => {
-                          if (value === 'system' || value === 'light' || value === 'dark')
-                            state.setTheme(value)
-                        }}
-                      >
-                        <DropdownMenuRadioItem value="system">{messages.themeSystem}</DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="light">{messages.themeLight}</DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="dark">{messages.themeDark}</DropdownMenuRadioItem>
-                      </DropdownMenuRadioGroup>
-                    </DropdownMenuGroup>
-                  </>
-                )}
                 {applications.length > 0 && (
                   <>
                     <DropdownMenuSeparator />

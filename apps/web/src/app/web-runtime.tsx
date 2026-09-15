@@ -6,9 +6,7 @@ export interface WebSurfaceNavigationState {
   items: readonly { path: string; label: string }[]
   activePath: string
   locale: WebPreferences['locale']
-  theme: WebPreferences['theme']
   navigate(path: string): void
-  setTheme(theme: WebPreferences['theme']): void
 }
 
 export interface WebSurfaceNavigation {

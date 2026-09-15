@@ -148,32 +148,6 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
     if (root !== null) root.lang = preferences.locale
   }, [preferences.locale, runtime.appearanceRoot, runtime.mode])
 
-  useEffect(() => {
-    const root = runtime.mode === 'surface'
-      ? runtime.appearanceRoot.current
-      : document.documentElement
-    if (root === null) return
-    if (preferences.theme !== 'system') {
-      applyResolvedWebTheme(preferences.theme, root)
-      return
-    }
-    if (runtime.mode === 'surface' && runtime.surfaceColorScheme !== undefined) {
-      applyResolvedWebTheme(runtime.surfaceColorScheme, root)
-      return
-    }
-
-    const mediaQuery = window.matchMedia(DARK_MODE_QUERY)
-    const applySystemTheme = (): void => applyResolvedWebTheme(
-      mediaQuery.matches ? 'dark' : 'light',
-      root,
-    )
-
-    applySystemTheme()
-    mediaQuery.addEventListener('change', applySystemTheme)
-
-    return () => mediaQuery.removeEventListener('change', applySystemTheme)
-  }, [preferences.theme, runtime.appearanceRoot, runtime.mode, runtime.surfaceColorScheme])
-
   if (session.isPending) {
     return (
       <main aria-label={messages.loading} className="mx-auto flex min-h-svh w-full max-w-lg flex-col justify-center gap-3 p-6">
@@ -510,6 +484,32 @@ function WebApplication({
   ])
   const preferencesContext = useMemo(() => ({ preferences, setPreferences }), [preferences])
   useEffect(() => writeWebPreferences(preferences), [preferences])
+
+  useEffect(() => {
+    const root = runtime.mode === 'surface'
+      ? runtime.appearanceRoot.current
+      : document.documentElement
+    if (root === null) return
+    if (runtime.mode === 'surface' && runtime.surfaceColorScheme !== undefined) {
+      applyResolvedWebTheme(runtime.surfaceColorScheme, root)
+      return
+    }
+    if (runtime.mode === 'standalone' && preferences.theme !== 'system') {
+      applyResolvedWebTheme(preferences.theme, root)
+      return
+    }
+
+    const mediaQuery = window.matchMedia(DARK_MODE_QUERY)
+    const applySystemTheme = (): void => applyResolvedWebTheme(
+      mediaQuery.matches ? 'dark' : 'light',
+      root,
+    )
+
+    applySystemTheme()
+    mediaQuery.addEventListener('change', applySystemTheme)
+
+    return () => mediaQuery.removeEventListener('change', applySystemTheme)
+  }, [preferences.theme, runtime.appearanceRoot, runtime.mode, runtime.surfaceColorScheme])
 
   return (
     <WebPreferencesProvider value={preferencesContext}>

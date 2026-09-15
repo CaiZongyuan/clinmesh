@@ -431,7 +431,7 @@ describe('Web application shell', () => {
     const history = createMemoryHistory({ initialEntries: ['/components'] })
     const user = userEvent.setup()
 
-    await renderWebApp({ history, runtime: { mode: 'surface' } })
+    await renderWebApp({ history, runtime: { mode: 'surface', surfaceColorScheme: 'dark' } })
     const applicationRoot = document.querySelector<HTMLElement>('[data-clinmesh-app="web"]')
     const portalRoot = applicationRoot?.querySelector<HTMLElement>('[data-clinmesh-portal-root]')
     expect(applicationRoot?.lang).toBe('en-US')
@@ -439,7 +439,8 @@ describe('Web application shell', () => {
     expect(applicationRoot?.dataset.fontSize).toBe('large')
     expect(document.documentElement.dataset.fontSize).toBeUndefined()
 
-    await user.click(screen.getByRole('button', { name: 'Dark theme' }))
+    expect(screen.queryByRole('button', { name: 'Dark theme' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Light theme' })).toBeNull()
     expect(applicationRoot?.classList.contains('dark')).toBe(true)
     expect(document.documentElement.classList.contains('dark')).toBe(false)
 
@@ -448,7 +449,9 @@ describe('Web application shell', () => {
     expect(portalRoot?.contains(dialog)).toBe(true)
   })
 
-  it('follows the resolved DSH theme while Surface appearance is set to system', async () => {
+  it.each(['light', 'dark', 'system'])('follows DSH without overwriting the saved %s theme', async theme => {
+    const preferences = { fontSize: 'larger', locale: 'zh-CN', theme }
+    localStorage.setItem('clinmesh.preferences:v1', JSON.stringify(preferences))
     const history = createMemoryHistory({ initialEntries: ['/registration'] })
     const runtime = (surfaceColorScheme: 'dark' | 'light'): WebRuntimeOptions => ({
       mode: 'surface' as const,
@@ -460,6 +463,37 @@ describe('Web application shell', () => {
     await waitFor(() => expect(applicationRoot.classList.contains('dark')).toBe(true))
     rendered.rerender(<WebApp history={history} runtime={runtime('light')} />)
     await waitFor(() => expect(applicationRoot.classList.contains('dark')).toBe(false))
+    rendered.rerender(<WebApp history={history} runtime={runtime('dark')} />)
+    await waitFor(() => expect(applicationRoot.classList.contains('dark')).toBe(true))
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+    expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1')!)).toEqual(preferences)
+    rendered.unmount()
+    await renderWebApp({ history: createMemoryHistory({ initialEntries: ['/registration'] }), runtime: runtime('light') })
+    expect(document.querySelector('[data-clinmesh-app="web"]')?.classList.contains('dark')).toBe(false)
+    expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1')!)).toEqual(preferences)
+  })
+
+  it('keeps Surface language, font size and account controls without theme choices', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/settings'] })
+    const user = userEvent.setup()
+    await renderWebApp({ history, runtime: { mode: 'surface', surfaceColorScheme: 'dark' } })
+    for (const name of ['跟随系统', '亮色', '暗色']) {
+      expect(screen.queryByRole('button', { name, exact: true })).toBeNull()
+    }
+    await user.click(screen.getByRole('button', { name: '较大', exact: true }))
+    expect(document.querySelector('[data-clinmesh-app="web"]')?.getAttribute('data-font-size')).toBe('larger')
+    await user.click(screen.getByRole('button', { name: 'English', exact: true }))
+    expect(screen.getByRole('heading', { name: 'General', exact: true })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'User menu' }))
+    expect(await screen.findByRole('menuitem', { name: 'Sign out' })).toBeTruthy()
+    for (const name of ['System', 'Light', 'Dark']) {
+      expect(screen.queryByRole('menuitemradio', { name, exact: true })).toBeNull()
+    }
+    await user.keyboard('{Escape}')
+    await act(() => history.push('/settings/developer/components'))
+    await screen.findByRole('heading', { name: 'UI components', exact: true })
+    expect(screen.queryByRole('button', { name: 'Dark theme' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Light theme' })).toBeNull()
   })
 
   it('lets a Surface Agent fill a draft but requires human review before creating a Patient', async () => {

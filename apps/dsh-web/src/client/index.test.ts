@@ -1,12 +1,68 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import { createElement, type ComponentType } from 'react'
+import { act, createElement, type ComponentType } from 'react'
+import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { apply, createDefinition } from './index.tsx'
 
 describe('ClinMesh React Surface definition', () => {
+  it('subscribes the application to the host theme while hidden and releases the subscription on unmount', async () => {
+    const listeners = new Set<() => void>()
+    let colorScheme: 'light' | 'dark' = 'dark'
+    const ctx = {
+      get(name: string) {
+        if (name === 'theme') return { getTheme: () => ({ active: { colorScheme } }) }
+        return { list: { getSnapshot: () => ({ current: undefined }), subscribe: () => () => {} } }
+      },
+      on(event: string, listener: () => void) {
+        if (event !== 'theme/change') throw new Error(`Unexpected event: ${event}`)
+        listeners.add(listener)
+        return () => { listeners.delete(listener) }
+      },
+    }
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    vi.stubGlobal('scrollTo', vi.fn())
+    vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }))
+    const preferences = JSON.stringify({ fontSize: 'standard', locale: 'en-US', theme: 'light' })
+    localStorage.setItem('clinmesh.preferences:v1', preferences)
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    const { component } = createDefinition(ctx as unknown as ClientContext)
+    const props = {
+      active: true,
+      agent: { register: () => () => {} },
+      capabilities: { agent: { available: false, status: 'unavailable' as const } },
+      close() {}, layout: 'workspace' as const, location: '/components', navigate() {},
+    }
+    try {
+      await act(() => root.render(createElement(component, props)))
+      const application = container.querySelector<HTMLElement>('[data-clinmesh-app="web"]')!
+      expect(application.dataset.theme).toBe('dark')
+      await act(() => root.render(createElement(component, { ...props, active: false })))
+      await act(() => {
+        colorScheme = 'light'
+        for (const listener of listeners) listener()
+      })
+      expect(application.dataset.theme).toBe('light')
+      await act(() => root.render(createElement(component, props)))
+      await act(() => {
+        colorScheme = 'dark'
+        for (const listener of listeners) listener()
+      })
+      expect(application.dataset.theme).toBe('dark')
+      expect(localStorage.getItem('clinmesh.preferences:v1')).toBe(preferences)
+    } finally {
+      await act(() => root.unmount())
+      container.remove()
+      localStorage.clear()
+      vi.unstubAllGlobals()
+    }
+    expect(listeners.size).toBe(0)
+  })
+
   it('registers the Profile identity before any application is opened and retracts it on unload', () => {
     const occupants = new Map<string, ComponentType<{ size: number }>>()
     const disposers: Array<() => void> = []
