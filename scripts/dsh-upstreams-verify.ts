@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { createServer } from 'node:net'
 import { existsSync } from 'node:fs'
 import { appendFile, chmod, cp, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
@@ -7,8 +7,18 @@ import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { candidatePath, lockDigest, parseCandidate, parseLock, type UpstreamLock } from './dsh-upstreams.ts'
+import { startManagedProcess } from './dsh-upstreams-process.ts'
 
 const execute = promisify(execFile)
+export function verificationEnvironment(runtime: string, source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const names = new Set(['path', 'pathext', 'systemroot', 'windir', 'comspec', 'temp', 'tmp', 'tmpdir', 'home', 'userprofile', 'appdata', 'localappdata', 'programfiles', 'programfiles(x86)', 'chrome_path', 'turbo_env_mode', 'turbo_concurrency', 'ci'])
+  return {
+    ...Object.fromEntries(Object.entries(source).filter(([name, value]) => names.has(name.toLowerCase()) && value !== undefined)),
+    pnpm_config_verify_deps_before_run: 'error',
+    npm_config_userconfig: join(runtime, 'npmrc'),
+    DSH_HOME: join(runtime, 'data'), DSHVM_HOME: join(runtime, 'versions'), DSHVM_BIN_DIR: join(runtime, 'bin'),
+  }
+}
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('非法 package.json 对象')
   return Object.fromEntries(Object.entries(value))
@@ -55,7 +65,7 @@ export async function prepareManifests(root: string, baseline: UpstreamLock, tar
   return writes.map(item => item.path)
 }
 
-async function run(command: string, args: string[], cwd: string, log: string, env = process.env) {
+async function run(command: string, args: string[], cwd: string, log: string, env: NodeJS.ProcessEnv) {
   let bin = command
   let parameters = args
   if (command === 'pnpm' && process.env.npm_execpath) {
@@ -70,15 +80,16 @@ async function run(command: string, args: string[], cwd: string, log: string, en
   console.log(heading.trim())
   await appendFile(log, heading)
   return new Promise<string>((resolve, reject) => {
-    const child = spawn(bin, parameters, { cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    const managed = startManagedProcess(bin, parameters, { cwd, env })
+    const { child } = managed
     const chunks: Buffer[] = []
-    child.stdout.on('data', chunk => { chunks.push(chunk); process.stdout.write(chunk) })
-    child.stderr.on('data', chunk => { chunks.push(chunk); process.stderr.write(chunk) })
+    child.stdout?.on('data', chunk => { chunks.push(chunk); process.stdout.write(chunk) })
+    child.stderr?.on('data', chunk => { chunks.push(chunk); process.stderr.write(chunk) })
     child.on('error', reject)
     child.on('close', code => {
       const output = Buffer.concat(chunks).toString('utf8')
-      appendFile(log, `${output}\nexit=${code} durationMs=${Date.now() - started}\n`)
-        .then(() => code === 0 ? resolve(output) : reject(new Error(`${command} 失败，退出码 ${code}；候选保持待适配`)), reject)
+      managed.stop().then(() => appendFile(log, `${output}\nexit=${code} durationMs=${Date.now() - started}\n`))
+        .then(() => code === 0 && !managed.wasInterrupted() ? resolve(output) : reject(new Error(`${command} 失败，退出码 ${code}；候选保持待适配`)), reject)
     })
   })
 }
@@ -95,42 +106,43 @@ async function verifyBridgeHost(path: string, expected: string) {
   }
 }
 
-async function smokeHost(cli: string, runtime: string, expected: string, log: string) {
+async function smokeHost(cli: string, runtime: string, expected: string, log: string, env: NodeJS.ProcessEnv) {
   const server = createServer()
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
   if (!address || typeof address === 'string') throw new Error('无法分配 smoke 端口')
   const port = address.port
   await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
-  const env = { ...process.env, DSH_HOME: join(runtime, 'data') }
-  const version = await execute(process.execPath, [cli, '--version'], { env, windowsHide: true })
+  const version = await execute(process.execPath, [cli, 'exec', '--version'], { env, windowsHide: true })
   if (!version.stdout.includes(expected)) throw new Error('实际 DSH 版本与候选不匹配')
-  const child = spawn(process.execPath, [cli, 'web', '--port', String(port), '--no-open'], {
-    cwd: runtime, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'],
-  })
+  const managed = startManagedProcess(process.execPath, [cli, 'exec', 'web', '--port', String(port), '--no-open'], { cwd: runtime, env })
+  const { child } = managed
   let output = ''
   let failure: Error | undefined
-  child.stdout.on('data', chunk => { output += chunk })
-  child.stderr.on('data', chunk => { output += chunk })
+  child.stdout?.on('data', chunk => { output += chunk })
+  child.stderr?.on('data', chunk => { output += chunk })
   child.on('error', error => { failure = error })
   try {
     const deadline = Date.now() + 90_000
     while (Date.now() < deadline) {
       if (failure) throw failure
-      if (child.exitCode !== null) throw new Error('候选 DSH 启动失败')
+      if (child.exitCode !== null || child.signalCode !== null || managed.wasInterrupted()) throw new Error('候选 DSH 启动失败或已取消')
       try {
-        const response = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2000) })
+        const token = /[?&]token=([A-Za-z0-9_-]+)/.exec(output)?.[1]
+        const origin = `http://127.0.0.1:${port}`
+        const login = await fetch(`${origin}/${token ? `?token=${encodeURIComponent(token)}` : ''}`, { redirect: 'manual', signal: AbortSignal.timeout(2000) })
+        const cookie = login.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
+        const response = login.status >= 300 && login.status < 400
+          ? await fetch(`${origin}/`, { headers: { Cookie: cookie }, signal: AbortSignal.timeout(2000) })
+          : login
         if (response.ok && (await response.text()).includes('<html')) return
       } catch { /* 启动期间端口尚未监听。 */ }
       await new Promise(resolve => setTimeout(resolve, 500))
     }
     throw new Error('候选 DSH Web 启动超时')
   } finally {
-    if (child.pid && child.exitCode === null) {
-      if (process.platform === 'win32') await execute('taskkill', ['/PID', String(child.pid), '/T', '/F']).catch(() => undefined)
-      else { try { process.kill(-child.pid, 'SIGTERM') } catch { /* 进程已退出。 */ } }
-    }
-    await appendFile(log, `\nDSH ${expected} Web smoke\n${output}\n`)
+    await managed.stop()
+    await appendFile(log, `\nDSH ${expected} Web smoke\n${output.replace(/([?&]token=)[^\s&]+/g, '$1[redacted]')}\n`)
   }
 }
 
@@ -158,43 +170,43 @@ export async function verifyCandidate(root: string) {
   const surface = target.components.find(item => item.name === 'dsh-react-surface')!
   const bridge = target.components.find(item => item.name === 'dsh-ag-ui')!
   if (!host?.version || !manager?.version || !surface?.commit || !bridge?.commit) throw new Error('候选缺少必要组合组件')
-  const env = {
-    ...process.env,
-    pnpm_config_verify_deps_before_run: 'error',
-    DSH_HOME: join(runtime, 'data'),
-    DSHVM_HOME: join(runtime, 'versions'),
-    DSHVM_BIN_DIR: join(runtime, 'bin'),
-  }
+  const env = verificationEnvironment(runtime)
+  await writeFile(join(runtime, 'npmrc'), '')
   try {
     await prepareManifests(root, baseline, target)
     const checkout = join(root, 'vendor/dsh-react-surface')
     const actual = (await execute('git', ['rev-parse', 'HEAD'], { cwd: checkout })).stdout.trim()
     const previous = baseline.components.find(item => item.name === surface.name)?.commit
     if (actual !== previous && actual !== surface.commit) throw new Error('保留人工适配的 React Surface commit；请协调候选')
-    await run('git', ['fetch', surface.source, surface.commit], checkout, log)
-    await run('git', ['checkout', '--detach', surface.commit], checkout, log)
+    await run('git', ['fetch', surface.source, surface.commit], checkout, log, env)
+    await run('git', ['checkout', '--detach', surface.commit], checkout, log, env)
     await verifyBridgeHost(join(checkout, 'packages/runtime/package.json'), host.version)
     await verifyBridgeHost(join(checkout, 'packages/build/package.json'), host.version)
-    await run('bun', ['install', '--frozen-lockfile'], checkout, log)
-    await run('bun', ['run', 'build:runtime'], checkout, log)
+    await run('bun', ['install', '--frozen-lockfile'], checkout, log, env)
+    await run('bun', ['run', 'build:runtime'], checkout, log, env)
     await run('pnpm', ['install', '--no-frozen-lockfile'], root, log, env)
     await run('pnpm', ['--filter', '@clinmesh/dsh-web', 'build'], root, log, env)
-    await run('git', ['clone', '--no-checkout', bridge.source, join(runtime, 'ag-ui')], runtime, log)
-    await run('git', ['checkout', '--detach', bridge.commit], join(runtime, 'ag-ui'), log)
+    await run('git', ['clone', '--no-checkout', bridge.source, join(runtime, 'ag-ui')], runtime, log, env)
+    await run('git', ['checkout', '--detach', bridge.commit], join(runtime, 'ag-ui'), log, env)
     await verifyBridgeHost(join(runtime, 'ag-ui/package.json'), host.version)
     await run('pnpm', ['install', '--frozen-lockfile'], join(runtime, 'ag-ui'), log, env)
     await run('pnpm', ['build'], join(runtime, 'ag-ui'), log, env)
-    const hostDirectory = join(runtime, 'host')
-    await mkdir(hostDirectory)
+    await run('npm', ['install', '--prefix', join(runtime, 'tooling'), '--ignore-scripts', `@dsh-so/dshvm@${manager.version}`], runtime, log, env)
+    const managerCli = join(runtime, 'tooling/node_modules/@dsh-so/dshvm/bin/dshvm.js')
+    await run(process.execPath, [managerCli, 'install', host.version], runtime, log, env)
+    const hostDirectory = join(runtime, 'versions', `dsh-${host.version}`)
     for (const file of ['package.json', 'package-lock.json']) await cp(join(root, 'deployment/dsh/host', file), join(hostDirectory, file))
     if (host.version !== baseline.components.find(item => item.name === host.name)?.version) {
       await run('npm', ['install', '--package-lock-only', '--ignore-scripts'], hostDirectory, log, env)
     }
     await run('npm', ['ci'], hostDirectory, log, env)
     await cp(join(hostDirectory, 'package-lock.json'), join(root, 'deployment/dsh/host/package-lock.json'))
-    await run('npm', ['install', '--prefix', join(runtime, 'tooling'), '--ignore-scripts', `@dsh-so/dshvm@${manager.version}`], runtime, log, env)
-    await run(process.execPath, [join(runtime, 'tooling/node_modules/@dsh-so/dshvm/bin/dshvm.js'), '--version'], runtime, log, env)
-    const profile = join(runtime, 'data/profiles/web')
+    await run(process.execPath, [managerCli, 'isolate', host.version], runtime, log, env)
+    await run(process.execPath, [managerCli, 'use', host.version], runtime, log, env)
+    const selected = await run(process.execPath, [managerCli, 'which', host.version], runtime, log, env)
+    if (!selected.includes(`dsh-${host.version}`)) throw new Error('dshvm 未选择候选隔离槽位')
+    env.DSH_HOME = join(runtime, 'versions/isolate', host.version)
+    const profile = join(env.DSH_HOME, 'profiles/web')
     await mkdir(join(profile, 'plugins'), { recursive: true })
     await cp(join(root, 'deployment/dsh/profile'), profile, { recursive: true })
     for (const [name, destination] of [
@@ -203,11 +215,11 @@ export async function verifyCandidate(root: string) {
     await run('pnpm', ['install', host.version === baseline.components.find(item => item.name === host.name)?.version ? '--frozen-lockfile' : '--no-frozen-lockfile'], profile, log, env)
     await cp(join(profile, 'pnpm-lock.yaml'), join(root, 'deployment/dsh/profile/pnpm-lock.yaml'))
     const cli = join(hostDirectory, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
-    const plugins = await run(process.execPath, [cli, 'plugin', '--profile', 'web', 'list'], runtime, log, { ...env, DSH_HOME: join(runtime, 'data') })
+    const plugins = await run(process.execPath, [cli, 'plugin', '--profile', 'web', 'list'], runtime, log, env)
     for (const name of ['dsh-react-surface', 'dsh-ag-ui', '@clinmesh/dsh-web']) {
       if (!plugins.includes(name)) throw new Error(`临时 Profile 缺少插件：${name}`)
     }
-    await smokeHost(cli, runtime, host.version, log)
+    await smokeHost(managerCli, runtime, host.version, log, env)
     await run('pnpm', ['check'], root, log, env)
     await writeJson(join(root, 'dsh-upstreams.lock.json'), target)
     await writeJson(receiptPath, { schemaVersion: 1, baselineDigest: candidate.baselineDigest, targetDigest: lockDigest(target) })
