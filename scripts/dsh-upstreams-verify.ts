@@ -8,7 +8,7 @@ import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { pipeline } from 'node:stream/promises'
-import { candidatePath, lockDigest, parseCandidate, parseLock, type UpstreamLock } from './dsh-upstreams.ts'
+import { candidatePath, checkNpmAvailability, lockDigest, parseCandidate, parseLock, type UpstreamLock } from './dsh-upstreams.ts'
 import { startManagedProcess } from './dsh-upstreams-process.ts'
 
 const execute = promisify(execFile)
@@ -212,6 +212,8 @@ export async function verifyCandidate(root: string, fetch: typeof globalThis.fet
   const env = verificationEnvironment(runtime)
   await writeFile(join(runtime, 'npmrc'), '')
   try {
+    const availability = await checkNpmAvailability(target, fetch)
+    if (availability) throw new Error(availability)
     const hostTarball = await downloadNpmCandidate(host, runtime, fetch)
     const managerTarball = await downloadNpmCandidate(manager, runtime, fetch)
     await prepareManifests(root, baseline, target)
@@ -263,6 +265,8 @@ export async function verifyCandidate(root: string, fetch: typeof globalThis.fet
     }
     await smokeHost(managerCli, runtime, host.version, log, env)
     await run('pnpm', ['check'], root, log, env)
+    const finalAvailability = await checkNpmAvailability(target, fetch)
+    if (finalAvailability) throw new Error(finalAvailability)
     await writeJson(join(root, 'dsh-upstreams.lock.json'), target)
     await writeJson(receiptPath, { schemaVersion: 1, baselineDigest: candidate.baselineDigest, targetDigest: lockDigest(target) })
     await writeJson(join(evidence, 'result.json'), { status: 'automated-checks-passed', targetDigest: lockDigest(target), humanAcceptance: 'required' })

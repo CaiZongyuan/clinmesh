@@ -114,6 +114,21 @@ async function json(fetch: Fetch, url: string) {
   return object(await response.json())
 }
 
+export async function checkNpmAvailability(target: UpstreamLock, fetch: Fetch = globalThis.fetch) {
+  for (const item of target.components) {
+    if (!item.version) continue
+    const packument = await json(fetch, `https://registry.npmjs.org/${encodeURIComponent(item.name)}`)
+    if (packument.name !== item.name) throw new Error(`npm 包身份不匹配：${item.name}`)
+    const versions = object(packument.versions)
+    if (versions[item.version] === undefined) return `候选发行已撤销：${item.name}@${item.version}`
+    const release = object(versions[item.version])
+    if (release.name !== item.name || release.version !== item.version) throw new Error(`npm 发行身份不匹配：${item.name}`)
+    const dist = object(release.dist)
+    if (tarball(dist.tarball) !== item.source || integrity(dist.integrity) !== item.integrity) return `候选发行内容发生变化：${item.name}@${item.version}`
+  }
+  return undefined
+}
+
 export async function discoverUpstreams(input: unknown, fetch: Fetch = globalThis.fetch): Promise<Candidate> {
   const baseline = parseLock(input)
   const target = structuredClone(baseline)
@@ -175,11 +190,12 @@ export function parseCandidate(value: unknown): Candidate {
   return { schemaVersion: 1, baselineDigest: string(input.baselineDigest), target, changes }
 }
 
-function candidateBody(candidate: Candidate, base: string) {
+function candidateBody(candidate: Candidate, base: string, problem?: string) {
   return [
     '<!-- dsh-upstreams:start -->',
     '## 上游升级候选', '',
     `以 ${base} 上的已验证组合为基线。当前状态：待适配与验收；仅由维护者人工合并。`, '',
+    ...(problem ? [`待适配原因：${problem}。候选文件与人工修改保留，请协调目标后重新验收。`, ''] : []),
     '| 组件 | 当前 | 目标 | 来源 |', '| --- | --- | --- | --- |',
     ...candidate.target.components.map(item => {
       const change = candidate.changes.find(change => change.name === item.name)
@@ -192,12 +208,18 @@ function candidateBody(candidate: Candidate, base: string) {
   ].join('\n')
 }
 
+function replaceManagedBody(previous: unknown, body: string) {
+  const text = typeof previous === 'string' ? previous : ''
+  return text.includes('<!-- dsh-upstreams:start -->')
+    ? text.replace(/<!-- dsh-upstreams:start -->[\s\S]*?<!-- dsh-upstreams:end -->/, body)
+    : `${text}\n\n${body}`
+}
+
 export async function publishCandidate(candidate: Candidate, options: {
   repository: string
   base: string
   fetch: Fetch
 }) {
-  if (!candidate.changes.length) return { status: 'no-update' as const }
   const scope = createHash('sha256').update(options.base).digest('hex').slice(0, 8)
   const upgradeBranch = `automation/dsh-upstreams-${scope}-${candidate.baselineDigest.slice(0, 12)}`
   if (!/^[\w.-]+\/[\w.-]+$/.test(options.repository) || !/^[\w./-]+$/.test(options.base)) throw new Error('非法 GitHub 仓库或分支')
@@ -212,7 +234,7 @@ export async function publishCandidate(candidate: Candidate, options: {
       const failure = await response.json().catch(() => undefined)
       const message = failure && typeof failure === 'object' && 'message' in failure && typeof failure.message === 'string'
         ? `；${failure.message}` : ''
-      throw new Error(`GitHub ${method} ${path} 失败：HTTP ${response.status}${message}；需要 contents:write 与 pull-requests:write，且允许 Actions 创建 PR；未推进基线`)
+      throw new Error(`GitHub ${method} ${path} 失败：HTTP ${response.status}${message}；需要 contents:write、pull-requests:write 与 statuses:write，且允许 Actions 创建 PR；未推进基线`)
     }
     if (response.status === 204) return undefined
     return response.json()
@@ -220,6 +242,8 @@ export async function publishCandidate(candidate: Candidate, options: {
   const pulls = await request(`pulls?state=open&head=${encodeURIComponent(`${options.repository.split('/')[0]}:${upgradeBranch}`)}&base=${encodeURIComponent(options.base)}`)
   if (!Array.isArray(pulls) || pulls.length > 1) throw new Error('活动升级 PR 响应不唯一')
   const pull = pulls[0] === undefined ? undefined : object(pulls[0])
+  if (!pull && !candidate.changes.length) return { status: 'no-update' as const }
+  if (pull && !Number.isSafeInteger(pull.number)) throw new Error('非法 PR 编号')
   const branch = await request(`git/ref/heads/${upgradeBranch}`, 'GET', undefined, true)
   async function readCandidate(path: string, head: string) {
     const response = await request(`contents/${path}?ref=${encodeURIComponent(head)}`, 'GET', undefined, true)
@@ -234,6 +258,25 @@ export async function publishCandidate(candidate: Candidate, options: {
     if ((current || pull) && !discovered) throw new Error('缺少自动发现记录，保留旧候选；请人工核对目标后建立 discovery.json')
     if (JSON.stringify(current) !== JSON.stringify(discovered)) throw new Error('保留人工候选目标：candidate.json 与上次自动发现结果不同；请协调目标后再恢复自动更新')
   }
+  if (pull) {
+    if (branch === undefined) throw new Error('活动候选分支不存在，请人工协调')
+    const head = sha(object(object(branch).object).sha)
+    const current = await readCandidate(candidatePath, head)
+    if (!current) throw new Error('活动 PR 缺少候选文件，保留现场并等待人工协调')
+    const problem = await checkNpmAvailability(current.target, options.fetch)
+    if (problem) {
+      const latest = object(await request(`git/ref/heads/${upgradeBranch}`))
+      if (sha(object(latest.object).sha) !== head) throw new Error('候选 HEAD 已变化，请重新发现；未修改新提交状态')
+      const pullRequest = `https://github.com/${options.repository}/pull/${pull.number}`
+      await request(`statuses/${head}`, 'POST', {
+        state: 'failure', context: 'DSH candidate compatibility',
+        description: '待适配：候选发行已撤销或内容变化，查看 PR 原因', target_url: pullRequest,
+      })
+      await request(`pulls/${pull.number}`, 'PATCH', { body: replaceManagedBody(pull.body, candidateBody(current, options.base, problem)) })
+      return { status: 'awaiting-adaptation' as const, invalidatedHead: head, pullRequest, reason: problem }
+    }
+  }
+  if (!candidate.changes.length) return { status: 'no-update' as const }
   let head: string
   if (branch === undefined) {
     const base = object(await request(`git/ref/heads/${options.base}`))
@@ -273,11 +316,8 @@ export async function publishCandidate(candidate: Candidate, options: {
       title: 'chore(upstream): 验证并适配 DSH 上游更新', head: upgradeBranch, base: options.base, body, draft: true,
     }))
   } else {
-    if (!Number.isSafeInteger(pull.number)) throw new Error('非法 PR 编号')
     const previous = typeof pull.body === 'string' ? pull.body : ''
-    const updated = previous.includes('<!-- dsh-upstreams:start -->')
-      ? previous.replace(/<!-- dsh-upstreams:start -->[\s\S]*?<!-- dsh-upstreams:end -->/, body)
-      : `${previous}\n\n${body}`
+    const updated = replaceManagedBody(previous, body)
     result = updated === previous ? pull : object(await request(`pulls/${pull.number}`, 'PATCH', { body: updated }))
   }
   return { status: changed ? 'updated' as const : 'unchanged' as const, head, branch: upgradeBranch, pullRequest: string(result.html_url), number: result.number }

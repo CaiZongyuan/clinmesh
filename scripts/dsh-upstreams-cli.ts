@@ -17,7 +17,7 @@ export async function runDiscovery(args: string[], environment: NodeJS.ProcessEn
     ? await publishCandidate(candidate, { repository: environment.GITHUB_REPOSITORY ?? 'CaiZongyuan/clinmesh', base: environment.UPSTREAM_BASE ?? 'main', fetch })
     : { status: candidate.changes.length ? 'discovered' : 'no-update' }
   // 只有所有来源与发布都成功后才替换本地报告，网络失败保留上一份证据。
-  await writeFile('dsh-upstreams.discovery.json', `${JSON.stringify(candidate, null, 2)}\n`)
+  await writeFile('dsh-upstreams.discovery.json', `${JSON.stringify({ ...candidate, result }, null, 2)}\n`)
   if (environment.GITHUB_OUTPUT) {
     await appendFile(environment.GITHUB_OUTPUT, `status=${result.status}\nhead=${'head' in result ? result.head : ''}\nbranch=${'branch' in result ? result.branch : ''}\n`)
   }

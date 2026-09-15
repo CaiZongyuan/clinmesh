@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm, access } from 'node:fs/promises'
+import { mkdtemp, rm, access, readFile, writeFile } from 'node:fs/promises'
+import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { candidatePath, discoveryPath, discoverUpstreams, publishCandidate } from './dsh-upstreams.ts'
 
 const baseline = {
@@ -44,7 +45,14 @@ describe('DSH 上游发现入口', () => {
       name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0'), [version]: release(version) },
     }))
     expect(candidate.changes).toEqual([])
-    expect(await publishCandidate(candidate, { repository: 'example/repo', base: 'main', fetch: async () => { throw new Error('不应调用 GitHub') } })).toEqual({ status: 'no-update' })
+    const reads: string[] = []
+    expect(await publishCandidate(candidate, { repository: 'example/repo', base: 'main', fetch: async (url, init) => {
+      expect(init?.method).toBe('GET')
+      expect(new URL(url).pathname).toBe('/repos/example/repo/pulls')
+      reads.push(url)
+      return Response.json([])
+    } })).toEqual({ status: 'no-update' })
+    expect(reads).toHaveLength(1)
   })
 
   it.each([
@@ -91,6 +99,43 @@ describe('DSH 上游发现入口', () => {
 })
 
 describe('发现 CLI process 合同', () => {
+  it('无更新但候选已撤销时，CLI 保存待适配证据且不调度安装', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-upstream-withdrawn-'))
+    try {
+      const active = await discoverUpstreams(baseline, async () => Response.json({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0'), '1.1.0': release('1.1.0') } }))
+      const baselineText = JSON.stringify(baseline)
+      await writeFile(join(directory, 'dsh-upstreams.lock.json'), baselineText)
+      const fixture = join(directory, 'network.mjs')
+      await writeFile(fixture, `
+        import { writeFileSync } from 'node:fs';
+        const active = ${JSON.stringify(active)};
+        const registry = ${JSON.stringify({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0') } })};
+        const head = 'a'.repeat(40);
+        globalThis.fetch = async (url, init = {}) => {
+          if (String(url).startsWith('https://registry.npmjs.org/')) return Response.json(registry);
+          const path = new URL(url).pathname.replace('/repos/example/repo/', '');
+          const method = init.method ?? 'GET';
+          if (path === 'pulls' && method === 'GET') return Response.json([{ number: 7, body: '人工说明', html_url: 'https://github.com/example/repo/pull/7' }]);
+          if (path.startsWith('git/ref/') && method === 'GET') return Response.json({ object: { sha: head } });
+          if (path === 'contents/deployment/dsh/candidate.json' && method === 'GET') return Response.json({ encoding: 'base64', content: Buffer.from(JSON.stringify(active)).toString('base64') });
+          if (path === 'statuses/' + head && method === 'POST') { writeFileSync('observed-status.json', init.body); return Response.json({}); }
+          if (path === 'pulls/7' && method === 'PATCH') return Response.json({});
+          throw new Error('不应创建或改写候选：' + method + ' ' + path);
+        };
+      `)
+      const entry = fileURLToPath(new URL('./dsh-upstreams-cli.ts', import.meta.url))
+      const loader = new URL('../node_modules/tsx/dist/loader.mjs', import.meta.url).href
+      const result = await promisify(execFile)(process.execPath, ['--import', loader, '--import', pathToFileURL(fixture).href, entry, '--publish'], {
+        cwd: directory, env: { ...process.env, GH_TOKEN: '', GITHUB_REPOSITORY: 'example/repo', UPSTREAM_BASE: 'main', GITHUB_OUTPUT: join(directory, 'outputs') },
+      })
+      expect(JSON.parse(result.stdout)).toMatchObject({ status: 'awaiting-adaptation', invalidatedHead: 'a'.repeat(40) })
+      expect(JSON.parse(await readFile(join(directory, 'observed-status.json'), 'utf8'))).toMatchObject({ state: 'failure' })
+      expect(JSON.parse(await readFile(join(directory, 'dsh-upstreams.discovery.json'), 'utf8'))).toMatchObject({ result: { status: 'awaiting-adaptation', reason: expect.stringContaining('已撤销') } })
+      expect(await readFile(join(directory, 'outputs'), 'utf8')).toBe('status=awaiting-adaptation\nhead=\nbranch=\n')
+      expect(await readFile(join(directory, 'dsh-upstreams.lock.json'), 'utf8')).toBe(baselineText)
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  })
+
   it('未知参数返回非零退出码，不写报告或访问来源', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-upstream-cli-'))
     try {
@@ -107,6 +152,57 @@ describe('发现 CLI process 合同', () => {
 })
 
 describe('升级 PR 的 GitHub adapter 合同', () => {
+  it.each(['available', 'network-error', 'malformed', 'head-changed'])('无更新复查 %s 时不误写兼容状态', async scenario => {
+    const active = await discoverUpstreams(baseline, async () => Response.json({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0'), '1.1.0': release('1.1.0') } }))
+    const fresh = await discoverUpstreams(baseline, async () => Response.json({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0') } }))
+    const writes: string[] = []
+    let refs = 0
+    const fetch = async (url: string, init?: RequestInit) => {
+      if (url.startsWith('https://registry.npmjs.org/')) {
+        if (scenario === 'network-error') return new Response('', { status: 503 })
+        if (scenario === 'malformed') return Response.json({ name: '@deepseek-ai/dsh' })
+        return Response.json({ name: '@deepseek-ai/dsh', versions: scenario === 'available' ? { '1.1.0': release('1.1.0') } : {} })
+      }
+      const path = new URL(url).pathname.replace('/repos/example/repo/', '')
+      if (init?.method !== 'GET') { writes.push(path); throw new Error('不应写入') }
+      if (path === 'pulls') return Response.json([{ number: 7, body: '' }])
+      if (path.startsWith('git/ref/')) return Response.json({ object: { sha: (++refs === 1 ? 'a' : 'b').repeat(40) } })
+      if (path === `contents/${candidatePath}`) return Response.json({ encoding: 'base64', content: Buffer.from(JSON.stringify(active)).toString('base64') })
+      throw new Error(`意外请求：${path}`)
+    }
+    const result = publishCandidate(fresh, { repository: 'example/repo', base: 'main', fetch })
+    if (scenario === 'available') await expect(result).resolves.toEqual({ status: 'no-update' })
+    else await expect(result).rejects.toThrow(scenario === 'network-error' ? 'HTTP 503' : scenario === 'head-changed' ? 'HEAD 已变化' : 'JSON 对象')
+    expect(writes).toEqual([])
+  })
+
+  it('无更新时仍将已撤销的活动候选标为待适配，保留候选和人工正文', async () => {
+    const active = await discoverUpstreams(baseline, async () => Response.json({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0'), '1.1.0': release('1.1.0') } }))
+    const fresh = await discoverUpstreams(baseline, async () => Response.json({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0') } }))
+    const head = 'a'.repeat(40)
+    const statuses: unknown[] = []
+    let body = '人工说明：保留支持提交。'
+    const fetch = async (url: string, init?: RequestInit) => {
+      if (url.startsWith('https://registry.npmjs.org/')) return Response.json({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0') } })
+      const path = new URL(url).pathname.replace('/repos/example/repo/', '')
+      const method = init?.method ?? 'GET'
+      const payload = init?.body ? JSON.parse(String(init.body)) : undefined
+      if (path === 'pulls' && method === 'GET') return Response.json([{ number: 7, body, html_url: 'https://github.com/example/repo/pull/7' }])
+      if (path.startsWith('git/ref/') && method === 'GET') return Response.json({ object: { sha: head } })
+      if (path === `contents/${candidatePath}` && method === 'GET') return Response.json({ encoding: 'base64', content: Buffer.from(JSON.stringify(active)).toString('base64') })
+      if (path === `statuses/${head}` && method === 'POST') { statuses.push(payload); return Response.json({}) }
+      if (path === 'pulls/7' && method === 'PATCH') { body = payload.body; return Response.json({}) }
+      throw new Error(`不应改写候选或创建 PR：${method} ${path}`)
+    }
+    const result = await publishCandidate(fresh, { repository: 'example/repo', base: 'main', fetch })
+    expect(result).toMatchObject({ status: 'awaiting-adaptation', invalidatedHead: head })
+    expect(result).not.toHaveProperty('head')
+    expect(statuses).toEqual([expect.objectContaining({ state: 'failure', context: 'DSH candidate compatibility' })])
+    expect(body).toContain('人工说明：保留支持提交。')
+    expect(body).toContain('已撤销')
+    expect(body).toContain('1.1.0')
+  })
+
   it('人工指定支持提交后，下一次发现拒绝覆盖且不合并目标分支', async () => {
     const input = { ...baseline, components: [{ name: 'bridge', source: 'https://github.com/example/bridge.git', owner: 'https://github.com/example/bridge', role: '桥接', commit: 'a'.repeat(40) }] }
     const responses = [{ default_branch: 'main' }, { sha: 'b'.repeat(40) }, { status: 'ahead' }]
@@ -133,6 +229,7 @@ describe('升级 PR 的 GitHub adapter 合同', () => {
     const candidate = await discoverUpstreams(baseline, async () => Response.json({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0'), '1.1.0': release('1.1.0') } }))
     const mutations: string[] = []
     const fetch = async (url: string, init?: RequestInit) => {
+      if (url.startsWith('https://registry.npmjs.org/')) return Response.json({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0'), '1.1.0': release('1.1.0') } })
       const path = new URL(url).pathname.replace('/repos/example/repo/', '')
       const method = init?.method ?? 'GET'
       if (method !== 'GET') mutations.push(path)
@@ -159,6 +256,7 @@ describe('升级 PR 的 GitHub adapter 合同', () => {
     let prCreates = 0
     let body = ''
     const fetch = async (url: string, init?: RequestInit) => {
+      if (url.startsWith('https://registry.npmjs.org/')) return Response.json({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0'), '1.1.0': release('1.1.0'), '1.2.0': release('1.2.0') } })
       const path = new URL(url).pathname.replace('/repos/example/repo/', '')
       const method = init?.method ?? 'GET'
       const payload = init?.body ? JSON.parse(String(init.body)) : undefined

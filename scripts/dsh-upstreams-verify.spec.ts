@@ -14,6 +14,30 @@ const execute = promisify(execFile)
 afterEach(async () => { for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true }) })
 
 describe('候选安装准备入口', () => {
+  it('候选发行已撤销时拒绝验收，即使原 tarball 仍然可下载', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-upstream-revoked-'))
+    directories.push(directory)
+    const lock = parseLock(JSON.parse(await readFile(new URL('../dsh-upstreams.lock.json', import.meta.url), 'utf8')))
+    const host = lock.components.find(component => component.name === '@deepseek-ai/dsh')!
+    const tarballBytes = Buffer.from('still available cached tarball')
+    host.integrity = `sha512-${createHash('sha512').update(tarballBytes).digest('base64')}`
+    await mkdir(join(directory, 'deployment/dsh'), { recursive: true })
+    await mkdir(join(directory, 'vendor/dsh-react-surface'), { recursive: true })
+    await writeFile(join(directory, 'dsh-upstreams.lock.json'), JSON.stringify(lock))
+    await writeFile(join(directory, 'deployment/dsh/candidate.json'), JSON.stringify({ schemaVersion: 1, baselineDigest: lockDigest(lock), target: lock, changes: [] }))
+    await execute('git', ['init', '-b', 'candidate-test'], { cwd: directory })
+    await execute('git', ['add', '.'], { cwd: directory })
+    await execute('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'fixture'], { cwd: directory })
+    let downloads = 0
+    await expect(verifyCandidate(directory, async url => {
+      if (String(url).endsWith('.tgz')) { downloads++; return new Response(tarballBytes) }
+      return Response.json({ name: host.name, versions: {} })
+    })).rejects.toThrow('候选发行已撤销')
+    expect(downloads).toBe(0)
+    expect(JSON.parse(await readFile(join(directory, '.upstream-evidence/result.json'), 'utf8'))).toMatchObject({ status: 'awaiting-adaptation', error: expect.stringContaining('已撤销') })
+    expect(await readdir(join(directory, 'deployment/dsh'))).toEqual(['candidate.json'])
+  })
+
   it.each([
     { integrity: 'sha512-Yg==' },
     { resolved: 'https://registry.npmjs.org/another.tgz' },
@@ -47,7 +71,11 @@ describe('候选安装准备入口', () => {
     await execute('git', ['add', '.'], { cwd: directory })
     await execute('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'fixture'], { cwd: directory })
     const changedSource = lock.components.find(component => component.name === changedPackage)!.source
-    await expect(verifyCandidate(directory, async source => new Response(source === changedSource ? 'changed package bytes' : original))).rejects.toThrow(`候选完整性不匹配：${changedPackage}`)
+    await expect(verifyCandidate(directory, async source => {
+      if (String(source).endsWith('.tgz')) return new Response(source === changedSource ? 'changed package bytes' : original)
+      const component = lock.components.find(item => String(source) === `https://registry.npmjs.org/${encodeURIComponent(item.name)}`)!
+      return Response.json({ name: component.name, versions: { [component.version!]: { name: component.name, version: component.version, dist: { tarball: component.source, integrity: component.integrity } } } })
+    })).rejects.toThrow(`候选完整性不匹配：${changedPackage}`)
     expect(await readFile(join(directory, 'dsh-upstreams.lock.json'), 'utf8')).toBe(before)
     expect(JSON.parse(await readFile(join(directory, '.upstream-evidence/result.json'), 'utf8'))).toMatchObject({ status: 'awaiting-adaptation' })
     expect(await readdir(join(directory, 'deployment/dsh'))).toEqual(['candidate.json'])

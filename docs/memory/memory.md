@@ -82,3 +82,5 @@
 - `gh pr merge` 成功时可能没有标准输出。只用一次 `gh pr view --json state,mergeCommit` 确认结果，不因空输出重复合并或重跑检查。
 - GitHub Raw 可能把包含 VP8/VP9 视频流的 `.webm` 响应标为 `audio/webm`。不要只按该 header 判定文件损坏；同时核对 HTTP 状态、字节数、校验和以及媒体流的 codec、尺寸和时长。
 - 已合并 PR 的正文仍可补充更清晰的演示链接，但不得改写 merge commit 或 force-push 源分支。更新后只核对 PR 状态、head SHA 和新链接，不重跑产品测试。
+
+- 上游自动更新中，无新版本与活动候选有效是两件事；撤销检查需覆盖旧候选，不能只检查 main 基线或 tarball 是否仍可下载。失效状态绑定精确 HEAD，并防止并发验收写回成功。
