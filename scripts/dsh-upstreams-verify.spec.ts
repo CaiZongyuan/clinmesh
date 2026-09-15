@@ -14,7 +14,7 @@ const execute = promisify(execFile)
 afterEach(async () => { for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true }) })
 
 describe('候选安装准备入口', () => {
-  it('候选发行已撤销时拒绝验收，即使原 tarball 仍然可下载', async () => {
+  it.each([200, 404])('registry 返回 %s 的撤销结果时拒绝验收，即使原 tarball 仍然可下载', async status => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-upstream-revoked-'))
     directories.push(directory)
     const lock = parseLock(JSON.parse(await readFile(new URL('../dsh-upstreams.lock.json', import.meta.url), 'utf8')))
@@ -31,7 +31,7 @@ describe('候选安装准备入口', () => {
     let downloads = 0
     await expect(verifyCandidate(directory, async url => {
       if (String(url).endsWith('.tgz')) { downloads++; return new Response(tarballBytes) }
-      return Response.json({ name: host.name, versions: {} })
+      return Response.json({ name: host.name, versions: {} }, { status })
     })).rejects.toThrow('候选发行已撤销')
     expect(downloads).toBe(0)
     expect(JSON.parse(await readFile(join(directory, '.upstream-evidence/result.json'), 'utf8'))).toMatchObject({ status: 'awaiting-adaptation', error: expect.stringContaining('已撤销') })

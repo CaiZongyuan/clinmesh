@@ -142,7 +142,7 @@ describe('发现 CLI process 合同', () => {
     } finally { await rm(directory, { recursive: true, force: true }) }
   })
 
-  it.each(['仅候选撤销', '基线与候选共用的版本撤销'])('%s 时，CLI 保存待适配证据且不调度安装', async scenario => {
+  it.each(['仅候选撤销', '基线与候选共用的版本撤销', '整包 404'])('%s 时，CLI 保存待适配证据且不调度安装', async scenario => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-upstream-withdrawn-'))
     try {
       const input = { ...baseline, components: [...baseline.components, { name: 'bridge', source: 'https://github.com/example/bridge.git', owner: 'https://github.com/example/bridge', role: '桥接', commit: 'c'.repeat(40) }] }
@@ -160,7 +160,7 @@ describe('发现 CLI process 合同', () => {
         const registry = ${JSON.stringify({ name: '@deepseek-ai/dsh', versions: scenario === '仅候选撤销' ? { '1.0.0': release('1.0.0') } : {} })};
         const head = 'a'.repeat(40);
         globalThis.fetch = async (url, init = {}) => {
-          if (String(url).startsWith('https://registry.npmjs.org/')) return Response.json(registry);
+          if (String(url).startsWith('https://registry.npmjs.org/')) return Response.json(registry, { status: ${scenario === '整包 404' ? 404 : 200} });
           if (String(url) === 'https://api.github.com/repos/example/bridge') return Response.json({ default_branch: 'main' });
           if (String(url) === 'https://api.github.com/repos/example/bridge/commits/main') return Response.json({ sha: 'c'.repeat(40) });
           const path = new URL(url).pathname.replace('/repos/example/repo/', '');
@@ -183,7 +183,7 @@ describe('发现 CLI process 合同', () => {
       expect(JSON.parse(await readFile(join(directory, 'observed-status.json'), 'utf8'))).toMatchObject({ state: 'failure' })
       expect(JSON.parse(await readFile(join(directory, 'dsh-upstreams.discovery.json'), 'utf8'))).toMatchObject({ result: { status: 'awaiting-adaptation', reason: expect.stringContaining('已撤销') } })
       if (scenario !== '仅候选撤销') {
-        expect(JSON.parse(await readFile(join(directory, 'dsh-upstreams.discovery.json'), 'utf8'))).toMatchObject({ discoveryError: '已验证版本被撤销：@deepseek-ai/dsh@1.0.0' })
+        expect(JSON.parse(await readFile(join(directory, 'dsh-upstreams.discovery.json'), 'utf8'))).toMatchObject({ discoveryError: scenario === '整包 404' ? expect.stringContaining('HTTP 404') : '已验证版本被撤销：@deepseek-ai/dsh@1.0.0' })
       }
       expect(await readFile(join(directory, 'outputs'), 'utf8')).toBe('status=awaiting-adaptation\nhead=\nbranch=\n')
       expect(await readFile(join(directory, 'dsh-upstreams.lock.json'), 'utf8')).toBe(baselineText)
@@ -206,7 +206,7 @@ describe('发现 CLI process 合同', () => {
 })
 
 describe('升级 PR 的 GitHub adapter 合同', () => {
-  it.each(['available', 'network-error', 'malformed', 'head-changed'])('无更新复查 %s 时不误写兼容状态', async scenario => {
+  it.each(['available', 'network-error', 'forbidden', 'timeout', 'redirect', 'malformed', 'head-changed'])('无更新复查 %s 时不误写兼容状态', async scenario => {
     const active = await discoverUpstreams(baseline, async () => Response.json({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0'), '1.1.0': release('1.1.0') } }))
     const fresh = await discoverUpstreams(baseline, async () => Response.json({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0') } }))
     const writes: string[] = []
@@ -214,6 +214,12 @@ describe('升级 PR 的 GitHub adapter 合同', () => {
     const fetch = async (url: string, init?: RequestInit) => {
       if (url.startsWith('https://registry.npmjs.org/')) {
         if (scenario === 'network-error') return new Response('', { status: 503 })
+        if (scenario === 'forbidden') return new Response('', { status: 403 })
+        if (scenario === 'timeout') throw new DOMException('registry 请求超时', 'TimeoutError')
+        if (scenario === 'redirect') {
+          if (init?.redirect === 'error') throw new TypeError('registry 重定向被拒绝')
+          return new Response('', { status: 404 })
+        }
         if (scenario === 'malformed') return Response.json({ name: '@deepseek-ai/dsh' })
         return Response.json({ name: '@deepseek-ai/dsh', versions: scenario === 'available' ? { '1.1.0': release('1.1.0') } : {} })
       }
@@ -226,7 +232,10 @@ describe('升级 PR 的 GitHub adapter 合同', () => {
     }
     const result = publishCandidate(fresh, { repository: 'example/repo', base: 'main', fetch })
     if (scenario === 'available') await expect(result).resolves.toEqual({ status: 'no-update' })
-    else await expect(result).rejects.toThrow(scenario === 'network-error' ? 'HTTP 503' : scenario === 'head-changed' ? 'HEAD 已变化' : 'JSON 对象')
+    else {
+      const errors: Record<string, string> = { 'network-error': 'HTTP 503', forbidden: 'HTTP 403', timeout: '请求超时', redirect: '重定向被拒绝', 'head-changed': 'HEAD 已变化', malformed: 'JSON 对象' }
+      await expect(result).rejects.toThrow(errors[scenario])
+    }
     expect(writes).toEqual([])
   })
 

@@ -109,7 +109,9 @@ export function lockDigest(lock: UpstreamLock) {
   return createHash('sha256').update(JSON.stringify(parseLock(lock))).digest('hex')
 }
 async function json(fetch: Fetch, url: string) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) })
+  return responseJson(await fetch(url, { signal: AbortSignal.timeout(30_000) }), url)
+}
+async function responseJson(response: Response, url: string) {
   if (!response.ok) throw new Error(`上游请求失败：HTTP ${response.status} ${url}`)
   return object(await response.json())
 }
@@ -117,7 +119,10 @@ async function json(fetch: Fetch, url: string) {
 export async function checkNpmAvailability(target: UpstreamLock, fetch: Fetch = globalThis.fetch) {
   for (const item of target.components) {
     if (!item.version) continue
-    const packument = await json(fetch, `https://registry.npmjs.org/${encodeURIComponent(item.name)}`)
+    const url = `https://registry.npmjs.org/${encodeURIComponent(item.name)}`
+    const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(30_000) })
+    if (response.status === 404) return `候选发行已撤销：${item.name}@${item.version}（官方 registry 返回整包 404）`
+    const packument = await responseJson(response, url)
     if (packument.name !== item.name) throw new Error(`npm 包身份不匹配：${item.name}`)
     const versions = object(packument.versions)
     if (versions[item.version] === undefined) return `候选发行已撤销：${item.name}@${item.version}`
