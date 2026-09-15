@@ -38,6 +38,7 @@
       "commit": "692944a04491016bed47bda78535fcfe234554ae",
       "source": "https://github.com/CaiZongyuan/dsh-react-surface.git",
       "owner": "https://github.com/CaiZongyuan/dsh-react-surface",
+      "supportPullRequest": "https://github.com/CaiZongyuan/dsh-react-surface/pull/12",
       "requires": [
         "@deepseek-ai/dsh",
         "dsh-ag-ui"
