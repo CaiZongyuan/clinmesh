@@ -31,12 +31,14 @@ describe('候选安装准备入口', () => {
       PATH: '/tools', GH_TOKEN: 'synthetic-sentinel', NODE_AUTH_TOKEN: 'synthetic-sentinel',
       CLINMESH_AI_API_KEY: 'synthetic-sentinel', CLINMESH_DATABASE_PATH: '/daily/database',
       DSH_HOME: '/daily/profile', DSHVM_HOME: '/daily/versions', npm_config_userconfig: '/daily/npmrc',
+      HTTPS_PROXY: 'http://127.0.0.1:9999', NO_PROXY: 'localhost,127.0.0.1',
     })
     expect(environment.PATH).toBe('/tools')
     expect(environment.DSH_HOME).toBe(join('/isolated', 'data'))
     expect(Object.values(environment)).not.toContain('synthetic-sentinel')
     expect(environment.CLINMESH_DATABASE_PATH).toBeUndefined()
     expect(environment.npm_config_userconfig).toBe(join('/isolated', 'npmrc'))
+    expect(environment.HTTPS_PROXY).toBe('http://127.0.0.1:9999')
   })
 
   it.skipIf(process.platform === 'win32')('launcher 先退出时仍回收其后台子进程', async () => {
@@ -62,5 +64,9 @@ describe('候选安装准备入口', () => {
     await closed
     expect(process.listenerCount('SIGTERM')).toBe(before)
     expect(managed.child.exitCode !== null || managed.child.signalCode !== null).toBe(true)
+  })
+
+  it('不向候选进程传递代理 URL 内的凭证', () => {
+    expect(() => verificationEnvironment('/isolated', { HTTPS_PROXY: 'http://user:synthetic-secret@proxy.example' })).toThrow('不含凭证')
   })
 })

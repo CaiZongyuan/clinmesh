@@ -11,9 +11,16 @@ import { startManagedProcess } from './dsh-upstreams-process.ts'
 
 const execute = promisify(execFile)
 export function verificationEnvironment(runtime: string, source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const names = new Set(['path', 'pathext', 'systemroot', 'windir', 'comspec', 'temp', 'tmp', 'tmpdir', 'home', 'userprofile', 'appdata', 'localappdata', 'programfiles', 'programfiles(x86)', 'chrome_path', 'turbo_env_mode', 'turbo_concurrency', 'ci'])
+  const names = new Set(['path', 'pathext', 'systemroot', 'windir', 'comspec', 'temp', 'tmp', 'tmpdir', 'home', 'userprofile', 'appdata', 'localappdata', 'programfiles', 'programfiles(x86)', 'chrome_path', 'turbo_env_mode', 'turbo_concurrency', 'ci', 'no_proxy'])
+  const proxies = Object.entries(source).filter(([name, value]) => {
+    if (!['http_proxy', 'https_proxy'].includes(name.toLowerCase()) || !value) return false
+    const url = new URL(value)
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error('候选安装只接受不含凭证的 HTTP 代理')
+    return true
+  })
   return {
     ...Object.fromEntries(Object.entries(source).filter(([name, value]) => names.has(name.toLowerCase()) && value !== undefined)),
+    ...Object.fromEntries(proxies),
     pnpm_config_verify_deps_before_run: 'error',
     npm_config_userconfig: join(runtime, 'npmrc'),
     DSH_HOME: join(runtime, 'data'), DSHVM_HOME: join(runtime, 'versions'), DSHVM_BIN_DIR: join(runtime, 'bin'),
