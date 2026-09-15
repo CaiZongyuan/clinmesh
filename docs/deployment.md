@@ -268,6 +268,8 @@ main 上的上游锁是已验证基线；升级分支的 `deployment/dsh/candida
 
 故障恢复按原因处理：网络或权限故障修复后重跑发现；依赖或编译失败由维护者在同一升级分支追加适配；人工 HEAD 已变化时重新运行验收；基线发生变化或候选与人工支持 commit 冲突时先协调目标再运行。不要 force-push 自动分支、降低宿主到 alpha 或覆盖人工改动来消除失败。合并后新的基线摘要拥有下一轮升级分支。`automation/dsh-upstreams-validation` 是受控集成验证入口：推送该分支会针对它自身创建候选 PR 并执行相同权限与验收路径，不向 main 提交或合并更新。
 
+如果 Actions 报 `GitHub Actions is not permitted to create or approve pull requests`，需要仓库管理员在 Settings → Actions → General → Workflow permissions 开启 `Allow GitHub Actions to create and approve pull requests`。暂时无法开启时，有创建 PR 权限的维护者可把已生成的候选分支手动建为 draft PR，目标分支必须与该次发现一致，再重跑发现工作流；机器人可复用已有 PR 并显式执行验收。这只能证明更新与验收路径，不能替代首次自动创建 PR 的权限验收，也不会自动修复下一轮新基线的创建权限。
+
 ## 8. 升级与重置
 
 当前病例架构包含破坏性的 operational database migration，不兼容旧的本地病例与安装数据。升级前停止 Server，重置 `CLINMESH_DATABASE_PATH` 指向的本地 operational SQLite：
