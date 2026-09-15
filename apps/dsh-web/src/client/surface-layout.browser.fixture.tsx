@@ -52,7 +52,9 @@ async function run() {
     '<aside data-pane="sidebar">DSH navigation</aside><main data-pane="conversation">DSH conversation</main><aside data-rightbar-col>DSH files</aside><div data-shell-overlay style="position:absolute;inset:0;pointer-events:none"></div>'
   document.body.append(frame)
   const overlay = frame.querySelector('[data-shell-overlay]')!
-  flushSync(() => createRoot(overlay).render(<SurfaceHost />))
+  ;(overlay as HTMLElement).style.zIndex = '20'
+  const hostRoot = createRoot(overlay)
+  flushSync(() => hostRoot.render(<SurfaceHost />))
   const settle = () =>
     new Promise<void>((resolve) =>
       requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 50))),
@@ -98,8 +100,34 @@ async function run() {
   details.innerHTML = '<div style="visibility:visible"><input aria-label="Selected file" value="synthetic.txt"></div>'
   const collapse = shadow.querySelector<HTMLButtonElement>('[aria-label="收起会话"]')
   if (!collapse) throw new Error('Missing collapse conversation control')
+  // DSH's native fullscreen file panel outranks its ordinary overlay slot.
+  const fullscreenFile = details.firstElementChild as HTMLElement
+  fullscreenFile.style.cssText = 'visibility:visible;position:fixed;inset:0;z-index:40;background:white'
+  await settle()
+  const rect = collapse.getBoundingClientRect()
+  const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+  let collapseReachableWithFullscreenFile = hit === frame.querySelector('[data-surface-id]')
+  frame.style.width = '680px'
+  await settle()
+  const narrowRect = collapse.getBoundingClientRect()
+  collapseReachableWithFullscreenFile &&= document.elementFromPoint(narrowRect.x + narrowRect.width / 2, narrowRect.y + narrowRect.height / 2) === frame.querySelector('[data-surface-id]')
+  frame.style.width = '2048px'
+  await settle()
+  const floatingFile = document.createElement('div')
+  floatingFile.setAttribute('data-sidebar-right-float-host', '')
+  floatingFile.style.cssText = 'position:fixed;inset:0;z-index:60;background:white'
+  floatingFile.innerHTML = '<input value="floating synthetic.txt">'
+  document.body.append(floatingFile)
+  await settle()
+  const collapseReachableWithFloatingFile = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2) === frame.querySelector('[data-surface-id]')
   collapse.click()
   await settle()
+  const lateFloat = document.createElement('div')
+  lateFloat.setAttribute('data-sidebar-right-float-host', '')
+  lateFloat.textContent = 'Late synthetic file'
+  document.body.append(lateFloat)
+  await settle()
+  const floatsHidden = [floatingFile, lateFloat].every(el => el.inert && !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }))
   const collapsed = {
     hidden: conversation.inert && details.inert && getComputedStyle(conversation).visibility === 'hidden' && getComputedStyle(details).visibility === 'hidden',
     sidebarActive: !frame.querySelector<HTMLElement>('aside')!.inert,
@@ -121,11 +149,21 @@ async function run() {
     scrollTop: conversation.scrollTop,
     nativeVisible: !conversation.inert && !details.inert && getComputedStyle(conversation).visibility === 'visible' && getComputedStyle(details).visibility === 'visible',
   }
+  const floatsRestored = [floatingFile, lateFloat].every(el => !el.inert && el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }))
   shadow.querySelector<HTMLButtonElement>('[aria-label="收起会话"]')!.click()
   await settle()
   flushSync(() => registry.close())
   await settle()
   const closedRestored = !conversation.inert && !details.inert && getComputedStyle(conversation).visibility === 'visible' && getComputedStyle(details).visibility === 'visible'
+  const floatsReleased = [floatingFile, lateFloat].every(el => !el.inert && el.style.opacity === '' && el.style.visibility === '')
+  const overlayRestored = (overlay as HTMLElement).style.zIndex === '20'
+  flushSync(() => registry.open('clinmesh.his'))
+  await settle()
+  flushSync(() => hostRoot.unmount())
+  await settle()
+  const unmountedRestored = !conversation.inert && !details.inert && !floatingFile.inert && !lateFloat.inert && (overlay as HTMLElement).style.zIndex === '20'
+  floatingFile.remove()
+  lateFloat.remove()
   const brandsAfterClose = [...brandSlots]
   document.title = btoa(
     JSON.stringify({
@@ -140,6 +178,13 @@ async function run() {
       retainedCollapse,
       expanded,
       closedRestored,
+      collapseReachableWithFullscreenFile,
+      collapseReachableWithFloatingFile,
+      floatsHidden,
+      floatsRestored,
+      floatsReleased,
+      overlayRestored,
+      unmountedRestored,
     }),
   )
 }
