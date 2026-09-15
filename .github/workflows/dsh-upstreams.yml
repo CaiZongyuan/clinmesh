@@ -1,0 +1,98 @@
+name: DSH upstream updates
+
+on:
+  schedule:
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+  push:
+    branches: [automation/dsh-upstreams-validation]
+  pull_request:
+    paths:
+      - 'scripts/dsh-upstreams*'
+      - '.github/workflows/dsh-upstreams*'
+      - 'deployment/dsh/**'
+      - 'dsh-upstreams.lock.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dsh-upstreams-${{ github.event_name == 'pull_request' && github.ref || 'discovery' }}
+  cancel-in-progress: false
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    outputs:
+      candidate: ${{ steps.candidate.outputs.present }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec vitest run scripts/dsh-upstreams.spec.ts scripts/dsh-upstreams-verify.spec.ts
+      - run: pnpm exec tsc --noEmit --strict --skipLibCheck --module nodenext --target es2023 --allowImportingTsExtensions scripts/dsh-upstreams.ts scripts/dsh-upstreams-cli.ts scripts/dsh-upstreams-verify.ts
+      - id: candidate
+        run: |
+          if [ -f deployment/dsh/candidate.json ]; then echo 'present=true' >> "$GITHUB_OUTPUT"; fi
+
+  verify-human-adaptation:
+    needs: contracts
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.contracts.outputs.candidate == 'true'
+    uses: ./.github/workflows/dsh-upstreams-verify.yml
+    permissions:
+      contents: write
+      statuses: write
+    with:
+      revision: ${{ github.event.pull_request.head.sha }}
+      branch: ${{ github.event.pull_request.head.ref }}
+
+  discover:
+    if: github.event_name != 'pull_request'
+    needs: contracts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      head: ${{ steps.discover.outputs.head }}
+      branch: ${{ steps.discover.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - id: discover
+        run: pnpm upstream:discover --publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # 专用验证分支证明真实机器人权限和 CI 触发，不改写 main。
+          UPSTREAM_BASE: ${{ github.event_name == 'push' && github.ref_name || github.event.repository.default_branch }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upstream-discovery
+          path: dsh-upstreams.discovery.json
+
+  verify:
+    needs: discover
+    if: needs.discover.outputs.head != ''
+    uses: ./.github/workflows/dsh-upstreams-verify.yml
+    permissions:
+      contents: write
+      statuses: write
+    with:
+      revision: ${{ needs.discover.outputs.head }}
+      branch: ${{ needs.discover.outputs.branch }}

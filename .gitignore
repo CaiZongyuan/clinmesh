@@ -23,3 +23,5 @@ apps/dsh-web/src/client/styles.generated.ts
 apps/dsh-web/lib/
 .worktrees/
 docs/ui/references/
+dsh-upstreams.discovery.json
+.upstream-evidence/

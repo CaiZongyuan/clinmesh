@@ -8,6 +8,8 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
+    "upstream:discover": "tsx scripts/dsh-upstreams-cli.ts",
+    "upstream:verify": "tsx scripts/dsh-upstreams-verify.ts",
     "dev:lan": "tsx scripts/dev-lan.ts",
     "dev:web": "turbo run dev --filter=@clinmesh/web",
     "dev:server": "turbo run dev --filter=@clinmesh/server",
@@ -32,7 +34,7 @@
     "check:mobile": "pnpm typecheck:mobile && tsx scripts/verify-expo-versions.ts",
     "clinmesh": "pnpm --filter @clinmesh/cli clinmesh",
     "lint": "oxlint apps packages scripts --deny-warnings",
-    "test": "turbo run test --filter=!@clinmesh/mobile && vitest run scripts/dev-lan.spec.ts scripts/synthea-runtime.spec.ts",
+    "test": "turbo run test --filter=!@clinmesh/mobile && vitest run scripts/dev-lan.spec.ts scripts/synthea-runtime.spec.ts scripts/dsh-upstreams.spec.ts scripts/dsh-upstreams-verify.spec.ts",
     "verify:docs": "tsx scripts/verify-docs.ts",
     "verify:agent-notes": "tsx scripts/verify-agent-note-format.ts",
     "verify:boundaries": "tsx scripts/verify-package-boundaries.ts",
