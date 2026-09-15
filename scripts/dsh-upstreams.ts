@@ -157,6 +157,7 @@ export async function discoverUpstreams(input: unknown, fetch: Fetch = globalThi
 }
 
 export const candidatePath = 'deployment/dsh/candidate.json'
+export const discoveryPath = 'deployment/dsh/discovery.json'
 
 export function parseCandidate(value: unknown): Candidate {
   const input = object(value)
@@ -220,6 +221,19 @@ export async function publishCandidate(candidate: Candidate, options: {
   if (!Array.isArray(pulls) || pulls.length > 1) throw new Error('活动升级 PR 响应不唯一')
   const pull = pulls[0] === undefined ? undefined : object(pulls[0])
   const branch = await request(`git/ref/heads/${upgradeBranch}`, 'GET', undefined, true)
+  async function readCandidate(path: string, head: string) {
+    const response = await request(`contents/${path}?ref=${encodeURIComponent(head)}`, 'GET', undefined, true)
+    if (response === undefined) return undefined
+    const file = object(response)
+    if (file.encoding !== 'base64') throw new Error('非法候选文件编码')
+    return parseCandidate(JSON.parse(Buffer.from(string(file.content), 'base64').toString('utf8')))
+  }
+  async function protectManualTarget(head: string) {
+    const current = await readCandidate(candidatePath, head)
+    const discovered = await readCandidate(discoveryPath, head)
+    if ((current || pull) && !discovered) throw new Error('缺少自动发现记录，保留旧候选；请人工核对目标后建立 discovery.json')
+    if (JSON.stringify(current) !== JSON.stringify(discovered)) throw new Error('保留人工候选目标：candidate.json 与上次自动发现结果不同；请协调目标后再恢复自动更新')
+  }
   let head: string
   if (branch === undefined) {
     const base = object(await request(`git/ref/heads/${options.base}`))
@@ -227,25 +241,23 @@ export async function publishCandidate(candidate: Candidate, options: {
     await request('git/refs', 'POST', { ref: `refs/heads/${upgradeBranch}`, sha: head })
   } else {
     head = sha(object(object(branch).object).sha)
+    await protectManualTarget(head)
     const merged = await request('merges', 'POST', {
       base: upgradeBranch, head: options.base,
       commit_message: 'chore(upstream): 合入当前基线并保留人工适配\n\n背景：\n- 验收需包含目标分支的当前实现\n\n变更：\n- 普通合并目标分支，冲突时停止\n\n验证：\n- GitHub 执行无冲突合并；兼容检查由后续 CI 执行\n\n关联：\n- Refs #92',
     })
-    if (merged !== undefined) head = sha(object(merged).sha)
+    if (merged !== undefined) {
+      head = sha(object(merged).sha)
+      await protectManualTarget(head)
+    }
   }
-  const current = await request(`contents/${candidatePath}?ref=${encodeURIComponent(head)}`, 'GET', undefined, true)
+  const current = await readCandidate(candidatePath, head)
   const content = `${JSON.stringify(parseCandidate(candidate), null, 2)}\n`
-  let changed = true
-  if (current !== undefined) {
-    const file = object(current)
-    if (file.encoding !== 'base64') throw new Error('非法候选文件编码')
-    const previous = parseCandidate(JSON.parse(Buffer.from(string(file.content), 'base64').toString('utf8')))
-    changed = JSON.stringify(previous) !== JSON.stringify(candidate)
-  }
+  const changed = JSON.stringify(current) !== JSON.stringify(candidate)
   if (changed) {
     const parent = object(await request(`git/commits/${head}`))
     const tree = object(await request('git/trees', 'POST', {
-      base_tree: sha(object(parent.tree).sha), tree: [{ path: candidatePath, mode: '100644', type: 'blob', content }],
+      base_tree: sha(object(parent.tree).sha), tree: [candidatePath, discoveryPath].map(path => ({ path, mode: '100644', type: 'blob', content })),
     }))
     const commit = object(await request('git/commits', 'POST', {
       message: 'chore(upstream): 更新 DSH 上游候选\n\n背景：\n- 发现新的正式版、RC 或源码提交\n\n变更：\n- 追加候选清单，保留人工适配与已验证基线\n\n验证：\n- 发现入口已校验来源与版本；兼容验收由 CI 执行\n\n关联：\n- Refs #92',

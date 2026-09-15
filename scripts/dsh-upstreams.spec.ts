@@ -4,7 +4,7 @@ import { mkdtemp, rm, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { discoverUpstreams, publishCandidate } from './dsh-upstreams.ts'
+import { candidatePath, discoveryPath, discoverUpstreams, publishCandidate } from './dsh-upstreams.ts'
 
 const baseline = {
   schemaVersion: 1,
@@ -107,12 +107,52 @@ describe('发现 CLI process 合同', () => {
 })
 
 describe('升级 PR 的 GitHub adapter 合同', () => {
+  it('人工指定支持提交后，下一次发现拒绝覆盖且不合并目标分支', async () => {
+    const input = { ...baseline, components: [{ name: 'bridge', source: 'https://github.com/example/bridge.git', owner: 'https://github.com/example/bridge', role: '桥接', commit: 'a'.repeat(40) }] }
+    const responses = [{ default_branch: 'main' }, { sha: 'b'.repeat(40) }, { status: 'ahead' }]
+    const discovered = await discoverUpstreams(input, async () => Response.json(responses.shift()))
+    const manual = structuredClone(discovered)
+    manual.target.components[0]!.commit = 'c'.repeat(40)
+    manual.changes[0]!.to = 'c'.repeat(40)
+    const mutations: string[] = []
+    const fetch = async (url: string, init?: RequestInit) => {
+      const path = new URL(url).pathname.replace('/repos/example/repo/', '')
+      const method = init?.method ?? 'GET'
+      if (method !== 'GET') mutations.push(path)
+      if (path === 'pulls') return Response.json([{ number: 7, body: '', html_url: 'https://github.com/example/repo/pull/7' }])
+      if (path.startsWith('git/ref/')) return Response.json({ object: { sha: 'd'.repeat(40) } })
+      if (path === 'merges') return new Response(null, { status: 204 })
+      if (path.startsWith('contents/')) return Response.json({ encoding: 'base64', content: Buffer.from(JSON.stringify(path.endsWith('candidate.json') ? manual : discovered)).toString('base64') })
+      throw new Error(`意外请求：${method} ${path}`)
+    }
+    await expect(publishCandidate(discovered, { repository: 'example/repo', base: 'main', fetch })).rejects.toThrow('保留人工候选目标')
+    expect(mutations).toEqual([])
+  })
+
+  it('旧候选缺少自动发现记录时保留现场，不猜测目标归属', async () => {
+    const candidate = await discoverUpstreams(baseline, async () => Response.json({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0'), '1.1.0': release('1.1.0') } }))
+    const mutations: string[] = []
+    const fetch = async (url: string, init?: RequestInit) => {
+      const path = new URL(url).pathname.replace('/repos/example/repo/', '')
+      const method = init?.method ?? 'GET'
+      if (method !== 'GET') mutations.push(path)
+      if (path === 'pulls') return Response.json([{ number: 7, body: '', html_url: 'https://github.com/example/repo/pull/7' }])
+      if (path.startsWith('git/ref/')) return Response.json({ object: { sha: 'c'.repeat(40) } })
+      if (path === 'merges') return new Response(null, { status: 204 })
+      if (path === 'contents/deployment/dsh/candidate.json') return Response.json({ encoding: 'base64', content: Buffer.from(JSON.stringify(candidate)).toString('base64') })
+      if (path.startsWith('contents/')) return new Response('', { status: 404 })
+      throw new Error(`意外请求：${method} ${path}`)
+    }
+    await expect(publishCandidate(candidate, { repository: 'example/repo', base: 'main', fetch })).rejects.toThrow('缺少自动发现记录')
+    expect(mutations).toEqual([])
+  })
+
   it('重复运行复用 PR，追加候选提交保留当前人工 HEAD 和非候选文件', async () => {
     const candidate = await discoverUpstreams(baseline, async () => Response.json({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0'), '1.1.0': release('1.1.0') } }))
     const humanHead = 'c'.repeat(40)
     const treeHead = 'd'.repeat(40)
     const newHead = 'e'.repeat(40)
-    let stored = ''
+    const stored = new Map<string, string>()
     let head = humanHead
     const commits: unknown[] = []
     const trees: unknown[] = []
@@ -125,12 +165,20 @@ describe('升级 PR 的 GitHub adapter 合同', () => {
       if (path === 'pulls' && method === 'GET') return Response.json(prCreates ? [{ number: 7, body, html_url: 'https://github.com/example/repo/pull/7' }] : [])
       if (path.startsWith('git/ref/')) return Response.json({ object: { sha: head } })
       if (path === 'merges') return new Response(null, { status: 204 })
-      if (path.startsWith('contents/')) return stored ? Response.json({ encoding: 'base64', content: Buffer.from(stored).toString('base64') }) : new Response('', { status: 404 })
+      if (path.startsWith('contents/')) {
+        const content = stored.get(path.slice('contents/'.length))
+        return content ? Response.json({ encoding: 'base64', content: Buffer.from(content).toString('base64') }) : new Response('', { status: 404 })
+      }
       if (path.startsWith('git/commits/') && method === 'GET') return Response.json({ tree: { sha: treeHead } })
-      if (path === 'git/trees') { trees.push(payload); stored = payload.tree[0].content; return Response.json({ sha: treeHead }) }
+      if (path === 'git/trees') {
+        trees.push(payload)
+        for (const file of payload.tree) stored.set(file.path, file.content)
+        return Response.json({ sha: treeHead })
+      }
       if (path === 'git/commits') { commits.push(payload); return Response.json({ sha: newHead }) }
       if (path.startsWith('git/refs/') && method === 'PATCH') { expect(payload.force).toBe(false); head = payload.sha; return Response.json({ object: { sha: head } }) }
       if (path === 'pulls' && method === 'POST') { prCreates++; body = payload.body; return Response.json({ number: 7, html_url: 'https://github.com/example/repo/pull/7' }) }
+      if (path === 'pulls/7' && method === 'PATCH') { body = payload.body; return Response.json({ number: 7, html_url: 'https://github.com/example/repo/pull/7' }) }
       throw new Error(`意外请求：${method} ${path}`)
     }
     const options = { repository: 'example/repo', base: 'main', fetch }
@@ -139,7 +187,16 @@ describe('升级 PR 的 GitHub adapter 合同', () => {
     expect(prCreates).toBe(1)
     expect(commits).toHaveLength(1)
     expect(commits[0]).toMatchObject({ parents: [humanHead] })
-    expect(trees).toEqual([{ base_tree: treeHead, tree: [{ path: 'deployment/dsh/candidate.json', mode: '100644', type: 'blob', content: stored }] }])
+    expect(trees).toEqual([{ base_tree: treeHead, tree: [candidatePath, discoveryPath].map(path => ({ path, mode: '100644', type: 'blob', content: stored.get(path) })) }])
+    expect(JSON.parse(stored.get(discoveryPath)!)).toEqual(candidate)
+    const newer = structuredClone(candidate)
+    const newerRelease = release('1.2.0')
+    Object.assign(newer.target.components[0]!, { version: '1.2.0', source: newerRelease.dist.tarball })
+    newer.changes[0]!.to = '1.2.0'
+    expect((await publishCandidate(newer, options)).status).toBe('updated')
+    expect(JSON.parse(stored.get(candidatePath)!)).toEqual(newer)
+    expect(JSON.parse(stored.get(discoveryPath)!)).toEqual(newer)
+    expect(prCreates).toBe(1)
   })
 
   it('权限不足明确失败，不把候选发布视为成功', async () => {

@@ -1,11 +1,13 @@
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { createServer } from 'node:net'
-import { existsSync } from 'node:fs'
-import { appendFile, chmod, cp, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
+import { createWriteStream, existsSync } from 'node:fs'
+import { appendFile, chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
+import { pipeline } from 'node:stream/promises'
 import { candidatePath, lockDigest, parseCandidate, parseLock, type UpstreamLock } from './dsh-upstreams.ts'
 import { startManagedProcess } from './dsh-upstreams-process.ts'
 
@@ -35,6 +37,36 @@ async function readJson(path: string): Promise<unknown> {
 }
 async function writeJson(path: string, value: unknown) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`)
+}
+
+async function downloadNpmCandidate(component: UpstreamLock['components'][number], runtime: string, fetch: typeof globalThis.fetch) {
+  if (!component.version || !component.integrity) throw new Error(`缺少 npm 候选版本或完整性：${component.name}`)
+  const response = await fetch(component.source, { redirect: 'error', signal: AbortSignal.timeout(120_000) })
+  if (!response.ok || !response.body) throw new Error(`候选下载失败：${component.name} HTTP ${response.status}`)
+  const path = join(runtime, `${component.name.replace('@', '').replace('/', '-')}-${component.version}.tgz`)
+  const hash = createHash('sha512')
+  try {
+    await pipeline(response.body, async function* (source) {
+      for await (const chunk of source) {
+        hash.update(chunk)
+        yield chunk
+      }
+    }, createWriteStream(path, { flags: 'wx' }))
+    if (`sha512-${hash.digest('base64')}` !== component.integrity) throw new Error(`候选完整性不匹配：${component.name}@${component.version}；停止安装并保留待适配状态`)
+    return path
+  } catch (error) {
+    await rm(path, { force: true })
+    throw error
+  }
+}
+
+export async function verifyNpmDependencyLock(path: string, component: UpstreamLock['components'][number]) {
+  const lock = record(await readJson(path))
+  if (lock.lockfileVersion !== 3) throw new Error('候选需要 npm v3 依赖锁')
+  const dependency = record(record(lock.packages)[`node_modules/${component.name}`])
+  if (!component.version || !component.integrity || dependency.version !== component.version || dependency.resolved !== component.source || dependency.integrity !== component.integrity) {
+    throw new Error(`依赖锁与候选不匹配：${component.name}；停止安装并保留待适配状态`)
+  }
 }
 
 async function restoreInstallerBinMode(root: string) {
@@ -153,7 +185,7 @@ async function smokeHost(cli: string, runtime: string, expected: string, log: st
   }
 }
 
-export async function verifyCandidate(root: string) {
+export async function verifyCandidate(root: string, fetch: typeof globalThis.fetch = globalThis.fetch) {
   const branch = await execute('git', ['branch', '--show-current'], { cwd: root })
   if (['main', 'master'].includes(branch.stdout.trim())) throw new Error('不能在主分支准备候选；请使用独立升级 checkout')
   const candidate = parseCandidate(await readJson(join(root, candidatePath)))
@@ -180,6 +212,8 @@ export async function verifyCandidate(root: string) {
   const env = verificationEnvironment(runtime)
   await writeFile(join(runtime, 'npmrc'), '')
   try {
+    const hostTarball = await downloadNpmCandidate(host, runtime, fetch)
+    const managerTarball = await downloadNpmCandidate(manager, runtime, fetch)
     await prepareManifests(root, baseline, target)
     const checkout = join(root, 'vendor/dsh-react-surface')
     const actual = (await execute('git', ['rev-parse', 'HEAD'], { cwd: checkout })).stdout.trim()
@@ -198,14 +232,15 @@ export async function verifyCandidate(root: string) {
     await verifyBridgeHost(join(runtime, 'ag-ui/package.json'), host.version)
     await run('pnpm', ['install', '--frozen-lockfile'], join(runtime, 'ag-ui'), log, env)
     await run('pnpm', ['build'], join(runtime, 'ag-ui'), log, env)
-    await run('npm', ['install', '--prefix', join(runtime, 'tooling'), '--ignore-scripts', `@dsh-so/dshvm@${manager.version}`], runtime, log, env)
+    await run('npm', ['install', '--prefix', join(runtime, 'tooling'), '--ignore-scripts', managerTarball], runtime, log, env)
     const managerCli = join(runtime, 'tooling/node_modules/@dsh-so/dshvm/bin/dshvm.js')
-    await run(process.execPath, [managerCli, 'install', host.version], runtime, log, env)
+    await run(process.execPath, [managerCli, 'install', hostTarball], runtime, log, env)
     const hostDirectory = join(runtime, 'versions', `dsh-${host.version}`)
     for (const file of ['package.json', 'package-lock.json']) await cp(join(root, 'deployment/dsh/host', file), join(hostDirectory, file))
     if (host.version !== baseline.components.find(item => item.name === host.name)?.version) {
       await run('npm', ['install', '--package-lock-only', '--ignore-scripts'], hostDirectory, log, env)
     }
+    await verifyNpmDependencyLock(join(hostDirectory, 'package-lock.json'), host)
     await run('npm', ['ci'], hostDirectory, log, env)
     await cp(join(hostDirectory, 'package-lock.json'), join(root, 'deployment/dsh/host/package-lock.json'))
     await run(process.execPath, [managerCli, 'isolate', host.version], runtime, log, env)

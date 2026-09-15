@@ -1,15 +1,59 @@
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile, rm, readdir } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { prepareManifests, verificationEnvironment } from './dsh-upstreams-verify.ts'
-import { parseLock } from './dsh-upstreams.ts'
+import { prepareManifests, verificationEnvironment, verifyCandidate, verifyNpmDependencyLock } from './dsh-upstreams-verify.ts'
+import { lockDigest, parseLock } from './dsh-upstreams.ts'
 import { startManagedProcess } from './dsh-upstreams-process.ts'
 
 const directories: string[] = []
+const execute = promisify(execFile)
 afterEach(async () => { for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true }) })
 
 describe('候选安装准备入口', () => {
+  it.each([
+    { integrity: 'sha512-Yg==' },
+    { resolved: 'https://registry.npmjs.org/another.tgz' },
+    { version: '1.0.1' },
+  ])('宿主依赖锁与候选不一致时拒绝安装：%j', async mismatch => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-upstream-npm-lock-'))
+    directories.push(directory)
+    const component = { name: '@deepseek-ai/dsh', version: '1.0.0', source: 'https://registry.npmjs.org/dsh.tgz', integrity: 'sha512-YQ==', owner: 'https://github.com/example/host', role: '宿主' }
+    const path = join(directory, 'package-lock.json')
+    const entry = { version: '1.0.0', resolved: component.source, integrity: 'sha512-YQ==' }
+    await writeFile(path, JSON.stringify({ lockfileVersion: 3, packages: { 'node_modules/@deepseek-ai/dsh': entry } }))
+    await expect(verifyNpmDependencyLock(path, component)).resolves.toBeUndefined()
+    await writeFile(path, JSON.stringify({ lockfileVersion: 3, packages: { 'node_modules/@deepseek-ai/dsh': { ...entry, ...mismatch } } }))
+    await expect(verifyNpmDependencyLock(path, component)).rejects.toThrow('依赖锁与候选不匹配')
+  })
+
+  it.each(['@deepseek-ai/dsh', '@dsh-so/dshvm'])('%s 同版本下载内容改变时，验收失败且不执行安装或推进上游锁', async changedPackage => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-upstream-integrity-'))
+    directories.push(directory)
+    const lock = parseLock(JSON.parse(await readFile(new URL('../dsh-upstreams.lock.json', import.meta.url), 'utf8')))
+    const original = Buffer.from('synthetic original package')
+    for (const component of lock.components) {
+      if (component.version) component.integrity = `sha512-${createHash('sha512').update(original).digest('base64')}`
+    }
+    await mkdir(join(directory, 'deployment/dsh'), { recursive: true })
+    await mkdir(join(directory, 'vendor/dsh-react-surface'), { recursive: true })
+    const before = `${JSON.stringify(lock)}\n`
+    await writeFile(join(directory, 'dsh-upstreams.lock.json'), before)
+    await writeFile(join(directory, 'deployment/dsh/candidate.json'), JSON.stringify({ schemaVersion: 1, baselineDigest: lockDigest(lock), target: lock, changes: [] }))
+    await execute('git', ['init', '-b', 'candidate-test'], { cwd: directory })
+    await execute('git', ['add', '.'], { cwd: directory })
+    await execute('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'fixture'], { cwd: directory })
+    const changedSource = lock.components.find(component => component.name === changedPackage)!.source
+    await expect(verifyCandidate(directory, async source => new Response(source === changedSource ? 'changed package bytes' : original))).rejects.toThrow(`候选完整性不匹配：${changedPackage}`)
+    expect(await readFile(join(directory, 'dsh-upstreams.lock.json'), 'utf8')).toBe(before)
+    expect(JSON.parse(await readFile(join(directory, '.upstream-evidence/result.json'), 'utf8'))).toMatchObject({ status: 'awaiting-adaptation' })
+    expect(await readdir(join(directory, 'deployment/dsh'))).toEqual(['candidate.json'])
+    expect(await readFile(join(directory, '.upstream-evidence/verification.log'), 'utf8')).not.toContain('$ ')
+  })
+
   it('人工修改的依赖不能被候选覆盖，拒绝前不写任何文件', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-upstream-test-'))
     directories.push(directory)
