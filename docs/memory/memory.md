@@ -35,7 +35,7 @@
 
 - `pnpm reference:sync` 固定写入默认路径 `.data/clinmesh-reference.sqlite`，不读取 `.env` 的 `CLINMESH_REFERENCE_DATABASE_PATH`；`.env` 指向自定义路径时会与同步结果分叉，出现"诊断药品正常、检验目录为空"（旧 Release 不含 `laboratory-cn`）。排查时直接查库：`reference_release` 表按 `release_id` 看 `laboratory_definition_count`。当前 Release 默认取 `reference-data.lock.json` 的 `compositeRelease.releaseId`，不要在 `.env` 手抄该 ID 制造双事实来源；运行中 Server 不热切换参考库，修复后必须重启。
 
-- 本地项目目录迁移后，DSH Profile 的 `link:` 插件依赖仍可能指向旧绝对路径。先备份 Profile 的 `package.json`，核对新目录后更新链接并运行 `dsh plugin --profile web install`；插件自身的依赖也必须在各自 workspace 按锁文件恢复，Profile 安装不会替本地链接包安装依赖。启动顺序与环境变量见[部署指南](../deployment.md)。
+- 本地项目目录迁移后，DSH Profile 的 `link:` 插件依赖可能仍指向旧绝对路径。`pnpm dsh:setup` / `pnpm dev:dsh` 每次启动都会重验 `.data/dsh-runtime` Profile 的三个链接并自动修复指向当前仓库，无需人工处理；仓库外手工维护的沙箱仍需按原方法备份 Profile 的 `package.json` 核对更新并运行 `dsh plugin --profile web install`，插件自身依赖须在各自 workspace 按锁恢复。启动见[部署指南](../deployment.md)。
 
 - pnpm 11 默认的 `verifyDepsBeforeRun=install` 会在脚本前自动安装，可能重解析锁文件并给 file dependency 的 bin 源文件增加可执行权限。验证前先执行 `pnpm install --frozen-lockfile`，验证进程使用 `pnpm_config_verify_deps_before_run=error`，发现不一致时显式处理；安装后检查锁文件和子模块权限。全局 pnpm 与仓库指定版本不一致且启动器卡在联网解析时，可直接调用已缓存的精确版本，并让子进程 PATH 使用同一版本。缓存中的 `pnpm.cjs` 可能没有可执行位，仅把其目录或符号链接放进 PATH 不会生效；使用可执行的 shell wrapper 通过 `node` 调用该文件。
 
