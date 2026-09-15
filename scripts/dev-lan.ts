@@ -224,7 +224,7 @@ async function ensureSyntheaProvider(dependencies: DataSourceReadinessDependenci
   }
 }
 
-export function managedProviderUrlFromEnvironment(
+function managedProviderUrlFromEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
   write: (message: string) => void,
 ): string | undefined {
@@ -238,7 +238,7 @@ export function managedProviderUrlFromEnvironment(
   }
 }
 
-export function runPackageManagerCommand(args: string[]): Promise<void> {
+function runPackageManagerCommand(args: string[]): Promise<void> {
   const packageManager = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
   const repositoryRoot = resolve(import.meta.dirname, '..')
   return new Promise((resolveCommand, reject) => {
@@ -254,14 +254,10 @@ export function runPackageManagerCommand(args: string[]): Promise<void> {
   })
 }
 
-export async function runLanDevelopment(): Promise<number> {
-  loadRepositoryEnvironment()
-  const repositoryRoot = resolve(import.meta.dirname, '..')
-  const color = supportsAnsiColor(process.stdout, process.env)
-  console.info(renderHeading('ClinMesh 局域网开发环境', color))
-  console.info('')
-  console.info(renderHeading('数据源', color))
-  await ensureDataSourcesReady({
+export function createDataSourceReadinessDependencies(
+  repositoryRoot: string,
+): DataSourceReadinessDependencies {
+  return {
     environment: process.env,
     managedProviderUrl: process.env.CLINMESH_SYNTHEA_PROVIDER_URL === undefined
       ? undefined
@@ -277,7 +273,17 @@ export async function runLanDevelopment(): Promise<number> {
       createSyntheaRuntimeDependencies(process.env, console.info),
     ),
     write: console.info,
-  })
+  }
+}
+
+export async function runLanDevelopment(): Promise<number> {
+  loadRepositoryEnvironment()
+  const repositoryRoot = resolve(import.meta.dirname, '..')
+  const color = supportsAnsiColor(process.stdout, process.env)
+  console.info(renderHeading('ClinMesh 局域网开发环境', color))
+  console.info('')
+  console.info(renderHeading('数据源', color))
+  await ensureDataSourcesReady(createDataSourceReadinessDependencies(repositoryRoot))
   const plan = createLanDevelopmentPlan(
     resolveLanAddresses(process.env.CLINMESH_LAN_IP),
   )

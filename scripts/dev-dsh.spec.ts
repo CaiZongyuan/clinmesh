@@ -68,13 +68,13 @@ describe('resolveDshTrustedOrigins', () => {
       .toBe('http://127.0.0.1:60001,http://127.0.0.1:51888,http://127.0.0.1:3080')
   })
 
-  it('appends the DSH origin to user-configured origins without duplicating it', () => {
+  it('unions user-configured origins with the local defaults without duplicating', () => {
     expect(resolveDshTrustedOrigins({
       CLINMESH_TRUSTED_ORIGINS: 'http://localhost:51888,http://127.0.0.1:3080',
-    })).toBe('http://localhost:51888,http://127.0.0.1:3080')
+    })).toBe('http://localhost:51888,http://127.0.0.1:3080,http://127.0.0.1:51868,http://127.0.0.1:51888')
     expect(resolveDshTrustedOrigins({
       CLINMESH_TRUSTED_ORIGINS: 'http://localhost:51888',
-    })).toBe('http://localhost:51888,http://127.0.0.1:3080')
+    })).toBe('http://localhost:51888,http://127.0.0.1:51868,http://127.0.0.1:51888,http://127.0.0.1:3080')
   })
 })
 
@@ -91,6 +91,7 @@ describe('createDshDevelopmentPlan', () => {
         CLINMESH_DATABASE_PATH: '.data/clinmesh.sqlite',
         CLINMESH_REFERENCE_DATABASE_PATH: '.data/clinmesh-reference.sqlite',
         CLINMESH_WEB_ROOT: '/absolute/web-root',
+        CLINMESH_PORT: '51869',
       },
     })
 
@@ -118,7 +119,7 @@ describe('createDshDevelopmentPlan', () => {
         },
       },
     ])
-    expect(plan.urls).toEqual(['http://127.0.0.1:3080/'])
+    expect(plan.urls).toEqual(['http://127.0.0.1:3080/', 'http://127.0.0.1:51869/api/health'])
   })
 
   it('omits server path overrides that the environment does not define', () => {

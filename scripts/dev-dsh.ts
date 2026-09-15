@@ -7,21 +7,14 @@ import { isAbsolute, join, resolve } from 'node:path'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 import { parseLock, type UpstreamLock } from './dsh-upstreams.ts'
+import { loadRepositoryEnvironment } from './synthea-runtime.ts'
 import {
-  createSyntheaRuntimeDependencies,
-  loadRepositoryEnvironment,
-  readProviderHealth,
-  runSyntheaRuntimeCommand,
-} from './synthea-runtime.ts'
-import {
+  createDataSourceReadinessDependencies,
   ensureDataSourcesReady,
-  managedProviderUrlFromEnvironment,
   renderHeading,
-  runPackageManagerCommand,
   supportsAnsiColor,
 } from './dev-lan.ts'
 import { runDevelopmentProcesses, type DevelopmentProcess } from './development-processes.ts'
-import { referenceDatabaseIsReady } from '../apps/server/src/reference-readiness.ts'
 
 export interface DshRuntimeVersions {
   dshVersion: string
@@ -94,8 +87,7 @@ export function resolveDshTrustedOrigins(
   ]
   const configured = environment.CLINMESH_TRUSTED_ORIGINS?.split(',').map(origin => origin.trim())
     .filter(origin => origin.length > 0)
-  if (configured === undefined) return defaults.join(',')
-  return [...new Set([...configured, dshWebOrigin])].join(',')
+  return [...new Set([...configured ?? [], ...defaults])].join(',')
 }
 
 export interface DshDevelopmentPlanInput {
@@ -117,6 +109,13 @@ const serverResolvedEnvironmentKeys = [
   'CLINMESH_REFERENCE_DATABASE_PATH',
   'CLINMESH_WEB_ROOT',
 ] as const
+
+export function dshvmEnvironmentFor(paths: Pick<DshSandboxPaths, 'versionsDir' | 'binDir'>): Record<string, string> {
+  return {
+    DSHVM_HOME: paths.versionsDir,
+    DSHVM_BIN_DIR: paths.binDir,
+  }
+}
 
 export function createDshDevelopmentPlan(input: DshDevelopmentPlanInput): DshDevelopmentPlan {
   const serverEnvironment: Record<string, string> = {
@@ -141,14 +140,16 @@ export function createDshDevelopmentPlan(input: DshDevelopmentPlanInput): DshDev
         command: 'node',
         args: [input.paths.dshvmCli, 'exec', 'web', '--port', dshWebPort, '--no-open'],
         environment: {
-          DSHVM_HOME: input.paths.versionsDir,
-          DSHVM_BIN_DIR: input.paths.binDir,
+          ...dshvmEnvironmentFor(input.paths),
           DSH_HOME: input.paths.dshHome,
           CLINMESH_DSH_BRIDGE_SECRET: input.bridgeSecret,
         },
       },
     ],
-    urls: [`${dshWebOrigin}/`],
+    urls: [
+      `${dshWebOrigin}/`,
+      `http://127.0.0.1:${input.environment.CLINMESH_PORT ?? '51868'}/api/health`,
+    ],
   }
 }
 
@@ -199,13 +200,21 @@ const surfaceCheckoutRelative = join('vendor', 'dsh-react-surface')
 const hostTemplateFiles = ['package.json', 'package-lock.json'] as const
 const profileTemplateFiles = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'cordis.yml'] as const
 
+function isBuildStamps(value: unknown): value is BuildStamps {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const record: Record<string, unknown> = value
+  return ['surfaceCommit', 'agUiCommit'].every(key =>
+    record[key] === undefined || typeof record[key] === 'string')
+}
+
 async function readBuildStamps(
   filesystem: DshEnsureFilesystem,
   stampPath: string,
 ): Promise<BuildStamps> {
   if (!filesystem.exists(stampPath)) return {}
   try {
-    return JSON.parse(await filesystem.readFile(stampPath)) as BuildStamps
+    const parsed: unknown = JSON.parse(await filesystem.readFile(stampPath))
+    return isBuildStamps(parsed) ? parsed : {}
   } catch {
     return {}
   }
@@ -271,10 +280,7 @@ export async function ensureDshRuntimeReady(
   const { environment, repositoryRoot, sandbox, versions, filesystem } = dependencies
   const checkout = join(repositoryRoot, surfaceCheckoutRelative)
   const envPath = join(repositoryRoot, '.env')
-  const dshvmEnvironment = {
-    DSHVM_HOME: sandbox.versionsDir,
-    DSHVM_BIN_DIR: sandbox.binDir,
-  }
+  const dshvmEnvironment = dshvmEnvironmentFor(sandbox)
 
   const bunVersion = await dependencies.runCommand('bun', ['--version'], repositoryRoot)
     .catch(() => undefined)
@@ -534,31 +540,7 @@ export async function runDshDevelopment(mode: 'run' | 'setup'): Promise<number> 
   })
   console.info('')
   console.info(renderHeading('数据源', color))
-  await ensureDataSourcesReady({
-    environment: process.env,
-    managedProviderUrl: process.env.CLINMESH_SYNTHEA_PROVIDER_URL === undefined
-      ? undefined
-      : managedProviderUrlFromEnvironment(process.env, console.info),
-    readProviderHealth: providerUrl => readProviderHealth({
-      fetch: globalThis.fetch,
-      providerUrl,
-    }),
-    referenceDatabaseReady: configuredPath => referenceDatabaseIsReady(
-      resolve(repositoryRoot, configuredPath),
-      repositoryRoot,
-      process.env.CLINMESH_REFERENCE_RELEASE_ID,
-    ),
-    runReferenceSync: () => runPackageManagerCommand([
-      'reference:sync',
-      '--database',
-      resolve(repositoryRoot, process.env.CLINMESH_REFERENCE_DATABASE_PATH!),
-    ]),
-    runSyntheaUp: () => runSyntheaRuntimeCommand(
-      'up',
-      createSyntheaRuntimeDependencies(process.env, console.info),
-    ),
-    write: console.info,
-  })
+  await ensureDataSourcesReady(createDataSourceReadinessDependencies(repositoryRoot))
 
   if (mode === 'setup') {
     console.info('')
@@ -583,8 +565,8 @@ export async function runDshDevelopment(mode: 'run' | 'setup'): Promise<number> 
   })
   console.info('')
   console.info(renderHeading('访问地址', color))
-  console.info('  DSH Web  http://127.0.0.1:3080/')
-  console.info('  Server   http://127.0.0.1:51868/api/health')
+  console.info(`  DSH Web  ${plan.urls[0]}`)
+  console.info(`  Server   ${plan.urls[1]}`)
   if (profileNewlyAssembled) {
     console.info('')
     console.info('⚠ 首次使用该 DSH Profile：模型 Provider 需在隔离宿主的设置页单独配置。')
