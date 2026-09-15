@@ -1006,6 +1006,22 @@ describe('Web application shell', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it('keeps component theme controls in sync with system changes before an explicit choice', async () => {
+    const media = installMatchMedia(false)
+    const user = userEvent.setup()
+    window.history.replaceState(null, '', '/components')
+    await renderWebApp()
+    const light = screen.getByRole('button', { name: '亮色主题' })
+    const dark = screen.getByRole('button', { name: '暗色主题' })
+    expect(light.getAttribute('aria-pressed')).toBe('true')
+    await act(() => media.setPrefersDark(true))
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(dark.getAttribute('aria-pressed')).toBe('true')
+    await user.click(light)
+    expect(document.documentElement.dataset.theme).toBe('light')
+    expect(light.getAttribute('aria-pressed')).toBe('true')
+  })
+
   it('localizes the public component catalog from the saved Web preference', async () => {
     localStorage.setItem('clinmesh.preferences:v1', JSON.stringify({
       locale: 'en-US',

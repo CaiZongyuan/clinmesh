@@ -126,30 +126,32 @@ import {
   SunIcon,
   Trash2Icon,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import {
   getComponentCatalogMessages,
   type ComponentCatalogMessages,
 } from './component-catalog-i18n.ts'
 import {
-  applyResolvedWebTheme,
   type ResolvedWebTheme,
 } from './preferences.ts'
 import { useWebPreferences } from './preferences-context.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { useWebRuntime } from './web-runtime.tsx'
 
-function currentTheme(root: HTMLElement | null): ResolvedWebTheme {
-  return (root ?? document.documentElement).classList.contains('dark') ? 'dark' : 'light'
+function subscribeSystemTheme(listener: () => void): () => void {
+  const media = window.matchMedia('(prefers-color-scheme: dark)')
+  media.addEventListener('change', listener)
+  return () => media.removeEventListener('change', listener)
+}
+
+function systemTheme(): ResolvedWebTheme {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
 function ThemeControl({ messages }: { messages: ComponentCatalogMessages }): React.JSX.Element {
-  const runtime = useWebRuntime()
-  const { setPreferences } = useWebPreferences()
-  const appearanceRoot = runtime.mode === 'surface'
-    ? runtime.appearanceRoot.current
-    : document.documentElement
-  const [theme, setTheme] = useState(() => currentTheme(appearanceRoot))
+  const { preferences, setPreferences } = useWebPreferences()
+  const resolvedSystemTheme = useSyncExternalStore(subscribeSystemTheme, systemTheme)
+  const theme = preferences.theme === 'system' ? resolvedSystemTheme : preferences.theme
 
   return (
     <ToggleGroup
@@ -157,8 +159,6 @@ function ThemeControl({ messages }: { messages: ComponentCatalogMessages }): Rea
       onValueChange={values => {
         const nextTheme = (values as ResolvedWebTheme[])[0]
         if (nextTheme === undefined) return
-        setTheme(nextTheme)
-        applyResolvedWebTheme(nextTheme, appearanceRoot ?? document.documentElement)
         setPreferences(current => ({ ...current, theme: nextTheme }))
       }}
       size="sm"
