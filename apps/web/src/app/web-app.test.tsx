@@ -478,20 +478,20 @@ describe('Web application shell', () => {
     const user = userEvent.setup()
     await renderWebApp({ history, runtime: { mode: 'surface', surfaceColorScheme: 'dark' } })
     for (const name of ['跟随系统', '亮色', '暗色']) {
-      expect(screen.queryByRole('button', { name, exact: true })).toBeNull()
+      expect(screen.queryByRole('button', { name })).toBeNull()
     }
-    await user.click(screen.getByRole('button', { name: '较大', exact: true }))
+    await user.click(screen.getByRole('button', { name: '较大' }))
     expect(document.querySelector('[data-clinmesh-app="web"]')?.getAttribute('data-font-size')).toBe('larger')
-    await user.click(screen.getByRole('button', { name: 'English', exact: true }))
-    expect(screen.getByRole('heading', { name: 'General', exact: true })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'English' }))
+    expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'User menu' }))
     expect(await screen.findByRole('menuitem', { name: 'Sign out' })).toBeTruthy()
     for (const name of ['System', 'Light', 'Dark']) {
-      expect(screen.queryByRole('menuitemradio', { name, exact: true })).toBeNull()
+      expect(screen.queryByRole('menuitemradio', { name })).toBeNull()
     }
     await user.keyboard('{Escape}')
     await act(() => history.push('/settings/developer/components'))
-    await screen.findByRole('heading', { name: 'UI components', exact: true })
+    await screen.findByRole('heading', { name: 'UI components' })
     expect(screen.queryByRole('button', { name: 'Dark theme' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Light theme' })).toBeNull()
   })
