@@ -144,6 +144,6 @@ describe('升级 PR 的 GitHub adapter 合同', () => {
 
   it('权限不足明确失败，不把候选发布视为成功', async () => {
     const candidate = await discoverUpstreams(baseline, async () => Response.json({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0'), '1.1.0': release('1.1.0') } }))
-    await expect(publishCandidate(candidate, { repository: 'example/repo', base: 'main', fetch: async () => new Response('', { status: 403 }) })).rejects.toThrow('contents:write')
+    await expect(publishCandidate(candidate, { repository: 'example/repo', base: 'main', fetch: async () => Response.json({ message: 'GitHub Actions is not permitted to create or approve pull requests.' }, { status: 403 }) })).rejects.toThrow('GitHub Actions is not permitted to create or approve pull requests.')
   })
 })

@@ -207,7 +207,12 @@ export async function publishCandidate(candidate: Candidate, options: {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000),
     })
     if (missing && response.status === 404) return undefined
-    if (!response.ok) throw new Error(`GitHub ${method} ${path} 失败：HTTP ${response.status}；需要 contents:write 与 pull-requests:write，且允许 Actions 创建 PR；未推进基线`)
+    if (!response.ok) {
+      const failure = await response.json().catch(() => undefined)
+      const message = failure && typeof failure === 'object' && 'message' in failure && typeof failure.message === 'string'
+        ? `；${failure.message}` : ''
+      throw new Error(`GitHub ${method} ${path} 失败：HTTP ${response.status}${message}；需要 contents:write 与 pull-requests:write，且允许 Actions 创建 PR；未推进基线`)
+    }
     if (response.status === 204) return undefined
     return response.json()
   }
