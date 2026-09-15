@@ -29,6 +29,7 @@
 ## 运行与验证边界
 
 - Windows 的 `core.symlinks=false` 会把 Git 符号链接检出为存放目标路径的普通文件。修改 `CLAUDE.md` 前先检查 Git mode；`120000` 的 blob 是链接目标，不能按 Markdown 添加末尾换行。文档或格式检查受 CRLF、符号链接、POSIX 权限影响时，在支持这些语义的 Linux checkout 验证，不改坏链接或放宽检查。
+- 从 Windows 用 `git archive` 同步 Linux 验证副本时，显式使用 `git -c core.autocrlf=false archive`；否则归档可能带入 CRLF，导致按 LF 字节锁定的合成数据校验和失败。先比较归档、Git blob 和检查副本，不修改校验和或测试阈值。
 
 - DSH 的启动地址包含临时访问 token，直接请求无凭证的 `/` 不能证明 Web 是否就绪。隔离 smoke 在内存中使用启动 token 完成登录，再携带返回的 Cookie 检查首页；保存或发布启动日志前必须移除该 token。候选子进程使用受限环境和临时 npm 用户配置，不能把父进程的 GitHub/npm/模型凭证传给安装脚本。
 
@@ -75,6 +76,7 @@
 - `agent-browser record start` 会在现有命名会话中新增录制 tab，原 tab 仍可保有 DSH Surface leader lease。录制 DSH browser Tools 时必须关闭旧 tab，等待录制 tab 取得 `active` lease，再让 Agent 读取新的 Page Context；否则 Tool 可能正确更新旧 leader，而录制 tab 只显示未变化的 contender Surface。
 - 使用 FFmpeg 前先检查依赖；缺失时报告而不是自行安装。后期只改变播放速度、字幕和编码，不拼接来自不同 Scenario、workspace、epoch 或 commit 的业务证据。
 - 一次 FFmpeg 命令抽取多个时间点时必须为每个输出显式指定 input/map，或为每个时间点单独执行；依赖默认 stream mapping 可能让多个输出都取自第一个输入，形成看似正常的重复截图。
+- 浏览器录制的媒体时间轴不一定等于自动化脚本的墙钟耗时。裁剪前用 ffprobe 和解码画面定位起止，不直接使用脚本执行时间作为视频时间戳，以免裁掉首次操作。
 
 ## GitHub 操作经验
 
