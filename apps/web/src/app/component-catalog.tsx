@@ -126,30 +126,32 @@ import {
   SunIcon,
   Trash2Icon,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import {
   getComponentCatalogMessages,
   type ComponentCatalogMessages,
 } from './component-catalog-i18n.ts'
 import {
-  applyResolvedWebTheme,
   type ResolvedWebTheme,
 } from './preferences.ts'
 import { useWebPreferences } from './preferences-context.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { useWebRuntime } from './web-runtime.tsx'
 
-function currentTheme(root: HTMLElement | null): ResolvedWebTheme {
-  return (root ?? document.documentElement).classList.contains('dark') ? 'dark' : 'light'
+function subscribeSystemTheme(listener: () => void): () => void {
+  const media = window.matchMedia('(prefers-color-scheme: dark)')
+  media.addEventListener('change', listener)
+  return () => media.removeEventListener('change', listener)
+}
+
+function systemTheme(): ResolvedWebTheme {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
 function ThemeControl({ messages }: { messages: ComponentCatalogMessages }): React.JSX.Element {
-  const runtime = useWebRuntime()
-  const { setPreferences } = useWebPreferences()
-  const appearanceRoot = runtime.mode === 'surface'
-    ? runtime.appearanceRoot.current
-    : document.documentElement
-  const [theme, setTheme] = useState(() => currentTheme(appearanceRoot))
+  const { preferences, setPreferences } = useWebPreferences()
+  const resolvedSystemTheme = useSyncExternalStore(subscribeSystemTheme, systemTheme)
+  const theme = preferences.theme === 'system' ? resolvedSystemTheme : preferences.theme
 
   return (
     <ToggleGroup
@@ -157,8 +159,6 @@ function ThemeControl({ messages }: { messages: ComponentCatalogMessages }): Rea
       onValueChange={values => {
         const nextTheme = (values as ResolvedWebTheme[])[0]
         if (nextTheme === undefined) return
-        setTheme(nextTheme)
-        applyResolvedWebTheme(nextTheme, appearanceRoot ?? document.documentElement)
         setPreferences(current => ({ ...current, theme: nextTheme }))
       }}
       size="sm"
@@ -621,16 +621,17 @@ export function ComponentCatalog({
       'flex flex-col bg-background text-foreground',
       embedded ? 'min-h-0 flex-1' : 'min-h-svh',
     )}>
-      {embedded ? (
+      {embedded && runtime.mode === 'standalone' ? (
         <div className="flex shrink-0 justify-end border-b pb-3">
           <ThemeControl messages={messages} />
         </div>
-      ) : (
+      ) : null}
+      {!embedded ? (
         <header className="sticky top-0 z-10 flex h-[3.375rem] shrink-0 items-center border-b bg-background px-4 sm:px-6">
           <h1 className="text-base font-semibold">{messages.catalogTitle}</h1>
-          <div className="ml-auto"><ThemeControl messages={messages} /></div>
+          {runtime.mode === 'standalone' ? <div className="ml-auto"><ThemeControl messages={messages} /></div> : null}
         </header>
-      )}
+      ) : null}
       <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-10 p-4 sm:p-6">
         <section aria-labelledby="catalog-controls-group-heading" className="flex flex-col gap-8">
           <h2 className="text-base font-semibold" id="catalog-controls-group-heading">{messages.controlsTab}</h2>

@@ -707,7 +707,7 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 - Surface 使用 Memory Router，应用位置不修改 DSH document pathname。
 - 每个 mount 创建独立 QueryClient；服务端状态仍只由 TanStack Query 拥有。
-- ClinMesh 插件在 Profile 加载时通过官方 `sidebar.brand.mark` / `sidebar.brand.name` 插槽固定左侧栏的现有 ClinMesh Logo 与名称，不依赖应用是否打开；新会话中央标志使用 `conversation.hero.brand.mark` 插槽，标题沿用 ClinMesh 的中英文产品标语；插件卸载后释放插槽并恢复宿主标题。DSH 继续拥有 Light/Dark/System theme；ClinMesh 的 `system` 主题订阅 DSH resolved theme，显式 light/dark 只作用于 Surface root，所有浮层通过注入 Portal 留在 ShadowRoot。
+- ClinMesh 插件在 Profile 加载时通过官方 `sidebar.brand.mark` / `sidebar.brand.name` 插槽固定左侧栏的现有 ClinMesh Logo 与名称，不依赖应用是否打开；新会话中央标志使用 `conversation.hero.brand.mark` 插槽，标题沿用 ClinMesh 的中英文产品标语；插件卸载后释放插槽并恢复宿主标题。DSH 拥有 Light/Dark/System theme；ClinMesh Surface 始终应用宿主 resolved theme，不提供独立主题选择，也不改写已保存的 Web 主题偏好。宿主底部按钮为“医院工作台”，打开后的菜单标题为“设置”。主题样式只作用于 Surface root，所有浮层通过注入 Portal 留在 ShadowRoot。
 - 默认 `workspace` 左右分屏，窄空间按比例收缩并由应用内部响应式适配；全屏仅由用户手动选择，应用左侧导航栏提供返回分屏入口。切换保留原生侧栏状态、分栏偏好与应用草稿，详见[手动全屏与容器响应式](../.agents/notes/implemented/bug-fix/2026-09-11-surface-responsive-layout.md)。
 - `/clinmesh-api` Host 代理只连接配置固定的 loopback Hono，保留 Cookie/Origin，限制路径、方法、请求体、响应体和超时，不记录患者正文。
 
@@ -1505,7 +1505,7 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 ### 15.3 Web 与明确边界
 
 - Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员入口；管理员可生成 Synthetic Profile/Case、浏览 Visible Source History、生成并选择 Brief、直接开始病例、reset/replay，以及按 Dataset/panel 筛选并发布 Laboratory Service。候选列表显示 Release、成员数、标本、成人适用性和规则来源，并把项目整理来源与国家标准分开；未计价服务不显示为免费。医生工作台从全局 Reference Release 分页搜索诊断和药品，从病例级目录搜索本院已发布检验服务；诊断、检验和处方有效修改自动保存，已创建事实固定对应 snapshot。Investigation 的系统执行异常支持受控重试，不向医生展示生成 capability。病例库继续提供责任范围内的已完诊 Encounter 与受控更正入口。服务端状态只由 TanStack Query 缓存，退出或跨账户登录会清除非 session 查询。
-- 可见字符串具有中文和英文 catalog；主题支持 system、light 与 dark。岗位页面具有分页、加载、空、错误、冲突、无权限和成功状态，并覆盖长中文文本与窄视口。
+- 可见字符串具有中文和英文 catalog；独立 Web 主题支持 system、light 与 dark，DSH Surface 始终跟随宿主主题。岗位页面具有分页、加载、空、错误、冲突、无权限和成功状态，并覆盖长中文文本与窄视口。
 - DSH Web 可从统一 launcher 打开同一完整工作台，使用 Memory Router、ShadowRoot 和动态岗位 Tools；Agent 可执行读取、导航、选择、草稿和 preview，正式动作只进入 detached 人工审阅。
 - `clinmesh` CLI 通过 Operation Catalog、单岗位 Capability Grant 和领域 Skills 开放当前 Query、Command 与只读 FHIR 能力。
 - 首期不包含 Desktop/Mobile 产品行为、模型 runner、AG-UI Gateway/MCP、自治 Agent、评分、附件、真实外部系统、完整医保/住院/库存、远程数据库、多实例或高可用。

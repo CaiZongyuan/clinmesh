@@ -40,7 +40,6 @@ it('places authorized routes above workspaces, keeps settings in the footer, and
   const openOther = vi.fn()
   const close = vi.fn()
   const navigate = vi.fn()
-  const setTheme = vi.fn()
   const element = document.createElement('div')
   const sidebar = document.createElement('div')
   sidebar.dataset.slot = 'sidebar'
@@ -70,7 +69,8 @@ it('places authorized routes above workspaces, keeps settings in the footer, and
     const trigger = shadow.querySelector<HTMLButtonElement>('button')!
     expect(trigger.getAttribute('aria-label')).toBe('医院工作台')
     await act(() => trigger.click())
-    expect(shadow.querySelector('[role="menu"]')?.getAttribute('aria-label')).toBe('医院工作台设置')
+    expect(shadow.querySelector('[role="menu"]')?.getAttribute('aria-label')).toBe('设置')
+    expect(shadow.querySelector('[data-slot="dropdown-menu-label"]')?.textContent).toBe('设置')
     const opener = shadow.querySelector<HTMLElement>('[role="menuitem"]')!
     expect(opener.textContent).toContain('打开 ClinMesh')
     await act(() => opener.click())
@@ -98,13 +98,12 @@ it('places authorized routes above workspaces, keeps settings in the footer, and
         ],
         activePath: '/registration',
         locale: 'zh-CN',
-        theme: 'system',
         navigate,
-        setTheme,
       })
     })
     await act(() => trigger.click())
     const items = [...shadow.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    expect(shadow.querySelectorAll('[role="menuitemradio"]')).toHaveLength(0)
     expect(items.some((item) => item.textContent === '门诊挂号')).toBe(false)
     const routeHost = sidebar.querySelector('[data-clinmesh-host-routes]')!
     expect(newSession.nextElementSibling).toBe(routeHost)
@@ -145,9 +144,7 @@ it('places authorized routes above workspaces, keeps settings in the footer, and
     const oldState = navigation.getSnapshot()!
     await act(() => release())
     oldState.navigate('/registration')
-    oldState.setTheme('dark')
     expect(navigate).not.toHaveBeenCalled()
-    expect(setTheme).not.toHaveBeenCalled()
     await act(() => trigger.click())
     expect(shadow.textContent).not.toContain('门诊挂号')
     expect(routeHost.shadowRoot!.querySelector('button')).toBeNull()
