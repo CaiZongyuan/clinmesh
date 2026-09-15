@@ -12,6 +12,7 @@ describe('RuntimeErrorBoundary', () => {
     cleanup()
     localStorage.clear()
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('shows a localized fallback and remounts the application subtree on retry', async () => {
@@ -54,6 +55,7 @@ describe('RuntimeErrorBoundary', () => {
   })
 
   it('recovers a production route failure without exposing the original error', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }))
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const rootRoute = createWebRouter().routeTree

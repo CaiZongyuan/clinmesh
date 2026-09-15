@@ -486,6 +486,7 @@ describe('Web application shell', () => {
     expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'User menu' }))
     expect(await screen.findByRole('menuitem', { name: 'Sign out' })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: 'Settings' })).toBeNull()
     for (const name of ['System', 'Light', 'Dark']) {
       expect(screen.queryByRole('menuitemradio', { name })).toBeNull()
     }
@@ -1131,9 +1132,11 @@ describe('Web application shell', () => {
     const user = userEvent.setup()
     await renderWebApp()
 
-    expect(screen.queryByRole('link', { name: '设置' })).toBeNull()
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
-    await user.click(await screen.findByRole('menuitem', { name: '设置' }))
+    await screen.findByRole('menuitem', { name: '退出登录' })
+    expect(screen.queryByRole('menuitem', { name: '设置' })).toBeNull()
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('link', { name: '设置' }))
 
     expect(window.location.pathname).toBe('/settings')
     expect(screen.getByRole('navigation', { name: '设置导航' })).toBeTruthy()
@@ -1193,8 +1196,7 @@ describe('Web application shell', () => {
     const user = userEvent.setup()
     const rendered = await renderWebApp()
 
-    await user.click(screen.getByRole('button', { name: '用户菜单' }))
-    await user.click(await screen.findByRole('menuitem', { name: '设置' }))
+    await user.click(screen.getByRole('link', { name: '设置' }))
     await user.click(screen.getByRole('button', { name: 'English' }))
 
     expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
@@ -1265,7 +1267,8 @@ describe('Web application shell', () => {
 
     await user.keyboard('{Escape}')
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
-    expect(await screen.findByRole('menuitem', { name: '设置' })).toBeTruthy()
+    expect(await screen.findByRole('menuitem', { name: '退出登录' })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: '设置' })).toBeNull()
     expect(screen.queryByRole('menuitemradio', { name: 'English' })).toBeNull()
     expect(screen.getByRole('menuitemradio', { name: '暗色' })).toBeTruthy()
   })

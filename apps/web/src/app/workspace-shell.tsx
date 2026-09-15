@@ -306,13 +306,6 @@ function UserMenu({
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
-          <DropdownMenuItem render={<Link to="/settings" />}>
-            <SettingsIcon aria-hidden="true" />
-            {messages.settings}
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuGroup>
           <DropdownMenuLabel>{messages.practitionerRole}</DropdownMenuLabel>
           <DropdownMenuRadioGroup
             onValueChange={onRoleChange}
@@ -553,6 +546,19 @@ export function WorkspaceShell({
             )}
           </SidebarContent>
           <SidebarFooter>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  aria-label={messages.settings}
+                  isActive={settingsMode}
+                  render={<Link to="/settings" />}
+                  tooltip={messages.settings}
+                >
+                  <SettingsIcon aria-hidden="true" />
+                  <span>{messages.settings}</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
             <AppearanceControls
               locale={locale}
               messages={messages}
