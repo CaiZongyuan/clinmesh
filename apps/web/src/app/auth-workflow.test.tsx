@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebApp } from './web-app.tsx'
@@ -136,6 +136,8 @@ describe('trusted Web session workflow', () => {
     let authenticated = false
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/sim/v1/scenario-providers') return Response.json({ items: [] })
+      if (path === '/api/sim/v1/synthetic-patients') return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
       if (path === '/api/auth/context') {
         return authenticated
           ? Response.json(registrarSession)
@@ -177,6 +179,8 @@ describe('trusted Web session workflow', () => {
     let scenarioRequests = 0
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/sim/v1/scenario-providers') return Response.json({ items: [] })
+      if (path === '/api/sim/v1/synthetic-patients') return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
       if (path === '/api/auth/context') return Response.json(session)
       if (path === '/api/auth/role') {
         const request = JSON.parse(String(init?.body)) as { practitionerRoleId: string }
@@ -192,6 +196,7 @@ describe('trusted Web session workflow', () => {
           epoch: 'epoch-1',
           initialStateHash: 'a'.repeat(64),
           kind: 'candidate',
+          seed: 20260824,
           scenarioId: 'candidate-fever-outpatient-v1',
           scenarioRunId: 'scenario-run-1',
           status: 'active',
@@ -210,7 +215,7 @@ describe('trusted Web session workflow', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    expect(await screen.findByRole('heading', { name: '工作台总览' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '模拟数据' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     for (const label of [
       '管理员 · 管理员',
@@ -229,18 +234,21 @@ describe('trusted Web session workflow', () => {
     expect(screen.getByText('挂号员 · 挂号员')).toBeTruthy()
     expect(screen.getByRole('link', { name: '门诊挂号' })).toBeTruthy()
     expect(screen.queryByRole('link', { name: '门诊收费' })).toBeNull()
+    const requestsBeforeReturning = scenarioRequests
 
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     await user.click(await screen.findByRole('menuitemradio', { name: '管理员 · 管理员' }))
 
-    expect(await screen.findByRole('heading', { name: '工作台总览' })).toBeTruthy()
-    expect(window.location.pathname).toBe('/')
-    expect(scenarioRequests).toBe(2)
+    expect(await screen.findByRole('heading', { name: '模拟数据' })).toBeTruthy()
+    expect(window.location.pathname).toBe('/scenario-data')
+    await waitFor(() => expect(scenarioRequests).toBeGreaterThan(requestsBeforeReturning))
   })
 
   it('shows a permission state when a stale role grant is rejected', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/sim/v1/scenario-providers') return Response.json({ items: [] })
+      if (path === '/api/sim/v1/synthetic-patients') return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
       if (path === '/api/auth/context') return Response.json(administratorSession)
       if (path === '/api/auth/role') {
         return Response.json({
@@ -256,6 +264,7 @@ describe('trusted Web session workflow', () => {
           epoch: 'epoch-1',
           initialStateHash: 'a'.repeat(64),
           kind: 'candidate',
+          seed: 20260824,
           scenarioId: 'candidate-fever-outpatient-v1',
           scenarioRunId: 'scenario-run-1',
           status: 'active',
@@ -268,13 +277,13 @@ describe('trusted Web session workflow', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    expect(await screen.findByRole('heading', { name: '工作台总览' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '模拟数据' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     await user.click(await screen.findByRole('menuitemradio', { name: '挂号员 · 挂号员' }))
 
     expect(await screen.findByText('当前岗位无权执行此操作')).toBeTruthy()
     expect(screen.getByText('请切换到有权限的岗位后重试。')).toBeTruthy()
-    expect(screen.getByRole('heading', { name: '工作台总览' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '模拟数据' })).toBeTruthy()
   })
 
   it('signs out and removes the authenticated role workspace', async () => {
@@ -282,6 +291,8 @@ describe('trusted Web session workflow', () => {
     let authenticated = true
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/sim/v1/scenario-providers') return Response.json({ items: [] })
+      if (path === '/api/sim/v1/synthetic-patients') return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
       if (path === '/api/auth/context') {
         return authenticated
           ? Response.json(registrarSession)
@@ -329,6 +340,8 @@ describe('trusted Web session workflow', () => {
     const queueAccounts: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/sim/v1/scenario-providers') return Response.json({ items: [] })
+      if (path === '/api/sim/v1/synthetic-patients') return Response.json({ items: [], page: 1, pageSize: 20, total: 0 })
       if (path === '/api/auth/context') {
         if (account === undefined) {
           return Response.json({

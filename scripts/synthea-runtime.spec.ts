@@ -26,11 +26,13 @@ const removeRuntimeArguments = [
 ]
 
 function dependencies(): SyntheaRuntimeDependencies & {
+  ensureDockerAvailable: ReturnType<typeof vi.fn>
   output: string[]
   runDocker: ReturnType<typeof vi.fn>
 } {
   const output: string[] = []
   return {
+    ensureDockerAvailable: vi.fn(async () => undefined),
     fetch: vi.fn(async () => Response.json(health)),
     output,
     providerUrl: 'http://127.0.0.1:51878',
@@ -103,6 +105,28 @@ describe('Synthea runtime command', () => {
     expect(runtime.runDocker.mock.calls.flat()).not.toContain('down')
     expect(runtime.runDocker.mock.calls.flat()).not.toContain('--volumes')
     expect(runtime.fetch).not.toHaveBeenCalled()
+    expect(runtime.ensureDockerAvailable).not.toHaveBeenCalled()
+  })
+
+  it('rejects startup before any compose command when the docker CLI is unavailable', async () => {
+    const runtime = dependencies()
+    runtime.ensureDockerAvailable = vi.fn(async () => {
+      throw new Error('未检测到可用的 docker CLI；WSL 下请确认 Docker Desktop 正在运行且已为本发行版启用 WSL 集成。')
+    })
+
+    await expect(runSyntheaRuntimeCommand('up', runtime)).rejects.toThrow('未检测到可用的 docker CLI')
+    expect(runtime.runDocker).not.toHaveBeenCalled()
+    expect(runtime.fetch).not.toHaveBeenCalled()
+  })
+
+  it('checks the docker CLI before the doctor smoke exec', async () => {
+    const runtime = dependencies()
+    runtime.ensureDockerAvailable = vi.fn(async () => {
+      throw new Error('未检测到可用的 docker CLI')
+    })
+
+    await expect(runSyntheaRuntimeCommand('doctor', runtime)).rejects.toThrow('未检测到可用的 docker CLI')
+    expect(runtime.runDocker).not.toHaveBeenCalled()
   })
 
   it('removes a partial runtime when startup fails', async () => {

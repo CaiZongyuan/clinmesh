@@ -273,7 +273,7 @@ describe('Web application shell', () => {
       runtime: { mode: 'surface', surfaceNavigation: { register } },
     })
     expect(register.mock.lastCall?.[0].items.map(item => item.path)).toEqual([
-      '/', '/scenario-data', '/settings', '/settings/developer/components',
+      '/scenario-data', '/settings', '/settings/developer/components',
     ])
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     await user.click(await screen.findByRole('menuitemradio', { name: '挂号员 · 挂号员' }))

@@ -7,6 +7,7 @@ import {
   createAgentClientInputSchema,
 } from '@clinmesh/contracts/agent'
 import {
+  resetScenarioRequestSchema,
   acknowledgeLaboratoryReportRequestSchema,
   cancelLaboratoryRequestRequestSchema,
   completeHospitalServiceRequestSchema,
@@ -497,11 +498,12 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
         const session = await identity.resolveSessionContext(context.req.raw.headers)
-        z.object({}).parse(await context.req.json())
+        const request = resetScenarioRequestSchema.parse(await context.req.json())
         const idempotencyKey = z.string().min(8).max(128).parse(
           context.req.header('idempotency-key'),
         )
         return context.json(scenario.reset({
+          clearPatientLibrary: request.clearPatientLibrary,
           context: session.actor,
           idempotencyKey,
           scenarioRunId: context.req.param('scenarioRunId'),
@@ -684,6 +686,16 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           pageSize: query.pageSize,
           ...(query.search === undefined ? {} : { search: query.search }),
         }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/sim/v1/admin/synthetic-cases/:caseId/truth', async (context) => {
+      context.header('Cache-Control', 'no-store')
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const caseId = z.string().min(1).max(128).parse(context.req.param('caseId'))
+        return context.json(scenarioData.getAdministratorCaseTruth(session.actor, caseId))
       } catch (error) {
         return apiErrorResponse(context, error)
       }

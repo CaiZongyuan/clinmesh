@@ -752,8 +752,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['administrator'],
-    summary: 'Search laboratory publication candidates by source and panel status',
-    version: 2,
+    summary: '查询默认启用的 laboratory-cn 单项与组合；其他来源须显式指定',
+    version: 3,
   },
   {
     cliPath: ['admin', 'laboratory-services', 'publish'],
@@ -771,8 +771,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['administrator'],
-    summary: 'Queue one bounded Laboratory Service publication batch',
-    version: 1,
+    summary: '发布显式选定的检验配置批次，支持 laboratory-cn 单项与组合',
+    version: 2,
   },
   {
     cliPath: ['admin', 'laboratory-services', 'job', 'get'],

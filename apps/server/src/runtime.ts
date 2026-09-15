@@ -237,6 +237,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       scenarioRunId: 'scenario-run-1',
       workspaceId: 'workspace-demo',
     })
+    laboratoryServicePublisher.ensureDefaultServices()
     const identity = new IdentityService(database, {
       authBaseUrl: options.authBaseUrl,
       authSecret: options.authSecret,

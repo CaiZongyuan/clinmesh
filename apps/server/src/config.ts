@@ -92,6 +92,29 @@ function findWorkspaceEnvironmentFile(startDirectory: string): string | undefine
   }
 }
 
+function findWorkspaceLockedReferenceReleaseId(startDirectory: string): string | undefined {
+  let directory = resolve(startDirectory)
+  while (true) {
+    if (existsSync(join(directory, 'pnpm-workspace.yaml'))) {
+      const lockFile = join(directory, 'reference-data.lock.json')
+      if (!existsSync(lockFile)) return undefined
+      try {
+        const lock = JSON.parse(readFileSync(lockFile, 'utf8')) as {
+          compositeRelease?: { releaseId?: unknown }
+        }
+        const releaseId = lock.compositeRelease?.releaseId
+        return typeof releaseId === 'string' && releaseId.length > 0 ? releaseId : undefined
+      } catch {
+        return undefined
+      }
+    }
+
+    const parent = dirname(directory)
+    if (parent === directory) return undefined
+    directory = parent
+  }
+}
+
 export function readServerEnvironment(
   environment: NodeJS.ProcessEnv,
   startDirectory = process.cwd(),
@@ -115,8 +138,13 @@ export function readServerEnvironment(
   return fromFile
 }
 
-export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
+export function readServerConfig(
+  environment: NodeJS.ProcessEnv,
+  startDirectory: string = process.cwd(),
+): ServerConfig {
   const parsed = serverEnvironmentSchema.parse(environment)
+  const referenceReleaseId = parsed.CLINMESH_REFERENCE_RELEASE_ID
+    ?? findWorkspaceLockedReferenceReleaseId(startDirectory)
   const authBaseUrl = parsed.CLINMESH_PUBLIC_ORIGIN
     ?? `http://${parsed.CLINMESH_HOST}:${parsed.CLINMESH_PORT}`
   const defaultTrustedOrigins = [authBaseUrl]
@@ -156,9 +184,7 @@ export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
     ...(parsed.CLINMESH_REFERENCE_DATABASE_PATH === undefined
       ? {}
       : { referenceDatabasePath: parsed.CLINMESH_REFERENCE_DATABASE_PATH }),
-    ...(parsed.CLINMESH_REFERENCE_RELEASE_ID === undefined
-      ? {}
-      : { referenceReleaseId: parsed.CLINMESH_REFERENCE_RELEASE_ID }),
+    ...(referenceReleaseId === undefined ? {} : { referenceReleaseId }),
     ...(parsed.CLINMESH_SYNTHEA_PROVIDER_URL === undefined
       ? {}
       : { syntheaProviderUrl: parsed.CLINMESH_SYNTHEA_PROVIDER_URL }),

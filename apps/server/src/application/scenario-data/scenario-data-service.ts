@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import {
+  administratorCaseTruthSchema,
   scenarioGenerationJobSchema,
   scenarioGenerationRequestSchema,
   syntheticPatientProfileDetailSchema,
@@ -163,15 +164,15 @@ export class ScenarioDataService {
         input: { jobId: claimed.jobId, sourceHash },
         operation: 'scenario-generation-job.complete',
       }, () => {
-        this.#profiles.createBatch(profiles, claimed.createdByActorId)
+        const restoredProfiles = new Set(this.#profiles.createBatch(profiles, claimed.createdByActorId))
         const cases = profiles.map((profile) => {
           const compiled = generated.casesByPatientId.get(profile.source.patientId)
           if (compiled === undefined) throw new Error('Generated Profile has no compiled Case')
-          return this.#cases.getByProfileRevision(
-            profile.workspaceId,
-            profile.profileId,
-            profile.revision,
-          ) ?? this.#cases.createFromProfile({
+          const existing = this.#cases.getByProfileRevision(profile.workspaceId, profile.profileId, profile.revision)
+          if (existing?.status === 'retired' && restoredProfiles.has(profile.profileId)) {
+            return this.#cases.restoreRetired(profile.workspaceId, existing.caseId, new Date().toISOString())
+          }
+          return existing ?? this.#cases.createFromProfile({
             actorId: claimed.createdByActorId,
             compiled,
             profile,
@@ -184,13 +185,19 @@ export class ScenarioDataService {
         return {
           data: completed,
           effects: [
-            ...profiles.map(profile => ({
-              kind: 'created' as const,
-              reference: `SyntheticPatientProfile/${profile.profileId}`,
-              versionId: String(profile.revision),
-            })),
+            ...profiles.map(profile => {
+              const stored = restoredProfiles.has(profile.profileId)
+                ? this.#profiles.get(profile.workspaceId, profile.profileId)
+                : profile
+              if (stored === undefined) throw new Error('The restored Synthetic Patient Profile was not found')
+              return {
+                kind: restoredProfiles.has(profile.profileId) ? 'updated' as const : 'created' as const,
+                reference: `SyntheticPatientProfile/${profile.profileId}`,
+                versionId: String(stored.revision),
+              }
+            }),
             ...cases.map(item => ({
-              kind: 'created' as const,
+              kind: restoredProfiles.has(item.profileId) ? 'updated' as const : 'created' as const,
               reference: `SyntheticCase/${item.caseId}`,
               versionId: String(item.revision),
             })),
@@ -344,6 +351,20 @@ export class ScenarioDataService {
   ) {
     this.getSyntheticCase(context, input.caseId)
     return this.#cases.listVisibleHistoryGroups({ ...input, workspaceId: context.workspaceId })
+  }
+
+  getAdministratorCaseTruth(context: ActorContext, caseId: string) {
+    this.#assertAdministrator(context)
+    this.getSyntheticCase(context, caseId)
+    const truth = this.#cases.getTruthForSimulator(context.workspaceId, caseId)
+    if (truth === undefined) {
+      throw new ScenarioDataError('CASE_NOT_FOUND', 'The Synthetic Case was not found')
+    }
+    return administratorCaseTruthSchema.parse({
+      caseId,
+      indexEncounterReference: truth.indexEncounterReference,
+      items: truth.hiddenResources,
+    })
   }
 
   getSyntheticCaseHistoryDetail(

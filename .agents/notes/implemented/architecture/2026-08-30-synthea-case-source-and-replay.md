@@ -8,6 +8,10 @@ Synthea 的本地化 FHIR R4 Bundle、参与者待诊断的本次病例、本院
 
 ## Decision
 
+默认启用与可选清空患者库由[默认检验服务与统一模拟数据管理](2026-09-15-default-laboratory-and-data-reset.md)定义；本文保留其余来源、版本和重放约束。
+
+管理员只读核对例外由[管理员病例真值核对](2026-09-15-administrator-case-truth-inspection.md)定义；本文的普通临床读取限制和来源 owner 保持有效。
+
 系统为四类事实设置唯一 owner。`Synthetic Patient Profile` 保存合成身份、生成参数、本地化 provenance 和完整不可变 R4 Bundle；`Synthetic Case Instance` 与私有 Case Truth repository 保存确定性选出的 Index Encounter、隐藏资源清单、病例类型和 Visible Source History 清单；Operational SQLite 与 FHIR R5 repository 只保存 ClinMesh 本次就诊中由挂号、分诊、医生、LIS、收费和药房实际产生的本院事实；独立只读 Reference SQLite 保存一个系统级当前 Release，医生搜索全部疾病、药品和检验概念，业务事实只冻结被选择行当时的 coding/display snapshot。
 
 Index Encounter 是来源时间线上最后一个具有 Condition、Observation、MedicationRequest、Procedure 或明确 reason 的临床 Encounter。其关联资源属于 Case Truth，不能通过普通 HIS、FHIR、来源历史详情或普通 Agent DTO 返回；此前资源形成按临床时间排序的 Visible Source History，详情接口在可见清单上逐项授权。[来源历史日期聚合](https://github.com/CaiZongyuan/clinmesh/issues/75)读取合同按 `Asia/Shanghai` 业务日期分组和分页，一个日期组包含当天全部可见记录且不跨页拆分；Web 默认收起日期栏目，展开后按临床时间显示组内记录，桌面端右侧详情与所选记录行对齐，窄屏详情位于列表下方。Claim 与 ExplanationOfBenefit 不进入病例历史。来源 R4 资源不转换或复制为本院 R5 Encounter、Condition、医嘱、收费、库存或审计记录。

@@ -40,7 +40,6 @@ import {
   SheetTitle,
 } from '@clinmesh/ui/components/sheet'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { cn } from '@clinmesh/ui/lib/utils'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -72,6 +71,7 @@ import {
   getSyntheticPatientProfile,
   getSyntheticPatientProfiles,
   newIdempotencyKey,
+  resetScenario,
   selectPatientBriefRevision,
   startSyntheticCaseVisit,
   updateSyntheticPatientProfile,
@@ -80,6 +80,13 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useSyntheticPatientLibraryViewStore } from './synthetic-patient-library-view-store.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
+
+import { SourceHistoryDetail, sourceHistoryTitle } from './source-history-detail.tsx'
+
+import { PatientCaseTruth } from './patient-case-truth.tsx'
+
+import { ScenarioResetControl, resetImpact } from './scenario-reset-control.tsx'
+import { useAgentReview } from './agent-review.tsx'
 
 const profileListKey = ['synthetic-patient-profiles'] as const
 const providerKey = ['scenario-providers'] as const
@@ -115,7 +122,7 @@ const copy = {
     nationalId: 'Synthetic national ID', next: 'Next', noCase: 'No usable current case',
     noHistory: 'No visible source history', patientCount: 'Patient count', phone: 'Phone',
     populationSeed: 'Population seed', previous: 'Previous',
-    resourceDetail: 'R4 resource detail', save: 'Save profile', saveFailed: 'Failed to save profile', search: 'Search patients', source: 'Source', startVisit: 'Start outpatient visit',
+    resourceDetail: 'History record details', save: 'Save profile', saveFailed: 'Failed to save profile', search: 'Search patients', source: 'Source', startVisit: 'Start outpatient visit',
     translationReview: 'Translation review {count}', translationWarningDescription: 'The patient is still usable. These English clinical names need later medical or pharmacy review.',
     translationWarningTitle: '{count} clinical names remain in English', translationWarningTruncated: 'Only the first retained items are shown.',
   },
@@ -141,7 +148,7 @@ const copy = {
     libraryDescription: '中文来源病史与不可变本次病例。', libraryTitle: '合成患者库', mrn: 'MRN',
     name: '展示姓名', nationalId: '模拟身份证', next: '下一页', noCase: '没有可用的本次病例',
     noHistory: '没有可见来源历史', patientCount: '患者人数', phone: '手机号码', populationSeed: '人口 seed',
-    previous: '上一页', resourceDetail: 'R4 资源详情', save: '保存档案', saveFailed: '保存失败',
+    previous: '上一页', resourceDetail: '历史记录详情', save: '保存档案', saveFailed: '保存失败',
     search: '搜索患者', source: '来源', startVisit: '开始门诊就诊',
     translationReview: '翻译待确认 {count}', translationWarningDescription: '患者仍可使用；这些英文临床名称需要后续医学或药学校对。',
     translationWarningTitle: '{count} 个临床名称保留英文', translationWarningTruncated: '这里只显示已保留的前几项。',
@@ -278,6 +285,7 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
     <div className="grid min-h-[360px] lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)]">
       <div aria-label={messages.history} className="lg:border-r" ref={historyListRef} role="group">
         {history.data.items.map((group) => {
+          const titles = [...new Set(group.items.map(item => sourceHistoryTitle(item, locale)))]
           const expanded = expandedDates.has(group.businessDate)
           const contentId = `source-history-${caseId}-${group.businessDate}`
           return (
@@ -299,7 +307,10 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
                   type="button"
                 >
                   <ChevronRightIcon className={cn('size-4 transition-transform', expanded && 'rotate-90')} />
-                  <span className="min-w-0 flex-1">{group.businessDate}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block">{group.businessDate}</span>
+                    <span className="mt-1 block break-words text-sm font-medium text-foreground">{titles.slice(0, 3).join(' · ')}{titles.length > 3 ? ' …' : ''}</span>
+                  </span>
                   <span className="font-normal">
                     {translationCount(messages.historyEntries, group.items.length)}
                   </span>
@@ -326,7 +337,7 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
                       type="button"
                     >
                       <span className="min-w-0">
-                        <strong className="block truncate text-sm">{item.title}</strong>
+                        <strong className="block truncate text-sm">{sourceHistoryTitle(item, locale)}</strong>
                         <span className="mt-0.5 block truncate text-xs text-muted-foreground">
                           {item.resourceType}
                         </span>
@@ -365,7 +376,7 @@ function SourceHistory({ caseId, locale }: { caseId: string; locale: WorkspaceLo
             ? <Skeleton className="mt-3 h-64 w-full" />
             : detail.isError
               ? <Alert className="mt-3" variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert>
-              : <pre className="mt-3 max-h-[420px] overflow-auto border bg-muted/20 p-3 text-xs">{JSON.stringify(detail.data.resource, null, 2)}</pre>}
+              : <SourceHistoryDetail locale={locale} resource={detail.data.resource} />}
       </section>
     </div>
   )
@@ -613,27 +624,25 @@ function ProfileDetails({ locale, onEdit, profile, referenceDate }: {
         <section className="min-w-0 border-b p-4 sm:border-r xl:border-b-0"><h4 className="text-sm font-semibold">{messages.contact}</h4><p className="mt-2 text-sm">{displayPhone}</p><p className="mt-1 break-words text-xs text-muted-foreground">{profile.identity.email}</p></section>
         <section className="min-w-0 p-4"><h4 className="text-sm font-semibold">{messages.insurance}</h4><p className="mt-2 text-sm">{profile.identity.insuranceDisplay}</p></section>
       </div>
-      <Tabs defaultValue="history">
-        <TabsList className="mx-4 mt-3" variant="line">
-          <TabsTrigger value="history">{messages.history}{profile.case === null ? '' : ` ${profile.case.visibleHistoryCount}`}</TabsTrigger>
-          {profile.case === null ? null : <TabsTrigger value="brief">{messages.brief}</TabsTrigger>}
-          <TabsTrigger value="source">{messages.source}</TabsTrigger>
-        </TabsList>
-        <TabsContent value="history">
-          {profile.case === null
-            ? <p className="p-4 text-sm text-muted-foreground">{messages.noHistory}</p>
-            : <SourceHistory caseId={profile.case.caseId} key={profile.case.caseId} locale={locale} />}
-        </TabsContent>
-        {profile.case === null ? null : (
-          <TabsContent value="brief">
-            <PatientBriefPanel key={profile.case.caseId} locale={locale} profileId={profile.profileId} syntheticCase={profile.case} />
-          </TabsContent>
-        )}
-        <TabsContent className="p-4" value="source">
-          <Alert><FileJsonIcon /><AlertTitle>{messages.externalHistory}</AlertTitle><AlertDescription>{profile.source.format} · SHA-256 {profile.source.hash}</AlertDescription></Alert>
-          {profile.source.translationWarning === undefined ? null : (
-            <TranslationWarningPanel locale={locale} warning={profile.source.translationWarning} />
-          )}
+      {profile.case === null ? null : (
+        <PatientBriefPanel key={profile.case.caseId} locale={locale} profileId={profile.profileId} syntheticCase={profile.case} />
+      )}
+      {profile.case === null ? null : (
+        <PatientCaseTruth caseId={profile.case.caseId} key={`truth:${profile.case.caseId}`} locale={locale} />
+      )}
+      <section className="border-t">
+        <h4 className="px-4 py-3 text-sm font-semibold">{messages.history}{profile.case === null ? '' : ` · ${profile.case.visibleHistoryCount}`}</h4>
+        {profile.case === null
+          ? <p className="p-4 text-sm text-muted-foreground">{messages.noHistory}</p>
+          : <SourceHistory caseId={profile.case.caseId} key={profile.case.caseId} locale={locale} />}
+      </section>
+      {profile.source.translationWarning === undefined ? null : (
+        <div className="px-4 pb-4"><TranslationWarningPanel locale={locale} warning={profile.source.translationWarning} /></div>
+      )}
+      <details className="border-t p-4">
+        <summary className="cursor-pointer text-sm font-medium">{locale === 'zh-CN' ? '数据来源' : 'Data source'}</summary>
+        <div className="mt-3">
+          <Alert><FileJsonIcon /><AlertTitle>{messages.externalHistory}</AlertTitle><AlertDescription className="break-all">{profile.source.format} · SHA-256 {profile.source.hash}</AlertDescription></Alert>
           {profile.case === null ? null : (
             <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
               <div><dt className="text-muted-foreground">Case ID</dt><dd className="mt-1 break-all font-mono text-xs">{profile.case.caseId}</dd></div>
@@ -641,8 +650,8 @@ function ProfileDetails({ locale, onEdit, profile, referenceDate }: {
               <div><dt className="text-muted-foreground">Status</dt><dd className="mt-1">{profile.case.status}</dd></div>
             </dl>
           )}
-        </TabsContent>
-      </Tabs>
+        </div>
+      </details>
     </div>
   )
 }
@@ -697,6 +706,7 @@ function EditProfileSheet({ error, locale, onOpenChange, onSave, open, pending, 
 export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale }): React.JSX.Element {
   const messages = copy[locale]
   const queryClient = useQueryClient()
+  const agentReview = useAgentReview()
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [submittedSearch, setSubmittedSearch] = useState('')
@@ -730,8 +740,38 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
     },
   })
   const generationJob = useQuery({ enabled: generationJobId !== undefined, queryFn: ({ signal }) => generationJobId === undefined ? Promise.reject(new Error('No generation job')) : getScenarioGenerationJob(generationJobId, signal), queryKey: ['scenario-generation-job', generationJobId ?? 'none'], refetchInterval: query => ['queued', 'running'].includes(query.state.data?.status ?? '') ? 1_000 : false })
+  const reset = useMutation({
+    mutationFn: (clearPatientLibrary: boolean) => {
+      if (scenario.data === undefined) throw new Error('当前模拟数据尚未加载。')
+      return resetScenario(scenario.data.scenarioRunId, newIdempotencyKey(), clearPatientLibrary)
+    },
+    onSuccess: async () => {
+      useSyntheticPatientLibraryViewStore.getState().reset()
+      setSelectedProfileId(undefined)
+      setPage(1)
+      await queryClient.resetQueries()
+    },
+  })
   const agentPage = useMemo(() => ({
     actions: {
+      'scenario.status.read': {
+        description: 'Read the current Scenario Run status.',
+        execute: () => scenario.data === undefined ? { status: 'loading' } : {
+          epoch: scenario.data.epoch, scenarioRunId: scenario.data.scenarioRunId,
+          status: scenario.data.status, virtualTime: scenario.data.virtualTime,
+        },
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+      },
+      'scenario.reset.propose': {
+        description: 'Review restarting clinical progress while retaining the patient library.',
+        enabled: scenario.data !== undefined,
+        execute: (_raw: unknown, signal: AbortSignal) => agentReview.request({
+          confirmLabel: locale === 'zh-CN' ? '确认重置' : 'Confirm reset',
+          description: resetImpact(locale), onConfirm: () => reset.mutateAsync(false), signal,
+          title: locale === 'zh-CN' ? '确认重置数据' : 'Confirm data reset',
+        }),
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+      },
       'scenario.providers.read': {
         description: 'Read configured Scenario generation Provider availability.',
         execute: (_raw: unknown, signal: AbortSignal) => getScenarioProviders(signal),
@@ -749,6 +789,7 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
       version: 1 as const,
       viewId: 'scenarioData' as const,
       viewRevision: agentViewRevision({
+        scenarioRunId: scenario.data?.scenarioRunId,
         generationJobId,
         generationStatus: generationJob.data?.status,
         generationUpdatedAt: generationJob.data?.updatedAt,
@@ -785,6 +826,7 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
       })) ?? [],
     }),
   }), [
+    agentReview, locale, reset.mutateAsync, scenario.data,
     generationJob.data,
     generationJob.isError,
     generationJob.isPending,
@@ -802,5 +844,5 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
   }, [generationJob.data?.profileIds, generationJob.data?.status, queryClient])
   const updateProfile = useMutation({ mutationFn: (identity: SyntheticPatientIdentity) => { if (profile.data === undefined) throw new Error('No profile selected'); return updateSyntheticPatientProfile({ expectedRevision: profile.data.revision, identity, profileId: profile.data.profileId }, newIdempotencyKey()) }, onSuccess: async response => { queryClient.setQueryData(['synthetic-patient-profile', response.data.profileId], response.data); await queryClient.invalidateQueries({ queryKey: profileListKey }); setEditOpen(false) } })
   const mutationError = generate.error ?? updateProfile.error
-  return <section aria-labelledby="synthetic-patient-library-heading" className="flex min-w-0 flex-col gap-4"><div className="flex flex-wrap items-start gap-3"><div><h2 className="text-base font-semibold" id="synthetic-patient-library-heading">{messages.libraryTitle}</h2><p className="mt-1 text-sm text-muted-foreground">{messages.libraryDescription}</p></div><Button className="ml-auto" onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></div>{mutationError !== null ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(mutationError, locale)}</AlertDescription></Alert> : null}{generationJob.data === undefined ? null : <JobStatusNotice error={generationJob.data.error?.message} label={messages.generationStatus[generationJob.data.status]} status={generationJob.data.status} />}{profiles.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profiles.isPending ? <Skeleton className="h-[680px] w-full" /> : null}{profiles.data?.items.length === 0 ? <Empty className="min-h-96 border"><EmptyHeader><EmptyMedia variant="icon"><DatabaseIcon /></EmptyMedia><EmptyTitle>{messages.emptyTitle}</EmptyTitle><EmptyDescription>{messages.emptyDescription}</EmptyDescription></EmptyHeader><EmptyContent><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></EmptyContent></Empty> : null}{profiles.data !== undefined && profiles.data.items.length > 0 ? <div className="grid min-h-[680px] border lg:grid-cols-[280px_minmax(0,1fr)]"><aside className="flex min-h-0 flex-col border-r bg-background"><form className="flex items-center gap-2 border-b p-3" onSubmit={event => { event.preventDefault(); setPage(1); setSubmittedSearch(search.trim()) }}><InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={`${messages.name}、${messages.mrn}、${messages.batch}`} value={search} /></InputGroup><Button aria-label={messages.search} size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon /></Button></form><div className="border-b px-3 py-2 text-xs text-muted-foreground">{profiles.data.total} 名患者</div><div className="min-h-0 flex-1 overflow-y-auto p-2">{profiles.data.items.map(item => <button className={cn('flex w-full items-center gap-3 border-b px-2 py-2 text-left', item.profileId === effectiveProfileId && 'border border-primary/30 bg-primary/5')} key={item.profileId} onClick={() => setSelectedProfileId(item.profileId)} type="button"><ProfileAvatar name={item.name} profileId={item.profileId} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="truncate text-sm">{item.name}</strong><span className="text-xs text-muted-foreground">{age(item.birthDate, referenceDate)} 岁</span></span><span className="mt-1 block truncate text-xs text-muted-foreground">{item.mrn}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.batchName} · {item.providerId === 'synthea' ? 'Synthea' : 'ClinMesh'}</span></span></button>)}</div>{profiles.data.total > profiles.data.pageSize ? <div className="flex justify-between border-t p-2"><Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="ghost">{messages.previous}</Button><Button disabled={page * profiles.data.pageSize >= profiles.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="ghost">{messages.next}</Button></div> : null}</aside>{profile.isPending ? <Skeleton className="h-full w-full" /> : null}{profile.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profile.data !== undefined ? <ProfileDetails locale={locale} onEdit={() => setEditOpen(true)} profile={profile.data} referenceDate={referenceDate} /> : null}</div> : null}<GenerationSheet error={generate.error} locale={locale} onGenerate={request => generate.mutate(request)} onOpenChange={setGenerationOpen} open={generationOpen} pending={generate.isPending} providers={providers.data?.items ?? []} />{profile.data !== undefined ? <EditProfileSheet error={updateProfile.error} key={`${profile.data.profileId}:${profile.data.revision}`} locale={locale} onOpenChange={setEditOpen} onSave={identity => updateProfile.mutate(identity)} open={editOpen} pending={updateProfile.isPending} profile={profile.data} /> : null}</section>
+  return <section aria-labelledby="synthetic-patient-library-heading" className="flex min-w-0 flex-col gap-4"><div className="flex flex-wrap items-start gap-3"><div><h2 className="text-base font-semibold" id="synthetic-patient-library-heading">{messages.libraryTitle}</h2><p className="mt-1 text-sm text-muted-foreground">{messages.libraryDescription}</p></div><div className="ml-auto flex items-center gap-2"><ScenarioResetControl disabled={scenario.data === undefined} error={reset.error} locale={locale} onReset={clear => reset.mutateAsync(clear)} pending={reset.isPending} /><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></div></div>{mutationError !== null ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(mutationError, locale)}</AlertDescription></Alert> : null}{generationJob.data === undefined ? null : <JobStatusNotice error={generationJob.data.error?.message} label={messages.generationStatus[generationJob.data.status]} status={generationJob.data.status} />}{profiles.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profiles.isPending ? <Skeleton className="h-[680px] w-full" /> : null}{profiles.data?.items.length === 0 ? <Empty className="min-h-96 border"><EmptyHeader><EmptyMedia variant="icon"><DatabaseIcon /></EmptyMedia><EmptyTitle>{messages.emptyTitle}</EmptyTitle><EmptyDescription>{messages.emptyDescription}</EmptyDescription></EmptyHeader><EmptyContent><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></EmptyContent></Empty> : null}{profiles.data !== undefined && profiles.data.items.length > 0 ? <div className="grid min-h-[680px] border lg:grid-cols-[280px_minmax(0,1fr)]"><aside className="flex min-h-0 flex-col border-r bg-background"><form className="flex items-center gap-2 border-b p-3" onSubmit={event => { event.preventDefault(); setPage(1); setSubmittedSearch(search.trim()) }}><InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={`${messages.name}、${messages.mrn}、${messages.batch}`} value={search} /></InputGroup><Button aria-label={messages.search} size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon /></Button></form><div className="border-b px-3 py-2 text-xs text-muted-foreground">{profiles.data.total} 名患者</div><div className="min-h-0 flex-1 overflow-y-auto p-2">{profiles.data.items.map(item => <button className={cn('flex w-full items-center gap-3 border-b px-2 py-2 text-left', item.profileId === effectiveProfileId && 'border border-primary/30 bg-primary/5')} key={item.profileId} onClick={() => setSelectedProfileId(item.profileId)} type="button"><ProfileAvatar name={item.name} profileId={item.profileId} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="truncate text-sm">{item.name}</strong><span className="text-xs text-muted-foreground">{age(item.birthDate, referenceDate)} 岁</span></span><span className="mt-1 block truncate text-xs text-muted-foreground">{item.mrn}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.batchName} · {item.providerId === 'synthea' ? 'Synthea' : 'ClinMesh'}</span></span></button>)}</div>{profiles.data.total > profiles.data.pageSize ? <div className="flex justify-between border-t p-2"><Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="ghost">{messages.previous}</Button><Button disabled={page * profiles.data.pageSize >= profiles.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="ghost">{messages.next}</Button></div> : null}</aside>{profile.isPending ? <Skeleton className="h-full w-full" /> : null}{profile.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profile.data !== undefined ? <ProfileDetails locale={locale} onEdit={() => setEditOpen(true)} profile={profile.data} referenceDate={referenceDate} /> : null}</div> : null}<GenerationSheet error={generate.error} locale={locale} onGenerate={request => generate.mutate(request)} onOpenChange={setGenerationOpen} open={generationOpen} pending={generate.isPending} providers={providers.data?.items ?? []} />{profile.data !== undefined ? <EditProfileSheet error={updateProfile.error} key={`${profile.data.profileId}:${profile.data.revision}`} locale={locale} onOpenChange={setEditOpen} onSave={identity => updateProfile.mutate(identity)} open={editOpen} pending={updateProfile.isPending} profile={profile.data} /> : null}</section>
 }

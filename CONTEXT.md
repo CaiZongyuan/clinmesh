@@ -53,7 +53,7 @@ _Avoid_: Hospital Baseline, live catalog, patient fact
 _Avoid_: Patient library, review batch, lifecycle
 
 **Synthetic Patient Profile**:
-可复用的合成患者身份、来源病史和业务展示信息。它独立于活动 Epoch，尚未发起就诊时不等同于运行中的 Patient Identity 或 Virtual Patient。
+可复用的合成患者身份、来源病史和业务展示信息。它独立于活动 Epoch，尚未发起就诊时不等同于运行中的 Patient Identity 或 Virtual Patient。归档后不再出现在当前患者库，其来源事实仍保留供旧轮次追溯。
 _Avoid_: Patient Identity, Virtual Patient, Scenario Dataset
 
 **Synthetic Patient Library**:
@@ -73,7 +73,7 @@ Index Encounter 之前允许临床参与者查看的本地化 Synthea 来源资�
 _Avoid_: Local FHIR record, Case Truth, imported Encounter
 
 **Case Truth**:
-由 Index Encounter 及其关联来源资源组成的本次病例客观依据。它只供仿真器使用，不是参与者可直接读取的 Clinical Record，也不能通过普通 HIS、FHIR、历史详情或 Agent 接口返回。
+由 Index Encounter 及其关联来源资源组成的本次病例客观依据。它供仿真器使用，管理员可在病例核对入口只读查看；它不是临床参与者可直接读取的 Clinical Record，也不能通过普通 HIS、FHIR、历史详情或 Agent 接口返回。
 _Avoid_: Clinical Record, answer key endpoint, Visible Source History
 
 **Synthetic Case Instance**:

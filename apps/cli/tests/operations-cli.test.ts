@@ -43,8 +43,8 @@ describe('clinmesh operations', () => {
       risk: 'read',
       roles: ['administrator'],
       skill: 'clinmesh-administrator',
-      summary: 'Search laboratory publication candidates by source and panel status',
-      version: 2,
+      summary: '查询默认启用的 laboratory-cn 单项与组合；其他来源须显式指定',
+      version: 3,
     })
   })
 

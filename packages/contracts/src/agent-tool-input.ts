@@ -82,7 +82,6 @@ export const agentToolInputSchemas = Object.freeze({
   'scenario.status.read': emptyInputSchema,
   'scenario.providers.read': emptyInputSchema,
   'scenario.generation.status.read': emptyInputSchema,
-  'scenario.install.propose': z.object({ kind: z.enum(['candidate', 'density']) }).strict(),
   'scenario.reset.propose': emptyInputSchema,
   'registration.patient.search': z.object({
     query: z.string().trim().min(1).max(100),

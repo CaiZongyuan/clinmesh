@@ -767,6 +767,18 @@ export const syntheticSourceHistoryGroupListSchema = z.object({
   })
 })
 
+export const administratorCaseTruthSchema = z.object({
+  caseId: z.string().min(1).max(128),
+  indexEncounterReference: z.string().min(1).max(512),
+  items: z.array(z.object({
+    resource: z.object({
+      id: z.string().min(1),
+      resourceType: z.string().min(1),
+    }).catchall(z.json()),
+    sourceReference: z.string().min(1).max(512),
+  }).strict()).max(20_000),
+}).strict()
+
 export const syntheticSourceResourceDetailSchema = z.object({
   caseId: z.string().min(1).max(128),
   resource: z.json(),

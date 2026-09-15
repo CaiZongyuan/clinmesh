@@ -417,37 +417,6 @@ function createMediaQueryList(media: string): MediaQueryList {
   }
 }
 
-function stubAdministratorWorkspace() {
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-    const path = new URL(String(input), 'http://localhost').pathname
-    if (path === '/api/auth/context') return Response.json(administratorSession)
-    if (path === '/api/sim/v1/scenario-runs/current') {
-      return Response.json({
-        clinicalReview: null,
-        epoch: 'epoch-1',
-        initialStateHash: '0123456789abcdef',
-        kind: 'candidate',
-        scenarioId: 'candidate-fever-outpatient-v1',
-        scenarioRunId: 'scenario-run-1',
-        seed: 20260824,
-        status: 'active',
-        virtualTime: '2026-08-24T09:00:00+08:00',
-        workspaceId: 'workspace-demo',
-      })
-    }
-    if (path === '/api/his/v1/admin/laboratory-services/candidates') {
-      return Response.json({
-        items: [],
-        page: 1,
-        pageSize: 20,
-        referenceReleaseId: 'reference-http-test-v1',
-        total: 0,
-      })
-    }
-    throw new Error(`Unexpected request: ${path}`)
-  }))
-}
-
 function stubScenarioDataWorkspace(options: {
   briefJobFails?: boolean
   briefJobDelayMs?: number
@@ -455,6 +424,8 @@ function stubScenarioDataWorkspace(options: {
   generationJobDelayMs?: number
   onGenerate?: (request: ScenarioGenerationRequest) => void
   onCaseStart?: () => void
+  onTruthRead?: () => void
+  onReset?: (clearPatientLibrary: boolean) => void
   profileAvailable?: boolean
   profileUpdateConflict?: boolean
   providerModules?: string[]
@@ -622,6 +593,35 @@ function stubScenarioDataWorkspace(options: {
         page: 1,
         pageSize: 20,
         total: generated ? summaries.length : 0,
+      })
+    }
+    if (url.pathname === '/api/sim/v1/scenario-runs/scenario-run-1/actions/reset') {
+      const body = JSON.parse(String(init?.body))
+      options.onReset?.(body.clearPatientLibrary === true)
+      if (body.clearPatientLibrary === true) generated = false
+      return Response.json(commandResponse({
+        clinicalReview: null, epoch: 'epoch-2', initialStateHash: '0123456789abcdef',
+        kind: 'candidate', scenarioId: 'candidate-fever-outpatient-v1', scenarioRunId: 'scenario-run-2',
+        seed: 20260824, status: 'active', virtualTime: '2026-08-24T09:00:00+08:00', workspaceId: 'workspace-demo',
+      }))
+    }
+    if (url.pathname === `/api/sim/v1/admin/synthetic-cases/${caseId}/truth`) {
+      options.onTruthRead?.()
+      return Response.json({
+        caseId,
+        indexEncounterReference: 'urn:uuid:index-encounter',
+        items: [{ sourceReference: 'urn:uuid:index-condition', resource: {
+          id: 'index-condition', resourceType: 'Condition', code: { text: '本次合成疾病' },
+          encounter: { reference: 'Encounter/index-encounter' },
+        } }, { sourceReference: 'urn:uuid:index-observation', resource: {
+          id: 'index-observation', resourceType: 'Observation', code: { text: '本次收缩压' },
+          valueQuantity: { value: 162, unit: 'mmHg' },
+        } }, { sourceReference: 'urn:uuid:index-encounter', resource: {
+          id: 'index-encounter', resourceType: 'Encounter',
+        } }, { sourceReference: 'urn:uuid:older-condition', resource: {
+          id: 'older-condition', resourceType: 'Condition', code: { text: '关联的既往疾病' },
+          encounter: { reference: 'Encounter/older-encounter' },
+        } }],
       })
     }
     if (url.pathname === `/api/sim/v1/synthetic-cases/${caseId}/history/detail`) {
@@ -1082,192 +1082,34 @@ describe('role workspaces', () => {
     vi.unstubAllGlobals()
   })
 
-  it('uses clinical operator language for administrator data controls', async () => {
-    stubAdministratorWorkspace()
-
-    render(<WebApp />)
-
-    expect(await screen.findByRole(
-      'heading',
-      { name: '演示数据' },
-      { timeout: 3_000 },
-    )).toBeTruthy()
-    expect(screen.getByText('标准门诊数据')).toBeTruthy()
-    expect(screen.queryByText('candidate-fever-outpatient-v1')).toBeNull()
-    expect(screen.queryByText('epoch-1')).toBeNull()
-    expect(screen.getByRole('button', { name: '载入标准数据' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '载入密集数据' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '重置当前数据' })).toBeTruthy()
-    expect(document.body.textContent).not.toMatch(forbiddenChineseClinicalUiTerms)
-  })
-
-  it('uses clinical operator language for English administrator data controls', async () => {
-    localStorage.setItem('clinmesh.preferences:v1', JSON.stringify({
-      locale: 'en-US',
-      theme: 'light',
-    }))
-    stubAdministratorWorkspace()
-
-    render(<WebApp />)
-
-    expect(await screen.findByRole('heading', { name: 'Demo data' })).toBeTruthy()
-    expect(screen.getByText('Standard outpatient data')).toBeTruthy()
-    expect(screen.queryByText('candidate-fever-outpatient-v1')).toBeNull()
-    expect(screen.queryByText('epoch-1')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Load standard data' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Load high-volume data' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Reset current data' })).toBeTruthy()
-    expect(screen.getByRole('main').textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
-  })
-
-  it.each([
-    ['AI_REQUEST_FAILED', '目录补全服务请求失败，请稍后重试。'],
-    ['AI_TIMEOUT', '目录补全服务响应超时，请重试。'],
-  ])('retries failed Laboratory Service publication with %s feedback', async (errorCode, errorMessage) => {
-    let published = false
-    let publishBody: unknown
-    const candidateQueries: string[] = []
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = new URL(String(input), 'http://localhost')
-      if (url.pathname === '/api/auth/context') return Response.json(administratorSession)
-      if (url.pathname === '/api/sim/v1/scenario-runs/current') {
-        return Response.json({
-          clinicalReview: null,
-          epoch: 'epoch-1',
-          initialStateHash: '0123456789abcdef',
-          kind: 'candidate',
-          scenarioId: 'candidate-fever-outpatient-v1',
-          scenarioRunId: 'scenario-run-1',
-          seed: 20260824,
-          status: 'active',
-          virtualTime: '2026-08-24T09:00:00+08:00',
-          workspaceId: 'workspace-demo',
-        })
-      }
-      if (url.pathname === '/api/his/v1/admin/laboratory-services/candidates') {
-        candidateQueries.push(url.search)
-        return Response.json({
-          items: [{
-            adultApplicability: {
-              minimumAgeYears: 18,
-              patientSexes: ['female', 'male'],
-            },
-            concept: {
-              code: 'CN-LAB-CBC',
-              display: '合成血常规',
-              domain: 'laboratory',
-              id: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
-              sourceLocator: 'synthetic:laboratory-cn:panel:CN-LAB-CBC',
-              status: 'active',
-              system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn',
-              version: '2026-09-01',
-            },
-            definition: {
-              conceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
-              datasetReleaseId: 'laboratory-cn@2026-09-01.r1',
-              kind: 'laboratory-cn-panel',
-              notes: '合成多叶子 panel',
-              sourceLocation: 'fixture/panel/1',
-              sourceLocator: 'synthetic:laboratory-cn:panel:CN-LAB-CBC',
-              sourceType: 'project-authored',
-              sourceVersion: '2026-09-01',
-              specimen: '全血',
-            },
-            error: published ? null : { code: errorCode, message: 'private provider detail' },
-            memberCount: 2,
-            publishedServiceId: published ? 'hospital-laboratory-service-cbc' : null,
-            referenceSources: [{
-              sourceLocation: '表 1',
-              sourceStandard: 'WS/T 405-2012',
-              sourceType: 'national-standard',
-              sourceVersion: '2012',
-            }, {
-              sourceLocation: '表 2',
-              sourceStandard: 'WS/T 405-2012',
-              sourceType: 'national-standard',
-              sourceVersion: '2012',
-            }],
-            sourceDataset: {
-              datasetId: 'laboratory-cn',
-              releaseId: 'laboratory-cn@2026-09-01.r1',
-            },
-            specimen: '全血',
-            standardStatus: {
-              effectiveOn: '2026-11-01',
-              mode: 'future-standard-preview',
-              standard: 'WS/T 886-2026',
-            },
-            status: published ? 'published' : 'failed',
-            version: published ? 1 : 0,
-          }],
-          page: 1,
-          pageSize: 20,
-          referenceReleaseId: 'reference-http-test-v1',
-          total: 1,
-        })
-      }
-      if (url.pathname === '/api/his/v1/admin/laboratory-services/actions/publish') {
-        publishBody = JSON.parse(String(init?.body))
-        published = true
-        return Response.json(commandResponse({
-          conceptIds: ['laboratory-panel-cn:2026-09-01:CN-LAB-CBC'],
-          createdAt: '2026-09-01T07:00:00.000Z',
-          error: null,
-          finishedAt: null,
-          jobId: 'laboratory-service-publication-1',
-          publishedServiceIds: [],
-          referenceReleaseId: 'reference-http-test-v1',
-          startedAt: null,
-          status: 'queued',
-          updatedAt: '2026-09-01T07:00:00.000Z',
-          workspaceId: 'workspace-demo',
-        }))
-      }
-      if (url.pathname === '/api/his/v1/admin/laboratory-services/jobs/laboratory-service-publication-1') {
-        return Response.json({
-          conceptIds: ['laboratory-panel-cn:2026-09-01:CN-LAB-CBC'],
-          createdAt: '2026-09-01T07:00:00.000Z',
-          error: null,
-          finishedAt: '2026-09-01T07:00:01.000Z',
-          jobId: 'laboratory-service-publication-1',
-          publishedServiceIds: ['hospital-laboratory-service-cbc'],
-          referenceReleaseId: 'reference-http-test-v1',
-          startedAt: '2026-09-01T07:00:00.100Z',
-          status: 'succeeded',
-          updatedAt: '2026-09-01T07:00:01.000Z',
-          workspaceId: 'workspace-demo',
-        })
-      }
-      throw new Error(`Unexpected request: ${url.pathname}`)
-    }))
+  it('shows only synthetic data and confirms the selected reset scope', async () => {
+    const resets: boolean[] = []
+    stubScenarioDataWorkspace({ profileAvailable: true, onReset: clear => resets.push(clear) })
     const user = userEvent.setup()
     render(<WebApp />)
-
-    expect(await screen.findByRole('heading', { name: '检验服务配置' })).toBeTruthy()
-    expect(await screen.findByText('laboratory-cn@2026-09-01.r1')).toBeTruthy()
-    expect(screen.getByText(errorMessage)).toBeTruthy()
-    expect(screen.queryByText('private provider detail')).toBeNull()
-    expect(screen.getByText('2 项')).toBeTruthy()
-    expect(screen.getByText('全血')).toBeTruthy()
-    expect(screen.getByText('成人：女性、男性')).toBeTruthy()
-    expect(screen.getAllByText('国家标准 · WS/T 405-2012 · 2012')).toHaveLength(1)
-    expect(screen.getByText('WS/T 886-2026 · 2026-11-01 前预览')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: 'laboratory-cn' }))
-    await user.click(screen.getByRole('checkbox', { name: '仅组合' }))
-    await waitFor(() => expect(candidateQueries.at(-1)).toContain('sourceDataset=laboratory-cn'))
-    expect(candidateQueries.at(-1)).toContain('panelOnly=true')
-    await user.click(await screen.findByRole('checkbox', { name: '选择 合成血常规 CN-LAB-CBC' }))
-    await user.click(screen.getByRole('button', { name: '发布所选检验服务' }))
-
-    expect(publishBody).toEqual({
-      input: {
-        entries: [{
-          conceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC',
-          expectedVersion: 0,
-        }],
-      },
-    })
-    expect(await screen.findByText('已发布')).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '合成患者库' })).toBeTruthy()
+    expect(screen.queryByRole('link', { name: '工作台总览' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '载入标准数据' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: '检验服务配置' })).toBeNull()
+    await waitFor(() => expect(window.location.pathname).toBe('/scenario-data'))
+    const reset = screen.getByRole('button', { name: '重置数据' })
+    await waitFor(() => expect(reset.hasAttribute('disabled')).toBe(false))
+    reset.focus()
+    expect(await screen.findByRole('tooltip')).toBeTruthy()
+    await user.hover(reset)
+    await user.click(reset)
+    const dialog = await screen.findByRole('alertdialog', { name: '确认重置数据' })
+    expect(resets).toEqual([])
+    expect(within(dialog).getByRole('checkbox', { name: '同时清空合成患者库' }).getAttribute('aria-checked')).toBe('false')
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
+    expect(resets).toEqual([])
+    await user.click(reset)
+    const confirmation = await screen.findByRole('alertdialog', { name: '确认重置数据' })
+    await user.click(within(confirmation).getByRole('checkbox', { name: '同时清空合成患者库' }))
+    expect(within(confirmation).getByText(/来源病史、患者梗概和本次病例真值/)).toBeTruthy()
+    await user.click(within(confirmation).getByRole('button', { name: '确认重置' }))
+    await waitFor(() => expect(resets).toEqual([true]))
+    expect(await screen.findByText('还没有合成患者')).toBeTruthy()
   })
 
   it('does not expose synthetic data management to a non-administrator role', async () => {
@@ -1366,8 +1208,10 @@ describe('role workspaces', () => {
       'clinmesh_read_current_context',
       'clinmesh_navigate',
       'clinmesh_focus_panel',
+      'clinmesh_read_scenario_status',
       'clinmesh_read_scenario_providers',
       'clinmesh_read_generation_status',
+      'clinmesh_prepare_scenario_reset',
     ]))
   })
 
@@ -1448,8 +1292,10 @@ describe('role workspaces', () => {
       { name: '患者生成中' },
       { timeout: 2_500 },
     )).toBeTruthy()
-    await user.click(screen.getByRole('link', { name: '工作台总览' }))
-    await user.click(await screen.findByRole('link', { name: '模拟数据' }))
+    await user.click(screen.getByRole('link', { name: '设置' }))
+    await waitFor(() => expect(window.location.pathname).toBe('/settings'))
+    window.history.back()
+    await waitFor(() => expect(window.location.pathname).toBe('/scenario-data'))
     expect(await screen.findByRole('status', { name: '患者生成中' })).toBeTruthy()
     expect(await screen.findByRole(
       'status',
@@ -1480,7 +1326,7 @@ describe('role workspaces', () => {
 
     expect(await screen.findByText('翻译待确认 1')).toBeTruthy()
     expect(screen.queryByText('患者生成失败')).toBeNull()
-    await user.click(screen.getByRole('tab', { name: '来源' }))
+    await user.click(screen.getByText('数据来源'))
     expect(await screen.findByText('1 个临床名称保留英文')).toBeTruthy()
     expect(screen.getByText('Untranslated display')).toBeTruthy()
     expect(screen.getByText(/Observation\/observation-1.*code\.coding\[0\]/)).toBeTruthy()
@@ -1507,6 +1353,58 @@ describe('role workspaces', () => {
     await user.click(await screen.findByRole('button', { name: /发热.*Condition/ }))
     expect(await screen.findByText(/prior-condition/)).toBeTruthy()
     expect(document.body.textContent).not.toContain('index-condition')
+  })
+
+  it('loads administrator case truth only when expanded and collapses it for another patient', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    let reads = 0
+    stubScenarioDataWorkspace({ profileAvailable: true, secondProfileAvailable: true, onTruthRead: () => { reads += 1 } })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    const toggle = await screen.findByText('本次病例真值')
+    expect(toggle.closest('details')?.open).toBe(false)
+    expect(reads).toBe(0)
+    expect(screen.queryByText('本次合成疾病')).toBeNull()
+    await user.click(toggle)
+    expect(await screen.findByRole('heading', { name: '本次合成疾病' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: '关联的既往疾病' })).toBeNull()
+    expect(screen.getByText('关联的既往疾病').closest('details')?.open).toBe(false)
+    expect(reads).toBe(1)
+    const related = screen.getByText('本次收缩压')
+    await user.click(related)
+    expect(await screen.findByText('162 mmHg')).toBeTruthy()
+    await user.click(related)
+    expect(screen.queryByText('162 mmHg')).toBeNull()
+    expect(toggle.closest('details')?.open).toBe(true)
+    const raw = screen.getAllByText('原始 JSON')[0]!
+    await user.click(raw)
+    await user.click(raw)
+    expect(toggle.closest('details')?.open).toBe(true)
+    await user.click(toggle)
+    expect(screen.queryByText('本次合成疾病')).toBeNull()
+    await user.click(screen.getByRole('button', { name: /第二位合成患者.*CMSYN000002/ }))
+    expect(await screen.findByRole('heading', { name: '第二位合成患者' })).toBeTruthy()
+    expect(screen.getByText('本次病例真值').closest('details')?.open).toBe(false)
+    expect(reads).toBe(1)
+  })
+
+  it('combines the patient brief, titled history and readable resource details', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ profileAvailable: true })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    expect(await screen.findByRole('button', { name: '生成患者梗概' })).toBeTruthy()
+    expect(screen.queryByRole('tab', { name: '来源' })).toBeNull()
+    const date = await screen.findByRole('button', { name: /2026-07-01.*发热.*体温.*2 条记录/ })
+    await user.click(date)
+    await user.click(screen.getByRole('button', { name: /发热.*Condition/ }))
+    const detail = await screen.findByRole('region', { name: '历史记录详情' })
+    expect(await within(detail).findByText('发热')).toBeTruthy()
+    expect(within(detail).getByText('诊断')).toBeTruthy()
+    expect(within(detail).getByText('原始 JSON').closest('details')?.open).toBe(false)
+    expect(screen.getByText('数据来源').closest('details')?.open).toBe(false)
   })
 
   it('expands and collapses source history events by business date', async () => {
@@ -1549,7 +1447,7 @@ describe('role workspaces', () => {
     vi.spyOn(observation, 'getBoundingClientRect').mockReturnValue({ top: 236 } as DOMRect)
 
     await user.click(condition)
-    const detail = await screen.findByRole('region', { name: 'R4 资源详情' })
+    const detail = await screen.findByRole('region', { name: '历史记录详情' })
     expect(detail.style.getPropertyValue('--source-history-detail-offset')).toBe('80px')
 
     await user.click(observation)
@@ -1615,7 +1513,7 @@ describe('role workspaces', () => {
 
     render(<WebApp />)
 
-    await user.click(await screen.findByRole('tab', { name: '患者梗概' }))
+    await screen.findByRole('button', { name: '生成患者梗概' })
     expect(await screen.findByText('尚未生成患者梗概')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '生成患者梗概' }))
 
@@ -1625,8 +1523,8 @@ describe('role workspaces', () => {
       { name: '患者梗概生成中' },
       { timeout: 2_500 },
     )).toBeTruthy()
-    await user.click(screen.getByRole('tab', { name: '来源' }))
-    await user.click(screen.getByRole('tab', { name: '患者梗概' }))
+    await user.click(screen.getByText('数据来源'))
+    await screen.findByRole('button', { name: '生成患者梗概' })
     expect(await screen.findByRole('status', { name: '患者梗概生成中' })).toBeTruthy()
     expect(await screen.findByRole(
       'status',
@@ -1657,7 +1555,7 @@ describe('role workspaces', () => {
     expect(await screen.findByRole('heading', { name: '第二位合成患者' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /林晓.*CMSYN000001/ }))
     expect(await screen.findByRole('heading', { name: '林晓' })).toBeTruthy()
-    await user.click(await screen.findByRole('tab', { name: '患者梗概' }))
+    await screen.findByRole('button', { name: '生成患者梗概' })
     await user.click(screen.getByRole('button', { name: '生成患者梗概' }))
     expect(await screen.findByRole(
       'status',
@@ -1667,12 +1565,12 @@ describe('role workspaces', () => {
 
     await user.click(screen.getByRole('button', { name: /第二位合成患者.*CMSYN000002/ }))
     expect(await screen.findByRole('heading', { name: '第二位合成患者' })).toBeTruthy()
-    await user.click(screen.getByRole('tab', { name: '患者梗概' }))
+    await screen.findByRole('button', { name: '生成患者梗概' })
     expect(screen.queryByRole('status', { name: '患者梗概生成中' })).toBeNull()
 
     await user.click(screen.getByRole('button', { name: /林晓.*CMSYN000001/ }))
     expect(await screen.findByRole('heading', { name: '林晓' })).toBeTruthy()
-    await user.click(screen.getByRole('tab', { name: '患者梗概' }))
+    await screen.findByRole('button', { name: '生成患者梗概' })
     expect(await screen.findByRole('status', { name: '患者梗概生成中' })).toBeTruthy()
   })
 
@@ -1686,7 +1584,7 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    await user.click(await screen.findByRole('tab', { name: '患者梗概' }))
+    await screen.findByRole('button', { name: '生成患者梗概' })
     await user.click(screen.getByRole('button', { name: '生成患者梗概' }))
 
     expect(await screen.findByRole('alert', { name: '患者梗概生成失败' })).toBeTruthy()

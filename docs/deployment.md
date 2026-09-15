@@ -39,9 +39,9 @@ cp .env.example .env
 
 ## 3. 同步参考目录（推荐）
 
-诊断（ICD-10）、药品、完整 LOINC 和 `laboratory-cn` 检验数据只存在于独立 Reference SQLite，不在 HIS operational SQLite 中。仓库提交的 `reference-data.lock.json` 固定每个 Dataset Release 与 Manifest hash；同步只在开发、构建或运维阶段访问 Registry，Server 运行时不执行 `cn-health`，也不访问 GitHub 或 Registry。
+默认同步诊断（ICD-10）、药品和 `laboratory-cn` 三个数据集，独立 LOINC 目录不进入默认 lock。参考数据保存在独立 Reference SQLite；Server 启动时自动将 laboratory-cn 单项和组合的可开服务快照写入 HIS operational SQLite。仓库提交的 `reference-data.lock.json` 固定每个 Dataset Release 与 Manifest hash；同步只在开发、构建或运维阶段访问 Registry，Server 运行时不执行 `cn-health`，也不访问 GitHub 或 Registry。
 
-先运行 check-only，它按 lock materialize 每个精确 Release 并交叉验证签名、身份、hash、SQLite 和表不变量，不写正式数据库。四个 Dataset 的 materialize 并行执行，stderr 逐阶段输出进度与耗时（stdout 的 JSON 结果不受影响）：
+先运行 check-only，它按 lock materialize 每个精确 Release 并交叉验证签名、身份、hash、SQLite 和表不变量，不写正式数据库。三个 Dataset 的 materialize 并行执行，stderr 逐阶段输出进度与耗时（stdout 的 JSON 结果不受影响）：
 
 ```sh
 pnpm reference:sync -- --check
@@ -53,14 +53,7 @@ pnpm reference:sync -- --check
 pnpm reference:sync
 ```
 
-正式同步写入 `.data/clinmesh-reference.sqlite`，相同 lock 重复执行返回幂等成功。同步不会修改 `.env`，也不会热切换已启动的 Server；随后在 `.env` 中启用：
-
-```dotenv
-CLINMESH_REFERENCE_DATABASE_PATH=.data/clinmesh-reference.sqlite
-CLINMESH_REFERENCE_RELEASE_ID=clinmesh-cn-health-2026-09-02.r1
-```
-
-数据库中存在多个 Release 时必须显式选择全系统当前 Release。跳过本步时 Server 使用内置合成 fixture（`clinmesh-hospital-reference-fixture-2026-08-28`）：诊断与检验目录为空，药品目录只有 3 条合成产品，医生无法下诊断或开检验。
+正式同步写入 `.data/clinmesh-reference.sqlite`，相同 lock 重复执行返回幂等成功。`.env.example` 已默认启用 `CLINMESH_REFERENCE_DATABASE_PATH=.data/clinmesh-reference.sqlite`；当前 Release 默认取 `reference-data.lock.json` 的 `compositeRelease.releaseId`（lock 升级后自动跟随），仅覆盖 `CLINMESH_REFERENCE_RELEASE_ID` 时才需要手动维护。同步不会修改 `.env`，也不会热切换已启动的 Server。库中缺少当前 Release 时 Server 启动失败关闭（`REFERENCE_RELEASE_NOT_FOUND`），错误消息指引重跑 `pnpm reference:sync`。跳过本步时 Server 使用内置合成 fixture（`clinmesh-hospital-reference-fixture-2026-08-28`）：诊断与检验目录为空，药品目录只有 3 条合成产品，医生无法下诊断或开检验。
 
 ## 4. 配置 AI Provider（患者梗概必需）
 
@@ -73,7 +66,7 @@ CLINMESH_AI_BRIEF_MODEL=provider/brief-model
 CLINMESH_AI_INVESTIGATION_MODEL=provider/investigation-model
 ```
 
-管理员发布新的本院检验服务时另需 `CLINMESH_AI_CATALOG_ENRICHMENT_MODEL`；未配置时已有服务仍可执行，但不能发布新服务。未配置基础变量时，"生成患者梗概"返回 `PROVIDER_NOT_AVAILABLE`，且没有 Brief 就无法把合成病例开始为门诊就诊（`BRIEF_NOT_READY`）。
+laboratory-cn 默认自动启用，不需要 Catalog Enrichment。只有显式配置包含 LOINC 的 Reference Release，并通过 CLI 发布该来源服务时，才需要 `CLINMESH_AI_CATALOG_ENRICHMENT_MODEL`。未配置基础变量时，"生成患者梗概"返回 `PROVIDER_NOT_AVAILABLE`，且没有 Brief 就无法把合成病例开始为门诊就诊（`BRIEF_NOT_READY`）。
 
 可显式运行一次本地 live smoke 验证 schema 与泄漏检查；它不进入 `pnpm check`，不打印 Brief 内容或凭证：
 
@@ -170,7 +163,7 @@ pnpm --filter @clinmesh/server start
 pnpm dev:lan
 ```
 
-该命令同时启动 Server 和 Web：自动识别私有 IPv4 地址、让 Vite 监听 `0.0.0.0:51888`，并把本机及识别到的 Web origins 注入 `CLINMESH_TRUSTED_ORIGINS`。`0.0.0.0` 仅用于监听，浏览器应访问打印出的具体地址；只需允许防火墙 TCP `51888` 入站。未识别到正确地址时可显式指定，例如 `CLINMESH_LAN_IP=192.168.1.23 pnpm dev:lan`。开发入口不提供 HTTPS，只应暴露在可信局域网内。
+该命令同时启动 Server 和 Web：自动识别私有 IPv4 地址、让 Vite 监听 `0.0.0.0:51888`，并把本机及识别到的 Web origins 注入 `CLINMESH_TRUSTED_ORIGINS`。启动进程前会检查数据源并打印就绪状态：Synthea Provider 按 `CLINMESH_SYNTHEA_PROVIDER_URL` 探测，URL 未配置时只提示患者生成不可用；不可达且为本地受管地址（环回主机名加 `CLINMESH_SYNTHEA_PROVIDER_PORT` 端口）时自动执行与 `pnpm synthea:up` 等价的拉起，Docker 不可用、拉起失败或为远程地址时只打印警告并继续（HIS 正常运行，仅新的患者生成任务不可用）。参考目录数据库缺失或未包含当前 lock Release 时，自动向配置的数据库路径执行 `pnpm reference:sync`，同步失败时降级警告并继续；Server 仍对已配置库的 Release 缺失执行失败关闭。`0.0.0.0` 仅用于监听，浏览器应访问打印出的具体地址；只需允许防火墙 TCP `51888` 入站。未识别到正确地址时可显式指定，例如 `CLINMESH_LAN_IP=192.168.1.23 pnpm dev:lan`。开发入口不提供 HTTPS，只应暴露在可信局域网内。
 
 ### DSH Web 原生入口
 

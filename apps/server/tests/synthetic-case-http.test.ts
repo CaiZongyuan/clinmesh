@@ -8,6 +8,7 @@ import {
   agentToolAuthorizationResponseSchema,
 } from '@clinmesh/contracts/agent'
 import {
+  administratorCaseTruthSchema,
   patientBriefJobSchema,
   patientBriefRevisionListSchema,
   scenarioGenerationJobSchema,
@@ -44,6 +45,7 @@ import type {
 } from '../src/application/scenario-data/provider.ts'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+import { CommandExecutor } from '../src/application/command-executor.ts'
 import type {
   JsonChatCompletionInput,
   JsonChatCompletionsProvider,
@@ -459,6 +461,152 @@ describe('Synthetic Case generation HTTP contract', () => {
         { headers: { cookie } },
       )
       expect(hiddenResponse.status).toBe(404)
+    }
+  })
+
+  it('allows only administrators to inspect case truth in their workspace', async () => {
+    const runtime = await createRuntime(new RetryingSyntheaProvider(1))
+    const cookie = await signIn(runtime)
+    await enqueue(runtime, cookie)
+    const generated = await runtime.scenarioData.processNextGenerationJob()
+    const caseId = generated?.caseIds[0] ?? ''
+    const url = `/api/sim/v1/admin/synthetic-cases/${encodeURIComponent(caseId)}/truth`
+    const response = await runtime.app.request(url, { headers: { cookie } })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(administratorCaseTruthSchema.parse(await response.json())).toMatchObject({
+      caseId,
+      indexEncounterReference: 'urn:uuid:index-encounter',
+      items: expect.arrayContaining([
+        expect.objectContaining({ sourceReference: 'urn:uuid:index-condition', resource: {
+          resourceType: 'Condition', id: 'index-condition',
+          code: { coding: [{ code: '59621000', display: '高血压（疾病）', system: 'http://snomed.info/sct' }] },
+          encounter: { reference: 'urn:uuid:index-encounter' },
+          recordedDate: '2026-06-01T10:05:00+08:00', subject: { reference: 'urn:uuid:patient' },
+        } }),
+        expect.objectContaining({ sourceReference: 'urn:uuid:index-observation' }),
+      ]),
+    })
+    const unauthorized = await runtime.app.request(url)
+    expect(unauthorized.status).toBe(401)
+    for (const email of ['doctor', 'registrar', 'triage', 'cashier', 'pharmacist']) {
+      const roleCookie = await signIn(runtime, `${email}@demo.clinmesh.local`)
+      const denied = await runtime.app.request(url, { headers: { cookie: roleCookie } })
+      expect(denied.status).toBe(403)
+      expect(await denied.text()).not.toMatch(/index-condition|59621000/)
+    }
+    const missing = await runtime.app.request('/api/sim/v1/admin/synthetic-cases/other-case/truth', { headers: { cookie } })
+    expect(missing.status).toBe(404)
+    const session = await runtime.identity.resolveSessionContext(new Headers({ cookie }))
+    expect(() => runtime.scenarioData.getAdministratorCaseTruth({
+      ...session.actor, workspaceId: 'workspace-other',
+    }, caseId)).toThrow('The Synthetic Case was not found')
+  })
+
+  it('can clear the patient library while preserving reference data and access to accounts', async () => {
+    const runtime = await createRuntime({ capabilities: () => new RetryingSyntheaProvider().capabilities(), generate: request => corpusFor(request, true) })
+    const cookie = await signIn(runtime)
+    await enqueue(runtime, cookie)
+    const generated = await runtime.scenarioData.processNextGenerationJob()
+    const profileId = generated?.profileIds[0] ?? ''
+    const caseId = generated?.caseIds[0] ?? ''
+    const originalProfile = syntheticPatientProfileDetailSchema.parse(await (await runtime.app.request(
+      `/api/sim/v1/synthetic-patients/${profileId}`, { headers: { cookie } },
+    )).json())
+    const edit = await runtime.app.request(`/api/sim/v1/synthetic-patients/${profileId}`, {
+      method: 'PUT', body: JSON.stringify({ expectedRevision: 1, input: { ...originalProfile.identity, displayName: '合成患者修订' } }),
+      headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    })
+    expect(edit.status).toBe(200)
+    const session = await runtime.identity.resolveSessionContext(new Headers({ cookie }))
+    const reset = await runtime.app.request(`/api/sim/v1/scenario-runs/${session.actor.scenarioRunId}/actions/reset`, {
+      method: 'POST', body: JSON.stringify({ clearPatientLibrary: true }),
+      headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    })
+    expect(reset.status).toBe(200)
+    scenarioCommandResponseSchema.parse(await reset.json())
+    const profiles = await runtime.app.request('/api/sim/v1/synthetic-patients', { headers: { cookie } })
+    expect(await profiles.json()).toMatchObject({ total: 0, items: [] })
+    for (const path of [
+      `/api/sim/v1/synthetic-patients/${profileId}`,
+      `/api/sim/v1/synthetic-cases/${caseId}`,
+      `/api/sim/v1/admin/synthetic-cases/${caseId}/truth`,
+    ]) expect((await runtime.app.request(path, { headers: { cookie } })).status).toBe(404)
+    expect((await runtime.app.request('/api/his/v1/catalogs/registration', { headers: { cookie } })).status).toBe(200)
+    await enqueue(runtime, cookie)
+    const regenerated = await runtime.scenarioData.processNextGenerationJob()
+    expect(regenerated).toMatchObject({ status: 'succeeded', profileIds: [profileId], caseIds: [caseId] })
+    const restored = syntheticPatientProfileDetailSchema.parse(await (await runtime.app.request(
+      `/api/sim/v1/synthetic-patients/${profileId}`, { headers: { cookie } },
+    )).json())
+    expect(restored.case?.status).toBe('brief-pending')
+    expect(restored.revision).toBe(2)
+    expect(restored.identity.displayName).toBe('合成患者修订')
+    const current = await runtime.identity.resolveSessionContext(new Headers({ cookie }))
+    const receipt = new CommandExecutor(runtime.database, runtime.fhir).readReceipt(
+      current.actor, 'scenario-generation-job.complete', `${regenerated!.jobId}:complete`,
+    )
+    expect(commandResponseSchema(scenarioGenerationJobSchema).parse(receipt.response).effects).toContainEqual({
+      kind: 'updated', reference: `SyntheticPatientProfile/${profileId}`, versionId: '2',
+    })
+
+
+  })
+
+  it('cancels queued patient and brief jobs when clearing the library', async () => {
+    const briefProvider = new ControlledBriefProvider([])
+    const runtime = await createRuntime(new RetryingSyntheaProvider(1), briefProvider)
+    const cookie = await signIn(runtime)
+    await enqueue(runtime, cookie)
+    const generated = await runtime.scenarioData.processNextGenerationJob()
+    await enqueueBrief(runtime, cookie, generated!.caseIds[0]!)
+    await enqueue(runtime, cookie)
+    const response = await runtime.app.request('/api/sim/v1/scenario-runs/scenario-run-1/actions/reset', {
+      method: 'POST', body: JSON.stringify({ clearPatientLibrary: true }),
+      headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    })
+    expect(response.status).toBe(200)
+    scenarioCommandResponseSchema.parse(await response.json())
+    expect(await runtime.scenarioData.processNextGenerationJob()).toBeUndefined()
+    expect(await runtime.patientBrief.processNext()).toBeUndefined()
+    expect(briefProvider.requests).toHaveLength(0)
+  })
+
+  it.each(['patient', 'brief'])('rejects clearing without partial changes while %s generation runs', async kind => {
+    let block = false
+    let release = () => {}
+    let markStarted = () => {}
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const started = new Promise<void>(resolve => { markStarted = resolve })
+    const pause = async () => { markStarted(); await gate }
+    const runtime = await createRuntime({
+      capabilities: () => new RetryingSyntheaProvider().capabilities(),
+      generate: async request => { if (block && kind === 'patient') await pause(); return corpusFor(request, true) },
+    }, {
+      completeJson: async () => { if (block && kind === 'brief') await pause(); return { content: '{}', model: 'fake-brief-model' } },
+    })
+    const cookie = await signIn(runtime)
+    await enqueue(runtime, cookie)
+    const generated = await runtime.scenarioData.processNextGenerationJob()
+    block = true
+    if (kind === 'patient') await enqueue(runtime, cookie)
+    else await enqueueBrief(runtime, cookie, generated!.caseIds[0]!)
+    const processing = kind === 'patient' ? runtime.scenarioData.processNextGenerationJob() : runtime.patientBrief.processNext()
+    try {
+      await started
+      const response = await runtime.app.request('/api/sim/v1/scenario-runs/scenario-run-1/actions/reset', {
+        method: 'POST', body: JSON.stringify({ clearPatientLibrary: true }),
+        headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+      })
+      expect(response.status).toBe(409)
+      expect(apiErrorSchema.parse(await response.json()).error.code).toBe('SCENARIO_GENERATION_RUNNING')
+      const profile = await runtime.app.request(`/api/sim/v1/synthetic-patients/${generated!.profileIds[0]!}`, { headers: { cookie } })
+      expect(profile.status).toBe(200)
+      syntheticPatientProfileDetailSchema.parse(await profile.json())
+      expect((await runtime.identity.resolveSessionContext(new Headers({ cookie }))).actor.epoch).toBe('epoch-1')
+    } finally {
+      release()
+      await processing
     }
   })
 

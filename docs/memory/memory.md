@@ -4,6 +4,7 @@
 
 ## 协作与交付偏好
 
+- 已确认局部 UI 调整方向且用户明确要求“直接开干”时，以当前对话作为实施合同，直接完成本地修改和必要验证，不再增加 issue 草稿、拆票或阶段确认；外部发布仍按已有授权执行。
 - 不使用 superpowers 插件及其 skills；开发与交付遵循仓库自身工作流。
 - ClinMesh 与实际必需的 DSH 桥接组件（React Surface、AG-UI）持续适配最新公开正式版和 RC，不跟踪 alpha。升级范围按实际需要确定，不因插件已安装就升级或逐项验收全部插件；其他插件保留原配置和数据。接口或行为变化时主动更新 ClinMesh 和必要组件，不以长期停留旧版本或修改 DSH 来迁就旧实现作为维护方案；仅在确认上游自身缺陷或缺少必要扩展能力时向上游贡献修复。必要组件未及时适配时优先贡献修复，必要时维护 fork。依赖锁用于复现已验证组合，不代表停止跟进上游。持续升级自动创建 PR，由用户决定合并。
 - 已批准的 spec、测试 seam 和拆票结构没有未决分支时，直接实施，不重复展示最终待发布全文，也不逐项请求内容批准。
@@ -30,6 +31,10 @@
 
 - 审查自动升级时同时核对人工提交历史和最终执行目标：快进追加仍可能覆盖人工指定的支持 SHA。版本号相同也不能证明安装内容相同；发现摘要必须绑定实际下载文件与重建锁。当前保护和恢复方式见[DSH 持续升级](../deployment.md#dsh-持续升级)。
 
+- Bun 未启用语法压缩时，先保存 `process.env.NODE_ENV` 判断再用于动态 import 条件，可能使开发路由依赖残留在 DSH 单文件产物中。开发专用 import 和路由数组直接使用编译期环境判断，并通过 artifact 体积与内容检查验证裁剪。
+
+- `pnpm reference:sync` 固定写入默认路径 `.data/clinmesh-reference.sqlite`，不读取 `.env` 的 `CLINMESH_REFERENCE_DATABASE_PATH`；`.env` 指向自定义路径时会与同步结果分叉，出现"诊断药品正常、检验目录为空"（旧 Release 不含 `laboratory-cn`）。排查时直接查库：`reference_release` 表按 `release_id` 看 `laboratory_definition_count`。当前 Release 默认取 `reference-data.lock.json` 的 `compositeRelease.releaseId`，不要在 `.env` 手抄该 ID 制造双事实来源；运行中 Server 不热切换参考库，修复后必须重启。
+
 - 本地项目目录迁移后，DSH Profile 的 `link:` 插件依赖仍可能指向旧绝对路径。先备份 Profile 的 `package.json`，核对新目录后更新链接并运行 `dsh plugin --profile web install`；插件自身的依赖也必须在各自 workspace 按锁文件恢复，Profile 安装不会替本地链接包安装依赖。启动顺序与环境变量见[部署指南](../deployment.md)。
 
 - pnpm 11 默认的 `verifyDepsBeforeRun=install` 会在脚本前自动安装，可能重解析锁文件并给 file dependency 的 bin 源文件增加可执行权限。验证前先执行 `pnpm install --frozen-lockfile`，验证进程使用 `pnpm_config_verify_deps_before_run=error`，发现不一致时显式处理；安装后检查锁文件和子模块权限。全局 pnpm 与仓库指定版本不一致且启动器卡在联网解析时，可直接调用已缓存的精确版本，并让子进程 PATH 使用同一版本。缓存中的 `pnpm.cjs` 可能没有可执行位，仅把其目录或符号链接放进 PATH 不会生效；使用可执行的 shell wrapper 通过 `node` 调用该文件。
@@ -47,7 +52,7 @@
 - worktree 外部的 `.env` 通过 shell 加载时，根 `pnpm dev:server` 的 Turborepo 子进程不会自动获得未声明转发的 `CLINMESH_AI_*` 变量。需要复用外部配置时直接运行 `pnpm --filter @clinmesh/server dev`，并从实际 Server 进程核对变量名；只核对父 shell 会把 Brief provider 的未配置误判为产品错误。
 - SQLite perf gate 统计数据库、WAL 和 SHM 总增长；同一 Command completion 更新的多个 nullable 关联列若各建独立索引，会放大短事务 WAL pages。优先按真实验证查询建立一个复合索引，并用 `pnpm perf:ci` 证明增长，而不是放宽预算。
 - VitePress 构建把公开页面里裸写的 `http://localhost:*` URL 当作内部死链并使 `pnpm docs:check` 失败（`127.0.0.1` 不受影响）。进入文档站投影的页面中所有本机地址一律写成代码 span，不起链接。
-- pnpm 在 Windows 的 `node_modules/.bin` 只生成 `.cmd`/`.ps1` shim，且 Node 直接 `execFile` `.cmd` 会被拒绝。需要子进程调用 workspace 依赖的 CLI 时，用 `process.execPath` 加包内 JS launcher（如 `node_modules/cn-health/bin/cn-health.js`），不要拼 `.bin` 路径；Linux 测试传 `cliPath` 桩会掩盖该断裂，默认解析路径必须有独立测试。`cn-health dataset materialize` 支持多进程并行写同一 `--data-dir`（内部有锁），四个 Dataset 并行冷下载实测约 59s；`cn-health@0.5.1` 起子进程在 stderr 自带分阶段进度，reference-sync 逐行转发到 `onProgress`。升级被 `reference-data.lock.json` 的 `cli.version` 锁定，与 receipt 的 `cliVersion` 严格相等，升级时 lock、根 devDependency、`pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 三处必须同步，且旧版本条目会因排除清单移除而被 `minimumReleaseAge` 政策拒绝——先临时双列排除完成重解析、`pnpm clean --lockfile` 清陈旧条目后再收窄清单。
+- pnpm 在 Windows 的 `node_modules/.bin` 只生成 `.cmd`/`.ps1` shim，且 Node 直接 `execFile` `.cmd` 会被拒绝。需要子进程调用 workspace 依赖的 CLI 时，用 `process.execPath` 加包内 JS launcher（如 `node_modules/cn-health/bin/cn-health.js`），不要拼 `.bin` 路径；Linux 测试传 `cliPath` 桩会掩盖该断裂，默认解析路径必须有独立测试。`cn-health dataset materialize` 支持多进程并行写同一 `--data-dir`（内部有锁），默认 Dataset 可并行 materialize；`cn-health@0.5.1` 起子进程在 stderr 自带分阶段进度，reference-sync 逐行转发到 `onProgress`。升级被 `reference-data.lock.json` 的 `cli.version` 锁定，与 receipt 的 `cliVersion` 严格相等，升级时 lock、根 devDependency、`pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 三处必须同步，且旧版本条目会因排除清单移除而被 `minimumReleaseAge` 政策拒绝——先临时双列排除完成重解析、`pnpm clean --lockfile` 清陈旧条目后再收窄清单。
 
 - Windows checkout 若把仓库中的 CLAUDE.md 符号链接物化为链接目标文本，文档换行检查会误报；CLI 的 POSIX 权限与文件符号链接测试也不能由该 checkout 证明。使用 Linux 文件系统上的独立 Git 检出验证，并把 Linux Node、pnpm 与 Bun 放在 PATH 前端，避免子进程拾取 Windows pnpm shim。跨命令复用的 WSL 验证副本和产物使用持久目录，避免重启清理 `/tmp`。
 

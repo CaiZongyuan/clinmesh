@@ -75,7 +75,6 @@ import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
 import { RuntimeErrorBoundary } from './runtime-error-boundary.tsx'
 
 const DARK_MODE_QUERY = '(prefers-color-scheme: dark)'
-const IS_DEVELOPMENT = process.env.NODE_ENV !== 'production'
 
 function SurfaceAgentBinding({
   activeSection,
@@ -135,7 +134,6 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
     const roleSection = roleSections[roleCode]
     if (
       activeSection === roleSection
-      || (roleCode === 'administrator' && (activeSection === 'overview' || activeSection === 'scenarioData'))
     ) return
     const roleRoute = workspaceRoutes.find(route => route.key === roleSection)
     void navigate({ replace: true, to: roleRoute?.path ?? '/' })
@@ -179,9 +177,6 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
   const effectiveSection = isSettingsSection(activeSection)
     ? activeSection
     : activeSection === roleSection
-      || (session.data.actor.roleCode === 'administrator' && (
-        activeSection === 'overview' || activeSection === 'scenarioData'
-      ))
       ? activeSection
       : roleSection
 
@@ -346,28 +341,29 @@ const componentCatalogRoute = createRoute({
   path: '/components',
 })
 
-const UiDevPage = IS_DEVELOPMENT
+// 直接使用编译期条件，使未启用压缩的 DSH 构建也能移除开发路由依赖。
+const UiDevPage = process.env.NODE_ENV !== 'production'
   ? lazy(async () => {
       const module = await import('../ui-dev/doctor-workspace-lab-page.tsx')
       return { default: module.DoctorWorkspaceLabPage }
     })
   : () => null
 
-const DataGenerationLabPage = IS_DEVELOPMENT
+const DataGenerationLabPage = process.env.NODE_ENV !== 'production'
   ? lazy(async () => {
       const module = await import('../ui-dev/data-generation-lab-page.tsx')
       return { default: module.DataGenerationLabPage }
     })
   : () => null
 
-const BrandLockupLabPage = IS_DEVELOPMENT
+const BrandLockupLabPage = process.env.NODE_ENV !== 'production'
   ? lazy(async () => {
       const module = await import('../ui-dev/brand-lockup-lab-page.tsx')
       return { default: module.BrandLockupLabPage }
     })
   : () => null
 
-const developmentRoutes = IS_DEVELOPMENT
+const developmentRoutes = process.env.NODE_ENV !== 'production'
   ? [
       createRoute({
         component: () => (

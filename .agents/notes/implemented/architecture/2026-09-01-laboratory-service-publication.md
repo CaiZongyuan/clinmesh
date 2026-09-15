@@ -12,6 +12,8 @@ Status: implemented
 
 ## Decision
 
+默认启用与可选清空患者库由[默认检验服务与统一模拟数据管理](2026-09-15-default-laboratory-and-data-reset.md)定义；本文保留其余来源、版本和重放约束。
+
 Reference SQLite 接受既有 Dataset Schema v1 和 `loinc-zh-cn` Schema v2。Schema v2 importer 校验 Candidate manifest、SQLite artifact、四张 canonical 表及其记录数，把 LOINC 主表、单位、SYSTEM 标本关系和 panel 成员边原子发布为不可变 Reference Release。Class Type 1 概念属于 laboratory domain；生命体征、临床观察、问卷和量表属于 `other`，不会进入 Laboratory Service 候选。
 
 现有 operational `hospital_service_catalog` 继续作为唯一 Hospital Service owner。管理员从 active、Class Type 1、Order/Both 候选中选择最多 50 个根概念，创建有 expected candidate version 和幂等键的 publication job。Catalog Enrichment 使用独立模型配置和 strict output，在后台补齐本院名称、合成价格、TAT、参考范围、定性值和报告定义；panel 根与 dependency-only 成员在一个 Command transaction 中发布。失败 job 保存结构化错误并保持既有服务不变，未成功候选不进入医生目录。
