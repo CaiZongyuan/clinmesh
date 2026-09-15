@@ -694,11 +694,12 @@ function MedicationProductRow({ group, excludedIds, locale, selectionId, onSelec
           label={`${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`}
           onSelect={() => onSelect(selection)} selected={selected} />
       </TableCell>
-      <TableCell className="font-medium">{item.genericName}</TableCell>
-      <TableCell>{item.strength}</TableCell>
-      <TableCell>{item.dosageForm}</TableCell>
-      <TableCell>{item.manufacturer}</TableCell>
-      <TableCell className="font-mono text-xs">{item.approvalNumber}</TableCell>
+      <TableCell className="font-medium">
+        <span className="line-clamp-2 whitespace-normal break-words" title={`${item.genericName} · ${item.dosageForm} · ${item.approvalNumber}`}>{item.genericName}</span>
+      </TableCell>
+      <TableCell><span className="line-clamp-2 whitespace-normal break-words" title={item.manufacturer}>{item.manufacturer}</span></TableCell>
+      <TableCell><span className="block truncate" title={item.brandName ?? undefined}>{item.brandName ?? '-'}</span></TableCell>
+      <TableCell><span className="block truncate" title={item.strength}>{item.strength}</span></TableCell>
       <TableCell onDoubleClick={event => event.stopPropagation()}>
         <Select disabled={unavailable} value={item.id} onValueChange={value => {
           const next = group.variants.find(variant => variant.id === value && available(variant))
@@ -706,14 +707,14 @@ function MedicationProductRow({ group, excludedIds, locale, selectionId, onSelec
           setPackageId(next.id)
           if (selected) onSelect({ kind: 'reference', product: next })
         }}>
-          <SelectTrigger aria-label={`${locale === 'zh-CN' ? '包装' : 'Package'} ${item.genericName} ${item.manufacturer}`}>
-            <SelectValue>{item.packageDescription}</SelectValue>
+          <SelectTrigger className="w-full min-w-0" aria-label={`${locale === 'zh-CN' ? '包装' : 'Package'} ${item.genericName} ${item.manufacturer}`}>
+            <SelectValue className="min-w-0"><span className="truncate" title={item.packageDescription}>{item.packageDescription}</span></SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>
               {group.variants.map(variant => (
                 <SelectItem disabled={!available(variant)} key={variant.id} value={variant.id}>
-                  {variant.packageDescription}
+                  <span className="max-w-72 truncate" title={variant.packageDescription}>{variant.packageDescription}</span>
                   {excludedIds.has(variant.id) ? (locale === 'zh-CN' ? ' · 已添加' : ' · Added')
                     : variant.status !== 'active' ? (locale === 'zh-CN' ? ' · 停用' : ' · Inactive') : ''}
                 </SelectItem>
@@ -821,16 +822,15 @@ export function MedicationCatalogDialog({
             {(useLocal ? localResults : remoteResults).length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
             ) : (
-              <Table singleScrollContainer>
+              <Table className="min-w-[1000px] table-fixed" singleScrollContainer>
                 <TableHeader className="sticky top-0 z-10 bg-popover">
                   <TableRow>
                     <TableHead className="w-12"><span className="sr-only">{messages.choose}</span></TableHead>
-                    <TableHead className="min-w-52">{locale === 'zh-CN' ? '临床产品' : 'Clinical product'}</TableHead>
-                    <TableHead className="min-w-28">{locale === 'zh-CN' ? '规格' : 'Strength'}</TableHead>
-                    <TableHead className="min-w-24">{locale === 'zh-CN' ? '剂型' : 'Form'}</TableHead>
-                    <TableHead className="min-w-56">{locale === 'zh-CN' ? '生产企业' : 'Manufacturer'}</TableHead>
-                    <TableHead className="min-w-44">{locale === 'zh-CN' ? '批准文号' : 'Approval number'}</TableHead>
-                    <TableHead className="min-w-32">{locale === 'zh-CN' ? '包装变体' : 'Package variant'}</TableHead>
+                    <TableHead className="w-60">{locale === 'zh-CN' ? '药品名称' : 'Medication name'}</TableHead>
+                    <TableHead className="w-48">{locale === 'zh-CN' ? '生产企业' : 'Manufacturer'}</TableHead>
+                    <TableHead className="w-32">{locale === 'zh-CN' ? '商品名' : 'Brand name'}</TableHead>
+                    <TableHead className="w-44">{locale === 'zh-CN' ? '规格' : 'Strength'}</TableHead>
+                    <TableHead className="w-56">{locale === 'zh-CN' ? '包装选择' : 'Package'}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -853,9 +853,8 @@ export function MedicationCatalogDialog({
                             selected={selectionId === id}
                           />
                         </TableCell>
-                        <TableCell className="font-medium">{genericName}</TableCell>
+                        <TableCell className="font-medium"><span className="line-clamp-2 whitespace-normal break-words" title={genericName}>{genericName}</span></TableCell>
                         <TableCell>-</TableCell>
-                        <TableCell>{messages.localCatalog}</TableCell>
                         <TableCell>-</TableCell>
                         <TableCell>-</TableCell>
                         <TableCell>{excluded ? <Badge variant="secondary">{locale === 'zh-CN' ? '已添加' : 'Added'}</Badge> : '-'}</TableCell>
