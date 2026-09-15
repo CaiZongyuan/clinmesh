@@ -254,6 +254,24 @@ node "$DSHVM_CLI" exec web --port 3080 --no-open
 
 经 Turborepo 的根 `pnpm dev:server` 不转发未声明的 `CLINMESH_AI_*` 变量；在 worktree 或需要显式加载 `.env` 的场景使用 `pnpm --filter @clinmesh/server dev` 直接启动，否则 Patient Brief 和 Investigation provider 会被视为未配置。
 
+### DSH 持续升级
+
+[`DSH upstream updates`](../.github/workflows/dsh-upstreams.yml) 每日 UTC 02:23（北京时间 10:23）发现更新，也支持 Actions 页面手动运行。发现范围由 [`dsh-upstreams.lock.json`](../dsh-upstreams.lock.json) 拥有：npm 组件比较全部公开正式版和 `rc.N`，不以 `latest` 或 `next` 标签决定候选；源码组件跟踪公开来源的默认分支完整 commit。源码默认分支落后于已验证支持提交时保留支持提交，历史分叉时明确失败并等待维护者协调。
+
+本地只读发现命令为 `pnpm upstream:discover`，结果写入已忽略的 `dsh-upstreams.discovery.json`。所有来源解析成功后才产生新候选；已验证 npm 版本被撤销、发行身份或完整性变化、非法响应和网络错误均失败，不产生部分更新。没有差异不创建 PR。发布模式先从目标分支的精确 HEAD 读取基线锁，不采用运行分支或本地 checkout 的锁；读取失败停止，不回退到本地。手动和定时运行以仓库默认分支为目标，专用验证分支的 push 以该验证分支为目标。随后在新版本发现前检查当前基线对应的活动候选；官方 npm registry 对已知候选包直接返回 404、目标版本已撤销或内容变化时，保留候选和人工提交，确认 HEAD 未变化后将该提交的兼容状态置为失败，并在 PR 自动管理区和发现报告的 `result` 中记录待适配原因，不调度安装。即使后续发现因基线版本撤销或其他来源错误而失败，候选失效证据仍保存：报告的 `result` 保留待适配结果，报告和 CLI 输出另以 `discoveryError` 记录发现错误，不产生新候选或验收 HEAD。没有候选失效时，发现错误仍以非零退出码结束。正常候选不写入；候选核对禁止重定向，403、503、超时和非法响应仍报错，不判定为撤销。只有固定官方 registry 地址的直接 404 按整包撤销处理，其他来源的 404 不采用该规则。`pnpm upstream:discover --publish` 还要求 `GH_TOKEN`，使用 GitHub Git API 在当前升级分支 HEAD 上原子追加候选文件与 `deployment/dsh/discovery.json`，后者保存上一次自动发现的完整候选。再次更新前比较 PR 当前候选与该记录；人工支持 commit、版本或其他目标字段有变化时停止，保留人工目标，不先合并基线。没有人工修改时，新的上游目标同步更新两份文件。基于目标分支和基线摘要的分支名保证重复发现复用活动 draft PR；PR 中的自动管理区更新完整组件差异，区外人工说明保留。
+
+main 上的上游锁是已验证基线；升级分支的 `deployment/dsh/candidate.json` 是待适配目标。发现只更新候选。同一目标分支的发现与 PR 验收由工作流串行执行，防止先前验收覆盖撤销后的失败状态。工作流随后显式调用[候选验收](../.github/workflows/dsh-upstreams-verify.yml)，不依赖 `GITHUB_TOKEN` 创建 PR 后触发 `pull_request`。安装与构建进程不获得写入 token；最终追加提交和写入 commit status 的步骤单独使用 token。需要仓库允许 Actions 创建 PR，并授予发现 job `contents:write`、`pull-requests:write`、`statuses:write`，验收收尾 job `contents:write`、`statuses:write`；权限不足保留明确的 HTTP 错误。
+
+维护者可在全新独立 clone 中检出升级 PR 的精确 HEAD、递归恢复子模块并执行 `pnpm install --frozen-lockfile`，随后运行 `pnpm upstream:verify`。该命令拒绝主分支和已有未提交修改，保护不同于锁定版本的人工依赖或子模块适配；pnpm 给构建 CLI 添加的可执行位仅在文件内容与 Git 相同时恢复。它在安装前和全部检查结束后核对 npm registry 中的目标版本及发行摘要；版本撤销或内容变化时停止，不因旧 tarball 仍可下载而通过验收。它从候选的精确 URL 下载 DSH/dshvm tarball，逐字节计算 SHA-512，摘要一致后才准备依赖或执行候选；下载错误、重定向及摘要不符均停止，失败下载不保留为可安装文件。随后按精确源码构建 Surface 与 AG-UI，在新的系统临时目录安装已校验的 dshvm 文件，并由它安装已校验的宿主文件。宿主 `npm ci` 前还核对依赖锁中的版本、来源与完整性是否匹配候选，npm 安装时继续验证锁定摘要。宿主与 Web Profile 重建后，通过 dshvm 隔离、选择和 `exec` 检查实际版本并启动 HTTP smoke，最后运行 `pnpm check`。子进程只继承运行工具所需环境，npm 使用临时空用户配置，模型密钥、GitHub token、日常 Profile 与数据库配置不传入；smoke 临时凭证在日志中脱敏。临时 Profile 只加载必要组合，不切换日常 Profile，也不调用付费模型。POSIX 命令与宿主在独立进程组中运行，退出或取消后有界清理；Windows 取消时回收 launcher 的现存子树。进程结束后保留临时安装供诊断；它不作为日常运行目录。
+
+只有自动检查全部通过才写入升级 checkout 的目标上游锁与 `deployment/dsh/automation.json` 摘要回执。回执允许同一 PR 在已自动准备的组合上继续接收新候选；人工改动锁后摘要不匹配时拒绝覆盖。Actions 在确认远端 HEAD 未被人工提交改变后追加精确依赖锁与子模块引用；普通 push 的快进约束处理检查后的并发竞争。结果、日志和准备补丁在 `.upstream-evidence/` 中，并作为当前 Actions 运行的 artifact 保存；`DSH candidate compatibility` status 绑定被检查的精确 commit。失败状态是待适配，已验证基线不推进，draft 不自动变为 ready，也不自动合并。自动通过只证明记录中的安装、构建、smoke 和测试；原生会话、browser Tool → review → Effect、Windows 实际使用和业务闭环仍按[测试策略](testing.md)补充人工证据，由维护者决定合并。
+
+故障恢复按原因处理：网络或权限故障修复后重跑发现；依赖或编译失败由维护者在同一升级分支追加适配；人工 HEAD 已变化时重新运行验收；基线发生变化或候选与人工支持 commit 冲突时先协调目标再运行。不要 force-push 自动分支、降低宿主到 alpha 或覆盖人工改动来消除失败。合并后新的基线摘要拥有下一轮升级分支。`automation/dsh-upstreams-validation` 是受控集成验证入口：推送该分支会针对它自身创建候选 PR 并执行相同权限与验收路径，不向 main 提交或合并更新。
+
+旧候选缺少 `deployment/dsh/discovery.json` 时，发现停止而不猜测归属。维护者可从 Git 历史恢复最后一次机器人写入的候选到该文件；有人工目标差异时继续保留，由 PR 验收验证支持提交。只有决定将当前候选重新交给自动发现管理时，才把经确认的 `candidate.json` 同步为 `discovery.json` 并提交；下一次发现即可采用更新的上游目标。不要为了消除报错而把未经核对的人工修复标为机器人目标。
+
+如果 Actions 报 `GitHub Actions is not permitted to create or approve pull requests`，需要仓库管理员在 Settings → Actions → General → Workflow permissions 开启 `Allow GitHub Actions to create and approve pull requests`。暂时无法开启时，有创建 PR 权限的维护者可把已生成的候选分支手动建为 draft PR，目标分支必须与该次发现一致，再重跑发现工作流；机器人可复用已有 PR 并显式执行验收。这只能证明更新与验收路径，不能替代首次自动创建 PR 的权限验收，也不会自动修复下一轮新基线的创建权限。
+
 ## 8. 升级与重置
 
 当前病例架构包含破坏性的 operational database migration，不兼容旧的本地病例与安装数据。升级前停止 Server，重置 `CLINMESH_DATABASE_PATH` 指向的本地 operational SQLite：
