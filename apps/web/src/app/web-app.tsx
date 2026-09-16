@@ -127,17 +127,18 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
     },
   })
   const roleCode = session.data?.actor.roleCode
+  const retiredGeneralSettings = runtime.mode === 'surface' && activeSection === 'settingsGeneral'
 
   useEffect(() => {
     if (roleCode === undefined) return
-    if (isSettingsSection(activeSection)) return
+    if (isSettingsSection(activeSection) && !retiredGeneralSettings) return
     const roleSection = roleSections[roleCode]
     if (
       activeSection === roleSection
     ) return
     const roleRoute = workspaceRoutes.find(route => route.key === roleSection)
     void navigate({ replace: true, to: roleRoute?.path ?? '/' })
-  }, [activeSection, navigate, roleCode])
+  }, [activeSection, navigate, roleCode, retiredGeneralSettings])
 
   useEffect(() => {
     const root = runtime.mode === 'surface'
@@ -174,7 +175,7 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
   }
 
   const roleSection = roleSections[session.data.actor.roleCode]
-  const effectiveSection = isSettingsSection(activeSection)
+  const effectiveSection = isSettingsSection(activeSection) && !retiredGeneralSettings
     ? activeSection
     : activeSection === roleSection
       ? activeSection
@@ -478,7 +479,16 @@ function WebApplication({
     runtimeOptions.surfaceColorScheme,
     runtimeOptions.surfaceSessionId,
   ])
-  const preferencesContext = useMemo(() => ({ preferences, setPreferences }), [preferences])
+  const locale = runtime.mode === 'surface'
+    ? runtimeOptions.surfaceLocale ?? 'zh-CN'
+    : preferences.locale
+  const fontSize = runtime.mode === 'surface'
+    ? runtimeOptions.surfaceFontSize ?? preferences.fontSize
+    : preferences.fontSize
+  const preferencesContext = useMemo(() => ({
+    preferences: { ...preferences, locale, fontSize },
+    setPreferences,
+  }), [preferences, locale, fontSize])
   useEffect(() => writeWebPreferences(preferences), [preferences])
 
   useEffect(() => {
@@ -516,12 +526,13 @@ function WebApplication({
               ? 'clinmesh-web-root h-full min-h-0 overflow-hidden'
               : 'clinmesh-web-root'}
             data-clinmesh-app="web"
-            data-font-size={preferences.fontSize}
+            data-font-size={fontSize}
+            lang={locale}
             ref={applicationRoot}
           >
             <QueryClientProvider client={queryClient}>
               <AgentPageRegistryProvider>
-                <AgentReviewProvider>
+                <AgentReviewProvider locale={locale}>
                   <Toaster>
                     <RouterProvider router={router} />
                   </Toaster>
@@ -537,7 +548,8 @@ function WebApplication({
 }
 
 export function WebApp(props: WebAppProps = {}): React.JSX.Element {
-  return <RuntimeErrorBoundary surfaceDisplay={props.runtime?.surfaceDisplay}><WebApplication {...props} /></RuntimeErrorBoundary>
+  const locale = props.runtime?.mode === 'surface' ? props.runtime.surfaceLocale ?? 'zh-CN' : undefined
+  return <RuntimeErrorBoundary locale={locale} surfaceDisplay={props.runtime?.surfaceDisplay}><WebApplication {...props} /></RuntimeErrorBoundary>
 }
 
 export type { WebRuntimeOptions } from './web-runtime.tsx'

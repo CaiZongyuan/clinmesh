@@ -155,12 +155,13 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: (_raw: unknown, signal: AbortSignal) => {
           if (preview.data === undefined) throw new Error(messages.paymentUnavailable)
+          const amountFen = preview.data.data.amountFen
           return agentReview.request({
-            confirmLabel: messages.submitPayment,
-            description: `${selectedCharge?.patient.name ?? ''} · ${formatFen(preview.data.data.amountFen, locale)}`,
+            confirmLabel: locale => getWorkspaceMessages(locale).submitPayment,
+            description: locale => `${selectedCharge?.patient.name ?? ''} · ${formatFen(amountFen, locale)}`,
             onConfirm: () => confirm.mutateAsync(),
             signal,
-            title: messages.confirmPaymentTitle,
+            title: locale => getWorkspaceMessages(locale).confirmPaymentTitle,
           })
         },
       },

@@ -237,12 +237,14 @@ describe('Web application shell', () => {
     await waitFor(() => expect(register).toHaveBeenCalled())
     const navigation = register.mock.lastCall?.[0]
     if (!navigation) throw new Error('Missing host navigation')
-    expect(navigation.items.map(item => item.label)).toEqual(['门诊挂号', '通用', 'UI 组件'])
+    expect(navigation.items.map(item => item.label)).toEqual(['门诊挂号', 'UI 组件'])
     expect(navigation.activePath).toBe('/registration')
     await act(() => navigation.navigate('/settings'))
-    expect(await screen.findByRole('heading', { name: '通用', level: 1 })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '全屏 ClinMesh' }).querySelector('.lucide-sliders-horizontal')).not.toBeNull()
-    expect(history.location.pathname).toBe('/settings')
+    expect(history.location.pathname).toBe('/registration')
+    await act(() => navigation.navigate('/settings/developer/components'))
+    expect(await screen.findByRole('heading', { name: 'UI 组件', level: 1 })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '全屏 ClinMesh' }).querySelector('.lucide-component')).not.toBeNull()
+    expect(history.location.pathname).toBe('/settings/developer/components')
     expect(window.location.pathname).toBe('/')
     const current = register.mock.lastCall?.[0]
     if (!current) throw new Error('Missing current host navigation')
@@ -301,13 +303,13 @@ describe('Web application shell', () => {
       runtime: { mode: 'surface', surfaceNavigation: { register } },
     })
     expect(register.mock.lastCall?.[0].items.map(item => item.path)).toEqual([
-      '/scenario-data', '/settings', '/settings/developer/components',
+      '/scenario-data', '/settings/developer/components',
     ])
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     await user.click(await screen.findByRole('menuitemradio', { name: '挂号员 · 挂号员' }))
     await screen.findByRole('heading', { name: '门诊挂号', level: 1 })
     expect(register.mock.lastCall?.[0].items.map(item => item.path)).toEqual([
-      '/registration', '/settings', '/settings/developer/components',
+      '/registration', '/settings/developer/components',
     ])
     const latestRelease = register.mock.results.at(-1)?.value
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
@@ -450,6 +452,44 @@ describe('Web application shell', () => {
       .toContain('overflow-y-auto')
   })
 
+  it('follows the host language without closing a dialog or overwriting local preferences', async () => {
+    const saved = JSON.stringify({ fontSize: 'large', locale: 'zh-CN', theme: 'light' })
+    localStorage.setItem('clinmesh.preferences:v1', saved)
+    const history = createMemoryHistory({ initialEntries: ['/components'] })
+    const runtime: WebRuntimeOptions = { mode: 'surface', surfaceLocale: 'en-US' }
+    const rendered = await renderWebApp({ history, runtime })
+    await userEvent.click(screen.getByRole('button', { name: 'Delete order' }))
+    const dialog = await screen.findByRole('alertdialog', { name: 'Confirm order deletion' })
+    rendered.rerender(<WebApp history={history} runtime={{ ...runtime, surfaceLocale: 'zh-CN' }} />)
+    expect(await screen.findByRole('alertdialog', { name: '确认删除医嘱' })).toBe(dialog)
+    expect(history.location.pathname).toBe('/components')
+    expect(localStorage.getItem('clinmesh.preferences:v1')).toBe(saved)
+    expect(document.documentElement.lang).toBe('zh-CN')
+  })
+
+  it('uses host language during loading and sign-in, preserving the sign-in draft', async () => {
+    let respond: (response: Response) => void = () => {}
+    vi.mocked(fetch).mockReturnValue(new Promise<Response>(resolve => { respond = resolve }))
+    const history = createMemoryHistory({ initialEntries: ['/registration'] })
+    const rendered = render(<WebApp history={history} runtime={{ mode: 'surface', surfaceLocale: 'en-US' }} />)
+    expect(await screen.findByRole('main', { name: 'Loading workspace' })).toBeTruthy()
+    await act(() => respond(Response.json({ error: 'Unauthorized' }, { status: 401 })))
+    const email = await screen.findByLabelText('Account email')
+    await userEvent.type(email, 'synthetic@example.test')
+    rendered.rerender(<WebApp history={history} runtime={{ mode: 'surface', surfaceLocale: 'zh-CN', surfaceFontSize: 'large' }} />)
+    expect(await screen.findByLabelText('账户邮箱')).toBe(email)
+    if (!(email instanceof HTMLInputElement)) throw new Error('Expected an email input')
+    expect(email.value).toContain('synthetic@example.test')
+    expect(document.querySelector('[data-clinmesh-app="web"]')?.getAttribute('data-font-size')).toBe('large')
+  })
+
+  it('falls back to Chinese in a Surface without host language instead of using the saved locale', async () => {
+    localStorage.setItem('clinmesh.preferences:v1', JSON.stringify({ fontSize: 'standard', locale: 'en-US', theme: 'system' }))
+    await renderWebApp({ runtime: { mode: 'surface' } })
+    expect(screen.getByRole('heading', { name: '门诊挂号' })).toBeTruthy()
+    expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1')!).locale).toBe('en-US')
+  })
+
   it('scopes Surface appearance and feedback portals to the application root', async () => {
     localStorage.setItem('clinmesh.preferences:v1', JSON.stringify({
       fontSize: 'large',
@@ -459,7 +499,7 @@ describe('Web application shell', () => {
     const history = createMemoryHistory({ initialEntries: ['/components'] })
     const user = userEvent.setup()
 
-    await renderWebApp({ history, runtime: { mode: 'surface', surfaceColorScheme: 'dark' } })
+    await renderWebApp({ history, runtime: { mode: 'surface', surfaceColorScheme: 'dark', surfaceLocale: 'en-US' } })
     const applicationRoot = document.querySelector<HTMLElement>('[data-clinmesh-app="web"]')
     const portalRoot = applicationRoot?.querySelector<HTMLElement>('[data-clinmesh-portal-root]')
     expect(applicationRoot?.lang).toBe('en-US')
@@ -501,17 +541,36 @@ describe('Web application shell', () => {
     expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1')!)).toEqual(preferences)
   })
 
-  it('keeps Surface language, font size and account controls without theme choices', async () => {
+  it('follows the DSH font size without changing standalone preferences or remounting the page', async () => {
+    localStorage.setItem('clinmesh.preferences:v1', JSON.stringify({ fontSize: 'standard', locale: 'zh-CN', theme: 'system' }))
+    const history = createMemoryHistory({ initialEntries: ['/registration'] })
+    const rendered = await renderWebApp({ history, runtime: { mode: 'surface', surfaceFontSize: 'larger' } })
+    const application = document.querySelector('[data-clinmesh-app="web"]')!
+    expect(application.getAttribute('data-font-size')).toBe('larger')
+    rendered.rerender(<WebApp history={history} runtime={{ mode: 'surface', surfaceFontSize: 'large' }} />)
+    expect(document.querySelector('[data-clinmesh-app="web"]')).toBe(application)
+    expect(application.getAttribute('data-font-size')).toBe('large')
+    expect(history.location.pathname).toBe('/registration')
+    expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1')!).fontSize).toBe('standard')
+  })
+
+  it('redirects retired Surface general settings and keeps host language and account controls', async () => {
     const history = createMemoryHistory({ initialEntries: ['/settings'] })
     const user = userEvent.setup()
-    await renderWebApp({ history, runtime: { mode: 'surface', surfaceColorScheme: 'dark' } })
+    const rendered = await renderWebApp({ history, runtime: { mode: 'surface', surfaceColorScheme: 'dark' } })
+    expect(screen.queryByRole('button', { name: 'English' })).toBeNull()
+    expect(screen.queryByText('语言由 DSH 管理')).toBeNull()
+    expect(screen.queryByRole('heading', { name: '外观' })).toBeNull()
+    expect(screen.queryByRole('group', { name: '字号' })).toBeNull()
+    await waitFor(() => expect(history.location.pathname).toBe('/registration'))
     for (const name of ['跟随系统', '亮色', '暗色']) {
       expect(screen.queryByRole('button', { name })).toBeNull()
     }
-    await user.click(screen.getByRole('button', { name: '较大' }))
-    expect(document.querySelector('[data-clinmesh-app="web"]')?.getAttribute('data-font-size')).toBe('larger')
-    await user.click(screen.getByRole('button', { name: 'English' }))
-    expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
+    rendered.rerender(<WebApp history={history} runtime={{ mode: 'surface', surfaceLocale: 'en-US' }} />)
+    expect(screen.getByRole('heading', { name: 'Registration' })).toBeTruthy()
+    expect(screen.queryByText('Language is managed by DSH')).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Appearance' })).toBeNull()
+    expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1')!).locale).toBe('zh-CN')
     await user.click(screen.getByRole('button', { name: 'User menu' }))
     expect(await screen.findByRole('menuitem', { name: 'Sign out' })).toBeTruthy()
     expect(screen.queryByRole('menuitem', { name: 'Settings' })).toBeNull()
@@ -739,8 +798,14 @@ describe('Web application shell', () => {
     })
 
     expect(proposalResult).toContain('awaiting-human-review')
-    expect(await screen.findByRole('alertdialog', { name: '创建临时患者' })).toBeTruthy()
+    const reviewDialog = await screen.findByRole('alertdialog', { name: '创建临时患者' })
     expect(patientCreated).toBe(false)
+
+    rendered.rerender(<WebApp history={history} runtime={{ ...runtimeFor('active'), surfaceLocale: 'en-US' }} />)
+    expect(await screen.findByRole('alertdialog', { name: 'Create temporary patient' })).toBe(reviewDialog)
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    expect(patientCreated).toBe(false)
+    rendered.rerender(<WebApp history={history} runtime={runtimeFor('active')} />)
 
     rendered.rerender(<WebApp history={history} runtime={runtimeFor('connecting')} />)
     await waitFor(() => expect(screen.queryByRole('alertdialog', { name: '创建临时患者' })).toBeNull())
@@ -769,7 +834,7 @@ describe('Web application shell', () => {
 
   it('renews the Agent Page Context without replacing the page Tool scope', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-31T00:00:00.000Z'), shouldAdvanceTime: true })
-    const history = createMemoryHistory({ initialEntries: ['/settings'] })
+    const history = createMemoryHistory({ initialEntries: ['/settings/developer/components'] })
     const registeredScopes: string[] = []
     let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
     let contextRequests = 0
@@ -815,10 +880,10 @@ describe('Web application shell', () => {
               epoch: registrarSession.actor.epoch,
               scenarioRunId: registrarSession.actor.scenarioRunId,
             },
-            allowedOperationIds: agentToolsForContext('registrar', 'settingsGeneral')
+            allowedOperationIds: agentToolsForContext('registrar', 'uiComponents')
               .map(tool => tool.operationId),
             dshSessionId: request.dshSessionId,
-            scopeKey: 'clinmesh:registrar:settings',
+            scopeKey: 'clinmesh:registrar:components',
             issuedAt: issuedAt.toISOString(),
             expiresAt: new Date(issuedAt.getTime() + 5 * 60_000).toISOString(),
           },
@@ -839,7 +904,7 @@ describe('Web application shell', () => {
       history,
       runtime: runtimeFor('unavailable'),
     })
-    await waitFor(() => expect(registration?.scopeKey).toBe('clinmesh:registrar:settings'))
+    await waitFor(() => expect(registration?.scopeKey).toBe('clinmesh:registrar:components'))
     expect(contextRequests).toBe(1)
 
     rendered.rerender(<WebApp history={history} runtime={runtimeFor('connecting')} />)
@@ -853,9 +918,9 @@ describe('Web application shell', () => {
     })
 
     await waitFor(() => expect(contextRequests).toBe(2))
-    expect(registration?.scopeKey).toBe('clinmesh:registrar:settings')
+    expect(registration?.scopeKey).toBe('clinmesh:registrar:components')
     expect(contextRequests).toBe(2)
-    expect(new Set(registeredScopes)).toEqual(new Set(['clinmesh:registrar:settings']))
+    expect(new Set(registeredScopes)).toEqual(new Set(['clinmesh:registrar:components']))
     expect(contextBindings[0]?.client.id).toMatch(/^clinmesh-surface-/)
     expect(contextBindings[1]?.client.id).toBe(contextBindings[0]?.client.id)
     expect(contextBindings.map(binding => binding.client.revision)).toEqual([1, 2])
@@ -874,7 +939,7 @@ describe('Web application shell', () => {
 
   it('replaces the Agent Page Context after an active Surface lease is lost', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-31T00:00:00.000Z'), shouldAdvanceTime: true })
-    const history = createMemoryHistory({ initialEntries: ['/settings'] })
+    const history = createMemoryHistory({ initialEntries: ['/settings/developer/components'] })
     let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
     let contextRequests = 0
     const clientRevisions: number[] = []
@@ -909,10 +974,10 @@ describe('Web application shell', () => {
               epoch: registrarSession.actor.epoch,
               scenarioRunId: registrarSession.actor.scenarioRunId,
             },
-            allowedOperationIds: agentToolsForContext('registrar', 'settingsGeneral')
+            allowedOperationIds: agentToolsForContext('registrar', 'uiComponents')
               .map(tool => tool.operationId),
             dshSessionId: request.dshSessionId,
-            scopeKey: 'clinmesh:registrar:settings',
+            scopeKey: 'clinmesh:registrar:components',
             issuedAt: '2026-08-31T00:00:00.000Z',
             expiresAt: '2026-08-31T00:05:00.000Z',
           },
@@ -960,7 +1025,7 @@ describe('Web application shell', () => {
   it('removes Surface Agent tools when Page Context renewal cannot finish before expiry', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-31T00:00:00.000Z'), shouldAdvanceTime: true })
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    const history = createMemoryHistory({ initialEntries: ['/settings'] })
+    const history = createMemoryHistory({ initialEntries: ['/settings/developer/components'] })
     let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
     let contextRequests = 0
     const surfaceAgent: WebSurfaceAgentController = {
@@ -993,10 +1058,10 @@ describe('Web application shell', () => {
               epoch: registrarSession.actor.epoch,
               scenarioRunId: registrarSession.actor.scenarioRunId,
             },
-            allowedOperationIds: agentToolsForContext('registrar', 'settingsGeneral')
+            allowedOperationIds: agentToolsForContext('registrar', 'uiComponents')
               .map(tool => tool.operationId),
             dshSessionId: request.dshSessionId,
-            scopeKey: 'clinmesh:registrar:settings',
+            scopeKey: 'clinmesh:registrar:components',
             issuedAt: '2026-08-31T00:00:00.000Z',
             expiresAt: '2026-08-31T00:05:00.000Z',
           },
@@ -1016,7 +1081,7 @@ describe('Web application shell', () => {
         surfaceSessionId: 'dsh-session-1',
       },
     })
-    await waitFor(() => expect(registration?.scopeKey).toBe('clinmesh:registrar:settings'))
+    await waitFor(() => expect(registration?.scopeKey).toBe('clinmesh:registrar:components'))
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5 * 60_000 + 1_000)

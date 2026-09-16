@@ -81,7 +81,10 @@ export function SettingsWorkspace({
   }
 
   return (
-    <section aria-labelledby="settings-appearance-heading" className="flex max-w-2xl flex-col gap-4">
+    <section
+      aria-labelledby="settings-appearance-heading"
+      className="flex max-w-2xl flex-col gap-4"
+    >
       <h2 className="text-sm font-semibold" id="settings-appearance-heading">
         {messages.appearanceLabel}
       </h2>

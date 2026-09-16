@@ -206,7 +206,7 @@ export function AppearanceControls({
         <div className="text-xs font-medium text-muted-foreground">{messages.appearanceLabel}</div>
       ) : null}
       <div className="flex items-center justify-between gap-2">
-        {showLocale ? (
+        {showLocale && runtime.mode === 'standalone' ? (
           <ToggleGroup
             aria-label={messages.languageLabel}
             onValueChange={values => {
@@ -392,7 +392,7 @@ export function WorkspaceShell({
   )), [activeRoleSection, session.actor.roleCode])
   useEffect(() => {
     if (runtime.mode !== 'surface' || !runtime.surfaceNavigation) return
-    const routes = [...visibleRoutes, ...settingsRoutes]
+    const routes = [...visibleRoutes, ...settingsRoutes.filter(route => route.key !== 'settingsGeneral')]
     return runtime.surfaceNavigation.register({
       items: routes.map(route => ({ path: route.path, label: messages[route.key] })),
       activePath: routes.find(route => route.key === activeSection)?.path ?? '/',

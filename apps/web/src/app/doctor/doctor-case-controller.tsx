@@ -1437,13 +1437,13 @@ function DoctorCaseController({
           const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
           const revisit = current.status === 'awaiting-revisit'
           return agentReview.request({
-            confirmLabel: revisit ? messages.startRevisit : messages.startFirstVisit,
+            confirmLabel: locale => getWorkspaceMessages(locale)[revisit ? 'startRevisit' : 'startFirstVisit'],
             description: current.patient.name,
             onConfirm: () => revisit
               ? beginRevisit.mutateAsync({ caseId: current.caseId })
               : start.mutateAsync({ caseId: current.caseId }),
             signal,
-            title: revisit ? messages.startRevisit : messages.startFirstVisit,
+            title: locale => getWorkspaceMessages(locale)[revisit ? 'startRevisit' : 'startFirstVisit'],
           })
         },
       },
@@ -1477,8 +1477,8 @@ function DoctorCaseController({
           const entries = doctorDiagnosisEntries(raw)
           const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
           return agentReview.request({
-            confirmLabel: messages.confirmDiagnosis,
-            description: `${entries.length} 项诊断`,
+            confirmLabel: locale => getWorkspaceMessages(locale).confirmDiagnosis,
+            description: locale => locale === 'zh-CN' ? `${entries.length} 项诊断` : `${entries.length} diagnoses`,
             onConfirm: async () => {
               const saved = await saveDiagnosisDraft({
                 encounterId: current.encounter.id,
@@ -1495,7 +1495,7 @@ function DoctorCaseController({
               return result
             },
             signal,
-            title: messages.confirmDiagnosis,
+            title: locale => getWorkspaceMessages(locale).confirmDiagnosis,
           })
         },
       },
@@ -1506,8 +1506,8 @@ function DoctorCaseController({
           : detail.data?.drafts?.firstVisit !== undefined,
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: (_raw: unknown, signal: AbortSignal) => agentReview.request({
-          confirmLabel: messages.issueLaboratoryRequest,
-          description: resolvedLaboratoryItem?.nameZh ?? messages.consultationUnavailable,
+          confirmLabel: locale => getWorkspaceMessages(locale).issueLaboratoryRequest,
+          description: locale => resolvedLaboratoryItem?.[locale === 'zh-CN' ? 'nameZh' : 'nameEn'] ?? getWorkspaceMessages(locale).consultationUnavailable,
           onConfirm: () => {
             const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
             return usesIndependentLaboratoryRequests
@@ -1515,7 +1515,7 @@ function DoctorCaseController({
               : issueOrder.mutateAsync({ caseId: current.caseId })
           },
           signal,
-          title: messages.issueLaboratoryRequest,
+          title: locale => getWorkspaceMessages(locale).issueLaboratoryRequest,
         }),
       },
       'outpatient.laboratory.cancel.propose': {
@@ -1537,11 +1537,11 @@ function DoctorCaseController({
             throw new Error(messages.consultationUnavailable)
           }
           return agentReview.request({
-            confirmLabel: messages.confirmCancelLaboratoryRequest,
+            confirmLabel: locale => getWorkspaceMessages(locale).confirmCancelLaboratoryRequest,
             description: request.catalogItemId,
             onConfirm: () => cancelRequest.mutateAsync({ caseId: current.caseId, request }),
             signal,
-            title: messages.cancelLaboratoryRequestTitle,
+            title: locale => getWorkspaceMessages(locale).cancelLaboratoryRequestTitle,
           })
         },
       },
@@ -1564,14 +1564,14 @@ function DoctorCaseController({
             throw new Error(messages.consultationUnavailable)
           }
           return agentReview.request({
-            confirmLabel: messages.acknowledgeLaboratoryReport,
+            confirmLabel: locale => getWorkspaceMessages(locale).acknowledgeLaboratoryReport,
             description: request.catalogItemId,
             onConfirm: () => acknowledgeReport.mutateAsync({
               caseId: current.caseId,
               request,
             }),
             signal,
-            title: messages.acknowledgeLaboratoryReport,
+            title: locale => getWorkspaceMessages(locale).acknowledgeLaboratoryReport,
           })
         },
       },
@@ -1611,7 +1611,7 @@ function DoctorCaseController({
             || !request.report.results.every(isQuantitativeLaboratoryResult)
           ) throw new Error(messages.consultationUnavailable)
           return agentReview.request({
-            confirmLabel: messages.confirmLaboratoryReportCorrection,
+            confirmLabel: locale => getWorkspaceMessages(locale).confirmLaboratoryReportCorrection,
             description: `${request.catalogItemId} · ${input.reason}`,
             onConfirm: () => correctReport.mutateAsync({
               caseId: current.caseId,
@@ -1623,7 +1623,7 @@ function DoctorCaseController({
               request,
             }),
             signal,
-            title: messages.previewLaboratoryReportCorrection,
+            title: locale => getWorkspaceMessages(locale).previewLaboratoryReportCorrection,
           })
         },
       },
@@ -1635,12 +1635,13 @@ function DoctorCaseController({
           const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
           const state = current.medicationConclusion
           if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
+          const itemCount = state.draft.items.length
           return agentReview.request({
-            confirmLabel: messages.issuePrescription,
-            description: `${current.patient.name} · ${state.draft.items.length} 项药品`,
+            confirmLabel: locale => getWorkspaceMessages(locale).issuePrescription,
+            description: locale => `${current.patient.name} · ${itemCount} ${locale === 'zh-CN' ? '项药品' : 'medication items'}`,
             onConfirm: () => issueCasePrescription.mutateAsync({ caseId: current.caseId }),
             signal,
-            title: messages.issuePrescription,
+            title: locale => getWorkspaceMessages(locale).issuePrescription,
           })
         },
       },
@@ -1657,14 +1658,14 @@ function DoctorCaseController({
             || (prescription.status !== 'signed' && prescription.status !== 'paid')
           ) throw new Error(messages.consultationUnavailable)
           return agentReview.request({
-            confirmLabel: messages.confirmWithdrawal,
+            confirmLabel: locale => getWorkspaceMessages(locale).confirmWithdrawal,
             description: prescription.number,
             onConfirm: () => withdrawCasePrescription.mutateAsync({
               caseId: current.caseId,
               prescriptionId: prescription.id,
             }),
             signal,
-            title: messages.withdrawPrescriptionTitle,
+            title: locale => getWorkspaceMessages(locale).withdrawPrescriptionTitle,
           })
         },
       },
@@ -1681,11 +1682,11 @@ function DoctorCaseController({
             throw new Error(messages.consultationUnavailable)
           }
           return agentReview.request({
-            confirmLabel: messages.confirmNoMedication,
+            confirmLabel: locale => getWorkspaceMessages(locale).confirmNoMedication,
             description: current.patient.name,
             onConfirm: () => confirmCaseNoMedication.mutateAsync({ caseId: current.caseId }),
             signal,
-            title: messages.confirmNoMedication,
+            title: locale => getWorkspaceMessages(locale).confirmNoMedication,
           })
         },
       },
@@ -1706,7 +1707,7 @@ function DoctorCaseController({
               expectedDraftVersion: draft.version,
             }, newIdempotencyKey())
             return agentReview.request({
-              confirmLabel: messages.confirmClinicalRecordSign,
+              confirmLabel: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
               description: current.patient.name,
               onConfirm: () => signStructuredClinicalDocument({
                 commitToken: preview.data.commitToken,
@@ -1718,14 +1719,14 @@ function DoctorCaseController({
                 return result
               }),
               signal,
-              title: messages.confirmClinicalRecordSign,
+              title: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
             })
           }
           const preview = await previewSign.mutateAsync({ caseId: current.caseId })
           const dependencies = signingDependencies(current.caseId)
           return agentReview.request({
-            confirmLabel: messages.confirmClinicalSign,
-            description: detail.data?.patient.name ?? messages.consultationUnavailable,
+            confirmLabel: locale => getWorkspaceMessages(locale).confirmClinicalSign,
+            description: locale => detail.data?.patient.name ?? getWorkspaceMessages(locale).consultationUnavailable,
             onConfirm: () => signClinicalDocument({
               commitToken: preview.data.commitToken,
               encounterId: dependencies.encounterId,
@@ -1736,7 +1737,7 @@ function DoctorCaseController({
               return result
             }),
             signal,
-            title: messages.confirmClinicalSign,
+            title: locale => getWorkspaceMessages(locale).confirmClinicalSign,
           })
         },
       },
@@ -1769,7 +1770,7 @@ function DoctorCaseController({
           if (latest === undefined) throw new Error(messages.consultationUnavailable)
           const input = clinicalDocumentRevisionInputSchema.parse(raw)
           return agentReview.request({
-            confirmLabel: messages.confirmClinicalDocumentRevisionAction,
+            confirmLabel: locale => getWorkspaceMessages(locale).confirmClinicalDocumentRevisionAction,
             description: `${current.patient.name} · ${input.reason}`,
             onConfirm: () => reviseClinicalDocument.mutateAsync({
               caseId: current.caseId,
@@ -1781,7 +1782,7 @@ function DoctorCaseController({
               reason: input.reason,
             }),
             signal,
-            title: messages.confirmClinicalDocumentRevision,
+            title: locale => getWorkspaceMessages(locale).confirmClinicalDocumentRevision,
           })
         },
       },
@@ -1792,11 +1793,11 @@ function DoctorCaseController({
         execute: (_raw: unknown, signal: AbortSignal) => {
           const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
           return agentReview.request({
-            confirmLabel: messages.encounterCompleted,
+            confirmLabel: locale => getWorkspaceMessages(locale).encounterCompleted,
             description: current.patient.name,
             onConfirm: () => completeCaseEncounter.mutateAsync({ caseId: current.caseId }),
             signal,
-            title: messages.encounterCompleted,
+            title: locale => getWorkspaceMessages(locale).encounterCompleted,
           })
         },
       },

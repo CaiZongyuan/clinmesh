@@ -17,6 +17,7 @@ const allowedRequires = new Set([
   'react/jsx-runtime',
   'react-dom',
   'dsh-react-surface/client',
+  '@deepseek-ai/dsh-client-ui-primitives',
 ])
 const requires = Array.from(client.matchAll(/require\(["']([^"']+)["']\)/g))
   .flatMap(match => match[1] === undefined ? [] : [match[1]])
