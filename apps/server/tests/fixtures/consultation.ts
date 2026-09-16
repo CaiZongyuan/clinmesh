@@ -259,4 +259,3 @@ export function useSyntheticLaboratoryCatalog(runtime: Awaited<ReturnType<typeof
     },
   }), 'lab-crp')
 }
-
