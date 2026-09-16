@@ -2484,7 +2484,7 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    await screen.findAllByText('当前无待诊病例')
+    await screen.findAllByText('当前没有在诊病例')
     await user.click(await screen.findByRole('tab', { name: '待诊' }))
     await waitFor(() => expect(
       screen.getByRole('tab', { name: /候选患者/ }).textContent,
@@ -2837,7 +2837,7 @@ describe('role workspaces', () => {
 
     render(<WebApp />)
 
-    await screen.findAllByText('当前无待诊病例')
+    await screen.findAllByText('当前没有在诊病例')
     await userEvent.setup().click(await screen.findByRole('tab', { name: '待诊' }))
     expect(await screen.findByText('暂无可接诊候选患者')).toBeTruthy()
     expect(screen.getByText('当前没有可接诊的候选患者。')).toBeTruthy()
@@ -2880,7 +2880,7 @@ describe('role workspaces', () => {
 
     render(<WebApp />)
 
-    await screen.findAllByText('No cases awaiting consultation')
+    await screen.findAllByText('No cases in care')
     await userEvent.setup().click(await screen.findByRole('tab', { name: 'Waiting' }))
     expect(await screen.findByText('No candidate patients available')).toBeTruthy()
     expect(screen.getByText('No candidate patient is currently available for consultation.')).toBeTruthy()
@@ -2916,7 +2916,7 @@ describe('role workspaces', () => {
     }))
     const user = userEvent.setup()
     render(<WebApp />)
-    await screen.findAllByText('当前无待诊病例')
+    await screen.findAllByText('当前没有在诊病例')
     await user.click(await screen.findByRole('tab', { name: '待诊' }))
 
     await user.click(await screen.findByRole('button', {

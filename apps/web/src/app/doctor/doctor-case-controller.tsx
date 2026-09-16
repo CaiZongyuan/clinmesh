@@ -9,6 +9,7 @@ import {
   type ClinicalDocumentContent,
   type DiagnosisDraftEntry,
   type DoctorCaseDetail,
+  doctorQueueViewStatusGroups,
   type EncounterCompletionPreview,
   type EncounterCompletionTarget,
   type LaboratoryRequest,
@@ -350,7 +351,11 @@ function DoctorCaseController({
   const queryClient = useQueryClient()
   const scope = [session.actor.workspaceId, session.actor.epoch] as const
   const [page, setPage] = useState(1)
-  useEffect(() => setPage(1), [queueView])
+  const [lastQueueView, setLastQueueView] = useState(queueView)
+  if (lastQueueView !== queueView) {
+    setLastQueueView(queueView)
+    setPage(1)
+  }
   const [activeCaseSection, setActiveCaseSection] = useState<DoctorCaseSection>('record')
   const [virtualPatientPage, setVirtualPatientPage] = useState(1)
   const [diagnosisReferenceSearch, setDiagnosisReferenceSearch] = useState<ReferenceCatalogSearchParameters>({
@@ -381,15 +386,14 @@ function DoctorCaseController({
   const queue = useQuery({
     queryFn: ({ signal }) => getDoctorQueue(signal, page),
     queryKey: queueKey,
-    refetchInterval: query => query.state.data?.items.some(item => item.status === 'awaiting-report') === true
-      ? 1_500
-      : false,
   })
   const [selectedVirtualPatientId, setSelectedVirtualPatientId] = useState<string>()
   const visibleQueue = useQuery({
     queryFn: ({ signal }) => getDoctorQueue(signal, page, queueView),
     queryKey: ['doctor-queue', ...scope, queueView, page],
-    refetchInterval: 5_000,
+    refetchInterval: query => query.state.data?.items.some(item => item.status === 'awaiting-report') === true
+      ? 1_500
+      : false,
   })
   const [laboratoryItemId, setLaboratoryItemId] = useState('')
   const [indicationCode, setIndicationCode] = useState('')
@@ -620,7 +624,7 @@ function DoctorCaseController({
     const current = queryClient.getQueryData<DoctorCaseDetail>(detailKey)
     if (queueView === 'waiting' && current?.caseId === caseId
       && current?.encounter.status === 'in-progress'
-      && ['first-visit', 'awaiting-report', 'revisit-draft'].includes(current.status)) {
+      && doctorQueueViewStatusGroups.active.some(status => status === current?.status)) {
       onSelectedCaseIdChange(current.caseId)
       onQueueViewChange('active')
     }

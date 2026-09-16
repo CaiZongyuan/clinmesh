@@ -1124,11 +1124,16 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
     expect(started.status).toBe(200)
-    expect(await readQueue('view=waiting')).toMatchObject({ total: 0, items: [] })
-    expect(await readQueue('view=active')).toMatchObject({
+    const waitingQueue = await readQueue('view=waiting')
+    expect(waitingQueue).toMatchObject({ total: 0, items: [] })
+    const activeQueue = await readQueue('view=active')
+    expect(activeQueue).toMatchObject({
       total: 1, items: [{ caseId: testCase.caseId, status: 'first-visit' }],
     })
-    expect(await readQueue('')).toEqual(await readQueue('view=active'))
+    const defaultQueue = await readQueue('')
+    expect(defaultQueue.total).toBe(waitingQueue.total + activeQueue.total)
+    expect(defaultQueue.items.map(item => item.caseId).sort())
+      .toEqual([...waitingQueue.items, ...activeQueue.items].map(item => item.caseId).sort())
     expect((await runtime.app.request('/api/his/v1/doctor/queue?view=unknown', {
       headers: { cookie: testCase.doctorCookie },
     })).status).toBe(400)

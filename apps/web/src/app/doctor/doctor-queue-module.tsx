@@ -155,13 +155,13 @@ export function DoctorQueueModule({
     <aside aria-label={messages.consultationQueue} className="flex h-full min-h-0 min-w-0 flex-col bg-background">
       <div className="shrink-0 border-b p-2">{navigation}</div>
       <Tabs
-        className="h-full min-w-0 gap-0"
+        className="flex min-h-0 min-w-0 flex-1 flex-col gap-0"
         onValueChange={(value) => {
           if (value === 'queue' || value === 'candidates') setSelectedView(value)
         }}
         value={view}
       >
-        <div className="border-b px-3 pt-3">
+        <div className="shrink-0 border-b px-3 pt-3">
           <div className="flex items-center justify-between gap-2 pb-2">
             <h2 className="text-sm font-semibold">{queueView === 'active' ? messages.doctorActiveQueue : messages.doctorWaitingQueue}</h2>
             <Badge variant="secondary">
@@ -180,8 +180,8 @@ export function DoctorQueueModule({
           </TabsList> : null}
         </div>
 
-        <TabsContent className="p-3" value="queue">
-          <section aria-labelledby="consultation-queue-heading" className="flex min-w-0 flex-col gap-3">
+        <TabsContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-3" value="queue">
+          <section aria-labelledby="consultation-queue-heading" className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
             <h3 className="sr-only" id="consultation-queue-heading">{messages.consultationQueue}</h3>
             {queuePending ? <Skeleton className="h-44 w-full" /> : queueError !== null ? (
               <ErrorAlert error={queueError} fallbackTitle={messages.consultationUnavailable} messages={messages} />
@@ -189,13 +189,13 @@ export function DoctorQueueModule({
               <Empty className="min-h-44 border">
                 <EmptyHeader>
                   <EmptyMedia variant="icon"><StethoscopeIcon aria-hidden="true" /></EmptyMedia>
-                  <EmptyTitle>{messages.noConsultationCases}</EmptyTitle>
+                  <EmptyTitle>{queueView === 'active' ? messages.doctorActiveQueueEmpty : messages.noConsultationCases}</EmptyTitle>
                   <EmptyDescription>{messages.noConsultationCasesDescription}</EmptyDescription>
                 </EmptyHeader>
               </Empty>
             ) : (
               <>
-                <ul className="flex flex-col gap-2">
+                <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
                   {queueData.items.map(item => (
                     <DoctorCaseRow
                       item={item}
@@ -218,7 +218,7 @@ export function DoctorQueueModule({
           </section>
         </TabsContent>
 
-        <TabsContent className="flex min-h-0 flex-col p-3" value="candidates">
+        <TabsContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-3" value="candidates">
           <section aria-labelledby="virtual-patient-heading" className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
             <h3 className="sr-only" id="virtual-patient-heading">{messages.virtualPatientCandidates}</h3>
             {virtualPatientPending ? <Skeleton className="h-44 w-full" /> : virtualPatientError !== null ? (
@@ -233,7 +233,7 @@ export function DoctorQueueModule({
               </Empty>
             ) : (
               <>
-                <ul className="flex flex-1 flex-col gap-2">
+                <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
                   {virtualPatientData.items.map(item => (
                     <VirtualPatientRow
                       item={item}
@@ -245,7 +245,7 @@ export function DoctorQueueModule({
                   ))}
                 </ul>
                 {selectedVirtualPatient === undefined ? null : (
-                  <div className="flex flex-col gap-3 border-t pt-3">
+                  <div className="flex shrink-0 flex-col gap-3 border-t pt-3">
                     <p className="text-sm">{selectedVirtualPatient.presentation.summary}</p>
                     <dl className="grid grid-cols-3 gap-x-3 gap-y-2 text-xs">
                       <VitalSummary label={messages.temperatureC} value={selectedVirtualPatient.presentation.vitalSigns.temperatureC} />
