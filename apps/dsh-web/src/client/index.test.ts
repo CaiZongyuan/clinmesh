@@ -58,9 +58,12 @@ describe('ClinMesh React Surface definition', () => {
     const props = { active: true, conversationCollapsed: false, agent: { register: () => () => {} }, capabilities: { agent: { available: false, status: 'unavailable' as const } }, close() {}, layout: 'workspace' as const, location: '/settings/developer/components', navigate() {} }
     try {
       await act(() => settingsRoot.render(createElement(Settings)))
-      const select = container.querySelector<HTMLSelectElement>('select[aria-label="ClinMesh 字号"]')!
+      const select = container.querySelector<HTMLButtonElement>('button[aria-label="ClinMesh 字号"]')!
       expect(select).not.toBeNull()
-      await act(() => { select.value = 'large'; select.dispatchEvent(new Event('change', { bubbles: true })) })
+      expect(select.getAttribute('aria-haspopup')).toBe('menu')
+      await act(() => select.click())
+      await act(() => [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(item => item.textContent === '大')!.click())
+      expect(select.getAttribute('aria-expanded')).toBe('false')
       await act(async () => {
         entryRoot.render(createElement(Entry, { wide: true }))
         appRoot.render(createElement(component, props))
@@ -76,7 +79,8 @@ describe('ClinMesh React Surface definition', () => {
       expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1')!).fontSize).toBe('standard')
       expect(createFontSizePreference().getSnapshot()).toBe('large')
       await act(() => appRoot.render(createElement(component, { ...props, active: false })))
-      await act(() => { select.value = 'larger'; select.dispatchEvent(new Event('change', { bubbles: true })) })
+      await act(() => select.click())
+      await act(() => [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(item => item.textContent === '较大')!.click())
       expect(container.querySelector('[data-clinmesh-app="web"]')).toBe(application)
       expect(application.dataset.fontSize).toBe('larger')
       const trigger = shadow.querySelector<HTMLButtonElement>('button')!
@@ -89,7 +93,7 @@ describe('ClinMesh React Surface definition', () => {
       })
       expect(trigger.getAttribute('aria-label')).toBe('Hospital workspace')
       expect(select.getAttribute('aria-label')).toBe('ClinMesh font size')
-      expect(select.selectedOptions[0]?.textContent).toBe('Larger')
+      expect(select.textContent).toBe('Larger')
       expect(shadow.textContent).not.toContain('General')
       expect(shadow.textContent).toContain('UI components')
       expect(container.querySelector('[data-clinmesh-host-routes]')!.shadowRoot!.querySelector('button')?.textContent).toBe('Registration')

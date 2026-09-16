@@ -1,4 +1,5 @@
-import { useSyncExternalStore } from 'react'
+import { useId, useState, useSyncExternalStore } from 'react'
+import { IconChevronDownOutline14, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { readWebPreferences, type FontSizePreference } from '../../../web/src/app/preferences.ts'
@@ -73,34 +74,53 @@ export function registerFontSizeSettings(ctx: Context, preference: FontSizePrefe
   const subscribeLocale = (listener: () => void) => locale.subscribe(listener)
   const getLocale = () => normalizeHostLocale(locale.getLocale().active)
   function FontSizeSetting() {
+    const [open, setOpen] = useState(false)
+    const valueId = useId()
     const language = useSyncExternalStore(subscribeLocale, getLocale, getLocale)
     const fontSize = useSyncExternalStore(preference.subscribe, preference.getSnapshot, preference.getSnapshot)
     const messages = getWorkspaceMessages(language)
     const label = language === 'zh-CN' ? 'ClinMesh 字号' : 'ClinMesh font size'
+    const items = [
+      { id: 'standard', label: messages.fontSizeStandard },
+      { id: 'larger', label: messages.fontSizeLarger },
+      { id: 'large', label: messages.fontSizeLarge },
+    ]
     return (
-      <label style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24,
-        minHeight: 60, fontSize: 14, color: 'var(--dsw-alias-label-primary)',
-        borderBottom: '1px solid var(--dsw-alias-border-standard)',
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+        padding: '16px 0', fontSize: 14, lineHeight: '22px', color: 'var(--dsw-alias-label-primary)',
+        borderBottom: '.5px solid var(--dsw-alias-border-l2)',
       }}>
+        <style>{`.clinmesh-dsh-font-selector{background:var(--dsw-alias-bg-module-platform);height:36px;font:inherit;color:var(--dsw-alias-label-primary);cursor:pointer;border:none;border-radius:18px;display:inline-flex;align-items:center;gap:12px;padding:0 14px}.clinmesh-dsh-font-selector:hover{background:var(--dsw-alias-interactive-bg-hover)}`}</style>
         <span>{label}</span>
-        <select
-          aria-label={label}
-          value={fontSize}
-          onChange={event => {
-            const value = decodeFontSize(event.target.value)
+        <Menu
+          open={open}
+          onClose={() => setOpen(false)}
+          items={items}
+          selectedId={fontSize}
+          onSelect={id => {
+            const value = decodeFontSize(id)
             if (value !== undefined) preference.set(value)
+            setOpen(false)
           }}
-          style={{
-            font: 'inherit', color: 'inherit', background: 'var(--dsw-alias-bg-base)',
-            border: '1px solid var(--dsw-alias-border-standard)', borderRadius: 8, padding: '6px 10px',
-          }}
-        >
-          <option value="standard">{messages.fontSizeStandard}</option>
-          <option value="larger">{messages.fontSizeLarger}</option>
-          <option value="large">{messages.fontSizeLarge}</option>
-        </select>
-      </label>
+          align="end"
+          portal
+          anchor={(
+            <button
+              type="button"
+              className="clinmesh-dsh-font-selector"
+              aria-label={label}
+              aria-describedby={valueId}
+              aria-haspopup="menu"
+              aria-expanded={open}
+              onClick={() => setOpen(value => !value)}
+            >
+              <span id={valueId}>{items.find(item => item.id === fontSize)?.label}</span>
+              <IconChevronDownOutline14 />
+            </button>
+          )}
+        />
+      </div>
     )
   }
   return ctx.slots.inject('settings.general.item', () => ctx.slots.register(

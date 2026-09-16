@@ -14,6 +14,9 @@ it('returns from manual fullscreen to the retained native split without remounti
     resolve: {
       dedupe: ['react', 'react-dom'],
       alias: {
+        '@deepseek-ai/dsh-client-ui-primitives': fileURLToPath(
+          new URL('./dsh-ui-primitives.test-stub.tsx', import.meta.url),
+        ),
         '@clinmesh/web/application': fileURLToPath(
           new URL('./surface-layout.browser.app.tsx', import.meta.url),
         ),
