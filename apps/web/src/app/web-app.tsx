@@ -478,7 +478,13 @@ function WebApplication({
     runtimeOptions.surfaceColorScheme,
     runtimeOptions.surfaceSessionId,
   ])
-  const preferencesContext = useMemo(() => ({ preferences, setPreferences }), [preferences])
+  const locale = runtime.mode === 'surface'
+    ? runtimeOptions.surfaceLocale ?? 'zh-CN'
+    : preferences.locale
+  const preferencesContext = useMemo(() => ({
+    preferences: { ...preferences, locale },
+    setPreferences,
+  }), [preferences, locale])
   useEffect(() => writeWebPreferences(preferences), [preferences])
 
   useEffect(() => {
@@ -517,6 +523,7 @@ function WebApplication({
               : 'clinmesh-web-root'}
             data-clinmesh-app="web"
             data-font-size={preferences.fontSize}
+            lang={locale}
             ref={applicationRoot}
           >
             <QueryClientProvider client={queryClient}>
@@ -537,7 +544,8 @@ function WebApplication({
 }
 
 export function WebApp(props: WebAppProps = {}): React.JSX.Element {
-  return <RuntimeErrorBoundary surfaceDisplay={props.runtime?.surfaceDisplay}><WebApplication {...props} /></RuntimeErrorBoundary>
+  const locale = props.runtime?.mode === 'surface' ? props.runtime.surfaceLocale ?? 'zh-CN' : undefined
+  return <RuntimeErrorBoundary locale={locale} surfaceDisplay={props.runtime?.surfaceDisplay}><WebApplication {...props} /></RuntimeErrorBoundary>
 }
 
 export type { WebRuntimeOptions } from './web-runtime.tsx'

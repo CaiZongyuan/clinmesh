@@ -206,7 +206,7 @@ export function AppearanceControls({
         <div className="text-xs font-medium text-muted-foreground">{messages.appearanceLabel}</div>
       ) : null}
       <div className="flex items-center justify-between gap-2">
-        {showLocale ? (
+        {showLocale && runtime.mode === 'standalone' ? (
           <ToggleGroup
             aria-label={messages.languageLabel}
             onValueChange={values => {

@@ -10,10 +10,19 @@ import { apply, createDefinition } from './index.tsx'
 describe('ClinMesh React Surface definition', () => {
   it('subscribes the application to the host theme while hidden and releases the subscription on unmount', async () => {
     const listeners = new Set<() => void>()
+    const localeListeners = new Set<() => void>()
+    let language: unknown = 'en-US'
     let colorScheme: 'light' | 'dark' = 'dark'
     const ctx = {
       get(name: string) {
         if (name === 'theme') return { getTheme: () => ({ active: { colorScheme } }) }
+        if (name === 'locale') return {
+          getLocale: () => ({ active: language }),
+          subscribe(listener: () => void) {
+            localeListeners.add(listener)
+            return () => { localeListeners.delete(listener) }
+          },
+        }
         return { list: { getSnapshot: () => ({ current: undefined }), subscribe: () => () => {} } }
       },
       on(event: string, listener: () => void) {
@@ -42,12 +51,23 @@ describe('ClinMesh React Surface definition', () => {
       await act(() => root.render(createElement(component, props)))
       const application = container.querySelector<HTMLElement>('[data-clinmesh-app="web"]')!
       expect(application.dataset.theme).toBe('dark')
+      expect(application.lang).toBe('en-US')
       await act(() => root.render(createElement(component, { ...props, active: false })))
       await act(() => {
         colorScheme = 'light'
         for (const listener of listeners) listener()
       })
       expect(application.dataset.theme).toBe('light')
+      for (const [input, expected] of [
+        ['zh-Hans', 'zh-CN'], ['en-GB', 'en-US'], ['fr-FR', 'en-US'],
+        [undefined, 'zh-CN'], [123, 'zh-CN'], ['not_a_locale', 'zh-CN'], ['ZH-cn', 'zh-CN'],
+      ]) {
+        await act(() => {
+          language = input
+          for (const listener of localeListeners) listener()
+        })
+        expect(application.lang).toBe(expected)
+      }
       await act(() => root.render(createElement(component, props)))
       await act(() => {
         colorScheme = 'dark'
@@ -62,6 +82,7 @@ describe('ClinMesh React Surface definition', () => {
       vi.unstubAllGlobals()
     }
     expect(listeners.size).toBe(0)
+    expect(localeListeners.size).toBe(0)
   })
 
   it('registers the Profile identity before any application is opened and retracts it on unload', () => {

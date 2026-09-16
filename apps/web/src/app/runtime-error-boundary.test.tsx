@@ -54,6 +54,18 @@ describe('RuntimeErrorBoundary', () => {
     expect(screen.getByRole('alert').textContent).toContain('工作台发生错误')
   })
 
+  it('keeps the failed Surface localized by the host as its language changes', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const runtime = Object.defineProperty({ mode: 'surface', surfaceLocale: 'en-US' }, 'apiBasePath', {
+      get() { throw new Error('private composition failure') },
+    }) as WebRuntimeOptions
+    const rendered = render(<WebApp runtime={runtime} />)
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
+    runtime.surfaceLocale = 'zh-CN'
+    rendered.rerender(<WebApp runtime={runtime} />)
+    expect(screen.getByRole('button', { name: '重试' })).toBeTruthy()
+  })
+
   it('recovers a production route failure without exposing the original error', async () => {
     vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }))
     vi.spyOn(console, 'error').mockImplementation(() => undefined)

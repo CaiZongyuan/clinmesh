@@ -10,6 +10,7 @@ import {
 } from 'dsh-react-surface/client'
 import { clinMeshStyles } from './styles.generated.ts'
 import { registerProfileBrand } from './profile-brand.tsx'
+import { normalizeHostLocale, type ClientLocalePort } from './host-locale.ts'
 import { createWorkspaceNavigation, registerWorkspaceNavigation } from './workspace-navigation.tsx'
 import type { WebSurfaceDisplay, WebSurfaceNavigation } from '@clinmesh/web/runtime'
 
@@ -36,6 +37,7 @@ function ClinMeshSurface({
   location,
   navigate,
   surfaceColorScheme,
+  surfaceLocale,
   surfaceSessionId,
   surfaceDisplay,
   surfaceNavigation,
@@ -43,6 +45,7 @@ function ClinMeshSurface({
   surfaceNavigation: WebSurfaceNavigation
   surfaceDisplay: WebSurfaceDisplay
   surfaceColorScheme: 'dark' | 'light'
+  surfaceLocale: 'zh-CN' | 'en-US'
   surfaceSessionId?: string
 }): React.JSX.Element {
   const locationRef = useRef(location)
@@ -80,6 +83,7 @@ function ClinMeshSurface({
         surfaceAgent: agent,
         surfaceAgentStatus: capabilities.agent.status,
         surfaceColorScheme,
+        surfaceLocale,
         surfaceDisplay,
         surfaceNavigation,
         ...(surfaceSessionId === undefined ? {} : { surfaceSessionId }),
@@ -98,6 +102,9 @@ export function createDefinition(
 ): Readonly<ReactSurfaceDefinition> {
   const sessions = ctx.get('sessions') as unknown as ClientSessionsPort
   const theme = ctx.get('theme') as unknown as ClientThemePort
+  const locale = ctx.get('locale') as unknown as ClientLocalePort
+  const subscribeLocale = (listener: () => void) => locale.subscribe(listener)
+  const getLocale = () => normalizeHostLocale(locale.getLocale().active)
   const surfaces = ctx.get('reactSurfaces') as unknown as ReactSurfaceRegistry
   const subscribe = (listener: () => void): (() => void) => sessions.list.subscribe(listener)
   const subscribeTheme = (listener: () => void): (() => void) => (
@@ -109,6 +116,7 @@ export function createDefinition(
   }
   function SessionBoundClinMeshSurface(props: ReactSurfaceProps): React.JSX.Element {
     const surfaceSessionId = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+    const surfaceLocale = useSyncExternalStore(subscribeLocale, getLocale, getLocale)
     const surfaceColorScheme = useSyncExternalStore(
       subscribeTheme,
       () => theme.getTheme().active.colorScheme,
@@ -127,6 +135,7 @@ export function createDefinition(
           },
         }}
         surfaceColorScheme={surfaceColorScheme}
+        surfaceLocale={surfaceLocale}
         {...(surfaceSessionId === undefined ? {} : { surfaceSessionId })}
       />
     )

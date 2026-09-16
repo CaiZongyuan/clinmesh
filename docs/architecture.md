@@ -707,6 +707,7 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 - Surface 使用 Memory Router，应用位置不修改 DSH document pathname。
 - 每个 mount 创建独立 QueryClient；服务端状态仍只由 TanStack Query 拥有。
+- DSH 拥有 Surface 的生效语言，adapter 订阅宿主语言并传入 Web runtime。中文语言标识使用 `zh-CN`，其他有效标识使用 `en-US`，缺失或无效标识回退到 `zh-CN`。ClinMesh 保留业务翻译字典，页面、宿主医院导航、浮层、登录与错误界面统一使用生效语言；隐藏期间持续同步，切换保留路由与草稿。Surface 不提供独立语言选择，不改写宿主文档语言或独立 Web 的本地语言偏好；独立 Web 保留原有语言设置。决策理由见[宿主语言归属](../.agents/notes/implemented/architecture/2026-09-16-dsh-host-locale-ownership.md)。
 - ClinMesh 插件在 Profile 加载时通过官方 `sidebar.brand.mark` / `sidebar.brand.name` 插槽固定左侧栏的现有 ClinMesh Logo 与名称，不依赖应用是否打开；新会话中央标志使用 `conversation.hero.brand.mark` 插槽，标题沿用 ClinMesh 的中英文产品标语；插件卸载后释放插槽并恢复宿主标题。DSH 拥有 Light/Dark/System theme；ClinMesh Surface 始终应用宿主 resolved theme，不提供独立主题选择，也不改写已保存的 Web 主题偏好。宿主底部按钮为“医院工作台”，打开后的菜单标题为“设置”。主题样式只作用于 Surface root，所有浮层通过注入 Portal 留在 ShadowRoot。
 - 默认 `workspace` 左右分屏，窄空间按比例收缩并由应用内部响应式适配；全屏仅由用户手动选择，现有页头提供返回分屏入口。会话可独立收起，原生文件栏随之隐藏并保留状态，左侧宿主导航仍可使用，详见[Surface 会话整体收起](../.agents/notes/implemented/feature/2026-09-15-surface-conversation-collapse.md)。切换保留原生侧栏状态、分栏偏好与应用草稿，详见[手动全屏与容器响应式](../.agents/notes/implemented/bug-fix/2026-09-11-surface-responsive-layout.md)。
 - `/clinmesh-api` Host 代理只连接配置固定的 loopback Hono，保留 Cookie/Origin，限制路径、方法、请求体、响应体和超时，不记录患者正文。

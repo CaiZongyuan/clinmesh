@@ -1123,6 +1123,26 @@ describe('role workspaces', () => {
     expect(screen.queryByRole('heading', { name: '模拟数据' })).toBeNull()
   })
 
+  it('localizes patient library counts and preserves an open generation draft on host language changes', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({ profileAvailable: true, syntheaAvailable: true })
+    const user = userEvent.setup()
+    const rendered = render(<WebApp runtime={{ mode: 'surface', surfaceLocale: 'en-US' }} />)
+    expect(await screen.findByText('1 patient')).toBeTruthy()
+    expect(screen.getAllByText('38 years').length).toBeGreaterThan(0)
+    await user.click(screen.getByRole('button', { name: 'Generate patients' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Generate patients' })
+    const count = within(dialog).getByRole('spinbutton', { name: 'Patient count' })
+    await user.clear(count)
+    await user.type(count, '3')
+    if (!(count instanceof HTMLInputElement)) throw new Error('Expected a patient count input')
+    expect(count.value).toBe('3')
+    rendered.rerender(<WebApp runtime={{ mode: 'surface', surfaceLocale: 'zh-CN' }} />)
+    expect(await screen.findByRole('dialog', { name: '生成患者' })).toBe(dialog)
+    expect(within(dialog).getByRole('spinbutton', { name: '患者人数' })).toBe(count)
+    expect(count.value).toBe('3')
+  })
+
   it('uses the persistent synthetic patient library as the only production data workspace', async () => {
     window.history.replaceState(null, '', '/scenario-data')
     stubScenarioDataWorkspace({ profileAvailable: true, syntheaAvailable: true })
