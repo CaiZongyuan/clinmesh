@@ -68,7 +68,8 @@ describe('ClinMesh React Surface definition', () => {
       expect(trigger.getAttribute('aria-label')).toBe('Hospital workspace')
       expect(shadow.textContent).toContain('General')
       expect(container.querySelector('[data-clinmesh-host-routes]')!.shadowRoot!.querySelector('button')?.textContent).toBe('Registration')
-      expect(container.querySelector('[data-clinmesh-app="web"]')?.textContent).toContain('Language is managed by DSH')
+      expect(container.querySelector('[data-clinmesh-app="web"]')?.textContent).toContain('Font size')
+      expect(container.querySelector('[data-clinmesh-app="web"]')?.textContent).not.toContain('Language is managed by DSH')
     } finally {
       await act(() => { appRoot.unmount(); entryRoot.unmount() })
       dispose()
