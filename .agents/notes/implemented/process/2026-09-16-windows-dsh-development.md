@@ -12,7 +12,7 @@ Windows 的 npm/pnpm 通常是 `.cmd` 入口，Node 默认 `spawn` 不能直接�
 
 Windows 插件链接使用 junction；链接存在性通过 lstat 检查，包含目标已不存在的链接。删除链接不删除目标数据。POSIX 继续使用目录符号链接。
 
-每个 Windows 开发分支由独立 PowerShell helper 创建带 `KILL_ON_JOB_CLOSE` 的 Job Object。helper 先以 suspended 状态创建 Node bootstrap，加入 Job 后再恢复线程，避免加入前已派生子进程的竞态。bootstrap 的命令与参数通过经过形状校验的 Base64 JSON 传入；实际命令经 cross-spawn 执行。bootstrap 退出后关闭 Job，或 helper 被终止导致内核关闭句柄，都会清理仍存活的后代，包括父命令已经退出的进程。Job 句柄不可继承；本次启动以外的进程不加入 Job。POSIX 仍向完整进程组发送原信号，包括组长已经退出的组。
+每个 Windows 开发分支由独立 PowerShell helper 创建带 `KILL_ON_JOB_CLOSE` 的 Job Object。helper 使用 Windows 10+ 的 `PROC_THREAD_ATTRIBUTE_JOB_LIST` 在 CreateProcess 时原子加入 Job，避免初始化过程中被强制终止而留下尚未归属 Job 的进程。bootstrap 的命令与参数通过经过形状校验的 Base64 JSON 传入；实际命令经 cross-spawn 执行。bootstrap 退出后关闭 Job，或 helper 被终止导致内核关闭句柄，都会清理仍存活的后代，包括父命令已经退出的进程。Job 句柄不可继承；本次启动以外的进程不加入 Job。POSIX 仍向完整进程组发送原信号，包括组长已经退出的组。
 
 ## Alternatives considered
 
