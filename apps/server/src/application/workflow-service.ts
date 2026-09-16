@@ -2552,9 +2552,13 @@ export class WorkflowService {
     })
   }
 
-  doctorQueue(context: ActorContext, pageSize: number, page = 1) {
+  doctorQueue(context: ActorContext, pageSize: number, page = 1, view?: 'active' | 'waiting') {
     this.#assertRole(context, ['outpatient-doctor'])
-    const statuses = ['awaiting-doctor', 'first-visit', 'awaiting-report', 'awaiting-revisit', 'revisit-draft']
+    const statuses = view === 'waiting'
+      ? ['awaiting-doctor', 'awaiting-revisit']
+      : view === 'active'
+        ? ['first-visit', 'awaiting-report', 'revisit-draft']
+        : ['awaiting-doctor', 'first-visit', 'awaiting-report', 'awaiting-revisit', 'revisit-draft']
     const placeholders = statuses.map(() => '?').join(', ')
     const bindings = [context.workspaceId, context.epoch, ...statuses]
     const total = this.#database.driver.prepare(`

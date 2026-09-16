@@ -815,6 +815,9 @@ const triageVitalSummarySchema = triageSummarySchema.extend({
   respirationBpm: z.number(),
 })
 
+export const doctorQueueViewSchema = z.enum(['active', 'waiting'])
+export type DoctorQueueView = z.infer<typeof doctorQueueViewSchema>
+
 export const doctorQueueItemSchema = z.object({
   caseId: z.string().min(1),
   diagnosticReportId: z.string().min(1).optional(),

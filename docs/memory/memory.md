@@ -29,6 +29,12 @@
 
 ## 运行与验证边界
 
+- 本地 UI 修改交付前先确认用户正在使用的入口。热更新页面通过不能证明 Server 静态 Web 或 DSH Surface 已更新；按实际入口重建对应 artifact，并核对服务返回的资源。构建与启动方式见[部署指南](../deployment.md)。
+
+- DSH 报插件 overlay `ENOENT` 时，同时核对该包声明的 patch、入口文件和本地安装内容；已禁用的插件仍可能在 Profile 合成阶段读取 overlay。若同版本官方 tarball 包含缺失文件，先核验 registry integrity 并备份本地目录，再恢复缺失文件；启动并验证带凭证首页后，停止验证实例，避免占用用户手动启动的端口。
+
+- 手动通过 Node `--env-file` 启动全局 DSH 时使用 `.env` 的绝对路径。`dshmarket` 调用 DSH CLI 更新插件时继承 `process.execArgv`，但把工作目录切到 CLI 所在目录；相对路径会让更新和旧构建恢复同时报 `.env: not found`。修正启动参数后再验证同一全局 Profile，不修改上游源码。
+
 - Windows 进程树测试必须在启动器自身仍存活时检查后代退出；只在启动器退出后检查，可能被 Node 的进程清理掩盖。用 `.cmd` 中间层和 detached 后代覆盖实际包管理器链路，并保留无关进程存活断言。
 
 - Windows 的 `core.symlinks=false` 会把 Git 符号链接检出为存放目标路径的普通文件。修改 `CLAUDE.md` 前先检查 Git mode；`120000` 的 blob 是链接目标，不能按 Markdown 添加末尾换行。文档或格式检查受 CRLF、符号链接、POSIX 权限影响时，在支持这些语义的 Linux checkout 验证，不改坏链接或放宽检查。
