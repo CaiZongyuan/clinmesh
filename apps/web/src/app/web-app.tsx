@@ -528,7 +528,7 @@ function WebApplication({
           >
             <QueryClientProvider client={queryClient}>
               <AgentPageRegistryProvider>
-                <AgentReviewProvider>
+                <AgentReviewProvider locale={locale}>
                   <Toaster>
                     <RouterProvider router={router} />
                   </Toaster>

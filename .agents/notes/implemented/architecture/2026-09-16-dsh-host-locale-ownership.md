@@ -12,6 +12,8 @@ DSH 拥有 Surface 生效语言，ClinMesh 拥有业务文案。Client adapter �
 
 完整产品合同由[系统架构](../../../../docs/architecture.md#71-surface-与-host-边界)拥有。Surface 设置显示语言由 DSH 管理，独立 Web 继续提供语言选择。语言变化不重建 Router、QueryClient 或表单组件。
 
+人工确认请求保留业务事实与审批状态，只将可翻译的显示字段按当前语言解析。切换语言不重新创建请求、不结算审批，也不修改 Command 输入；患者标识、金额和待确认的项目数仍绑定请求发起时的事实。
+
 ## Alternatives considered
 
 **同步写回本地偏好。** 会覆盖独立 Web 的选择，并引入宿主与本地两个可写来源。

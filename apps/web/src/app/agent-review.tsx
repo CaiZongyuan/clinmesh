@@ -17,6 +17,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@clinmesh/ui/components/alert-dialog'
+import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 
 export interface AgentReviewResult {
   approved: boolean
@@ -37,11 +38,17 @@ interface AgentReviewDecisionGateRef {
 }
 
 export interface AgentReviewRequest {
-  confirmLabel: string
-  description: string
+  confirmLabel: ReviewText
+  description: ReviewText
   onConfirm(): unknown | Promise<unknown>
   signal: AbortSignal
-  title: string
+  title: ReviewText
+}
+
+type ReviewText = string | ((locale: WorkspaceLocale) => string)
+
+function reviewText(text: ReviewText | undefined, locale: WorkspaceLocale): string | undefined {
+  return typeof text === 'function' ? text(locale) : text
 }
 
 interface PendingReview extends AgentReviewRequest {
@@ -65,7 +72,7 @@ const unavailableReviewController: AgentReviewController = {
   ),
 }
 
-export function AgentReviewProvider({ children }: { children: ReactNode }): React.JSX.Element {
+export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: ReactNode; locale?: WorkspaceLocale }): React.JSX.Element {
   const [pending, setPending] = useState<PendingReview>()
   const pendingRef = useRef(pending)
   const [confirming, setConfirming] = useState(false)
@@ -185,13 +192,13 @@ export function AgentReviewProvider({ children }: { children: ReactNode }): Reac
       }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{pending?.title}</AlertDialogTitle>
-            <AlertDialogDescription>{pending?.description}</AlertDialogDescription>
+            <AlertDialogTitle>{reviewText(pending?.title, locale)}</AlertDialogTitle>
+            <AlertDialogDescription>{reviewText(pending?.description, locale)}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={confirming}>取消</AlertDialogCancel>
+            <AlertDialogCancel disabled={confirming}>{getWorkspaceMessages(locale).cancel}</AlertDialogCancel>
             <AlertDialogAction disabled={confirming} onClick={() => void confirm()}>
-              {pending?.confirmLabel}
+              {reviewText(pending?.confirmLabel, locale)}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

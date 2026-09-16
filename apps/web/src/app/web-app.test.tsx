@@ -780,8 +780,14 @@ describe('Web application shell', () => {
     })
 
     expect(proposalResult).toContain('awaiting-human-review')
-    expect(await screen.findByRole('alertdialog', { name: '创建临时患者' })).toBeTruthy()
+    const reviewDialog = await screen.findByRole('alertdialog', { name: '创建临时患者' })
     expect(patientCreated).toBe(false)
+
+    rendered.rerender(<WebApp history={history} runtime={{ ...runtimeFor('active'), surfaceLocale: 'en-US' }} />)
+    expect(await screen.findByRole('alertdialog', { name: 'Create temporary patient' })).toBe(reviewDialog)
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    expect(patientCreated).toBe(false)
+    rendered.rerender(<WebApp history={history} runtime={runtimeFor('active')} />)
 
     rendered.rerender(<WebApp history={history} runtime={runtimeFor('connecting')} />)
     await waitFor(() => expect(screen.queryByRole('alertdialog', { name: '创建临时患者' })).toBeNull())

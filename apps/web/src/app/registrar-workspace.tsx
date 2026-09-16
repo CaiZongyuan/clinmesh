@@ -315,11 +315,11 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
         enabled: name.trim() !== '' && identifier.trim() !== '' && birthDate !== '',
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: (_raw: unknown, signal: AbortSignal) => agentReview.request({
-          confirmLabel: messages.createTemporaryPatient,
+          confirmLabel: locale => getWorkspaceMessages(locale).createTemporaryPatient,
           description: `${name} · ${identifier} · ${birthDate}`,
           onConfirm: () => createPatient.mutateAsync(),
           signal,
-          title: messages.createTemporaryPatient,
+          title: locale => getWorkspaceMessages(locale).createTemporaryPatient,
         }),
       },
       'registration.outpatient.propose': {
@@ -332,11 +332,11 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
         execute: (_raw: unknown, signal: AbortSignal) => {
           if (selection?.kind !== 'patient') throw new Error(messages.selectPatientFirst)
           return agentReview.request({
-            confirmLabel: messages.confirmRegistration,
+            confirmLabel: locale => getWorkspaceMessages(locale).confirmRegistration,
             description: `${selection.patient.name} · ${resolvedDepartmentId} · ${resolvedVisitTypeId}`,
             onConfirm: () => submitRegistration.mutateAsync(),
             signal,
-            title: messages.registrationDetails,
+            title: locale => getWorkspaceMessages(locale).registrationDetails,
           })
         },
       },
@@ -350,11 +350,11 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
         execute: (_raw: unknown, signal: AbortSignal) => {
           if (selection?.kind !== 'synthetic-case') throw new Error(messages.selectPatientFirst)
           return agentReview.request({
-            confirmLabel: messages.confirmRegistration,
+            confirmLabel: locale => getWorkspaceMessages(locale).confirmRegistration,
             description: `${selection.syntheticCase.name} · ${resolvedDepartmentId} · ${resolvedVisitTypeId}`,
             onConfirm: () => submitRegistration.mutateAsync(),
             signal,
-            title: messages.registrationDetails,
+            title: locale => getWorkspaceMessages(locale).registrationDetails,
           })
         },
       },

@@ -773,9 +773,9 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
         description: 'Review restarting clinical progress while retaining the patient library.',
         enabled: scenario.data !== undefined,
         execute: (_raw: unknown, signal: AbortSignal) => agentReview.request({
-          confirmLabel: locale === 'zh-CN' ? '确认重置' : 'Confirm reset',
-          description: resetImpact(locale), onConfirm: () => reset.mutateAsync(false), signal,
-          title: locale === 'zh-CN' ? '确认重置数据' : 'Confirm data reset',
+          confirmLabel: locale => locale === 'zh-CN' ? '确认重置' : 'Confirm reset',
+          description: resetImpact, onConfirm: () => reset.mutateAsync(false), signal,
+          title: locale => locale === 'zh-CN' ? '确认重置数据' : 'Confirm data reset',
         }),
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
       },
