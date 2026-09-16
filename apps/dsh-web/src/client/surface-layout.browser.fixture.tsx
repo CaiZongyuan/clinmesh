@@ -35,6 +35,7 @@ async function run() {
     get(name: string) {
       if (name === 'reactSurfaces') return provided.registry
       if (name === 'theme') return { getTheme: () => ({ active: { colorScheme: 'light' } }) }
+      if (name === 'locale') return { getLocale: () => ({ active: 'zh-CN' }), subscribe: () => () => {} }
       return { list: { getSnapshot: () => ({ current: 'session-1' }), subscribe: () => () => {} } }
     },
     on: () => () => {},

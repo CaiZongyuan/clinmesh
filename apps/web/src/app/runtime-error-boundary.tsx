@@ -5,11 +5,12 @@ import { Component, type ReactNode } from 'react'
 import { readWebPreferences } from './preferences.ts'
 import { SurfaceDisplayFallbackAction } from './surface-display-control.tsx'
 import type { WebSurfaceDisplay } from './web-runtime.tsx'
-import { getWorkspaceMessages } from './workspace-i18n.ts'
+import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 
 interface RuntimeErrorBoundaryProps {
   children: ReactNode
   surfaceDisplay?: WebSurfaceDisplay | undefined
+  locale?: WorkspaceLocale | undefined
 }
 
 interface RuntimeErrorBoundaryState {
@@ -28,10 +29,10 @@ export class RuntimeErrorBoundary extends Component<
 
   override render(): ReactNode {
     if (!this.state.failed) return this.props.children
-    const { locale } = readWebPreferences()
+    const locale = this.props.locale ?? readWebPreferences().locale
     const messages = getWorkspaceMessages(locale)
     return (
-      <main className="flex min-h-[320px] items-center justify-center p-6">
+      <main className="flex min-h-[320px] items-center justify-center p-6" lang={locale}>
         <Alert className="max-w-xl" role="alert" variant="destructive">
           <CircleAlertIcon aria-hidden="true" />
           <AlertTitle>{messages.runtimeErrorTitle}</AlertTitle>

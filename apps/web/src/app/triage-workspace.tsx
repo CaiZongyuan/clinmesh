@@ -153,11 +153,11 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
         execute: (_raw: unknown, signal: AbortSignal) => {
           if (selectedCase === undefined) throw new Error(messages.triageUnavailable)
           return agentReview.request({
-            confirmLabel: messages.completeTriage,
+            confirmLabel: locale => getWorkspaceMessages(locale).completeTriage,
             description: `${selectedCase.patient.name} · ${temperatureC} C · ${acuityCode}`,
             onConfirm: () => mutation.mutateAsync(),
             signal,
-            title: messages.triageAssessment,
+            title: locale => getWorkspaceMessages(locale).triageAssessment,
           })
         },
       },

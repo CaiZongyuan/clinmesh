@@ -450,6 +450,43 @@ describe('Web application shell', () => {
       .toContain('overflow-y-auto')
   })
 
+  it('follows the host language without closing a dialog or overwriting local preferences', async () => {
+    const saved = JSON.stringify({ fontSize: 'large', locale: 'zh-CN', theme: 'light' })
+    localStorage.setItem('clinmesh.preferences:v1', saved)
+    const history = createMemoryHistory({ initialEntries: ['/components'] })
+    const runtime: WebRuntimeOptions = { mode: 'surface', surfaceLocale: 'en-US' }
+    const rendered = await renderWebApp({ history, runtime })
+    await userEvent.click(screen.getByRole('button', { name: 'Delete order' }))
+    const dialog = await screen.findByRole('alertdialog', { name: 'Confirm order deletion' })
+    rendered.rerender(<WebApp history={history} runtime={{ ...runtime, surfaceLocale: 'zh-CN' }} />)
+    expect(await screen.findByRole('alertdialog', { name: '确认删除医嘱' })).toBe(dialog)
+    expect(history.location.pathname).toBe('/components')
+    expect(localStorage.getItem('clinmesh.preferences:v1')).toBe(saved)
+    expect(document.documentElement.lang).toBe('zh-CN')
+  })
+
+  it('uses host language during loading and sign-in, preserving the sign-in draft', async () => {
+    let respond: (response: Response) => void = () => {}
+    vi.mocked(fetch).mockReturnValue(new Promise<Response>(resolve => { respond = resolve }))
+    const history = createMemoryHistory({ initialEntries: ['/registration'] })
+    const rendered = render(<WebApp history={history} runtime={{ mode: 'surface', surfaceLocale: 'en-US' }} />)
+    expect(await screen.findByRole('main', { name: 'Loading workspace' })).toBeTruthy()
+    await act(() => respond(Response.json({ error: 'Unauthorized' }, { status: 401 })))
+    const email = await screen.findByLabelText('Account email')
+    await userEvent.type(email, 'synthetic@example.test')
+    rendered.rerender(<WebApp history={history} runtime={{ mode: 'surface', surfaceLocale: 'zh-CN' }} />)
+    expect(await screen.findByLabelText('账户邮箱')).toBe(email)
+    if (!(email instanceof HTMLInputElement)) throw new Error('Expected an email input')
+    expect(email.value).toContain('synthetic@example.test')
+  })
+
+  it('falls back to Chinese in a Surface without host language instead of using the saved locale', async () => {
+    localStorage.setItem('clinmesh.preferences:v1', JSON.stringify({ fontSize: 'standard', locale: 'en-US', theme: 'system' }))
+    await renderWebApp({ runtime: { mode: 'surface' } })
+    expect(screen.getByRole('heading', { name: '门诊挂号' })).toBeTruthy()
+    expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1')!).locale).toBe('en-US')
+  })
+
   it('scopes Surface appearance and feedback portals to the application root', async () => {
     localStorage.setItem('clinmesh.preferences:v1', JSON.stringify({
       fontSize: 'large',
@@ -459,7 +496,7 @@ describe('Web application shell', () => {
     const history = createMemoryHistory({ initialEntries: ['/components'] })
     const user = userEvent.setup()
 
-    await renderWebApp({ history, runtime: { mode: 'surface', surfaceColorScheme: 'dark' } })
+    await renderWebApp({ history, runtime: { mode: 'surface', surfaceColorScheme: 'dark', surfaceLocale: 'en-US' } })
     const applicationRoot = document.querySelector<HTMLElement>('[data-clinmesh-app="web"]')
     const portalRoot = applicationRoot?.querySelector<HTMLElement>('[data-clinmesh-portal-root]')
     expect(applicationRoot?.lang).toBe('en-US')
@@ -501,17 +538,23 @@ describe('Web application shell', () => {
     expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1')!)).toEqual(preferences)
   })
 
-  it('keeps Surface language, font size and account controls without theme choices', async () => {
+  it('delegates Surface language to DSH and preserves font size and account controls', async () => {
     const history = createMemoryHistory({ initialEntries: ['/settings'] })
     const user = userEvent.setup()
-    await renderWebApp({ history, runtime: { mode: 'surface', surfaceColorScheme: 'dark' } })
+    const rendered = await renderWebApp({ history, runtime: { mode: 'surface', surfaceColorScheme: 'dark' } })
+    expect(screen.queryByRole('button', { name: 'English' })).toBeNull()
+    expect(screen.queryByText('语言由 DSH 管理')).toBeNull()
+    expect(screen.queryByRole('heading', { name: '外观' })).toBeNull()
     for (const name of ['跟随系统', '亮色', '暗色']) {
       expect(screen.queryByRole('button', { name })).toBeNull()
     }
     await user.click(screen.getByRole('button', { name: '较大' }))
     expect(document.querySelector('[data-clinmesh-app="web"]')?.getAttribute('data-font-size')).toBe('larger')
-    await user.click(screen.getByRole('button', { name: 'English' }))
+    rendered.rerender(<WebApp history={history} runtime={{ mode: 'surface', surfaceLocale: 'en-US' }} />)
     expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
+    expect(screen.queryByText('Language is managed by DSH')).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Appearance' })).toBeNull()
+    expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1')!).locale).toBe('zh-CN')
     await user.click(screen.getByRole('button', { name: 'User menu' }))
     expect(await screen.findByRole('menuitem', { name: 'Sign out' })).toBeTruthy()
     expect(screen.queryByRole('menuitem', { name: 'Settings' })).toBeNull()
@@ -739,8 +782,14 @@ describe('Web application shell', () => {
     })
 
     expect(proposalResult).toContain('awaiting-human-review')
-    expect(await screen.findByRole('alertdialog', { name: '创建临时患者' })).toBeTruthy()
+    const reviewDialog = await screen.findByRole('alertdialog', { name: '创建临时患者' })
     expect(patientCreated).toBe(false)
+
+    rendered.rerender(<WebApp history={history} runtime={{ ...runtimeFor('active'), surfaceLocale: 'en-US' }} />)
+    expect(await screen.findByRole('alertdialog', { name: 'Create temporary patient' })).toBe(reviewDialog)
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    expect(patientCreated).toBe(false)
+    rendered.rerender(<WebApp history={history} runtime={runtimeFor('active')} />)
 
     rendered.rerender(<WebApp history={history} runtime={runtimeFor('connecting')} />)
     await waitFor(() => expect(screen.queryByRole('alertdialog', { name: '创建临时患者' })).toBeNull())

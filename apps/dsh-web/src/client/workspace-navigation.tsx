@@ -19,6 +19,7 @@ import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
 import { workspaceRoutes, settingsRoutes } from '../../../web/src/app/workspace-shell.tsx'
 import clinmeshMarkUrl from '../../../web/src/assets/clinmesh-mark.webp'
 import { clinMeshStyles } from './styles.generated.ts'
+import { normalizeHostLocale, type ClientLocalePort } from './host-locale.ts'
 
 export function createWorkspaceNavigation() {
   let current: WebSurfaceNavigationState | null = null
@@ -135,7 +136,7 @@ export function WorkspaceNavigation({
       root.style.colorScheme = colorScheme
     }
   }, [colorScheme, container, routeContainer])
-  const locale = state?.locale ?? hostLocale
+  const locale = hostLocale
   const label = locale === 'zh-CN' ? '医院工作台' : 'Hospital workspace'
   const menuLabel = locale === 'zh-CN' ? '设置' : 'Settings'
   const messages = getWorkspaceMessages(locale)
@@ -241,10 +242,7 @@ export function WorkspaceNavigation({
 export function registerWorkspaceNavigation(ctx: ClientContext, navigation: Navigation): () => void {
   const surfaces = ctx.get('reactSurfaces') as unknown as ReactSurfaceRegistry
   const theme = ctx.get('theme') as unknown as { getTheme(): { active: { colorScheme: 'light' | 'dark' } } }
-  const locale = ctx.get('locale') as unknown as {
-    getLocale(): { active: string }
-    subscribe(listener: () => void): () => void
-  }
+  const locale = ctx.get('locale') as unknown as ClientLocalePort
   const subscribeTheme = (listener: () => void) =>
     (
       ctx as unknown as {
@@ -253,7 +251,7 @@ export function registerWorkspaceNavigation(ctx: ClientContext, navigation: Navi
     ).on('theme/change', listener)
   const getTheme = () => theme.getTheme().active.colorScheme
   const subscribeLocale = (listener: () => void) => locale.subscribe(listener)
-  const getLocale = () => locale.getLocale().active
+  const getLocale = () => normalizeHostLocale(locale.getLocale().active)
   function Entry({ wide }: SidebarFooterActionOwnerProps) {
     const colorScheme = useSyncExternalStore(subscribeTheme, getTheme, getTheme)
     const language = useSyncExternalStore(subscribeLocale, getLocale, getLocale)
@@ -263,7 +261,7 @@ export function registerWorkspaceNavigation(ctx: ClientContext, navigation: Navi
         navigation={navigation}
         wide={wide}
         colorScheme={colorScheme}
-        locale={language.startsWith('zh') ? 'zh-CN' : 'en-US'}
+        locale={language}
         open={() => surfaces.open('clinmesh.his')}
         active={snapshot.activeId === 'clinmesh.his'}
         {...(snapshot.activeId === null ? {} : { close: () => surfaces.close() })}

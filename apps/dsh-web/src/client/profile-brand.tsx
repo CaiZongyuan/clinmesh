@@ -8,24 +8,18 @@ import type {
 } from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import clinmeshMarkUrl from '../../../web/src/assets/clinmesh-mark.webp'
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
+import { normalizeHostLocale, type ClientLocalePort } from './host-locale.ts'
 
 // Profile identity takes precedence over the runtime's active-Surface identity (-100).
 const PROFILE_BRAND_PRIORITY = -200
 
-interface HeroLocalePort {
-  getLocale(): { active: string }
-  subscribe(listener: () => void): () => void
-}
-
-function createHeroBrand(locale: HeroLocalePort) {
+function createHeroBrand(locale: ClientLocalePort) {
   const subscribe = (listener: () => void) => locale.subscribe(listener)
-  const getLocale = () => locale.getLocale().active
+  const getLocale = () => normalizeHostLocale(locale.getLocale().active)
   return function ClinMeshHeroBrand({ size, className }: HeroBrandMarkOwnerProps) {
     const mark = useRef<HTMLSpanElement>(null)
     const language = useSyncExternalStore(subscribe, getLocale, getLocale)
-    const headline = getWorkspaceMessages(
-      language.startsWith('zh') ? 'zh-CN' : 'en-US',
-    ).productTagline
+    const headline = getWorkspaceMessages(language).productTagline
     useLayoutEffect(() => {
       // DSH RC exposes a mark slot, but its adjacent headline has no replacement API.
       const slot = mark.current?.closest('[data-slot="conversation.hero.brand.mark"]')
@@ -91,7 +85,7 @@ function ClinMeshBrandName(_props: SidebarBrandNameOwnerProps) {
 
 /** Profile identity survives Surface navigation; unloading this plugin releases both slots. */
 export function registerProfileBrand(ctx: ClientContext): () => void {
-  const HeroBrand = createHeroBrand(ctx.get('locale') as unknown as HeroLocalePort)
+  const HeroBrand = createHeroBrand(ctx.get('locale') as unknown as ClientLocalePort)
   const disposeMark = ctx.slots.inject('sidebar.brand.mark', () =>
     ctx.slots.register(
       {

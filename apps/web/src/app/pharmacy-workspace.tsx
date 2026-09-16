@@ -226,11 +226,11 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
             throw new Error(messages.pharmacyUnavailable)
           }
           return agentReview.request({
-            confirmLabel: messages.approvePrescription,
+            confirmLabel: locale => getWorkspaceMessages(locale).approvePrescription,
             description: `${selectedPrescription.patient.name} · ${selectedPrescription.prescriptionNumber}`,
             onConfirm: () => review.mutateAsync(),
             signal,
-            title: messages.prescriptionReview,
+            title: locale => getWorkspaceMessages(locale).prescriptionReview,
           })
         },
       },
@@ -245,11 +245,11 @@ export function PharmacyWorkspace({ locale, session }: PharmacyWorkspaceProps): 
             || !hasValidDispense(selectedPrescription, selectedLotIds, dispenseQuantities)
           ) throw new Error(messages.inventoryUnavailable)
           return agentReview.request({
-            confirmLabel: messages.confirmDispense,
+            confirmLabel: locale => getWorkspaceMessages(locale).confirmDispense,
             description: `${selectedPrescription.patient.name} · ${selectedPrescription.prescriptionNumber}`,
             onConfirm: () => dispense.mutateAsync(),
             signal,
-            title: messages.dispenseReview,
+            title: locale => getWorkspaceMessages(locale).dispenseReview,
           })
         },
       },

@@ -7,6 +7,7 @@ import {
   type WorkspaceTheme,
 } from './workspace-shell.tsx'
 import type { FontSizePreference } from './preferences.ts'
+import { useWebRuntime } from './web-runtime.tsx'
 import {
   getWorkspaceMessages,
   type WorkspaceLocale,
@@ -75,16 +76,22 @@ export function SettingsWorkspace({
   theme,
 }: SettingsWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  const runtime = useWebRuntime()
 
   if (activeSection === 'uiComponents') {
     return <ComponentCatalog embedded locale={locale} />
   }
 
   return (
-    <section aria-labelledby="settings-appearance-heading" className="flex max-w-2xl flex-col gap-4">
-      <h2 className="text-sm font-semibold" id="settings-appearance-heading">
-        {messages.appearanceLabel}
-      </h2>
+    <section
+      aria-labelledby={runtime.mode === 'surface' ? 'settings-font-size-label' : 'settings-appearance-heading'}
+      className="flex max-w-2xl flex-col gap-4"
+    >
+      {runtime.mode !== 'surface' ? (
+        <h2 className="text-sm font-semibold" id="settings-appearance-heading">
+          {messages.appearanceLabel}
+        </h2>
+      ) : null}
       <AppearanceControls
         locale={locale}
         messages={messages}
