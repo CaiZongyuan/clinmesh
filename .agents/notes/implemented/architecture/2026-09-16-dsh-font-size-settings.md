@@ -12,7 +12,7 @@ Client adapter 通过官方 `settings.general.item` 注册独立的 ClinMesh 字
 
 设置位置集中到 DSH，字号仍是 ClinMesh 专属偏好。它使用当前浏览器 origin 下的 `clinmesh.dsh.font-size:v1`，值域为 `standard`、`larger`、`large`。首次缺少此键时继承旧 `clinmesh.preferences:v1` 的字号并保存；已有非法值回退到标准。独立 Web 偏好只读继承一次，不被反向修改。其他标签页的存储变化通过浏览器事件同步；没有订阅者时移除监听，重新订阅时读取最新值。存储不可读写时保留当前插件会话内的选择，刷新后不保证恢复。
 
-完整产品行为由[系统架构](../../../../docs/architecture.md#71-surface-与-host-边界)拥有。
+完整产品行为由[系统架构](../../../../docs/architecture.md#71-surface-与-host-边界)拥有。本决策替代 [Web 应用级字号偏好](../feature/2026-09-02-web-font-size-preference.md)中 Surface 的设置入口与存储归属，保留其三档比例、字号 token 和宿主样式隔离规则；旧存储归属继续适用于独立 Web。
 
 ## Alternatives considered
 

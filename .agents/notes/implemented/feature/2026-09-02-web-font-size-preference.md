@@ -10,11 +10,11 @@ Canonical implementation contract 是 [GitHub issue #72](https://github.com/CaiZ
 
 ## Decision
 
-`WebPreferences` 拥有设备本地的 `fontSize` 偏好，并继续使用 `clinmesh.preferences:v1`。`standard`、`larger` 和 `large` 分别表示 `100%`、`112.5%` 和 `125%`；缺少或无法识别的字号值按 `standard` 读取，同时保留有效的语言和主题。
+独立 Web 的 `WebPreferences` 拥有设备本地的 `fontSize` 偏好，并继续使用 `clinmesh.preferences:v1`。DSH Surface 的设置入口和独立偏好源由 [DSH 字号设置](../architecture/2026-09-16-dsh-font-size-settings.md)拥有，本文的字号比例和样式隔离规则继续适用于两种载体。`standard`、`larger` 和 `large` 分别表示 `100%`、`112.5%` 和 `125%`；缺少或无法识别的字号值按 `standard` 读取，同时保留有效的语言和主题。
 
 `WebApp` 在首次渲染前同步读取偏好，并通过 React Context 向岗位页面和组件目录提供唯一的客户端状态。ClinMesh 应用根携带当前字号档位，`packages/ui/src/styles.css` 在该作用域内调整语义字体 token；共享根提供标准档默认 token，保证 Desktop primitives 不依赖 Web 属性。standalone 文档根保持 `16px`，应用基础字号只作用于 `body` 和 `.clinmesh-web-root`；Surface 只修改自己的应用根。
 
-设置页提供固定三档单选并即时持久化。字号变化不修改 spacing、图标尺寸、控件高度、浏览器缩放或 DSH 宿主文档根。
+独立 Web 设置页提供固定三档单选并即时持久化。字号变化不修改 spacing、图标尺寸、控件高度、浏览器缩放或 DSH 宿主文档根。
 
 ## Alternatives considered
 
