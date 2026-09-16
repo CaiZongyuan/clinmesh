@@ -10,7 +10,7 @@ DSH 品牌入口读取宿主语言，ClinMesh 工作台读取本地偏好，医�
 
 DSH 拥有 Surface 生效语言，ClinMesh 拥有业务文案。Client adapter 通过宿主 locale service 读取并订阅语言，共用一个规范化函数为品牌、医院导航和 Web runtime 提供受支持语言。Web 应用在渲染时派生生效语言，偏好更新仍作用于本地保存值，避免修改字号时把宿主语言写入独立 Web 偏好。错误边界直接接收宿主语言，因此应用子树失败后仍能同步。
 
-完整产品合同由[系统架构](../../../../docs/architecture.md#71-surface-与-host-边界)拥有。Surface 通用设置只保留字号，不显示外观标题或宿主语言提示；独立 Web 继续提供语言选择。语言变化不重建 Router、QueryClient 或表单组件。
+完整产品合同由[系统架构](../../../../docs/architecture.md#71-surface-与-host-边界)拥有。Surface 不显示独立语言选择或宿主语言提示，字号入口见 [DSH 字号设置](2026-09-16-dsh-font-size-settings.md)；独立 Web 继续提供语言选择。语言变化不重建 Router、QueryClient 或表单组件。
 
 人工确认请求保留业务事实与审批状态，只将可翻译的显示字段按当前语言解析。切换语言不重新创建请求、不结算审批，也不修改 Command 输入；患者标识、金额和待确认的项目数仍绑定请求发起时的事实。
 

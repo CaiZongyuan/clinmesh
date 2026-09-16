@@ -7,12 +7,14 @@ import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { apply, createDefinition } from './index.tsx'
 import { createWorkspaceNavigation, registerWorkspaceNavigation } from './workspace-navigation.tsx'
+import { createFontSizePreference, registerFontSizeSettings } from './font-size-settings.tsx'
 
 describe('ClinMesh React Surface definition', () => {
   it('updates workspace routes, settings and launcher through the same host locale event', async () => {
     const listeners = new Set<() => void>()
     let language = 'zh-CN'
     let Entry: ComponentType<{ wide: boolean }> = () => null
+    let Settings: ComponentType = () => null
     const snapshot = { activeId: 'clinmesh.his', surfaces: [] }
     const ctx = {
       get(name: string) {
@@ -27,7 +29,11 @@ describe('ClinMesh React Surface definition', () => {
       on: () => () => {},
       slots: {
         inject: (_name: string, register: () => () => void) => register(),
-        register(_entry: unknown, component: ComponentType<{ wide: boolean }>) { Entry = component; return () => {} },
+        register(entry: { name: string }, component: ComponentType<{ wide: boolean }>) {
+          if (entry.name === 'settings.general.item') Settings = component as ComponentType
+          else Entry = component
+          return () => {}
+        },
       },
     }
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
@@ -39,15 +45,22 @@ describe('ClinMesh React Surface definition', () => {
       user: { email: 'registrar@example.test', id: 'user-registrar', name: '合成挂号员' },
     })))
     const container = document.createElement('div')
-    container.innerHTML = '<aside data-slot="sidebar"><div><div data-slot="sidebar.workspaces"></div></div><div id="locale-navigation"></div></aside><div id="locale-application"></div>'
+    container.innerHTML = '<aside data-slot="sidebar"><div><div data-slot="sidebar.workspaces"></div></div><div id="locale-navigation"></div></aside><div id="locale-application"></div><div id="font-settings"></div>'
     document.body.append(container)
     const entryRoot = createRoot(container.querySelector('#locale-navigation')!)
     const appRoot = createRoot(container.querySelector('#locale-application')!)
+    const settingsRoot = createRoot(container.querySelector('#font-settings')!)
+    const fontSize = createFontSizePreference()
+    const disposeSettings = registerFontSizeSettings(ctx as unknown as ClientContext, fontSize)
     const navigation = createWorkspaceNavigation()
     const dispose = registerWorkspaceNavigation(ctx as unknown as ClientContext, navigation)
-    const { component } = createDefinition(ctx as unknown as ClientContext, navigation)
-    const props = { active: true, conversationCollapsed: false, agent: { register: () => () => {} }, capabilities: { agent: { available: false, status: 'unavailable' as const } }, close() {}, layout: 'workspace' as const, location: '/settings', navigate() {} }
+    const { component } = createDefinition(ctx as unknown as ClientContext, navigation, fontSize)
+    const props = { active: true, conversationCollapsed: false, agent: { register: () => () => {} }, capabilities: { agent: { available: false, status: 'unavailable' as const } }, close() {}, layout: 'workspace' as const, location: '/settings/developer/components', navigate() {} }
     try {
+      await act(() => settingsRoot.render(createElement(Settings)))
+      const select = container.querySelector<HTMLSelectElement>('select[aria-label="ClinMesh 字号"]')!
+      expect(select).not.toBeNull()
+      await act(() => { select.value = 'large'; select.dispatchEvent(new Event('change', { bubbles: true })) })
       await act(async () => {
         entryRoot.render(createElement(Entry, { wide: true }))
         appRoot.render(createElement(component, props))
@@ -58,20 +71,33 @@ describe('ClinMesh React Surface definition', () => {
         expect(navigation.getSnapshot()?.items.some(item => item.label === '门诊挂号')).toBe(true)
       })
       const shadow = container.querySelector('[data-clinmesh-host-navigation]')!.shadowRoot!
+      const application = container.querySelector<HTMLElement>('[data-clinmesh-app="web"]')!
+      expect(application.dataset.fontSize).toBe('large')
+      expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1')!).fontSize).toBe('standard')
+      expect(createFontSizePreference().getSnapshot()).toBe('large')
+      await act(() => appRoot.render(createElement(component, { ...props, active: false })))
+      await act(() => { select.value = 'larger'; select.dispatchEvent(new Event('change', { bubbles: true })) })
+      expect(container.querySelector('[data-clinmesh-app="web"]')).toBe(application)
+      expect(application.dataset.fontSize).toBe('larger')
       const trigger = shadow.querySelector<HTMLButtonElement>('button')!
       await act(() => trigger.click())
-      expect(shadow.textContent).toContain('通用')
+      expect(shadow.textContent).not.toContain('通用')
+      expect(shadow.textContent).toContain('UI 组件')
       await act(() => {
         language = 'en-US'
         for (const listener of listeners) listener()
       })
       expect(trigger.getAttribute('aria-label')).toBe('Hospital workspace')
-      expect(shadow.textContent).toContain('General')
+      expect(select.getAttribute('aria-label')).toBe('ClinMesh font size')
+      expect(select.selectedOptions[0]?.textContent).toBe('Larger')
+      expect(shadow.textContent).not.toContain('General')
+      expect(shadow.textContent).toContain('UI components')
       expect(container.querySelector('[data-clinmesh-host-routes]')!.shadowRoot!.querySelector('button')?.textContent).toBe('Registration')
-      expect(container.querySelector('[data-clinmesh-app="web"]')?.textContent).toContain('Font size')
+      expect(navigation.getSnapshot()?.items.some(item => item.path === '/settings')).toBe(false)
       expect(container.querySelector('[data-clinmesh-app="web"]')?.textContent).not.toContain('Language is managed by DSH')
     } finally {
-      await act(() => { appRoot.unmount(); entryRoot.unmount() })
+      await act(() => { appRoot.unmount(); entryRoot.unmount(); settingsRoot.unmount() })
+      disposeSettings()
       dispose()
       container.remove()
       localStorage.clear()
@@ -192,6 +218,7 @@ describe('ClinMesh React Surface definition', () => {
       'sidebar.brand.mark',
       'sidebar.brand.name',
       'conversation.hero.brand.mark',
+      'settings.general.item',
       'sidebar.footer.action',
     ])
     const Mark = occupants.get('sidebar.brand.mark')!

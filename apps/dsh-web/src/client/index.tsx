@@ -13,6 +13,8 @@ import { registerProfileBrand } from './profile-brand.tsx'
 import { normalizeHostLocale, type ClientLocalePort } from './host-locale.ts'
 import { createWorkspaceNavigation, registerWorkspaceNavigation } from './workspace-navigation.tsx'
 import type { WebSurfaceDisplay, WebSurfaceNavigation } from '@clinmesh/web/runtime'
+import { createFontSizePreference, registerFontSizeSettings, type FontSizePreferenceStore } from './font-size-settings.tsx'
+import type { FontSizePreference } from '../../../web/src/app/preferences.ts'
 
 interface ClientSessionsPort {
   list: {
@@ -38,6 +40,7 @@ function ClinMeshSurface({
   navigate,
   surfaceColorScheme,
   surfaceLocale,
+  surfaceFontSize,
   surfaceSessionId,
   surfaceDisplay,
   surfaceNavigation,
@@ -46,6 +49,7 @@ function ClinMeshSurface({
   surfaceDisplay: WebSurfaceDisplay
   surfaceColorScheme: 'dark' | 'light'
   surfaceLocale: 'zh-CN' | 'en-US'
+  surfaceFontSize: FontSizePreference
   surfaceSessionId?: string
 }): React.JSX.Element {
   const locationRef = useRef(location)
@@ -84,6 +88,7 @@ function ClinMeshSurface({
         surfaceAgentStatus: capabilities.agent.status,
         surfaceColorScheme,
         surfaceLocale,
+        surfaceFontSize,
         surfaceDisplay,
         surfaceNavigation,
         ...(surfaceSessionId === undefined ? {} : { surfaceSessionId }),
@@ -99,6 +104,7 @@ function normalizeLocation(location: string): string {
 export function createDefinition(
   ctx: ClientContext,
   navigation = createWorkspaceNavigation(),
+  fontSize: FontSizePreferenceStore = createFontSizePreference(),
 ): Readonly<ReactSurfaceDefinition> {
   const sessions = ctx.get('sessions') as unknown as ClientSessionsPort
   const theme = ctx.get('theme') as unknown as ClientThemePort
@@ -117,6 +123,7 @@ export function createDefinition(
   function SessionBoundClinMeshSurface(props: ReactSurfaceProps): React.JSX.Element {
     const surfaceSessionId = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
     const surfaceLocale = useSyncExternalStore(subscribeLocale, getLocale, getLocale)
+    const surfaceFontSize = useSyncExternalStore(fontSize.subscribe, fontSize.getSnapshot, fontSize.getSnapshot)
     const surfaceColorScheme = useSyncExternalStore(
       subscribeTheme,
       () => theme.getTheme().active.colorScheme,
@@ -136,6 +143,7 @@ export function createDefinition(
         }}
         surfaceColorScheme={surfaceColorScheme}
         surfaceLocale={surfaceLocale}
+        surfaceFontSize={surfaceFontSize}
         {...(surfaceSessionId === undefined ? {} : { surfaceSessionId })}
       />
     )
@@ -170,8 +178,10 @@ export const inject = ['reactSurfaces', 'sessions', 'theme', 'slots', 'locale']
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => registerProfileBrand(ctx), 'clinmesh-dsh-web: register Profile identity')
   const navigation = createWorkspaceNavigation()
+  const fontSize = createFontSizePreference()
+  ctx.effect(() => registerFontSizeSettings(ctx, fontSize), 'clinmesh-dsh-web: register font size setting')
   ctx.effect(() => registerWorkspaceNavigation(ctx, navigation), 'clinmesh-dsh-web: register hospital navigation')
-  const definition = createDefinition(ctx, navigation)
+  const definition = createDefinition(ctx, navigation, fontSize)
   const reactSurfaces = (ctx as ClientContext & {
     reactSurfaces: {
       register(value: typeof definition): () => void

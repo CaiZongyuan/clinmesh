@@ -42,6 +42,7 @@ export interface WebRuntimeOptions {
   surfaceAgentStatus?: WebSurfaceAgentStatus
   surfaceColorScheme?: 'dark' | 'light'
   surfaceLocale?: WebPreferences['locale']
+  surfaceFontSize?: WebPreferences['fontSize']
   surfaceSessionId?: string
 }
 

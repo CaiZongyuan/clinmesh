@@ -41,7 +41,8 @@
     "client": {
       "platform": "web",
       "inject": [
-        "dsh-react-surface"
+        "dsh-react-surface",
+        "@deepseek-ai/dsh-client-ui-settings-general"
       ],
       "external": [
         "dsh-react-surface/client"
@@ -64,6 +65,7 @@
     "react-dom": "^18.2.0 || ^19.0.0"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-client-ui-settings": "0.1.5-rc.2",
     "@clinmesh/ui": "workspace:*",
     "@deepseek-ai/cordis": "4.0.2",
     "@deepseek-ai/dsh-agent": "0.1.5-rc.2",
