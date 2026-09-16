@@ -543,7 +543,8 @@ describe('Web application shell', () => {
     const user = userEvent.setup()
     const rendered = await renderWebApp({ history, runtime: { mode: 'surface', surfaceColorScheme: 'dark' } })
     expect(screen.queryByRole('button', { name: 'English' })).toBeNull()
-    expect(screen.getByText('语言由 DSH 管理')).toBeTruthy()
+    expect(screen.queryByText('语言由 DSH 管理')).toBeNull()
+    expect(screen.queryByRole('heading', { name: '外观' })).toBeNull()
     for (const name of ['跟随系统', '亮色', '暗色']) {
       expect(screen.queryByRole('button', { name })).toBeNull()
     }
@@ -551,7 +552,8 @@ describe('Web application shell', () => {
     expect(document.querySelector('[data-clinmesh-app="web"]')?.getAttribute('data-font-size')).toBe('larger')
     rendered.rerender(<WebApp history={history} runtime={{ mode: 'surface', surfaceLocale: 'en-US' }} />)
     expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
-    expect(screen.getByText('Language is managed by DSH')).toBeTruthy()
+    expect(screen.queryByText('Language is managed by DSH')).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Appearance' })).toBeNull()
     expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1')!).locale).toBe('zh-CN')
     await user.click(screen.getByRole('button', { name: 'User menu' }))
     expect(await screen.findByRole('menuitem', { name: 'Sign out' })).toBeTruthy()

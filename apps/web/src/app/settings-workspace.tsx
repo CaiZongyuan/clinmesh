@@ -83,11 +83,15 @@ export function SettingsWorkspace({
   }
 
   return (
-    <section aria-labelledby="settings-appearance-heading" className="flex max-w-2xl flex-col gap-4">
-      <h2 className="text-sm font-semibold" id="settings-appearance-heading">
-        {messages.appearanceLabel}
-      </h2>
-      {runtime.mode === 'surface' ? <p className="text-sm text-muted-foreground">{messages.hostManagedLanguage}</p> : null}
+    <section
+      aria-labelledby={runtime.mode === 'surface' ? 'settings-font-size-label' : 'settings-appearance-heading'}
+      className="flex max-w-2xl flex-col gap-4"
+    >
+      {runtime.mode !== 'surface' ? (
+        <h2 className="text-sm font-semibold" id="settings-appearance-heading">
+          {messages.appearanceLabel}
+        </h2>
+      ) : null}
       <AppearanceControls
         locale={locale}
         messages={messages}
