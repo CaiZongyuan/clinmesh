@@ -1,0 +1,21 @@
+{
+  "commit": "37f4555ec3634f680025ab24ac52790beb5df245",
+  "entry": "standalone Web production build: /scenario-data -> /consultation",
+  "scenario": "患者自由问诊演示；合成 Synthea 病例",
+  "workspace": "workspace-demo",
+  "epoch": "epoch-1",
+  "aiProvider": "fake provider with one transient reply failure",
+  "speed": 4,
+  "durationSeconds": 29.425,
+  "width": 1440,
+  "height": 1000,
+  "bytes": 1167370,
+  "sha256": "622478fc22e867ba2193c8eb051d969bbcc480a370e861a002644c093bd9c413",
+  "observed": [
+    "管理员编辑产生新档案修订",
+    "原修订继续绑定已开始病例",
+    "医生自由文本提问与等待反馈",
+    "失败保留医生发言",
+    "重试恢复患者回复并清除旧错误"
+  ]
+}
