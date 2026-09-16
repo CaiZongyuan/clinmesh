@@ -78,7 +78,7 @@ function ClinMeshBrandName(_props: SidebarBrandNameOwnerProps) {
         whiteSpace: 'nowrap',
       }}
     >
-      ClinMesh
+      科灵脉智
     </span>
   )
 }

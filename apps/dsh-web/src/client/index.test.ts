@@ -227,7 +227,7 @@ describe('ClinMesh React Surface definition', () => {
     ])
     const Mark = occupants.get('sidebar.brand.mark')!
     const Name = occupants.get('sidebar.brand.name')!
-    expect(renderToStaticMarkup(createElement(Name, { size: 28 }))).toContain('ClinMesh')
+    expect(renderToStaticMarkup(createElement(Name, { size: 28 }))).toContain('科灵脉智')
     for (const size of [20, 28]) {
       const mark = renderToStaticMarkup(createElement(Mark, { size }))
       expect(mark).toContain('alt="ClinMesh"')

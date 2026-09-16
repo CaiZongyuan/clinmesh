@@ -124,7 +124,7 @@ export function registerFontSizeSettings(ctx: Context, preference: FontSizePrefe
     )
   }
   return ctx.slots.inject('settings.general.item', () => ctx.slots.register(
-    { name: 'settings.general.item', id: 'clinmesh.font-size', order: 80 },
+    { name: 'settings.general.item', id: 'clinmesh.font-size', order: 10.5 },
     FontSizeSetting,
   ))
 }
