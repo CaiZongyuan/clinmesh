@@ -320,10 +320,32 @@ class StubSyntheaProvider implements ScenarioGenerationProvider {
 }
 
 
+const consultationSessions = new WeakMap<TestRuntime, Promise<{
+  adminCookie: string
+  doctorCookie: string
+  registrarCookie: string
+  triageCookie: string
+}>>()
+
+function getConsultationSessions(runtime: TestRuntime, password: string) {
+  let sessions = consultationSessions.get(runtime)
+  if (sessions === undefined) {
+    sessions = Promise.all([
+      signIn(runtime, 'admin@demo.clinmesh.local', password),
+      signIn(runtime, 'doctor@demo.clinmesh.local', password),
+      signIn(runtime, 'registrar@demo.clinmesh.local', password),
+      signIn(runtime, 'triage@demo.clinmesh.local', password),
+    ]).then(([adminCookie, doctorCookie, registrarCookie, triageCookie]) => ({
+      adminCookie, doctorCookie, registrarCookie, triageCookie,
+    }))
+    consultationSessions.set(runtime, sessions)
+  }
+  return sessions
+}
+
 async function startSyntheticPatientConsultation(runtime: TestRuntime, password: string) {
   useSyntheticLaboratoryCatalog(runtime)
-  const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
-  const adminCookie = await signIn(runtime, 'admin@demo.clinmesh.local', password)
+  const { adminCookie, doctorCookie, registrarCookie, triageCookie } = await getConsultationSessions(runtime, password)
   const generationResponse = await runtime.app.request('/api/sim/v1/scenario-generation-jobs', {
     body: JSON.stringify({
       name: '门诊演练患者',
@@ -348,7 +370,6 @@ async function startSyntheticPatientConsultation(runtime: TestRuntime, password:
   const personaJob = await runtime.patientPersona.processNext()
   if (personaJob?.status !== 'succeeded') throw new Error(`Patient Persona was not generated: ${JSON.stringify(personaJob?.error)}`)
 
-  const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local', password)
   const registrarSession = await runtime.identity.resolveSessionContext(
     new Headers({ cookie: registrarCookie }),
   )
@@ -382,7 +403,6 @@ async function startSyntheticPatientConsultation(runtime: TestRuntime, password:
     registrationId: string
   } }
   const encounterId = started.data.encounterId
-  const triageCookie = await signIn(runtime, 'triage@demo.clinmesh.local', password)
   const triageResponse = await runtime.app.request(
     `/api/his/v1/encounters/${encounterId}/actions/record-triage`, {
       body: JSON.stringify({
