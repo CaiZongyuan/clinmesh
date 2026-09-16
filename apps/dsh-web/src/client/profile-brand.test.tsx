@@ -39,9 +39,11 @@ it('brands the new-session hero and restores its native headline when removed', 
   expect(entry).toBeDefined()
   if (!entry) throw new Error('Missing hero brand registration')
   const Hero: ComponentType<{ size: number }> = entry
+  const Name = entries.get('sidebar.brand.name')!
   function Host({ title, branded = true }: { title: string; branded?: boolean }) {
     return (
       <div>
+        <div data-testid="brand-name">{branded ? <Name size={16} /> : null}</div>
         <span>
           <div data-slot="conversation.hero.brand.mark">{branded ? <Hero size={34} /> : null}</div>
         </span>
@@ -59,6 +61,7 @@ it('brands the new-session hero and restores its native headline when removed', 
   root = createRoot(container)
   const result = { rerender: (element: React.ReactNode) => act(() => root!.render(element)) }
   result.rerender(<Host title="探索未至之境" />)
+  expect(container.querySelector('[data-testid=brand-name]')!.textContent).toBe('科灵脉智')
   expect(container.querySelector('[data-testid=headline]')!.textContent).toBe('医疗智能体平台')
   expect(container.querySelector('img[alt=ClinMesh]')!.getAttribute('width')).toBe('34')
   act(() => {
@@ -72,6 +75,12 @@ it('brands the new-session hero and restores its native headline when removed', 
   expect(container.querySelector('[data-testid=headline]')!.textContent).toBe(
     'Medical AI Agent Platform',
   )
+  expect(container.querySelector('[data-testid=brand-name]')!.textContent).toBe('ClinMesh')
+  act(() => {
+    active = 'zh-CN'
+    for (const listener of listeners) listener()
+  })
+  expect(container.querySelector('[data-testid=brand-name]')!.textContent).toBe('科灵脉智')
   expect(container.textContent).toContain('预览版')
   expect(container.querySelector('input')!.value).toBe('kept draft')
   result.rerender(<Host title="Into the Unknown" branded={false} />)

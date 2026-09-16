@@ -58,7 +58,7 @@ describe('ClinMesh React Surface definition', () => {
     const props = { active: true, conversationCollapsed: false, agent: { register: () => () => {} }, capabilities: { agent: { available: false, status: 'unavailable' as const } }, close() {}, layout: 'workspace' as const, location: '/settings/developer/components', navigate() {} }
     try {
       await act(() => settingsRoot.render(createElement(Settings)))
-      const select = container.querySelector<HTMLButtonElement>('button[aria-label="ClinMesh 字号"]')!
+      const select = container.querySelector<HTMLButtonElement>('button[aria-label="科灵脉智字号"]')!
       expect(select).not.toBeNull()
       expect(select.getAttribute('aria-haspopup')).toBe('menu')
       await act(() => select.click())
@@ -99,6 +99,13 @@ describe('ClinMesh React Surface definition', () => {
       expect(container.querySelector('[data-clinmesh-host-routes]')!.shadowRoot!.querySelector('button')?.textContent).toBe('Registration')
       expect(navigation.getSnapshot()?.items.some(item => item.path === '/settings')).toBe(false)
       expect(container.querySelector('[data-clinmesh-app="web"]')?.textContent).not.toContain('Language is managed by DSH')
+      await act(() => {
+        language = 'zh-CN'
+        for (const listener of listeners) listener()
+      })
+      expect(select.getAttribute('aria-label')).toBe('科灵脉智字号')
+      expect(select.textContent).toBe('较大')
+      expect(application.dataset.fontSize).toBe('larger')
     } finally {
       await act(() => { appRoot.unmount(); entryRoot.unmount(); settingsRoot.unmount() })
       disposeSettings()
@@ -193,6 +200,8 @@ describe('ClinMesh React Surface definition', () => {
     let registered = false
     const ctx = {
       get: () => ({
+        getLocale: () => ({ active: 'zh-CN' }),
+        subscribe: () => () => {},
         list: { getSnapshot: () => ({ current: undefined }), subscribe: () => () => {} },
       }),
       reactSurfaces: {

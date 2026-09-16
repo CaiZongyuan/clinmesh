@@ -68,24 +68,31 @@ function ClinMeshBrandMark({ size }: SidebarBrandMarkOwnerProps) {
   )
 }
 
-function ClinMeshBrandName(_props: SidebarBrandNameOwnerProps) {
-  return (
-    <span
-      style={{
-        color: 'var(--dsw-alias-label-primary)',
-        fontSize: 16,
-        fontWeight: 650,
-        whiteSpace: 'nowrap',
-      }}
-    >
-      科灵脉智
-    </span>
-  )
+function createBrandName(locale: ClientLocalePort) {
+  const subscribe = (listener: () => void) => locale.subscribe(listener)
+  const getLocale = () => normalizeHostLocale(locale.getLocale().active)
+  return function ClinMeshBrandName(_props: SidebarBrandNameOwnerProps) {
+    const language = useSyncExternalStore(subscribe, getLocale, getLocale)
+    return (
+      <span
+        style={{
+          color: 'var(--dsw-alias-label-primary)',
+          fontSize: 16,
+          fontWeight: 650,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {language === 'zh-CN' ? '科灵脉智' : 'ClinMesh'}
+      </span>
+    )
+  }
 }
 
 /** Profile identity survives Surface navigation; unloading this plugin releases both slots. */
 export function registerProfileBrand(ctx: ClientContext): () => void {
-  const HeroBrand = createHeroBrand(ctx.get('locale') as unknown as ClientLocalePort)
+  const locale = ctx.get('locale') as unknown as ClientLocalePort
+  const HeroBrand = createHeroBrand(locale)
+  const BrandName = createBrandName(locale)
   const disposeMark = ctx.slots.inject('sidebar.brand.mark', () =>
     ctx.slots.register(
       {
@@ -103,7 +110,7 @@ export function registerProfileBrand(ctx: ClientContext): () => void {
         priority: PROFILE_BRAND_PRIORITY,
         registrant: 'clinmesh-profile-brand',
       },
-      ClinMeshBrandName,
+      BrandName,
     ),
   )
   const disposeHero = ctx.slots.inject('conversation.hero.brand.mark', () =>

@@ -79,7 +79,7 @@ export function registerFontSizeSettings(ctx: Context, preference: FontSizePrefe
     const language = useSyncExternalStore(subscribeLocale, getLocale, getLocale)
     const fontSize = useSyncExternalStore(preference.subscribe, preference.getSnapshot, preference.getSnapshot)
     const messages = getWorkspaceMessages(language)
-    const label = language === 'zh-CN' ? 'ClinMesh 字号' : 'ClinMesh font size'
+    const label = language === 'zh-CN' ? '科灵脉智字号' : 'ClinMesh font size'
     const items = [
       { id: 'standard', label: messages.fontSizeStandard },
       { id: 'larger', label: messages.fontSizeLarger },
