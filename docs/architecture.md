@@ -828,11 +828,11 @@ Registration + Encounter + Account + 挂号 Charge Item
 
 Consultation 是病例级领域聚合，Consultation Record 保存 append-only 对话轮次。Synthetic Case 开始时绑定 Persona Revision 并追加患者开场白；首次医生发言可以同时开始首诊并绑定负责 Practitioner Role。每个轮次保存说话方、内容类型、来源、虚拟业务时间、参与 Actor 和患者档案修订。来源预留 `asr-import` 与 `external-sync`，当前没有导入接口。旧选择题问答迁移为保留原文的只读轮次；旧版档案不能用于自由对话，三个手写 Virtual Patient 的直达接诊路由已移除。
 
-患者模型的输入只有固定档案、最近 40 个对话轮次、可见既往史、分诊体验和已签发报告。Case Truth 仅由档案生成器与独立泄漏出口检查读取，不进入回答模型上下文。回答命中本次隐藏诊断术语时重新生成一次，再命中则保存安全患者应答；既往已知诊断允许陈述。整轮共享 30 秒期限，失败时保留医生发言并允许重试，其他诊疗环节继续可用。
+患者模型的输入只有固定档案、最近 40 个对话轮次、可见既往史、分诊体验、正式 Specimen 的类型与采集时间和已签发报告。Case Truth 仅由档案生成器与独立泄漏出口检查读取，不进入回答模型上下文。出口检查规范化诊断术语修饰尾缀及常见数字写法，并覆盖已知的常见简称；命中本次隐藏诊断术语时重新生成一次，再命中则保存安全患者应答；既往已知诊断允许陈述。整轮共享 30 秒期限，失败时保留医生发言并允许重试，其他诊疗环节继续可用。
 
 未回答的医生发言阻止追加下一条医生发言。检验报告 final 或更正时，系统追加引用固定 DiagnosticReport 版本的报告卡片；卡片不充当文本回答，不阻断正在生成的回答。同一医生发言的回答使用稳定追加键，并发生成只能冻结一个结果。公开 Command 回执按原 operation 和幂等键查询；已接受但尚未返回完整回答时为 `executing`，包含已保存的发言。客户端先刷新病例确认末条未回答发言，再调用显式重试；成功后相同请求返回第一次完整回执。
 
-复诊延续同一条对话；完诊只读。Reset 重放保留病例与档案事实，重新生成的措辞可以不同。Canonical state hash 排除对话表文本和问诊回执内的轮次文本，保留轮次、来源、档案版本与审计等元数据；备份仍保存原始对话全文。
+复诊延续同一条对话；完诊只读。Reset 重放保留病例与档案事实，重新生成的措辞可以不同。Canonical hash 的覆盖范围与限制见[确定性与故障注入](#104-确定性与故障注入)。
 
 结构化 Clinical Document 草稿包含主诉、现病史、查体、评估、处置和随访六个共享必填字段，按病例保存在 `clinical_document_draft`，以 `expectedDraftVersion` 和 Encounter expected version 做 CAS 更新。签署预览固定 Actor context、Encounter 版本、草稿正文和草稿版本；提交重新校验这些依赖与 token 后创建不可变 FHIR R5 Composition、带稳定 identifier 且首 entry 为该 Composition 的自包含 document Bundle，以及同时引用二者的 Provenance，但不改变 Encounter 或病例状态。`signed_clinical_document` 只保存 FHIR 资源关联、签署者、时间和修订父链；每个病例只允许一个根文书，修订只接受最新 Composition 并创建线性替代版本。首期复诊 `sign-and-complete` 是兼容入口，只能用于尚无结构化签署根文书的病例；已有根文书时预览和提交都返回稳定业务冲突。
 
@@ -1239,10 +1239,10 @@ clock_revision
 - 生成请求固定 Provider commit、profile/localization hash、模块模式、人口参数和 seed；相同来源 Bundle 的 Index Encounter 选择、历史/真值闭包和 case type 保持确定。
 - Investigation resolver 先匹配 Case Truth 中完全兼容的冻结 coding；缺失时按冻结 Adult Reference Baseline 确定性生成，只有没有该规则的 LOINC 叶子才调用受限模型。首次验证成功的结果按 input hash 冻结，重试、reset 和 replay 复用 snapshot。
 - 支付规则可确定地产生 success、declined 或 ambiguous；LIS 规则确定地产生结构化报告。outbox 通过测试 handler 验证 retryable failure、lease 恢复、重复消费和结果未知。
-- 数据库备份的 canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引、schema migration 和 runtime metadata 外的全部持久领域表；`*_json` 按 JSON 值规范化，递归排除 FHIR `lastUpdated` 和存放 hash 自身的列。它用于同一 schema 下的备份/恢复等价校验，不宣称是跨版本 replay hash。
+- 数据库备份的 canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引、schema migration 和 runtime metadata 外的全部持久领域表；`*_json` 按 JSON 值规范化，递归排除 FHIR `lastUpdated` 和存放 hash 自身的列。对话表的 `message_text` 和问诊回执中的轮次 `messageText` 不参与计算，措辞不用于等价判定；轮次顺序、来源、档案版本和审计元数据仍参与，备份文件保留完整原文。它用于同一 schema 下排除这些字段的备份/恢复等价校验，不证明对话原文的逐字完整性，也不是跨版本 replay hash。
 - 当前 replay 是 Case Revision 到新 Epoch 的重新物化，不是 command-log replay；当前没有逐步 state hash 或通用故障编排 API。
 
-### 10.5 Case Truth、Brief 与 Action Trace
+### 10.5 Case Truth、Persona 与 Action Trace
 
 Case Truth 表示普通岗位不能直接读取、只能通过问诊和合规业务观察发现的本次病例事实。管理员在模拟数据患者详情的档案下方，通过默认折叠的“本次病例真值”核对来源疾病、Index Encounter 与相关证据；展开才请求 `GET /api/sim/v1/admin/synthetic-cases/:caseId/truth`，收起后移除真值正文，切换患者重新折叠。服务端从受信会话校验 administrator 岗位和 Workspace，返回病例标识、Index Encounter 引用与冻结的 Case Truth 资源，响应禁止 HTTP 缓存；非管理员返回 403，同工作区无对应病例返回 404。该入口不加入 Operation Catalog、CLI、Page Context 或 Agent Tools，也不返回模型输入。Patient Persona 控制患者开场与自由对话扮演；Investigation Result Snapshot 控制已成功解析的检查结果。三者都不进入普通 FHIR Search、Visible Source History 或 HIS 查询。
 

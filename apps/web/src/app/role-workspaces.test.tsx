@@ -2624,6 +2624,93 @@ describe('role workspaces', () => {
     expect(screen.getByRole('textbox', { name: '向患者提问' })).toBeTruthy()
   })
 
+  it('clears the send error after retry succeeds and allows the next doctor message', async () => {
+    const patient = {
+      birthDate: '1988-03-16',
+      gender: 'female',
+      id: 'candidate-patient-001',
+      identifier: 'CM-SYN-CANDIDATE-001',
+      name: '合成候选患者林晓',
+      synthetic: true,
+      versionId: '1',
+    }
+    const question = { code: 'symptom-onset', text: '什么时候开始发热？' }
+    let failed = false
+    let recovered = false
+    const doctorTurn = { id: 'doctor-turn', kind: 'text', messageText: question.text, personaRevision: null,
+      recordedAt: '2026-09-16T09:00:00+08:00', reportReference: null, sequence: 1, source: 'doctor-typed', speaker: 'doctor' }
+    const patientTurn = { ...doctorTurn, id: 'patient-turn', messageText: '昨天傍晚开始的。', personaRevision: 1, sequence: 2, source: 'patient-agent', speaker: 'patient' }
+
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({
+          laboratory: [],
+          medications: [],
+          prescriptionConclusionSupported: true,
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        return Response.json({
+          items: [{
+            caseId: 'case-direct',
+            encounterId: 'encounter-direct',
+            encounterVersion: '1',
+            patient,
+            presentation: virtualPatientPresentation,
+            status: 'first-visit',
+            taskId: 'task-doctor-direct',
+            taskVersion: '1',
+          }],
+          ...pagination(1),
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-direct') {
+        return Response.json({
+          allergies: [],
+          caseId: 'case-direct',
+          consultation: { turns: recovered ? [doctorTurn, patientTurn] : failed ? [doctorTurn] : [], version: recovered ? 3 : failed ? 2 : 1 },
+          encounter: { id: 'encounter-direct', status: 'in-progress', versionId: '1' },
+          patient,
+          presentation: virtualPatientPresentation,
+          priorFacts: [],
+          status: 'first-visit',
+          taskId: 'task-doctor-direct',
+          taskVersion: '1',
+        })
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-direct/actions/retry-consultation-reply') {
+        recovered = true
+        return Response.json(commandResponse({ caseId: 'case-direct', consultationVersion: 3, patientTurn }))
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-direct/actions/ask-consultation-question') {
+        failed = true
+        return Response.json({
+          error: {
+            code: 'CONSULTATION_REPLY_UNAVAILABLE',
+            message: 'Patient reply temporarily unavailable',
+          },
+        }, { status: 503 })
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('tab', { name: '问诊记录' }))
+    await user.type(await screen.findByRole('textbox', { name: '向患者提问' }), question.text)
+    await user.click(screen.getByRole('button', { name: '向患者提问' }))
+
+    await user.click(await screen.findByRole('button', { name: '重试患者回答' }))
+    expect(await screen.findByText('昨天傍晚开始的。')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect((screen.getByRole('textbox', { name: '向患者提问' }) as HTMLTextAreaElement).disabled).toBe(false)
+  })
+
   it('shows the doctor queue without the retired Virtual Patient entry point', async () => {
     stubEmptyDoctorWorkspace()
 

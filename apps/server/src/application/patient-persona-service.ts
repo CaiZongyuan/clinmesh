@@ -87,7 +87,7 @@ function conceptValues(resource: PersonaResource): { codes: string[]; terms: str
 }
 
 export function normalized(value: string): string {
-  return value.normalize('NFKC').toLocaleLowerCase('zh-CN').replaceAll(/[^\p{L}\p{N}]+/gu, '')
+  return value.normalize('NFKC').toLocaleLowerCase('zh-CN').replaceAll(/[^\p{L}\p{N}]+/gu, '').replaceAll('二型', '2型').replaceAll('一型', '1型')
 }
 
 function summarizedResource(resource: PersonaResource) {
@@ -108,25 +108,27 @@ function summarizedResource(resource: PersonaResource) {
   }
 }
 
+function diagnosisTerms(term: string): string[] {
+  const name = normalized(term.replace(/[(（](?:疾病|疾患|障碍|disorder|disease|finding)[)）]/gi, ''))
+  return name.endsWith('糖尿病') && /^[12]型/.test(name) ? [name, '糖尿病'] : [name]
+}
+
 export function hiddenDiagnosisTokens(
   hiddenResources: PersonaResource[],
   visibleResources: PersonaResource[],
 ): string[] {
   const visibleConditions = visibleResources.filter(resource => resource.resourceType === 'Condition')
   const visibleCodes = new Set(visibleConditions.flatMap(resource => conceptValues(resource).codes))
-  const visibleTerms = new Set(visibleConditions.flatMap(resource => (
-    conceptValues(resource).terms.map(normalized)
-  )))
-  return hiddenResources
+  const visibleTerms = new Set(visibleConditions.flatMap(resource => conceptValues(resource).terms.flatMap(diagnosisTerms)))
+  return [...new Set(hiddenResources
     .filter(resource => resource.resourceType === 'Condition')
-    .flatMap((resource) => {
+    .flatMap(resource => {
       const values = conceptValues(resource)
-      const alreadyVisible = values.codes.some(code => visibleCodes.has(code))
-        || values.terms.some(term => visibleTerms.has(normalized(term)))
-      return alreadyVisible ? [] : [...values.codes, ...values.terms]
+      if (values.codes.some(code => visibleCodes.has(code))) return []
+      return [...values.codes.map(normalized), ...values.terms.flatMap(diagnosisTerms)]
+        .filter(token => !visibleTerms.has(token))
     })
-    .map(normalized)
-    .filter(value => value.length >= 2)
+    .filter(value => value.length >= 2))]
 }
 
 function assertNoDiagnosisLeak(

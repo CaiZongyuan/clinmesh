@@ -586,6 +586,7 @@ function DoctorCaseController({
     },
   })
   const askQuestion = useMutation({
+    onMutate: (): void => { retryPatientReply.reset() },
     mutationFn: ({ caseId, message }: { caseId: string; message: string }) => {
       const current = detail.data
       if (current?.caseId !== caseId || current.consultation === undefined) {
@@ -604,6 +605,7 @@ function DoctorCaseController({
     onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const retryPatientReply = useMutation({
+    onMutate: (): void => { askQuestion.reset() },
     mutationFn: ({ caseId }: { caseId: string }) => {
       const current = detail.data
       if (current?.caseId !== caseId || current.consultation === undefined) {

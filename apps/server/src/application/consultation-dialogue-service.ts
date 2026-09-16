@@ -7,6 +7,7 @@ import { isLegacyPatientPersonaContent, type PatientPersonaContent } from '@clin
 import { z } from 'zod'
 import type { JsonChatCompletionsProvider } from '../infrastructure/ai/openai-chat-completions.ts'
 import type { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic-case-repository.ts'
+import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import { hiddenDiagnosisTokens, normalized, type PersonaResource } from './patient-persona-service.ts'
 import type { WorkflowService } from './workflow-service.ts'
@@ -27,6 +28,11 @@ const replyOutputSchema = z.object({
 const safeFallbackReply = '这个我说不清楚，您帮我看看我这是怎么了。'
 
 const dialogueContextTurnLimit = 40
+
+const experiencedSpecimenSchema = z.object({
+  collection: z.object({ collectedDateTime: z.string() }).optional(),
+  type: z.object({ text: z.string().optional() }).optional(),
+})
 
 type ConsultationDialogueErrorCode =
   | 'CONSULTATION_CASE_NOT_FOUND'
@@ -50,6 +56,7 @@ export class ConsultationDialogueError extends Error {
 
 export class ConsultationDialogueService {
   readonly #commands: CommandExecutor
+  readonly #fhir: FhirRepository
   readonly #cases: SyntheticCaseRepository
   readonly #model: string | undefined
   readonly #provider: JsonChatCompletionsProvider | undefined
@@ -58,11 +65,13 @@ export class ConsultationDialogueService {
   constructor(input: {
     cases: SyntheticCaseRepository
     commands: CommandExecutor
+    fhir: FhirRepository
     model?: string
     provider?: JsonChatCompletionsProvider
     workflow: WorkflowService
   }) {
     this.#commands = input.commands
+    this.#fhir = input.fhir
     this.#cases = input.cases
     this.#model = input.model
     this.#provider = input.provider
@@ -233,6 +242,16 @@ export class ConsultationDialogueService {
         })),
       knownConditions: detail.priorFacts.map(fact => fact.display),
       persona,
+      specimenExperiences: (detail.laboratoryRequests?.requests ?? []).flatMap(request => {
+        if (request.report === undefined) return []
+        const specimen = experiencedSpecimenSchema.parse(
+          this.#fhir.read(context, 'Specimen', request.report.specimenId),
+        )
+        return specimen.collection === undefined ? [] : [{
+          collectedAt: specimen.collection.collectedDateTime,
+          type: specimen.type?.text ?? '已采集标本',
+        }]
+      }),
       triageExperience: detail.triage === undefined ? undefined : {
         chiefComplaintToldByNurse: detail.triage.chiefComplaint,
         measuredVitals: {

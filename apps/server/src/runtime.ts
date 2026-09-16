@@ -239,6 +239,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const consultationDialogue = new ConsultationDialogueService({
       cases: syntheticCases,
       commands,
+      fhir,
       ...(consultationModel === undefined ? {} : { model: consultationModel }),
       ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
       workflow,

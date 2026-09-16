@@ -1440,6 +1440,36 @@ describe('SQLite lifecycle', () => {
       condition_id: 'condition-legacy-primary',
       coding_snapshot_json: expect.stringContaining('J10.1'),
     })
+    for (const migration of (await readdir(join(process.cwd(), 'drizzle'))).filter(name => name.endsWith('.sql') && name < '0045')) {
+      await copyFile(join(process.cwd(), 'drizzle', migration), join(legacyMigrationDirectory, migration))
+    }
+    applyMigrations(database, legacyMigrationDirectory)
+    const profile = createProfile({ batchId: 'legacy-persona-batch', createdAt: '2026-08-24T09:00:00+08:00', workspaceId: context.workspaceId })
+    new SyntheticPatientProfileRepository(database).createBatch([profile], 'actor-legacy-doctor')
+    database.driver.prepare(`INSERT INTO synthetic_case_instance (
+      workspace_id, case_id, profile_id, profile_revision, revision, case_type, status, active_brief_revision,
+      source_hash, visible_history_count, created_by_actor_id, created_at, updated_at
+    ) VALUES (?, 'synthetic-legacy', ?, 1, 2, 'new-problem', 'brief-ready', 1, ?, 0, 'actor-legacy-doctor', ?, ?)`)
+      .run(context.workspaceId, profile.profileId, 'a'.repeat(64), '2026-08-24T09:00:00+08:00', '2026-08-24T09:00:00+08:00')
+    const legacyBrief = JSON.stringify({ chiefComplaint: '发热一天', knownHistorySummary: '既往体健。', openingStatement: '医生，我发热了。', symptomTopics: [{ id: 'onset', name: '起病', answerPoints: ['昨天开始。'] }] })
+    database.driver.prepare(`INSERT INTO patient_brief_revision VALUES (?, 'synthetic-legacy', 1, ?, 'legacy-model', 'patient-brief-v1', ?, ?, ?, ?)`)
+      .run(context.workspaceId, legacyBrief, 'a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64), '2026-08-24T09:00:00+08:00')
+    database.driver.prepare(`INSERT INTO consultation_record (
+      workspace_id, epoch, record_id, case_id, sequence, question_code, question_text, answer_text, rule_version,
+      asked_by_actor_id, asked_by_practitioner_id, recorded_at
+    ) VALUES (?, ?, 'legacy-record', 'case-legacy', 1, 'symptom-onset', '什么时候发热？', '昨天傍晚开始。', 1, 'actor-legacy-doctor', 'practitioner-legacy-doctor', ?)`)
+      .run(context.workspaceId, context.epoch, '2026-08-24T09:00:00+08:00')
+    for (const migration of ['0045_patient-persona.sql', '0046_consultation-turn.sql']) {
+      await copyFile(join(process.cwd(), 'drizzle', migration), join(legacyMigrationDirectory, migration))
+    }
+    expect(applyMigrations(database, legacyMigrationDirectory).applied).toEqual(['0045_patient-persona.sql', '0046_consultation-turn.sql'])
+    expect(database.driver.prepare('SELECT content_json FROM patient_persona_revision WHERE case_id = ?').get('synthetic-legacy')).toEqual({ content_json: legacyBrief })
+    expect(database.driver.prepare('SELECT active_brief_revision FROM synthetic_case_instance WHERE case_id = ?').get('synthetic-legacy')).toEqual({ active_brief_revision: 1 })
+    expect(database.driver.prepare('SELECT sequence, speaker, source, message_text, actor_id, practitioner_id FROM consultation_turn WHERE case_id = ? ORDER BY sequence').all('case-legacy')).toEqual([
+      { sequence: 1, speaker: 'doctor', source: 'legacy-question-answer', message_text: '什么时候发热？', actor_id: 'actor-legacy-doctor', practitioner_id: 'practitioner-legacy-doctor' },
+      { sequence: 2, speaker: 'patient', source: 'legacy-question-answer', message_text: '昨天傍晚开始。', actor_id: null, practitioner_id: null },
+    ])
+    expect(database.driver.prepare('SELECT version FROM consultation WHERE case_id = ?').get('case-legacy')).toEqual({ version: 3 })
     expect(database.driver.pragma('foreign_key_check')).toEqual([])
     expect(database.driver.pragma('integrity_check', { simple: true })).toBe('ok')
     database.close()
