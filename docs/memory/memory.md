@@ -29,6 +29,8 @@
 
 ## 运行与验证边界
 
+- Windows 进程树测试必须在启动器自身仍存活时检查后代退出；只在启动器退出后检查，可能被 Node 的进程清理掩盖。用 `.cmd` 中间层和 detached 后代覆盖实际包管理器链路，并保留无关进程存活断言。
+
 - Windows 的 `core.symlinks=false` 会把 Git 符号链接检出为存放目标路径的普通文件。修改 `CLAUDE.md` 前先检查 Git mode；`120000` 的 blob 是链接目标，不能按 Markdown 添加末尾换行。文档或格式检查受 CRLF、符号链接、POSIX 权限影响时，在支持这些语义的 Linux checkout 验证，不改坏链接或放宽检查。
 - 从 Windows 用 `git archive` 同步 Linux 验证副本时，显式使用 `git -c core.autocrlf=false archive`；否则归档可能带入 CRLF，导致按 LF 字节锁定的合成数据校验和失败。先比较归档、Git blob 和检查副本，不修改校验和或测试阈值。
 

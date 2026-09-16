@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import spawn from 'cross-spawn'
 import { isIPv4 } from 'node:net'
 import { networkInterfaces, type NetworkInterfaceInfo } from 'node:os'
 import { resolve } from 'node:path'

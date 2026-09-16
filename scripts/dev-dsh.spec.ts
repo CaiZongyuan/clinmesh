@@ -1,8 +1,12 @@
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, normalize, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { parseLock } from './dsh-upstreams.ts'
 import {
+  createDshCommandRunner,
+  createDshFilesystem,
   awaitDshReadiness,
   createDshDevelopmentPlan,
   ensureDshRuntimeReady,
@@ -12,6 +16,47 @@ import {
   type DshEnsureDependencies,
   type DshReadinessDependencies,
 } from './dev-dsh.ts'
+
+describe('DSH command execution', () => {
+  it('runs the installed npm launcher', async () => {
+    await expect(createDshCommandRunner()('npm', ['--version'], process.cwd(), undefined, { quiet: true }))
+      .resolves.toMatch(/^\d+\.\d+\.\d+/)
+  })
+
+  it('passes arguments literally through a package manager script in a Unicode path', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh 中文 & commands-'))
+    try {
+      await writeFile(join(directory, 'package.json'), JSON.stringify({ scripts: { echo: 'node echo.cjs' } }))
+      await writeFile(join(directory, 'echo.cjs'), 'console.log(JSON.stringify(process.argv.slice(2)))')
+      const args = ['中文 空格', 'a&b', 'a|b', 'a>b', 'a<b', 'a^b', '"quoted"', '%PATH%', 'tail\\']
+      const output = await createDshCommandRunner()('npm', ['--silent', 'run', 'echo', '--', ...args], directory, undefined, { quiet: true })
+      expect(JSON.parse(output.trim())).toEqual(args)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+})
+
+it('repairs a dangling profile directory link without removing its target data', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'clinmesh links 中文 '))
+  const filesystem = createDshFilesystem()
+  const target = join(directory, 'target')
+  const link = join(directory, 'plugin')
+  try {
+    await symlink(join(directory, 'missing'), link, process.platform === 'win32' ? 'junction' : 'dir')
+    expect(filesystem.exists(link)).toBe(true)
+    await filesystem.rm(link)
+    await mkdir(target)
+    await writeFile(join(target, 'keep.txt'), 'keep')
+    await filesystem.symlink(target, link)
+    expect(await filesystem.readlink(link)).toBe(target)
+    expect(await readFile(join(link, 'keep.txt'), 'utf8')).toBe('keep')
+    await filesystem.rm(link)
+    expect(await readFile(join(target, 'keep.txt'), 'utf8')).toBe('keep')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 const upstreamLock = parseLock(
   JSON.parse(readFileSync(join(import.meta.dirname, '..', 'dsh-upstreams.lock.json'), 'utf8')),
@@ -40,16 +85,16 @@ describe('extractRuntimeVersions', () => {
 describe('resolveDshSandboxPaths', () => {
   it('derives the sandbox layout from the repository root and DSH version', () => {
     expect(resolveDshSandboxPaths('/repo', undefined, '0.1.5-rc.2')).toEqual({
-      root: '/repo/.data/dsh-runtime',
-      toolingDir: '/repo/.data/dsh-runtime/tooling',
-      dshvmCli: '/repo/.data/dsh-runtime/tooling/node_modules/@dsh-so/dshvm/bin/dshvm.js',
-      versionsDir: '/repo/.data/dsh-runtime/versions',
-      binDir: '/repo/.data/dsh-runtime/bin',
-      slotDir: '/repo/.data/dsh-runtime/versions/dsh-0.1.5-rc.2',
-      dshHome: '/repo/.data/dsh-runtime/versions/isolate/0.1.5-rc.2',
-      agUiDir: '/repo/.data/dsh-runtime/ag-ui',
-      profileDir: '/repo/.data/dsh-runtime/versions/isolate/0.1.5-rc.2/profiles/web',
-      stampPath: '/repo/.data/dsh-runtime/build-stamps.json',
+      root: normalize('/repo/.data/dsh-runtime'),
+      toolingDir: normalize('/repo/.data/dsh-runtime/tooling'),
+      dshvmCli: normalize('/repo/.data/dsh-runtime/tooling/node_modules/@dsh-so/dshvm/bin/dshvm.js'),
+      versionsDir: normalize('/repo/.data/dsh-runtime/versions'),
+      binDir: normalize('/repo/.data/dsh-runtime/bin'),
+      slotDir: normalize('/repo/.data/dsh-runtime/versions/dsh-0.1.5-rc.2'),
+      dshHome: normalize('/repo/.data/dsh-runtime/versions/isolate/0.1.5-rc.2'),
+      agUiDir: normalize('/repo/.data/dsh-runtime/ag-ui'),
+      profileDir: normalize('/repo/.data/dsh-runtime/versions/isolate/0.1.5-rc.2/profiles/web'),
+      stampPath: normalize('/repo/.data/dsh-runtime/build-stamps.json'),
     })
   })
 
@@ -104,8 +149,8 @@ describe('createDshDevelopmentPlan', () => {
         args: ['--filter', '@clinmesh/server', 'dev'],
         environment: {
           CLINMESH_TRUSTED_ORIGINS: 'http://127.0.0.1:51868,http://127.0.0.1:3080',
-          CLINMESH_DATABASE_PATH: '/repo/.data/clinmesh.sqlite',
-          CLINMESH_REFERENCE_DATABASE_PATH: '/repo/.data/clinmesh-reference.sqlite',
+          CLINMESH_DATABASE_PATH: resolve('/repo/.data/clinmesh.sqlite'),
+          CLINMESH_REFERENCE_DATABASE_PATH: resolve('/repo/.data/clinmesh-reference.sqlite'),
           CLINMESH_WEB_ROOT: '/absolute/web-root',
         },
         output: { prefix: '[Server]' },
@@ -245,7 +290,7 @@ function createFakeDependencies(
       if (failureCount <= failures.times) throw new Error('network down')
     }
     if (command === 'bun' && args[0] === '--version') return `${options.bunVersion ?? '1.4.0'}\n`
-    if (command === 'git' && args[0] === 'rev-parse' && cwd.endsWith('vendor/dsh-react-surface')) {
+    if (command === 'git' && args[0] === 'rev-parse' && cwd.endsWith(join('vendor', 'dsh-react-surface'))) {
       return `${surfaceCommitRef.value}\n`
     }
     if (command === 'git' && args[0] === 'rev-parse' && cwd.endsWith('ag-ui')) {
@@ -316,6 +361,16 @@ function createFakeDependencies(
 }
 
 describe('ensureDshRuntimeReady', () => {
+  it('reports missing commands without a network retry', async () => {
+    const fake = createFakeDependencies()
+    const run = fake.dependencies.runCommand
+    fake.dependencies.runCommand = async (...args) => {
+      if (args[0] === 'npm') throw Object.assign(new Error('spawn npm ENOENT'), { code: 'ENOENT' })
+      return run(...args)
+    }
+    await expect(ensureDshRuntimeReady(fake.dependencies)).rejects.toMatchObject({ hint: expect.stringContaining('PATH') })
+    expect(fake.writes.some(message => message.includes('重试'))).toBe(false)
+  })
   it('provisions the whole runtime on a cold sandbox', async () => {
     const { dependencies, files, links, commands } = createFakeDependencies()
     const { repositoryRoot, sandbox, versions } = dependencies
