@@ -39,7 +39,7 @@ import {
   PlusIcon,
   SearchIcon,
 } from 'lucide-react'
-import { useEffect, useEffectEvent, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
 
 type TriggerMode = 'add' | 'replace' | 'select'
@@ -155,11 +155,15 @@ function CatalogSearchForm({
   pending: boolean
   placeholder: string
 }) {
-  const searchLatest = useEffectEvent(onSearch)
+  // DSH 宿主运行 React 18.3.1，无 useEffectEvent（19.2 才转正）；用 latest ref 在不加入依赖的情况下调用最新回调。
+  const searchLatestRef = useRef(onSearch)
+  useEffect(() => {
+    searchLatestRef.current = onSearch
+  })
   useEffect(() => {
     const nextQuery = input.trim()
     if (!active || nextQuery.length === 1 || nextQuery === query) return
-    const timer = setTimeout(searchLatest, 300)
+    const timer = setTimeout(() => { searchLatestRef.current() }, 300)
     return () => clearTimeout(timer)
   }, [active, input, query])
   const invalidLength = input.trim().length === 1

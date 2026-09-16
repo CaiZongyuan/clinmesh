@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-DSH React Surface 使用 ShadowRoot 和宿主 React 18，standalone Web 使用 React 19。Tailwind 的非继承自定义属性依赖 `@property` 初始值，但 Chromium 不在 ShadowRoot 内注册这些声明，导致边框样式变量为空。作为 Base UI 菜单 render 元素的共享 Button 若使用普通函数组件，React 18 不会把 ref 作为 prop 传入，菜单因缺少按钮引用而无法完成首次定位。合同见 [issue #81](https://github.com/CaiZongyuan/clinmesh/issues/81)；整体集成边界由 [DSH 原生 Surface](../architecture/2026-08-30-dsh-native-clinmesh-surface.md) 拥有。
+DSH React Surface 使用 ShadowRoot 和宿主 React 18，standalone Web 使用 React 19。Tailwind 的非继承自定义属性依赖 `@property` 初始值，但 Chromium 不在 ShadowRoot 内注册这些声明，导致边框样式变量为空。作为 Base UI 菜单 render 元素的共享 Button 若使用普通函数组件，React 18 不会把 ref 作为 prop 传入，菜单因缺少按钮引用而无法完成首次定位。本 Note 只拥有样式与 ref 转发维度；React API 面维度由 [Surface React API 面约束](2026-09-16-dsh-surface-react-api-surface.md) 拥有。合同见 [issue #81](https://github.com/CaiZongyuan/clinmesh/issues/81)；整体集成边界由 [DSH 原生 Surface](../architecture/2026-08-30-dsh-native-clinmesh-surface.md) 拥有。
 
 ## Decision
 

@@ -39,6 +39,7 @@ pnpm check
 - 复杂状态变化通过共享 Command 模块执行；HTTP、FHIR Operation、Web/Desktop 和 Agent tools 不复制状态机。
 - TanStack Query 拥有服务端状态；Zustand 只保存客户端视图状态。禁止把同一接口结果同时写入两者。
 - Web/Desktop 共享 `contracts -> core -> ui/views`。Mobile 只复用 contracts、类型和纯函数，UI、导航、存储和 QueryClient 独立。
+- DSH 宿主页面提供上游锁定的 React 18.3.1，standalone Web 使用 React 19.2：Surface 共享代码只使用两个版本共有的 React API（禁止 `useEffectEvent` 等 19-only API，需要时用 latest-ref 模式），对话框类组件纳入 React 18/19 双版本浏览器合同测试，见 [Agent Note](.agents/notes/implemented/bug-fix/2026-09-16-dsh-surface-react-api-surface.md)。
 - `packages/contracts` 和 `packages/core` 不得读取 DOM、`localStorage`、Electron、React Native 或环境变量。平台能力由 app adapter 注入。
 - `packages/ui` 不依赖 `core`；`packages/views` 可依赖 `core + ui`，但不导入 Vite、Electron、Expo 或路由框架。
 - Agent tools 使用窄 schema、受信 context binding、幂等键、预期版本和完整审计；不提供任意 URL、SQL、Bundle 或任意 method/path/body 写工具。

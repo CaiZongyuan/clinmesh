@@ -61,7 +61,7 @@
 
 - Windows checkout 若把仓库中的 CLAUDE.md 符号链接物化为链接目标文本，文档换行检查会误报；CLI 的 POSIX 权限与文件符号链接测试也不能由该 checkout 证明。使用 Linux 文件系统上的独立 Git 检出验证，并把 Linux Node、pnpm 与 Bun 放在 PATH 前端，避免子进程拾取 Windows pnpm shim。跨命令复用的 WSL 验证副本和产物使用持久目录，避免重启清理 `/tmp`。
 
-- Linux 中 Chrome for Testing 的独立 profile 若启动后不返回 `--dump-dom`，可将 `CHROME_PATH` 指向同版本 Chrome Headless Shell。容器或 root 环境由外部 wrapper 提供必要启动参数，保持测试文档、断言与超时不变；通过 Turbo 运行时需显式转发该环境变量。
+- Linux 中 Chrome for Testing 的独立 profile 若启动后不返回 `--dump-dom`，可将 `CHROME_PATH` 指向同版本 Chrome Headless Shell。容器或 root 环境由外部 wrapper 提供必要启动参数，保持测试文档、断言与超时不变；通过 Turbo 运行时需显式转发该环境变量。本机（WSL2）没有系统 Chrome，浏览器合同测试用 `~/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell` 作为 `CHROME_PATH`。
 
 - WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。
 
