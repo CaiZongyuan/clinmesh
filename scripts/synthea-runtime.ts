@@ -5,17 +5,22 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 type SyntheaRuntimeCommand = 'doctor' | 'down' | 'up'
 
-interface ProviderHealth {
+export interface ProviderHealth {
   moduleCount: number
   profileId: string
   syntheaCommit: string
 }
 
 export interface SyntheaRuntimeDependencies {
+  ensureDockerAvailable: () => Promise<void>
   fetch: (input: string, init: RequestInit) => Promise<Response>
   providerUrl: string
   runDocker: (arguments_: string[]) => Promise<void>
   write: (message: string) => void
+}
+
+export function formatProviderHealthSummary(health: ProviderHealth): string {
+  return `Synthea ${health.syntheaCommit}，${health.profileId}，${health.moduleCount} 个模块`
 }
 
 const composeArguments = ['compose', '--file', 'compose.synthea-provider.yaml']
@@ -56,8 +61,8 @@ function parseProviderHealth(value: unknown): ProviderHealth {
   }
 }
 
-async function readProviderHealth(
-  dependencies: SyntheaRuntimeDependencies,
+export async function readProviderHealth(
+  dependencies: Pick<SyntheaRuntimeDependencies, 'fetch' | 'providerUrl'>,
 ): Promise<ProviderHealth> {
   const response = await dependencies.fetch(`${dependencies.providerUrl}/health`, {
     headers: { accept: 'application/json' },
@@ -116,6 +121,7 @@ export async function runSyntheaRuntimeCommand(
     return
   }
   if (command === 'up') {
+    await dependencies.ensureDockerAvailable()
     let health: ProviderHealth
     try {
       await dependencies.runDocker([
@@ -142,15 +148,14 @@ export async function runSyntheaRuntimeCommand(
       throw error
     }
     dependencies.write(
-      `Synthea Provider 已就绪：${dependencies.providerUrl}（Synthea ${health.syntheaCommit}，${health.profileId}，${health.moduleCount} 个模块）。`,
+      `Synthea Provider 已就绪：${dependencies.providerUrl}（${formatProviderHealthSummary(health)}）。`,
     )
     return
   }
 
   const health = await readProviderHealth(dependencies)
-  dependencies.write(
-    `Synthea Provider 健康：Synthea ${health.syntheaCommit}，${health.profileId}，${health.moduleCount} 个模块。`,
-  )
+  dependencies.write(`Synthea Provider 健康：${formatProviderHealthSummary(health)}。`)
+  await dependencies.ensureDockerAvailable()
   await dependencies.runDocker([
     ...composeArguments,
     'exec',
@@ -176,6 +181,36 @@ export function providerUrlFromEnvironment(
   return `http://127.0.0.1:${port}`
 }
 
+export function createSyntheaRuntimeDependencies(
+  environment: Readonly<Record<string, string | undefined>>,
+  write: (message: string) => void,
+): SyntheaRuntimeDependencies {
+  return {
+    ensureDockerAvailable: probeDockerCli,
+    fetch: globalThis.fetch,
+    providerUrl: providerUrlFromEnvironment(environment),
+    runDocker,
+    write,
+  }
+}
+
+async function probeDockerCli(): Promise<void> {
+  const available = await new Promise<boolean>((resolveAvailability) => {
+    const child = spawn('docker', ['--version'], {
+      shell: false,
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    child.once('error', () => resolveAvailability(false))
+    child.once('exit', code => resolveAvailability(code === 0))
+  })
+  if (!available) {
+    throw new Error(
+      '未检测到可用的 docker CLI；WSL 下请确认 Docker Desktop 正在运行且已为本发行版启用 WSL 集成。',
+    )
+  }
+}
+
 function runDocker(arguments_: string[]): Promise<void> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn('docker', arguments_, {
@@ -192,22 +227,24 @@ function runDocker(arguments_: string[]): Promise<void> {
   })
 }
 
-async function main(): Promise<void> {
+export function loadRepositoryEnvironment(): void {
   try {
     loadEnvFile(resolve(repositoryRoot, '.env'))
   } catch (error) {
     if (!isRecord(error) || error.code !== 'ENOENT') throw error
   }
+}
+
+async function main(): Promise<void> {
+  loadRepositoryEnvironment()
   const command = process.argv[2]
   if (!['doctor', 'down', 'up'].includes(command ?? '')) {
     throw new Error('用法：pnpm synthea:up | pnpm synthea:down | pnpm synthea:doctor')
   }
-  await runSyntheaRuntimeCommand(command as SyntheaRuntimeCommand, {
-    fetch: globalThis.fetch,
-    providerUrl: providerUrlFromEnvironment(process.env),
-    runDocker,
-    write: console.log,
-  })
+  await runSyntheaRuntimeCommand(
+    command as SyntheaRuntimeCommand,
+    createSyntheaRuntimeDependencies(process.env, console.log),
+  )
 }
 
 const entryPath = process.argv[1]

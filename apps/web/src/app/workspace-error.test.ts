@@ -14,6 +14,11 @@ function signedConflict(owner: 'clinical-document' | 'prescription') {
 }
 
 describe('workspace conflict messages', () => {
+  it('explains why active generation prevents clearing the patient library', () => {
+    expect(getWorkspaceErrorMessage(new ApiClientError(409, 'SCENARIO_GENERATION_RUNNING', 'private detail'), getWorkspaceMessages('zh-CN')))
+      .toBe('患者或梗概正在生成，请等待完成后再清空患者库。')
+  })
+
   it('maps a shared signed status according to its clinical owner', () => {
     expect(getWorkspaceErrorMessage(
       signedConflict('clinical-document'),

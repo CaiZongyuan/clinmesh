@@ -621,7 +621,7 @@ describe('DSH Agent Page Context HTTP contract', () => {
     expect(await hidden.json()).toMatchObject({ error: { code: 'INVALID_INPUT' } })
   })
 
-  it('exposes only read-only Scenario authoring status to an administrator context', async () => {
+  it('exposes synthetic data status and reviewed reset in the administrator workspace', async () => {
     const { cookie, runtime } = await setup('admin@demo.clinmesh.local')
     const response = await createContext(runtime, cookie, {
       version: 1,
@@ -634,8 +634,10 @@ describe('DSH Agent Page Context HTTP contract', () => {
       'ui.context.read',
       'ui.navigate',
       'ui.panel.focus',
+      'scenario.status.read',
       'scenario.providers.read',
       'scenario.generation.status.read',
+      'scenario.reset.propose',
     ])
   })
 

@@ -107,7 +107,7 @@ type PreferenceControlProps = Pick<
 }
 
 export const roleSections: Record<SessionContext['actor']['roleCode'], WorkspaceSection> = {
-  administrator: 'overview',
+  administrator: 'scenarioData',
   cashier: 'billing',
   'outpatient-doctor': 'consultation',
   pharmacist: 'pharmacy',
@@ -389,7 +389,6 @@ export function WorkspaceShell({
   const activeRoleSection = roleSections[session.actor.roleCode]
   const visibleRoutes = useMemo(() => workspaceRoutes.filter(route => (
     route.key === activeRoleSection
-    || (session.actor.roleCode === 'administrator' && route.key === 'scenarioData')
   )), [activeRoleSection, session.actor.roleCode])
   useEffect(() => {
     if (runtime.mode !== 'surface' || !runtime.surfaceNavigation) return

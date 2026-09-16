@@ -139,6 +139,10 @@ export const sessionContextSchema = z.object({
   }),
 })
 
+export const resetScenarioRequestSchema = z.object({
+  clearPatientLibrary: z.boolean().default(false),
+}).strict()
+
 export const scenarioStateSchema = z.object({
   clinicalReview: z.record(z.string(), z.unknown()).nullable(),
   epoch: z.string().min(1),
@@ -472,7 +476,7 @@ export const laboratoryServiceCandidateSearchInputSchema = z.object({
   pageSize: z.number().int().positive().max(50).default(20),
   panelOnly: z.boolean().default(false),
   query: z.string().trim().min(2).max(100).optional(),
-  sourceDataset: referenceLaboratorySourceDatasetSchema.optional(),
+  sourceDataset: referenceLaboratorySourceDatasetSchema.default('laboratory-cn'),
 }).strict()
 
 export const laboratoryServiceCandidateSearchSchema = z.object({

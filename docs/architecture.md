@@ -226,7 +226,7 @@ standalone Web、DSH Surface 和 CLI 最终调用相同的 Query 与 Command han
 | `fhir-native-immutable` | 已签署的 Composition、document Bundle、Provenance | 业务 Command 只创建新资源；更正创建显式修订关系，不覆盖已签实例 |
 | `domain-native` | Workspace Actor、Agent Client/Grant、Synthetic Patient Profile 与 Profile Revision、Synthetic Case Instance、Patient Brief Revision、Investigation Result Snapshot、Consultation 与 Consultation Record、Registration、Diagnosis Draft 与 Diagnosis Confirmation、Prescription、PaymentTransaction、库存账、临床草稿、Scenario Run、Action Trace、audit_log | 只通过 `/api/agent/v1`、`/api/his/v1`、`/api/sim/v1` 或内部 Command 写入 |
 | `domain-projection` | AuditEvent、InventoryItem | 从领域事实同事务生成；FHIR API 只读 |
-| `simulation-private` | Index Encounter、Case Truth、隐藏来源资源和生成模型输入 | 仅 Simulator 内部解析器可访问；普通 HIS、FHIR、来源历史详情和角色 Agent 均不可读取 |
+| `simulation-private` | Index Encounter、Case Truth、隐藏来源资源和生成模型输入 | Simulator 内部解析器可访问；管理员病例核对仅可读 Case Truth，生成模型输入仍不公开；普通 HIS、FHIR、来源历史详情和角色 Agent 均不可读取 |
 
 账务边界特别约定：Account、ChargeItem、Invoice 是标准交换事实并保存在 FHIR Resource Store；实际收款、退款、医保基金分配和收费员交账由领域账务表负责。两者通过明确引用关联，不把“账单”和“支付流水”混成一个资源。
 
@@ -441,7 +441,7 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 
 目录搜索返回稳定的 `system + version + code + display`。诊断、医嘱等本院 R5 业务事实在创建时保存所选 coding/display 快照，因此切换全局当前 Release 不会改写既有病历。Synthea R4 来源 coding 仅用于呈现 Visible Source History 和解析同 LOINC 的隐藏 Observation；不以显示文本匹配，不建设 Synthea 到本院疾病或药品目录的通用映射。
 
-Reference Concept 只表达检验术语、分类、值类型、UCUM 单位、标本、成人规则和 panel 关系，不表示医院已经开展。管理员按 Dataset 来源和 panel 状态搜索候选，候选同时返回 Dataset Release、成员数、标本、成人适用性和规则来源。LOINC active Class Type 1 Order/Both 根仍由 Catalog Enrichment Agent 补齐本院运营字段；`laboratory-cn` 只把 Dataset panel 根作为候选，并以确定性 policy 直接冻结单位、precision、成人规则、健康生成策略、TAT 180 分钟和未计价状态，不调用模型。每批最多选择 50 个根，根服务与 dependency-only 成员原子发布到唯一的 `hospital_service_catalog`；同一 `laboratory-cn` panel 跨 Reference Release 保持 Hospital Service ID 并递增版本。失败候选不激活，医生路径不调用 enrichment。
+Reference Concept 拥有检验术语、分类、值类型、UCUM 单位、标本、成人规则和 panel 关系。默认 Reference Release 包含疾病、药品和 `laboratory-cn`，不下载或导入独立 LOINC Dataset。Server 启动时通过内部 Command，自动把当前 Release 的所有 active `laboratory-cn` 单项和组合启用为 doctor-orderable Hospital Service；正常临床使用不需要管理员选择或发布。确定性 policy 冻结单位、precision、成人规则、健康生成策略、TAT 180 分钟和未计价状态，不调用 Catalog Enrichment。单项拥有独立可开服务，组合同时拥有不可单独开立的成员服务；同一来源编码跨 Release 保持服务 ID，重复启动不修改已经匹配的版本。普通组合取全部成员共同支持的标本，明确声明混合标本的组合保留各成员标本。默认 Release 不含 LOINC 时，已有 LOINC 服务停用，但已签发申请的冻结快照保留。管理员 CLI 保留显式配置路径：候选查询默认 laboratory-cn，显式 LOINC 来源需要包含该 Dataset 的 Reference Release；人工批次上限 50 根，LOINC 运营字段仍需 Catalog Enrichment。
 
 医生病例级检验目录只返回当前 Workspace/Epoch 中 active、doctor-orderable 的 Hospital Laboratory Service；dependency-only 叶子不会单独出现。所有可见项目都可保存草稿和正式开立，响应不含 Case Truth、模型或 Investigation Generation Capability。开立时冻结服务版本、source coding 和完整 report definition；成人规则按 Virtual Time 计算年龄，男/女规则优先于 `all`，其他或未知性别只使用 `all`。不足 18 岁或任一叶子没有适用规则时，保存和开立都以稳定领域错误失败。
 
@@ -1226,7 +1226,7 @@ clock_revision
 
 管理员显式请求异步 Patient Brief。Server-owned OpenAI-compatible transport 只接受启动配置的 HTTPS endpoint、模型和凭证，使用固定版本 prompt 与严格 schema；客户端不能覆盖 URL、模型、header 或请求体。成功结果经过结构校验和隐藏诊断泄漏检查后成为不可变 Brief Revision，失败或拒绝不会覆盖既有成功 revision。Case 必须选择一个成功 Brief Revision 才能开始。
 
-开始是带 expected revision 和幂等键的一次性 Command，直接创建本院 R5 Patient、Registration、Encounter、Queue Task 与所需工作流状态，不复制来源历史或参考目录。管理员 reset 在新 Epoch replay 同一不可变 Case Revision，并复用所选 Brief、Case Truth 和全部成功 Investigation Result Snapshot；replay 不重新调用 Synthea 或模型。
+开始是带 expected revision 和幂等键的一次性 Command，直接创建本院 R5 Patient、Registration、Encounter、Queue Task 与所需工作流状态，不复制来源历史或参考目录。默认重置在新 Epoch replay 同一不可变 Case Revision，并复用所选 Brief、Case Truth 和全部成功 Investigation Result Snapshot；replay 不重新调用 Synthea 或模型。管理员在模拟数据页通过带悬浮说明的“重置数据”打开二次确认，默认保留患者库，可选择同时清空。清空模式将当前患者库归档并退役关联 Case，不重放这些病例；来源病史、Brief 和真值从当前工作台移除，旧轮次诊疗及审计事实保留。两种模式都保留标准目录、已启用检验服务和账号。清空模式拒绝正在运行的患者或 Brief 生成任务，并取消尚未开始的相关生成任务。
 
 ### 10.4 确定性与故障注入
 
@@ -1238,7 +1238,7 @@ clock_revision
 
 ### 10.5 Case Truth、Brief 与 Action Trace
 
-Case Truth 表示普通岗位不能直接读取、只能通过问诊和合规业务观察发现的本次病例事实。Patient Brief 控制患者开场与受控问答；Investigation Result Snapshot 控制已成功解析的检查结果。三者都不进入普通 FHIR Search、Visible Source History 或 HIS 查询。
+Case Truth 表示普通岗位不能直接读取、只能通过问诊和合规业务观察发现的本次病例事实。管理员在模拟数据患者详情的梗概下方，通过默认折叠的“本次病例真值”核对来源疾病、Index Encounter 与相关证据；展开才请求 `GET /api/sim/v1/admin/synthetic-cases/:caseId/truth`，收起后移除真值正文，切换患者重新折叠。服务端从受信会话校验 administrator 岗位和 Workspace，返回病例标识、Index Encounter 引用与冻结的 Case Truth 资源，响应禁止 HTTP 缓存；非管理员返回 403，同工作区无对应病例返回 404。该入口不加入 Operation Catalog、CLI、Page Context 或 Agent Tools，也不返回模型输入。Patient Brief 控制患者开场与受控问答；Investigation Result Snapshot 控制已成功解析的检查结果。三者都不进入普通 FHIR Search、Visible Source History 或 HIS 查询。
 
 Action Trace 按 Scenario Run 记录 Command 尝试、结果、Effect 引用和资源版本，事件时间使用当前 Epoch 的 Virtual Time；Audit Event 继续保存真实接收时间。它不记录普通读取，不保存模型 chain-of-thought，也不代替 Audit Event 或 Provenance。首期不定义评分规则、Evaluation Spec、分数变化或 evaluator service account。
 
@@ -1504,7 +1504,7 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 
 ### 15.3 Web 与明确边界
 
-- Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员入口；管理员可生成 Synthetic Profile/Case、浏览 Visible Source History、生成并选择 Brief、直接开始病例、reset/replay，以及按 Dataset/panel 筛选并发布 Laboratory Service。候选列表显示 Release、成员数、标本、成人适用性和规则来源，并把项目整理来源与国家标准分开；未计价服务不显示为免费。医生工作台从全局 Reference Release 分页搜索诊断和药品，从病例级目录搜索本院已发布检验服务；诊断、检验和处方有效修改自动保存，已创建事实固定对应 snapshot。Investigation 的系统执行异常支持受控重试，不向医生展示生成 capability。病例库继续提供责任范围内的已完诊 Encounter 与受控更正入口。服务端状态只由 TanStack Query 缓存，退出或跨账户登录会清除非 session 查询。
+- Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员入口；管理员以模拟数据为唯一岗位首页，可生成 Synthetic Profile/Case、浏览 Visible Source History、生成并选择 Brief、查看本次病例真值、直接开始病例，并在确认影响范围后重置。检验目录默认自动启用 laboratory-cn，Web 不提供手动选择发布或标准/密集数据载入入口；未计价服务不显示为免费。医生工作台从全局 Reference Release 分页搜索诊断和药品，从病例级目录搜索本院已发布检验服务；诊断、检验和处方有效修改自动保存，已创建事实固定对应 snapshot。Investigation 的系统执行异常支持受控重试，不向医生展示生成 capability。病例库继续提供责任范围内的已完诊 Encounter 与受控更正入口。服务端状态只由 TanStack Query 缓存，退出或跨账户登录会清除非 session 查询。
 - 可见字符串具有中文和英文 catalog；独立 Web 主题支持 system、light 与 dark，DSH Surface 始终跟随宿主主题。岗位页面具有分页、加载、空、错误、冲突、无权限和成功状态，并覆盖长中文文本与窄视口。
 - DSH Web 可从统一 launcher 打开同一完整工作台，使用 Memory Router、ShadowRoot 和动态岗位 Tools；Agent 可执行读取、导航、选择、草稿和 preview，正式动作只进入 detached 人工审阅。
 - `clinmesh` CLI 通过 Operation Catalog、单岗位 Capability Grant 和领域 Skills 开放当前 Query、Command 与只读 FHIR 能力。

@@ -138,6 +138,74 @@ export class LaboratoryServicePublisher {
     this.#referenceData = input.referenceData
   }
 
+  ensureDefaultServices(): void {
+    const contexts = z.array(z.object({
+      workspaceId: z.string(), epoch: z.string(), scenarioRunId: z.string(),
+    })).parse(this.#database.driver.prepare(`
+      SELECT workspace.workspace_id AS workspaceId, workspace.active_epoch AS epoch,
+        run.scenario_run_id AS scenarioRunId
+      FROM workspace JOIN scenario_run AS run
+        ON run.workspace_id = workspace.workspace_id AND run.epoch = workspace.active_epoch
+    `).all())
+    for (const current of contexts) {
+      const context: ActorContext = { ...current, actorId: 'actor-laboratory-defaults', roleCode: 'administrator' }
+      const records: ReferenceLaboratoryRecord[] = []
+      let page = 1
+      let referenceReleaseId = ''
+      while (true) {
+        const result = this.#referenceData.searchLaboratoryCandidates(context, {
+          page, pageSize: 50, sourceDataset: 'laboratory-cn',
+        })
+        records.push(...result.items)
+        referenceReleaseId = result.referenceReleaseId
+        if (records.length >= result.total || result.items.length === 0) break
+        page += 1
+      }
+      if (records.length === 0) continue
+      const hasLoinc = this.#referenceData.searchLaboratoryCandidates(context, { page: 1, pageSize: 1, sourceDataset: 'loinc-zh-cn' }).total > 0
+      const retired = hasLoinc ? [] : z.array(z.object({ id: z.string(), version: z.number().int() })).parse(this.#database.driver.prepare(`
+        SELECT service_id AS id, version FROM hospital_service_catalog
+        WHERE workspace_id = ? AND epoch = ? AND active = 1
+          AND json_extract(config_json, '$.laboratoryService.referenceConcept.system') = 'http://loinc.org'
+      `).all(current.workspaceId, current.epoch))
+      const input = { referenceReleaseId, policyVersion: laboratoryCnPublicationPolicyVersion, retired }
+      const installed = z.array(z.object({ conceptId: z.string() })).parse(this.#database.driver.prepare(`
+        SELECT json_extract(config_json, '$.laboratoryService.referenceConcept.id') AS conceptId
+        FROM hospital_service_catalog WHERE workspace_id = ? AND epoch = ? AND active = 1
+          AND json_extract(config_json, '$.laboratoryService.doctorOrderable') = 1
+          AND json_extract(config_json, '$.laboratoryService.referenceReleaseId') = ?
+          AND json_extract(config_json, '$.laboratoryService.publicationPolicyVersion') = ?
+      `).all(current.workspaceId, current.epoch, referenceReleaseId, laboratoryCnPublicationPolicyVersion))
+      const installedIds = new Set(installed.map(item => item.conceptId))
+      const missing = records.filter(record => !installedIds.has(record.concept.id))
+      if (missing.length === 0 && retired.length === 0) continue
+      const roots = missing.map(record => this.#resolveRoot(context, referenceReleaseId, record.concept.id))
+      const drafts = this.#laboratoryCnServiceDrafts({ actorContext: context, referenceReleaseId }, roots)
+      this.#commands.execute({
+        context, contextRequirement: 'current', dataSchema: z.object({ serviceCount: z.number().int() }),
+        expectedVersions: {}, idempotencyKey: `laboratory-defaults:${current.epoch}:${canonicalJsonHash({ ...input, roots: missing.map(item => item.concept.id) })}`,
+        idempotencyScope: 'workspace', input, operation: 'laboratory-service-defaults.initialize',
+      }, () => {
+        const published = this.#publish(drafts, current)
+        const deactivate = this.#database.driver.prepare(`
+          UPDATE hospital_service_catalog SET active = 0, version = version + 1,
+            config_json = json_set(config_json, '$.laboratoryService.version', version + 1)
+          WHERE workspace_id = ? AND epoch = ? AND service_id = ? AND version = ?
+        `)
+        for (const service of retired) deactivate.run(current.workspaceId, current.epoch, service.id, service.version)
+        return {
+          data: { serviceCount: published.serviceIds.length },
+          effects: [...published.serviceIds.map(reference => ({
+            kind: 'created' as const, reference: `HospitalService/${reference}`,
+            versionId: String(published.versions.get(reference)),
+          })), ...retired.map(service => ({
+            kind: 'updated' as const, reference: `HospitalService/${service.id}`, versionId: String(service.version + 1),
+          }))],
+        }
+      })
+    }
+  }
+
   candidates(
     context: ActorContext,
     input: {
@@ -149,7 +217,7 @@ export class LaboratoryServicePublisher {
     },
   ) {
     this.#assertAdministrator(context)
-    const result = this.#referenceData.searchLaboratoryCandidates(context, input)
+    const result = this.#referenceData.searchLaboratoryCandidates(context, { ...input, sourceDataset: input.sourceDataset ?? 'laboratory-cn' })
     const states = this.#publications.candidateStates(
       context.workspaceId,
       context.epoch,
@@ -185,7 +253,7 @@ export class LaboratoryServicePublisher {
   }
 
   #candidateMetadata(context: ActorContext, record: ReferenceLaboratoryRecord) {
-    if (record.definition.kind !== 'laboratory-cn-panel') {
+    if (record.definition.kind === 'loinc') {
       const source = this.#referenceData.current().sources.find(item => (
         item.candidate?.datasetId === 'loinc-zh-cn' || item.sourceId.includes('loinc')
       ))
@@ -201,9 +269,11 @@ export class LaboratoryServicePublisher {
         standardStatus: null,
       }
     }
-    const leaves = record.panelMembers.map(member => (
-      this.#referenceData.laboratoryRecord(context, member.memberConceptId)
-    )).filter(isLaboratoryCnTestRecord)
+    const leaves = record.definition.kind === 'laboratory-cn-test'
+      ? [record].filter(isLaboratoryCnTestRecord)
+      : record.panelMembers.map(member => (
+          this.#referenceData.laboratoryRecord(context, member.memberConceptId)
+        )).filter(isLaboratoryCnTestRecord)
     const patientSexes = (['female', 'male', 'other', 'unknown'] as const).filter(sex => (
       leaves.length > 0 && leaves.every(leaf => (
         leaf.definition.adultReferenceRules.some(rule => (
@@ -357,7 +427,7 @@ export class LaboratoryServicePublisher {
         conceptId,
       ))
       const laboratoryCnRoots = roots.filter(
-        item => item.root.definition.kind === 'laboratory-cn-panel',
+        item => item.root.definition.kind !== 'loinc',
       )
       const loincRoots = roots.filter(item => item.root.definition.kind === 'loinc')
       const drafts = this.#laboratoryCnServiceDrafts(claimed, laboratoryCnRoots)
@@ -557,10 +627,10 @@ export class LaboratoryServicePublisher {
       }
     }
     const rootDefinition = root!.definition
-    if (rootDefinition.kind === 'laboratory-cn-panel' && leaves.some(leaf => (
-      leaf.definition.kind !== 'laboratory-cn-test'
-      || leaf.definition.specimen !== rootDefinition.specimen
-    ))) {
+    if (rootDefinition.kind === 'laboratory-cn-panel' && (
+      leaves.some(leaf => leaf.definition.kind !== 'laboratory-cn-test')
+      || this.#laboratoryCnSpecimen(root!, leaves) === undefined
+    )) {
       throw new LaboratoryServicePublisherError(
         'LABORATORY_PANEL_INVALID',
         'The laboratory-cn panel contains incompatible specimen definitions',
@@ -606,15 +676,24 @@ export class LaboratoryServicePublisher {
     }
   }
 
-  #specimen(record: ReferenceLaboratoryRecord) {
+  #laboratoryCnSpecimen(root: ReferenceLaboratoryRecord, leaves: ReferenceLaboratoryRecord[]): string | undefined {
+    if (root.definition.kind === 'loinc') return undefined
+    if (root.definition.specimen === '混合标本') return root.definition.specimen
+    const common = leaves.reduce((specimens, leaf) => leaf.definition.kind === 'loinc' ? []
+      : specimens.filter(specimen => leaf.definition.kind !== 'loinc' && leaf.definition.specimen.split('、').includes(specimen)),
+    root.definition.specimen.split('、'))
+    return common.length === 0 ? undefined : common.join('、')
+  }
+
+  #specimen(record: ReferenceLaboratoryRecord, specimenOverride?: string) {
     if (record.definition.kind === 'laboratory-cn-test'
       || record.definition.kind === 'laboratory-cn-panel') {
       return {
         code: `CN-SP-${createHash('sha256')
-          .update(record.definition.specimen)
+          .update(specimenOverride ?? record.definition.specimen)
           .digest('hex')
           .slice(0, 12)}`,
-        display: record.definition.specimen,
+        display: specimenOverride ?? record.definition.specimen,
         system: laboratorySpecimenSystem,
         version: '1',
       }
@@ -626,13 +705,13 @@ export class LaboratoryServicePublisher {
   }
 
   #laboratoryCnServiceDrafts(
-    job: ClaimedLaboratoryServicePublicationJob,
+    job: Pick<ClaimedLaboratoryServicePublicationJob, 'actorContext' | 'referenceReleaseId'>,
     roots: ResolvedRoot[],
   ): Array<{ draft: ServiceDraft; rootConceptId?: string }> {
     const drafts: Array<{ draft: ServiceDraft; rootConceptId?: string }> = []
     const standardStatus = this.#laboratoryStandardStatus(job.actorContext)
     for (const resolved of roots) {
-      if (resolved.root.definition.kind !== 'laboratory-cn-panel'
+      if (resolved.root.definition.kind === 'loinc'
         || resolved.leaves.some(leaf => leaf.definition.kind !== 'laboratory-cn-test')) {
         throw new LaboratoryServicePublisherError(
           'LABORATORY_PANEL_INVALID',
@@ -641,7 +720,7 @@ export class LaboratoryServicePublisher {
         )
       }
       const rootDefinition = resolved.root.definition
-      const componentServiceIds = resolved.leaves.map(leaf => this.#stableServiceId(
+      const componentServiceIds = rootDefinition.kind === 'laboratory-cn-test' ? [] : resolved.leaves.map(leaf => this.#stableServiceId(
         `${resolved.root.concept.system}\0${resolved.root.concept.code}`
           + `\0${leaf.concept.system}\0${leaf.concept.code}`,
       ))
@@ -692,11 +771,12 @@ export class LaboratoryServicePublisher {
           serviceKind: 'laboratory',
           sourceDataset,
           standardStatus,
-          specimen: this.#specimen(resolved.root)!,
+          specimen: this.#specimen(resolved.root, this.#laboratoryCnSpecimen(resolved.root, resolved.leaves))!,
           tatMinutes: 180,
         },
         rootConceptId: resolved.root.concept.id,
       })
+      if (rootDefinition.kind === 'laboratory-cn-test') continue
       resolved.leaves.forEach((leaf, index) => {
         drafts.push({
           draft: {
@@ -870,7 +950,7 @@ export class LaboratoryServicePublisher {
 
   #publish(
     drafts: Array<{ draft: ServiceDraft; rootConceptId?: string }>,
-    job: ClaimedLaboratoryServicePublicationJob,
+    job: Pick<ClaimedLaboratoryServicePublicationJob, 'workspaceId' | 'epoch'>,
   ) {
     const serviceIds: string[] = []
     const rootServiceIds = new Map<string, string>()
@@ -1027,7 +1107,7 @@ export class LaboratoryServicePublisher {
     if (record !== undefined
       && record.concept.status === 'active'
       && record.concept.domain === 'laboratory'
-      && record.definition.kind === 'laboratory-cn-panel') return
+      && (record.definition.kind === 'laboratory-cn-panel' || record.definition.kind === 'laboratory-cn-test')) return
     if (record !== undefined
       && record.concept.status === 'active'
       && record.concept.domain === 'laboratory'

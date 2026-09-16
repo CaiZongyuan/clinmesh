@@ -4,8 +4,8 @@
     "version": "0.5.2"
   },
   "compositeRelease": {
-    "createdAt": "2026-09-02T00:00:00.000Z",
-    "releaseId": "clinmesh-cn-health-2026-09-02.r1",
+    "createdAt": "2026-09-15T00:00:00.000Z",
+    "releaseId": "clinmesh-cn-health-2026-09-15.r1",
     "schemaVersion": "1"
   },
   "datasets": [
@@ -28,16 +28,6 @@
       "releaseId": "nhsa-drugs@2026-01-09.r4",
       "sourceId": "cn-health-nhsa-drugs",
       "sourceUrl": "https://raw.githubusercontent.com/CaiZongyuan/cn-health-data/main/distribution/releases/nhsa-drugs/2026-01-09.r4/manifest.json"
-    },
-    {
-      "datasetId": "loinc-zh-cn",
-      "datasetSchemaVersion": 2,
-      "licenseId": "LOINC-5.8",
-      "manifestSha256": "801a5eb75f59db4d1a4cefe5d539a852d3f0c94110d2369b0c5ef6bd18753f8c",
-      "publishedAt": "2026-09-01",
-      "releaseId": "loinc-zh-cn@2.83.r2",
-      "sourceId": "cn-health-loinc-zh-cn",
-      "sourceUrl": "https://raw.githubusercontent.com/CaiZongyuan/cn-health-data/main/distribution/releases/loinc-zh-cn/2.83.r2/manifest.json"
     },
     {
       "datasetId": "laboratory-cn",

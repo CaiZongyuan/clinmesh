@@ -39,10 +39,11 @@ describe('HIS operation catalog', () => {
 
   it('describes source and panel filters for Laboratory Service candidates', () => {
     const operation = getHisOperation('admin.laboratory-services.candidates.search')
+    expect(operation.input.parse({})).toMatchObject({ sourceDataset: 'laboratory-cn' })
 
     expect(operation).toMatchObject({
       cliPath: ['admin', 'laboratory-services', 'candidates', 'search'],
-      version: 2,
+      version: 3,
     })
     expect(operation.input.parse({
       page: 1,

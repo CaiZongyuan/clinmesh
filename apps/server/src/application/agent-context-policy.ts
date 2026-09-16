@@ -138,7 +138,6 @@ export function validateAgentToolInputForContext(
 }
 
 export const proposalCommandOperations: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  'scenario.install.propose': ['scenario.install'],
   'scenario.reset.propose': ['scenario.reset'],
   'registration.patient.create.propose': ['patient.create-synthetic'],
   'registration.outpatient.propose': ['registration.register'],

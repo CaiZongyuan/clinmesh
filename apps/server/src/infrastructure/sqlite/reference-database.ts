@@ -847,7 +847,7 @@ export function searchReferenceLaboratoryRecords(
       AND json_extract(
         reference_laboratory_definition.definition_json,
         '$.kind'
-      ) = 'laboratory-cn-panel'
+      ) IN ('laboratory-cn-panel', 'laboratory-cn-test')
     `
   } else if (input.sourceDataset === 'loinc-zh-cn') {
     filterCondition += `
@@ -903,7 +903,7 @@ export function searchReferenceLaboratoryRecords(
         OR json_extract(
           reference_laboratory_definition.definition_json,
           '$.kind'
-        ) = 'laboratory-cn-panel'
+        ) IN ('laboratory-cn-panel', 'laboratory-cn-test')
       )
       ${filterCondition}
       ${queryCondition}

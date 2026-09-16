@@ -150,7 +150,6 @@ describe('ClinMesh DSH Agent contracts', () => {
       'uiComponents',
     ])
     expect(agentViewsForRole('administrator')).toEqual([
-      'overview',
       'scenarioData',
       'settingsGeneral',
       'uiComponents',
@@ -165,14 +164,16 @@ describe('ClinMesh DSH Agent contracts', () => {
     expect(agentToolCatalog.map(tool => tool.mode)).not.toContain('command')
   })
 
-  it('exposes only Provider and generation status from Scenario authoring', () => {
+  it('exposes synthetic data status and reviewed reset from the administrator page', () => {
     const adminTools = agentToolsForContext('administrator', 'scenarioData')
     expect(adminTools.map(tool => tool.operationId)).toEqual([
       'ui.context.read',
       'ui.navigate',
       'ui.panel.focus',
+      'scenario.status.read',
       'scenario.providers.read',
       'scenario.generation.status.read',
+      'scenario.reset.propose',
     ])
   })
 

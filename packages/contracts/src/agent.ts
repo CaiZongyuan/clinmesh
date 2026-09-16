@@ -238,7 +238,7 @@ const pharmacist = ['pharmacist'] as const
 
 const sharedAgentViews = ['settingsGeneral', 'uiComponents'] as const
 const agentRoleViews: Readonly<Record<AgentHumanRoleCode, readonly AgentViewId[]>> = Object.freeze({
-  administrator: Object.freeze(['overview', 'scenarioData', ...sharedAgentViews] as const),
+  administrator: Object.freeze(['scenarioData', ...sharedAgentViews] as const),
   cashier: Object.freeze(['billing', ...sharedAgentViews] as const),
   'outpatient-doctor': Object.freeze(['consultation', ...sharedAgentViews] as const),
   pharmacist: Object.freeze(['pharmacy', ...sharedAgentViews] as const),
@@ -255,11 +255,10 @@ export const agentToolCatalog: readonly AgentToolDefinition[] = Object.freeze([
   tool('ui.navigate', 'clinmesh_navigate', 'ui', 'ui-only', allRoles, allViews),
   tool('ui.panel.focus', 'clinmesh_focus_panel', 'ui', 'ui-only', allRoles, allViews),
 
-  tool('scenario.status.read', 'clinmesh_read_scenario_status', 'query', 'read-only', administrator, ['overview']),
+  tool('scenario.status.read', 'clinmesh_read_scenario_status', 'query', 'read-only', administrator, ['scenarioData']),
   tool('scenario.providers.read', 'clinmesh_read_scenario_providers', 'query', 'read-only', administrator, ['scenarioData']),
   tool('scenario.generation.status.read', 'clinmesh_read_generation_status', 'query', 'read-only', administrator, ['scenarioData']),
-  tool('scenario.install.propose', 'clinmesh_prepare_scenario_install', 'proposal', 'human-review', administrator, ['overview']),
-  tool('scenario.reset.propose', 'clinmesh_prepare_scenario_reset', 'proposal', 'human-review', administrator, ['overview']),
+  tool('scenario.reset.propose', 'clinmesh_prepare_scenario_reset', 'proposal', 'human-review', administrator, ['scenarioData']),
 
   tool('registration.patient.search', 'clinmesh_search_patients', 'query', 'read-only', registrar, ['registration']),
   tool('registration.patient.select', 'clinmesh_select_registration_patient', 'ui', 'ui-only', registrar, ['registration']),

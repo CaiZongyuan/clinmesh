@@ -35,10 +35,10 @@
     },
     {
       "name": "dsh-react-surface",
-      "commit": "8ed46ab06e2e0058ff13e2ed91036cc5c3b6d653",
+      "commit": "c70aac89d31dcd607725aa5f416e88844b47e662",
       "source": "https://github.com/CaiZongyuan/dsh-react-surface.git",
       "owner": "https://github.com/CaiZongyuan/dsh-react-surface",
-      "supportPullRequest": "https://github.com/CaiZongyuan/dsh-react-surface/pull/12",
+      "supportPullRequest": "https://github.com/CaiZongyuan/dsh-react-surface/pull/13",
       "requires": [
         "@deepseek-ai/dsh",
         "dsh-ag-ui"

@@ -654,13 +654,10 @@ describe('trusted session and Scenario HTTP contract', () => {
     })
 
     const idempotencyKey = randomUUID()
-    const reset = () => runtime.app.request(
+    const reset = (body: unknown = {}) => runtime.app.request(
       `/api/sim/v1/scenario-runs/${initial.scenarioRunId}/actions/reset`,
       {
-        body: JSON.stringify({
-          epoch: 'epoch-forged',
-          workspaceId: 'workspace-forged',
-        }),
+        body: JSON.stringify(body),
         headers: {
           'content-type': 'application/json',
           cookie: adminCookie,
@@ -670,6 +667,9 @@ describe('trusted session and Scenario HTTP contract', () => {
         method: 'POST',
       },
     )
+    const forged = await reset({ epoch: 'epoch-forged', workspaceId: 'workspace-forged' })
+    expect(forged.status).toBe(400)
+    expect(apiErrorSchema.parse(await forged.json()).error.code).toBe('INVALID_INPUT')
     const resetResponse = await reset()
     expect(resetResponse.status).toBe(200)
     const resetResult = scenarioCommandResponseSchema.parse(await resetResponse.json())

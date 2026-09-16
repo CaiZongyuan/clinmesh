@@ -502,11 +502,11 @@ interface ScenarioStateRow {
 }
 
 export class ScenarioError extends Error {
-  readonly code: 'ROLE_NOT_ALLOWED' | 'SCENARIO_RUN_CONFLICT' | 'SCENARIO_STATE_MISSING'
+  readonly code: 'ROLE_NOT_ALLOWED' | 'SCENARIO_RUN_CONFLICT' | 'SCENARIO_STATE_MISSING' | 'SCENARIO_GENERATION_RUNNING'
   readonly status: 403 | 404 | 409
 
   constructor(
-    code: 'ROLE_NOT_ALLOWED' | 'SCENARIO_RUN_CONFLICT' | 'SCENARIO_STATE_MISSING',
+    code: 'ROLE_NOT_ALLOWED' | 'SCENARIO_RUN_CONFLICT' | 'SCENARIO_STATE_MISSING' | 'SCENARIO_GENERATION_RUNNING',
     message: string,
   ) {
     super(message)
@@ -614,6 +614,7 @@ export class ScenarioService {
   }
 
   reset(input: {
+    clearPatientLibrary?: boolean
     context: ActorContext
     idempotencyKey: string
     scenarioRunId: string
@@ -625,7 +626,7 @@ export class ScenarioService {
       expectedVersions: {},
       idempotencyKey: input.idempotencyKey,
       idempotencyScope: 'workspace',
-      input: { scenarioRunId: input.scenarioRunId },
+      input: { scenarioRunId: input.scenarioRunId, ...(input.clearPatientLibrary === true ? { clearPatientLibrary: true } : {}) },
       operation: 'scenario.reset',
     }, (transaction) => {
       if (input.context.roleCode !== 'administrator') {
@@ -634,13 +635,38 @@ export class ScenarioService {
       if (input.scenarioRunId !== input.context.scenarioRunId) {
         throw new ScenarioError('SCENARIO_RUN_CONFLICT', 'The Scenario Run is no longer active')
       }
+      if (input.clearPatientLibrary === true) {
+        const running = this.#database.driver.prepare(`
+          SELECT 1 FROM scenario_generation_job WHERE workspace_id = ? AND status = 'running'
+          UNION ALL SELECT 1 FROM patient_brief_job WHERE workspace_id = ? AND status = 'running'
+          LIMIT 1
+        `).get(input.context.workspaceId, input.context.workspaceId)
+        if (running !== undefined) throw new ScenarioError('SCENARIO_GENERATION_RUNNING', '患者或梗概正在生成，请等待完成后再清空患者库。')
+      }
       const currentState = this.current(input.context)
       const blueprint = knownScenarioBlueprints.find(
         candidate => candidate.scenarioId === currentState.scenarioId,
       ) ?? installableScenarioBlueprints.candidate
       const transition = this.#transitionEpoch(input.context, blueprint)
       // The reset audit belongs to the closing Epoch; replayed FHIR facts belong to the new Epoch.
-      this.#replaySyntheticCases?.({
+      if (input.clearPatientLibrary === true) {
+        const now = new Date().toISOString()
+        this.#database.driver.prepare(`
+          UPDATE synthetic_patient_profile SET archived_at = ?
+          WHERE workspace_id = ? AND archived_at IS NULL
+        `).run(now, input.context.workspaceId)
+        this.#database.driver.prepare(`
+          UPDATE synthetic_case_instance SET status = 'retired', revision = revision + 1, updated_at = ?
+          WHERE workspace_id = ? AND status != 'retired'
+        `).run(now, input.context.workspaceId)
+        for (const table of ['scenario_generation_job', 'patient_brief_job']) {
+          this.#database.driver.prepare(`
+            UPDATE ${table} SET status = 'failed', error_code = 'SCENARIO_DATA_RESET',
+              error_message = '患者库已清空，生成任务已取消。', started_at = ?, finished_at = ?, updated_at = ?
+            WHERE workspace_id = ? AND status = 'queued'
+          `).run(now, now, now, input.context.workspaceId)
+        }
+      } else this.#replaySyntheticCases?.({
         fromContext: input.context,
         toContext: {
           ...input.context,

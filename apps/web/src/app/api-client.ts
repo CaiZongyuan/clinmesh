@@ -28,13 +28,10 @@ import {
   issuePrescriptionResponseSchema,
   laboratoryOrderResponseSchema,
   laboratoryRequestDraftResponseSchema,
-  laboratoryServiceCandidateSearchSchema,
-  laboratoryServicePublicationJobSchema,
   paymentPreviewResponseSchema,
   paymentResponseSchema,
   pharmacyQueueSchema,
   prescriptionDraftResponseSchema,
-  publishLaboratoryServicesResponseSchema,
   prescriptionReviewResponseSchema,
   dispenseResponseSchema,
   encounterCompletionPreviewSchema,
@@ -61,8 +58,8 @@ import {
   type ScenarioState,
   type SessionContext,
 } from '@clinmesh/contracts/his'
-import type { ReferenceLaboratorySourceDataset } from '@clinmesh/contracts/reference-data'
 import {
+  administratorCaseTruthSchema,
   patientBriefJobSchema,
   patientBriefRevisionListSchema,
   scenarioGenerationJobSchema,
@@ -373,48 +370,6 @@ export function getReferenceDataReleases(signal?: AbortSignal) {
   )
 }
 
-export function searchLaboratoryServiceCandidates(
-  query: string,
-  page = 1,
-  filters: {
-    panelOnly?: boolean
-    sourceDataset?: ReferenceLaboratorySourceDataset
-  } = {},
-  signal?: AbortSignal,
-) {
-  const parameters = new URLSearchParams({ page: String(page), pageSize: '20' })
-  if (query.length > 0) parameters.set('query', query)
-  if (filters.panelOnly === true) parameters.set('panelOnly', 'true')
-  if (filters.sourceDataset !== undefined) {
-    parameters.set('sourceDataset', filters.sourceDataset)
-  }
-  return apiGet(
-    `/api/his/v1/admin/laboratory-services/candidates?${parameters.toString()}`,
-    laboratoryServiceCandidateSearchSchema,
-    signal,
-  )
-}
-
-export function publishLaboratoryServices(
-  entries: Array<{ conceptId: string; expectedVersion: number }>,
-  idempotencyKey: string,
-) {
-  return apiMutation(
-    '/api/his/v1/admin/laboratory-services/actions/publish',
-    publishLaboratoryServicesResponseSchema,
-    { input: { entries } },
-    { idempotencyKey },
-  )
-}
-
-export function getLaboratoryServicePublicationJob(jobId: string, signal?: AbortSignal) {
-  return apiGet(
-    `/api/his/v1/admin/laboratory-services/jobs/${encodeURIComponent(jobId)}`,
-    laboratoryServicePublicationJobSchema,
-    signal,
-  )
-}
-
 function referenceCatalogPath(kind: 'diagnoses' | 'laboratory' | 'medications', query: string, page: number) {
   const parameters = new URLSearchParams({ page: String(page), pageSize: '20' })
   if (query.length > 0) parameters.set('query', query)
@@ -452,23 +407,11 @@ export function searchReferenceMedications(query: string, page = 1, signal?: Abo
   )
 }
 
-export function installScenario(
-  kind: 'candidate' | 'density',
-  idempotencyKey: string,
-) {
-  return apiMutation(
-    '/api/sim/v1/scenarios/actions/install',
-    scenarioCommandResponseSchema,
-    { kind },
-    { idempotencyKey },
-  )
-}
-
-export function resetScenario(scenarioRunId: string, idempotencyKey: string) {
+export function resetScenario(scenarioRunId: string, idempotencyKey: string, clearPatientLibrary = false) {
   return apiMutation(
     `/api/sim/v1/scenario-runs/${encodeURIComponent(scenarioRunId)}/actions/reset`,
     scenarioCommandResponseSchema,
-    {},
+    { clearPatientLibrary },
     { idempotencyKey },
   )
 }
@@ -515,6 +458,14 @@ export function getSyntheticPatientProfile(profileId: string, signal?: AbortSign
   return apiGet(
     `/api/sim/v1/synthetic-patients/${encodeURIComponent(profileId)}`,
     syntheticPatientProfileDetailSchema,
+    signal,
+  )
+}
+
+export function getAdministratorCaseTruth(caseId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/sim/v1/admin/synthetic-cases/${encodeURIComponent(caseId)}/truth`,
+    administratorCaseTruthSchema,
     signal,
   )
 }

@@ -107,6 +107,7 @@ export function getWorkspaceErrorMessage(
   if (error.status === 403 || ['CSRF_FAILED', 'ROLE_NOT_ALLOWED'].includes(error.code)) {
     return messages.permissionDeniedDescription
   }
+  if (error.code === 'SCENARIO_GENERATION_RUNNING') return messages.scenarioGenerationRunningDescription
   if (error.code === 'INVALID_INPUT') return messages.invalidInputDescription
   if (error.code === 'NETWORK_ERROR') return messages.networkErrorDescription
   if (error.code === 'REQUEST_TIMEOUT') return messages.requestTimeoutDescription

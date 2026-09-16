@@ -324,7 +324,7 @@ export class ReferenceDataService {
       if (release === undefined) {
         throw new ReferenceDataError(
           'REFERENCE_RELEASE_NOT_FOUND',
-          'The configured current Reference Data Release was not found',
+          'The configured current Reference Data Release was not found; run pnpm reference:sync to materialize the locked release',
         )
       }
       return release

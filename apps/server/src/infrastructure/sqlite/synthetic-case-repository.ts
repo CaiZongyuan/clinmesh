@@ -341,9 +341,21 @@ export class SyntheticCaseRepository {
 
   get(workspaceId: string, caseIdValue: string): SyntheticCaseInstance | undefined {
     const row = this.#database.driver.prepare(`${selectCase}
-      WHERE workspace_id = ? AND case_id = ?
+      WHERE workspace_id = ? AND case_id = ? AND status != 'retired'
     `).get(workspaceId, caseIdValue)
     return row === undefined ? undefined : this.#mapCase(caseRowSchema.parse(row))
+  }
+
+  restoreRetired(workspaceId: string, caseIdValue: string, now: string): SyntheticCaseInstance {
+    this.#database.driver.prepare(`
+      UPDATE synthetic_case_instance
+      SET status = CASE WHEN active_brief_revision IS NULL THEN 'brief-pending' ELSE 'brief-ready' END,
+        revision = revision + 1, updated_at = ?
+      WHERE workspace_id = ? AND case_id = ? AND status = 'retired'
+    `).run(now, workspaceId, caseIdValue)
+    const restored = this.get(workspaceId, caseIdValue)
+    if (restored === undefined) throw new SyntheticCaseRepositoryError('CASE_SOURCE_INVALID', 'The archived Synthetic Case could not be restored')
+    return restored
   }
 
   hasMaterialization(workspaceId: string, epoch: string, caseIdValue: string): boolean {
@@ -368,7 +380,7 @@ export class SyntheticCaseRepository {
 
   getByProfile(workspaceId: string, profileId: string): SyntheticCaseInstance | undefined {
     const row = this.#database.driver.prepare(`${selectCase}
-      WHERE workspace_id = ? AND profile_id = ?
+      WHERE workspace_id = ? AND profile_id = ? AND status != 'retired'
       ORDER BY profile_revision DESC, case_id
       LIMIT 1
     `).get(workspaceId, profileId)

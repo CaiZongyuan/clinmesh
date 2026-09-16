@@ -25,6 +25,7 @@ import type {
 import { openReferenceDatabase } from '../src/infrastructure/sqlite/reference-database.ts'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+import { referenceDatabaseIsReady } from '../src/reference-readiness.ts'
 
 class LaboratoryEnrichmentProvider implements JsonChatCompletionsProvider {
   calls: JsonChatCompletionInput[] = []
@@ -634,6 +635,62 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     )).json()).data.request
   }
 
+  it('makes every laboratory-cn panel and test orderable without manual publication', async () => {
+    const fixture = await createRuntime()
+    const response = await fixture.runtime.app.request(
+      '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20',
+      { headers: { cookie: fixture.administratorCookie } },
+    )
+    const candidates = laboratoryServiceCandidateSearchSchema.parse(await response.json())
+    expect(referenceDatabaseIsReady(fixture.referenceDatabasePath, '.', 'laboratory-service-reference-v1')).toBe(true)
+    expect(referenceDatabaseIsReady(fixture.referenceDatabasePath, '.', 'new-release')).toBe(false)
+    expect(candidates.total).toBe(3)
+    expect(candidates.items.every(item => item.sourceDataset.datasetId === 'laboratory-cn' && item.status === 'published')).toBe(true)
+    const started = await startMaterializedCase(fixture)
+    const catalog = caseLaboratoryCatalogSearchSchema.parse(await (await fixture.runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}/reference-catalogs/laboratory?page=1&pageSize=20`,
+      { headers: { cookie: fixture.doctorCookie } },
+    )).json())
+    expect(catalog.items.filter(item => candidates.items.some(candidate => candidate.publishedServiceId === item.id))).toHaveLength(3)
+    fixture.runtime.laboratoryServicePublisher.ensureDefaultServices()
+    const unchanged = caseLaboratoryCatalogSearchSchema.parse(await (await fixture.runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}/reference-catalogs/laboratory?page=1&pageSize=20`,
+      { headers: { cookie: fixture.doctorCookie } },
+    )).json())
+    expect(unchanged).toEqual(catalog)
+    const reset = await fixture.runtime.app.request('/api/sim/v1/scenario-runs/scenario-run-1/actions/reset', {
+      method: 'POST', body: '{}', headers: { cookie: fixture.administratorCookie,
+        origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    })
+    expect(reset.status).toBe(200)
+    const afterReset = laboratoryServiceCandidateSearchSchema.parse(await (await fixture.runtime.app.request(
+      '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20',
+      { headers: { cookie: fixture.administratorCookie } },
+    )).json())
+    expect(afterReset.items.map(item => item.publishedServiceId)).toEqual(candidates.items.map(item => item.publishedServiceId))
+
+  })
+
+  it.each([
+    { panelSpecimen: '全血、血清', leafSpecimen: '全血', expected: '全血' },
+    { panelSpecimen: '混合标本', leafSpecimen: '血清', expected: '混合标本' },
+  ])('publishes declared specimen alternatives and mixed panels: $panelSpecimen', async ({ panelSpecimen, leafSpecimen, expected }) => {
+    const fixture = await createRuntime()
+    editReferenceDatabase(fixture.referenceDatabasePath, database => {
+      database.driver.prepare(`UPDATE reference_laboratory_definition
+        SET definition_json = json_set(definition_json, '$.specimen', ?)
+        WHERE concept_id = 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC'`).run(panelSpecimen)
+      database.driver.prepare(`UPDATE reference_laboratory_definition
+        SET definition_json = json_set(definition_json, '$.specimen', ?)
+        WHERE concept_id = 'wst-886:2026:0100101A'`).run(leafSpecimen)
+    })
+    await publishLaboratoryCnPanel(fixture.runtime, fixture.administratorCookie)
+    const row = fixture.runtime.database.driver.prepare(`SELECT config_json FROM hospital_service_catalog
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+      AND json_extract(config_json, '$.laboratoryService.referenceConcept.code') = 'CN-LAB-CBC'`).get() as { config_json: string }
+    expect(laboratoryServiceSnapshotSchema.parse(JSON.parse(row.config_json).laboratoryService).specimen.display).toBe(expected)
+  })
+
   it('paginates orderable Laboratory Service candidates', async () => {
     const { administratorCookie, runtime } = await createRuntime()
     const candidatePages = await Promise.all([1, 2].map(async page => (
@@ -642,7 +699,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
         { headers: { cookie: administratorCookie } },
       )).json())
     )))
-    expect(candidatePages.map(page => page.total)).toEqual([4, 4])
+    expect(candidatePages.map(page => page.total)).toEqual([3, 3])
     expect(new Set(candidatePages.flatMap(page => page.items.map(item => item.concept.id))).size)
       .toBe(2)
   })
@@ -726,6 +783,8 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       SELECT service_id, config_json FROM hospital_service_catalog
       WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
         AND json_extract(config_json, '$.laboratoryService.sourceDataset.datasetId') = 'laboratory-cn'
+        AND (json_extract(config_json, '$.laboratoryService.doctorOrderable') = 0
+          OR json_extract(config_json, '$.laboratoryService.referenceConcept.code') = 'CN-LAB-CBC')
       ORDER BY json_extract(config_json, '$.laboratoryService.doctorOrderable') DESC, service_id
     `).all() as Array<{ config_json: string; service_id: string }>
     expect(rows).toHaveLength(3)
@@ -807,12 +866,14 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       SELECT service_id, version FROM hospital_service_catalog
       WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
         AND json_extract(config_json, '$.laboratoryService.sourceDataset.datasetId') = 'laboratory-cn'
+        AND (json_extract(config_json, '$.laboratoryService.doctorOrderable') = 0
+          OR json_extract(config_json, '$.laboratoryService.referenceConcept.code') = 'CN-LAB-CBC')
       ORDER BY service_id
     `).all() as Array<{ service_id: string; version: number }>
     expect(republishedRows).toHaveLength(3)
     expect(republishedRows.find(row => row.service_id === rootService.id)).toMatchObject({
       service_id: rootService.id,
-      version: 2,
+      version: 3,
     })
 
   })
@@ -825,6 +886,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
         AND json_extract(config_json, '$.laboratoryService.sourceDataset.datasetId') = 'laboratory-cn'
         AND json_extract(config_json, '$.laboratoryService.doctorOrderable') = 1
+        AND json_array_length(json_extract(config_json, '$.laboratoryService.componentServiceIds')) > 0
     `).get() as { config_json: string; service_id: string; version: number }
     const firstService = laboratoryServiceSnapshotSchema.parse(
       JSON.parse(firstRow.config_json).laboratoryService,
@@ -873,11 +935,12 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
         AND json_extract(config_json, '$.laboratoryService.sourceDataset.datasetId') = 'laboratory-cn'
         AND json_extract(config_json, '$.laboratoryService.doctorOrderable') = 1
+        AND json_array_length(json_extract(config_json, '$.laboratoryService.componentServiceIds')) > 0
     `).get() as { config_json: string; service_id: string; version: number }
     const secondService = laboratoryServiceSnapshotSchema.parse(
       JSON.parse(secondRow.config_json).laboratoryService,
     )
-    expect(secondRow).toMatchObject({ service_id: firstRow.service_id, version: 2 })
+    expect(secondRow).toMatchObject({ service_id: firstRow.service_id, version: 4 })
     expect(secondService).toMatchObject({
       id: firstService.id,
       referenceConcept: { id: 'laboratory-panel-cn:2026-10-01:CN-LAB-CBC' },
@@ -894,7 +957,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
         id: firstService.id,
         referenceReleaseId: 'laboratory-service-reference-v1',
         sourceDataset: { releaseId: 'laboratory-cn@2026-09-01.r1' },
-        version: 1,
+        version: 2,
       })
   })
 
@@ -966,7 +1029,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     const { administratorCookie, doctorCookie, runtime } = fixture
 
     const candidatesResponse = await runtime.app.request(
-      '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20&query=58410-2',
+      '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20&sourceDataset=loinc-zh-cn&query=58410-2',
       { headers: { cookie: administratorCookie } },
     )
     if (candidatesResponse.status !== 200) {
@@ -1015,7 +1078,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
 
     const started = await startMaterializedCase(fixture)
     const doctorCatalogResponse = await runtime.app.request(
-      `/api/his/v1/doctor/cases/${started.caseId}/reference-catalogs/laboratory?page=1&pageSize=20`,
+      `/api/his/v1/doctor/cases/${started.caseId}/reference-catalogs/laboratory?page=1&pageSize=20&query=58410-2`,
       { headers: { cookie: doctorCookie } },
     )
     expect(doctorCatalogResponse.status).toBe(200)
@@ -1048,7 +1111,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       expect(response.status).toBe(200)
       return caseLaboratoryCatalogSearchSchema.parse(await response.json())
     }
-    expect((await searchCatalog('血常规 血')).total).toBe(1)
+    expect((await searchCatalog('血常规 血')).total).toBe(2)
     expect((await searchCatalog('血常规 不存在')).total).toBe(0)
 
     const publishedService = doctorCatalog.items[0]!
@@ -1135,6 +1198,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       SELECT COUNT(*) AS count FROM hospital_service_catalog
       WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
       AND json_extract(config_json, '$.laboratoryService.doctorOrderable') = 0
+      AND json_extract(config_json, '$.laboratoryService.referenceConcept.system') = 'http://loinc.org'
     `).get()).toEqual({ count: 1 })
   })
 
@@ -1201,7 +1265,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     expect(runtime.database.driver.prepare(`
       SELECT COUNT(*) AS count FROM hospital_service_catalog
       WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
-        AND json_extract(config_json, '$.laboratoryService.id') IS NOT NULL
+        AND json_extract(config_json, '$.laboratoryService.referenceConcept.system') = 'http://loinc.org'
     `).get()).toEqual({ count: 0 })
   })
 
@@ -1283,7 +1347,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       SELECT COUNT(*) AS count, MAX(version) AS version
       FROM hospital_service_catalog
       WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
-        AND json_extract(config_json, '$.laboratoryService.id') IS NOT NULL
+        AND json_extract(config_json, '$.laboratoryService.referenceConcept.system') = 'http://loinc.org'
     `).get()).toEqual({ count: 2, version: 1 })
   })
 
@@ -1302,7 +1366,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       status: 'failed',
     })
     expect(laboratoryServiceCandidateSearchSchema.parse(await (await runtime.app.request(
-      '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20&query=58410-2',
+      '/api/his/v1/admin/laboratory-services/candidates?page=1&pageSize=20&sourceDataset=loinc-zh-cn&query=58410-2',
       { headers: { cookie: administratorCookie } },
     )).json())).toMatchObject({
       items: [{

@@ -11,7 +11,7 @@ describe('Node.js server configuration', () => {
       CLINMESH_CURSOR_SECRET: 'cursor-secret-with-at-least-32-characters',
       CLINMESH_DATABASE_PATH: '/var/lib/clinmesh/clinmesh.sqlite',
       CLINMESH_DEMO_PASSWORD: 'Synthetic-password-2026!',
-    })).toEqual({
+    }, '/clinmesh-config-test-isolated')).toEqual({
       authBaseUrl: 'http://127.0.0.1:51868',
       authSecret: 'auth-secret-with-at-least-32-characters',
       cursorSecret: 'cursor-secret-with-at-least-32-characters',
@@ -112,6 +112,52 @@ describe('Node.js server configuration', () => {
 
   it('rejects an invalid listener port before startup', () => {
     expect(() => readServerConfig({ CLINMESH_PORT: 'invalid' })).toThrow()
+  })
+
+  it('defaults the current reference release to the locked composite release', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'clinmesh-server-lock-'))
+    const serverDirectory = join(workspace, 'apps/server')
+    await mkdir(serverDirectory, { recursive: true })
+    await writeFile(join(workspace, 'pnpm-workspace.yaml'), 'packages: []\n', 'utf8')
+    await writeFile(join(workspace, 'reference-data.lock.json'), JSON.stringify({
+      compositeRelease: { releaseId: 'clinmesh-cn-health-locked.r1' },
+    }), 'utf8')
+    const requiredEnvironment = {
+      CLINMESH_AUTH_SECRET: 'auth-secret-with-at-least-32-characters',
+      CLINMESH_CURSOR_SECRET: 'cursor-secret-with-at-least-32-characters',
+      CLINMESH_DATABASE_PATH: '/var/lib/clinmesh/clinmesh.sqlite',
+      CLINMESH_DEMO_PASSWORD: 'Synthetic-password-2026!',
+    }
+
+    try {
+      expect(readServerConfig({ ...requiredEnvironment }, serverDirectory)).toMatchObject({
+        referenceReleaseId: 'clinmesh-cn-health-locked.r1',
+      })
+      expect(readServerConfig({
+        ...requiredEnvironment,
+        CLINMESH_REFERENCE_RELEASE_ID: 'explicit-release',
+      }, serverDirectory)).toMatchObject({ referenceReleaseId: 'explicit-release' })
+    } finally {
+      await rm(workspace, { force: true, recursive: true })
+    }
+  })
+
+  it('keeps the reference release unset when no valid lock exists in the workspace', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'clinmesh-server-nolock-'))
+    await writeFile(join(workspace, 'pnpm-workspace.yaml'), 'packages: []\n', 'utf8')
+    await writeFile(join(workspace, 'reference-data.lock.json'), 'not json', 'utf8')
+    const requiredEnvironment = {
+      CLINMESH_AUTH_SECRET: 'auth-secret-with-at-least-32-characters',
+      CLINMESH_CURSOR_SECRET: 'cursor-secret-with-at-least-32-characters',
+      CLINMESH_DATABASE_PATH: '/var/lib/clinmesh/clinmesh.sqlite',
+      CLINMESH_DEMO_PASSWORD: 'Synthetic-password-2026!',
+    }
+
+    try {
+      expect(readServerConfig({ ...requiredEnvironment }, workspace)).not.toHaveProperty('referenceReleaseId')
+    } finally {
+      await rm(workspace, { force: true, recursive: true })
+    }
   })
 
   it('loads the workspace .env while preserving explicit environment overrides', async () => {

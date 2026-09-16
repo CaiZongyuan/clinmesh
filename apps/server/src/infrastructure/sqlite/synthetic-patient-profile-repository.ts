@@ -42,7 +42,8 @@ export class SyntheticPatientProfileRepository {
     this.#database = database
   }
 
-  createBatch(profiles: readonly SyntheticPatientProfile[], actorId: string): void {
+  createBatch(profiles: readonly SyntheticPatientProfile[], actorId: string): string[] {
+    const restored: string[] = []
     const insert = this.#database.driver.prepare(`
       INSERT INTO synthetic_patient_profile (
         workspace_id, profile_id, batch_id, batch_name, source_patient_id,
@@ -80,6 +81,12 @@ export class SyntheticPatientProfileRepository {
         profile.updatedAt,
       )
       if (result.changes === 1) this.#insertRevision(profile, actorId)
+      else if (this.#database.driver.prepare(`
+        UPDATE synthetic_patient_profile SET archived_at = NULL, updated_at = ?
+        WHERE workspace_id = ? AND profile_id = ? AND archived_at IS NOT NULL
+      `).run(profile.updatedAt, profile.workspaceId, profile.profileId).changes === 1) {
+        restored.push(profile.profileId)
+      }
       this.#database.driver.prepare(`
         INSERT INTO synthetic_patient_profile_batch (
           workspace_id, profile_id, batch_id, batch_name, provider_id, created_at
@@ -93,11 +100,12 @@ export class SyntheticPatientProfileRepository {
         profile.createdAt,
       )
     }
+    return restored
   }
 
   get(workspaceId: string, profileId: string): SyntheticPatientProfile | undefined {
     const row = this.#database.driver.prepare(`${selectProfile}
-      WHERE workspace_id = ? AND profile_id = ?
+      WHERE workspace_id = ? AND profile_id = ? AND archived_at IS NULL
     `).get(workspaceId, profileId)
     return row === undefined ? undefined : this.#map(rowSchema.parse(row))
   }
@@ -147,7 +155,7 @@ export class SyntheticPatientProfileRepository {
     const total = z.object({ count: z.number().int().nonnegative() }).strict().parse(
       this.#database.driver.prepare(`
         SELECT COUNT(*) AS count FROM synthetic_patient_profile
-        WHERE workspace_id = ? AND (
+        WHERE workspace_id = ? AND archived_at IS NULL AND (
           ? IS NULL OR instr(lower(display_name), lower(?)) > 0
           OR instr(lower(mrn), lower(?)) > 0
           OR instr(lower(batch_name), lower(?)) > 0
@@ -186,7 +194,7 @@ export class SyntheticPatientProfileRepository {
               AND outpatient.status != 'completed'
           ) AS active_visit
         FROM synthetic_patient_profile AS profile
-        WHERE profile.workspace_id = ? AND (
+        WHERE profile.workspace_id = ? AND profile.archived_at IS NULL AND (
           ? IS NULL OR instr(lower(profile.display_name), lower(?)) > 0
           OR instr(lower(profile.mrn), lower(?)) > 0
           OR instr(lower(profile.batch_name), lower(?)) > 0
