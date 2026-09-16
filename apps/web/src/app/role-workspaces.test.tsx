@@ -1125,13 +1125,14 @@ describe('role workspaces', () => {
 
   it('localizes patient library counts and preserves an open generation draft on host language changes', async () => {
     window.history.replaceState(null, '', '/scenario-data')
-    stubScenarioDataWorkspace({ profileAvailable: true, syntheaAvailable: true })
+    stubScenarioDataWorkspace({ profileAvailable: true, syntheaAvailable: false })
     const user = userEvent.setup()
     const rendered = render(<WebApp runtime={{ mode: 'surface', surfaceLocale: 'en-US' }} />)
     expect(await screen.findByText('1 patient')).toBeTruthy()
     expect(screen.getAllByText('38 years').length).toBeGreaterThan(0)
     await user.click(screen.getByRole('button', { name: 'Generate patients' }))
     const dialog = await screen.findByRole('dialog', { name: 'Generate patients' })
+    expect(within(dialog).getByText('Synthea Provider is not configured')).toBeTruthy()
     const count = within(dialog).getByRole('spinbutton', { name: 'Patient count' })
     await user.clear(count)
     await user.type(count, '3')
