@@ -39,6 +39,6 @@ DSH Web 原生入口的搭建与启动散落在部署指南约二十条手工命
 
 ## Consequences
 
-Linux/macOS 上 DSH Web 原生入口的进入成本收敛为 `pnpm dsh:setup` + `pnpm dev:dsh`；Windows 保留部署指南手工路径。`scripts/dev-dsh.spec.ts` 以注入文件系统与命令执行覆盖冷/热运行、link 自愈、stamp 重建、secret 生成与重试边界，不真实联网、不启动 DSH；进程同退语义由 dev-lan 的活体监督测试继续覆盖。AG-UI 的 GitHub clone 仍是网络依赖，重试一次后失败即停止。仓库迁移目录后无需人工修复 Profile 链接。
+DSH Web 原生入口的进入成本收敛为 `pnpm dsh:setup` + `pnpm dev:dsh`；Windows 命令、目录链接和进程生命周期由 [Windows DSH 开发入口](2026-09-16-windows-dsh-development.md) 拥有。`scripts/dev-dsh.spec.ts` 以注入文件系统与命令执行覆盖冷/热运行、link 自愈、stamp 重建、secret 生成与重试边界，真实适配器测试另行覆盖命令执行和目录链接；进程同退语义由开发进程的活体监督测试覆盖。AG-UI 的 GitHub clone 仍是网络依赖，重试一次后失败即停止。仓库迁移目录后无需人工修复 Profile 链接。
 
 Issue: https://github.com/CaiZongyuan/clinmesh/issues/102

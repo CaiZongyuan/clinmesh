@@ -1,7 +1,7 @@
-import { spawn } from 'node:child_process'
+import spawn from 'cross-spawn'
 import { randomBytes } from 'node:crypto'
 import { createConnection } from 'node:net'
-import { existsSync } from 'node:fs'
+import { lstatSync } from 'node:fs'
 import { appendFile, cp, mkdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import process from 'node:process'
@@ -237,9 +237,10 @@ const profileTemplateFiles = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.
 
 function isBuildStamps(value: unknown): value is BuildStamps {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  const record: Record<string, unknown> = value
-  return ['surfaceCommit', 'agUiCommit'].every(key =>
-    record[key] === undefined || typeof record[key] === 'string')
+  return ['surfaceCommit', 'agUiCommit'].every(key => {
+    const commit: unknown = Reflect.get(value, key)
+    return commit === undefined || typeof commit === 'string'
+  })
 }
 
 async function readBuildStamps(
@@ -271,7 +272,10 @@ async function retryNetworkStep(
 ): Promise<void> {
   try {
     await run()
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      throw new DevDshEnsureError(`${step}失败：${error.message}`, step, '命令或工作目录不存在；检查工具安装、PATH 与目录路径')
+    }
     dependencies.write(`⚠ ${step}失败，自动重试一次…`)
     try {
       await run()
@@ -511,27 +515,28 @@ export async function ensureDshRuntimeReady(
   return { profileNewlyAssembled, bridgeSecret }
 }
 
-function createRealFilesystem(): DshEnsureFilesystem {
+export function createDshFilesystem(): DshEnsureFilesystem {
   return {
-    exists: existsSync,
+    exists: path => lstatSync(path, { throwIfNoEntry: false }) !== undefined,
     readFile: path => readFile(path, 'utf8'),
     writeFile: (path, content) => writeFile(path, content, 'utf8'),
     appendFile: (path, content) => appendFile(path, content, 'utf8'),
     readlink: path => readlink(path, 'utf8'),
-    symlink: (target, path) => symlink(target, path, 'dir'),
+    symlink: (target, path) => symlink(target, path, process.platform === 'win32' ? 'junction' : 'dir'),
     rm: path => rm(path, { force: true, recursive: true }),
     cp: (from, to) => cp(from, to),
-    mkdir: path => mkdir(path, { recursive: true }),
+    mkdir: async path => { await mkdir(path, { recursive: true }) },
   }
 }
 
-function createRealRunCommand(): DshEnsureDependencies['runCommand'] {
+export function createDshCommandRunner(): DshEnsureDependencies['runCommand'] {
   return (command, args, cwd, environment, options) => new Promise((resolveCommand, reject) => {
     const quiet = options?.quiet === true
     const child = spawn(command, [...args], {
       cwd,
       env: { ...process.env, ...environment },
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
     })
     const chunks: Buffer[] = []
     const output = () => Buffer.concat(chunks).toString('utf8')
@@ -595,8 +600,8 @@ export async function runDshDevelopment(mode: 'run' | 'setup'): Promise<number> 
     repositoryRoot,
     sandbox,
     versions,
-    filesystem: createRealFilesystem(),
-    runCommand: createRealRunCommand(),
+    filesystem: createDshFilesystem(),
+    runCommand: createDshCommandRunner(),
     randomBytes,
     write: message => console.info(message),
   })

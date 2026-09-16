@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
+import spawn from 'cross-spawn'
 import { resolve } from 'node:path'
 
 export interface DevelopmentProcessOutput {
@@ -49,24 +50,35 @@ export function createPrefixedLineWriter(
   }
 }
 
-/** 以进程组方式并行启动开发进程；任一退出或收到 SIGINT/SIGTERM 时停止全部。 */
+/** POSIX 使用进程组，Windows 使用 Job Object；任一退出或收到终止信号时停止全部子树。 */
 export async function runDevelopmentProcesses(plan: DevelopmentProcessPlan): Promise<number> {
   const packageManager = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
   const repositoryRoot = resolve(import.meta.dirname, '..')
   const useProcessGroups = process.platform !== 'win32'
   const running: Array<{ child: ChildProcess, name: string, output?: DevelopmentProcessOutput }> = plan
-    .processes.map(configuration => ({
-      child: spawn(configuration.command ?? packageManager, configuration.args, {
-        cwd: repositoryRoot,
-        detached: useProcessGroups,
-        env: { ...process.env, ...configuration.environment },
-        stdio: configuration.output === undefined
-          ? 'inherit'
-          : ['ignore', 'pipe', 'pipe'],
-      }),
-      name: configuration.name,
-      output: configuration.output,
-    }))
+    .processes.map(configuration => {
+      const command = configuration.command ?? packageManager
+      const executable = process.platform === 'win32' ? 'powershell.exe' : command
+      const args = process.platform === 'win32'
+        ? ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
+            resolve(import.meta.dirname, 'windows-process-job.ps1'), process.execPath,
+            resolve(import.meta.dirname, 'windows-process-bootstrap.mjs'),
+            Buffer.from(JSON.stringify({ command, args: configuration.args })).toString('base64')]
+        : configuration.args
+      return {
+        child: spawn(executable, args, {
+          cwd: repositoryRoot,
+          detached: useProcessGroups,
+          windowsHide: true,
+          env: { ...process.env, ...configuration.environment },
+          stdio: configuration.output === undefined
+            ? 'inherit'
+            : ['ignore', 'pipe', 'pipe'],
+        }),
+        name: configuration.name,
+        output: configuration.output,
+      }
+    })
 
   for (const { child, output } of running) {
     if (output === undefined || child.stdout === null || child.stderr === null) continue
@@ -96,9 +108,8 @@ export async function runDevelopmentProcesses(plan: DevelopmentProcessPlan): Pro
       stopping = true
       exitCode = code
       for (const { child } of running) {
-        if (child.exitCode !== null || child.signalCode !== null) continue
         if (!useProcessGroups || child.pid === undefined) {
-          child.kill(signal)
+          if (child.exitCode === null && child.signalCode === null) child.kill(signal)
           continue
         }
         try {
@@ -109,8 +120,10 @@ export async function runDevelopmentProcesses(plan: DevelopmentProcessPlan): Pro
       }
     }
 
-    process.once('SIGINT', () => stop('SIGINT', 0))
-    process.once('SIGTERM', () => stop('SIGTERM', 0))
+    const interrupt = () => stop('SIGINT', 0)
+    const terminate = () => stop('SIGTERM', 0)
+    process.once('SIGINT', interrupt)
+    process.once('SIGTERM', terminate)
 
     for (const { child, name } of running) {
       child.once('error', (error) => {
@@ -123,7 +136,11 @@ export async function runDevelopmentProcesses(plan: DevelopmentProcessPlan): Pro
           if (code !== 0) console.error(`${name} exited with ${code ?? signal ?? 'unknown status'}`)
           stop('SIGTERM', code ?? 1)
         }
-        if (closed === running.length) resolveExitCode(exitCode)
+        if (closed === running.length) {
+          process.removeListener('SIGINT', interrupt)
+          process.removeListener('SIGTERM', terminate)
+          resolveExitCode(exitCode)
+        }
       })
     }
   })
