@@ -156,11 +156,22 @@ function quotedIdentifier(value: string): string {
   return `"${value.replaceAll('"', '""')}"`
 }
 
-function canonicalDomainRow(row: Record<string, unknown>): Record<string, unknown> {
+function omitDialogueWording(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(omitDialogueWording)
+  if (typeof value !== 'object' || value === null) return value
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => key !== 'messageText')
+    .map(([key, entry]) => [key, omitDialogueWording(entry)]))
+}
+
+function canonicalDomainRow(table: string, row: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(row).flatMap(([column, value]) => {
     if (column === 'canonical_state_hash') return []
+    if (table === 'consultation_turn' && column === 'message_text') return []
     if (typeof value !== 'string' || !column.endsWith('_json')) return [[column, value]]
-    return [[column, JSON.parse(value) as unknown]]
+    const parsed: unknown = JSON.parse(value)
+    return [[column, table === 'command_receipt' && typeof row.operation === 'string'
+      && row.operation.startsWith('consultation.') ? omitDialogueWording(parsed) : parsed]]
   }))
 }
 
@@ -183,7 +194,7 @@ function canonicalDomainTables(database: ClinMeshDatabase): Record<string, unkno
     const rows = database.driver.prepare(
       `SELECT * FROM ${quotedIdentifier(table)} ORDER BY ${orderBy}`,
     ).all() as Array<Record<string, unknown>>
-    return [table, rows.map(canonicalDomainRow)]
+    return [table, rows.map(row => canonicalDomainRow(table, row))]
   }))
 }
 

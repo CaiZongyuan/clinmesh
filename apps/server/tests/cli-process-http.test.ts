@@ -17,7 +17,8 @@ import { startServer } from '../src/server.ts'
 import { z } from 'zod'
 import {
   acknowledgeLaboratoryReportResponseSchema,
-  askConsultationQuestionResponseSchema,
+  sendConsultationMessageResponseSchema,
+  retryConsultationReplyResponseSchema,
   billingQueueSchema,
   caseLaboratoryCatalogSearchSchema,
   clinicalCatalogSchema,
@@ -45,11 +46,11 @@ import {
   triageResponseSchema,
 } from '@clinmesh/contracts/his'
 import {
-  patientBriefJobSchema,
+  patientPersonaJobSchema,
   scenarioGenerationJobSchema,
   startSyntheticCaseResultSchema,
   syntheticCaseInstanceSchema,
-  type PatientBriefContent,
+  type PatientPersonaContent,
   type ScenarioGenerationRequest,
   type ScenarioProviderCapabilities,
 } from '@clinmesh/contracts/scenario'
@@ -162,9 +163,12 @@ class CliE2eSyntheaProvider implements ScenarioGenerationProvider {
 class CliE2eChatProvider implements JsonChatCompletionsProvider {
   readonly #outputs: unknown[]
 
-  constructor(brief: PatientBriefContent) {
+  constructor(brief: PatientPersonaContent) {
     this.#outputs = [
       brief,
+      { reply: '两天前开始发热，咽口水也疼。' },
+      new Error('Synthetic temporary dialogue failure'),
+      { reply: '没有自己加药。' },
       { conclusion: '白细胞计数升高。', interpretation: 'high', value: 11.2 },
     ]
   }
@@ -172,6 +176,7 @@ class CliE2eChatProvider implements JsonChatCompletionsProvider {
   async completeJson(_input: JsonChatCompletionInput) {
     const output = this.#outputs.shift()
     if (output === undefined) throw new Error('No synthetic CLI E2E model output remains')
+    if (output instanceof Error) throw output
     return { content: JSON.stringify(output), model: 'synthetic-cli-e2e-model' }
   }
 }
@@ -480,15 +485,18 @@ describe('clinmesh CLI process over real HTTP', () => {
     const password = 'synthetic-cli-cross-role-password'
     const port = await reservePort()
     const serverOrigin = `http://127.0.0.1:${port}`
-    const brief: PatientBriefContent = {
+    const brief: PatientPersonaContent = {
       chiefComplaint: '发热伴咽痛两天',
       knownHistorySummary: '既往体健，无已知药物过敏。',
+      medicationMemory: '自己吃过一次退烧药。',
       openingStatement: '医生您好，我发热两天了，吞咽时咽痛。',
-      symptomTopics: [{
-        answerPoints: ['两天前开始发热。', '最高体温 38.8 摄氏度。'],
-        id: 'fever-course',
-        name: '发热经过',
-      }],
+      persona: {
+        attitude: '听医生的',
+        character: '温和',
+        healthLiteracy: '高中文化',
+        speechStyle: '普通话',
+      },
+      symptomExperience: '两天前开始发热，最高 38.8 摄氏度，咽口水疼。',
     }
     const chatProvider = new CliE2eChatProvider(brief)
     const runtime = await createClinMeshRuntime({
@@ -500,7 +508,8 @@ describe('clinmesh CLI process over real HTTP', () => {
       demoPassword: password,
       investigationModel: 'synthetic-cli-investigation-model',
       migrationMode: 'apply',
-      patientBriefModel: 'synthetic-cli-brief-model',
+      patientPersonaModel: 'synthetic-cli-brief-model',
+      consultationModel: 'synthetic-cli-consultation-model',
       syntheaProvider: new CliE2eSyntheaProvider(),
       trustedOrigins: [serverOrigin],
     })
@@ -544,7 +553,7 @@ describe('clinmesh CLI process over real HTTP', () => {
     if (caseId === undefined) throw new Error('CLI cross-role generation produced no Synthetic Case')
 
     const briefResponse = await fetch(
-      `${serverOrigin}/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-brief-jobs`,
+      `${serverOrigin}/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-persona-jobs`,
       {
         body: '{}',
         headers: { ...controlHeaders, 'idempotency-key': 'cli-cross-role-brief-1' },
@@ -552,8 +561,8 @@ describe('clinmesh CLI process over real HTTP', () => {
       },
     )
     expect(briefResponse.status).toBe(200)
-    commandResponseSchema(patientBriefJobSchema).parse(await briefResponse.json())
-    expect(await runtime.patientBrief.processNext()).toMatchObject({ status: 'succeeded' })
+    commandResponseSchema(patientPersonaJobSchema).parse(await briefResponse.json())
+    expect(await runtime.patientPersona.processNext()).toMatchObject({ status: 'succeeded' })
     const caseResponse = await fetch(
       `${serverOrigin}/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}`,
       { headers: { cookie } },
@@ -680,6 +689,7 @@ describe('clinmesh CLI process over real HTTP', () => {
       'encounter.complete',
       'encounter.completion.preview',
       'encounter.consultation.ask',
+      'encounter.consultation.reply.retry',
       'encounter.diagnosis.confirm',
       'encounter.diagnosis.draft.set',
       'encounter.laboratory-request.draft.set',
@@ -700,9 +710,8 @@ describe('clinmesh CLI process over real HTTP', () => {
       'doctor.case.get',
       doctorCaseDetailSchema,
     )
-    const question = initialCase.consultation?.questions[0]
-    if (question === undefined || initialCase.consultation === undefined) {
-      throw new Error('Generated case has no consultation question')
+    if (initialCase.consultation === undefined) {
+      throw new Error('Generated case has no consultation record')
     }
     cliData(
       await execute(doctorToken, [
@@ -712,13 +721,13 @@ describe('clinmesh CLI process over real HTTP', () => {
       ], {
         encounterId: doctorItem.encounterId,
         encounterVersion: doctorItem.encounterVersion,
-        expectedVersion: initialCase.consultation.version,
-        questionCode: question.code,
+        expectedConsultationVersion: initialCase.consultation.version,
+        message: '您什么时候开始发热的？',
         taskId: doctorItem.taskId,
         taskVersion: doctorItem.taskVersion,
       }),
       'encounter.consultation.ask',
-      askConsultationQuestionResponseSchema,
+      sendConsultationMessageResponseSchema,
     )
     const activeDoctorItem = cliData(
       await execute(doctorToken, ['doctor', 'queue', 'list']),
@@ -726,6 +735,21 @@ describe('clinmesh CLI process over real HTTP', () => {
       doctorQueueSchema,
     ).items.find(item => item.encounterId === started.encounterId)
     if (activeDoctorItem === undefined) throw new Error('Consultation did not start the first visit')
+    const beforeFailure = cliData(await execute(doctorToken, ['doctor', 'case', 'get', '--case-id', doctorItem.caseId]), 'doctor.case.get', doctorCaseDetailSchema)
+    const failedQuestion = await execute(doctorToken, [
+      'encounter', 'consultation', 'ask', '--input', '-', '--idempotency-key', 'cli-question-with-outage',
+    ], {
+      encounterId: activeDoctorItem.encounterId, encounterVersion: activeDoctorItem.encounterVersion,
+      taskId: activeDoctorItem.taskId, taskVersion: activeDoctorItem.taskVersion,
+      expectedConsultationVersion: beforeFailure.consultation!.version, message: '您自己加过药吗？',
+    })
+    expect(failedQuestion.code).toBe(7)
+    const pending = cliData(await execute(doctorToken, ['doctor', 'case', 'get', '--case-id', doctorItem.caseId]), 'doctor.case.get', doctorCaseDetailSchema)
+    const retryArgs = ['encounter', 'consultation', 'retry-reply', '--input', '-', '--idempotency-key', 'cli-retry-patient-reply']
+    const retryInput = { encounterId: activeDoctorItem.encounterId, expectedConsultationVersion: pending.consultation!.version }
+    const recovered = cliData(await execute(doctorToken, retryArgs, retryInput), 'encounter.consultation.reply.retry', retryConsultationReplyResponseSchema)
+    expect(recovered.data.patientTurn.messageText).toBe('没有自己加药。')
+    expect(cliData(await execute(doctorToken, retryArgs, retryInput), 'encounter.consultation.reply.retry', retryConsultationReplyResponseSchema)).toEqual(recovered)
     const laboratoryCatalog = cliData(
       await execute(doctorToken, [
         'doctor', 'case', 'laboratory-catalog', 'search',

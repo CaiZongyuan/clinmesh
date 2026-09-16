@@ -171,7 +171,7 @@ describe('DSH Agent Page Context HTTP contract', () => {
       'a'.repeat(64), 0, 'actor-administrator', now, now,
     )
     runtime.database.driver.prepare(`
-      INSERT INTO patient_brief_revision (
+      INSERT INTO patient_persona_revision (
         workspace_id, case_id, revision, content_json, model_id,
         prompt_version, prompt_hash, input_hash, output_hash, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1178,7 +1178,7 @@ describe('DSH Agent Page Context HTTP contract', () => {
         method: 'POST',
       })
       expect(response.status).toBe(200)
-      return await response.json() as { auditId: string; requestId: string }
+      return await response.json() as { auditId: string; requestId: string; data: { patient: { id: string; versionId: string } } }
     }
     const first = await createPatient('CM-AGENT-LINK-001')
     const second = await createPatient('CM-AGENT-LINK-002')
@@ -1231,11 +1231,11 @@ describe('DSH Agent Page Context HTTP contract', () => {
     }
     const registrationResponse = await runtime.app.request('/api/his/v1/registrations/actions/register', {
       body: JSON.stringify({
-        expectedVersions: { 'Patient/candidate-patient-001': '1' },
+        expectedVersions: { [`Patient/${first.data.patient.id}`]: first.data.patient.versionId },
         input: {
           departmentId: catalog.departments[0]?.id,
           locationId: catalog.locations[0]?.id,
-          patientId: 'candidate-patient-001',
+          patientId: first.data.patient.id,
           visitDate: catalog.virtualDate,
           visitTypeId: catalog.visitTypes[0]?.id,
         },

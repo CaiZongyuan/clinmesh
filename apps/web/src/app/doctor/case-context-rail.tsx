@@ -102,8 +102,7 @@ function PageContext({ detail, locale, messages, section }: {
       <section aria-labelledby={headingId}>
         <h3 className="text-sm font-semibold" id={headingId}>{labels.consultationContext}</h3>
         <dl className="mt-2 grid grid-cols-2 gap-3">
-          <ContextFact label={messages.consultationRecord} value={labels.recordCount(consultation?.records.length ?? 0)} />
-          <ContextFact label={labels.availableQuestions} value={labels.questionCount(consultation?.questions.length ?? 0)} />
+          <ContextFact label={messages.consultationRecord} value={labels.recordCount(consultation?.turns.length ?? 0)} />
         </dl>
       </section>
     )

@@ -97,15 +97,6 @@ const virtualPatientPresentation = {
   },
 }
 
-const virtualPatient = {
-  birthDate: '1988-03-16',
-  gender: 'female',
-  id: 'virtual-patient-fever-001',
-  name: '合成候选患者林晓',
-  presentation: virtualPatientPresentation,
-  version: 'opaque-virtual-patient-version-token',
-}
-
 const administratorSession = {
   actor: {
     actorId: 'actor-administrator',
@@ -640,7 +631,7 @@ function stubScenarioDataWorkspace(options: {
         sourceReference,
       })
     }
-    if (url.pathname === `/api/sim/v1/synthetic-cases/${caseId}/patient-brief-jobs`) {
+    if (url.pathname === `/api/sim/v1/synthetic-cases/${caseId}/patient-persona-jobs`) {
       expect(init?.method).toBe('POST')
       expect(JSON.parse(String(init?.body))).toEqual({})
       return Response.json(commandResponse({
@@ -656,7 +647,7 @@ function stubScenarioDataWorkspace(options: {
         workspaceId: 'workspace-demo',
       }))
     }
-    if (url.pathname === '/api/sim/v1/patient-brief-jobs/patient-brief-job-001') {
+    if (url.pathname === '/api/sim/v1/patient-persona-jobs/patient-brief-job-001') {
       await new Promise(resolve => setTimeout(resolve, options.briefJobDelayMs ?? 0))
       briefJobReads += 1
       const failed = options.briefJobFails === true
@@ -665,7 +656,7 @@ function stubScenarioDataWorkspace(options: {
       return Response.json({
         caseId,
         createdAt: '2026-08-30T08:00:00+08:00',
-        error: failed ? { code: 'BRIEF_GENERATION_FAILED', message: '患者梗概服务暂时不可用' } : null,
+        error: failed ? { code: 'BRIEF_GENERATION_FAILED', message: '患者档案服务暂时不可用' } : null,
         finishedAt: failed || succeeded ? '2026-08-30T08:00:01+08:00' : null,
         jobId: 'patient-brief-job-001',
         resultRevision: succeeded ? 1 : null,
@@ -675,7 +666,7 @@ function stubScenarioDataWorkspace(options: {
         workspaceId: 'workspace-demo',
       })
     }
-    if (url.pathname === `/api/sim/v1/synthetic-cases/${caseId}/patient-brief-revisions`) {
+    if (url.pathname === `/api/sim/v1/synthetic-cases/${caseId}/patient-persona-revisions`) {
       return Response.json({
         activeRevision: briefGenerated ? 1 : null,
         items: briefGenerated ? [{
@@ -695,7 +686,7 @@ function stubScenarioDataWorkspace(options: {
           model: 'fake-brief-model',
           outputHash: 'b'.repeat(64),
           promptHash: 'c'.repeat(64),
-          promptVersion: 'patient-brief-v1',
+          promptVersion: 'patient-persona-v1',
           revision: 1,
           workspaceId: 'workspace-demo',
         }] : [],
@@ -974,7 +965,7 @@ function stubLaboratoryReportPolling(reportingSupported: boolean) {
       return Response.json({
         allergies: [],
         caseId: 'case-virtual-1',
-        consultation: { questions: [], records: [], version: 1 },
+        consultation: { turns: [], version: 1 },
         encounter: { id: 'encounter-virtual-1', status: 'in-progress', versionId: '1' },
         laboratoryRequests: {
           draftVersion: 0,
@@ -1106,7 +1097,7 @@ describe('role workspaces', () => {
     await user.click(reset)
     const confirmation = await screen.findByRole('alertdialog', { name: '确认重置数据' })
     await user.click(within(confirmation).getByRole('checkbox', { name: '同时清空合成患者库' }))
-    expect(within(confirmation).getByText(/来源病史、患者梗概和本次病例真值/)).toBeTruthy()
+    expect(within(confirmation).getByText(/来源病史、患者档案和本次病例真值/)).toBeTruthy()
     await user.click(within(confirmation).getByRole('button', { name: '确认重置' }))
     await waitFor(() => expect(resets).toEqual([true]))
     expect(await screen.findByText('还没有合成患者')).toBeTruthy()
@@ -1416,7 +1407,7 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    expect(await screen.findByRole('button', { name: '生成患者梗概' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: '生成患者档案' })).toBeTruthy()
     expect(screen.queryByRole('tab', { name: '来源' })).toBeNull()
     const date = await screen.findByRole('button', { name: /2026-07-01.*发热.*体温.*2 条记录/ })
     await user.click(date)
@@ -1521,7 +1512,7 @@ describe('role workspaces', () => {
     expect(document.body.textContent).not.toContain('index-condition')
   })
 
-  it('generates a Patient Brief explicitly from the synthetic patient library', async () => {
+  it('generates a Patient Persona explicitly from the synthetic patient library', async () => {
     window.history.replaceState(null, '', '/scenario-data')
     let caseStarts = 0
     stubScenarioDataWorkspace({
@@ -1534,22 +1525,22 @@ describe('role workspaces', () => {
 
     render(<WebApp />)
 
-    await screen.findByRole('button', { name: '生成患者梗概' })
-    expect(await screen.findByText('尚未生成患者梗概')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '生成患者梗概' }))
+    await screen.findByRole('button', { name: '生成患者档案' })
+    expect(await screen.findByText('尚未生成患者档案')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '生成患者档案' }))
 
-    expect(await screen.findByRole('status', { name: '患者梗概排队中' })).toBeTruthy()
+    expect(await screen.findByRole('status', { name: '患者档案排队中' })).toBeTruthy()
     expect(await screen.findByRole(
       'status',
-      { name: '患者梗概生成中' },
+      { name: '患者档案生成中' },
       { timeout: 2_500 },
     )).toBeTruthy()
     await user.click(screen.getByText('数据来源'))
-    await screen.findByRole('button', { name: '生成患者梗概' })
-    expect(await screen.findByRole('status', { name: '患者梗概生成中' })).toBeTruthy()
+    await screen.findByRole('button', { name: '生成患者档案' })
+    expect(await screen.findByRole('status', { name: '患者档案生成中' })).toBeTruthy()
     expect(await screen.findByRole(
       'status',
-      { name: '患者梗概已完成' },
+      { name: '患者档案已完成' },
       { timeout: 2_500 },
     )).toBeTruthy()
     expect(await screen.findByText('反复头晕一周')).toBeTruthy()
@@ -1561,7 +1552,7 @@ describe('role workspaces', () => {
     await waitFor(() => expect(caseStarts).toBe(1))
   })
 
-  it('does not carry an active Patient Brief job into another patient', async () => {
+  it('does not carry an active Patient Persona job into another patient', async () => {
     window.history.replaceState(null, '', '/scenario-data')
     stubScenarioDataWorkspace({
       briefJobDelayMs: 2_500,
@@ -1576,26 +1567,26 @@ describe('role workspaces', () => {
     expect(await screen.findByRole('heading', { name: '第二位合成患者' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /林晓.*CMSYN000001/ }))
     expect(await screen.findByRole('heading', { name: '林晓' })).toBeTruthy()
-    await screen.findByRole('button', { name: '生成患者梗概' })
-    await user.click(screen.getByRole('button', { name: '生成患者梗概' }))
+    await screen.findByRole('button', { name: '生成患者档案' })
+    await user.click(screen.getByRole('button', { name: '生成患者档案' }))
     expect(await screen.findByRole(
       'status',
-      { name: '患者梗概生成中' },
+      { name: '患者档案生成中' },
       { timeout: 3_500 },
     )).toBeTruthy()
 
     await user.click(screen.getByRole('button', { name: /第二位合成患者.*CMSYN000002/ }))
     expect(await screen.findByRole('heading', { name: '第二位合成患者' })).toBeTruthy()
-    await screen.findByRole('button', { name: '生成患者梗概' })
-    expect(screen.queryByRole('status', { name: '患者梗概生成中' })).toBeNull()
+    await screen.findByRole('button', { name: '生成患者档案' })
+    expect(screen.queryByRole('status', { name: '患者档案生成中' })).toBeNull()
 
     await user.click(screen.getByRole('button', { name: /林晓.*CMSYN000001/ }))
     expect(await screen.findByRole('heading', { name: '林晓' })).toBeTruthy()
-    await screen.findByRole('button', { name: '生成患者梗概' })
-    expect(await screen.findByRole('status', { name: '患者梗概生成中' })).toBeTruthy()
+    await screen.findByRole('button', { name: '生成患者档案' })
+    expect(await screen.findByRole('status', { name: '患者档案生成中' })).toBeTruthy()
   })
 
-  it('reports a failed Patient Brief generation with its error', async () => {
+  it('reports a failed Patient Persona generation with its error', async () => {
     window.history.replaceState(null, '', '/scenario-data')
     stubScenarioDataWorkspace({
       briefJobFails: true,
@@ -1605,11 +1596,11 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<WebApp />)
 
-    await screen.findByRole('button', { name: '生成患者梗概' })
-    await user.click(screen.getByRole('button', { name: '生成患者梗概' }))
+    await screen.findByRole('button', { name: '生成患者档案' })
+    await user.click(screen.getByRole('button', { name: '生成患者档案' }))
 
-    expect(await screen.findByRole('alert', { name: '患者梗概生成失败' })).toBeTruthy()
-    expect(screen.getByText('患者梗概服务暂时不可用')).toBeTruthy()
+    expect(await screen.findByRole('alert', { name: '患者档案生成失败' })).toBeTruthy()
+    expect(screen.getByText('患者档案服务暂时不可用')).toBeTruthy()
   })
 
   it('uses clinical operator language for the registrar empty state', async () => {
@@ -2439,192 +2430,7 @@ describe('role workspaces', () => {
     expect(await screen.findByRole('listitem', { name: '选择病例 合成患者周明' })).toBeTruthy()
   })
 
-  it('selects a clinically visible Virtual Patient and submits its expected version', async () => {
-    let startRequests = 0
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = new URL(String(input), 'http://localhost')
-      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
-      if (url.pathname === '/api/his/v1/catalogs/clinical') {
-        return Response.json({
-          laboratory: [],
-          medications: [],
-          prescriptionConclusionSupported: true,
-        })
-      }
-      if (url.pathname === '/api/his/v1/doctor/virtual-patients' && init?.method === undefined) {
-        return Response.json({ items: [virtualPatient], ...pagination(1) })
-      }
-      if (url.pathname === '/api/his/v1/doctor/queue') {
-        return Response.json({ items: [], ...pagination(0) })
-      }
-      if (url.pathname === '/api/his/v1/doctor/virtual-patients/virtual-patient-fever-001/actions/start') {
-        startRequests += 1
-        if (init === undefined) throw new Error('Expected a mutation request')
-        expect(init.method).toBe('POST')
-        expect(new Headers(init.headers).get('idempotency-key')).toBeTruthy()
-        expect(JSON.parse(String(init.body))).toEqual({
-          expectedVersions: {},
-          input: { expectedVersion: 'opaque-virtual-patient-version-token' },
-        })
-        return Response.json(commandResponse({
-          caseId: 'case-direct',
-          encounterId: 'encounter-direct',
-          patientId: 'candidate-patient-001',
-          queueTaskId: 'task-doctor-direct',
-          registrationId: 'registration-direct',
-          status: 'first-visit',
-          virtualPatientId: virtualPatient.id,
-        }))
-      }
-      throw new Error(`Unexpected request: ${url.pathname}`)
-    }))
-    const user = userEvent.setup()
-    render(<WebApp />)
-
-    await waitFor(() => expect(
-      screen.getByRole('tab', { name: /候选患者/ }).textContent,
-    ).toContain('1'))
-    const candidatesTab = screen.getByRole('tab', { name: /候选患者/ })
-    await user.click(candidatesTab)
-    await waitFor(() => expect(candidatesTab.getAttribute('aria-selected')).toBe('true'))
-    const candidate = await screen.findByRole('button', {
-      name: '选择候选患者 合成候选患者林晓',
-    }, { timeout: 3_000 })
-    expect(screen.getByText('发热、咽痛 1 天。')).toBeTruthy()
-    await user.click(candidate)
-    expect(screen.getByText(/昨日傍晚开始发热，最高 38\.7 °C，伴咽痛。/)).toBeTruthy()
-    expect(screen.getByText('38.6')).toBeTruthy()
-    expect(screen.getByText('118/76')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '开始接诊' }))
-
-    await waitFor(() => expect(startRequests).toBe(1))
-  })
-
-  it('refreshes Virtual Patients and the queue before opening the started case', async () => {
-    window.history.replaceState(null, '', '/consultation')
-    let started = false
-    let queueRequests = 0
-    let virtualPatientRequests = 0
-    const existingPatient = {
-      birthDate: '1990-05-10',
-      gender: 'male',
-      id: 'patient-existing',
-      identifier: 'CM-SYN-EXISTING',
-      name: '合成患者周明',
-      synthetic: true,
-      versionId: '1',
-    }
-    const directPatient = {
-      birthDate: virtualPatient.birthDate,
-      gender: virtualPatient.gender,
-      id: 'candidate-patient-001',
-      identifier: 'CM-SYN-CANDIDATE-001',
-      name: virtualPatient.name,
-      synthetic: true,
-      versionId: '1',
-    }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'http://localhost')
-      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
-      if (url.pathname === '/api/his/v1/catalogs/clinical') {
-        return Response.json({
-          laboratory: [],
-          medications: [],
-          prescriptionConclusionSupported: true,
-        })
-      }
-      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
-        virtualPatientRequests += 1
-        return Response.json({ items: started ? [] : [virtualPatient], ...pagination(started ? 0 : 1) })
-      }
-      if (url.pathname === '/api/his/v1/doctor/queue') {
-        queueRequests += 1
-        return Response.json({
-          items: [{
-            caseId: 'case-existing',
-            encounterId: 'encounter-existing',
-            encounterVersion: '2',
-            patient: existingPatient,
-            presentation: doctorPresentation,
-            status: 'awaiting-doctor',
-            taskId: 'task-doctor-existing',
-            taskVersion: '1',
-            triage: doctorTriage,
-          }, ...(started ? [{
-            caseId: 'case-direct',
-            encounterId: 'encounter-direct',
-            encounterVersion: '1',
-            patient: directPatient,
-            presentation: virtualPatientPresentation,
-            status: 'first-visit',
-            taskId: 'task-doctor-direct',
-            taskVersion: '1',
-          }] : [])],
-          ...pagination(started ? 2 : 1),
-        })
-      }
-      if (url.pathname === '/api/his/v1/doctor/cases/case-existing') {
-        return Response.json({
-          allergies: [],
-          caseId: 'case-existing',
-          encounter: { id: 'encounter-existing', status: 'in-progress', versionId: '2' },
-          patient: existingPatient,
-          presentation: doctorPresentation,
-          priorFacts: [],
-          status: 'awaiting-doctor',
-          taskId: 'task-doctor-existing',
-          taskVersion: '1',
-          triage: doctorTriage,
-        })
-      }
-      if (url.pathname === '/api/his/v1/doctor/cases/case-direct') {
-        return Response.json({
-          allergies: [],
-          caseId: 'case-direct',
-          encounter: { id: 'encounter-direct', status: 'in-progress', versionId: '1' },
-          patient: directPatient,
-          presentation: virtualPatientPresentation,
-          priorFacts: [],
-          status: 'first-visit',
-          taskId: 'task-doctor-direct',
-          taskVersion: '1',
-        })
-      }
-      if (url.pathname === '/api/his/v1/doctor/virtual-patients/virtual-patient-fever-001/actions/start') {
-        started = true
-        return Response.json(commandResponse({
-          caseId: 'case-direct',
-          encounterId: 'encounter-direct',
-          patientId: directPatient.id,
-          queueTaskId: 'task-doctor-direct',
-          registrationId: 'registration-direct',
-          status: 'first-visit',
-          virtualPatientId: virtualPatient.id,
-        }))
-      }
-      throw new Error(`Unexpected request: ${url.pathname}`)
-    }))
-    const user = userEvent.setup()
-    render(<WebApp />)
-
-    await waitFor(() => expect(
-      screen.getByRole('tab', { name: /候选患者/ }).textContent,
-    ).toContain('1'))
-    await user.click(screen.getByRole('tab', { name: /候选患者/ }))
-    await user.click(await screen.findByRole('button', {
-      name: '选择候选患者 合成候选患者林晓',
-    }))
-    await user.click(screen.getByRole('button', { name: '开始接诊' }))
-
-    const firstVisitForm = await screen.findByRole('form', { name: '首诊记录' })
-    expect(within(firstVisitForm).getByLabelText('现病史')).toBeTruthy()
-    expect(screen.getByText(/CM-SYN-CANDIDATE-001/)).toBeTruthy()
-    expect(screen.getByText('主诉：发热、咽痛 1 天。')).toBeTruthy()
-    expect(virtualPatientRequests).toBeGreaterThanOrEqual(2)
-    expect(queueRequests).toBeGreaterThanOrEqual(2)
-  })
-
-  it('restores Consultation Records and shows a pending controlled-question response', async () => {
+  it('restores frozen dialogue and displays a free-text message while the patient is typing', async () => {
     const patient = {
       birthDate: '1988-03-16',
       gender: 'female',
@@ -2634,21 +2440,13 @@ describe('role workspaces', () => {
       synthetic: true,
       versionId: '1',
     }
-    const questions = [{ code: 'symptom-onset', text: '什么时候开始发热？' }, {
-      code: 'associated-symptoms',
-      text: '除了发热，还有哪里不舒服？',
-    }, {
-      code: 'infection-cause',
-      text: '知道是什么感染引起的吗？',
-    }]
     let consultationVersion = 2
-    let records = [{
-      answer: '昨天傍晚开始发热，最高量到 38.7 °C。',
-      id: 'consultation-record-1',
-      question: questions[0],
-      recordedAt: '2026-08-24T09:00:00+08:00',
-      sequence: 1,
-    }]
+    const opening = {
+      id: 'opening', kind: 'text', messageText: '昨天傍晚开始发热，最高量到 38.7 °C。',
+      personaRevision: 1, recordedAt: '2026-08-24T09:00:00+08:00', reportReference: null,
+      sequence: 1, source: 'persona-opening', speaker: 'patient',
+    }
+    let turns: Array<Omit<typeof opening, 'personaRevision'> & { personaRevision: number | null }> = [opening]
     let releaseAnswer: (() => void) | undefined
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
@@ -2682,7 +2480,7 @@ describe('role workspaces', () => {
         return Response.json({
           allergies: [],
           caseId: 'case-direct',
-          consultation: { questions, records, version: consultationVersion },
+          consultation: { turns, version: consultationVersion },
           encounter: { id: 'encounter-direct', status: 'in-progress', versionId: '1' },
           patient,
           presentation: virtualPatientPresentation,
@@ -2701,26 +2499,25 @@ describe('role workspaces', () => {
             'Task/task-doctor-direct': '1',
           },
           input: {
-            expectedVersion: 2,
-            questionCode: 'associated-symptoms',
+            expectedConsultationVersion: 2,
+            message: '除了发热，还有哪里不舒服？',
           },
         })
+        const doctorTurn = {
+          ...opening, id: 'doctor-turn', messageText: '除了发热，还有哪里不舒服？',
+          personaRevision: null, sequence: 2, source: 'doctor-typed', speaker: 'doctor',
+        }
+        consultationVersion = 3
+        turns = [...turns, doctorTurn]
         return new Promise<Response>(resolve => {
           releaseAnswer = () => {
-            const record = {
-              answer: '咽痛，吞咽时更明显，没有气促。',
-              id: 'consultation-record-2',
-              question: questions[1],
-              recordedAt: '2026-08-24T09:00:00+08:00',
-              sequence: 2,
+            const patientTurn = {
+              ...opening, id: 'patient-turn', messageText: '咽痛，吞咽时更明显，没有气促。',
+              sequence: 3, source: 'patient-agent',
             }
-            consultationVersion = 3
-            records = [...records, record]
-            resolve(Response.json(commandResponse({
-              caseId: 'case-direct',
-              consultationVersion,
-              record,
-            })))
+            consultationVersion = 4
+            turns = [...turns, patientTurn]
+            resolve(Response.json(commandResponse({ caseId: 'case-direct', consultationVersion, doctorTurn, patientTurn })))
           }
         })
       }
@@ -2734,11 +2531,13 @@ describe('role workspaces', () => {
     await user.click(await screen.findByRole('tab', { name: '问诊记录' }))
     const consultationRegion = screen.getByRole('region', { name: '问诊记录' })
     expect(within(consultationRegion).getByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeTruthy()
-    await user.click(within(consultationRegion).getByRole('button', { name: '除了发热，还有哪里不舒服？' }))
+    await user.type(within(consultationRegion).getByRole('textbox', { name: '向患者提问' }), '除了发热，还有哪里不舒服？')
     await user.click(within(consultationRegion).getByRole('button', { name: '向患者提问' }))
 
     const pendingButton = await screen.findByRole('button', { name: '正在等待患者回答' })
     expect((pendingButton as HTMLButtonElement).disabled).toBe(true)
+    expect(within(consultationRegion).getByText('除了发热，还有哪里不舒服？')).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toContain('患者正在输入')
     await act(async () => releaseAnswer?.())
     expect(await screen.findByText('咽痛，吞咽时更明显，没有气促。')).toBeTruthy()
     expect(screen.getByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeTruthy()
@@ -2792,7 +2591,7 @@ describe('role workspaces', () => {
         return Response.json({
           allergies: [],
           caseId: 'case-direct',
-          consultation: { questions: [question], records: [], version: 1 },
+          consultation: { turns: [], version: 1 },
           encounter: { id: 'encounter-direct', status: 'in-progress', versionId: '1' },
           patient,
           presentation: virtualPatientPresentation,
@@ -2816,22 +2615,22 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     await user.click(await screen.findByRole('tab', { name: '问诊记录' }))
-    await user.click(await screen.findByRole('button', { name: question.text }))
+    await user.type(await screen.findByRole('textbox', { name: '向患者提问' }), question.text)
     await user.click(screen.getByRole('button', { name: '向患者提问' }))
 
     expect(await screen.findByText('操作冲突')).toBeTruthy()
     expect(screen.getByText('数据已发生变化，请刷新后重新确认。')).toBeTruthy()
     expect(screen.getByText('暂无问诊记录')).toBeTruthy()
-    expect(screen.getByRole('button', { name: question.text })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: '向患者提问' })).toBeTruthy()
   })
 
-  it('renders a specific empty state when no Virtual Patient is available', async () => {
+  it('shows the doctor queue without the retired Virtual Patient entry point', async () => {
     stubEmptyDoctorWorkspace()
 
     render(<WebApp />)
 
-    expect(await screen.findByText('暂无可接诊候选患者')).toBeTruthy()
-    expect(screen.getByText('当前没有可接诊的候选患者。')).toBeTruthy()
+    expect(await screen.findAllByText('当前无待诊病例')).toBeTruthy()
+    expect(screen.getByText('已完成的交接会从当前队列移除。')).toBeTruthy()
     expect(document.body.textContent).not.toMatch(forbiddenChineseClinicalUiTerms)
   })
 
@@ -2871,48 +2670,9 @@ describe('role workspaces', () => {
 
     render(<WebApp />)
 
-    expect(await screen.findByText('No candidate patients available')).toBeTruthy()
-    expect(screen.getByText('No candidate patient is currently available for consultation.')).toBeTruthy()
+    expect(await screen.findAllByText('No cases awaiting consultation')).toBeTruthy()
+    expect(screen.getByText('Completed handoffs leave the active queue.')).toBeTruthy()
     expect(screen.getByRole('main').textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
-  })
-
-  it('shows the operation-conflict alert when a Virtual Patient version is stale', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'http://localhost')
-      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
-      if (url.pathname === '/api/his/v1/catalogs/clinical') {
-        return Response.json({
-          laboratory: [],
-          medications: [],
-          prescriptionConclusionSupported: true,
-        })
-      }
-      if (url.pathname === '/api/his/v1/doctor/virtual-patients') {
-        return Response.json({ items: [virtualPatient], ...pagination(1) })
-      }
-      if (url.pathname === '/api/his/v1/doctor/queue') {
-        return Response.json({ items: [], ...pagination(0) })
-      }
-      if (url.pathname === '/api/his/v1/doctor/virtual-patients/virtual-patient-fever-001/actions/start') {
-        return Response.json({
-          error: {
-            code: 'WORKFLOW_CONFLICT',
-            message: 'The Virtual Patient version has changed',
-          },
-        }, { status: 409 })
-      }
-      throw new Error(`Unexpected request: ${url.pathname}`)
-    }))
-    const user = userEvent.setup()
-    render(<WebApp />)
-
-    await user.click(await screen.findByRole('button', {
-      name: '选择候选患者 合成候选患者林晓',
-    }))
-    await user.click(screen.getByRole('button', { name: '开始接诊' }))
-
-    expect(await screen.findByText('操作冲突')).toBeTruthy()
-    expect(screen.getByText('数据已发生变化，请刷新后重新确认。')).toBeTruthy()
   })
 
   it('hydrates an Agent laboratory draft from the case catalog without reverse autosave', async () => {
@@ -3083,7 +2843,7 @@ describe('role workspaces', () => {
         return Response.json({
           allergies: [],
           caseId: 'case-virtual-1',
-          consultation: { questions: [], records: [], version: 1 },
+          consultation: { turns: [], version: 1 },
           encounter: { id: 'encounter-virtual-1', status: 'in-progress', versionId: '1' },
           laboratoryRequests: {
             ...(draft === undefined ? {} : { draft }),
@@ -3452,7 +3212,7 @@ describe('role workspaces', () => {
         return Response.json({
           allergies: [],
           caseId: 'case-virtual-1',
-          consultation: { questions: [], records: [], version: 1 },
+          consultation: { turns: [], version: 1 },
           encounter: { id: 'encounter-virtual-1', status: 'in-progress', versionId: '1' },
           laboratoryRequests: {
             ...(draft === undefined ? {} : { draft }),
@@ -3472,7 +3232,7 @@ describe('role workspaces', () => {
         return Response.json({
           allergies: [],
           caseId: 'case-virtual-2',
-          consultation: { questions: [], records: [], version: 1 },
+          consultation: { turns: [], version: 1 },
           encounter: { id: 'encounter-virtual-2', status: 'in-progress', versionId: '1' },
           laboratoryRequests: {
             draftVersion: 2,
@@ -4435,7 +4195,7 @@ describe('role workspaces', () => {
         return Response.json({
           allergies: [],
           caseId: 'case-independent-diagnosis',
-          consultation: { questions: [], records: [], version: 1 },
+          consultation: { turns: [], version: 1 },
           ...(diagnosis === undefined ? {} : { diagnosis }),
           encounter: {
             id: 'encounter-independent-diagnosis',
@@ -4584,7 +4344,6 @@ describe('role workspaces', () => {
 
   it('keeps each patient clinical record while aligning the consultation workbench', async () => {
     const questionText = '什么时候开始不舒服？'
-    const questions = [{ code: 'symptom-onset', text: questionText }]
     let releaseFirstPatientAnswer: (() => void) | undefined
     const patients = [{
       birthDate: '1981-06-12',
@@ -4644,7 +4403,7 @@ describe('role workspaces', () => {
         return Response.json({
           allergies: [],
           caseId: `case-${index + 1}`,
-          consultation: { questions, records: [], version: 1 },
+          consultation: { turns: [], version: 1 },
           encounter: { id: `encounter-${index + 1}`, status: 'in-progress', versionId: '1' },
           laboratoryRequests: { draftVersion: 0, reportingSupported: true, requests: [] },
           patient,
@@ -4703,7 +4462,7 @@ describe('role workspaces', () => {
     expect(within(contextRail).getByRole('heading', { name: '完诊清单' })).toBeTruthy()
     expect(within(contextRail).getByText('已满足 2 / 7')).toBeTruthy()
     await user.click(screen.getByRole('tab', { name: '问诊记录' }))
-    await user.click(screen.getByRole('button', { name: questionText }))
+    await user.type(screen.getByRole('textbox', { name: '向患者提问' }), questionText)
     await user.click(screen.getByRole('button', { name: '向患者提问' }))
     expect((await screen.findByRole('button', {
       name: '正在等待患者回答',
@@ -4854,8 +4613,7 @@ describe('role workspaces', () => {
             signed: [signedDocument],
           },
           consultation: {
-            questions: [{ code: 'symptom-onset', text: '什么时候开始发热？' }],
-            records: [],
+            turns: [],
             version: 1,
           },
           diagnosis,
@@ -4920,7 +4678,7 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: '确认完诊' }))
 
     expect(await screen.findByText('Encounter 已完成，当前病例为只读。')).toBeTruthy()
-    expect(screen.getByRole('tab', { name: /候诊队列/ }).textContent).toContain('0')
+    expect(within(screen.getByRole('complementary', { name: '候诊队列' })).getByText('0')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '向患者提问' })).toBeNull()
     expect(screen.queryByRole('button', { name: '提交病历修订' })).toBeNull()
     expect(screen.queryByRole('button', { name: '撤回处方' })).toBeNull()
@@ -4982,7 +4740,7 @@ describe('role workspaces', () => {
         return Response.json({
           allergies: [],
           caseId: 'case-diagnosis-validation',
-          consultation: { questions: [], records: [], version: 1 },
+          consultation: { turns: [], version: 1 },
           diagnosis: {
             draft: {
               entries: [{
@@ -5180,7 +4938,7 @@ describe('role workspaces', () => {
         return Response.json({
           allergies: [],
           caseId: 'case-prescription-conclusion',
-          consultation: { questions: [], records: [], version: 1 },
+          consultation: { turns: [], version: 1 },
           diagnosis: {
             confirmation: {
               confirmedAt: '2026-08-24T09:00:00+08:00',
@@ -5425,7 +5183,7 @@ describe('role workspaces', () => {
         return Response.json({
           allergies: [{ code: 'OSELTAMIVIR', display: '磷酸奥司他韦过敏' }],
           caseId: 'case-prescription-conflict',
-          consultation: { questions: [], records: [], version: 1 },
+          consultation: { turns: [], version: 1 },
           encounter: {
             id: 'encounter-prescription-conflict',
             status: 'in-progress',
@@ -5734,7 +5492,7 @@ describe('role workspaces', () => {
               signedAt: '2026-08-24T09:00:00+08:00',
             }] : [],
           },
-          consultation: { questions: [], records: [], version: 1 },
+          consultation: { turns: [], version: 1 },
           encounter: { id: 'encounter-1', status: 'in-progress', versionId: '1' },
           patient,
           presentation: doctorPresentation,
@@ -5932,7 +5690,7 @@ describe('role workspaces', () => {
           allergies: [],
           caseId: 'case-1',
           clinicalDocument: { signed: signedDocuments },
-          consultation: { questions: [], records: [], version: 1 },
+          consultation: { turns: [], version: 1 },
           encounter: { id: 'encounter-1', status: 'in-progress', versionId: '5' },
           patient,
           presentation: doctorPresentation,
@@ -6112,14 +5870,17 @@ describe('role workspaces', () => {
       }],
       completedAt: '2026-08-24T09:00:00+08:00',
       consultation: {
-        records: [{
-          answer: '症状自前日晚间开始，最高体温 38.7 摄氏度，并伴有持续咽痛、乏力及同住家属近期流感样症状。',
-          id: 'consultation-record-completed-1',
-          question: { code: 'symptom-onset', text: '症状何时开始？' },
-          recordedAt: '2026-08-24T08:05:00+08:00',
-          sequence: 1,
-        }],
-        version: 1,
+        turns: [{
+          actorId: null, practitionerId: null, id: 'legacy-question', kind: 'text',
+          messageText: '症状何时开始？', personaRevision: null,
+          recordedAt: '2026-08-24T08:05:00+08:00', reportReference: null,
+          sequence: 1, source: 'legacy-question-answer', speaker: 'doctor',
+        }, {
+          actorId: null, practitionerId: null, id: 'legacy-answer', kind: 'text',
+          messageText: '症状自前日晚间开始，最高体温 38.7 摄氏度，并伴有持续咽痛、乏力及同住家属近期流感样症状。', personaRevision: null,
+          recordedAt: '2026-08-24T08:05:00+08:00', reportReference: null,
+          sequence: 2, source: 'legacy-question-answer', speaker: 'patient',
+        }], version: 3,
       },
       diagnosis: {
         confirmedAt: '2026-08-24T08:30:00+08:00',
@@ -6286,7 +6047,7 @@ describe('role workspaces', () => {
     let activeDetail: DoctorCaseDetail = {
       allergies: [],
       caseId: 'case-completed-paid-1',
-      consultation: { questions: [], records: [], version: 1 },
+      consultation: { turns: [], version: 1 },
       encounter: { id: 'encounter-completed-paid-1', status: 'completed', versionId: '6' },
       medicationConclusion: { draftVersion: 3, prescription },
       patient,
@@ -6764,7 +6525,7 @@ describe('role workspaces', () => {
       allergies: [],
       caseId: completedDetail.caseId,
       clinicalDocument: { signed: [signedDocument] },
-      consultation: { questions: [], records: [], version: 1 },
+      consultation: { turns: [], version: 1 },
       encounter: {
         id: completedDetail.encounter.id,
         status: 'in-progress',

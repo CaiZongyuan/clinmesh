@@ -15,7 +15,6 @@ import {
   type LaboratoryRequestCatalogItemId,
   type LaboratoryReport,
   type SessionContext,
-  type VirtualPatientList,
 } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
@@ -40,10 +39,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/component
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, LibraryBigIcon, MessagesSquareIcon, PillIcon, PlusIcon, RefreshCwIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   acknowledgeLaboratoryReport,
-  askConsultationQuestion,
+  sendConsultationMessage,
+  retryConsultationReply,
   cancelLaboratoryRequest,
   completeEncounter,
   confirmNoMedication,
@@ -55,7 +55,6 @@ import {
   getDoctorCase,
   getDoctorQueue,
   getEncounterCompletion,
-  getVirtualPatients,
   issueLaboratoryRequest,
   issueLaboratoryOrder,
   issuePrescription,
@@ -77,7 +76,6 @@ import {
   signStructuredClinicalDocument,
   startFirstVisit,
   startRevisit,
-  startVirtualPatient,
   withdrawPrescription,
 } from '../api-client.ts'
 import {
@@ -340,7 +338,6 @@ function DoctorCaseController({
   const scope = [session.actor.workspaceId, session.actor.epoch] as const
   const [page, setPage] = useState(1)
   const [activeCaseSection, setActiveCaseSection] = useState<DoctorCaseSection>('record')
-  const [virtualPatientPage, setVirtualPatientPage] = useState(1)
   const [diagnosisReferenceSearch, setDiagnosisReferenceSearch] = useState<ReferenceCatalogSearchParameters>({
     enabled: false,
     page: 1,
@@ -357,15 +354,9 @@ function DoctorCaseController({
     query: '',
   })
   const queueKey = ['doctor-queue', ...scope, page] as const
-  const virtualPatientScopeKey = ['doctor-virtual-patients', ...scope] as const
   const encounterCompletionScopeKey = ['encounter-completion', ...scope] as const
   const completedCaseListScopeKey = ['doctor-completed-cases', ...scope] as const
   const completedCaseDetailScopeKey = ['doctor-completed-case', ...scope] as const
-  const virtualPatientKey = [...virtualPatientScopeKey, virtualPatientPage] as const
-  const virtualPatients = useQuery({
-    queryFn: ({ signal }) => getVirtualPatients(signal, virtualPatientPage),
-    queryKey: virtualPatientKey,
-  })
   const queue = useQuery({
     queryFn: ({ signal }) => getDoctorQueue(signal, page),
     queryKey: queueKey,
@@ -373,7 +364,6 @@ function DoctorCaseController({
       ? 1_500
       : false,
   })
-  const [selectedVirtualPatientId, setSelectedVirtualPatientId] = useState<string>()
   const [laboratoryItemId, setLaboratoryItemId] = useState('')
   const [indicationCode, setIndicationCode] = useState('')
   const [workingClinicalDocuments, setWorkingClinicalDocuments] = useState<
@@ -391,12 +381,8 @@ function DoctorCaseController({
       },
     }))
   }, [])
-  const autoStartRequested = useRef(false)
   const activeCaseId = selectedCaseId ?? queue.data?.items[0]?.caseId
   const selectedCase = queue.data?.items.find(item => item.caseId === activeCaseId)
-  const selectedVirtualPatient = virtualPatients.data?.items.find(
-    item => item.id === selectedVirtualPatientId,
-  )
   const detailKey = [
     'doctor-case',
     ...scope,
@@ -559,36 +545,6 @@ function DoctorCaseController({
   ) === true
     ? requestedIndicationCode ?? ''
     : resolvedLaboratoryItem?.allowedIndicationCodes[0] ?? ''
-  const startCandidate = useMutation({
-    mutationFn: (patient: VirtualPatientList['items'][number]) => {
-      return startVirtualPatient(
-        patient.id,
-        patient.version,
-        newIdempotencyKey(),
-      )
-    },
-    onSuccess: async response => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: virtualPatientScopeKey }),
-        queryClient.invalidateQueries({ queryKey: ['doctor-queue', ...scope] }),
-      ])
-      setVirtualPatientPage(1)
-      setSelectedVirtualPatientId(undefined)
-      onSelectedCaseIdChange(response.data.caseId)
-    },
-  })
-  const autoStartCandidate = virtualPatients.data?.items[0]
-  useEffect(() => {
-    if (
-      autoStartRequested.current
-      || queue.data?.total !== 0
-      || virtualPatients.data === undefined
-      || virtualPatients.data.total < 12
-      || autoStartCandidate === undefined
-    ) return
-    autoStartRequested.current = true
-    startCandidate.mutate(autoStartCandidate)
-  }, [autoStartCandidate, queue.data?.total, startCandidate, virtualPatients.data])
   const refreshCaseById = async (caseId: string | undefined) => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queueKey }),
@@ -630,21 +586,35 @@ function DoctorCaseController({
     },
   })
   const askQuestion = useMutation({
-    mutationFn: ({ caseId, questionCode }: { caseId: string; questionCode: string }) => {
+    mutationFn: ({ caseId, message }: { caseId: string; message: string }) => {
       const current = detail.data
       if (current?.caseId !== caseId || current.consultation === undefined) {
         throw new Error(messages.consultationUnavailable)
       }
-      return askConsultationQuestion({
+      return sendConsultationMessage({
         encounterId: current.encounter.id,
         encounterVersion: current.encounter.versionId,
-        expectedVersion: current.consultation.version,
-        questionCode,
+        expectedConsultationVersion: current.consultation.version,
+        message,
         taskId: current.taskId,
         taskVersion: current.taskVersion,
       }, newIdempotencyKey())
     },
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
     onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
+  })
+  const retryPatientReply = useMutation({
+    mutationFn: ({ caseId }: { caseId: string }) => {
+      const current = detail.data
+      if (current?.caseId !== caseId || current.consultation === undefined) {
+        throw new Error(messages.consultationUnavailable)
+      }
+      return retryConsultationReply({
+        encounterId: current.encounter.id,
+        expectedConsultationVersion: current.consultation.version,
+      }, newIdempotencyKey())
+    },
+    onSettled: async (_response, _error, variables) => refreshCaseById(variables.caseId),
   })
   const signingDependencies = (caseId: string) => {
     const current = detail.data
@@ -1174,20 +1144,35 @@ function DoctorCaseController({
         },
       },
       'outpatient.consultation.ask': {
-        description: 'Ask one allowlisted Virtual Patient question in the current consultation.',
-        enabled: (detail.data?.consultation?.questions.length ?? 0) > 0,
+        description: 'Send a free-text message to the patient in the current consultation.',
+        enabled: detail.data?.consultation !== undefined
+          && detail.data.encounter.status !== 'completed'
+          && detail.data.consultation.turns.findLast(turn => turn.kind === 'text')?.speaker !== 'doctor'
+          && !askQuestion.isPending
+          && !retryPatientReply.isPending,
         parameters: {
           type: 'object' as const,
-          properties: { questionCode: { type: 'string', maxLength: 128 } },
-          required: ['questionCode'],
+          properties: { message: { type: 'string', minLength: 1, maxLength: 2000 } },
+          required: ['message'],
           additionalProperties: false,
         },
         execute: (raw: unknown) => {
           const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
           return askQuestion.mutateAsync({
             caseId: current.caseId,
-            questionCode: doctorString(raw, 'questionCode', 128),
+            message: doctorString(raw, 'message', 2000),
           })
+        },
+      },
+      'outpatient.consultation.reply.retry': {
+        description: 'Retry the patient reply to the last unanswered doctor message.',
+        enabled: detail.data?.encounter.status !== 'completed'
+          && detail.data?.consultation?.turns.findLast(turn => turn.kind === 'text')?.speaker === 'doctor'
+          && !askQuestion.isPending && !retryPatientReply.isPending,
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: () => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          return retryPatientReply.mutateAsync({ caseId: current.caseId })
         },
       },
       'outpatient.first-visit.draft.set': {
@@ -1892,24 +1877,9 @@ function DoctorCaseController({
           onSelectedCaseIdChange(undefined)
         }}
         onSelectCase={caseId => { onSelectedCaseIdChange(caseId); showDetail() }}
-        onSelectVirtualPatient={(patient) => {
-          startCandidate.reset()
-          setSelectedVirtualPatientId(patient.id)
-        }}
-        onStartVirtualPatient={patient => startCandidate.mutate(patient)}
-        onVirtualPatientPageChange={(nextPage) => {
-          setVirtualPatientPage(nextPage)
-          setSelectedVirtualPatientId(undefined)
-        }}
         queueData={queue.data}
         queueError={queue.error}
         queuePending={queue.isPending}
-        selectedVirtualPatient={selectedVirtualPatient}
-        startError={startCandidate.error}
-        startPending={startCandidate.isPending}
-        virtualPatientData={virtualPatients.data}
-        virtualPatientError={virtualPatients.error}
-        virtualPatientPending={virtualPatients.isPending}
       />
       )}>
       <section aria-labelledby="case-detail-heading" className="flex min-w-0 flex-col gap-3 p-3">
@@ -1993,15 +1963,15 @@ function DoctorCaseController({
               ? correctionNavigation.target
               : undefined}
             consultationAction={{
-              error: askQuestion.variables?.caseId === detail.data.caseId
-                ? askQuestion.error
-                : null,
-              onAsk: questionCode => askQuestion.mutate({
-                caseId: detail.data.caseId,
-                questionCode,
-              }),
-              pending: askQuestion.isPending
-                && askQuestion.variables?.caseId === detail.data.caseId,
+              error: retryPatientReply.variables?.caseId === detail.data.caseId && retryPatientReply.error !== null
+                ? retryPatientReply.error
+                : askQuestion.variables?.caseId === detail.data.caseId ? askQuestion.error : null,
+              onAsk: message => askQuestion.mutate({ caseId: detail.data.caseId, message }),
+              onRetry: () => retryPatientReply.mutate({ caseId: detail.data.caseId }),
+              pending: (askQuestion.isPending && askQuestion.variables?.caseId === detail.data.caseId)
+                || (retryPatientReply.isPending && retryPatientReply.variables?.caseId === detail.data.caseId),
+              ...(askQuestion.isPending && askQuestion.variables?.caseId === detail.data.caseId
+                ? { pendingMessage: askQuestion.variables.message } : {}),
             }}
             catalog={catalog}
             detail={detail.data}
@@ -2675,7 +2645,7 @@ function CaseDetail({
           {detail.consultation === undefined ? null : (
             <TabsContent className="p-4" value="consultation">
               <ConsultationPage
-                action={consultationAction}
+                action={{ ...consultationAction, onOpenReport: () => setActiveSection('laboratory') }}
                 consultation={detail.consultation}
                 key={`consultation:${detail.caseId}`}
                 locale={locale}

@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks'
 import { z } from 'zod'
-import { generatePatientBrief } from './application/patient-brief-service.ts'
+import { generatePatientPersona } from './application/patient-persona-service.ts'
 import { readServerConfig, readServerEnvironment } from './config.ts'
 import { OpenAIChatCompletionsClient } from './infrastructure/ai/openai-chat-completions.ts'
 
@@ -68,7 +68,7 @@ try {
     timeoutMs: config.ai.timeoutMs,
   })
   const startedAt = performance.now()
-  const result = await generatePatientBrief({
+  const result = await generatePatientPersona({
     hiddenResources,
     model: config.ai.briefModel,
     payload,

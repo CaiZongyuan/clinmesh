@@ -9,8 +9,8 @@ import {
 } from '@clinmesh/contracts/agent'
 import {
   administratorCaseTruthSchema,
-  patientBriefJobSchema,
-  patientBriefRevisionListSchema,
+  patientPersonaJobSchema,
+  patientPersonaRevisionListSchema,
   scenarioGenerationJobSchema,
   startSyntheticCaseResultSchema,
   syntheticCaseRegistrationListSchema,
@@ -20,7 +20,7 @@ import {
   syntheticSourceResourceDetailSchema,
   type ScenarioGenerationRequest,
   type ScenarioProviderCapabilities,
-  type PatientBriefContent,
+  type PatientPersonaContent,
 } from '@clinmesh/contracts/scenario'
 import {
   apiErrorSchema,
@@ -307,7 +307,7 @@ describe('Synthetic Case generation HTTP contract', () => {
         : {
             chatCompletionsProvider: briefProvider,
             investigationModel: 'fake-investigation-model',
-            patientBriefModel: 'fake-brief-model',
+            patientPersonaModel: 'fake-brief-model',
           }),
       syntheaProvider: provider,
       trustedOrigins: ['http://localhost'],
@@ -322,7 +322,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     caseId: string,
   ) {
     const response = await runtime.app.request(
-      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-brief-jobs`,
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-persona-jobs`,
       {
         body: '{}',
         headers: {
@@ -335,7 +335,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       },
     )
     expect(response.status).toBe(200)
-    return commandResponseSchema(patientBriefJobSchema).parse(await response.json()).data
+    return commandResponseSchema(patientPersonaJobSchema).parse(await response.json()).data
   }
 
   async function signIn(
@@ -568,7 +568,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     expect(response.status).toBe(200)
     scenarioCommandResponseSchema.parse(await response.json())
     expect(await runtime.scenarioData.processNextGenerationJob()).toBeUndefined()
-    expect(await runtime.patientBrief.processNext()).toBeUndefined()
+    expect(await runtime.patientPersona.processNext()).toBeUndefined()
     expect(briefProvider.requests).toHaveLength(0)
   })
 
@@ -591,7 +591,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     block = true
     if (kind === 'patient') await enqueue(runtime, cookie)
     else await enqueueBrief(runtime, cookie, generated!.caseIds[0]!)
-    const processing = kind === 'patient' ? runtime.scenarioData.processNextGenerationJob() : runtime.patientBrief.processNext()
+    const processing = kind === 'patient' ? runtime.scenarioData.processNextGenerationJob() : runtime.patientPersona.processNext()
     try {
       await started
       const response = await runtime.app.request('/api/sim/v1/scenario-runs/scenario-run-1/actions/reset', {
@@ -636,15 +636,18 @@ describe('Synthetic Case generation HTTP contract', () => {
   })
 
   it('lists only the fixed Synthetic Case identity fields needed by the registrar', async () => {
-    const brief: PatientBriefContent = {
+    const brief: PatientPersonaContent = {
       chiefComplaint: '反复头晕一周',
       knownHistorySummary: '既往有高血压病史。',
+      medicationMemory: '每天吃一片降压药，名字记不清。',
       openingStatement: '医生您好，我最近一周经常头晕。',
-      symptomTopics: [{
-        answerPoints: ['一周前开始。', '起身时更明显。'],
-        id: 'dizziness-onset',
-        name: '头晕经过',
-      }],
+      persona: {
+        attitude: '怕花钱，能不查就不查',
+        character: '直爽、话多',
+        healthLiteracy: '小学文化，听不懂医学名词',
+        speechStyle: '句子短，爱打比方',
+      },
+      symptomExperience: '一周前蹲下起身时开始晕，眼前发黑，歇一会儿能缓过来，没自己买过药。',
     }
     const runtime = await createRuntime(
       new RetryingSyntheaProvider(1),
@@ -657,7 +660,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     const profileId = generation?.profileIds[0] ?? ''
     expect(generation).toMatchObject({ status: 'succeeded' })
     await enqueueBrief(runtime, administratorCookie, caseId)
-    expect(await runtime.patientBrief.processNext()).toMatchObject({
+    expect(await runtime.patientPersona.processNext()).toMatchObject({
       resultRevision: 1,
       status: 'succeeded',
     })
@@ -751,7 +754,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       )
       if (input.includeBrief) {
         runtime.database.driver.prepare(`
-          INSERT INTO patient_brief_revision (
+          INSERT INTO patient_persona_revision (
             workspace_id, case_id, revision, content_json, model_id,
             prompt_version, prompt_hash, input_hash, output_hash, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -791,15 +794,18 @@ describe('Synthetic Case generation HTTP contract', () => {
   })
 
   it('keeps registration search pinned to the Profile Revision owned by the Case', async () => {
-    const brief: PatientBriefContent = {
+    const brief: PatientPersonaContent = {
       chiefComplaint: '反复头晕一周',
       knownHistorySummary: '既往有高血压病史。',
+      medicationMemory: '每天吃一片降压药，名字记不清。',
       openingStatement: '医生您好，我最近一周经常头晕。',
-      symptomTopics: [{
-        answerPoints: ['一周前开始。'],
-        id: 'dizziness-onset',
-        name: '头晕经过',
-      }],
+      persona: {
+        attitude: '怕花钱，能不查就不查',
+        character: '直爽、话多',
+        healthLiteracy: '小学文化，听不懂医学名词',
+        speechStyle: '句子短，爱打比方',
+      },
+      symptomExperience: '一周前蹲下起身时开始晕，眼前发黑，歇一会儿能缓过来，没自己买过药。',
     }
     const runtime = await createRuntime(
       new RetryingSyntheaProvider(1),
@@ -811,7 +817,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     const caseId = generation?.caseIds[0] ?? ''
     const profileId = generation?.profileIds[0] ?? ''
     await enqueueBrief(runtime, administratorCookie, caseId)
-    await runtime.patientBrief.processNext()
+    await runtime.patientPersona.processNext()
     const original = syntheticPatientProfileDetailSchema.parse(await (await runtime.app.request(
       `/api/sim/v1/synthetic-patients/${encodeURIComponent(profileId)}`,
       { headers: { cookie: administratorCookie } },
@@ -876,15 +882,18 @@ describe('Synthetic Case generation HTTP contract', () => {
   })
 
   it('allows only one registrar to start a ready Case and hands it to triage once', async () => {
-    const brief: PatientBriefContent = {
+    const brief: PatientPersonaContent = {
       chiefComplaint: '反复头晕一周',
       knownHistorySummary: '既往有高血压病史。',
+      medicationMemory: '每天吃一片降压药，名字记不清。',
       openingStatement: '医生您好，我最近一周经常头晕。',
-      symptomTopics: [{
-        answerPoints: ['一周前开始。', '起身时更明显。'],
-        id: 'dizziness-onset',
-        name: '头晕经过',
-      }],
+      persona: {
+        attitude: '怕花钱，能不查就不查',
+        character: '直爽、话多',
+        healthLiteracy: '小学文化，听不懂医学名词',
+        speechStyle: '句子短，爱打比方',
+      },
+      symptomExperience: '一周前蹲下起身时开始晕，眼前发黑，歇一会儿能缓过来，没自己买过药。',
     }
     const runtime = await createRuntime(
       new RetryingSyntheaProvider(1),
@@ -895,7 +904,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     const generation = await runtime.scenarioData.processNextGenerationJob()
     const caseId = generation?.caseIds[0] ?? ''
     await enqueueBrief(runtime, administratorCookie, caseId)
-    await runtime.patientBrief.processNext()
+    await runtime.patientPersona.processNext()
     const readyCase = syntheticCaseInstanceSchema.parse(await (await runtime.app.request(
       `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}`,
       { headers: { cookie: administratorCookie } },
@@ -967,27 +976,36 @@ describe('Synthetic Case generation HTTP contract', () => {
       WHERE workspace_id = ? AND case_id = ?
     `).get('workspace-demo', caseId)).toEqual({ count: 1 })
     expect(runtime.database.driver.prepare(`
-      SELECT COUNT(*) AS count FROM consultation_question_rule
+      SELECT message_text, persona_revision, sequence, source, speaker FROM consultation_turn
       WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-    `).get('workspace-demo', 'epoch-1', started.outpatientCaseId)).toEqual({ count: 1 })
+    `).get('workspace-demo', 'epoch-1', started.outpatientCaseId)).toEqual({
+      message_text: brief.openingStatement,
+      persona_revision: 1,
+      sequence: 1,
+      source: 'persona-opening',
+      speaker: 'patient',
+    })
   })
 
   it('keeps successful Brief revisions immutable and rejects hidden diagnosis leakage', async () => {
-    const safeBrief: PatientBriefContent = {
+    const safeBrief: PatientPersonaContent = {
       chiefComplaint: '反复头晕一周',
       knownHistorySummary: '既往有 2 型糖尿病病史。',
+      medicationMemory: '吃着二甲双胍，别的不记得了。',
       openingStatement: '医生您好，我最近一周经常头晕。',
-      symptomTopics: [{
-        answerPoints: ['一周前开始。', '起身时更明显。'],
-        id: 'dizziness-onset',
-        name: '头晕经过',
-      }],
+      persona: {
+        attitude: '怕花钱，能不查就不查',
+        character: '直爽、话多',
+        healthLiteracy: '小学文化，听不懂医学名词',
+        speechStyle: '句子短，爱打比方',
+      },
+      symptomExperience: '一周前蹲下起身时开始晕，眼前发黑，歇一会儿能缓过来，没自己买过药。',
     }
-    const leakingBrief: PatientBriefContent = {
+    const leakingBrief: PatientPersonaContent = {
       ...safeBrief,
       knownHistorySummary: '本次诊断是高血压（疾病）。',
     }
-    const secondBrief: PatientBriefContent = {
+    const secondBrief: PatientPersonaContent = {
       ...safeBrief,
       chiefComplaint: '头晕伴乏力一周',
       openingStatement: '医生您好，我头晕之外还有些乏力。',
@@ -1076,17 +1094,17 @@ describe('Synthetic Case generation HTTP contract', () => {
     })
 
     const firstJob = await enqueueBrief(runtime, cookie, caseId)
-    expect(await runtime.patientBrief.processNext()).toMatchObject({
+    expect(await runtime.patientPersona.processNext()).toMatchObject({
       jobId: firstJob.jobId,
       resultRevision: 1,
       status: 'succeeded',
     })
     const firstRevisionsResponse = await runtime.app.request(
-      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-brief-revisions`,
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-persona-revisions`,
       { headers: { cookie } },
     )
     expect(firstRevisionsResponse.status).toBe(200)
-    const firstRevisions = patientBriefRevisionListSchema.parse(
+    const firstRevisions = patientPersonaRevisionListSchema.parse(
       await firstRevisionsResponse.json(),
     )
     expect(firstRevisions).toMatchObject({
@@ -1094,7 +1112,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       items: [{
         content: safeBrief,
         model: 'resolved-fake-brief-model',
-        promptVersion: 'patient-brief-v1',
+        promptVersion: 'patient-persona-v2',
         revision: 1,
       }],
     })
@@ -1105,26 +1123,26 @@ describe('Synthetic Case generation HTTP contract', () => {
     })
 
     const leakingJob = await enqueueBrief(runtime, cookie, caseId)
-    expect(await runtime.patientBrief.processNext()).toMatchObject({
-      error: { code: 'BRIEF_DIAGNOSIS_LEAK' },
+    expect(await runtime.patientPersona.processNext()).toMatchObject({
+      error: { code: 'PERSONA_DIAGNOSIS_LEAK' },
       jobId: leakingJob.jobId,
       resultRevision: null,
       status: 'failed',
     })
-    const afterLeak = patientBriefRevisionListSchema.parse(await (await runtime.app.request(
-      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-brief-revisions`,
+    const afterLeak = patientPersonaRevisionListSchema.parse(await (await runtime.app.request(
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-persona-revisions`,
       { headers: { cookie } },
     )).json())
     expect(afterLeak).toEqual(firstRevisions)
 
     const secondJob = await enqueueBrief(runtime, cookie, caseId)
-    expect(await runtime.patientBrief.processNext()).toMatchObject({
+    expect(await runtime.patientPersona.processNext()).toMatchObject({
       jobId: secondJob.jobId,
       resultRevision: 2,
       status: 'succeeded',
     })
-    const beforeSelection = patientBriefRevisionListSchema.parse(await (await runtime.app.request(
-      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-brief-revisions`,
+    const beforeSelection = patientPersonaRevisionListSchema.parse(await (await runtime.app.request(
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-persona-revisions`,
       { headers: { cookie } },
     )).json())
     expect(beforeSelection).toMatchObject({
@@ -1136,10 +1154,10 @@ describe('Synthetic Case generation HTTP contract', () => {
       { headers: { cookie } },
     )).json())
     const selectResponse = await runtime.app.request(
-      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-brief-revisions/active`,
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-persona-revisions/active`,
       {
         body: JSON.stringify({
-          briefRevision: 2,
+          personaRevision: 2,
           expectedCaseRevision: caseBeforeSelection.revision,
         }),
         headers: {
@@ -2730,15 +2748,18 @@ describe('Synthetic Case generation HTTP contract', () => {
   }, 30_000)
 
   it('rejects ledger-less laboratory service orders and fails generation fast', async () => {
-    const safeBrief: PatientBriefContent = {
+    const safeBrief: PatientPersonaContent = {
       chiefComplaint: '咽痛两天',
       knownHistorySummary: '既往体健。',
+      medicationMemory: '没吃什么药。',
       openingStatement: '医生您好，我咽痛两天了。',
-      symptomTopics: [{
-        answerPoints: ['两天前开始。', '吞咽时更痛。'],
-        id: 'sore-throat-onset',
-        name: '咽痛经过',
-      }],
+      persona: {
+        attitude: '听医生的',
+        character: '温和',
+        healthLiteracy: '高中文化',
+        speechStyle: '普通话，句子完整',
+      },
+      symptomExperience: '两天前嗓子开始疼，吞口水更疼，喝了点热水没管用。',
     }
     const briefProvider = new ControlledBriefProvider([safeBrief])
     const runtime = await createRuntime(new RetryingSyntheaProvider(1, false), briefProvider)
@@ -2748,7 +2769,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     const caseId = generation?.caseIds[0] ?? ''
     expect(generation).toMatchObject({ status: 'succeeded' })
     await enqueueBrief(runtime, cookie, caseId)
-    expect(await runtime.patientBrief.processNext()).toMatchObject({ status: 'succeeded' })
+    expect(await runtime.patientPersona.processNext()).toMatchObject({ status: 'succeeded' })
     const caseInstance = syntheticCaseInstanceSchema.parse(await (await runtime.app.request(
       `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}`,
       { headers: { cookie } },
@@ -3085,7 +3106,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     const caseId = generation?.caseIds[0] ?? ''
     const job = await enqueueBrief(first, cookie, caseId)
     first.database.driver.prepare(`
-      UPDATE patient_brief_job
+      UPDATE patient_persona_job
       SET status = 'running', started_at = updated_at
       WHERE workspace_id = ? AND job_id = ?
     `).run(job.workspaceId, job.jobId)
@@ -3097,13 +3118,13 @@ describe('Synthetic Case generation HTTP contract', () => {
       migrationMode: 'verify',
     })
     const restartedCookie = await signIn(restarted)
-    const recovered = patientBriefJobSchema.parse(await (await restarted.app.request(
-      `/api/sim/v1/patient-brief-jobs/${encodeURIComponent(job.jobId)}`,
+    const recovered = patientPersonaJobSchema.parse(await (await restarted.app.request(
+      `/api/sim/v1/patient-persona-jobs/${encodeURIComponent(job.jobId)}`,
       { headers: { cookie: restartedCookie } },
     )).json())
     expect(recovered).toMatchObject({ startedAt: null, status: 'queued' })
     expect(restarted.database.driver.prepare(`
-      SELECT COUNT(*) AS count FROM patient_brief_revision WHERE case_id = ?
+      SELECT COUNT(*) AS count FROM patient_persona_revision WHERE case_id = ?
     `).get(caseId)).toEqual({ count: 0 })
   })
 })

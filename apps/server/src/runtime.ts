@@ -4,7 +4,8 @@ import { CommandExecutor, type ActorContext } from './application/command-execut
 import { ScenarioService } from './application/scenario-service.ts'
 import { ReferenceDataService } from './application/reference-data-service.ts'
 import { ScenarioDataService } from './application/scenario-data/scenario-data-service.ts'
-import { PatientBriefService } from './application/patient-brief-service.ts'
+import { ConsultationDialogueService } from './application/consultation-dialogue-service.ts'
+import { PatientPersonaService } from './application/patient-persona-service.ts'
 import { LaboratoryServicePublisher } from './application/laboratory-service-publisher.ts'
 import { SyntheticCaseVisitService } from './application/synthetic-case-visit-service.ts'
 import {
@@ -25,7 +26,7 @@ import { WorkspaceRepository } from './infrastructure/sqlite/workspace-repositor
 import { ScenarioGenerationJobRepository } from './infrastructure/sqlite/scenario-generation-job-repository.ts'
 import { SyntheticPatientProfileRepository } from './infrastructure/sqlite/synthetic-patient-profile-repository.ts'
 import { SyntheticCaseRepository } from './infrastructure/sqlite/synthetic-case-repository.ts'
-import { PatientBriefRepository } from './infrastructure/sqlite/patient-brief-repository.ts'
+import { PatientPersonaRepository } from './infrastructure/sqlite/patient-persona-repository.ts'
 import { InvestigationResultRepository } from './infrastructure/sqlite/investigation-result-repository.ts'
 import {
   LaboratoryServicePublicationRepository,
@@ -73,6 +74,7 @@ export interface CreateClinMeshRuntimeOptions {
     baseUrl: string
     briefModel: string
     catalogEnrichmentModel?: string
+    consultationModel?: string | undefined
     investigationModel: string
     maxResponseBytes: number
     timeoutMs: number
@@ -88,7 +90,8 @@ export interface CreateClinMeshRuntimeOptions {
   chatCompletionsProvider?: JsonChatCompletionsProvider
   investigationModel?: string
   catalogEnrichmentModel?: string
-  patientBriefModel?: string
+  consultationModel?: string
+  patientPersonaModel?: string
   now?: () => Date
   outboxRetryDelayMs?: number
   performanceObserver?: SqlitePerformanceObserver
@@ -148,7 +151,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const generationJobs = new ScenarioGenerationJobRepository(database)
     const syntheticPatientProfiles = new SyntheticPatientProfileRepository(database)
     const syntheticCases = new SyntheticCaseRepository(database)
-    const patientBriefs = new PatientBriefRepository(database, syntheticCases)
+    const patientPersonas = new PatientPersonaRepository(database, syntheticCases)
     const investigationResults = new InvestigationResultRepository(database)
     const laboratoryServicePublications = new LaboratoryServicePublicationRepository(database)
     const chatCompletions = options.chatCompletionsProvider
@@ -160,7 +163,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             maxResponseBytes: options.ai.maxResponseBytes,
             timeoutMs: options.ai.timeoutMs,
           }))
-    const patientBriefModel = options.patientBriefModel ?? options.ai?.briefModel
+    const patientPersonaModel = options.patientPersonaModel ?? options.ai?.briefModel
+    const consultationModel = options.consultationModel ?? options.ai?.consultationModel
     const investigationModel = options.investigationModel ?? options.ai?.investigationModel
     const catalogEnrichmentModel = options.catalogEnrichmentModel
       ?? options.ai?.catalogEnrichmentModel
@@ -209,7 +213,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             baseUrl: options.syntheaProviderUrl,
           }))
     generationJobs.requeueInterrupted(new Date().toISOString())
-    patientBriefs.requeueInterrupted(new Date().toISOString())
+    patientPersonas.requeueInterrupted(new Date().toISOString())
     laboratoryServicePublications.requeueInterrupted(new Date().toISOString())
     const scenarioData = new ScenarioDataService({
       cases: syntheticCases,
@@ -218,18 +222,25 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       provider: syntheaProvider,
       profiles: syntheticPatientProfiles,
     })
-    const patientBrief = new PatientBriefService({
-      briefs: patientBriefs,
+    const patientPersona = new PatientPersonaService({
+      briefs: patientPersonas,
       cases: syntheticCases,
       commands,
-      ...(patientBriefModel === undefined ? {} : { model: patientBriefModel }),
+      ...(patientPersonaModel === undefined ? {} : { model: patientPersonaModel }),
       profiles: syntheticPatientProfiles,
       ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
     })
     const caseVisits = new SyntheticCaseVisitService({
-      briefs: patientBriefs,
+      briefs: patientPersonas,
       cases: syntheticCases,
       profiles: syntheticPatientProfiles,
+      workflow,
+    })
+    const consultationDialogue = new ConsultationDialogueService({
+      cases: syntheticCases,
+      commands,
+      ...(consultationModel === undefined ? {} : { model: consultationModel }),
+      ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
       workflow,
     })
     scenario.ensureInitialEpoch({
@@ -355,7 +366,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     let closed = false
     let dispatchCycle: Promise<void> | undefined
     let generationCycle: Promise<void> | undefined
-    let patientBriefCycle: Promise<void> | undefined
+    let patientPersonaCycle: Promise<void> | undefined
     let laboratoryServicePublicationCycle: Promise<void> | undefined
     let closePromise: Promise<void> | undefined
     const generationAbort = new AbortController()
@@ -381,15 +392,15 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         })
       return generationCycle
     }
-    const dispatchPatientBriefJobs = (): Promise<void> => {
+    const dispatchPatientPersonaJobs = (): Promise<void> => {
       if (closed) return Promise.resolve()
-      if (patientBriefCycle !== undefined) return patientBriefCycle
-      patientBriefCycle = patientBrief.processNext(generationAbort.signal)
+      if (patientPersonaCycle !== undefined) return patientPersonaCycle
+      patientPersonaCycle = patientPersona.processNext(generationAbort.signal)
         .then(() => undefined)
         .finally(() => {
-          patientBriefCycle = undefined
+          patientPersonaCycle = undefined
         })
-      return patientBriefCycle
+      return patientPersonaCycle
     }
     const dispatchLaboratoryServicePublicationJobs = (): Promise<void> => {
       if (closed) return Promise.resolve()
@@ -417,10 +428,10 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             reportRuntimeError({ error, scope: 'scenario-generation-dispatch' })
           })
         }, options.autoDispatchIntervalMs)
-    const patientBriefTimer = options.autoDispatchIntervalMs === undefined
+    const patientPersonaTimer = options.autoDispatchIntervalMs === undefined
       ? undefined
       : setInterval(() => {
-          void dispatchPatientBriefJobs().catch(error => {
+          void dispatchPatientPersonaJobs().catch(error => {
             reportRuntimeError({ error, scope: 'patient-brief-dispatch' })
           })
         }, options.autoDispatchIntervalMs)
@@ -444,7 +455,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       identity,
       investigation,
       caseVisits,
-      patientBrief,
+      patientPersona,
+      consultationDialogue,
       laboratoryServicePublisher,
       referenceData,
       scenario,
@@ -459,7 +471,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         closed = true
         if (dispatchTimer !== undefined) clearInterval(dispatchTimer)
         if (generationTimer !== undefined) clearInterval(generationTimer)
-        if (patientBriefTimer !== undefined) clearInterval(patientBriefTimer)
+        if (patientPersonaTimer !== undefined) clearInterval(patientPersonaTimer)
         if (laboratoryServicePublicationTimer !== undefined) {
           clearInterval(laboratoryServicePublicationTimer)
         }
@@ -469,7 +481,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             dispatchCycle,
             generationCycle,
             laboratoryServicePublicationCycle,
-            patientBriefCycle,
+            patientPersonaCycle,
           ])
           referenceDatabase?.close()
           referenceDatabase = undefined
@@ -480,7 +492,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       database,
       dispatchPending,
       dispatchScenarioGenerationJobs,
-      dispatchPatientBriefJobs,
+      dispatchPatientPersonaJobs,
       dispatchLaboratoryServicePublicationJobs,
       dispatcher,
       fhir,
@@ -488,7 +500,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       caseVisits,
       investigation,
       laboratoryServicePublisher,
-      patientBrief,
+      patientPersona,
       referenceData,
       scenario,
       scenarioData,

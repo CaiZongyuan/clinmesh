@@ -100,18 +100,6 @@ const paginationShape = {
   total: z.number().int().nonnegative(),
 }
 
-export const virtualPatientListSchema = z.object({
-  items: z.array(z.object({
-    birthDate: z.iso.date(),
-    gender: z.enum(['female', 'male', 'other', 'unknown']),
-    id: z.string().min(1),
-    name: z.string().min(1),
-    presentation: clinicalPresentationSchema,
-    version: z.string().min(32).max(2_048),
-  }).strict()),
-  ...paginationShape,
-}).strict()
-
 export const sessionContextSchema = z.object({
   actor: z.object({
     actorId: z.string().min(1),
@@ -173,16 +161,6 @@ export function commandResponseSchema<Schema extends z.ZodType>(data: Schema) {
 }
 
 export const scenarioCommandResponseSchema = commandResponseSchema(scenarioStateSchema)
-
-export const startVirtualPatientResponseSchema = commandResponseSchema(z.object({
-  caseId: z.string().min(1),
-  encounterId: z.string().min(1),
-  patientId: z.string().min(1),
-  queueTaskId: z.string().min(1),
-  registrationId: z.string().min(1),
-  status: z.literal('first-visit'),
-  virtualPatientId: z.string().min(1),
-}))
 
 const catalogItemSchema = z.object({
   id: z.string().min(1),
@@ -929,23 +907,39 @@ export const allergyWarningSchema = z.object({
   display: z.string().min(1),
 }).strict()
 
-export const consultationQuestionSchema = z.object({
-  code: z.string().min(1),
-  text: z.string().min(1),
-}).strict()
-
-export const consultationRecordSchema = z.object({
-  answer: z.string().min(1),
+export const consultationTurnSchema = z.object({
+  actorId: z.string().min(1).nullable().default(null),
+  practitionerId: z.string().min(1).nullable().default(null),
   id: z.string().min(1),
-  question: consultationQuestionSchema,
+  kind: z.enum(['text', 'report-card']),
+  messageText: z.string().min(1),
+  personaRevision: z.number().int().positive().nullable(),
   recordedAt: z.string().min(1),
+  reportReference: z.string().min(1).nullable(),
   sequence: z.number().int().positive(),
+  source: z.enum([
+    'doctor-typed',
+    'patient-agent',
+    'persona-opening',
+    'report-card',
+    'legacy-question-answer',
+    'asr-import',
+    'external-sync',
+  ]),
+  speaker: z.enum(['doctor', 'patient']),
 }).strict()
 
-export const askConsultationQuestionResponseSchema = commandResponseSchema(z.object({
+export const sendConsultationMessageResponseSchema = commandResponseSchema(z.object({
   caseId: z.string().min(1),
   consultationVersion: z.number().int().positive(),
-  record: consultationRecordSchema,
+  doctorTurn: consultationTurnSchema,
+  patientTurn: consultationTurnSchema,
+}).strict())
+
+export const retryConsultationReplyResponseSchema = commandResponseSchema(z.object({
+  caseId: z.string().min(1),
+  consultationVersion: z.number().int().positive(),
+  patientTurn: consultationTurnSchema,
 }).strict())
 
 export const clinicalDocumentContentSchema = z.object({
@@ -1454,7 +1448,7 @@ export const doctorCompletedCaseDetailSchema = z.object({
   clinicalDocuments: z.array(completedCaseClinicalDocumentSchema),
   completedAt: z.iso.datetime({ offset: true }),
   consultation: z.object({
-    records: z.array(consultationRecordSchema),
+    turns: z.array(consultationTurnSchema),
     version: z.number().int().positive(),
   }).strict().optional(),
   diagnosis: diagnosisConfirmationSchema.extend({
@@ -1481,8 +1475,7 @@ export const doctorCaseDetailSchema = z.object({
   caseId: z.string().min(1),
   clinicalDocument: clinicalDocumentStateSchema.optional(),
   consultation: z.object({
-    questions: z.array(consultationQuestionSchema),
-    records: z.array(consultationRecordSchema),
+    turns: z.array(consultationTurnSchema),
     version: z.number().int().positive(),
   }).strict().optional(),
   diagnosis: diagnosisStateSchema.optional(),
@@ -1743,7 +1736,6 @@ export type DiagnosisDraftEntry = z.infer<typeof diagnosisDraftEntrySchema>
 export type DiagnosisConfirmation = z.infer<typeof diagnosisConfirmationSchema>
 export type DiagnosisState = z.infer<typeof diagnosisStateSchema>
 export type PrescriptionDraftItem = z.infer<typeof prescriptionDraftItemSchema>
-export type VirtualPatientList = z.infer<typeof virtualPatientListSchema>
 export type ClinicalCatalog = z.infer<typeof clinicalCatalogSchema>
 export type TriageQueueItem = z.infer<typeof triageQueueSchema>['items'][number]
 export type DoctorQueueItem = z.infer<typeof doctorQueueItemSchema>

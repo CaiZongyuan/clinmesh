@@ -8,7 +8,8 @@ import {
 import {
   acknowledgeLaboratoryReportRequestSchema,
   acknowledgeLaboratoryReportResponseSchema,
-  askConsultationQuestionResponseSchema,
+  retryConsultationReplyResponseSchema,
+  sendConsultationMessageResponseSchema,
   billingQueueSchema,
   cancelLaboratoryRequestRequestSchema,
   caseLaboratoryCatalogSearchSchema,
@@ -270,13 +271,18 @@ const doctorCompletedCasesInputSchema = paginationInputSchema.extend({
   path: ['completedFrom'],
 })
 
-const consultationQuestionInputSchema = z.object({
+const consultationMessageInputSchema = z.object({
   encounterId: z.string().min(1),
   encounterVersion: z.string().regex(/^\d+$/),
-  expectedVersion: z.number().int().positive(),
-  questionCode: z.string().min(1).max(64),
+  expectedConsultationVersion: z.number().int().positive(),
+  message: z.string().trim().min(1).max(2_000),
   taskId: z.string().min(1),
   taskVersion: z.string().regex(/^\d+$/),
+}).strict()
+
+const consultationRetryInputSchema = z.object({
+  encounterId: z.string().min(1),
+  expectedConsultationVersion: z.number().int().positive(),
 }).strict()
 
 const completeEncounterInputSchema = z.object({
@@ -563,11 +569,15 @@ const bodyEncoders = {
       taskId,
       taskVersion,
       ...input
-    } = consultationQuestionInputSchema.parse(rawInput)
+    } = consultationMessageInputSchema.parse(rawInput)
     return commandBody({
       [`Encounter/${encounterId}`]: encounterVersion,
       [`Task/${taskId}`]: taskVersion,
     }, input)
+  },
+  'encounter.consultation.reply.retry': (rawInput: unknown) => {
+    const { encounterId: _encounterId, ...input } = consultationRetryInputSchema.parse(rawInput)
+    return commandBody({}, input)
   },
   'encounter.complete': (rawInput: unknown) => {
     const { encounterId, encounterVersion } = completeEncounterInputSchema.parse(rawInput)
@@ -1161,16 +1171,35 @@ const operationDefinitions = [
       path: '/api/his/v1/encounters/:encounterId/actions/ask-consultation-question',
     },
     id: 'encounter.consultation.ask',
-    input: consultationQuestionInputSchema,
+    input: consultationMessageInputSchema,
     mode: 'command',
-    output: askConsultationQuestionResponseSchema,
+    output: sendConsultationMessageResponseSchema,
     requirements: {
       expectedVersions: true,
       idempotency: 'required',
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Ask one allowed consultation question and append the answer',
+    summary: 'Send one free-text consultation message and append the patient reply',
+    version: 2,
+  },
+  {
+    cliPath: ['encounter', 'consultation', 'retry-reply'],
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/encounters/:encounterId/actions/retry-consultation-reply',
+    },
+    id: 'encounter.consultation.reply.retry',
+    input: consultationRetryInputSchema,
+    mode: 'command',
+    output: retryConsultationReplyResponseSchema,
+    requirements: {
+      expectedVersions: false,
+      idempotency: 'required',
+    },
+    risk: 'write',
+    roles: ['outpatient-doctor'],
+    summary: 'Regenerate the patient reply for the last unanswered consultation message',
     version: 1,
   },
   {
@@ -1829,6 +1858,7 @@ const commandOperationAliases: Readonly<Record<string, string>> = {
   [clinicalDocumentOperationIds.previewSign]: clinicalDocumentOperationIds.storedPreviewSign,
   [clinicalDocumentOperationIds.sign]: clinicalDocumentOperationIds.storedSign,
   'encounter.consultation.ask': 'consultation.ask-question',
+  'encounter.consultation.reply.retry': 'consultation.reply.retry',
   'encounter.diagnosis.confirm': 'encounter.confirm-diagnosis',
   'encounter.diagnosis.draft.set': 'encounter.save-diagnosis-draft',
   'encounter.laboratory-request.draft.delete': 'laboratory-request.delete-draft',
@@ -1867,6 +1897,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'encounter.complete': 'clinmesh-doctor',
   'encounter.completion.preview': 'clinmesh-doctor',
   'encounter.consultation.ask': 'clinmesh-doctor',
+  'encounter.consultation.reply.retry': 'clinmesh-doctor',
   'encounter.diagnosis.confirm': 'clinmesh-doctor',
   'encounter.diagnosis.draft.set': 'clinmesh-doctor',
   'encounter.laboratory-request.draft.delete': 'clinmesh-doctor',
@@ -1963,16 +1994,6 @@ export interface ExcludedHisRoute {
 }
 
 export const excludedHisRoutes = [
-  {
-    method: 'GET',
-    path: '/api/his/v1/doctor/virtual-patients',
-    reason: 'Superseded by the Synthetic Patient Library and Synthetic Case direct-start flow',
-  },
-  {
-    method: 'POST',
-    path: '/api/his/v1/doctor/virtual-patients/:virtualPatientId/actions/start',
-    reason: 'Superseded by registration.synthetic-case.start',
-  },
   {
     method: 'POST',
     path: '/api/his/v1/encounters/:encounterId/actions/start-first-visit',

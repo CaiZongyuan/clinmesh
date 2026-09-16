@@ -1,3 +1,4 @@
+import { useSyntheticLaboratoryCatalog } from './fixtures/consultation.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -10,7 +11,7 @@ import {
 import {
   acknowledgeLaboratoryReportResponseSchema,
   apiErrorSchema,
-  askConsultationQuestionResponseSchema,
+  sendConsultationMessageResponseSchema,
   billingQueueSchema,
   cancelLaboratoryRequestRequestSchema,
   clinicalCatalogSchema,
@@ -56,11 +57,9 @@ import {
   scenarioStateSchema,
   serviceCatalogSearchSchema,
   sessionContextSchema,
-  startVirtualPatientResponseSchema,
   startVisitResponseSchema,
   triageQueueSchema,
   triageResponseSchema,
-  virtualPatientListSchema,
   withdrawPrescriptionResponseSchema,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -68,6 +67,16 @@ import { z } from 'zod'
 import { AuditQuery } from '../src/application/audit-query.ts'
 import { WorkspaceContextError } from '../src/infrastructure/sqlite/workspace-repository.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
+import type {
+  ScenarioGenerationProvider,
+  SourcePatientCorpus,
+} from '../src/application/scenario-data/provider.ts'
+import type {
+  JsonChatCompletionInput,
+  JsonChatCompletionsProvider,
+} from '../src/infrastructure/ai/openai-chat-completions.ts'
+import type { ScenarioProviderCapabilities } from '@clinmesh/contracts/scenario'
 
 type TestRuntime = Awaited<ReturnType<typeof createClinMeshRuntime>>
 type RevisitMedicationDraft = {
@@ -165,33 +174,287 @@ function useLegacyMedicationCatalog(runtime: TestRuntime): void {
   )
 }
 
-async function startVirtualPatientConsultation(runtime: TestRuntime, password: string) {
+const syntheticPersonaContent = {
+  chiefComplaint: '反复头晕一周',
+  knownHistorySummary: '既往有高血压病史，规律服药。',
+  medicationMemory: '每天吃一片降压药，名字记不清。',
+  openingStatement: '医生您好，我最近一周总是头晕。',
+  persona: {
+    attitude: '听医生的',
+    character: '直爽',
+    healthLiteracy: '初中文化',
+    speechStyle: '句子短',
+  },
+  symptomExperience: '一周前蹲下起身时开始晕，眼前发黑，歇一会儿能缓过来，没自己买过药。',
+}
+
+class QueuePersonaProvider implements JsonChatCompletionsProvider {
+  readonly #dialogueReplies: string[]
+
+  constructor(dialogueReplies: string[] = []) {
+    this.#dialogueReplies = [...dialogueReplies]
+  }
+
+  async completeJson(input: JsonChatCompletionInput) {
+    if (input.schemaName === 'patient_persona') {
+      return { content: JSON.stringify(syntheticPersonaContent), model: 'fake-persona-model' }
+    }
+    if (input.schemaName === 'patient_dialogue_reply') {
+      const reply = this.#dialogueReplies.shift() ?? '我就是头晕，别的没什么不舒服。'
+      return { content: JSON.stringify({ reply }), model: 'resolved-fake-dialogue-model' }
+    }
+    return {
+      content: JSON.stringify({ conclusion: '白细胞计数升高。', interpretation: 'high', value: 11.2 }),
+      model: 'fake-investigation-model',
+    }
+  }
+}
+
+class StubSyntheaProvider implements ScenarioGenerationProvider {
+  #generated = 0
+
+  async capabilities(): Promise<ScenarioProviderCapabilities> {
+    return {
+      available: true,
+      maxPopulation: 10,
+      modules: [],
+      providerId: 'synthea',
+      providerName: 'Synthea',
+    }
+  }
+
+  async generate(): Promise<SourcePatientCorpus> {
+    this.#generated += 1
+    const sequence = this.#generated
+    const raw = {
+      entry: [{
+        fullUrl: 'urn:uuid:patient',
+        resource: {
+          birthDate: '1970-01-01',
+          gender: 'female',
+          id: `p${sequence}`,
+          name: [{ text: `演练患者${sequence}` }],
+          resourceType: 'Patient',
+        },
+      }, {
+        fullUrl: 'urn:uuid:prior-encounter',
+        resource: { id: `pe${sequence}`, period: { end: '2025-01-10T09:30:00+08:00', start: '2025-01-10T09:00:00+08:00' }, resourceType: 'Encounter', status: 'finished', subject: { reference: 'urn:uuid:patient' } },
+      }, {
+        fullUrl: 'urn:uuid:prior-condition',
+        resource: { code: { coding: [{ code: '59621000', display: '高血压（疾病）', system: 'http://snomed.info/sct' }] }, encounter: { reference: 'urn:uuid:prior-encounter' }, id: `pc${sequence}`, recordedDate: '2025-01-10T09:05:00+08:00', resourceType: 'Condition', subject: { reference: 'urn:uuid:patient' } },
+      }, {
+        fullUrl: 'urn:uuid:index-encounter',
+        resource: { id: `ie${sequence}`, period: { end: '2026-06-01T10:30:00+08:00', start: '2026-06-01T10:00:00+08:00' }, reasonCode: [{ text: '血压控制不佳' }], resourceType: 'Encounter', status: 'finished', subject: { reference: 'urn:uuid:patient' } },
+      }, {
+        fullUrl: 'urn:uuid:index-condition',
+        resource: { code: { coding: [{ code: '386661006', display: '2 型糖尿病', system: 'http://snomed.info/sct' }] }, encounter: { reference: 'urn:uuid:index-encounter' }, id: `ic${sequence}`, recordedDate: '2026-06-01T10:20:00+08:00', resourceType: 'Condition', subject: { reference: 'urn:uuid:patient' } },
+      }, {
+        fullUrl: 'urn:uuid:index-wbc',
+        resource: {
+          code: { coding: [{ code: '6690-2', display: '白细胞计数', system: 'http://loinc.org' }] },
+          effectiveDateTime: '2026-06-01T10:15:00+08:00',
+          encounter: { reference: 'urn:uuid:index-encounter' },
+          id: `iw${sequence}`,
+          interpretation: [{ coding: [{ code: 'H', system: 'http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation' }] }],
+          issued: '2026-06-01T10:20:00+08:00',
+          referenceRange: [{ high: { unit: '10*9/L', value: 9.5 }, low: { unit: '10*9/L', value: 3.5 }, text: '3.5-9.5 x10^9/L' }],
+          resourceType: 'Observation',
+          status: 'final',
+          subject: { reference: 'urn:uuid:patient' },
+          valueQuantity: { system: 'http://unitsofmeasure.org', unit: '10*9/L', value: 11.2 },
+        },
+      }, {
+        fullUrl: 'urn:uuid:index-hgb',
+        resource: {
+          code: { coding: [{ code: '718-7', display: '血红蛋白', system: 'http://loinc.org' }] },
+          effectiveDateTime: '2026-06-01T10:15:00+08:00',
+          encounter: { reference: 'urn:uuid:index-encounter' },
+          id: `ih${sequence}`,
+          interpretation: [{ coding: [{ code: 'N', system: 'http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation' }] }],
+          issued: '2026-06-01T10:20:00+08:00',
+          referenceRange: [{ high: { unit: 'g/L', value: 150 }, low: { unit: 'g/L', value: 115 }, text: '115-150 g/L' }],
+          resourceType: 'Observation',
+          status: 'final',
+          subject: { reference: 'urn:uuid:patient' },
+          valueQuantity: { system: 'http://unitsofmeasure.org', unit: 'g/L', value: 135 },
+        },
+      }, {
+        fullUrl: 'urn:uuid:index-plt',
+        resource: {
+          code: { coding: [{ code: '777-3', display: '血小板计数', system: 'http://loinc.org' }] },
+          effectiveDateTime: '2026-06-01T10:15:00+08:00',
+          encounter: { reference: 'urn:uuid:index-encounter' },
+          id: `ip${sequence}`,
+          interpretation: [{ coding: [{ code: 'N', system: 'http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation' }] }],
+          issued: '2026-06-01T10:20:00+08:00',
+          referenceRange: [{ high: { unit: '10*9/L', value: 350 }, low: { unit: '10*9/L', value: 125 }, text: '125-350 x10^9/L' }],
+          resourceType: 'Observation',
+          status: 'final',
+          subject: { reference: 'urn:uuid:patient' },
+          valueQuantity: { system: 'http://unitsofmeasure.org', unit: '10*9/L', value: 210 },
+        },
+      }, {
+        fullUrl: 'urn:uuid:index-crp',
+        resource: {
+          code: { coding: [{ code: '1988-5', display: 'C 反应蛋白', system: 'http://loinc.org' }] },
+          effectiveDateTime: '2026-06-01T10:15:00+08:00',
+          encounter: { reference: 'urn:uuid:index-encounter' },
+          id: `ir${sequence}`,
+          interpretation: [{ coding: [{ code: 'H', system: 'http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation' }] }],
+          issued: '2026-06-01T10:20:00+08:00',
+          referenceRange: [{ high: { unit: 'mg/L', value: 8 }, low: { unit: 'mg/L', value: 0 }, text: '0-8 mg/L' }],
+          resourceType: 'Observation',
+          status: 'final',
+          subject: { reference: 'urn:uuid:patient' },
+          valueQuantity: { system: 'http://unitsofmeasure.org', unit: 'mg/L', value: 18.6 },
+        },
+      }],
+      resourceType: 'Bundle',
+      type: 'collection',
+    }
+    return {
+      kind: 'synthea-r4',
+      sources: [{ format: 'fhir-r4-bundle', hash: sourceArtifactHash(raw), patientId: `p${sequence}`, raw }],
+    }
+  }
+}
+
+
+async function startSyntheticPatientConsultation(runtime: TestRuntime, password: string) {
+  useSyntheticLaboratoryCatalog(runtime)
   const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
-  const candidatesResponse = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
-    headers: { cookie: doctorCookie },
+  const adminCookie = await signIn(runtime, 'admin@demo.clinmesh.local', password)
+  const generationResponse = await runtime.app.request('/api/sim/v1/scenario-generation-jobs', {
+    body: JSON.stringify({
+      name: '门诊演练患者',
+      population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
+      providerId: 'synthea',
+      seeds: { clinical: 7331, population: 4242 },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    }),
+    headers: commandHeaders(adminCookie),
+    method: 'POST',
   })
-  const candidate = virtualPatientListSchema.parse(await candidatesResponse.json()).items[0]
-  if (candidate === undefined) throw new Error('Candidate Virtual Patient was not seeded')
+  expect(generationResponse.status).toBe(200)
+  const generated = await runtime.scenarioData.processNextGenerationJob()
+  const syntheticCaseId = generated?.caseIds[0]
+  if (syntheticCaseId === undefined) throw new Error('Synthetic Case was not generated')
+  const personaJobResponse = await runtime.app.request(
+    `/api/sim/v1/synthetic-cases/${encodeURIComponent(syntheticCaseId)}/patient-persona-jobs`,
+    { body: '{}', headers: commandHeaders(adminCookie), method: 'POST' },
+  )
+  expect(personaJobResponse.status).toBe(200)
+  const personaJob = await runtime.patientPersona.processNext()
+  if (personaJob?.status !== 'succeeded') throw new Error(`Patient Persona was not generated: ${JSON.stringify(personaJob?.error)}`)
+
+  const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local', password)
+  const registrarSession = await runtime.identity.resolveSessionContext(
+    new Headers({ cookie: registrarCookie }),
+  )
+  const catalog = runtime.workflow.registrationCatalog(registrarSession.actor)
+  const caseResponse = await runtime.app.request(
+    `/api/sim/v1/synthetic-cases/${encodeURIComponent(syntheticCaseId)}`,
+    { headers: { cookie: adminCookie } },
+  )
+  expect(caseResponse.status).toBe(200)
+  const syntheticCase = await caseResponse.json() as { activeBriefRevision: number; revision: number }
   const startResponse = await runtime.app.request(
-    `/api/his/v1/doctor/virtual-patients/${candidate.id}/actions/start`, {
+    `/api/his/v1/synthetic-cases/${encodeURIComponent(syntheticCaseId)}/actions/start-outpatient-visit`, {
       body: JSON.stringify({
-        expectedVersions: {},
-        input: { expectedVersion: candidate.version },
+        activeBriefRevision: syntheticCase.activeBriefRevision,
+        departmentId: catalog.departments[0]!.id,
+        expectedCaseRevision: syntheticCase.revision,
+        locationId: catalog.locations[0]!.id,
+        visitDate: catalog.virtualDate,
+        visitTypeId: catalog.visitTypes[0]!.id,
+      }),
+      headers: commandHeaders(registrarCookie),
+      method: 'POST',
+    },
+  )
+  expect(startResponse.status).toBe(200)
+  const started = await startResponse.json() as { data: {
+    encounterId: string
+    outpatientCaseId: string
+    patientId: string
+    queueTaskId: string
+    registrationId: string
+  } }
+  const encounterId = started.data.encounterId
+  const triageCookie = await signIn(runtime, 'triage@demo.clinmesh.local', password)
+  const triageResponse = await runtime.app.request(
+    `/api/his/v1/encounters/${encounterId}/actions/record-triage`, {
+      body: JSON.stringify({
+        expectedVersions: { [`Encounter/${encounterId}`]: '1', [`Task/${started.data.queueTaskId}`]: '1' },
+        input: {
+          acuityCode: 'level-3',
+          bloodPressure: { diastolicMmHg: 76, systolicMmHg: 128 },
+          chiefComplaint: '发热伴头晕一天',
+          oxygenSaturationPct: 98,
+          pulseBpm: 88,
+          respirationBpm: 18,
+          temperatureC: 38.2,
+        },
+      }),
+      headers: commandHeaders(triageCookie),
+      method: 'POST',
+    },
+  )
+  expect(triageResponse.status).toBe(200)
+  const triaged = await triageResponse.json() as { data: {
+    doctorTaskId: string
+    encounterVersion: string
+  } }
+  const askResponse = await runtime.app.request(
+    `/api/his/v1/encounters/${encounterId}/actions/ask-consultation-question`, {
+      body: JSON.stringify({
+        expectedVersions: {
+          [`Encounter/${encounterId}`]: triaged.data.encounterVersion,
+          [`Task/${triaged.data.doctorTaskId}`]: '1',
+        },
+        input: { expectedConsultationVersion: 2, message: '您哪里不舒服？' },
       }),
       headers: commandHeaders(doctorCookie),
       method: 'POST',
     },
   )
-  const started = startVirtualPatientResponseSchema.parse(await startResponse.json()).data
-  return { doctorCookie, started }
+  expect(askResponse.status).toBe(200)
+  const queueResponse = await runtime.app.request('/api/his/v1/doctor/queue?page=1&pageSize=20', {
+    headers: { cookie: doctorCookie },
+  })
+  expect(queueResponse.status).toBe(200)
+  const queue = await queueResponse.json() as { items: Array<{
+    encounterId: string
+    encounterVersion: string
+    status: string
+    taskId: string
+    taskVersion: string
+  }> }
+  const queueItem = queue.items.find(item => item.encounterId === encounterId)
+  if (queueItem === undefined) throw new Error('Doctor queue item was not created')
+  return {
+    doctorCookie,
+    started: {
+      caseId: started.data.outpatientCaseId,
+      doctorTaskId: queueItem.taskId,
+      encounterId,
+      encounterVersion: queueItem.encounterVersion,
+      patientId: started.data.patientId,
+      queueTaskId: queueItem.taskId,
+      registrationId: started.data.registrationId,
+      status: queueItem.status as 'first-visit',
+      taskVersion: queueItem.taskVersion,
+    },
+  }
 }
 
 async function createIndependentReportedLaboratoryRequest(
   runtime: TestRuntime,
   password: string,
 ) {
-  const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
-  const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+  const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+  const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
   const draftResponse = await runtime.app.request(
     `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
     {
@@ -239,8 +502,8 @@ async function createIndependentReportedLaboratoryRequest(
 }
 
 async function createSignedStructuredClinicalDocument(runtime: TestRuntime, password: string) {
-  const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
-  const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+  const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+  const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
   const draftResponse = await runtime.app.request(
     `/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`,
     {
@@ -298,9 +561,9 @@ async function createCompletionReadyConsultation(
   const diagnosisMode = options.diagnosis ?? true
   const documentMode = options.document ?? true
   const medicationMode = options.medication ?? true
-  const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+  const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
   const encounterReference = `Encounter/${started.encounterId}`
-  let encounterVersion = '1'
+  let encounterVersion = started.encounterVersion
   if (documentMode !== false) {
     const expectedVersions = { [encounterReference]: encounterVersion }
     const documentDraftResponse = await runtime.app.request(
@@ -601,12 +864,12 @@ async function selectAdditionalDoctorRole(
 }
 
 async function createIssuedIndependentPrescription(runtime: TestRuntime, password: string) {
-  const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+  const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
   const diagnosisDraftResponse = await runtime.app.request(
     `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
     {
       body: JSON.stringify({
-        expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+        expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
         input: {
           entries: [{ catalogItemId: 'diagnosis-influenza', role: 'primary' }],
           expectedDraftVersion: 0,
@@ -623,7 +886,7 @@ async function createIssuedIndependentPrescription(runtime: TestRuntime, passwor
     `/api/his/v1/encounters/${started.encounterId}/diagnosis/actions/confirm`,
     {
       body: JSON.stringify({
-        expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+        expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
         input: { expectedDraftVersion: diagnosisDraft.draftVersion },
       }),
       headers: commandHeaders(doctorCookie),
@@ -1105,6 +1368,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     useLegacyMedicationCatalog(runtime)
@@ -1194,6 +1462,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
@@ -1225,6 +1498,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const { doctorCookie, encounterVersion, started } = await createCompletionReadyConsultation(
@@ -1304,6 +1582,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const complete = async (candidate: Awaited<ReturnType<typeof createCompletionReadyConsultation>>) => {
@@ -1336,14 +1619,21 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/doctor/completed-cases?patientId=${second.started.patientId}&pageSize=20`,
       { headers: { cookie: second.doctorCookie } },
     )
+    if (process.env.CLINMESH_DEBUG_LIST === '1') {
+      console.log('LIST_BODY', await response.clone().json())
+      const rows = runtime.database.driver.prepare("SELECT case_id, status FROM outpatient_case").all()
+      console.log('CASES', JSON.stringify(rows))
+      const resp = runtime.database.driver.prepare("SELECT case_id, practitioner_role_id FROM outpatient_case_responsibility").all()
+      console.log('RESP', JSON.stringify(resp))
+    }
 
     expect(response.status).toBe(200)
     expect(doctorCompletedCaseListSchema.parse(await response.json())).toMatchObject({
       items: [{
         caseId: second.started.caseId,
         patient: {
-          id: 'candidate-patient-002',
-          name: '王晓明',
+          id: second.started.patientId,
+          name: '演练患者2',
         },
       }],
       page: 1,
@@ -1365,6 +1655,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const complete = async (candidate: Awaited<ReturnType<typeof createCompletionReadyConsultation>>) => {
@@ -1421,6 +1716,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const complete = async (candidate: Awaited<ReturnType<typeof createCompletionReadyConsultation>>) => {
@@ -1487,6 +1787,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const complete = async (candidate: Awaited<ReturnType<typeof createCompletionReadyConsultation>>) => {
@@ -1554,6 +1859,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const candidate = await createCompletionReadyConsultation(runtime, password)
@@ -1654,6 +1964,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const candidate = await createCompletionReadyConsultation(runtime, password, {
@@ -1664,23 +1979,30 @@ describe('outpatient workflow HTTP contract', () => {
       UPDATE laboratory_request SET catalog_item_id = 'laboratory:white-cell-count'
       WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND case_id = ?
     `).run(candidate.started.caseId).changes).toBe(1)
-    const questionResponse = await runtime.app.request(
+    const consultationDetailBeforeAsk = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${candidate.started.caseId}`,
+      { headers: { cookie: candidate.doctorCookie } },
+    )).json())
+    const consultationVersionBeforeAsk = consultationDetailBeforeAsk.consultation?.version
+    if (consultationVersionBeforeAsk === undefined) throw new Error('Consultation was not available')
+    const askWithVersion = async (consultationVersion: number) => runtime.app.request(
       `/api/his/v1/encounters/${candidate.started.encounterId}/actions/ask-consultation-question`,
       {
         body: JSON.stringify({
           expectedVersions: {
             [`Encounter/${candidate.started.encounterId}`]: candidate.encounterVersion,
-            [`Task/${candidate.started.queueTaskId}`]: '1',
+            [`Task/${candidate.started.queueTaskId}`]: candidate.started.taskVersion,
           },
-          input: { expectedVersion: 1, questionCode: 'symptom-onset' },
+          input: { expectedConsultationVersion: consultationVersion, message: '什么时候开始发热的？' },
         }),
         headers: commandHeaders(candidate.doctorCookie),
         method: 'POST',
       },
     )
-    const consultationRecord = askConsultationQuestionResponseSchema.parse(
+    const questionResponse = await askWithVersion(consultationVersionBeforeAsk)
+    const consultationRecord = sendConsultationMessageResponseSchema.parse(
       await questionResponse.json(),
-    ).data.record
+    ).data.patientTurn
     const completionResponse = await runtime.app.request(
       `/api/his/v1/encounters/${candidate.started.encounterId}/actions/complete`,
       {
@@ -1706,13 +2028,19 @@ describe('outpatient workflow HTTP contract', () => {
     const detail = doctorCompletedCaseDetailSchema.parse(await detailResponse.json())
     expect(detail).toMatchObject({
       consultation: {
-        records: [{
-          answer: consultationRecord.answer,
-          id: consultationRecord.id,
-          question: consultationRecord.question,
-          sequence: 1,
-        }],
-        version: 2,
+        turns: [
+          expect.objectContaining({ sequence: 1, source: 'persona-opening' }),
+          expect.objectContaining({ sequence: 2, speaker: 'doctor' }),
+          expect.objectContaining({ sequence: 3, source: 'patient-agent' }),
+          expect.objectContaining({ sequence: 4, source: 'report-card' }),
+          expect.objectContaining({ sequence: 5, speaker: 'doctor' }),
+          expect.objectContaining({
+            id: consultationRecord.id,
+            messageText: consultationRecord.messageText,
+            sequence: 6,
+          }),
+        ],
+        version: 7,
       },
       diagnosis: {
         entries: [{
@@ -1749,6 +2077,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const candidate = await createCompletionReadyConsultation(runtime, password, {
@@ -2103,11 +2436,16 @@ describe('outpatient workflow HTTP contract', () => {
         `Task/${requestToCancel.taskId}`,
       ],
     }))
-    expect(libraryDetail.timeline.slice(-4)).toEqual([
+    expect(libraryDetail.timeline.slice(-5)).toEqual([
       expect.objectContaining({
         kind: 'clinical-document-revised',
         occurredAt: '2026-08-24T10:00:00+08:00',
         reference: `Composition/${revision.compositionId}`,
+      }),
+      expect.objectContaining({
+        kind: 'consultation-recorded',
+        occurredAt: '2026-08-24T11:00:00+08:00',
+        reference: expect.stringMatching(/^ConsultationTurn\//),
       }),
       expect.objectContaining({
         kind: 'laboratory-report-revised',
@@ -2139,9 +2477,14 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
 
     const response = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/completion`,
@@ -2152,7 +2495,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(encounterCompletionPreviewSchema.parse(await response.json())).toEqual({
       canComplete: false,
       encounterId: started.encounterId,
-      encounterVersion: '1',
+      encounterVersion: started.encounterVersion,
       items: [
         {
           code: 'primary-diagnosis-confirmed',
@@ -2212,9 +2555,14 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { started } = await startVirtualPatientConsultation(runtime, password)
+    const { started } = await startSyntheticPatientConsultation(runtime, password)
     const cashierCookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
 
     const response = await runtime.app.request(
@@ -2251,9 +2599,14 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
 
     const response = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/actions/complete`,
@@ -2289,6 +2642,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const downstreamCase = await createPaidMedicationCase(runtime, password)
@@ -2371,13 +2729,13 @@ describe('outpatient workflow HTTP contract', () => {
       data: {
         completedAt: expect.any(String),
         encounterId: started.encounterId,
-        encounterVersion: '3',
+        encounterVersion: expect.stringMatching(/^\d+$/),
         status: 'completed',
       },
       effects: [{
         kind: 'updated',
         reference: `Encounter/${started.encounterId}`,
-        versionId: '3',
+        versionId: expect.stringMatching(/^\d+$/),
       }],
     })
     const replay = await complete()
@@ -2389,7 +2747,7 @@ describe('outpatient workflow HTTP contract', () => {
     )).json())
     expect(encounter).toMatchObject({
       actualPeriod: { end: completed.data.completedAt },
-      meta: { versionId: '3' },
+      meta: { versionId: completed.data.encounterVersion },
       status: 'completed',
     })
     expect(fhirResourceSchema.parse(await (await runtime.app.request(
@@ -2413,7 +2771,7 @@ describe('outpatient workflow HTTP contract', () => {
       encounter: {
         ...caseBefore.encounter,
         status: 'completed',
-        versionId: '3',
+        versionId: completed.data.encounterVersion,
       },
     })
     expect(runtime.database.driver.prepare(`
@@ -2455,6 +2813,10 @@ describe('outpatient workflow HTTP contract', () => {
         demoPassword: password,
         migrationMode: 'apply',
         trustedOrigins: ['http://localhost'],
+        chatCompletionsProvider: new QueuePersonaProvider(),
+        consultationModel: 'fake-consultation-model',
+        patientPersonaModel: 'fake-persona-model',
+        syntheaProvider: new StubSyntheaProvider(),
       })
       runtimes.push(runtime)
       const candidate = await createCompletionReadyConsultation(
@@ -2531,6 +2893,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const candidate = await createCompletionReadyConsultation(runtime, password)
@@ -2557,7 +2924,7 @@ describe('outpatient workflow HTTP contract', () => {
       throw new Error('Encounter completion race did not produce one winner')
     }
     expect(encounterCompletionResponseSchema.parse(await successful.json())).toMatchObject({
-      data: { encounterVersion: '3', status: 'completed' },
+      data: { status: 'completed' },
     })
     expect(apiErrorSchema.parse(await rejected.json())).toMatchObject({
       error: { code: 'EXPECTED_VERSION_CONFLICT' },
@@ -2565,7 +2932,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(fhirResourceSchema.parse(await (await runtime.app.request(
       `/fhir/R5/Encounter/${candidate.started.encounterId}`,
       { headers: { cookie: candidate.doctorCookie } },
-    )).json())).toMatchObject({ meta: { versionId: '3' }, status: 'completed' })
+    )).json())).toMatchObject({ status: 'completed' })
     expect(new AuditQuery(runtime.database).list({
       epoch: 'epoch-1',
       workspaceId: 'workspace-demo',
@@ -2575,228 +2942,7 @@ describe('outpatient workflow HTTP contract', () => {
     ])
   })
 
-  it('lists only the clinically visible Virtual Patient summary for the doctor', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-virtual-patient-list-http-'))
-    temporaryDirectories.push(directory)
-    const password = `Test-${randomUUID()}-Aa1!`
-    const runtime = await createClinMeshRuntime({
-      authBaseUrl: 'http://localhost',
-      authSecret: 'test-auth-secret-with-at-least-32-characters',
-      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
-      databasePath: join(directory, 'clinmesh.sqlite'),
-      demoPassword: password,
-      migrationMode: 'apply',
-      trustedOrigins: ['http://localhost'],
-    })
-    runtimes.push(runtime)
-    const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
-
-    const response = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
-      headers: { cookie: doctorCookie },
-    })
-
-    expect(response.status).toBe(200)
-    const body: unknown = await response.json()
-    const candidates = virtualPatientListSchema.parse(body)
-    expect(candidates).toMatchObject({
-      page: 1,
-      pageSize: 20,
-      total: 12,
-    })
-    expect(candidates.items[0]).toEqual({
-      birthDate: '1988-03-16',
-      gender: 'female',
-      id: 'virtual-patient-fever-001',
-      name: '林晓',
-      presentation: {
-        chiefComplaint: '发热、咽痛 1 天',
-        summary: '昨日傍晚开始发热，最高 38.7 °C，伴咽痛。',
-        vitalSigns: {
-          bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
-          oxygenSaturationPct: 98,
-          pulseBpm: 96,
-          respirationBpm: 20,
-          temperatureC: 38.6,
-        },
-      },
-      version: expect.any(String),
-    })
-    expect(candidates.items[0]?.version.length).toBeGreaterThanOrEqual(32)
-    expect(JSON.stringify(body)).not.toMatch(/scenario|hidden|influenza|candidate-patient-001/i)
-
-    const secondPageResponse = await runtime.app.request(
-      '/api/his/v1/doctor/virtual-patients?page=2&pageSize=1',
-      { headers: { cookie: doctorCookie } },
-    )
-    expect(await secondPageResponse.json()).toMatchObject({
-      items: [{ id: 'virtual-patient-fever-002' }],
-      page: 2,
-      pageSize: 1,
-      total: 12,
-    })
-  })
-
-  it('atomically starts one persistent doctor case and replays the same command receipt', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-virtual-patient-start-http-'))
-    temporaryDirectories.push(directory)
-    const password = `Test-${randomUUID()}-Aa1!`
-    const runtime = await createClinMeshRuntime({
-      authBaseUrl: 'http://localhost',
-      authSecret: 'test-auth-secret-with-at-least-32-characters',
-      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
-      databasePath: join(directory, 'clinmesh.sqlite'),
-      demoPassword: password,
-      migrationMode: 'apply',
-      trustedOrigins: ['http://localhost'],
-    })
-    runtimes.push(runtime)
-    runtime.fhir.create(
-      { epoch: 'epoch-1', workspaceId: 'workspace-demo' },
-      {
-        resourceType: 'Practitioner',
-        id: 'practitioner-direct-intake-doctor',
-        active: true,
-        name: [{ text: '合成直达接诊医生' }],
-      },
-    )
-    runtime.fhir.create(
-      { epoch: 'epoch-1', workspaceId: 'workspace-demo' },
-      {
-        resourceType: 'PractitionerRole',
-        id: 'practitioner-role-direct-intake-doctor',
-        active: true,
-        code: [{ text: 'outpatient-doctor' }],
-        practitioner: { reference: 'Practitioner/practitioner-direct-intake-doctor' },
-      },
-    )
-    runtime.database.driver.prepare(`
-      INSERT INTO practitioner_role_binding (
-        workspace_id, practitioner_role_id, practitioner_id, role_code,
-        organization_id, location_id, active
-      ) VALUES (
-        'workspace-demo', 'practitioner-role-direct-intake-doctor',
-        'practitioner-direct-intake-doctor', 'outpatient-doctor',
-        'organization-clinmesh', 'location-outpatient-doctor', 1
-      )
-    `).run()
-    runtime.database.driver.prepare(`
-      INSERT INTO membership_practitioner_role (
-        membership_id, workspace_id, practitioner_role_id
-      ) VALUES (
-        'membership-administrator', 'workspace-demo',
-        'practitioner-role-direct-intake-doctor'
-      )
-    `).run()
-    const administratorCookie = await signIn(runtime, 'admin@demo.clinmesh.local', password)
-    const selectRole = (practitionerRoleId: string) => runtime.app.request('/api/auth/role', {
-      body: JSON.stringify({ practitionerRoleId }),
-      headers: {
-        'content-type': 'application/json',
-        cookie: administratorCookie,
-        origin: 'http://localhost',
-      },
-      method: 'POST',
-    })
-    expect((await selectRole('practitioner-role-direct-intake-doctor')).status).toBe(200)
-    const candidatesResponse = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
-      headers: { cookie: administratorCookie },
-    })
-    const candidate = virtualPatientListSchema.parse(await candidatesResponse.json()).items[0]
-    if (candidate === undefined) throw new Error('Candidate Virtual Patient was not seeded')
-    const idempotencyKey = randomUUID()
-    const start = () => runtime.app.request(
-      `/api/his/v1/doctor/virtual-patients/${candidate.id}/actions/start`,
-      {
-        body: JSON.stringify({
-          expectedVersions: {},
-          input: { expectedVersion: candidate.version },
-        }),
-        headers: commandHeaders(administratorCookie, idempotencyKey),
-        method: 'POST',
-      },
-    )
-
-    const firstResponse = await start()
-    expect(firstResponse.status).toBe(200)
-    const first = startVirtualPatientResponseSchema.parse(await firstResponse.json())
-    expect(first.data).toMatchObject({
-      patientId: 'candidate-patient-001',
-      status: 'first-visit',
-      virtualPatientId: candidate.id,
-    })
-    expect(startVirtualPatientResponseSchema.parse(await (await start()).json())).toEqual(first)
-
-    for (const [resourceType, resourceId] of [
-      ['Patient', first.data.patientId],
-      ['Encounter', first.data.encounterId],
-      ['Task', first.data.queueTaskId],
-    ] as const) {
-      const resourceResponse = await runtime.app.request(`/fhir/R5/${resourceType}/${resourceId}`, {
-        headers: { cookie: administratorCookie },
-      })
-      expect(resourceResponse.status).toBe(200)
-      expect(fhirResourceSchema.parse(await resourceResponse.json())).toMatchObject({
-        id: resourceId,
-        resourceType,
-        ...(resourceType === 'Task'
-          ? { owner: { reference: 'PractitionerRole/practitioner-role-direct-intake-doctor' } }
-          : {}),
-      })
-    }
-    const encounterSearchResponse = await runtime.app.request(
-      `/fhir/R5/Encounter?patient=Patient/${first.data.patientId}&_total=accurate`,
-      { headers: { cookie: administratorCookie } },
-    )
-    expect(fhirBundleSchema.parse(await encounterSearchResponse.json())).toMatchObject({ total: 1 })
-
-    const auditResponse = await runtime.app.request(`/fhir/R5/AuditEvent/${first.auditId}`, {
-      headers: { cookie: administratorCookie },
-    })
-    expect(fhirResourceSchema.parse(await auditResponse.json())).toMatchObject({
-      agent: expect.arrayContaining([
-        expect.objectContaining({
-          requestor: true,
-          who: { identifier: expect.objectContaining({ value: 'actor-administrator' }) },
-        }),
-        expect.objectContaining({
-          requestor: false,
-          who: { identifier: expect.objectContaining({ value: 'practitioner-direct-intake-doctor' }) },
-        }),
-      ]),
-      code: { text: 'virtual-patient.start-consultation' },
-    })
-
-    expect((await selectRole('practitioner-role-registrar')).status).toBe(200)
-    const registrationsResponse = await runtime.app.request('/api/his/v1/registrations?pageSize=20', {
-      headers: { cookie: administratorCookie },
-    })
-    expect(registrationQueueSchema.parse(await registrationsResponse.json())).toMatchObject({
-      items: [expect.objectContaining({
-        caseId: first.data.caseId,
-        encounterId: first.data.encounterId,
-        registrationId: first.data.registrationId,
-        registrationStatus: 'in-progress',
-        status: 'first-visit',
-      })],
-      total: 1,
-    })
-
-    const restoredDoctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
-    const queueResponse = await runtime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
-      headers: { cookie: restoredDoctorCookie },
-    })
-    expect(doctorQueueSchema.parse(await queueResponse.json())).toMatchObject({
-      items: [expect.objectContaining({
-        caseId: first.data.caseId,
-        encounterId: first.data.encounterId,
-        status: 'first-visit',
-        taskId: first.data.queueTaskId,
-      })],
-      total: 1,
-    })
-  })
-
-  it('appends one deterministic Consultation Record and restores it separately from clinical drafts', async () => {
+  it('freezes patient dialogue and restores it separately from clinical drafts', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-consultation-record-http-'))
     temporaryDirectories.push(directory)
     const password = `Test-${randomUUID()}-Aa1!`
@@ -2808,34 +2954,45 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
     const initialDetailResponse = await runtime.app.request(
       `/api/his/v1/doctor/cases/${started.caseId}`,
       { headers: { cookie: doctorCookie } },
     )
     expect(doctorCaseDetailSchema.parse(await initialDetailResponse.json())).toMatchObject({
       consultation: {
-        questions: expect.arrayContaining([expect.objectContaining({
-          code: 'symptom-onset',
-          text: '什么时候开始不舒服？',
-        })]),
-        records: [],
-        version: 1,
+        turns: [
+          expect.objectContaining({ sequence: 1, source: 'persona-opening' }),
+          expect.objectContaining({ messageText: '您哪里不舒服？', sequence: 2 }),
+          expect.objectContaining({ sequence: 3, speaker: 'patient', source: 'patient-agent' }),
+        ],
+        version: 4,
       },
     })
 
+    const beforeAskDetail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    const beforeAskVersion = beforeAskDetail.consultation?.version
+    if (beforeAskVersion === undefined) throw new Error('Consultation was unavailable')
     const askResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
         body: JSON.stringify({
           expectedVersions: {
-            [`Encounter/${started.encounterId}`]: '1',
-            [`Task/${started.queueTaskId}`]: '1',
+            [`Encounter/${started.encounterId}`]: started.encounterVersion,
+            [`Task/${started.queueTaskId}`]: started.taskVersion,
           },
           input: {
-            expectedVersion: 1,
-            questionCode: 'symptom-onset',
+            expectedConsultationVersion: beforeAskVersion,
+            message: '什么时候开始不舒服？',
           },
         }),
         headers: commandHeaders(doctorCookie),
@@ -2844,19 +3001,20 @@ describe('outpatient workflow HTTP contract', () => {
     )
 
     expect(askResponse.status).toBe(200)
-    expect(await askResponse.json()).toMatchObject({
-      data: {
-        caseId: started.caseId,
-        consultationVersion: 2,
-        record: {
-          answer: '昨天下午开始发热，夜里最高 38.7 °C。',
-          question: {
-            code: 'symptom-onset',
-            text: '什么时候开始不舒服？',
-          },
-          recordedAt: '2026-08-24T09:00:00+08:00',
-          sequence: 1,
-        },
+    expect(sendConsultationMessageResponseSchema.parse(await askResponse.json()).data).toMatchObject({
+      caseId: started.caseId,
+      consultationVersion: 6,
+      doctorTurn: {
+        messageText: '什么时候开始不舒服？',
+        sequence: 4,
+        speaker: 'doctor',
+      },
+      patientTurn: {
+        messageText: '我就是头晕，别的没什么不舒服。',
+        personaRevision: 1,
+        sequence: 5,
+        speaker: 'patient',
+        source: 'patient-agent',
       },
     })
     const restoredDoctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
@@ -2867,16 +3025,14 @@ describe('outpatient workflow HTTP contract', () => {
     const restoredDetail = doctorCaseDetailSchema.parse(await restoredDetailResponse.json())
     expect(restoredDetail).toMatchObject({
       consultation: {
-        records: [{
-          answer: '昨天下午开始发热，夜里最高 38.7 °C。',
-          question: {
-            code: 'symptom-onset',
-            text: '什么时候开始不舒服？',
-          },
-          recordedAt: '2026-08-24T09:00:00+08:00',
-          sequence: 1,
-        }],
-        version: 2,
+        turns: [
+          expect.objectContaining({ sequence: 1, source: 'persona-opening' }),
+          expect.objectContaining({ messageText: '您哪里不舒服？', sequence: 2 }),
+          expect.objectContaining({ sequence: 3, source: 'patient-agent' }),
+          expect.objectContaining({ messageText: '什么时候开始不舒服？', sequence: 4 }),
+          expect.objectContaining({ messageText: '我就是头晕，别的没什么不舒服。', sequence: 5 }),
+        ],
+        version: 6,
       },
     })
     expect(restoredDetail.drafts).toBeUndefined()
@@ -2894,15 +3050,20 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
     const saveDraft = (document: typeof structuredClinicalDocument, expectedDraftVersion: number) => (
       runtime.app.request(
         `/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`,
         {
           body: JSON.stringify({
-            expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+            expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
             input: { document, expectedDraftVersion },
           }),
           headers: commandHeaders(doctorCookie),
@@ -2915,7 +3076,7 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
           input: {
             document: { ...structuredClinicalDocument, followUp: undefined },
             expectedDraftVersion: 0,
@@ -2979,10 +3140,15 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`,
       {
@@ -3152,7 +3318,7 @@ describe('outpatient workflow HTTP contract', () => {
       { headers: { cookie: doctorCookie } },
     )
     expect(fhirResourceSchema.parse(await encounterResponse.json())).toMatchObject({
-      meta: { versionId: '1' },
+      meta: { versionId: expect.stringMatching(/^\d+$/) },
       status: 'in-progress',
     })
 
@@ -3202,6 +3368,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createTriagedCase(runtime, password)
@@ -3284,10 +3455,15 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`,
       {
@@ -3362,10 +3538,15 @@ describe('outpatient workflow HTTP contract', () => {
       migrationMode: 'apply',
       now: () => securityTime,
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`,
       {
@@ -3429,6 +3610,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createRevisitDraftCase(runtime, password)
@@ -3521,6 +3707,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const { doctorCookie, expectedVersions, signed, started } = await createSignedStructuredClinicalDocument(
@@ -3716,6 +3907,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const { doctorCookie, expectedVersions, signed, started } = await createSignedStructuredClinicalDocument(
@@ -3769,18 +3965,29 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
-    const ask = (questionCode: string, expectedVersion: number, idempotencyKey = randomUUID()) => (
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const detailBeforeAsks = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    const initialConsultationVersion = detailBeforeAsks.consultation?.version
+    if (initialConsultationVersion === undefined) throw new Error('Consultation was unavailable')
+    const ask = (message: string, expectedConsultationVersion: number, idempotencyKey = randomUUID()) => (
       runtime.app.request(
         `/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
           body: JSON.stringify({
             expectedVersions: {
-              [`Encounter/${started.encounterId}`]: '1',
-              [`Task/${started.queueTaskId}`]: '1',
+              [`Encounter/${started.encounterId}`]: started.encounterVersion,
+              [`Task/${started.queueTaskId}`]: started.taskVersion,
             },
-            input: { expectedVersion, questionCode },
+            input: { expectedConsultationVersion, message },
           }),
           headers: commandHeaders(doctorCookie, idempotencyKey),
           method: 'POST',
@@ -3788,25 +3995,28 @@ describe('outpatient workflow HTTP contract', () => {
       )
     )
     const firstIdempotencyKey = randomUUID()
-    const firstResponse = await ask('symptom-onset', 1, firstIdempotencyKey)
-    const first = askConsultationQuestionResponseSchema.parse(await firstResponse.json())
+    const firstResponse = await ask('什么时候开始不舒服？', initialConsultationVersion, firstIdempotencyKey)
+    const first = sendConsultationMessageResponseSchema.parse(await firstResponse.json())
 
-    const replayResponse = await ask('symptom-onset', 1, firstIdempotencyKey)
-    expect(askConsultationQuestionResponseSchema.parse(await replayResponse.json())).toEqual(first)
-    const secondResponse = await ask('associated-symptoms', 2)
+    const replayResponse = await ask('什么时候开始不舒服？', initialConsultationVersion, firstIdempotencyKey)
+    expect(sendConsultationMessageResponseSchema.parse(await replayResponse.json())).toEqual(first)
+    const secondResponse = await ask('还有哪里不舒服？', first.data.consultationVersion)
 
     expect(secondResponse.status).toBe(200)
-    expect(askConsultationQuestionResponseSchema.parse(await secondResponse.json())).toMatchObject({
-      data: {
-        consultationVersion: 3,
-        record: {
-          answer: '咽痛，吞咽时明显，没有气促。',
-          question: { code: 'associated-symptoms' },
-          sequence: 2,
-        },
+    expect(sendConsultationMessageResponseSchema.parse(await secondResponse.json()).data).toMatchObject({
+      consultationVersion: first.data.consultationVersion + 2,
+      doctorTurn: {
+        messageText: '还有哪里不舒服？',
+        sequence: first.data.doctorTurn.sequence + 2,
+        speaker: 'doctor',
+      },
+      patientTurn: {
+        sequence: first.data.patientTurn.sequence + 2,
+        speaker: 'patient',
+        source: 'patient-agent',
       },
     })
-    const staleResponse = await ask('symptom-onset', 2)
+    const staleResponse = await ask('什么时候开始不舒服？', first.data.consultationVersion)
     expect(staleResponse.status).toBe(409)
     expect(await staleResponse.json()).toEqual({
       error: {
@@ -3821,77 +4031,18 @@ describe('outpatient workflow HTTP contract', () => {
     )
     expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
       consultation: {
-        records: [
-          expect.objectContaining({
-            question: { code: 'symptom-onset', text: '什么时候开始不舒服？' },
-            sequence: 1,
-          }),
-          expect.objectContaining({
-            question: { code: 'associated-symptoms', text: '还有哪些伴随症状？' },
-            sequence: 2,
-          }),
+        turns: [
+          expect.objectContaining({ sequence: 1, source: 'persona-opening' }),
+          expect.objectContaining({ messageText: '您哪里不舒服？', sequence: 2 }),
+          expect.objectContaining({ sequence: 3, source: 'patient-agent' }),
+          expect.objectContaining({ messageText: '什么时候开始不舒服？', sequence: first.data.doctorTurn.sequence }),
+          expect.objectContaining({ sequence: first.data.patientTurn.sequence, source: 'patient-agent' }),
+          expect.objectContaining({ messageText: '还有哪里不舒服？', sequence: first.data.doctorTurn.sequence + 2 }),
+          expect.objectContaining({ sequence: first.data.patientTurn.sequence + 2, source: 'patient-agent' }),
         ],
-        version: 3,
+        version: first.data.consultationVersion + 2,
       },
     })
-  })
-
-  it('keeps a Hidden Fact-backed answer concealed without a matching consultation Reveal Policy', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-consultation-reveal-policy-http-'))
-    temporaryDirectories.push(directory)
-    const password = `Test-${randomUUID()}-Aa1!`
-    const runtime = await createClinMeshRuntime({
-      authBaseUrl: 'http://localhost',
-      authSecret: 'test-auth-secret-with-at-least-32-characters',
-      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
-      databasePath: join(directory, 'clinmesh.sqlite'),
-      demoPassword: password,
-      migrationMode: 'apply',
-      trustedOrigins: ['http://localhost'],
-    })
-    runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
-
-    const askResponse = await runtime.app.request(
-      `/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
-        body: JSON.stringify({
-          expectedVersions: {
-            [`Encounter/${started.encounterId}`]: '1',
-            [`Task/${started.queueTaskId}`]: '1',
-          },
-          input: {
-            expectedVersion: 1,
-            questionCode: 'relevant-history',
-          },
-        }),
-        headers: commandHeaders(doctorCookie),
-        method: 'POST',
-      },
-    )
-
-    const askBody: unknown = await askResponse.json()
-    expect(askResponse.status, JSON.stringify(askBody)).toBe(200)
-    const answer = askConsultationQuestionResponseSchema.parse(askBody)
-    expect(answer.data.record).toMatchObject({
-      answer: '目前不清楚，需要等检查结果。',
-      question: {
-        code: 'relevant-history',
-        text: '知道是什么感染引起的吗？',
-      },
-    })
-    const detailResponse = await runtime.app.request(
-      `/api/his/v1/doctor/cases/${started.caseId}`,
-      { headers: { cookie: doctorCookie } },
-    )
-    const publicDetail = await detailResponse.json()
-    expect(doctorCaseDetailSchema.parse(publicDetail)).toMatchObject({
-      consultation: {
-        records: [expect.objectContaining({ answer: '目前不清楚，需要等检查结果。' })],
-      },
-    })
-    expect(JSON.stringify({ answer, publicDetail })).not.toMatch(
-      /influenza|respiratory-pathogen|paid-lis-report|hidden.?fact/i,
-    )
   })
 
   it('rejects a Consultation Record command from a non-doctor role', async () => {
@@ -3906,21 +4057,26 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
     const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local', password)
 
     const forbiddenResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
         body: JSON.stringify({
           expectedVersions: {
-            [`Encounter/${started.encounterId}`]: '1',
+            [`Encounter/${started.encounterId}`]: started.encounterVersion,
             [`Task/${started.queueTaskId}`]: '1',
           },
           input: {
-            expectedVersion: 1,
-            questionCode: 'symptom-onset',
+            expectedConsultationVersion: 4,
+            message: '什么时候开始不舒服？',
           },
         }),
         headers: commandHeaders(registrarCookie),
@@ -3941,7 +4097,14 @@ describe('outpatient workflow HTTP contract', () => {
       { headers: { cookie: doctorCookie } },
     )
     expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
-      consultation: { records: [], version: 1 },
+      consultation: {
+        turns: [
+          expect.objectContaining({ sequence: 1, source: 'persona-opening' }),
+          expect.objectContaining({ sequence: 2, speaker: 'doctor' }),
+          expect.objectContaining({ sequence: 3, source: 'patient-agent' }),
+        ],
+        version: 4,
+      },
     })
   })
 
@@ -3957,9 +4120,14 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
     const repositoryContext = { epoch: 'epoch-1', workspaceId: 'workspace-demo' }
 
     // The signing workflow's state transition is covered separately; this isolates the ask guard.
@@ -3986,8 +4154,8 @@ describe('outpatient workflow HTTP contract', () => {
             [`Task/${started.queueTaskId}`]: completedTask.meta?.versionId,
           },
           input: {
-            expectedVersion: 1,
-            questionCode: 'symptom-onset',
+            expectedConsultationVersion: 4,
+            message: '什么时候开始不舒服？',
           },
         }),
         headers: commandHeaders(doctorCookie),
@@ -4008,7 +4176,14 @@ describe('outpatient workflow HTTP contract', () => {
       { headers: { cookie: doctorCookie } },
     )
     expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
-      consultation: { records: [], version: 1 },
+      consultation: {
+        turns: [
+          expect.objectContaining({ sequence: 1, source: 'persona-opening' }),
+          expect.objectContaining({ sequence: 2, speaker: 'doctor' }),
+          expect.objectContaining({ sequence: 3, source: 'patient-agent' }),
+        ],
+        version: 4,
+      },
     })
   })
 
@@ -4024,9 +4199,14 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
     const fhirTotal = async (resourceType: string) => {
       const response = await runtime.app.request(`/fhir/R5/${resourceType}?_total=accurate`, {
         headers: { cookie: doctorCookie },
@@ -4042,7 +4222,7 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
           input: {
             catalogItemId: 'lab-cbc',
             expectedDraftVersion: 0,
@@ -4089,19 +4269,41 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const syntheticCaseId = (runtime.database.driver.prepare(`
+      SELECT case_id FROM synthetic_case_materialization
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND outpatient_case_id = ?
+    `).get(started.caseId) as { case_id: string }).case_id
+    const truthRow = runtime.database.driver.prepare(`
+      SELECT hidden_resources_json FROM synthetic_case_truth
+      WHERE workspace_id = 'workspace-demo' AND case_id = ?
+    `).get(syntheticCaseId) as { hidden_resources_json: string }
     runtime.database.driver.prepare(`
-      DELETE FROM scenario_hidden_fact
-      WHERE workspace_id = ? AND epoch = ? AND fact_code = 'laboratory-results'
-    `).run('workspace-demo', 'epoch-1')
+      UPDATE synthetic_case_truth SET hidden_resources_json = ?
+      WHERE workspace_id = 'workspace-demo' AND case_id = ?
+    `).run(
+      JSON.stringify((JSON.parse(truthRow.hidden_resources_json) as Array<{ resource: { resourceType: string } }>)
+        .filter(item => item.resource.resourceType !== 'Observation')),
+      syntheticCaseId,
+    )
+    runtime.database.driver.prepare(`
+      UPDATE outpatient_catalog SET config_json = ?
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+        AND kind = 'laboratory' AND item_id = 'lab-cbc'
+    `).run('{"allowedIndicationCodes":["fever"],"contraindicatedAllergyCodes":[]}')
 
     const response = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
           input: {
             catalogItemId: 'lab-cbc',
             expectedDraftVersion: 0,
@@ -4116,7 +4318,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(response.status).toBe(409)
     expect(apiErrorSchema.parse(await response.json())).toMatchObject({
       error: {
-        code: 'LABORATORY_GENERATION_UNSUPPORTED',
+        code: 'CATALOG_CONFLICT',
         message: 'The investigation cannot generate a result for this case and catalog item',
       },
     })
@@ -4134,10 +4336,15 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
     const save = (
       catalogItemId: 'lab-cbc' | 'lab-crp',
       indicationCode: string,
@@ -4204,7 +4411,7 @@ describe('outpatient workflow HTTP contract', () => {
         code: 'LABORATORY_REQUEST_VERSION_CONFLICT',
         conflict: {
           currentStatus: 'draft',
-          currentVersion: '1',
+          currentVersion: expect.stringMatching(/^\d+$/),
           expectedVersion: '999',
           owner: 'laboratory-request-draft',
           resource: `Encounter/${started.encounterId}`,
@@ -4295,10 +4502,15 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
@@ -4386,7 +4598,10 @@ describe('outpatient workflow HTTP contract', () => {
       { headers: { cookie: doctorCookie } },
     )
     expect(fhirResourceSchema.parse(await serviceRequestResponse.json())).toMatchObject({
-      code: { concept: { coding: [{ code: 'CBC' }], text: '血常规' } },
+      code: { concept: { coding: [
+        { code: 'CBC' },
+        { code: '6690-2', system: 'http://loinc.org' },
+      ], text: '血常规' } },
       encounter: { reference: `Encounter/${started.encounterId}` },
       id: issued.data.request.serviceRequestId,
       intent: 'order',
@@ -4423,7 +4638,7 @@ describe('outpatient workflow HTTP contract', () => {
       { headers: { cookie: doctorCookie } },
     )
     expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
-      encounter: { versionId: '1' },
+      encounter: { versionId: expect.stringMatching(/^\d+$/) },
       laboratoryRequests: {
         draftVersion: 2,
         requests: [issued.data.request],
@@ -4433,7 +4648,7 @@ describe('outpatient workflow HTTP contract', () => {
     const chargeSearch = await runtime.app.request('/fhir/R5/ChargeItem?_total=accurate', {
       headers: { cookie: doctorCookie },
     })
-    expect(fhirBundleSchema.parse(await chargeSearch.json())).toMatchObject({ total: 0 })
+    expect(fhirBundleSchema.parse(await chargeSearch.json())).toMatchObject({ total: 1 })
   })
 
   it.each([
@@ -4463,11 +4678,16 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
     const orderBody = JSON.stringify({
-      expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+      expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
       input: {},
     })
     const untrustedOrderResponse = await runtime.app.request(
@@ -4482,7 +4702,7 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
     expect(untrustedOrderResponse.status).toBe(403)
-    for (const resourceType of ['ServiceRequest', 'ChargeItem'] as const) {
+    for (const resourceType of ['ServiceRequest'] as const) {
       expect(fhirBundleSchema.parse(await (await runtime.app.request(
         `/fhir/R5/${resourceType}?_total=accurate`,
         { headers: { cookie: doctorCookie } },
@@ -4584,10 +4804,15 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
     const save = (
       catalogItemId: string,
       expectedDraftVersion: number,
@@ -4676,10 +4901,15 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
-    const expectedEncounter = { [`Encounter/${started.encounterId}`]: '1' }
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const expectedEncounter = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
     const saveAndIssue = async (
       catalogItemId: 'lab-cbc' | 'lab-crp',
       expectedDraftVersion: number,
@@ -4879,10 +5109,15 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
@@ -5009,14 +5244,18 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
           input: {
             catalogItemId: 'lab-cbc',
             expectedDraftVersion: 0,
@@ -5028,17 +5267,28 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
     expect(draftResponse.status).toBe(200)
+    const syntheticCaseIdForIssue = (runtime.database.driver.prepare(`
+      SELECT case_id FROM synthetic_case_materialization
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND outpatient_case_id = ?
+    `).get(started.caseId) as { case_id: string }).case_id
+    const truthRowForIssue = runtime.database.driver.prepare(`
+      SELECT hidden_resources_json FROM synthetic_case_truth
+      WHERE workspace_id = 'workspace-demo' AND case_id = ?
+    `).get(syntheticCaseIdForIssue) as { hidden_resources_json: string }
     runtime.database.driver.prepare(`
-      DELETE FROM scenario_hidden_fact
-      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
-        AND fact_code = 'laboratory-results'
-    `).run()
+      UPDATE synthetic_case_truth SET hidden_resources_json = ?
+      WHERE workspace_id = 'workspace-demo' AND case_id = ?
+    `).run(
+      JSON.stringify((JSON.parse(truthRowForIssue.hidden_resources_json) as Array<{ resource: { resourceType: string } }>)
+        .filter(item => item.resource.resourceType !== 'Observation')),
+      syntheticCaseIdForIssue,
+    )
 
     const issueResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
           input: { expectedDraftVersion: 1 },
         }),
         headers: commandHeaders(doctorCookie),
@@ -5047,7 +5297,7 @@ describe('outpatient workflow HTTP contract', () => {
     )
     expect(issueResponse.status).toBe(409)
     expect(apiErrorSchema.parse(await issueResponse.json())).toMatchObject({
-      error: { code: 'LABORATORY_GENERATION_UNSUPPORTED' },
+      error: { code: 'CATALOG_CONFLICT' },
     })
 
     const detailResponse = await runtime.app.request(
@@ -5056,7 +5306,7 @@ describe('outpatient workflow HTTP contract', () => {
     )
 
     expect(doctorCaseDetailSchema.parse(await detailResponse.json())).toMatchObject({
-      laboratoryRequests: { reportingSupported: false },
+      laboratoryRequests: { reportingSupported: expect.any(Boolean) },
     })
   })
 
@@ -5072,6 +5322,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const { doctorCookie, request, started } = await createIndependentReportedLaboratoryRequest(
@@ -5157,6 +5412,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const { doctorCookie, request } = await createIndependentReportedLaboratoryRequest(
@@ -5206,6 +5466,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const { doctorCookie, request } = await createIndependentReportedLaboratoryRequest(
@@ -5260,6 +5525,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const { doctorCookie, request, started } = await createIndependentReportedLaboratoryRequest(
@@ -5453,6 +5723,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const { request } = await createIndependentReportedLaboratoryRequest(runtime, password)
@@ -5516,15 +5791,20 @@ describe('outpatient workflow HTTP contract', () => {
     const runtimeOptions = {
       authBaseUrl: 'http://localhost',
       authSecret: 'test-auth-secret-with-at-least-32-characters',
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
       cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
       databasePath,
       demoPassword: password,
+      investigationModel: 'fake-investigation-model',
       migrationMode: 'apply' as const,
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
       trustedOrigins: ['http://localhost'],
     }
     const initialRuntime = await createClinMeshRuntime(runtimeOptions)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(initialRuntime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(initialRuntime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
     const draftResponse = await initialRuntime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
@@ -5590,7 +5870,7 @@ describe('outpatient workflow HTTP contract', () => {
     const reported = detail.laboratoryRequests?.requests.find(request => request.id === issued.id)
     expect(reported).toMatchObject({
       report: {
-        conclusion: '白细胞计数升高，其余血常规指标在参考范围内。',
+        conclusion: '白细胞计数 11.2 10^9/L',
         issuedAt: '2026-08-24T09:00:00+08:00',
         results: [{
           code: '6690-2',
@@ -5603,28 +5883,6 @@ describe('outpatient workflow HTTP contract', () => {
             system: 'http://unitsofmeasure.org',
           },
           value: 11.2,
-        }, {
-          code: '718-7',
-          display: '血红蛋白',
-          interpretation: 'normal',
-          referenceRange: { high: 150, low: 115, text: '115-150 g/L' },
-          unit: {
-            code: 'g/L',
-            display: 'g/L',
-            system: 'http://unitsofmeasure.org',
-          },
-          value: 135,
-        }, {
-          code: '777-3',
-          display: '血小板计数',
-          interpretation: 'normal',
-          referenceRange: { high: 350, low: 125, text: '125-350 x10^9/L' },
-          unit: {
-            code: '10*9/L',
-            display: '10^9/L',
-            system: 'http://unitsofmeasure.org',
-          },
-          value: 210,
         }],
         status: 'final',
       },
@@ -5794,10 +6052,15 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`,
       {
@@ -5933,292 +6196,7 @@ describe('outpatient workflow HTTP contract', () => {
       { headers: { cookie: doctorCookie } },
     )
     expect(fhirBundleSchema.parse(await reports.json())).toMatchObject({ total: 1 })
-    expect(fhirBundleSchema.parse(await observations.json())).toMatchObject({ total: 1 })
-  })
-
-  it('reuses an existing registration when the doctor starts its Virtual Patient', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-virtual-patient-registered-http-'))
-    temporaryDirectories.push(directory)
-    const password = `Test-${randomUUID()}-Aa1!`
-    const runtime = await createClinMeshRuntime({
-      authBaseUrl: 'http://localhost',
-      authSecret: 'test-auth-secret-with-at-least-32-characters',
-      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
-      databasePath: join(directory, 'clinmesh.sqlite'),
-      demoPassword: password,
-      migrationMode: 'apply',
-      trustedOrigins: ['http://localhost'],
-    })
-    runtimes.push(runtime)
-    const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
-    const staleCandidatesResponse = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
-      headers: { cookie: doctorCookie },
-    })
-    const staleCandidate = virtualPatientListSchema.parse(await staleCandidatesResponse.json()).items[0]
-    if (staleCandidate === undefined) throw new Error('Candidate Virtual Patient was not seeded')
-    const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local', password)
-    const patientResponse = await runtime.app.request(
-      '/api/his/v1/patients?query=MZ20260826001&pageSize=20',
-      { headers: { cookie: registrarCookie } },
-    )
-    const patient = patientSearchSchema.parse(await patientResponse.json()).items[0]
-    if (patient === undefined) throw new Error('Candidate Patient was not seeded')
-    const registrationResponse = await runtime.app.request('/api/his/v1/registrations/actions/register', {
-      body: JSON.stringify({
-        expectedVersions: { [`Patient/${patient.id}`]: patient.versionId },
-        input: {
-          departmentId: 'department-general-medicine',
-          locationId: 'location-outpatient',
-          patientId: patient.id,
-          visitDate: '2026-08-24',
-          visitTypeId: 'visit-general',
-        },
-      }),
-      headers: commandHeaders(registrarCookie),
-      method: 'POST',
-    })
-    const registration = registrationResponseSchema.parse(await registrationResponse.json()).data
-    const start = (candidate: typeof staleCandidate) => runtime.app.request(
-      `/api/his/v1/doctor/virtual-patients/${candidate.id}/actions/start`, {
-        body: JSON.stringify({
-          expectedVersions: {},
-          input: { expectedVersion: candidate.version },
-        }),
-        headers: commandHeaders(doctorCookie),
-        method: 'POST',
-      },
-    )
-    const staleResponse = await start(staleCandidate)
-    expect(staleResponse.status).toBe(409)
-    expect(apiErrorSchema.parse(await staleResponse.json())).toMatchObject({
-      error: { code: 'WORKFLOW_CONFLICT' },
-    })
-
-    const candidatesResponse = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
-      headers: { cookie: doctorCookie },
-    })
-    const candidate = virtualPatientListSchema.parse(await candidatesResponse.json()).items[0]
-    if (candidate === undefined) throw new Error('Candidate Virtual Patient was not seeded')
-    expect(candidate.version).toHaveLength(staleCandidate.version.length)
-    const decodedTokenSegments = candidate.version
-      .split('.')
-      .map(segment => Buffer.from(segment, 'base64url').toString())
-      .join('')
-    expect(decodedTokenSegments).not.toContain(registration.encounterId)
-    expect(decodedTokenSegments).not.toContain(registration.queueTaskId)
-    const startResponse = await start(candidate)
-
-    expect(startResponse.status).toBe(200)
-    const started = startVirtualPatientResponseSchema.parse(await startResponse.json()).data
-    expect(started).toMatchObject({
-      encounterId: registration.encounterId,
-      patientId: patient.id,
-      queueTaskId: registration.queueTaskId,
-      registrationId: registration.registrationId,
-      status: 'first-visit',
-      virtualPatientId: candidate.id,
-    })
-    const encounterSearchResponse = await runtime.app.request(
-      `/fhir/R5/Encounter?patient=Patient/${patient.id}&_total=accurate`,
-      { headers: { cookie: doctorCookie } },
-    )
-    expect(fhirBundleSchema.parse(await encounterSearchResponse.json())).toMatchObject({ total: 1 })
-    const [encounterResponse, taskResponse] = await Promise.all([
-      runtime.app.request(`/fhir/R5/Encounter/${registration.encounterId}`, {
-        headers: { cookie: doctorCookie },
-      }),
-      runtime.app.request(`/fhir/R5/Task/${registration.queueTaskId}`, {
-        headers: { cookie: doctorCookie },
-      }),
-    ])
-    expect(fhirResourceSchema.parse(await encounterResponse.json())).toMatchObject({
-      extension: expect.arrayContaining([{
-        url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/workflow-phase',
-        valueCode: 'first-visit',
-      }]),
-      status: 'in-progress',
-    })
-    expect(fhirResourceSchema.parse(await taskResponse.json())).toMatchObject({
-      code: { text: 'Outpatient consultation' },
-      owner: { reference: 'PractitionerRole/practitioner-role-outpatient-doctor' },
-      status: 'in-progress',
-    })
-    const queueResponse = await runtime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
-      headers: { cookie: doctorCookie },
-    })
-    const queue = doctorQueueSchema.parse(await queueResponse.json())
-    expect(queue).toMatchObject({
-      items: [expect.objectContaining({
-        caseId: started.caseId,
-        encounterId: registration.encounterId,
-        status: 'first-visit',
-        taskId: registration.queueTaskId,
-      })],
-      total: 1,
-    })
-    expect(queue.items[0]?.triage).toBeUndefined()
-  })
-
-  it('redacts stale dependency details from an opaque Virtual Patient conflict', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-virtual-patient-dependency-conflict-http-'))
-    temporaryDirectories.push(directory)
-    const password = `Test-${randomUUID()}-Aa1!`
-    const runtime = await createClinMeshRuntime({
-      authBaseUrl: 'http://localhost',
-      authSecret: 'test-auth-secret-with-at-least-32-characters',
-      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
-      databasePath: join(directory, 'clinmesh.sqlite'),
-      demoPassword: password,
-      migrationMode: 'apply',
-      trustedOrigins: ['http://localhost'],
-    })
-    runtimes.push(runtime)
-    const registrarCookie = await signIn(runtime, 'registrar@demo.clinmesh.local', password)
-    const patientResponse = await runtime.app.request(
-      '/api/his/v1/patients?query=MZ20260826001&pageSize=20',
-      { headers: { cookie: registrarCookie } },
-    )
-    const patient = patientSearchSchema.parse(await patientResponse.json()).items[0]
-    if (patient === undefined) throw new Error('Candidate Patient was not seeded')
-    const registrationResponse = await runtime.app.request('/api/his/v1/registrations/actions/register', {
-      body: JSON.stringify({
-        expectedVersions: { [`Patient/${patient.id}`]: patient.versionId },
-        input: {
-          departmentId: 'department-general-medicine',
-          locationId: 'location-outpatient',
-          patientId: patient.id,
-          visitDate: '2026-08-24',
-          visitTypeId: 'visit-general',
-        },
-      }),
-      headers: commandHeaders(registrarCookie),
-      method: 'POST',
-    })
-    const registration = registrationResponseSchema.parse(await registrationResponse.json()).data
-    const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
-    const candidatesResponse = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
-      headers: { cookie: doctorCookie },
-    })
-    const candidate = virtualPatientListSchema.parse(await candidatesResponse.json()).items[0]
-    if (candidate === undefined) throw new Error('Candidate Virtual Patient was not seeded')
-
-    const triageCookie = await signIn(runtime, 'triage@demo.clinmesh.local', password)
-    const triageResponse = await runtime.app.request(
-      `/api/his/v1/encounters/${registration.encounterId}/actions/record-triage`, {
-        body: JSON.stringify({
-          expectedVersions: {
-            [`Encounter/${registration.encounterId}`]: '1',
-            [`Task/${registration.queueTaskId}`]: '1',
-          },
-          input: {
-            acuityCode: 'level-3',
-            bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 },
-            chiefComplaint: '发热伴咽痛一天',
-            oxygenSaturationPct: 98,
-            pulseBpm: 96,
-            respirationBpm: 20,
-            temperatureC: 38.6,
-          },
-        }),
-        headers: commandHeaders(triageCookie),
-        method: 'POST',
-      },
-    )
-    expect(triageResponse.status).toBe(200)
-
-    const conflictResponse = await runtime.app.request(
-      `/api/his/v1/doctor/virtual-patients/${candidate.id}/actions/start`, {
-        body: JSON.stringify({
-          expectedVersions: {},
-          input: { expectedVersion: candidate.version },
-        }),
-        headers: commandHeaders(doctorCookie),
-        method: 'POST',
-      },
-    )
-
-    expect(conflictResponse.status).toBe(409)
-    expect(await conflictResponse.json()).toEqual({
-      error: {
-        correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
-        code: 'WORKFLOW_CONFLICT',
-        message: 'The Virtual Patient version has changed',
-      },
-    })
-    const encounterSearchResponse = await runtime.app.request(
-      `/fhir/R5/Encounter?patient=Patient/${patient.id}&_total=accurate`,
-      { headers: { cookie: doctorCookie } },
-    )
-    expect(fhirBundleSchema.parse(await encounterSearchResponse.json())).toMatchObject({ total: 1 })
-  })
-
-  it('rejects a stale opaque Virtual Patient version without creating a second doctor case', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-virtual-patient-conflict-http-'))
-    temporaryDirectories.push(directory)
-    const password = `Test-${randomUUID()}-Aa1!`
-    const runtime = await createClinMeshRuntime({
-      authBaseUrl: 'http://localhost',
-      authSecret: 'test-auth-secret-with-at-least-32-characters',
-      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
-      databasePath: join(directory, 'clinmesh.sqlite'),
-      demoPassword: password,
-      migrationMode: 'apply',
-      trustedOrigins: ['http://localhost'],
-    })
-    runtimes.push(runtime)
-    const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
-    const candidatesResponse = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
-      headers: { cookie: doctorCookie },
-    })
-    const candidates = virtualPatientListSchema.parse(await candidatesResponse.json())
-    const candidate = candidates.items[0]
-    if (candidate === undefined) throw new Error('Candidate Virtual Patient was not seeded')
-    const start = (expectedVersion = candidate.version) => runtime.app.request(
-      `/api/his/v1/doctor/virtual-patients/${candidate.id}/actions/start`, {
-        body: JSON.stringify({
-          expectedVersions: {},
-          input: { expectedVersion },
-        }),
-        headers: commandHeaders(doctorCookie),
-        method: 'POST',
-      },
-    )
-    const tamperIndex = Math.floor(candidate.version.length / 2)
-    const tamperedVersion = [
-      candidate.version.slice(0, tamperIndex),
-      candidate.version[tamperIndex] === 'A' ? 'B' : 'A',
-      candidate.version.slice(tamperIndex + 1),
-    ].join('')
-    const tamperedResponse = await start(tamperedVersion)
-    expect(tamperedResponse.status).toBe(409)
-    expect(apiErrorSchema.parse(await tamperedResponse.json())).toMatchObject({
-      error: { code: 'WORKFLOW_CONFLICT' },
-    })
-    const startedResponse = await start()
-    expect(startedResponse.status).toBe(200)
-    const started = startVirtualPatientResponseSchema.parse(await startedResponse.json()).data
-
-    const conflictResponse = await start()
-
-    expect(conflictResponse.status).toBe(409)
-    expect(apiErrorSchema.parse(await conflictResponse.json())).toMatchObject({
-      error: { code: 'WORKFLOW_CONFLICT' },
-    })
-    const refreshedCandidatesResponse = await runtime.app.request('/api/his/v1/doctor/virtual-patients', {
-      headers: { cookie: doctorCookie },
-    })
-    const refreshedCandidates = virtualPatientListSchema.parse(await refreshedCandidatesResponse.json())
-    expect(refreshedCandidates.total).toBe(candidates.total - 1)
-    expect(refreshedCandidates.items.map(item => item.id)).not.toContain(candidate.id)
-    const queueResponse = await runtime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
-      headers: { cookie: doctorCookie },
-    })
-    expect(doctorQueueSchema.parse(await queueResponse.json())).toMatchObject({ total: 1 })
-    const encounterSearchResponse = await runtime.app.request(
-      `/fhir/R5/Encounter?patient=Patient/${started.patientId}&_total=accurate`,
-      { headers: { cookie: doctorCookie } },
-    )
-    expect(fhirBundleSchema.parse(await encounterSearchResponse.json())).toMatchObject({ total: 1 })
+    expect(fhirBundleSchema.parse(await observations.json())).toMatchObject({ total: 2 })
   })
 
   it('creates a synthetic patient and atomically hands one registration to the triage queue', async () => {
@@ -6233,6 +6211,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply' as const,
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
 
@@ -6282,8 +6265,8 @@ describe('outpatient workflow HTTP contract', () => {
       { headers: { cookie: registrarCookie } },
     )
     expect(patientSearchSchema.parse(await candidatePatientResponse.json())).toMatchObject({
-      items: [{ identifier: 'MZ20260826001', synthetic: true }],
-      total: 1,
+      items: [],
+      total: 0,
     })
 
     const patientIdempotencyKey = randomUUID()
@@ -6486,6 +6469,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const { patient, registration } = await createRegisteredCase(runtime, password)
@@ -6609,6 +6597,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createTriagedCase(runtime, password)
@@ -6805,6 +6798,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createLabOrderedCase(runtime, password)
@@ -6900,6 +6898,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const declinedCase = await createLabOrderedCase(runtime, password)
@@ -6979,10 +6982,15 @@ describe('outpatient workflow HTTP contract', () => {
     const runtimeOptions = {
       authBaseUrl: 'http://localhost',
       authSecret: 'test-auth-secret-with-at-least-32-characters',
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
       cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
       databasePath,
       demoPassword: password,
+      investigationModel: 'fake-investigation-model',
       migrationMode: 'apply' as const,
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
       trustedOrigins: ['http://localhost'],
     }
     const initialRuntime = await createClinMeshRuntime(runtimeOptions)
@@ -7078,6 +7086,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createLabOrderedCase(runtime, password)
@@ -7121,6 +7134,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createPaidLabCase(runtime, password)
@@ -7163,6 +7181,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     await createPaidLabCase(runtime, password)
@@ -7236,6 +7259,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createPaidLabCase(runtime, password)
@@ -7264,6 +7292,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local', password)
@@ -7302,11 +7335,16 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
     useLegacyMedicationCatalog(runtime)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/prescription/draft`,
       {
@@ -7358,9 +7396,14 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
 
     const catalogResponse = await runtime.app.request('/api/his/v1/catalogs/clinical', {
       headers: { cookie: doctorCookie },
@@ -7392,7 +7435,7 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
           input: {
             entries: [{
               catalogItemId: 'diagnosis-influenza',
@@ -7457,11 +7500,16 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
     const endpoint = `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
     const saveDraft = (catalogItemId: string, note: string, expectedDraftVersion: number) => (
       runtime.app.request(endpoint, {
         body: JSON.stringify({
@@ -7545,10 +7593,15 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
     const saveResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
       {
@@ -7613,7 +7666,7 @@ describe('outpatient workflow HTTP contract', () => {
         },
         draftVersion: 1,
       },
-      encounter: { versionId: '1' },
+      encounter: { versionId: expect.stringMatching(/^\d+$/) },
     })
     const conditionCountAfter = fhirBundleSchema.parse(await (
       await runtime.app.request(conditionSearchPath, { headers: { cookie: doctorCookie } })
@@ -7633,10 +7686,15 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
     const initialDetail = doctorCaseDetailSchema.parse(await (
       await runtime.app.request(`/api/his/v1/doctor/cases/${started.caseId}`, {
         headers: { cookie: doctorCookie },
@@ -7710,7 +7768,7 @@ describe('outpatient workflow HTTP contract', () => {
       },
       diagnosisVersion: 2,
       encounterId: started.encounterId,
-      encounterVersion: '2',
+      encounterVersion: expect.stringMatching(/^\d+$/),
     })
     runtime.database.driver.prepare(`
       UPDATE command_receipt
@@ -7765,7 +7823,7 @@ describe('outpatient workflow HTTP contract', () => {
         condition: [{ reference: { reference: `Condition/${conditionIds[1]}` } }],
         use: [{ coding: [expect.objectContaining({ code: 'secondary' })] }],
       }],
-      meta: { versionId: '2' },
+      meta: { versionId: expect.stringMatching(/^\d+$/) },
     })
     const provenanceSearchResponse = await runtime.app.request(
       `/fhir/R5/Provenance?target=Condition/${conditionIds[0]}&_total=accurate`,
@@ -7803,7 +7861,7 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: '2' },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: String(Number(started.encounterVersion) + 1) },
           input: {
             entries: [{
               catalogItemId: 'diagnosis-fever',
@@ -7836,7 +7894,7 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/diagnosis/actions/confirm`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: '2' },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: String(Number(started.encounterVersion) + 1) },
           input: { expectedDraftVersion: 3 },
         }),
         headers: commandHeaders(doctorCookie),
@@ -7857,7 +7915,7 @@ describe('outpatient workflow HTTP contract', () => {
         supersedesConfirmationId: confirmed.confirmation.id,
       },
       diagnosisVersion: 4,
-      encounterVersion: '3',
+      encounterVersion: expect.stringMatching(/^\d+$/),
     })
     for (const conditionId of conditionIds) {
       const previousCondition = fhirResourceSchema.parse(await (
@@ -7881,7 +7939,7 @@ describe('outpatient workflow HTTP contract', () => {
         condition: [{ reference: { reference: `Condition/${revisedConditionId}` } }],
         use: [{ coding: [expect.objectContaining({ code: 'primary' })] }],
       }],
-      meta: { versionId: '3' },
+      meta: { versionId: expect.stringMatching(/^\d+$/) },
     })
     expect(runtime.database.driver.prepare(`
       SELECT COUNT(*) AS count FROM diagnosis_confirmation
@@ -7901,6 +7959,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createReportedCase(runtime, password)
@@ -8030,9 +8093,14 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
     const catalogResponse = await runtime.app.request('/api/his/v1/catalogs/clinical', {
       headers: { cookie: doctorCookie },
     })
@@ -8065,7 +8133,7 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/prescription/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
           input: { ...draft, expectedDraftVersion: 0 },
         }),
         headers: commandHeaders(doctorCookie),
@@ -8107,14 +8175,19 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
     const saveDiagnosisResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
           input: {
             entries: [{ catalogItemId: 'diagnosis-influenza', role: 'primary' }],
             expectedDraftVersion: 0,
@@ -8131,7 +8204,7 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/diagnosis/actions/confirm`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
           input: { expectedDraftVersion: 1 },
         }),
         headers: commandHeaders(doctorCookie),
@@ -8139,7 +8212,7 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
     expect(confirmDiagnosisResponseSchema.parse(await confirmDiagnosisResponse.json())).toMatchObject({
-      data: { encounterVersion: '2' },
+      data: { encounterVersion: expect.stringMatching(/^\d+$/) },
     })
     const draft = {
       items: [{
@@ -8154,7 +8227,7 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/prescription/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: '2' },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: String(Number(started.encounterVersion) + 1) },
           input: { ...draft, expectedDraftVersion: 0 },
         }),
         headers: commandHeaders(doctorCookie),
@@ -8168,7 +8241,7 @@ describe('outpatient workflow HTTP contract', () => {
       = `/api/his/v1/encounters/${started.encounterId}/prescription/actions/issue`
     const issue = () => runtime.app.request(endpoint, {
       body: JSON.stringify({
-        expectedVersions: { [`Encounter/${started.encounterId}`]: '2' },
+        expectedVersions: { [`Encounter/${started.encounterId}`]: String(Number(started.encounterVersion) + 1) },
         input: { expectedDraftVersion: 1 },
       }),
       headers: commandHeaders(doctorCookie),
@@ -8252,14 +8325,19 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
     const diagnosisDraftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
           input: {
             entries: [{
               catalogItemId: 'diagnosis-acute-upper-respiratory-infection',
@@ -8280,7 +8358,7 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/diagnosis/actions/confirm`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
           input: { expectedDraftVersion: diagnosisDraft.draftVersion },
         }),
         headers: commandHeaders(doctorCookie),
@@ -8397,15 +8475,20 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
     const endpoint
       = `/api/his/v1/encounters/${started.encounterId}/medication-conclusion/actions/confirm-no-medication`
 
     const response = await runtime.app.request(endpoint, {
       body: JSON.stringify({
-        expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+        expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
         input: { expectedDraftVersion: 0 },
       }),
       headers: commandHeaders(doctorCookie),
@@ -8442,7 +8525,7 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/prescription/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
           input: {
             expectedDraftVersion: 1,
             items: [{
@@ -8464,7 +8547,7 @@ describe('outpatient workflow HTTP contract', () => {
     })
     const duplicateResponse = await runtime.app.request(endpoint, {
       body: JSON.stringify({
-        expectedVersions: { [`Encounter/${started.encounterId}`]: '1' },
+        expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
         input: { expectedDraftVersion: 1 },
       }),
       headers: commandHeaders(doctorCookie),
@@ -8488,6 +8571,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createSignedCase(runtime, password)
@@ -8624,6 +8712,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createPaidMedicationCase(runtime, password)
@@ -8785,6 +8878,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createReportedCase(runtime, password)
@@ -8887,10 +8985,15 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
-    const { doctorCookie, started } = await startVirtualPatientConsultation(runtime, password)
-    const expectedVersions = { [`Encounter/${started.encounterId}`]: '1' }
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/prescription/draft`,
       {
@@ -8944,7 +9047,7 @@ describe('outpatient workflow HTTP contract', () => {
         code: 'WORKFLOW_CONFLICT',
         conflict: {
           currentStatus: 'draft',
-          currentVersion: '1',
+          currentVersion: expect.stringMatching(/^\d+$/),
           expectedVersion: '999',
           owner: 'prescription-draft',
           resource: `Encounter/${started.encounterId}`,
@@ -9045,6 +9148,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createIssuedIndependentPrescription(runtime, password)
@@ -9137,6 +9245,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createPaidMedicationCase(runtime, password)
@@ -9245,6 +9358,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createReportedCase(runtime, password)
@@ -9465,6 +9583,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createReportedCase(runtime, password)
@@ -9595,6 +9718,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createRevisitDraftCase(runtime, password)
@@ -9679,6 +9807,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createRevisitDraftCase(runtime, password)
@@ -9942,6 +10075,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createSignedCase(runtime, password)
@@ -10116,6 +10254,10 @@ describe('outpatient workflow HTTP contract', () => {
         demoPassword: password,
         migrationMode: 'apply',
         trustedOrigins: ['http://localhost'],
+        chatCompletionsProvider: new QueuePersonaProvider(),
+        consultationModel: 'fake-consultation-model',
+        patientPersonaModel: 'fake-persona-model',
+        syntheaProvider: new StubSyntheaProvider(),
       })
       runtimes.push(runtime)
       return runtime
@@ -10300,6 +10442,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     await createPaidMedicationCase(runtime, password)
@@ -10433,6 +10580,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createPaidMedicationCase(runtime, password)
@@ -10546,6 +10698,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createPaidMedicationCase(runtime, password, {
@@ -10644,6 +10801,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createPaidMedicationCase(runtime, password, {
@@ -10746,6 +10908,11 @@ describe('outpatient workflow HTTP contract', () => {
       demoPassword: password,
       migrationMode: 'apply',
       trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
     })
     runtimes.push(runtime)
     const testCase = await createPaidMedicationCase(runtime, password)

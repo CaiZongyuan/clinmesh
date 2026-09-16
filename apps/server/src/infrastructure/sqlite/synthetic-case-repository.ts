@@ -92,7 +92,7 @@ const registrationCaseSource = `
     ON profile_revision.workspace_id = synthetic_case.workspace_id
    AND profile_revision.profile_id = synthetic_case.profile_id
    AND profile_revision.revision = synthetic_case.profile_revision
-  JOIN patient_brief_revision AS active_brief
+  JOIN patient_persona_revision AS active_brief
     ON active_brief.workspace_id = synthetic_case.workspace_id
    AND active_brief.case_id = synthetic_case.case_id
    AND active_brief.revision = synthetic_case.active_brief_revision

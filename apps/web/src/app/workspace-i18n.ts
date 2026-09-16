@@ -812,7 +812,7 @@ const enUS = {
   developer: 'Developer',
   uiComponents: 'UI components',
   overview: 'Workspace overview',
-  scenarioGenerationRunningDescription: 'Wait for patient or Patient Brief generation to finish before clearing the patient library.',
+  scenarioGenerationRunningDescription: 'Wait for patient or Patient Persona generation to finish before clearing the patient library.',
   scenarioData: 'Synthetic data',
   registration: 'Registration',
   triage: 'Triage',

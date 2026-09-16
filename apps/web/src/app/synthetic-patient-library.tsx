@@ -1,7 +1,9 @@
 import { createAvatar } from '@dicebear/core'
 import * as lorelei from '@dicebear/lorelei'
+import { isLegacyPatientPersonaContent, type PatientPersonaContent } from '@clinmesh/contracts/scenario'
+import { PatientPersonaEditor } from './patient-persona-editor.tsx'
 import type {
-  PatientBriefJob,
+  PatientPersonaJob,
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
   SyntheticPatientIdentity,
@@ -58,11 +60,11 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
-  enqueuePatientBrief,
+  enqueuePatientPersona,
   enqueueScenarioGenerationJob,
   getCurrentScenario,
-  getPatientBriefJob,
-  getPatientBriefRevisions,
+  getPatientPersonaJob,
+  getPatientPersonaRevisions,
   getRegistrationCatalog,
   getScenarioGenerationJob,
   getScenarioProviders,
@@ -72,7 +74,7 @@ import {
   getSyntheticPatientProfiles,
   newIdempotencyKey,
   resetScenario,
-  selectPatientBriefRevision,
+  selectPatientPersonaRevision,
   startSyntheticCaseVisit,
   updateSyntheticPatientProfile,
 } from './api-client.ts'
@@ -101,12 +103,12 @@ const copy = {
     minimumAge: 'Minimum age', maximumAge: 'Maximum age', gender: 'Gender',
     genderAny: 'Any', genderFemale: 'Female', genderMale: 'Male', avatarLabel: '{name} synthetic avatar',
     address: 'Address', advanced: 'Advanced settings', allModules: 'All Synthea modules',
-    batch: 'Generation batch', brief: 'Patient Brief', briefFailed: 'Brief generation failed', briefGenerate: 'Generate Brief',
+    batch: 'Generation batch', brief: 'Patient Persona', briefFailed: 'Persona generation failed', briefGenerate: 'Generate persona',
     briefStatus: {
-      failed: 'Patient Brief generation failed',
-      queued: 'Patient Brief queued',
-      running: 'Generating Patient Brief',
-      succeeded: 'Patient Brief complete',
+      failed: 'Patient Persona generation failed',
+      queued: 'Patient Persona queued',
+      running: 'Generating Patient Persona',
+      succeeded: 'Patient Persona complete',
     },
     caseType: 'Case type', clinicalSeed: 'Clinical seed',
     contact: 'Contact', editProfile: 'Edit profile', email: 'Email',
@@ -135,12 +137,12 @@ const copy = {
     ageYears: '{count} 岁', patientSingular: '{count} 名患者', patientPlural: '{count} 名患者',
     minimumAge: '最小年龄', maximumAge: '最大年龄', gender: '性别',
     genderAny: '不限', genderFemale: '女', genderMale: '男', avatarLabel: '{name}的合成头像',
-    address: '地址', advanced: '高级设置', allModules: '全部 Synthea 模块', batch: '生成批次', brief: '患者梗概', briefFailed: '梗概生成失败', briefGenerate: '生成患者梗概',
+    address: '地址', advanced: '高级设置', allModules: '全部 Synthea 模块', batch: '生成批次', brief: '患者档案', briefFailed: '档案生成失败', briefGenerate: '生成患者档案',
     briefStatus: {
-      failed: '患者梗概生成失败',
-      queued: '患者梗概排队中',
-      running: '患者梗概生成中',
-      succeeded: '患者梗概已完成',
+      failed: '患者档案生成失败',
+      queued: '患者档案排队中',
+      running: '患者档案生成中',
+      succeeded: '患者档案已完成',
     },
     caseType: '病例类型', clinicalSeed: '临床 seed', contact: '联系方式', editProfile: '编辑档案',
     email: '电子邮箱', emptyDescription: '生成完整中文 Synthea 纵向病历，每批最多 10 人。',
@@ -166,7 +168,7 @@ const copy = {
 function JobStatusNotice({ error, label, status }: {
   error: string | undefined
   label: string
-  status: PatientBriefJob['status']
+  status: PatientPersonaJob['status']
 }) {
   const inProgress = status === 'queued' || status === 'running'
   const StatusIcon = status === 'failed'
@@ -409,7 +411,7 @@ function StartCaseVisitSheet({ locale, onOpenChange, open, profileId, syntheticC
   const start = useMutation({
     mutationFn: () => {
       if (syntheticCase.activeBriefRevision === null || catalog.data === undefined) {
-        throw new Error('The Synthetic Case has no active Patient Brief')
+        throw new Error('The Synthetic Case has no active Patient Persona')
       }
       return startSyntheticCaseVisit({
         activeBriefRevision: syntheticCase.activeBriefRevision,
@@ -451,7 +453,7 @@ function StartCaseVisitSheet({ locale, onOpenChange, open, profileId, syntheticC
   )
 }
 
-function PatientBriefPanel({ locale, profileId, syntheticCase }: {
+function PatientPersonaPanel({ locale, profileId, syntheticCase }: {
   locale: WorkspaceLocale
   profileId: string
   syntheticCase: NonNullable<SyntheticPatientProfileDetail['case']>
@@ -461,26 +463,27 @@ function PatientBriefPanel({ locale, profileId, syntheticCase }: {
   const jobId = useSyntheticPatientLibraryViewStore(
     state => state.patientBriefJobIds[syntheticCase.caseId],
   )
-  const setPatientBriefJob = useSyntheticPatientLibraryViewStore(
-    state => state.setPatientBriefJob,
+  const setPatientPersonaJob = useSyntheticPatientLibraryViewStore(
+    state => state.setPatientPersonaJob,
   )
   const [visitOpen, setVisitOpen] = useState(false)
+  const [editing, setEditing] = useState<{ revision: number; content: PatientPersonaContent }>()
   const revisions = useQuery({
-    queryFn: ({ signal }) => getPatientBriefRevisions(syntheticCase.caseId, signal),
-    queryKey: ['patient-brief-revisions', syntheticCase.caseId],
+    queryFn: ({ signal }) => getPatientPersonaRevisions(syntheticCase.caseId, signal),
+    queryKey: ['patient-persona-revisions', syntheticCase.caseId],
   })
   const generate = useMutation({
-    mutationFn: () => enqueuePatientBrief(syntheticCase.caseId, newIdempotencyKey()),
+    mutationFn: () => enqueuePatientPersona(syntheticCase.caseId, newIdempotencyKey()),
     onSuccess: response => {
       queryClient.setQueryData(['patient-brief-job', response.data.jobId], response.data)
-      setPatientBriefJob(syntheticCase.caseId, response.data.jobId)
+      setPatientPersonaJob(syntheticCase.caseId, response.data.jobId)
     },
   })
   const job = useQuery({
     enabled: jobId !== undefined,
     queryFn: ({ signal }) => jobId === undefined
-      ? Promise.reject(new Error('No Patient Brief job'))
-      : getPatientBriefJob(jobId, signal),
+      ? Promise.reject(new Error('No Patient Persona job'))
+      : getPatientPersonaJob(jobId, signal),
     queryKey: ['patient-brief-job', jobId ?? 'none'],
     refetchInterval: query => ['queued', 'running'].includes(query.state.data?.status ?? '')
       ? 1_000
@@ -489,20 +492,20 @@ function PatientBriefPanel({ locale, profileId, syntheticCase }: {
   useEffect(() => {
     if (job.data?.status !== 'succeeded') return
     void Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['patient-brief-revisions', syntheticCase.caseId] }),
+      queryClient.invalidateQueries({ queryKey: ['patient-persona-revisions', syntheticCase.caseId] }),
       queryClient.invalidateQueries({ queryKey: ['synthetic-patient-profile', profileId] }),
       queryClient.invalidateQueries({ queryKey: profileListKey }),
     ])
   }, [job.data?.status, profileId, queryClient, syntheticCase.caseId])
   const select = useMutation({
-    mutationFn: (revision: number) => selectPatientBriefRevision({
+    mutationFn: (revision: number) => selectPatientPersonaRevision({
       briefRevision: revision,
       caseId: syntheticCase.caseId,
       expectedCaseRevision: syntheticCase.revision,
     }, newIdempotencyKey()),
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['patient-brief-revisions', syntheticCase.caseId] }),
+        queryClient.invalidateQueries({ queryKey: ['patient-persona-revisions', syntheticCase.caseId] }),
         queryClient.invalidateQueries({ queryKey: ['synthetic-patient-profile', profileId] }),
       ])
     },
@@ -542,7 +545,7 @@ function PatientBriefPanel({ locale, profileId, syntheticCase }: {
       ) : revisions.isError ? (
         <Alert className="mt-3" variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.briefFailed}</AlertTitle></Alert>
       ) : revisions.data.items.length === 0 ? (
-        <p className="mt-4 text-sm text-muted-foreground">{locale === 'zh-CN' ? '尚未生成患者梗概' : 'No Patient Brief revision'}</p>
+        <p className="mt-4 text-sm text-muted-foreground">{locale === 'zh-CN' ? '尚未生成患者档案' : 'No Patient Persona revision'}</p>
       ) : (
         <div className="mt-4 border-t">
           {revisions.data.items.map(revision => (
@@ -559,9 +562,31 @@ function PatientBriefPanel({ locale, profileId, syntheticCase }: {
                 <div><dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '开场陈述' : 'Opening statement'}</dt><dd className="mt-1">{revision.content.openingStatement}</dd></div>
                 <div><dt className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '已知史' : 'Known history'}</dt><dd className="mt-1">{revision.content.knownHistorySummary}</dd></div>
               </dl>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {revision.content.symptomTopics.map(topic => <Badge key={topic.id} variant="outline">{topic.name}</Badge>)}
-              </div>
+              {isLegacyPatientPersonaContent(revision.content) ? (
+                <p className="mt-3 text-sm text-muted-foreground">{locale === 'zh-CN' ? '旧版档案仅供回看；请重新生成以启用自由对话。' : 'Legacy persona: regenerate to enable free dialogue.'}</p>
+              ) : (
+                <div className="mt-3 flex flex-col gap-3">
+                  <dl className="grid gap-3 text-sm">
+                    <div><dt>{locale === 'zh-CN' ? '性格与表达' : 'Character and expression'}</dt><dd>{Object.values(revision.content.persona).join('；')}</dd></div>
+                    <div><dt>{locale === 'zh-CN' ? '症状体验' : 'Symptom experience'}</dt><dd>{revision.content.symptomExperience}</dd></div>
+                    <div><dt>{locale === 'zh-CN' ? '用药记忆' : 'Medication memory'}</dt><dd>{revision.content.medicationMemory}</dd></div>
+                  </dl>
+                  <Button onClick={() => { if (!isLegacyPatientPersonaContent(revision.content)) setEditing({ revision: revision.revision, content: revision.content }) }} size="sm" variant="outline">
+                    {locale === 'zh-CN' ? '编辑为新修订' : 'Edit as new revision'}
+                  </Button>
+                  {editing?.revision === revision.revision ? <PatientPersonaEditor
+                    caseId={syntheticCase.caseId}
+                    content={editing.content}
+                    key={revision.revision}
+                    locale={locale}
+                    onCancel={() => setEditing(undefined)}
+                    onSaved={async () => {
+                      setEditing(undefined)
+                      await revisions.refetch()
+                    }}
+                  /> : null}
+                </div>
+              )}
             </section>
           ))}
         </div>
@@ -629,7 +654,7 @@ function ProfileDetails({ locale, onEdit, profile, referenceDate }: {
         <section className="min-w-0 p-4"><h4 className="text-sm font-semibold">{messages.insurance}</h4><p className="mt-2 text-sm">{profile.identity.insuranceDisplay}</p></section>
       </div>
       {profile.case === null ? null : (
-        <PatientBriefPanel key={profile.case.caseId} locale={locale} profileId={profile.profileId} syntheticCase={profile.case} />
+        <PatientPersonaPanel key={profile.case.caseId} locale={locale} profileId={profile.profileId} syntheticCase={profile.case} />
       )}
       {profile.case === null ? null : (
         <PatientCaseTruth caseId={profile.case.caseId} key={`truth:${profile.case.caseId}`} locale={locale} />

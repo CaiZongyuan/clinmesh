@@ -1,3 +1,4 @@
+import { persona, StubSyntheaProvider, startConsultationCase, signIn } from './fixtures/consultation.ts'
 import { existsSync } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -171,7 +172,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 49,
+      schemaVersion: 51,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -224,8 +225,10 @@ describe('SQLite lifecycle', () => {
         '0043_dsh-agent-integration.sql',
         '0043_investigation-generation-provenance.sql',
         '0044_synthetic-patient-archive.sql',
+        '0045_patient-persona.sql',
+        '0046_consultation-turn.sql',
       ],
-      schemaVersion: 49,
+      schemaVersion: 51,
     })
     expect(first.driver.prepare(`
       SELECT name FROM sqlite_schema
@@ -241,8 +244,8 @@ describe('SQLite lifecycle', () => {
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 49 })
-    expect(reopened.diagnostics().schemaVersion).toBe(49)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 51 })
+    expect(reopened.diagnostics().schemaVersion).toBe(51)
     reopened.close()
   })
 
@@ -311,8 +314,10 @@ describe('SQLite lifecycle', () => {
         '0043_dsh-agent-integration.sql',
         '0043_investigation-generation-provenance.sql',
         '0044_synthetic-patient-archive.sql',
+        '0045_patient-persona.sql',
+        '0046_consultation-turn.sql',
       ],
-      schemaVersion: 49,
+      schemaVersion: 51,
     })
     expect(database.driver.prepare(`
       SELECT practitioner_role_id FROM command_receipt
@@ -1461,8 +1466,40 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(49)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(51)
     await runtime.close()
+  })
+
+  it('excludes frozen dialogue wording from the canonical hash while preserving turn metadata', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-dialogue-hash-'))
+    temporaryDirectories.push(directory)
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost', authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'dialogue.sqlite'), migrationMode: 'apply',
+      demoPassword: 'Synthetic-Demo-Password-2026!', trustedOrigins: ['http://localhost'],
+      syntheaProvider: new StubSyntheaProvider(), patientPersonaModel: 'fake-persona', consultationModel: 'fake-dialogue',
+      chatCompletionsProvider: { completeJson: async input => ({
+        model: input.model, content: JSON.stringify(input.schemaName === 'patient_persona' ? persona : { reply: '蹲下站起来的时候晕。' }),
+      }) },
+    })
+    try {
+      const started = await startConsultationCase(runtime)
+      const cookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
+      const response = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
+        method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': 'hash-test-question' },
+        body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion, [`Task/${started.doctorTaskId}`]: '1' }, input: { expectedConsultationVersion: 2, message: '什么时候晕？' } }),
+      })
+      expect(response.status).toBe(200)
+      const before = canonicalStateHash(runtime.database)
+      runtime.database.driver.prepare("UPDATE consultation_turn SET message_text = '站起来会晕。' WHERE source = 'patient-agent'").run()
+      runtime.database.driver.prepare(`UPDATE command_receipt SET response_json = replace(response_json, '蹲下站起来的时候晕。', '站起来会晕。') WHERE operation LIKE 'consultation.%'`).run()
+      expect(canonicalStateHash(runtime.database)).toBe(before)
+      runtime.database.driver.prepare("UPDATE consultation_turn SET persona_revision = 2 WHERE source = 'patient-agent'").run()
+      expect(canonicalStateHash(runtime.database)).not.toBe(before)
+    } finally {
+      await runtime.close()
+    }
   })
 
   it('restores a consistent backup to a new path without changing the active database', async () => {
@@ -1531,7 +1568,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 49,
+      schemaVersion: 51,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -1543,11 +1580,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 49,
+      expectedSchemaVersion: 51,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 49,
+      schemaVersion: 51,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -1731,7 +1768,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(49),
+      schemaVersion: z.literal(51),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -1780,26 +1817,28 @@ describe('SQLite lifecycle', () => {
       '0043_dsh-agent-integration.sql',
       '0043_investigation-generation-provenance.sql',
         '0044_synthetic-patient-archive.sql',
+        '0045_patient-persona.sql',
+        '0046_consultation-turn.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 49 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 51 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 49 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 51 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 49 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 51 })
   })
 })

@@ -47,7 +47,7 @@ DSH Web -- React Surface --> same React application/runtime
 3. **按资源确定唯一权威数据源。** 标准临床和主数据以 FHIR JSON 为权威记录；库存、医保、收银交账、仿真运行等领域以规范化关系表为权威，并生成只读 FHIR 投影。禁止同一事实被两个模型双向修改。
 4. **不追求完整 FHIR Search。** 只实现资源能力注册表列出的 SearchParameter canonical，并由 CapabilityStatement 引用同一清单；本服务器首期固定采用严格处理，不支持的参数返回 `OperationOutcome`。
 5. **首期只交付 Web 和 SQLite。** standalone Web 与 DSH React Surface 复用同一 Web application interface；Hono 在单个 Node.js 进程中运行，一个本地 SQLite 文件持久化所有业务状态。Desktop、React Native、Cloudflare/D1、PostgreSQL/Supabase 和多实例部署均后置。
-6. **仿真能力是一等领域，但评分不是首期基础设施。** 每个 Scenario Run 绑定 Workspace/Epoch、虚拟时钟、不可变 Synthetic Case Instance、私有 Case Truth、Patient Brief、冻结的 Investigation Result Snapshot 和 Action Trace；首期没有 Evaluation Spec、评分规则或 evaluator runtime。
+6. **仿真能力是一等领域，但评分不是首期基础设施。** 每个 Scenario Run 绑定 Workspace/Epoch、虚拟时钟、不可变 Synthetic Case Instance、私有 Case Truth、Patient Persona、冻结的 Investigation Result Snapshot 和 Action Trace；首期没有 Evaluation Spec、评分规则或 evaluator runtime。
 7. **SQLite 是首期真实数据库。** 所有关系约束、迁移、备份恢复、幂等竞争、outbox 恢复和 reset 都在 file-backed SQLite 上验证。未来数据库通过新 adapter 和显式迁移接入，不维护未使用的兼容路径。
 8. **一个 Encounter 贯穿首期门诊。** 结构化病历签署拥有独立生命周期，不推进 Encounter；带 Consultation 的病例由独立完诊门禁汇总正式临床事实，首期复诊兼容流仍可在尚无结构化签署根文书时组合签署与完诊。药品支付和发药随后发生，发药完成 Scenario Run，而不是再次推进 Encounter。
 9. **Agent adapter 不拥有第二套业务内核。** DSH 拥有模型 Session、transcript、Tool 调度和 Surface 宿主，ClinMesh 拥有 Page Context、前端 action、proposal、人工审阅、共享 Command 和审计关联；`clinmesh` CLI 从业务 Operation Catalog 生成命令树，通过受信 Actor context 调用同一 Query 与 Command。两条入口都不能绕过授权、CAS/expected version、状态机、审计或各自声明的人工确认边界。
@@ -224,7 +224,7 @@ standalone Web、DSH Surface 和 CLI 最终调用相同的 Query 与 Command han
 | --- | --- | --- |
 | `fhir-native` | Patient、AllergyIntolerance、Organization、Location、Practitioner、PractitionerRole、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、Condition、Medication、MedicationRequest、MedicationDispense | 只由 Case 开始或业务 Command 创建和更新；FHIR API 只读 |
 | `fhir-native-immutable` | 已签署的 Composition、document Bundle、Provenance | 业务 Command 只创建新资源；更正创建显式修订关系，不覆盖已签实例 |
-| `domain-native` | Workspace Actor、Agent Client/Grant、Synthetic Patient Profile 与 Profile Revision、Synthetic Case Instance、Patient Brief Revision、Investigation Result Snapshot、Consultation 与 Consultation Record、Registration、Diagnosis Draft 与 Diagnosis Confirmation、Prescription、PaymentTransaction、库存账、临床草稿、Scenario Run、Action Trace、audit_log | 只通过 `/api/agent/v1`、`/api/his/v1`、`/api/sim/v1` 或内部 Command 写入 |
+| `domain-native` | Workspace Actor、Agent Client/Grant、Synthetic Patient Profile 与 Profile Revision、Synthetic Case Instance、Patient Persona Revision、Investigation Result Snapshot、Consultation 与 Consultation Record、Registration、Diagnosis Draft 与 Diagnosis Confirmation、Prescription、PaymentTransaction、库存账、临床草稿、Scenario Run、Action Trace、audit_log | 只通过 `/api/agent/v1`、`/api/his/v1`、`/api/sim/v1` 或内部 Command 写入 |
 | `domain-projection` | AuditEvent、InventoryItem | 从领域事实同事务生成；FHIR API 只读 |
 | `simulation-private` | Index Encounter、Case Truth、隐藏来源资源和生成模型输入 | Simulator 内部解析器可访问；管理员病例核对仅可读 Case Truth，生成模型输入仍不公开；普通 HIS、FHIR、来源历史详情和角色 Agent 均不可读取 |
 
@@ -248,7 +248,7 @@ D1、PostgreSQL 或 Supabase 只在出现公开托管、多实例、持续写竞
 - `CommandExecutor`：以受信 context 执行强类型 Command，内部隐藏事务、幂等、expected version、审计、Action Trace 和 Effect receipt。
 - `FhirRepository`：提供内部创建/更新与公开 read、history、受控 search；首期只有 SQLite 实现，不伪造第二数据库 adapter。
 - `ScenarioDataService`：拥有 Synthea 生成任务、Profile/Case 原子创建、患者库与来源历史授权读取。
-- `SyntheticCaseVisitService`：向挂号员投影固定 Profile/Brief revision 的待挂号病例，并把管理员或挂号员确认的 Case 开始请求交给共享 Workflow 内核。
+- `SyntheticCaseVisitService`：向挂号员投影固定 Profile/Persona revision 的待挂号病例，并把管理员或挂号员确认的 Case 开始请求交给共享 Workflow 内核。
 - `ScenarioService`：拥有 building/active Epoch 切换与 reset/replay 协调；病例物化委托给共享 Workflow 内核。
 - `WorkflowService`：拥有 Case direct start、首期门诊状态转换、预览 token、支付/LIS/文书/药房规则和岗位读模型。
 - `AgentIntegrationService`：隐藏 Page Context 签发、execution proof 校验、防重放、proposal/review 生命周期以及 Tool call 到 Command/Audit/Trace 的关联。
@@ -593,8 +593,8 @@ FHIR 没有稳定等价物的聚合使用显式 API。当前写路由为：
 ```text
 POST /api/his/v1/patients
 POST /api/his/v1/registrations/actions/register
-POST /api/his/v1/doctor/virtual-patients/{id}/actions/start
 POST /api/his/v1/encounters/{id}/actions/ask-consultation-question
+POST /api/his/v1/encounters/{id}/actions/retry-consultation-reply
 POST /api/his/v1/encounters/{id}/actions/record-triage
 POST /api/his/v1/encounters/{id}/actions/start-first-visit
 POST /api/his/v1/encounters/{id}/actions/start-revisit
@@ -630,17 +630,17 @@ GET  /api/sim/v1/synthetic-patients
 GET  /api/sim/v1/synthetic-patients/{id}
 GET  /api/sim/v1/synthetic-cases/{id}/history
 GET  /api/sim/v1/synthetic-cases/{id}/history/detail?sourceReference=...
-POST /api/sim/v1/synthetic-cases/{id}/patient-brief-jobs
-GET  /api/sim/v1/patient-brief-jobs/{id}
-GET  /api/sim/v1/synthetic-cases/{id}/patient-brief-revisions
-PUT  /api/sim/v1/synthetic-cases/{id}/patient-brief-revisions/active
+POST /api/sim/v1/synthetic-cases/{id}/patient-persona-jobs
+GET  /api/sim/v1/patient-persona-jobs/{id}
+GET  /api/sim/v1/synthetic-cases/{id}/patient-persona-revisions
+POST /api/sim/v1/synthetic-cases/{id}/patient-persona-revisions
+PUT  /api/sim/v1/synthetic-cases/{id}/patient-persona-revisions/active
 GET  /api/his/v1/registration/synthetic-cases
 POST /api/his/v1/synthetic-cases/{id}/actions/start-outpatient-visit
 ```
 
-`GET /api/his/v1/registration/synthetic-cases` 只允许挂号员读取同一 Workspace 中 `brief-ready`、具有活动 Patient Brief 且尚未开始的病例，支持按姓名或病历号分页检索。响应从 Case 固定的 Profile Revision 投影病例 ID、Case/Profile/Brief revision、病例类型、姓名、病历号、性别和出生日期；不读取当前 Profile，也不返回 Case Truth、来源 Bundle、生成配置或来源历史详情。
+`GET /api/his/v1/registration/synthetic-cases` 只允许挂号员读取同一 Workspace 中 `brief-ready`、具有活动 Patient Persona 且尚未开始的病例，支持按姓名或病历号分页检索。响应从 Case 固定的 Profile Revision 投影病例 ID、Case/Profile/Persona revision、病例类型、姓名、病历号、性别和出生日期；不读取当前 Profile，也不返回 Case Truth、来源 Bundle、生成配置或来源历史详情。
 
-`GET /api/his/v1/doctor/virtual-patients` 按 `page/pageSize` 分页，只返回当前 Workspace/Epoch 中仍可接诊的 Virtual Patient 名称、性别、出生日期、临床可见摘要、协议 ID 和固定长度的 opaque `version`。姓名、性别和出生日期读取自绑定的 `fhir-native` Patient，Virtual Patient 领域表不重复保存 Patient Identity；响应不返回 Patient logical ID、Case Truth、病原体、运行时状态、底层资源引用或确定性回答规则。`version` 的绑定和冲突语义由[门诊闭环](#81-门诊闭环)定义。
 
 Command 写请求使用同源 session 与 CSRF 校验，并通过以下 header 提供幂等键：
 
@@ -664,7 +664,7 @@ Workspace、Epoch、Scenario Run、Actor 和 Acting Practitioner Context 只从�
 
 `virtual-patient.start-consultation` 的公开 `expectedVersions` 固定为空对象，`input.expectedVersion` 提交列表返回的 opaque `version`。服务端从该引用恢复依赖版本后再进入 `CommandExecutor`；客户端不能读取或覆盖底层 dependency set。
 
-`consultation.ask-question` 在 `expectedVersions` 中提交当前 Encounter 和医生 Task 版本，并在 `input` 中提交 Consultation expected version 与受控问题代码。成功追加一轮不可变记录并递增 Consultation 版本；相同幂等键重放原回执，旧版本返回稳定冲突。病例详情只返回可选问题的代码和文本、有序问答记录及当前 Consultation 版本，不返回 Patient Brief 的隐藏 answer points 或 Case Truth。
+`encounter.consultation.ask` 接收自由文本 `message`、当前 Encounter/Task expected versions 和 `expectedConsultationVersion`。医生发言先由共享 Command 以短事务追加；患者模型在事务外生成回答，再由第二个 Command 追加。完整响应保留 `requestId`、`auditId`、`effects` 与双方轮次；病例详情只返回有序 `turns` 和聚合版本。`encounter.consultation.reply.retry` 只为尚未得到文本回答的医生发言生成回答，输入为 Encounter ID 和当前 Consultation version。
 
 成功响应包含：
 
@@ -805,7 +805,7 @@ Skills 不复制 flags、输入 schema 或完整命令目录，Agent 对不熟�
 ### 8.1 门诊闭环
 
 ```text
-管理员生成 Synthetic Case + 选定 Patient Brief
+管理员生成 Synthetic Case + 选定 Patient Persona
   -> 挂号员读取待挂号病例 + 选择科室/号别/地点
 Registration + Encounter + Account + 挂号 Charge Item
   -> 分诊 Observation + Queue Task ready
@@ -822,13 +822,17 @@ Registration + Encounter + Account + 挂号 Charge Item
 
 首期只实现现场普通门诊。Registration 是持久领域事实；挂号 Command 在同一事务中创建或关联 Registration、Encounter、Queue Task、Account 和挂号 Charge Item。Appointment 表达未来预约承诺，Slot 表达可预约时段，不承担挂号事实、排队序号或挂号费语义，二者不属于首期闭环。
 
-管理员生成 Synthetic Case 并选定 Patient Brief 后，挂号员从待挂号列表选择 Case 与挂号目录项，复用 `registration.synthetic-case.start` 对应的共享物化内核原子创建 Patient、Registration、Encounter、Queue Task、Consultation 与 Case materialization。成功结果是 `awaiting-triage`，同时从待挂号列表移除并进入挂号记录与分诊待处理队列；两个挂号员以不同幂等键并发提交同一 Case 时只有一个 revision 条件更新成功，失败方收到受控冲突并刷新队列。管理员仍可直接开始 ready Case。临时患者建档只创建普通 HIS Patient Identity，不推导 Synthetic Case、Case Truth 或 Patient Brief。
+管理员生成 Synthetic Case 并选定 Patient Persona 后，挂号员从待挂号列表选择 Case 与挂号目录项，复用 `registration.synthetic-case.start` 对应的共享物化内核原子创建 Patient、Registration、Encounter、Queue Task、Consultation 与 Case materialization。成功结果是 `awaiting-triage`，同时从待挂号列表移除并进入挂号记录与分诊待处理队列；两个挂号员以不同幂等键并发提交同一 Case 时只有一个 revision 条件更新成功，失败方收到受控冲突并刷新队列。管理员仍可直接开始 ready Case。临时患者建档只创建普通 HIS Patient Identity，不推导 Synthetic Case、Case Truth 或 Patient Persona。
 
-门诊医生也可从版本固定的 Virtual Patient 直接建立接诊上下文。候选列表返回的 opaque `version` 由服务端认证加密并固定长度，绑定 Workspace、Epoch、Virtual Patient ID、内部版本，以及列表读取时已有活动病例的 Encounter 和可用 Queue Task 引用与版本。`virtual-patient.start-consultation` 在进入 `CommandExecutor` 前解密并校验该引用，以 Virtual Patient 版本、依赖版本与可用状态作为前置条件；篡改、跨上下文、旧候选或依赖已变化都返回稳定冲突，客户端不能解码技术状态或自行提交底层 expected versions。
 
-Patient 没有活动门诊病例时，Command 在同一事务中创建 Registration、进行中 Encounter、Account、医生 Queue Task、`first-visit` outpatient case 和版本为 `1` 的 Consultation；Patient 已有 `awaiting-triage`、`awaiting-doctor` 或 `first-visit` 病例时，Command 复用该病例的 Registration、Encounter、Account 和可用 Queue Task，并把尚未开始的 Task 转入医生首诊，同时为病例建立 Consultation。成功后 Virtual Patient 不可再次接诊；这条入口不伪造分诊 Observation、分诊级别或费用事实，相同幂等键重放第一次回执，其他活动状态或已消费候选患者返回稳定冲突。
 
-Consultation 是病例级领域聚合，Consultation Record 是按序号追加的不可变问答事实；Synthetic Case 开始或 replay 时把活动 Patient Brief 的 `symptomTopics` 确定性物化为 case-scoped question rules，旧 Virtual Patient 继续使用自己的 reveal rules。首次问诊可在同一 Command 中把 `awaiting-doctor` Task 转入 first visit、绑定负责 Practitioner Role 并追加回答；后续问诊只追加记录。每次追加以旧聚合版本作为记录序号，通过 SQL expected-version 条件更新递增版本，并保存当时的问题文本、回答、提问 Actor、Acting Practitioner 和虚拟业务时间。公开响应不暴露 Case Truth 或内部答案规则。
+Consultation 是病例级领域聚合，Consultation Record 保存 append-only 对话轮次。Synthetic Case 开始时绑定 Persona Revision 并追加患者开场白；首次医生发言可以同时开始首诊并绑定负责 Practitioner Role。每个轮次保存说话方、内容类型、来源、虚拟业务时间、参与 Actor 和患者档案修订。来源预留 `asr-import` 与 `external-sync`，当前没有导入接口。旧选择题问答迁移为保留原文的只读轮次；旧版档案不能用于自由对话，三个手写 Virtual Patient 的直达接诊路由已移除。
+
+患者模型的输入只有固定档案、最近 40 个对话轮次、可见既往史、分诊体验和已签发报告。Case Truth 仅由档案生成器与独立泄漏出口检查读取，不进入回答模型上下文。回答命中本次隐藏诊断术语时重新生成一次，再命中则保存安全患者应答；既往已知诊断允许陈述。整轮共享 30 秒期限，失败时保留医生发言并允许重试，其他诊疗环节继续可用。
+
+未回答的医生发言阻止追加下一条医生发言。检验报告 final 或更正时，系统追加引用固定 DiagnosticReport 版本的报告卡片；卡片不充当文本回答，不阻断正在生成的回答。同一医生发言的回答使用稳定追加键，并发生成只能冻结一个结果。公开 Command 回执按原 operation 和幂等键查询；已接受但尚未返回完整回答时为 `executing`，包含已保存的发言。客户端先刷新病例确认末条未回答发言，再调用显式重试；成功后相同请求返回第一次完整回执。
+
+复诊延续同一条对话；完诊只读。Reset 重放保留病例与档案事实，重新生成的措辞可以不同。Canonical state hash 排除对话表文本和问诊回执内的轮次文本，保留轮次、来源、档案版本与审计等元数据；备份仍保存原始对话全文。
 
 结构化 Clinical Document 草稿包含主诉、现病史、查体、评估、处置和随访六个共享必填字段，按病例保存在 `clinical_document_draft`，以 `expectedDraftVersion` 和 Encounter expected version 做 CAS 更新。签署预览固定 Actor context、Encounter 版本、草稿正文和草稿版本；提交重新校验这些依赖与 token 后创建不可变 FHIR R5 Composition、带稳定 identifier 且首 entry 为该 Composition 的自包含 document Bundle，以及同时引用二者的 Provenance，但不改变 Encounter 或病例状态。`signed_clinical_document` 只保存 FHIR 资源关联、签署者、时间和修订父链；每个病例只允许一个根文书，修订只接受最新 Composition 并创建线性替代版本。首期复诊 `sign-and-complete` 是兼容入口，只能用于尚无结构化签署根文书的病例；已有根文书时预览和提交都返回稳定业务冲突。
 
@@ -1082,11 +1086,11 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 当前领域表只覆盖首期闭环：
 
 - 身份与岗位：Better Auth 的 user/session/account，加 Workspace Actor、Human Membership、Agent Client/Capability Grant、Practitioner Role binding 和当前 session context。
-- 门诊：Virtual Patient 候选状态与接诊映射、Consultation、append-only Consultation Record、目录、outpatient case、Registration、分诊记录、临床草稿、诊断草稿状态与确认分组、检查申请草稿状态、正式检查申请、处方草稿状态、Prescription 与处方项目、无需用药结论和处方撤回事实。
+- 门诊：Consultation、append-only Consultation Record、目录、outpatient case、Registration、分诊记录、临床草稿、诊断草稿状态与确认分组、检查申请草稿状态、正式检查申请、处方草稿状态、Prescription 与处方项目、无需用药结论和处方撤回事实。
 - 账务：Charge Record、Payment Preview 和 Payment Transaction。金额以整数分保存；当前没有退款、医保或收费员交账表。
 - 库存与发药：Inventory Lot、append-only Inventory Movement 和 Dispense。当前不实现预占、追溯码、盘点或调拨。
 - 文书：结构化 Clinical Document Draft、结构化与兼容 Clinical Sign Preview、Signed Clinical Document 关联和修订父链；签署的 Composition、document Bundle 和 Provenance 正文仍由 FHIR store 权威保存。
-- 平台与仿真：Workspace/Epoch、Scenario Run/State、Synthetic Profile/Case、Patient Brief、Investigation Result Snapshot、私有 Case Truth、Command Receipt/Effect、Audit、Action Trace、Outbox、Agent Page Context、Tool call、proposal 和 review decision。
+- 平台与仿真：Workspace/Epoch、Scenario Run/State、Synthetic Profile/Case、Patient Persona、Investigation Result Snapshot、私有 Case Truth、Command Receipt/Effect、Audit、Action Trace、Outbox、Agent Page Context、Tool call、proposal 和 review decision。
 
 所有适用表、主键、唯一键、外键和岗位队列索引包含 `workspace_id + epoch`。新增 FHIR-native 辅助索引时必须可由权威资源重建；新增无法重建的事实时必须明确成为 domain aggregate，不能同时由 FHIR JSON 和领域表双向拥有。
 
@@ -1189,7 +1193,7 @@ Repository 边界降低业务代码耦合，但不承诺直接复制 `.sqlite` �
 
 ### 10.1 Workspace 隔离
 
-每次人类演示或 Agent 任务运行使用一个 Scenario Run，并在 Workspace 内以不可复用的 Epoch 标识具体数据世代。所有运行资源、索引、领域表、session/Grant context、Command、outbox、callback 和 Action Trace 都绑定 `workspace_id + epoch`；审计保留域独立，不随 reset 删除。生成任务、Synthetic Patient Profile/Revision、Synthetic Case Instance、Brief Revision、来源 R4 artifact 和冻结的 Investigation Result Snapshot 是 Workspace 级不可变资产，故意跨 Epoch 存续。直接开始或管理员 reset/replay 才把同一 Case Revision 物化为新 Epoch 的本院 Patient、Registration、Encounter、Queue Task 和 Consultation；Visible Source History 保持来源投影，不进入本院 R5 store。
+每次人类演示或 Agent 任务运行使用一个 Scenario Run，并在 Workspace 内以不可复用的 Epoch 标识具体数据世代。所有运行资源、索引、领域表、session/Grant context、Command、outbox、callback 和 Action Trace 都绑定 `workspace_id + epoch`；审计保留域独立，不随 reset 删除。生成任务、Synthetic Patient Profile/Revision、Synthetic Case Instance、Persona Revision、来源 R4 artifact 和冻结的 Investigation Result Snapshot 是 Workspace 级不可变资产，故意跨 Epoch 存续。直接开始或管理员 reset/replay 才把同一 Case Revision 物化为新 Epoch 的本院 Patient、Registration、Encounter、Queue Task 和 Consultation；Visible Source History 保持来源投影，不进入本院 R5 store。
 
 首期所有 Workspace 共用一个 SQLite 文件并按行隔离。数据库文件不是 Workspace 边界；任何查询和约束都必须显式携带 Workspace/Epoch。
 
@@ -1226,7 +1230,7 @@ clock_revision
 
 一次成功生成原子保存不可变 Synthetic Patient Profile Revision、本地化 R4 Bundle 和 Synthetic Case Instance。固定 catalog 未命中的 clinical display 保留来源英文，并把有界 translation warning 与 Profile 一起保存供管理员校对；缺译不阻塞患者，FHIR 结构、引用、身份、catalog hash 或 provenance 无效仍阻塞。Index Encounter 之前的闭包构成按临床时间排序的 Visible Source History；授权临床岗位可以分页查看摘要和经过可见性检查的原始 R4 详情。Index Encounter 与当前 episode 的关联资源构成 Case Truth，保存在私有边界，不进入普通 HIS/FHIR/history/tool 响应。Case 类型由来源时间线推断为 new-problem、follow-up 或 preventive。
 
-管理员显式请求异步 Patient Brief。Server-owned OpenAI-compatible transport 只接受启动配置的 HTTPS endpoint、模型和凭证，使用固定版本 prompt 与严格 schema；客户端不能覆盖 URL、模型、header 或请求体。成功结果经过结构校验和隐藏诊断泄漏检查后成为不可变 Brief Revision，失败或拒绝不会覆盖既有成功 revision。Case 必须选择一个成功 Brief Revision 才能开始。
+管理员显式请求异步 Patient Persona。Server-owned OpenAI-compatible transport 只接受启动配置的 HTTPS endpoint、模型和凭证，使用固定版本 prompt 与严格 schema；客户端不能覆盖 URL、模型、header 或请求体。成功结果经过结构校验和隐藏诊断泄漏检查后成为不可变 Persona Revision，失败或拒绝不会覆盖既有成功 revision。Case 必须选择一个成功 Persona Revision 才能开始。管理员可编辑为新修订；同一诊断泄漏检查命中时返回警告，明确强制保存才接受。已开始病例的绑定修订保持不变。
 
 开始是带 expected revision 和幂等键的一次性 Command，直接创建本院 R5 Patient、Registration、Encounter、Queue Task 与所需工作流状态，不复制来源历史或参考目录。默认重置在新 Epoch replay 同一不可变 Case Revision，并复用所选 Brief、Case Truth 和全部成功 Investigation Result Snapshot；replay 不重新调用 Synthea 或模型。管理员在模拟数据页通过带悬浮说明的“重置数据”打开二次确认，默认保留患者库，可选择同时清空。清空模式将当前患者库归档并退役关联 Case，不重放这些病例；来源病史、Brief 和真值从当前工作台移除，旧轮次诊疗及审计事实保留。两种模式都保留标准目录、已启用检验服务和账号。清空模式拒绝正在运行的患者或 Brief 生成任务，并取消尚未开始的相关生成任务。
 
@@ -1240,7 +1244,7 @@ clock_revision
 
 ### 10.5 Case Truth、Brief 与 Action Trace
 
-Case Truth 表示普通岗位不能直接读取、只能通过问诊和合规业务观察发现的本次病例事实。管理员在模拟数据患者详情的梗概下方，通过默认折叠的“本次病例真值”核对来源疾病、Index Encounter 与相关证据；展开才请求 `GET /api/sim/v1/admin/synthetic-cases/:caseId/truth`，收起后移除真值正文，切换患者重新折叠。服务端从受信会话校验 administrator 岗位和 Workspace，返回病例标识、Index Encounter 引用与冻结的 Case Truth 资源，响应禁止 HTTP 缓存；非管理员返回 403，同工作区无对应病例返回 404。该入口不加入 Operation Catalog、CLI、Page Context 或 Agent Tools，也不返回模型输入。Patient Brief 控制患者开场与受控问答；Investigation Result Snapshot 控制已成功解析的检查结果。三者都不进入普通 FHIR Search、Visible Source History 或 HIS 查询。
+Case Truth 表示普通岗位不能直接读取、只能通过问诊和合规业务观察发现的本次病例事实。管理员在模拟数据患者详情的档案下方，通过默认折叠的“本次病例真值”核对来源疾病、Index Encounter 与相关证据；展开才请求 `GET /api/sim/v1/admin/synthetic-cases/:caseId/truth`，收起后移除真值正文，切换患者重新折叠。服务端从受信会话校验 administrator 岗位和 Workspace，返回病例标识、Index Encounter 引用与冻结的 Case Truth 资源，响应禁止 HTTP 缓存；非管理员返回 403，同工作区无对应病例返回 404。该入口不加入 Operation Catalog、CLI、Page Context 或 Agent Tools，也不返回模型输入。Patient Persona 控制患者开场与自由对话扮演；Investigation Result Snapshot 控制已成功解析的检查结果。三者都不进入普通 FHIR Search、Visible Source History 或 HIS 查询。
 
 Action Trace 按 Scenario Run 记录 Command 尝试、结果、Effect 引用和资源版本，事件时间使用当前 Epoch 的 Virtual Time；Audit Event 继续保存真实接收时间。它不记录普通读取，不保存模型 chain-of-thought，也不代替 Audit Event 或 Provenance。首期不定义评分规则、Evaluation Spec、分数变化或 evaluator service account。
 
@@ -1471,8 +1475,8 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 
 ```text
 登录与受信岗位上下文
-  -> 患者检索/合成患者建档与挂号，或 Virtual Patient 直达接诊
-  -> 分诊生命体征与医生候诊，或复用 Virtual Patient 的活动病例
+  -> 合成病例患者档案与挂号
+  -> 分诊生命体征与医生候诊
   -> 医生受控问诊、首诊草稿与检验申请
   -> 检验费用预览及 success/declined/ambiguous 支付
   -> 持久 outbox 驱动 LIS 结构化报告
@@ -1486,7 +1490,7 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 ### 15.1 运行与持久化
 
 - Node.js Hono 同时提供 Web SPA、认证、HIS/Scenario API、FHIR R5 只读 API 和健康检查。
-- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；四十四个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、门诊事实、结构化病历、诊断与处方、持久生成任务、Synthetic Patient Profile/Revision、Synthetic Case Instance、Brief Revision、Investigation Result Snapshot、来源 R4 artifact、Visible Source History、Epoch materialization、Agent Client/Grant/Workspace Actor/receipt role，以及 DSH Page Context/Tool/proposal/review 关联。
+- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；四十四个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、门诊事实、结构化病历、诊断与处方、持久生成任务、Synthetic Patient Profile/Revision、Synthetic Case Instance、Persona Revision、Investigation Result Snapshot、来源 R4 artifact、Visible Source History、Epoch materialization、Agent Client/Grant/Workspace Actor/receipt role，以及 DSH Page Context/Tool/proposal/review 关联。
 - 数据库 CLI 提供 migrate、verify、reindex、backup 和 restore；已有旧版数据库执行 migrate 时先在同目录创建并验证升级前备份，Server 进程只验证 migration。
 - CommandExecutor 统一 `BEGIN IMMEDIATE`、expected versions、幂等 receipt、FHIR current/history/search、领域事实、AuditEvent、Action Trace 和 outbox 原子提交。
 - 同进程 dispatcher 持久化 claim/lease/attempt/correlation，支持失败重试、ambiguous、重复消费和旧 Epoch abandon。
@@ -1561,7 +1565,7 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 - 真实 file-backed SQLite 测试覆盖 transaction rollback、零行条件写、幂等竞争、outbox lease/recovery、audit head、backup/restore 和 reset/callback 隔离。
 - 一个 Encounter 贯穿首期门诊；独立结构化病历签署与 Encounter 完成是不同事实，首期复诊兼容流仍可组合处理，发药只完成 Scenario Run。
 - 挂号原子创建 Registration、Encounter、Queue Task、Account 和挂号 Charge Item；Prescription 稳定关联 MedicationRequest、费用、支付和发药。
-- Virtual Patient 直接接诊原子复用其合成 Patient；没有活动病例时建立 Registration、Encounter、Account 和医生 Queue Task，可进入首诊的活动病例则复用同一组事实，不伪造分诊或费用事实。
+- 医生接诊统一使用具有固定患者档案的 Synthetic Case；挂号与分诊提供接诊上下文。
 - 五个人类岗位可以通过 Web/API、单岗位任务 Agent 可以通过 CLI 完成由 Synthetic Case 直接开始的 Scenario；生成库、来源历史和全局目录查询满足分页与交互基线。
 - standalone Web 与 DSH React Surface 复用同一 Web application；DSH 原生 Session 只能获得当前岗位/view 的窄 Tools，正式业务 Effect 需要人类审阅并可关联 Tool、proposal、review、Command、Audit 与 Trace。
 - `clinmesh` CLI 由同一 Operation Catalog 生成命令树，Capability Grant 绑定单一 Practitioner Role、Workspace/Epoch、Scenario Run、policy version 和真实过期时间。

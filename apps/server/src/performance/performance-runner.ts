@@ -12,6 +12,13 @@ import {
 import Database from 'better-sqlite3'
 import { z } from 'zod'
 import { CommandExecutor, type ActorContext } from '../application/command-executor.ts'
+import type {
+  ScenarioGenerationProvider,
+  SourcePatientCorpus,
+} from '../application/scenario-data/provider.ts'
+import type { ScenarioProviderCapabilities } from '@clinmesh/contracts/scenario'
+import { sourceArtifactHash } from '../application/scenario-data/provider.ts'
+import type { JsonChatCompletionInput, JsonChatCompletionsProvider } from '../infrastructure/ai/openai-chat-completions.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../application/scenario-data/medication-product-snapshot.ts'
 import {
   applyReferenceMigrations,
@@ -86,10 +93,161 @@ function workloadResult(input: {
   }
 }
 
+class TrajectorySyntheaProvider implements ScenarioGenerationProvider {
+  async capabilities(): Promise<ScenarioProviderCapabilities> {
+    return {
+      available: true,
+      maxPopulation: 10,
+      modules: [],
+      providerId: 'synthea',
+      providerName: 'Synthea',
+    }
+  }
+
+  async generate(): Promise<SourcePatientCorpus> {
+    const raw = {
+      entry: [{
+        fullUrl: 'urn:uuid:patient',
+        resource: {
+          birthDate: '1970-01-01', gender: 'female', id: 'performance-patient',
+          name: [{ text: '性能演练' }], resourceType: 'Patient',
+        },
+      }, {
+        fullUrl: 'urn:uuid:prior-encounter',
+        resource: {
+          id: 'prior-encounter', period: { end: '2025-01-10T09:30:00+08:00', start: '2025-01-10T09:00:00+08:00' },
+          resourceType: 'Encounter', status: 'finished', subject: { reference: 'urn:uuid:patient' },
+        },
+      }, {
+        fullUrl: 'urn:uuid:prior-condition',
+        resource: {
+          code: { coding: [{ code: '59621000', display: '高血压（疾病）', system: 'http://snomed.info/sct' }] },
+          encounter: { reference: 'urn:uuid:prior-encounter' }, id: 'prior-condition',
+          recordedDate: '2025-01-10T09:05:00+08:00', resourceType: 'Condition', subject: { reference: 'urn:uuid:patient' },
+        },
+      }, {
+        fullUrl: 'urn:uuid:index-encounter',
+        resource: {
+          id: 'index-encounter', period: { end: '2026-06-01T10:30:00+08:00', start: '2026-06-01T10:00:00+08:00' },
+          reasonCode: [{ text: '血压控制不佳' }], resourceType: 'Encounter', status: 'finished',
+          subject: { reference: 'urn:uuid:patient' },
+        },
+      }, {
+        fullUrl: 'urn:uuid:index-condition',
+        resource: {
+          code: { coding: [{ code: '59621000', display: '高血压（疾病）', system: 'http://snomed.info/sct' }] },
+          encounter: { reference: 'urn:uuid:index-encounter' }, id: 'index-condition',
+          recordedDate: '2026-06-01T10:20:00+08:00', resourceType: 'Condition', subject: { reference: 'urn:uuid:patient' },
+        },
+      }, {
+        fullUrl: 'urn:uuid:index-wbc',
+        resource: {
+          code: { coding: [{ code: '6690-2', display: '白细胞计数', system: 'http://loinc.org' }] },
+          effectiveDateTime: '2026-06-01T10:15:00+08:00',
+          encounter: { reference: 'urn:uuid:index-encounter' },
+          id: 'iwtest',
+          interpretation: [{ coding: [{ code: 'H', system: 'http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation' }] }],
+          issued: '2026-06-01T10:20:00+08:00',
+          referenceRange: [{ high: { unit: '10*9/L', value: 9.5 }, low: { unit: '10*9/L', value: 3.5 }, text: '3.5-9.5 x10^9/L' }],
+          resourceType: 'Observation',
+          status: 'final',
+          subject: { reference: 'urn:uuid:patient' },
+          valueQuantity: { system: 'http://unitsofmeasure.org', unit: '10*9/L', value: 11.2 },
+        },
+      }, {
+        fullUrl: 'urn:uuid:index-hgb',
+        resource: {
+          code: { coding: [{ code: '718-7', display: '血红蛋白', system: 'http://loinc.org' }] },
+          effectiveDateTime: '2026-06-01T10:15:00+08:00',
+          encounter: { reference: 'urn:uuid:index-encounter' },
+          id: 'ihtest',
+          interpretation: [{ coding: [{ code: 'N', system: 'http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation' }] }],
+          issued: '2026-06-01T10:20:00+08:00',
+          referenceRange: [{ high: { unit: 'g/L', value: 150 }, low: { unit: 'g/L', value: 115 }, text: '115-150 g/L' }],
+          resourceType: 'Observation',
+          status: 'final',
+          subject: { reference: 'urn:uuid:patient' },
+          valueQuantity: { system: 'http://unitsofmeasure.org', unit: 'g/L', value: 135 },
+        },
+      }, {
+        fullUrl: 'urn:uuid:index-plt',
+        resource: {
+          code: { coding: [{ code: '777-3', display: '血小板计数', system: 'http://loinc.org' }] },
+          effectiveDateTime: '2026-06-01T10:15:00+08:00',
+          encounter: { reference: 'urn:uuid:index-encounter' },
+          id: 'iptest',
+          interpretation: [{ coding: [{ code: 'N', system: 'http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation' }] }],
+          issued: '2026-06-01T10:20:00+08:00',
+          referenceRange: [{ high: { unit: '10*9/L', value: 350 }, low: { unit: '10*9/L', value: 125 }, text: '125-350 x10^9/L' }],
+          resourceType: 'Observation',
+          status: 'final',
+          subject: { reference: 'urn:uuid:patient' },
+          valueQuantity: { system: 'http://unitsofmeasure.org', unit: '10*9/L', value: 210 },
+        },
+      }, {
+        fullUrl: 'urn:uuid:index-crp',
+        resource: {
+          code: { coding: [{ code: '1988-5', display: 'C 反应蛋白', system: 'http://loinc.org' }] },
+          effectiveDateTime: '2026-06-01T10:15:00+08:00',
+          encounter: { reference: 'urn:uuid:index-encounter' },
+          id: 'irtest',
+          interpretation: [{ coding: [{ code: 'H', system: 'http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation' }] }],
+          issued: '2026-06-01T10:20:00+08:00',
+          referenceRange: [{ high: { unit: 'mg/L', value: 8 }, low: { unit: 'mg/L', value: 0 }, text: '0-8 mg/L' }],
+          resourceType: 'Observation',
+          status: 'final',
+          subject: { reference: 'urn:uuid:patient' },
+          valueQuantity: { system: 'http://unitsofmeasure.org', unit: 'mg/L', value: 18.6 },
+        },
+      }],
+      resourceType: 'Bundle',
+      type: 'collection',
+    }
+    return {
+      kind: 'synthea-r4',
+      sources: [{
+        format: 'fhir-r4-bundle',
+        hash: sourceArtifactHash(raw),
+        patientId: 'performance-patient',
+        raw,
+      }],
+    }
+  }
+}
+
+class TrajectoryPersonaProvider implements JsonChatCompletionsProvider {
+  async completeJson(input: JsonChatCompletionInput) {
+    if (input.schemaName !== 'patient_persona') return { content: JSON.stringify({ conclusion: '白细胞计数升高。', interpretation: 'high', value: 11.2 }), model: input.model }
+    return {
+      content: JSON.stringify({
+        chiefComplaint: '反复头晕一周',
+        knownHistorySummary: '既往有高血压病史，规律服药。',
+        medicationMemory: '每天吃一片降压药，名字记不清。',
+        openingStatement: '医生您好，我最近一周总是头晕。',
+        persona: {
+          attitude: '配合但着急',
+          character: '直爽',
+          healthLiteracy: '初中文化，不懂医学名词',
+          speechStyle: '句子短，带口语词',
+        },
+        symptomExperience: '一周前开始头晕，起身时明显，没自己加过药。',
+      }),
+      model: 'performance-fake-persona-model',
+    }
+  }
+}
+
 async function createRuntime(
   databasePath: string,
   probe: SqlitePerformanceProbe,
-  options: { activeReferenceReleaseId?: string; referenceDatabasePath?: string } = {},
+  options: {
+    activeReferenceReleaseId?: string
+    chatCompletionsProvider?: JsonChatCompletionsProvider
+    investigationModel?: string
+    patientPersonaModel?: string
+    referenceDatabasePath?: string
+    syntheaProvider?: ScenarioGenerationProvider
+  } = {},
 ) {
   return createClinMeshRuntime({
     ...options,
@@ -133,6 +291,8 @@ function administratorContext(epoch = 'epoch-1', scenarioRunId = 'scenario-run-1
     workspaceId: 'workspace-demo',
   }
 }
+
+
 
 async function runCatalogSearch(directory: string): Promise<PerformanceWorkloadResult> {
   const probe = new SqlitePerformanceProbe()
@@ -635,12 +795,65 @@ export async function runCiPerformanceProfile() {
   }
 }
 
+function useSyntheticLaboratoryCatalog(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>): void {
+  const update = runtime.database.driver.prepare(`
+    UPDATE outpatient_catalog SET config_json = ?
+    WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+      AND kind = 'laboratory' AND item_id = ?
+  `)
+  update.run(JSON.stringify({
+    allowedIndicationCodes: ['fever', 'clinical-evaluation'],
+    contraindicatedAllergyCodes: [],
+    referenceConcept: {
+      code: '6690-2',
+      display: '白细胞计数',
+      id: 'laboratory:synthetic-wbc',
+      laboratory: {
+        category: 'hematology',
+        referenceRange: { high: 9.5, low: 3.5, text: '3.5-9.5 x10^9/L' },
+        resultType: 'quantity',
+        specimen: 'blood',
+        unit: { code: '10*9/L', display: '10^9/L', system: 'http://unitsofmeasure.org' },
+      },
+      sourceLocator: 'synthetic:test:wbc',
+      system: 'http://loinc.org',
+      version: '2.83',
+    },
+  }), 'lab-cbc')
+  update.run(JSON.stringify({
+    allowedIndicationCodes: ['fever', 'clinical-evaluation'],
+    contraindicatedAllergyCodes: [],
+    referenceConcept: {
+      code: '1988-5',
+      display: 'C 反应蛋白',
+      id: 'laboratory:synthetic-crp',
+      laboratory: {
+        category: 'chemistry',
+        referenceRange: { high: 8, low: 0, text: '0-8 mg/L' },
+        resultType: 'quantity',
+        specimen: 'blood',
+        unit: { code: 'mg/L', display: 'mg/L', system: 'http://unitsofmeasure.org' },
+      },
+      sourceLocator: 'synthetic:test:crp',
+      system: 'http://loinc.org',
+      version: '2.83',
+    },
+  }), 'lab-crp')
+}
+
+
 export async function runTrajectoryPerformanceProfile() {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-performance-trajectory-'))
   const databasePath = join(directory, 'trajectory.sqlite')
   const probe = new SqlitePerformanceProbe()
   const startedAt = new Date()
-  const runtime = await createRuntime(databasePath, probe)
+  const runtime = await createRuntime(databasePath, probe, {
+    chatCompletionsProvider: new TrajectoryPersonaProvider(),
+    patientPersonaModel: 'performance-persona-model',
+    investigationModel: 'performance-investigation-model',
+    syntheaProvider: new TrajectorySyntheaProvider(),
+  })
+  useSyntheticLaboratoryCatalog(runtime)
   try {
     const doctorCookie = await signInAdministrator(runtime, 'doctor@demo.clinmesh.local')
     probe.reset()
@@ -653,35 +866,122 @@ export async function runTrajectoryPerformanceProfile() {
       return result
     }
     const workloadStartedAt = performance.now()
+    const administratorCookie = await signInAdministrator(runtime)
+    const generationJob = await runtime.app.request('/api/sim/v1/scenario-generation-jobs', {
+      body: JSON.stringify({
+        name: '性能演练患者',
+        population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' },
+        providerId: 'synthea',
+        seeds: { clinical: 7331, population: 4242 },
+        timeRange: { end: '2026-08-01', start: '2020-01-01' },
+        timeZone: 'Asia/Shanghai',
+      }),
+      headers: {
+        'content-type': 'application/json',
+        cookie: administratorCookie,
+        'idempotency-key': 'performance-trajectory-generation',
+        origin: performanceOrigin,
+      },
+      method: 'POST',
+    })
+    if (generationJob.status !== 200) throw new Error('Performance trajectory generation failed')
+    const generated = await runtime.scenarioData.processNextGenerationJob()
+    const caseId = generated?.caseIds[0]
+    if (caseId === undefined) throw new Error('Performance trajectory has no Synthetic Case')
+    const personaJob = await runtime.app.request(
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-persona-jobs`,
+      {
+        body: '{}',
+        headers: {
+          'content-type': 'application/json',
+          cookie: administratorCookie,
+          'idempotency-key': 'performance-trajectory-persona',
+          origin: performanceOrigin,
+        },
+        method: 'POST',
+      },
+    )
+    if (personaJob.status !== 200) throw new Error('Performance trajectory persona job failed')
+    const personaGenerated = await runtime.patientPersona.processNext()
+    if (personaGenerated?.status !== 'succeeded') throw new Error('Performance trajectory persona failed')
+    const caseResponse = await runtime.app.request(
+      `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}`,
+      { headers: { cookie: administratorCookie } },
+    )
+    if (caseResponse.status !== 200) throw new Error('Performance trajectory case fetch failed')
+    const syntheticCase = await caseResponse.json() as { activeBriefRevision: number; revision: number }
+    const registrarCookie = await signInAdministrator(runtime, 'registrar@demo.clinmesh.local')
+    const registrarContext = await runtime.identity.resolveSessionContext(
+      new Headers({ cookie: registrarCookie }),
+    ).then(resolved => resolved.actor)
+    const catalog = runtime.workflow.registrationCatalog(registrarContext)
+    const triageCookie = await signInAdministrator(runtime, 'triage@demo.clinmesh.local')
+    const triageContext = await runtime.identity.resolveSessionContext(
+      new Headers({ cookie: triageCookie }),
+    ).then(resolved => resolved.actor)
     const doctorContext = (await measure(() => runtime.identity.resolveSessionContext(
       new Headers({ cookie: doctorCookie }),
     ))).actor
-    const candidate = (await measure(() => runtime.workflow.virtualPatients(doctorContext, 20))).items[0]
-    if (candidate === undefined) throw new Error('Performance trajectory has no Virtual Patient')
-    const started = (await measure(() => runtime.workflow.startVirtualPatient({
-      context: doctorContext,
-      expectedVersion: candidate.version,
-      idempotencyKey: 'performance-trajectory-start',
-      virtualPatientId: candidate.id,
-    }))).data
+    const startResponse = await runtime.app.request(
+      `/api/his/v1/synthetic-cases/${encodeURIComponent(caseId)}/actions/start-outpatient-visit`,
+      {
+        body: JSON.stringify({
+          activeBriefRevision: syntheticCase.activeBriefRevision,
+          departmentId: catalog.departments[0]!.id,
+          expectedCaseRevision: syntheticCase.revision,
+          locationId: catalog.locations[0]!.id,
+          visitDate: catalog.virtualDate,
+          visitTypeId: catalog.visitTypes[0]!.id,
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: registrarCookie,
+          'idempotency-key': 'performance-trajectory-start',
+          origin: performanceOrigin,
+        },
+        method: 'POST',
+      },
+    )
+    if (startResponse.status !== 200) throw new Error('Performance trajectory start failed')
+    const started = (await startResponse.json() as { data: {
+      encounterId: string
+      outpatientCaseId: string
+      queueTaskId: string
+    } }).data
     const encounterReference = `Encounter/${started.encounterId}`
-    await measure(() => runtime.workflow.askConsultationQuestion({
+    const triaged = (await measure(() => runtime.workflow.recordTriage({
+      context: triageContext,
+      encounterId: started.encounterId,
+      expectedVersions: { [encounterReference]: '1', [`Task/${started.queueTaskId}`]: '1' },
+      idempotencyKey: 'performance-trajectory-triage',
+      triage: {
+        acuityCode: 'level-3',
+        bloodPressure: { diastolicMmHg: 96, systolicMmHg: 162 },
+        chiefComplaint: '反复头晕一周',
+        oxygenSaturationPct: 98,
+        pulseBpm: 82,
+        respirationBpm: 18,
+        temperatureC: 36.5,
+      },
+    }))).data
+    await measure(() => runtime.workflow.appendDoctorConsultationTurn({
       context: doctorContext,
       encounterId: started.encounterId,
-      expectedVersion: 1,
+      expectedConsultationVersion: 2,
       expectedVersions: {
-        [encounterReference]: '1',
-        [`Task/${started.queueTaskId}`]: '1',
+        [encounterReference]: triaged.encounterVersion,
+        [`Task/${triaged.doctorTaskId}`]: '1',
       },
       idempotencyKey: 'performance-trajectory-question',
-      questionCode: 'symptom-onset',
+      message: '您哪里不舒服？',
     }))
+    const consultationEncounterVersion = runtime.workflow.doctorCaseDetail(doctorContext, started.outpatientCaseId).encounter.versionId!
     const laboratoryDraft = (await measure(() => runtime.workflow.saveLaboratoryRequestDraft({
       catalogItemId: 'lab-cbc',
       context: doctorContext,
       encounterId: started.encounterId,
       expectedDraftVersion: 0,
-      expectedVersions: { [encounterReference]: '1' },
+      expectedVersions: { [encounterReference]: consultationEncounterVersion },
       idempotencyKey: 'performance-trajectory-lab-draft',
       indicationCode: 'fever',
     }))).data
@@ -689,7 +989,7 @@ export async function runTrajectoryPerformanceProfile() {
       context: doctorContext,
       encounterId: started.encounterId,
       expectedDraftVersion: laboratoryDraft.draftVersion,
-      expectedVersions: { [encounterReference]: '1' },
+      expectedVersions: { [encounterReference]: consultationEncounterVersion },
       idempotencyKey: 'performance-trajectory-lab-issue',
     }))).data.request
     for (let step = 0; step < 3; step += 1) {
@@ -697,7 +997,7 @@ export async function runTrajectoryPerformanceProfile() {
     }
     const reportedCase = await measure(() => runtime.workflow.doctorCaseDetail(
       doctorContext,
-      started.caseId,
+      started.outpatientCaseId,
     ))
     const reported = reportedCase.laboratoryRequests?.requests.find(request => (
       request.id === laboratory.id
@@ -719,14 +1019,14 @@ export async function runTrajectoryPerformanceProfile() {
       encounterId: started.encounterId,
       entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary' }],
       expectedDraftVersion: 0,
-      expectedVersions: { [encounterReference]: '1' },
+      expectedVersions: { [encounterReference]: consultationEncounterVersion },
       idempotencyKey: 'performance-trajectory-diagnosis-draft',
     }))).data
     const diagnosis = (await measure(() => runtime.workflow.confirmDiagnosis({
       context: doctorContext,
       encounterId: started.encounterId,
       expectedDraftVersion: diagnosisDraft.draftVersion,
-      expectedVersions: { [encounterReference]: '1' },
+      expectedVersions: { [encounterReference]: consultationEncounterVersion },
       idempotencyKey: 'performance-trajectory-diagnosis-confirm',
     }))).data
     const prescriptionDraft = (await measure(() => runtime.workflow.savePrescriptionDraft({
@@ -791,7 +1091,7 @@ export async function runTrajectoryPerformanceProfile() {
     }))
     const completed = await measure(() => runtime.workflow.doctorCompletedCaseDetail(
       doctorContext,
-      started.caseId,
+      started.outpatientCaseId,
     ))
     if (completed.encounter.status !== 'completed') {
       throw new Error('Performance trajectory did not complete its Encounter')

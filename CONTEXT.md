@@ -80,12 +80,12 @@ _Avoid_: Clinical Record, answer key endpoint, Visible Source History
 绑定一个不可变 Profile Revision、Case Truth、病例类型和可见历史清单的合成病例实例。普通业务只能开始一次；管理员可在新 Epoch 中重放同一不可变 revision。
 _Avoid_: Synthetic Patient Profile, local Encounter, Scenario Dataset
 
-**Patient Brief**:
-根据合成患者背景和本次病例证据生成的患者初始表现，包括主诉、开场陈述、已知史摘要和问诊主题。它不得直接泄露参与者尚不可见的本次诊断。
+**Patient Persona**:
+扮演患者所依据的版本固定档案，包含性格、表达方式、健康素养、症状体验、主诉、开场陈述和自知病史。它描述患者知道的自身情况，不直接命名尚未获知的本次疾病。
 _Avoid_: Case Truth, diagnosis note, chat transcript
 
-**Brief Revision**:
-一次通过结构校验和诊断泄漏检查的不可覆盖 Patient Brief 结果。Case 只能选择已有成功 revision，重新生成不会改写旧结果。
+**Persona Revision**:
+一次不可覆盖的 Patient Persona 生成或人工编辑结果。病例绑定所选修订，后续修订不改变已经开始的患者表现。
 _Avoid_: Editable prompt output, Case revision, overwrite
 
 **Investigation Result Snapshot**:
@@ -167,11 +167,11 @@ _Avoid_: Patient, Appointment, Episode
 _Avoid_: Appointment status, Encounter status
 
 **Virtual Patient**:
-由版本固定的合成病例事实和确定性回答规则驱动、可供参与者完成诊疗流程的患者表现。Virtual Patient 不是真实患者，也不等同于 Scenario 或 Patient Identity。
+由版本固定的患者档案驱动、可供参与者完成诊疗流程的患者表现。Virtual Patient 不是真实患者，也不等同于 Scenario 或 Patient Identity。
 _Avoid_: Real patient, chatbot, Scenario
 
 **Consultation Record**:
-一次 Encounter 中医患问答的有序业务记录。它保存问诊过程，但不等同于医生整理和签署的 Clinical Document。
+一次 Encounter 中按发生顺序保存的医患对话轮次，包括医生发言、患者回答和患者持有的报告。它保留当时原文，不等同于医生整理和签署的 Clinical Document。
 _Avoid_: Clinical Document, chat transcript, medical record
 
 **Diagnosis Draft**:

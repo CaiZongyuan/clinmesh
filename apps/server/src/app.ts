@@ -38,7 +38,7 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
 import {
-  selectPatientBriefRevisionRequestSchema,
+  selectPatientPersonaRevisionRequestSchema,
   startSyntheticCaseRequestSchema,
   scenarioGenerationRequestSchema,
   updateSyntheticPatientProfileRequestSchema,
@@ -61,8 +61,10 @@ import type { ScenarioService } from './application/scenario-service.ts'
 import { ScenarioError } from './application/scenario-service.ts'
 import type { ScenarioDataService } from './application/scenario-data/scenario-data-service.ts'
 import { ScenarioDataError } from './application/scenario-data/scenario-data-service.ts'
-import type { PatientBriefService } from './application/patient-brief-service.ts'
-import { PatientBriefError } from './application/patient-brief-service.ts'
+import { ConsultationDialogueError, type ConsultationDialogueService } from './application/consultation-dialogue-service.ts'
+import { createPatientPersonaRevisionFromEditRequestSchema } from '@clinmesh/contracts/scenario'
+import type { PatientPersonaService } from './application/patient-persona-service.ts'
+import { PatientPersonaError } from './application/patient-persona-service.ts'
 import type { SyntheticCaseVisitService } from './application/synthetic-case-visit-service.ts'
 import { SyntheticCaseVisitError } from './application/synthetic-case-visit-service.ts'
 import type { WorkflowService } from './application/workflow-service.ts'
@@ -97,7 +99,8 @@ export interface CreateAppOptions {
   identity?: IdentityService
   investigation?: InvestigationService
   laboratoryServicePublisher?: LaboratoryServicePublisher
-  patientBrief?: PatientBriefService
+  consultationDialogue?: ConsultationDialogueService
+  patientPersona?: PatientPersonaService
   referenceData?: ReferenceDataService
   scenario?: ScenarioService
   scenarioData?: ScenarioDataService
@@ -153,8 +156,9 @@ function apiErrorResponse(
     if (
       error instanceof IdentityError
       || error instanceof AgentIntegrationError
+      || error instanceof ConsultationDialogueError
       || error instanceof LaboratoryServicePublisherError
-    || error instanceof PatientBriefError
+    || error instanceof PatientPersonaError
     || error instanceof SyntheticCaseVisitError
     || error instanceof ReferenceDataError
     || error instanceof ScenarioDataError
@@ -774,10 +778,20 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
   }
 
-  if (options.identity !== undefined && options.patientBrief !== undefined) {
+  function requireConsultationDialogue(): ConsultationDialogueService {
+    if (options.consultationDialogue === undefined) {
+      throw new ConsultationDialogueError(
+        'CONSULTATION_REPLY_UNAVAILABLE',
+        'Patient dialogue generation is not configured',
+      )
+    }
+    return options.consultationDialogue
+  }
+
+  if (options.identity !== undefined && options.patientPersona !== undefined) {
     const identity = options.identity
-    const patientBrief = options.patientBrief
-    app.post('/api/sim/v1/synthetic-cases/:caseId/patient-brief-jobs', async (context) => {
+    const patientPersona = options.patientPersona
+    app.post('/api/sim/v1/synthetic-cases/:caseId/patient-persona-jobs', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
         z.object({}).strict().parse(await context.req.json())
@@ -785,27 +799,27 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         const idempotencyKey = z.string().min(8).max(128).parse(
           context.req.header('idempotency-key'),
         )
-        return context.json(patientBrief.enqueue({
+        return context.json(patientPersona.enqueue({
           caseId: context.req.param('caseId'),
           context: session.actor,
           idempotencyKey,
         }))
       } catch (error) {
-        return apiErrorResponse(context, error, 'The Patient Brief generation request is invalid')
+        return apiErrorResponse(context, error, 'The Patient Persona generation request is invalid')
       }
     })
-    app.get('/api/sim/v1/patient-brief-jobs/:jobId', async (context) => {
+    app.get('/api/sim/v1/patient-persona-jobs/:jobId', async (context) => {
       try {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
-        return context.json(patientBrief.getJob(session.actor, context.req.param('jobId')))
+        return context.json(patientPersona.getJob(session.actor, context.req.param('jobId')))
       } catch (error) {
         return apiErrorResponse(context, error)
       }
     })
-    app.get('/api/sim/v1/synthetic-cases/:caseId/patient-brief-revisions', async (context) => {
+    app.get('/api/sim/v1/synthetic-cases/:caseId/patient-persona-revisions', async (context) => {
       try {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
-        return context.json(patientBrief.listRevisions(
+        return context.json(patientPersona.listRevisions(
           session.actor,
           context.req.param('caseId'),
         ))
@@ -813,23 +827,42 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
-    app.put('/api/sim/v1/synthetic-cases/:caseId/patient-brief-revisions/active', async (context) => {
+    app.post('/api/sim/v1/synthetic-cases/:caseId/patient-persona-revisions', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
-        const body = selectPatientBriefRevisionRequestSchema.parse(await context.req.json())
+        const body = createPatientPersonaRevisionFromEditRequestSchema.parse(await context.req.json())
         const session = await identity.resolveSessionContext(context.req.raw.headers)
         const idempotencyKey = z.string().min(8).max(128).parse(
           context.req.header('idempotency-key'),
         )
-        return context.json(patientBrief.selectRevision({
-          briefRevision: body.briefRevision,
+        return context.json(patientPersona.createRevisionFromEdit({
+          caseId: context.req.param('caseId'),
+          content: body.input.content,
+          context: session.actor,
+          forceDiagnosisLeakOverride: body.input.forceDiagnosisLeakOverride ?? false,
+          idempotencyKey,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error, 'The Patient Persona edit is invalid')
+      }
+    })
+    app.put('/api/sim/v1/synthetic-cases/:caseId/patient-persona-revisions/active', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = selectPatientPersonaRevisionRequestSchema.parse(await context.req.json())
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const idempotencyKey = z.string().min(8).max(128).parse(
+          context.req.header('idempotency-key'),
+        )
+        return context.json(patientPersona.selectRevision({
+          personaRevision: body.personaRevision,
           caseId: context.req.param('caseId'),
           context: session.actor,
           expectedCaseRevision: body.expectedCaseRevision,
           idempotencyKey,
         }))
       } catch (error) {
-        return apiErrorResponse(context, error, 'The Patient Brief revision selection is invalid')
+        return apiErrorResponse(context, error, 'The Patient Persona revision selection is invalid')
       }
     })
   }
@@ -1147,40 +1180,6 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
-    app.get('/api/his/v1/doctor/virtual-patients', async (context) => {
-      try {
-        const query = z.object({
-          page: z.coerce.number().int().min(1).default(1),
-          pageSize: z.coerce.number().int().min(1).max(100).default(20),
-        }).parse(context.req.query())
-        return context.json(workflow.virtualPatients(
-          await actor(context),
-          query.pageSize,
-          query.page,
-        ))
-      } catch (error) {
-        return apiErrorResponse(context, error)
-      }
-    })
-    app.post('/api/his/v1/doctor/virtual-patients/:virtualPatientId/actions/start', async (context) => {
-      try {
-        identity.assertTrustedMutation(context.req.raw.headers)
-        const body = z.object({
-          expectedVersions: z.object({}).strict(),
-          input: z.object({
-            expectedVersion: z.string().min(32).max(2_048),
-          }),
-        }).parse(await context.req.json())
-        return context.json(workflow.startVirtualPatient({
-          context: await actor(context),
-          expectedVersion: body.input.expectedVersion,
-          idempotencyKey: idempotencyKey(context),
-          virtualPatientId: context.req.param('virtualPatientId'),
-        }))
-      } catch (error) {
-        return apiErrorResponse(context, error)
-      }
-    })
     if (options.investigation !== undefined && options.referenceData !== undefined) {
       app.get('/api/his/v1/doctor/cases/:caseId/reference-catalogs/laboratory', async (context) => {
         try {
@@ -1234,17 +1233,38 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         const body = z.object({
           expectedVersions: z.record(z.string(), z.string()),
           input: z.object({
-            expectedVersion: z.number().int().positive(),
-            questionCode: z.string().min(1).max(64),
+            expectedConsultationVersion: z.number().int().positive(),
+            message: z.string().trim().min(1).max(2_000),
           }).strict(),
         }).strict().parse(await context.req.json())
-        return context.json(workflow.askConsultationQuestion({
+        const dialogue = requireConsultationDialogue()
+        return context.json(await dialogue.ask({
           context: await actor(context),
           encounterId: context.req.param('encounterId'),
+          expectedConsultationVersion: body.input.expectedConsultationVersion,
           expectedVersions: body.expectedVersions,
-          expectedVersion: body.input.expectedVersion,
           idempotencyKey: idempotencyKey(context),
-          questionCode: body.input.questionCode,
+          message: body.input.message,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/actions/retry-consultation-reply', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.object({}).strict(),
+          input: z.object({
+            expectedConsultationVersion: z.number().int().positive(),
+          }).strict(),
+        }).strict().parse(await context.req.json())
+        const dialogue = requireConsultationDialogue()
+        return context.json(await dialogue.retryReply({
+          context: await actor(context),
+          encounterId: context.req.param('encounterId'),
+          expectedConsultationVersion: body.input.expectedConsultationVersion,
+          idempotencyKey: idempotencyKey(context),
         }))
       } catch (error) {
         return apiErrorResponse(context, error)

@@ -4,7 +4,7 @@ import { Badge } from '@clinmesh/ui/components/badge'
 import { Bubble, BubbleContent } from '@clinmesh/ui/components/bubble'
 import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
-import { FieldGroup, FieldLegend, FieldSet } from '@clinmesh/ui/components/field'
+import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Message, MessageContent, MessageFooter, MessageHeader } from '@clinmesh/ui/components/message'
 import {
   MessageScroller,
@@ -14,7 +14,7 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from '@clinmesh/ui/components/message-scroller'
-import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
+import { Textarea } from '@clinmesh/ui/components/textarea'
 import { CircleAlertIcon, MessagesSquareIcon, RefreshCwIcon, SendIcon } from 'lucide-react'
 import { useState } from 'react'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
@@ -23,7 +23,10 @@ import { formatClinicalTime } from './clinical-date-time.ts'
 
 export interface ConsultationPageAction {
   error: Error | null
-  onAsk: (questionCode: string) => void
+  onAsk: (message: string) => void
+  onRetry: () => void
+  onOpenReport?: () => void
+  pendingMessage?: string
   pending: boolean
 }
 
@@ -35,18 +38,23 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
   patientName: string
   readOnly: boolean
 }): React.JSX.Element {
-  const [questionCode, setQuestionCode] = useState('')
+  const [message, setMessage] = useState('')
+  const lastTextTurn = consultation.turns.findLast(turn => turn.kind === 'text')
+  const unanswered = lastTextTurn?.speaker === 'doctor'
+  const optimisticMessage = action.pending && action.pendingMessage !== undefined
+    && !(unanswered && lastTextTurn.messageText === action.pendingMessage)
+    ? action.pendingMessage : undefined
   return (
     <section aria-labelledby="consultation-record-heading" className="flex min-w-0 flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold" id="consultation-record-heading">{messages.consultationRecord}</h3>
-        <Badge variant="secondary">{consultation.records.length}</Badge>
+        <Badge variant="secondary">{consultation.turns.length}</Badge>
       </div>
       <MessageScrollerProvider autoScroll>
         <MessageScroller className="h-[min(34rem,55vh)] min-h-72 rounded-md border">
           <MessageScrollerViewport>
             <MessageScrollerContent className="gap-4 p-3">
-              {consultation.records.length === 0 ? (
+              {consultation.turns.length === 0 ? (
                 <MessageScrollerItem messageId="empty-consultation-records">
                   <Empty className="min-h-52">
                     <EmptyHeader>
@@ -55,25 +63,41 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                     </EmptyHeader>
                   </Empty>
                 </MessageScrollerItem>
-              ) : consultation.records.flatMap(record => [
-                <MessageScrollerItem key={`${record.id}-question`} messageId={`${record.id}-question`} scrollAnchor>
-                  <Message align="end">
+              ) : consultation.turns.map(turn => (
+                <MessageScrollerItem key={turn.id} messageId={turn.id} scrollAnchor={turn.speaker === 'doctor'}>
+                  <Message align={turn.speaker === 'doctor' ? 'end' : 'start'}>
                     <MessageContent>
-                      <MessageHeader>{messages.doctorQuestion} · #{record.sequence}</MessageHeader>
-                      <Bubble align="end" variant="outline"><BubbleContent>{record.question.text}</BubbleContent></Bubble>
+                      <MessageHeader>{turn.speaker === 'doctor' ? messages.doctorQuestion : patientName}</MessageHeader>
+                      <Bubble align={turn.speaker === 'doctor' ? 'end' : 'start'} variant={turn.speaker === 'doctor' ? 'outline' : 'muted'}>
+                        <BubbleContent>
+                          <p className="whitespace-pre-wrap">{turn.messageText}</p>
+                          {turn.kind === 'report-card' ? (
+                            <Button onClick={action.onOpenReport} size="sm" type="button" variant="outline">
+                              {locale === 'zh-CN' ? '查看检验报告' : 'View laboratory report'}
+                            </Button>
+                          ) : null}
+                        </BubbleContent>
+                      </Bubble>
+                      <MessageFooter>{formatClinicalTime(turn.recordedAt, locale)}</MessageFooter>
                     </MessageContent>
                   </Message>
-                </MessageScrollerItem>,
-                <MessageScrollerItem key={`${record.id}-answer`} messageId={`${record.id}-answer`}>
-                  <Message>
-                    <MessageContent>
-                      <MessageHeader>{patientName}</MessageHeader>
-                      <Bubble variant="muted"><BubbleContent>{record.answer}</BubbleContent></Bubble>
-                      <MessageFooter>{formatClinicalTime(record.recordedAt, locale)}</MessageFooter>
-                    </MessageContent>
-                  </Message>
-                </MessageScrollerItem>,
-              ])}
+                </MessageScrollerItem>
+              ))}
+              {optimisticMessage === undefined ? null : (
+                <MessageScrollerItem messageId="sending-doctor-message" scrollAnchor>
+                  <Message align="end"><MessageContent>
+                    <MessageHeader>{messages.doctorQuestion}</MessageHeader>
+                    <Bubble align="end" variant="outline"><BubbleContent>{optimisticMessage}</BubbleContent></Bubble>
+                  </MessageContent></Message>
+                </MessageScrollerItem>
+              )}
+              {action.pending ? (
+                <MessageScrollerItem messageId="patient-typing">
+                  <Message><MessageContent><Bubble variant="muted"><BubbleContent>
+                    <span role="status">{locale === 'zh-CN' ? '患者正在输入…' : 'The patient is typing…'}</span>
+                  </BubbleContent></Bubble></MessageContent></Message>
+                </MessageScrollerItem>
+              ) : null}
             </MessageScrollerContent>
           </MessageScrollerViewport>
           <MessageScrollerButton />
@@ -83,40 +107,37 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
         <form
           onSubmit={event => {
             event.preventDefault()
-            if (questionCode !== '') action.onAsk(questionCode)
+            if (message.trim() !== '' && !action.pending && !unanswered) {
+              action.onAsk(message.trim())
+              setMessage('')
+            }
           }}
         >
           <FieldGroup className="gap-3">
-            <FieldSet>
-              <FieldLegend variant="label">{messages.consultationQuestions}</FieldLegend>
-              <ToggleGroup
-                aria-label={messages.consultationQuestions}
-                className="w-full"
-                disabled={action.pending}
-                onValueChange={value => setQuestionCode(value[0] ?? '')}
-                orientation="vertical"
-                value={questionCode === '' ? [] : [questionCode]}
-                variant="outline"
-              >
-                {consultation.questions.map(question => (
-                  <ToggleGroupItem
-                    aria-label={question.text}
-                    className="h-auto w-full justify-start whitespace-normal px-3 py-2 text-left"
-                    key={question.code}
-                    value={question.code}
-                  >
-                    {question.text}
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
-            </FieldSet>
+            <Field>
+              <FieldLabel htmlFor="consultation-message">{messages.askPatient}</FieldLabel>
+              <Textarea
+                disabled={action.pending || unanswered}
+                id="consultation-message"
+                maxLength={2000}
+                onChange={event => setMessage(event.target.value)}
+                value={message}
+              />
+            </Field>
             <div className="flex justify-end">
-              <Button disabled={action.pending || questionCode === ''} type="submit">
-                {action.pending
-                  ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
-                  : <SendIcon aria-hidden="true" data-icon="inline-start" />}
-                {action.pending ? messages.waitingForPatientAnswer : messages.askPatient}
-              </Button>
+              {unanswered && !action.pending ? (
+                <Button onClick={action.onRetry} type="button" variant="outline">
+                  <RefreshCwIcon aria-hidden="true" data-icon="inline-start" />
+                  {locale === 'zh-CN' ? '重试患者回答' : 'Retry patient reply'}
+                </Button>
+              ) : (
+                <Button disabled={action.pending || message.trim() === ''} type="submit">
+                  {action.pending
+                    ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
+                    : <SendIcon aria-hidden="true" data-icon="inline-start" />}
+                  {action.pending ? messages.waitingForPatientAnswer : messages.askPatient}
+                </Button>
+              )}
             </div>
             {action.error === null ? null : (
               <Alert variant="destructive">
