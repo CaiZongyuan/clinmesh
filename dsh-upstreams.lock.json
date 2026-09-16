@@ -17,7 +17,9 @@
       "source": "https://registry.npmjs.org/@dsh-so/dshvm/-/dshvm-0.1.1.tgz",
       "integrity": "sha512-5IEDSi0VhK1QJNyQRJqy0rSw/wxA4meYby7m/vAKXeVUS9hobWkzXWt7/tkBw9z02uoh09X4DXwpbmhtSVmKWQ==",
       "owner": "https://github.com/dsh-so/dshvm",
-      "requires": ["@deepseek-ai/dsh"],
+      "requires": [
+        "@deepseek-ai/dsh"
+      ],
       "role": "隔离安装、版本选择与启动"
     },
     {
@@ -26,16 +28,21 @@
       "source": "https://github.com/keaideppk/dsh-ag-ui.git",
       "owner": "https://github.com/CaiZongyuan/dsh-ag-ui",
       "supportPullRequest": "https://github.com/CaiZongyuan/dsh-ag-ui/pull/52",
-      "requires": ["@deepseek-ai/dsh"],
+      "requires": [
+        "@deepseek-ai/dsh"
+      ],
       "role": "原生 browser Tool broker；不另建 Gateway 模型会话"
     },
     {
       "name": "dsh-react-surface",
-      "commit": "025c003c7dce5fbbc76f6caa31196aeb65b531e1",
+      "commit": "c70aac89d31dcd607725aa5f416e88844b47e662",
       "source": "https://github.com/CaiZongyuan/dsh-react-surface.git",
       "owner": "https://github.com/CaiZongyuan/dsh-react-surface",
-      "supportPullRequest": "https://github.com/CaiZongyuan/dsh-react-surface/pull/11",
-      "requires": ["@deepseek-ai/dsh", "dsh-ag-ui"],
+      "supportPullRequest": "https://github.com/CaiZongyuan/dsh-react-surface/pull/13",
+      "requires": [
+        "@deepseek-ai/dsh",
+        "dsh-ag-ui"
+      ],
       "role": "React runtime、Surface 生命周期、布局和构建工具",
       "checkout": "vendor/dsh-react-surface"
     },
@@ -43,7 +50,11 @@
       "name": "@clinmesh/dsh-web",
       "source": "workspace:apps/dsh-web",
       "owner": "https://github.com/CaiZongyuan/clinmesh",
-      "requires": ["@deepseek-ai/dsh", "dsh-react-surface", "dsh-ag-ui"],
+      "requires": [
+        "@deepseek-ai/dsh",
+        "dsh-react-surface",
+        "dsh-ag-ui"
+      ],
       "role": "复用当前 ClinMesh Web、Server、Command 与审计合同；版本由所在 ClinMesh commit 确定"
     }
   ]

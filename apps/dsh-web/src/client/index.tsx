@@ -11,7 +11,7 @@ import {
 import { clinMeshStyles } from './styles.generated.ts'
 import { registerProfileBrand } from './profile-brand.tsx'
 import { createWorkspaceNavigation, registerWorkspaceNavigation } from './workspace-navigation.tsx'
-import type { WebSurfaceNavigation } from '@clinmesh/web/runtime'
+import type { WebSurfaceDisplay, WebSurfaceNavigation } from '@clinmesh/web/runtime'
 
 interface ClientSessionsPort {
   list: {
@@ -41,7 +41,7 @@ function ClinMeshSurface({
   surfaceNavigation,
 }: ReactSurfaceProps & {
   surfaceNavigation: WebSurfaceNavigation
-  surfaceDisplay: { fullscreen: boolean; toggle(): void }
+  surfaceDisplay: WebSurfaceDisplay
   surfaceColorScheme: 'dark' | 'light'
   surfaceSessionId?: string
 }): React.JSX.Element {
@@ -121,6 +121,10 @@ export function createDefinition(
         surfaceDisplay={{
           fullscreen: props.layout === 'full-frame',
           toggle: () => surfaces.setLayout('clinmesh.his', props.layout === 'full-frame' ? 'workspace' : 'full-frame'),
+          conversation: {
+            collapsed: props.conversationCollapsed,
+            toggle: () => surfaces.setConversationCollapsed('clinmesh.his', !props.conversationCollapsed),
+          },
         }}
         surfaceColorScheme={surfaceColorScheme}
         {...(surfaceSessionId === undefined ? {} : { surfaceSessionId })}

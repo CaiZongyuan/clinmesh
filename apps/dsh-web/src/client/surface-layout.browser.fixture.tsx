@@ -4,12 +4,29 @@ import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import type { Context } from '@deepseek-ai/cordis'
 import { apply as applyClinMesh } from './index.tsx'
+import { createWorkspaceNavigation, WorkspaceNavigation } from './workspace-navigation.tsx'
 
 async function run() {
+  let nativeLayout = { rightbar: null as number | null, rightbarShown: false, rightbarFullscreen: false, viewportWidth: 2048 }
+  let nativeSnapshot = { layoutInfo: nativeLayout }
+  const nativeListeners = new Set<() => void>()
+  const nativeStore = { create() { throw new Error('The slot renderer owns store creation') } }
+  const updateNative = (patch: Partial<typeof nativeLayout>) => {
+    nativeLayout = { ...nativeLayout, ...patch }
+    nativeSnapshot = { layoutInfo: nativeLayout }
+    for (const listener of nativeListeners) listener()
+  }
+  const nativeProps = {
+    useStore: <T,>(selector: (state: unknown) => T) => selector(React.useSyncExternalStore(
+      (listener) => { nativeListeners.add(listener); return () => { nativeListeners.delete(listener) } },
+      () => nativeSnapshot,
+    )),
+    actions: { setRightbar: (width: number) => updateNative({ rightbar: width }) },
+  }
   const reset = document.createElement('style')
   reset.textContent = '* { box-sizing: border-box; }'
   document.head.append(reset)
-  const provided: { registry?: ReactSurfaceRegistry; host?: React.ComponentType } = {}
+  const provided: { registry?: ReactSurfaceRegistry; host?: React.ComponentType<typeof nativeProps> } = {}
   const brandSlots = new Set<string>()
   const ctx = {
     get reactSurfaces() {
@@ -30,9 +47,13 @@ async function run() {
       },
     },
     slots: {
+      entries: () => [{ store: nativeStore }],
       inject: (_name: string, callback: () => () => void) => callback(),
-      register: (entry: { name: string }, component: React.ComponentType) => {
-        if (entry.name === 'shell.overlay') provided.host = component
+      register: (entry: { name: string; store?: unknown }, component: React.ComponentType<typeof nativeProps>) => {
+        if (entry.name === 'shell.overlay') {
+          if (entry.store !== nativeStore) throw new Error('Surface must share the native root store')
+          provided.host = component
+        }
         if (entry.name.startsWith('sidebar.brand.')) brandSlots.add(entry.name)
         return () => {
           brandSlots.delete(entry.name)
@@ -52,7 +73,9 @@ async function run() {
     '<aside data-pane="sidebar">DSH navigation</aside><main data-pane="conversation">DSH conversation</main><aside data-rightbar-col>DSH files</aside><div data-shell-overlay style="position:absolute;inset:0;pointer-events:none"></div>'
   document.body.append(frame)
   const overlay = frame.querySelector('[data-shell-overlay]')!
-  flushSync(() => createRoot(overlay).render(<SurfaceHost />))
+  ;(overlay as HTMLElement).style.zIndex = '20'
+  const hostRoot = createRoot(overlay)
+  flushSync(() => hostRoot.render(<SurfaceHost {...nativeProps} />))
   const settle = () =>
     new Promise<void>((resolve) =>
       requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 50))),
@@ -60,6 +83,19 @@ async function run() {
   flushSync(() => registry.open('clinmesh.his'))
   await settle()
   const shadow = frame.querySelector('[data-surface-id]')!.shadowRoot!
+  const sidebar = frame.querySelector<HTMLElement>('[data-pane="sidebar"]')!
+  const navigationHost = document.createElement('div')
+  sidebar.append(navigationHost)
+  const navigationRoot = createRoot(navigationHost)
+  flushSync(() => navigationRoot.render(<WorkspaceNavigation navigation={createWorkspaceNavigation()} wide open={() => {}} />))
+  const navigationShadow = navigationHost.querySelector('[data-clinmesh-host-navigation]')!.shadowRoot!
+  navigationShadow.querySelector<HTMLButtonElement>('button')!.click()
+  await settle()
+  const menuItem = navigationShadow.querySelector<HTMLElement>('[role="menuitem"]')!
+  const menuRect = menuItem.getBoundingClientRect()
+  const menuAboveWorkspace = document.elementFromPoint(menuRect.x + menuRect.width / 2, menuRect.y + menuRect.height / 2) === navigationShadow.host
+  menuItem.click()
+  await settle()
   const draft = shadow.querySelector<HTMLInputElement>('input')!
   draft.value = 'kept clinical draft'
   const snapshot = () => ({
@@ -90,8 +126,122 @@ async function run() {
     await settle()
     resized.push(snapshot())
   }
+  const conversation = frame.querySelector<HTMLElement>('main')!
+  conversation.innerHTML = '<input aria-label="Native draft" value="kept native draft"><div style="height:1500px">Messages</div>'
+  conversation.style.overflow = 'auto'
+  conversation.scrollTop = 120
+  const details = frame.querySelector<HTMLElement>('[data-rightbar-col]')!
+  details.innerHTML = '<div style="visibility:visible"><input aria-label="Selected file" value="synthetic.txt"></div>'
+  const collapse = shadow.querySelector<HTMLButtonElement>('[aria-label="收起会话"]')
+  if (!collapse) throw new Error('Missing collapse conversation control')
+  // DSH's native fullscreen file panel outranks its ordinary overlay slot.
+  const fullscreenFile = details.firstElementChild as HTMLElement
+  fullscreenFile.style.cssText = 'visibility:visible;position:fixed;inset:0;z-index:40;background:white'
+  await settle()
+  const rect = collapse.getBoundingClientRect()
+  const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+  let fullscreenFileAboveWorkspace = hit === fullscreenFile
+  frame.style.width = '680px'
+  await settle()
+  const narrowRect = collapse.getBoundingClientRect()
+  fullscreenFileAboveWorkspace &&= document.elementFromPoint(narrowRect.x + narrowRect.width / 2, narrowRect.y + narrowRect.height / 2) === fullscreenFile
+  frame.style.width = '2048px'
+  await settle()
+  const floatingFile = document.createElement('div')
+  floatingFile.setAttribute('data-sidebar-right-float-host', '')
+  floatingFile.style.cssText = 'position:fixed;inset:0;z-index:60;background:white'
+  floatingFile.innerHTML = '<input value="floating synthetic.txt">'
+  document.body.append(floatingFile)
+  await settle()
+  const floatingFileAboveWorkspace = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2) === floatingFile
+  // Exit native fullscreen and move the float away before using the HIS control.
+  fullscreenFile.style.cssText = 'visibility:visible'
+  floatingFile.style.left = '1800px'
+  await settle()
+  const collapseReachableAfterFileExit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2) === frame.querySelector('[data-surface-id]')
+  collapse.click()
+  await settle()
+  const lateFloat = document.createElement('div')
+  lateFloat.setAttribute('data-sidebar-right-float-host', '')
+  lateFloat.textContent = 'Late synthetic file'
+  document.body.append(lateFloat)
+  await settle()
+  const floatsHidden = [floatingFile, lateFloat].every(el => el.inert && !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }))
+  const collapsed = {
+    hidden: conversation.inert && details.inert && getComputedStyle(conversation).visibility === 'hidden' && getComputedStyle(details).visibility === 'hidden',
+    sidebarActive: !frame.querySelector<HTMLElement>('aside')!.inert,
+    right: frame.querySelector<HTMLElement>('[data-dsh-react-surface-layer]')!.style.right,
+    expandable: shadow.querySelector('[aria-label="展开会话"]') !== null,
+    fileHidden: !details.querySelector('input')!.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }),
+  }
+  shadow.querySelector<HTMLButtonElement>('[aria-label="全屏 ClinMesh"]')!.click()
+  await settle()
+  shadow.querySelector<HTMLButtonElement>('[aria-label="返回 DSH 分屏"]')!.click()
+  await settle()
+  const retainedCollapse = conversation.inert && details.inert
+  shadow.querySelector<HTMLButtonElement>('[aria-label="展开会话"]')!.click()
+  await settle()
+  const expanded = {
+    ...snapshot(),
+    nativeDraft: conversation.querySelector('input')!.value,
+    selectedFile: details.querySelector('input')!.value,
+    scrollTop: conversation.scrollTop,
+    nativeVisible: !conversation.inert && !details.inert && getComputedStyle(conversation).visibility === 'visible' && getComputedStyle(details).visibility === 'visible',
+  }
+  const floatsRestored = [floatingFile, lateFloat].every(el => !el.inert && el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }))
+  shadow.querySelector<HTMLButtonElement>('[aria-label="收起会话"]')!.click()
+  await settle()
   flushSync(() => registry.close())
+  await settle()
+  const closedRestored = !conversation.inert && !details.inert && getComputedStyle(conversation).visibility === 'visible' && getComputedStyle(details).visibility === 'visible'
+  const floatsReleased = [floatingFile, lateFloat].every(el => !el.inert && el.style.opacity === '' && el.style.visibility === '')
+  const overlayRestored = (overlay as HTMLElement).style.zIndex === '20'
+  flushSync(() => registry.open('clinmesh.his'))
+  await settle()
+  registry.setConversationCollapsed('clinmesh.his', false)
+  await settle()
+  updateNative({ rightbar: Math.round(2048 * 0.45), rightbarShown: true })
+  await settle()
+  const firstFileWidth = nativeLayout.rightbar
+  updateNative({ rightbar: 410 })
+  updateNative({ rightbarShown: false })
+  await settle()
+  updateNative({ rightbarShown: true })
+  await settle()
+  const retainedFileWidth = nativeLayout.rightbar
+  registry.close()
+  updateNative({ rightbar: null, rightbarShown: false })
+  await settle()
+  updateNative({ rightbar: 922, rightbarShown: true })
+  await settle()
+  registry.open('clinmesh.his')
+  await settle()
+  const preexistingFileWidth = nativeLayout.rightbar
+  updateNative({ rightbar: null, rightbarShown: false })
+  await settle()
+  updateNative({ rightbar: 922, rightbarShown: true, rightbarFullscreen: true })
+  await settle()
+  const fullscreenFileWidth = nativeLayout.rightbar
+  updateNative({ rightbar: null, rightbarShown: false, rightbarFullscreen: false })
+  registry.setConversationCollapsed('clinmesh.his', true)
+  await settle()
+  updateNative({ rightbar: 922, rightbarShown: true })
+  await settle()
+  if (nativeLayout.rightbar !== 922) throw new Error('Collapsed conversation changed native width')
+  updateNative({ rightbar: null, rightbarShown: false })
+  registry.setConversationCollapsed('clinmesh.his', false)
+  registry.setLayout('clinmesh.his', 'full-frame')
+  await settle()
+  updateNative({ rightbar: 922, rightbarShown: true })
+  await settle()
+  if (nativeLayout.rightbar !== 922) throw new Error('Fullscreen application changed native width')
+  flushSync(() => hostRoot.unmount())
+  await settle()
+  const unmountedRestored = !conversation.inert && !details.inert && !floatingFile.inert && !lateFloat.inert && (overlay as HTMLElement).style.zIndex === '20'
+  floatingFile.remove()
+  lateFloat.remove()
   const brandsAfterClose = [...brandSlots]
+  flushSync(() => navigationRoot.unmount())
   document.title = btoa(
     JSON.stringify({
       initial,
@@ -101,6 +251,23 @@ async function run() {
       returnVisible,
       brandsBeforeOpen,
       brandsAfterClose,
+      collapsed,
+      retainedCollapse,
+      expanded,
+      closedRestored,
+      menuAboveWorkspace,
+      fullscreenFileAboveWorkspace,
+      floatingFileAboveWorkspace,
+      collapseReachableAfterFileExit,
+      floatsHidden,
+      floatsRestored,
+      floatsReleased,
+      overlayRestored,
+      unmountedRestored,
+      firstFileWidth,
+      retainedFileWidth,
+      preexistingFileWidth,
+      fullscreenFileWidth,
     }),
   )
 }

@@ -66,6 +66,23 @@ it('returns from manual fullscreen to the retained native split without remounti
         returnVisible: z.boolean(),
         brandsBeforeOpen: z.array(z.string()),
         brandsAfterClose: z.array(z.string()),
+        collapsed: z.object({ hidden: z.boolean(), sidebarActive: z.boolean(), right: z.string(), expandable: z.boolean(), fileHidden: z.boolean() }),
+        retainedCollapse: z.boolean(),
+        expanded: state.extend({ nativeDraft: z.string(), selectedFile: z.string(), scrollTop: z.number(), nativeVisible: z.boolean() }),
+        closedRestored: z.boolean(),
+        menuAboveWorkspace: z.boolean(),
+        fullscreenFileAboveWorkspace: z.boolean(),
+        floatingFileAboveWorkspace: z.boolean(),
+        collapseReachableAfterFileExit: z.boolean(),
+        floatsHidden: z.boolean(),
+        floatsRestored: z.boolean(),
+        floatsReleased: z.boolean(),
+        overlayRestored: z.boolean(),
+        unmountedRestored: z.boolean(),
+        firstFileWidth: z.number(),
+        retainedFileWidth: z.number(),
+        preexistingFileWidth: z.number(),
+        fullscreenFileWidth: z.number(),
       })
       .parse(response)
     expect(actual.initial).toMatchObject({
@@ -87,6 +104,23 @@ it('returns from manual fullscreen to the retained native split without remounti
     expect(actual.resized.at(-1)).toEqual(actual.initial)
     expect(actual.brandsBeforeOpen).toEqual(['sidebar.brand.mark', 'sidebar.brand.name'])
     expect(actual.brandsAfterClose).toEqual(actual.brandsBeforeOpen)
+    expect(actual.collapsed).toEqual({ hidden: true, sidebarActive: true, right: '0px', expandable: true, fileHidden: true })
+    expect(actual.retainedCollapse).toBe(true)
+    expect(actual.expanded).toMatchObject({ ...actual.initial, nativeDraft: 'kept native draft', selectedFile: 'synthetic.txt', scrollTop: 120, nativeVisible: true })
+    expect(actual.closedRestored).toBe(true)
+    expect(actual.menuAboveWorkspace).toBe(true)
+    expect(actual.fullscreenFileAboveWorkspace).toBe(true)
+    expect(actual.floatingFileAboveWorkspace).toBe(true)
+    expect(actual.collapseReachableAfterFileExit).toBe(true)
+    expect(actual.floatsHidden).toBe(true)
+    expect(actual.floatsRestored).toBe(true)
+    expect(actual.floatsReleased).toBe(true)
+    expect(actual.overlayRestored).toBe(true)
+    expect(actual.unmountedRestored).toBe(true)
+    expect(actual.firstFileWidth).toBe(360)
+    expect(actual.retainedFileWidth).toBe(410)
+    expect(actual.preexistingFileWidth).toBe(922)
+    expect(actual.fullscreenFileWidth).toBe(922)
   } finally {
     await browser.close()
   }

@@ -1,5 +1,5 @@
 import { ResponsiveSidebarProvider } from './responsive-sidebar.tsx'
-import { SurfaceDisplayButton } from './surface-display-control.tsx'
+import { SurfaceDisplayButton, SurfaceConversationButton } from './surface-display-control.tsx'
 import { Avatar, AvatarFallback } from '@clinmesh/ui/components/avatar'
 import { Button } from '@clinmesh/ui/components/button'
 import {
@@ -420,6 +420,7 @@ export function WorkspaceShell({
           {messages[activeSection]}
         </h1>
         <div className="ml-auto flex shrink-0 items-center gap-1">
+          <SurfaceConversationButton locale={locale} />
           <NotificationsMenu messages={messages} />
           <UserMenu
             messages={messages}
