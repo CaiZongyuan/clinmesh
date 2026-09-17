@@ -46,12 +46,22 @@ const code = await runDevelopmentProcesses({ processes: ['first', 'second'].map(
   } }
 })) })
 console.log('exit-code=' + code)
-const survivors = ['first', 'second'].filter(role => {
+const readPid = role => {
   const path = join(${JSON.stringify(directory)}, role + '.pid')
-  if (!existsSync(path)) return false
-  const pid = Number(readFileSync(path, 'utf8'))
+  if (!existsSync(path)) return 0
+  return Number(readFileSync(path, 'utf8'))
+}
+const alive = pid => {
+  if (pid <= 0) return false
   try { process.kill(pid, 0); return true } catch { return false }
-})
+}
+// 刚被杀掉的孤儿进程在内核收尸前仍能被 kill(pid, 0) 探测为存活，轮询等待回收完成后再判定
+const deadline = Date.now() + 3000
+let survivors = ['first', 'second'].filter(role => alive(readPid(role)))
+while (survivors.length > 0 && Date.now() < deadline) {
+  await new Promise(resolve => setTimeout(resolve, 50))
+  survivors = ['first', 'second'].filter(role => alive(readPid(role)))
+}
 console.log('survivors=' + survivors.join(','))
 process.exitCode = 0
 `)
