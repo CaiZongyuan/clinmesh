@@ -1,5 +1,8 @@
 import { createContext, useContext, type ReactNode, type RefObject } from 'react'
+import type { DoctorCaseDetail, EncounterCompletionPreview } from '@clinmesh/contracts/his'
 import type { WebPreferences } from './preferences.ts'
+import type { DoctorCaseSection } from './doctor/case-context-rail.tsx'
+import type { WorkspaceLocale } from './workspace-i18n.ts'
 
 /** Local presentation and actions; the application retains session and route ownership. */
 export interface WebSurfaceNavigationState {
@@ -11,6 +14,21 @@ export interface WebSurfaceNavigationState {
 
 export interface WebSurfaceNavigation {
   register(state: WebSurfaceNavigationState): () => void
+}
+
+/** Read-only case-context snapshot consumed by the host rightbar panel; view data only, never queries. */
+export interface WebSurfaceCaseContextState {
+  caseId: string
+  completion: EncounterCompletionPreview | undefined
+  detail: DoctorCaseDetail
+  locale: WorkspaceLocale
+  section: DoctorCaseSection
+  statusText: string
+}
+
+/** Host rightbar contract; the application keeps query and state ownership. */
+export interface WebSurfaceCaseContext {
+  register(state: WebSurfaceCaseContextState): () => void
 }
 
 export type WebRuntimeMode = 'standalone' | 'surface'
@@ -33,6 +51,7 @@ export interface WebSurfaceAgentController {
 
 export interface WebRuntimeOptions {
   surfaceNavigation?: WebSurfaceNavigation
+  surfaceCaseContext?: WebSurfaceCaseContext
   surfaceDisplay?: WebSurfaceDisplay
   apiBasePath?: string
   mode?: WebRuntimeMode
@@ -46,8 +65,9 @@ export interface WebRuntimeOptions {
   surfaceSessionId?: string
 }
 
-interface WebRuntimeValue {
+export interface WebRuntimeValue {
   surfaceNavigation?: WebSurfaceNavigation
+  surfaceCaseContext?: WebSurfaceCaseContext
   surfaceDisplay?: WebSurfaceDisplay
   appearanceRoot: RefObject<HTMLElement | null>
   mode: WebRuntimeMode
@@ -81,4 +101,9 @@ export function useWebRuntime(): WebRuntimeValue {
   const value = useContext(WebRuntimeContext)
   if (value === null) throw new Error('useWebRuntime must be used inside WebRuntimeProvider')
   return value
+}
+
+/** Nullable variant for shared components that may render outside the provider (直接挂载的视图与测试). */
+export function useOptionalWebRuntime(): WebRuntimeValue | null {
+  return useContext(WebRuntimeContext)
 }

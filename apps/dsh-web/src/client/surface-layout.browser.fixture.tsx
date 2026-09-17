@@ -36,6 +36,8 @@ async function run() {
       if (name === 'reactSurfaces') return provided.registry
       if (name === 'theme') return { getTheme: () => ({ active: { colorScheme: 'light' } }) }
       if (name === 'locale') return { getLocale: () => ({ active: 'zh-CN' }), subscribe: () => () => {} }
+      if (name === 'sidebarRightTabs') return { register: () => () => {} }
+      if (name === 'sidebarRight') return { openTab: () => {} }
       return { list: { getSnapshot: () => ({ current: 'session-1' }), subscribe: () => () => {} } }
     },
     on: () => () => {},

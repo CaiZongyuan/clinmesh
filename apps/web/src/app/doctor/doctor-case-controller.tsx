@@ -1,4 +1,6 @@
 import { DoctorWorkspaceLayout, DoctorCaseLayout } from './responsive-layout.tsx'
+import { useSurfaceCaseContextPort } from './surface-case-context.ts'
+import { useOptionalWebRuntime } from '../web-runtime.tsx'
 import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import {
   clinicalDocumentContentSchema,
@@ -2423,6 +2425,18 @@ function CaseDetail({
     source: 'checklist' | 'correction'
     target: EncounterCompletionTarget
   }>()
+  // surface 模式下右栏由 DSH 宿主右列承载:发布与内嵌 rail 完全一致的快照
+  const runtime = useOptionalWebRuntime()
+  const hostRail = runtime?.mode === 'surface' && runtime.surfaceCaseContext !== undefined
+  const caseContextState = useMemo(() => (hostRail ? {
+    caseId: detail.caseId,
+    completion: completion.data,
+    detail,
+    locale,
+    section: activeSection,
+    statusText: doctorCaseStatusLabel(detail.status, messages),
+  } : undefined), [hostRail, detail, completion.data, activeSection, locale, messages])
+  useSurfaceCaseContextPort(caseContextState)
   useEffect(() => {
     if (correctionTarget === undefined) return
     setActiveSection(caseDetailSectionByCompletionTarget[correctionTarget])
@@ -2650,7 +2664,7 @@ function CaseDetail({
     )
 
   return (
-    <DoctorCaseLayout contextLabel={messages.caseContext} rail={(expanded, onExpandedChange) => (
+    <DoctorCaseLayout contextLabel={messages.caseContext} railPlacement={hostRail ? 'host' : 'inline'} rail={(expanded, onExpandedChange) => (
       <DoctorCaseContextRail
         completion={completion.data}
         detail={detail}

@@ -18,7 +18,7 @@ import type { ReactSurfaceRegistry } from 'dsh-react-surface/client'
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
 import { workspaceRoutes, settingsRoutes } from '../../../web/src/app/workspace-shell.tsx'
 import clinmeshMarkUrl from '../../../web/src/assets/clinmesh-mark.webp'
-import { clinMeshStyles } from './styles.generated.ts'
+import { createStyledRoot } from './styled-root.ts'
 import { normalizeHostLocale, type ClientLocalePort } from './host-locale.ts'
 
 export function createWorkspaceNavigation() {
@@ -60,17 +60,6 @@ type Navigation = ReturnType<typeof createWorkspaceNavigation>
 
 function isSettingsPath(path: string) {
   return settingsRoutes.some((route) => route.path === path)
-}
-
-function createStyledRoot(host: HTMLElement) {
-  const shadow = host.shadowRoot ?? host.attachShadow({ mode: 'open' })
-  const style = document.createElement('style')
-  style.textContent = clinMeshStyles
-  const root = document.createElement('div')
-  root.className = 'clinmesh-web-root'
-  root.style.cssText = 'min-height:0;min-width:0;background:transparent;'
-  shadow.append(style, root)
-  return { root, dispose: () => { root.remove(); style.remove() } }
 }
 
 export function WorkspaceNavigation({
