@@ -52,15 +52,21 @@ const readPid = role => {
   return Number(readFileSync(path, 'utf8'))
 }
 const alive = pid => {
-  if (pid <= 0) return false
-  try { process.kill(pid, 0); return true } catch { return false }
+  // Number.isInteger 同时拒绝缺失文件的 0 和损坏内容的 NaN（NaN 会被强转为 pid 0，探测到 harness 自身进程组）
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try { process.kill(pid, 0); return true } catch (error) {
+    // 只把 ESRCH 视为已死；EPERM 等其余错误如实抛出，避免把仍存活的进程误判为已清理
+    if (error.code === 'ESRCH') return false
+    throw error
+  }
 }
 // 刚被杀掉的孤儿进程在内核收尸前仍能被 kill(pid, 0) 探测为存活，轮询等待回收完成后再判定
+const collectSurvivors = () => ['first', 'second'].filter(role => alive(readPid(role)))
 const deadline = Date.now() + 3000
-let survivors = ['first', 'second'].filter(role => alive(readPid(role)))
+let survivors = collectSurvivors()
 while (survivors.length > 0 && Date.now() < deadline) {
   await new Promise(resolve => setTimeout(resolve, 50))
-  survivors = ['first', 'second'].filter(role => alive(readPid(role)))
+  survivors = collectSurvivors()
 }
 console.log('survivors=' + survivors.join(','))
 process.exitCode = 0
