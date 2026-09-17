@@ -815,6 +815,23 @@ const triageVitalSummarySchema = triageSummarySchema.extend({
   respirationBpm: z.number(),
 })
 
+export const doctorQueueViewSchema = z.enum(['active', 'waiting'])
+export type DoctorQueueView = z.infer<typeof doctorQueueViewSchema>
+
+export const doctorQueueStatusSchema = z.enum([
+  'awaiting-doctor',
+  'awaiting-report',
+  'awaiting-revisit',
+  'first-visit',
+  'revisit-draft',
+])
+export type DoctorQueueStatus = z.infer<typeof doctorQueueStatusSchema>
+
+export const doctorQueueViewStatusGroups: Record<DoctorQueueView, readonly DoctorQueueStatus[]> = {
+  active: ['first-visit', 'awaiting-report', 'revisit-draft'],
+  waiting: ['awaiting-doctor', 'awaiting-revisit'],
+}
+
 export const doctorQueueItemSchema = z.object({
   caseId: z.string().min(1),
   diagnosticReportId: z.string().min(1).optional(),
@@ -822,13 +839,7 @@ export const doctorQueueItemSchema = z.object({
   encounterVersion: z.string().regex(/^\d+$/),
   patient: patientSummarySchema,
   presentation: clinicalPresentationSchema,
-  status: z.enum([
-    'awaiting-doctor',
-    'awaiting-report',
-    'awaiting-revisit',
-    'first-visit',
-    'revisit-draft',
-  ]),
+  status: doctorQueueStatusSchema,
   taskId: z.string().min(1),
   taskVersion: z.string().regex(/^\d+$/),
   triage: triageSummarySchema.optional(),

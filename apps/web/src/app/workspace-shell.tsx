@@ -435,7 +435,9 @@ export function WorkspaceShell({
         </div>
       </header>
       <div
-        className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto bg-muted/40 p-4 outline-none sm:p-5"
+        className={activeSection === 'consultation'
+          ? 'flex min-h-0 flex-1 flex-col overflow-hidden bg-background outline-none'
+          : 'flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto bg-muted/40 p-4 outline-none sm:p-5'}
         data-clinmesh-workspace-panel=""
         tabIndex={-1}
       >
@@ -457,6 +459,7 @@ export function WorkspaceShell({
   return (
     <TooltipProvider>
       <ResponsiveSidebarProvider
+        className={activeSection === 'consultation' ? 'h-svh overflow-hidden' : undefined}
         heightMode="viewport"
         style={{
           '--sidebar-width': '13.75rem',

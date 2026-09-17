@@ -697,14 +697,16 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
               </Field>
               <Field><FieldLabel>{messages.visitDate}</FieldLabel><Input disabled value={catalog.data.virtualDate} /></Field>
               <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 border-t bg-background py-3">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <strong className="min-w-0 text-sm font-medium">{selectedName === undefined ? messages.selectPatientFirst : `${messages.selectedPrefix}${selectedName}`}</strong>
-                  {selection === undefined ? null : (
-                    <Button onClick={() => setSelection(undefined)} size="sm" type="button" variant="ghost">
-                      <XIcon data-icon="inline-start" />{messages.clearSelection}
+                {selectedName === undefined ? (
+                  <strong className="min-w-0 text-sm font-medium">{messages.selectPatientFirst}</strong>
+                ) : (
+                  <Badge className="h-8 min-w-0 max-w-full gap-1 rounded-full py-0 pl-3 pr-1" variant="secondary">
+                    <span className="truncate" title={selectedName}>{selectedName}</span>
+                    <Button aria-label={messages.clearSelection} className="rounded-full" onClick={() => setSelection(undefined)} size="icon-xs" title={messages.clearSelection} type="button" variant="ghost">
+                      <XIcon aria-hidden="true" />
                     </Button>
-                  )}
-                </div>
+                  </Badge>
+                )}
                 <Button disabled={selectedName === undefined || submitRegistration.isPending} onClick={() => submitRegistration.mutate()} type="button"><ClipboardPlusIcon data-icon="inline-start" />{messages.confirmRegistration}</Button>
               </div>
               {submitRegistration.isSuccess ? <Alert><CheckIcon aria-hidden="true" /><AlertTitle>{messages.registrationCompleted}</AlertTitle><AlertDescription>{messages.awaitingTriage}</AlertDescription></Alert> : null}

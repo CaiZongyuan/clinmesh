@@ -9,6 +9,8 @@ import {
   type ClinicalDocumentContent,
   type DiagnosisDraftEntry,
   type DoctorCaseDetail,
+  type DoctorQueueView,
+  doctorQueueViewStatusGroups,
   type EncounterCompletionPreview,
   type EncounterCompletionTarget,
   type LaboratoryRequest,
@@ -39,8 +41,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
-import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, LibraryBigIcon, MessagesSquareIcon, PillIcon, PlusIcon, RefreshCwIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, MessagesSquareIcon, PillIcon, PlusIcon, RefreshCwIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   acknowledgeLaboratoryReport,
   askConsultationQuestion,
@@ -131,6 +133,9 @@ interface CompletedCaseCorrectionNavigation {
 }
 
 interface DoctorCaseControllerProps extends DoctorWorkspaceProps {
+  navigation: ReactNode
+  queueView: DoctorQueueView
+  onQueueViewChange: (view: DoctorQueueView) => void
   correctionNavigation: CompletedCaseCorrectionNavigation | undefined
   onCorrectionNavigationHandled: () => void
   onSelectedCaseIdChange: (caseId: string | undefined) => void
@@ -276,7 +281,7 @@ function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocume
 
 export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
-  const [activeTab, setActiveTab] = useState<'active' | 'completed'>('active')
+  const [activeTab, setActiveTab] = useState<DoctorQueueView | 'completed'>('active')
   const [selectedCaseId, setSelectedCaseId] = useState<string>()
   const [correctionNavigation, setCorrectionNavigation] = useState<
     CompletedCaseCorrectionNavigation
@@ -286,20 +291,25 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
     setSelectedCaseId(undefined)
     setCorrectionNavigation(undefined)
   }, [session.actor.epoch, session.actor.workspaceId])
+  const navigation = (
+    <TabsList aria-label={messages.consultation} className="w-full">
+      <TabsTrigger value="active">{messages.doctorActiveQueue}</TabsTrigger>
+      <TabsTrigger value="waiting">{messages.doctorWaitingQueue}</TabsTrigger>
+      <TabsTrigger value="completed">{messages.doctorCompletedQueue}</TabsTrigger>
+    </TabsList>
+  )
   return (
-    <Tabs onValueChange={value => setActiveTab(value as 'active' | 'completed')} value={activeTab}>
-      <TabsList aria-label={messages.consultation} className="w-full @min-[640px]/case-content:w-fit" variant="line">
-        <TabsTrigger className="min-w-0 px-3" value="active">
-          <StethoscopeIcon data-icon="inline-start" />
-          {messages.doctorActiveCases}
-        </TabsTrigger>
-        <TabsTrigger className="min-w-0 px-3" value="completed">
-          <LibraryBigIcon data-icon="inline-start" />
-          {messages.doctorCompletedCases}
-        </TabsTrigger>
-      </TabsList>
-      <TabsContent className="pt-4" value="active">
+    <Tabs className="min-h-0 flex-1 gap-0" onValueChange={value => {
+      if (value !== 'active' && value !== 'waiting' && value !== 'completed') return
+      setActiveTab(value)
+      setSelectedCaseId(undefined)
+      setCorrectionNavigation(undefined)
+    }} value={activeTab}>
+      {activeTab !== 'completed' ? (
         <DoctorCaseController
+          navigation={navigation}
+          queueView={activeTab}
+          onQueueViewChange={setActiveTab}
           correctionNavigation={correctionNavigation}
           key={`${session.actor.workspaceId}:${session.actor.epoch}`}
           locale={locale}
@@ -310,9 +320,9 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
           selectedCaseId={selectedCaseId}
           session={session}
         />
-      </TabsContent>
-      <TabsContent className="pt-4" value="completed">
+      ) : (
         <DoctorCompletedCaseLibrary
+          navigation={navigation}
           locale={locale}
           onOpenCorrection={(caseId, target) => {
             setSelectedCaseId(caseId)
@@ -321,12 +331,15 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
           }}
           session={session}
         />
-      </TabsContent>
+      )}
     </Tabs>
   )
 }
 
 function DoctorCaseController({
+  navigation,
+  queueView,
+  onQueueViewChange,
   correctionNavigation,
   locale,
   onCorrectionNavigationHandled,
@@ -339,6 +352,11 @@ function DoctorCaseController({
   const queryClient = useQueryClient()
   const scope = [session.actor.workspaceId, session.actor.epoch] as const
   const [page, setPage] = useState(1)
+  const [lastQueueView, setLastQueueView] = useState(queueView)
+  if (lastQueueView !== queueView) {
+    setLastQueueView(queueView)
+    setPage(1)
+  }
   const [activeCaseSection, setActiveCaseSection] = useState<DoctorCaseSection>('record')
   const [virtualPatientPage, setVirtualPatientPage] = useState(1)
   const [diagnosisReferenceSearch, setDiagnosisReferenceSearch] = useState<ReferenceCatalogSearchParameters>({
@@ -369,11 +387,17 @@ function DoctorCaseController({
   const queue = useQuery({
     queryFn: ({ signal }) => getDoctorQueue(signal, page),
     queryKey: queueKey,
+    // 仅失效刷新会让其他会话清空队列的感知滞后，低速轮询兜底 auto-start 门控
+    refetchInterval: 30_000,
+  })
+  const [selectedVirtualPatientId, setSelectedVirtualPatientId] = useState<string>()
+  const visibleQueue = useQuery({
+    queryFn: ({ signal }) => getDoctorQueue(signal, page, queueView),
+    queryKey: ['doctor-queue', ...scope, queueView, page],
     refetchInterval: query => query.state.data?.items.some(item => item.status === 'awaiting-report') === true
       ? 1_500
       : false,
   })
-  const [selectedVirtualPatientId, setSelectedVirtualPatientId] = useState<string>()
   const [laboratoryItemId, setLaboratoryItemId] = useState('')
   const [indicationCode, setIndicationCode] = useState('')
   const [workingClinicalDocuments, setWorkingClinicalDocuments] = useState<
@@ -392,8 +416,8 @@ function DoctorCaseController({
     }))
   }, [])
   const autoStartRequested = useRef(false)
-  const activeCaseId = selectedCaseId ?? queue.data?.items[0]?.caseId
-  const selectedCase = queue.data?.items.find(item => item.caseId === activeCaseId)
+  const activeCaseId = selectedCaseId ?? visibleQueue.data?.items[0]?.caseId
+  const selectedCase = visibleQueue.data?.items.find(item => item.caseId === activeCaseId)
   const selectedVirtualPatient = virtualPatients.data?.items.find(
     item => item.id === selectedVirtualPatientId,
   )
@@ -575,6 +599,7 @@ function DoctorCaseController({
       setVirtualPatientPage(1)
       setSelectedVirtualPatientId(undefined)
       onSelectedCaseIdChange(response.data.caseId)
+      onQueueViewChange('active')
     },
   })
   const autoStartCandidate = virtualPatients.data?.items[0]
@@ -591,7 +616,7 @@ function DoctorCaseController({
   }, [autoStartCandidate, queue.data?.total, startCandidate, virtualPatients.data])
   const refreshCaseById = async (caseId: string | undefined) => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: queueKey }),
+      queryClient.invalidateQueries({ queryKey: ['doctor-queue', ...scope] }),
       queryClient.invalidateQueries({
         queryKey: caseId === undefined
           ? ['doctor-case', ...scope]
@@ -599,6 +624,13 @@ function DoctorCaseController({
       }),
       queryClient.invalidateQueries({ queryKey: encounterCompletionScopeKey }),
     ])
+    const current = queryClient.getQueryData<DoctorCaseDetail>(detailKey)
+    if (queueView === 'waiting' && current?.caseId === caseId
+      && current?.encounter.status === 'in-progress'
+      && doctorQueueViewStatusGroups.active.some(status => status === current?.status)) {
+      onSelectedCaseIdChange(current.caseId)
+      onQueueViewChange('active')
+    }
   }
   const refreshCompletedCaseDetails = async () => {
     await queryClient.invalidateQueries({ queryKey: completedCaseDetailScopeKey })
@@ -1885,6 +1917,8 @@ function DoctorCaseController({
   return (
     <DoctorWorkspaceLayout selectedCaseId={activeCaseId} queueLabel={messages.waitingPatients} detailLabel={messages.caseDetail} queue={showDetail => (
       <DoctorQueueModule
+        navigation={navigation}
+        queueView={queueView}
         activeCaseId={activeCaseId}
         messages={messages}
         onQueuePageChange={(nextPage) => {
@@ -1901,9 +1935,9 @@ function DoctorCaseController({
           setVirtualPatientPage(nextPage)
           setSelectedVirtualPatientId(undefined)
         }}
-        queueData={queue.data}
-        queueError={queue.error}
-        queuePending={queue.isPending}
+        queueData={visibleQueue.data}
+        queueError={visibleQueue.error}
+        queuePending={visibleQueue.isPending}
         selectedVirtualPatient={selectedVirtualPatient}
         startError={startCandidate.error}
         startPending={startCandidate.isPending}
@@ -1912,7 +1946,7 @@ function DoctorCaseController({
         virtualPatientPending={virtualPatients.isPending}
       />
       )}>
-      <section aria-labelledby="case-detail-heading" className="flex min-w-0 flex-col gap-3 p-3">
+      <section aria-labelledby="case-detail-heading" className="flex min-h-full min-w-0 flex-1 flex-col gap-3">
         <h2 className="sr-only" id="case-detail-heading">{messages.caseDetail}</h2>
         {issueOrder.isSuccess && issueOrder.variables.caseId === activeCaseId ? (
           <Alert>
@@ -2628,7 +2662,7 @@ function CaseDetail({
         statusText={doctorCaseStatusLabel(detail.status, messages)}
       />
     )}>
-      <div className="flex min-w-0 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col">
         <PatientBanner
           {...(clinicalReadOnly || detail.consultation === undefined
             ? {}
@@ -2652,7 +2686,7 @@ function CaseDetail({
         )}
 
         <Tabs
-          className="min-w-0 gap-0 bg-background"
+          className="min-w-0 flex-1 gap-0 bg-background"
           onValueChange={value => {
             if (value === 'consultation' || value === 'record' || value === 'diagnosis' || value === 'prescription' || value === 'laboratory') {
               setActiveSection(value)

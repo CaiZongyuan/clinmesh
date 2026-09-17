@@ -53,6 +53,7 @@ import {
   type ApiConflict,
   type ClinicalDocumentContent,
   type DiagnosisDraftEntry,
+  type DoctorQueueView,
   type LaboratoryRequestCatalogItemId,
   type PrescriptionDraftItem,
   type ScenarioState,
@@ -689,8 +690,9 @@ export function getClinicalCatalog(signal?: AbortSignal) {
   return apiGet('/api/his/v1/catalogs/clinical', clinicalCatalogSchema, signal)
 }
 
-export function getDoctorQueue(signal?: AbortSignal, page = 1) {
+export function getDoctorQueue(signal?: AbortSignal, page = 1, view?: DoctorQueueView) {
   const search = new URLSearchParams({ page: String(page), pageSize: '20' })
+  if (view !== undefined) search.set('view', view)
   return apiGet(`/api/his/v1/doctor/queue?${search.toString()}`, doctorQueueSchema, signal)
 }
 

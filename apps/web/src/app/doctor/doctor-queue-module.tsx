@@ -1,4 +1,4 @@
-import type { DoctorQueueItem, VirtualPatientList } from '@clinmesh/contracts/his'
+import type { DoctorQueueItem, DoctorQueueView, VirtualPatientList } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
@@ -7,7 +7,7 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Spinner } from '@clinmesh/ui/components/spinner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { CircleAlertIcon, PlayIcon, StethoscopeIcon, UserRoundPlusIcon } from 'lucide-react'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { PaginationControls } from '../pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
@@ -92,12 +92,12 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
         type="button"
         variant="ghost"
       >
-        <span className="flex min-w-0 items-center gap-3">
+        <span className="flex min-w-0 flex-1 items-center gap-2">
           <PatientAvatar className="size-9" label={`${item.patient.name} ${messages.patient}`} name={item.patient.name} />
           <span className="min-w-0">
-            <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate font-medium">{item.patient.name}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">
+            <span className="flex min-w-0 flex-col gap-1">
+              <span className="truncate font-medium" title={item.patient.name}>{item.patient.name}</span>
+              <span className="text-xs text-muted-foreground">
                 {messages[`gender_${item.patient.gender}` as 'gender_male']} · {age === undefined ? '-' : messages.patientAge.replace('{age}', String(age))}
               </span>
             </span>
@@ -111,6 +111,8 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
 }
 
 export function DoctorQueueModule({
+  navigation,
+  queueView,
   activeCaseId,
   messages,
   onQueuePageChange,
@@ -128,6 +130,8 @@ export function DoctorQueueModule({
   virtualPatientError,
   virtualPatientPending,
 }: {
+  navigation: ReactNode
+  queueView: DoctorQueueView
   activeCaseId: string | undefined
   messages: WorkspaceMessages
   onQueuePageChange: (page: number) => void
@@ -146,24 +150,25 @@ export function DoctorQueueModule({
   virtualPatientPending: boolean
 }): React.JSX.Element {
   const [selectedView, setSelectedView] = useState<'queue' | 'candidates'>()
-  const view = selectedView ?? (!queuePending && queueData?.total === 0 ? 'candidates' : 'queue')
+  const view = queueView === 'active' ? 'queue' : selectedView ?? (!queuePending && queueData?.total === 0 ? 'candidates' : 'queue')
   return (
-    <aside aria-label={messages.consultationQueue} className="h-full min-h-0 min-w-0 border-b bg-background xl:border-r xl:border-b-0">
+    <aside aria-label={messages.consultationQueue} className="flex h-full min-h-0 min-w-0 flex-col bg-background">
+      <div className="shrink-0 border-b p-2">{navigation}</div>
       <Tabs
-        className="h-full min-w-0 gap-0"
+        className="flex min-h-0 min-w-0 flex-1 flex-col gap-0"
         onValueChange={(value) => {
           if (value === 'queue' || value === 'candidates') setSelectedView(value)
         }}
         value={view}
       >
-        <div className="border-b px-3 pt-3">
+        <div className="shrink-0 border-b px-3 pt-3">
           <div className="flex items-center justify-between gap-2 pb-2">
-            <h2 className="text-base font-semibold">{messages.waitingPatients}</h2>
+            <h2 className="text-sm font-semibold">{queueView === 'active' ? messages.doctorActiveQueue : messages.doctorWaitingQueue}</h2>
             <Badge variant="secondary">
               {view === 'queue' ? (queueData?.total ?? 0) : (virtualPatientData?.total ?? 0)}
             </Badge>
           </div>
-          <TabsList className="h-9 w-full justify-start" variant="line">
+          {queueView === 'waiting' ? <TabsList className="h-8 w-full justify-start" variant="line">
             <TabsTrigger className="flex-1" value="queue">
               {messages.consultationQueue}
               <span className="tabular-nums text-muted-foreground">{queueData?.total ?? 0}</span>
@@ -172,11 +177,11 @@ export function DoctorQueueModule({
               {messages.virtualPatientCandidates}
               <span className="tabular-nums text-muted-foreground">{virtualPatientData?.total ?? 0}</span>
             </TabsTrigger>
-          </TabsList>
+          </TabsList> : null}
         </div>
 
-        <TabsContent className="p-3" value="queue">
-          <section aria-labelledby="consultation-queue-heading" className="flex min-w-0 flex-col gap-3">
+        <TabsContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-3" value="queue">
+          <section aria-labelledby="consultation-queue-heading" className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
             <h3 className="sr-only" id="consultation-queue-heading">{messages.consultationQueue}</h3>
             {queuePending ? <Skeleton className="h-44 w-full" /> : queueError !== null ? (
               <ErrorAlert error={queueError} fallbackTitle={messages.consultationUnavailable} messages={messages} />
@@ -184,13 +189,13 @@ export function DoctorQueueModule({
               <Empty className="min-h-44 border">
                 <EmptyHeader>
                   <EmptyMedia variant="icon"><StethoscopeIcon aria-hidden="true" /></EmptyMedia>
-                  <EmptyTitle>{messages.noConsultationCases}</EmptyTitle>
+                  <EmptyTitle>{queueView === 'active' ? messages.doctorActiveQueueEmpty : messages.noConsultationCases}</EmptyTitle>
                   <EmptyDescription>{messages.noConsultationCasesDescription}</EmptyDescription>
                 </EmptyHeader>
               </Empty>
             ) : (
               <>
-                <ul className="flex max-h-[calc(100svh-19rem)] flex-col gap-2 overflow-y-auto pr-1">
+                <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
                   {queueData.items.map(item => (
                     <DoctorCaseRow
                       item={item}
@@ -213,7 +218,7 @@ export function DoctorQueueModule({
           </section>
         </TabsContent>
 
-        <TabsContent className="flex min-h-0 flex-col p-3" value="candidates">
+        <TabsContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-3" value="candidates">
           <section aria-labelledby="virtual-patient-heading" className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
             <h3 className="sr-only" id="virtual-patient-heading">{messages.virtualPatientCandidates}</h3>
             {virtualPatientPending ? <Skeleton className="h-44 w-full" /> : virtualPatientError !== null ? (
@@ -228,7 +233,7 @@ export function DoctorQueueModule({
               </Empty>
             ) : (
               <>
-                <ul className="flex min-h-[max(10rem,calc(100svh-19rem))] flex-1 flex-col gap-2 overflow-y-auto pr-1 [contain:size]">
+                <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
                   {virtualPatientData.items.map(item => (
                     <VirtualPatientRow
                       item={item}
@@ -240,7 +245,7 @@ export function DoctorQueueModule({
                   ))}
                 </ul>
                 {selectedVirtualPatient === undefined ? null : (
-                  <div className="flex flex-col gap-3 border-t pt-3">
+                  <div className="flex shrink-0 flex-col gap-3 border-t pt-3">
                     <p className="text-sm">{selectedVirtualPatient.presentation.summary}</p>
                     <dl className="grid grid-cols-3 gap-x-3 gap-y-2 text-xs">
                       <VitalSummary label={messages.temperatureC} value={selectedVirtualPatient.presentation.vitalSigns.temperatureC} />

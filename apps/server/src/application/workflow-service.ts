@@ -45,6 +45,8 @@ import {
   doctorCompletedCaseDetailSchema,
   doctorCompletedCaseListSchema,
   doctorCompletedCaseTimelineEventSchema,
+  type DoctorQueueView,
+  doctorQueueViewStatusGroups,
   encounterCompletionPreviewSchema,
   encounterCompletionResponseSchema,
   type EncounterCompletionTarget,
@@ -2552,9 +2554,11 @@ export class WorkflowService {
     })
   }
 
-  doctorQueue(context: ActorContext, pageSize: number, page = 1) {
+  doctorQueue(context: ActorContext, pageSize: number, page = 1, view?: DoctorQueueView) {
     this.#assertRole(context, ['outpatient-doctor'])
-    const statuses = ['awaiting-doctor', 'first-visit', 'awaiting-report', 'awaiting-revisit', 'revisit-draft']
+    const statuses: readonly string[] = view === undefined
+      ? [...doctorQueueViewStatusGroups.waiting, ...doctorQueueViewStatusGroups.active]
+      : doctorQueueViewStatusGroups[view]
     const placeholders = statuses.map(() => '?').join(', ')
     const bindings = [context.workspaceId, context.epoch, ...statuses]
     const total = this.#database.driver.prepare(`

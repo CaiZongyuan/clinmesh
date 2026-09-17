@@ -29,6 +29,12 @@
 
 ## 运行与验证边界
 
+- 本地 UI 修改交付前先确认用户正在使用的入口。热更新页面通过不能证明 Server 静态 Web 或 DSH Surface 已更新；按实际入口重建对应 artifact，并核对服务返回的资源。构建与启动方式见[部署指南](../deployment.md)。
+
+- DSH 报插件 overlay `ENOENT` 时，同时核对该包声明的 patch、入口文件和本地安装内容；已禁用的插件仍可能在 Profile 合成阶段读取 overlay。若同版本官方 tarball 包含缺失文件，先核验 registry integrity 并备份本地目录，再恢复缺失文件；启动并验证带凭证首页后，停止验证实例，避免占用用户手动启动的端口。
+
+- 手动通过 Node `--env-file` 启动全局 DSH 时使用 `.env` 的绝对路径。`dshmarket` 调用 DSH CLI 更新插件时继承 `process.execArgv`，但把工作目录切到 CLI 所在目录；相对路径会让更新和旧构建恢复同时报 `.env: not found`。修正启动参数后再验证同一全局 Profile，不修改上游源码。
+
 - Windows 进程树测试必须在启动器自身仍存活时检查后代退出；只在启动器退出后检查，可能被 Node 的进程清理掩盖。用 `.cmd` 中间层和 detached 后代覆盖实际包管理器链路，并保留无关进程存活断言。
 
 - Windows 的 `core.symlinks=false` 会把 Git 符号链接检出为存放目标路径的普通文件。修改 `CLAUDE.md` 前先检查 Git mode；`120000` 的 blob 是链接目标，不能按 Markdown 添加末尾换行。文档或格式检查受 CRLF、符号链接、POSIX 权限影响时，在支持这些语义的 Linux checkout 验证，不改坏链接或放宽检查。
@@ -82,6 +88,9 @@
 - 每次 `record start` 都配对 `record stop` 和进程清理。停止命令超时后检查 encoder 子进程，只对确认属于该录制会话的进程发送终止信号，避免后台 FFmpeg 无限驻留。
 - `agent-browser` 会话守护进程存活时，单独终止 Chrome 可能触发自动重启。正常 `record stop`/`close` 超时后先终止该命名会话的守护进程，再清理其 Chrome 和 encoder 子进程；随后用 `ps`/`ss` 验证，不重新连接已关闭会话。
 - `agent-browser record start` 会在现有命名会话中新增录制 tab，原 tab 仍可保有 DSH Surface leader lease。录制 DSH browser Tools 时必须关闭旧 tab，等待录制 tab 取得 `active` lease，再让 Agent 读取新的 Page Context；否则 Tool 可能正确更新旧 leader，而录制 tab 只显示未变化的 contender Surface。
+- `agent-browser record start` 创建 fresh context 后，`eval`/`click` 可能仍作用于旧 tab，成片只有空白帧。start 之后必须显式 `open` 目标 URL，并用 `tab list` 与页面状态（tab 文本、队列条数）确认操作落在录制 tab 上；随后再注入点击高亮脚本。
+- 视图切换会重排 snapshot refs：同一 `@eN` 在不同视图解析到不同元素，旧 ref 的 click 返回成功却点错位置。每次切换视图后重新 snapshot 取新 ref，再以成片抽帧核对关键画面（切换、选中、空态）是否都发生。
+- Windows FFmpeg 的 `drawtext` 引用盘符路径时，冒号会截断 filter 参数；命令行内联转义易被 shell 吃掉。把 filter 写进文件并用 `-filter_complex_script` 执行，路径统一写成 `'C\:/path/...'`（引号包裹 + 转义冒号）。正在写入的 WebM 无法被 FFmpeg 读取（EBML header 未完成），抽帧核对只能在 `record stop` 之后进行。
 - 使用 FFmpeg 前先检查依赖；缺失时报告而不是自行安装。后期只改变播放速度、字幕和编码，不拼接来自不同 Scenario、workspace、epoch 或 commit 的业务证据。
 - 一次 FFmpeg 命令抽取多个时间点时必须为每个输出显式指定 input/map，或为每个时间点单独执行；依赖默认 stream mapping 可能让多个输出都取自第一个输入，形成看似正常的重复截图。
 - 浏览器录制的媒体时间轴不一定等于自动化脚本的墙钟耗时。裁剪前用 ffprobe 和解码画面定位起止，不直接使用脚本执行时间作为视频时间戳，以免裁掉首次操作。
