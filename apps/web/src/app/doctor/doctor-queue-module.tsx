@@ -1,4 +1,4 @@
-import type { DoctorQueueItem, VirtualPatientList } from '@clinmesh/contracts/his'
+import type { DoctorQueueItem, DoctorQueueView, VirtualPatientList } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
@@ -131,7 +131,7 @@ export function DoctorQueueModule({
   virtualPatientPending,
 }: {
   navigation: ReactNode
-  queueView: 'active' | 'waiting'
+  queueView: DoctorQueueView
   activeCaseId: string | undefined
   messages: WorkspaceMessages
   onQueuePageChange: (page: number) => void

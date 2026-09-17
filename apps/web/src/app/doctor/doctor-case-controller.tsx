@@ -9,6 +9,7 @@ import {
   type ClinicalDocumentContent,
   type DiagnosisDraftEntry,
   type DoctorCaseDetail,
+  type DoctorQueueView,
   doctorQueueViewStatusGroups,
   type EncounterCompletionPreview,
   type EncounterCompletionTarget,
@@ -133,8 +134,8 @@ interface CompletedCaseCorrectionNavigation {
 
 interface DoctorCaseControllerProps extends DoctorWorkspaceProps {
   navigation: ReactNode
-  queueView: 'active' | 'waiting'
-  onQueueViewChange: (view: 'active' | 'waiting') => void
+  queueView: DoctorQueueView
+  onQueueViewChange: (view: DoctorQueueView) => void
   correctionNavigation: CompletedCaseCorrectionNavigation | undefined
   onCorrectionNavigationHandled: () => void
   onSelectedCaseIdChange: (caseId: string | undefined) => void
@@ -280,7 +281,7 @@ function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocume
 
 export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
-  const [activeTab, setActiveTab] = useState<'active' | 'waiting' | 'completed'>('active')
+  const [activeTab, setActiveTab] = useState<DoctorQueueView | 'completed'>('active')
   const [selectedCaseId, setSelectedCaseId] = useState<string>()
   const [correctionNavigation, setCorrectionNavigation] = useState<
     CompletedCaseCorrectionNavigation
@@ -386,6 +387,8 @@ function DoctorCaseController({
   const queue = useQuery({
     queryFn: ({ signal }) => getDoctorQueue(signal, page),
     queryKey: queueKey,
+    // 仅失效刷新会让其他会话清空队列的感知滞后，低速轮询兜底 auto-start 门控
+    refetchInterval: 30_000,
   })
   const [selectedVirtualPatientId, setSelectedVirtualPatientId] = useState<string>()
   const visibleQueue = useQuery({
