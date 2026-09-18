@@ -8,6 +8,7 @@ import {
 } from '@clinmesh/contracts/agent'
 import {
   resetScenarioRequestSchema,
+  doctorQueueViewSchema,
   acknowledgeLaboratoryReportRequestSchema,
   cancelLaboratoryRequestRequestSchema,
   completeHospitalServiceRequestSchema,
@@ -1130,6 +1131,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.get('/api/his/v1/doctor/queue', async (context) => {
       try {
         const query = z.object({
+          view: doctorQueueViewSchema.optional(),
           page: z.coerce.number().int().min(1).default(1),
           pageSize: z.coerce.number().int().min(1).max(100).default(20),
         }).parse(context.req.query())
@@ -1137,6 +1139,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           await actor(context),
           query.pageSize,
           query.page,
+          query.view,
         ))
       } catch (error) {
         return apiErrorResponse(context, error)

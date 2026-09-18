@@ -2,7 +2,7 @@ import type { SessionContext, TriageQueueItem } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
@@ -279,7 +279,6 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
             <EmptyHeader>
               <EmptyMedia variant="icon"><HeartPulseIcon aria-hidden="true" /></EmptyMedia>
               <EmptyTitle>{messages.noTriageCases}</EmptyTitle>
-              <EmptyDescription>{messages.noTriageCasesDescription}</EmptyDescription>
             </EmptyHeader>
           </Empty>
         ) : (

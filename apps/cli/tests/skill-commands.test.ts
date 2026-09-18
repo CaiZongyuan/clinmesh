@@ -149,6 +149,10 @@ describe('ClinMesh CLI Agent Skills', () => {
     for (const skillName of skillNames) {
       const markdown = await readFile(resolve(skillsRoot, skillName, 'SKILL.md'), 'utf8')
       const commands = commandLines(markdown)
+      if (skillName === 'clinmesh-doctor') {
+        expect(commands).toContain('clinmesh doctor queue list --view waiting')
+        expect(commands).toContain('clinmesh doctor queue list --view active')
+      }
       expect(commands.length, `${skillName} has no executable examples`).toBeGreaterThan(0)
       if (skillName === 'clinmesh-registration') {
         expect(commands).toContain(

@@ -209,7 +209,8 @@ export function DoctorCaseContextRail({
   expanded: boolean
   locale: WorkspaceLocale
   messages: WorkspaceMessages
-  onExpandedChange: (expanded: boolean) => void
+  /** 宿主右列没有 44px 折叠形态;缺省时不渲染折叠按钮。 */
+  onExpandedChange?: (expanded: boolean) => void
   section: DoctorCaseSection
   statusText: string
 }): React.JSX.Element {
@@ -222,22 +223,23 @@ export function DoctorCaseContextRail({
       className="flex min-w-0 flex-col border-t bg-muted/15 xl:border-t-0 xl:border-l"
     >
       <div className="flex items-center gap-2 p-2">
-        <Button
-          aria-expanded={expanded}
-          aria-label={expanded ? messages.closeRightSidebar : messages.openRightSidebar}
-          onClick={() => onExpandedChange(!expanded)}
-          size="icon-sm"
-          title={expanded ? messages.closeRightSidebar : messages.openRightSidebar}
-          type="button"
-          variant="ghost"
-        >
-          {expanded
-            ? <PanelRightCloseIcon aria-hidden="true" />
-            : <PanelRightOpenIcon aria-hidden="true" />}
-        </Button>
+        {onExpandedChange === undefined ? null : (
+          <Button
+            aria-expanded={expanded}
+            aria-label={expanded ? messages.closeRightSidebar : messages.openRightSidebar}
+            onClick={() => onExpandedChange(!expanded)}
+            size="icon-sm"
+            title={expanded ? messages.closeRightSidebar : messages.openRightSidebar}
+            type="button"
+            variant="ghost"
+          >
+            {expanded
+              ? <PanelRightCloseIcon aria-hidden="true" />
+              : <PanelRightOpenIcon aria-hidden="true" />}
+          </Button>
+        )}
         {expanded ? (
           <div className="min-w-0">
-            <div className="text-xs text-muted-foreground">{messages.rightSidebar}</div>
             <h2 className="truncate text-sm font-semibold">{messages.caseContext}</h2>
           </div>
         ) : null}

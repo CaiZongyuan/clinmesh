@@ -1,9 +1,10 @@
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { Avatar, AvatarFallback, AvatarImage } from '@clinmesh/ui/components/avatar'
 import { Badge } from '@clinmesh/ui/components/badge'
+import { Button } from '@clinmesh/ui/components/button'
 import { createAvatar } from '@dicebear/core'
 import * as lorelei from '@dicebear/lorelei'
-import { LockKeyholeIcon } from 'lucide-react'
+import { IdCardIcon, LockKeyholeIcon } from 'lucide-react'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 
 type WorkspaceMessages = ReturnType<typeof getWorkspaceMessages>
@@ -72,11 +73,14 @@ export function PatientBanner({
   completionAction,
   detail,
   messages,
+  onShowContext,
   statusText,
 }: {
   completionAction?: React.ReactNode
   detail: DoctorCaseDetail
   messages: WorkspaceMessages
+  /** surface 模式下宿主右栏承载患者上下文:点击在右栏打开/聚焦患者信息标签页。 */
+  onShowContext?: () => void
   statusText: string
 }): React.JSX.Element {
   const presentation = detail.presentation
@@ -114,6 +118,12 @@ export function PatientBanner({
           {readOnly ? (
             <Badge variant="outline"><LockKeyholeIcon aria-hidden="true" />{messages.encounterReadOnly}</Badge>
           ) : completionAction}
+          {onShowContext === undefined ? null : (
+            <Button onClick={onShowContext} size="sm" variant="outline">
+              <IdCardIcon aria-hidden="true" />
+              {messages.showPatientContext}
+            </Button>
+          )}
         </div>
       </div>
       <dl className="grid grid-cols-2 gap-px border-t bg-border @min-[400px]/patient-banner:grid-cols-3 @min-[680px]/patient-banner:grid-cols-5 [&>div]:bg-background [&>div]:px-3 [&>div]:py-2.5">

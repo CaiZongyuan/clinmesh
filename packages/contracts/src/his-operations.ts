@@ -36,6 +36,7 @@ import {
   doctorCompletedCaseDetailSchema,
   doctorCompletedCaseListSchema,
   doctorQueueSchema,
+  doctorQueueViewSchema,
   dispenseResponseSchema,
   encounterCompletionPreviewSchema,
   encounterCompletionResponseSchema,
@@ -1076,7 +1077,7 @@ const operationDefinitions = [
       path: '/api/his/v1/doctor/queue',
     },
     id: 'doctor.queue.list',
-    input: paginationInputSchema,
+    input: paginationInputSchema.extend({ view: doctorQueueViewSchema.optional() }),
     mode: 'query',
     output: doctorQueueSchema,
     requirements: {

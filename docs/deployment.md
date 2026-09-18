@@ -13,7 +13,7 @@
 | 患者档案与就诊闭环（步骤 4） | 同上，加一个 OpenAI-compatible Provider 及 API key |
 | Synthea 患者生成（步骤 6） | x86-64 主机上的 Docker Engine 与 `docker compose` |
 | 全量检查与生产构建 | Bun `1.4.0`（DSH React Surface artifact 构建使用 `bun`） |
-| DSH Web 原生入口 | Linux/macOS：Bun `1.4.0` 与网络，其余由 `pnpm dsh:setup` 按 lock 自动安装；Windows 手工路径另需 DSH CLI `0.1.5-rc.2`、`@dsh-so/dshvm@0.1.1` |
+| DSH Web 原生入口 | Bun `1.4.0` 与网络，其余由 `pnpm dsh:setup` 按 lock 自动安装；Windows 同时需要系统自带的 Windows PowerShell 5.1 |
 | Mobile 原生目标 | Xcode 或 Android Studio |
 
 pnpm 版本由根 `package.json` 的 `packageManager` 字段固定，可使用 corepack 自动切换。
@@ -172,7 +172,7 @@ pnpm dev:lan
 
 ClinMesh 只要求 DSH、React Surface 和 AG-UI。精确来源、版本、commit、依赖关系及维护归属由 [`dsh-upstreams.lock.json`](../dsh-upstreams.lock.json) 记录；React Surface 与 AG-UI 均直接声明当前 RC 依赖。其他插件与旧 HIS Demo 不属于此组合，不需要升级或逐项验收，也不应覆盖它们的配置和数据。跟进公开正式版和 RC 时更新经过验证的精确输入，不把 `latest` 当作可复现版本。
 
-Linux/macOS 使用两条命令完成搭建与启动：
+Windows PowerShell、Linux 和 macOS 使用两条命令完成搭建与启动：
 
 ```sh
 pnpm dsh:setup
@@ -181,7 +181,9 @@ pnpm dev:dsh
 
 `dsh:setup` 幂等供给 `.data/dsh-runtime/` 沙箱（已忽略，`CLINMESH_DSH_SANDBOX` 可覆盖到仓库外）：按 lock 安装 dshvm 工具目录与隔离宿主槽位、用宿主锁文件恢复依赖、克隆锁定 commit 的 AG-UI、构建 React Surface runtime 与 ClinMesh DSH artifact、组装 Web Profile 并重验三个插件 `link:`。`dev:dsh` 复用同一 ensure，然后直接启动 ClinMesh Server（`pnpm --filter @clinmesh/server dev`，绕过 Turborepo，`CLINMESH_AI_*` 直接生效）与 DSH Web（`dshvm exec web --port 3080 --no-open`）；Ctrl+C 或任一进程退出时全部停止并打印原因。就绪横幅打印 DSH Web 与 Server 地址；DSH Web 的真实入口是 Host 打印的带本次启动 token 的地址，直接打开无 token 地址会被要求认证。子进程日志以 `[Server]`/`[DSH]` 前缀标注归属，ensure 探测命令静默执行（失败时回显输出尾部）。`CLINMESH_DSH_BRIDGE_SECRET` 缺失时自动生成并追加到 `.env`，已有值不覆盖；`CLINMESH_TRUSTED_ORIGINS` 自动包含 `127.0.0.1:51868/51888/3080`，自定义 `CLINMESH_PORT` 时跟随。前置只检查 Bun `1.4.x` 与 submodule；网络步骤失败自动重试一次，仍失败则带原因退出且不启动任何进程。端口 `3080` 已被占用时启动前直接失败——DSH 会静默改用其他端口并导致 trusted origin 与登录校验错位。Profile `link:` 每次启动重验，仓库迁移目录后自动修复指向。React Surface 与 AG-UI 按 commit stamp 跳过重复构建，ClinMesh DSH artifact 每次启动重建。首次新装 Profile 后需在隔离宿主设置页配置模型 Provider。数据源检查行为与 `pnpm dev:lan` 一致。
 
-Windows 与验收重建使用以下手工路径。Bash 示例建立独立工具、连接器和数据目录，不接管日常 DSH。`CLINMESH_DSH_SANDBOX` 应使用仓库外尚未使用的绝对目录：
+Windows 的 npm/pnpm 启动由 `cross-spawn` 解析命令入口并转义参数；插件目录使用 junction，不要求管理员权限或开发者模式。目录迁移后的失效链接也会重建。开发服务由 Windows Job Object 持有，退出时清理本次启动的完整子树；POSIX 使用进程组。PowerShell 必须允许本地 `Add-Type` 调用 Win32 Job API；受限语言模式不受支持。命令或工作目录不存在时直接提示检查安装、PATH 和路径，不按网络故障重试。
+
+验收重建也可使用以下手工路径。Bash 示例建立独立工具、连接器和数据目录，不接管日常 DSH。`CLINMESH_DSH_SANDBOX` 应使用仓库外尚未使用的绝对目录：
 
 ```sh
 export CLINMESH_DSH_SANDBOX="$(cd .. && pwd)/clinmesh-dsh-runtime"
@@ -257,7 +259,7 @@ node "$DSHVM_CLI" exec web --port 3080 --no-open
 
 重新启动 DSH Web 后，左侧栏顶端显示 ClinMesh Logo 和名称；应用尚未打开或已经关闭时仍保留该 Profile 品牌。新会话中央同样显示 ClinMesh Logo，中文标题为“医疗智能体平台”，英文为“Medical AI Agent Platform”。禁用或卸载 ClinMesh 插件后恢复宿主的品牌显示。从侧栏底部“医院工作台”菜单打开 ClinMesh；登录后岗位导航直接显示在宿主侧栏的新会话与工作区之间，底部菜单保留设置与主题入口，其他已注册 Surface 位于“其他应用”分组。ClinMesh 在 DSH 内不显示自己的左侧栏，默认使用 `workspace` 左右分屏并保留原生会话；现有页头的“全屏 ClinMesh”与“返回 DSH 分屏”按钮可往返切换，无需刷新。页头右侧的“收起会话 / 展开会话”可释放或恢复右侧空间，原生文件栏随会话隐藏并保留开合、文件选择和草稿；左侧医院导航保持可用。全屏时先返回分屏再使用宿主导航，返回后保留会话收起状态。窗口缩小或侧栏开关不自动全屏，应用内部按容器宽度适配。页面导航使用 Memory Router，不修改 DSH document pathname。独立 Web 保留原侧栏。当前模式只信任安装到同一 Web Profile 的插件，并只允许合成数据。
 
-经 Turborepo 的根 `pnpm dev:server` 不转发未声明的 `CLINMESH_AI_*` 变量；在 worktree 或需要显式加载 `.env` 的场景使用 `pnpm --filter @clinmesh/server dev` 直接启动，否则 Patient Persona 和 Investigation provider 会被视为未配置。`pnpm dev:dsh` 的 Server 进程即按后者直启，不受该限制。直启时若环境里已存在 `.env` 加载出的原始相对路径（`CLINMESH_DATABASE_PATH`、`CLINMESH_REFERENCE_DATABASE_PATH`、`CLINMESH_WEB_ROOT`），必须先按 `.env` 所在目录绝对化：Server 会对 `.env` 中的相对路径做同样的绝对化，但进程环境变量的原始相对值会覆盖该结果并按进程工作目录解析。
+根 `pnpm dev:server` 直连 pnpm 运行 `@clinmesh/server` 的 `dev` 脚本，不经过 Turborepo：Turborepo 在 Windows 上包装 `tsx watch` 的持久任务时会把进程树冻结在启动阶段（服务永不监听），且 strict env 会过滤未声明的 `CLINMESH_AI_*` 变量——漏配时 Patient Persona 和 Investigation provider 会被视为未配置。`pnpm dev:dsh` 的 Server 进程同样直启。手动直启时若环境里已存在 `.env` 加载出的原始相对路径（`CLINMESH_DATABASE_PATH`、`CLINMESH_REFERENCE_DATABASE_PATH`、`CLINMESH_WEB_ROOT`），必须先按 `.env` 所在目录绝对化：Server 会对 `.env` 中的相对路径做同样的绝对化，但进程环境变量的原始相对值会覆盖该结果并按进程工作目录解析。
 
 ### DSH 持续升级
 

@@ -198,12 +198,31 @@ describe('ClinMesh React Surface definition', () => {
     const occupants = new Map<string, ComponentType<{ size: number }>>()
     const disposers: Array<() => void> = []
     let registered = false
+    // 病例上下文面板按活动门控动态注册;stub 初始非激活,apply 时不得占用 rightbar
+    const surfacesListeners = new Set<() => void>()
+    let surfacesSnapshot: { activeId: string | null; surfaces: unknown[] } = { activeId: null, surfaces: [] }
     const ctx = {
-      get: () => ({
-        getLocale: () => ({ active: 'zh-CN' }),
-        subscribe: () => () => {},
-        list: { getSnapshot: () => ({ current: undefined }), subscribe: () => () => {} },
-      }),
+      get: (name: string) => {
+        if (name === 'reactSurfaces') {
+          return {
+            getSnapshot: () => surfacesSnapshot,
+            subscribe: (listener: () => void) => {
+              surfacesListeners.add(listener)
+              return () => {
+                surfacesListeners.delete(listener)
+              }
+            },
+          }
+        }
+        if (name === 'sidebarRightTabs') {
+          return { register: () => () => {} }
+        }
+        return {
+          getLocale: () => ({ active: 'zh-CN' }),
+          subscribe: () => () => {},
+          list: { getSnapshot: () => ({ current: undefined }), subscribe: () => () => {} },
+        }
+      },
       reactSurfaces: {
         register: () => {
           registered = true
@@ -233,6 +252,8 @@ describe('ClinMesh React Surface definition', () => {
       'conversation.hero.brand.mark',
       'settings.general.item',
       'sidebar.footer.action',
+      'sidebar.right.pane.tab',
+      'sidebar.right.pane.tab.title',
     ])
     const Mark = occupants.get('sidebar.brand.mark')!
     const Name = occupants.get('sidebar.brand.name')!

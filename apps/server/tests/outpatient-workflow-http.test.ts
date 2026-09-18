@@ -1371,6 +1371,57 @@ describe('outpatient workflow HTTP contract', () => {
   const runtimes: Array<Awaited<ReturnType<typeof createClinMeshRuntime>>> = []
   const temporaryDirectories: string[] = []
 
+  it('filters doctor queues before counting and pagination and moves a started case to active', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-doctor-queue-filter-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createTriagedCase(runtime, password)
+    const readQueue = async (query: string) => doctorQueueSchema.parse(await (
+      await runtime.app.request(`/api/his/v1/doctor/queue?${query}`, {
+        headers: { cookie: testCase.doctorCookie },
+      })
+    ).json())
+    expect(await readQueue('view=active&pageSize=1')).toMatchObject({ total: 0, items: [] })
+    expect(await readQueue('view=waiting&pageSize=1')).toMatchObject({
+      total: 1, items: [{ caseId: testCase.caseId, status: 'awaiting-doctor' }],
+    })
+    expect(await readQueue('view=waiting&pageSize=1&page=2')).toMatchObject({ total: 1, items: [] })
+    const started = await runtime.app.request(
+      `/api/his/v1/encounters/${testCase.registration.encounterId}/actions/start-first-visit`,
+      {
+        method: 'POST', headers: commandHeaders(testCase.doctorCookie),
+        body: JSON.stringify({ expectedVersions: {
+          [`Encounter/${testCase.registration.encounterId}`]: '2',
+          [`Task/${testCase.triage.doctorTaskId}`]: '1',
+        }, input: {} }),
+      },
+    )
+    expect(started.status).toBe(200)
+    const waitingQueue = await readQueue('view=waiting')
+    expect(waitingQueue).toMatchObject({ total: 0, items: [] })
+    const activeQueue = await readQueue('view=active')
+    expect(activeQueue).toMatchObject({
+      total: 1, items: [{ caseId: testCase.caseId, status: 'first-visit' }],
+    })
+    const defaultQueue = await readQueue('')
+    expect(defaultQueue.total).toBe(waitingQueue.total + activeQueue.total)
+    expect(defaultQueue.items.map(item => item.caseId).sort())
+      .toEqual([...waitingQueue.items, ...activeQueue.items].map(item => item.caseId).sort())
+    expect((await runtime.app.request('/api/his/v1/doctor/queue?view=unknown', {
+      headers: { cookie: testCase.doctorCookie },
+    })).status).toBe(400)
+  })
+
   afterEach(async () => {
     await Promise.all(runtimes.splice(0).map(runtime => runtime.close()))
     await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true })))

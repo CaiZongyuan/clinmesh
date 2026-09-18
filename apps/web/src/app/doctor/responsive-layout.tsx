@@ -22,11 +22,11 @@ export function DoctorWorkspaceLayout({
   queueLabel: string
   detailLabel: string
 }) {
-  const { ref, compact } = useContainerCompact(1000)
+  const { ref, compact } = useContainerCompact(720)
   const [showQueue, setShowQueue] = useState(selectedCaseId === undefined)
   useEffect(() => setShowQueue(selectedCaseId === undefined), [selectedCaseId])
   return (
-    <div ref={ref} className="min-w-0 border bg-background">
+    <div ref={ref} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
       {compact ? (
         <div className="flex gap-2 border-b p-2" role="group" aria-label={queueLabel}>
           <Button
@@ -48,13 +48,13 @@ export function DoctorWorkspaceLayout({
         </div>
       ) : null}
       <div
-        className="grid min-w-0"
-        style={{ gridTemplateColumns: compact ? 'minmax(0, 1fr)' : '280px minmax(0, 1fr)' }}
+        className="grid min-h-0 min-w-0 flex-1"
+        style={{ gridTemplateColumns: compact ? 'minmax(0, 1fr)' : '240px minmax(0, 1fr)' }}
       >
-        <div hidden={compact && !showQueue} className="min-w-0">
+        <div hidden={compact && !showQueue} className="min-h-0 min-w-0 overflow-y-auto border-r">
           {queue(() => setShowQueue(false))}
         </div>
-        <div hidden={compact && showQueue} className="min-w-0">
+        <div hidden={compact && showQueue} className="min-h-0 min-w-0 overflow-y-auto">
           {children}
         </div>
       </div>
@@ -65,21 +65,25 @@ export function DoctorWorkspaceLayout({
 export function DoctorCaseLayout({
   children,
   rail,
+  railPlacement = 'inline',
   contextLabel,
 }: {
   children: ReactNode
   rail: (expanded: boolean, onExpandedChange: (expanded: boolean) => void) => ReactNode
+  /** host:右栏由 DSH 宿主右列承载,内容区恒单列且禁用 Sheet 降级。 */
+  railPlacement?: 'inline' | 'host'
   contextLabel: string
 }) {
   const { ref, compact } = useContainerCompact(960)
   const [expanded, setExpanded] = useState(true)
   const [sheetOpen, setSheetOpen] = useState(false)
+  const hosted = railPlacement === 'host'
   useEffect(() => {
     if (!compact) setSheetOpen(false)
   }, [compact])
   return (
-    <div ref={ref} className="min-w-0 border bg-background">
-      {compact ? (
+    <div ref={ref} className="flex min-h-full min-w-0 flex-1 flex-col bg-background">
+      {compact && !hosted ? (
         <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
           <div className="flex justify-end border-b p-1">
             <SheetTrigger render={<Button size="sm" variant="ghost" />}>
@@ -95,15 +99,15 @@ export function DoctorCaseLayout({
         </Sheet>
       ) : null}
       <div
-        className="grid min-w-0"
+        className="grid min-w-0 flex-1"
         style={{
-          gridTemplateColumns: compact
+          gridTemplateColumns: compact || hosted
             ? 'minmax(0, 1fr)'
-            : `minmax(0, 1fr) ${expanded ? '300px' : '44px'}`,
+            : `minmax(0, 1fr) ${expanded ? '264px' : '44px'}`,
         }}
       >
-        <div className="@container/case-content min-w-0">{children}</div>
-        {compact ? null : rail(expanded, setExpanded)}
+        <div className="@container/case-content flex min-w-0 flex-col">{children}</div>
+        {compact || hosted ? null : rail(expanded, setExpanded)}
       </div>
     </div>
   )

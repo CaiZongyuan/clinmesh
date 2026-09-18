@@ -1,10 +1,11 @@
-import type { DoctorQueueItem } from '@clinmesh/contracts/his'
+import type { DoctorQueueItem, DoctorQueueView } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { CircleAlertIcon, StethoscopeIcon } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { PaginationControls } from '../pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
@@ -53,12 +54,12 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
         type="button"
         variant="ghost"
       >
-        <span className="flex min-w-0 items-center gap-3">
+        <span className="flex min-w-0 flex-1 items-center gap-2">
           <PatientAvatar className="size-9" label={`${item.patient.name} ${messages.patient}`} name={item.patient.name} />
           <span className="min-w-0">
-            <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate font-medium">{item.patient.name}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">
+            <span className="flex min-w-0 flex-col gap-1">
+              <span className="truncate font-medium" title={item.patient.name}>{item.patient.name}</span>
+              <span className="text-xs text-muted-foreground">
                 {messages[`gender_${item.patient.gender}` as 'gender_male']} · {age === undefined ? '-' : messages.patientAge.replace('{age}', String(age))}
               </span>
             </span>
@@ -71,7 +72,19 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
   )
 }
 
-export function DoctorQueueModule({ activeCaseId, messages, onQueuePageChange, onSelectCase, queueData, queueError, queuePending }: {
+export function DoctorQueueModule({
+  navigation,
+  queueView,
+  activeCaseId,
+  messages,
+  onQueuePageChange,
+  onSelectCase,
+  queueData,
+  queueError,
+  queuePending,
+}: {
+  navigation: ReactNode
+  queueView: DoctorQueueView
   activeCaseId: string | undefined
   messages: WorkspaceMessages
   onQueuePageChange: (page: number) => void
@@ -81,12 +94,16 @@ export function DoctorQueueModule({ activeCaseId, messages, onQueuePageChange, o
   queuePending: boolean
 }): React.JSX.Element {
   return (
-    <aside aria-label={messages.consultationQueue} className="flex h-full min-h-0 min-w-0 flex-col gap-3 border-b bg-background p-3 xl:border-r xl:border-b-0">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-base font-semibold">{messages.waitingPatients}</h2>
-        <Badge variant="secondary">{queueData?.total ?? 0}</Badge>
+    <aside aria-label={messages.consultationQueue} className="flex h-full min-h-0 min-w-0 flex-col bg-background">
+      <div className="shrink-0 border-b p-2">{navigation}</div>
+      <div className="shrink-0 border-b px-3 pt-3">
+        <div className="flex items-center justify-between gap-2 pb-2">
+          <h2 className="text-sm font-semibold">{queueView === 'active' ? messages.doctorActiveQueue : messages.doctorWaitingQueue}</h2>
+          <Badge variant="secondary">{queueData?.total ?? 0}</Badge>
+        </div>
       </div>
-          <section aria-labelledby="consultation-queue-heading" className="flex min-w-0 flex-col gap-3">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
+        <section aria-labelledby="consultation-queue-heading" className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
             <h3 className="sr-only" id="consultation-queue-heading">{messages.consultationQueue}</h3>
             {queuePending ? <Skeleton className="h-44 w-full" /> : queueError !== null ? (
               <ErrorAlert error={queueError} fallbackTitle={messages.consultationUnavailable} messages={messages} />
@@ -94,13 +111,13 @@ export function DoctorQueueModule({ activeCaseId, messages, onQueuePageChange, o
               <Empty className="min-h-44 border">
                 <EmptyHeader>
                   <EmptyMedia variant="icon"><StethoscopeIcon aria-hidden="true" /></EmptyMedia>
-                  <EmptyTitle>{messages.noConsultationCases}</EmptyTitle>
+                  <EmptyTitle>{queueView === 'active' ? messages.doctorActiveQueueEmpty : messages.noConsultationCases}</EmptyTitle>
                   <EmptyDescription>{messages.noConsultationCasesDescription}</EmptyDescription>
                 </EmptyHeader>
               </Empty>
             ) : (
               <>
-                <ul className="flex max-h-[calc(100svh-19rem)] flex-col gap-2 overflow-y-auto pr-1">
+                <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
                   {queueData.items.map(item => (
                     <DoctorCaseRow
                       item={item}
@@ -121,6 +138,7 @@ export function DoctorQueueModule({ activeCaseId, messages, onQueuePageChange, o
               </>
             )}
           </section>
+      </div>
     </aside>
   )
 }

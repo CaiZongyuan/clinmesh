@@ -11,10 +11,14 @@ Start from the queue and current case DTO; it owns the responsible doctor, curre
 
 ```bash
 clinmesh doctor queue list
+clinmesh doctor queue list --view waiting
+clinmesh doctor queue list --view active
 clinmesh doctor case get --case-id <case-id>
 clinmesh encounter consultation ask --input @question.json --idempotency-key <key>
 clinmesh encounter consultation retry-reply --input @reply-retry.json --idempotency-key <key>
 ```
+
+`--view waiting` selects cases awaiting first visit or revisit. `--view active` selects first visits, revisit drafts, and cases awaiting reports. Omit `--view` to list both groups. Filtering precedes pagination and the returned total belongs to the selected group. Completed Encounters use `doctor completed-cases list`.
 
 ## Clinical conclusions
 

@@ -17,7 +17,6 @@ import { useQuery } from '@tanstack/react-query'
 import {
   CircleAlertIcon,
   Clock3Icon,
-  EyeIcon,
   FileClockIcon,
   FilePenLineIcon,
   FilterXIcon,
@@ -26,7 +25,8 @@ import {
   RotateCcwIcon,
   SearchIcon,
 } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { useState, type FormEvent, type ReactNode } from 'react'
+import { DoctorWorkspaceLayout } from './doctor/responsive-layout.tsx'
 import {
   getClinicalCatalog,
   getDoctorCompletedCase,
@@ -43,6 +43,7 @@ import {
 import { WorkspaceSelect } from './workspace-select.tsx'
 
 interface DoctorCompletedCaseLibraryProps {
+  navigation: ReactNode
   locale: WorkspaceLocale
   onOpenCorrection: (caseId: string, target: CompletedCaseCorrectionTarget) => void
   session: SessionContext
@@ -140,6 +141,7 @@ function formatDateTime(value: string, locale: WorkspaceLocale): string {
 }
 
 export function DoctorCompletedCaseLibrary({
+  navigation,
   locale,
   onOpenCorrection,
   session,
@@ -191,12 +193,13 @@ export function DoctorCompletedCaseLibrary({
   }
 
   return (
-    <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(28rem,0.9fr)_minmax(34rem,1.1fr)]">
-      <div className="flex min-w-0 flex-col gap-5 border-b pb-6 xl:border-r xl:border-b-0 xl:pr-6">
+    <DoctorWorkspaceLayout selectedCaseId={selectedCaseId} queueLabel={messages.consultationQueue} detailLabel={messages.completedCaseDetail} queue={showDetail => (
+      <aside aria-label={messages.consultationQueue} className="flex min-w-0 flex-col gap-3 p-2">
+        {navigation}
         <form aria-label={messages.completedCaseFilters} onSubmit={applyFilters}>
           <FieldSet>
             <FieldLegend>{messages.completedCaseFilters}</FieldLegend>
-            <FieldGroup className="grid gap-3 sm:grid-cols-2">
+            <FieldGroup className="gap-3">
               <Field>
                 <FieldLabel htmlFor="completed-case-patient-id">{messages.completedPatientId}</FieldLabel>
                 <Input
@@ -292,45 +295,25 @@ export function DoctorCompletedCaseLibrary({
               </EmptyHeader>
             </Empty>
           ) : (
-            <div className="min-w-0 overflow-x-auto">
-              <Table className="min-w-[44rem]">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{messages.patient}</TableHead>
-                    <TableHead>{messages.syntheticIdentifier}</TableHead>
-                    <TableHead>{messages.completedAt}</TableHead>
-                    <TableHead>{messages.primaryDiagnosis}</TableHead>
-                    <TableHead><span className="sr-only">{messages.viewCompletedCase}</span></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {cases.data.items.map(item => (
-                    <TableRow data-state={selectedCaseId === item.caseId ? 'selected' : undefined} key={item.caseId}>
-                      <TableCell className="max-w-64 whitespace-normal font-medium break-words">
-                        {item.patient.name}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">{item.patient.identifier}</TableCell>
-                      <TableCell>{formatDateTime(item.completedAt, locale)}</TableCell>
-                      <TableCell className="max-w-56 whitespace-normal break-words">
-                        {item.primaryDiagnosis?.display ?? '—'}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          aria-label={`${messages.viewCompletedCase} ${item.patient.name}`}
-                          onClick={() => setSelectedCaseId(item.caseId)}
-                          size="icon-sm"
-                          title={messages.viewCompletedCase}
-                          type="button"
-                          variant="ghost"
-                        >
-                          <EyeIcon aria-hidden="true" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            <ul className="flex flex-col gap-2">
+              {cases.data.items.map(item => (
+                <li key={item.caseId}>
+                  <Button
+                    aria-label={messages.viewCompletedCase + ' ' + item.patient.name}
+                    aria-pressed={selectedCaseId === item.caseId}
+                    className="h-auto w-full flex-col items-start gap-1 whitespace-normal px-3 py-2 text-left"
+                    onClick={() => { setSelectedCaseId(item.caseId); showDetail() }}
+                    type="button"
+                    variant={selectedCaseId === item.caseId ? 'secondary' : 'ghost'}
+                  >
+                    <span className="break-words">{item.patient.name}</span>
+                    <span className="text-xs text-muted-foreground">{item.patient.identifier}</span>
+                    <span className="text-xs text-muted-foreground">{formatDateTime(item.completedAt, locale)}</span>
+                    <span className="text-xs text-muted-foreground">{item.primaryDiagnosis?.display ?? '-'}</span>
+                  </Button>
+                </li>
+              ))}
+            </ul>
           )}
           {cases.data === undefined || cases.data.total === 0 ? null : (
             <PaginationControls
@@ -345,9 +328,9 @@ export function DoctorCompletedCaseLibrary({
             />
           )}
         </section>
-      </div>
-
-      <section aria-labelledby="completed-case-detail-heading" className="flex min-w-0 flex-col gap-5">
+      </aside>
+      )}>
+      <section aria-labelledby="completed-case-detail-heading" className="flex min-h-full min-w-0 flex-col gap-5 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-semibold" id="completed-case-detail-heading">
             {messages.completedCaseDetail}
@@ -380,7 +363,7 @@ export function DoctorCompletedCaseLibrary({
           />
         )}
       </section>
-    </div>
+    </DoctorWorkspaceLayout>
   )
 }
 
