@@ -14,7 +14,7 @@
     "dev:dsh": "tsx scripts/dev-dsh.ts",
     "dsh:setup": "tsx scripts/dev-dsh.ts setup",
     "dev:web": "turbo run dev --filter=@clinmesh/web",
-    "dev:server": "turbo run dev --filter=@clinmesh/server",
+    "dev:server": "pnpm --filter @clinmesh/server dev",
     "dev:desktop": "turbo run dev --filter=@clinmesh/desktop",
     "dev:mobile": "pnpm --filter @clinmesh/mobile dev",
     "docs:dev": "pnpm --filter @clinmesh/docs dev",
