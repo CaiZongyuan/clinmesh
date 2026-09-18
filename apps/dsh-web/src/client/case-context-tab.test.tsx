@@ -52,7 +52,7 @@ interface HarnessOptions {
   activeId?: string | null
   colorScheme?: 'light' | 'dark'
   hostLocale?: 'zh-CN' | 'en-US'
-  openTabFailure?: boolean
+  seatMounted?: boolean
 }
 
 function createHarness(
@@ -61,15 +61,19 @@ function createHarness(
     activeId = null,
     colorScheme = 'light',
     hostLocale = 'zh-CN',
-    openTabFailure = false,
+    seatMounted = true,
   }: HarnessOptions = {},
 ) {
+  let mounted = seatMounted
   const openTab = vi.fn(() => {
-    if (openTabFailure) throw new Error('no seat mounted')
+    // 宿主合同:座位未挂载时 openTab 抛错(no session surface is mounted)
+    if (!mounted) throw new Error('sidebarRight: no session surface is mounted')
   })
   const surfacesListeners = new Set<() => void>()
   // useSyncExternalStore 要求快照身份稳定:仅在 setActive 时更换
   let surfacesSnapshot: { activeId: string | null; surfaces: unknown[] } = { activeId, surfaces: [] }
+  const sessionListeners = new Set<() => void>()
+  let sessionId: string | undefined = 'session-1'
   const localeListeners = new Set<() => void>()
   let hostLanguage: 'zh-CN' | 'en-US' = hostLocale
   let definition: SidebarRightTabDefinition | undefined
@@ -86,6 +90,19 @@ function createHarness(
             }
           },
           getSnapshot: () => surfacesSnapshot,
+        }
+      }
+      if (name === 'sessions') {
+        return {
+          list: {
+            subscribe(listener: () => void) {
+              sessionListeners.add(listener)
+              return () => {
+                sessionListeners.delete(listener)
+              }
+            },
+            getSnapshot: () => ({ current: sessionId }),
+          },
         }
       }
       if (name === 'sidebarRightTabs') {
@@ -138,6 +155,13 @@ function createHarness(
       surfacesSnapshot = { activeId: next, surfaces: [] }
       for (const listener of surfacesListeners) listener()
     },
+    setSession(next: string | undefined) {
+      sessionId = next
+      for (const listener of sessionListeners) listener()
+    },
+    setSeatMounted(next: boolean) {
+      mounted = next
+    },
     setHostLocale(next: 'zh-CN' | 'en-US') {
       hostLanguage = next
       for (const listener of localeListeners) listener()
@@ -171,55 +195,141 @@ it('registers a page-type tab definition with a localized guide entry', () => {
   harness.dispose()
 })
 
-it('opens the tab only on the rising edge of active surface with a snapshot and never closes it', () => {
-  const port = createCaseContextPort()
-  const harness = createHarness(port, { activeId: null })
-  // 非激活:不打开
-  expect(harness.openTab).not.toHaveBeenCalled()
+// openTab 尝试统一延迟 ~200ms 执行(见实现注释):测试用假时钟推进
+const RETRY_DELAY_MS = 200
 
-  // 激活但无快照:仍不打开
-  harness.setActive('clinmesh.his')
-  expect(harness.openTab).not.toHaveBeenCalled()
+async function flushAttempt(): Promise<void> {
+  // 推进一个延迟周期(250 > 200,且 < 2×200,每次恰好触发一次尝试)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(RETRY_DELAY_MS + 50)
+  })
+}
 
-  // 快照到达即打开,且以页面 kind 命名
-  const disposeState = port.register(caseState())
-  expect(harness.openTab).toHaveBeenCalledTimes(1)
-  expect(harness.openTab).toHaveBeenCalledWith('clinmesh.case-context')
+it('opens the tab only on the rising edge of active surface with a snapshot and never closes it', async () => {
+  vi.useFakeTimers()
+  try {
+    const port = createCaseContextPort()
+    const harness = createHarness(port, { activeId: null })
+    // 非激活:不打开
+    await flushAttempt()
+    expect(harness.openTab).not.toHaveBeenCalled()
 
-  // 快照更新(切病例)不重复打开:openTab 幂等,无需再请求
-  const disposeSecond = port.register(caseState({ caseId: 'case-002' }))
-  expect(harness.openTab).toHaveBeenCalledTimes(1)
+    // 激活但无快照:仍不打开
+    harness.setActive('clinmesh.his')
+    await flushAttempt()
+    expect(harness.openTab).not.toHaveBeenCalled()
 
-  // 快照撤销(切完诊/切角色)不关闭标签;重新发布即再次请求(幂等聚焦)
-  disposeSecond()
-  expect(harness.openTab).toHaveBeenCalledTimes(1)
-  port.register(caseState())
-  expect(harness.openTab).toHaveBeenCalledTimes(2)
+    // 快照到达即打开(延迟尝试),且以页面 kind 命名
+    const disposeState = port.register(caseState())
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(1)
+    expect(harness.openTab).toHaveBeenCalledWith('clinmesh.case-context')
 
-  // surface 切走再回来:下降沿不做事,上升沿重开
-  harness.setActive(null)
-  expect(harness.openTab).toHaveBeenCalledTimes(2)
-  harness.setActive('clinmesh.his')
-  expect(harness.openTab).toHaveBeenCalledTimes(3)
-  disposeState()
-  harness.dispose()
+    // 快照更新(切病例)不重复打开:openTab 幂等,无需再请求
+    const disposeSecond = port.register(caseState({ caseId: 'case-002' }))
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(1)
+
+    // 快照撤销(切完诊/切角色)不关闭标签;重新发布即再次请求(幂等聚焦)
+    disposeSecond()
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(1)
+    port.register(caseState())
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(2)
+
+    // surface 切走再回来:下降沿不做事,上升沿重开
+    harness.setActive(null)
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(2)
+    harness.setActive('clinmesh.his')
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(3)
+    disposeState()
+    harness.dispose()
+  } finally {
+    vi.useRealTimers()
+  }
 })
 
-it('retries opening on the next event when the right sidebar seat is not mounted yet', () => {
-  const port = createCaseContextPort()
-  const harness = createHarness(port, { activeId: 'clinmesh.his', openTabFailure: true })
+it('retries opening on a short timer until the seat mounts, logging once per failure streak', async () => {
+  vi.useFakeTimers()
   const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
   try {
+    const port = createCaseContextPort()
+    const harness = createHarness(port, { activeId: 'clinmesh.his', seatMounted: false })
     const disposeState = port.register(caseState())
+    await flushAttempt()
     expect(harness.openTab).toHaveBeenCalledTimes(1)
-    // 失败后保持未请求:下一次快照事件自动重试而非永久放弃
-    const disposeSecond = port.register(caseState({ caseId: 'case-002' }))
+    // 座位仍未挂载:不依赖下一次事件,定时器自愈重试;失败段只记录一次错误
+    await flushAttempt()
     expect(harness.openTab).toHaveBeenCalledTimes(2)
-    disposeSecond()
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    // 座位挂载后下一次尝试成功
+    harness.setSeatMounted(true)
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(3)
+    expect(harness.openTab).toHaveBeenCalledWith('clinmesh.case-context')
+    // 成功后停止重试
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(3)
     disposeState()
     harness.dispose()
   } finally {
     errorSpy.mockRestore()
+    vi.useRealTimers()
+  }
+})
+
+it('reopens the tab for a new DSH session and resets the request after leaving the doctor page', async () => {
+  vi.useFakeTimers()
+  try {
+    const port = createCaseContextPort()
+    const harness = createHarness(port, { activeId: 'clinmesh.his' })
+    const disposeState = port.register(caseState())
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(1)
+
+    // 右栏停靠面按会话隔离:切换/新建会话后原标签不在新会话布局里,须重新请求
+    harness.setSession('session-2')
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(2)
+    // 同一会话内的重复事件不重开
+    harness.setSession('session-2')
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(2)
+
+    // 离开医生页重置记账:回到医生页即使同会话也重新打开(幂等聚焦)
+    harness.setActive(null)
+    harness.setActive('clinmesh.his')
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(3)
+    disposeState()
+    harness.dispose()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('skips opening while no DSH session is current and opens once a session appears', async () => {
+  vi.useFakeTimers()
+  try {
+    const port = createCaseContextPort()
+    const harness = createHarness(port, { activeId: 'clinmesh.his' })
+    harness.setSession(undefined)
+    const disposeState = port.register(caseState())
+    await flushAttempt()
+    // hero/新会话未发首条消息:无会话可绑定,不请求也不报错
+    expect(harness.openTab).not.toHaveBeenCalled()
+    // 会话激活(发出首条消息或选中会话)即打开
+    harness.setSession('session-9')
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(1)
+    expect(harness.openTab).toHaveBeenCalledWith('clinmesh.case-context')
+    disposeState()
+    harness.dispose()
+  } finally {
+    vi.useRealTimers()
   }
 })
 

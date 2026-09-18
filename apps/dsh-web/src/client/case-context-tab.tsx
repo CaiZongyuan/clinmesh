@@ -67,6 +67,13 @@ interface ClientThemeContext {
   on(event: 'theme/change', listener: () => void): () => void
 }
 
+interface ClientSessionsPort {
+  list: {
+    getSnapshot(): { current: unknown }
+    subscribe(listener: () => void): () => void
+  }
+}
+
 export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort): () => void {
   const surfaces = ctx.get('reactSurfaces') as unknown as ReactSurfaceRegistry
   const sidebarRightTabs = ctx.get('sidebarRightTabs') as unknown as {
@@ -74,6 +81,7 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
   }
   const theme = ctx.get('theme') as unknown as ClientThemePort
   const locale = ctx.get('locale') as unknown as ClientLocalePort
+  const sessions = ctx.get('sessions') as unknown as ClientSessionsPort
   const subscribeTheme = (listener: () => void): (() => void) => (
     ctx as unknown as ClientThemeContext
   ).on('theme/change', listener)
@@ -157,33 +165,84 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
       CaseContextTabTitle,
     ))
 
-  // 自动打开只在上升沿(surface 激活且存在病例快照):openTab 对页面型标签幂等,
-  // 已开即聚焦不新开。下降沿不关标签——标签页语义下由用户手动关闭,无快照时
-  // 标签体显示空态而非消失。
-  let openRequested = false
-  const reevaluate = (): void => {
-    const should = surfaces.getSnapshot().activeId === 'clinmesh.his' && port.getSnapshot() !== null
-    if (should === openRequested) return
-    if (!should) {
-      openRequested = false
+  // 自动打开按"surface 激活 + 存在病例快照 + 当前会话"门控,以会话 id 记账:
+  // 右栏停靠面按会话隔离(每会话一份布局,切换会话后原标签不在新会话布局里),
+  // 会话变化即对新的当前会话重新请求。下降沿(含离开医生页)重置记账。
+  //
+  // 关键时序:座位绑定跟随会话 surface 的 React 挂载效果,而 sessions.list 等
+  // store 事件先于提交触发——同步 openTab 要么落进旧会话布局(成功但不可见),
+  // 要么因座位未挂载抛错且不再有事件。因此触发事件只比对记账,真正的 openTab
+  // 一律推迟到事件循环之后执行;失败(座位未挂载)以短定时器自愈重试直到成功
+  // 或门控失效,不依赖下一次事件。openTab 对页面型标签幂等(已开即聚焦),
+  // 并把右栏展开纳入同一步。
+  const RETRY_DELAY_MS = 200
+  let requestedSession: string | null = null
+  let retryTimer: ReturnType<typeof setTimeout> | null = null
+  let loggedFailure = false
+  const gateOpen = (): boolean =>
+    surfaces.getSnapshot().activeId === 'clinmesh.his' && port.getSnapshot() !== null
+  const currentSessionId = (): string | undefined => {
+    const current = sessions.list.getSnapshot().current
+    return current === undefined ? undefined : String(current)
+  }
+  const clearRetry = (): void => {
+    if (retryTimer !== null) {
+      clearTimeout(retryTimer)
+      retryTimer = null
+    }
+  }
+  const attempt = (): void => {
+    retryTimer = null
+    if (!gateOpen()) {
+      requestedSession = null
       return
     }
+    const sessionId = currentSessionId()
+    if (sessionId === undefined || requestedSession === sessionId) return
     try {
       const sidebarRight = ctx.get('sidebarRight') as unknown as { openTab(kind: string): void }
       sidebarRight.openTab(CASE_CONTEXT_TAB_KIND)
-      openRequested = true
+      requestedSession = sessionId
+      loggedFailure = false
     } catch (error) {
-      // 右栏座位尚未挂载等瞬时失败:保持未请求,下一次快照事件重试
-      console.error('[clinmesh-dsh-web] open case context tab failed', error)
+      // 座位挂载没有公开事件(hero 会话首次激活、慢机器上的座位重挂):短延迟
+      // 重试直到成功或门控失效;每个失败段只记录一次错误避免刷屏。
+      if (!loggedFailure) {
+        loggedFailure = true
+        console.error('[clinmesh-dsh-web] open case context tab failed, retrying', error)
+      }
+      retryTimer = setTimeout(attempt, RETRY_DELAY_MS)
+    }
+  }
+  const reevaluate = (): void => {
+    if (!gateOpen()) {
+      requestedSession = null
+      loggedFailure = false
+      clearRetry()
+      return
+    }
+    const sessionId = currentSessionId()
+    if (sessionId === undefined) {
+      // hero/新会话未发首条消息:无会话可绑定,清记账等会话激活事件
+      requestedSession = null
+      loggedFailure = false
+      clearRetry()
+      return
+    }
+    if (requestedSession !== sessionId && retryTimer === null) {
+      retryTimer = setTimeout(attempt, RETRY_DELAY_MS)
     }
   }
   const disposeSurfaces = surfaces.subscribe(reevaluate)
   const disposePort = port.subscribe(reevaluate)
+  const disposeSessions = sessions.list.subscribe(reevaluate)
   reevaluate()
 
   return () => {
+    clearRetry()
     disposeSurfaces()
     disposePort()
+    disposeSessions()
     disposeTitle()
     disposeBody()
     disposeType()
