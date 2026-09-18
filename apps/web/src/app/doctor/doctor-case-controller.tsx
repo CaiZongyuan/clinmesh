@@ -2692,6 +2692,7 @@ function CaseDetail({
               })}
           detail={detail}
           messages={messages}
+          {...(hostRail ? { onShowContext: () => { runtime?.surfaceCaseContext?.requestOpen?.() } } : {})}
           statusText={doctorCaseStatusLabel(detail.status, messages)}
         />
 

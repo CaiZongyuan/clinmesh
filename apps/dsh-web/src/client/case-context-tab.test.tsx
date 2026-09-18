@@ -333,6 +333,52 @@ it('skips opening while no DSH session is current and opens once a session appea
   }
 })
 
+it('requestOpen forces an open even for the booked session and stops after dispose', async () => {
+  vi.useFakeTimers()
+  try {
+    const port = createCaseContextPort()
+    const harness = createHarness(port, { activeId: 'clinmesh.his' })
+    const disposeState = port.register(caseState())
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(1)
+
+    // 用户在 WebApp 内点击"显示患者信息":绕过会话记账,已关可重开、已开即聚焦
+    await act(async () => { port.requestOpen() })
+    expect(harness.openTab).toHaveBeenCalledTimes(2)
+
+    // 注销后反向通道失效:不再调用也不抛错
+    harness.dispose()
+    await act(async () => { port.requestOpen() })
+    expect(harness.openTab).toHaveBeenCalledTimes(2)
+    disposeState()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('retries a manual request on the same short timer until the seat mounts', async () => {
+  vi.useFakeTimers()
+  try {
+    const port = createCaseContextPort()
+    const harness = createHarness(port, { activeId: 'clinmesh.his', seatMounted: false })
+    const disposeState = port.register(caseState())
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(1)
+
+    // 手动请求立即再尝试;座位仍缺失则并入同一条重试链(不产生并发定时器)
+    await act(async () => { port.requestOpen() })
+    expect(harness.openTab).toHaveBeenCalledTimes(2)
+    harness.setSeatMounted(true)
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(3)
+    expect(harness.openTab).toHaveBeenLastCalledWith('clinmesh.case-context')
+    disposeState()
+    harness.dispose()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 async function mountComponent(component: unknown, props: Record<string, unknown> = {}): Promise<{
   host: HTMLElement
   unmount(): Promise<void>

@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { WebSurfaceCaseContextState } from '../web-runtime.tsx'
 import { WebRuntimeProvider, type WebRuntimeValue } from '../web-runtime.tsx'
+import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { DoctorCaseLayout } from './responsive-layout.tsx'
+import { PatientBanner } from './patient-summary.tsx'
 import { useSurfaceCaseContextPort } from './surface-case-context.ts'
 
 afterEach(cleanup)
@@ -118,6 +120,33 @@ describe('useSurfaceCaseContextPort', () => {
     )
     expect(port.register).toHaveBeenCalledTimes(1)
     expect(port.register.mock.results[0]!.value).toHaveBeenCalled()
+  })
+})
+
+describe('PatientBanner show-context entry', () => {
+  it('invokes the host open request from the banner button', () => {
+    const onShowContext = vi.fn()
+    render(
+      <PatientBanner
+        detail={createState().detail}
+        messages={getWorkspaceMessages('zh-CN')}
+        onShowContext={onShowContext}
+        statusText="接诊中"
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: '显示患者信息' }))
+    expect(onShowContext).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders no entry without a host open channel', () => {
+    render(
+      <PatientBanner
+        detail={createState().detail}
+        messages={getWorkspaceMessages('zh-CN')}
+        statusText="接诊中"
+      />,
+    )
+    expect(screen.queryByRole('button', { name: '显示患者信息' })).toBeNull()
   })
 })
 

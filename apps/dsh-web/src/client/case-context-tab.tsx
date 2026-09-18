@@ -13,6 +13,7 @@ import { createStyledRoot } from './styled-root.ts'
 /** WebApp → 宿主右栏标签页的病例上下文通道;生命周期合同与 workspace navigation 一致。 */
 export function createCaseContextPort() {
   let current: WebSurfaceCaseContextState | null = null
+  let openRequester: (() => void) | null = null
   const listeners = new Set<() => void>()
   const emit = () => {
     for (const listener of listeners) listener()
@@ -34,6 +35,14 @@ export function createCaseContextPort() {
         current = null
         emit()
       }
+    },
+    /** 宿主注册"打开/聚焦患者信息标签"的实现;WebApp 经 requestOpen 反向调用。 */
+    setOpenRequester(requester: (() => void) | null) {
+      openRequester = requester
+    },
+    /** WebApp 主动请求展示患者信息(患者横幅按钮);宿主未注册时为空操作。 */
+    requestOpen() {
+      openRequester?.()
     },
   }
 }
@@ -191,14 +200,22 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
       retryTimer = null
     }
   }
-  const attempt = (): void => {
-    retryTimer = null
+  const attempt = (force: boolean): void => {
+    // 入口先清挂起的重试定时器:手动强制尝试可能与自动重试并发,不清会孤儿化
+    // 旧定时器形成双重重试链(定时器自触发时 clearTimeout 为无害空操作)。
+    clearRetry()
     if (!gateOpen()) {
       requestedSession = null
       return
     }
     const sessionId = currentSessionId()
-    if (sessionId === undefined || requestedSession === sessionId) return
+    if (sessionId === undefined) {
+      requestedSession = null
+      return
+    }
+    // force = WebApp 内用户主动请求(患者横幅按钮):绕过会话记账,已开即聚焦,
+    // 关闭后点击即可恢复;自动路径仍按会话 id 去重。
+    if (!force && requestedSession === sessionId) return
     try {
       const sidebarRight = ctx.get('sidebarRight') as unknown as { openTab(kind: string): void }
       sidebarRight.openTab(CASE_CONTEXT_TAB_KIND)
@@ -211,7 +228,7 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
         loggedFailure = true
         console.error('[clinmesh-dsh-web] open case context tab failed, retrying', error)
       }
-      retryTimer = setTimeout(attempt, RETRY_DELAY_MS)
+      retryTimer = setTimeout(() => { attempt(false) }, RETRY_DELAY_MS)
     }
   }
   const reevaluate = (): void => {
@@ -230,15 +247,19 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
       return
     }
     if (requestedSession !== sessionId && retryTimer === null) {
-      retryTimer = setTimeout(attempt, RETRY_DELAY_MS)
+      retryTimer = setTimeout(() => { attempt(false) }, RETRY_DELAY_MS)
     }
   }
+  // WebApp 患者横幅的"显示患者信息"按钮:requestOpen 反向通道,立即强制尝试;
+  // 座位未挂载(如 hero 会话)时沿用重试循环,座位出现后自动补开。
+  port.setOpenRequester(() => { attempt(true) })
   const disposeSurfaces = surfaces.subscribe(reevaluate)
   const disposePort = port.subscribe(reevaluate)
   const disposeSessions = sessions.list.subscribe(reevaluate)
   reevaluate()
 
   return () => {
+    port.setOpenRequester(null)
     clearRetry()
     disposeSurfaces()
     disposePort()
