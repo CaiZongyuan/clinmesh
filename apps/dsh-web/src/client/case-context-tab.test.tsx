@@ -197,6 +197,8 @@ it('registers a page-type tab definition with a localized guide entry', () => {
 
 // openTab 尝试统一延迟 ~200ms 执行(见实现注释):测试用假时钟推进
 const RETRY_DELAY_MS = 200
+// 单个请求段的重试预算(见实现注释):预算耗尽后放弃,新请求段重置
+const RETRY_MAX_ATTEMPTS = 25
 
 async function flushAttempt(): Promise<void> {
   // 推进一个延迟周期(250 > 200,且 < 2×200,每次恰好触发一次尝试)
@@ -273,6 +275,39 @@ it('retries opening on a short timer until the seat mounts, logging once per fai
     // 成功后停止重试
     await flushAttempt()
     expect(harness.openTab).toHaveBeenCalledTimes(3)
+    disposeState()
+    harness.dispose()
+  } finally {
+    errorSpy.mockRestore()
+    vi.useRealTimers()
+  }
+})
+
+it('gives up after the bounded retry budget and resets it on a new request segment or manual request', async () => {
+  vi.useFakeTimers()
+  const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    const port = createCaseContextPort()
+    const harness = createHarness(port, { activeId: 'clinmesh.his', seatMounted: false })
+    const disposeState = port.register(caseState())
+    for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt += 1) await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(RETRY_MAX_ATTEMPTS)
+    // 预算耗尽后不再自触发:座位永不挂载的永久性故障不是无限后台循环
+    for (let round = 0; round < 5; round += 1) await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(RETRY_MAX_ATTEMPTS)
+    // 会话切换 = 新的请求段:预算重置,自愈重试恢复
+    harness.setSession('session-2')
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(RETRY_MAX_ATTEMPTS + 1)
+    // 手动请求(患者横幅按钮)是新的用户动作:重置预算立即再试
+    await act(async () => { port.requestOpen() })
+    expect(harness.openTab).toHaveBeenCalledTimes(RETRY_MAX_ATTEMPTS + 2)
+    // 座位挂载后下一次尝试成功,链条停止
+    harness.setSeatMounted(true)
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(RETRY_MAX_ATTEMPTS + 3)
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(RETRY_MAX_ATTEMPTS + 3)
     disposeState()
     harness.dispose()
   } finally {

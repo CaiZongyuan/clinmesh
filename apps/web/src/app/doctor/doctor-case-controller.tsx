@@ -1,5 +1,5 @@
 import { DoctorWorkspaceLayout, DoctorCaseLayout } from './responsive-layout.tsx'
-import { useSurfaceCaseContextPort } from './surface-case-context.ts'
+import { hostCaseContextRail, useSurfaceCaseContextPort } from './surface-case-context.ts'
 import { useOptionalWebRuntime } from '../web-runtime.tsx'
 import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import {
@@ -2425,9 +2425,10 @@ function CaseDetail({
     source: 'checklist' | 'correction'
     target: EncounterCompletionTarget
   }>()
-  // surface 模式下右栏由 DSH 宿主右列承载:发布与内嵌 rail 完全一致的快照
+  // surface 模式下右栏由 DSH 宿主右列承载:发布与内嵌 rail 完全一致的快照;
+  // 全屏(full-frame)且宿主未保留右列时回退内嵌 rail,保证病例上下文可达
   const runtime = useOptionalWebRuntime()
-  const hostRail = runtime?.mode === 'surface' && runtime.surfaceCaseContext !== undefined
+  const hostRail = hostCaseContextRail(runtime)
   const caseContextState = useMemo(() => (hostRail ? {
     caseId: detail.caseId,
     completion: completion.data,

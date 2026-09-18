@@ -90,6 +90,8 @@ const WebRuntimeContext = createContext<WebRuntimeValue | null>(null)
 export interface WebSurfaceDisplay {
   conversation?: { collapsed: boolean; toggle(): void }
   fullscreen: boolean
+  /** 宿主全屏(full-frame)保留右栏(details)时声明:右栏标签在全屏下仍可见可交互。 */
+  fullscreenKeepsDetails?: boolean
   toggle(): void
 }
 

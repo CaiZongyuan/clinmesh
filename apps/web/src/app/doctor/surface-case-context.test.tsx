@@ -6,7 +6,7 @@ import { WebRuntimeProvider, type WebRuntimeValue } from '../web-runtime.tsx'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { DoctorCaseLayout } from './responsive-layout.tsx'
 import { PatientBanner } from './patient-summary.tsx'
-import { useSurfaceCaseContextPort } from './surface-case-context.ts'
+import { hostCaseContextRail, useSurfaceCaseContextPort } from './surface-case-context.ts'
 
 afterEach(cleanup)
 
@@ -60,6 +60,40 @@ function Probe({ state }: { state: WebSurfaceCaseContextState | undefined }): nu
   useSurfaceCaseContextPort(state)
   return null
 }
+
+describe('hostCaseContextRail', () => {
+  it('hosts the rail in surface mode with the port connected and a visible host rightbar', () => {
+    expect(hostCaseContextRail(runtimeValue({
+      mode: 'surface',
+      surfaceCaseContext: createPortStub(),
+      surfaceDisplay: { fullscreen: false, toggle: vi.fn() },
+    }))).toBe(true)
+    // 未提供 surfaceDisplay 的宿主默认右栏可见,保持既有行为
+    expect(hostCaseContextRail(runtimeValue({ mode: 'surface', surfaceCaseContext: createPortStub() }))).toBe(true)
+  })
+
+  it('falls back to the inline rail in fullscreen where the host rightbar is inert', () => {
+    expect(hostCaseContextRail(runtimeValue({
+      mode: 'surface',
+      surfaceCaseContext: createPortStub(),
+      surfaceDisplay: { fullscreen: true, toggle: vi.fn() },
+    }))).toBe(false)
+  })
+
+  it('keeps hosting the rail in fullscreen when the host declares it keeps the details column', () => {
+    expect(hostCaseContextRail(runtimeValue({
+      mode: 'surface',
+      surfaceCaseContext: createPortStub(),
+      surfaceDisplay: { fullscreen: true, fullscreenKeepsDetails: true, toggle: vi.fn() },
+    }))).toBe(true)
+  })
+
+  it('is false in standalone mode or without the host port', () => {
+    expect(hostCaseContextRail(runtimeValue({ mode: 'standalone', surfaceCaseContext: createPortStub() }))).toBe(false)
+    expect(hostCaseContextRail(runtimeValue({ mode: 'surface' }))).toBe(false)
+    expect(hostCaseContextRail(null)).toBe(false)
+  })
+})
 
 describe('useSurfaceCaseContextPort', () => {
   it('registers the snapshot in surface mode and disposes on change and unmount', () => {

@@ -116,9 +116,16 @@ async function run() {
     await settle()
   }
   const initial = snapshot()
+  const rightbarCol = frame.querySelector<HTMLElement>('[data-rightbar-col]')!
+  const surfaceLayer = frame.querySelector<HTMLElement>('[data-dsh-react-surface-layer]')!
   shadow.querySelector<HTMLButtonElement>('button')!.click()
   await settle()
   const fullscreen = snapshot()
+  // 全屏声明 fullFrameKeepDetails:右栏保持可交互,表面让出右栏宽度
+  const fullscreenKeptDetails = {
+    detailsInteractive: !rightbarCol.inert,
+    layerRight: surfaceLayer.style.right,
+  }
   const returnVisible = shadow.querySelector('button')?.getAttribute('aria-label') === '返回 DSH 分屏'
   shadow.querySelector<HTMLButtonElement>('button')!.click()
   await settle()
@@ -249,6 +256,7 @@ async function run() {
     JSON.stringify({
       initial,
       fullscreen,
+      fullscreenKeptDetails,
       restored,
       resized,
       returnVisible,
