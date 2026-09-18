@@ -23,3 +23,25 @@ const requires = Array.from(client.matchAll(/require\(["']([^"']+)["']\)/g))
   .flatMap(match => match[1] === undefined ? [] : [match[1]])
 const unsupported = requires.filter(specifier => !allowedRequires.has(specifier))
 if (unsupported.length > 0) throw new Error(`Unsupported DSH client modules: ${unsupported.join(', ')}`)
+
+// The bundle requires the vendored runtime at host runtime, and every host
+// profile symlinks plugins/react-surface at the monorepo checkout, so a stale
+// build of vendor/dsh-react-surface silently no-ops the layout features the
+// definition declares (seen live as fullscreen ignoring fullFrameKeepDetails).
+// Verify the checkout's built artifact honors every declared feature marker.
+// A missing artifact means this environment never builds the vendor runtime
+// (CI); the host then fails loudly on the require, so there is nothing to guard.
+const surfaceRuntimeFile = Bun.file(join(
+  import.meta.dir, '..', '..', '..', 'vendor', 'dsh-react-surface', 'packages', 'runtime', 'lib', 'client.js',
+))
+if (await surfaceRuntimeFile.exists()) {
+  const surfaceRuntime = await surfaceRuntimeFile.text()
+  const surfaceRuntimeMarkers = ['fullFrameKeepDetails'] as const
+  const missingMarkers = surfaceRuntimeMarkers.filter(marker => !surfaceRuntime.includes(marker))
+  if (missingMarkers.length > 0) {
+    throw new Error(
+      `Stale dsh-react-surface build: missing ${missingMarkers.join(', ')};`
+      + ' run `bun run build:runtime` in vendor/dsh-react-surface, then restart the DSH host',
+    )
+  }
+}

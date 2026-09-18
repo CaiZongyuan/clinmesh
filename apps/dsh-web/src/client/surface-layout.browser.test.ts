@@ -64,6 +64,7 @@ it('returns from manual fullscreen to the retained native split without remounti
       .object({
         initial: state,
         fullscreen: state,
+        fullscreenKeptDetails: z.object({ detailsInteractive: z.boolean(), layerRight: z.string() }),
         restored: state,
         resized: z.array(state),
         returnVisible: z.boolean(),
@@ -96,6 +97,7 @@ it('returns from manual fullscreen to the retained native split without remounti
       conversationWidth: 392,
     })
     expect(actual.fullscreen).toMatchObject({ mode: 'full-frame', hiddenNative: true })
+    expect(actual.fullscreenKeptDetails).toEqual({ detailsInteractive: true, layerRight: '300px' })
     expect(actual.returnVisible).toBe(true)
     expect(actual.restored).toEqual(actual.initial)
     expect(
