@@ -29,13 +29,19 @@ if (unsupported.length > 0) throw new Error(`Unsupported DSH client modules: ${u
 // build of vendor/dsh-react-surface silently no-ops the layout features the
 // definition declares (seen live as fullscreen ignoring fullFrameKeepDetails).
 // Verify the checkout's built artifact honors every declared feature marker.
-const surfaceRuntimePath = join(import.meta.dir, '..', '..', '..', 'vendor', 'dsh-react-surface', 'packages', 'runtime', 'lib', 'client.js')
-const surfaceRuntime = await Bun.file(surfaceRuntimePath).text()
-const surfaceRuntimeMarkers = ['fullFrameKeepDetails'] as const
-const missingMarkers = surfaceRuntimeMarkers.filter(marker => !surfaceRuntime.includes(marker))
-if (missingMarkers.length > 0) {
-  throw new Error(
-    `Stale dsh-react-surface build: missing ${missingMarkers.join(', ')};`
-    + ' run `bun run build:runtime` in vendor/dsh-react-surface, then restart the DSH host',
-  )
+// A missing artifact means this environment never builds the vendor runtime
+// (CI); the host then fails loudly on the require, so there is nothing to guard.
+const surfaceRuntimeFile = Bun.file(join(
+  import.meta.dir, '..', '..', '..', 'vendor', 'dsh-react-surface', 'packages', 'runtime', 'lib', 'client.js',
+))
+if (await surfaceRuntimeFile.exists()) {
+  const surfaceRuntime = await surfaceRuntimeFile.text()
+  const surfaceRuntimeMarkers = ['fullFrameKeepDetails'] as const
+  const missingMarkers = surfaceRuntimeMarkers.filter(marker => !surfaceRuntime.includes(marker))
+  if (missingMarkers.length > 0) {
+    throw new Error(
+      `Stale dsh-react-surface build: missing ${missingMarkers.join(', ')};`
+      + ' run `bun run build:runtime` in vendor/dsh-react-surface, then restart the DSH host',
+    )
+  }
 }
