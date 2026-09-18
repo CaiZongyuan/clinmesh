@@ -448,21 +448,21 @@ function CompletedCaseDetailView({ canCorrectLaboratoryReport, catalog, detail, 
       <Separator />
 
       <CompletedCaseSection heading={messages.consultationRecord}>
-        {detail.consultation === undefined || detail.consultation.records.length === 0 ? (
+        {detail.consultation === undefined || detail.consultation.turns.length === 0 ? (
           <p className="text-sm text-muted-foreground">{messages.noConsultationHistory}</p>
         ) : (
           <ol className="flex flex-col gap-4">
-            {detail.consultation.records.map(record => (
+            {detail.consultation.turns.map(record => (
               <li className="min-w-0 border-l-2 border-primary/30 pl-4" key={record.id}>
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="text-sm font-medium">{record.question.text}</span>
+                  <span className="text-sm font-medium">{record.speaker === 'doctor' ? messages.doctorQuestion : detail.patient.name}</span>
                   <span className="text-xs text-muted-foreground">
                     {formatDateTime(record.recordedAt, locale)}
                   </span>
                 </div>
-                <p className="mt-2 whitespace-pre-wrap break-words text-sm">{record.answer}</p>
+                <p className="mt-2 whitespace-pre-wrap break-words text-sm">{record.messageText}</p>
                 <code className="mt-2 block break-all text-xs text-muted-foreground">
-                  ConsultationRecord/{record.id}
+                  ConsultationTurn/{record.id}
                 </code>
               </li>
             ))}

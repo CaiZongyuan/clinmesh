@@ -1,18 +1,19 @@
 import { randomUUID } from 'node:crypto'
 import {
-  patientBriefContentSchema,
-  patientBriefJobSchema,
+  patientPersonaContentSchema,
+  patientPersonaJobSchema,
+  patientPersonaRevisionSchema,
   syntheticCaseInstanceSchema,
-  type PatientBriefContent,
-  type PatientBriefJob,
+  type PatientPersonaContent,
+  type PatientPersonaJob,
 } from '@clinmesh/contracts/scenario'
 import { z } from 'zod'
 import type { SyntheticPatientProfileRepository } from '../infrastructure/sqlite/synthetic-patient-profile-repository.ts'
 import type { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic-case-repository.ts'
 import type {
-  ClaimedPatientBriefJob,
-  PatientBriefRepository,
-} from '../infrastructure/sqlite/patient-brief-repository.ts'
+  ClaimedPatientPersonaJob,
+  PatientPersonaRepository,
+} from '../infrastructure/sqlite/patient-persona-repository.ts'
 import {
   ChatCompletionsError,
   type JsonChatCompletionsProvider,
@@ -20,51 +21,55 @@ import {
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 
-const promptVersion = 'patient-brief-v1'
+const promptVersion = 'patient-persona-v2'
 const systemPrompt = [
-  '你是中国门诊标准化患者病例梗概生成器。',
+  '你是中国门诊标准化患者人设生成器。',
   '只返回符合 JSON Schema 的 JSON，不要返回 Markdown。',
-  '根据合成患者的既往可见病史和本次私有证据生成主诉、患者开场陈述、已知史摘要和问诊主题。',
-  '不得把尚未在既往病史出现的本次诊断名称、诊断编码或同义表达写入输出。',
-  '问诊主题 ID 使用稳定的小写英文短横线格式，answerPoints 使用患者自然口语。',
+  '根据合成患者的人口学与生活背景、既往可见病史和本次私有证据生成患者档案：',
+  '主诉、患者开场陈述、已知史摘要、性格与说话方式、健康素养、就医态度、体验式症状叙述、用药记忆。',
+  '性格、表达方式和健康素养必须与年龄、职业、文化程度协调，像一位真实的中国门诊患者。',
+  '症状叙述使用患者第一人称体验（感受、时间线、加重缓解、自行处理过什么）。',
+  '患者不知道自己本次得了什么病，只知道自己的感受。',
+  '不得把尚未在既往病史出现的本次诊断名称、诊断编码或同义表达写入任何字段。',
 ].join('\n')
 const promptHash = canonicalJsonHash({ promptVersion, systemPrompt })
 
-type Resource = { id: string; resourceType: string; [key: string]: unknown }
+export type PersonaResource = { id: string; resourceType: string; [key: string]: unknown }
 
-export class PatientBriefLeakError extends Error {
-  readonly code = 'BRIEF_DIAGNOSIS_LEAK'
+export class PatientPersonaLeakError extends Error {
+  readonly code = 'PERSONA_DIAGNOSIS_LEAK'
 
   constructor() {
-    super('The generated Patient Brief reveals a hidden diagnosis')
-    this.name = 'PatientBriefLeakError'
+    super('The generated Patient Persona reveals a hidden diagnosis')
+    this.name = 'PatientPersonaLeakError'
   }
 }
 
-type PatientBriefErrorCode =
-  | 'BRIEF_JOB_NOT_FOUND'
-  | 'BRIEF_REVISION_NOT_FOUND'
+type PatientPersonaErrorCode =
+  | 'PERSONA_JOB_NOT_FOUND'
+  | 'PERSONA_REVISION_NOT_FOUND'
+  | 'PERSONA_DIAGNOSIS_LEAK_WARNING'
   | 'CASE_NOT_FOUND'
   | 'CASE_VERSION_CONFLICT'
   | 'PROVIDER_NOT_AVAILABLE'
   | 'ROLE_NOT_ALLOWED'
 
-export class PatientBriefError extends Error {
-  readonly code: PatientBriefErrorCode
+export class PatientPersonaError extends Error {
+  readonly code: PatientPersonaErrorCode
   readonly status: 403 | 404 | 409 | 503
 
-  constructor(code: PatientBriefErrorCode, message: string) {
+  constructor(code: PatientPersonaErrorCode, message: string) {
     super(message)
-    this.name = 'PatientBriefError'
+    this.name = 'PatientPersonaError'
     this.code = code
     if (code === 'ROLE_NOT_ALLOWED') this.status = 403
-    else if (code === 'CASE_VERSION_CONFLICT') this.status = 409
+    else if (code === 'CASE_VERSION_CONFLICT' || code === 'PERSONA_DIAGNOSIS_LEAK_WARNING') this.status = 409
     else if (code === 'PROVIDER_NOT_AVAILABLE') this.status = 503
     else this.status = 404
   }
 }
 
-function conceptValues(resource: Resource): { codes: string[]; terms: string[] } {
+function conceptValues(resource: PersonaResource): { codes: string[]; terms: string[] } {
   const concept = typeof resource.code === 'object' && resource.code !== null
     ? resource.code as Record<string, unknown>
     : {}
@@ -81,11 +86,11 @@ function conceptValues(resource: Resource): { codes: string[]; terms: string[] }
   return { codes, terms }
 }
 
-function normalized(value: string): string {
-  return value.normalize('NFKC').toLocaleLowerCase('zh-CN').replaceAll(/[^\p{L}\p{N}]+/gu, '')
+export function normalized(value: string): string {
+  return value.normalize('NFKC').toLocaleLowerCase('zh-CN').replaceAll(/[^\p{L}\p{N}]+/gu, '').replaceAll('二型', '2型').replaceAll('一型', '1型')
 }
 
-function summarizedResource(resource: Resource) {
+function summarizedResource(resource: PersonaResource) {
   const concept = conceptValues(resource)
   const valueQuantity = typeof resource.valueQuantity === 'object' && resource.valueQuantity !== null
     ? resource.valueQuantity as Record<string, unknown>
@@ -103,55 +108,57 @@ function summarizedResource(resource: Resource) {
   }
 }
 
-function hiddenDiagnosisTokens(
-  hiddenResources: Resource[],
-  visibleResources: Resource[],
+function diagnosisTerms(term: string): string[] {
+  const name = normalized(term.replace(/[(（](?:疾病|疾患|障碍|disorder|disease|finding)[)）]/gi, ''))
+  return name.endsWith('糖尿病') && /^[12]型/.test(name) ? [name, '糖尿病'] : [name]
+}
+
+export function hiddenDiagnosisTokens(
+  hiddenResources: PersonaResource[],
+  visibleResources: PersonaResource[],
 ): string[] {
   const visibleConditions = visibleResources.filter(resource => resource.resourceType === 'Condition')
   const visibleCodes = new Set(visibleConditions.flatMap(resource => conceptValues(resource).codes))
-  const visibleTerms = new Set(visibleConditions.flatMap(resource => (
-    conceptValues(resource).terms.map(normalized)
-  )))
-  return hiddenResources
+  const visibleTerms = new Set(visibleConditions.flatMap(resource => conceptValues(resource).terms.flatMap(diagnosisTerms)))
+  return [...new Set(hiddenResources
     .filter(resource => resource.resourceType === 'Condition')
-    .flatMap((resource) => {
+    .flatMap(resource => {
       const values = conceptValues(resource)
-      const alreadyVisible = values.codes.some(code => visibleCodes.has(code))
-        || values.terms.some(term => visibleTerms.has(normalized(term)))
-      return alreadyVisible ? [] : [...values.codes, ...values.terms]
+      if (values.codes.some(code => visibleCodes.has(code))) return []
+      return [...values.codes.map(normalized), ...values.terms.flatMap(diagnosisTerms)]
+        .filter(token => !visibleTerms.has(token))
     })
-    .map(normalized)
-    .filter(value => value.length >= 2)
+    .filter(value => value.length >= 2))]
 }
 
 function assertNoDiagnosisLeak(
-  content: PatientBriefContent,
-  hiddenResources: Resource[],
-  visibleResources: Resource[],
+  content: PatientPersonaContent,
+  hiddenResources: PersonaResource[],
+  visibleResources: PersonaResource[],
 ): void {
   const output = normalized(JSON.stringify(content))
   if (hiddenDiagnosisTokens(hiddenResources, visibleResources).some(token => output.includes(token))) {
-    throw new PatientBriefLeakError()
+    throw new PatientPersonaLeakError()
   }
 }
 
-export async function generatePatientBrief(input: {
-  hiddenResources: Resource[]
+export async function generatePatientPersona(input: {
+  hiddenResources: PersonaResource[]
   model: string
   payload: unknown
   provider: JsonChatCompletionsProvider
   signal?: AbortSignal
-  visibleResources: Resource[]
+  visibleResources: PersonaResource[]
 }) {
   const completion = await input.provider.completeJson({
-    jsonSchema: z.toJSONSchema(patientBriefContentSchema) as Record<string, unknown>,
+    jsonSchema: z.toJSONSchema(patientPersonaContentSchema) as Record<string, unknown>,
     model: input.model,
-    schemaName: 'patient_brief',
+    schemaName: 'patient_persona',
     ...(input.signal === undefined ? {} : { signal: input.signal }),
     systemPrompt,
     userPayload: input.payload,
   })
-  const content = patientBriefContentSchema.parse(JSON.parse(completion.content))
+  const content = patientPersonaContentSchema.parse(JSON.parse(completion.content))
   assertNoDiagnosisLeak(content, input.hiddenResources, input.visibleResources)
   return {
     content,
@@ -163,8 +170,11 @@ export async function generatePatientBrief(input: {
   }
 }
 
-export class PatientBriefService {
-  readonly #briefs: PatientBriefRepository
+const manualPromptVersion = 'patient-persona-manual-edit-v1'
+const manualPromptHash = canonicalJsonHash({ promptVersion: manualPromptVersion })
+
+export class PatientPersonaService {
+  readonly #briefs: PatientPersonaRepository
   readonly #cases: SyntheticCaseRepository
   readonly #commands: CommandExecutor
   readonly #model: string | undefined
@@ -172,7 +182,7 @@ export class PatientBriefService {
   readonly #provider: JsonChatCompletionsProvider | undefined
 
   constructor(input: {
-    briefs: PatientBriefRepository
+    briefs: PatientPersonaRepository
     cases: SyntheticCaseRepository
     commands: CommandExecutor
     model?: string
@@ -190,13 +200,13 @@ export class PatientBriefService {
   enqueue(input: { caseId: string; context: ActorContext; idempotencyKey: string }) {
     this.#assertAdministrator(input.context)
     if (this.#provider === undefined || this.#model === undefined) {
-      throw new PatientBriefError('PROVIDER_NOT_AVAILABLE', 'Patient Brief generation is not configured')
+      throw new PatientPersonaError('PROVIDER_NOT_AVAILABLE', 'Patient Persona generation is not configured')
     }
     if (this.#cases.get(input.context.workspaceId, input.caseId) === undefined) {
-      throw new PatientBriefError('CASE_NOT_FOUND', 'The Synthetic Case was not found')
+      throw new PatientPersonaError('CASE_NOT_FOUND', 'The Synthetic Case was not found')
     }
     const now = new Date().toISOString()
-    const job = patientBriefJobSchema.parse({
+    const job = patientPersonaJobSchema.parse({
       caseId: input.caseId,
       createdAt: now,
       error: null,
@@ -211,26 +221,26 @@ export class PatientBriefService {
     return this.#commands.execute({
       context: input.context,
       contextRequirement: 'current',
-      dataSchema: patientBriefJobSchema,
+      dataSchema: patientPersonaJobSchema,
       expectedVersions: {},
       idempotencyKey: input.idempotencyKey,
       idempotencyScope: 'workspace',
       input: { caseId: input.caseId },
-      operation: 'patient-brief-job.create',
+      operation: 'patient-persona-job.create',
     }, () => {
       this.#briefs.create(job, input.context, this.#model!)
       return {
         data: job,
-        effects: [{ kind: 'created' as const, reference: `PatientBriefJob/${job.jobId}`, versionId: '1' }],
+        effects: [{ kind: 'created' as const, reference: `PatientPersonaJob/${job.jobId}`, versionId: '1' }],
       }
     })
   }
 
-  getJob(context: ActorContext, jobId: string): PatientBriefJob {
+  getJob(context: ActorContext, jobId: string): PatientPersonaJob {
     this.#assertAdministrator(context)
     const job = this.#briefs.get(context.workspaceId, jobId)
     if (job === undefined) {
-      throw new PatientBriefError('BRIEF_JOB_NOT_FOUND', 'The Patient Brief job was not found')
+      throw new PatientPersonaError('PERSONA_JOB_NOT_FOUND', 'The Patient Persona job was not found')
     }
     return job
   }
@@ -239,13 +249,13 @@ export class PatientBriefService {
     this.#assertAdministrator(context)
     const revisions = this.#briefs.listRevisions(context.workspaceId, caseId)
     if (revisions === undefined) {
-      throw new PatientBriefError('CASE_NOT_FOUND', 'The Synthetic Case was not found')
+      throw new PatientPersonaError('CASE_NOT_FOUND', 'The Synthetic Case was not found')
     }
     return revisions
   }
 
   selectRevision(input: {
-    briefRevision: number
+    personaRevision: number
     caseId: string
     context: ActorContext
     expectedCaseRevision: number
@@ -260,14 +270,14 @@ export class PatientBriefService {
       idempotencyKey: input.idempotencyKey,
       idempotencyScope: 'workspace',
       input: {
-        briefRevision: input.briefRevision,
+        personaRevision: input.personaRevision,
         caseId: input.caseId,
         expectedCaseRevision: input.expectedCaseRevision,
       },
-      operation: 'patient-brief-revision.select',
+      operation: 'patient-persona-revision.select',
     }, () => {
       const selected = this.#briefs.selectRevision({
-        briefRevision: input.briefRevision,
+        personaRevision: input.personaRevision,
         caseId: input.caseId,
         expectedCaseRevision: input.expectedCaseRevision,
         now: new Date().toISOString(),
@@ -276,12 +286,12 @@ export class PatientBriefService {
       if (selected === undefined) {
         const revisions = this.#briefs.listRevisions(input.context.workspaceId, input.caseId)
         if (revisions === undefined) {
-          throw new PatientBriefError('CASE_NOT_FOUND', 'The Synthetic Case was not found')
+          throw new PatientPersonaError('CASE_NOT_FOUND', 'The Synthetic Case was not found')
         }
-        if (!revisions.items.some(item => item.revision === input.briefRevision)) {
-          throw new PatientBriefError('BRIEF_REVISION_NOT_FOUND', 'The Patient Brief revision was not found')
+        if (!revisions.items.some(item => item.revision === input.personaRevision)) {
+          throw new PatientPersonaError('PERSONA_REVISION_NOT_FOUND', 'The Patient Persona revision was not found')
         }
-        throw new PatientBriefError('CASE_VERSION_CONFLICT', 'The Synthetic Case changed after it was loaded')
+        throw new PatientPersonaError('CASE_VERSION_CONFLICT', 'The Synthetic Case changed after it was loaded')
       }
       return {
         data: selected,
@@ -294,16 +304,78 @@ export class PatientBriefService {
     })
   }
 
-  async processNext(signal?: AbortSignal): Promise<PatientBriefJob | undefined> {
+  createRevisionFromEdit(input: {
+    caseId: string
+    content: PatientPersonaContent
+    context: ActorContext
+    forceDiagnosisLeakOverride: boolean
+    idempotencyKey: string
+  }) {
+    this.#assertAdministrator(input.context)
+    if (this.#cases.get(input.context.workspaceId, input.caseId) === undefined) {
+      throw new PatientPersonaError('CASE_NOT_FOUND', 'The Synthetic Case was not found')
+    }
+    const content = patientPersonaContentSchema.parse(input.content)
+    const generation = this.#generationInput({
+      caseId: input.caseId,
+      workspaceId: input.context.workspaceId,
+    })
+    if (
+      hiddenDiagnosisTokens(generation.hiddenResources, generation.visibleResources)
+        .some(token => normalized(JSON.stringify(content)).includes(token))
+      && !input.forceDiagnosisLeakOverride
+    ) {
+      throw new PatientPersonaError(
+        'PERSONA_DIAGNOSIS_LEAK_WARNING',
+        'The edited Patient Persona mentions the hidden diagnosis of this encounter',
+      )
+    }
+    const contentHash = canonicalJsonHash(content)
+    return this.#commands.execute({
+      context: input.context,
+      contextRequirement: 'current',
+      dataSchema: patientPersonaRevisionSchema,
+      expectedVersions: {},
+      idempotencyKey: input.idempotencyKey,
+      idempotencyScope: 'workspace',
+      input: { caseId: input.caseId, outputHash: contentHash },
+      operation: 'patient-persona-revision.create-from-edit',
+    }, () => {
+      const revision = this.#briefs.createRevision({
+        caseId: input.caseId,
+        content,
+        createdAt: new Date().toISOString(),
+        inputHash: contentHash,
+        model: 'administrator-manual',
+        outputHash: contentHash,
+        promptHash: manualPromptHash,
+        promptVersion: manualPromptVersion,
+        workspaceId: input.context.workspaceId,
+      })
+      return {
+        data: revision,
+        effects: [{
+          kind: 'created' as const,
+          reference: `PatientPersona/${input.caseId}/${revision.revision}`,
+          versionId: String(revision.revision),
+        }],
+      }
+    })
+  }
+
+  async processNext(signal?: AbortSignal): Promise<PatientPersonaJob | undefined> {
     const claimed = this.#briefs.claimNext(new Date().toISOString())
     if (claimed === undefined) return undefined
     if (this.#provider === undefined) return this.#fail(claimed, {
       code: 'PROVIDER_NOT_AVAILABLE',
-      message: 'Patient Brief generation is not configured',
+      message: 'Patient Persona generation is not configured',
     })
     try {
-      const generation = this.#generationInput(claimed)
-      const generated = await generatePatientBrief({
+      const generation = this.#generationInput({
+        caseId: claimed.caseId,
+        workspaceId: claimed.workspaceId,
+      })
+      const generated = await generatePatientPersona({
         hiddenResources: generation.hiddenResources,
         model: claimed.model,
         payload: generation.payload,
@@ -314,12 +386,12 @@ export class PatientBriefService {
       return this.#commands.execute({
         context: claimed.actorContext,
         contextRequirement: 'known',
-        dataSchema: patientBriefJobSchema,
+        dataSchema: patientPersonaJobSchema,
         expectedVersions: {},
         idempotencyKey: `${claimed.jobId}:complete:${generated.outputHash}`,
         idempotencyScope: 'workspace',
         input: { jobId: claimed.jobId, outputHash: generated.outputHash },
-        operation: 'patient-brief-job.complete',
+        operation: 'patient-persona-job.complete',
       }, () => {
         const result = this.#briefs.succeed(claimed, {
           ...generated,
@@ -342,12 +414,12 @@ export class PatientBriefService {
         return this.#commands.execute({
           context: claimed.actorContext,
           contextRequirement: 'known',
-          dataSchema: patientBriefJobSchema,
+          dataSchema: patientPersonaJobSchema,
           expectedVersions: {},
           idempotencyKey: `${claimed.jobId}:requeue:${claimed.startedAt}`,
           idempotencyScope: 'workspace',
           input: { jobId: claimed.jobId },
-          operation: 'patient-brief-job.requeue',
+          operation: 'patient-persona-job.requeue',
         }, () => ({
           data: this.#briefs.requeue(claimed, new Date().toISOString()),
           effects: [],
@@ -357,24 +429,24 @@ export class PatientBriefService {
     }
   }
 
-  #generationInput(job: ClaimedPatientBriefJob) {
-    const syntheticCase = this.#cases.get(job.workspaceId, job.caseId)
-    const truth = this.#cases.getTruthForSimulator(job.workspaceId, job.caseId)
-    const visible = this.#cases.getVisibleResourcesForSimulator(job.workspaceId, job.caseId)
+  #generationInput(input: { caseId: string; workspaceId: string }) {
+    const syntheticCase = this.#cases.get(input.workspaceId, input.caseId)
+    const truth = this.#cases.getTruthForSimulator(input.workspaceId, input.caseId)
+    const visible = this.#cases.getVisibleResourcesForSimulator(input.workspaceId, input.caseId)
     if (syntheticCase === undefined || truth === undefined) {
-      throw new PatientBriefError('CASE_NOT_FOUND', 'The Synthetic Case was not found')
+      throw new PatientPersonaError('CASE_NOT_FOUND', 'The Synthetic Case was not found')
     }
-    const profile = this.#profiles.get(job.workspaceId, syntheticCase.profileId)
+    const profile = this.#profiles.get(input.workspaceId, syntheticCase.profileId)
     if (profile === undefined) {
-      throw new PatientBriefError('CASE_NOT_FOUND', 'The Synthetic Patient Profile was not found')
+      throw new PatientPersonaError('CASE_NOT_FOUND', 'The Synthetic Patient Profile was not found')
     }
-    const hiddenResources = truth.hiddenResources.map(item => item.resource as Resource)
-    const visibleResources = visible.map(item => item.resource as Resource)
+    const hiddenResources = truth.hiddenResources.map(item => item.resource as PersonaResource)
+    const visibleResources = visible.map(item => item.resource as PersonaResource)
     const history = this.#cases.listVisibleHistory({
-      caseId: job.caseId,
+      caseId: input.caseId,
       page: 1,
       pageSize: 100,
-      workspaceId: job.workspaceId,
+      workspaceId: input.workspaceId,
     }).items
     const payload = {
       caseType: syntheticCase.caseType,
@@ -392,39 +464,39 @@ export class PatientBriefService {
     }
   }
 
-  #fail(job: ClaimedPatientBriefJob, error: { code: string; message: string }) {
+  #fail(job: ClaimedPatientPersonaJob, error: { code: string; message: string }) {
     return this.#commands.execute({
       context: job.actorContext,
       contextRequirement: 'known',
-      dataSchema: patientBriefJobSchema,
+      dataSchema: patientPersonaJobSchema,
       expectedVersions: {},
       idempotencyKey: `${job.jobId}:fail:${error.code}`,
       idempotencyScope: 'workspace',
       input: { errorCode: error.code, jobId: job.jobId },
-      operation: 'patient-brief-job.fail',
+      operation: 'patient-persona-job.fail',
     }, () => ({
       data: this.#briefs.fail(job, error, new Date().toISOString()),
       effects: [{
         kind: 'updated' as const,
-        reference: `PatientBriefJob/${job.jobId}`,
+        reference: `PatientPersonaJob/${job.jobId}`,
         versionId: 'failed',
       }],
     })).data
   }
 
   #publicFailure(error: unknown): { code: string; message: string } {
-    if (error instanceof ChatCompletionsError || error instanceof PatientBriefLeakError) {
+    if (error instanceof ChatCompletionsError || error instanceof PatientPersonaLeakError) {
       return { code: error.code, message: error.message }
     }
     if (error instanceof SyntaxError || error instanceof z.ZodError) {
-      return { code: 'BRIEF_RESPONSE_INVALID', message: 'The generated Patient Brief is invalid' }
+      return { code: 'PERSONA_RESPONSE_INVALID', message: 'The generated Patient Persona is invalid' }
     }
-    return { code: 'BRIEF_GENERATION_FAILED', message: 'Patient Brief generation failed' }
+    return { code: 'PERSONA_GENERATION_FAILED', message: 'Patient Persona generation failed' }
   }
 
   #assertAdministrator(context: ActorContext): void {
     if (context.roleCode !== 'administrator') {
-      throw new PatientBriefError('ROLE_NOT_ALLOWED', 'Only an administrator can manage Patient Briefs')
+      throw new PatientPersonaError('ROLE_NOT_ALLOWED', 'Only an administrator can manage Patient Personas')
     }
   }
 }

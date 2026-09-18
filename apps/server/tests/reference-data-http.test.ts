@@ -1,3 +1,4 @@
+import { persona, StubSyntheaProvider, startConsultationCase } from './fixtures/consultation.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -17,8 +18,6 @@ import {
   doctorCaseDetailSchema,
   issuePrescriptionResponseSchema,
   prescriptionDraftResponseSchema,
-  startVirtualPatientResponseSchema,
-  virtualPatientListSchema,
 } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -68,6 +67,9 @@ describe('Reference Data HTTP contract', () => {
       ...(input.activeReferenceReleaseId === undefined
         ? {}
         : { activeReferenceReleaseId: input.activeReferenceReleaseId }),
+      syntheaProvider: new StubSyntheaProvider(),
+      patientPersonaModel: 'test-persona',
+      chatCompletionsProvider: { completeJson: async () => ({ content: JSON.stringify(persona), model: 'test-persona' }) },
       authBaseUrl: 'http://localhost',
       authSecret: 'test-auth-secret-with-at-least-32-characters',
       cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
@@ -466,28 +468,24 @@ describe('Reference Data HTTP contract', () => {
       'idempotency-key': randomUUID(),
       origin: 'http://localhost',
     })
-    const candidates = virtualPatientListSchema.parse(await (await first.runtime.app.request(
-      '/api/his/v1/doctor/virtual-patients',
-      { headers: { cookie: doctorCookie } },
-    )).json())
-    const candidate = candidates.items[0]
-    if (candidate === undefined) throw new Error('Expected a Virtual Patient candidate')
+    const generated = await startConsultationCase(first.runtime, password)
     const startResponse = await first.runtime.app.request(
-      `/api/his/v1/doctor/virtual-patients/${candidate.id}/actions/start`,
-      {
-        body: JSON.stringify({ expectedVersions: {}, input: { expectedVersion: candidate.version } }),
-        headers: headers(),
-        method: 'POST',
+      `/api/his/v1/encounters/${generated.encounterId}/actions/start-first-visit`, {
+        method: 'POST', headers: headers(), body: JSON.stringify({
+          expectedVersions: { [`Encounter/${generated.encounterId}`]: generated.encounterVersion, [`Task/${generated.doctorTaskId}`]: '1' },
+          input: {},
+        }),
       },
     )
-    const started = startVirtualPatientResponseSchema.parse(await startResponse.json()).data
+    expect(startResponse.status).toBe(200)
+    const started = { encounterId: generated.encounterId, caseId: generated.outpatientCaseId }
     const encounterReference = `Encounter/${started.encounterId}`
 
     const diagnosisDraftResponse = await first.runtime.app.request(
       `/api/his/v1/encounters/${started.encounterId}/diagnosis/draft`,
       {
         body: JSON.stringify({
-          expectedVersions: { [encounterReference]: '1' },
+          expectedVersions: { [encounterReference]: '3' },
           input: {
             entries: [{ catalogItemId: 'diagnosis:hypertension', role: 'primary' }],
             expectedDraftVersion: 0,
@@ -505,7 +503,7 @@ describe('Reference Data HTTP contract', () => {
       `/api/his/v1/encounters/${started.encounterId}/diagnosis/actions/confirm`,
       {
         body: JSON.stringify({
-          expectedVersions: { [encounterReference]: '1' },
+          expectedVersions: { [encounterReference]: '3' },
           input: { expectedDraftVersion: diagnosisDraft.draftVersion },
         }),
         headers: headers(),

@@ -279,6 +279,7 @@ export const agentToolCatalog: readonly AgentToolDefinition[] = Object.freeze([
   tool('outpatient.case.select', 'clinmesh_select_doctor_case', 'ui', 'ui-only', doctor, ['consultation']),
   tool('outpatient.section.select', 'clinmesh_select_doctor_section', 'ui', 'ui-only', doctor, ['consultation']),
   tool('outpatient.consultation.ask', 'clinmesh_ask_virtual_patient', 'draft', 'draft-only', doctor, ['consultation']),
+  tool('outpatient.consultation.reply.retry', 'clinmesh_retry_patient_reply', 'draft', 'draft-only', doctor, ['consultation']),
   tool('outpatient.first-visit.draft.set', 'clinmesh_fill_first_visit_draft', 'draft', 'draft-only', doctor, ['consultation']),
   tool('outpatient.diagnosis.draft.set', 'clinmesh_fill_diagnosis_draft', 'draft', 'draft-only', doctor, ['consultation']),
   tool('outpatient.laboratory.draft.set', 'clinmesh_fill_laboratory_draft', 'draft', 'draft-only', doctor, ['consultation']),

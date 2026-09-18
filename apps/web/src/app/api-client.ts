@@ -1,7 +1,8 @@
 import {
   acknowledgeLaboratoryReportResponseSchema,
   apiErrorSchema,
-  askConsultationQuestionResponseSchema,
+  retryConsultationReplyResponseSchema,
+  sendConsultationMessageResponseSchema,
   billingQueueSchema,
   caseLaboratoryCatalogSearchSchema,
   laboratoryRequestActionResponseSchema,
@@ -44,11 +45,9 @@ import {
   scenarioCommandResponseSchema,
   scenarioStateSchema,
   sessionContextSchema,
-  startVirtualPatientResponseSchema,
   startVisitResponseSchema,
   triageQueueSchema,
   triageResponseSchema,
-  virtualPatientListSchema,
   withdrawPrescriptionResponseSchema,
   type ApiConflict,
   type ClinicalDocumentContent,
@@ -61,8 +60,9 @@ import {
 } from '@clinmesh/contracts/his'
 import {
   administratorCaseTruthSchema,
-  patientBriefJobSchema,
-  patientBriefRevisionListSchema,
+  patientPersonaJobSchema,
+  patientPersonaRevisionListSchema,
+  patientPersonaRevisionSchema,
   scenarioGenerationJobSchema,
   scenarioGenerationRequestSchema,
   scenarioProviderCapabilitiesListSchema,
@@ -493,44 +493,65 @@ export function getSyntheticCaseHistoryDetail(
   )
 }
 
-export function enqueuePatientBrief(caseId: string, idempotencyKey: string) {
+export function enqueuePatientPersona(caseId: string, idempotencyKey: string) {
   return apiMutation(
-    `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-brief-jobs`,
-    commandResponseSchema(patientBriefJobSchema),
+    `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-persona-jobs`,
+    commandResponseSchema(patientPersonaJobSchema),
     {},
     { idempotencyKey },
   )
 }
 
-export function getPatientBriefJob(jobId: string, signal?: AbortSignal) {
+export function getPatientPersonaJob(jobId: string, signal?: AbortSignal) {
   return apiGet(
-    `/api/sim/v1/patient-brief-jobs/${encodeURIComponent(jobId)}`,
-    patientBriefJobSchema,
+    `/api/sim/v1/patient-persona-jobs/${encodeURIComponent(jobId)}`,
+    patientPersonaJobSchema,
     signal,
   )
 }
 
-export function getPatientBriefRevisions(caseId: string, signal?: AbortSignal) {
+export function getPatientPersonaRevisions(caseId: string, signal?: AbortSignal) {
   return apiGet(
-    `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-brief-revisions`,
-    patientBriefRevisionListSchema,
+    `/api/sim/v1/synthetic-cases/${encodeURIComponent(caseId)}/patient-persona-revisions`,
+    patientPersonaRevisionListSchema,
     signal,
   )
 }
 
-export function selectPatientBriefRevision(input: {
+export function selectPatientPersonaRevision(input: {
   briefRevision: number
   caseId: string
   expectedCaseRevision: number
 }, idempotencyKey: string) {
   return apiMutation(
-    `/api/sim/v1/synthetic-cases/${encodeURIComponent(input.caseId)}/patient-brief-revisions/active`,
+    `/api/sim/v1/synthetic-cases/${encodeURIComponent(input.caseId)}/patient-persona-revisions/active`,
     commandResponseSchema(syntheticCaseInstanceSchema),
     {
-      briefRevision: input.briefRevision,
+      personaRevision: input.briefRevision,
       expectedCaseRevision: input.expectedCaseRevision,
     },
     { idempotencyKey, method: 'PUT' },
+  )
+}
+
+
+export function createPatientPersonaRevision(input: {
+  caseId: string
+  content: unknown
+  forceDiagnosisLeakOverride?: boolean
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/sim/v1/synthetic-cases/${encodeURIComponent(input.caseId)}/patient-persona-revisions`,
+    commandResponseSchema(patientPersonaRevisionSchema),
+    {
+      input: {
+        content: input.content,
+        ...(input.forceDiagnosisLeakOverride === undefined
+          ? {}
+          : { forceDiagnosisLeakOverride: input.forceDiagnosisLeakOverride }),
+      },
+    },
+    { idempotencyKey },
   )
 }
 
@@ -730,46 +751,42 @@ export function getDoctorCompletedCase(caseId: string, signal?: AbortSignal) {
   )
 }
 
-export function getVirtualPatients(signal?: AbortSignal, page = 1) {
-  const search = new URLSearchParams({ page: String(page), pageSize: '20' })
-  return apiGet(`/api/his/v1/doctor/virtual-patients?${search.toString()}`, virtualPatientListSchema, signal)
-}
-
-export function startVirtualPatient(
-  virtualPatientId: string,
-  expectedVersion: string,
-  idempotencyKey: string,
-) {
-  return apiMutation(
-    `/api/his/v1/doctor/virtual-patients/${encodeURIComponent(virtualPatientId)}/actions/start`,
-    startVirtualPatientResponseSchema,
-    {
-      expectedVersions: {},
-      input: { expectedVersion },
-    },
-    { idempotencyKey },
-  )
-}
-
-export function askConsultationQuestion(input: {
+export function sendConsultationMessage(input: {
   encounterId: string
   encounterVersion: string
-  expectedVersion: number
-  questionCode: string
+  expectedConsultationVersion: number
+  message: string
   taskId: string
   taskVersion: string
 }, idempotencyKey: string) {
   return apiMutation(
     `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/actions/ask-consultation-question`,
-    askConsultationQuestionResponseSchema,
+    sendConsultationMessageResponseSchema,
     {
       expectedVersions: {
         [`Encounter/${input.encounterId}`]: input.encounterVersion,
         [`Task/${input.taskId}`]: input.taskVersion,
       },
       input: {
-        expectedVersion: input.expectedVersion,
-        questionCode: input.questionCode,
+        expectedConsultationVersion: input.expectedConsultationVersion,
+        message: input.message,
+      },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function retryConsultationReply(input: {
+  encounterId: string
+  expectedConsultationVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/actions/retry-consultation-reply`,
+    retryConsultationReplyResponseSchema,
+    {
+      expectedVersions: {},
+      input: {
+        expectedConsultationVersion: input.expectedConsultationVersion,
       },
     },
     { idempotencyKey },

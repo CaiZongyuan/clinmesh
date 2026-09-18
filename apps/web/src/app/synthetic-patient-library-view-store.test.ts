@@ -11,8 +11,8 @@ describe('Synthetic Patient Library view state', () => {
 
     store.setScenarioGenerationJob('workspace-a', 'generation-job-a')
     store.setScenarioGenerationJob('workspace-b', 'generation-job-b')
-    store.setPatientBriefJob('case-a', 'brief-job-a')
-    store.setPatientBriefJob('case-b', 'brief-job-b')
+    store.setPatientPersonaJob('case-a', 'brief-job-a')
+    store.setPatientPersonaJob('case-b', 'brief-job-b')
 
     expect(useSyntheticPatientLibraryViewStore.getState()).toMatchObject({
       patientBriefJobIds: {

@@ -13,11 +13,11 @@ import { getWorkspaceErrorMessage } from './workspace-error.ts'
 
 export function resetImpact(locale: WorkspaceLocale, clearPatientLibrary = false): string {
   if (locale !== 'zh-CN') return clearPatientLibrary
-    ? 'Clear the patient library, including source history, Patient Briefs and case truth, from the current workspace. Previous clinical records and audits remain archived. Standard catalogs, orderable laboratory services and accounts are retained.'
-    : 'Restart clinical progress for registrations, consultations, orders, reports, payments and dispensing. Generated patients, source history, Patient Briefs and case truth are retained, and started cases return to registration. Previous records remain archived; standard catalogs, laboratory services and accounts are retained.'
+    ? 'Clear the patient library, including source history, Patient Personas and case truth, from the current workspace. Previous clinical records and audits remain archived. Standard catalogs, orderable laboratory services and accounts are retained.'
+    : 'Restart clinical progress for registrations, consultations, orders, reports, payments and dispensing. Generated patients, source history, Patient Personas and case truth are retained, and started cases return to registration. Previous records remain archived; standard catalogs, laboratory services and accounts are retained.'
   return clearPatientLibrary
-    ? '从当前工作台清空合成患者、来源病史、患者梗概和本次病例真值；旧轮次诊疗与审计记录归档，不物理删除。标准目录、可开检验和账号保留。'
-    : '重置挂号、问诊、医嘱、报告、收费和发药进度，已开始病例重新进入待就诊状态。合成患者、来源病史、患者梗概和本次病例真值保留；旧轮次记录归档，标准目录、可开检验和账号保留。'
+    ? '从当前工作台清空合成患者、来源病史、患者档案和本次病例真值；旧轮次诊疗与审计记录归档，不物理删除。标准目录、可开检验和账号保留。'
+    : '重置挂号、问诊、医嘱、报告、收费和发药进度，已开始病例重新进入待就诊状态。合成患者、来源病史、患者档案和本次病例真值保留；旧轮次记录归档，标准目录、可开检验和账号保留。'
 }
 
 export function ScenarioResetControl({ disabled, error, locale, onReset, pending }: {

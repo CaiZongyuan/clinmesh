@@ -439,13 +439,14 @@ describe('Laboratory Service Publisher HTTP contract', () => {
         : {
             catalogEnrichmentModel: 'catalog-test-model',
           }),
-      patientBriefModel: 'brief-fixture',
+      patientPersonaModel: 'brief-fixture',
       chatCompletionsProvider: {
         completeJson: async input => {
           if (input.model !== 'brief-fixture' && provider !== undefined) return provider.completeJson(input)
           return { model: 'brief-fixture', content: JSON.stringify({
             chiefComplaint: '咽痛两天', knownHistorySummary: '既往体健。', openingStatement: '医生您好，我咽痛两天了。',
-            symptomTopics: [{ id: 'onset', name: '咽痛经过', answerPoints: ['两天前开始。'] }],
+            medicationMemory: '没吃过药。', symptomExperience: '两天前开始嗓子痛。',
+            persona: { character: '随和', speechStyle: '简洁', healthLiteracy: '一般', attitude: '信任医生' },
           }) }
         },
       },
@@ -561,8 +562,8 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     const generation = await runtime.scenarioData.processNextGenerationJob()
     expect(generation?.status).toBe('succeeded')
     const caseId = generation!.caseIds[0]!
-    await post(`/api/sim/v1/synthetic-cases/${caseId}/patient-brief-jobs`, administratorCookie, {})
-    expect((await runtime.patientBrief.processNext())?.status).toBe('succeeded')
+    await post(`/api/sim/v1/synthetic-cases/${caseId}/patient-persona-jobs`, administratorCookie, {})
+    expect((await runtime.patientPersona.processNext())?.status).toBe('succeeded')
     const syntheticCase = syntheticCaseInstanceSchema.parse(await (await runtime.app.request(
       `/api/sim/v1/synthetic-cases/${caseId}`, { headers: { cookie: administratorCookie } },
     )).json())

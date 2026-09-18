@@ -2,7 +2,7 @@
 
 本指南从 clone 开始，按顺序完成本地部署：基础运行、参考目录同步、AI Provider 配置、Synthea 患者生成与可选运行方式。每一步都以前一步为前提；只想快速体验的读者完成步骤 1、2、5 即可登录演示账号。产品定位与工程形态见仓库根 [README](../README.md)，部署决策与单实例约束见 [Demo 部署架构](demo-architecture.md)。
 
-不配置 Synthea Provider 不阻塞 ClinMesh 启动；Provider 缺失只影响新的患者生成任务。生成患者后，"生成患者梗概"和"开始门诊就诊"要求步骤 4 的 AI Provider 已配置。
+不配置 Synthea Provider 不阻塞 ClinMesh 启动；Provider 缺失只影响新的患者生成任务。生成患者后，"生成患者档案"和"开始门诊就诊"要求步骤 4 的 AI Provider 已配置。
 
 ## 0. 前置条件
 
@@ -10,7 +10,7 @@
 | --- | --- |
 | 基础运行（步骤 1–2、5） | Node.js `^22.19.0` 或 `>=24.0.0`、pnpm `11.17.0`、Git |
 | 完整参考目录（步骤 3） | 同上，加可访问 cn-health Registry 的网络 |
-| 患者梗概与就诊闭环（步骤 4） | 同上，加一个 OpenAI-compatible Provider 及 API key |
+| 患者档案与就诊闭环（步骤 4） | 同上，加一个 OpenAI-compatible Provider 及 API key |
 | Synthea 患者生成（步骤 6） | x86-64 主机上的 Docker Engine 与 `docker compose` |
 | 全量检查与生产构建 | Bun `1.4.0`（DSH React Surface artifact 构建使用 `bun`） |
 | DSH Web 原生入口 | Bun `1.4.0` 与网络，其余由 `pnpm dsh:setup` 按 lock 自动安装；Windows 同时需要系统自带的 Windows PowerShell 5.1 |
@@ -55,20 +55,23 @@ pnpm reference:sync
 
 正式同步写入 `.data/clinmesh-reference.sqlite`，相同 lock 重复执行返回幂等成功。`.env.example` 已默认启用 `CLINMESH_REFERENCE_DATABASE_PATH=.data/clinmesh-reference.sqlite`；当前 Release 默认取 `reference-data.lock.json` 的 `compositeRelease.releaseId`（lock 升级后自动跟随），仅覆盖 `CLINMESH_REFERENCE_RELEASE_ID` 时才需要手动维护。同步不会修改 `.env`，也不会热切换已启动的 Server。库中缺少当前 Release 时 Server 启动失败关闭（`REFERENCE_RELEASE_NOT_FOUND`），错误消息指引重跑 `pnpm reference:sync`。跳过本步时 Server 使用内置合成 fixture（`clinmesh-hospital-reference-fixture-2026-08-28`）：诊断与检验目录为空，药品目录只有 3 条合成产品，医生无法下诊断或开检验。
 
-## 4. 配置 AI Provider（患者梗概必需）
+## 4. 配置 AI Provider（患者档案必需）
 
-Synthea 病历压缩为 Patient Brief、Investigation 与 Catalog Enrichment 使用 OpenAI-compatible Provider。四个基础变量必须同时配置：
+Synthea 病历压缩为 Patient Persona、Investigation 与 Catalog Enrichment 使用 OpenAI-compatible Provider。原有四个基础变量必须同时配置；档案继续复用 `CLINMESH_AI_BRIEF_MODEL`，自由问诊另配置 `CLINMESH_AI_CONSULTATION_MODEL`：
 
 ```dotenv
 CLINMESH_AI_BASE_URL=https://provider.example/v1
 CLINMESH_AI_API_KEY=replace-with-local-key
 CLINMESH_AI_BRIEF_MODEL=provider/brief-model
 CLINMESH_AI_INVESTIGATION_MODEL=provider/investigation-model
+CLINMESH_AI_CONSULTATION_MODEL=provider/consultation-model
 ```
 
-laboratory-cn 默认自动启用，不需要 Catalog Enrichment。只有显式配置包含 LOINC 的 Reference Release，并通过 CLI 发布该来源服务时，才需要 `CLINMESH_AI_CATALOG_ENRICHMENT_MODEL`。未配置基础变量时，"生成患者梗概"返回 `PROVIDER_NOT_AVAILABLE`，且没有 Brief 就无法把合成病例开始为门诊就诊（`BRIEF_NOT_READY`）。
+laboratory-cn 默认自动启用，不需要 Catalog Enrichment。只有显式配置包含 LOINC 的 Reference Release，并通过 CLI 发布该来源服务时，才需要 `CLINMESH_AI_CATALOG_ENRICHMENT_MODEL`。未配置基础变量时，"生成患者档案"返回 `PROVIDER_NOT_AVAILABLE`，且没有档案就无法把合成病例开始为门诊就诊（`BRIEF_NOT_READY`）。
 
-可显式运行一次本地 live smoke 验证 schema 与泄漏检查；它不进入 `pnpm check`，不打印 Brief 内容或凭证：
+未配置 consultation 模型时，已有服务仍可启动；自由问诊返回 `CONSULTATION_REPLY_UNAVAILABLE`，保留医生发言并可在模型恢复后重试。每轮问诊最多等待约 30 秒。
+
+可显式运行一次本地 live smoke 验证 schema 与泄漏检查；它不进入 `pnpm check`，不打印档案内容或凭证：
 
 ```sh
 pnpm smoke:patient-brief:live
@@ -122,7 +125,7 @@ pnpm synthea:doctor
 
 访问管理员模拟数据页面 `http://127.0.0.1:51868/scenario-data`，在“合成患者库”中点击“生成患者”；默认选择全部 Synthea 模块，每次打开都会产生新的双 seed，高级设置可手动修改以复现。生成完成后选择患者，可在“来源”页查看完整来源病史。
 
-在“来源历史”中打开任一条目的 R4 详情，点击“生成患者梗概”（要求步骤 4 已配置）。Brief 成功且已有当前 revision 后点击“开始门诊就诊”，选择科室、地点和门诊类型；系统直接创建普通 HIS 的 Patient、Registration、Encounter 和 Queue Task，随后即可继续岗位流程。
+在“来源历史”中打开任一条目的 R4 详情，点击“生成患者档案”（要求步骤 4 已配置）。Brief 成功且已有当前 revision 后点击“开始门诊就诊”，选择科室、地点和门诊类型；系统直接创建普通 HIS 的 Patient、Registration、Encounter 和 Queue Task，随后即可继续岗位流程。
 
 停止并只移除两个 Synthea 容器：
 
@@ -256,7 +259,7 @@ node "$DSHVM_CLI" exec web --port 3080 --no-open
 
 重新启动 DSH Web 后，左侧栏顶端显示 ClinMesh Logo 和名称；应用尚未打开或已经关闭时仍保留该 Profile 品牌。新会话中央同样显示 ClinMesh Logo，中文标题为“医疗智能体平台”，英文为“Medical AI Agent Platform”。禁用或卸载 ClinMesh 插件后恢复宿主的品牌显示。从侧栏底部“医院工作台”菜单打开 ClinMesh；登录后岗位导航直接显示在宿主侧栏的新会话与工作区之间，底部菜单保留设置与主题入口，其他已注册 Surface 位于“其他应用”分组。ClinMesh 在 DSH 内不显示自己的左侧栏，默认使用 `workspace` 左右分屏并保留原生会话；现有页头的“全屏 ClinMesh”与“返回 DSH 分屏”按钮可往返切换，无需刷新。页头右侧的“收起会话 / 展开会话”可释放或恢复右侧空间，原生文件栏随会话隐藏并保留开合、文件选择和草稿；左侧医院导航保持可用。全屏时先返回分屏再使用宿主导航，返回后保留会话收起状态。窗口缩小或侧栏开关不自动全屏，应用内部按容器宽度适配。页面导航使用 Memory Router，不修改 DSH document pathname。独立 Web 保留原侧栏。当前模式只信任安装到同一 Web Profile 的插件，并只允许合成数据。
 
-根 `pnpm dev:server` 直连 pnpm 运行 `@clinmesh/server` 的 `dev` 脚本，不经过 Turborepo：Turborepo 在 Windows 上包装 `tsx watch` 的持久任务时会把进程树冻结在启动阶段（服务永不监听），且 strict env 会过滤未声明的 `CLINMESH_AI_*` 变量。`pnpm dev:dsh` 的 Server 进程同样直启。手动直启时若环境里已存在 `.env` 加载出的原始相对路径（`CLINMESH_DATABASE_PATH`、`CLINMESH_REFERENCE_DATABASE_PATH`、`CLINMESH_WEB_ROOT`），必须先按 `.env` 所在目录绝对化：Server 会对 `.env` 中的相对路径做同样的绝对化，但进程环境变量的原始相对值会覆盖该结果并按进程工作目录解析。
+根 `pnpm dev:server` 直连 pnpm 运行 `@clinmesh/server` 的 `dev` 脚本，不经过 Turborepo：Turborepo 在 Windows 上包装 `tsx watch` 的持久任务时会把进程树冻结在启动阶段（服务永不监听），且 strict env 会过滤未声明的 `CLINMESH_AI_*` 变量——漏配时 Patient Persona 和 Investigation provider 会被视为未配置。`pnpm dev:dsh` 的 Server 进程同样直启。手动直启时若环境里已存在 `.env` 加载出的原始相对路径（`CLINMESH_DATABASE_PATH`、`CLINMESH_REFERENCE_DATABASE_PATH`、`CLINMESH_WEB_ROOT`），必须先按 `.env` 所在目录绝对化：Server 会对 `.env` 中的相对路径做同样的绝对化，但进程环境变量的原始相对值会覆盖该结果并按进程工作目录解析。
 
 ### DSH 持续升级
 

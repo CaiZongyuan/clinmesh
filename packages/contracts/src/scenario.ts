@@ -842,7 +842,23 @@ export const syntheticPatientProfileDetailSchema = z.object({
   workspaceId: z.string().min(1),
 }).strict()
 
-export const patientBriefContentSchema = z.object({
+export const patientPersonaTraitsSchema = z.object({
+  attitude: z.string().trim().min(1).max(300),
+  character: z.string().trim().min(1).max(300),
+  healthLiteracy: z.string().trim().min(1).max(300),
+  speechStyle: z.string().trim().min(1).max(300),
+}).strict()
+
+export const patientPersonaContentSchema = z.object({
+  chiefComplaint: z.string().trim().min(1).max(500),
+  knownHistorySummary: z.string().trim().min(1).max(2_000),
+  medicationMemory: z.string().trim().min(1).max(1_000),
+  openingStatement: z.string().trim().min(1).max(1_000),
+  persona: patientPersonaTraitsSchema,
+  symptomExperience: z.string().trim().min(1).max(4_000),
+}).strict()
+
+export const patientBriefLegacyContentSchema = z.object({
   chiefComplaint: z.string().trim().min(1).max(500),
   knownHistorySummary: z.string().trim().min(1).max(2_000),
   openingStatement: z.string().trim().min(1).max(1_000),
@@ -865,9 +881,20 @@ export const patientBriefContentSchema = z.object({
   })
 })
 
-export const patientBriefRevisionSchema = z.object({
+export const patientPersonaRevisionContentSchema = z.union([
+  patientPersonaContentSchema,
+  patientBriefLegacyContentSchema,
+])
+
+export function isLegacyPatientPersonaContent(
+  content: z.infer<typeof patientPersonaRevisionContentSchema>,
+): content is z.infer<typeof patientBriefLegacyContentSchema> {
+  return !('persona' in content)
+}
+
+export const patientPersonaRevisionSchema = z.object({
   caseId: z.string().min(1).max(128),
-  content: patientBriefContentSchema,
+  content: patientPersonaRevisionContentSchema,
   createdAt: z.iso.datetime({ offset: true }),
   inputHash: z.string().regex(/^[a-f0-9]{64}$/),
   model: z.string().min(1).max(256),
@@ -878,12 +905,19 @@ export const patientBriefRevisionSchema = z.object({
   workspaceId: z.string().min(1),
 }).strict()
 
-export const patientBriefRevisionListSchema = z.object({
-  activeRevision: z.number().int().positive().nullable(),
-  items: z.array(patientBriefRevisionSchema),
+export const createPatientPersonaRevisionFromEditRequestSchema = z.object({
+  input: z.object({
+    content: patientPersonaContentSchema,
+    forceDiagnosisLeakOverride: z.boolean().optional(),
+  }).strict(),
 }).strict()
 
-export const patientBriefJobSchema = z.object({
+export const patientPersonaRevisionListSchema = z.object({
+  activeRevision: z.number().int().positive().nullable(),
+  items: z.array(patientPersonaRevisionSchema),
+}).strict()
+
+export const patientPersonaJobSchema = z.object({
   caseId: z.string().min(1).max(128),
   createdAt: z.iso.datetime({ offset: true }),
   error: z.object({
@@ -899,8 +933,8 @@ export const patientBriefJobSchema = z.object({
   workspaceId: z.string().min(1),
 }).strict()
 
-export const selectPatientBriefRevisionRequestSchema = z.object({
-  briefRevision: z.number().int().positive(),
+export const selectPatientPersonaRevisionRequestSchema = z.object({
+  personaRevision: z.number().int().positive(),
   expectedCaseRevision: z.number().int().positive(),
 }).strict()
 
@@ -1027,9 +1061,10 @@ export const updateSyntheticPatientProfileRequestSchema = z.object({
   input: syntheticPatientIdentitySchema,
 }).strict()
 
-export type PatientBriefContent = z.infer<typeof patientBriefContentSchema>
-export type PatientBriefJob = z.infer<typeof patientBriefJobSchema>
-export type PatientBriefRevision = z.infer<typeof patientBriefRevisionSchema>
+export type PatientPersonaContent = z.infer<typeof patientPersonaContentSchema>
+export type PatientPersonaRevisionContent = z.infer<typeof patientPersonaRevisionContentSchema>
+export type PatientPersonaJob = z.infer<typeof patientPersonaJobSchema>
+export type PatientPersonaRevision = z.infer<typeof patientPersonaRevisionSchema>
 export type InvestigationResultContent = z.infer<typeof investigationResultContentSchema>
 export type InvestigationResultSnapshot = z.infer<typeof investigationResultSnapshotSchema>
 export type ScenarioProductMedicationCatalogItem = z.infer<

@@ -1,10 +1,10 @@
 import {
-  patientBriefJobSchema,
-  patientBriefRevisionListSchema,
-  patientBriefRevisionSchema,
-  type PatientBriefContent,
-  type PatientBriefJob,
-  type PatientBriefRevision,
+  patientPersonaJobSchema,
+  patientPersonaRevisionListSchema,
+  patientPersonaRevisionSchema,
+  type PatientPersonaContent,
+  type PatientPersonaJob,
+  type PatientPersonaRevision,
   type SyntheticCaseInstance,
 } from '@clinmesh/contracts/scenario'
 import { z } from 'zod'
@@ -58,7 +58,7 @@ const selectJob = `
   SELECT workspace_id, job_id, case_id, status, model_id,
     actor_context_json, created_by_actor_id, result_revision,
     error_code, error_message, created_at, started_at, finished_at, updated_at
-  FROM patient_brief_job
+  FROM patient_persona_job
 `
 
 function parseActorContext(value: unknown): ActorContext {
@@ -78,14 +78,14 @@ function parseActorContext(value: unknown): ActorContext {
   }
 }
 
-export interface ClaimedPatientBriefJob extends PatientBriefJob {
+export interface ClaimedPatientPersonaJob extends PatientPersonaJob {
   actorContext: ActorContext
   createdByActorId: string
   model: string
   status: 'running'
 }
 
-export class PatientBriefRepository {
+export class PatientPersonaRepository {
   readonly #cases: SyntheticCaseRepository
   readonly #database: ClinMeshDatabase
 
@@ -94,10 +94,10 @@ export class PatientBriefRepository {
     this.#database = database
   }
 
-  create(job: PatientBriefJob, context: ActorContext, model: string): void {
-    const parsed = patientBriefJobSchema.parse(job)
+  create(job: PatientPersonaJob, context: ActorContext, model: string): void {
+    const parsed = patientPersonaJobSchema.parse(job)
     this.#database.driver.prepare(`
-      INSERT INTO patient_brief_job (
+      INSERT INTO patient_persona_job (
         workspace_id, job_id, case_id, status, model_id,
         actor_context_json, created_by_actor_id, created_at, updated_at
       ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?)
@@ -113,7 +113,7 @@ export class PatientBriefRepository {
     )
   }
 
-  get(workspaceId: string, jobId: string): PatientBriefJob | undefined {
+  get(workspaceId: string, jobId: string): PatientPersonaJob | undefined {
     const row = this.#database.driver.prepare(`${selectJob}
       WHERE workspace_id = ? AND job_id = ?
     `).get(workspaceId, jobId)
@@ -122,13 +122,13 @@ export class PatientBriefRepository {
 
   requeueInterrupted(now: string): number {
     return this.#database.driver.prepare(`
-      UPDATE patient_brief_job
+      UPDATE patient_persona_job
       SET status = 'queued', started_at = NULL, updated_at = ?
       WHERE status = 'running'
     `).run(now).changes
   }
 
-  claimNext(now: string): ClaimedPatientBriefJob | undefined {
+  claimNext(now: string): ClaimedPatientPersonaJob | undefined {
     return this.#database.driver.transaction(() => {
       const row = this.#database.driver.prepare(`${selectJob}
         WHERE status = 'queued'
@@ -138,7 +138,7 @@ export class PatientBriefRepository {
       if (row === undefined) return undefined
       const candidate = jobRowSchema.parse(row)
       const updated = this.#database.driver.prepare(`
-        UPDATE patient_brief_job
+        UPDATE patient_persona_job
         SET status = 'running', started_at = ?, updated_at = ?
         WHERE workspace_id = ? AND job_id = ? AND status = 'queued'
       `).run(now, now, candidate.workspace_id, candidate.job_id)
@@ -159,9 +159,9 @@ export class PatientBriefRepository {
   }
 
   succeed(
-    job: ClaimedPatientBriefJob,
+    job: ClaimedPatientPersonaJob,
     input: {
-      content: PatientBriefContent
+      content: PatientPersonaContent
       inputHash: string
       model: string
       outputHash: string
@@ -169,16 +169,16 @@ export class PatientBriefRepository {
       promptVersion: string
     },
     now: string,
-  ): { job: PatientBriefJob; revision: PatientBriefRevision; syntheticCase: SyntheticCaseInstance } {
+  ): { job: PatientPersonaJob; revision: PatientPersonaRevision; syntheticCase: SyntheticCaseInstance } {
     return this.#database.driver.transaction(() => {
       const nextRevision = z.object({ revision: z.number().int().positive() }).parse(
         this.#database.driver.prepare(`
           SELECT coalesce(MAX(revision), 0) + 1 AS revision
-          FROM patient_brief_revision
+          FROM patient_persona_revision
           WHERE workspace_id = ? AND case_id = ?
         `).get(job.workspaceId, job.caseId),
       ).revision
-      const revision = patientBriefRevisionSchema.parse({
+      const revision = patientPersonaRevisionSchema.parse({
         caseId: job.caseId,
         content: input.content,
         createdAt: now,
@@ -191,7 +191,7 @@ export class PatientBriefRepository {
         workspaceId: job.workspaceId,
       })
       this.#database.driver.prepare(`
-        INSERT INTO patient_brief_revision (
+        INSERT INTO patient_persona_revision (
           workspace_id, case_id, revision, content_json, model_id,
           prompt_version, prompt_hash, input_hash, output_hash, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -217,12 +217,12 @@ export class PatientBriefRepository {
       `).run(nextRevision, now, job.workspaceId, job.caseId)
       if (caseUpdate.changes !== 1) throw new Error('The Synthetic Case cannot accept a Brief')
       const jobUpdate = this.#database.driver.prepare(`
-        UPDATE patient_brief_job
+        UPDATE patient_persona_job
         SET status = 'succeeded', result_revision = ?, error_code = NULL,
           error_message = NULL, finished_at = ?, updated_at = ?
         WHERE workspace_id = ? AND job_id = ? AND status = 'running'
       `).run(nextRevision, now, now, job.workspaceId, job.jobId)
-      if (jobUpdate.changes !== 1) throw new Error('The Patient Brief job is no longer running')
+      if (jobUpdate.changes !== 1) throw new Error('The Patient Persona job is no longer running')
       return {
         job: this.get(job.workspaceId, job.jobId)!,
         revision,
@@ -232,27 +232,27 @@ export class PatientBriefRepository {
   }
 
   fail(
-    job: ClaimedPatientBriefJob,
+    job: ClaimedPatientPersonaJob,
     error: { code: string; message: string },
     now: string,
-  ): PatientBriefJob {
+  ): PatientPersonaJob {
     const update = this.#database.driver.prepare(`
-      UPDATE patient_brief_job
+      UPDATE patient_persona_job
       SET status = 'failed', error_code = ?, error_message = ?,
         finished_at = ?, updated_at = ?
       WHERE workspace_id = ? AND job_id = ? AND status = 'running'
     `).run(error.code, error.message, now, now, job.workspaceId, job.jobId)
-    if (update.changes !== 1) throw new Error('The Patient Brief job is no longer running')
+    if (update.changes !== 1) throw new Error('The Patient Persona job is no longer running')
     return this.get(job.workspaceId, job.jobId)!
   }
 
-  requeue(job: ClaimedPatientBriefJob, now: string): PatientBriefJob {
+  requeue(job: ClaimedPatientPersonaJob, now: string): PatientPersonaJob {
     const update = this.#database.driver.prepare(`
-      UPDATE patient_brief_job
+      UPDATE patient_persona_job
       SET status = 'queued', started_at = NULL, updated_at = ?
       WHERE workspace_id = ? AND job_id = ? AND status = 'running'
     `).run(now, job.workspaceId, job.jobId)
-    if (update.changes !== 1) throw new Error('The Patient Brief job is no longer running')
+    if (update.changes !== 1) throw new Error('The Patient Persona job is no longer running')
     return this.get(job.workspaceId, job.jobId)!
   }
 
@@ -262,11 +262,11 @@ export class PatientBriefRepository {
     const rows = z.array(revisionRowSchema).parse(this.#database.driver.prepare(`
       SELECT workspace_id, case_id, revision, content_json, model_id,
         prompt_version, prompt_hash, input_hash, output_hash, created_at
-      FROM patient_brief_revision
+      FROM patient_persona_revision
       WHERE workspace_id = ? AND case_id = ?
       ORDER BY revision DESC
     `).all(workspaceId, caseId))
-    return patientBriefRevisionListSchema.parse({
+    return patientPersonaRevisionListSchema.parse({
       activeRevision: syntheticCase.activeBriefRevision,
       items: rows.map(row => this.#mapRevision(row)),
     })
@@ -276,27 +276,27 @@ export class PatientBriefRepository {
     workspaceId: string,
     caseId: string,
     revision: number,
-  ): PatientBriefRevision | undefined {
+  ): PatientPersonaRevision | undefined {
     const row = this.#database.driver.prepare(`
       SELECT workspace_id, case_id, revision, content_json, model_id,
         prompt_version, prompt_hash, input_hash, output_hash, created_at
-      FROM patient_brief_revision
+      FROM patient_persona_revision
       WHERE workspace_id = ? AND case_id = ? AND revision = ?
     `).get(workspaceId, caseId, revision)
     return row === undefined ? undefined : this.#mapRevision(revisionRowSchema.parse(row))
   }
 
   selectRevision(input: {
-    briefRevision: number
+    personaRevision: number
     caseId: string
     expectedCaseRevision: number
     now: string
     workspaceId: string
   }): SyntheticCaseInstance | undefined {
     const exists = this.#database.driver.prepare(`
-      SELECT 1 AS present FROM patient_brief_revision
+      SELECT 1 AS present FROM patient_persona_revision
       WHERE workspace_id = ? AND case_id = ? AND revision = ?
-    `).get(input.workspaceId, input.caseId, input.briefRevision)
+    `).get(input.workspaceId, input.caseId, input.personaRevision)
     if (exists === undefined) return undefined
     const update = this.#database.driver.prepare(`
       UPDATE synthetic_case_instance
@@ -305,7 +305,7 @@ export class PatientBriefRepository {
       WHERE workspace_id = ? AND case_id = ? AND revision = ?
         AND status IN ('brief-pending', 'brief-ready')
     `).run(
-      input.briefRevision,
+      input.personaRevision,
       input.now,
       input.workspaceId,
       input.caseId,
@@ -314,8 +314,60 @@ export class PatientBriefRepository {
     return update.changes === 1 ? this.#cases.get(input.workspaceId, input.caseId) : undefined
   }
 
-  #publicJob(row: z.infer<typeof jobRowSchema>): PatientBriefJob {
-    return patientBriefJobSchema.parse({
+  createRevision(input: {
+    caseId: string
+    content: PatientPersonaContent
+    createdAt: string
+    inputHash: string
+    model: string
+    outputHash: string
+    promptHash: string
+    promptVersion: string
+    workspaceId: string
+  }): PatientPersonaRevision {
+    return this.#database.driver.transaction(() => {
+      const nextRevision = z.object({ revision: z.number().int().positive() }).parse(
+        this.#database.driver.prepare(`
+          SELECT coalesce(MAX(revision), 0) + 1 AS revision
+          FROM patient_persona_revision
+          WHERE workspace_id = ? AND case_id = ?
+        `).get(input.workspaceId, input.caseId),
+      ).revision
+      const revision = patientPersonaRevisionSchema.parse({
+        caseId: input.caseId,
+        content: input.content,
+        createdAt: input.createdAt,
+        inputHash: input.inputHash,
+        model: input.model,
+        outputHash: input.outputHash,
+        promptHash: input.promptHash,
+        promptVersion: input.promptVersion,
+        revision: nextRevision,
+        workspaceId: input.workspaceId,
+      })
+      this.#database.driver.prepare(`
+        INSERT INTO patient_persona_revision (
+          workspace_id, case_id, revision, content_json, model_id,
+          prompt_version, prompt_hash, input_hash, output_hash, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        revision.workspaceId,
+        revision.caseId,
+        revision.revision,
+        JSON.stringify(revision.content),
+        revision.model,
+        revision.promptVersion,
+        revision.promptHash,
+        revision.inputHash,
+        revision.outputHash,
+        revision.createdAt,
+      )
+      return revision
+    })()
+  }
+
+  #publicJob(row: z.infer<typeof jobRowSchema>): PatientPersonaJob {
+    return patientPersonaJobSchema.parse({
       caseId: row.case_id,
       createdAt: row.created_at,
       error: row.error_code === null || row.error_message === null
@@ -331,8 +383,8 @@ export class PatientBriefRepository {
     })
   }
 
-  #mapRevision(row: z.infer<typeof revisionRowSchema>): PatientBriefRevision {
-    return patientBriefRevisionSchema.parse({
+  #mapRevision(row: z.infer<typeof revisionRowSchema>): PatientPersonaRevision {
+    return patientPersonaRevisionSchema.parse({
       caseId: row.case_id,
       content: JSON.parse(row.content_json),
       createdAt: row.created_at,

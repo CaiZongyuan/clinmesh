@@ -4,7 +4,7 @@ interface SyntheticPatientLibraryViewState {
   patientBriefJobIds: Record<string, string>
   reset: () => void
   scenarioGenerationJobIds: Record<string, string>
-  setPatientBriefJob: (caseId: string, jobId: string) => void
+  setPatientPersonaJob: (caseId: string, jobId: string) => void
   setScenarioGenerationJob: (workspaceId: string, jobId: string) => void
 }
 
@@ -15,7 +15,7 @@ export const useSyntheticPatientLibraryViewStore = create<SyntheticPatientLibrar
     scenarioGenerationJobIds: {},
   }),
   scenarioGenerationJobIds: {},
-  setPatientBriefJob: (caseId, jobId) => set(state => ({
+  setPatientPersonaJob: (caseId, jobId) => set(state => ({
     patientBriefJobIds: {
       ...state.patientBriefJobIds,
       [caseId]: jobId,

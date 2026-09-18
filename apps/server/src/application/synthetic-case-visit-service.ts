@@ -1,8 +1,9 @@
 import type { z } from 'zod'
 import {
   startSyntheticCaseRequestSchema,
+  isLegacyPatientPersonaContent,
 } from '@clinmesh/contracts/scenario'
-import type { PatientBriefRepository } from '../infrastructure/sqlite/patient-brief-repository.ts'
+import type { PatientPersonaRepository } from '../infrastructure/sqlite/patient-persona-repository.ts'
 import type { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic-case-repository.ts'
 import type { SyntheticPatientProfileRepository } from '../infrastructure/sqlite/synthetic-patient-profile-repository.ts'
 import type { ActorContext } from './command-executor.ts'
@@ -29,13 +30,13 @@ export class SyntheticCaseVisitError extends Error {
 }
 
 export class SyntheticCaseVisitService {
-  readonly #briefs: PatientBriefRepository
+  readonly #briefs: PatientPersonaRepository
   readonly #cases: SyntheticCaseRepository
   readonly #profiles: SyntheticPatientProfileRepository
   readonly #workflow: WorkflowService
 
   constructor(input: {
-    briefs: PatientBriefRepository
+    briefs: PatientPersonaRepository
     cases: SyntheticCaseRepository
     profiles: SyntheticPatientProfileRepository
     workflow: WorkflowService
@@ -96,7 +97,10 @@ export class SyntheticCaseVisitService {
       input.request.activeBriefRevision,
     )
     if (brief === undefined) {
-      throw new SyntheticCaseVisitError('BRIEF_NOT_READY', 'The selected Patient Brief was not found')
+      throw new SyntheticCaseVisitError('BRIEF_NOT_READY', 'The selected Patient Persona was not found')
+    }
+    if (syntheticCase.status !== 'started' && isLegacyPatientPersonaContent(brief.content)) {
+      throw new SyntheticCaseVisitError('BRIEF_NOT_READY', 'Regenerate and select a Patient Persona before starting this legacy case')
     }
     return this.#workflow.startSyntheticCase({
       brief,

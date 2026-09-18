@@ -11,6 +11,7 @@ const httpUrlSchema = z.url().refine((value) => {
 const serverEnvironmentSchema = z.object({
   CLINMESH_AI_API_KEY: z.string().min(1).optional(),
   CLINMESH_AI_BASE_URL: httpUrlSchema.optional(),
+  CLINMESH_AI_CONSULTATION_MODEL: z.string().trim().min(1).max(256).optional(),
   CLINMESH_AI_BRIEF_MODEL: z.string().trim().min(1).max(256).optional(),
   CLINMESH_AI_CATALOG_ENRICHMENT_MODEL: z.string().trim().min(1).max(256).optional(),
   CLINMESH_AI_INVESTIGATION_MODEL: z.string().trim().min(1).max(256).optional(),
@@ -44,7 +45,7 @@ const serverEnvironmentSchema = z.object({
     environment.CLINMESH_AI_BRIEF_MODEL,
     environment.CLINMESH_AI_INVESTIGATION_MODEL,
   ]
-  if (values.some(value => value !== undefined) && values.some(value => value === undefined)) {
+  if ((values.some(value => value !== undefined) || environment.CLINMESH_AI_CONSULTATION_MODEL !== undefined) && values.some(value => value === undefined)) {
     context.addIssue({
       code: 'custom',
       message: 'AI base URL, API key, Brief model, and Investigation model must be configured together',
@@ -57,6 +58,7 @@ export interface ServerConfig {
   ai?: {
     apiKey: string
     baseUrl: string
+    consultationModel?: string | undefined
     briefModel: string
     catalogEnrichmentModel?: string
     investigationModel: string
@@ -162,6 +164,7 @@ export function readServerConfig(
           ai: {
             apiKey: parsed.CLINMESH_AI_API_KEY!,
             baseUrl: parsed.CLINMESH_AI_BASE_URL,
+            consultationModel: parsed.CLINMESH_AI_CONSULTATION_MODEL,
             briefModel: parsed.CLINMESH_AI_BRIEF_MODEL!,
             ...(parsed.CLINMESH_AI_CATALOG_ENRICHMENT_MODEL === undefined
               ? {}
