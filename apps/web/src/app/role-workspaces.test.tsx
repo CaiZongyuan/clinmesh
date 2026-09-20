@@ -2797,6 +2797,7 @@ describe('role workspaces', () => {
           await tool.execute(boundAgentToolInput(tool, { section }), new AbortController().signal)
         })
         await waitFor(() => expect(queries.getByRole('tab', { name: label }).getAttribute('aria-selected')).toBe('true'))
+        expect(queries.getByRole('tabpanel', { name: label }).getAttribute('data-agent-section')).toBe(section)
       }
     } finally {
       view.unmount()

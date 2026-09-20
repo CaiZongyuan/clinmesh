@@ -45,7 +45,7 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
     && !(unanswered && lastTextTurn.messageText === action.pendingMessage)
     ? action.pendingMessage : undefined
   return (
-    <section aria-labelledby="consultation-record-heading" className="flex min-w-0 flex-col gap-4">
+    <section aria-labelledby="consultation-record-heading" data-agent-consultation="" className="flex min-w-0 flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold" id="consultation-record-heading">{messages.consultationRecord}</h3>
         <Badge variant="secondary">{consultation.turns.length}</Badge>
@@ -68,7 +68,7 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                   <Message align={turn.speaker === 'doctor' ? 'end' : 'start'}>
                     <MessageContent>
                       <MessageHeader>{turn.speaker === 'doctor' ? messages.doctorQuestion : patientName}</MessageHeader>
-                      <Bubble align={turn.speaker === 'doctor' ? 'end' : 'start'} variant={turn.speaker === 'doctor' ? 'outline' : 'muted'}>
+                      <Bubble data-agent-consultation-message={turn.kind === 'text' ? turn.id : undefined} align={turn.speaker === 'doctor' ? 'end' : 'start'} variant={turn.speaker === 'doctor' ? 'outline' : 'muted'}>
                         <BubbleContent>
                           <p className="whitespace-pre-wrap">{turn.messageText}</p>
                           {turn.kind === 'report-card' ? (
@@ -87,13 +87,13 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                 <MessageScrollerItem messageId="sending-doctor-message" scrollAnchor>
                   <Message align="end"><MessageContent>
                     <MessageHeader>{messages.doctorQuestion}</MessageHeader>
-                    <Bubble align="end" variant="outline"><BubbleContent>{optimisticMessage}</BubbleContent></Bubble>
+                    <Bubble data-agent-consultation-pending="" align="end" variant="outline"><BubbleContent>{optimisticMessage}</BubbleContent></Bubble>
                   </MessageContent></Message>
                 </MessageScrollerItem>
               )}
               {action.pending ? (
                 <MessageScrollerItem messageId="patient-typing">
-                  <Message><MessageContent><Bubble variant="muted"><BubbleContent>
+                  <Message><MessageContent><Bubble data-agent-consultation-pending="" variant="muted"><BubbleContent>
                     <span role="status">{locale === 'zh-CN' ? '患者正在输入…' : 'The patient is typing…'}</span>
                   </BubbleContent></Bubble></MessageContent></Message>
                 </MessageScrollerItem>

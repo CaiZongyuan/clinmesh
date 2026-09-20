@@ -244,11 +244,13 @@ function CatalogPagination({
 }
 
 function CatalogTriggerButton({
+  catalog,
   disabled,
   label,
   mode,
   onClick,
 }: {
+  catalog: 'diagnosis' | 'laboratory' | 'medication'
   disabled?: boolean
   label: string
   mode: TriggerMode
@@ -257,6 +259,7 @@ function CatalogTriggerButton({
   if (mode === 'replace') {
     return (
       <Button
+        data-agent-catalog-trigger={catalog}
         aria-label={label}
         disabled={disabled}
         onClick={onClick}
@@ -270,7 +273,7 @@ function CatalogTriggerButton({
     )
   }
   return (
-    <Button disabled={disabled} onClick={onClick} size="sm" type="button" variant="outline">
+    <Button data-agent-catalog-trigger={catalog} disabled={disabled} onClick={onClick} size="sm" type="button" variant="outline">
       {mode === 'add'
         ? <PlusIcon data-icon="inline-start" />
         : <ListPlusIcon data-icon="inline-start" />}
@@ -377,12 +380,13 @@ export function DiagnosisCatalogDialog({
   return (
     <Dialog onOpenChange={setOpen} open={open}>
       <CatalogTriggerButton
+        catalog="diagnosis"
         {...(disabled === undefined ? {} : { disabled })}
         label={triggerLabel}
         mode={mode}
         onClick={openDialog}
       />
-      <DialogContent className="h-[min(680px,calc(100svh-2rem))] sm:max-w-4xl">
+      <DialogContent data-agent-catalog="diagnosis" className="h-[min(680px,calc(100svh-2rem))] sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>{messages.chooseDiagnosis}</DialogTitle>
           <DialogDescription>{messages.diagnosisDescription}</DialogDescription>
@@ -533,7 +537,7 @@ export function LaboratoryCatalogDialog({
   }
   return (
     <Dialog onOpenChange={setOpen} open={open}>
-      <CatalogTriggerButton label={messages.selectLaboratory} mode="select" onClick={openDialog} />
+      <CatalogTriggerButton catalog="laboratory" label={messages.selectLaboratory} mode="select" onClick={openDialog} />
       <DialogContent className="h-[min(640px,calc(100svh-2rem))] sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>{messages.chooseLaboratory}</DialogTitle>
@@ -700,7 +704,7 @@ function MedicationProductRow({ group, excludedIds, locale, selectionId, onSelec
           label={`${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`}
           onSelectedChange={next => onSelect(next ? selection : undefined)} selected={selected} />
       </TableCell>
-      <TableCell className="font-medium">
+      <TableCell data-agent-medication-name="" className="font-medium">
         <span className="line-clamp-2 whitespace-normal break-words" title={`${item.genericName} · ${item.dosageForm} · ${item.approvalNumber}`}>{item.genericName}</span>
       </TableCell>
       <TableCell><span className="line-clamp-2 whitespace-normal break-words" title={item.manufacturer}>{item.manufacturer}</span></TableCell>
@@ -713,7 +717,7 @@ function MedicationProductRow({ group, excludedIds, locale, selectionId, onSelec
           setPackageId(next.id)
           if (selected) onSelect({ kind: 'reference', product: next })
         }}>
-          <SelectTrigger className="w-full min-w-0" aria-label={`${locale === 'zh-CN' ? '包装' : 'Package'} ${item.genericName} ${item.manufacturer}`}>
+          <SelectTrigger data-agent-medication-package="" className="w-full min-w-0" aria-label={`${locale === 'zh-CN' ? '包装' : 'Package'} ${item.genericName} ${item.manufacturer}`}>
             <SelectValue className="min-w-0"><span className="truncate" title={item.packageDescription}>{item.packageDescription}</span></SelectValue>
           </SelectTrigger>
           <SelectContent>
@@ -793,12 +797,13 @@ export function MedicationCatalogDialog({
   return (
     <Dialog onOpenChange={setOpen} open={open}>
       <CatalogTriggerButton
+        catalog="medication"
         {...(disabled === undefined ? {} : { disabled })}
         label={triggerLabel}
         mode={mode}
         onClick={openDialog}
       />
-      <DialogContent className="h-[min(720px,calc(100svh-2rem))] sm:max-w-6xl">
+      <DialogContent data-agent-catalog="medication" className="h-[min(720px,calc(100svh-2rem))] sm:max-w-6xl">
         <DialogHeader>
           <DialogTitle>{messages.chooseMedication}</DialogTitle>
           <DialogDescription>{messages.medicationDescription}</DialogDescription>
@@ -859,7 +864,7 @@ export function MedicationCatalogDialog({
                             selected={selectionId === id}
                           />
                         </TableCell>
-                        <TableCell className="font-medium"><span className="line-clamp-2 whitespace-normal break-words" title={genericName}>{genericName}</span></TableCell>
+                        <TableCell data-agent-medication-name="" className="font-medium"><span className="line-clamp-2 whitespace-normal break-words" title={genericName}>{genericName}</span></TableCell>
                         <TableCell>-</TableCell>
                         <TableCell>-</TableCell>
                         <TableCell>-</TableCell>

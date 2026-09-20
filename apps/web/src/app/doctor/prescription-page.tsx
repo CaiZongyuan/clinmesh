@@ -425,7 +425,7 @@ export function PrescriptionPage({
                     key={item.key}
                   >
                     <FieldLegend className="sr-only" variant="label">{messages.medication} {index + 1}</FieldLegend>
-                    <div className="min-w-0 self-center">
+                    <div data-agent-medication-name="" className="min-w-0 self-center">
                       <span className="min-w-0">
                         <strong className="flex gap-1 break-words text-sm">
                           <span aria-hidden="true">{index + 1}.</span>

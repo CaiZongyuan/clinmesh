@@ -2710,7 +2710,7 @@ function CaseDetail({
           </div>
 
           {detail.consultation === undefined ? null : (
-            <TabsContent className="p-4" value="consultation">
+            <TabsContent data-agent-section="consultation" className="p-4" value="consultation">
               <ConsultationPage
                 action={{ ...consultationAction, onOpenReport: () => setActiveSection('laboratory') }}
                 consultation={detail.consultation}
@@ -2723,7 +2723,7 @@ function CaseDetail({
             </TabsContent>
           )}
 
-          <TabsContent className="p-4" value="record">
+          <TabsContent data-agent-section="record" className="p-4" value="record">
             <div className="flex flex-col gap-4">
               <div className="min-w-0">
                 {visitNotStarted ? null : detail.consultation === undefined ? firstVisitRecord : (
@@ -2743,7 +2743,7 @@ function CaseDetail({
             </div>
           </TabsContent>
 
-          <TabsContent className="p-4" value="diagnosis">
+          <TabsContent data-agent-section="diagnosis" className="p-4" value="diagnosis">
             {detail.consultation === undefined ? revisitWorkflow : catalog.isPending ? (
               <Skeleton className="h-72 w-full" />
             ) : catalog.isError ? (
@@ -2767,7 +2767,7 @@ function CaseDetail({
             )}
           </TabsContent>
 
-          <TabsContent className="p-4" value="prescription">
+          <TabsContent data-agent-section="prescription" className="p-4" value="prescription">
             {detail.consultation === undefined || catalog.isPending ? (
               detail.consultation === undefined ? revisitWorkflow : <Skeleton className="h-72 w-full" />
             ) : catalog.isError ? (
@@ -2791,7 +2791,7 @@ function CaseDetail({
             ) : null}
           </TabsContent>
 
-          <TabsContent className="p-4" value="laboratory">
+          <TabsContent data-agent-section="laboratory" className="p-4" value="laboratory">
             <LaboratoryPage
               actions={laboratoryRequestActions}
               catalogError={catalog.error}

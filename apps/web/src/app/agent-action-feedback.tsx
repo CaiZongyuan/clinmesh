@@ -15,7 +15,11 @@ interface FeedbackController {
   bind(scope: AgentFeedbackScope): (event: AgentActionFeedback) => void
   setScope(scope: AgentFeedbackScope | undefined): void
 }
-interface DisplayFeedback extends AgentActionFeedback { updatedAt: number; scope: AgentFeedbackScope }
+interface DisplayFeedback extends AgentActionFeedback {
+  updatedAt: number
+  scope: AgentFeedbackScope
+  initialConsultationMessageIds?: ReadonlySet<string>
+}
 const FeedbackContext = createContext<FeedbackController | null>(null)
 
 function sameScope(left: AgentFeedbackScope | undefined, right: AgentFeedbackScope): boolean {
@@ -34,6 +38,8 @@ function matchesTransition(event: AgentActionFeedback, source: AgentFeedbackScop
 
 export function AgentActionFeedbackProvider({ children }: { children: ReactNode }): React.JSX.Element {
   const runtime = useWebRuntime()
+  const appearanceRoot = useRef(runtime.appearanceRoot)
+  useLayoutEffect(() => { appearanceRoot.current = runtime.appearanceRoot }, [runtime.appearanceRoot])
   const [events, setEvents] = useState<DisplayFeedback[]>([])
   const currentScope = useRef<AgentFeedbackScope | undefined>(undefined)
   const generation = useRef(0)
@@ -58,10 +64,18 @@ export function AgentActionFeedbackProvider({ children }: { children: ReactNode 
         const transitioned = matchesTransition(event, scope, current) && generation.current === startedGeneration + 1
         if (!sameScope(current, scope) && !transitioned) return
         if (generation.current !== startedGeneration && !transitioned) return
-        setEvents(previous => [
-          ...previous.filter(item => item.id !== event.id),
-          { ...event, scope: current ?? scope, updatedAt: Date.now() },
-        ])
+        const initialMessageIds = event.phase === 'executing' && event.operationId.startsWith('outpatient.consultation.')
+          ? new Set([...appearanceRoot.current.current?.querySelectorAll('[data-agent-consultation-message]') ?? []]
+            .map(element => element.getAttribute('data-agent-consultation-message')!))
+          : undefined
+        setEvents(previous => {
+          const initialConsultationMessageIds = previous.find(item => item.id === event.id)?.initialConsultationMessageIds ?? initialMessageIds
+          return [
+            ...previous.filter(item => item.id !== event.id),
+            { ...event, scope: current ?? scope, updatedAt: Date.now(),
+              ...(initialConsultationMessageIds === undefined ? {} : { initialConsultationMessageIds }) },
+          ]
+        })
       }
     },
   }), [])
@@ -102,9 +116,12 @@ export function useAgentActionFeedback(scope: AgentFeedbackScope | undefined): (
 function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HTMLElement | null }): React.JSX.Element {
   const english = root?.lang === 'en-US'
   const overlay = useRef<HTMLDivElement>(null)
+  const [overlayRoot, setOverlayRoot] = useState<HTMLElement | null>(null)
   const [rectangles, setRectangles] = useState<{ key: string; left: number; top: number; width: number; height: number; phase: string }[]>([])
   const measure = useCallback(() => {
     if (root === null || overlay.current === null) return
+    const catalogDialog = root.querySelector<HTMLElement>('[role="dialog"][data-agent-catalog]:not([data-closed])')
+    setOverlayRoot(catalogDialog)
     const origin = overlay.current.getBoundingClientRect()
     const selected = new Map<Element, DisplayFeedback>()
     // Active operations retain their border when an overlapping operation finishes.
@@ -112,9 +129,15 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
       for (const selector of agentActionTarget(event).selectors) {
         for (const element of root.querySelectorAll(selector)) selected.set(element, event)
       }
+      if (event.initialConsultationMessageIds !== undefined) {
+        for (const element of root.querySelectorAll('[data-agent-consultation-message]')) {
+          if (!event.initialConsultationMessageIds.has(element.getAttribute('data-agent-consultation-message')!)) selected.set(element, event)
+        }
+      }
     }
     const bounds = root.getBoundingClientRect()
     setRectangles([...selected].flatMap(([element, event], index) => {
+      if (catalogDialog !== null && !catalogDialog.contains(element)) return []
       const rect = element.getBoundingClientRect()
       let left = Math.max(rect.left, bounds.left, 0)
       let top = Math.max(rect.top, bounds.top, 0)
@@ -129,7 +152,7 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
       if (right <= left || bottom <= top) return []
       return [{ key: element.id || String(index), left: left - origin.left, top: top - origin.top, width: right - left, height: bottom - top, phase: event.phase }]
     }))
-  }, [events, root])
+  }, [events, root, overlayRoot])
   useLayoutEffect(() => {
     measure()
     const timer = setInterval(measure, 100)
@@ -142,14 +165,15 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
     </div>)}
   </div>
   const statusRoot = root?.querySelector('[data-agent-feedback-status]')
+  const layer = <div ref={overlay} className="clinmesh-agent-overlay" aria-hidden="true">
+    {rectangles.map(({ key, phase, ...rect }) => (
+      <div className="clinmesh-agent-target" data-phase={phase} key={key} style={rect} />
+    ))}
+  </div>
   return (
     <>
       {statusRoot === undefined || statusRoot === null ? status : createPortal(status, statusRoot)}
-      <div ref={overlay} className="clinmesh-agent-overlay" aria-hidden="true">
-        {rectangles.map(({ key, phase, ...rect }) => (
-          <div className="clinmesh-agent-target" data-phase={phase} key={key} style={rect} />
-        ))}
-      </div>
+      {overlayRoot === null ? layer : createPortal(layer, overlayRoot)}
     </>
   )
 }

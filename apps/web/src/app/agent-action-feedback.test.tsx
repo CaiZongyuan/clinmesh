@@ -4,8 +4,85 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { AgentActionFeedbackProvider, useAgentActionFeedback, type AgentFeedbackScope } from './agent-action-feedback.tsx'
 import { WebRuntimeProvider } from './web-runtime.tsx'
 import type { AgentActionFeedback } from './surface-agent-tools.ts'
+import { ConsultationPage } from './doctor/consultation-page.tsx'
+import { getWorkspaceMessages } from './workspace-i18n.ts'
+import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 
-afterEach(() => { cleanup(); vi.useRealTimers() })
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks() })
+
+it.each([
+  { operationId: 'outpatient.section.select', input: { section: 'diagnosis' }, expected: ['10px'] },
+  { operationId: 'outpatient.diagnosis.draft.set', input: {}, expected: ['20px', '30px'] },
+  { operationId: 'outpatient.prescription.draft.set', input: {}, expected: ['40px', '50px', '60px', '70px'] },
+])('highlights the visible work area for $operationId', ({ operationId, input, expected }) => {
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    return new DOMRect(Number(this.getAttribute('data-left') ?? 0), 0, 100, 100)
+  })
+  let feedback: (event: AgentActionFeedback) => void = () => undefined
+  function Harness() {
+    feedback = useAgentActionFeedback({ identity: 'session:doctor', view: 'consultation', selection: 'case-1', section: 'diagnosis' })
+    return <>
+      <button data-agent-selection="diagnosis" data-left="5">诊断标签</button>
+      <section data-agent-section="diagnosis" data-left="10">诊断内容</section>
+      <button data-agent-catalog-trigger="diagnosis" data-left="20">添加诊断</button>
+      <div data-agent-catalog="diagnosis" data-left="30">疾病目录</div>
+      <span data-agent-medication-name="" data-left="40">药品名称</span>
+      <button data-agent-catalog-trigger="medication" data-left="50">添加药品</button>
+      <div data-agent-catalog="medication" data-left="60">药品目录</div>
+      <button data-agent-medication-package="" data-left="70">包装</button>
+    </>
+  }
+  render(<WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: document.body } }}>
+    <AgentActionFeedbackProvider><Harness /></AgentActionFeedbackProvider>
+  </WebRuntimeProvider>)
+  act(() => feedback({ id: 'action', operationId, input, phase: 'completed' }))
+  expect([...document.querySelectorAll<HTMLElement>('.clinmesh-agent-target')].map(element => element.style.left)).toEqual(expected)
+})
+
+it('highlights the consultation region and new reply bubbles without highlighting old messages', () => {
+  vi.useFakeTimers()
+  const rects = new Map<Element, DOMRect>()
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    return rects.get(this) ?? new DOMRect(0, 0, 600, 600)
+  })
+  let feedback: (event: AgentActionFeedback) => void = () => undefined
+  const messages = getWorkspaceMessages('zh-CN')
+  type Consultation = NonNullable<DoctorCaseDetail['consultation']>
+  const oldTurn: Consultation['turns'][number] = {
+    actorId: null, practitionerId: null,
+    id: 'old-patient', kind: 'text', messageText: '之前的患者消息', personaRevision: 1,
+    recordedAt: '2026-09-20T09:00:00+08:00', reportReference: null, sequence: 1,
+    source: 'persona-opening', speaker: 'patient',
+  }
+  function Harness({ turns }: { turns: Consultation['turns'] }) {
+    feedback = useAgentActionFeedback({ identity: 'session:doctor', view: 'consultation', selection: 'case-1', section: 'consultation' })
+    return <ConsultationPage action={{ error: null, onAsk: () => {}, onRetry: () => {}, pending: false }}
+      consultation={{ turns, version: turns.length }} locale="zh-CN" messages={messages} patientName="合成患者" readOnly={false} />
+  }
+  const app = (turns: Consultation['turns']) => <WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: document.body } }}>
+    <AgentActionFeedbackProvider><Harness turns={turns} /></AgentActionFeedbackProvider>
+  </WebRuntimeProvider>
+  const view = render(app([oldTurn]))
+  rects.set(screen.getByRole('region', { name: '问诊记录' }), new DOMRect(10, 10, 500, 400))
+  rects.set(screen.getByText('之前的患者消息').closest('[data-slot="bubble"]')!, new DOMRect(20, 20, 100, 40))
+  const event: AgentActionFeedback = { id: 'ask', operationId: 'outpatient.consultation.ask', input: { message: '本次问题' }, phase: 'executing' }
+  act(() => feedback(event))
+  const highlightedLefts = () => [...document.querySelectorAll<HTMLElement>('.clinmesh-agent-target')].map(element => element.style.left)
+  expect(highlightedLefts()).toEqual(['10px'])
+  view.rerender(app([
+    oldTurn,
+    { ...oldTurn, id: 'new-doctor', messageText: '本次问题', sequence: 2, speaker: 'doctor', source: 'doctor-typed', personaRevision: null },
+    { ...oldTurn, id: 'new-patient', messageText: '本次回答', sequence: 3, source: 'patient-agent' },
+  ]))
+  rects.set(screen.getByText('本次问题').closest('[data-slot="bubble"]')!, new DOMRect(30, 60, 100, 40))
+  rects.set(screen.getByText('本次回答').closest('[data-slot="bubble"]')!, new DOMRect(40, 100, 100, 40))
+  act(() => vi.advanceTimersByTime(100))
+  expect(highlightedLefts()).toEqual(['10px', '30px', '40px'])
+  act(() => feedback({ ...event, phase: 'completed' }))
+  expect(highlightedLefts()).not.toContain('20px')
+  act(() => vi.advanceTimersByTime(1000))
+  expect(highlightedLefts()).toEqual([])
+})
 
 it('keeps overlapping actions independent, preserves editing, and ignores late results after a patient switch', () => {
   vi.useFakeTimers()
