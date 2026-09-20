@@ -3,7 +3,6 @@ import * as lorelei from '@dicebear/lorelei'
 import { isLegacyPatientPersonaContent, type PatientPersonaContent } from '@clinmesh/contracts/scenario'
 import { PatientPersonaEditor } from './patient-persona-editor.tsx'
 import type {
-  PatientPersonaJob,
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
   SyntheticPatientIdentity,
@@ -50,7 +49,6 @@ import {
   DatabaseIcon,
   FileJsonIcon,
   ListFilterIcon,
-  LoaderCircleIcon,
   PencilIcon,
   PlusIcon,
   SearchIcon,
@@ -79,6 +77,7 @@ import {
   updateSyntheticPatientProfile,
 } from './api-client.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
+import { PersonaJobStatusNotice } from './persona-job-failure.tsx'
 import { agentViewRevision, useRegisterAgentPage } from './agent-page-context.tsx'
 import { useSyntheticPatientLibraryViewStore } from './synthetic-patient-library-view-store.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
@@ -164,32 +163,6 @@ const copy = {
     translationWarningTitle: '{count} 个临床名称保留英文', translationWarningTruncated: '这里只显示已保留的前几项。',
   },
 } as const
-
-function JobStatusNotice({ error, label, status }: {
-  error: string | undefined
-  label: string
-  status: PatientPersonaJob['status']
-}) {
-  const inProgress = status === 'queued' || status === 'running'
-  const StatusIcon = status === 'failed'
-    ? CircleAlertIcon
-    : inProgress
-      ? LoaderCircleIcon
-      : SparklesIcon
-  return (
-    <Alert
-      aria-label={label}
-      className="mt-3"
-      role={status === 'failed' ? 'alert' : 'status'}
-      variant={status === 'failed' ? 'destructive' : 'default'}
-    >
-      <StatusIcon className={inProgress ? 'animate-spin' : undefined} />
-      <AlertTitle>{label}</AlertTitle>
-      {error === undefined ? null : <AlertDescription>{error}</AlertDescription>}
-    </Alert>
-  )
-}
-
 
 function avatarUri(seed: string): string {
   const cached = avatarCache.get(seed)
@@ -533,9 +506,11 @@ function PatientPersonaPanel({ locale, profileId, syntheticCase }: {
         </Alert>
       )}
       {job.data === undefined ? null : (
-        <JobStatusNotice
-          error={job.data.error?.message}
+        <PersonaJobStatusNotice
+          error={job.data.error}
+          finishedAt={job.data.finishedAt}
           label={messages.briefStatus[job.data.status]}
+          locale={locale}
           status={job.data.status}
         />
       )}
@@ -883,5 +858,5 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
   }, [generationJob.data?.profileIds, generationJob.data?.status, queryClient])
   const updateProfile = useMutation({ mutationFn: (identity: SyntheticPatientIdentity) => { if (profile.data === undefined) throw new Error('No profile selected'); return updateSyntheticPatientProfile({ expectedRevision: profile.data.revision, identity, profileId: profile.data.profileId }, newIdempotencyKey()) }, onSuccess: async response => { queryClient.setQueryData(['synthetic-patient-profile', response.data.profileId], response.data); await queryClient.invalidateQueries({ queryKey: profileListKey }); setEditOpen(false) } })
   const mutationError = generate.error ?? updateProfile.error
-  return <section aria-labelledby="synthetic-patient-library-heading" className="flex min-w-0 flex-col gap-4"><div className="flex flex-wrap items-start gap-3"><div><h2 className="text-base font-semibold" id="synthetic-patient-library-heading">{messages.libraryTitle}</h2><p className="mt-1 text-sm text-muted-foreground">{messages.libraryDescription}</p></div><div className="ml-auto flex items-center gap-2"><ScenarioResetControl disabled={scenario.data === undefined} error={reset.error} locale={locale} onReset={clear => reset.mutateAsync(clear)} pending={reset.isPending} /><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></div></div>{mutationError !== null ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(mutationError, locale)}</AlertDescription></Alert> : null}{generationJob.data === undefined ? null : <JobStatusNotice error={generationJob.data.error?.message} label={messages.generationStatus[generationJob.data.status]} status={generationJob.data.status} />}{profiles.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profiles.isPending ? <Skeleton className="h-[680px] w-full" /> : null}{profiles.data?.items.length === 0 ? <Empty className="min-h-96 border"><EmptyHeader><EmptyMedia variant="icon"><DatabaseIcon /></EmptyMedia><EmptyTitle>{messages.emptyTitle}</EmptyTitle><EmptyDescription>{messages.emptyDescription}</EmptyDescription></EmptyHeader><EmptyContent><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></EmptyContent></Empty> : null}{profiles.data !== undefined && profiles.data.items.length > 0 ? <div className="grid min-h-[680px] border lg:grid-cols-[280px_minmax(0,1fr)]"><aside className="flex min-h-0 flex-col border-r bg-background"><form className="flex items-center gap-2 border-b p-3" onSubmit={event => { event.preventDefault(); setPage(1); setSubmittedSearch(search.trim()) }}><InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={`${messages.name}、${messages.mrn}、${messages.batch}`} value={search} /></InputGroup><Button aria-label={messages.search} size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon /></Button></form><div className="border-b px-3 py-2 text-xs text-muted-foreground">{(profiles.data.total === 1 ? messages.patientSingular : messages.patientPlural).replace('{count}', String(profiles.data.total))}</div><div className="min-h-0 flex-1 overflow-y-auto p-2">{profiles.data.items.map(item => <button className={cn('flex w-full items-center gap-3 border-b px-2 py-2 text-left', item.profileId === effectiveProfileId && 'border border-primary/30 bg-primary/5')} key={item.profileId} onClick={() => setSelectedProfileId(item.profileId)} type="button"><ProfileAvatar locale={locale} name={item.name} profileId={item.profileId} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="truncate text-sm">{item.name}</strong><span className="text-xs text-muted-foreground">{messages.ageYears.replace('{count}', String(age(item.birthDate, referenceDate)))}</span></span><span className="mt-1 block truncate text-xs text-muted-foreground">{item.mrn}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.batchName} · {item.providerId === 'synthea' ? 'Synthea' : 'ClinMesh'}</span></span></button>)}</div>{profiles.data.total > profiles.data.pageSize ? <div className="flex justify-between border-t p-2"><Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="ghost">{messages.previous}</Button><Button disabled={page * profiles.data.pageSize >= profiles.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="ghost">{messages.next}</Button></div> : null}</aside>{profile.isPending ? <Skeleton className="h-full w-full" /> : null}{profile.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profile.data !== undefined ? <ProfileDetails locale={locale} onEdit={() => setEditOpen(true)} profile={profile.data} referenceDate={referenceDate} /> : null}</div> : null}<GenerationSheet error={generate.error} locale={locale} onGenerate={request => generate.mutate(request)} onOpenChange={setGenerationOpen} open={generationOpen} pending={generate.isPending} providers={providers.data?.items ?? []} />{profile.data !== undefined ? <EditProfileSheet error={updateProfile.error} key={`${profile.data.profileId}:${profile.data.revision}`} locale={locale} onOpenChange={setEditOpen} onSave={identity => updateProfile.mutate(identity)} open={editOpen} pending={updateProfile.isPending} profile={profile.data} /> : null}</section>
+  return <section aria-labelledby="synthetic-patient-library-heading" className="flex min-w-0 flex-col gap-4"><div className="flex flex-wrap items-start gap-3"><div><h2 className="text-base font-semibold" id="synthetic-patient-library-heading">{messages.libraryTitle}</h2><p className="mt-1 text-sm text-muted-foreground">{messages.libraryDescription}</p></div><div className="ml-auto flex items-center gap-2"><ScenarioResetControl disabled={scenario.data === undefined} error={reset.error} locale={locale} onReset={clear => reset.mutateAsync(clear)} pending={reset.isPending} /><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></div></div>{mutationError !== null ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(mutationError, locale)}</AlertDescription></Alert> : null}{generationJob.data === undefined ? null : <PersonaJobStatusNotice error={generationJob.data.error} finishedAt={generationJob.data.finishedAt} label={messages.generationStatus[generationJob.data.status]} locale={locale} status={generationJob.data.status} />}{profiles.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profiles.isPending ? <Skeleton className="h-[680px] w-full" /> : null}{profiles.data?.items.length === 0 ? <Empty className="min-h-96 border"><EmptyHeader><EmptyMedia variant="icon"><DatabaseIcon /></EmptyMedia><EmptyTitle>{messages.emptyTitle}</EmptyTitle><EmptyDescription>{messages.emptyDescription}</EmptyDescription></EmptyHeader><EmptyContent><Button onClick={() => setGenerationOpen(true)}><PlusIcon data-icon="inline-start" />{messages.generate}</Button></EmptyContent></Empty> : null}{profiles.data !== undefined && profiles.data.items.length > 0 ? <div className="grid min-h-[680px] border lg:grid-cols-[280px_minmax(0,1fr)]"><aside className="flex min-h-0 flex-col border-r bg-background"><form className="flex items-center gap-2 border-b p-3" onSubmit={event => { event.preventDefault(); setPage(1); setSubmittedSearch(search.trim()) }}><InputGroup className="min-w-0 flex-1"><InputGroupAddon><SearchIcon /></InputGroupAddon><InputGroupInput aria-label={messages.search} onChange={event => setSearch(event.target.value)} placeholder={`${messages.name}、${messages.mrn}、${messages.batch}`} value={search} /></InputGroup><Button aria-label={messages.search} size="icon" title={messages.search} type="submit" variant="outline"><ListFilterIcon /></Button></form><div className="border-b px-3 py-2 text-xs text-muted-foreground">{(profiles.data.total === 1 ? messages.patientSingular : messages.patientPlural).replace('{count}', String(profiles.data.total))}</div><div className="min-h-0 flex-1 overflow-y-auto p-2">{profiles.data.items.map(item => <button className={cn('flex w-full items-center gap-3 border-b px-2 py-2 text-left', item.profileId === effectiveProfileId && 'border border-primary/30 bg-primary/5')} key={item.profileId} onClick={() => setSelectedProfileId(item.profileId)} type="button"><ProfileAvatar locale={locale} name={item.name} profileId={item.profileId} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><strong className="truncate text-sm">{item.name}</strong><span className="text-xs text-muted-foreground">{messages.ageYears.replace('{count}', String(age(item.birthDate, referenceDate)))}</span></span><span className="mt-1 block truncate text-xs text-muted-foreground">{item.mrn}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.batchName} · {item.providerId === 'synthea' ? 'Synthea' : 'ClinMesh'}</span></span></button>)}</div>{profiles.data.total > profiles.data.pageSize ? <div className="flex justify-between border-t p-2"><Button disabled={page === 1} onClick={() => setPage(current => current - 1)} size="sm" variant="ghost">{messages.previous}</Button><Button disabled={page * profiles.data.pageSize >= profiles.data.total} onClick={() => setPage(current => current + 1)} size="sm" variant="ghost">{messages.next}</Button></div> : null}</aside>{profile.isPending ? <Skeleton className="h-full w-full" /> : null}{profile.isError ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle></Alert> : null}{profile.data !== undefined ? <ProfileDetails locale={locale} onEdit={() => setEditOpen(true)} profile={profile.data} referenceDate={referenceDate} /> : null}</div> : null}<GenerationSheet error={generate.error} locale={locale} onGenerate={request => generate.mutate(request)} onOpenChange={setGenerationOpen} open={generationOpen} pending={generate.isPending} providers={providers.data?.items ?? []} />{profile.data !== undefined ? <EditProfileSheet error={updateProfile.error} key={`${profile.data.profileId}:${profile.data.revision}`} locale={locale} onOpenChange={setEditOpen} onSave={identity => updateProfile.mutate(identity)} open={editOpen} pending={updateProfile.isPending} profile={profile.data} /> : null}</section>
 }

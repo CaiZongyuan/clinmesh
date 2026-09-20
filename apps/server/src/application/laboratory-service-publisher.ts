@@ -467,6 +467,7 @@ export class LaboratoryServicePublisher {
           ...(signal === undefined ? {} : { signal }),
           systemPrompt,
           userPayload: payload,
+          validate: value => enrichmentResultSchema.safeParse(value).success,
         })
         const enriched = enrichmentResultSchema.parse(JSON.parse(completion.content))
         drafts.push(...this.#serviceDrafts(claimed, loincRoots, enriched.services))

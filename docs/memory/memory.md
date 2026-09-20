@@ -119,3 +119,5 @@
 - 自动发布的目标基线从目标分支精确提交读取，不能沿用 workflow_dispatch 所选分支的本地锁。活动候选失效检查放在新版本发现前；回归需覆盖真实 CLI 的提前抛错路径，单独测试发布函数不足以证明旧状态能失效。
 
 - npm 撤销需区分包仍存在但版本缺失与整包直接 404；候选失效检查覆盖两者。权威 404 的判断限定到固定官方 registry 且禁止重定向，不能把权限错误、服务故障或通用 HTTP 404 当作撤销。
+
+- OpenRouter 部分模型（尤其 free 档）不支持结构化输出，`response_format: json_schema` 请求固定 400，tool call 输出可能整段缺失必填字段或返回空串且每次不同。`completeJson` 的 `validate` 回调是内容质量闸门，新增调用点必须传与后续 `parse` 相同的 Zod schema（`safeParse(value).success`），否则可解析的坏 tool-call 内容会掩盖后续 prompt 降级策略。生成类 `*_RESPONSE_INVALID` 报错先用 `patient-persona-live-smoke` 复现并确认模型的 structured outputs 支持情况。
