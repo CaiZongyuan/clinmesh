@@ -9,7 +9,12 @@ import '../../../web/src/app/agent-action-feedback.css'
 
 const rootElement = document.createElement('main')
 rootElement.style.cssText = 'width:360px;height:640px;position:relative'
-document.body.append(rootElement)
+const host = document.createElement('div')
+host.style.cssText = 'contain:strict;position:absolute;left:140px;top:90px;width:400px;height:700px'
+document.body.append(host)
+const shadow = host.attachShadow({ mode: 'open' })
+for (const style of document.querySelectorAll('style')) shadow.append(style.cloneNode(true))
+shadow.append(rootElement)
 let feedback: ReturnType<typeof useAgentActionFeedback>
 let review: ReturnType<typeof useAgentReview>
 let committed = false
@@ -32,8 +37,11 @@ async function run(): Promise<void> {
   const field = rootElement.querySelector<HTMLInputElement>('#patient-name')!
   field.focus()
   flushSync(() => feedback({ id: 'fill', operationId: 'registration.patient.draft.set', input: {}, phase: 'executing' }))
-  const focused = document.activeElement === field
+  const focused = shadow.activeElement === field
   const highlighted = rootElement.querySelectorAll('.clinmesh-agent-target').length > 0
+  const targetRect = field.getBoundingClientRect()
+  const glowRect = rootElement.querySelector('.clinmesh-agent-target')!.getBoundingClientRect()
+  const aligned = ['left', 'top', 'width', 'height'].every(key => Math.abs(targetRect[key as keyof DOMRect] as number - (glowRect[key as keyof DOMRect] as number)) < 1)
   const runningAnimation = getComputedStyle(rootElement.querySelector('.clinmesh-agent-target')!).animationName
   flushSync(() => feedback({ id: 'fill', operationId: 'registration.patient.draft.set', input: {}, phase: 'completed' }))
   await wait(950)
@@ -55,6 +63,6 @@ async function run(): Promise<void> {
   approve?.click()
   const result = await task.decision
   await wait(50)
-  document.title = btoa(JSON.stringify({ focused, highlighted, runningAnimation, faded, waiting, staticWaiting, committed, approved: result.approved }))
+  document.title = btoa(JSON.stringify({ focused, highlighted, aligned, runningAnimation, faded, waiting, staticWaiting, committed, approved: result.approved }))
 }
 void run().catch(error => { document.title = btoa(JSON.stringify({ error: String(error) })) })

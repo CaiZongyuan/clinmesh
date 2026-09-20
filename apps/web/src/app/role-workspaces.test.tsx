@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DoctorWorkspace } from './doctor-workspace.tsx'
 import { useSyntheticPatientLibraryViewStore } from './synthetic-patient-library-view-store.ts'
 import { WebApp } from './web-app.tsx'
+import { agentActionTarget } from './agent-action-targets.ts'
 import type { WebSurfaceAgentController, WebSurfaceAgentTool } from './web-runtime.tsx'
 
 const forbiddenChineseClinicalUiTerms = /Agent|评分|仿真|Scenario|Epoch/i
@@ -4103,6 +4104,10 @@ describe('role workspaces', () => {
     await user.type(screen.getByLabelText('诊疗计划'), '口服抗病毒药物，对症处理，必要时复诊。')
     await user.clear(screen.getByLabelText('数量'))
     await user.type(screen.getByLabelText('数量'), '10')
+    const selectors = agentActionTarget({ id: 'revisit', operationId: 'outpatient.revisit.draft.set', input: {}, phase: 'executing' }).selectors
+    for (const field of [medicationSelect, screen.getByRole('combobox', { name: '剂量' }), screen.getByRole('combobox', { name: '频次' }), screen.getByLabelText('数量')]) {
+      expect(selectors.some(selector => field.matches(selector))).toBe(true)
+    }
     await user.click(screen.getByRole('button', { name: '保存复诊草稿' }))
 
     expect(await screen.findByText('复诊草稿已保存')).toBeTruthy()

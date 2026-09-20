@@ -101,9 +101,11 @@ export function useAgentActionFeedback(scope: AgentFeedbackScope | undefined): (
 
 function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HTMLElement | null }): React.JSX.Element {
   const english = root?.lang === 'en-US'
+  const overlay = useRef<HTMLDivElement>(null)
   const [rectangles, setRectangles] = useState<{ key: string; left: number; top: number; width: number; height: number; phase: string }[]>([])
   const measure = useCallback(() => {
-    if (root === null) return
+    if (root === null || overlay.current === null) return
+    const origin = overlay.current.getBoundingClientRect()
     const selected = new Map<Element, DisplayFeedback>()
     // Active operations retain their border when an overlapping operation finishes.
     for (const event of [...events].sort((a, b) => Number(isRunning(a)) - Number(isRunning(b)))) {
@@ -125,7 +127,7 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
         if (style.overflowY !== 'visible') { top = Math.max(top, clip.top); bottom = Math.min(bottom, clip.bottom) }
       }
       if (right <= left || bottom <= top) return []
-      return [{ key: element.id || String(index), left, top, width: right - left, height: bottom - top, phase: event.phase }]
+      return [{ key: element.id || String(index), left: left - origin.left, top: top - origin.top, width: right - left, height: bottom - top, phase: event.phase }]
     }))
   }, [events, root])
   useLayoutEffect(() => {
@@ -143,9 +145,11 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
   return (
     <>
       {statusRoot === undefined || statusRoot === null ? status : createPortal(status, statusRoot)}
-      {rectangles.map(({ key, phase, ...rect }) => (
-        <div aria-hidden="true" className="clinmesh-agent-target" data-phase={phase} key={key} style={rect} />
-      ))}
+      <div ref={overlay} className="clinmesh-agent-overlay" aria-hidden="true">
+        {rectangles.map(({ key, phase, ...rect }) => (
+          <div className="clinmesh-agent-target" data-phase={phase} key={key} style={rect} />
+        ))}
+      </div>
     </>
   )
 }

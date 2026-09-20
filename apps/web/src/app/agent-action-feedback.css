@@ -10,8 +10,15 @@
   pointer-events: none;
 }
 
-.clinmesh-agent-target {
+.clinmesh-agent-overlay {
   position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.clinmesh-agent-target {
+  position: absolute;
+  box-sizing: border-box;
   border: 2px solid #818cf8;
   border-radius: 0.4rem;
   pointer-events: none;

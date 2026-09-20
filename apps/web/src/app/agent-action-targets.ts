@@ -16,7 +16,7 @@ const targets: Record<string, { label: string; selectors: string[] }> = {
   'outpatient.diagnosis.draft.set': { label: '保存诊断草稿', selectors: ['[data-agent-diagnosis-entry]'] },
   'outpatient.laboratory.draft.set': { label: '保存检验申请草稿', selectors: ['#laboratory-item', '#laboratory-indication'] },
   'outpatient.prescription.draft.set': { label: '保存处方草稿', selectors: ['#medication-conclusion-heading', '[id^="prescription-dose-"]', '[id^="prescription-frequency-"]', '[id^="prescription-course-"]', '[id^="prescription-quantity-"]'] },
-  'outpatient.revisit.draft.set': { label: '保存复诊草稿', selectors: ['input[id^="revisit-"]', 'textarea[id^="revisit-"]', 'button[id^="revisit-"]'] },
+  'outpatient.revisit.draft.set': { label: '保存复诊草稿', selectors: ['input[id^="revisit-"]', 'textarea[id^="revisit-"]', 'button[id^="revisit-"]', '[id^="medication-"]', '[id^="dose-"]', '[id^="frequency-"]', '[id^="quantity-"]'] },
   'outpatient.record.draft.set': { label: '保存病历草稿', selectors: ['[id^="clinical-record-"] textarea', 'textarea[id^="clinical-record-"]', 'input[id^="clinical-record-"]'] },
   'outpatient.preview.request': { label: '生成签署预览', selectors: ['#structured-clinical-document-heading'] },
   'billing.payment.preview': { label: '生成缴费预览', selectors: ['#payment-details-heading'] },

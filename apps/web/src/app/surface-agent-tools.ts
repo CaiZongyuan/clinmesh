@@ -10,6 +10,7 @@ import {
 import { z } from 'zod'
 import type { WebSurfaceAgentTool } from './web-runtime.tsx'
 import { isAgentReviewTask, type AgentReviewTask } from './agent-review.tsx'
+import { ApiClientError } from './api-client.ts'
 
 const editingInstruction = 'Before filling or saving a draft, read the current authorized page with clinmesh_read_current_context, including unsaved form values. Decide whether to ask about overwriting existing content from the user’s intent. This is a communication convention, not enforced overwrite authorization or concurrent-edit protection. Formal hospital actions still require the application’s human review; chat approval cannot replace it.'
 
@@ -154,7 +155,8 @@ export function buildSurfaceAgentTools(
             return JSON.stringify({ data: result, ok: true })
           } catch (error) {
             const message = error instanceof Error ? error.message : 'ClinMesh page action failed'
-            feedback?.(signal.aborted || actionResolved ? 'unconfirmed' : 'failed', message)
+            const phase = signal.aborted || actionResolved ? 'unconfirmed' : errorFeedbackPhase(error)
+            feedback?.(phase, feedbackErrorMessage(phase, message))
             if (!actionResolved) {
               await input.complete({
                 error: message,
@@ -199,7 +201,8 @@ function settleAgentReview(
       } else feedback?.('completed')
     },
     async error => {
-      feedback?.('failed', error instanceof Error ? error.message : '人工审阅未完成')
+      const phase = errorFeedbackPhase(error)
+      feedback?.(phase, feedbackErrorMessage(phase, error instanceof Error ? error.message : '人工审阅未完成'))
       await complete({
         error: error instanceof Error ? error.message : 'ClinMesh Agent review was cancelled',
         ok: false,
@@ -207,6 +210,16 @@ function settleAgentReview(
       }, completionSignal)
     },
   ).catch(() => feedback?.('unconfirmed', '操作结果尚未确认，请读取当前状态。'))
+}
+
+function errorFeedbackPhase(error: unknown): 'failed' | 'unconfirmed' {
+  if (error instanceof ApiClientError && (error.status === 0 || error.status >= 500
+    || error.code === 'UNEXPECTED_RESPONSE')) return 'unconfirmed'
+  return 'failed'
+}
+
+function feedbackErrorMessage(phase: AgentActionFeedback['phase'], message: string): string {
+  return phase === 'unconfirmed' ? `${message}；结果尚未确认，请读取当前状态。` : message
 }
 
 function paymentFeedbackPhase(response: unknown): AgentActionFeedback['phase'] {

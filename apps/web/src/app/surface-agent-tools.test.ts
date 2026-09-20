@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentToolDefinition } from '@clinmesh/contracts/agent'
 import { buildSurfaceAgentTools } from './surface-agent-tools.ts'
+import { ApiClientError } from './api-client.ts'
 
 const binding = {
   snapshot: {
@@ -63,6 +64,40 @@ const definitions: AgentToolDefinition[] = [
 ]
 
 describe('ClinMesh Surface Agent tools', () => {
+  it.each([
+    [new ApiClientError(0, 'NETWORK_ERROR', 'Response lost'), 'unconfirmed'],
+    [new ApiClientError(0, 'REQUEST_TIMEOUT', 'Timed out'), 'unconfirmed'],
+    [new ApiClientError(200, 'UNEXPECTED_RESPONSE', 'Unreadable response'), 'unconfirmed'],
+    [new ApiClientError(409, 'VERSION_CONFLICT', 'Version changed'), 'failed'],
+  ])('preserves uncertain results for page writes and approved Commands: %s', async (error, phase) => {
+    for (const detached of [false, true]) {
+      let rejectDecision: (error: unknown) => void = () => undefined
+      const decision = new Promise<never>((_, reject) => { rejectDecision = reject })
+      const feedback = vi.fn()
+      const tools = buildSurfaceAgentTools({
+        actions: { 'registration.patient.create.propose': {
+          description: 'Create patient', parameters: { type: 'object' },
+          execute: () => {
+            if (!detached) throw error
+            return { kind: 'clinmesh-agent-review', decision, bindDecisionGate: () => undefined }
+          },
+        } },
+        binding, definitions,
+        authorize: async input => ({ callId: 'call', context: binding.snapshot, dshSessionId: 'session',
+          operationId: input.operationId, proposalId: 'proposal', receiptToken: 'receipt', status: 'authorized' }),
+        complete: async () => ({}), onActionFeedback: feedback,
+        issueProof: async () => 'proof', readState: () => ({}), review: async () => ({}),
+      })
+      const execute = tools.find(tool => tool.name === 'clinmesh_prepare_create_patient')!.execute(
+        { contextId: binding.snapshot.id, scopeKey: binding.snapshot.scopeKey }, new AbortController().signal,
+      )
+      if (detached) { await execute; rejectDecision(error) }
+      else await expect(execute).rejects.toThrow(error.message)
+      await vi.waitFor(() => expect(feedback.mock.lastCall?.[0].phase).toBe(phase))
+      if (phase === 'unconfirmed') expect(feedback.mock.lastCall?.[0].message).toContain('请读取当前状态')
+    }
+  })
+
   it('binds the current context and records one authorized page action', async () => {
     const search = vi.fn(async (input: unknown) => ({ input, matches: 1 }))
     const authorize = vi.fn(async input => ({
