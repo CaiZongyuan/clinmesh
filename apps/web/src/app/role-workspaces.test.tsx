@@ -2716,6 +2716,67 @@ describe('role workspaces', () => {
     expect(document.body.textContent).not.toMatch(forbiddenChineseClinicalUiTerms)
   })
 
+  it.each([false, true])('switches every doctor section through authorized Tools with shadow DOM=%s', async shadow => {
+    window.history.replaceState(null, '', '/consultation')
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registration = value
+        return () => { if (registration === value) registration = undefined }
+      },
+    }
+    const patient = {
+      id: 'patient-1', identifier: 'CM-SYN-001', name: '合成测试患者',
+      birthDate: '1988-03-16', gender: 'female', synthetic: true, versionId: '1',
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      const agentResponse = doctorSurfaceAgentResponse(path, init)
+      if (agentResponse !== undefined) return agentResponse
+      if (path === '/api/auth/context') return Response.json(doctorSession)
+      if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
+      if (path === '/api/his/v1/doctor/queue') return Response.json({
+        items: [{ caseId: 'case-1', encounterId: 'encounter-1', encounterVersion: '1',
+          patient, presentation: doctorPresentation, status: 'first-visit', taskId: 'task-1', taskVersion: '1' }],
+        ...pagination(1),
+      })
+      if (path === '/api/his/v1/doctor/cases/case-1') return Response.json({
+        allergies: [], caseId: 'case-1', consultation: { turns: [], version: 1 },
+        encounter: { id: 'encounter-1', status: 'in-progress', versionId: '1' },
+        patient, presentation: doctorPresentation, priorFacts: [], status: 'first-visit',
+        taskId: 'task-1', taskVersion: '1',
+      })
+      throw new Error(`Unexpected request: ${path}`)
+    }))
+    const host = document.createElement('div')
+    document.body.append(host)
+    const container = document.createElement('div')
+    const root = shadow ? host.attachShadow({ mode: 'open' }) : host
+    root.append(container)
+    const view = render(<WebApp runtime={{
+      mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+    }} />, { container })
+    const queries = within(container)
+    try {
+      await queries.findByRole('tab', { name: '病历记录' })
+      for (const { section, label } of [
+        { section: 'consultation', label: '问诊记录' }, { section: 'record', label: '病历记录' },
+        { section: 'diagnosis', label: '诊断' }, { section: 'prescription', label: '处方' },
+        { section: 'laboratory', label: '检验' },
+      ]) {
+        await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_select_doctor_section')).toBe(true))
+        const tool = registration!.tools.find(tool => tool.name === 'clinmesh_select_doctor_section')!
+        await act(async () => {
+          await tool.execute(boundAgentToolInput(tool, { section }), new AbortController().signal)
+        })
+        await waitFor(() => expect(queries.getByRole('tab', { name: label }).getAttribute('aria-selected')).toBe('true'))
+      }
+    } finally {
+      view.unmount()
+      host.remove()
+    }
+  })
+
   it('narrows an empty doctor page to common Tools while validating every grant', async () => {
     stubEmptyDoctorWorkspace()
     let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined

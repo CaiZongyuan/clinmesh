@@ -358,6 +358,7 @@ function DoctorCaseController({
     setPage(1)
   }
   const [activeCaseSection, setActiveCaseSection] = useState<DoctorCaseSection>('record')
+  const caseDetailRoot = useRef<HTMLElement>(null)
   const [diagnosisReferenceSearch, setDiagnosisReferenceSearch] = useState<ReferenceCatalogSearchParameters>({
     enabled: false,
     page: 1,
@@ -1171,7 +1172,7 @@ function DoctorCaseController({
         },
         execute: (raw: unknown) => {
           const section = caseDetailSectionSchema.parse(doctorRecord(raw).section)
-          const tab = document.getElementById(doctorCaseSectionTabElementIds[section])
+          const tab = caseDetailRoot.current?.querySelector(`#${doctorCaseSectionTabElementIds[section]}`)
           if (!(tab instanceof HTMLButtonElement)) {
             throw new Error('Doctor case section is not available')
           }
@@ -1923,7 +1924,7 @@ function DoctorCaseController({
         queuePending={visibleQueue.isPending}
       />
       )}>
-      <section aria-labelledby="case-detail-heading" className="flex min-h-full min-w-0 flex-1 flex-col gap-3">
+      <section ref={caseDetailRoot} aria-labelledby="case-detail-heading" className="flex min-h-full min-w-0 flex-1 flex-col gap-3">
         <h2 className="sr-only" id="case-detail-heading">{messages.caseDetail}</h2>
         {issueOrder.isSuccess && issueOrder.variables.caseId === activeCaseId ? (
           <Alert>
