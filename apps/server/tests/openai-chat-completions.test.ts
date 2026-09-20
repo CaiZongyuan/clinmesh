@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   ChatCompletionsError,
   OpenAIChatCompletionsClient,
@@ -144,6 +144,167 @@ describe('OpenAI-compatible Chat Completions client', () => {
       }],
     })
     expect(bodies[1]).not.toHaveProperty('response_format')
+  })
+
+  it('falls through to the prompt strategy when the required tool returns schema-invalid JSON', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const client = new OpenAIChatCompletionsClient({
+      apiKey: secret,
+      baseUrl: 'https://openrouter.example/api/v1',
+      fetch: async (_input, init) => {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        if (bodies.length === 1) return new Response('{}', { status: 400 })
+        if (bodies.length === 2) {
+          return Response.json({
+            choices: [{
+              message: {
+                content: null,
+                tool_calls: [{
+                  function: {
+                    arguments: '{"chiefComplaint":""}',
+                    name: 'patient_brief',
+                  },
+                  type: 'function',
+                }],
+              },
+            }],
+          })
+        }
+        return Response.json({
+          choices: [{ message: { content: '```json\n{"chiefComplaint":"头晕"}\n```' } }],
+          model: 'resolved-prompt-model',
+        })
+      },
+    })
+
+    await expect(client.completeJson({
+      ...completionInput,
+      validate: value => (value as { chiefComplaint?: unknown }).chiefComplaint !== '',
+    })).resolves.toEqual({
+      content: '{"chiefComplaint":"头晕"}',
+      model: 'resolved-prompt-model',
+    })
+    expect(bodies).toHaveLength(3)
+    expect(bodies[2]).not.toHaveProperty('response_format')
+    expect(bodies[2]).not.toHaveProperty('tools')
+  })
+
+  it('rejects with AI_RESPONSE_INVALID when every strategy returns schema-invalid JSON', async () => {
+    let requests = 0
+    const client = new OpenAIChatCompletionsClient({
+      apiKey: secret,
+      baseUrl: 'https://openrouter.example/api/v1',
+      fetch: async (_input, init) => {
+        void JSON.parse(String(init?.body))
+        requests += 1
+        if (requests === 1) return new Response('{}', { status: 400 })
+        return Response.json({
+          choices: [{
+            message: {
+              tool_calls: [{
+                function: { arguments: '{"chiefComplaint":""}', name: 'patient_brief' },
+                type: 'function',
+              }],
+            },
+          }],
+        })
+      },
+    })
+
+    const error = await client.completeJson({
+      ...completionInput,
+      validate: value => (value as { chiefComplaint?: unknown }).chiefComplaint !== '',
+    }).then(() => undefined, (value: unknown) => value)
+
+    expect(error).toBeInstanceOf(ChatCompletionsError)
+    expect(error).toMatchObject({ code: 'AI_RESPONSE_INVALID' })
+    expect(requests).toBe(3)
+  })
+
+  it('skips the JSON-schema request for a model that previously rejected it', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const toolCallResponse = () => Response.json({
+      choices: [{
+        message: {
+          content: null,
+          tool_calls: [{
+            function: { arguments: '{"chiefComplaint":"头晕"}', name: 'patient_brief' },
+            type: 'function',
+          }],
+        },
+      }],
+    })
+    const client = new OpenAIChatCompletionsClient({
+      apiKey: secret,
+      baseUrl: 'https://openrouter.example/api/v1',
+      fetch: async (_input, init) => {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        if (bodies.length === 1) return new Response('{}', { status: 400 })
+        return toolCallResponse()
+      },
+    })
+
+    await expect(client.completeJson(completionInput)).resolves.toMatchObject({
+      content: '{"chiefComplaint":"头晕"}',
+    })
+    expect(bodies).toHaveLength(2)
+
+    await expect(client.completeJson(completionInput)).resolves.toMatchObject({
+      content: '{"chiefComplaint":"头晕"}',
+    })
+    expect(bodies).toHaveLength(3)
+    expect(bodies[2]).toHaveProperty('tool_choice')
+    expect(bodies[2]).not.toHaveProperty('response_format')
+  })
+
+  it('reports the path that produced the structured result and why earlier paths were rejected', async () => {
+    const warnings: string[] = []
+    const infos: string[] = []
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation((value: unknown) => {
+      warnings.push(String(value))
+    })
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation((value: unknown) => {
+      infos.push(String(value))
+    })
+    try {
+      const bodies: Array<Record<string, unknown>> = []
+      const client = new OpenAIChatCompletionsClient({
+        apiKey: secret,
+        baseUrl: 'https://openrouter.example/api/v1',
+        fetch: async (_input, init) => {
+          bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+          if (bodies.length === 1) return new Response('{}', { status: 400 })
+          if (bodies.length === 2) {
+            return Response.json({
+              choices: [{
+                message: {
+                  content: null,
+                  tool_calls: [{
+                    function: { arguments: '{"chiefComplaint":""}', name: 'patient_brief' },
+                    type: 'function',
+                  }],
+                },
+              }],
+            })
+          }
+          return Response.json({
+            choices: [{ message: { content: '```json\n{"chiefComplaint":"头晕"}\n```' } }],
+          })
+        },
+      })
+
+      await expect(client.completeJson({
+        ...completionInput,
+        validate: value => (value as { chiefComplaint?: unknown }).chiefComplaint !== '',
+      })).resolves.toMatchObject({ content: '{"chiefComplaint":"头晕"}' })
+
+      expect(warnings.some(value => value.includes('JSON-schema') && value.includes('400'))).toBe(true)
+      expect(warnings.some(value => value.includes('required tool') && value.includes('schema validation'))).toBe(true)
+      expect(infos.some(value => value.includes('prompt request'))).toBe(true)
+    } finally {
+      warnSpy.mockRestore()
+      infoSpy.mockRestore()
+    }
   })
 
   it('uses prompt-constrained JSON only when the required tool returns no structured output', async () => {

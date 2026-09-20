@@ -53,6 +53,7 @@ export interface JsonChatCompletionInput {
   signal?: AbortSignal
   systemPrompt: string
   userPayload: unknown
+  validate?: (value: unknown) => boolean
 }
 
 export interface JsonChatCompletionResult {
@@ -110,6 +111,7 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
   readonly #apiKey: string
   readonly #endpoint: URL
   readonly #fetch: typeof fetch
+  readonly #jsonSchemaRejectedModels = new Set<string>()
   readonly #maxRequestBytes: number
   readonly #maxResponseBytes: number
   readonly #timeoutMs: number
@@ -191,7 +193,7 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
         })
       }
     }
-    let response = await request(jsonSchemaBody)
+    let response: Response | undefined
     try {
       const parseResponse = async (value: Response) => {
         if (!value.ok) {
@@ -205,7 +207,7 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
           await readBoundedResponse(value, this.#maxResponseBytes),
         ))
       }
-      const structuredJsonContent = (parsed: z.infer<typeof providerResponseSchema>) => {
+      const structuredJsonContent = (path: string, parsed: z.infer<typeof providerResponseSchema>) => {
         const message = parsed.choices[0]!.message
         const candidates = [
           message.tool_calls?.find(
@@ -219,9 +221,14 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
           if (candidate === undefined) continue
           const normalized = singleJsonCodeBlock(candidate) ?? candidate
           try {
-            JSON.parse(normalized)
+            const value: unknown = JSON.parse(normalized)
+            if (input.validate?.(value) === false) {
+              console.warn(`[ai-chat-completions] ${path} content failed schema validation (model ${input.model})`)
+              continue
+            }
             return normalized
           } catch {
+            console.warn(`[ai-chat-completions] ${path} content was not valid JSON (model ${input.model})`)
             continue
           }
         }
@@ -229,11 +236,20 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
       }
       let parsed: z.infer<typeof providerResponseSchema> | undefined
       let content: string | undefined
-      if (response.status === 400) {
-        await response.body?.cancel()
+      let contentPath: string | undefined
+      if (this.#jsonSchemaRejectedModels.has(input.model)) {
+        // 该模型此前对 JSON-schema 请求返回 400，确定性失败不再重付学费。
       } else {
-        parsed = await parseResponse(response)
-        content = structuredJsonContent(parsed)
+        response = await request(jsonSchemaBody)
+        if (response.status === 400) {
+          this.#jsonSchemaRejectedModels.add(input.model)
+          console.warn(`[ai-chat-completions] model ${input.model} rejected the JSON-schema request with HTTP 400; skipping it for future calls`)
+          await response.body?.cancel()
+        } else {
+          parsed = await parseResponse(response)
+          contentPath = 'JSON-schema request'
+          content = structuredJsonContent(contentPath, parsed)
+        }
       }
       if (content === undefined) {
         response = await request({
@@ -249,7 +265,8 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
           }],
         })
         parsed = await parseResponse(response)
-        content = structuredJsonContent(parsed)
+        contentPath = 'required tool request'
+        content = structuredJsonContent(contentPath, parsed)
       }
       if (content === undefined) {
         response = await request({
@@ -267,11 +284,13 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
           }],
         })
         parsed = await parseResponse(response)
-        content = structuredJsonContent(parsed)
+        contentPath = 'prompt request'
+        content = structuredJsonContent(contentPath, parsed)
       }
-      if (content === undefined || parsed === undefined) {
+      if (content === undefined || parsed === undefined || contentPath === undefined) {
         throw new Error('The expected structured result was not returned')
       }
+      console.info(`[ai-chat-completions] structured result via ${contentPath} (model ${parsed.model ?? input.model})`)
       return {
         content,
         model: parsed.model ?? input.model,

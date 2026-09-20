@@ -157,6 +157,7 @@ export async function generatePatientPersona(input: {
     ...(input.signal === undefined ? {} : { signal: input.signal }),
     systemPrompt,
     userPayload: input.payload,
+    validate: value => patientPersonaContentSchema.safeParse(value).success,
   })
   const content = patientPersonaContentSchema.parse(JSON.parse(completion.content))
   assertNoDiagnosisLeak(content, input.hiddenResources, input.visibleResources)

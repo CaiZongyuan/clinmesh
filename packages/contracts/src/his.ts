@@ -70,6 +70,7 @@ const fhirExpectedVersionsSchema = z.record(
 )
 
 export const patientSummarySchema = z.object({
+  address: z.string().optional(),
   birthDate: z.string().optional(),
   gender: z.string().optional(),
   id: z.string().min(1),

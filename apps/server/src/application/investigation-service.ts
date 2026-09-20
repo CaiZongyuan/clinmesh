@@ -538,6 +538,7 @@ export class InvestigationService {
       ...(signal === undefined ? {} : { signal }),
       systemPrompt,
       userPayload: payload,
+      validate: value => agentOutputSchema.safeParse(value).success,
     })
     const output = agentOutputSchema.parse(JSON.parse(completion.content))
     if (output.interpretation !== interpretationFor(output.value, referenceRange)) {
@@ -731,6 +732,7 @@ export class InvestigationService {
       ...(signal === undefined ? {} : { signal }),
       systemPrompt: serviceSystemPrompt,
       userPayload: payload,
+      validate: value => serviceAgentOutputSchema.safeParse(value).success,
     })
     const output = serviceAgentOutputSchema.parse(JSON.parse(completion.content))
     const outputByCode = new Map(output.results.map(result => [result.code, result]))
