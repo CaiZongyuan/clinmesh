@@ -1135,7 +1135,7 @@ function DoctorCaseController({
   const agentPage = useMemo(() => ({
     actions: {
       'outpatient.case.read': {
-        description: 'Read the selected authorized outpatient case and the loaded doctor queue page containing waiting and active cases. Use queue.items caseId and patient identity to select another case; queue.total includes rows outside this page.',
+        description: 'Read current case and queue.items (waiting + active); use each caseId to select a patient.',
         enabled: activeCaseId !== undefined,
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: async (_raw: unknown, signal: AbortSignal) => {
@@ -1144,7 +1144,7 @@ function DoctorCaseController({
         },
       },
       'outpatient.case.select': {
-        description: 'Select one caseId from queue.items returned by the current page context or doctor context. Only cases in that loaded queue page can be selected; the waiting or active tab follows the selected case.',
+        description: 'Select caseId from loaded queue.items; switch to its waiting or active tab.',
         enabled: (queue.data?.items.length ?? 0) > 0,
         parameters: {
           type: 'object' as const,

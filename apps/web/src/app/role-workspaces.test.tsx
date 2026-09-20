@@ -2967,6 +2967,7 @@ describe('role workspaces', () => {
         return JSON.parse(result).data
       }
       const context = await call('clinmesh_read_current_context')
+      for (const tool of registration!.tools) expect(tool.description.length, tool.name).toBeLessThanOrEqual(512)
       expect(context.pageState.queue).toMatchObject({ items: queueItems, ...pagination(2) })
       const doctor = await call('clinmesh_read_doctor_context')
       expect(doctor.queue).toEqual(context.pageState.queue)

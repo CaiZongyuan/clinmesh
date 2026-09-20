@@ -33,6 +33,8 @@
 
 - DSH 工具缺失时，同时检查后端 Page Context 的 `allowedOperationIds` 和前端 action 的 `enabled` 条件。失败后的恢复工具也必须经过两层筛选；仅用返回全部 catalog operations 的前端 mock，无法发现后端漏授权，需补真实 HTTP Page Context 回归。
 
+- Surface 宿主限制每个 Tool 的最终 description 不超过 512 字符；Web 包装器会追加通用编辑说明，预算必须按拼接后的文本计算。单个描述超限会使整份 lease 注册失败、全部 ClinMesh 工具缺失，不能仅以页面上下文签发成功或 mock register 测试通过判断桥接可用。
+
 - React 缓存的 Agent action 配置必须依赖其读取的 mutation 状态。连续问诊回归须包含已有病历草稿、病例刷新先于队列完成的时序，并验证完成后的工具清单；无草稿时临时创建的文书对象可能让缓存每次重算，掩盖缺失依赖。
 
 - DSH Surface 的页面元素位于 ShadowRoot 内，`document.getElementById` 无法找到内部标签。页面 Tool 应持有当前业务容器的 ref 并在容器内定位目标，避免误命中宿主同名元素；回归须把真实组件挂载到 ShadowRoot 后调用注册的 Tool，普通 DOM 测试不能证明宿主路径可用。
