@@ -12,7 +12,7 @@ const dialogResultSchema = z.object({
   calls: z.array(z.tuple([z.string(), z.number()])),
 })
 
-it.each(['18', '19'])('opens clinical catalog dialogs and debounces search with React %s', async version => {
+it.each(['18', '19'])('opens catalog dialogs and opens/closes persona failure details with React %s', async version => {
   const react = version === '18' ? 'react18' : 'react'
   const reactDom = version === '18' ? 'react-dom18' : 'react-dom'
   const result = await build({
@@ -47,6 +47,12 @@ it.each(['18', '19'])('opens clinical catalog dialogs and debounces search with 
     diagnosis: dialogResultSchema,
     laboratory: dialogResultSchema,
     medication: dialogResultSchema,
+    persona: z.object({
+      opened: z.boolean(),
+      details: z.string(),
+      portalOutsideShadow: z.boolean(),
+      closed: z.boolean(),
+    }),
     windowErrors: z.array(z.string()),
   }).parse(response)
   expect(actual.windowErrors).toEqual([])
@@ -56,4 +62,8 @@ it.each(['18', '19'])('opens clinical catalog dialogs and debounces search with 
   expect(actual.diagnosis.calls).toEqual([['', 1]])
   expect(actual.laboratory.calls).toEqual([['', 1], ['血常规', 1]])
   expect(actual.medication.calls).toEqual([['', 1]])
+  expect(actual.persona).toMatchObject({ opened: true, closed: true, portalOutsideShadow: false })
+  for (const detail of ['失败原因详情', 'AI_RESPONSE_INVALID', 'Synthetic provider response is invalid', '更换模型', '2026-09-20T07:23:32.782Z']) {
+    expect(actual.persona.details).toContain(detail)
+  }
 }, 30_000)

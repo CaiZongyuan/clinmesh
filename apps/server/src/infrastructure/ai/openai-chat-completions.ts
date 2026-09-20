@@ -6,7 +6,7 @@ const providerMessageSchema = z.object({
   role: z.string().optional(),
   tool_calls: z.array(z.object({
     function: z.object({
-      arguments: z.string().min(1),
+      arguments: z.string(),
       name: z.string().min(1),
     }).passthrough(),
     type: z.literal('function'),

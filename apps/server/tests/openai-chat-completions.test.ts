@@ -307,7 +307,7 @@ describe('OpenAI-compatible Chat Completions client', () => {
     }
   })
 
-  it('uses prompt-constrained JSON only when the required tool returns no structured output', async () => {
+  it.each([null, ''])('uses prompt-constrained JSON when the required tool returns no usable arguments (%s)', async argumentsValue => {
     const bodies: Array<Record<string, unknown>> = []
     const client = new OpenAIChatCompletionsClient({
       apiKey: secret,
@@ -317,7 +317,15 @@ describe('OpenAI-compatible Chat Completions client', () => {
         if (bodies.length === 1) return new Response('{}', { status: 400 })
         if (bodies.length === 2) {
           return Response.json({
-            choices: [{ message: { content: null, reasoning: 'synthetic reasoning' } }],
+            choices: [{ message: {
+              content: null,
+              ...(argumentsValue === null ? {} : {
+                tool_calls: [{
+                  function: { arguments: argumentsValue, name: 'patient_brief' },
+                  type: 'function',
+                }],
+              }),
+            } }],
           })
         }
         return Response.json({
