@@ -55,24 +55,45 @@ const medicationCatalog: PrescriptionMedication[] = [{
   version: 1,
 }]
 
-function makeSearch<Data>(onSearch: (query: string, page: number) => void): ReferenceCatalogSearchModel<Data> {
-  return { data: undefined, error: null, isError: false, isFetching: false, isPending: false, onSearch }
+const laboratoryConcept = {
+  code: '6690-2', display: '合成白细胞计数', id: 'synthetic-wbc',
+  sourceLocator: 'synthetic:test', system: 'http://loinc.org', version: '2.83',
+}
+const laboratoryCatalog: CaseLaboratoryCatalogSearch = {
+  items: [{
+    allowedIndicationCodes: ['clinical-evaluation'], componentServiceIds: [], doctorOrderable: true,
+    executingDepartmentId: 'department-laboratory', id: 'synthetic-lab', localCode: 'SYN-LAB',
+    nameZh: '合成白细胞计数', priceFen: 1000, referenceConcept: laboratoryConcept,
+    referenceReleaseId: 'synthetic', reportDefinition: {
+      conclusionTemplate: '合成检验结果',
+      results: [{
+        alternateCodings: [], referenceConcept: laboratoryConcept, referenceRange: { text: '合成结果' },
+        valueType: 'string', allowedValues: ['合成结果'],
+      }],
+    },
+    specimen: { code: 'blood', display: '血液' }, serviceKind: 'laboratory', tatMinutes: 20, version: 1,
+  }],
+  page: 1, pageSize: 20, total: 1,
 }
 
-function CatalogDialog({ kind, onSearch }: {
+function makeSearch<Data>(onSearch: (query: string, page: number) => void, data: Data): ReferenceCatalogSearchModel<Data> {
+  return { data, error: null, isError: false, isFetching: false, isPending: false, onSearch }
+}
+
+function CatalogDialog({ kind, onSearch, onSelect }: {
   kind: CatalogKind
   onSearch: (query: string, page: number) => void
+  onSelect: () => void
 }) {
   const excludedIds = new Set<string>()
-  const select = (): void => {}
   if (kind === 'diagnosis') {
     return (
       <DiagnosisCatalogDialog
         excludedIds={excludedIds}
         locale="zh-CN"
         localCatalog={diagnosisCatalog}
-        onSelect={select}
-        search={makeSearch<ReferenceDiagnosisCatalogSearch>(onSearch)}
+        onSelect={onSelect}
+        search={makeSearch<ReferenceDiagnosisCatalogSearch>(onSearch, { items: [], page: 1, pageSize: 20, total: 0, releaseId: 'synthetic' })}
       />
     )
   }
@@ -80,8 +101,8 @@ function CatalogDialog({ kind, onSearch }: {
     return (
       <LaboratoryCatalogDialog
         locale="zh-CN"
-        onSelect={select}
-        search={makeSearch<CaseLaboratoryCatalogSearch>(onSearch)}
+        onSelect={onSelect}
+        search={makeSearch(onSearch, laboratoryCatalog)}
       />
     )
   }
@@ -90,8 +111,8 @@ function CatalogDialog({ kind, onSearch }: {
       excludedIds={excludedIds}
       locale="zh-CN"
       localCatalog={medicationCatalog}
-      onSelect={select}
-      search={makeSearch<ReferenceMedicationCatalogSearch>(onSearch)}
+      onSelect={onSelect}
+      search={makeSearch<ReferenceMedicationCatalogSearch>(onSearch, { items: [], page: 1, pageSize: 20, total: 0, releaseId: 'synthetic' })}
     />
   )
 }
@@ -113,10 +134,13 @@ async function run() {
   shadow.append(container)
   const windowErrors: string[] = []
   window.addEventListener('error', event => { windowErrors.push(String(event.error ?? event.message)) })
-  const results: Record<CatalogKind, { inputFound: boolean, calls: Array<[string, number]> }> = {
-    diagnosis: { inputFound: false, calls: [] },
-    laboratory: { inputFound: false, calls: [] },
-    medication: { inputFound: false, calls: [] },
+  const results: Record<CatalogKind, {
+    inputFound: boolean, calls: Array<[string, number]>, selectionStates: Array<string | null>,
+    confirmDisabled: boolean[], confirmations: number,
+  }> = {
+    diagnosis: { inputFound: false, calls: [], selectionStates: [], confirmDisabled: [], confirmations: 0 },
+    laboratory: { inputFound: false, calls: [], selectionStates: [], confirmDisabled: [], confirmations: 0 },
+    medication: { inputFound: false, calls: [], selectionStates: [], confirmDisabled: [], confirmations: 0 },
   }
   for (const kind of ['diagnosis', 'laboratory', 'medication'] as const) {
     const calls = results[kind].calls
@@ -125,7 +149,8 @@ async function run() {
       root = createRoot(container)
       root.render(
         <PortalContainerProvider container={container}>
-          <CatalogDialog kind={kind} onSearch={(query, page) => { calls.push([query, page]) }} />
+          <CatalogDialog kind={kind} onSearch={(query, page) => { calls.push([query, page]) }}
+            onSelect={() => { results[kind].confirmations += 1 }} />
         </PortalContainerProvider>,
       )
     })
@@ -142,6 +167,24 @@ async function run() {
       typeInto(input, '血常规')
       await settle(450)
     }
+    const selection = container.querySelector<HTMLButtonElement>('button[aria-pressed]')
+    const confirm = [...container.querySelectorAll('button')].find(button => (
+      button.textContent === { diagnosis: '加入诊断', laboratory: '确定选择', medication: '加入处方' }[kind]
+    ))
+    if (!selection || !confirm) throw new Error(`Missing ${kind} selection controls`)
+    for (let index = 0; index < 4; index += 1) {
+      results[kind].selectionStates.push(selection.getAttribute('aria-pressed'))
+      results[kind].confirmDisabled.push(confirm.disabled)
+      if (index < 3) {
+        selection.click()
+        await settle()
+      }
+    }
+    if (results[kind].confirmations !== 0) throw new Error(`Selection unexpectedly confirmed ${kind}`)
+    const row = selection.closest('tr')
+    if (!row) throw new Error(`Missing ${kind} row`)
+    row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, composed: true }))
+    await settle()
     void root.unmount()
     container.textContent = ''
   }

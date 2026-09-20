@@ -282,20 +282,22 @@ function CatalogTriggerButton({
 function SelectionButton({
   disabled,
   label,
-  onSelect,
+  onSelectedChange,
   selected,
 }: {
   disabled: boolean
   label: string
-  onSelect: () => void
+  onSelectedChange: (selected: boolean) => void
   selected: boolean
 }) {
   return (
     <Button
       aria-label={label}
+      aria-pressed={selected}
       className="size-7"
       disabled={disabled}
-      onClick={onSelect}
+      onClick={() => onSelectedChange(!selected)}
+      onDoubleClick={event => event.stopPropagation()}
       size="icon-sm"
       title={label}
       type="button"
@@ -443,7 +445,7 @@ export function DiagnosisCatalogDialog({
                           <SelectionButton
                             disabled={unavailable}
                             label={label}
-                            onSelect={() => setSelected(selection)}
+                            onSelectedChange={next => setSelected(next ? selection : undefined)}
                             selected={selected?.catalogItemId === selection.catalogItemId}
                           />
                         </TableCell>
@@ -599,7 +601,7 @@ export function LaboratoryCatalogDialog({
                           <SelectionButton
                             disabled={false}
                             label={label}
-                            onSelect={() => setSelected(selection)}
+                            onSelectedChange={next => setSelected(next ? selection : undefined)}
                             selected={selected?.catalogItemId === selection.catalogItemId}
                           />
                         </TableCell>
@@ -678,7 +680,7 @@ function MedicationProductRow({ group, excludedIds, locale, selectionId, onSelec
   excludedIds: ReadonlySet<string>
   locale: WorkspaceLocale
   selectionId: string | undefined
-  onSelect: (selection: MedicationCatalogSelection) => void
+  onSelect: (selection: MedicationCatalogSelection | undefined) => void
   onConfirm: (selection: MedicationCatalogSelection) => void
 }) {
   const [packageId, setPackageId] = useState<string>()
@@ -696,7 +698,7 @@ function MedicationProductRow({ group, excludedIds, locale, selectionId, onSelec
       <TableCell>
         <SelectionButton disabled={unavailable}
           label={`${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`}
-          onSelect={() => onSelect(selection)} selected={selected} />
+          onSelectedChange={next => onSelect(next ? selection : undefined)} selected={selected} />
       </TableCell>
       <TableCell className="font-medium">
         <span className="line-clamp-2 whitespace-normal break-words" title={`${item.genericName} · ${item.dosageForm} · ${item.approvalNumber}`}>{item.genericName}</span>
@@ -853,7 +855,7 @@ export function MedicationCatalogDialog({
                           <SelectionButton
                             disabled={excluded}
                             label={`${messages.choose} ${genericName}`}
-                            onSelect={() => setSelected(selection)}
+                            onSelectedChange={next => setSelected(next ? selection : undefined)}
                             selected={selectionId === id}
                           />
                         </TableCell>

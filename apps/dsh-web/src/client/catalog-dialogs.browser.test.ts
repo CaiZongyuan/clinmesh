@@ -10,9 +10,12 @@ const require = createRequire(import.meta.url)
 const dialogResultSchema = z.object({
   inputFound: z.boolean(),
   calls: z.array(z.tuple([z.string(), z.number()])),
+  selectionStates: z.array(z.string().nullable()),
+  confirmDisabled: z.array(z.boolean()),
+  confirmations: z.number(),
 })
 
-it.each(['18', '19'])('opens clinical catalog dialogs and debounces search with React %s', async version => {
+it.each(['18', '19'])('opens clinical catalog dialogs, toggles selection and debounces search with React %s', async version => {
   const react = version === '18' ? 'react18' : 'react'
   const reactDom = version === '18' ? 'react-dom18' : 'react-dom'
   const result = await build({
@@ -52,6 +55,9 @@ it.each(['18', '19'])('opens clinical catalog dialogs and debounces search with 
   expect(actual.windowErrors).toEqual([])
   for (const dialog of [actual.diagnosis, actual.laboratory, actual.medication]) {
     expect(dialog.inputFound).toBe(true)
+    expect(dialog.selectionStates).toEqual(['false', 'true', 'false', 'true'])
+    expect(dialog.confirmDisabled).toEqual([true, false, true, false])
+    expect(dialog.confirmations).toBe(1)
   }
   expect(actual.diagnosis.calls).toEqual([['', 1]])
   expect(actual.laboratory.calls).toEqual([['', 1], ['血常规', 1]])
