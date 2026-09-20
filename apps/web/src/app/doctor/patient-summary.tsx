@@ -106,14 +106,6 @@ export function PatientBanner({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {detail.allergies.slice(0, 1).map(allergy => (
-            <Badge key={`${allergy.code}:${allergy.display}`} variant="destructive">
-              {messages.allergySummary} · {allergy.display}
-            </Badge>
-          ))}
-          {detail.triage === undefined ? null : (
-            <Badge variant="warning">{triageAcuityLabel(detail.triage.acuityCode, messages)}</Badge>
-          )}
           <Badge variant="secondary">{statusText}</Badge>
           {readOnly ? (
             <Badge variant="outline"><LockKeyholeIcon aria-hidden="true" />{messages.encounterReadOnly}</Badge>
@@ -126,6 +118,18 @@ export function PatientBanner({
           )}
         </div>
       </div>
+      {detail.allergies.length === 0 && detail.triage === undefined ? null : (
+        <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+          {detail.allergies.slice(0, 1).map(allergy => (
+            <Badge className="max-w-full whitespace-normal" key={`${allergy.code}:${allergy.display}`} variant="destructive">
+              {messages.allergySummary} · {allergy.display}
+            </Badge>
+          ))}
+          {detail.triage === undefined ? null : (
+            <Badge variant="warning">{triageAcuityLabel(detail.triage.acuityCode, messages)}</Badge>
+          )}
+        </div>
+      )}
       {presentation === null ? null : <dl className="grid grid-cols-2 gap-px border-t bg-border @min-[400px]/patient-banner:grid-cols-3 @min-[680px]/patient-banner:grid-cols-5 [&>div]:bg-background [&>div]:px-3 [&>div]:py-2.5">
         <VitalSummary label={messages.temperatureC} value={presentation.vitalSigns.temperatureC} />
         <VitalSummary label={messages.pulseBpm} value={presentation.vitalSigns.pulseBpm} />
