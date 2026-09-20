@@ -262,17 +262,17 @@ function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocume
       priorMedicalHistory: persisted.priorMedicalHistory,
     }
   }
-  const vitals = detail.presentation.vitalSigns
+  const vitals = detail.presentation?.vitalSigns
   return {
     assessment: '',
     auxiliaryExamination: detail.report === undefined
       ? '暂无辅助检查结果。'
       : detail.report.results.map(result => `${result.code} ${String(result.value)}`).join('；'),
-    chiefComplaint: detail.presentation.chiefComplaint,
+    chiefComplaint: detail.presentation?.chiefComplaint ?? '',
     disposition: '',
     followUp: '',
-    historyOfPresentIllness: detail.presentation.summary,
-    physicalExamination: `T ${vitals.temperatureC} °C，P ${vitals.pulseBpm} 次/分，R ${vitals.respirationBpm} 次/分，BP ${vitals.bloodPressure.systolicMmHg}/${vitals.bloodPressure.diastolicMmHg} mmHg，SpO₂ ${vitals.oxygenSaturationPct}%。`,
+    historyOfPresentIllness: detail.presentation?.summary ?? '',
+    physicalExamination: vitals === undefined ? '' : `T ${vitals.temperatureC} °C，P ${vitals.pulseBpm} 次/分，R ${vitals.respirationBpm} 次/分，BP ${vitals.bloodPressure.systolicMmHg}/${vitals.bloodPressure.diastolicMmHg} mmHg，SpO₂ ${vitals.oxygenSaturationPct}%。`,
     priorMedicalHistory: detail.priorFacts.length === 0
       ? '系统未记录既往病史。'
       : detail.priorFacts.map(fact => fact.display || fact.code).join('；'),

@@ -215,7 +215,7 @@ export function DoctorCaseContextRail({
   statusText: string
 }): React.JSX.Element {
   const labels = copy[locale]
-  const vitalSigns = detail.presentation.vitalSigns
+  const vitalSigns = detail.presentation?.vitalSigns
   const completionCount = completion?.items.filter(item => item.status === 'complete').length ?? 0
   return (
     <aside
@@ -267,7 +267,7 @@ export function DoctorCaseContextRail({
               {messages.presentationSummary}
             </h3>
             <dl className="mt-2 flex flex-col gap-2 text-sm">
-              <ContextFact label={messages.chiefComplaint} value={detail.presentation.chiefComplaint} />
+              <ContextFact label={messages.chiefComplaint} value={detail.presentation?.chiefComplaint ?? messages.triageNotRecorded} />
               <ContextFact label={messages.status} value={statusText} />
               <ContextFact
                 label={messages.priorDiseases}
@@ -279,11 +279,11 @@ export function DoctorCaseContextRail({
             <h3 className="text-sm font-semibold" id={`vital-signs-heading-${detail.caseId}`}>
               {labels.vitalSigns}
             </h3>
-            <p className="mt-2 text-sm font-medium tabular-nums">
+            {vitalSigns === undefined ? <p className="mt-2 text-sm text-muted-foreground">{messages.triageNotRecorded}</p> : <p className="mt-2 text-sm font-medium tabular-nums">
               {messages.temperatureC}{vitalSigns.temperatureC} · {messages.pulseBpm}{vitalSigns.pulseBpm} · {messages.respirationBpm}{vitalSigns.respirationBpm}
               {' · '}{messages.bloodPressure}{vitalSigns.bloodPressure.systolicMmHg}/{vitalSigns.bloodPressure.diastolicMmHg}
               {' · '}{messages.oxygenSaturationPct}{vitalSigns.oxygenSaturationPct}
-            </p>
+            </p>}
           </section>
           {completion === undefined ? null : (
             <section aria-labelledby={`completion-heading-${detail.caseId}`} className="border-b pb-4">

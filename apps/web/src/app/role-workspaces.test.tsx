@@ -2203,7 +2203,7 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: '确认挂号' }))
 
     expect(await screen.findByText('操作冲突')).toBeTruthy()
-    expect(screen.getByText('数据已发生变化，请刷新后重新确认。')).toBeTruthy()
+    expect(screen.getByText('当前业务状态或前置条件不满足，请核对病例信息后重试。')).toBeTruthy()
   })
 
   it('keeps a long Chinese patient name available through search and selection', async () => {
@@ -2425,7 +2425,7 @@ describe('role workspaces', () => {
     expect(await screen.findByRole('listitem', { name: '选择病例 合成患者周明' })).toBeTruthy()
   })
 
-  it('restores frozen dialogue and displays a free-text message while the patient is typing', async () => {
+  it.each([true, false])('restores dialogue and editable records with recorded triage=%s', async hasTriage => {
     const patient = {
       birthDate: '1988-03-16',
       gender: 'female',
@@ -2460,7 +2460,7 @@ describe('role workspaces', () => {
             encounterId: 'encounter-direct',
             encounterVersion: '1',
             patient,
-            presentation: virtualPatientPresentation,
+            presentation: hasTriage ? virtualPatientPresentation : null,
             status: 'first-visit',
             taskId: 'task-doctor-direct',
             taskVersion: '1',
@@ -2475,7 +2475,7 @@ describe('role workspaces', () => {
           consultation: { turns, version: consultationVersion },
           encounter: { id: 'encounter-direct', status: 'in-progress', versionId: '1' },
           patient,
-          presentation: virtualPatientPresentation,
+          presentation: hasTriage ? virtualPatientPresentation : null,
           priorFacts: [],
           status: 'first-visit',
           taskId: 'task-doctor-direct',
@@ -2520,6 +2520,7 @@ describe('role workspaces', () => {
 
     const contextRail = await screen.findByRole('complementary', { name: '病例上下文' })
     expect(within(contextRail).queryByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeNull()
+    if (!hasTriage) expect(within(contextRail).getAllByText('未记录分诊信息').length).toBeGreaterThan(0)
     await user.click(await screen.findByRole('tab', { name: '问诊记录' }))
     const consultationRegion = screen.getByRole('region', { name: '问诊记录' })
     expect(within(consultationRegion).getByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeTruthy()
@@ -2534,7 +2535,12 @@ describe('role workspaces', () => {
     expect(await screen.findByText('咽痛，吞咽时更明显，没有气促。')).toBeTruthy()
     expect(screen.getByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeTruthy()
     await user.click(screen.getByRole('tab', { name: '病历记录' }))
-    expect(await screen.findByRole('region', { name: '结构化病历' })).toBeTruthy()
+    const record = await screen.findByRole('region', { name: '结构化病历' })
+    expect(record).toBeTruthy()
+    if (!hasTriage) {
+      expect((within(record).getByLabelText('主诉') as HTMLTextAreaElement).value).toBe('')
+      expect((within(record).getByLabelText('查体') as HTMLTextAreaElement).value).toBe('')
+    }
     expect(screen.queryByText('咽痛，吞咽时更明显，没有气促。')).toBeNull()
     await user.click(screen.getByRole('tab', { name: '问诊记录' }))
     expect(await screen.findByText('咽痛，吞咽时更明显，没有气促。')).toBeTruthy()
@@ -2608,7 +2614,7 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: '向患者提问' }))
 
     expect(await screen.findByText('操作冲突')).toBeTruthy()
-    expect(screen.getByText('数据已发生变化，请刷新后重新确认。')).toBeTruthy()
+    expect(screen.getByText('当前业务状态或前置条件不满足，请核对病例信息后重试。')).toBeTruthy()
     expect(screen.getByText('暂无问诊记录')).toBeTruthy()
     expect(screen.getByRole('textbox', { name: '向患者提问' })).toBeTruthy()
   })
@@ -3808,7 +3814,7 @@ describe('role workspaces', () => {
     expect(screen.getByRole('heading', { name: '确认支付' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '提交支付' }))
 
-    expect(await screen.findByText('数据已发生变化，请刷新后重新确认。')).toBeTruthy()
+    expect(await screen.findByText('当前业务状态或前置条件不满足，请核对病例信息后重试。')).toBeTruthy()
     expect(screen.getByRole('alertdialog')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '提交支付' }))
     expect(await screen.findByText('支付成功')).toBeTruthy()

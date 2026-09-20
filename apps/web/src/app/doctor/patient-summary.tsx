@@ -101,7 +101,7 @@ export function PatientBanner({
             </div>
             <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
               <span>{messages.registrationNumber}：{detail.patient.identifier}</span>
-              <span>{messages.chiefComplaint}：{presentation.chiefComplaint}</span>
+              <span>{messages.chiefComplaint}：{presentation?.chiefComplaint ?? messages.triageNotRecorded}</span>
             </div>
           </div>
         </div>
@@ -126,13 +126,13 @@ export function PatientBanner({
           )}
         </div>
       </div>
-      <dl className="grid grid-cols-2 gap-px border-t bg-border @min-[400px]/patient-banner:grid-cols-3 @min-[680px]/patient-banner:grid-cols-5 [&>div]:bg-background [&>div]:px-3 [&>div]:py-2.5">
+      {presentation === null ? null : <dl className="grid grid-cols-2 gap-px border-t bg-border @min-[400px]/patient-banner:grid-cols-3 @min-[680px]/patient-banner:grid-cols-5 [&>div]:bg-background [&>div]:px-3 [&>div]:py-2.5">
         <VitalSummary label={messages.temperatureC} value={presentation.vitalSigns.temperatureC} />
         <VitalSummary label={messages.pulseBpm} value={presentation.vitalSigns.pulseBpm} />
         <VitalSummary label={messages.respirationBpm} value={presentation.vitalSigns.respirationBpm} />
         <VitalSummary label={messages.bloodPressure} value={`${presentation.vitalSigns.bloodPressure.systolicMmHg}/${presentation.vitalSigns.bloodPressure.diastolicMmHg}`} />
         <VitalSummary label={messages.oxygenSaturationPct} value={presentation.vitalSigns.oxygenSaturationPct} />
-      </dl>
+      </dl>}
     </section>
   )
 }

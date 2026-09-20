@@ -763,7 +763,7 @@ function casePresentation(triage: z.infer<typeof triageRecordContentSchema> | un
   if (triage !== undefined) {
     return presentationFromTriage(triage)
   }
-  throw new WorkflowError('WORKFLOW_CONFLICT', 'The outpatient case has no clinical presentation')
+  return null
 }
 
 function xhtmlText(value: string): string {

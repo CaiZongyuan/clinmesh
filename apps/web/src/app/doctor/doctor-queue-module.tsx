@@ -64,7 +64,7 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
                 {messages[`gender_${item.patient.gender}` as 'gender_male']} · {age === undefined ? '-' : messages.patientAge.replace('{age}', String(age))}
               </span>
             </span>
-            <span className="mt-1 block truncate text-xs text-muted-foreground">{item.presentation.chiefComplaint}</span>
+            <span className="mt-1 block truncate text-xs text-muted-foreground">{item.presentation?.chiefComplaint ?? messages.triageNotRecorded}</span>
           </span>
         </span>
         <Badge className="shrink-0" variant="outline">{doctorCaseStatusLabel(item.status, messages)}</Badge>
