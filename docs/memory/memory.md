@@ -83,6 +83,8 @@
 
 ## 浏览器演示经验
 
+- `agent-browser record start` 会创建新标签页并保留旧标签页。录制 DSH 原生 Tools 前关闭本次验证的旧标签页，再打开 Surface；同一 Session 的多个页面实例可能让 Tool 作用于非录制页面。只关闭自己创建的验证标签页，不关闭用户标签页。
+
 - `agent-browser click` 对滚动容器外的 ref 可能返回成功但页面未发生变化。先 `scrollintoview` 再点击，并以预期页面状态确认结果；异步 mutation 后的即时 snapshot 可能仍是旧状态。
 - PowerShell 将中文脚本通过 stdin 管道交给 Node 或浏览器前，显式设置 UTF-8 `$OutputEncoding`，避免默认 ASCII 把中文替换为问号。正式文件优先使用结构化 patch 或显式 UTF-8 写入。
 
