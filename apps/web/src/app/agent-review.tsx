@@ -190,10 +190,16 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
       <AlertDialog open={pending !== undefined} onOpenChange={open => {
         if (!open) void reject()
       }}>
-        <AlertDialogContent>
+        <AlertDialogContent data-agent-review="">
+          <div aria-hidden="true" className="clinmesh-agent-target clinmesh-agent-review-glow" data-phase={confirming ? 'submitting' : 'awaiting-review'} />
           <AlertDialogHeader>
             <AlertDialogTitle>{reviewText(pending?.title, locale)}</AlertDialogTitle>
             <AlertDialogDescription>{reviewText(pending?.description, locale)}</AlertDialogDescription>
+            <p role="status" className="text-sm text-muted-foreground">
+              {locale === 'zh-CN'
+                ? confirming ? '正在处理人工决定' : '待人工确认；聊天确认不能替代本次审阅'
+                : confirming ? 'Processing human decision' : 'Awaiting human confirmation; chat cannot approve this review'}
+            </p>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={confirming}>{getWorkspaceMessages(locale).cancel}</AlertDialogCancel>

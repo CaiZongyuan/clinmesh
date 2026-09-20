@@ -505,6 +505,7 @@ function PrescriptionRow({ item, messages, onSelect, selected }: {
   return (
     <Button
       aria-label={`${messages.selectPrescription} ${item.patient.name}`}
+      data-agent-selection={item.prescriptionId}
       className="h-auto min-h-16 w-full justify-between gap-3 px-3 py-2 text-left"
       onClick={onSelect}
       role="listitem"

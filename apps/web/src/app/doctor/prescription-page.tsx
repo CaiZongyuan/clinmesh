@@ -31,6 +31,7 @@ import {
   Trash2Icon,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { ApiClientError } from '../api-client.ts'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
@@ -163,6 +164,10 @@ export function PrescriptionPage({
   })
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
   const submittedItems = items.map(({ key: _key, ...item }) => item)
+  useRegisterAgentForm({
+    viewId: 'consultation', selectionId: detail.caseId, name: 'prescription',
+    values: { mode, items: items.map(({ catalogItemId, courseDays, doseText, frequencyCode, quantity }) => ({ catalogItemId, courseDays, doseText, frequencyCode, quantity })) },
+  })
   const currentRevision = JSON.stringify(submittedItems)
   useEffect(() => {
     if (actions.saveDraft.success && actions.saveDraft.savedRevision === currentRevision) {

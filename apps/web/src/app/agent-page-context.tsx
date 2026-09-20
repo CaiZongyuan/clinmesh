@@ -2,6 +2,8 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
+  useRef,
   useCallback,
   useMemo,
   useState,
@@ -23,6 +25,25 @@ export interface AgentPageRegistration {
 interface AgentPageRegistryValue {
   registration: AgentPageRegistration | null
   setRegistration(value: AgentPageRegistration | null): void
+  forms: Map<symbol, AgentFormSnapshot>
+}
+
+interface AgentFormSnapshot {
+  viewId: AgentViewId
+  selectionId: string
+  name: string
+  values: unknown
+  readValues?(): unknown
+}
+
+/** Registers only structured values owned by the mounted, authorized business form. */
+export function useRegisterAgentForm(form: AgentFormSnapshot): void {
+  const registry = useContext(AgentPageRegistryContext)
+  const [key] = useState(() => Symbol('agent-form'))
+  useLayoutEffect(() => {
+    registry?.forms.set(key, form)
+  })
+  useLayoutEffect(() => () => { registry?.forms.delete(key) }, [registry?.forms, key])
 }
 
 interface PublishedAgentPageRegistration {
@@ -34,6 +55,7 @@ interface PublishedAgentPageRegistration {
 const AgentPageRegistryContext = createContext<AgentPageRegistryValue | null>(null)
 
 export function AgentPageRegistryProvider({ children }: { children: ReactNode }): React.JSX.Element {
+  const forms = useRef(new Map<symbol, AgentFormSnapshot>()).current
   const [published, setPublished] = useState<PublishedAgentPageRegistration | null>(null)
   const updateRegistration = useCallback((value: AgentPageRegistration | null) => {
     setPublished(current => {
@@ -48,8 +70,9 @@ export function AgentPageRegistryProvider({ children }: { children: ReactNode })
   }, [])
   const value = useMemo(() => ({
     registration: published?.registration ?? null,
+    forms,
     setRegistration: updateRegistration,
-  }), [published, updateRegistration])
+  }), [forms, published, updateRegistration])
   return (
     <AgentPageRegistryContext.Provider value={value}>
       {children}
@@ -65,8 +88,17 @@ export function useRegisterAgentPage(registration: AgentPageRegistration): void 
   const registry = useContext(AgentPageRegistryContext)
   const setRegistration = registry?.setRegistration
   useEffect(() => {
-    if (setRegistration === undefined) return
-    setRegistration(registration)
+    if (setRegistration === undefined || registry === null) return
+    setRegistration({
+      ...registration,
+      readState: () => ({
+        ...registration.readState() as Record<string, unknown>,
+        forms: Object.fromEntries([...registry.forms.values()]
+          .filter(form => form.viewId === registration.claim.viewId
+            && form.selectionId === registration.claim.selection?.id)
+          .map(form => [form.name, form.readValues?.() ?? form.values])),
+      }),
+    })
   }, [registration, setRegistration])
   useEffect(() => () => setRegistration?.(null), [setRegistration])
 }

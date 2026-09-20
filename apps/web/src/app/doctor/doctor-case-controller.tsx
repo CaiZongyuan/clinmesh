@@ -43,7 +43,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/component
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, MessagesSquareIcon, PillIcon, PlusIcon, RefreshCwIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   acknowledgeLaboratoryReport,
   sendConsultationMessage,
@@ -118,7 +118,7 @@ import {
 } from './laboratory-page.tsx'
 import { PatientBanner } from './patient-summary.tsx'
 import { PrescriptionPage, type PrescriptionPageActions } from './prescription-page.tsx'
-import { agentViewRevision, useRegisterAgentPage } from '../agent-page-context.tsx'
+import { agentViewRevision, useRegisterAgentPage, useRegisterAgentForm } from '../agent-page-context.tsx'
 import { useAgentReview } from '../agent-review.tsx'
 
 interface DoctorWorkspaceProps {
@@ -1869,6 +1869,7 @@ function DoctorCaseController({
         presentation: detail.data.presentation,
       },
       clinicalDocumentDraft: currentClinicalDocument ?? null,
+      laboratoryDraft: { catalogItemId: laboratoryItemId, indicationCode },
       queueCount: queue.data?.total ?? 0,
       section: activeCaseSection,
     }),
@@ -1889,6 +1890,8 @@ function DoctorCaseController({
     hydrateAgentDraft,
     issueOrder.mutateAsync,
     issueRequest.mutateAsync,
+    indicationCode,
+    laboratoryItemId,
     messages,
     onSelectedCaseIdChange,
     page,
@@ -2389,6 +2392,16 @@ function CaseDetail({
   workingClinicalDocument: ClinicalDocumentContent
 }): React.JSX.Element {
   const firstVisitDraft = detail.drafts?.firstVisit
+  const firstVisitForm = useRef<HTMLFormElement>(null)
+  useRegisterAgentForm({
+    viewId: 'consultation', selectionId: detail.caseId, name: 'firstVisit', values: null,
+    readValues: () => {
+      const form = firstVisitForm.current
+      if (form === null) return null
+      const data = new FormData(form)
+      return { assessment: String(data.get('assessment') ?? ''), historyOfPresentIllness: String(data.get('historyOfPresentIllness') ?? '') }
+    },
+  })
   const readOnly = detail.encounter.status !== 'in-progress'
   const visitNotStarted = detail.status === 'awaiting-doctor'
   const clinicalReadOnly = readOnly || visitNotStarted
@@ -2470,6 +2483,7 @@ function CaseDetail({
       <h3 className="text-sm font-semibold" id="first-visit-heading">{messages.firstVisitRecord}</h3>
       <form
         aria-labelledby="first-visit-heading"
+        ref={firstVisitForm}
         key={`${detail.caseId}:${firstVisitDraft?.version ?? 0}:${agentDraftHydrationRevisions['first-visit'] ?? 0}`}
         onSubmit={event => {
           event.preventDefault()
@@ -2685,12 +2699,12 @@ function CaseDetail({
           <div className="overflow-x-auto overflow-y-hidden border-b px-2">
             <TabsList className="h-11 min-w-max" variant="line">
               {detail.consultation === undefined ? null : (
-                <TabsTrigger id={doctorCaseSectionTabElementIds.consultation} value="consultation"><MessagesSquareIcon aria-hidden="true" />{messages.consultationRecord}</TabsTrigger>
+                <TabsTrigger data-agent-selection="consultation" id={doctorCaseSectionTabElementIds.consultation} value="consultation"><MessagesSquareIcon aria-hidden="true" />{messages.consultationRecord}</TabsTrigger>
               )}
-              <TabsTrigger id={doctorCaseSectionTabElementIds.record} value="record"><ClipboardListIcon aria-hidden="true" />{messages.medicalRecord}</TabsTrigger>
-              <TabsTrigger id={doctorCaseSectionTabElementIds.laboratory} value="laboratory"><TestTubesIcon aria-hidden="true" />{messages.laboratoryAndExamination}</TabsTrigger>
-              <TabsTrigger id={doctorCaseSectionTabElementIds.diagnosis} value="diagnosis"><StethoscopeIcon aria-hidden="true" />{messages.diagnosis}</TabsTrigger>
-              <TabsTrigger id={doctorCaseSectionTabElementIds.prescription} value="prescription"><PillIcon aria-hidden="true" />{messages.prescription}</TabsTrigger>
+              <TabsTrigger data-agent-selection="record" id={doctorCaseSectionTabElementIds.record} value="record"><ClipboardListIcon aria-hidden="true" />{messages.medicalRecord}</TabsTrigger>
+              <TabsTrigger data-agent-selection="laboratory" id={doctorCaseSectionTabElementIds.laboratory} value="laboratory"><TestTubesIcon aria-hidden="true" />{messages.laboratoryAndExamination}</TabsTrigger>
+              <TabsTrigger data-agent-selection="diagnosis" id={doctorCaseSectionTabElementIds.diagnosis} value="diagnosis"><StethoscopeIcon aria-hidden="true" />{messages.diagnosis}</TabsTrigger>
+              <TabsTrigger data-agent-selection="prescription" id={doctorCaseSectionTabElementIds.prescription} value="prescription"><PillIcon aria-hidden="true" />{messages.prescription}</TabsTrigger>
             </TabsList>
           </div>
 
@@ -2739,6 +2753,7 @@ function CaseDetail({
             ) : (
               <DiagnosisPage
                 actions={diagnosisActions}
+                caseId={detail.caseId}
                 catalog={catalog.data.diagnoses}
                 elementId={encounterCompletionTargetElementIds.diagnosis}
                 key={`${detail.caseId}:${agentDraftHydrationRevisions.diagnosis ?? 0}`}
@@ -2943,6 +2958,14 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
     label: locale === 'zh-CN' ? item.nameZh : item.nameEn,
     value: item.id,
   }))
+  useRegisterAgentForm({
+    viewId: 'consultation', selectionId: detail.caseId, name: 'revisit',
+    values: {
+      diagnosis: { code: diagnosisCode, display: diagnosisDisplay },
+      document: { assessment, plan },
+      medications: medications.map(({ catalogItemId, doseText, frequencyCode, quantity }) => ({ catalogItemId, doseText, frequencyCode, quantity })),
+    },
+  })
   const updateMedication = (index: number, update: Partial<MedicationDraftLine>) => {
     setMedications(current => current.map((item, itemIndex) => (
       itemIndex === index ? { ...item, ...update } : item

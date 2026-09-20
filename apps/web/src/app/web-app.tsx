@@ -70,6 +70,7 @@ import {
 import { AgentPageRegistryProvider } from './agent-page-context.tsx'
 import { useSurfaceAgentPublisher } from './surface-agent-publisher.ts'
 import { AgentReviewProvider } from './agent-review.tsx'
+import { AgentActionFeedbackProvider } from './agent-action-feedback.tsx'
 import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
 import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
 import { RuntimeErrorBoundary } from './runtime-error-boundary.tsx'
@@ -534,11 +535,13 @@ function WebApplication({
           >
             <QueryClientProvider client={queryClient}>
               <AgentPageRegistryProvider>
-                <AgentReviewProvider locale={locale}>
-                  <Toaster>
-                    <RouterProvider router={router} />
-                  </Toaster>
-                </AgentReviewProvider>
+                <AgentActionFeedbackProvider>
+                  <AgentReviewProvider locale={locale}>
+                    <Toaster>
+                      <RouterProvider router={router} />
+                    </Toaster>
+                  </AgentReviewProvider>
+                </AgentActionFeedbackProvider>
               </AgentPageRegistryProvider>
             </QueryClientProvider>
             <div data-clinmesh-portal-root="" ref={portalRoot} />

@@ -402,7 +402,7 @@ function ChargeRow({ item, locale, messages, onSelect, selected }: {
   selected: boolean
 }): React.JSX.Element {
   return (
-    <Button aria-label={`${messages.selectCharge} ${item.patient.name}`} className="h-auto min-h-16 w-full justify-between gap-3 px-3 py-2 text-left" onClick={onSelect} role="listitem" type="button" variant={selected ? 'secondary' : 'outline'}>
+    <Button data-agent-selection={item.chargeItemId} aria-label={`${messages.selectCharge} ${item.patient.name}`} className="h-auto min-h-16 w-full justify-between gap-3 px-3 py-2 text-left" onClick={onSelect} role="listitem" type="button" variant={selected ? 'secondary' : 'outline'}>
       <span className="min-w-0"><span className="block truncate font-medium">{item.patient.name}</span><span className="block truncate text-xs text-muted-foreground">{locale === 'zh-CN' ? item.descriptionZh : item.descriptionEn}</span></span>
       <span className="shrink-0 font-semibold">{formatFen(item.amountFen, locale)}</span>
     </Button>
