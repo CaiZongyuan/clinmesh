@@ -1135,16 +1135,16 @@ function DoctorCaseController({
   const agentPage = useMemo(() => ({
     actions: {
       'outpatient.case.read': {
-        description: 'Read the selected authorized outpatient case and visible clinical state.',
+        description: 'Read the selected authorized outpatient case and the loaded doctor queue page containing waiting and active cases. Use queue.items caseId and patient identity to select another case; queue.total includes rows outside this page.',
         enabled: activeCaseId !== undefined,
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: (_raw: unknown, signal: AbortSignal) => {
+        execute: async (_raw: unknown, signal: AbortSignal) => {
           if (activeCaseId === undefined) throw new Error(messages.consultationUnavailable)
-          return getDoctorCase(activeCaseId, signal)
+          return { ...await getDoctorCase(activeCaseId, signal), queue: queue.data ?? null }
         },
       },
       'outpatient.case.select': {
-        description: 'Select one case from the current doctor queue.',
+        description: 'Select one caseId from queue.items returned by the current page context or doctor context. Only cases in that loaded queue page can be selected; the waiting or active tab follows the selected case.',
         enabled: (queue.data?.items.length ?? 0) > 0,
         parameters: {
           type: 'object' as const,
@@ -1154,9 +1154,11 @@ function DoctorCaseController({
         },
         execute: (raw: unknown) => {
           const caseId = doctorString(raw, 'caseId', 128)
-          if (!queue.data?.items.some(item => item.caseId === caseId)) {
+          const item = queue.data?.items.find(item => item.caseId === caseId)
+          if (item === undefined) {
             throw new Error('Case is not in the current doctor queue')
           }
+          onQueueViewChange(doctorQueueViewStatusGroups.waiting.includes(item.status) ? 'waiting' : 'active')
           onSelectedCaseIdChange(caseId)
           return { caseId, selected: true }
         },
@@ -1871,6 +1873,7 @@ function DoctorCaseController({
       },
       clinicalDocumentDraft: currentClinicalDocument ?? null,
       laboratoryDraft: { catalogItemId: laboratoryItemId, indicationCode },
+      queue: queue.data ?? null,
       queueCount: queue.data?.total ?? 0,
       section: activeCaseSection,
     }),
@@ -1895,6 +1898,7 @@ function DoctorCaseController({
     indicationCode,
     laboratoryItemId,
     messages,
+    onQueueViewChange,
     onSelectedCaseIdChange,
     page,
     previewSign.mutateAsync,

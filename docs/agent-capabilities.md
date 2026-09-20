@@ -44,7 +44,7 @@ proposal 返回 `awaiting-human-review` 后，Tool 调用已经返回，但审�
 | `triage.case.select` | 病例在当前分诊队列页中 | 选择目标病例行 |
 | `triage.draft.set` | 已选分诊病例 | 同时填写并强调主诉、分级及生命体征；不提交分诊 |
 | `triage.record.propose` | 已选病例且主诉非空 | 人工审阅分诊评估 |
-| `outpatient.case.select` | 病例在当前医生队列页中 | 选择目标病例行 |
+| `outpatient.case.select` | 病例在读取结果的 `queue.items` 中 | 选择目标病例，并切到其所属的待诊或在诊分组 |
 | `outpatient.section.select` | 当前病例有相应可见诊疗页 | 选择目标诊疗标签；完成时强调目标内容区 |
 | `outpatient.consultation.ask` | 当前病例允许问诊 | 发送问题，等待患者回答；强调问诊记录区 |
 | `outpatient.consultation.reply.retry` | 当前回复可重试 | 重试患者回答；强调问诊记录区 |
@@ -78,6 +78,8 @@ proposal 返回 `awaiting-human-review` 后，Tool 调用已经返回，但审�
 | `scenario.reset.propose` | 管理员场景页面 | 人工审阅重置；新 Epoch 清理旧反馈 |
 
 只读操作包括 `ui.context.read`、`triage.queue.read`、`outpatient.case.read`、`billing.queue.read`、`pharmacy.queue.read`、`scenario.status.read`、`scenario.providers.read` 和 `scenario.generation.status.read`。它们读取授权范围内的页面或服务端结果，不显示执行边框，也不复制 Case Truth。
+
+医生页面的 `clinmesh_read_current_context` 在 `data.pageState.queue` 返回已加载的医生队列页；`clinmesh_read_doctor_context` 保留当前病例详情字段，并在 `data.queue` 返回同一队列。`queue.items` 包含可用于切换的 `caseId`、患者身份和病例状态，`page`、`pageSize`、`total` 描述分页。该队列包含待诊与在诊病例，不等同于当前标签筛选后的列表；`queueCount` 保留为总数，不能据此推断已返回全部条目。队列尚未加载时 `queue` 为 `null`，空队列的 `items` 为 `[]`。选择工具只接受这份已加载队列中的病例，不提供任意患者查询、按姓名全库搜索或跨页选择；同名时应结合队列返回的身份字段消歧。
 
 ## 上游能力与接入限制
 

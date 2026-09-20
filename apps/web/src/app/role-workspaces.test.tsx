@@ -2912,6 +2912,81 @@ describe('role workspaces', () => {
     }
   })
 
+  it.each([false, true])('discovers another queue patient and switches through authorized Tools with shadow DOM=%s', async shadow => {
+    window.history.replaceState(null, '', '/consultation')
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registration = value
+        return () => { if (registration === value) registration = undefined }
+      },
+    }
+    const patient = {
+      id: 'patient-1', identifier: 'CM-SYN-001', name: '合成测试患者',
+      birthDate: '1988-03-16', gender: 'female', synthetic: true, versionId: '1',
+    }
+    const queueItems = [1, 2].map(index => ({
+      caseId: 'case-' + index, encounterId: 'encounter-' + index, encounterVersion: '1',
+      patient: { ...patient, id: 'patient-' + index, name: '合成测试患者' + index },
+      presentation: doctorPresentation, status: index === 1 ? 'first-visit' : 'awaiting-doctor', taskId: 'task-' + index, taskVersion: '1',
+    }))
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      const agentResponse = doctorSurfaceAgentResponse(path, init)
+      if (agentResponse !== undefined) return agentResponse
+      if (path === '/api/auth/context') return Response.json(doctorSession)
+      if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
+      if (path === '/api/his/v1/doctor/queue') {
+        const queueView = new URL(String(input), 'http://localhost').searchParams.get('view')
+        const items = queueView === 'active' ? [queueItems[0]] : queueView === 'waiting' ? [queueItems[1]] : queueItems
+        return Response.json({ items, ...pagination(items.length) })
+      }
+      const item = queueItems.find(item => path === '/api/his/v1/doctor/cases/' + item.caseId)
+      if (item) return Response.json({
+        ...item, allergies: [], consultation: { turns: [], version: 1 },
+        encounter: { id: item.encounterId, status: 'in-progress', versionId: '1' }, priorFacts: [],
+      })
+      throw new Error(`Unexpected request: ${path}`)
+    }))
+    const host = document.createElement('div')
+    document.body.append(host)
+    const container = document.createElement('div')
+    const root = shadow ? host.attachShadow({ mode: 'open' }) : host
+    root.append(container)
+    const view = render(<WebApp runtime={{
+      mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+    }} />, { container })
+    const queries = within(container)
+    try {
+      await queries.findByRole('tab', { name: '病历记录' })
+      const call = async (name: string, input = {}) => {
+        await waitFor(() => expect(registration?.tools.some(tool => tool.name === name)).toBe(true))
+        const tool = registration!.tools.find(tool => tool.name === name)!
+        let result = ''
+        await act(async () => { result = await tool.execute(boundAgentToolInput(tool, input), new AbortController().signal) })
+        return JSON.parse(result).data
+      }
+      const context = await call('clinmesh_read_current_context')
+      expect(context.pageState.queue).toMatchObject({ items: queueItems, ...pagination(2) })
+      const doctor = await call('clinmesh_read_doctor_context')
+      expect(doctor.queue).toEqual(context.pageState.queue)
+      expect(doctor.caseId).toBe('case-1')
+      const target = doctor.queue.items.find((item: { patient: { name: string } }) => item.patient.name === '合成测试患者2')
+      expect(target).toBeDefined()
+      await expect(call('clinmesh_select_doctor_case', { caseId: 'outside-current-page' })).rejects.toThrow('Case is not in the current doctor queue')
+      await call('clinmesh_select_doctor_case', { caseId: target.caseId })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 150)) })
+      const selected = await call('clinmesh_read_doctor_context')
+      expect(selected.caseId).toBe('case-2')
+      expect(selected.patient.name).toBe('合成测试患者2')
+      expect(selected.queue.items).toEqual(queueItems)
+      expect(queries.getByRole('tab', { name: '待诊' }).getAttribute('aria-selected')).toBe('true')
+    } finally {
+      view.unmount()
+      host.remove()
+    }
+  })
+
   it('narrows an empty doctor page to common Tools while validating every grant', async () => {
     stubEmptyDoctorWorkspace()
     let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
