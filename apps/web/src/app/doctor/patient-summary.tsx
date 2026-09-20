@@ -121,7 +121,7 @@ export function PatientBanner({
       {detail.allergies.length === 0 && detail.triage === undefined ? null : (
         <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
           {detail.allergies.slice(0, 1).map(allergy => (
-            <Badge className="max-w-full whitespace-normal" key={`${allergy.code}:${allergy.display}`} variant="destructive">
+            <Badge className="h-auto max-w-full whitespace-normal" key={`${allergy.code}:${allergy.display}`} variant="destructive">
               {messages.allergySummary} · {allergy.display}
             </Badge>
           ))}
