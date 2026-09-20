@@ -2700,9 +2700,9 @@ describe('role workspaces', () => {
       throw new Error(`Unexpected request: ${url.pathname}`)
     }))
     const user = userEvent.setup()
-    render(<WebApp runtime={sender === 'agent' ? {
+    render(sender === 'agent' ? <WebApp runtime={{
       mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
-    } : undefined} />)
+    }} /> : <WebApp />)
 
     await user.click(await screen.findByRole('tab', { name: '问诊记录' }))
     if (sender === 'human') {
