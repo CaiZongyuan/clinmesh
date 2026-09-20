@@ -75,7 +75,7 @@ export function buildSurfaceAgentTools(
       : input.actions[definition.operationId]
     if (action === undefined || action.enabled === false) return []
     return [{
-      description: `${action.description}\n${editingInstruction}`,
+      description: [action.description, editingInstruction].join(' '),
       name: definition.toolName,
       parameters: bindContextParameters(
         action.parameters,

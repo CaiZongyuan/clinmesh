@@ -227,6 +227,8 @@ pnpm --dir "$DSH_PROFILE" install --frozen-lockfile
 
 需要查看或修改插件时直接调用 `node "$DSH_CLI" plugin --profile web ...`：dshvm `0.1.1` 会把 `plugin --profile web` 误判为 Web 启动，并在默认端口被占用时附加插件命令不接受的 `--port`。dshvm 连接器也会按 active-data 覆盖显式 `DSH_HOME`；测试自行管理数据目录时应使用对应槽位的实际 bin。插件变更后重新验证并更新 Profile lock，日常运行不要用无锁安装替换已验证组合。
 
+非开发模式的 DSH 会在插件激活时把 client 脚本读入内存。重新构建 `@clinmesh/dsh-web` 后，须重新加载插件或重启对应 DSH 宿主，再刷新页面并打开 ClinMesh；仅刷新浏览器不能替换宿主缓存。验收应核对宿主实际返回的脚本包含当前构建内容，并确认 `/react-surface-agent/lease` 成功、真实模型请求包含 ClinMesh 工具且能完成一次调用。页面已登录或 Page Context 签发成功不足以证明工具注册成功；原生 Session 的工作目录无需与 ClinMesh 源码目录一致。
+
 手工路径在 `.env` 中为 Hono 配置至少 32 bytes 的 `CLINMESH_DSH_BRIDGE_SECRET`，并把实际 DSH Web origin 加入 `CLINMESH_TRUSTED_ORIGINS`（DSH 默认开发端口 `3080`；使用 `--port` 时必须同步替换该 origin，否则登录和 mutation 的 CSRF 校验会拒绝）：
 
 ```sh
