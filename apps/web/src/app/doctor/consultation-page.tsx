@@ -45,13 +45,13 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
     && !(unanswered && lastTextTurn.messageText === action.pendingMessage)
     ? action.pendingMessage : undefined
   return (
-    <section aria-labelledby="consultation-record-heading" data-agent-consultation="" className="flex min-w-0 flex-col gap-4">
+    <section aria-labelledby="consultation-record-heading" className="flex min-w-0 flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold" id="consultation-record-heading">{messages.consultationRecord}</h3>
         <Badge variant="secondary">{consultation.turns.length}</Badge>
       </div>
       <MessageScrollerProvider autoScroll>
-        <MessageScroller className="h-[min(34rem,55vh)] min-h-72 rounded-md border">
+        <MessageScroller data-agent-consultation="" className="h-[min(34rem,55vh)] min-h-72 rounded-md border">
           <MessageScrollerViewport>
             <MessageScrollerContent className="gap-4 p-3">
               {consultation.turns.length === 0 ? (

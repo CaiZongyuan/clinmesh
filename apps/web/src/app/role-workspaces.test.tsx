@@ -2674,6 +2674,10 @@ describe('role workspaces', () => {
         return Response.json({
           allergies: [],
           caseId: 'case-direct',
+          clinicalDocument: {
+            draft: { ...structuredClinicalDocument, updatedAt: '2026-09-20T08:00:00Z', version: 1 },
+            signed: [],
+          },
           consultation: { turns: recovered ? [doctorTurn, patientTurn] : failed ? [doctorTurn] : [], version: recovered ? 3 : failed ? 2 : 1 },
           encounter: { id: 'encounter-direct', status: 'in-progress', versionId: '1' },
           patient,
@@ -2728,6 +2732,109 @@ describe('role workspaces', () => {
     expect(await screen.findByText('昨天傍晚开始的。')).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
     expect((screen.getByRole('textbox', { name: '向患者提问' }) as HTMLTextAreaElement).disabled).toBe(false)
+  })
+
+  it.each([false, true])('keeps ask registered after a successful reply and sends a second round with persisted document=%s', async persistedDocument => {
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registration = value
+        return () => { if (registration === value) registration = undefined }
+      },
+    }
+    const patient = {
+      birthDate: '1988-03-16',
+      gender: 'female',
+      id: 'candidate-patient-001',
+      identifier: 'CM-SYN-CANDIDATE-001',
+      name: '合成候选患者林晓',
+      synthetic: true,
+      versionId: '1',
+    }
+    const question = { code: 'symptom-onset', text: '什么时候开始发热？' }
+    let rounds = 0
+    const versions: number[] = []
+    let releaseQueue: (() => void) | undefined
+    let queueGate: Promise<void> | undefined
+    const doctorTurn = { id: 'doctor-turn', kind: 'text', messageText: question.text, personaRevision: null,
+      recordedAt: '2026-09-16T09:00:00+08:00', reportReference: null, sequence: 1, source: 'doctor-typed', speaker: 'doctor' }
+    const patientTurn = { ...doctorTurn, id: 'patient-turn', messageText: '昨天傍晚开始的。', personaRevision: 1, sequence: 2, source: 'patient-agent', speaker: 'patient' }
+
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      const agentResponse = doctorSurfaceAgentResponse(url.pathname, init)
+      if (agentResponse !== undefined) return agentResponse
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({
+          laboratory: [],
+          medications: [],
+          prescriptionConclusionSupported: true,
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        await queueGate
+        return Response.json({
+          items: [{
+            caseId: 'case-direct',
+            encounterId: 'encounter-direct',
+            encounterVersion: '1',
+            patient,
+            presentation: virtualPatientPresentation,
+            status: 'first-visit',
+            taskId: 'task-doctor-direct',
+            taskVersion: '1',
+          }],
+          ...pagination(1),
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-direct') {
+        return Response.json({
+          allergies: [],
+          caseId: 'case-direct',
+          clinicalDocument: persistedDocument ? {
+            draft: { ...structuredClinicalDocument, updatedAt: '2026-09-20T08:00:00Z', version: 1 },
+            signed: [],
+          } : undefined,
+          consultation: { turns: rounds > 0 ? [doctorTurn, patientTurn] : [], version: 1 + rounds * 2 },
+          encounter: { id: 'encounter-direct', status: 'in-progress', versionId: '1' },
+          patient,
+          presentation: virtualPatientPresentation,
+          priorFacts: [],
+          status: 'first-visit',
+          taskId: 'task-doctor-direct',
+          taskVersion: '1',
+        })
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-direct/actions/ask-consultation-question') {
+        const body = JSON.parse(String(init?.body))
+        versions.push(body.input.expectedConsultationVersion)
+        rounds += 1
+        queueGate = new Promise<void>(resolve => { releaseQueue = resolve })
+        return Response.json(commandResponse({ caseId: 'case-direct', consultationVersion: 1 + rounds * 2, doctorTurn, patientTurn }))
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    render(<WebApp runtime={{
+      mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+    }} />)
+    await userEvent.setup().click(await screen.findByRole('tab', { name: '问诊记录' }))
+    for (let round = 0; round < 2; round += 1) {
+      await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_ask_virtual_patient')).toBe(true))
+      const ask = registration!.tools.find(tool => tool.name === 'clinmesh_ask_virtual_patient')!
+      let execution: ReturnType<WebSurfaceAgentTool['execute']> | undefined
+      act(() => {
+        execution = ask.execute(boundAgentToolInput(ask, { message: question.text }), new AbortController().signal)
+      })
+      await waitFor(() => expect(releaseQueue).toBeDefined())
+      await waitFor(() => expect(screen.getByText('昨天傍晚开始的。')).toBeTruthy())
+      expect((screen.getByRole('textbox', { name: '向患者提问' }) as HTMLTextAreaElement).disabled).toBe(true)
+      await act(async () => { releaseQueue?.(); releaseQueue = undefined; await execution })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 150)) })
+      expect((screen.getByRole('textbox', { name: '向患者提问' }) as HTMLTextAreaElement).disabled).toBe(false)
+      await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_ask_virtual_patient')).toBe(true))
+    }
+    expect(versions).toEqual([1, 3])
   })
 
   it('shows the doctor queue without the retired Virtual Patient entry point', async () => {

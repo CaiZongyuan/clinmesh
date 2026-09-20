@@ -63,7 +63,8 @@ it('highlights the consultation region and new reply bubbles without highlightin
     <AgentActionFeedbackProvider><Harness turns={turns} /></AgentActionFeedbackProvider>
   </WebRuntimeProvider>
   const view = render(app([oldTurn]))
-  rects.set(screen.getByRole('region', { name: '问诊记录' }), new DOMRect(10, 10, 500, 400))
+  rects.set(screen.getByRole('region', { name: '问诊记录' }), new DOMRect(5, 5, 500, 700))
+  rects.set(document.querySelector('[data-slot="message-scroller"]')!, new DOMRect(10, 10, 500, 400))
   rects.set(screen.getByText('之前的患者消息').closest('[data-slot="bubble"]')!, new DOMRect(20, 20, 100, 40))
   const event: AgentActionFeedback = { id: 'ask', operationId: 'outpatient.consultation.ask', input: { message: '本次问题' }, phase: 'executing' }
   act(() => feedback(event))

@@ -101,11 +101,12 @@ async function run(): Promise<void> {
       ) < 1)
     })
   }
-  const consultationRegion = isHighlighted('[data-agent-consultation]')
+  const consultationRegion = isHighlighted('[data-slot="message-scroller"]')
+  const consultationFormExcluded = !isHighlighted('[aria-labelledby="consultation-record-heading"]')
   const newDoctorBubble = isHighlighted('[data-agent-consultation-message="new-doctor"]')
   const newPatientBubble = isHighlighted('[data-agent-consultation-message="new-patient"]')
   const oldMessageUnchanged = !isHighlighted('[data-agent-consultation-message="old-patient"]')
   document.title = btoa(JSON.stringify({ focused, highlighted, aligned, runningAnimation, faded, waiting, staticWaiting, committed, approved: result.approved,
-    consultationRegion, newDoctorBubble, newPatientBubble, oldMessageUnchanged }))
+    consultationRegion, consultationFormExcluded, newDoctorBubble, newPatientBubble, oldMessageUnchanged }))
 }
 void run().catch(error => { document.title = btoa(JSON.stringify({ error: String(error) })) })
