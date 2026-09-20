@@ -448,6 +448,7 @@ function narrowOperations(
     if (selection.has_consultation === 1) {
       operations.push(
         'outpatient.consultation.ask',
+        'outpatient.consultation.reply.retry',
         'outpatient.diagnosis.draft.set',
         'outpatient.diagnosis.confirm.propose',
         'outpatient.laboratory.draft.set',

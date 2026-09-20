@@ -2619,7 +2619,14 @@ describe('role workspaces', () => {
     expect(screen.getByRole('textbox', { name: '向患者提问' })).toBeTruthy()
   })
 
-  it('clears the send error after retry succeeds and allows the next doctor message', async () => {
+  it.each(['human', 'agent'])('clears the send error after retry succeeds and allows the next doctor message via %s', async sender => {
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registration = value
+        return () => { if (registration === value) registration = undefined }
+      },
+    }
     const patient = {
       birthDate: '1988-03-16',
       gender: 'female',
@@ -2636,8 +2643,10 @@ describe('role workspaces', () => {
       recordedAt: '2026-09-16T09:00:00+08:00', reportReference: null, sequence: 1, source: 'doctor-typed', speaker: 'doctor' }
     const patientTurn = { ...doctorTurn, id: 'patient-turn', messageText: '昨天傍晚开始的。', personaRevision: 1, sequence: 2, source: 'patient-agent', speaker: 'patient' }
 
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
+      const agentResponse = doctorSurfaceAgentResponse(url.pathname, init)
+      if (agentResponse !== undefined) return agentResponse
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
         return Response.json({
@@ -2691,13 +2700,31 @@ describe('role workspaces', () => {
       throw new Error(`Unexpected request: ${url.pathname}`)
     }))
     const user = userEvent.setup()
-    render(<WebApp />)
+    render(<WebApp runtime={sender === 'agent' ? {
+      mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+    } : undefined} />)
 
     await user.click(await screen.findByRole('tab', { name: '问诊记录' }))
-    await user.type(await screen.findByRole('textbox', { name: '向患者提问' }), question.text)
-    await user.click(screen.getByRole('button', { name: '向患者提问' }))
-
-    await user.click(await screen.findByRole('button', { name: '重试患者回答' }))
+    if (sender === 'human') {
+      await user.type(await screen.findByRole('textbox', { name: '向患者提问' }), question.text)
+      await user.click(screen.getByRole('button', { name: '向患者提问' }))
+      await user.click(await screen.findByRole('button', { name: '重试患者回答' }))
+    } else {
+      await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_ask_virtual_patient')).toBe(true))
+      expect(registration?.tools.some(tool => tool.name === 'clinmesh_retry_patient_reply')).toBe(false)
+      const ask = registration!.tools.find(tool => tool.name === 'clinmesh_ask_virtual_patient')!
+      await act(async () => {
+        await expect(ask.execute(boundAgentToolInput(ask, { message: question.text }), new AbortController().signal)).rejects.toThrow()
+      })
+      await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_retry_patient_reply')).toBe(true))
+      expect(registration?.tools.some(tool => tool.name === 'clinmesh_ask_virtual_patient')).toBe(false)
+      const retry = registration!.tools.find(tool => tool.name === 'clinmesh_retry_patient_reply')!
+      await act(async () => {
+        await retry.execute(boundAgentToolInput(retry, {}), new AbortController().signal)
+      })
+      await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_ask_virtual_patient')).toBe(true))
+      expect(registration?.tools.some(tool => tool.name === 'clinmesh_retry_patient_reply')).toBe(false)
+    }
     expect(await screen.findByText('昨天傍晚开始的。')).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
     expect((screen.getByRole('textbox', { name: '向患者提问' }) as HTMLTextAreaElement).disabled).toBe(false)
