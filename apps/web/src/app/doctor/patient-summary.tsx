@@ -87,7 +87,7 @@ export function PatientBanner({
   const readOnly = detail.encounter.status !== 'in-progress'
   const age = patientAge(detail.patient.birthDate)
   return (
-    <section aria-label={messages.selectedPatient} className="@container/patient-banner min-w-0 border-b bg-background [overflow-wrap:anywhere]">
+    <section aria-label={messages.selectedPatient} className="@container/patient-banner min-w-0 shrink-0 border-b bg-background [overflow-wrap:anywhere]">
       <div className="flex items-start justify-between gap-3 px-4 py-3">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <PatientAvatar label={`${detail.patient.name} ${messages.patient}`} name={detail.patient.name} />

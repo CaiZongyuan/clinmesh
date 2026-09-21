@@ -1,4 +1,4 @@
-import { DoctorWorkspaceLayout, DoctorCaseLayout } from './responsive-layout.tsx'
+import { DoctorWorkspaceLayout, DoctorCaseLayout, DoctorCasePanel } from './responsive-layout.tsx'
 import { hostCaseContextRail, useSurfaceCaseContextPort } from './surface-case-context.ts'
 import { useOptionalWebRuntime } from '../web-runtime.tsx'
 import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
@@ -39,7 +39,7 @@ import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
+import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, MessagesSquareIcon, PillIcon, PlusIcon, RefreshCwIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon } from 'lucide-react'
@@ -2660,7 +2660,7 @@ function CaseDetail({
     )
 
   return (
-    <DoctorCaseLayout fillHeight={activeSection === 'consultation'} contextLabel={messages.caseContext} railPlacement={hostRail ? 'host' : 'inline'} rail={(expanded, onExpandedChange) => (
+    <DoctorCaseLayout contextLabel={messages.caseContext} railPlacement={hostRail ? 'host' : 'inline'} rail={(expanded, onExpandedChange) => (
       <DoctorCaseContextRail
         completion={completion.data}
         detail={detail}
@@ -2693,7 +2693,7 @@ function CaseDetail({
         />
 
         {overviewWorkflow === null ? null : (
-          <div className="border-b p-4">{overviewWorkflow}</div>
+          <div className="shrink-0 border-b p-4">{overviewWorkflow}</div>
         )}
 
         <Tabs
@@ -2718,7 +2718,7 @@ function CaseDetail({
           </div>
 
           {detail.consultation === undefined ? null : (
-            <TabsContent data-agent-section="consultation" className="flex min-h-0 flex-col p-4" value="consultation">
+            <DoctorCasePanel value="consultation">
               <ConsultationPage
                 action={{ ...consultationAction, onOpenReport: () => setActiveSection('laboratory') }}
                 consultation={detail.consultation}
@@ -2728,10 +2728,10 @@ function CaseDetail({
                 patientName={detail.patient.name}
                 readOnly={clinicalReadOnly}
               />
-            </TabsContent>
+            </DoctorCasePanel>
           )}
 
-          <TabsContent data-agent-section="record" className="p-4" value="record">
+          <DoctorCasePanel value="record">
             <div className="flex flex-col gap-4">
               <div className="min-w-0">
                 {visitNotStarted ? null : detail.consultation === undefined ? firstVisitRecord : (
@@ -2749,9 +2749,9 @@ function CaseDetail({
                 )}
               </div>
             </div>
-          </TabsContent>
+          </DoctorCasePanel>
 
-          <TabsContent data-agent-section="diagnosis" className="p-4" value="diagnosis">
+          <DoctorCasePanel value="diagnosis">
             {detail.consultation === undefined ? revisitWorkflow : catalog.isPending ? (
               <Skeleton className="h-72 w-full" />
             ) : catalog.isError ? (
@@ -2773,9 +2773,9 @@ function CaseDetail({
                 state={detail.diagnosis}
               />
             )}
-          </TabsContent>
+          </DoctorCasePanel>
 
-          <TabsContent data-agent-section="prescription" className="p-4" value="prescription">
+          <DoctorCasePanel value="prescription">
             {detail.consultation === undefined || catalog.isPending ? (
               detail.consultation === undefined ? revisitWorkflow : <Skeleton className="h-72 w-full" />
             ) : catalog.isError ? (
@@ -2797,9 +2797,9 @@ function CaseDetail({
                 referenceSearch={referenceCatalogSearches.medications}
               />
             ) : null}
-          </TabsContent>
+          </DoctorCasePanel>
 
-          <TabsContent data-agent-section="laboratory" className="p-4" value="laboratory">
+          <DoctorCasePanel value="laboratory">
             <LaboratoryPage
               actions={laboratoryRequestActions}
               catalogError={catalog.error}
@@ -2821,7 +2821,7 @@ function CaseDetail({
               referenceSearch={referenceCatalogSearches.laboratory}
               showCorrection={correctionTarget === 'laboratory'}
             />
-          </TabsContent>
+          </DoctorCasePanel>
         </Tabs>
       </div>
 

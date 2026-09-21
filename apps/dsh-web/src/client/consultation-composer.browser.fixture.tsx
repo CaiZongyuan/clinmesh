@@ -32,7 +32,7 @@ function App() {
   return <div className="flex h-full min-h-0 flex-col">
     <div data-agent-feedback-status="" />
     <DoctorWorkspaceLayout selectedCaseId="case" queueLabel="Queue" detailLabel="Case" queue={() => <div>Queue</div>}>
-      <DoctorCaseLayout fillHeight railPlacement="host" contextLabel="Context" rail={() => null}>
+      <DoctorCaseLayout railPlacement="host" contextLabel="Context" rail={() => null}>
         <div className="flex min-h-0 flex-1 flex-col">
           <div style={{ height: 160, flexShrink: 0 }}>Synthetic patient banner and tabs</div>
           <div data-agent-section="consultation" className="flex min-h-0 flex-1 flex-col p-4">

@@ -9,6 +9,7 @@ import {
 } from '@clinmesh/ui/components/sheet'
 import { useContainerCompact } from '@clinmesh/ui/hooks/use-container-compact'
 import { cn } from '@clinmesh/ui/lib/utils'
+import { TabsContent } from '@clinmesh/ui/components/tabs'
 
 export function DoctorWorkspaceLayout({
   children,
@@ -55,7 +56,7 @@ export function DoctorWorkspaceLayout({
         <div hidden={compact && !showQueue} className="min-h-0 min-w-0 overflow-y-auto border-r">
           {queue(() => setShowQueue(false))}
         </div>
-        <div hidden={compact && showQueue} className="min-h-0 min-w-0 overflow-y-auto">
+        <div hidden={compact && showQueue} className="min-h-0 min-w-0 overflow-hidden">
           {children}
         </div>
       </div>
@@ -65,13 +66,11 @@ export function DoctorWorkspaceLayout({
 
 export function DoctorCaseLayout({
   children,
-  fillHeight = false,
   rail,
   railPlacement = 'inline',
   contextLabel,
 }: {
   children: ReactNode
-  fillHeight?: boolean
   rail: (expanded: boolean, onExpandedChange: (expanded: boolean) => void) => ReactNode
   /** host:右栏由 DSH 宿主右列承载,内容区恒单列且禁用 Sheet 降级。 */
   railPlacement?: 'inline' | 'host'
@@ -85,10 +84,10 @@ export function DoctorCaseLayout({
     if (!compact) setSheetOpen(false)
   }, [compact])
   return (
-    <div ref={ref} className={cn('flex min-w-0 flex-1 flex-col bg-background', fillHeight ? 'h-full min-h-0' : 'min-h-full')}>
+    <div ref={ref} className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
       {compact && !hosted ? (
         <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-          <div className="flex justify-end border-b p-1">
+          <div className="flex shrink-0 justify-end border-b p-1">
             <SheetTrigger render={<Button size="sm" variant="ghost" />}>
               {contextLabel}
             </SheetTrigger>
@@ -113,5 +112,20 @@ export function DoctorCaseLayout({
         {compact || hosted ? null : rail(expanded, setExpanded)}
       </div>
     </div>
+  )
+}
+
+export function DoctorCasePanel({ children, value }: {
+  children: ReactNode
+  value: 'consultation' | 'record' | 'laboratory' | 'diagnosis' | 'prescription'
+}) {
+  return (
+    <TabsContent
+      data-agent-section={value}
+      value={value}
+      className={cn('min-h-0 overflow-y-auto overscroll-contain p-4', value === 'consultation' && 'flex flex-col')}
+    >
+      {children}
+    </TabsContent>
   )
 }
