@@ -3319,10 +3319,33 @@ describe('role workspaces', () => {
     expect(await screen.findByText('血常规')).toBeTruthy()
     expect(within(requestRegion).queryByRole('combobox', { name: '检验适应证' })).toBeNull()
     expect(within(requestRegion).getByText('临床评估')).toBeTruthy()
+    const expectVisibleLaboratoryDraft = async (): Promise<void> => {
+      await waitFor(() => expect(registration?.tools.some(candidate => (
+        candidate.name === 'clinmesh_read_current_context'
+      ))).toBe(true))
+      const read = registration!.tools.find(candidate => candidate.name === 'clinmesh_read_current_context')!
+      await act(async () => {
+        const result = JSON.parse(await read.execute(boundAgentToolInput(read, {}), new AbortController().signal))
+        expect(result).toMatchObject({ data: { pageState: { laboratoryDraft: {
+          catalogItemId: 'hospital-laboratory-service-cbc',
+          indicationCode: 'clinical-evaluation',
+        } } } })
+      })
+    }
+    await expectVisibleLaboratoryDraft()
     expect(within(requestRegion).queryByRole('button', { name: '保存检验草稿' })).toBeNull()
     expect(await screen.findByText('草稿已自动保存')).toBeTruthy()
     const savedRequestRegion = screen.getByRole('region', { name: '检验申请' })
     expect(within(savedRequestRegion).getByText('草稿已自动保存')).toBeTruthy()
+    cleanup()
+    render(<WebApp runtime={{
+      mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+    }} />)
+    await user.click(await screen.findByRole('tab', { name: '检验' }))
+    const reopenedRequestRegion = await screen.findByRole('region', { name: '检验申请' })
+    expect(await within(reopenedRequestRegion).findByText(referenceConcept.display)).toBeTruthy()
+    expect(within(reopenedRequestRegion).getByText('临床评估')).toBeTruthy()
+    await expectVisibleLaboratoryDraft()
     await waitFor(() => {
       const tool = registration?.tools.find(candidate => (
         candidate.name === 'clinmesh_fill_laboratory_draft'
