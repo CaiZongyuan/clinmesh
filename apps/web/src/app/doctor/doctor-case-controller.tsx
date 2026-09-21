@@ -2660,7 +2660,7 @@ function CaseDetail({
     )
 
   return (
-    <DoctorCaseLayout contextLabel={messages.caseContext} railPlacement={hostRail ? 'host' : 'inline'} rail={(expanded, onExpandedChange) => (
+    <DoctorCaseLayout fillHeight={activeSection === 'consultation'} contextLabel={messages.caseContext} railPlacement={hostRail ? 'host' : 'inline'} rail={(expanded, onExpandedChange) => (
       <DoctorCaseContextRail
         completion={completion.data}
         detail={detail}
@@ -2672,7 +2672,7 @@ function CaseDetail({
         statusText={doctorCaseStatusLabel(detail.status, messages)}
       />
     )}>
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <PatientBanner
           {...(clinicalReadOnly || detail.consultation === undefined
             ? {}
@@ -2697,7 +2697,7 @@ function CaseDetail({
         )}
 
         <Tabs
-          className="min-w-0 flex-1 gap-0 bg-background"
+          className="min-h-0 min-w-0 flex-1 gap-0 bg-background"
           onValueChange={value => {
             if (value === 'consultation' || value === 'record' || value === 'diagnosis' || value === 'prescription' || value === 'laboratory') {
               setActiveSection(value)
@@ -2705,7 +2705,7 @@ function CaseDetail({
           }}
           value={activeSection}
         >
-          <div className="overflow-x-auto overflow-y-hidden border-b px-2">
+          <div className="shrink-0 overflow-x-auto overflow-y-hidden border-b px-2">
             <TabsList className="h-11 min-w-max" variant="line">
               {detail.consultation === undefined ? null : (
                 <TabsTrigger data-agent-selection="consultation" id={doctorCaseSectionTabElementIds.consultation} value="consultation"><MessagesSquareIcon aria-hidden="true" />{messages.consultationRecord}</TabsTrigger>
@@ -2718,7 +2718,7 @@ function CaseDetail({
           </div>
 
           {detail.consultation === undefined ? null : (
-            <TabsContent data-agent-section="consultation" className="p-4" value="consultation">
+            <TabsContent data-agent-section="consultation" className="flex min-h-0 flex-col p-4" value="consultation">
               <ConsultationPage
                 action={{ ...consultationAction, onOpenReport: () => setActiveSection('laboratory') }}
                 consultation={detail.consultation}

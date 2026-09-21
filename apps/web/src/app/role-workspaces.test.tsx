@@ -2524,8 +2524,9 @@ describe('role workspaces', () => {
     await user.click(await screen.findByRole('tab', { name: '问诊记录' }))
     const consultationRegion = screen.getByRole('region', { name: '问诊记录' })
     expect(within(consultationRegion).getByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeTruthy()
-    await user.type(within(consultationRegion).getByRole('textbox', { name: '向患者提问' }), '除了发热，还有哪里不舒服？')
-    await user.click(within(consultationRegion).getByRole('button', { name: '向患者提问' }))
+    const composer = within(consultationRegion).getByRole('group', { name: '向患者提问' })
+    await user.type(within(composer).getByRole('textbox', { name: '向患者提问' }), '除了发热，还有哪里不舒服？')
+    await user.click(within(composer).getByRole('button', { name: '向患者提问' }))
 
     const pendingButton = await screen.findByRole('button', { name: '正在等待患者回答' })
     expect((pendingButton as HTMLButtonElement).disabled).toBe(true)

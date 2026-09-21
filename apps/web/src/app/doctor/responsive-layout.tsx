@@ -8,6 +8,7 @@ import {
   SheetTrigger,
 } from '@clinmesh/ui/components/sheet'
 import { useContainerCompact } from '@clinmesh/ui/hooks/use-container-compact'
+import { cn } from '@clinmesh/ui/lib/utils'
 
 export function DoctorWorkspaceLayout({
   children,
@@ -64,11 +65,13 @@ export function DoctorWorkspaceLayout({
 
 export function DoctorCaseLayout({
   children,
+  fillHeight = false,
   rail,
   railPlacement = 'inline',
   contextLabel,
 }: {
   children: ReactNode
+  fillHeight?: boolean
   rail: (expanded: boolean, onExpandedChange: (expanded: boolean) => void) => ReactNode
   /** host:右栏由 DSH 宿主右列承载,内容区恒单列且禁用 Sheet 降级。 */
   railPlacement?: 'inline' | 'host'
@@ -82,7 +85,7 @@ export function DoctorCaseLayout({
     if (!compact) setSheetOpen(false)
   }, [compact])
   return (
-    <div ref={ref} className="flex min-h-full min-w-0 flex-1 flex-col bg-background">
+    <div ref={ref} className={cn('flex min-w-0 flex-1 flex-col bg-background', fillHeight ? 'h-full min-h-0' : 'min-h-full')}>
       {compact && !hosted ? (
         <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
           <div className="flex justify-end border-b p-1">
@@ -99,14 +102,14 @@ export function DoctorCaseLayout({
         </Sheet>
       ) : null}
       <div
-        className="grid min-w-0 flex-1"
+        className="grid min-h-0 min-w-0 flex-1"
         style={{
           gridTemplateColumns: compact || hosted
             ? 'minmax(0, 1fr)'
             : `minmax(0, 1fr) ${expanded ? '264px' : '44px'}`,
         }}
       >
-        <div className="@container/case-content flex min-w-0 flex-col">{children}</div>
+        <div className="@container/case-content flex min-h-0 min-w-0 flex-col">{children}</div>
         {compact || hosted ? null : rail(expanded, setExpanded)}
       </div>
     </div>
