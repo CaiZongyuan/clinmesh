@@ -12,6 +12,7 @@ import type { ClinicalDocumentContent, DoctorCaseDetail } from '@clinmesh/contra
 import '../../../web/src/app/agent-action-feedback.css'
 
 const rootElement = document.createElement('main')
+rootElement.dataset.clinmeshMode = 'surface'
 rootElement.style.cssText = 'width:360px;height:640px;position:relative'
 const host = document.createElement('div')
 host.style.cssText = 'contain:strict;position:absolute;left:140px;top:90px;width:400px;height:700px'
@@ -84,18 +85,37 @@ const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms
 async function run(): Promise<void> {
   await wait(50)
   const field = rootElement.querySelector<HTMLInputElement>('#patient-name')!
+  const initialTop = field.getBoundingClientRect().top
   field.focus()
   flushSync(() => feedback({ id: 'fill', operationId: 'registration.patient.draft.set', input: {}, phase: 'executing' }))
+  const delayed = rootElement.querySelector('.clinmesh-agent-target') === null
+  await wait(220)
   const focused = shadow.activeElement === field
   const highlighted = rootElement.querySelectorAll('.clinmesh-agent-target').length > 0
   const targetRect = field.getBoundingClientRect()
   const glowRect = rootElement.querySelector('.clinmesh-agent-target')!.getBoundingClientRect()
   const aligned = ['left', 'top', 'width', 'height'].every(key => Math.abs(targetRect[key as keyof DOMRect] as number - (glowRect[key as keyof DOMRect] as number)) < 1)
-  const runningAnimation = getComputedStyle(rootElement.querySelector('.clinmesh-agent-target')!).animationName
+  const stableLayout = field.getBoundingClientRect().top === initialTop
+  const inputReachable = shadow.elementFromPoint(targetRect.left + 10, targetRect.top + 10) === field
+  const runningAnimation = getComputedStyle(rootElement.querySelector('.clinmesh-agent-target')!).animationName !== 'none'
+  const hasBlueFeedback = () => {
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')!
+    context.fillStyle = getComputedStyle(rootElement.querySelector('.clinmesh-agent-target')!).borderTopColor
+    context.fillRect(0, 0, 1, 1)
+    const [red, green, blue] = context.getImageData(0, 0, 1, 1).data
+    return blue! > red! + 50 && blue! > green! + 30
+  }
+  rootElement.style.setProperty('--primary', '#eeeeee')
+  const lightFeedbackBlue = hasBlueFeedback()
+  rootElement.classList.add('dark')
+  const darkFeedbackBlue = hasBlueFeedback()
+  rootElement.classList.remove('dark')
+  rootElement.style.removeProperty('--primary')
   flushSync(() => feedback({ id: 'fill', operationId: 'registration.patient.draft.set', input: {}, phase: 'completed' }))
-  await wait(1200)
+  await wait(200)
   const held = Number(getComputedStyle(rootElement.querySelector('.clinmesh-agent-target')!).opacity) >= 0.8
-  await wait(1100)
+  await wait(650)
   const faded = rootElement.querySelector('.clinmesh-agent-target') === null
   let task: AgentReviewTask | undefined
   flushSync(() => {
@@ -117,7 +137,7 @@ async function run(): Promise<void> {
   flushSync(() => showConsultation())
   flushSync(() => feedback({ id: 'ask', operationId: 'outpatient.consultation.ask', input: { message: 'New synthetic question' }, phase: 'executing' }))
   flushSync(() => receiveReply())
-  await wait(150)
+  await wait(250)
   const isHighlighted = (selector: string) => {
     const target = rootElement.querySelector(selector)
     if (!target) return false
@@ -132,7 +152,7 @@ async function run(): Promise<void> {
       ) < 1)
     })
   }
-  const consultationRegion = isHighlighted('[data-slot="message-scroller"]')
+  const consultationRegionExcluded = !isHighlighted('[data-slot="message-scroller"]')
   const consultationFormExcluded = !isHighlighted('[aria-labelledby="consultation-record-heading"]')
   const newDoctorBubble = isHighlighted('[data-agent-consultation-message="new-doctor"]')
   const newPatientBubble = isHighlighted('[data-agent-consultation-message="new-patient"]')
@@ -140,6 +160,7 @@ async function run(): Promise<void> {
   flushSync(() => showClinicalRecord())
   const changedRecord = { ...initialRecord, chiefComplaint: 'Updated complaint' }
   flushSync(() => feedback({ id: 'record', operationId: 'outpatient.record.draft.set', input: changedRecord, phase: 'executing' }))
+  await wait(220)
   const onlyChangedRecordField = isHighlighted('#clinical-record-case-1-chiefComplaint')
     && !isHighlighted('#clinical-record-case-1-historyOfPresentIllness')
     && rootElement.querySelectorAll('.clinmesh-agent-target').length === 1
@@ -152,19 +173,42 @@ async function run(): Promise<void> {
   const section = document.createElement('section')
   section.dataset.agentSection = 'diagnosis'
   section.style.height = '600px'
+  const tab = document.createElement('button')
+  tab.dataset.agentSelection = 'diagnosis'
+  tab.textContent = 'Diagnosis'
+  tab.style.cssText = 'height:30px;width:100px'
+  section.append(tab)
   scroller.append(section)
   rootElement.append(scroller)
   flushSync(() => feedback({ id: 'section', operationId: 'outpatient.section.select', input: { section: 'diagnosis' }, phase: 'completed' }))
-  const sectionRect = section.getBoundingClientRect()
-  const scrollRect = scroller.getBoundingClientRect()
-  const sectionInset = [...rootElement.querySelectorAll('.clinmesh-agent-target')].some(glow => {
-    const rect = glow.getBoundingClientRect()
-    return Math.abs(rect.left - sectionRect.left - 4) < 1
-      && Math.abs(rect.right - sectionRect.right + 4) < 1
-      && Math.abs(rect.top - scrollRect.top - 4) < 1
-      && Math.abs(rect.bottom - scrollRect.bottom + 4) < 1
-  })
-  document.title = btoa(JSON.stringify({ focused, highlighted, aligned, runningAnimation, held, faded, waiting, staticWaiting, committed, approved: result.approved,
-    consultationRegion, consultationFormExcluded, newDoctorBubble, newPatientBubble, oldMessageUnchanged, onlyChangedRecordField, completedRecordField, sectionInset }))
+  const sectionLabelOnly = isHighlighted('[data-agent-selection="diagnosis"]') && !isHighlighted('[data-agent-section="diagnosis"]')
+  const clippedField = document.createElement('input')
+  clippedField.id = 'patient-query'
+  clippedField.style.cssText = 'position:absolute;left:210px;top:40px;width:100px;height:30px;border-radius:12px;box-sizing:border-box'
+  section.append(clippedField)
+  flushSync(() => feedback({ id: 'clipped', operationId: 'registration.patient.search', input: {}, phase: 'completed' }))
+  const clippedGlow = () => [...rootElement.querySelectorAll<HTMLElement>('.clinmesh-agent-target')].find(glow => glow.style.borderRadius === '12px')
+  const clipped = Math.abs(clippedGlow()!.getBoundingClientRect().right - scroller.getBoundingClientRect().right) < 1
+    && Math.abs(clippedGlow()!.getBoundingClientRect().width - 30) < 1
+  flushSync(() => { scroller.scrollLeft = 40; scroller.dispatchEvent(new Event('scroll')) })
+  const scrollAligned = Math.abs(clippedGlow()!.getBoundingClientRect().left - clippedField.getBoundingClientRect().left) < 1
+    && Math.abs(clippedGlow()!.getBoundingClientRect().width - 70) < 1
+  const dialogElement = document.createElement('div')
+  dialogElement.setAttribute('role', 'dialog')
+  dialogElement.dataset.agentCatalog = 'diagnosis'
+  dialogElement.style.cssText = 'position:absolute;left:10px;top:10px;width:300px;height:200px'
+  const title = document.createElement('h2')
+  title.dataset.slot = 'dialog-title'
+  title.textContent = 'Synthetic catalog'
+  dialogElement.append(title)
+  rootElement.append(dialogElement)
+  flushSync(() => feedback({ id: 'catalog', operationId: 'outpatient.diagnosis.draft.set', input: {}, phase: 'completed' }))
+  await wait(30)
+  const dialogLayer = dialogElement.querySelector('.clinmesh-agent-overlay') !== null
+    && rootElement.querySelectorAll('.clinmesh-agent-target').length === 1
+    && isHighlighted('[data-agent-catalog="diagnosis"] h2')
+  document.title = btoa(JSON.stringify({ delayed, focused, highlighted, aligned, stableLayout, inputReachable, clipped, scrollAligned, dialogLayer,
+    runningAnimation, lightFeedbackBlue, darkFeedbackBlue, held, faded, waiting, staticWaiting, committed, approved: result.approved,
+    consultationRegionExcluded, consultationFormExcluded, newDoctorBubble, newPatientBubble, oldMessageUnchanged, onlyChangedRecordField, completedRecordField, sectionLabelOnly }))
 }
 void run().catch(error => { document.title = btoa(JSON.stringify({ error: String(error) })) })

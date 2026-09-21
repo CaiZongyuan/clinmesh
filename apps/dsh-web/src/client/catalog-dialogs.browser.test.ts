@@ -5,6 +5,7 @@ import { build } from 'vite'
 import { expect, it } from 'vitest'
 import { z } from 'zod'
 import { findChrome } from '../../../../scripts/headless-browser.ts'
+import { buildSurfaceStyles } from '../surface-styles.ts'
 
 const require = createRequire(import.meta.url)
 
@@ -17,6 +18,9 @@ const dialogResultSchema = z.object({
   catalogHighlighted: z.boolean().optional(),
   productHighlighted: z.boolean().optional(),
   packageHighlighted: z.boolean().optional(),
+  titleUncovered: z.boolean().optional(),
+  closeReachable: z.boolean().optional(),
+  errorAfterClose: z.boolean().optional(),
 })
 
 it.each(['18', '19'])('supports catalog selection, search, feedback and persona failure details with React %s', async version => {
@@ -43,8 +47,7 @@ it.each(['18', '19'])('supports catalog selection, search, feedback and persona 
     return output.output
   })
   const script = outputs.find(output => output.type === 'chunk')
-  const css = outputs.filter(output => output.type === 'asset' && output.fileName.endsWith('.css'))
-    .map(output => output.type === 'asset' ? String(output.source) : '').join('\n')
+  const css = await buildSurfaceStyles()
   if (!script || script.type !== 'chunk') throw new Error('Missing browser script')
   // Base UI completes dialog unmounting on animation frames, which virtual time can skip.
   const browser = await chromium.launch({ executablePath: findChrome(), headless: true })
@@ -85,6 +88,11 @@ it.each(['18', '19'])('supports catalog selection, search, feedback and persona 
   expect(actual.medication.catalogHighlighted).toBe(true)
   expect(actual.medication.productHighlighted).toBe(true)
   expect(actual.medication.packageHighlighted).toBe(true)
+  for (const dialog of [actual.diagnosis, actual.medication]) {
+    expect(dialog.titleUncovered).toBe(true)
+    expect(dialog.closeReachable).toBe(true)
+    expect(dialog.errorAfterClose).toBe(true)
+  }
   expect(actual.persona).toMatchObject({ opened: true, closed: true, portalOutsideShadow: false })
   for (const detail of ['失败原因详情', 'AI_RESPONSE_INVALID', 'Synthetic provider response is invalid', '更换模型', '2026-09-20T07:23:32.782Z']) {
     expect(actual.persona.details).toContain(detail)

@@ -28,6 +28,8 @@
 - Tairex 虚拟诊室研究只参考虚拟诊疗产品模式和体验；`references/DSH-AGUI-demo` 与其他 Agent 案例只参考 UI 和交互布局，不作为 HIS 业务事实来源。发生冲突时以 OpenHIS、Medplum、当前 ClinMesh owner 文档和可执行流程为准。
 
 ## 运行与验证边界
+
+- Agent 装饰反馈不能把 `--primary` 当作固定强调色：深色主题的主按钮色可能接近白色。使用有色调语义的主题色阶，并在浏览器中覆盖中性主色主题、检查实际渲染颜色；DOM 存在、坐标正确和时序通过不能代替视觉可辨识性验收。
 - DSH 标签页品牌验证须覆盖初始 HTML、宿主赋值后的同步读取和刷新；布局会主动写入默认产品标题，MutationObserver 只能事后纠正，下一帧正确不能证明标签页没有闪烁。标题保护通过首页扩展在首个宿主脚本前同步规范当前 document 的标题赋值，浏览器回归覆盖同步改名、延迟改名和重复刷新。
 - Base UI 弹框关闭依赖动画帧完成卸载；Chrome `--virtual-time-budget` 下即使轮询定时器已结束，渲染帧仍可能未执行。验证关闭卸载的浏览器合同使用真实时钟并限时等待 DOM 消失，不缩减关闭断言。
 
@@ -108,6 +110,8 @@
 - 验证副本和隔离 worktree 放在仓库外。Git 忽略的 `.data/` 仍可能被根 Vitest 的脚本文件 glob 遍历，仓库内嵌套 checkout 会重复运行它的测试；不能靠 `.gitignore` 隔离测试发现。
 
 ## 浏览器演示经验
+
+- PowerShell 调用 `agent-browser` 时，把 `@eN` 引用写成带引号的参数（例如 `'@e12'`）；裸写会被解释为 PowerShell splatting，导致浏览器命令缺少参数。
 
 - `agent-browser record start` 会创建新标签页并保留旧标签页。录制 DSH 原生 Tools 前关闭本次验证的旧标签页，再打开 Surface；同一 Session 的多个页面实例可能让 Tool 作用于非录制页面。只关闭自己创建的验证标签页，不关闭用户标签页。
 

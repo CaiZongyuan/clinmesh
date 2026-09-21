@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { agentActionLabel, agentActionTarget, changedClinicalRecordSelectors } from './agent-action-targets.ts'
 import type { AgentActionFeedback } from './surface-agent-tools.ts'
@@ -21,6 +21,17 @@ interface DisplayFeedback extends AgentActionFeedback {
   initialConsultationMessageIds?: ReadonlySet<string>
   recordSelectors?: string[]
 }
+interface TargetRectangle {
+  key: string
+  left: number
+  top: number
+  width: number
+  height: number
+  borderRadius: string
+  phase: string
+  kind: 'message' | 'title' | 'record' | 'review' | 'field'
+  marker: boolean
+}
 const FeedbackContext = createContext<FeedbackController | null>(null)
 
 function sameScope(left: AgentFeedbackScope | undefined, right: AgentFeedbackScope): boolean {
@@ -42,6 +53,7 @@ export function AgentActionFeedbackProvider({ children }: { children: ReactNode 
   const appearanceRoot = useRef(runtime.appearanceRoot)
   useLayoutEffect(() => { appearanceRoot.current = runtime.appearanceRoot }, [runtime.appearanceRoot])
   const [events, setEvents] = useState<DisplayFeedback[]>([])
+  const [now, setNow] = useState(Date.now)
   const currentScope = useRef<AgentFeedbackScope | undefined>(undefined)
   const generation = useRef(0)
   const controller = useMemo<FeedbackController>(() => ({
@@ -87,20 +99,25 @@ export function AgentActionFeedbackProvider({ children }: { children: ReactNode 
     },
   }), [])
   useEffect(() => {
-    if (events.length === 0) return
-    const timer = setInterval(() => {
-      setEvents(previous => previous.filter(event => {
-        if (['executing', 'submitting', 'awaiting-review'].includes(event.phase)) return true
-        return Date.now() - event.updatedAt < (event.phase === 'completed' ? 4_000 : 5_000)
-      }))
-    }, 100)
-    return () => clearInterval(timer)
-  }, [events.length])
+    const time = Date.now()
+    const deadlines = events.flatMap(event => isRunning(event) ? [event.updatedAt + 200]
+      : event.phase === 'awaiting-review' ? [] : [event.updatedAt + 300, event.updatedAt + 800])
+      .filter(deadline => deadline > time)
+    if (deadlines.length === 0) return
+    const timers = [...new Set(deadlines)].map(deadline => setTimeout(() => {
+      const next = Date.now()
+      setNow(next)
+      setEvents(previous => previous.filter(event => event.phase !== 'completed' || next - event.updatedAt < 800))
+    }, deadline - time))
+    return () => timers.forEach(clearTimeout)
+  }, [events, now])
+  const visibleEvents = events.filter(event => !isRunning(event) || Math.max(now, Date.now()) - event.updatedAt >= 200)
   return (
     <FeedbackContext.Provider value={controller}>
       {children}
-      {runtime.mode === 'surface' && events.length > 0 ? (
-        <FeedbackDisplay events={events} root={runtime.appearanceRoot.current} />
+      {runtime.mode === 'surface' && visibleEvents.length > 0 ? (
+        <FeedbackDisplay events={visibleEvents} root={runtime.appearanceRoot.current}
+          onDismiss={id => setEvents(previous => previous.filter(event => event.id !== id))} />
       ) : null}
     </FeedbackContext.Provider>
   )
@@ -120,20 +137,32 @@ export function useAgentActionFeedback(scope: AgentFeedbackScope | undefined): (
     [controller, identity, view, selection, section])
 }
 
-function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HTMLElement | null }): React.JSX.Element {
+function FeedbackDisplay({ events, root, onDismiss }: { events: DisplayFeedback[]; root: HTMLElement | null; onDismiss: (id: string) => void }): React.JSX.Element {
   const english = root?.lang === 'en-US'
   const overlay = useRef<HTMLDivElement>(null)
   const [overlayRoot, setOverlayRoot] = useState<HTMLElement | null>(null)
-  const [rectangles, setRectangles] = useState<{ key: string; left: number; top: number; width: number; height: number; phase: string }[]>([])
+  const [expanded, setExpanded] = useState(false)
+  const detailsId = useId()
+  const [rectangles, setRectangles] = useState<TargetRectangle[]>([])
+  useLayoutEffect(() => {
+    if (root === null) return
+    const syncPortal = () => setOverlayRoot(root.querySelector<HTMLElement>(
+      '[role="dialog"][data-agent-catalog]:not([data-closed]), [data-agent-review]:not([data-closed])',
+    ))
+    syncPortal()
+    // Persistent outcome details must follow dialog removal after target tracking stops.
+    const observer = new MutationObserver(syncPortal)
+    observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-closed'] })
+    return () => observer.disconnect()
+  }, [root])
   const measure = useCallback(() => {
     if (root === null || overlay.current === null) return
-    const catalogDialog = root.querySelector<HTMLElement>('[role="dialog"][data-agent-catalog]:not([data-closed])')
-    setOverlayRoot(catalogDialog)
+    const catalogDialog = root.querySelector<HTMLElement>('[role="dialog"][data-agent-catalog]:not([data-closed]), [data-agent-review]:not([data-closed])')
     const origin = overlay.current.getBoundingClientRect()
     const selected = new Map<Element, DisplayFeedback>()
     // Active operations retain their border when an overlapping operation finishes.
     for (const event of [...events].sort((a, b) => Number(isRunning(a)) - Number(isRunning(b)))) {
-      if (event.phase === 'completed' && Date.now() - event.updatedAt >= 2_100) continue
+      if (!isRunning(event) && event.phase !== 'awaiting-review' && Date.now() - event.updatedAt >= 800) continue
       for (const selector of event.recordSelectors ?? agentActionTarget(event).selectors) {
         for (const element of root.querySelectorAll(selector)) selected.set(element, event)
       }
@@ -143,8 +172,10 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
         }
       }
     }
+    const targetCounts = new Map<string, number>()
+    for (const event of selected.values()) targetCounts.set(event.id, (targetCounts.get(event.id) ?? 0) + 1)
     const bounds = root.getBoundingClientRect()
-    setRectangles([...selected].flatMap(([element, event], index) => {
+    setRectangles([...selected].flatMap<TargetRectangle>(([element, event], index) => {
       if (catalogDialog !== null && !catalogDialog.contains(element)) return []
       const rect = element.getBoundingClientRect()
       let left = Math.max(rect.left, bounds.left, 0)
@@ -157,37 +188,74 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
         if (style.overflowX !== 'visible') { left = Math.max(left, clip.left); right = Math.min(right, clip.right) }
         if (style.overflowY !== 'visible') { top = Math.max(top, clip.top); bottom = Math.min(bottom, clip.bottom) }
       }
-      // Keep section borders distinct from the viewport and scroll-container edges.
-      if (event.operationId === 'outpatient.section.select') {
-        left += 4
-        top += 4
-        right -= 4
-        bottom -= 4
-      }
       if (right <= left || bottom <= top) return []
-      const phase = event.phase === 'completed' && Date.now() - event.updatedAt >= 1_500 ? 'fading' : event.phase
-      return [{ key: element.id || String(index), left: left - origin.left, top: top - origin.top, width: right - left, height: bottom - top, phase }]
+      const phase = event.phase === 'completed' && Date.now() - event.updatedAt >= 300 ? 'fading' : event.phase
+      const kind = element.matches('[data-agent-consultation-message], [data-agent-consultation-pending]') ? 'message'
+        : event.operationId === 'outpatient.section.select' || element.matches('[data-agent-page-title], h1, h2, h3') ? 'title'
+        : element.matches('[data-agent-selection], [data-agent-diagnosis-entry], [data-agent-medication-name]') ? 'record'
+        : element.matches('[data-agent-review]') ? 'review' : 'field'
+      const marker = targetCounts.get(event.id) === 1 && kind !== 'review'
+      return [{ key: `${event.id}:${element.id || index}`, left: left - origin.left, top: top - origin.top,
+        width: right - left, height: bottom - top, borderRadius: getComputedStyle(element).borderRadius || '6px', phase, kind, marker }]
     }))
   }, [events, root, overlayRoot])
   useLayoutEffect(() => {
     measure()
-    const timer = setInterval(measure, 100)
-    return () => clearInterval(timer)
+    if (root === null || !events.some(event => isRunning(event) || event.phase === 'awaiting-review' || Date.now() - event.updatedAt < 800)) return
+    const timer = events.some(isRunning) ? setInterval(measure, 100) : undefined
+    root.addEventListener('scroll', measure, true)
+    window.addEventListener('resize', measure)
+    window.visualViewport?.addEventListener('resize', measure)
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure)
+    resizeObserver?.observe(root)
+    for (const event of events) {
+      for (const selector of event.recordSelectors ?? agentActionTarget(event).selectors) {
+        for (const element of root.querySelectorAll(selector)) resizeObserver?.observe(element)
+      }
+    }
+    const observer = new MutationObserver(records => {
+      if (records.some(record => record.target instanceof Element
+        && record.target.closest('.clinmesh-agent-overlay, .clinmesh-agent-feedback') === null)) measure()
+    })
+    observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'data-closed'] })
+    return () => {
+      clearInterval(timer)
+      observer.disconnect()
+      resizeObserver?.disconnect()
+      root.removeEventListener('scroll', measure, true)
+      window.removeEventListener('resize', measure)
+      window.visualViewport?.removeEventListener('resize', measure)
+    }
   }, [measure])
-  const statusEvents = new Map<string, DisplayFeedback>()
-  for (const event of events) {
-    statusEvents.set(`${agentActionLabel(event, english)}:${event.phase}:${event.message ?? ''}`, event)
-  }
-  const status = <div className="clinmesh-agent-feedback" role="status" aria-live="polite">
-    {[...statusEvents.values()].map(event => <div key={event.id}>
-      <span>{agentActionLabel(event, english)} · {phaseLabel(event, english)}</span>
-      {event.message === undefined ? null : <span>：{event.message}</span>}
-    </div>)}
+  const primary = events.find(event => event.phase === 'failed' || event.phase === 'unconfirmed' || event.phase === 'rejected')
+    ?? events.find(isRunning) ?? events.at(-1)!
+  const status = <div className="clinmesh-agent-feedback" data-phase={primary.phase}
+    data-fading={events.every(event => event.phase === 'completed' && Date.now() - event.updatedAt >= 300) || undefined}>
+    <div className="clinmesh-agent-feedback-summary">
+      <span role="status" aria-live="polite">
+        {events.length > 1 ? `${events.length} ${english ? 'actions' : '项操作'} · ` : `${agentActionLabel(primary, english)} · `}
+        {phaseLabel(primary, english)}
+      </span>
+      <button type="button" aria-expanded={expanded} aria-controls={detailsId}
+        aria-label={english ? 'View action details' : '查看操作详情'} onClick={() => setExpanded(value => !value)}>
+        {expanded ? (english ? 'Collapse' : '收起') : (english ? 'Details' : '详情')}
+      </button>
+    </div>
+    {expanded ? <ul id={detailsId} className="clinmesh-agent-feedback-details">
+      {events.map(event => <li key={event.id} data-phase={event.phase}>
+        <span>{agentActionLabel(event, english)} · {phaseLabel(event, english)}</span>
+        {event.message === undefined ? null : <p>{event.message}</p>}
+        {!isRunning(event) && event.phase !== 'awaiting-review' && event.phase !== 'completed'
+          ? <button type="button" onClick={() => onDismiss(event.id)}>{english ? 'Dismiss' : '关闭提示'}</button> : null}
+      </li>)}
+    </ul> : null}
   </div>
-  const statusRoot = root?.querySelector('[data-agent-feedback-status]')
+  const statusRoot = overlayRoot ?? root?.querySelector('[data-agent-feedback-status]')
   const layer = <div ref={overlay} className="clinmesh-agent-overlay" aria-hidden="true">
-    {rectangles.map(({ key, phase, ...rect }) => (
-      <div className="clinmesh-agent-target" data-phase={phase} key={key} style={rect} />
+    {rectangles.map(({ key, phase, kind, marker, ...rect }) => (
+      <div className="clinmesh-agent-target" data-phase={phase} data-kind={kind} key={key} style={rect}>
+        {marker ? <span className="clinmesh-agent-landing" /> : null}
+      </div>
     ))}
   </div>
   return (

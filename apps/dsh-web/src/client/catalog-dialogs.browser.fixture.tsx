@@ -141,10 +141,14 @@ function typeInto(input: Element, value: string): void {
 
 async function run() {
   const host = document.createElement('div')
+  host.style.cssText = 'position:relative;contain:strict;width:780px;height:580px'
   document.body.append(host)
   const shadow = host.attachShadow({ mode: 'open' })
   for (const style of document.querySelectorAll('style')) shadow.append(style.cloneNode(true))
   const container = document.createElement('div')
+  container.className = 'clinmesh-web-root'
+  container.dataset.clinmeshMode = 'surface'
+  container.style.cssText = 'height:100%;width:100%;container: dsh-react-surface-content / inline-size'
   shadow.append(container)
   const windowErrors: string[] = []
   window.addEventListener('error', event => { windowErrors.push(String(event.error ?? event.message)) })
@@ -152,6 +156,7 @@ async function run() {
     inputFound: boolean, calls: Array<[string, number]>, selectionStates: Array<string | null>,
     confirmDisabled: boolean[], confirmations: number,
     catalogHighlighted?: boolean, productHighlighted?: boolean, packageHighlighted?: boolean,
+    titleUncovered?: boolean, closeReachable?: boolean, errorAfterClose?: boolean,
   }> = {
     diagnosis: { inputFound: false, calls: [], selectionStates: [], confirmDisabled: [], confirmations: 0 },
     laboratory: { inputFound: false, calls: [], selectionStates: [], confirmDisabled: [], confirmations: 0 },
@@ -180,9 +185,8 @@ async function run() {
     await settle()
     if (kind !== 'laboratory') {
       const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!
-      dialog.style.cssText = 'position:relative;z-index:50;transform:translate(0px);width:340px'
       flushSync(() => feedback({ id: kind, operationId: `outpatient.${kind === 'diagnosis' ? 'diagnosis' : 'prescription'}.draft.set`, input: {}, phase: 'executing' }))
-      await settle(200)
+      await settle(250)
       const isHighlighted = (target: Element | null) => {
         if (!target) return false
         const targetRect = target.getBoundingClientRect()
@@ -193,11 +197,23 @@ async function run() {
           ) < 1)
         })
       }
-      results[kind].catalogHighlighted = isHighlighted(dialog)
+      const title = dialog.querySelector('[data-slot="dialog-title"]')!
+      results[kind].catalogHighlighted = isHighlighted(title)
+      const statusRect = dialog.querySelector('.clinmesh-agent-feedback')!.getBoundingClientRect()
+      results[kind].titleUncovered = title.getBoundingClientRect().top >= statusRect.bottom
+      const close = dialog.querySelector('[data-slot="dialog-close"]')!
+      const closeRect = close.getBoundingClientRect()
+      const hit = shadow.elementFromPoint(closeRect.left + closeRect.width / 2, closeRect.top + closeRect.height / 2)
+      results[kind].closeReachable = hit !== null && close.contains(hit)
       if (kind === 'medication') {
         results[kind].productHighlighted = isHighlighted(dialog.querySelector('[data-agent-medication-name]'))
-        results[kind].packageHighlighted = isHighlighted(dialog.querySelector('[data-agent-medication-package]'))
+        const packageControl = dialog.querySelector('[data-agent-medication-package]')!
+        packageControl.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+        await settle()
+        results[kind].packageHighlighted = isHighlighted(packageControl)
       }
+      flushSync(() => feedback({ id: kind, operationId: `outpatient.${kind === 'diagnosis' ? 'diagnosis' : 'prescription'}.draft.set`, input: {}, phase: 'failed', message: 'Synthetic version conflict' }))
+      await settle(850)
     }
     const input = container.querySelector(`input[aria-label="${searchInputLabels[kind]}"]`)
     results[kind].inputFound = input instanceof HTMLInputElement
@@ -225,6 +241,14 @@ async function run() {
     if (!row) throw new Error(`Missing ${kind} row`)
     row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, composed: true }))
     await settle()
+    if (kind !== 'laboratory') {
+      for (let attempt = 0; attempt < 20 && container.querySelector('[role="dialog"]') !== null; attempt += 1) await settle()
+      const details = container.querySelector<HTMLButtonElement>('.clinmesh-agent-feedback button')
+      details?.click()
+      await settle()
+      results[kind].errorAfterClose = container.querySelector('[role="dialog"]') === null
+        && container.querySelector('.clinmesh-agent-feedback')?.textContent?.includes('Synthetic version conflict') === true
+    }
     void root.unmount()
     container.textContent = ''
   }
