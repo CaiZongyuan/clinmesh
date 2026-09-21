@@ -72,12 +72,13 @@ export function useSurfaceAgentPublisher(input: {
   ])
   const page = registeredPage?.claim.viewId === input.activeSection ? registeredPage : defaultPage
   const onActionFeedback = useAgentActionFeedback(runtime.mode !== 'surface' || runtime.surfaceActive === false
-    || (runtime.surfaceAgentStatus !== undefined && runtime.surfaceAgentStatus !== 'active')
+    || (runtime.surfaceAgentStatus !== undefined && runtime.surfaceAgentStatus !== 'active'
+      && runtime.surfaceAgentStatus !== 'connecting')
     || runtime.surfaceSessionId === undefined ? undefined : {
       identity: [runtime.surfaceSessionId, input.session.actor.actorId, input.session.actor.workspaceId,
         input.session.actor.epoch, input.session.actor.practitionerRoleId].join(':'),
       view: page.claim.viewId,
-      selection: page.claim.selection?.id ?? '',
+      selection: page.feedbackSelectionId ?? page.claim.selection?.id ?? '',
       section: page.claim.activeSection ?? '',
     })
   const [pageContextClientId] = useState(() => `clinmesh-surface-${crypto.randomUUID()}`)

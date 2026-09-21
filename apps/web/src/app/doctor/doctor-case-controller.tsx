@@ -1861,6 +1861,7 @@ function DoctorCaseController({
       },
     },
     label: 'ClinMesh · 门诊医生',
+    feedbackSelectionId: activeCaseId ?? '',
     readState: () => ({
       case: detail.data === undefined ? null : {
         caseId: detail.data.caseId,

@@ -67,7 +67,9 @@ async function run(): Promise<void> {
   const aligned = ['left', 'top', 'width', 'height'].every(key => Math.abs(targetRect[key as keyof DOMRect] as number - (glowRect[key as keyof DOMRect] as number)) < 1)
   const runningAnimation = getComputedStyle(rootElement.querySelector('.clinmesh-agent-target')!).animationName
   flushSync(() => feedback({ id: 'fill', operationId: 'registration.patient.draft.set', input: {}, phase: 'completed' }))
-  await wait(950)
+  await wait(1200)
+  const held = Number(getComputedStyle(rootElement.querySelector('.clinmesh-agent-target')!).opacity) >= 0.8
+  await wait(1100)
   const faded = rootElement.querySelector('.clinmesh-agent-target') === null
   let task: AgentReviewTask | undefined
   flushSync(() => {
@@ -94,10 +96,13 @@ async function run(): Promise<void> {
     const target = rootElement.querySelector(selector)
     if (!target) return false
     const rect = target.getBoundingClientRect()
+    const visibleRect = new DOMRect(rect.left, rect.top,
+      Math.min(rect.right, window.innerWidth) - rect.left,
+      Math.min(rect.bottom, window.innerHeight) - rect.top)
     return [...rootElement.querySelectorAll('.clinmesh-agent-target')].some(glow => {
       const glowRect = glow.getBoundingClientRect()
       return ['left', 'top', 'width', 'height'].every(key => Math.abs(
-        (rect[key as keyof DOMRect] as number) - (glowRect[key as keyof DOMRect] as number),
+        (visibleRect[key as keyof DOMRect] as number) - (glowRect[key as keyof DOMRect] as number),
       ) < 1)
     })
   }
@@ -106,7 +111,7 @@ async function run(): Promise<void> {
   const newDoctorBubble = isHighlighted('[data-agent-consultation-message="new-doctor"]')
   const newPatientBubble = isHighlighted('[data-agent-consultation-message="new-patient"]')
   const oldMessageUnchanged = !isHighlighted('[data-agent-consultation-message="old-patient"]')
-  document.title = btoa(JSON.stringify({ focused, highlighted, aligned, runningAnimation, faded, waiting, staticWaiting, committed, approved: result.approved,
+  document.title = btoa(JSON.stringify({ focused, highlighted, aligned, runningAnimation, held, faded, waiting, staticWaiting, committed, approved: result.approved,
     consultationRegion, consultationFormExcluded, newDoctorBubble, newPatientBubble, oldMessageUnchanged }))
 }
 void run().catch(error => { document.title = btoa(JSON.stringify({ error: String(error) })) })

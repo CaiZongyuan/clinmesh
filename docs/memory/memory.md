@@ -29,6 +29,10 @@
 
 ## 运行与验证边界
 
+- Agent 视觉反馈的时序验证必须覆盖真实页面 Tool 和 Surface 工具重新注册：`connecting` 可能是同一页面发布新工具列表的正常过程，不能一概当作页面失活；仅向反馈组件注入完成事件会漏掉这类提前清理。
+
+- 浏览器高光坐标测试应比较目标的可见部分；headless Chrome 的默认视口可能裁掉目标底部，不能把完整 `getBoundingClientRect()` 与已按视口裁剪的边框直接比较。保留裁剪断言，不通过放大窗口掩盖差异。
+
 - 目录表格同时支持行双击确认和行内选择切换时，选择按钮须阻止 `dblclick` 冒泡，避免快速选中再取消触发行确认。药品包装切换只更新当前选择，不复用取消选择逻辑。
 
 - DSH 工具缺失时，同时检查后端 Page Context 的 `allowedOperationIds` 和前端 action 的 `enabled` 条件。失败后的恢复工具也必须经过两层筛选；仅用返回全部 catalog operations 的前端 mock，无法发现后端漏授权，需补真实 HTTP Page Context 回归。

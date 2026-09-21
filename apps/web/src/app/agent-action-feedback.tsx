@@ -84,7 +84,7 @@ export function AgentActionFeedbackProvider({ children }: { children: ReactNode 
     const timer = setInterval(() => {
       setEvents(previous => previous.filter(event => {
         if (['executing', 'submitting', 'awaiting-review'].includes(event.phase)) return true
-        return Date.now() - event.updatedAt < (event.phase === 'completed' ? 800 : 5_000)
+        return Date.now() - event.updatedAt < (event.phase === 'completed' ? 4_000 : 5_000)
       }))
     }, 100)
     return () => clearInterval(timer)
@@ -126,6 +126,7 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
     const selected = new Map<Element, DisplayFeedback>()
     // Active operations retain their border when an overlapping operation finishes.
     for (const event of [...events].sort((a, b) => Number(isRunning(a)) - Number(isRunning(b)))) {
+      if (event.phase === 'completed' && Date.now() - event.updatedAt >= 2_100) continue
       for (const selector of agentActionTarget(event).selectors) {
         for (const element of root.querySelectorAll(selector)) selected.set(element, event)
       }
@@ -150,7 +151,8 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
         if (style.overflowY !== 'visible') { top = Math.max(top, clip.top); bottom = Math.min(bottom, clip.bottom) }
       }
       if (right <= left || bottom <= top) return []
-      return [{ key: element.id || String(index), left: left - origin.left, top: top - origin.top, width: right - left, height: bottom - top, phase: event.phase }]
+      const phase = event.phase === 'completed' && Date.now() - event.updatedAt >= 1_500 ? 'fading' : event.phase
+      return [{ key: element.id || String(index), left: left - origin.left, top: top - origin.top, width: right - left, height: bottom - top, phase }]
     }))
   }, [events, root, overlayRoot])
   useLayoutEffect(() => {
@@ -158,8 +160,12 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
     const timer = setInterval(measure, 100)
     return () => clearInterval(timer)
   }, [measure])
+  const statusEvents = new Map<string, DisplayFeedback>()
+  for (const event of events) {
+    statusEvents.set(`${agentActionLabel(event, english)}:${event.phase}:${event.message ?? ''}`, event)
+  }
   const status = <div className="clinmesh-agent-feedback" role="status" aria-live="polite">
-    {events.map(event => <div key={event.id}>
+    {[...statusEvents.values()].map(event => <div key={event.id}>
       <span>{agentActionLabel(event, english)} · {phaseLabel(event, english)}</span>
       {event.message === undefined ? null : <span>：{event.message}</span>}
     </div>)}

@@ -2905,6 +2905,14 @@ describe('role workspaces', () => {
         })
         await waitFor(() => expect(queries.getByRole('tab', { name: label }).getAttribute('aria-selected')).toBe('true'))
         expect(queries.getByRole('tabpanel', { name: label }).getAttribute('data-agent-section')).toBe(section)
+        expect(container.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('已完成')
+        view.rerender(<WebApp runtime={{
+          mode: 'surface', surfaceAgent, surfaceAgentStatus: 'connecting', surfaceSessionId: 'dsh-session-1',
+        }} />)
+        expect(container.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('已完成')
+        view.rerender(<WebApp runtime={{
+          mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+        }} />)
       }
     } finally {
       view.unmount()
@@ -2980,6 +2988,14 @@ describe('role workspaces', () => {
       const selected = await call('clinmesh_read_doctor_context')
       expect(selected.caseId).toBe('case-2')
       expect(selected.patient.name).toBe('合成测试患者2')
+      expect(container.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('已完成')
+      view.rerender(<WebApp runtime={{
+        mode: 'surface', surfaceAgent, surfaceAgentStatus: 'connecting', surfaceSessionId: 'dsh-session-1',
+      }} />)
+      expect(container.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('已完成')
+      view.rerender(<WebApp runtime={{
+        mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+      }} />)
       expect(selected.queue.items).toEqual(queueItems)
       expect(queries.getByRole('tab', { name: '待诊' }).getAttribute('aria-selected')).toBe('true')
     } finally {
