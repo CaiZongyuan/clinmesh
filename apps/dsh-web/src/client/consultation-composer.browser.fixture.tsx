@@ -7,6 +7,16 @@ import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
 import { AgentActionFeedbackProvider, useAgentActionFeedback } from '../../../web/src/app/agent-action-feedback.tsx'
 import { WebRuntimeProvider } from '../../../web/src/app/web-runtime.tsx'
 
+const consultation: React.ComponentProps<typeof ConsultationPage>['consultation'] = {
+  version: 1,
+  turns: Array.from({ length: 24 }, (_, index) => ({
+    id: `synthetic-message-${index}`, kind: 'text',
+    messageText: 'Synthetic consultation message for scrolling verification. '.repeat(8),
+    personaRevision: 1, recordedAt: '2026-09-21T09:00:00+08:00', reportReference: null,
+    sequence: index + 1, source: 'persona-opening', speaker: 'patient', actorId: null, practitionerId: null,
+  })),
+}
+
 const host = document.createElement('div')
 host.style.cssText = 'position:absolute;left:20px;top:20px;contain:strict'
 document.body.append(host)
@@ -27,7 +37,7 @@ function App() {
           <div style={{ height: 160, flexShrink: 0 }}>Synthetic patient banner and tabs</div>
           <div data-agent-section="consultation" className="flex min-h-0 flex-1 flex-col p-4">
             <ConsultationPage action={{ error: null, pending: false, onAsk: () => {}, onRetry: () => {} }}
-              consultation={{ version: 1, turns: [] }} locale="en-US" messages={getWorkspaceMessages('en-US')}
+              consultation={consultation} locale="en-US" messages={getWorkspaceMessages('en-US')}
               patientName="Synthetic patient" readOnly={false} />
           </div>
         </div>
@@ -53,12 +63,19 @@ async function run() {
     flushSync(() => feedback({ id: 'section', operationId: 'outpatient.section.select', input: { section: 'consultation' }, phase: 'completed' }))
     await new Promise(resolve => setTimeout(resolve, 150))
     const composer = root.querySelector('[data-slot="input-group"]')!
+    const history = root.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]')!
+    const beforeScroll = composer.getBoundingClientRect()
+    history.scrollTop = 0
+    history.scrollTop = 200
+    const historyScrolled = history.scrollTop > 0 && history.scrollHeight > history.clientHeight
     const button = composer.querySelector('button')!
     const buttonRect = button.getBoundingClientRect()
     const composerRect = composer.getBoundingClientRect()
     const glow = root.querySelector('.clinmesh-agent-target')!.getBoundingClientRect()
     steps.push({
       width, height,
+      historyScrolled,
+      composerStable: Math.abs(composerRect.top - beforeScroll.top) < 1 && Math.abs(composerRect.bottom - beforeScroll.bottom) < 1,
       composerVisible: composerRect.bottom <= host.getBoundingClientRect().bottom - 4,
       buttonInside: buttonRect.bottom < composerRect.bottom && buttonRect.right < composerRect.right,
       glowOutside: glow.bottom > buttonRect.bottom && glow.right > buttonRect.right,

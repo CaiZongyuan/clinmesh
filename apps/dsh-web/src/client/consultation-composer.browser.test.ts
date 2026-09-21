@@ -34,11 +34,11 @@ it.each(['18', '19'])('keeps the consultation composer visible below scrolling h
     const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
     await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
     await page.waitForFunction(() => document.title !== '')
-    const steps = z.array(z.object({ width: z.number(), height: z.number(), composerVisible: z.boolean(), buttonInside: z.boolean(), glowOutside: z.boolean(), buttonHit: z.boolean(), historyHeight: z.number() }))
+    const steps = z.array(z.object({ width: z.number(), height: z.number(), historyScrolled: z.boolean(), composerStable: z.boolean(), composerVisible: z.boolean(), buttonInside: z.boolean(), glowOutside: z.boolean(), buttonHit: z.boolean(), historyHeight: z.number() }))
       .parse(JSON.parse(Buffer.from(await page.title(), 'base64').toString('utf8')))
     expect(steps).toHaveLength(3)
     for (const step of steps) {
-      expect(step, `${step.width} x ${step.height}`).toMatchObject({ composerVisible: true, buttonInside: true, glowOutside: true, buttonHit: true })
+      expect(step, `${step.width} x ${step.height}`).toMatchObject({ historyScrolled: true, composerStable: true, composerVisible: true, buttonInside: true, glowOutside: true, buttonHit: true })
       expect(step.historyHeight).toBeGreaterThan(80)
     }
   } finally { await browser.close() }
