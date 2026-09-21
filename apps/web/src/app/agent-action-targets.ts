@@ -17,7 +17,7 @@ const targets: Record<string, { label: string; selectors: string[] }> = {
   'outpatient.laboratory.draft.set': { label: '保存检验申请草稿', selectors: ['#laboratory-item', '#laboratory-indication'] },
   'outpatient.prescription.draft.set': { label: '保存处方草稿', selectors: ['#medication-conclusion-heading', '[data-agent-medication-name]', '[data-agent-catalog-trigger="medication"]', '[data-agent-catalog="medication"]', '[data-agent-medication-package]', '[id^="prescription-dose-"]', '[id^="prescription-frequency-"]', '[id^="prescription-course-"]', '[id^="prescription-quantity-"]'] },
   'outpatient.revisit.draft.set': { label: '保存复诊草稿', selectors: ['input[id^="revisit-"]', 'textarea[id^="revisit-"]', 'button[id^="revisit-"]', '[id^="medication-"]', '[id^="dose-"]', '[id^="frequency-"]', '[id^="quantity-"]'] },
-  'outpatient.record.draft.set': { label: '保存病历草稿', selectors: ['[id^="clinical-record-"] textarea', 'textarea[id^="clinical-record-"]', 'input[id^="clinical-record-"]'] },
+  'outpatient.record.draft.set': { label: '保存病历草稿', selectors: [] },
   'outpatient.preview.request': { label: '生成签署预览', selectors: ['#structured-clinical-document-heading'] },
   'billing.payment.preview': { label: '生成缴费预览', selectors: ['#payment-details-heading'] },
 }
@@ -72,6 +72,17 @@ const englishLabels: Record<string, string> = {
 export function agentActionLabel(event: AgentActionFeedback, english: boolean): string {
   const label = agentActionTarget(event).label
   return english ? englishLabels[label] ?? label : label
+}
+
+export function changedClinicalRecordSelectors(input: unknown, selectionId: string, root: HTMLElement | null): string[] {
+  if (root === null || selectionId === '' || typeof input !== 'object' || input === null) return []
+  return Object.entries(input).flatMap(([field, value]) => {
+    const selector = `#${CSS.escape(`clinical-record-${selectionId}-${field}`)}`
+    const element = root.querySelector(selector)
+    return typeof value === 'string'
+      && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)
+      && element.value !== value ? [selector] : []
+  })
 }
 
 export function agentActionTarget(event: AgentActionFeedback): { label: string; selectors: string[] } {

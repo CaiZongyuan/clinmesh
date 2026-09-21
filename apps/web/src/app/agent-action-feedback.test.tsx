@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { AgentActionFeedbackProvider, useAgentActionFeedback, type AgentFeedbackScope } from './agent-action-feedback.tsx'
 import { WebRuntimeProvider } from './web-runtime.tsx'
@@ -9,6 +9,40 @@ import { getWorkspaceMessages } from './workspace-i18n.ts'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks() })
+
+it.each([
+  { changed: { chiefComplaint: '新的主诉' }, expected: ['10px'] },
+  { changed: { chiefComplaint: '新的主诉', historyOfPresentIllness: '新的现病史' }, expected: ['10px', '20px'] },
+  { changed: {}, expected: [] },
+])('highlights only clinical record fields changed from the current unsaved values: $expected', ({ changed, expected }) => {
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    return new DOMRect(Number(this.getAttribute('data-left') ?? 0), 0, 100, 100)
+  })
+  let feedback: (event: AgentActionFeedback) => void = () => undefined
+  function Harness() {
+    feedback = useAgentActionFeedback({ identity: 'session:doctor', view: 'consultation', selection: 'case-1', section: 'record' })
+    return <>
+      <input id="clinical-record-case-1-chiefComplaint" aria-label="主诉" defaultValue="原主诉" data-left="10" />
+      <textarea id="clinical-record-case-1-historyOfPresentIllness" aria-label="现病史" defaultValue="原现病史" data-left="20" />
+      <textarea id="clinical-record-case-1-assessment" aria-label="评估" defaultValue="原评估" data-left="30" />
+      <input id="clinical-record-case-2-chiefComplaint" aria-label="其他病例主诉" defaultValue="其他病例" data-left="40" />
+    </>
+  }
+  render(<WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: document.body } }}>
+    <AgentActionFeedbackProvider><Harness /></AgentActionFeedbackProvider>
+  </WebRuntimeProvider>)
+  fireEvent.change(screen.getByLabelText('主诉'), { target: { value: '尚未保存的主诉' } })
+  const input = { chiefComplaint: '尚未保存的主诉', historyOfPresentIllness: '原现病史', assessment: '原评估', ...changed }
+  const event: AgentActionFeedback = { id: 'record', operationId: 'outpatient.record.draft.set', input, phase: 'executing' }
+  const highlighted = () => [...document.querySelectorAll<HTMLElement>('.clinmesh-agent-target')].map(element => element.style.left)
+  act(() => feedback(event))
+  expect(highlighted()).toEqual(expected)
+  fireEvent.change(screen.getByLabelText('主诉'), { target: { value: input.chiefComplaint } })
+  fireEvent.change(screen.getByLabelText('现病史'), { target: { value: input.historyOfPresentIllness } })
+  act(() => feedback({ ...event, phase: 'completed' }))
+  expect(highlighted()).toEqual(expected)
+  expect(screen.getByRole('status').textContent).toContain('草稿已更新')
+})
 
 it.each([
   { operationId: 'outpatient.section.select', input: { section: 'diagnosis' }, expected: ['10px'] },

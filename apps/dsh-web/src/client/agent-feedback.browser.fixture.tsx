@@ -6,8 +6,9 @@ import { AgentActionFeedbackProvider, useAgentActionFeedback } from '../../../we
 import { AgentReviewProvider, useAgentReview, type AgentReviewTask } from '../../../web/src/app/agent-review.tsx'
 import { WebRuntimeProvider } from '../../../web/src/app/web-runtime.tsx'
 import { ConsultationPage } from '../../../web/src/app/doctor/consultation-page.tsx'
+import { ClinicalDocumentPage } from '../../../web/src/app/doctor/clinical-document-page.tsx'
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
-import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
+import type { ClinicalDocumentContent, DoctorCaseDetail } from '@clinmesh/contracts/his'
 import '../../../web/src/app/agent-action-feedback.css'
 
 const rootElement = document.createElement('main')
@@ -23,6 +24,14 @@ let review: ReturnType<typeof useAgentReview>
 let committed = false
 let showConsultation: () => void
 let receiveReply: () => void
+let showClinicalRecord: () => void
+let updateRecord: (document: ClinicalDocumentContent) => void
+const initialRecord: ClinicalDocumentContent = {
+  chiefComplaint: 'Initial complaint', historyOfPresentIllness: 'Initial history',
+  priorMedicalHistory: 'No prior conditions', physicalExamination: 'Examination recorded',
+  auxiliaryExamination: 'No results', assessment: 'Initial assessment',
+  disposition: 'Outpatient follow-up', followUp: 'Return if symptoms persist',
+}
 const oldTurn: NonNullable<DoctorCaseDetail['consultation']>['turns'][number] = {
   actorId: null, practitionerId: null,
   id: 'old-patient', kind: 'text', messageText: 'Old synthetic reply', personaRevision: 1,
@@ -30,13 +39,30 @@ const oldTurn: NonNullable<DoctorCaseDetail['consultation']>['turns'][number] = 
   source: 'persona-opening', speaker: 'patient',
 }
 function Harness(): React.JSX.Element {
+  const [recordVisible, setRecordVisible] = React.useState(false)
+  const [record, setRecord] = React.useState(initialRecord)
+  showClinicalRecord = () => setRecordVisible(true)
+  updateRecord = setRecord
   const [consultation, setConsultation] = React.useState<'hidden' | 'waiting' | 'answered'>('hidden')
   showConsultation = () => setConsultation('waiting')
   receiveReply = () => setConsultation('answered')
-  feedback = useAgentActionFeedback(consultation === 'hidden'
+  feedback = useAgentActionFeedback(recordVisible
+    ? { identity: 'session:doctor', view: 'consultation', selection: 'case-1', section: 'record' }
+    : consultation === 'hidden'
     ? { identity: 'session:registrar', view: 'registration', selection: '', section: '' }
     : { identity: 'session:doctor', view: 'consultation', selection: 'case-1', section: 'consultation' })
   review = useAgentReview()
+  if (recordVisible) return <><div data-agent-feedback-status="" /><ClinicalDocumentPage
+    actions={{
+      prepareSign: { data: undefined, error: null, onReset: () => {}, onSubmit: () => {}, pending: false },
+      revise: { error: null, onSubmit: () => {}, pending: false, success: false },
+      sign: { error: null, onSubmit: () => {}, pending: false, success: false },
+    }} allowRevision={false} detail={{
+      allergies: [], caseId: 'case-1', encounter: { id: 'encounter-1', status: 'in-progress', versionId: '1' },
+      patient: { id: 'patient-1', identifier: 'SYNTHETIC-1', name: 'Synthetic patient', gender: 'female', birthDate: '1990-01-01', synthetic: true, versionId: '1' },
+      presentation: null, priorFacts: [], status: 'first-visit', taskId: 'task-1', taskVersion: '1',
+    }} elementId="record" locale="en-US" messages={getWorkspaceMessages('en-US')}
+    onDocumentChange={setRecord} workingDocument={record} /></>
   return <><div data-agent-feedback-status="" />{consultation === 'hidden'
     ? <input id="patient-name" aria-label="Patient name" defaultValue="Synthetic patient" />
     : <ConsultationPage action={{ error: null, onAsk: () => {}, onRetry: () => {}, pending: false }}
@@ -111,7 +137,17 @@ async function run(): Promise<void> {
   const newDoctorBubble = isHighlighted('[data-agent-consultation-message="new-doctor"]')
   const newPatientBubble = isHighlighted('[data-agent-consultation-message="new-patient"]')
   const oldMessageUnchanged = !isHighlighted('[data-agent-consultation-message="old-patient"]')
+  flushSync(() => showClinicalRecord())
+  const changedRecord = { ...initialRecord, chiefComplaint: 'Updated complaint' }
+  flushSync(() => feedback({ id: 'record', operationId: 'outpatient.record.draft.set', input: changedRecord, phase: 'executing' }))
+  const onlyChangedRecordField = isHighlighted('#clinical-record-case-1-chiefComplaint')
+    && !isHighlighted('#clinical-record-case-1-historyOfPresentIllness')
+    && rootElement.querySelectorAll('.clinmesh-agent-target').length === 1
+  flushSync(() => updateRecord(changedRecord))
+  flushSync(() => feedback({ id: 'record', operationId: 'outpatient.record.draft.set', input: changedRecord, phase: 'completed' }))
+  const completedRecordField = isHighlighted('#clinical-record-case-1-chiefComplaint')
+    && rootElement.querySelectorAll('.clinmesh-agent-target').length === 1
   document.title = btoa(JSON.stringify({ focused, highlighted, aligned, runningAnimation, held, faded, waiting, staticWaiting, committed, approved: result.approved,
-    consultationRegion, consultationFormExcluded, newDoctorBubble, newPatientBubble, oldMessageUnchanged }))
+    consultationRegion, consultationFormExcluded, newDoctorBubble, newPatientBubble, oldMessageUnchanged, onlyChangedRecordField, completedRecordField }))
 }
 void run().catch(error => { document.title = btoa(JSON.stringify({ error: String(error) })) })

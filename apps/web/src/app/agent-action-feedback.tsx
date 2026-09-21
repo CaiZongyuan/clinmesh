@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { agentActionLabel, agentActionTarget } from './agent-action-targets.ts'
+import { agentActionLabel, agentActionTarget, changedClinicalRecordSelectors } from './agent-action-targets.ts'
 import type { AgentActionFeedback } from './surface-agent-tools.ts'
 import { useWebRuntime } from './web-runtime.tsx'
 
@@ -19,6 +19,7 @@ interface DisplayFeedback extends AgentActionFeedback {
   updatedAt: number
   scope: AgentFeedbackScope
   initialConsultationMessageIds?: ReadonlySet<string>
+  recordSelectors?: string[]
 }
 const FeedbackContext = createContext<FeedbackController | null>(null)
 
@@ -68,11 +69,17 @@ export function AgentActionFeedbackProvider({ children }: { children: ReactNode 
           ? new Set([...appearanceRoot.current.current?.querySelectorAll('[data-agent-consultation-message]') ?? []]
             .map(element => element.getAttribute('data-agent-consultation-message')!))
           : undefined
+        const changedRecordSelectors = event.phase === 'executing' && event.operationId === 'outpatient.record.draft.set'
+          ? changedClinicalRecordSelectors(event.input, scope.selection, appearanceRoot.current.current)
+          : undefined
         setEvents(previous => {
-          const initialConsultationMessageIds = previous.find(item => item.id === event.id)?.initialConsultationMessageIds ?? initialMessageIds
+          const previousEvent = previous.find(item => item.id === event.id)
+          const initialConsultationMessageIds = previousEvent?.initialConsultationMessageIds ?? initialMessageIds
+          const recordSelectors = previousEvent?.recordSelectors ?? changedRecordSelectors
           return [
             ...previous.filter(item => item.id !== event.id),
             { ...event, scope: current ?? scope, updatedAt: Date.now(),
+              ...(recordSelectors === undefined ? {} : { recordSelectors }),
               ...(initialConsultationMessageIds === undefined ? {} : { initialConsultationMessageIds }) },
           ]
         })
@@ -127,7 +134,7 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
     // Active operations retain their border when an overlapping operation finishes.
     for (const event of [...events].sort((a, b) => Number(isRunning(a)) - Number(isRunning(b)))) {
       if (event.phase === 'completed' && Date.now() - event.updatedAt >= 2_100) continue
-      for (const selector of agentActionTarget(event).selectors) {
+      for (const selector of event.recordSelectors ?? agentActionTarget(event).selectors) {
         for (const element of root.querySelectorAll(selector)) selected.set(element, event)
       }
       if (event.initialConsultationMessageIds !== undefined) {
