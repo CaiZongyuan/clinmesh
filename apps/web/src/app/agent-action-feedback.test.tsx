@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import { AgentActionFeedbackProvider, useAgentActionFeedback, type AgentFeedbackScope } from './agent-action-feedback.tsx'
 import { WebRuntimeProvider } from './web-runtime.tsx'
@@ -10,11 +11,41 @@ import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks() })
 
+it('delays executing feedback and retires completion and status together after 800ms', () => {
+  vi.useFakeTimers()
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 100, 100))
+  let feedback: (event: AgentActionFeedback) => void = () => undefined
+  function Harness() {
+    feedback = useAgentActionFeedback({ identity: 'session:registrar', view: 'registration', selection: '', section: '' })
+    return <input id="patient-query" aria-label="查找患者" />
+  }
+  render(<WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: document.body } }}>
+    <AgentActionFeedbackProvider><Harness /></AgentActionFeedbackProvider>
+  </WebRuntimeProvider>)
+  const event: AgentActionFeedback = { id: 'search', operationId: 'registration.patient.search', input: {}, phase: 'executing' }
+  act(() => feedback(event))
+  act(() => vi.advanceTimersByTime(199))
+  expect(screen.queryByRole('status')).toBeNull()
+  expect(document.querySelector('.clinmesh-agent-target')).toBeNull()
+  act(() => feedback({ ...event, phase: 'completed' }))
+  expect(screen.getByRole('status').textContent).toContain('已完成')
+  expect(document.querySelector('.clinmesh-agent-target')?.getAttribute('data-phase')).toBe('completed')
+  act(() => vi.advanceTimersByTime(300))
+  expect(document.querySelector('.clinmesh-agent-target')?.getAttribute('data-phase')).toBe('fading')
+  act(() => vi.advanceTimersByTime(500))
+  expect(screen.queryByRole('status')).toBeNull()
+  expect(document.querySelector('.clinmesh-agent-target')).toBeNull()
+  act(() => feedback({ ...event, id: 'slow' }))
+  act(() => vi.advanceTimersByTime(200))
+  expect(screen.getByRole('status').textContent).toContain('正在操作')
+})
+
 it.each([
   { changed: { chiefComplaint: '新的主诉' }, expected: ['10px'] },
   { changed: { chiefComplaint: '新的主诉', historyOfPresentIllness: '新的现病史' }, expected: ['10px', '20px'] },
   { changed: {}, expected: [] },
 ])('highlights only clinical record fields changed from the current unsaved values: $expected', ({ changed, expected }) => {
+  vi.useFakeTimers()
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
     return new DOMRect(Number(this.getAttribute('data-left') ?? 0), 0, 100, 100)
   })
@@ -36,6 +67,7 @@ it.each([
   const event: AgentActionFeedback = { id: 'record', operationId: 'outpatient.record.draft.set', input, phase: 'executing' }
   const highlighted = () => [...document.querySelectorAll<HTMLElement>('.clinmesh-agent-target')].map(element => element.style.left)
   act(() => feedback(event))
+  act(() => vi.advanceTimersByTime(200))
   expect(highlighted()).toEqual(expected)
   fireEvent.change(screen.getByLabelText('主诉'), { target: { value: input.chiefComplaint } })
   fireEvent.change(screen.getByLabelText('现病史'), { target: { value: input.historyOfPresentIllness } })
@@ -45,7 +77,7 @@ it.each([
 })
 
 it.each([
-  { operationId: 'outpatient.section.select', input: { section: 'diagnosis' }, expected: ['14px'] },
+  { operationId: 'outpatient.section.select', input: { section: 'diagnosis' }, expected: ['5px'] },
   { operationId: 'outpatient.diagnosis.draft.set', input: {}, expected: ['20px', '30px'] },
   { operationId: 'outpatient.prescription.draft.set', input: {}, expected: ['40px', '50px', '60px', '70px'] },
 ])('highlights the visible work area for $operationId', ({ operationId, input, expected }) => {
@@ -59,10 +91,10 @@ it.each([
       <button data-agent-selection="diagnosis" data-left="5">诊断标签</button>
       <section data-agent-section="diagnosis" data-left="10">诊断内容</section>
       <button data-agent-catalog-trigger="diagnosis" data-left="20">添加诊断</button>
-      <div data-agent-catalog="diagnosis" data-left="30">疾病目录</div>
+      <div data-agent-catalog="diagnosis"><h2 data-slot="dialog-title" data-left="30">疾病目录</h2></div>
       <span data-agent-medication-name="" data-left="40">药品名称</span>
       <button data-agent-catalog-trigger="medication" data-left="50">添加药品</button>
-      <div data-agent-catalog="medication" data-left="60">药品目录</div>
+      <div data-agent-catalog="medication"><h2 data-slot="dialog-title" data-left="60">药品目录</h2></div>
       <button data-agent-medication-package="" data-left="70">包装</button>
     </>
   }
@@ -102,8 +134,9 @@ it('highlights the consultation region and new reply bubbles without highlightin
   rects.set(screen.getByText('之前的患者消息').closest('[data-slot="bubble"]')!, new DOMRect(20, 20, 100, 40))
   const event: AgentActionFeedback = { id: 'ask', operationId: 'outpatient.consultation.ask', input: { message: '本次问题' }, phase: 'executing' }
   act(() => feedback(event))
+  act(() => vi.advanceTimersByTime(200))
   const highlightedLefts = () => [...document.querySelectorAll<HTMLElement>('.clinmesh-agent-target')].map(element => element.style.left)
-  expect(highlightedLefts()).toEqual(['10px'])
+  expect(highlightedLefts()).toEqual([])
   view.rerender(app([
     oldTurn,
     { ...oldTurn, id: 'new-doctor', messageText: '本次问题', sequence: 2, speaker: 'doctor', source: 'doctor-typed', personaRevision: null },
@@ -112,22 +145,19 @@ it('highlights the consultation region and new reply bubbles without highlightin
   rects.set(screen.getByText('本次问题').closest('[data-slot="bubble"]')!, new DOMRect(30, 60, 100, 40))
   rects.set(screen.getByText('本次回答').closest('[data-slot="bubble"]')!, new DOMRect(40, 100, 100, 40))
   act(() => vi.advanceTimersByTime(100))
-  expect(highlightedLefts()).toEqual(['10px', '30px', '40px'])
+  expect(highlightedLefts()).toEqual(['30px', '40px'])
   act(() => feedback({ ...event, phase: 'completed' }))
   expect(highlightedLefts()).not.toContain('20px')
-  act(() => vi.advanceTimersByTime(1400))
-  expect(highlightedLefts()).toEqual(['10px', '30px', '40px'])
+  act(() => vi.advanceTimersByTime(200))
+  expect(highlightedLefts()).toEqual(['30px', '40px'])
   expect(document.querySelector('.clinmesh-agent-target')?.getAttribute('data-phase')).toBe('completed')
   act(() => vi.advanceTimersByTime(200))
   expect(document.querySelector('.clinmesh-agent-target')?.getAttribute('data-phase')).toBe('fading')
-  act(() => feedback({ ...event, id: 'ask-again', phase: 'completed' }))
-  act(() => vi.advanceTimersByTime(1000))
+  act(() => feedback({ ...event, phase: 'completed' }))
+  act(() => vi.advanceTimersByTime(200))
   expect(document.querySelector('.clinmesh-agent-target')?.getAttribute('data-phase')).toBe('completed')
   act(() => vi.advanceTimersByTime(1200))
   expect(highlightedLefts()).toEqual([])
-  expect(screen.getByRole('status').textContent).toContain('已完成')
-  expect(screen.getByRole('status').children).toHaveLength(1)
-  act(() => vi.advanceTimersByTime(1900))
   expect(screen.queryByRole('status')).toBeNull()
 })
 
@@ -171,4 +201,56 @@ it('shows completion on the selected target after a real selection transition', 
   view.rerender(app({ ...scope, selection: 'case-2' }))
   act(() => oldFeedback({ ...event, phase: 'completed' }))
   expect(screen.getByRole('status').textContent).toContain('已完成')
+})
+
+it.each(['failed', 'unconfirmed', 'rejected'] as const)('counts concurrent calls and keeps %s details available until dismissed', phase => {
+  vi.useFakeTimers()
+  let feedback: (event: AgentActionFeedback) => void = () => undefined
+  function Harness() {
+    feedback = useAgentActionFeedback({ identity: 'session:doctor', view: 'consultation', selection: 'case-1', section: 'record' })
+    return null
+  }
+  render(<WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: document.body } }}>
+    <AgentActionFeedbackProvider><Harness /></AgentActionFeedbackProvider>
+  </WebRuntimeProvider>)
+  const event: AgentActionFeedback = { id: 'one', operationId: 'outpatient.record.draft.set', input: {}, phase: 'executing' }
+  act(() => { feedback(event); feedback({ ...event, id: 'two' }) })
+  act(() => vi.advanceTimersByTime(200))
+  expect(screen.getByRole('status').textContent).toContain('2 项操作')
+  const expand = screen.getByRole('button', { name: '查看操作详情' })
+  expect(expand.getAttribute('aria-expanded')).toBe('false')
+  fireEvent.click(expand)
+  expect(expand.getAttribute('aria-expanded')).toBe('true')
+  act(() => feedback({ ...event, phase, message: '连接中断，请核对当前病历' }))
+  expect(screen.getByText('连接中断，请核对当前病历')).toBeTruthy()
+  act(() => feedback({ ...event, id: 'two', phase: 'completed' }))
+  act(() => vi.advanceTimersByTime(6000))
+  expect(screen.getByText('连接中断，请核对当前病历')).toBeTruthy()
+  expect(screen.getByRole('status').textContent).toContain({ failed: '未完成', unconfirmed: '结果尚未确认', rejected: '人工已拒绝' }[phase])
+  expect(screen.getByRole('status').textContent).not.toContain('已完成')
+  fireEvent.click(screen.getByRole('button', { name: '关闭提示' }))
+  expect(screen.queryByRole('status')).toBeNull()
+})
+
+it('opens and dismisses action details using the keyboard', async () => {
+  const user = userEvent.setup()
+  let feedback: (event: AgentActionFeedback) => void = () => undefined
+  function Harness() {
+    feedback = useAgentActionFeedback({ identity: 'session:doctor', view: 'consultation', selection: 'case-1', section: 'record' })
+    return <input aria-label="人工编辑" />
+  }
+  render(<WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: document.body } }}>
+    <AgentActionFeedbackProvider><Harness /></AgentActionFeedbackProvider>
+  </WebRuntimeProvider>)
+  const input = screen.getByLabelText('人工编辑')
+  input.focus()
+  act(() => feedback({ id: 'failure', operationId: 'outpatient.record.draft.set', input: {}, phase: 'failed', message: '版本冲突' }))
+  expect(document.activeElement).toBe(input)
+  await user.tab()
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: '查看操作详情' }))
+  await user.keyboard('{Enter}')
+  expect(screen.getByText('版本冲突')).toBeTruthy()
+  await user.tab()
+  await user.keyboard(' ')
+  expect(screen.queryByRole('status')).toBeNull()
 })

@@ -1,59 +1,70 @@
+[data-agent-feedback-status] { position: relative; height: 0; z-index: 11; }
 .clinmesh-agent-feedback {
-  max-height: 4rem;
-  overflow-y: auto;
-  padding: 0.4rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  background: var(--background);
-  color: var(--foreground);
-  font-size: 0.75rem;
-  pointer-events: none;
+  --agent-color: var(--primary, #6366f1);
+  position: absolute; top: 0.5rem; right: 0.75rem;
+  width: max-content; max-width: min(26rem, calc(100% - 1.5rem));
+  border: 1px solid var(--border, #d4d4d8); border-radius: 0.75rem;
+  background: var(--background, #fff); color: var(--foreground, #18181b);
+  box-shadow: 0 3px 14px color-mix(in srgb, var(--agent-color) 8%, transparent);
+  font-size: 0.75rem; pointer-events: auto; transition: opacity 500ms ease-out;
 }
-
-.clinmesh-agent-overlay {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-}
-
+.clinmesh-agent-feedback[data-fading] { opacity: 0; }
+.clinmesh-agent-feedback-summary { display: flex; align-items: center; gap: 0.75rem; padding: 0.45rem 0.65rem; }
+.clinmesh-agent-feedback-summary [role="status"] { min-width: 0; overflow-wrap: anywhere; }
+.clinmesh-agent-feedback button { flex-shrink: 0; cursor: pointer; color: var(--primary, #4f46e5); }
+.clinmesh-agent-feedback button:focus-visible { outline: 2px solid var(--ring, #6366f1); outline-offset: 3px; border-radius: 3px; }
+.clinmesh-agent-feedback-details { list-style: none; margin: 0; padding: 0 0.65rem; max-height: 12rem; overflow: auto; }
+.clinmesh-agent-feedback-details li { padding: 0.6rem 0; border-top: 1px solid var(--border, #d4d4d8); overflow-wrap: anywhere; }
+.clinmesh-agent-feedback-details p { margin: 0.25rem 0; }
+.clinmesh-agent-feedback[data-phase="failed"],
+.clinmesh-agent-feedback-details [data-phase="failed"] { color: var(--destructive, #b91c1c); }
+.clinmesh-agent-feedback[data-phase="unconfirmed"],
+.clinmesh-agent-feedback[data-phase="rejected"],
+.clinmesh-agent-feedback-details [data-phase="unconfirmed"],
+.clinmesh-agent-feedback-details [data-phase="rejected"] { color: var(--foreground, #18181b); border-color: var(--chart-4, #b45309); }
+.clinmesh-agent-overlay { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
 .clinmesh-agent-target {
-  position: absolute;
-  box-sizing: border-box;
-  border: 2px solid #818cf8;
+  --agent-color: var(--primary, #6366f1); --agent-glow: 12%;
+  position: absolute; box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--agent-color) 55%, transparent);
   border-radius: 0.4rem;
-  pointer-events: none;
-  opacity: 0.85;
-  transition: opacity 150ms ease-out;
+  box-shadow: inset 0 0 8px color-mix(in srgb, var(--agent-color) var(--agent-glow), transparent);
+  pointer-events: none; opacity: 1; transition: opacity 500ms ease-out;
 }
-
-.clinmesh-agent-review-glow {
-  position: absolute;
-  inset: 0;
+.dark .clinmesh-agent-target { --agent-glow: 20%; }
+.clinmesh-agent-target[data-kind="record"],
+.clinmesh-agent-target[data-kind="message"] { border-color: transparent; background: color-mix(in srgb, var(--agent-color) 7%, transparent); }
+.clinmesh-agent-target[data-kind="title"] {
+  border-color: transparent; border-bottom-color: color-mix(in srgb, var(--agent-color) 55%, transparent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--agent-color) 9%, transparent), transparent);
 }
-
 .clinmesh-agent-target[data-phase="executing"],
 .clinmesh-agent-target[data-phase="submitting"] {
-  border: 0;
-  padding: 2px;
-  background: linear-gradient(110deg, #3b82f6, #a855f7, #22d3ee, #3b82f6) 0 0 / 300% 100%;
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  animation: clinmesh-agent-flow 3s linear infinite;
+  background-image: linear-gradient(110deg, transparent 25%, color-mix(in srgb, var(--agent-color) 12%, transparent) 50%, transparent 75%);
+  background-size: 300% 100%; animation: clinmesh-agent-flow 3s linear infinite;
 }
-
-.clinmesh-agent-target[data-phase="fading"] {
-  opacity: 0;
-  transition-duration: 600ms;
+.clinmesh-agent-target[data-phase="fading"] { opacity: 0; }
+.clinmesh-agent-target[data-phase="failed"] { --agent-color: var(--destructive, #b91c1c); }
+.clinmesh-agent-target[data-phase="unconfirmed"],
+.clinmesh-agent-target[data-phase="rejected"] { --agent-color: var(--chart-4, #b45309); }
+.clinmesh-agent-target[data-phase="awaiting-review"] { border-color: var(--border, #d4d4d8); box-shadow: none; }
+.clinmesh-agent-review-glow { position: absolute; inset: 0; border-radius: inherit; }
+.clinmesh-agent-review-glow[data-phase="submitting"] { animation-delay: 200ms; }
+.clinmesh-agent-landing {
+  position: absolute; width: 5px; height: 5px; top: 2px; right: 2px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--agent-color), var(--chart-2, #22d3ee));
 }
-
-.clinmesh-agent-target[data-phase="awaiting-review"] {
-  animation: clinmesh-agent-review 800ms ease-out;
+.clinmesh-agent-landing::after {
+  content: ""; position: absolute; inset: -3px; border: 1px solid var(--agent-color); border-radius: inherit;
+  animation: clinmesh-agent-pulse 300ms ease-out forwards;
 }
-
-@keyframes clinmesh-agent-flow { to { background-position: 100% 0; } }
-@keyframes clinmesh-agent-review { from { opacity: 1; box-shadow: 0 0 8px #818cf8; } to { opacity: 0.85; box-shadow: none; } }
-
+.clinmesh-agent-target[data-phase="awaiting-review"] .clinmesh-agent-landing { display: none; }
+@keyframes clinmesh-agent-flow { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@keyframes clinmesh-agent-pulse { from { transform: scale(0.5); opacity: 0.45; } to { transform: scale(1.5); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
+  .clinmesh-agent-feedback { transition: none; }
+  .clinmesh-agent-feedback[data-fading] { opacity: 1; }
   .clinmesh-agent-target { animation: none !important; transition: none !important; }
-  .clinmesh-agent-target[data-phase="fading"] { opacity: 0.85; }
+  .clinmesh-agent-landing::after { animation: none; display: none; }
+  .clinmesh-agent-target[data-phase="fading"] { opacity: 1; }
 }
