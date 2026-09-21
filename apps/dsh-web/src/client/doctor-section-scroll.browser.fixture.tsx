@@ -7,10 +7,11 @@ import { DoctorCaseDetailRegion, DoctorCaseLayout, DoctorCasePanel, DoctorWorksp
 import { PatientBanner } from '../../../web/src/app/doctor/patient-summary.tsx'
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
 import { Button } from '@clinmesh/ui/components/button'
+const messages = getWorkspaceMessages('zh-CN')
 const detail: React.ComponentProps<typeof PatientBanner>['detail'] = {
   allergies: [], caseId: 'synthetic-case', encounter: { id: 'enc', status: 'in-progress', versionId: '1' },
-  patient: { id: 'synthetic-patient', identifier: 'SYNTHETIC-00000001', name: '??????', synthetic: true, versionId: '1' },
-  presentation: { chiefComplaint: '??????', summary: '????', vitalSigns: {
+  patient: { id: 'synthetic-patient', identifier: 'SYNTHETIC-00000001', name: '合成测试患者', synthetic: true, versionId: '1' },
+  presentation: { chiefComplaint: '合成测试主诉', summary: '合成测试', vitalSigns: {
     bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 }, oxygenSaturationPct: 98, pulseBpm: 80, respirationBpm: 18, temperatureC: 37,
   } }, priorFacts: [], status: 'in-progress', taskId: 'task', taskVersion: '1',
 }
@@ -29,7 +30,7 @@ function App() {
     <DoctorWorkspaceLayout selectedCaseId="case" queueLabel="Queue" detailLabel="Case" queue={() => <div>Queue</div>}>
       <DoctorCaseDetailRegion><div role="status" className="shrink-0">Synthetic success notification</div><DoctorCaseLayout railPlacement="host" contextLabel="Context" rail={() => null}>
         <div className="flex min-h-0 flex-1 flex-col">
-          <PatientBanner detail={detail} messages={getWorkspaceMessages('zh-CN')} statusText="???" onShowContext={() => {}} completionAction={<Button>??</Button>} />
+          <PatientBanner detail={detail} messages={messages} statusText="接诊中" onShowContext={() => {}} completionAction={<Button>完诊</Button>} />
           <Tabs defaultValue="record" className="min-h-0 flex-1 gap-0">
             <div className="shrink-0 overflow-x-auto"><TabsList>{sections.map(section => <TabsTrigger key={section} value={section}>{section}</TabsTrigger>)}</TabsList></div>
             {sections.map(section => <DoctorCasePanel key={section} value={section}>
@@ -53,7 +54,7 @@ async function run() {
       const tab = [...root.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === section)!
       flushSync(() => tab.click())
       const panel = root.querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])')!
-      const header = root.querySelector('[aria-label="????"]') ?? root.querySelector('[class*="patient-banner"]')!
+      const header = root.querySelector(`[aria-label="${messages.selectedPatient}"]`)!
       const tabs = root.querySelector('[role="tablist"]')!
       const headerTop = header.getBoundingClientRect().top
       const tabsTop = tabs.getBoundingClientRect().top
