@@ -157,6 +157,13 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
         if (style.overflowX !== 'visible') { left = Math.max(left, clip.left); right = Math.min(right, clip.right) }
         if (style.overflowY !== 'visible') { top = Math.max(top, clip.top); bottom = Math.min(bottom, clip.bottom) }
       }
+      // Keep section borders distinct from the viewport and scroll-container edges.
+      if (event.operationId === 'outpatient.section.select') {
+        left += 4
+        top += 4
+        right -= 4
+        bottom -= 4
+      }
       if (right <= left || bottom <= top) return []
       const phase = event.phase === 'completed' && Date.now() - event.updatedAt >= 1_500 ? 'fading' : event.phase
       return [{ key: element.id || String(index), left: left - origin.left, top: top - origin.top, width: right - left, height: bottom - top, phase }]

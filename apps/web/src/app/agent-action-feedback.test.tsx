@@ -45,7 +45,7 @@ it.each([
 })
 
 it.each([
-  { operationId: 'outpatient.section.select', input: { section: 'diagnosis' }, expected: ['10px'] },
+  { operationId: 'outpatient.section.select', input: { section: 'diagnosis' }, expected: ['14px'] },
   { operationId: 'outpatient.diagnosis.draft.set', input: {}, expected: ['20px', '30px'] },
   { operationId: 'outpatient.prescription.draft.set', input: {}, expected: ['40px', '50px', '60px', '70px'] },
 ])('highlights the visible work area for $operationId', ({ operationId, input, expected }) => {

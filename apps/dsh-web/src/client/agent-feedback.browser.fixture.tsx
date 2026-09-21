@@ -147,7 +147,24 @@ async function run(): Promise<void> {
   flushSync(() => feedback({ id: 'record', operationId: 'outpatient.record.draft.set', input: changedRecord, phase: 'completed' }))
   const completedRecordField = isHighlighted('#clinical-record-case-1-chiefComplaint')
     && rootElement.querySelectorAll('.clinmesh-agent-target').length === 1
+  const scroller = document.createElement('div')
+  scroller.style.cssText = 'position:absolute;left:20px;top:80px;width:240px;height:120px;overflow:auto'
+  const section = document.createElement('section')
+  section.dataset.agentSection = 'diagnosis'
+  section.style.height = '600px'
+  scroller.append(section)
+  rootElement.append(scroller)
+  flushSync(() => feedback({ id: 'section', operationId: 'outpatient.section.select', input: { section: 'diagnosis' }, phase: 'completed' }))
+  const sectionRect = section.getBoundingClientRect()
+  const scrollRect = scroller.getBoundingClientRect()
+  const sectionInset = [...rootElement.querySelectorAll('.clinmesh-agent-target')].some(glow => {
+    const rect = glow.getBoundingClientRect()
+    return Math.abs(rect.left - sectionRect.left - 4) < 1
+      && Math.abs(rect.right - sectionRect.right + 4) < 1
+      && Math.abs(rect.top - scrollRect.top - 4) < 1
+      && Math.abs(rect.bottom - scrollRect.bottom + 4) < 1
+  })
   document.title = btoa(JSON.stringify({ focused, highlighted, aligned, runningAnimation, held, faded, waiting, staticWaiting, committed, approved: result.approved,
-    consultationRegion, consultationFormExcluded, newDoctorBubble, newPatientBubble, oldMessageUnchanged, onlyChangedRecordField, completedRecordField }))
+    consultationRegion, consultationFormExcluded, newDoctorBubble, newPatientBubble, oldMessageUnchanged, onlyChangedRecordField, completedRecordField, sectionInset }))
 }
 void run().catch(error => { document.title = btoa(JSON.stringify({ error: String(error) })) })
