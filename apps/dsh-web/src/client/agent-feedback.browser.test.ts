@@ -35,11 +35,13 @@ it.each(['18', '19'])('preserves editing and human review with action feedback o
   const response = await readJsonFromHeadlessChrome(`<!doctype html><html><head><style>${css}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`, 6000)
   expect(response).not.toHaveProperty('error')
   const actual = z.object({ delayed: z.boolean(), focused: z.boolean(), highlighted: z.boolean(), aligned: z.boolean(), runningAnimation: z.boolean(), held: z.boolean(), faded: z.boolean(), waiting: z.boolean(), staticWaiting: z.boolean(), committed: z.boolean(), approved: z.boolean(),
+    lightFeedbackBlue: z.boolean(), darkFeedbackBlue: z.boolean(),
     consultationRegionExcluded: z.boolean(), consultationFormExcluded: z.boolean(), newDoctorBubble: z.boolean(), newPatientBubble: z.boolean(), oldMessageUnchanged: z.boolean(),
     onlyChangedRecordField: z.boolean(), completedRecordField: z.boolean(), sectionLabelOnly: z.boolean(),
     stableLayout: z.boolean(), inputReachable: z.boolean(), clipped: z.boolean(), scrollAligned: z.boolean(), dialogLayer: z.boolean(),
   }).parse(response)
   expect(actual).toEqual({ delayed: true, focused: true, highlighted: true, aligned: true, runningAnimation: true, held: true, faded: true, waiting: true, staticWaiting: true, committed: true, approved: true,
+    lightFeedbackBlue: true, darkFeedbackBlue: true,
     consultationRegionExcluded: true, consultationFormExcluded: true, newDoctorBubble: true, newPatientBubble: true, oldMessageUnchanged: true,
     onlyChangedRecordField: true, completedRecordField: true, sectionLabelOnly: true,
     stableLayout: true, inputReachable: true, clipped: true, scrollAligned: true, dialogLayer: true,

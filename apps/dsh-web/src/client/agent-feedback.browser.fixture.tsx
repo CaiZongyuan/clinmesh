@@ -98,6 +98,20 @@ async function run(): Promise<void> {
   const stableLayout = field.getBoundingClientRect().top === initialTop
   const inputReachable = shadow.elementFromPoint(targetRect.left + 10, targetRect.top + 10) === field
   const runningAnimation = getComputedStyle(rootElement.querySelector('.clinmesh-agent-target')!).animationName !== 'none'
+  const hasBlueFeedback = () => {
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')!
+    context.fillStyle = getComputedStyle(rootElement.querySelector('.clinmesh-agent-target')!).borderTopColor
+    context.fillRect(0, 0, 1, 1)
+    const [red, green, blue] = context.getImageData(0, 0, 1, 1).data
+    return blue! > red! + 50 && blue! > green! + 30
+  }
+  rootElement.style.setProperty('--primary', '#eeeeee')
+  const lightFeedbackBlue = hasBlueFeedback()
+  rootElement.classList.add('dark')
+  const darkFeedbackBlue = hasBlueFeedback()
+  rootElement.classList.remove('dark')
+  rootElement.style.removeProperty('--primary')
   flushSync(() => feedback({ id: 'fill', operationId: 'registration.patient.draft.set', input: {}, phase: 'completed' }))
   await wait(200)
   const held = Number(getComputedStyle(rootElement.querySelector('.clinmesh-agent-target')!).opacity) >= 0.8
@@ -194,7 +208,7 @@ async function run(): Promise<void> {
     && rootElement.querySelectorAll('.clinmesh-agent-target').length === 1
     && isHighlighted('[data-agent-catalog="diagnosis"] h2')
   document.title = btoa(JSON.stringify({ delayed, focused, highlighted, aligned, stableLayout, inputReachable, clipped, scrollAligned, dialogLayer,
-    runningAnimation, held, faded, waiting, staticWaiting, committed, approved: result.approved,
+    runningAnimation, lightFeedbackBlue, darkFeedbackBlue, held, faded, waiting, staticWaiting, committed, approved: result.approved,
     consultationRegionExcluded, consultationFormExcluded, newDoctorBubble, newPatientBubble, oldMessageUnchanged, onlyChangedRecordField, completedRecordField, sectionLabelOnly }))
 }
 void run().catch(error => { document.title = btoa(JSON.stringify({ error: String(error) })) })
