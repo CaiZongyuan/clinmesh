@@ -88,7 +88,7 @@ export function PatientBanner({
   const age = patientAge(detail.patient.birthDate)
   return (
     <section aria-label={messages.selectedPatient} className="@container/patient-banner min-w-0 shrink-0 border-b bg-background [overflow-wrap:anywhere]">
-      <div className="flex items-start justify-between gap-3 px-4 py-3">
+      <div className="flex flex-col gap-3 px-4 py-3 @min-[520px]/patient-banner:flex-row @min-[520px]/patient-banner:items-start @min-[520px]/patient-banner:justify-between">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <PatientAvatar label={`${detail.patient.name} ${messages.patient}`} name={detail.patient.name} />
           <div className="min-w-0 flex-1">
@@ -105,7 +105,7 @@ export function PatientBanner({
             </div>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
           <Badge variant="secondary">{statusText}</Badge>
           {readOnly ? (
             <Badge variant="outline"><LockKeyholeIcon aria-hidden="true" />{messages.encounterReadOnly}</Badge>

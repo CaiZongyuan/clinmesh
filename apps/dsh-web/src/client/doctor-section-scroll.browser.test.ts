@@ -22,12 +22,12 @@ it.each(['18', '19'])('scrolls only the active doctor section while preserving t
     ] },
     build: { write: false, lib: {
       entry: fileURLToPath(new URL('./doctor-section-scroll.browser.fixture.tsx', import.meta.url)),
-      formats: ['iife'], name: 'ConsultationComposer',
+      formats: ['iife'], name: 'DoctorSectionScroll',
     } },
   })
   const outputs = (Array.isArray(result) ? result : [result]).flatMap(output => 'output' in output ? output.output : [])
   const script = outputs.find(output => output.type === 'chunk')
-  if (script?.type !== 'chunk') throw new Error('Missing composer fixture')
+  if (script?.type !== 'chunk') throw new Error('Missing doctor section scroll fixture')
   const css = await buildSurfaceStyles()
   const browser = await chromium.launch({ executablePath: findChrome(), headless: true })
   try {
