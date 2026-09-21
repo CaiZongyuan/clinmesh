@@ -34,7 +34,10 @@ function App() {
     <DoctorWorkspaceLayout selectedCaseId="case" queueLabel="Queue" detailLabel="Case" queue={() => <div>Queue</div>}>
       <DoctorCaseDetailRegion><DoctorCaseLayout railPlacement="host" contextLabel="Context" rail={() => null}>
         <div className="flex min-h-0 flex-1 flex-col">
-          <div style={{ height: 160, flexShrink: 0 }}>Synthetic patient banner and tabs</div>
+          <div style={{ height: 160, flexShrink: 0 }}>
+            Synthetic patient banner
+            <button type="button" data-agent-selection="consultation">Consultation</button>
+          </div>
           <div data-agent-section="consultation" className="flex min-h-0 flex-1 flex-col p-4">
             <ConsultationPage action={{ error: null, pending: false, onAsk: () => {}, onRetry: () => {} }}
               consultation={consultation} locale="en-US" messages={getWorkspaceMessages('en-US')}
@@ -72,13 +75,17 @@ async function run() {
     const buttonRect = button.getBoundingClientRect()
     const composerRect = composer.getBoundingClientRect()
     const glow = root.querySelector('.clinmesh-agent-target')!.getBoundingClientRect()
+    const tab = root.querySelector('[data-agent-selection="consultation"]')!.getBoundingClientRect()
     steps.push({
       width, height,
       historyScrolled,
       composerStable: Math.abs(composerRect.top - beforeScroll.top) < 1 && Math.abs(composerRect.bottom - beforeScroll.bottom) < 1,
       composerVisible: composerRect.bottom <= host.getBoundingClientRect().bottom - 4,
       buttonInside: buttonRect.bottom < composerRect.bottom && buttonRect.right < composerRect.right,
-      glowOutside: glow.bottom > buttonRect.bottom && glow.right > buttonRect.right,
+      glowOutside: glow.bottom <= composerRect.top,
+      glowOnTab: ['left', 'top', 'width', 'height'].every(key => Math.abs(
+        (glow[key as keyof DOMRect] as number) - (tab[key as keyof DOMRect] as number),
+      ) < 1),
       buttonHit: shadow.elementFromPoint(buttonRect.x + buttonRect.width / 2, buttonRect.y + buttonRect.height / 2)?.closest('button') === button,
       historyHeight: root.querySelector('[data-agent-consultation]')!.getBoundingClientRect().height,
     })
