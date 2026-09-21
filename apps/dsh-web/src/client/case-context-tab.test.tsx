@@ -65,9 +65,12 @@ function createHarness(
   }: HarnessOptions = {},
 ) {
   let mounted = seatMounted
+  let expanded = false
+  const toggleExpanded = vi.fn(() => { expanded = !expanded })
   const openTab = vi.fn(() => {
     // 宿主合同:座位未挂载时 openTab 抛错(no session surface is mounted)
     if (!mounted) throw new Error('sidebarRight: no session surface is mounted')
+    expanded = true
   })
   const surfacesListeners = new Set<() => void>()
   // useSyncExternalStore 要求快照身份稳定:仅在 setActive 时更换
@@ -115,7 +118,7 @@ function createHarness(
           },
         }
       }
-      if (name === 'sidebarRight') return { openTab }
+      if (name === 'sidebarRight') return { openTab, toggleExpanded, isExpanded: () => expanded, active: () => ({ id: 'patient-tab', kind: CASE_CONTEXT_TAB_KIND }) }
       if (name === 'theme') return { getTheme: () => ({ active: { colorScheme } }) }
       if (name === 'locale') {
         return {
@@ -150,6 +153,7 @@ function createHarness(
     definition,
     occupants,
     openTab,
+    toggleExpanded,
     dispose,
     setActive(next: string | null) {
       surfacesSnapshot = { activeId: next, surfaces: [] }
@@ -179,6 +183,31 @@ it('keeps snapshot ownership with the port and ignores stale disposers', () => {
   expect(port.getSnapshot()?.caseId).toBe('case-002')
   second()
   expect(port.getSnapshot()).toBeNull()
+})
+
+it('hides visible patient information and reopens it without snapshot refresh undoing the hide', async () => {
+  vi.useFakeTimers()
+  try {
+    const port = createCaseContextPort()
+    const harness = createHarness(port, { activeId: 'clinmesh.his' })
+    const disposeState = port.register(caseState())
+    await flushAttempt()
+    const release = port.registerVisibility(() => harness.toggleExpanded())
+    expect(port.visibility.getSnapshot()).toBe(true)
+    port.visibility.toggle()
+    expect(harness.toggleExpanded).toHaveBeenCalledTimes(1)
+    release()
+    expect(port.visibility.getSnapshot()).toBe(false)
+    disposeState()
+    port.register(caseState({ caseId: 'case-002' }))
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(1)
+    port.visibility.toggle()
+    expect(harness.openTab).toHaveBeenCalledTimes(2)
+    harness.dispose()
+    port.visibility.toggle()
+    expect(harness.openTab).toHaveBeenCalledTimes(2)
+  } finally { vi.useRealTimers() }
 })
 
 it('registers a page-type tab definition with a localized guide entry', () => {
@@ -414,8 +443,11 @@ it('retries a manual request on the same short timer until the seat mounts', asy
   }
 })
 
-async function mountComponent(component: unknown, props: Record<string, unknown> = {}): Promise<{
+async function mountComponent(component: unknown, props: Record<string, unknown> = {
+  useTabInfo: () => ({ tab: { id: 'patient-tab', visible: true, actions: { close: () => {} } } }),
+}): Promise<{
   host: HTMLElement
+  rerender(props: Record<string, unknown>): Promise<void>
   unmount(): Promise<void>
 }> {
   const host = document.createElement('div')
@@ -426,6 +458,9 @@ async function mountComponent(component: unknown, props: Record<string, unknown>
   })
   return {
     host,
+    async rerender(nextProps) {
+      await act(() => { root.render(createElement(component as never, nextProps as never)) })
+    },
     async unmount() {
       await act(() => {
         root.unmount()
@@ -434,6 +469,29 @@ async function mountComponent(component: unknown, props: Record<string, unknown>
     },
   }
 }
+
+it('tracks host tab visibility and clears the button state when the tab is closed', async () => {
+  const port = createCaseContextPort()
+  const harness = createHarness(port, { activeId: 'clinmesh.his' })
+  port.register(caseState())
+  const actions = { close: vi.fn() }
+  const props = (visible: boolean) => ({ useTabInfo: () => ({ tab: { id: 'patient-tab', visible, actions } }) })
+  const mounted = await mountComponent(harness.occupants.get('sidebar.right.pane.tab'), props(true))
+  try {
+    expect(port.visibility.getSnapshot()).toBe(true)
+    await mounted.rerender(props(false))
+    expect(port.visibility.getSnapshot()).toBe(false)
+    await mounted.rerender(props(true))
+    expect(port.visibility.getSnapshot()).toBe(true)
+    // A visible floating tab can outlive the collapsed docked column.
+    port.visibility.toggle()
+    expect(actions.close).toHaveBeenCalledTimes(1)
+  } finally {
+    await mounted.unmount()
+    expect(port.visibility.getSnapshot()).toBe(false)
+    harness.dispose()
+  }
+})
 
 it('renders the rail into a shadow root while a snapshot is published', async () => {
   const port = createCaseContextPort()

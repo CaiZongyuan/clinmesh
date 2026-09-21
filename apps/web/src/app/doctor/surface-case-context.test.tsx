@@ -158,6 +158,15 @@ describe('useSurfaceCaseContextPort', () => {
 })
 
 describe('PatientBanner show-context entry', () => {
+  it('shows the hide action while patient information is visible', () => {
+    const onShowContext = vi.fn()
+    render(<PatientBanner detail={createState().detail} messages={getWorkspaceMessages('zh-CN')}
+      contextVisible onShowContext={onShowContext} statusText="接诊中" />)
+    const button = screen.getByRole('button', { name: '隐藏患者信息' })
+    expect(button.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(button)
+    expect(onShowContext).toHaveBeenCalledTimes(1)
+  })
   it('invokes the host open request from the banner button', () => {
     const onShowContext = vi.fn()
     render(

@@ -74,13 +74,15 @@ export function PatientBanner({
   detail,
   messages,
   onShowContext,
+  contextVisible = false,
   statusText,
 }: {
   completionAction?: React.ReactNode
   detail: DoctorCaseDetail
   messages: WorkspaceMessages
-  /** surface 模式下宿主右栏承载患者上下文:点击在右栏打开/聚焦患者信息标签页。 */
+  /** 切换宿主患者信息可见性；仅支持打开的宿主可保留展示回调。 */
   onShowContext?: () => void
+  contextVisible?: boolean
   statusText: string
 }): React.JSX.Element {
   const presentation = detail.presentation
@@ -111,9 +113,9 @@ export function PatientBanner({
             <Badge variant="outline"><LockKeyholeIcon aria-hidden="true" />{messages.encounterReadOnly}</Badge>
           ) : completionAction}
           {onShowContext === undefined ? null : (
-            <Button onClick={onShowContext} size="sm" variant="outline">
+            <Button aria-expanded={contextVisible} onClick={onShowContext} size="sm" variant="outline">
               <IdCardIcon aria-hidden="true" />
-              {messages.showPatientContext}
+              {contextVisible ? messages.hidePatientContext : messages.showPatientContext}
             </Button>
           )}
         </div>

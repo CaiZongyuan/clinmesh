@@ -1,5 +1,5 @@
 import { DoctorWorkspaceLayout, DoctorCaseLayout, DoctorCasePanel, DoctorCaseDetailRegion } from './responsive-layout.tsx'
-import { hostCaseContextRail, useSurfaceCaseContextPort } from './surface-case-context.ts'
+import { hostCaseContextRail, useSurfaceCaseContextPort, useSurfaceCaseContextVisible } from './surface-case-context.ts'
 import { useOptionalWebRuntime } from '../web-runtime.tsx'
 import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import {
@@ -2423,6 +2423,7 @@ function CaseDetail({
   // 全屏(full-frame)且宿主未保留右列时回退内嵌 rail,保证病例上下文可达
   const runtime = useOptionalWebRuntime()
   const hostRail = hostCaseContextRail(runtime)
+  const contextVisible = useSurfaceCaseContextVisible()
   const caseContextState = useMemo(() => (hostRail ? {
     caseId: detail.caseId,
     completion: completion.data,
@@ -2688,7 +2689,11 @@ function CaseDetail({
               })}
           detail={detail}
           messages={messages}
-          {...(hostRail ? { onShowContext: () => { runtime?.surfaceCaseContext?.requestOpen?.() } } : {})}
+          {...(hostRail && runtime?.surfaceCaseContext?.visibility !== undefined
+            ? { contextVisible, onShowContext: runtime.surfaceCaseContext.visibility.toggle }
+            : hostRail && runtime?.surfaceCaseContext?.requestOpen !== undefined
+              ? { onShowContext: runtime.surfaceCaseContext.requestOpen }
+              : {})}
           statusText={doctorCaseStatusLabel(detail.status, messages)}
         />
 
