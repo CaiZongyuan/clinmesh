@@ -29,6 +29,12 @@ export interface WebSurfaceCaseContextState {
 /** Host rightbar contract; the application keeps query and state ownership. */
 export interface WebSurfaceCaseContext {
   register(state: WebSurfaceCaseContextState): () => void
+  /** 宿主患者信息的真实可见状态；手动收起、关闭和切换标签均同步。 */
+  visibility?: {
+    getSnapshot(): boolean
+    subscribe(listener: () => void): () => void
+    toggle(): void
+  }
   /**
    * 用户在 WebApp 内主动请求展示右栏患者上下文（如手动按钮）。宿主负责打开/聚焦
    * 标签页，幂等；右栏座位未挂载时由宿主自行延迟重试。缺省（宿主未实现）时

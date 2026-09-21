@@ -1,9 +1,17 @@
-import { useLayoutEffect } from 'react'
+import { useLayoutEffect, useSyncExternalStore } from 'react'
 import {
   useOptionalWebRuntime,
   type WebRuntimeValue,
   type WebSurfaceCaseContextState,
 } from '../web-runtime.tsx'
+
+const subscribeUnavailable = () => () => {}
+const getUnavailable = () => false
+
+export function useSurfaceCaseContextVisible(): boolean {
+  const visibility = useOptionalWebRuntime()?.surfaceCaseContext?.visibility
+  return useSyncExternalStore(visibility?.subscribe ?? subscribeUnavailable, visibility?.getSnapshot ?? getUnavailable, getUnavailable)
+}
 
 /** 宿主右栏是否承载病例上下文:surface 模式接通端口且右栏可见。全屏(full-frame)
  * 布局下宿主右列默认被标记 inert、被全屏表面遮盖,此时回退内嵌 rail;宿主声明

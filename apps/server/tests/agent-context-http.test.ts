@@ -402,6 +402,7 @@ describe('DSH Agent Page Context HTTP contract', () => {
     expect(doctorContext.status).toBe(201)
     const doctor = agentPageContextBindingSchema.parse(await doctorContext.json())
     expect(doctor.snapshot.allowedOperationIds).toContain('outpatient.visit.start.propose')
+    expect(doctor.snapshot.allowedOperationIds).not.toContain('outpatient.consultation.reply.retry')
 
     runtime.database.driver.prepare(`
       INSERT INTO laboratory_request (

@@ -7,6 +7,9 @@ import type {
   ReferenceMedicationCatalogSearch,
 } from '@clinmesh/contracts/reference-data'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
+import { AgentActionFeedbackProvider, useAgentActionFeedback } from '../../../web/src/app/agent-action-feedback.tsx'
+import { WebRuntimeProvider } from '../../../web/src/app/web-runtime.tsx'
+import '../../../web/src/app/agent-action-feedback.css'
 import { PersonaJobStatusNotice } from '../../../web/src/app/persona-job-failure.tsx'
 import {
   DiagnosisCatalogDialog,
@@ -16,6 +19,7 @@ import {
 } from '../../../../apps/web/src/app/doctor/catalog-picker-dialogs.tsx'
 
 type CatalogKind = 'diagnosis' | 'laboratory' | 'medication'
+let feedback: ReturnType<typeof useAgentActionFeedback>
 
 const triggerLabels: Record<CatalogKind, string> = {
   diagnosis: '添加诊断',
@@ -56,24 +60,46 @@ const medicationCatalog: PrescriptionMedication[] = [{
   version: 1,
 }]
 
-function makeSearch<Data>(onSearch: (query: string, page: number) => void): ReferenceCatalogSearchModel<Data> {
-  return { data: undefined, error: null, isError: false, isFetching: false, isPending: false, onSearch }
+const laboratoryConcept = {
+  code: '6690-2', display: '合成白细胞计数', id: 'synthetic-wbc',
+  sourceLocator: 'synthetic:test', system: 'http://loinc.org', version: '2.83',
+}
+const laboratoryCatalog: CaseLaboratoryCatalogSearch = {
+  items: [{
+    allowedIndicationCodes: ['clinical-evaluation'], componentServiceIds: [], doctorOrderable: true,
+    executingDepartmentId: 'department-laboratory', id: 'synthetic-lab', localCode: 'SYN-LAB',
+    nameZh: '合成白细胞计数', priceFen: 1000, referenceConcept: laboratoryConcept,
+    referenceReleaseId: 'synthetic', reportDefinition: {
+      conclusionTemplate: '合成检验结果',
+      results: [{
+        alternateCodings: [], referenceConcept: laboratoryConcept, referenceRange: { text: '合成结果' },
+        valueType: 'string', allowedValues: ['合成结果'],
+      }],
+    },
+    specimen: { code: 'blood', display: '血液' }, serviceKind: 'laboratory', tatMinutes: 20, version: 1,
+  }],
+  page: 1, pageSize: 20, total: 1,
 }
 
-function CatalogDialog({ kind, onSearch }: {
+function makeSearch<Data>(onSearch: (query: string, page: number) => void, data: Data): ReferenceCatalogSearchModel<Data> {
+  return { data, error: null, isError: false, isFetching: false, isPending: false, onSearch }
+}
+
+function CatalogDialog({ kind, onSearch, onSelect }: {
   kind: CatalogKind
   onSearch: (query: string, page: number) => void
+  onSelect: () => void
 }) {
+  feedback = useAgentActionFeedback({ identity: 'session:doctor', view: 'consultation', selection: 'case-1', section: kind })
   const excludedIds = new Set<string>()
-  const select = (): void => {}
   if (kind === 'diagnosis') {
     return (
       <DiagnosisCatalogDialog
         excludedIds={excludedIds}
         locale="zh-CN"
         localCatalog={diagnosisCatalog}
-        onSelect={select}
-        search={makeSearch<ReferenceDiagnosisCatalogSearch>(onSearch)}
+        onSelect={onSelect}
+        search={makeSearch<ReferenceDiagnosisCatalogSearch>(onSearch, { items: [], page: 1, pageSize: 20, total: 0, releaseId: 'synthetic' })}
       />
     )
   }
@@ -81,8 +107,8 @@ function CatalogDialog({ kind, onSearch }: {
     return (
       <LaboratoryCatalogDialog
         locale="zh-CN"
-        onSelect={select}
-        search={makeSearch<CaseLaboratoryCatalogSearch>(onSearch)}
+        onSelect={onSelect}
+        search={makeSearch(onSearch, laboratoryCatalog)}
       />
     )
   }
@@ -91,8 +117,15 @@ function CatalogDialog({ kind, onSearch }: {
       excludedIds={excludedIds}
       locale="zh-CN"
       localCatalog={medicationCatalog}
-      onSelect={select}
-      search={makeSearch<ReferenceMedicationCatalogSearch>(onSearch)}
+      onSelect={onSelect}
+      search={makeSearch<ReferenceMedicationCatalogSearch>(onSearch, {
+        items: [{
+          brandName: null, id: 'synthetic-product', code: 'SYN-1', genericName: '合成测试片',
+          dosageForm: '片剂', strength: '10 mg', manufacturer: '合成药厂', approvalNumber: '合成批准号',
+          packageDescription: '10片/盒', status: 'active', system: 'urn:synthetic:medication',
+          version: '1', sourceLocator: 'synthetic:test',
+        }], page: 1, pageSize: 20, total: 1, releaseId: 'synthetic',
+      })}
     />
   )
 }
@@ -110,14 +143,19 @@ async function run() {
   const host = document.createElement('div')
   document.body.append(host)
   const shadow = host.attachShadow({ mode: 'open' })
+  for (const style of document.querySelectorAll('style')) shadow.append(style.cloneNode(true))
   const container = document.createElement('div')
   shadow.append(container)
   const windowErrors: string[] = []
   window.addEventListener('error', event => { windowErrors.push(String(event.error ?? event.message)) })
-  const results: Record<CatalogKind, { inputFound: boolean, calls: Array<[string, number]> }> = {
-    diagnosis: { inputFound: false, calls: [] },
-    laboratory: { inputFound: false, calls: [] },
-    medication: { inputFound: false, calls: [] },
+  const results: Record<CatalogKind, {
+    inputFound: boolean, calls: Array<[string, number]>, selectionStates: Array<string | null>,
+    confirmDisabled: boolean[], confirmations: number,
+    catalogHighlighted?: boolean, productHighlighted?: boolean, packageHighlighted?: boolean,
+  }> = {
+    diagnosis: { inputFound: false, calls: [], selectionStates: [], confirmDisabled: [], confirmations: 0 },
+    laboratory: { inputFound: false, calls: [], selectionStates: [], confirmDisabled: [], confirmations: 0 },
+    medication: { inputFound: false, calls: [], selectionStates: [], confirmDisabled: [], confirmations: 0 },
   }
   for (const kind of ['diagnosis', 'laboratory', 'medication'] as const) {
     const calls = results[kind].calls
@@ -125,9 +163,14 @@ async function run() {
     flushSync(() => {
       root = createRoot(container)
       root.render(
-        <PortalContainerProvider container={container}>
-          <CatalogDialog kind={kind} onSearch={(query, page) => { calls.push([query, page]) }} />
-        </PortalContainerProvider>,
+        <WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: container } }}>
+          <AgentActionFeedbackProvider>
+            <PortalContainerProvider container={container}>
+              <CatalogDialog kind={kind} onSearch={(query, page) => { calls.push([query, page]) }}
+                onSelect={() => { results[kind].confirmations += 1 }} />
+            </PortalContainerProvider>
+          </AgentActionFeedbackProvider>
+        </WebRuntimeProvider>,
       )
     })
     if (root === undefined) throw new Error('Missing React root')
@@ -135,6 +178,27 @@ async function run() {
     if (!trigger) throw new Error(`Missing ${kind} trigger`)
     trigger.click()
     await settle()
+    if (kind !== 'laboratory') {
+      const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!
+      dialog.style.cssText = 'position:relative;z-index:50;transform:translate(0px);width:340px'
+      flushSync(() => feedback({ id: kind, operationId: `outpatient.${kind === 'diagnosis' ? 'diagnosis' : 'prescription'}.draft.set`, input: {}, phase: 'executing' }))
+      await settle(200)
+      const isHighlighted = (target: Element | null) => {
+        if (!target) return false
+        const targetRect = target.getBoundingClientRect()
+        return [...dialog.querySelectorAll('.clinmesh-agent-target')].some(glow => {
+          const glowRect = glow.getBoundingClientRect()
+          return ['left', 'top', 'width', 'height'].every(key => Math.abs(
+            (targetRect[key as keyof DOMRect] as number) - (glowRect[key as keyof DOMRect] as number),
+          ) < 1)
+        })
+      }
+      results[kind].catalogHighlighted = isHighlighted(dialog)
+      if (kind === 'medication') {
+        results[kind].productHighlighted = isHighlighted(dialog.querySelector('[data-agent-medication-name]'))
+        results[kind].packageHighlighted = isHighlighted(dialog.querySelector('[data-agent-medication-package]'))
+      }
+    }
     const input = container.querySelector(`input[aria-label="${searchInputLabels[kind]}"]`)
     results[kind].inputFound = input instanceof HTMLInputElement
     if (kind === 'laboratory' && input instanceof HTMLInputElement) {
@@ -143,6 +207,24 @@ async function run() {
       typeInto(input, '血常规')
       await settle(450)
     }
+    const selection = container.querySelector<HTMLButtonElement>('button[aria-pressed]')
+    const confirm = [...container.querySelectorAll('button')].find(button => (
+      button.textContent === { diagnosis: '加入诊断', laboratory: '确定选择', medication: '加入处方' }[kind]
+    ))
+    if (!selection || !confirm) throw new Error(`Missing ${kind} selection controls`)
+    for (let index = 0; index < 4; index += 1) {
+      results[kind].selectionStates.push(selection.getAttribute('aria-pressed'))
+      results[kind].confirmDisabled.push(confirm.disabled)
+      if (index < 3) {
+        selection.click()
+        await settle()
+      }
+    }
+    if (results[kind].confirmations !== 0) throw new Error(`Selection unexpectedly confirmed ${kind}`)
+    const row = selection.closest('tr')
+    if (!row) throw new Error(`Missing ${kind} row`)
+    row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, composed: true }))
+    await settle()
     void root.unmount()
     container.textContent = ''
   }
@@ -174,7 +256,9 @@ async function run() {
   const close = [...(dialog?.querySelectorAll('button') ?? [])].find(button => button.textContent === '关闭')
   if (!close) throw new Error('Missing persona failure details close button')
   close.click()
-  await settle()
+  for (let attempt = 0; attempt < 20 && container.querySelector('[role="dialog"]') !== null; attempt += 1) {
+    await settle()
+  }
   persona.closed = container.querySelector('[role="dialog"]') === null
   personaRoot.unmount()
   document.title = encodeResult({ ...results, persona, windowErrors })

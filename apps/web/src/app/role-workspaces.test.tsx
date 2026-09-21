@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DoctorWorkspace } from './doctor-workspace.tsx'
 import { useSyntheticPatientLibraryViewStore } from './synthetic-patient-library-view-store.ts'
 import { WebApp } from './web-app.tsx'
+import { agentActionTarget } from './agent-action-targets.ts'
 import type { WebSurfaceAgentController, WebSurfaceAgentTool } from './web-runtime.tsx'
 
 const forbiddenChineseClinicalUiTerms = /Agent|评分|仿真|Scenario|Epoch/i
@@ -2202,7 +2203,7 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: '确认挂号' }))
 
     expect(await screen.findByText('操作冲突')).toBeTruthy()
-    expect(screen.getByText('数据已发生变化，请刷新后重新确认。')).toBeTruthy()
+    expect(screen.getByText('当前业务状态或前置条件不满足，请核对病例信息后重试。')).toBeTruthy()
   })
 
   it('keeps a long Chinese patient name available through search and selection', async () => {
@@ -2424,7 +2425,7 @@ describe('role workspaces', () => {
     expect(await screen.findByRole('listitem', { name: '选择病例 合成患者周明' })).toBeTruthy()
   })
 
-  it('restores frozen dialogue and displays a free-text message while the patient is typing', async () => {
+  it.each([true, false])('restores dialogue and editable records with recorded triage=%s', async hasTriage => {
     const patient = {
       birthDate: '1988-03-16',
       gender: 'female',
@@ -2459,7 +2460,7 @@ describe('role workspaces', () => {
             encounterId: 'encounter-direct',
             encounterVersion: '1',
             patient,
-            presentation: virtualPatientPresentation,
+            presentation: hasTriage ? virtualPatientPresentation : null,
             status: 'first-visit',
             taskId: 'task-doctor-direct',
             taskVersion: '1',
@@ -2474,7 +2475,7 @@ describe('role workspaces', () => {
           consultation: { turns, version: consultationVersion },
           encounter: { id: 'encounter-direct', status: 'in-progress', versionId: '1' },
           patient,
-          presentation: virtualPatientPresentation,
+          presentation: hasTriage ? virtualPatientPresentation : null,
           priorFacts: [],
           status: 'first-visit',
           taskId: 'task-doctor-direct',
@@ -2519,11 +2520,13 @@ describe('role workspaces', () => {
 
     const contextRail = await screen.findByRole('complementary', { name: '病例上下文' })
     expect(within(contextRail).queryByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeNull()
+    if (!hasTriage) expect(within(contextRail).getAllByText('未记录分诊信息').length).toBeGreaterThan(0)
     await user.click(await screen.findByRole('tab', { name: '问诊记录' }))
     const consultationRegion = screen.getByRole('region', { name: '问诊记录' })
     expect(within(consultationRegion).getByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeTruthy()
-    await user.type(within(consultationRegion).getByRole('textbox', { name: '向患者提问' }), '除了发热，还有哪里不舒服？')
-    await user.click(within(consultationRegion).getByRole('button', { name: '向患者提问' }))
+    const composer = within(consultationRegion).getByRole('group', { name: '向患者提问' })
+    await user.type(within(composer).getByRole('textbox', { name: '向患者提问' }), '除了发热，还有哪里不舒服？')
+    await user.click(within(composer).getByRole('button', { name: '向患者提问' }))
 
     const pendingButton = await screen.findByRole('button', { name: '正在等待患者回答' })
     expect((pendingButton as HTMLButtonElement).disabled).toBe(true)
@@ -2533,7 +2536,12 @@ describe('role workspaces', () => {
     expect(await screen.findByText('咽痛，吞咽时更明显，没有气促。')).toBeTruthy()
     expect(screen.getByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeTruthy()
     await user.click(screen.getByRole('tab', { name: '病历记录' }))
-    expect(await screen.findByRole('region', { name: '结构化病历' })).toBeTruthy()
+    const record = await screen.findByRole('region', { name: '结构化病历' })
+    expect(record).toBeTruthy()
+    if (!hasTriage) {
+      expect((within(record).getByLabelText('主诉') as HTMLTextAreaElement).value).toBe('')
+      expect((within(record).getByLabelText('查体') as HTMLTextAreaElement).value).toBe('')
+    }
     expect(screen.queryByText('咽痛，吞咽时更明显，没有气促。')).toBeNull()
     await user.click(screen.getByRole('tab', { name: '问诊记录' }))
     expect(await screen.findByText('咽痛，吞咽时更明显，没有气促。')).toBeTruthy()
@@ -2607,12 +2615,19 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: '向患者提问' }))
 
     expect(await screen.findByText('操作冲突')).toBeTruthy()
-    expect(screen.getByText('数据已发生变化，请刷新后重新确认。')).toBeTruthy()
+    expect(screen.getByText('当前业务状态或前置条件不满足，请核对病例信息后重试。')).toBeTruthy()
     expect(screen.getByText('暂无问诊记录')).toBeTruthy()
     expect(screen.getByRole('textbox', { name: '向患者提问' })).toBeTruthy()
   })
 
-  it('clears the send error after retry succeeds and allows the next doctor message', async () => {
+  it.each(['human', 'agent'])('clears the send error after retry succeeds and allows the next doctor message via %s', async sender => {
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registration = value
+        return () => { if (registration === value) registration = undefined }
+      },
+    }
     const patient = {
       birthDate: '1988-03-16',
       gender: 'female',
@@ -2629,8 +2644,10 @@ describe('role workspaces', () => {
       recordedAt: '2026-09-16T09:00:00+08:00', reportReference: null, sequence: 1, source: 'doctor-typed', speaker: 'doctor' }
     const patientTurn = { ...doctorTurn, id: 'patient-turn', messageText: '昨天傍晚开始的。', personaRevision: 1, sequence: 2, source: 'patient-agent', speaker: 'patient' }
 
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
+      const agentResponse = doctorSurfaceAgentResponse(url.pathname, init)
+      if (agentResponse !== undefined) return agentResponse
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
         return Response.json({
@@ -2658,6 +2675,10 @@ describe('role workspaces', () => {
         return Response.json({
           allergies: [],
           caseId: 'case-direct',
+          clinicalDocument: {
+            draft: { ...structuredClinicalDocument, updatedAt: '2026-09-20T08:00:00Z', version: 1 },
+            signed: [],
+          },
           consultation: { turns: recovered ? [doctorTurn, patientTurn] : failed ? [doctorTurn] : [], version: recovered ? 3 : failed ? 2 : 1 },
           encounter: { id: 'encounter-direct', status: 'in-progress', versionId: '1' },
           patient,
@@ -2684,16 +2705,137 @@ describe('role workspaces', () => {
       throw new Error(`Unexpected request: ${url.pathname}`)
     }))
     const user = userEvent.setup()
-    render(<WebApp />)
+    render(sender === 'agent' ? <WebApp runtime={{
+      mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+    }} /> : <WebApp />)
 
     await user.click(await screen.findByRole('tab', { name: '问诊记录' }))
-    await user.type(await screen.findByRole('textbox', { name: '向患者提问' }), question.text)
-    await user.click(screen.getByRole('button', { name: '向患者提问' }))
-
-    await user.click(await screen.findByRole('button', { name: '重试患者回答' }))
+    if (sender === 'human') {
+      await user.type(await screen.findByRole('textbox', { name: '向患者提问' }), question.text)
+      await user.click(screen.getByRole('button', { name: '向患者提问' }))
+      await user.click(await screen.findByRole('button', { name: '重试患者回答' }))
+    } else {
+      await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_ask_virtual_patient')).toBe(true))
+      expect(registration?.tools.some(tool => tool.name === 'clinmesh_retry_patient_reply')).toBe(false)
+      const ask = registration!.tools.find(tool => tool.name === 'clinmesh_ask_virtual_patient')!
+      await act(async () => {
+        await expect(ask.execute(boundAgentToolInput(ask, { message: question.text }), new AbortController().signal)).rejects.toThrow()
+      })
+      await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_retry_patient_reply')).toBe(true))
+      expect(registration?.tools.some(tool => tool.name === 'clinmesh_ask_virtual_patient')).toBe(false)
+      const retry = registration!.tools.find(tool => tool.name === 'clinmesh_retry_patient_reply')!
+      await act(async () => {
+        await retry.execute(boundAgentToolInput(retry, {}), new AbortController().signal)
+      })
+      await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_ask_virtual_patient')).toBe(true))
+      expect(registration?.tools.some(tool => tool.name === 'clinmesh_retry_patient_reply')).toBe(false)
+    }
     expect(await screen.findByText('昨天傍晚开始的。')).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
     expect((screen.getByRole('textbox', { name: '向患者提问' }) as HTMLTextAreaElement).disabled).toBe(false)
+  })
+
+  it.each([false, true])('keeps ask registered after a successful reply and sends a second round with persisted document=%s', async persistedDocument => {
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registration = value
+        return () => { if (registration === value) registration = undefined }
+      },
+    }
+    const patient = {
+      birthDate: '1988-03-16',
+      gender: 'female',
+      id: 'candidate-patient-001',
+      identifier: 'CM-SYN-CANDIDATE-001',
+      name: '合成候选患者林晓',
+      synthetic: true,
+      versionId: '1',
+    }
+    const question = { code: 'symptom-onset', text: '什么时候开始发热？' }
+    let rounds = 0
+    const versions: number[] = []
+    let releaseQueue: (() => void) | undefined
+    let queueGate: Promise<void> | undefined
+    const doctorTurn = { id: 'doctor-turn', kind: 'text', messageText: question.text, personaRevision: null,
+      recordedAt: '2026-09-16T09:00:00+08:00', reportReference: null, sequence: 1, source: 'doctor-typed', speaker: 'doctor' }
+    const patientTurn = { ...doctorTurn, id: 'patient-turn', messageText: '昨天傍晚开始的。', personaRevision: 1, sequence: 2, source: 'patient-agent', speaker: 'patient' }
+
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      const agentResponse = doctorSurfaceAgentResponse(url.pathname, init)
+      if (agentResponse !== undefined) return agentResponse
+      if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
+      if (url.pathname === '/api/his/v1/catalogs/clinical') {
+        return Response.json({
+          laboratory: [],
+          medications: [],
+          prescriptionConclusionSupported: true,
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/queue') {
+        await queueGate
+        return Response.json({
+          items: [{
+            caseId: 'case-direct',
+            encounterId: 'encounter-direct',
+            encounterVersion: '1',
+            patient,
+            presentation: virtualPatientPresentation,
+            status: 'first-visit',
+            taskId: 'task-doctor-direct',
+            taskVersion: '1',
+          }],
+          ...pagination(1),
+        })
+      }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-direct') {
+        return Response.json({
+          allergies: [],
+          caseId: 'case-direct',
+          clinicalDocument: persistedDocument ? {
+            draft: { ...structuredClinicalDocument, updatedAt: '2026-09-20T08:00:00Z', version: 1 },
+            signed: [],
+          } : undefined,
+          consultation: { turns: rounds > 0 ? [doctorTurn, patientTurn] : [], version: 1 + rounds * 2 },
+          encounter: { id: 'encounter-direct', status: 'in-progress', versionId: '1' },
+          patient,
+          presentation: virtualPatientPresentation,
+          priorFacts: [],
+          status: 'first-visit',
+          taskId: 'task-doctor-direct',
+          taskVersion: '1',
+        })
+      }
+      if (url.pathname === '/api/his/v1/encounters/encounter-direct/actions/ask-consultation-question') {
+        const body = JSON.parse(String(init?.body))
+        versions.push(body.input.expectedConsultationVersion)
+        rounds += 1
+        queueGate = new Promise<void>(resolve => { releaseQueue = resolve })
+        return Response.json(commandResponse({ caseId: 'case-direct', consultationVersion: 1 + rounds * 2, doctorTurn, patientTurn }))
+      }
+      throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    render(<WebApp runtime={{
+      mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+    }} />)
+    await userEvent.setup().click(await screen.findByRole('tab', { name: '问诊记录' }))
+    for (let round = 0; round < 2; round += 1) {
+      await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_ask_virtual_patient')).toBe(true))
+      const ask = registration!.tools.find(tool => tool.name === 'clinmesh_ask_virtual_patient')!
+      let execution: ReturnType<WebSurfaceAgentTool['execute']> | undefined
+      act(() => {
+        execution = ask.execute(boundAgentToolInput(ask, { message: question.text }), new AbortController().signal)
+      })
+      await waitFor(() => expect(releaseQueue).toBeDefined())
+      await waitFor(() => expect(screen.getByText('昨天傍晚开始的。')).toBeTruthy())
+      expect((screen.getByRole('textbox', { name: '向患者提问' }) as HTMLTextAreaElement).disabled).toBe(true)
+      await act(async () => { releaseQueue?.(); releaseQueue = undefined; await execution })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 150)) })
+      expect((screen.getByRole('textbox', { name: '向患者提问' }) as HTMLTextAreaElement).disabled).toBe(false)
+      await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_ask_virtual_patient')).toBe(true))
+    }
+    expect(versions).toEqual([1, 3])
   })
 
   it('shows the doctor queue without the retired Virtual Patient entry point', async () => {
@@ -2707,6 +2849,160 @@ describe('role workspaces', () => {
     expect(screen.getByText('已完成的交接会从当前队列移除。')).toBeTruthy()
     expect(screen.queryByRole('tab', { name: /候选患者/ })).toBeNull()
     expect(document.body.textContent).not.toMatch(forbiddenChineseClinicalUiTerms)
+  })
+
+  it.each([false, true])('switches every doctor section through authorized Tools with shadow DOM=%s', async shadow => {
+    window.history.replaceState(null, '', '/consultation')
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registration = value
+        return () => { if (registration === value) registration = undefined }
+      },
+    }
+    const patient = {
+      id: 'patient-1', identifier: 'CM-SYN-001', name: '合成测试患者',
+      birthDate: '1988-03-16', gender: 'female', synthetic: true, versionId: '1',
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      const agentResponse = doctorSurfaceAgentResponse(path, init)
+      if (agentResponse !== undefined) return agentResponse
+      if (path === '/api/auth/context') return Response.json(doctorSession)
+      if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
+      if (path === '/api/his/v1/doctor/queue') return Response.json({
+        items: [{ caseId: 'case-1', encounterId: 'encounter-1', encounterVersion: '1',
+          patient, presentation: doctorPresentation, status: 'first-visit', taskId: 'task-1', taskVersion: '1' }],
+        ...pagination(1),
+      })
+      if (path === '/api/his/v1/doctor/cases/case-1') return Response.json({
+        allergies: [], caseId: 'case-1', consultation: { turns: [], version: 1 },
+        encounter: { id: 'encounter-1', status: 'in-progress', versionId: '1' },
+        patient, presentation: doctorPresentation, priorFacts: [], status: 'first-visit',
+        taskId: 'task-1', taskVersion: '1',
+      })
+      throw new Error(`Unexpected request: ${path}`)
+    }))
+    const host = document.createElement('div')
+    document.body.append(host)
+    const container = document.createElement('div')
+    const root = shadow ? host.attachShadow({ mode: 'open' }) : host
+    root.append(container)
+    const view = render(<WebApp runtime={{
+      mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+    }} />, { container })
+    const queries = within(container)
+    try {
+      await queries.findByRole('tab', { name: '病历记录' })
+      for (const { section, label } of [
+        { section: 'consultation', label: '问诊记录' }, { section: 'record', label: '病历记录' },
+        { section: 'diagnosis', label: '诊断' }, { section: 'prescription', label: '处方' },
+        { section: 'laboratory', label: '检验' },
+      ]) {
+        await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_select_doctor_section')).toBe(true))
+        const tool = registration!.tools.find(tool => tool.name === 'clinmesh_select_doctor_section')!
+        await act(async () => {
+          await tool.execute(boundAgentToolInput(tool, { section }), new AbortController().signal)
+        })
+        await waitFor(() => expect(queries.getByRole('tab', { name: label }).getAttribute('aria-selected')).toBe('true'))
+        expect(queries.getByRole('tabpanel', { name: label }).getAttribute('data-agent-section')).toBe(section)
+        expect(container.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('已完成')
+        view.rerender(<WebApp runtime={{
+          mode: 'surface', surfaceAgent, surfaceAgentStatus: 'connecting', surfaceSessionId: 'dsh-session-1',
+        }} />)
+        expect(container.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('已完成')
+        view.rerender(<WebApp runtime={{
+          mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+        }} />)
+      }
+    } finally {
+      view.unmount()
+      host.remove()
+    }
+  })
+
+  it.each([false, true])('discovers another queue patient and switches through authorized Tools with shadow DOM=%s', async shadow => {
+    window.history.replaceState(null, '', '/consultation')
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registration = value
+        return () => { if (registration === value) registration = undefined }
+      },
+    }
+    const patient = {
+      id: 'patient-1', identifier: 'CM-SYN-001', name: '合成测试患者',
+      birthDate: '1988-03-16', gender: 'female', synthetic: true, versionId: '1',
+    }
+    const queueItems = [1, 2].map(index => ({
+      caseId: 'case-' + index, encounterId: 'encounter-' + index, encounterVersion: '1',
+      patient: { ...patient, id: 'patient-' + index, name: '合成测试患者' + index },
+      presentation: doctorPresentation, status: index === 1 ? 'first-visit' : 'awaiting-doctor', taskId: 'task-' + index, taskVersion: '1',
+    }))
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      const agentResponse = doctorSurfaceAgentResponse(path, init)
+      if (agentResponse !== undefined) return agentResponse
+      if (path === '/api/auth/context') return Response.json(doctorSession)
+      if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
+      if (path === '/api/his/v1/doctor/queue') {
+        const queueView = new URL(String(input), 'http://localhost').searchParams.get('view')
+        const items = queueView === 'active' ? [queueItems[0]] : queueView === 'waiting' ? [queueItems[1]] : queueItems
+        return Response.json({ items, ...pagination(items.length) })
+      }
+      const item = queueItems.find(item => path === '/api/his/v1/doctor/cases/' + item.caseId)
+      if (item) return Response.json({
+        ...item, allergies: [], consultation: { turns: [], version: 1 },
+        encounter: { id: item.encounterId, status: 'in-progress', versionId: '1' }, priorFacts: [],
+      })
+      throw new Error(`Unexpected request: ${path}`)
+    }))
+    const host = document.createElement('div')
+    document.body.append(host)
+    const container = document.createElement('div')
+    const root = shadow ? host.attachShadow({ mode: 'open' }) : host
+    root.append(container)
+    const view = render(<WebApp runtime={{
+      mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+    }} />, { container })
+    const queries = within(container)
+    try {
+      await queries.findByRole('tab', { name: '病历记录' })
+      const call = async (name: string, input = {}) => {
+        await waitFor(() => expect(registration?.tools.some(tool => tool.name === name)).toBe(true))
+        const tool = registration!.tools.find(tool => tool.name === name)!
+        let result = ''
+        await act(async () => { result = await tool.execute(boundAgentToolInput(tool, input), new AbortController().signal) })
+        return JSON.parse(result).data
+      }
+      const context = await call('clinmesh_read_current_context')
+      for (const tool of registration!.tools) expect(tool.description.length, tool.name).toBeLessThanOrEqual(512)
+      expect(context.pageState.queue).toMatchObject({ items: queueItems, ...pagination(2) })
+      const doctor = await call('clinmesh_read_doctor_context')
+      expect(doctor.queue).toEqual(context.pageState.queue)
+      expect(doctor.caseId).toBe('case-1')
+      const target = doctor.queue.items.find((item: { patient: { name: string } }) => item.patient.name === '合成测试患者2')
+      expect(target).toBeDefined()
+      await expect(call('clinmesh_select_doctor_case', { caseId: 'outside-current-page' })).rejects.toThrow('Case is not in the current doctor queue')
+      await call('clinmesh_select_doctor_case', { caseId: target.caseId })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 150)) })
+      const selected = await call('clinmesh_read_doctor_context')
+      expect(selected.caseId).toBe('case-2')
+      expect(selected.patient.name).toBe('合成测试患者2')
+      expect(container.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('已完成')
+      view.rerender(<WebApp runtime={{
+        mode: 'surface', surfaceAgent, surfaceAgentStatus: 'connecting', surfaceSessionId: 'dsh-session-1',
+      }} />)
+      expect(container.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('已完成')
+      view.rerender(<WebApp runtime={{
+        mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+      }} />)
+      expect(selected.queue.items).toEqual(queueItems)
+      expect(queries.getByRole('tab', { name: '待诊' }).getAttribute('aria-selected')).toBe('true')
+    } finally {
+      view.unmount()
+      host.remove()
+    }
   })
 
   it('narrows an empty doctor page to common Tools while validating every grant', async () => {
@@ -3023,10 +3319,33 @@ describe('role workspaces', () => {
     expect(await screen.findByText('血常规')).toBeTruthy()
     expect(within(requestRegion).queryByRole('combobox', { name: '检验适应证' })).toBeNull()
     expect(within(requestRegion).getByText('临床评估')).toBeTruthy()
+    const expectVisibleLaboratoryDraft = async (): Promise<void> => {
+      await waitFor(() => expect(registration?.tools.some(candidate => (
+        candidate.name === 'clinmesh_read_current_context'
+      ))).toBe(true))
+      const read = registration!.tools.find(candidate => candidate.name === 'clinmesh_read_current_context')!
+      await act(async () => {
+        const result = JSON.parse(await read.execute(boundAgentToolInput(read, {}), new AbortController().signal))
+        expect(result).toMatchObject({ data: { pageState: { laboratoryDraft: {
+          catalogItemId: 'hospital-laboratory-service-cbc',
+          indicationCode: 'clinical-evaluation',
+        } } } })
+      })
+    }
+    await expectVisibleLaboratoryDraft()
     expect(within(requestRegion).queryByRole('button', { name: '保存检验草稿' })).toBeNull()
     expect(await screen.findByText('草稿已自动保存')).toBeTruthy()
     const savedRequestRegion = screen.getByRole('region', { name: '检验申请' })
     expect(within(savedRequestRegion).getByText('草稿已自动保存')).toBeTruthy()
+    cleanup()
+    render(<WebApp runtime={{
+      mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+    }} />)
+    await user.click(await screen.findByRole('tab', { name: '检验' }))
+    const reopenedRequestRegion = await screen.findByRole('region', { name: '检验申请' })
+    expect(await within(reopenedRequestRegion).findByText(referenceConcept.display)).toBeTruthy()
+    expect(within(reopenedRequestRegion).getByText('临床评估')).toBeTruthy()
+    await expectVisibleLaboratoryDraft()
     await waitFor(() => {
       const tool = registration?.tools.find(candidate => (
         candidate.name === 'clinmesh_fill_laboratory_draft'
@@ -3807,7 +4126,7 @@ describe('role workspaces', () => {
     expect(screen.getByRole('heading', { name: '确认支付' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '提交支付' }))
 
-    expect(await screen.findByText('数据已发生变化，请刷新后重新确认。')).toBeTruthy()
+    expect(await screen.findByText('当前业务状态或前置条件不满足，请核对病例信息后重试。')).toBeTruthy()
     expect(screen.getByRole('alertdialog')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '提交支付' }))
     expect(await screen.findByText('支付成功')).toBeTruthy()
@@ -4103,6 +4422,10 @@ describe('role workspaces', () => {
     await user.type(screen.getByLabelText('诊疗计划'), '口服抗病毒药物，对症处理，必要时复诊。')
     await user.clear(screen.getByLabelText('数量'))
     await user.type(screen.getByLabelText('数量'), '10')
+    const selectors = agentActionTarget({ id: 'revisit', operationId: 'outpatient.revisit.draft.set', input: {}, phase: 'executing' }).selectors
+    for (const field of [medicationSelect, screen.getByRole('combobox', { name: '剂量' }), screen.getByRole('combobox', { name: '频次' }), screen.getByLabelText('数量')]) {
+      expect(selectors.some(selector => field.matches(selector))).toBe(true)
+    }
     await user.click(screen.getByRole('button', { name: '保存复诊草稿' }))
 
     expect(await screen.findByText('复诊草稿已保存')).toBeTruthy()

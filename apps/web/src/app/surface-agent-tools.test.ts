@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentToolDefinition } from '@clinmesh/contracts/agent'
 import { buildSurfaceAgentTools } from './surface-agent-tools.ts'
+import { ApiClientError } from './api-client.ts'
 
 const binding = {
   snapshot: {
@@ -63,6 +64,40 @@ const definitions: AgentToolDefinition[] = [
 ]
 
 describe('ClinMesh Surface Agent tools', () => {
+  it.each([
+    [new ApiClientError(0, 'NETWORK_ERROR', 'Response lost'), 'unconfirmed'],
+    [new ApiClientError(0, 'REQUEST_TIMEOUT', 'Timed out'), 'unconfirmed'],
+    [new ApiClientError(200, 'UNEXPECTED_RESPONSE', 'Unreadable response'), 'unconfirmed'],
+    [new ApiClientError(409, 'VERSION_CONFLICT', 'Version changed'), 'failed'],
+  ])('preserves uncertain results for page writes and approved Commands: %s', async (error, phase) => {
+    for (const detached of [false, true]) {
+      let rejectDecision: (error: unknown) => void = () => undefined
+      const decision = new Promise<never>((_, reject) => { rejectDecision = reject })
+      const feedback = vi.fn()
+      const tools = buildSurfaceAgentTools({
+        actions: { 'registration.patient.create.propose': {
+          description: 'Create patient', parameters: { type: 'object' },
+          execute: () => {
+            if (!detached) throw error
+            return { kind: 'clinmesh-agent-review', decision, bindDecisionGate: () => undefined }
+          },
+        } },
+        binding, definitions,
+        authorize: async input => ({ callId: 'call', context: binding.snapshot, dshSessionId: 'session',
+          operationId: input.operationId, proposalId: 'proposal', receiptToken: 'receipt', status: 'authorized' }),
+        complete: async () => ({}), onActionFeedback: feedback,
+        issueProof: async () => 'proof', readState: () => ({}), review: async () => ({}),
+      })
+      const execute = tools.find(tool => tool.name === 'clinmesh_prepare_create_patient')!.execute(
+        { contextId: binding.snapshot.id, scopeKey: binding.snapshot.scopeKey }, new AbortController().signal,
+      )
+      if (detached) { await execute; rejectDecision(error) }
+      else await expect(execute).rejects.toThrow(error.message)
+      await vi.waitFor(() => expect(feedback.mock.lastCall?.[0].phase).toBe(phase))
+      if (phase === 'unconfirmed') expect(feedback.mock.lastCall?.[0].message).toContain('请读取当前状态')
+    }
+  })
+
   it('binds the current context and records one authorized page action', async () => {
     const search = vi.fn(async (input: unknown) => ({ input, matches: 1 }))
     const authorize = vi.fn(async input => ({
@@ -74,6 +109,7 @@ describe('ClinMesh Surface Agent tools', () => {
       status: 'authorized' as const,
     }))
     const complete = vi.fn(async () => ({ status: 'completed' as const }))
+    const feedback = vi.fn()
     const tools = buildSurfaceAgentTools({
       actions: {
         'registration.patient.search': {
@@ -98,6 +134,7 @@ describe('ClinMesh Surface Agent tools', () => {
       binding,
       complete,
       definitions,
+      onActionFeedback: feedback,
       issueProof: vi.fn(async () => 'proof-with-at-least-32-characters'),
       readState: () => ({ queueStatus: 'empty' }),
       review: vi.fn(async () => ({ decision: 'approved' })),
@@ -107,6 +144,9 @@ describe('ClinMesh Surface Agent tools', () => {
       'clinmesh_read_current_context',
       'clinmesh_search_patients',
     ])
+    expect(tools[1]?.description).toContain('读取当前授权页面及未保存内容')
+    expect(tools[1]?.description).toContain('const 不会自动填入')
+    expect(tools[1]?.description).toContain('不是强制覆盖授权或并发修改保护')
     expect(tools[1]?.parameters).toMatchObject({
       properties: {
         contextId: { const: 'context-1' },
@@ -125,6 +165,10 @@ describe('ClinMesh Surface Agent tools', () => {
     }, new AbortController().signal)) as Record<string, unknown>
     expect(result).toMatchObject({ data: { matches: 1 }, ok: true })
     expect(search).toHaveBeenCalledOnce()
+    expect(feedback.mock.calls.map(([event]) => event.phase)).toEqual(['executing', 'completed'])
+    expect(feedback.mock.calls[0]?.[0]).toMatchObject({
+      operationId: 'registration.patient.search', input: { query: '张' },
+    })
     expect(authorize).toHaveBeenCalledOnce()
     expect(authorize).toHaveBeenCalledWith(
       expect.objectContaining({ input: { query: '张' } }),
@@ -135,6 +179,23 @@ describe('ClinMesh Surface Agent tools', () => {
       expect.any(AbortSignal),
     )
   })
+
+  it.each(['AGENT_CONTEXT_EXPIRED', 'AGENT_CONTEXT_INVALID', 'AGENT_CONTEXT_STALE'])(
+    'gives current-binding recovery guidance before executing for %s', async code => {
+      const readState = vi.fn()
+      const tools = buildSurfaceAgentTools({
+        actions: {}, binding, definitions,
+        authorize: async () => { throw new ApiClientError(409, code, 'Context unavailable') },
+        complete: vi.fn(), issueProof: async () => 'proof', readState, review: vi.fn(),
+      })
+      const result = tools[0]!.execute({
+        contextId: binding.snapshot.id, scopeKey: binding.snapshot.scopeKey,
+      }, new AbortController().signal)
+      await expect(result).rejects.toThrow(`${code}:`)
+      await expect(result).rejects.toThrow('当前工具 schema')
+      expect(readState).not.toHaveBeenCalled()
+    },
+  )
 
   it('returns only registered page state and rejects another scope key', async () => {
     const authorize = vi.fn(async input => ({
@@ -175,10 +236,13 @@ describe('ClinMesh Surface Agent tools', () => {
     })
     expect(JSON.stringify(value)).not.toContain('unavailableReason')
     expect(JSON.stringify(value)).not.toContain('hiddenFacts')
+    await expect(read.execute({}, new AbortController().signal))
+      .rejects.toThrow('CLINMESH_BINDING_ARGUMENTS_INVALID')
     await expect(read.execute(
       { contextId: 'context-1', scopeKey: 'clinmesh:forged' },
       new AbortController().signal,
-    )).rejects.toThrow('scope')
+    )).rejects.toThrow('CLINMESH_BINDING_MISMATCH')
+    expect(authorize).toHaveBeenCalledOnce()
   })
 
   it('returns a pending proposal before completing the later human review decision', async () => {
@@ -187,6 +251,7 @@ describe('ClinMesh Surface Agent tools', () => {
       resolveDecision = resolve
     })
     const bindDecisionGate = vi.fn()
+    const feedback = vi.fn()
     const complete = vi.fn(async () => ({ status: 'completed' as const }))
     const tools = buildSurfaceAgentTools({
       actions: {
@@ -208,6 +273,7 @@ describe('ClinMesh Surface Agent tools', () => {
       binding,
       complete,
       definitions,
+      onActionFeedback: feedback,
       issueProof: vi.fn(async () => 'proof-with-at-least-32-characters'),
       readState: () => ({}),
       review: vi.fn(async () => ({
@@ -224,11 +290,42 @@ describe('ClinMesh Surface Agent tools', () => {
     )).resolves.toContain('awaiting-human-review')
     expect(complete).not.toHaveBeenCalled()
     expect(bindDecisionGate).toHaveBeenCalledOnce()
+    expect(feedback.mock.calls.map(([event]) => event.phase)).toEqual(['executing', 'awaiting-review'])
 
     resolveDecision({ approved: false })
     await vi.waitFor(() => expect(complete).toHaveBeenCalledWith(
       expect.objectContaining({ ok: true, result: { approved: false } }),
       expect.any(AbortSignal),
     ))
+    expect(feedback.mock.lastCall?.[0].phase).toBe('rejected')
+  })
+
+  it('does not report success when authorization fails or the result receipt is unconfirmed', async () => {
+    const feedback = vi.fn()
+    const authorize = vi.fn(async () => { throw new Error('scope expired') })
+    const complete = vi.fn(async () => { throw new Error('receipt unavailable') })
+    const makeTools = () => buildSurfaceAgentTools({
+      actions: { 'registration.patient.search': {
+        description: 'Search patients', parameters: { type: 'object' }, execute: () => ({ matches: 1 }),
+      } },
+      binding, definitions, authorize, complete, onActionFeedback: feedback,
+      issueProof: async () => 'proof', readState: () => ({}), review: async () => ({}),
+    })
+    const bound = { contextId: binding.snapshot.id, scopeKey: binding.snapshot.scopeKey, query: '张' }
+    await expect(makeTools()[1]!.execute(bound, new AbortController().signal)).rejects.toThrow('scope expired')
+    expect(feedback).not.toHaveBeenCalled()
+    const accepted = {
+      callId: 'call', context: binding.snapshot, dshSessionId: 'session', operationId: 'registration.patient.search',
+      receiptToken: 'receipt', status: 'authorized' as const,
+    }
+    const authorized = buildSurfaceAgentTools({
+      actions: { 'registration.patient.search': {
+        description: 'Search patients', parameters: { type: 'object' }, execute: () => ({ matches: 1 }),
+      } },
+      binding, definitions, authorize: async () => accepted, complete, onActionFeedback: feedback,
+      issueProof: async () => 'proof', readState: () => ({}), review: async () => ({}),
+    })
+    await expect(authorized[1]!.execute(bound, new AbortController().signal)).rejects.toThrow('receipt unavailable')
+    expect(feedback.mock.calls.map(([event]) => event.phase)).toEqual(['executing', 'unconfirmed'])
   })
 })

@@ -23,6 +23,7 @@ import {
 import { buildSurfaceAgentTools, type SurfaceAgentPageAction } from './surface-agent-tools.ts'
 import { useWebRuntime } from './web-runtime.tsx'
 import { useAgentReview } from './agent-review.tsx'
+import { useAgentActionFeedback } from './agent-action-feedback.tsx'
 
 const viewPaths: Record<AgentViewId, string> = {
   billing: '/billing',
@@ -70,6 +71,16 @@ export function useSurfaceAgentPublisher(input: {
     input.session.actor.workspaceId,
   ])
   const page = registeredPage?.claim.viewId === input.activeSection ? registeredPage : defaultPage
+  const onActionFeedback = useAgentActionFeedback(runtime.mode !== 'surface' || runtime.surfaceActive === false
+    || (runtime.surfaceAgentStatus !== undefined && runtime.surfaceAgentStatus !== 'active'
+      && runtime.surfaceAgentStatus !== 'connecting')
+    || runtime.surfaceSessionId === undefined ? undefined : {
+      identity: [runtime.surfaceSessionId, input.session.actor.actorId, input.session.actor.workspaceId,
+        input.session.actor.epoch, input.session.actor.practitionerRoleId].join(':'),
+      view: page.claim.viewId,
+      selection: page.feedbackSelectionId ?? page.claim.selection?.id ?? '',
+      section: page.claim.activeSection ?? '',
+    })
   const [pageContextClientId] = useState(() => `clinmesh-surface-${crypto.randomUUID()}`)
   const pageContextRevision = useRef(0)
   const [binding, setBinding] = useState<AgentPageContextBinding>()
@@ -270,6 +281,7 @@ export function useSurfaceAgentPublisher(input: {
       }),
       onExecutionSettled,
       onExecutionStart,
+      onActionFeedback,
       readState: publishedPage.readState,
       review: (request, signal) => reviewAgentToolCall(request, signal),
       strictDefinitions: publishedPage === registeredPage,
@@ -279,7 +291,7 @@ export function useSurfaceAgentPublisher(input: {
       scopeKey: publishedBinding.snapshot.scopeKey,
       tools,
     })
-  }, [input.navigate, onExecutionSettled, onExecutionStart, published, registeredPage, runtime.surfaceAgent])
+  }, [input.navigate, onActionFeedback, onExecutionSettled, onExecutionStart, published, registeredPage, runtime.surfaceAgent])
 }
 
 function commonActions(

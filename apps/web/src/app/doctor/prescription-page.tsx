@@ -25,12 +25,12 @@ import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-gro
 import {
   CheckIcon,
   CircleAlertIcon,
-  CircleXIcon,
   PillIcon,
   RotateCcwIcon,
   Trash2Icon,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { ApiClientError } from '../api-client.ts'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
@@ -163,6 +163,10 @@ export function PrescriptionPage({
   })
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
   const submittedItems = items.map(({ key: _key, ...item }) => item)
+  useRegisterAgentForm({
+    viewId: 'consultation', selectionId: detail.caseId, name: 'prescription',
+    values: { mode, items: items.map(({ catalogItemId, courseDays, doseText, frequencyCode, quantity }) => ({ catalogItemId, courseDays, doseText, frequencyCode, quantity })) },
+  })
   const currentRevision = JSON.stringify(submittedItems)
   useEffect(() => {
     if (actions.saveDraft.success && actions.saveDraft.savedRevision === currentRevision) {
@@ -326,7 +330,7 @@ export function PrescriptionPage({
 
       {noMedicationConclusion === undefined ? null : (
         <Alert>
-          <CircleXIcon aria-hidden="true" />
+          <CheckIcon aria-hidden="true" />
           <AlertTitle>{messages.noMedicationConfirmed}</AlertTitle>
           <AlertDescription>
             {messages.authoredAt} · {formatClinicalDateTime(noMedicationConclusion.authoredAt, locale)}
@@ -421,7 +425,7 @@ export function PrescriptionPage({
                     key={item.key}
                   >
                     <FieldLegend className="sr-only" variant="label">{messages.medication} {index + 1}</FieldLegend>
-                    <div className="min-w-0 self-center">
+                    <div data-agent-medication-name="" className="min-w-0 self-center">
                       <span className="min-w-0">
                         <strong className="flex gap-1 break-words text-sm">
                           <span aria-hidden="true">{index + 1}.</span>
@@ -664,7 +668,7 @@ export function PrescriptionPage({
               onClick={actions.confirmNoMedication.onSubmit}
               type="button"
             >
-              <CircleXIcon data-icon="inline-start" />{messages.confirmNoMedication}
+              <CheckIcon aria-hidden="true" data-icon="inline-start" />{messages.confirmNoMedication}
             </Button>
             {actions.confirmNoMedication.error === null ? null : (
               <ErrorAlert

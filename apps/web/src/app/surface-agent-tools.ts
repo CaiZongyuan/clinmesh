@@ -10,6 +10,9 @@ import {
 import { z } from 'zod'
 import type { WebSurfaceAgentTool } from './web-runtime.tsx'
 import { isAgentReviewTask, type AgentReviewTask } from './agent-review.tsx'
+import { ApiClientError } from './api-client.ts'
+
+const editingInstruction = '每次调用 JSON 须显式传入当前 schema 的 contextId、scopeKey 的 const 值，不复用历史值；const 不会自动填入。读取不消耗绑定，无须把写入放在回合首位。缺参则补齐；绑定失效则等待工具定义更新。填写或保存草稿前用 clinmesh_read_current_context 读取当前授权页面及未保存内容，根据用户意图判断是否询问覆盖；这是沟通约定，不是强制覆盖授权或并发修改保护。正式医院动作仍须应用内人工审阅，聊天同意不能替代。'
 
 export interface SurfaceAgentPageAction {
   description: string
@@ -21,6 +24,14 @@ export interface SurfaceAgentPageAction {
     required?: readonly string[]
     additionalProperties?: boolean
   }
+}
+
+export interface AgentActionFeedback {
+  id: string
+  operationId: string
+  input: unknown
+  phase: 'executing' | 'completed' | 'awaiting-review' | 'submitting' | 'rejected' | 'failed' | 'unconfirmed'
+  message?: string
 }
 
 interface BuildSurfaceAgentToolsInput {
@@ -37,6 +48,7 @@ interface BuildSurfaceAgentToolsInput {
   }): Promise<string>
   onExecutionSettled?(): void
   onExecutionStart?(): void
+  onActionFeedback?(event: AgentActionFeedback): void
   readState(): unknown
   review(request: AgentReviewDecisionRequest, signal: AbortSignal): Promise<unknown>
   strictDefinitions?: boolean
@@ -63,7 +75,7 @@ export function buildSurfaceAgentTools(
       : input.actions[definition.operationId]
     if (action === undefined || action.enabled === false) return []
     return [{
-      description: action.description,
+      description: [action.description, editingInstruction].join(' '),
       name: definition.toolName,
       parameters: bindContextParameters(
         action.parameters,
@@ -72,6 +84,9 @@ export function buildSurfaceAgentTools(
       ),
       execute: async (raw, signal) => {
         input.onExecutionStart?.()
+        const id = crypto.randomUUID()
+        let feedback: ((phase: AgentActionFeedback['phase'], message?: string) => void) | undefined
+        const onAbort = (): void => feedback?.('unconfirmed', '操作已中断，结果尚未确认；请读取当前状态。')
         try {
           const values = requireBoundInput(
             raw,
@@ -95,9 +110,27 @@ export function buildSurfaceAgentTools(
             executionProof,
             input: actionInput,
             operationId: definition.operationId,
-          }, signal)
+          }, signal).catch((error: unknown) => {
+            if (error instanceof ApiClientError && [
+              'AGENT_CONTEXT_EXPIRED', 'AGENT_CONTEXT_INVALID', 'AGENT_CONTEXT_STALE',
+            ].includes(error.code)) {
+              throw new Error(`${error.code}: ${error.message}。本次动作尚未执行。请等待 ClinMesh 页面更新工具定义，按当前工具 schema 的 const 重新传入 contextId、scopeKey，并读取当前页面状态后再决定是否重试。不要沿用历史消息中的绑定值；若工具持续未更新，请重新打开 ClinMesh 工作台。`, { cause: error })
+            }
+            throw error
+          })
+          signal.throwIfAborted()
+          if (definition.operationId !== 'ui.context.read' && !definition.operationId.endsWith('.read')) {
+            feedback = (phase, message) => input.onActionFeedback?.({
+              id, operationId: definition.operationId, input: actionInput, phase,
+              ...(message === undefined ? {} : { message }),
+            })
+          }
+          feedback?.('executing')
+          signal.addEventListener('abort', onAbort, { once: true })
+          let actionResolved = false
           try {
             const data = await action.execute(actionInput, signal)
+            actionResolved = true
             if (isAgentReviewTask(data)) {
               if (definition.mode !== 'proposal' || authorization.proposalId === undefined) {
                 throw new Error('ClinMesh review requires an authorized Agent proposal')
@@ -107,7 +140,10 @@ export function buildSurfaceAgentTools(
                 authorization.receiptToken,
                 input.review,
                 input.complete,
+                feedback,
+                definition.operationId,
               )
+              feedback?.('awaiting-review')
               return JSON.stringify({
                 data: {
                   proposalId: authorization.proposalId,
@@ -122,17 +158,23 @@ export function buildSurfaceAgentTools(
               receiptToken: authorization.receiptToken,
               result,
             }, signal)
+            feedback?.(signal.aborted ? 'unconfirmed' : 'completed')
             return JSON.stringify({ data: result, ok: true })
           } catch (error) {
             const message = error instanceof Error ? error.message : 'ClinMesh page action failed'
-            await input.complete({
-              error: message,
-              ok: false,
-              receiptToken: authorization.receiptToken,
-            }, signal)
+            const phase = signal.aborted || actionResolved ? 'unconfirmed' : errorFeedbackPhase(error)
+            feedback?.(phase, feedbackErrorMessage(phase, message))
+            if (!actionResolved) {
+              await input.complete({
+                error: message,
+                ok: false,
+                receiptToken: authorization.receiptToken,
+              }, signal)
+            }
             throw new Error(message)
           }
         } finally {
+          signal.removeEventListener('abort', onAbort)
           input.onExecutionSettled?.()
         }
       },
@@ -145,23 +187,54 @@ function settleAgentReview(
   receiptToken: string,
   review: BuildSurfaceAgentToolsInput['review'],
   complete: BuildSurfaceAgentToolsInput['complete'],
+  feedback?: (phase: AgentActionFeedback['phase'], message?: string) => void,
+  operationId?: string,
 ): void {
   const completionSignal = new AbortController().signal
   task.bindDecisionGate(async decision => {
+    if (decision === 'approved') feedback?.('submitting')
     await review({ decision, receiptToken }, completionSignal)
   })
   void task.decision.then(
-    result => complete({
-      ok: true,
-      receiptToken,
-      result: z.json().parse(result),
-    }, completionSignal),
-    error => complete({
-      error: error instanceof Error ? error.message : 'ClinMesh Agent review was cancelled',
-      ok: false,
-      receiptToken,
-    }, completionSignal),
-  ).catch(() => undefined)
+    async result => {
+      await complete({
+        ok: true,
+        receiptToken,
+        result: z.json().parse(result),
+      }, completionSignal)
+      if (!result.approved) feedback?.('rejected')
+      else if (operationId === 'billing.payment.confirm.propose') {
+        feedback?.(paymentFeedbackPhase(result.data))
+      } else feedback?.('completed')
+    },
+    async error => {
+      const phase = errorFeedbackPhase(error)
+      feedback?.(phase, feedbackErrorMessage(phase, error instanceof Error ? error.message : '人工审阅未完成'))
+      await complete({
+        error: error instanceof Error ? error.message : 'ClinMesh Agent review was cancelled',
+        ok: false,
+        receiptToken,
+      }, completionSignal)
+    },
+  ).catch(() => feedback?.('unconfirmed', '操作结果尚未确认，请读取当前状态。'))
+}
+
+function errorFeedbackPhase(error: unknown): 'failed' | 'unconfirmed' {
+  if (error instanceof ApiClientError && (error.status === 0 || error.status >= 500
+    || error.code === 'UNEXPECTED_RESPONSE')) return 'unconfirmed'
+  return 'failed'
+}
+
+function feedbackErrorMessage(phase: AgentActionFeedback['phase'], message: string): string {
+  return phase === 'unconfirmed' ? `${message}；结果尚未确认，请读取当前状态。` : message
+}
+
+function paymentFeedbackPhase(response: unknown): AgentActionFeedback['phase'] {
+  const data = typeof response === 'object' && response !== null && 'data' in response ? response.data : undefined
+  const outcome = typeof data === 'object' && data !== null && 'outcome' in data ? data.outcome : undefined
+  if (outcome === 'success') return 'completed'
+  if (outcome === 'declined') return 'failed'
+  return 'unconfirmed'
 }
 
 function contextReadAction(input: BuildSurfaceAgentToolsInput): SurfaceAgentPageAction {
@@ -191,8 +264,8 @@ function bindContextParameters(
   return projectDshToolSchema({
     type: 'object',
     properties: {
-      contextId: { type: 'string', const: contextId },
-      scopeKey: { type: 'string', const: scopeKey },
+      contextId: { type: 'string', const: contextId, description: '必填：显式传入此处的 const 值，不复用历史 Context ID。' },
+      scopeKey: { type: 'string', const: scopeKey, description: '必填：显式传入此处的 const 值，与当前 contextId 配对。' },
       ...parameters.properties,
     },
     required: ['contextId', 'scopeKey', ...(parameters.required ?? [])],
@@ -237,8 +310,14 @@ function requireBoundInput(
     throw new TypeError('ClinMesh Tool input must be an object')
   }
   const input = value as Record<string, unknown>
+  const invalidFields = ['contextId', 'scopeKey'].filter(key => (
+    typeof input[key] !== 'string' || input[key].length === 0
+  ))
+  if (invalidFields.length > 0) {
+    throw new TypeError(`CLINMESH_BINDING_ARGUMENTS_INVALID: 调用 JSON 缺少或包含无效的绑定参数：${invalidFields.join(', ')}。尚未执行。请显式传入当前工具 schema 的 const 值；const 不会自动填入。`)
+  }
   if (input.contextId !== contextId || input.scopeKey !== scopeKey) {
-    throw new TypeError('ClinMesh Tool input does not match the active page scope')
+    throw new TypeError('CLINMESH_BINDING_MISMATCH: contextId 或 scopeKey 与当前页面不匹配，尚未执行。请使用当前工具 schema 的 const 值并读取当前页面状态后重试，不要沿用历史消息中的绑定值。')
   }
   return input
 }

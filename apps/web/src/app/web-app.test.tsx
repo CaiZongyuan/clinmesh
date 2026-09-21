@@ -724,7 +724,7 @@ describe('Web application shell', () => {
       throw new Error(`Unexpected request: ${path}`)
     })
 
-    const runtimeFor = (surfaceAgentStatus: 'active' | 'connecting') => ({
+    const runtimeFor = (surfaceAgentStatus: 'active' | 'connecting' | 'unavailable') => ({
       apiBasePath: '/clinmesh-api',
       mode: 'surface' as const,
       surfaceAgent,
@@ -777,6 +777,12 @@ describe('Web application shell', () => {
     expect((screen.getByLabelText('临时患者标识') as HTMLInputElement).value).toBe('CM-AGENT-001')
     expect((screen.getByLabelText('出生日期') as HTMLInputElement).value).toBe('1990-01-01')
     expect(screen.getByRole('combobox', { name: '性别' }).textContent).toContain('男')
+    expect(document.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('草稿已更新')
+    rendered.rerender(<WebApp history={history} runtime={runtimeFor('connecting')} />)
+    expect(document.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('草稿已更新')
+    rendered.rerender(<WebApp history={history} runtime={runtimeFor('unavailable')} />)
+    expect(document.querySelector('.clinmesh-agent-feedback')).toBeNull()
+    rendered.rerender(<WebApp history={history} runtime={runtimeFor('active')} />)
     await waitFor(() => expect(pageClaims.at(-1)?.draft?.dirty).toBe(true))
     await waitFor(() => expect(registration?.tools.some(
       tool => tool.name === 'clinmesh_prepare_create_patient',

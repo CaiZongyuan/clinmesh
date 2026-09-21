@@ -416,7 +416,7 @@ export function WorkspaceShell({
         {runtime.mode === 'surface'
           ? <SurfaceDisplayButton locale={locale} icon={activeIcon} />
           : <SidebarTrigger aria-label={messages.sidebarToggle} title={messages.sidebarToggle} />}
-        <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
+        <h1 data-agent-page-title="" className="min-w-0 flex-1 truncate text-sm font-semibold">
           {messages[activeSection]}
         </h1>
         <div className="ml-auto flex shrink-0 items-center gap-1">
@@ -434,6 +434,7 @@ export function WorkspaceShell({
           />
         </div>
       </header>
+      {runtime.mode === 'surface' ? <div className="shrink-0" data-agent-feedback-status="" /> : null}
       <div
         className={activeSection === 'consultation'
           ? 'flex min-h-0 flex-1 flex-col overflow-hidden bg-background outline-none'

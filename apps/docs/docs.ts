@@ -79,6 +79,14 @@ export const docsPages: DocsPage[] = [
     order: 1,
   },
   {
+    source: 'docs/agent-capabilities.md',
+    route: 'guide/agent-capabilities.md',
+    label: 'Agent 操作与反馈',
+    sidebar: 'guide',
+    section: 'Guide',
+    order: 2,
+  },
+  {
     source: 'docs/testing.md',
     route: 'engineering/testing.md',
     label: '测试策略',

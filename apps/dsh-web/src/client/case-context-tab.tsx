@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import type { WebSurfaceCaseContextState } from '@clinmesh/web/runtime'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type { SidebarRightTabDefinition } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
+import type { SidebarRightTabDefinition, UseSidebarRightTabInfo } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type { ReactSurfaceRegistry } from 'dsh-react-surface/client'
 import { DoctorCaseContextRail } from '../../../web/src/app/doctor/case-context-rail.tsx'
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
@@ -15,11 +15,30 @@ import { createStyledRoot } from './styled-root.ts'
 export function createCaseContextPort() {
   let current: WebSurfaceCaseContextState | null = null
   let openRequester: (() => void) | null = null
+  let toggleRequester: (() => void) | null = null
+  const visibleTabs = new Set<() => void>()
+  const visibilityListeners = new Set<() => void>()
+  const emitVisibility = () => { for (const listener of visibilityListeners) listener() }
   const listeners = new Set<() => void>()
   const emit = () => {
     for (const listener of listeners) listener()
   }
   return {
+    visibility: {
+      getSnapshot: () => visibleTabs.size > 0,
+      subscribe(listener: () => void) {
+        visibilityListeners.add(listener)
+        return () => { visibilityListeners.delete(listener) }
+      },
+      toggle() { toggleRequester?.() },
+    },
+    registerVisibility(hide: () => void) {
+      visibleTabs.add(hide)
+      emitVisibility()
+      return () => { visibleTabs.delete(hide); emitVisibility() }
+    },
+    hideVisible() { for (const hide of visibleTabs) hide() },
+    setToggleRequester(requester: (() => void) | null) { toggleRequester = requester },
     getSnapshot: () => current,
     subscribe(listener: () => void) {
       listeners.add(listener)
@@ -82,7 +101,12 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
   })
 
   // 阶段二:标签体与活动 chip 标题,均以定义 id 为 keyed 槽的 key。
-  function CaseContextTabBody(): React.JSX.Element {
+  function CaseContextTabBody({ useTabInfo }: { useTabInfo: UseSidebarRightTabInfo }): React.JSX.Element {
+    const info = useTabInfo()
+    useLayoutEffect(() => {
+      if (!info.tab.visible) return
+      return port.registerVisibility(() => { info.tab.actions.close() })
+    }, [info.tab.visible, info.tab.id, info.tab.actions])
     const state = useSyncExternalStore(port.subscribe, port.getSnapshot, port.getSnapshot)
     const colorScheme = useSyncExternalStore(subscribeTheme, getTheme, getTheme)
     const hostLocale = useSyncExternalStore(subscribeLocale, getLocale, getLocale)
@@ -159,6 +183,7 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
   // 插件生命周期内的无限后台循环;预算随新的请求段(会话切换、手动请求)重置。
   const RETRY_MAX_ATTEMPTS = 25
   let requestedSession: string | null = null
+  let hiddenSession: string | null = null
   let retryTimer: ReturnType<typeof setTimeout> | null = null
   let retryAttempts = 0
   let loggedFailure = false
@@ -185,6 +210,7 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
       requestedSession = null
       return
     }
+    if (!force && hiddenSession === sessionId) return
     // force = WebApp 内用户主动请求(患者横幅按钮):绕过会话记账,已开即聚焦,
     // 关闭后点击即可恢复;自动路径仍按会话 id 去重。
     if (!force && requestedSession === sessionId) return
@@ -230,6 +256,7 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
       clearRetry()
       return
     }
+    if (hiddenSession === sessionId) return
     if (requestedSession !== sessionId && retryTimer === null) {
       // 新的请求段(新会话):重置重试预算与失败日志记账
       loggedFailure = false
@@ -241,8 +268,24 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
   // 座位未挂载(如 hero 会话)时沿用重试循环,座位出现后自动补开。手动请求是
   // 新的用户动作,重置重试预算后再试。
   port.setOpenRequester(() => {
+    hiddenSession = null
+    requestedSession = null
     retryAttempts = 0
     attempt(true)
+  })
+  port.setToggleRequester(() => {
+    if (!gateOpen()) return
+    if (port.visibility.getSnapshot()) {
+      clearRetry()
+      requestedSession = currentSessionId() ?? null
+      hiddenSession = requestedSession
+      port.hideVisible()
+    } else {
+      hiddenSession = null
+      requestedSession = null
+      retryAttempts = 0
+      attempt(true)
+    }
   })
   const disposeSurfaces = surfaces.subscribe(reevaluate)
   const disposePort = port.subscribe(reevaluate)
@@ -251,6 +294,7 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
 
   return () => {
     port.setOpenRequester(null)
+    port.setToggleRequester(null)
     clearRetry()
     disposeSurfaces()
     disposePort()

@@ -18,6 +18,7 @@ import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { CheckCircleIcon, CheckIcon, CircleAlertIcon, Trash2Icon } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import {
@@ -49,7 +50,8 @@ interface DiagnosisDraftLine extends DiagnosisDraftEntry {
   snapshotDisplay?: string
 }
 
-export function DiagnosisPage({ actions, catalog, elementId, locale, messages, readOnly, referenceSearch, state }: {
+export function DiagnosisPage({ actions, caseId, catalog, elementId, locale, messages, readOnly, referenceSearch, state }: {
+  caseId: string
   actions: DiagnosisPageActions
   catalog: ClinicalCatalog['diagnoses']
   elementId: string
@@ -79,6 +81,10 @@ export function DiagnosisPage({ actions, catalog, elementId, locale, messages, r
     })) ?? []
   })
   const [dirty, setDirty] = useState(false)
+  useRegisterAgentForm({
+    viewId: 'consultation', selectionId: caseId, name: 'diagnosis',
+    values: { entries: entries.map(({ catalogItemId, role, note }) => ({ catalogItemId, role, note })) },
+  })
   const [confirmOpen, setConfirmOpen] = useState(false)
   const usedCatalogItemIds = new Set(entries.map(entry => entry.catalogItemId))
   const addEntry = (selection: DiagnosisCatalogSelection) => {
@@ -273,7 +279,7 @@ export function DiagnosisPage({ actions, catalog, elementId, locale, messages, r
                 candidateIndex === index ? [] : [candidate.catalogItemId]
               )))
               return (
-                <TableRow key={entry.key}>
+                <TableRow data-agent-diagnosis-entry="" key={entry.key}>
                   <TableCell className="align-top">
                     <ToggleGroup
                       aria-label={`${messages.diagnosisRole}${suffix}`}

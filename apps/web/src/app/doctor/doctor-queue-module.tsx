@@ -47,6 +47,7 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
     <li aria-label={label} className="list-none">
       <Button
         aria-label={label}
+        data-agent-selection={item.caseId}
         className={`h-auto min-h-20 w-full justify-between gap-3 rounded-md border px-3 py-2 text-left ${selected
           ? 'border-primary/40 bg-primary/5'
           : 'border-border bg-background hover:border-foreground/20'}`}
@@ -63,7 +64,7 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
                 {messages[`gender_${item.patient.gender}` as 'gender_male']} · {age === undefined ? '-' : messages.patientAge.replace('{age}', String(age))}
               </span>
             </span>
-            <span className="mt-1 block truncate text-xs text-muted-foreground">{item.presentation.chiefComplaint}</span>
+            <span className="mt-1 block truncate text-xs text-muted-foreground">{item.presentation?.chiefComplaint ?? messages.triageNotRecorded}</span>
           </span>
         </span>
         <Badge className="shrink-0" variant="outline">{doctorCaseStatusLabel(item.status, messages)}</Badge>

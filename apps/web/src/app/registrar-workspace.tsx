@@ -536,7 +536,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
                           const selected = selection?.kind === 'synthetic-case'
                             && selection.syntheticCase.caseId === item.caseId
                           return (
-                          <TableRow data-state={selected ? 'selected' : undefined} key={item.caseId}>
+                          <TableRow data-agent-selection={item.caseId} data-state={selected ? 'selected' : undefined} key={item.caseId}>
                             <TableCell><div className="font-medium">{item.name}</div><div className="text-xs text-muted-foreground">{messages[`gender_${item.gender}`]}</div></TableCell>
                             <TableCell>{item.mrn}</TableCell>
                             <TableCell>{caseTypeLabels[item.caseType]}</TableCell>
@@ -620,7 +620,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
                           const selected = selection?.kind === 'patient'
                             && selection.patient.id === patient.id
                           return (
-                          <TableRow data-state={selected ? 'selected' : undefined} key={patient.id}>
+                          <TableRow data-agent-selection={patient.id} data-state={selected ? 'selected' : undefined} key={patient.id}>
                             <TableCell>{patient.name}</TableCell>
                             <TableCell>{patient.identifier}</TableCell>
                             <TableCell className="text-right">

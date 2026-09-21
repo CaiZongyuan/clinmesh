@@ -20,6 +20,8 @@ clinmesh encounter consultation retry-reply --input @reply-retry.json --idempote
 
 `--view waiting` selects cases awaiting first visit or revisit. `--view active` selects first visits, revisit drafts, and cases awaiting reports. Omit `--view` to list both groups. Filtering precedes pagination and the returned total belongs to the selected group. Completed Encounters use `doctor completed-cases list`.
 
+队列和病例详情中的 `presentation: null` 表示没有分诊来源的临床表现，不能推断无症状或生命体征正常。保留病例并读取已有病历、问诊记录等可见证据；不得从 Case Truth 补造主诉、体征或分诊记录。缺失时结构化病历的主诉、现病史和查体初始为空，已有持久草稿不受影响。
+
 ## Clinical conclusions
 
 Diagnosis and medication conclusions are independent. Save a controlled diagnosis draft and confirm it only when exactly one entry is primary. When a diagnosis is already confirmed, saving and confirming a new draft creates a new revision; re-read the case before downstream medication or completion decisions. Then either issue a valid prescription or explicitly confirm no medication. A signed, undispensed prescription may be withdrawn through its own command.

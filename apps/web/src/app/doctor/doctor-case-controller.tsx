@@ -1,5 +1,5 @@
-import { DoctorWorkspaceLayout, DoctorCaseLayout } from './responsive-layout.tsx'
-import { hostCaseContextRail, useSurfaceCaseContextPort } from './surface-case-context.ts'
+import { DoctorWorkspaceLayout, DoctorCaseLayout, DoctorCasePanel, DoctorCaseDetailRegion } from './responsive-layout.tsx'
+import { hostCaseContextRail, useSurfaceCaseContextPort, useSurfaceCaseContextVisible } from './surface-case-context.ts'
 import { useOptionalWebRuntime } from '../web-runtime.tsx'
 import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import {
@@ -39,11 +39,11 @@ import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
+import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, MessagesSquareIcon, PillIcon, PlusIcon, RefreshCwIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   acknowledgeLaboratoryReport,
   sendConsultationMessage,
@@ -118,7 +118,7 @@ import {
 } from './laboratory-page.tsx'
 import { PatientBanner } from './patient-summary.tsx'
 import { PrescriptionPage, type PrescriptionPageActions } from './prescription-page.tsx'
-import { agentViewRevision, useRegisterAgentPage } from '../agent-page-context.tsx'
+import { agentViewRevision, useRegisterAgentPage, useRegisterAgentForm } from '../agent-page-context.tsx'
 import { useAgentReview } from '../agent-review.tsx'
 
 interface DoctorWorkspaceProps {
@@ -262,17 +262,17 @@ function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocume
       priorMedicalHistory: persisted.priorMedicalHistory,
     }
   }
-  const vitals = detail.presentation.vitalSigns
+  const vitals = detail.presentation?.vitalSigns
   return {
     assessment: '',
     auxiliaryExamination: detail.report === undefined
       ? '暂无辅助检查结果。'
       : detail.report.results.map(result => `${result.code} ${String(result.value)}`).join('；'),
-    chiefComplaint: detail.presentation.chiefComplaint,
+    chiefComplaint: detail.presentation?.chiefComplaint ?? '',
     disposition: '',
     followUp: '',
-    historyOfPresentIllness: detail.presentation.summary,
-    physicalExamination: `T ${vitals.temperatureC} °C，P ${vitals.pulseBpm} 次/分，R ${vitals.respirationBpm} 次/分，BP ${vitals.bloodPressure.systolicMmHg}/${vitals.bloodPressure.diastolicMmHg} mmHg，SpO₂ ${vitals.oxygenSaturationPct}%。`,
+    historyOfPresentIllness: detail.presentation?.summary ?? '',
+    physicalExamination: vitals === undefined ? '' : `T ${vitals.temperatureC} °C，P ${vitals.pulseBpm} 次/分，R ${vitals.respirationBpm} 次/分，BP ${vitals.bloodPressure.systolicMmHg}/${vitals.bloodPressure.diastolicMmHg} mmHg，SpO₂ ${vitals.oxygenSaturationPct}%。`,
     priorMedicalHistory: detail.priorFacts.length === 0
       ? '系统未记录既往病史。'
       : detail.priorFacts.map(fact => fact.display || fact.code).join('；'),
@@ -358,6 +358,7 @@ function DoctorCaseController({
     setPage(1)
   }
   const [activeCaseSection, setActiveCaseSection] = useState<DoctorCaseSection>('record')
+  const caseDetailRoot = useRef<HTMLElement>(null)
   const [diagnosisReferenceSearch, setDiagnosisReferenceSearch] = useState<ReferenceCatalogSearchParameters>({
     enabled: false,
     page: 1,
@@ -1134,16 +1135,16 @@ function DoctorCaseController({
   const agentPage = useMemo(() => ({
     actions: {
       'outpatient.case.read': {
-        description: 'Read the selected authorized outpatient case and visible clinical state.',
+        description: 'Read current case and queue.items (waiting + active); use each caseId to select a patient.',
         enabled: activeCaseId !== undefined,
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: (_raw: unknown, signal: AbortSignal) => {
+        execute: async (_raw: unknown, signal: AbortSignal) => {
           if (activeCaseId === undefined) throw new Error(messages.consultationUnavailable)
-          return getDoctorCase(activeCaseId, signal)
+          return { ...await getDoctorCase(activeCaseId, signal), queue: queue.data ?? null }
         },
       },
       'outpatient.case.select': {
-        description: 'Select one case from the current doctor queue.',
+        description: 'Select caseId from loaded queue.items; switch to its waiting or active tab.',
         enabled: (queue.data?.items.length ?? 0) > 0,
         parameters: {
           type: 'object' as const,
@@ -1153,9 +1154,11 @@ function DoctorCaseController({
         },
         execute: (raw: unknown) => {
           const caseId = doctorString(raw, 'caseId', 128)
-          if (!queue.data?.items.some(item => item.caseId === caseId)) {
+          const item = queue.data?.items.find(item => item.caseId === caseId)
+          if (item === undefined) {
             throw new Error('Case is not in the current doctor queue')
           }
+          onQueueViewChange(doctorQueueViewStatusGroups.waiting.includes(item.status) ? 'waiting' : 'active')
           onSelectedCaseIdChange(caseId)
           return { caseId, selected: true }
         },
@@ -1171,7 +1174,7 @@ function DoctorCaseController({
         },
         execute: (raw: unknown) => {
           const section = caseDetailSectionSchema.parse(doctorRecord(raw).section)
-          const tab = document.getElementById(doctorCaseSectionTabElementIds[section])
+          const tab = caseDetailRoot.current?.querySelector(`#${doctorCaseSectionTabElementIds[section]}`)
           if (!(tab instanceof HTMLButtonElement)) {
             throw new Error('Doctor case section is not available')
           }
@@ -1858,6 +1861,7 @@ function DoctorCaseController({
       },
     },
     label: 'ClinMesh · 门诊医生',
+    feedbackSelectionId: activeCaseId ?? '',
     readState: () => ({
       case: detail.data === undefined ? null : {
         caseId: detail.data.caseId,
@@ -1869,6 +1873,8 @@ function DoctorCaseController({
         presentation: detail.data.presentation,
       },
       clinicalDocumentDraft: currentClinicalDocument ?? null,
+      laboratoryDraft: { catalogItemId: resolvedLaboratoryItemId, indicationCode: resolvedIndicationCode },
+      queue: queue.data ?? null,
       queueCount: queue.data?.total ?? 0,
       section: activeCaseSection,
     }),
@@ -1877,6 +1883,7 @@ function DoctorCaseController({
     activeCaseSection,
     acknowledgeReport.mutateAsync,
     agentReview,
+    askQuestion.isPending,
     askQuestion.mutateAsync,
     beginRevisit.mutateAsync,
     cancelRequest.mutateAsync,
@@ -1890,13 +1897,18 @@ function DoctorCaseController({
     issueOrder.mutateAsync,
     issueRequest.mutateAsync,
     messages,
+    onQueueViewChange,
     onSelectedCaseIdChange,
     page,
     previewSign.mutateAsync,
     queue.data,
     queue.isError,
     queue.isPending,
+    resolvedIndicationCode,
     resolvedLaboratoryItem,
+    resolvedLaboratoryItemId,
+    retryPatientReply.isPending,
+    retryPatientReply.mutateAsync,
     saveDraft.mutateAsync,
     saveRevisit.mutateAsync,
     start.mutateAsync,
@@ -1920,10 +1932,10 @@ function DoctorCaseController({
         queuePending={visibleQueue.isPending}
       />
       )}>
-      <section aria-labelledby="case-detail-heading" className="flex min-h-full min-w-0 flex-1 flex-col gap-3">
+      <DoctorCaseDetailRegion containerRef={caseDetailRoot} labelledBy="case-detail-heading">
         <h2 className="sr-only" id="case-detail-heading">{messages.caseDetail}</h2>
         {issueOrder.isSuccess && issueOrder.variables.caseId === activeCaseId ? (
-          <Alert>
+          <Alert className="shrink-0">
             <CheckIcon aria-hidden="true" />
             <AlertTitle>{messages.laboratoryOrderIssued}</AlertTitle>
             <AlertDescription>
@@ -1932,7 +1944,7 @@ function DoctorCaseController({
           </Alert>
         ) : null}
         {completeSign.isSuccess && completeSign.variables.caseId === activeCaseId ? (
-          <Alert>
+          <Alert className="shrink-0">
             <CheckCircleIcon aria-hidden="true" />
             <AlertTitle>{messages.encounterCompleted}</AlertTitle>
             <AlertDescription>{messages.awaitingMedicationPayment}</AlertDescription>
@@ -2275,7 +2287,7 @@ function DoctorCaseController({
               ?? createWorkingClinicalDocument(detail.data)}
           />
         )}
-      </section>
+      </DoctorCaseDetailRegion>
     </DoctorWorkspaceLayout>
   )
 }
@@ -2389,6 +2401,16 @@ function CaseDetail({
   workingClinicalDocument: ClinicalDocumentContent
 }): React.JSX.Element {
   const firstVisitDraft = detail.drafts?.firstVisit
+  const firstVisitForm = useRef<HTMLFormElement>(null)
+  useRegisterAgentForm({
+    viewId: 'consultation', selectionId: detail.caseId, name: 'firstVisit', values: null,
+    readValues: () => {
+      const form = firstVisitForm.current
+      if (form === null) return null
+      const data = new FormData(form)
+      return { assessment: String(data.get('assessment') ?? ''), historyOfPresentIllness: String(data.get('historyOfPresentIllness') ?? '') }
+    },
+  })
   const readOnly = detail.encounter.status !== 'in-progress'
   const visitNotStarted = detail.status === 'awaiting-doctor'
   const clinicalReadOnly = readOnly || visitNotStarted
@@ -2401,6 +2423,7 @@ function CaseDetail({
   // 全屏(full-frame)且宿主未保留右列时回退内嵌 rail,保证病例上下文可达
   const runtime = useOptionalWebRuntime()
   const hostRail = hostCaseContextRail(runtime)
+  const contextVisible = useSurfaceCaseContextVisible()
   const caseContextState = useMemo(() => (hostRail ? {
     caseId: detail.caseId,
     completion: completion.data,
@@ -2470,6 +2493,7 @@ function CaseDetail({
       <h3 className="text-sm font-semibold" id="first-visit-heading">{messages.firstVisitRecord}</h3>
       <form
         aria-labelledby="first-visit-heading"
+        ref={firstVisitForm}
         key={`${detail.caseId}:${firstVisitDraft?.version ?? 0}:${agentDraftHydrationRevisions['first-visit'] ?? 0}`}
         onSubmit={event => {
           event.preventDefault()
@@ -2649,7 +2673,7 @@ function CaseDetail({
         statusText={doctorCaseStatusLabel(detail.status, messages)}
       />
     )}>
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <PatientBanner
           {...(clinicalReadOnly || detail.consultation === undefined
             ? {}
@@ -2665,16 +2689,20 @@ function CaseDetail({
               })}
           detail={detail}
           messages={messages}
-          {...(hostRail ? { onShowContext: () => { runtime?.surfaceCaseContext?.requestOpen?.() } } : {})}
+          {...(hostRail && runtime?.surfaceCaseContext?.visibility !== undefined
+            ? { contextVisible, onShowContext: runtime.surfaceCaseContext.visibility.toggle }
+            : hostRail && runtime?.surfaceCaseContext?.requestOpen !== undefined
+              ? { onShowContext: runtime.surfaceCaseContext.requestOpen }
+              : {})}
           statusText={doctorCaseStatusLabel(detail.status, messages)}
         />
 
         {overviewWorkflow === null ? null : (
-          <div className="border-b p-4">{overviewWorkflow}</div>
+          <div className="shrink-0 border-b p-4">{overviewWorkflow}</div>
         )}
 
         <Tabs
-          className="min-w-0 flex-1 gap-0 bg-background"
+          className="min-h-0 min-w-0 flex-1 gap-0 bg-background"
           onValueChange={value => {
             if (value === 'consultation' || value === 'record' || value === 'diagnosis' || value === 'prescription' || value === 'laboratory') {
               setActiveSection(value)
@@ -2682,20 +2710,20 @@ function CaseDetail({
           }}
           value={activeSection}
         >
-          <div className="overflow-x-auto overflow-y-hidden border-b px-2">
+          <div className="shrink-0 overflow-x-auto overflow-y-hidden border-b px-2">
             <TabsList className="h-11 min-w-max" variant="line">
               {detail.consultation === undefined ? null : (
-                <TabsTrigger id={doctorCaseSectionTabElementIds.consultation} value="consultation"><MessagesSquareIcon aria-hidden="true" />{messages.consultationRecord}</TabsTrigger>
+                <TabsTrigger data-agent-selection="consultation" id={doctorCaseSectionTabElementIds.consultation} value="consultation"><MessagesSquareIcon aria-hidden="true" />{messages.consultationRecord}</TabsTrigger>
               )}
-              <TabsTrigger id={doctorCaseSectionTabElementIds.record} value="record"><ClipboardListIcon aria-hidden="true" />{messages.medicalRecord}</TabsTrigger>
-              <TabsTrigger id={doctorCaseSectionTabElementIds.laboratory} value="laboratory"><TestTubesIcon aria-hidden="true" />{messages.laboratoryAndExamination}</TabsTrigger>
-              <TabsTrigger id={doctorCaseSectionTabElementIds.diagnosis} value="diagnosis"><StethoscopeIcon aria-hidden="true" />{messages.diagnosis}</TabsTrigger>
-              <TabsTrigger id={doctorCaseSectionTabElementIds.prescription} value="prescription"><PillIcon aria-hidden="true" />{messages.prescription}</TabsTrigger>
+              <TabsTrigger data-agent-selection="record" id={doctorCaseSectionTabElementIds.record} value="record"><ClipboardListIcon aria-hidden="true" />{messages.medicalRecord}</TabsTrigger>
+              <TabsTrigger data-agent-selection="laboratory" id={doctorCaseSectionTabElementIds.laboratory} value="laboratory"><TestTubesIcon aria-hidden="true" />{messages.laboratoryAndExamination}</TabsTrigger>
+              <TabsTrigger data-agent-selection="diagnosis" id={doctorCaseSectionTabElementIds.diagnosis} value="diagnosis"><StethoscopeIcon aria-hidden="true" />{messages.diagnosis}</TabsTrigger>
+              <TabsTrigger data-agent-selection="prescription" id={doctorCaseSectionTabElementIds.prescription} value="prescription"><PillIcon aria-hidden="true" />{messages.prescription}</TabsTrigger>
             </TabsList>
           </div>
 
           {detail.consultation === undefined ? null : (
-            <TabsContent className="p-4" value="consultation">
+            <DoctorCasePanel value="consultation">
               <ConsultationPage
                 action={{ ...consultationAction, onOpenReport: () => setActiveSection('laboratory') }}
                 consultation={detail.consultation}
@@ -2705,10 +2733,10 @@ function CaseDetail({
                 patientName={detail.patient.name}
                 readOnly={clinicalReadOnly}
               />
-            </TabsContent>
+            </DoctorCasePanel>
           )}
 
-          <TabsContent className="p-4" value="record">
+          <DoctorCasePanel value="record">
             <div className="flex flex-col gap-4">
               <div className="min-w-0">
                 {visitNotStarted ? null : detail.consultation === undefined ? firstVisitRecord : (
@@ -2726,9 +2754,9 @@ function CaseDetail({
                 )}
               </div>
             </div>
-          </TabsContent>
+          </DoctorCasePanel>
 
-          <TabsContent className="p-4" value="diagnosis">
+          <DoctorCasePanel value="diagnosis">
             {detail.consultation === undefined ? revisitWorkflow : catalog.isPending ? (
               <Skeleton className="h-72 w-full" />
             ) : catalog.isError ? (
@@ -2739,6 +2767,7 @@ function CaseDetail({
             ) : (
               <DiagnosisPage
                 actions={diagnosisActions}
+                caseId={detail.caseId}
                 catalog={catalog.data.diagnoses}
                 elementId={encounterCompletionTargetElementIds.diagnosis}
                 key={`${detail.caseId}:${agentDraftHydrationRevisions.diagnosis ?? 0}`}
@@ -2749,9 +2778,9 @@ function CaseDetail({
                 state={detail.diagnosis}
               />
             )}
-          </TabsContent>
+          </DoctorCasePanel>
 
-          <TabsContent className="p-4" value="prescription">
+          <DoctorCasePanel value="prescription">
             {detail.consultation === undefined || catalog.isPending ? (
               detail.consultation === undefined ? revisitWorkflow : <Skeleton className="h-72 w-full" />
             ) : catalog.isError ? (
@@ -2773,9 +2802,9 @@ function CaseDetail({
                 referenceSearch={referenceCatalogSearches.medications}
               />
             ) : null}
-          </TabsContent>
+          </DoctorCasePanel>
 
-          <TabsContent className="p-4" value="laboratory">
+          <DoctorCasePanel value="laboratory">
             <LaboratoryPage
               actions={laboratoryRequestActions}
               catalogError={catalog.error}
@@ -2797,7 +2826,7 @@ function CaseDetail({
               referenceSearch={referenceCatalogSearches.laboratory}
               showCorrection={correctionTarget === 'laboratory'}
             />
-          </TabsContent>
+          </DoctorCasePanel>
         </Tabs>
       </div>
 
@@ -2943,6 +2972,14 @@ function RevisitEditor({ catalog, detail, locale, messages, onSave, pending }: {
     label: locale === 'zh-CN' ? item.nameZh : item.nameEn,
     value: item.id,
   }))
+  useRegisterAgentForm({
+    viewId: 'consultation', selectionId: detail.caseId, name: 'revisit',
+    values: {
+      diagnosis: { code: diagnosisCode, display: diagnosisDisplay },
+      document: { assessment, plan },
+      medications: medications.map(({ catalogItemId, doseText, frequencyCode, quantity }) => ({ catalogItemId, doseText, frequencyCode, quantity })),
+    },
+  })
   const updateMedication = (index: number, update: Partial<MedicationDraftLine>) => {
     setMedications(current => current.map((item, itemIndex) => (
       itemIndex === index ? { ...item, ...update } : item

@@ -699,6 +699,8 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 ## 7. Agent 适配器与能力边界
 
+页面控制、结构化表单读取、真实执行反馈和人工审阅的详细行为见 [DSH 页面操作与视觉反馈](agent-capabilities.md)。
+
 当前 DSH 集成只服务 Web Profile 中的原生 Session。`dsh-react-surface` 提供 React Surface、布局和 Session-scoped capability lease，`dsh-ag-ui/browser-tools` 提供 always-on browser Tool broker；AG-UI Gateway 不参与该链路，也不需要单独的 model route 或 shared secret。DSH 拥有模型 transcript，ClinMesh 不复制 Assistant message 或 reasoning。
 
 ### 7.1 Surface 与 Host 边界

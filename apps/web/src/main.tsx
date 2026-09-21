@@ -1,4 +1,5 @@
 import '@clinmesh/ui/styles.css'
+import './app/agent-action-feedback.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { WebApp } from './app/web-app.tsx'

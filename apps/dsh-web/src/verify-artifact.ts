@@ -1,4 +1,6 @@
 import { join } from 'node:path'
+import { runInNewContext } from 'node:vm'
+import ts from 'typescript'
 
 const clientPath = join(import.meta.dir, '..', 'lib', 'client.js')
 const clientFile = Bun.file(clientPath)
@@ -23,6 +25,42 @@ const requires = Array.from(client.matchAll(/require\(["']([^"']+)["']\)/g))
   .flatMap(match => match[1] === undefined ? [] : [match[1]])
 const unsupported = requires.filter(specifier => !allowedRequires.has(specifier))
 if (unsupported.length > 0) throw new Error(`Unsupported DSH client modules: ${unsupported.join(', ')}`)
+
+// Exercise emitted descriptors: the lazy-CJS wrapper indents multiline templates,
+// which can change their string values even when source-level tests pass.
+const parsedClient = ts.createSourceFile(clientPath, client, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
+let toolBuilder: string | undefined
+let editingInstruction: string | undefined
+function findToolBuilder(node: ts.Node): void {
+  if (ts.isFunctionDeclaration(node) && node.name?.text === 'buildSurfaceAgentTools') {
+    toolBuilder = node.getText(parsedClient)
+  }
+  if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)
+    && node.name.text === 'editingInstruction' && node.initializer !== undefined) {
+    editingInstruction = node.initializer.getText(parsedClient)
+  }
+  ts.forEachChild(node, findToolBuilder)
+}
+findToolBuilder(parsedClient)
+if (toolBuilder === undefined || editingInstruction === undefined) {
+  throw new Error('Missing emitted Surface Tool descriptor builder')
+}
+const descriptorLength: unknown = runInNewContext(`
+  const editingInstruction = ${editingInstruction};
+  ${toolBuilder}
+  buildSurfaceAgentTools({
+    definitions: [{ operationId: 'artifact.read', toolName: 'artifact_read' }],
+    binding: { snapshot: { allowedOperationIds: ['artifact.read'] } },
+    actions: { 'artifact.read': {
+      description: 'x'.repeat(512 - editingInstruction.length - 1), parameters: {}
+    } }
+  })[0].description.length;
+`, {
+  bindContextParameters: (parameters: unknown) => parameters,
+}, { timeout: 1_000 })
+if (descriptorLength !== 512) {
+  throw new Error(`Emitted Surface Tool description must be 512 characters, received ${String(descriptorLength)}`)
+}
 
 // The bundle requires the vendored runtime at host runtime, and every host
 // profile symlinks plugins/react-surface at the monorepo checkout, so a stale

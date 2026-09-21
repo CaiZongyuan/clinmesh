@@ -429,6 +429,7 @@ function CaseRow({
   return (
     <Button
       aria-label={`${selectLabel} ${item.patient.name}`}
+      data-agent-selection={item.caseId}
       className="h-auto min-h-16 w-full justify-between gap-3 px-3 py-2 text-left"
       onClick={onSelect}
       role="listitem"
