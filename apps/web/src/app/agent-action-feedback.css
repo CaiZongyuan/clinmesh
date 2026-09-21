@@ -23,6 +23,7 @@
   border-radius: 0.4rem;
   pointer-events: none;
   opacity: 0.85;
+  transition: opacity 150ms ease-out;
 }
 
 .clinmesh-agent-review-glow {
@@ -40,8 +41,9 @@
   animation: clinmesh-agent-flow 3s linear infinite;
 }
 
-.clinmesh-agent-target[data-phase="completed"] {
-  animation: clinmesh-agent-fade 800ms ease-out forwards;
+.clinmesh-agent-target[data-phase="fading"] {
+  opacity: 0;
+  transition-duration: 600ms;
 }
 
 .clinmesh-agent-target[data-phase="awaiting-review"] {
@@ -49,9 +51,9 @@
 }
 
 @keyframes clinmesh-agent-flow { to { background-position: 100% 0; } }
-@keyframes clinmesh-agent-fade { from { opacity: 1; } to { opacity: 0; } }
 @keyframes clinmesh-agent-review { from { opacity: 1; box-shadow: 0 0 8px #818cf8; } to { opacity: 0.85; box-shadow: none; } }
 
 @media (prefers-reduced-motion: reduce) {
-  .clinmesh-agent-target { animation: none !important; }
+  .clinmesh-agent-target { animation: none !important; transition: none !important; }
+  .clinmesh-agent-target[data-phase="fading"] { opacity: 0.85; }
 }

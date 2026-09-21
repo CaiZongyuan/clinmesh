@@ -33,6 +33,13 @@ it.each(['18', '19'])('preserves editing and human review with action feedback o
     .map(output => output.type === 'asset' ? String(output.source) : '').join('\n')
   if (script?.type !== 'chunk') throw new Error('Missing browser script')
   const response = await readJsonFromHeadlessChrome(`<!doctype html><html><head><style>${css}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`, 6000)
-  const actual = z.object({ focused: z.boolean(), highlighted: z.boolean(), aligned: z.boolean(), runningAnimation: z.string(), faded: z.boolean(), waiting: z.boolean(), staticWaiting: z.boolean(), committed: z.boolean(), approved: z.boolean() }).parse(response)
-  expect(actual).toEqual({ focused: true, highlighted: true, aligned: true, runningAnimation: 'clinmesh-agent-flow', faded: true, waiting: true, staticWaiting: true, committed: true, approved: true })
+  expect(response).not.toHaveProperty('error')
+  const actual = z.object({ focused: z.boolean(), highlighted: z.boolean(), aligned: z.boolean(), runningAnimation: z.string(), held: z.boolean(), faded: z.boolean(), waiting: z.boolean(), staticWaiting: z.boolean(), committed: z.boolean(), approved: z.boolean(),
+    consultationRegion: z.boolean(), consultationFormExcluded: z.boolean(), newDoctorBubble: z.boolean(), newPatientBubble: z.boolean(), oldMessageUnchanged: z.boolean(),
+    onlyChangedRecordField: z.boolean(), completedRecordField: z.boolean(), sectionInset: z.boolean(),
+  }).parse(response)
+  expect(actual).toEqual({ focused: true, highlighted: true, aligned: true, runningAnimation: 'clinmesh-agent-flow', held: true, faded: true, waiting: true, staticWaiting: true, committed: true, approved: true,
+    consultationRegion: true, consultationFormExcluded: true, newDoctorBubble: true, newPatientBubble: true, oldMessageUnchanged: true,
+    onlyChangedRecordField: true, completedRecordField: true, sectionInset: true,
+  })
 }, 30_000)

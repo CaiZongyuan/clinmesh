@@ -97,6 +97,32 @@ function inspectExample(program: Command, line: string) {
 }
 
 describe('ClinMesh CLI Agent Skills', () => {
+  it('documents absent triage in the versioned doctor read contracts', async () => {
+    const doctorSkill = await readFile(resolve(
+      import.meta.dirname, '../../../.agents/skills/clinmesh-doctor/SKILL.md',
+    ), 'utf8')
+    for (const id of ['doctor.queue.list', 'doctor.case.get']) {
+      const operation = getHisOperation(id)
+      expect(operation.version).toBe(2)
+      expect(operation.summary).toContain('presentation')
+      const result = operation.output.safeParse(id === 'doctor.queue.list'
+        ? { items: [{ presentation: null }] }
+        : { presentation: null })
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error.issues.some(issue => issue.path.includes('presentation'))).toBe(false)
+      }
+      const invalid = operation.output.safeParse(id === 'doctor.queue.list'
+        ? { items: [{ presentation: 'unknown' }] }
+        : { presentation: 'unknown' })
+      expect(invalid.success).toBe(false)
+      if (!invalid.success) {
+        expect(invalid.error.issues.some(issue => issue.path.includes('presentation'))).toBe(true)
+      }
+    }
+    expect(doctorSkill).toContain('presentation: null')
+  })
+
   it('keeps correlation recovery guidance aligned with the Catalog error schema', async () => {
     const sharedSkill = await readFile(resolve(
       import.meta.dirname,

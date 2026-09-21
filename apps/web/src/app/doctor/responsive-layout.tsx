@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode, type Ref } from 'react'
 import { Button } from '@clinmesh/ui/components/button'
 import {
   Sheet,
@@ -8,6 +8,8 @@ import {
   SheetTrigger,
 } from '@clinmesh/ui/components/sheet'
 import { useContainerCompact } from '@clinmesh/ui/hooks/use-container-compact'
+import { cn } from '@clinmesh/ui/lib/utils'
+import { TabsContent } from '@clinmesh/ui/components/tabs'
 
 export function DoctorWorkspaceLayout({
   children,
@@ -54,7 +56,7 @@ export function DoctorWorkspaceLayout({
         <div hidden={compact && !showQueue} className="min-h-0 min-w-0 overflow-y-auto border-r">
           {queue(() => setShowQueue(false))}
         </div>
-        <div hidden={compact && showQueue} className="min-h-0 min-w-0 overflow-y-auto">
+        <div hidden={compact && showQueue} className="min-h-0 min-w-0 overflow-hidden">
           {children}
         </div>
       </div>
@@ -82,10 +84,10 @@ export function DoctorCaseLayout({
     if (!compact) setSheetOpen(false)
   }, [compact])
   return (
-    <div ref={ref} className="flex min-h-full min-w-0 flex-1 flex-col bg-background">
+    <div ref={ref} className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
       {compact && !hosted ? (
         <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-          <div className="flex justify-end border-b p-1">
+          <div className="flex shrink-0 justify-end border-b p-1">
             <SheetTrigger render={<Button size="sm" variant="ghost" />}>
               {contextLabel}
             </SheetTrigger>
@@ -99,16 +101,39 @@ export function DoctorCaseLayout({
         </Sheet>
       ) : null}
       <div
-        className="grid min-w-0 flex-1"
+        className="grid min-h-0 min-w-0 flex-1"
         style={{
           gridTemplateColumns: compact || hosted
             ? 'minmax(0, 1fr)'
             : `minmax(0, 1fr) ${expanded ? '264px' : '44px'}`,
         }}
       >
-        <div className="@container/case-content flex min-w-0 flex-col">{children}</div>
+        <div className="@container/case-content flex min-h-0 min-w-0 flex-col">{children}</div>
         {compact || hosted ? null : rail(expanded, setExpanded)}
       </div>
     </div>
+  )
+}
+
+export function DoctorCaseDetailRegion({ children, containerRef, labelledBy }: {
+  children: ReactNode
+  containerRef?: Ref<HTMLElement>
+  labelledBy?: string
+}) {
+  return <section ref={containerRef} aria-labelledby={labelledBy} className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden">{children}</section>
+}
+
+export function DoctorCasePanel({ children, value }: {
+  children: ReactNode
+  value: 'consultation' | 'record' | 'laboratory' | 'diagnosis' | 'prescription'
+}) {
+  return (
+    <TabsContent
+      data-agent-section={value}
+      value={value}
+      className={cn('min-h-0 overflow-y-auto overscroll-contain p-4', value === 'consultation' && 'flex flex-col')}
+    >
+      {children}
+    </TabsContent>
   )
 }

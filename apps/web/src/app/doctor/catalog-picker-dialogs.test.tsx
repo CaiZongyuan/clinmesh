@@ -23,6 +23,34 @@ function mount(items: ReferenceMedicationProduct[], excludedIds = new Set<string
 }
 afterEach(cleanup)
 describe('medication catalog picker', () => {
+  it('deselects a selected product without closing and preserves package changes', async () => {
+    const user = userEvent.setup()
+    const { onSelect } = mount([product, { ...product, id: 'product-2', packageDescription: '20片/盒' }])
+    await user.click(screen.getByRole('button', { name: '添加药品' }))
+    const dialog = screen.getByRole('dialog', { name: '选择药品' })
+    const confirm = within(dialog).getByRole('button', { name: '加入处方' })
+    const select = () => within(dialog).getByRole('button', { name: /^选择 合成测试片/ })
+    expect(confirm.hasAttribute('disabled')).toBe(true)
+    await user.click(select())
+    expect(confirm.hasAttribute('disabled')).toBe(false)
+    await user.click(select())
+    expect(confirm.hasAttribute('disabled')).toBe(true)
+    expect(onSelect).not.toHaveBeenCalled()
+    await user.dblClick(select())
+    expect(screen.getByRole('dialog', { name: '选择药品' })).toBe(dialog)
+    expect(confirm.hasAttribute('disabled')).toBe(true)
+    expect(onSelect).not.toHaveBeenCalled()
+    await user.click(select())
+    await user.click(within(dialog).getByRole('combobox', { name: '包装 合成测试片 合成药厂' }))
+    await user.click(screen.getByRole('option', { name: '20片/盒' }))
+    expect(confirm.hasAttribute('disabled')).toBe(false)
+    await user.click(select())
+    expect(confirm.hasAttribute('disabled')).toBe(true)
+    await user.click(select())
+    await user.click(confirm)
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith({ kind: 'reference', product: expect.objectContaining({ id: 'product-2' }) })
+  })
+
   it('keeps packaging in one row and disables inactive and already selected packages', async () => {
     const user = userEvent.setup()
     const { onSelect } = mount([
@@ -62,6 +90,35 @@ describe('medication catalog picker', () => {
 })
 
 describe('diagnosis and laboratory catalog search', () => {
+  it('switches and clears a reference diagnosis while keeping excluded entries disabled', async () => {
+    const user = userEvent.setup()
+    const onSelect = vi.fn()
+    render(<DiagnosisCatalogDialog excludedIds={new Set(['diag-3'])} localCatalog={[]} locale="zh-CN" onSelect={onSelect}
+      search={{ data: { items: [1, 2, 3].map(id => ({
+        id: `diag-${id}`, code: `SYN-${id}`, display: `合成诊断${id}`, domain: 'diagnosis',
+        sourceLocator: 'synthetic:test', system: 'https://clinmesh.example.com/icd-10', version: '1', status: 'active',
+      })), page: 1, pageSize: 20, total: 3, releaseId: 'synthetic' },
+      error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn() }} />)
+    await user.click(screen.getByRole('button', { name: '添加诊断' }))
+    const first = screen.getByRole('button', { name: '选择 合成诊断1 SYN-1' })
+    const second = screen.getByRole('button', { name: '选择 合成诊断2 SYN-2' })
+    const excluded = screen.getByRole('button', { name: '选择 合成诊断3 SYN-3' })
+    const confirm = screen.getByRole('button', { name: '加入诊断' })
+    expect(excluded.hasAttribute('disabled')).toBe(true)
+    await user.click(first)
+    await user.click(second)
+    expect(first.getAttribute('aria-pressed')).toBe('false')
+    expect(second.getAttribute('aria-pressed')).toBe('true')
+    second.focus()
+    await user.keyboard(' ')
+    expect(second.getAttribute('aria-pressed')).toBe('false')
+    expect(confirm.hasAttribute('disabled')).toBe(true)
+    expect(onSelect).not.toHaveBeenCalled()
+    await user.click(first)
+    await user.click(confirm)
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ catalogItemId: 'diag-1' }))
+  })
+
   it.each(['diagnosis', 'laboratory'])('debounces %s input without a submit click', async kind => {
     const user = userEvent.setup()
     const onSearch = vi.fn()

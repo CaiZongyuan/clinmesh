@@ -1018,7 +1018,7 @@ async function createTriagedCase(runtime: TestRuntime, password: string) {
   const queue = await runtime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
     headers: { cookie: doctorCookie },
   })
-  const queueItem = doctorQueueSchema.parse(await queue.json()).items[0]
+  const queueItem = doctorQueueSchema.parse(await queue.json()).items.find(item => item.encounterId === registered.registration.encounterId)
   if (queueItem === undefined) throw new Error('Triaged test case did not reach the doctor queue')
   return { ...registered, caseId: queueItem.caseId, doctorCookie, triage }
 }
@@ -1371,7 +1371,7 @@ describe('outpatient workflow HTTP contract', () => {
   const runtimes: Array<Awaited<ReturnType<typeof createClinMeshRuntime>>> = []
   const temporaryDirectories: string[] = []
 
-  it('filters doctor queues before counting and pagination and moves a started case to active', async () => {
+  it('keeps doctor queue pagination and case details readable when an active case has no triage record', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-doctor-queue-filter-'))
     temporaryDirectories.push(directory)
     const password = `Test-${randomUUID()}-Aa1!`
@@ -1420,6 +1420,27 @@ describe('outpatient workflow HTTP contract', () => {
     expect((await runtime.app.request('/api/his/v1/doctor/queue?view=unknown', {
       headers: { cookie: testCase.doctorCookie },
     })).status).toBe(400)
+    const normalCase = await createTriagedCase(runtime, password)
+    // Persisted legacy cases can predate the mandatory triage handoff.
+    runtime.database.driver.prepare('DELETE FROM triage_record WHERE case_id = ?').run(testCase.caseId)
+    const mixedResponse = await runtime.app.request('/api/his/v1/doctor/queue?pageSize=20', {
+      headers: { cookie: testCase.doctorCookie },
+    })
+    expect(mixedResponse.status).toBe(200)
+    const mixedQueue = doctorQueueSchema.parse(await mixedResponse.json())
+    expect(mixedQueue.total).toBe(2)
+    expect(mixedQueue.items.find(item => item.caseId === testCase.caseId)).toMatchObject({ presentation: null })
+    expect(mixedQueue.items.find(item => item.caseId === normalCase.caseId)?.presentation?.chiefComplaint).toBe('发热伴咽痛两天')
+    const pages = await Promise.all([readQueue('pageSize=1&page=1'), readQueue('pageSize=1&page=2')])
+    expect(pages.map(page => page.total)).toEqual([2, 2])
+    expect(new Set(pages.flatMap(page => page.items.map(item => item.caseId))).size).toBe(2)
+    const detailResponse = await runtime.app.request(`/api/his/v1/doctor/cases/${testCase.caseId}`, {
+      headers: { cookie: testCase.doctorCookie },
+    })
+    expect(detailResponse.status).toBe(200)
+    const detail = doctorCaseDetailSchema.parse(await detailResponse.json())
+    expect(detail.presentation).toBeNull()
+    expect(detail.triage).toBeUndefined()
   })
 
   afterEach(async () => {

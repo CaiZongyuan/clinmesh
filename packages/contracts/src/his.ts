@@ -816,7 +816,7 @@ export const doctorQueueItemSchema = z.object({
   encounterId: z.string().min(1),
   encounterVersion: z.string().regex(/^\d+$/),
   patient: patientSummarySchema,
-  presentation: clinicalPresentationSchema,
+  presentation: clinicalPresentationSchema.nullable(),
   status: doctorQueueStatusSchema,
   taskId: z.string().min(1),
   taskVersion: z.string().regex(/^\d+$/),
@@ -1532,7 +1532,7 @@ export const doctorCaseDetailSchema = z.object({
   laboratoryRequests: laboratoryRequestStateSchema.optional(),
   medicationConclusion: medicationConclusionStateSchema.optional(),
   patient: patientSummarySchema,
-  presentation: clinicalPresentationSchema,
+  presentation: clinicalPresentationSchema.nullable(),
   priorFacts: z.array(priorFactSchema),
   report: z.object({
     id: z.string().min(1),

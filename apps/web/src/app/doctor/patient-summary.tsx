@@ -74,65 +74,71 @@ export function PatientBanner({
   detail,
   messages,
   onShowContext,
+  contextVisible = false,
   statusText,
 }: {
   completionAction?: React.ReactNode
   detail: DoctorCaseDetail
   messages: WorkspaceMessages
-  /** surface 模式下宿主右栏承载患者上下文:点击在右栏打开/聚焦患者信息标签页。 */
+  /** 切换宿主患者信息可见性；仅支持打开的宿主可保留展示回调。 */
   onShowContext?: () => void
+  contextVisible?: boolean
   statusText: string
 }): React.JSX.Element {
   const presentation = detail.presentation
   const readOnly = detail.encounter.status !== 'in-progress'
   const age = patientAge(detail.patient.birthDate)
   return (
-    <section aria-label={messages.selectedPatient} className="@container/patient-banner min-w-0 border-b bg-background [overflow-wrap:anywhere]">
-      <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
-        <div className="flex min-w-0 items-center gap-3">
+    <section aria-label={messages.selectedPatient} className="@container/patient-banner min-w-0 shrink-0 border-b bg-background [overflow-wrap:anywhere]">
+      <div className="flex flex-col gap-3 px-4 py-3 @min-[520px]/patient-banner:flex-row @min-[520px]/patient-banner:items-start @min-[520px]/patient-banner:justify-between">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
           <PatientAvatar label={`${detail.patient.name} ${messages.patient}`} name={detail.patient.name} />
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
               <h2 className="truncate text-lg font-semibold">{detail.patient.name}</h2>
               <Badge variant="outline">{messages[`gender_${detail.patient.gender}` as 'gender_male']}</Badge>
-              <span className="text-sm text-muted-foreground">
+              <span className="shrink-0 whitespace-nowrap text-sm text-muted-foreground">
                 {age === undefined ? '-' : messages.patientAge.replace('{age}', String(age))}
               </span>
             </div>
             <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
               <span>{messages.registrationNumber}：{detail.patient.identifier}</span>
-              <span>{messages.chiefComplaint}：{presentation.chiefComplaint}</span>
+              <span>{messages.chiefComplaint}：{presentation?.chiefComplaint ?? messages.triageNotRecorded}</span>
             </div>
           </div>
         </div>
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <Badge variant="secondary">{statusText}</Badge>
+          {readOnly ? (
+            <Badge variant="outline"><LockKeyholeIcon aria-hidden="true" />{messages.encounterReadOnly}</Badge>
+          ) : completionAction}
+          {onShowContext === undefined ? null : (
+            <Button aria-expanded={contextVisible} onClick={onShowContext} size="sm" variant="outline">
+              <IdCardIcon aria-hidden="true" />
+              {contextVisible ? messages.hidePatientContext : messages.showPatientContext}
+            </Button>
+          )}
+        </div>
+      </div>
+      {detail.allergies.length === 0 && detail.triage === undefined ? null : (
+        <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
           {detail.allergies.slice(0, 1).map(allergy => (
-            <Badge key={`${allergy.code}:${allergy.display}`} variant="destructive">
+            <Badge className="h-auto max-w-full whitespace-normal" key={`${allergy.code}:${allergy.display}`} variant="destructive">
               {messages.allergySummary} · {allergy.display}
             </Badge>
           ))}
           {detail.triage === undefined ? null : (
             <Badge variant="warning">{triageAcuityLabel(detail.triage.acuityCode, messages)}</Badge>
           )}
-          <Badge variant="secondary">{statusText}</Badge>
-          {readOnly ? (
-            <Badge variant="outline"><LockKeyholeIcon aria-hidden="true" />{messages.encounterReadOnly}</Badge>
-          ) : completionAction}
-          {onShowContext === undefined ? null : (
-            <Button onClick={onShowContext} size="sm" variant="outline">
-              <IdCardIcon aria-hidden="true" />
-              {messages.showPatientContext}
-            </Button>
-          )}
         </div>
-      </div>
-      <dl className="grid grid-cols-2 gap-px border-t bg-border @min-[400px]/patient-banner:grid-cols-3 @min-[680px]/patient-banner:grid-cols-5 [&>div]:bg-background [&>div]:px-3 [&>div]:py-2.5">
+      )}
+      {presentation === null ? null : <dl className="grid grid-cols-2 gap-px border-t bg-border @min-[400px]/patient-banner:grid-cols-3 @min-[680px]/patient-banner:grid-cols-5 [&>div]:bg-background [&>div]:px-3 [&>div]:py-2.5">
         <VitalSummary label={messages.temperatureC} value={presentation.vitalSigns.temperatureC} />
         <VitalSummary label={messages.pulseBpm} value={presentation.vitalSigns.pulseBpm} />
         <VitalSummary label={messages.respirationBpm} value={presentation.vitalSigns.respirationBpm} />
         <VitalSummary label={messages.bloodPressure} value={`${presentation.vitalSigns.bloodPressure.systolicMmHg}/${presentation.vitalSigns.bloodPressure.diastolicMmHg}`} />
         <VitalSummary label={messages.oxygenSaturationPct} value={presentation.vitalSigns.oxygenSaturationPct} />
-      </dl>
+      </dl>}
     </section>
   )
 }

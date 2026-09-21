@@ -14,6 +14,14 @@ function signedConflict(owner: 'clinical-document' | 'prescription') {
 }
 
 describe('workspace conflict messages', () => {
+  it('does not describe every workflow precondition failure as a version change', () => {
+    const error = new ApiClientError(409, 'WORKFLOW_CONFLICT', 'The outpatient case has no clinical presentation')
+    expect(getWorkspaceErrorMessage(error, getWorkspaceMessages('zh-CN')))
+      .toBe('当前业务状态或前置条件不满足，请核对病例信息后重试。')
+    expect(getWorkspaceErrorMessage(error, getWorkspaceMessages('en-US')))
+      .toBe('The current workflow state or prerequisites do not allow this operation. Check the case information before retrying.')
+  })
+
   it('explains why active generation prevents clearing the patient library', () => {
     expect(getWorkspaceErrorMessage(new ApiClientError(409, 'SCENARIO_GENERATION_RUNNING', 'private detail'), getWorkspaceMessages('zh-CN')))
       .toBe('患者或梗概正在生成，请等待完成后再清空患者库。')

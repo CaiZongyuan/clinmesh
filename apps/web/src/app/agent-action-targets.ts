@@ -10,14 +10,14 @@ const targets: Record<string, { label: string; selectors: string[] }> = {
   'triage.draft.set': { label: '填写分诊评估', selectors: ['#triage-chief-complaint', '#triage-temperature', '#triage-pulse', '#triage-respiration', '#triage-systolic', '#triage-diastolic', '#triage-oxygen', '#triage-acuity'] },
   'pharmacy.review.draft.set': { label: '填写处方审核意见', selectors: ['#prescription-review-note'] },
   'pharmacy.dispense.draft.set': { label: '填写调剂批次与数量', selectors: ['[id^="lot-"]', '[id^="dispense-quantity-"]'] },
-  'outpatient.consultation.ask': { label: '问诊并等待患者回答', selectors: ['#consultation-record-heading'] },
-  'outpatient.consultation.reply.retry': { label: '重试患者回答', selectors: ['#consultation-record-heading'] },
+  'outpatient.consultation.ask': { label: '问诊并等待患者回答', selectors: ['[data-agent-consultation]', '[data-agent-consultation-pending]'] },
+  'outpatient.consultation.reply.retry': { label: '重试患者回答', selectors: ['[data-agent-consultation]', '[data-agent-consultation-pending]'] },
   'outpatient.first-visit.draft.set': { label: '保存初诊草稿', selectors: ['#first-visit-history', '#first-visit-assessment'] },
-  'outpatient.diagnosis.draft.set': { label: '保存诊断草稿', selectors: ['[data-agent-diagnosis-entry]'] },
+  'outpatient.diagnosis.draft.set': { label: '保存诊断草稿', selectors: ['[data-agent-catalog-trigger="diagnosis"]', '[data-agent-catalog="diagnosis"]', '[data-agent-diagnosis-entry]'] },
   'outpatient.laboratory.draft.set': { label: '保存检验申请草稿', selectors: ['#laboratory-item', '#laboratory-indication'] },
-  'outpatient.prescription.draft.set': { label: '保存处方草稿', selectors: ['#medication-conclusion-heading', '[id^="prescription-dose-"]', '[id^="prescription-frequency-"]', '[id^="prescription-course-"]', '[id^="prescription-quantity-"]'] },
+  'outpatient.prescription.draft.set': { label: '保存处方草稿', selectors: ['#medication-conclusion-heading', '[data-agent-medication-name]', '[data-agent-catalog-trigger="medication"]', '[data-agent-catalog="medication"]', '[data-agent-medication-package]', '[id^="prescription-dose-"]', '[id^="prescription-frequency-"]', '[id^="prescription-course-"]', '[id^="prescription-quantity-"]'] },
   'outpatient.revisit.draft.set': { label: '保存复诊草稿', selectors: ['input[id^="revisit-"]', 'textarea[id^="revisit-"]', 'button[id^="revisit-"]', '[id^="medication-"]', '[id^="dose-"]', '[id^="frequency-"]', '[id^="quantity-"]'] },
-  'outpatient.record.draft.set': { label: '保存病历草稿', selectors: ['[id^="clinical-record-"] textarea', 'textarea[id^="clinical-record-"]', 'input[id^="clinical-record-"]'] },
+  'outpatient.record.draft.set': { label: '保存病历草稿', selectors: [] },
   'outpatient.preview.request': { label: '生成签署预览', selectors: ['#structured-clinical-document-heading'] },
   'billing.payment.preview': { label: '生成缴费预览', selectors: ['#payment-details-heading'] },
 }
@@ -74,15 +74,31 @@ export function agentActionLabel(event: AgentActionFeedback, english: boolean): 
   return english ? englishLabels[label] ?? label : label
 }
 
+export function changedClinicalRecordSelectors(input: unknown, selectionId: string, root: HTMLElement | null): string[] {
+  if (root === null || selectionId === '' || typeof input !== 'object' || input === null) return []
+  return Object.entries(input).flatMap(([field, value]) => {
+    const selector = `#${CSS.escape(`clinical-record-${selectionId}-${field}`)}`
+    const element = root.querySelector(selector)
+    return typeof value === 'string'
+      && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)
+      && element.value !== value ? [selector] : []
+  })
+}
+
 export function agentActionTarget(event: AgentActionFeedback): { label: string; selectors: string[] } {
   if (event.operationId === 'ui.navigate' && event.phase !== 'completed') return { label: '切换工作区', selectors: [] }
+  if (event.operationId === 'outpatient.section.select') {
+    const section = typeof event.input === 'object' && event.input !== null && 'section' in event.input ? event.input.section : undefined
+    return { label: '切换诊疗页面', selectors: event.phase === 'completed' && typeof section === 'string'
+      ? [`[data-agent-section="${CSS.escape(section)}"]`] : [] }
+  }
   if (event.operationId.endsWith('.propose')) {
     return { label: proposalLabels[event.operationId] ?? '更新当前工作区', selectors: ['[data-agent-review]'] }
   }
   if (event.operationId.endsWith('.select')) {
     const values = typeof event.input === 'object' && event.input !== null ? Object.values(event.input) : []
     return {
-      label: event.operationId === 'outpatient.section.select' ? '切换诊疗页面' : '选择业务记录',
+      label: '选择业务记录',
       selectors: values.filter((value): value is string => typeof value === 'string')
         .map(value => `[data-agent-selection="${CSS.escape(value)}"]`),
     }

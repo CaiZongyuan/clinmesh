@@ -18,6 +18,8 @@ import type { SurfaceAgentPageAction } from './surface-agent-tools.ts'
 export interface AgentPageRegistration {
   actions: Readonly<Record<string, SurfaceAgentPageAction>>
   claim: AgentPageContextClaim
+  /** Visible selection remains scoped while its server detail is loading; never used for authorization. */
+  feedbackSelectionId?: string
   label: string
   readState(): unknown
 }
@@ -157,6 +159,7 @@ function publishRegistration(
     registration: {
       actions,
       claim: registration.claim,
+      ...(registration.feedbackSelectionId === undefined ? {} : { feedbackSelectionId: registration.feedbackSelectionId }),
       label: registration.label,
       readState: () => source.current.readState(),
     },
@@ -174,6 +177,7 @@ function registrationFingerprint(registration: AgentPageRegistration): string {
       },
     ])),
     claim: registration.claim,
+    feedbackSelectionId: registration.feedbackSelectionId,
     label: registration.label,
     state: registration.readState(),
   })

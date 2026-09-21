@@ -1086,8 +1086,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'List the active doctor work queue',
-    version: 1,
+    summary: 'List the doctor work queue; presentation is null when no triage record exists',
+    version: 2,
   },
   {
     cliPath: ['doctor', 'completed-cases', 'list'],
@@ -1143,8 +1143,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case state and available questions',
-    version: 1,
+    summary: 'Read the active doctor case state; presentation is null when no triage record exists',
+    version: 2,
   },
   {
     cliPath: ['doctor', 'case', 'laboratory-catalog', 'search'],

@@ -25,7 +25,6 @@ import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-gro
 import {
   CheckIcon,
   CircleAlertIcon,
-  CircleXIcon,
   PillIcon,
   RotateCcwIcon,
   Trash2Icon,
@@ -331,7 +330,7 @@ export function PrescriptionPage({
 
       {noMedicationConclusion === undefined ? null : (
         <Alert>
-          <CircleXIcon aria-hidden="true" />
+          <CheckIcon aria-hidden="true" />
           <AlertTitle>{messages.noMedicationConfirmed}</AlertTitle>
           <AlertDescription>
             {messages.authoredAt} · {formatClinicalDateTime(noMedicationConclusion.authoredAt, locale)}
@@ -426,7 +425,7 @@ export function PrescriptionPage({
                     key={item.key}
                   >
                     <FieldLegend className="sr-only" variant="label">{messages.medication} {index + 1}</FieldLegend>
-                    <div className="min-w-0 self-center">
+                    <div data-agent-medication-name="" className="min-w-0 self-center">
                       <span className="min-w-0">
                         <strong className="flex gap-1 break-words text-sm">
                           <span aria-hidden="true">{index + 1}.</span>
@@ -669,7 +668,7 @@ export function PrescriptionPage({
               onClick={actions.confirmNoMedication.onSubmit}
               type="button"
             >
-              <CircleXIcon data-icon="inline-start" />{messages.confirmNoMedication}
+              <CheckIcon aria-hidden="true" data-icon="inline-start" />{messages.confirmNoMedication}
             </Button>
             {actions.confirmNoMedication.error === null ? null : (
               <ErrorAlert

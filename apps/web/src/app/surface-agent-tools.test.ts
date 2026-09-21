@@ -144,8 +144,9 @@ describe('ClinMesh Surface Agent tools', () => {
       'clinmesh_read_current_context',
       'clinmesh_search_patients',
     ])
-    expect(tools[1]?.description).toContain('read the current authorized page')
-    expect(tools[1]?.description).toContain('not enforced overwrite authorization or concurrent-edit protection')
+    expect(tools[1]?.description).toContain('读取当前授权页面及未保存内容')
+    expect(tools[1]?.description).toContain('const 不会自动填入')
+    expect(tools[1]?.description).toContain('不是强制覆盖授权或并发修改保护')
     expect(tools[1]?.parameters).toMatchObject({
       properties: {
         contextId: { const: 'context-1' },
@@ -178,6 +179,23 @@ describe('ClinMesh Surface Agent tools', () => {
       expect.any(AbortSignal),
     )
   })
+
+  it.each(['AGENT_CONTEXT_EXPIRED', 'AGENT_CONTEXT_INVALID', 'AGENT_CONTEXT_STALE'])(
+    'gives current-binding recovery guidance before executing for %s', async code => {
+      const readState = vi.fn()
+      const tools = buildSurfaceAgentTools({
+        actions: {}, binding, definitions,
+        authorize: async () => { throw new ApiClientError(409, code, 'Context unavailable') },
+        complete: vi.fn(), issueProof: async () => 'proof', readState, review: vi.fn(),
+      })
+      const result = tools[0]!.execute({
+        contextId: binding.snapshot.id, scopeKey: binding.snapshot.scopeKey,
+      }, new AbortController().signal)
+      await expect(result).rejects.toThrow(`${code}:`)
+      await expect(result).rejects.toThrow('当前工具 schema')
+      expect(readState).not.toHaveBeenCalled()
+    },
+  )
 
   it('returns only registered page state and rejects another scope key', async () => {
     const authorize = vi.fn(async input => ({
@@ -218,10 +236,13 @@ describe('ClinMesh Surface Agent tools', () => {
     })
     expect(JSON.stringify(value)).not.toContain('unavailableReason')
     expect(JSON.stringify(value)).not.toContain('hiddenFacts')
+    await expect(read.execute({}, new AbortController().signal))
+      .rejects.toThrow('CLINMESH_BINDING_ARGUMENTS_INVALID')
     await expect(read.execute(
       { contextId: 'context-1', scopeKey: 'clinmesh:forged' },
       new AbortController().signal,
-    )).rejects.toThrow('scope')
+    )).rejects.toThrow('CLINMESH_BINDING_MISMATCH')
+    expect(authorize).toHaveBeenCalledOnce()
   })
 
   it('returns a pending proposal before completing the later human review decision', async () => {
