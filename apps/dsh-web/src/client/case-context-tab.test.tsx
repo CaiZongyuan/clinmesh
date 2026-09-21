@@ -66,6 +66,7 @@ function createHarness(
 ) {
   let mounted = seatMounted
   let expanded = false
+  let activeKind = CASE_CONTEXT_TAB_KIND
   const toggleExpanded = vi.fn(() => { expanded = !expanded })
   const openTab = vi.fn(() => {
     // 宿主合同:座位未挂载时 openTab 抛错(no session surface is mounted)
@@ -118,7 +119,7 @@ function createHarness(
           },
         }
       }
-      if (name === 'sidebarRight') return { openTab, toggleExpanded, isExpanded: () => expanded, active: () => ({ id: 'patient-tab', kind: CASE_CONTEXT_TAB_KIND }) }
+      if (name === 'sidebarRight') return { openTab, toggleExpanded, isExpanded: () => expanded, active: () => ({ id: 'patient-tab', kind: activeKind }) }
       if (name === 'theme') return { getTheme: () => ({ active: { colorScheme } }) }
       if (name === 'locale') {
         return {
@@ -154,6 +155,8 @@ function createHarness(
     occupants,
     openTab,
     toggleExpanded,
+    setSidebarExpanded(next: boolean) { expanded = next },
+    setActiveTabKind(next: string) { activeKind = next },
     dispose,
     setActive(next: string | null) {
       surfacesSnapshot = { activeId: next, surfaces: [] }
@@ -208,6 +211,27 @@ it('hides visible patient information and reopens it without snapshot refresh un
     port.visibility.toggle()
     expect(harness.openTab).toHaveBeenCalledTimes(2)
   } finally { vi.useRealTimers() }
+})
+
+it('retries a manual reopen after hiding while the host seat is remounting', async () => {
+  vi.useFakeTimers()
+  const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    const port = createCaseContextPort()
+    const harness = createHarness(port, { activeId: 'clinmesh.his' })
+    port.register(caseState())
+    await flushAttempt()
+    const release = port.registerVisibility(() => harness.toggleExpanded())
+    port.visibility.toggle()
+    release()
+    harness.setSeatMounted(false)
+    port.visibility.toggle()
+    expect(harness.openTab).toHaveBeenCalledTimes(2)
+    harness.setSeatMounted(true)
+    await flushAttempt()
+    expect(harness.openTab).toHaveBeenCalledTimes(3)
+    harness.dispose()
+  } finally { errorSpy.mockRestore(); vi.useRealTimers() }
 })
 
 it('registers a page-type tab definition with a localized guide entry', () => {
@@ -473,6 +497,7 @@ async function mountComponent(component: unknown, props: Record<string, unknown>
 it('tracks host tab visibility and clears the button state when the tab is closed', async () => {
   const port = createCaseContextPort()
   const harness = createHarness(port, { activeId: 'clinmesh.his' })
+  harness.setSidebarExpanded(true)
   port.register(caseState())
   const actions = { close: vi.fn() }
   const props = (visible: boolean) => ({ useTabInfo: () => ({ tab: { id: 'patient-tab', visible, actions } }) })
@@ -483,14 +508,33 @@ it('tracks host tab visibility and clears the button state when the tab is close
     expect(port.visibility.getSnapshot()).toBe(false)
     await mounted.rerender(props(true))
     expect(port.visibility.getSnapshot()).toBe(true)
-    // A visible floating tab can outlive the collapsed docked column.
+    // An active floating patient tab does not own the expanded docked column.
     port.visibility.toggle()
     expect(actions.close).toHaveBeenCalledTimes(1)
+    expect(harness.toggleExpanded).not.toHaveBeenCalled()
   } finally {
     await mounted.unmount()
     expect(port.visibility.getSnapshot()).toBe(false)
     harness.dispose()
   }
+})
+
+it.each(['guide', 'document'])('preserves the host column after hiding patient info with %s remaining', async remainingKind => {
+  vi.useFakeTimers()
+  const port = createCaseContextPort()
+  const harness = createHarness(port, { activeId: 'clinmesh.his' })
+  port.register(caseState())
+  await flushAttempt()
+  const close = vi.fn(() => { harness.setActiveTabKind(remainingKind) })
+  const mounted = await mountComponent(harness.occupants.get('sidebar.right.pane.tab'), {
+    useTabInfo: () => ({ tab: { id: 'patient-tab', visible: true, actions: { close } } }),
+  })
+  try {
+    port.visibility.toggle()
+    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(harness.toggleExpanded).not.toHaveBeenCalled()
+  } finally { await mounted.unmount(); harness.dispose(); vi.useRealTimers() }
 })
 
 it('renders the rail into a shadow root while a snapshot is published', async () => {

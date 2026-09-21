@@ -105,11 +105,7 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
     const info = useTabInfo()
     useLayoutEffect(() => {
       if (!info.tab.visible) return
-      return port.registerVisibility(() => {
-        const sidebar = ctx.get('sidebarRight')
-        if (sidebar?.isExpanded() && sidebar.active()?.id === info.tab.id) sidebar.toggleExpanded()
-        else info.tab.actions.close()
-      })
+      return port.registerVisibility(() => { info.tab.actions.close() })
     }, [info.tab.visible, info.tab.id, info.tab.actions])
     const state = useSyncExternalStore(port.subscribe, port.getSnapshot, port.getSnapshot)
     const colorScheme = useSyncExternalStore(subscribeTheme, getTheme, getTheme)
@@ -273,6 +269,7 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
   // 新的用户动作,重置重试预算后再试。
   port.setOpenRequester(() => {
     hiddenSession = null
+    requestedSession = null
     retryAttempts = 0
     attempt(true)
   })
@@ -285,6 +282,7 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
       port.hideVisible()
     } else {
       hiddenSession = null
+      requestedSession = null
       retryAttempts = 0
       attempt(true)
     }
