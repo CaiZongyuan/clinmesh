@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
-import { DoctorCaseLayout, DoctorWorkspaceLayout } from '../../../web/src/app/doctor/responsive-layout.tsx'
+import { DoctorCaseDetailRegion, DoctorCaseLayout, DoctorWorkspaceLayout } from '../../../web/src/app/doctor/responsive-layout.tsx'
 import { ConsultationPage } from '../../../web/src/app/doctor/consultation-page.tsx'
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
 import { AgentActionFeedbackProvider, useAgentActionFeedback } from '../../../web/src/app/agent-action-feedback.tsx'
@@ -32,7 +32,7 @@ function App() {
   return <div className="flex h-full min-h-0 flex-col">
     <div data-agent-feedback-status="" />
     <DoctorWorkspaceLayout selectedCaseId="case" queueLabel="Queue" detailLabel="Case" queue={() => <div>Queue</div>}>
-      <DoctorCaseLayout railPlacement="host" contextLabel="Context" rail={() => null}>
+      <DoctorCaseDetailRegion><DoctorCaseLayout railPlacement="host" contextLabel="Context" rail={() => null}>
         <div className="flex min-h-0 flex-1 flex-col">
           <div style={{ height: 160, flexShrink: 0 }}>Synthetic patient banner and tabs</div>
           <div data-agent-section="consultation" className="flex min-h-0 flex-1 flex-col p-4">
@@ -41,7 +41,7 @@ function App() {
               patientName="Synthetic patient" readOnly={false} />
           </div>
         </div>
-      </DoctorCaseLayout>
+      </DoctorCaseLayout></DoctorCaseDetailRegion>
     </DoctorWorkspaceLayout>
   </div>
 }

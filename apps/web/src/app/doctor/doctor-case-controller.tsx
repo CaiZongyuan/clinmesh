@@ -1,4 +1,4 @@
-import { DoctorWorkspaceLayout, DoctorCaseLayout, DoctorCasePanel } from './responsive-layout.tsx'
+import { DoctorWorkspaceLayout, DoctorCaseLayout, DoctorCasePanel, DoctorCaseDetailRegion } from './responsive-layout.tsx'
 import { hostCaseContextRail, useSurfaceCaseContextPort } from './surface-case-context.ts'
 import { useOptionalWebRuntime } from '../web-runtime.tsx'
 import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
@@ -1932,10 +1932,10 @@ function DoctorCaseController({
         queuePending={visibleQueue.isPending}
       />
       )}>
-      <section ref={caseDetailRoot} aria-labelledby="case-detail-heading" className="flex min-h-full min-w-0 flex-1 flex-col gap-3">
+      <DoctorCaseDetailRegion containerRef={caseDetailRoot} labelledBy="case-detail-heading">
         <h2 className="sr-only" id="case-detail-heading">{messages.caseDetail}</h2>
         {issueOrder.isSuccess && issueOrder.variables.caseId === activeCaseId ? (
-          <Alert>
+          <Alert className="shrink-0">
             <CheckIcon aria-hidden="true" />
             <AlertTitle>{messages.laboratoryOrderIssued}</AlertTitle>
             <AlertDescription>
@@ -1944,7 +1944,7 @@ function DoctorCaseController({
           </Alert>
         ) : null}
         {completeSign.isSuccess && completeSign.variables.caseId === activeCaseId ? (
-          <Alert>
+          <Alert className="shrink-0">
             <CheckCircleIcon aria-hidden="true" />
             <AlertTitle>{messages.encounterCompleted}</AlertTitle>
             <AlertDescription>{messages.awaitingMedicationPayment}</AlertDescription>
@@ -2287,7 +2287,7 @@ function DoctorCaseController({
               ?? createWorkingClinicalDocument(detail.data)}
           />
         )}
-      </section>
+      </DoctorCaseDetailRegion>
     </DoctorWorkspaceLayout>
   )
 }

@@ -2,7 +2,7 @@ import * as React from 'react'
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
-import { DoctorCaseLayout, DoctorCasePanel, DoctorWorkspaceLayout } from '../../../web/src/app/doctor/responsive-layout.tsx'
+import { DoctorCaseDetailRegion, DoctorCaseLayout, DoctorCasePanel, DoctorWorkspaceLayout } from '../../../web/src/app/doctor/responsive-layout.tsx'
 
 const sections = ['record', 'laboratory', 'diagnosis', 'prescription'] as const
 const host = document.createElement('div')
@@ -17,7 +17,7 @@ shadow.append(style, root)
 function App() {
   return <div className="flex h-full min-h-0 flex-col">
     <DoctorWorkspaceLayout selectedCaseId="case" queueLabel="Queue" detailLabel="Case" queue={() => <div>Queue</div>}>
-      <DoctorCaseLayout railPlacement="host" contextLabel="Context" rail={() => null}>
+      <DoctorCaseDetailRegion><div role="status" className="shrink-0">Synthetic success notification</div><DoctorCaseLayout railPlacement="host" contextLabel="Context" rail={() => null}>
         <div className="flex min-h-0 flex-1 flex-col">
           <header className="shrink-0" style={{ height: 100 }}>Synthetic patient banner</header>
           <Tabs defaultValue="record" className="min-h-0 flex-1 gap-0">
@@ -28,7 +28,7 @@ function App() {
             </DoctorCasePanel>)}
           </Tabs>
         </div>
-      </DoctorCaseLayout>
+      </DoctorCaseLayout></DoctorCaseDetailRegion>
     </DoctorWorkspaceLayout>
   </div>
 }

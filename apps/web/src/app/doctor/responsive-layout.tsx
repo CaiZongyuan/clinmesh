@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode, type Ref } from 'react'
 import { Button } from '@clinmesh/ui/components/button'
 import {
   Sheet,
@@ -113,6 +113,14 @@ export function DoctorCaseLayout({
       </div>
     </div>
   )
+}
+
+export function DoctorCaseDetailRegion({ children, containerRef, labelledBy }: {
+  children: ReactNode
+  containerRef?: Ref<HTMLElement>
+  labelledBy?: string
+}) {
+  return <section ref={containerRef} aria-labelledby={labelledBy} className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden">{children}</section>
 }
 
 export function DoctorCasePanel({ children, value }: {
