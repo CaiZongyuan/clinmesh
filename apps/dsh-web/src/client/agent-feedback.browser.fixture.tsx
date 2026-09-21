@@ -12,6 +12,7 @@ import type { ClinicalDocumentContent, DoctorCaseDetail } from '@clinmesh/contra
 import '../../../web/src/app/agent-action-feedback.css'
 
 const rootElement = document.createElement('main')
+rootElement.dataset.clinmeshMode = 'surface'
 rootElement.style.cssText = 'width:360px;height:640px;position:relative'
 const host = document.createElement('div')
 host.style.cssText = 'contain:strict;position:absolute;left:140px;top:90px;width:400px;height:700px'

@@ -10,7 +10,16 @@
 }
 .clinmesh-agent-feedback[data-fading] { opacity: 0; }
 .clinmesh-agent-feedback-summary { display: flex; align-items: center; gap: 0.75rem; padding: 0.45rem 0.65rem; }
-.clinmesh-agent-feedback-summary [role="status"] { min-width: 0; overflow-wrap: anywhere; }
+.clinmesh-agent-feedback-summary [role="status"] { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+[data-clinmesh-mode="surface"] :is([role="dialog"][data-agent-catalog], [data-agent-review]) { padding-top: 2.75rem; }
+[data-agent-catalog] > .clinmesh-agent-feedback,
+[data-agent-review] > .clinmesh-agent-feedback { left: 0.75rem; right: 3rem; width: auto; max-width: none; }
+[data-agent-catalog] > .clinmesh-agent-feedback .clinmesh-agent-feedback-details,
+[data-agent-review] > .clinmesh-agent-feedback .clinmesh-agent-feedback-details {
+  position: absolute; top: calc(100% + 2.75rem); left: 0; right: 0;
+  border: 1px solid var(--border, #d4d4d8); border-radius: 0.5rem;
+  background: var(--background, #fff); box-shadow: 0 3px 12px color-mix(in srgb, var(--foreground, #18181b) 10%, transparent);
+}
 .clinmesh-agent-feedback button { flex-shrink: 0; cursor: pointer; color: var(--primary, #4f46e5); }
 .clinmesh-agent-feedback button:focus-visible { outline: 2px solid var(--ring, #6366f1); outline-offset: 3px; border-radius: 3px; }
 .clinmesh-agent-feedback-details { list-style: none; margin: 0; padding: 0 0.65rem; max-height: 12rem; overflow: auto; }

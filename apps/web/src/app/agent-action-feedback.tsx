@@ -144,10 +144,20 @@ function FeedbackDisplay({ events, root, onDismiss }: { events: DisplayFeedback[
   const [expanded, setExpanded] = useState(false)
   const detailsId = useId()
   const [rectangles, setRectangles] = useState<TargetRectangle[]>([])
+  useLayoutEffect(() => {
+    if (root === null) return
+    const syncPortal = () => setOverlayRoot(root.querySelector<HTMLElement>(
+      '[role="dialog"][data-agent-catalog]:not([data-closed]), [data-agent-review]:not([data-closed])',
+    ))
+    syncPortal()
+    // Persistent outcome details must follow dialog removal after target tracking stops.
+    const observer = new MutationObserver(syncPortal)
+    observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-closed'] })
+    return () => observer.disconnect()
+  }, [root])
   const measure = useCallback(() => {
     if (root === null || overlay.current === null) return
     const catalogDialog = root.querySelector<HTMLElement>('[role="dialog"][data-agent-catalog]:not([data-closed]), [data-agent-review]:not([data-closed])')
-    setOverlayRoot(catalogDialog)
     const origin = overlay.current.getBoundingClientRect()
     const selected = new Map<Element, DisplayFeedback>()
     // Active operations retain their border when an overlapping operation finishes.

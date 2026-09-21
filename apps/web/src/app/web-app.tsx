@@ -529,6 +529,7 @@ function WebApplication({
               ? 'clinmesh-web-root h-full min-h-0 overflow-hidden'
               : 'clinmesh-web-root'}
             data-clinmesh-app="web"
+            data-clinmesh-mode={runtime.mode}
             data-font-size={fontSize}
             lang={locale}
             ref={applicationRoot}
