@@ -1,9 +1,10 @@
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import { chromium } from 'playwright-core'
 import { build } from 'vite'
 import { expect, it } from 'vitest'
 import { z } from 'zod'
-import { readJsonFromHeadlessChrome } from '../../../../scripts/headless-browser.ts'
+import { findChrome } from '../../../../scripts/headless-browser.ts'
 
 const require = createRequire(import.meta.url)
 
@@ -18,7 +19,7 @@ const dialogResultSchema = z.object({
   packageHighlighted: z.boolean().optional(),
 })
 
-it.each(['18', '19'])('opens clinical catalog dialogs, toggles selection and debounces search with React %s', async version => {
+it.each(['18', '19'])('supports catalog selection, search, feedback and persona failure details with React %s', async version => {
   const react = version === '18' ? 'react18' : 'react'
   const reactDom = version === '18' ? 'react-dom18' : 'react-dom'
   const result = await build({
@@ -45,16 +46,29 @@ it.each(['18', '19'])('opens clinical catalog dialogs, toggles selection and deb
   const css = outputs.filter(output => output.type === 'asset' && output.fileName.endsWith('.css'))
     .map(output => output.type === 'asset' ? String(output.source) : '').join('\n')
   if (!script || script.type !== 'chunk') throw new Error('Missing browser script')
-  const response = await readJsonFromHeadlessChrome(
-    `<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body><script>window.onerror = message => { document.title = btoa(JSON.stringify({ error: String(message) })) }</script><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`,
-    8000,
-  )
+  // Base UI completes dialog unmounting on animation frames, which virtual time can skip.
+  const browser = await chromium.launch({ executablePath: findChrome(), headless: true })
+  let response: unknown
+  try {
+    const page = await browser.newPage({ viewport: { width: 800, height: 600 } })
+    await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body><script>window.onerror = message => { document.title = btoa(JSON.stringify({ error: String(message) })) }</script><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
+    await page.waitForFunction(() => document.title.length > 0, undefined, { timeout: 8_000 })
+    response = JSON.parse(Buffer.from(await page.title(), 'base64').toString('utf8'))
+  } finally {
+    await browser.close()
+  }
   const failure = z.object({ error: z.string() }).safeParse(response)
   if (failure.success) throw new Error(failure.data.error)
   const actual = z.object({
     diagnosis: dialogResultSchema,
     laboratory: dialogResultSchema,
     medication: dialogResultSchema,
+    persona: z.object({
+      opened: z.boolean(),
+      details: z.string(),
+      portalOutsideShadow: z.boolean(),
+      closed: z.boolean(),
+    }),
     windowErrors: z.array(z.string()),
   }).parse(response)
   expect(actual.windowErrors).toEqual([])
@@ -71,4 +85,8 @@ it.each(['18', '19'])('opens clinical catalog dialogs, toggles selection and deb
   expect(actual.medication.catalogHighlighted).toBe(true)
   expect(actual.medication.productHighlighted).toBe(true)
   expect(actual.medication.packageHighlighted).toBe(true)
+  expect(actual.persona).toMatchObject({ opened: true, closed: true, portalOutsideShadow: false })
+  for (const detail of ['失败原因详情', 'AI_RESPONSE_INVALID', 'Synthetic provider response is invalid', '更换模型', '2026-09-20T07:23:32.782Z']) {
+    expect(actual.persona.details).toContain(detail)
+  }
 }, 30_000)

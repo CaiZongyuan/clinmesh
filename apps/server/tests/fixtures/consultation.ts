@@ -34,7 +34,7 @@ export class StubSyntheaProvider implements ScenarioGenerationProvider {
     const raw = {
       entry: [{
         fullUrl: 'urn:uuid:patient',
-        resource: { birthDate: '1970-01-01', gender: 'female', id: 'p1', name: [{ text: '张琴' }], resourceType: 'Patient' },
+        resource: { address: [{ text: '合成市城东区块合成路1号' }], birthDate: '1970-01-01', gender: 'female', id: 'p1', name: [{ text: '张琴' }], resourceType: 'Patient' },
       }, {
         fullUrl: 'urn:uuid:prior-encounter',
         resource: { id: 'pe', period: { end: '2025-01-10T09:30:00+08:00', start: '2025-01-10T09:00:00+08:00' }, resourceType: 'Encounter', status: 'finished', subject: { reference: 'urn:uuid:patient' } },

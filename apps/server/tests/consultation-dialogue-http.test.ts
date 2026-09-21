@@ -163,6 +163,50 @@ describe('Consultation free dialogue HTTP contract', () => {
     ])
   })
 
+  it('grounds the patient reply payload in the case patient identity', async () => {
+    const provider = new ScriptedDialogueProvider([
+      persona,
+      { reply: '医生,我叫张琴,今年五十五了。' },
+    ])
+    const runtime = await createRuntimeWithProvider(provider)
+    const started = await startConsultationCase(runtime)
+    const doctorCookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
+
+    const ask = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`Encounter/${started.encounterId}`]: started.encounterVersion,
+            [`Task/${started.doctorTaskId}`]: '1',
+          },
+          input: { expectedConsultationVersion: 2, message: '您叫什么名字？多大年纪？' },
+        }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: doctorCookie,
+          'idempotency-key': randomUUID(),
+          origin,
+        },
+        method: 'POST',
+      },
+    )
+    expect(ask.status).toBe(200)
+
+    const dialogueRequest = provider.requests.find(item => item.schemaName !== 'patient_persona')
+    expect(dialogueRequest).toBeDefined()
+    expect(dialogueRequest?.userPayload).toMatchObject({
+      identity: {
+        address: expect.any(String),
+        birthDate: '1970-01-01',
+        gender: 'female',
+        name: '张琴',
+      },
+    })
+    expect(dialogueRequest?.systemPrompt).toContain('姓名')
+    expect(dialogueRequest?.systemPrompt).toContain('第一次')
+  })
+
   it('regenerates a leaking reply once and falls back to a safe answer', async () => {
     const provider = new ScriptedDialogueProvider([
       persona,

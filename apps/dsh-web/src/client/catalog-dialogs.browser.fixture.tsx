@@ -10,6 +10,7 @@ import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import { AgentActionFeedbackProvider, useAgentActionFeedback } from '../../../web/src/app/agent-action-feedback.tsx'
 import { WebRuntimeProvider } from '../../../web/src/app/web-runtime.tsx'
 import '../../../web/src/app/agent-action-feedback.css'
+import { PersonaJobStatusNotice } from '../../../web/src/app/persona-job-failure.tsx'
 import {
   DiagnosisCatalogDialog,
   LaboratoryCatalogDialog,
@@ -227,7 +228,40 @@ async function run() {
     void root.unmount()
     container.textContent = ''
   }
-  document.title = encodeResult({ ...results, windowErrors })
+  const personaRoot = createRoot(container)
+  flushSync(() => {
+    personaRoot.render(
+      <PortalContainerProvider container={container}>
+        <PersonaJobStatusNotice
+          error={{ code: 'AI_RESPONSE_INVALID', message: 'Synthetic provider response is invalid' }}
+          finishedAt="2026-09-20T07:23:32.782Z"
+          label="患者档案生成失败"
+          locale="zh-CN"
+          status="failed"
+        />
+      </PortalContainerProvider>,
+    )
+  })
+  const detailsTrigger = [...container.querySelectorAll('button')].find(button => button.textContent === '查看失败详情')
+  if (!detailsTrigger) throw new Error('Missing persona failure details trigger')
+  detailsTrigger.click()
+  await settle()
+  const dialog = container.querySelector('[role="dialog"]')
+  const persona = {
+    opened: dialog !== null,
+    details: dialog?.textContent ?? '',
+    portalOutsideShadow: document.body.querySelector('[role="dialog"]') !== null,
+    closed: false,
+  }
+  const close = [...(dialog?.querySelectorAll('button') ?? [])].find(button => button.textContent === '关闭')
+  if (!close) throw new Error('Missing persona failure details close button')
+  close.click()
+  for (let attempt = 0; attempt < 20 && container.querySelector('[role="dialog"]') !== null; attempt += 1) {
+    await settle()
+  }
+  persona.closed = container.querySelector('[role="dialog"]') === null
+  personaRoot.unmount()
+  document.title = encodeResult({ ...results, persona, windowErrors })
 }
 
 function encodeResult(value: unknown): string {

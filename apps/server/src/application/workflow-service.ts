@@ -724,6 +724,12 @@ function parseStoredFhirResource(content: string): FhirResource {
   return fhirResourceSchema.parse(JSON.parse(content))
 }
 
+function patientAddressText(resource: FhirResource): string | undefined {
+  const addresses = Array.isArray(resource.address) ? resource.address : []
+  const first = addresses[0] as { text?: unknown } | undefined
+  return typeof first?.text === 'string' && first.text.length > 0 ? first.text : undefined
+}
+
 function patientSummary(resource: FhirResource): PatientSummary {
   const identifier = Array.isArray(resource.identifier)
     ? (resource.identifier[0] as { value?: unknown } | undefined)?.value
@@ -734,7 +740,9 @@ function patientSummary(resource: FhirResource): PatientSummary {
   const clinicalName = typeof name === 'string'
     ? name.replace(/^合成(?:候选|密度)?患者/, '').replace(/^Synthetic\s+(?:candidate\s+)?patient\s+/i, '')
     : ''
+  const address = patientAddressText(resource)
   return {
+    ...(address === undefined ? {} : { address }),
     ...(typeof resource.birthDate === 'string' ? { birthDate: resource.birthDate } : {}),
     ...(typeof resource.gender === 'string' ? { gender: resource.gender } : {}),
     id: resource.id,
