@@ -37,6 +37,8 @@
 
 - 目录表格同时支持行双击确认和行内选择切换时，选择按钮须阻止 `dblclick` 冒泡，避免快速选中再取消触发行确认。药品包装切换只更新当前选择，不复用取消选择逻辑。
 
+- DSH Tool 报 `ClinMesh Tools require an active Page Context binding` 时，先核对真实调用参数中的 `contextId`、`scopeKey` 和宿主会话关联；不要根据调用顺序推断绑定被读取消耗或已过期。对照发送给模型的 schema 与实际 Tool arguments，区分模型漏传必填参数和页面签发故障。
+
 - DSH 工具缺失时，同时检查后端 Page Context 的 `allowedOperationIds` 和前端 action 的 `enabled` 条件。失败后的恢复工具也必须经过两层筛选；仅用返回全部 catalog operations 的前端 mock，无法发现后端漏授权，需补真实 HTTP Page Context 回归。
 
 - Surface 宿主限制每个 Tool 的最终 description 不超过 512 字符；Web 包装器会追加通用编辑说明，预算必须按拼接后的文本计算。单个描述超限会使整份 lease 注册失败、全部 ClinMesh 工具缺失，不能仅以页面上下文签发成功或 mock register 测试通过判断桥接可用。

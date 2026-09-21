@@ -2,6 +2,21 @@
 
 本文说明 DSH ClinMesh 工作台实际接入的页面控制、业务操作及反馈。可执行工具名称、岗位与页面范围由 [Tool Catalog](../packages/contracts/src/agent.ts) 定义，输入约束由 [Tool 输入 schema](../packages/contracts/src/agent-tool-input.ts) 定义；本文不复制参数 schema。
 
+## Tool 绑定与恢复
+
+每次页面 Tool 调用都必须在 JSON 中显式传入当前工具 schema 的 `contextId`、`scopeKey` 的 `const` 值；`const` 只限制取值，不会自动填入。读取不消耗 Page Context，无须让写入成为新回合的第一次调用。绑定值可能随页面状态或续签更新，不从历史对话复制。
+
+绑定诊断发生在页面业务动作执行前，不代替业务结果核对：
+
+| 诊断 | 含义与恢复 |
+| --- | --- |
+| `CLINMESH_BINDING_ARGUMENTS_INVALID` | 调用缺少或包含无效绑定字段；按错误列出的字段补齐当前 schema 的值后重试。 |
+| `CLINMESH_HOST_SESSION_REQUIRED` | 宿主未关联 DSH Agent 会话；从打开 ClinMesh 工作台的会话调用，补参数不能恢复会话关联。 |
+| `CLINMESH_BINDING_MISMATCH` | 参数与当前页面绑定不匹配；使用当前 schema 的值并重新读取页面状态。 |
+| `AGENT_CONTEXT_EXPIRED` / `AGENT_CONTEXT_INVALID` / `AGENT_CONTEXT_STALE` | 服务端授权拒绝过期、无效或资源已变化的上下文；等待页面更新工具定义，按当前绑定读取状态后决定是否重试。工具持续未更新时重新打开工作台。 |
+
+宿主和页面不会自动补入缺失绑定，也不会自动重放写入。网络中断、执行失败或回执失败仍按下述结果确认规则处理，不能套用绑定拒绝的“尚未执行”结论。
+
 ## 读取与编辑边界
 
 原生 DSH Session 经 React Surface 与 browser-tools 调用当前授权岗位、页面和病例的窄 Tools。连接状态 active 只表示通道可用，不表示模型正在思考或操作；读取不会触发目标流光。模型 transcript 由 DSH 拥有，ClinMesh 不显示推测的模型活动。
