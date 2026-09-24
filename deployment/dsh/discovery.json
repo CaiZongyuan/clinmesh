@@ -8,19 +8,19 @@
     "components": [
       {
         "name": "@deepseek-ai/dsh",
-        "source": "https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.1.5-rc.3.tgz",
+        "source": "https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.1.7-rc.1.tgz",
         "owner": "https://github.com/deepseek-ai/deepseek-harness",
         "role": "原生会话、工具调度与 Web 宿主",
-        "version": "0.1.5-rc.3",
-        "integrity": "sha512-c0W6Xqc4ChjFcCJkbzPeIxZQdnbKqe+QAcJzWGtogg0ZzsnZRcw3vopMyZ5oZU6E2fmyqGcyDR1sBeiCH4yHcg=="
+        "version": "0.1.7-rc.1",
+        "integrity": "sha512-O1K076aCmqE+h4fB5J+mi3twNSAnh26OqHepaqvS5f1tccFnxhVyGpUmjcncVM5x1SX4niznmvsGrsRo9p733A=="
       },
       {
         "name": "@dsh-so/dshvm",
-        "source": "https://registry.npmjs.org/@dsh-so/dshvm/-/dshvm-0.1.1.tgz",
+        "source": "https://registry.npmjs.org/@dsh-so/dshvm/-/dshvm-0.2.0.tgz",
         "owner": "https://github.com/dsh-so/dshvm",
         "role": "隔离安装、版本选择与启动",
-        "version": "0.1.1",
-        "integrity": "sha512-5IEDSi0VhK1QJNyQRJqy0rSw/wxA4meYby7m/vAKXeVUS9hobWkzXWt7/tkBw9z02uoh09X4DXwpbmhtSVmKWQ==",
+        "version": "0.2.0",
+        "integrity": "sha512-9HMJq4VZk4n0hF0UvUHyxbciwr0iQReb7nDdGjPQ3EnIHVMNDGf5MEywwYudI4A1rcFsI5rcF6YdD923YDMdRw==",
         "requires": [
           "@deepseek-ai/dsh"
         ]
@@ -66,7 +66,12 @@
     {
       "name": "@deepseek-ai/dsh",
       "from": "0.1.5-rc.2",
-      "to": "0.1.5-rc.3"
+      "to": "0.1.7-rc.1"
+    },
+    {
+      "name": "@dsh-so/dshvm",
+      "from": "0.1.1",
+      "to": "0.2.0"
     }
   ]
 }
