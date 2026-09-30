@@ -259,15 +259,18 @@ function resolveSelection(
           AND prescription_draft_state.draft_json IS NOT NULL) AS has_prescription_draft,
         EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
           AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
+          AND laboratory_request.request_kind = 'laboratory'
           AND (laboratory_request.status = 'issued'
             OR (laboratory_request.status = 'generation-failed'
               AND laboratory_request.generation_error_code = 'INVESTIGATION_UNSUPPORTED')))
           AS has_cancellable_laboratory,
         EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
           AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
+          AND laboratory_request.request_kind = 'laboratory'
           AND laboratory_request.status = 'reported') AS has_reported_laboratory,
         EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
           AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
+          AND laboratory_request.request_kind = 'laboratory'
           AND laboratory_request.status IN ('reported', 'acknowledged')) AS has_correctable_laboratory,
         EXISTS (SELECT 1 FROM signed_clinical_document WHERE signed_clinical_document.workspace_id = outpatient_case.workspace_id
           AND signed_clinical_document.epoch = outpatient_case.epoch AND signed_clinical_document.case_id = outpatient_case.case_id) AS has_signed_document
@@ -567,7 +570,7 @@ function inputMatchesCurrentResources(
     if (claim.selection?.kind !== 'case') return false
     if (operationId === 'outpatient.laboratory.cancel.propose') {
       return exists(`SELECT 1 FROM laboratory_request WHERE workspace_id = ? AND epoch = ?
-        AND case_id = ? AND request_id = ?
+        AND case_id = ? AND request_id = ? AND request_kind = 'laboratory'
         AND (status = 'issued'
           OR (status = 'generation-failed' AND generation_error_code = 'INVESTIGATION_UNSUPPORTED'))`,
       ...scope, claim.selection.id, value.requestId)
@@ -576,7 +579,7 @@ function inputMatchesCurrentResources(
       ? ['reported', 'acknowledged']
       : ['reported']
     return exists(`SELECT 1 FROM laboratory_request WHERE workspace_id = ? AND epoch = ?
-      AND case_id = ? AND request_id = ? AND status IN (${statuses.map(() => '?').join(', ')})`,
+      AND case_id = ? AND request_id = ? AND request_kind = 'laboratory' AND status IN (${statuses.map(() => '?').join(', ')})`,
     ...scope, claim.selection.id, value.requestId, ...statuses)
   }
   if (operationId === 'billing.item.select') {
