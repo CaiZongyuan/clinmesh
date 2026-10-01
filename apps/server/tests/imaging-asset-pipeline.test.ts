@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { runImagingAssetsCli } from '../src/imaging-assets-cli.ts'
+import { ImagingAssetLibrary } from '../src/infrastructure/imaging-assets/imaging-asset-library.ts'
 import {
   openInstalledImagingAsset,
   recordImagingAssets,
@@ -103,6 +104,8 @@ async function writeCatalog(directory: string, assets: Array<{
     packId: 'clinmesh-imaging-test',
     schemaVersion: 1,
   }, null, 2)}\n`)
+  await mkdir(join(directory, 'prompts'), { recursive: true })
+  await writeFile(join(directory, 'prompts', 'chest-report-v1.md'), '# Synthetic report prompt\n')
   for (const asset of assets) {
     await writeFile(join(directory, 'assets', `${asset.assetId}.json`), `${JSON.stringify({
       assetId: asset.assetId,
@@ -124,6 +127,12 @@ function int16Values(bytes: Uint8Array): number[] {
 
 function uint16Values(bytes: Uint8Array): number[] {
   return Array.from(new Uint16Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)))
+}
+
+async function openInstalled(assetDirectory: string, assetId: string) {
+  const opened = await openInstalledImagingAsset({ assetDirectory, assetId })
+  if (opened === undefined) throw new Error(`${assetId} is not installed`)
+  return opened
 }
 
 async function listTree(directory: string): Promise<string[]> {
@@ -190,7 +199,7 @@ describe('imaging asset pipeline', () => {
       ],
     })
 
-    const ct = await openInstalledImagingAsset({ assetDirectory: deployedAssets, assetId: 'synthetic-ct' })
+    const ct = await openInstalled(deployedAssets, 'synthetic-ct')
     expect(ct.series).toHaveLength(1)
     const [ctGeometry] = ct.series.map(item => item.geometry)
     expect(ctGeometry).toMatchObject({
@@ -207,7 +216,7 @@ describe('imaging asset pipeline', () => {
     // HU 超出显示范围的值被钳制到 [-1024, 3071]。
     expect(int16Values(await ct.series[0]!.readBlock(2, 0))).toEqual([1000, 0, -1000, 0, 3071, 2000])
 
-    const radiograph = await openInstalledImagingAsset({ assetDirectory: deployedAssets, assetId: 'synthetic-radiograph' })
+    const radiograph = await openInstalled(deployedAssets, 'synthetic-radiograph')
     expect(radiograph.series[0]?.geometry).toMatchObject({
       modality: 'DX',
       pixelFormat: 'uint16',
@@ -224,7 +233,7 @@ describe('imaging asset pipeline', () => {
     })
     expect(uint16Values(await radiograph.series[0]!.readBlock(0, 0))).toEqual([0, 3995, 4095, 4065, 4075, 4085])
 
-    const maintainerCt = await openInstalledImagingAsset({ assetDirectory: maintainerAssets, assetId: 'synthetic-ct' })
+    const maintainerCt = await openInstalled(maintainerAssets, 'synthetic-ct')
     expect(await maintainerCt.series[0]!.readBlock(0, 0)).toEqual(await ct.series[0]!.readBlock(0, 0))
     expect(await syncImagingAssets({
       assetDirectory: deployedAssets,
@@ -258,7 +267,7 @@ describe('imaging asset pipeline', () => {
 
     await recordImagingAssets({ assetDirectory, catalogDirectory, sourceClient: sourceClient(series) })
 
-    const asset = await openInstalledImagingAsset({ assetDirectory, assetId: 'synthetic-radiograph' })
+    const asset = await openInstalled(assetDirectory, 'synthetic-radiograph')
     expect(asset.series[0]?.geometry.frames.map(frame => frame.view)).toEqual(['frontal', 'lateral'])
     // 设备自定义的投照体位文本不进入几何描述，只保留 DICOM 定义的取值。
     expect(asset.series[0]?.geometry.frames.map(frame => frame.viewPosition)).toEqual([undefined, 'LL'])
@@ -293,7 +302,7 @@ describe('imaging asset pipeline', () => {
 
     await recordImagingAssets({ assetDirectory, catalogDirectory, sourceClient: sourceClient(series) })
 
-    const asset = await openInstalledImagingAsset({ assetDirectory, assetId: 'synthetic-wide-radiograph' })
+    const asset = await openInstalled(assetDirectory, 'synthetic-wide-radiograph')
     expect(asset.series[0]?.geometry.frames[0]?.blocks.map(block => ({
       length: block.length,
       rowCount: block.rowCount,
@@ -311,7 +320,7 @@ describe('imaging asset pipeline', () => {
     const series = new Map([[ctSeries, ctInstances()], [radiographSeries, radiographInstances()]])
     const assetDirectory = join(root, 'assets')
     await recordImagingAssets({ assetDirectory, catalogDirectory, sourceClient: sourceClient(series) })
-    const original = await openInstalledImagingAsset({ assetDirectory, assetId: 'synthetic-ct' })
+    const original = await openInstalled(assetDirectory, 'synthetic-ct')
     const originalBlock = await original.series[0]!.readBlock(1, 0)
 
     const framesPath = join(assetDirectory, 'installed', 'synthetic-ct', '0', 'frames.bin')
@@ -330,7 +339,7 @@ describe('imaging asset pipeline', () => {
     expect(await repairImagingAssets({ assetDirectory, catalogDirectory, assetIds: ['synthetic-ct'] })).toEqual({
       assets: [{ assetId: 'synthetic-ct', status: 'repaired' }],
     })
-    const repaired = await openInstalledImagingAsset({ assetDirectory, assetId: 'synthetic-ct' })
+    const repaired = await openInstalled(assetDirectory, 'synthetic-ct')
     expect(await repaired.series[0]!.readBlock(1, 0)).toEqual(originalBlock)
 
     await rm(join(assetDirectory, 'sources', 'synthetic-radiograph'), { recursive: true })
@@ -349,27 +358,22 @@ describe('imaging asset pipeline', () => {
     })
   })
 
-  it('retries a transient download failure and gives up after three attempts', async () => {
+  it('reports a source that cannot be downloaded without retrying in the store', async () => {
     const { catalogDirectory, root } = await workspace()
     await rm(join(catalogDirectory, 'assets', 'synthetic-ct.json'))
     const reliable = sourceClient(new Map([[radiographSeries, radiographInstances()]]))
-    let failures = 2
-    const flaky: ImagingSourceClient = {
+    await recordImagingAssets({ assetDirectory: join(root, 'assets'), catalogDirectory, sourceClient: reliable })
+    // 重试与退避由来源客户端负责，见 imaging-tcia-client.test.ts。
+    let attempts = 0
+    const failing: ImagingSourceClient = {
       ...reliable,
-      async fetchInstance(reference) {
-        if (failures > 0) {
-          failures -= 1
-          throw new Error('connection reset')
-        }
-        return await reliable.fetchInstance(reference)
+      async fetchInstance() {
+        attempts += 1
+        throw new Error('connection reset')
       },
     }
 
-    expect(await recordImagingAssets({ assetDirectory: join(root, 'assets'), catalogDirectory, sourceClient: flaky }))
-      .toEqual({ assets: [{ assetId: 'synthetic-radiograph', status: 'recorded' }] })
-
-    failures = 3
-    expect(await syncImagingAssets({ assetDirectory: join(root, 'deployed'), catalogDirectory, sourceClient: flaky }))
+    expect(await syncImagingAssets({ assetDirectory: join(root, 'deployed'), catalogDirectory, sourceClient: failing }))
       .toEqual({
         assets: [{
           assetId: 'synthetic-radiograph',
@@ -377,6 +381,85 @@ describe('imaging asset pipeline', () => {
           status: 'failed',
         }],
       })
+    expect(attempts).toBe(1)
+  })
+
+  it('verifies retained sources and restores them on sync', async () => {
+    const { catalogDirectory, root } = await workspace()
+    const series = new Map([[ctSeries, ctInstances()], [radiographSeries, radiographInstances()]])
+    const assetDirectory = join(root, 'assets')
+    await recordImagingAssets({ assetDirectory, catalogDirectory, sourceClient: sourceClient(series) })
+    const ctSource = join(assetDirectory, 'sources', 'synthetic-ct', '0', '2.25.1102.dcm')
+    const ctBytes = await readFile(ctSource)
+    ctBytes[ctBytes.length - 1] = ctBytes[ctBytes.length - 1]! ^ 0xff
+    await writeFile(ctSource, ctBytes)
+    await rm(join(assetDirectory, 'sources', 'synthetic-radiograph'), { recursive: true })
+
+    expect(await verifyImagingAssets({ assetDirectory, catalogDirectory })).toEqual({
+      assets: [
+        { assetId: 'synthetic-ct', status: 'sources-corrupt' },
+        { assetId: 'synthetic-radiograph', status: 'sources-missing' },
+      ],
+    })
+    expect(await syncImagingAssets({ assetDirectory, catalogDirectory, sourceClient: sourceClient(series) })).toEqual({
+      assets: [
+        { assetId: 'synthetic-ct', status: 'installed' },
+        { assetId: 'synthetic-radiograph', status: 'installed' },
+      ],
+    })
+    expect(await verifyImagingAssets({ assetDirectory, catalogDirectory })).toEqual({
+      assets: [
+        { assetId: 'synthetic-ct', status: 'ready' },
+        { assetId: 'synthetic-radiograph', status: 'ready' },
+      ],
+    })
+  })
+
+  it('sweeps staging directories left by an interrupted run', async () => {
+    const { catalogDirectory, root } = await workspace()
+    const series = new Map([[ctSeries, ctInstances()], [radiographSeries, radiographInstances()]])
+    const assetDirectory = join(root, 'assets')
+    await recordImagingAssets({ assetDirectory, catalogDirectory, sourceClient: sourceClient(series) })
+    await mkdir(join(assetDirectory, '.staging', 'killed-run', 'installed'), { recursive: true })
+    await writeFile(join(assetDirectory, '.staging', 'killed-run', 'installed', 'receipt.json'), '{')
+
+    await repairImagingAssets({ assetDirectory, catalogDirectory, assetIds: ['synthetic-ct'] })
+    expect((await listTree(assetDirectory)).filter(path => /^\.staging\/./.test(path))).toEqual([])
+
+    await mkdir(join(assetDirectory, '.staging', 'killed-run'), { recursive: true })
+    await syncImagingAssets({ assetDirectory, catalogDirectory, sourceClient: sourceClient(series) })
+    expect((await listTree(assetDirectory)).filter(path => /^\.staging\/./.test(path))).toEqual([])
+  })
+
+  it('treats a corrupt installed geometry as unavailable and reflects repair without a new library', async () => {
+    const { catalogDirectory, root } = await workspace()
+    const series = new Map([[ctSeries, ctInstances()], [radiographSeries, radiographInstances()]])
+    const assetDirectory = join(root, 'assets')
+    await recordImagingAssets({ assetDirectory, catalogDirectory, sourceClient: sourceClient(series) })
+    const library = new ImagingAssetLibrary({ assetDirectory, catalogDirectory })
+    const asset = (await library.catalog())!.assets.find(candidate => candidate.assetId === 'synthetic-ct')!
+    const opened = await library.open(asset)
+    expect(opened).toHaveLength(1)
+    // 未变化的安装复用已打开的序列与清单。
+    expect(await library.open(asset)).toBe(opened)
+    expect(await library.catalog()).toBe(await library.catalog())
+
+    const geometryPath = join(assetDirectory, 'installed', 'synthetic-ct', '0', 'series.json')
+    for (const corrupt of ['{', '{"frames":[]}\n']) {
+      await writeFile(geometryPath, corrupt)
+      expect(await openInstalledImagingAsset({ assetDirectory, assetId: 'synthetic-ct' })).toBeUndefined()
+      expect(await library.open(asset)).toBeUndefined()
+    }
+
+    await repairImagingAssets({ assetDirectory, catalogDirectory, assetIds: ['synthetic-ct'] })
+    expect(await library.open(asset)).toHaveLength(1)
+
+    // 清单文件变化后重新读取。
+    const entryPath = join(catalogDirectory, 'assets', 'synthetic-ct.json')
+    const entry = JSON.parse(await readFile(entryPath, 'utf8'))
+    await writeFile(entryPath, JSON.stringify({ ...entry, source: { ...entry.source, subjectId: 'SYNTHETIC-0002' } }))
+    expect((await library.catalog())!.assets.find(candidate => candidate.assetId === 'synthetic-ct')!.source.subjectId)
+      .toBe('SYNTHETIC-0002')
   })
 
   it('leaves no partial install when downloaded bytes do not match the catalog', async () => {
@@ -425,6 +508,34 @@ describe('imaging asset pipeline', () => {
       code: 'IMAGING_SERIES_NONCONTIGUOUS',
       instances: () => ctInstances({ positions: [0, -80, -400] }),
       name: 'a chest CT with a slice gap',
+    },
+    {
+      code: 'IMAGING_DICOM_INVALID',
+      instances: () => ctInstances({ attributes: { ImagerPixelSpacing: [0.7, 0.8], PixelSpacing: undefined } }),
+      name: 'a chest CT without PixelSpacing',
+    },
+    {
+      code: 'IMAGING_PIXEL_FORMAT_UNSUPPORTED',
+      instances: () => ctInstances({ attributes: { PhotometricInterpretation: 'MONOCHROME1' } }),
+      name: 'a MONOCHROME1 chest CT',
+    },
+    {
+      code: 'IMAGING_PIXEL_FORMAT_UNSUPPORTED',
+      instances: () => ctInstances({ attributes: { HighBit: 14 } }),
+      name: 'a chest CT whose HighBit is not BitsStored - 1',
+    },
+    {
+      code: 'IMAGING_SOURCE_UID_MISMATCH',
+      instances: () => ctInstances({ attributes: { StudyInstanceUID: '2.25.99' } }),
+      name: 'instances from another study',
+    },
+    {
+      code: 'IMAGING_SOURCE_UID_MISMATCH',
+      instances: () => {
+        const [first, second, third] = ctInstances()
+        return [{ ...first!, bytes: second!.bytes }, { ...second!, bytes: first!.bytes }, third!]
+      },
+      name: 'an instance whose SOP Instance UID differs from the requested one',
     },
   ])('rejects $name before recording or installing it', async ({ code, instances }) => {
     const { catalogDirectory, root } = await workspace()
@@ -550,7 +661,7 @@ describe('imaging asset pipeline', () => {
     })
     const reviewed = JSON.parse(await readFile(assetPath, 'utf8'))
     expect(reviewed.reports[0].review).toMatchObject({
-      automatedCheck: { checkVersion: 1, passed: true },
+      automatedCheck: { checkVersion: 2, passed: true },
       conclusion: 'approved',
       note: '已对照像素核对',
       reviewedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
@@ -560,13 +671,42 @@ describe('imaging asset pipeline', () => {
     expect((await runImagingAssetsCli(['check', ...directories, '--asset', 'synthetic-ct'], options)).assets).toEqual([
       { assetId: 'synthetic-ct', publishedRevisions: [1], reasons: [], reports: [{ issues: [], revision: 1 }], status: 'published' },
     ])
-    // 复核后改动报告会使签署失效。
+    // 复核后改动报告、prompt 文件或引用该素材的适配条目都会使签署失效。
     await writeFile(assetPath, JSON.stringify({
       ...reviewed,
       reports: [{ ...reviewed.reports[0], impression: '左肺微小结节，建议年度随访。' }],
     }))
     expect((await runImagingAssetsCli(['check', ...directories, '--asset', 'synthetic-ct'], options)).assets).toMatchObject([
       { publishedRevisions: [], reasons: [{ code: 'REVIEW_STALE', revision: 1 }], status: 'unpublished' },
+    ])
+    await writeFile(assetPath, JSON.stringify(reviewed))
+    const promptPath = join(catalogDirectory, 'prompts', 'chest-report-v1.md')
+    await writeFile(promptPath, '# Synthetic report prompt, revised\n')
+    expect((await runImagingAssetsCli(['check', ...directories, '--asset', 'synthetic-ct'], options)).assets).toMatchObject([
+      { reasons: [{ code: 'REVIEW_STALE', revision: 1 }], status: 'unpublished' },
+    ])
+    await writeFile(promptPath, '# Synthetic report prompt\n')
+    await writeFile(join(catalogDirectory, 'matching.json'), JSON.stringify({
+      codeSystem: 'http://snomed.info/sct',
+      profiles: [{
+        ageRange: [18, 89],
+        assets: { 'chest-ct-plain': 'synthetic-ct' },
+        finding: 'negative',
+        id: 'synthetic-profile',
+        indexConditionCodes: ['10509002'],
+        label: 'Synthetic profile',
+      }],
+      ruleVersion: 1,
+      schemaVersion: 1,
+      sourceExamCodes: {},
+      uncoveredConditions: [],
+    }))
+    expect((await runImagingAssetsCli(['check', ...directories, '--asset', 'synthetic-ct'], options)).assets).toMatchObject([
+      { reasons: [{ code: 'REVIEW_STALE', revision: 1 }], status: 'unpublished' },
+    ])
+    await rm(join(catalogDirectory, 'matching.json'))
+    expect((await runImagingAssetsCli(['check', ...directories, '--asset', 'synthetic-ct'], options)).assets).toMatchObject([
+      { publishedRevisions: [1], status: 'published' },
     ])
     await writeFile(assetPath, JSON.stringify(reannotated))
 

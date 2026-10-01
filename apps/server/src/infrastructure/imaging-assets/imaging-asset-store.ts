@@ -56,6 +56,8 @@ export type ImagingAssetResult<Status extends string> =
   | ImagingAssetFailure
 
 export type ImagingAssetInstallStatus = 'corrupt' | 'missing' | 'outdated' | 'ready' | 'unrecorded'
+/** 完整核对结果：安装目录就绪后再核对本地保留的来源实例，来源缺失或损坏时安装虽可用但不能离线修复。 */
+export type ImagingAssetVerifyStatus = ImagingAssetInstallStatus | 'sources-corrupt' | 'sources-missing'
 
 interface AssetStoreInput {
   assetDirectory: string
@@ -72,7 +74,6 @@ const installReceiptSchema = z.object({
 }).strict()
 
 const sourceDownloadConcurrency = 4
-const sourceDownloadAttempts = 3
 
 function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
@@ -105,6 +106,11 @@ async function selectAssets(input: Omit<AssetStoreInput, 'assetDirectory'>): Pro
   })
 }
 
+/** 清理被中断的进程遗留的临时目录；素材维护命令不支持同一素材目录上的并发执行。 */
+async function sweepStaging(assetDirectory: string): Promise<void> {
+  await rm(join(assetDirectory, '.staging'), { force: true, recursive: true })
+}
+
 /** 逐个素材执行；素材级失败转成结果项，其余异常（磁盘、目录结构）照常抛出。 */
 async function forEachAsset<Status extends string>(
   input: AssetStoreInput,
@@ -129,23 +135,19 @@ async function forEachAsset<Status extends string>(
   return { assets: results }
 }
 
-/** 单个实例的下载最多尝试三次；一套 CT 有数百个实例，偶发网络失败不应让整套素材从头下载。 */
+/** 下载单个实例；重试与退避由来源客户端按其协议负责。 */
 async function fetchFromSource(
   sourceClient: ImagingSourceClient,
   reference: ImagingInstanceReference,
 ): Promise<Uint8Array> {
-  let failure: unknown
-  for (let attempt = 0; attempt < sourceDownloadAttempts; attempt += 1) {
-    try {
-      return await sourceClient.fetchInstance(reference)
-    } catch (error) {
-      failure = error
-    }
+  try {
+    return await sourceClient.fetchInstance(reference)
+  } catch (error) {
+    throw new ImagingAssetError(
+      'IMAGING_SOURCE_UNAVAILABLE',
+      `The source instance ${reference.sopInstanceUid} cannot be downloaded: ${String(error)}`,
+    )
   }
-  throw new ImagingAssetError(
-    'IMAGING_SOURCE_UNAVAILABLE',
-    `The source instance ${reference.sopInstanceUid} cannot be downloaded: ${String(failure)}`,
-  )
 }
 
 /** 按固定并发取回一个序列的全部实例，保持输入顺序。 */
@@ -181,6 +183,11 @@ async function stageAsset(
       instances: unordered.map(instance => instance.bytes),
       modality: series.modality,
       ...(series.orientation === undefined ? {} : { orientation: series.orientation }),
+      source: {
+        seriesInstanceUid: series.seriesInstanceUid,
+        sopInstanceUids: unordered.map(instance => instance.sopInstanceUid),
+        studyInstanceUid: asset.source.studyInstanceUid,
+      },
     })
     // 实例按安装后的帧顺序登记，清单中的第 N 个实例就是第 N 帧的来源。
     const resolved = canonical.frameInstances.map(index => unordered[index]!)
@@ -262,6 +269,24 @@ async function installStatus(
   return 'ready'
 }
 
+/** 安装目录就绪后，逐个核对本地保留的来源实例的字节数与哈希。 */
+async function verifyStatus(
+  assetDirectory: string,
+  asset: ImagingCatalogAsset,
+): Promise<ImagingAssetVerifyStatus> {
+  const status = await installStatus(assetDirectory, asset)
+  if (status !== 'ready') return status
+  const retained = join(assetDirectory, 'sources', asset.assetId)
+  for (const [seriesIndex, series] of asset.source.series.entries()) {
+    for (const instance of series.instances ?? []) {
+      const bytes = await readOptionalFile(sourcePath(retained, seriesIndex, instance.sopInstanceUid))
+      if (bytes === undefined) return 'sources-missing'
+      if (bytes.byteLength !== instance.bytes || sha256(bytes) !== instance.sha256) return 'sources-corrupt'
+    }
+  }
+  return 'ready'
+}
+
 /** 取回一个已登记序列的全部实例：本地保留副本哈希相符时直接复用，否则下载并核对登记的哈希。 */
 async function loadRecordedSeries(
   input: { assetDirectory: string; sourceClient: ImagingSourceClient },
@@ -299,6 +324,7 @@ async function loadRecordedSeries(
 export async function recordImagingAssets(
   input: AssetStoreInput & { sourceClient: ImagingSourceClient },
 ): Promise<{ assets: ImagingAssetResult<'recorded'>[] }> {
+  await sweepStaging(input.assetDirectory)
   return await forEachAsset(input, async (asset, staging) => {
     const { instances, output } = await stageAsset(asset, staging, async (series, seriesIndex) => {
       if (series.instances !== undefined) {
@@ -346,15 +372,16 @@ export async function recordImagingAssets(
 }
 
 /**
- * 部署同步：只安装清单已登记的素材。来源字节优先复用本地保留副本，哈希不符时重新下载；
- * 来源哈希或规范化输出哈希与清单不一致时整个素材不发布。
+ * 部署同步：只安装清单已登记的素材。来源字节优先复用本地保留副本，缺失或哈希不符时重新下载；
+ * 来源哈希或规范化输出哈希与清单不一致时整个素材不发布。安装与保留的来源都完好时跳过。
  */
 export async function syncImagingAssets(
   input: AssetStoreInput & { sourceClient: ImagingSourceClient },
 ): Promise<{ assets: ImagingAssetResult<'already-installed' | 'installed'>[] }> {
+  await sweepStaging(input.assetDirectory)
   return await forEachAsset(input, async (asset, staging) => {
     recordedOutput(asset)
-    if (await installStatus(input.assetDirectory, asset) === 'ready') return 'already-installed'
+    if (await verifyStatus(input.assetDirectory, asset) === 'ready') return 'already-installed'
     const { output } = await stageAsset(asset, staging, (series, seriesIndex) => (
       loadRecordedSeries(input, asset, series.instances!, series, seriesIndex)
     ))
@@ -369,6 +396,7 @@ export async function syncImagingAssets(
 export async function repairImagingAssets(
   input: AssetStoreInput,
 ): Promise<{ assets: ImagingAssetResult<'repaired'>[] }> {
+  await sweepStaging(input.assetDirectory)
   return await forEachAsset(input, async (asset, staging) => {
     recordedOutput(asset)
     const retained = join(input.assetDirectory, 'sources', asset.assetId)
@@ -398,13 +426,13 @@ export async function repairImagingAssets(
   })
 }
 
-/** 对照清单逐字节核对已安装素材；只读，不修改任何文件。 */
+/** 对照清单逐字节核对已安装素材与本地保留的来源实例；只读，不修改任何文件。 */
 export async function verifyImagingAssets(
   input: AssetStoreInput,
-): Promise<{ assets: Array<{ assetId: string; status: ImagingAssetInstallStatus }> }> {
+): Promise<{ assets: Array<{ assetId: string; status: ImagingAssetVerifyStatus }> }> {
   const assets = []
   for (const asset of await selectAssets(input)) {
-    assets.push({ assetId: asset.assetId, status: await installStatus(input.assetDirectory, asset) })
+    assets.push({ assetId: asset.assetId, status: await verifyStatus(input.assetDirectory, asset) })
   }
   return { assets }
 }
@@ -482,6 +510,9 @@ export async function annotateImagingAssets(
       )
     }
     const installed = await openInstalledImagingAsset({ assetDirectory: input.assetDirectory, assetId: asset.assetId })
+    if (installed === undefined) {
+      throw new ImagingAssetError('IMAGING_ANNOTATION_INVALID', `The imaging asset ${asset.assetId} changed while it was annotated`)
+    }
     await writeImagingCatalogAsset(input.catalogDirectory, {
       ...asset,
       annotation: lidcAnnotation({
@@ -579,17 +610,61 @@ export interface InstalledImagingSeries {
   readBlock(frameIndex: number, blockIndex: number): Promise<Uint8Array>
 }
 
-/** 打开一个已安装素材：返回每个序列的几何描述与按块读取像素的入口。 */
+/**
+ * 已安装文件的变化指纹：回执与各序列文件的 inode、大小与修改时间；任一文件缺失时返回 undefined。
+ * 运行时据此判断已打开的序列是否仍然有效，安装、修复或文件被改动后会得到不同的指纹。
+ */
+export async function installedImagingAssetFingerprint(input: {
+  asset: ImagingCatalogAsset
+  assetDirectory: string
+}): Promise<string | undefined> {
+  const installed = join(input.assetDirectory, 'installed', input.asset.assetId)
+  const paths = [
+    'receipt.json',
+    ...(input.asset.output?.series ?? []).flatMap((_, index) => [`${index}/series.json`, `${index}/frames.bin`]),
+  ]
+  const parts: string[] = []
+  for (const path of paths) {
+    try {
+      const { ctimeNs, ino, mtimeNs, size } = await stat(join(installed, path), { bigint: true })
+      parts.push(`${path}:${ino}:${size}:${mtimeNs}:${ctimeNs}`)
+    } catch (error) {
+      if (isMissingFile(error)) return undefined
+      throw error
+    }
+  }
+  return parts.join('\n')
+}
+
+/**
+ * 打开一个已安装素材：返回每个序列的几何描述与按块读取像素的入口。
+ * 回执或 `series.json` 缺失、无法解析，或 `series.json` 与回执登记的几何哈希不符时返回 undefined。
+ */
 export async function openInstalledImagingAsset(input: {
   assetDirectory: string
   assetId: string
-}): Promise<{ series: InstalledImagingSeries[] }> {
+}): Promise<{ series: InstalledImagingSeries[] } | undefined> {
   const installed = join(input.assetDirectory, 'installed', input.assetId)
-  const receipt = installReceiptSchema.parse(JSON.parse(await readFile(join(installed, 'receipt.json'), 'utf8')))
-  const series = await Promise.all(receipt.output.series.map(async (_, seriesIndex) => {
+  const receiptBytes = await readOptionalFile(join(installed, 'receipt.json'))
+  if (receiptBytes === undefined) return undefined
+  let receipt
+  try {
+    receipt = installReceiptSchema.parse(JSON.parse(Buffer.from(receiptBytes).toString('utf8')))
+  } catch {
+    return undefined
+  }
+  const series: InstalledImagingSeries[] = []
+  for (const [seriesIndex, output] of receipt.output.series.entries()) {
     const directory = join(installed, String(seriesIndex))
-    const geometry = seriesGeometrySchema.parse(JSON.parse(await readFile(join(directory, 'series.json'), 'utf8')))
-    return {
+    const geometryBytes = await readOptionalFile(join(directory, 'series.json'))
+    if (geometryBytes === undefined || sha256(geometryBytes) !== output.geometrySha256) return undefined
+    let geometry: SeriesGeometry
+    try {
+      geometry = seriesGeometrySchema.parse(JSON.parse(Buffer.from(geometryBytes).toString('utf8')))
+    } catch {
+      return undefined
+    }
+    series.push({
       geometry,
       async readBlock(frameIndex: number, blockIndex: number) {
         const block = geometry.frames[frameIndex]?.blocks[blockIndex]
@@ -606,7 +681,7 @@ export async function openInstalledImagingAsset(input: {
           await handle.close()
         }
       },
-    }
-  }))
+    })
+  }
   return { series }
 }

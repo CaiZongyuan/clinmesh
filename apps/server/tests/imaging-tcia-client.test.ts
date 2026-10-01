@@ -32,6 +32,7 @@ describe('TCIA NBIA imaging source client', () => {
   it('rejects failed, malformed and oversized responses', async () => {
     const failing = createTciaNbiaSourceClient({
       fetch: fakeFetch(() => new Response('unavailable', { status: 503 })),
+      retryDelaysMs: [],
     })
     await expect(failing.listInstances(reference)).rejects.toThrow('HTTP 503')
     await expect(failing.fetchInstance({ ...reference, sopInstanceUid: '2.25.1101' })).rejects.toThrow('HTTP 503')
@@ -41,11 +42,62 @@ describe('TCIA NBIA imaging source client', () => {
     })
     await expect(malformed.listInstances(reference)).rejects.toThrow()
 
+    const oversizedRequests: string[] = []
     const oversized = createTciaNbiaSourceClient({
-      fetch: fakeFetch(() => new Response(new Uint8Array(9))),
+      fetch: fakeFetch(() => new Response(new Uint8Array(9)), oversizedRequests),
       maxInstanceBytes: 8,
+      retryDelaysMs: [0, 0],
     })
     await expect(oversized.fetchInstance({ ...reference, sopInstanceUid: '2.25.1101' }))
       .rejects.toThrow('exceeds 8 bytes')
+    expect(oversizedRequests).toHaveLength(1)
+  })
+
+  it.each([
+    { name: 'a server error', response: () => new Response('unavailable', { status: 503 }) },
+    { name: 'a request timeout', response: () => new Response('timeout', { status: 408 }) },
+    { name: 'rate limiting', response: () => new Response('slow down', { status: 429 }) },
+    {
+      name: 'a body shorter than its Content-Length',
+      response: () => new Response(Uint8Array.from([1]), { headers: { 'content-length': '3' } }),
+    },
+    {
+      name: 'a network failure',
+      response: () => {
+        throw new TypeError('fetch failed')
+      },
+    },
+  ])('retries $name with bounded backoff and then succeeds', async ({ response }) => {
+    const requests: string[] = []
+    let failures = 2
+    const client = createTciaNbiaSourceClient({
+      fetch: fakeFetch(() => {
+        if (failures === 0) return new Response(Uint8Array.from([1, 2, 3]), { headers: { 'content-length': '3' } })
+        failures -= 1
+        return response()
+      }, requests),
+      retryDelaysMs: [0, 0],
+    })
+
+    expect(Array.from(await client.fetchInstance({ ...reference, sopInstanceUid: '2.25.1101' }))).toEqual([1, 2, 3])
+    expect(requests).toHaveLength(3)
+  })
+
+  it('gives up after the bounded attempts and does not retry other client errors', async () => {
+    const exhaustedRequests: string[] = []
+    const exhausted = createTciaNbiaSourceClient({
+      fetch: fakeFetch(() => new Response('unavailable', { status: 502 }), exhaustedRequests),
+      retryDelaysMs: [0, 0],
+    })
+    await expect(exhausted.fetchInstance({ ...reference, sopInstanceUid: '2.25.1101' })).rejects.toThrow('HTTP 502')
+    expect(exhaustedRequests).toHaveLength(3)
+
+    const missingRequests: string[] = []
+    const missing = createTciaNbiaSourceClient({
+      fetch: fakeFetch(() => new Response('not found', { status: 404 }), missingRequests),
+      retryDelaysMs: [0, 0],
+    })
+    await expect(missing.fetchInstance({ ...reference, sopInstanceUid: '2.25.1101' })).rejects.toThrow('HTTP 404')
+    expect(missingRequests).toHaveLength(1)
   })
 })

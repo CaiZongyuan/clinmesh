@@ -5,23 +5,32 @@ import { recordImagingAssets } from '../../src/infrastructure/imaging-assets/ima
 import {
   loadImagingCatalog,
   writeImagingCatalogAsset,
-  type ImagingCatalogAsset,
+  type ImagingCatalogAssetEntry,
 } from '../../src/infrastructure/imaging-assets/imaging-catalog.ts'
-import { imagingReportContentSha256 } from '../../src/infrastructure/imaging-assets/imaging-report-check.ts'
-import { syntheticCtSlice, syntheticRadiograph } from './imaging-dicom.ts'
+import {
+  imagingReportCheckVersion,
+  imagingReportContentSha256,
+} from '../../src/infrastructure/imaging-assets/imaging-report-check.ts'
+import { syntheticCtSlice, syntheticRadiograph, syntheticStudyInstanceUid } from './imaging-dicom.ts'
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex')
 }
 
-/** 不含像素的合成素材条目：阴性标注、通过自动检查的报告；`published` 为 false 时不带复核记录。 */
+/** 复核签署占位；`writeSyntheticImagingCatalog` 按读取后的签署范围补签。 */
+const unsignedContentSha256 = '0'.repeat(64)
+
+/**
+ * 不含像素的合成素材条目：阴性标注、通过自动检查的报告；`published` 为 false 时不带复核记录。
+ * 复核签署在写入清单目录时补上，因为签署范围包括合集、prompt 文件和适配规则。
+ */
 export function syntheticCatalogAsset(input: {
   assetId: string
-  examCode: ImagingCatalogAsset['examCode']
+  examCode: ImagingCatalogAssetEntry['examCode']
   published?: boolean
-}): ImagingCatalogAsset {
+}): ImagingCatalogAssetEntry {
   const computed = input.examCode === 'chest-ct-plain'
-  const asset: ImagingCatalogAsset = {
+  const asset: ImagingCatalogAssetEntry = {
     annotation: computed
       ? {
           kind: 'lidc-ct',
@@ -73,9 +82,9 @@ export function syntheticCatalogAsset(input: {
     reports: [{
       ...report,
       review: {
-        automatedCheck: { checkVersion: 1, passed: true },
+        automatedCheck: { checkVersion: imagingReportCheckVersion, passed: true },
         conclusion: 'approved',
-        contentSha256: imagingReportContentSha256(asset, report),
+        contentSha256: unsignedContentSha256,
         items: [
           { conclusion: 'confirmed', item: 'exam-and-orientation' },
           { conclusion: 'confirmed', item: 'no-identifying-content' },
@@ -91,13 +100,34 @@ export function syntheticCatalogAsset(input: {
   }
 }
 
-/** 重写一个完全合成的素材清单目录：合集、素材条目和可选的适配规则。 */
+/** 读取清单，对所有带复核记录的报告修订按当前签署范围重新签署；故意写入的无效清单不签署。 */
+async function signSyntheticReviews(directory: string): Promise<void> {
+  let catalog: Awaited<ReturnType<typeof loadImagingCatalog>>
+  try {
+    catalog = await loadImagingCatalog(directory)
+  } catch {
+    return
+  }
+  for (const asset of catalog.assets) {
+    if (!asset.reports?.some(report => report.review !== undefined)) continue
+    await writeImagingCatalogAsset(directory, {
+      ...asset,
+      reports: asset.reports.map(report => report.review === undefined
+        ? report
+        : { ...report, review: { ...report.review, contentSha256: imagingReportContentSha256(asset, report) } }),
+    })
+  }
+}
+
+/** 重写一个完全合成的素材清单目录：合集、prompt、素材条目和可选的适配规则；带复核记录的报告按写入后的内容签署。 */
 export async function writeSyntheticImagingCatalog(directory: string, input: {
-  assets: ImagingCatalogAsset[]
+  assets: ImagingCatalogAssetEntry[]
   matching?: unknown
 }): Promise<void> {
   await rm(directory, { force: true, recursive: true })
   await mkdir(join(directory, 'assets'), { recursive: true })
+  await mkdir(join(directory, 'prompts'), { recursive: true })
+  await writeFile(join(directory, 'prompts', 'chest-report-v1.md'), '# Synthetic report prompt\n')
   await writeFile(join(directory, 'manifest.json'), `${JSON.stringify({
     collections: [{
       attribution: 'Synthetic fixture collection',
@@ -116,6 +146,7 @@ export async function writeSyntheticImagingCatalog(directory: string, input: {
   if (input.matching !== undefined) {
     await writeFile(join(directory, 'matching.json'), `${JSON.stringify(input.matching, null, 2)}\n`)
   }
+  await signSyntheticReviews(directory)
 }
 
 const reviewItems = [
@@ -134,7 +165,7 @@ export async function installSyntheticImagingAssets(input: {
   assetDirectory: string
   assets: Array<{
     assetId: string
-    examCode: ImagingCatalogAsset['examCode']
+    examCode: ImagingCatalogAssetEntry['examCode']
     published?: boolean
     reportRevisions?: number
   }>
@@ -153,10 +184,11 @@ export async function installSyntheticImagingAssets(input: {
           modality: asset.examCode === 'chest-ct-plain' ? 'CT' as const : 'DX' as const,
           seriesInstanceUid: seriesUid(index),
         }],
-        studyInstanceUid: '2.25.4000',
+        studyInstanceUid: syntheticStudyInstanceUid,
         subjectId: 'SYNTHETIC-0001',
       },
     })),
+    ...(input.matching === undefined ? {} : { matching: input.matching }),
   })
   const instances = new Map(input.assets.map((asset, index) => [seriesUid(index), asset.examCode === 'chest-ct-plain'
     ? [0, -80, -160].map((z, slice) => ({
@@ -198,7 +230,7 @@ export async function installSyntheticImagingAssets(input: {
       ...(index === 0 ? {} : { impression: `${template.reports![0]!.impression}（第 ${index + 1} 版措辞）` }),
       revision: index + 1,
     }))
-    const asset: ImagingCatalogAsset = { ...recordedAsset, annotation: template.annotation, reports }
+    const asset: ImagingCatalogAssetEntry = { ...recordedAsset, annotation: template.annotation, reports }
     await writeImagingCatalogAsset(input.catalogDirectory, options.published === false
       ? asset
       : {
@@ -206,9 +238,9 @@ export async function installSyntheticImagingAssets(input: {
           reports: reports.map(report => ({
             ...report,
             review: {
-              automatedCheck: { checkVersion: 1, passed: true },
+              automatedCheck: { checkVersion: imagingReportCheckVersion, passed: true },
               conclusion: 'approved' as const,
-              contentSha256: imagingReportContentSha256(asset, report),
+              contentSha256: unsignedContentSha256,
               items: reviewItems.map(item => ({ conclusion: 'confirmed' as const, item })),
               reviewedAt: '2026-10-01',
               reviewer: 'synthetic-maintainer',
@@ -217,7 +249,5 @@ export async function installSyntheticImagingAssets(input: {
           })),
         })
   }
-  if (input.matching !== undefined) {
-    await writeFile(join(input.catalogDirectory, 'matching.json'), `${JSON.stringify(input.matching, null, 2)}\n`)
-  }
+  await signSyntheticReviews(input.catalogDirectory)
 }

@@ -146,7 +146,7 @@ pnpm imaging:sync
 pnpm imaging:verify
 ```
 
-`imaging:sync` 需要访问 The Cancer Imaging Archive，逐文件下载来源 DICOM、校验哈希、转码并原子安装；已安装且完好的素材会被跳过，命令可以重复运行，中断后重跑即可。首批五套素材的来源文件约 355 MB，安装后另占约 352 MB。经代理访问公网时为该命令设置 `NODE_USE_ENV_PROXY=1`，Node 才会使用 `HTTPS_PROXY`。`imaging:verify` 只读核对已安装素材与清单的哈希，不访问网络。两个命令都接受可重复的 `--asset <assetId>` 以限定素材。
+`imaging:sync` 需要访问 The Cancer Imaging Archive，逐文件下载来源 DICOM、校验哈希与 DICOM 中的 Study/Series/Instance UID、转码并原子安装；网络错误、超时、服务端错误、限流和被截断的响应会短暂退避后重试，其他请求错误直接报告失败。安装与保留的来源文件都完好的素材会被跳过，命令可以重复运行，中断后重跑即可，开始时会清理被中断运行遗留的临时目录。首批五套素材的来源文件约 355 MB，安装后另占约 352 MB。经代理访问公网时为该命令设置 `NODE_USE_ENV_PROXY=1`，Node 才会使用 `HTTPS_PROXY`。`imaging:verify` 只读核对已安装素材与 `sources/` 中保留的来源文件，不访问网络；每套素材的状态为 `ready`（完好）、`missing` / `corrupt` / `outdated`（安装目录缺失、损坏或与清单版本不符）、`sources-missing` / `sources-corrupt`（安装可用，但保留的来源文件缺失或哈希不符，无法离线修复）或 `unrecorded`（清单尚未登记）。两个命令都接受可重复的 `--asset <assetId>` 以限定素材。
 
 素材默认安装到 `.data/imaging-assets`，用 `CLINMESH_IMAGING_ASSET_DIRECTORY` 可以改到其他位置；Server 与这些命令读取同一个变量。目录结构是 `sources/`（保留的来源文件）、`installed/`（阅片使用的规范帧数据）和 `.staging/`（安装中的临时目录）。安装完成后的运行期阅片不访问网络。
 
@@ -158,9 +158,9 @@ pnpm imaging:verify
 pnpm imaging:repair
 ```
 
-`imaging:repair` 用 `sources/` 中保留的来源文件离线重建 `installed/`，不访问网络；来源文件也丢失时重新运行 `imaging:sync`。素材不可读期间，已签发的报告仍可阅读，阅片器提示影像暂不可用，确认已阅不开放；修复后无需重启 Server。
+`imaging:repair` 用 `sources/` 中保留的来源文件离线重建 `installed/`，不访问网络；来源文件也丢失或损坏时重新运行 `imaging:sync`，它会补齐 `sources/` 并重建安装。素材不可读期间，已签发的报告仍可阅读，阅片器提示影像暂不可用，确认已阅不开放；修复后无需重启 Server。
 
-备份 operational SQLite 时不需要备份素材目录：数据库只保存本院检查与素材的对应关系，素材本身可以按清单重新同步，内容由清单中的哈希保证一致。离线环境或需要快速恢复时，把 `sources/` 与 `installed/` 一并复制到目标机器的素材目录，再运行 `pnpm imaging:verify`。
+清单和哈希只能校验字节，不能取回字节：公开数据源可能下线或变更，因此仅有清单不构成可恢复的备份。备份 operational SQLite 时同时备份素材目录中的 `sources/`（不可变的来源文件），或者保留一份能独立校验为相同字节的副本；清单、哈希和转码版本随仓库提交固定。`installed/` 可以由 `imaging:repair` 从 `sources/` 离线重建，不必备份。恢复时把 `sources/` 放回目标机器的素材目录，运行 `pnpm imaging:repair` 重建安装，再运行 `pnpm imaging:verify`，确认每套素材都是 `ready`。
 
 Docker 一键镜像不包含影像清单和素材，其中的放射服务显示为未开展；阅片闭环在源码运行方式下使用。
 

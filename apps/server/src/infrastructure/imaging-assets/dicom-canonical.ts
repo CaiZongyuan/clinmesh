@@ -24,6 +24,7 @@ export type ImagingAssetErrorCode =
   | 'IMAGING_SERIES_NONCONTIGUOUS'
   | 'IMAGING_SOURCE_HASH_MISMATCH'
   | 'IMAGING_SOURCE_MISSING'
+  | 'IMAGING_SOURCE_UID_MISMATCH'
   | 'IMAGING_SOURCE_UNAVAILABLE'
   | 'IMAGING_TRANSFER_SYNTAX_UNSUPPORTED'
 
@@ -156,12 +157,13 @@ interface DecodedFrame {
   values: Int32Array
 }
 
-/** 按 BitsStored 截取存储值，有符号数做符号扩展。 */
+/** 按 BitsStored 截取低位存储值（要求 HighBit = BitsStored - 1），有符号数做符号扩展。 */
 function decodePixels(dataset: Dataset): DecodedFrame {
   const rows = requiredNumber(dataset, 'Rows')
   const columns = requiredNumber(dataset, 'Columns')
   const bitsAllocated = requiredNumber(dataset, 'BitsAllocated')
   const bitsStored = requiredNumber(dataset, 'BitsStored')
+  const highBit = requiredNumber(dataset, 'HighBit')
   const pixelRepresentation = requiredNumber(dataset, 'PixelRepresentation')
   const samplesPerPixel = numberAttribute(dataset, 'SamplesPerPixel') ?? 1
   const numberOfFrames = numberAttribute(dataset, 'NumberOfFrames') ?? 1
@@ -170,6 +172,7 @@ function decodePixels(dataset: Dataset): DecodedFrame {
     bitsAllocated !== 16
     || bitsStored < 1
     || bitsStored > 16
+    || highBit !== bitsStored - 1
     || (pixelRepresentation !== 0 && pixelRepresentation !== 1)
     || samplesPerPixel !== 1
     || numberOfFrames !== 1
@@ -179,7 +182,7 @@ function decodePixels(dataset: Dataset): DecodedFrame {
   ) {
     throw new ImagingAssetError(
       'IMAGING_PIXEL_FORMAT_UNSUPPORTED',
-      'Only single-frame 16-bit monochrome pixel data is supported',
+      'Only single-frame 16-bit monochrome pixel data with HighBit = BitsStored - 1 is supported',
     )
   }
   const pixelData = dataset.PixelData
@@ -295,6 +298,15 @@ function pixelSpacing(dataset: Dataset): [number, number] | null {
   return spacing === undefined || spacing.some(value => value <= 0) ? null : [spacing[0]!, spacing[1]!]
 }
 
+/** CT 只接受 PixelSpacing；ImagerPixelSpacing 是探测器平面间距，不能代替患者平面间距。 */
+function ctPixelSpacing(dataset: Dataset): [number, number] {
+  const spacing = numberList(dataset, 'PixelSpacing', 2)
+  if (spacing === undefined || spacing.some(value => value <= 0)) {
+    throw new ImagingAssetError('IMAGING_DICOM_INVALID', 'Each CT slice requires a positive PixelSpacing')
+  }
+  return [spacing[0]!, spacing[1]!]
+}
+
 function hasContrast(dataset: Dataset): boolean {
   return ['ContrastBolusAgent', 'ContrastBolusRoute', 'ContrastBolusVolume', 'ContrastBolusIngredient']
     .some(name => textAttribute(dataset, name) !== undefined)
@@ -320,23 +332,26 @@ function canonicalizeChestCt(instances: ParsedInstance[]): CanonicalSeries {
   const flipVertical = columnY < 0
   const rows = requiredNumber(first, 'Rows')
   const columns = requiredNumber(first, 'Columns')
-  const spacing = pixelSpacing(first)
+  const spacing = ctPixelSpacing(first)
   const slices = instances.map(({ dataset }, instance) => {
     if (textAttribute(dataset, 'Modality') !== 'CT') {
       throw new ImagingAssetError('IMAGING_MODALITY_MISMATCH', 'A chest CT asset may contain only CT instances')
+    }
+    // HU 越大越亮是 CT 的显示约定；MONOCHROME1 的 CT 不做反相，直接拒绝。
+    if (textAttribute(dataset, 'PhotometricInterpretation') !== 'MONOCHROME2') {
+      throw new ImagingAssetError('IMAGING_PIXEL_FORMAT_UNSUPPORTED', 'CT slices must be MONOCHROME2')
     }
     if (hasContrast(dataset)) {
       throw new ImagingAssetError('IMAGING_CONTRAST_NOT_ALLOWED', 'A plain chest CT asset cannot use contrast')
     }
     const instanceOrientation = numberList(dataset, 'ImageOrientationPatient', 6)
-    const instanceSpacing = pixelSpacing(dataset)
+    const instanceSpacing = ctPixelSpacing(dataset)
     if (
       requiredNumber(dataset, 'Rows') !== rows
       || requiredNumber(dataset, 'Columns') !== columns
       || instanceOrientation === undefined
       || instanceOrientation.some((value, index) => !nearlyEqual(value, orientation[index]!))
-      || (instanceSpacing === null) !== (spacing === null)
-      || (instanceSpacing !== null && spacing !== null && instanceSpacing.some((value, index) => !nearlyEqual(value, spacing[index]!)))
+      || instanceSpacing.some((value, index) => !nearlyEqual(value, spacing[index]!))
     ) {
       throw new ImagingAssetError('IMAGING_SERIES_INCONSISTENT', 'CT slices must share size, spacing and orientation')
     }
@@ -523,18 +538,33 @@ function canonicalizeChestRadiograph(
 /**
  * 校验并规范化一个来源序列：只接受未压缩的单帧灰度图，CT 输出为按从头到足排序、
  * 放射学方向的 HU，胸片输出为 MONOCHROME2 方向、行向患者左侧的存储值。
+ * 每个实例的 Study/Series/SOP Instance UID 必须与请求的来源 UID 一致，`sopInstanceUids` 与 `instances` 一一对应。
  */
 export function canonicalizeSeries(input: {
   examCode: ImagingExamCode
   instances: Uint8Array[]
   modality: ImagingModality
   orientation?: [PatientDirection, PatientDirection]
+  source: { seriesInstanceUid: string; sopInstanceUids: string[]; studyInstanceUid: string }
 }): CanonicalSeries {
   if (input.instances.length === 0) {
     throw new ImagingAssetError('IMAGING_DICOM_INVALID', 'A series requires at least one instance')
   }
   const parsed = input.instances.map(parseInstance)
   parsed.forEach(assertTransferSyntax)
+  for (const [index, { dataset }] of parsed.entries()) {
+    const sopInstanceUid = input.source.sopInstanceUids[index]
+    if (
+      textAttribute(dataset, 'SOPInstanceUID') !== sopInstanceUid
+      || textAttribute(dataset, 'SeriesInstanceUID') !== input.source.seriesInstanceUid
+      || textAttribute(dataset, 'StudyInstanceUID') !== input.source.studyInstanceUid
+    ) {
+      throw new ImagingAssetError(
+        'IMAGING_SOURCE_UID_MISMATCH',
+        `The source instance ${sopInstanceUid ?? '<none>'} does not carry the requested Study/Series/SOP Instance UIDs`,
+      )
+    }
+  }
   if (input.examCode === 'chest-ct-plain') {
     if (input.modality !== 'CT') {
       throw new ImagingAssetError('IMAGING_MODALITY_MISMATCH', 'A plain chest CT asset must use CT series')

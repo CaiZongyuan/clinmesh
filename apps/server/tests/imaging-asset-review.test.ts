@@ -5,6 +5,7 @@ import type { ImagingCatalogAsset } from '../src/infrastructure/imaging-assets/i
 import {
   checkImagingReport,
   imagingAssetPublication,
+  imagingReportCheckVersion,
   imagingReportContentSha256,
 } from '../src/infrastructure/imaging-assets/imaging-report-check.ts'
 import { lidcAnnotation } from '../src/infrastructure/imaging-assets/lidc-annotation.ts'
@@ -250,6 +251,11 @@ function ctAsset(overrides: Partial<ImagingCatalogAsset> = {}): ImagingCatalogAs
       studyInstanceUid: '2.25.9',
       subjectId: 'SYNTHETIC-0001',
     },
+    reviewScope: {
+      collection: { doi: '10.0000/synthetic', id: 'synthetic-collection', license: 'CC-BY-4.0' },
+      matchingProfiles: [],
+      promptSha256: { 'chest-report-v1': 'e'.repeat(64) },
+    },
     ...overrides,
   }
 }
@@ -264,7 +270,7 @@ function issueCodes(asset: ImagingCatalogAsset): string[] {
 
 describe('imaging report consistency check', () => {
   it('accepts a report whose lesions and wording match the majority-marked source nodules', () => {
-    expect(checkImagingReport(ctAsset(), ctAsset().reports![0]!)).toEqual({ checkVersion: 1, issues: [] })
+    expect(checkImagingReport(ctAsset(), ctAsset().reports![0]!)).toEqual({ checkVersion: imagingReportCheckVersion, issues: [] })
   })
 
   it.each([
@@ -339,6 +345,36 @@ describe('imaging report consistency check', () => {
       name: 'the impression does not name the lesion',
       patch: { impression: '胸部 CT 平扫未见明确异常。' },
     },
+    {
+      code: 'REPORT_LESION_DUPLICATE',
+      name: 'a nodule is declared twice',
+      patch: {
+        lesions: [
+          { imageNumber: 58, longAxisMm: 21, noduleId: 'n1', side: 'right' as const },
+          { imageNumber: 58, longAxisMm: 21, noduleId: 'n1', side: 'right' as const },
+          { imageNumber: 81, noduleId: 'n2', side: 'left' as const },
+        ],
+      },
+    },
+    {
+      code: 'REPORT_COUNT_MISMATCH',
+      name: 'the text states more lesions on a side than are declared',
+      patch: {
+        findings: '右肺见两枚实性结节（Im 58），长径约 21 mm。左肺见一微小结节（Im 81），直径小于 3 mm。',
+      },
+    },
+    {
+      code: 'REPORT_COUNT_MISMATCH',
+      name: 'the text calls a single declared lesion multiple',
+      patch: { impression: '右肺多发实性结节，长径约 21 mm。左肺微小结节，建议随访。' },
+    },
+    {
+      code: 'REPORT_TEXT_UNSUPPORTED_FINDING',
+      name: 'a clause adds a finding on the side without a declared lesion at that image',
+      patch: {
+        findings: '右肺见一实性结节（Im 58），长径约 21 mm，左肺下叶见斑点状钙化灶。左肺见一微小结节（Im 81），直径小于 3 mm。',
+      },
+    },
   ])('rejects a report when $name', ({ code, patch }) => {
     expect(issueCodes(withReport(ctAsset(), patch))).toContain(code)
   })
@@ -359,6 +395,39 @@ describe('imaging report consistency check', () => {
       impression: '右肺结节。',
       lesions: [],
     }))).toContain('REPORT_POSITIVE_FINDING_IN_NEGATIVE')
+  })
+
+  it.each([
+    '双肺未见明确结节，右肺上叶见一肿块。',
+    '胸廓对称无畸形，左肺下叶见结节。',
+    '右肺下叶见斑点状钙化灶。',
+    '右肺上叶见条索状高密度影。',
+    '右肺见多发病灶。',
+    '双肺未见结节而右肺见团块影。',
+  ])('rejects the positive statement %s in a negative report', (findings) => {
+    const negative = ctAsset({
+      annotation: { ...ctAsset().annotation!, nodules: [] } as ImagingCatalogAsset['annotation'],
+    })
+    expect(issueCodes(withReport(negative, {
+      findings,
+      impression: '胸部 CT 平扫未见明确肺结节。',
+      lesions: [],
+    }))).toContain('REPORT_POSITIVE_FINDING_IN_NEGATIVE')
+  })
+
+  it('compares sizes stated in centimetres without floating point drift', () => {
+    const annotation = ctAsset().annotation as Extract<ImagingCatalogAsset['annotation'], { kind: 'lidc-ct' }>
+    const asset = ctAsset({
+      annotation: { ...annotation, nodules: [{ ...annotation.nodules[0]!, longAxisMm: 11.2 }, ...annotation.nodules.slice(1)] },
+    })
+    expect(issueCodes(withReport(asset, {
+      findings: '右肺见一实性结节（Im 58），长径约 1.1 cm，未见钙化。左肺见一微小结节（Im 81），直径小于 3 mm。',
+      impression: '右肺实性结节，长径约 1.1 cm。左肺微小结节，建议随访。',
+      lesions: [
+        { imageNumber: 58, longAxisMm: 11, noduleId: 'n1', side: 'right' },
+        { imageNumber: 81, noduleId: 'n2', side: 'left' },
+      ],
+    }))).toEqual([])
   })
 
   it('rejects any report when the source annotation is indeterminate', () => {
@@ -410,7 +479,7 @@ describe('imaging asset publication gate', () => {
     const report = asset.reports![0]!
     return withReport(asset, {
       review: {
-        automatedCheck: { checkVersion: 1, passed: true },
+        automatedCheck: { checkVersion: imagingReportCheckVersion, passed: true },
         conclusion: 'approved',
         contentSha256: imagingReportContentSha256(asset, report),
         items: [
@@ -464,6 +533,56 @@ describe('imaging asset publication gate', () => {
     expect(imagingAssetPublication(unrecorded)).toEqual({
       publishedRevisions: [],
       reasons: [{ code: 'ASSET_UNRECORDED' }],
+    })
+  })
+
+  it.each([
+    {
+      name: 'a source instance hash',
+      patch: (asset: ImagingCatalogAsset): ImagingCatalogAsset => ({
+        ...asset,
+        source: {
+          ...asset.source,
+          series: [{ ...asset.source.series[0]!, instances: [{ bytes: 1, sha256: 'f'.repeat(64), sopInstanceUid: '2.25.2101' }] }],
+        },
+      }),
+    },
+    {
+      name: 'the collection licence',
+      patch: (asset: ImagingCatalogAsset): ImagingCatalogAsset => ({
+        ...asset,
+        reviewScope: { ...asset.reviewScope, collection: { ...asset.reviewScope.collection, license: 'CC-BY-NC-4.0' } },
+      }),
+    },
+    {
+      name: 'the prompt file',
+      patch: (asset: ImagingCatalogAsset): ImagingCatalogAsset => ({
+        ...asset,
+        reviewScope: { ...asset.reviewScope, promptSha256: { 'chest-report-v1': 'f'.repeat(64) } },
+      }),
+    },
+    {
+      name: 'a matching profile that uses the asset',
+      patch: (asset: ImagingCatalogAsset): ImagingCatalogAsset => ({
+        ...asset,
+        reviewScope: {
+          ...asset.reviewScope,
+          matchingProfiles: [{
+            ageRange: [40, 79],
+            assets: { 'chest-ct-plain': asset.assetId },
+            conditionCodes: ['162573006'],
+            conflictProcedureCodes: [],
+            finding: 'positive',
+            id: 'synthetic-profile',
+            label: 'Synthetic profile',
+          }],
+        },
+      }),
+    },
+  ])('withdraws publication when $name changes after review', ({ patch }) => {
+    expect(imagingAssetPublication(patch(reviewed(ctAsset())))).toEqual({
+      publishedRevisions: [],
+      reasons: [{ code: 'REVIEW_STALE', revision: 1 }],
     })
   })
 })

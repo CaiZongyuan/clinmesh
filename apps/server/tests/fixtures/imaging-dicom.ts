@@ -5,6 +5,8 @@ dcmjs.log.level = 'silent'
 
 export const explicitVrLittleEndian = '1.2.840.10008.1.2.1'
 export const jpegBaseline = '1.2.840.10008.1.2.4.50'
+/** 合成实例默认所属的来源检查；清单条目的 `studyInstanceUid` 必须与之一致。 */
+export const syntheticStudyInstanceUid = '2.25.9'
 
 interface SyntheticInstance {
   attributes: Record<string, unknown>
@@ -67,7 +69,7 @@ export function syntheticCtSlice(input: {
       SamplesPerPixel: 1,
       SeriesInstanceUID: input.seriesInstanceUid,
       SliceThickness: 80,
-      StudyInstanceUID: '2.25.100',
+      StudyInstanceUID: syntheticStudyInstanceUid,
       ...input.attributes,
     },
     pixels: Int16Array.from(input.pixels),
@@ -100,7 +102,7 @@ export function syntheticRadiograph(input: {
       SOPInstanceUID: input.sopInstanceUid,
       SamplesPerPixel: 1,
       SeriesInstanceUID: input.seriesInstanceUid,
-      StudyInstanceUID: '2.25.200',
+      StudyInstanceUID: syntheticStudyInstanceUid,
       ViewPosition: 'PA',
       WindowCenter: 1000,
       WindowWidth: 2000,

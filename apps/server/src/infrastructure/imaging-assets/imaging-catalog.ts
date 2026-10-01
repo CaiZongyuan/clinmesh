@@ -1,4 +1,5 @@
-import { readdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { readdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 
@@ -145,6 +146,8 @@ const matchingProfileBaseShape = {
     .refine(([minimum, maximum]) => minimum <= maximum),
   /** 每项检查对应的素材；同一条目的素材来自同一来源受试者，保证胸片与 CT 相互一致。 */
   assets: z.partialRecord(examCodeSchema, identifierSchema),
+  /** 与素材冲突的来源操作，例如肺切除或肺移植；出现在来源任何时间都不配片。 */
+  conflictProcedureCodes: z.array(sourceCodeSchema).default([]),
   id: identifierSchema,
   label: z.string().min(1),
   sex: z.enum(['female', 'male']).optional(),
@@ -152,7 +155,7 @@ const matchingProfileBaseShape = {
 
 /**
  * 病例适配规则：用来源编码决定一个病例使用哪个条目的素材。阳性条目要求未缓解的来源疾病，
- * 阴性条目要求本次就诊的疾病属于明确列出的范围；规则未覆盖的病例不配片。
+ * 阴性条目要求本次就诊的疾病属于明确列出的范围，且来源从未出现阳性条目的疾病；规则未覆盖的病例不配片。
  */
 export const imagingMatchingRulesSchema = z.object({
   codeSystem: z.url(),
@@ -160,8 +163,6 @@ export const imagingMatchingRulesSchema = z.object({
     z.object({
       ...matchingProfileBaseShape,
       conditionCodes: z.array(sourceCodeSchema).min(1),
-      /** 与素材冲突的既往操作，例如肺切除或肺移植。 */
-      conflictProcedureCodes: z.array(sourceCodeSchema).default([]),
       finding: z.literal('positive'),
     }).strict(),
     z.object({
@@ -184,10 +185,23 @@ export const imagingMatchingRulesSchema = z.object({
 
 export type ImagingCatalogManifest = z.infer<typeof imagingCatalogManifestSchema>
 export type ImagingMatchingRules = z.infer<typeof imagingMatchingRulesSchema>
-export type ImagingCatalogAsset = z.infer<typeof imagingCatalogAssetSchema>
+/** 素材条目文件的内容。 */
+export type ImagingCatalogAssetEntry = z.infer<typeof imagingCatalogAssetSchema>
 export type ImagingAssetOutput = z.infer<typeof imagingAssetOutputSchema>
 export type ImagingAnnotation = z.infer<typeof imagingAnnotationSchema>
 export type ImagingReportRevision = z.infer<typeof reportRevisionSchema>
+
+/** 复核签署范围中条目之外的部分：读取清单时从合集、prompt 文件和适配规则解析，不写回条目。 */
+export interface ImagingReviewScope {
+  collection: { doi: string; id: string; license: string }
+  /** 引用该素材的全部适配条目。 */
+  matchingProfiles: ImagingMatchingRules['profiles']
+  /** promptVersion → prompt 文件的 SHA-256。 */
+  promptSha256: Record<string, string>
+}
+
+/** 读取后的素材条目，附带复核签署范围。 */
+export type ImagingCatalogAsset = ImagingCatalogAssetEntry & { reviewScope: ImagingReviewScope }
 
 export interface ImagingCatalog {
   assets: ImagingCatalogAsset[]
@@ -199,54 +213,124 @@ function assetPath(catalogDirectory: string, assetId: string): string {
   return join(catalogDirectory, 'assets', `${assetId}.json`)
 }
 
-/** 读取仓库中的素材清单；文件名必须与 assetId 一致，素材只能引用已声明的合集，适配规则只能引用检查相符的素材。 */
+function isMissingFile(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT'
+}
+
+/**
+ * 读取仓库中的素材清单；文件名必须与 assetId 一致，素材只能引用已声明的合集和存在的 prompt 文件，
+ * 适配规则只能引用检查相符的素材。
+ */
 export async function loadImagingCatalog(catalogDirectory: string): Promise<ImagingCatalog> {
   const manifest = imagingCatalogManifestSchema.parse(
     JSON.parse(await readFile(join(catalogDirectory, 'manifest.json'), 'utf8')),
   )
-  const collections = new Set(manifest.collections.map(collection => collection.id))
   const files = (await readdir(join(catalogDirectory, 'assets')))
     .filter(file => file.endsWith('.json'))
     .toSorted()
-  const assets = await Promise.all(files.map(async (file) => {
+  const entries = await Promise.all(files.map(async (file) => {
     const asset = imagingCatalogAssetSchema.parse(
       JSON.parse(await readFile(join(catalogDirectory, 'assets', file), 'utf8')),
     )
     if (`${asset.assetId}.json` !== file) {
       throw new Error(`Imaging asset file ${file} does not match assetId ${asset.assetId}`)
     }
-    if (!collections.has(asset.collectionId)) {
+    if (!manifest.collections.some(collection => collection.id === asset.collectionId)) {
       throw new Error(`Imaging asset ${asset.assetId} references unknown collection ${asset.collectionId}`)
     }
     return asset
   }))
-  let matchingText: string
+  let matching: ImagingMatchingRules | undefined
   try {
-    matchingText = await readFile(join(catalogDirectory, 'matching.json'), 'utf8')
+    matching = imagingMatchingRulesSchema.parse(
+      JSON.parse(await readFile(join(catalogDirectory, 'matching.json'), 'utf8')),
+    )
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return { assets, manifest }
-    throw error
+    if (!isMissingFile(error)) throw error
   }
-  const matching = imagingMatchingRulesSchema.parse(JSON.parse(matchingText))
-  if (new Set(matching.profiles.map(profile => profile.id)).size !== matching.profiles.length) {
-    throw new Error('Imaging matching profile ids must be unique')
-  }
-  for (const profile of matching.profiles) {
-    for (const [examCode, assetId] of Object.entries(profile.assets)) {
-      if (assets.find(asset => asset.assetId === assetId)?.examCode !== examCode) {
-        throw new Error(`Imaging matching profile ${profile.id} references ${assetId}, which is not a ${examCode} asset`)
+  if (matching !== undefined) {
+    if (new Set(matching.profiles.map(profile => profile.id)).size !== matching.profiles.length) {
+      throw new Error('Imaging matching profile ids must be unique')
+    }
+    for (const profile of matching.profiles) {
+      for (const [examCode, assetId] of Object.entries(profile.assets)) {
+        if (entries.find(asset => asset.assetId === assetId)?.examCode !== examCode) {
+          throw new Error(`Imaging matching profile ${profile.id} references ${assetId}, which is not a ${examCode} asset`)
+        }
       }
     }
   }
-  return { assets, manifest, matching }
+  const promptSha256: Record<string, string> = {}
+  for (const promptVersion of new Set(entries.flatMap(asset => (asset.reports ?? []).map(report => report.draft.promptVersion)))) {
+    let prompt: Buffer
+    try {
+      prompt = await readFile(join(catalogDirectory, 'prompts', `${promptVersion}.md`))
+    } catch (error) {
+      // 不以 ENOENT 上抛：缺少 prompt 是清单无效，不是清单目录不存在。
+      if (isMissingFile(error)) throw new Error(`Imaging report prompt ${promptVersion} is missing`)
+      throw error
+    }
+    promptSha256[promptVersion] = createHash('sha256').update(prompt).digest('hex')
+  }
+  const assets = entries.map((asset) => {
+    const collection = manifest.collections.find(candidate => candidate.id === asset.collectionId)!
+    return {
+      ...asset,
+      reviewScope: {
+        collection: { doi: collection.doi, id: collection.id, license: collection.license },
+        matchingProfiles: (matching?.profiles ?? [])
+          .filter(profile => Object.values(profile.assets).includes(asset.assetId)),
+        promptSha256: Object.fromEntries((asset.reports ?? []).map(report => [
+          report.draft.promptVersion,
+          promptSha256[report.draft.promptVersion]!,
+        ])),
+      },
+    }
+  })
+  return matching === undefined ? { assets, manifest } : { assets, manifest, matching }
 }
 
-/** 以临时文件加改名写回单个素材条目，避免中断留下半个 JSON。 */
+/**
+ * 清单文件的变化指纹：各文件的 inode、大小与修改时间。读取方据此判断缓存的清单是否仍然有效；
+ * 清单目录或 `manifest.json`、`assets/` 不存在时以 ENOENT 抛出，与 `loadImagingCatalog` 一致。
+ */
+export async function imagingCatalogFingerprint(catalogDirectory: string): Promise<string> {
+  const listed = async (directory: string, extension: string, required: boolean) => {
+    try {
+      return (await readdir(join(catalogDirectory, directory)))
+        .filter(file => file.endsWith(extension))
+        .toSorted()
+        .map(file => join(directory, file))
+    } catch (error) {
+      if (!required && isMissingFile(error)) return []
+      throw error
+    }
+  }
+  const paths = [
+    'manifest.json',
+    'matching.json',
+    ...await listed('assets', '.json', true),
+    ...await listed('prompts', '.md', false),
+  ]
+  const stats = await Promise.all(paths.map(async (path) => {
+    try {
+      const { ctimeNs, ino, mtimeNs, size } = await stat(join(catalogDirectory, path), { bigint: true })
+      return `${path}:${ino}:${size}:${mtimeNs}:${ctimeNs}`
+    } catch (error) {
+      if (path !== 'manifest.json' && isMissingFile(error)) return `${path}:-`
+      throw error
+    }
+  }))
+  return stats.join('\n')
+}
+
+/** 以临时文件加改名写回单个素材条目，避免中断留下半个 JSON；读取时附带的复核签署范围不写回。 */
 export async function writeImagingCatalogAsset(
   catalogDirectory: string,
-  asset: ImagingCatalogAsset,
+  asset: ImagingCatalogAssetEntry & { reviewScope?: ImagingReviewScope },
 ): Promise<void> {
-  const parsed = imagingCatalogAssetSchema.parse(asset)
+  const { reviewScope: _reviewScope, ...entry } = asset
+  const parsed = imagingCatalogAssetSchema.parse(entry)
   const target = assetPath(catalogDirectory, parsed.assetId)
   const temporary = `${target}.tmp`
   await writeFile(temporary, `${JSON.stringify(parsed, null, 2)}\n`)
