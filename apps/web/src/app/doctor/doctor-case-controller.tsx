@@ -170,6 +170,7 @@ interface ReferenceCatalogSearchParameters {
 const encounterCompletionTargetElementIds = {
   diagnosis: 'encounter-completion-target-diagnosis',
   'clinical-document': 'encounter-completion-target-clinical-document',
+  imaging: 'encounter-completion-target-imaging',
   laboratory: 'encounter-completion-target-laboratory',
   'medication-conclusion': 'encounter-completion-target-medication-conclusion',
 } satisfies Record<EncounterCompletionTarget, string>
@@ -177,6 +178,8 @@ const encounterCompletionTargetElementIds = {
 const caseDetailSectionByCompletionTarget = {
   diagnosis: 'diagnosis',
   'clinical-document': 'record',
+  // 放射检查与检验在同一个“检验检查”分区内。
+  imaging: 'laboratory',
   laboratory: 'laboratory',
   'medication-conclusion': 'prescription',
 } satisfies Record<EncounterCompletionTarget, DoctorCaseSection>

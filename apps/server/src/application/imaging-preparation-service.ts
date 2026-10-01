@@ -7,8 +7,10 @@ import {
   type ImagingPreparationReason,
 } from '@clinmesh/contracts/imaging'
 import type { z } from 'zod'
-import { imagingAssetInstalled } from '../infrastructure/imaging-assets/imaging-asset-store.ts'
-import { loadImagingCatalog } from '../infrastructure/imaging-assets/imaging-catalog.ts'
+import {
+  ImagingCatalogInvalidError,
+  type ImagingAssetLibrary,
+} from '../infrastructure/imaging-assets/imaging-asset-library.ts'
 import {
   imagingAssetPublication,
   imagingReportContentSha256,
@@ -49,25 +51,22 @@ const batchLimit = 50
  * 病例与素材的绑定属于 Workspace，跨 Epoch 保留；病例开始前跟随最新修订，开始后只追加、不替换。
  */
 export class ImagingPreparationService {
-  readonly #assetDirectory: string | undefined
   readonly #cases: SyntheticCaseRepository
-  readonly #catalogDirectory: string | undefined
   readonly #commands: CommandExecutor
+  readonly #library: ImagingAssetLibrary
   readonly #preparations: ImagingPreparationRepository
   readonly #profiles: SyntheticPatientProfileRepository
 
   constructor(input: {
-    assetDirectory?: string | undefined
     cases: SyntheticCaseRepository
-    catalogDirectory?: string | undefined
     commands: CommandExecutor
+    library: ImagingAssetLibrary
     preparations: ImagingPreparationRepository
     profiles: SyntheticPatientProfileRepository
   }) {
-    this.#assetDirectory = input.assetDirectory
     this.#cases = input.cases
-    this.#catalogDirectory = input.catalogDirectory
     this.#commands = input.commands
+    this.#library = input.library
     this.#preparations = input.preparations
     this.#profiles = input.profiles
   }
@@ -172,8 +171,7 @@ export class ImagingPreparationService {
     }
     const installed = new Map<string, boolean>()
     for (const [assetId, { asset }] of catalog.assets) {
-      installed.set(assetId, this.#assetDirectory !== undefined
-        && await imagingAssetInstalled({ asset, assetDirectory: this.#assetDirectory }))
+      installed.set(assetId, await this.#library.installed(asset))
     }
     const preparations = this.#preparations.latestForLibrary(context.workspaceId)
     return imagingCoverageSchema.parse({
@@ -224,19 +222,16 @@ export class ImagingPreparationService {
     })
   }
 
-  /** 每次读取磁盘上的清单，清单更新后无需重启即可重新准备。目录或适配规则缺失时没有可用清单；内容无效时报告给管理员。 */
+  /** 适配规则与其引用素材的发布状态；清单目录或适配规则缺失时没有可用清单，内容无效时报告给管理员。 */
   async #matchingCatalog(): Promise<ImagingMatchingCatalog | undefined> {
-    if (this.#catalogDirectory === undefined) return undefined
-    let catalog: Awaited<ReturnType<typeof loadImagingCatalog>>
+    let catalog: Awaited<ReturnType<ImagingAssetLibrary['catalog']>>
     try {
-      catalog = await loadImagingCatalog(this.#catalogDirectory)
+      catalog = await this.#library.catalog()
     } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined
-      throw new ImagingPreparationError(
-        'IMAGING_CATALOG_INVALID',
-        `The imaging asset catalog cannot be loaded: ${error instanceof Error ? error.message : String(error)}`,
-      )
+      if (!(error instanceof ImagingCatalogInvalidError)) throw error
+      throw new ImagingPreparationError('IMAGING_CATALOG_INVALID', error.message)
     }
+    if (catalog === undefined) return undefined
     if (catalog.matching === undefined) return undefined
     const referenced = new Set(catalog.matching.profiles.flatMap(profile => Object.values(profile.assets)))
     const assets: ImagingMatchingCatalog['assets'] = new Map(catalog.assets

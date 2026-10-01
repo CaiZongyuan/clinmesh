@@ -438,6 +438,14 @@ export async function imagingAssetInstalled(input: {
   return true
 }
 
+/** 逐字节核对一个素材的已安装像素是否与清单登记的输出一致。 */
+export async function imagingAssetVerified(input: {
+  asset: ImagingCatalogAsset
+  assetDirectory: string
+}): Promise<boolean> {
+  return await installStatus(input.assetDirectory, input.asset) === 'ready'
+}
+
 /**
  * 维护者标注：在本地 LIDC 读片 XML 目录中找到描述该序列的唯一文件，按已安装几何导出结构化标注并写回清单。
  * 标注变化会使已签署的复核失效。

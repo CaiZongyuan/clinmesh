@@ -6258,6 +6258,7 @@ describe('role workspaces', () => {
         revisionNumber: 1,
       },
       encounter: { id: 'encounter-completed-1', status: 'completed', versionId: '6' },
+      imagingRequests: [],
       laboratoryRequests: [],
       medicationConclusion: {
         noMedication: {
@@ -6434,6 +6435,7 @@ describe('role workspaces', () => {
         status: 'completed',
         versionId: activeDetail.encounter.versionId,
       },
+      imagingRequests: [],
       laboratoryRequests: [],
       medicationConclusion: {
         prescription: { ...prescription, withdrawalSupported: true },
@@ -6574,6 +6576,7 @@ describe('role workspaces', () => {
         status: 'completed',
         versionId: '6',
       },
+      imagingRequests: [],
       laboratoryRequests: [{
         catalogDisplay: '发热检验组合',
         correctionSupported: false,
@@ -6793,6 +6796,7 @@ describe('role workspaces', () => {
         status: 'completed',
         versionId: '6',
       },
+      imagingRequests: [],
       laboratoryRequests: [completedIssuedLaboratoryRequest, completedLaboratoryRequest],
       patient,
       timeline: [{

@@ -156,6 +156,33 @@ export class ImagingPreparationRepository {
     }))
   }
 
+  /** 执行检查时使用的固定绑定，含绑定时的素材版本与报告内容哈希。 */
+  bindingRecord(workspaceId: string, caseId: string, sourceHash: string, examCode: string): {
+    assetId: string
+    assetOutput: unknown
+    reportContentSha256: string
+    reportRevision: number
+  } | undefined {
+    const row = z.object({
+      asset_id: z.string().min(1),
+      asset_output_json: z.string().min(1),
+      report_content_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+      report_revision: z.number().int().positive(),
+    }).strict().optional().parse(this.#database.driver.prepare(`
+      SELECT asset_id, asset_output_json, report_revision, report_content_sha256
+      FROM imaging_case_binding
+      WHERE workspace_id = ? AND case_id = ? AND source_hash = ? AND exam_code = ?
+    `).get(workspaceId, caseId, sourceHash, examCode))
+    return row === undefined
+      ? undefined
+      : {
+          assetId: row.asset_id,
+          assetOutput: JSON.parse(row.asset_output_json),
+          reportContentSha256: row.report_content_sha256,
+          reportRevision: row.report_revision,
+        }
+  }
+
   clearBindings(workspaceId: string, caseId: string, sourceHash: string): void {
     this.#database.driver.prepare(`
       DELETE FROM imaging_case_binding

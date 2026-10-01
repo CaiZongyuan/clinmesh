@@ -1,140 +1,30 @@
-import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { apiErrorSchema, commandResponseSchema, registrationCatalogSchema } from '@clinmesh/contracts/his'
+import { rm } from 'node:fs/promises'
+import { apiErrorSchema } from '@clinmesh/contracts/his'
 import {
   administratorImagingPreparationSchema,
   imagingCoverageSchema,
-  imagingPreparationBatchSchema,
 } from '@clinmesh/contracts/imaging'
-import {
-  syntheticCaseInstanceSchema,
-  type PatientPersonaContent,
-  type ScenarioGenerationRequest,
-  type ScenarioProviderCapabilities,
-} from '@clinmesh/contracts/scenario'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { ScenarioGenerationProvider, SourcePatientCorpus } from '../src/application/scenario-data/provider.ts'
-import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
-import type { JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
-import { createClinMeshRuntime } from '../src/runtime.ts'
+import type { createClinMeshRuntime } from '../src/runtime.ts'
 import { syntheticCatalogAsset, writeSyntheticImagingCatalog } from './fixtures/imaging-catalog.ts'
+import {
+  acuteBronchitis,
+  caseBundle,
+  chestRadiographProcedure,
+  createImagingRuntime,
+  generateCase,
+  hypertension,
+  lungCancer,
+  lungTransplant,
+  mutation,
+  pneumonia,
+  prepareImaging,
+  signIn,
+  snomed,
+  startOutpatientVisit,
+} from './fixtures/imaging-scenario.ts'
 
 type Runtime = Awaited<ReturnType<typeof createClinMeshRuntime>>
-
-const snomed = 'http://snomed.info/sct'
-const lungCancer = { code: '254637007', display: '非小细胞肺癌' }
-const acuteBronchitis = { code: '10509002', display: '急性支气管炎' }
-const pneumonia = { code: '233604007', display: '肺炎' }
-const hypertension = { code: '59621000', display: '高血压' }
-const chestRadiographProcedure = { code: '399208008', display: '胸部 X 线平片' }
-const lungTransplant = { code: '88039007', display: '肺移植术' }
-
-interface SourceFact {
-  code: string
-  display: string
-  resolved?: boolean
-  resourceType: 'Condition' | 'Procedure'
-}
-
-/** 合成 Synthea R4 病例：一次既往就诊承载既往事实，最后一次就诊是 Index Encounter。 */
-function caseBundle(input: {
-  birthDate?: string
-  gender: 'female' | 'male'
-  history?: SourceFact[]
-  index: SourceFact[]
-  name: string
-}) {
-  const fact = (item: SourceFact, encounter: string, date: string, id: string) => ({
-    fullUrl: `urn:uuid:${id}`,
-    resource: {
-      code: { coding: [{ code: item.code, display: item.display, system: snomed }] },
-      encounter: { reference: `urn:uuid:${encounter}` },
-      id,
-      resourceType: item.resourceType,
-      subject: { reference: 'urn:uuid:patient' },
-      ...(item.resourceType === 'Condition'
-        ? { recordedDate: date, ...(item.resolved === true ? { abatementDateTime: date } : {}) }
-        : { performedPeriod: { end: date, start: date }, status: 'completed' }),
-    },
-  })
-  return {
-    entry: [
-      {
-        fullUrl: 'urn:uuid:patient',
-        resource: {
-          birthDate: input.birthDate ?? '1970-01-01',
-          gender: input.gender,
-          id: 'patient',
-          name: [{ text: input.name }],
-          resourceType: 'Patient',
-        },
-      },
-      {
-        fullUrl: 'urn:uuid:prior-encounter',
-        resource: {
-          id: 'prior-encounter',
-          period: { end: '2025-01-10T09:30:00+08:00', start: '2025-01-10T09:00:00+08:00' },
-          resourceType: 'Encounter',
-          status: 'finished',
-          subject: { reference: 'urn:uuid:patient' },
-        },
-      },
-      ...[{ ...hypertension, resourceType: 'Condition' as const }, ...input.history ?? []]
-        .map((item, index) => fact(item, 'prior-encounter', '2025-01-10T09:05:00+08:00', `prior-fact-${index}`)),
-      {
-        fullUrl: 'urn:uuid:index-encounter',
-        resource: {
-          id: 'index-encounter',
-          period: { end: '2026-06-01T10:30:00+08:00', start: '2026-06-01T10:00:00+08:00' },
-          reasonCode: [{ text: '门诊就诊' }],
-          resourceType: 'Encounter',
-          status: 'finished',
-          subject: { reference: 'urn:uuid:patient' },
-        },
-      },
-      ...input.index.map((item, index) => fact(item, 'index-encounter', '2026-06-01T10:05:00+08:00', `index-fact-${index}`)),
-    ],
-    resourceType: 'Bundle',
-    type: 'collection',
-  }
-}
-
-class SequenceSyntheaProvider implements ScenarioGenerationProvider {
-  readonly #bundles: unknown[]
-
-  constructor(bundles: unknown[]) {
-    this.#bundles = [...bundles]
-  }
-
-  async capabilities(): Promise<ScenarioProviderCapabilities> {
-    return { available: true, maxPopulation: 10, modules: [], providerId: 'synthea', providerName: 'Synthea' }
-  }
-
-  async generate(_request: ScenarioGenerationRequest): Promise<SourcePatientCorpus> {
-    const bundle = this.#bundles.shift()
-    if (bundle === undefined) throw new Error('No synthetic patient bundle remains')
-    return {
-      kind: 'synthea-r4',
-      sources: [{ format: 'fhir-r4-bundle', hash: sourceArtifactHash(bundle), patientId: 'patient', raw: bundle }],
-    }
-  }
-}
-
-const persona: PatientPersonaContent = {
-  chiefComplaint: '咳嗽两周',
-  knownHistorySummary: '既往有高血压病史。',
-  medicationMemory: '每天吃一片降压药。',
-  openingStatement: '医生您好，我咳嗽两周了。',
-  persona: {
-    attitude: '配合检查',
-    character: '话不多',
-    healthLiteracy: '初中文化',
-    speechStyle: '句子短',
-  },
-  symptomExperience: '两周前开始咳嗽，夜里更明显。',
-}
 
 const massCt = 'synthetic-mass-ct'
 const massRadiograph = 'synthetic-mass-radiograph'
@@ -180,80 +70,13 @@ describe('Imaging case preparation HTTP contract', () => {
   })
 
   async function createRuntime(bundles: unknown[], options: { catalog?: boolean; persona?: boolean } = {}) {
-    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-imaging-preparation-'))
-    temporaryDirectories.push(directory)
-    const catalogDirectory = join(directory, 'imaging-catalog')
-    const briefProvider: JsonChatCompletionsProvider = {
-      completeJson: async () => ({ content: JSON.stringify(persona), model: 'fake-brief-model' }),
-    }
-    const runtime = await createClinMeshRuntime({
-      authBaseUrl: 'http://localhost',
-      authSecret: 'test-auth-secret-with-at-least-32-characters',
-      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
-      databasePath: join(directory, 'clinmesh.sqlite'),
-      demoPassword: 'Synthetic-Demo-Password-2026!',
-      ...(options.catalog === false ? {} : { imagingCatalogDirectory: catalogDirectory }),
-      migrationMode: 'apply',
-      outboxRetryDelayMs: 0,
-      ...(options.persona === true
-        ? {
-            chatCompletionsProvider: briefProvider,
-            investigationModel: 'fake-investigation-model',
-            patientPersonaModel: 'fake-brief-model',
-          }
-        : {}),
-      syntheaProvider: new SequenceSyntheaProvider(bundles),
-      trustedOrigins: ['http://localhost'],
-    })
-    runtimes.push(runtime)
-    return { catalogDirectory, runtime }
+    const created = await createImagingRuntime(bundles, options)
+    temporaryDirectories.push(created.directory)
+    runtimes.push(created.runtime)
+    return created
   }
 
-  async function signIn(runtime: Runtime, email = 'admin@demo.clinmesh.local') {
-    const response = await runtime.app.request('/api/auth/sign-in/email', {
-      body: JSON.stringify({ email, password: 'Synthetic-Demo-Password-2026!' }),
-      headers: { 'content-type': 'application/json', origin: 'http://localhost' },
-      method: 'POST',
-    })
-    expect(response.status).toBe(200)
-    return response.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
-  }
-
-  function mutation(cookie: string, body: unknown) {
-    return {
-      body: JSON.stringify(body),
-      headers: {
-        'content-type': 'application/json',
-        cookie,
-        'idempotency-key': randomUUID(),
-        origin: 'http://localhost',
-      },
-      method: 'POST',
-    }
-  }
-
-  async function generateCase(runtime: Runtime, cookie: string): Promise<string> {
-    const response = await runtime.app.request('/api/sim/v1/scenario-generation-jobs', mutation(cookie, {
-      name: '影像准备患者',
-      population: { age: { maximum: 90, minimum: 0 }, count: 1, gender: 'any' },
-      providerId: 'synthea',
-      seeds: { clinical: 7331, population: 4242 },
-      timeRange: { end: '2026-08-01', start: '2020-01-01' },
-      timeZone: 'Asia/Shanghai',
-    }))
-    expect(response.status).toBe(200)
-    const processed = await runtime.scenarioData.processNextGenerationJob()
-    expect(processed?.status).toBe('succeeded')
-    return processed!.caseIds[0]!
-  }
-
-  async function prepare(runtime: Runtime, cookie: string, caseIds?: string[]) {
-    const response = await runtime.app.request('/api/sim/v1/admin/imaging-preparations', mutation(cookie, {
-      input: caseIds === undefined ? {} : { caseIds },
-    }))
-    expect(response.status).toBe(200)
-    return commandResponseSchema(imagingPreparationBatchSchema).parse(await response.json()).data
-  }
+  const prepare = prepareImaging
 
   async function preparationOf(runtime: Runtime, cookie: string, caseId: string) {
     const response = await runtime.app.request(
@@ -531,32 +354,7 @@ describe('Imaging case preparation HTTP contract', () => {
     expect((await prepare(runtime, cookie, [started])).prepared[0]?.preparation?.revision).toBe(1)
 
     // 开始其中一个病例。
-    await runtime.app.request(
-      `/api/sim/v1/synthetic-cases/${encodeURIComponent(started)}/patient-persona-jobs`,
-      mutation(cookie, {}),
-    )
-    await runtime.patientPersona.processNext()
-    const readyCase = syntheticCaseInstanceSchema.parse(await (await runtime.app.request(
-      `/api/sim/v1/synthetic-cases/${encodeURIComponent(started)}`,
-      { headers: { cookie } },
-    )).json())
-    const registrar = await signIn(runtime, 'registrar@demo.clinmesh.local')
-    const registration = registrationCatalogSchema.parse(await (await runtime.app.request(
-      '/api/his/v1/catalogs/registration',
-      { headers: { cookie: registrar } },
-    )).json())
-    const start = await runtime.app.request(
-      `/api/his/v1/synthetic-cases/${encodeURIComponent(started)}/actions/start-outpatient-visit`,
-      mutation(registrar, {
-        activeBriefRevision: readyCase.activeBriefRevision,
-        departmentId: registration.departments[0]!.id,
-        expectedCaseRevision: readyCase.revision,
-        locationId: registration.locations[0]!.id,
-        visitDate: registration.virtualDate,
-        visitTypeId: registration.visitTypes[0]!.id,
-      }),
-    )
-    expect(start.status).toBe(200)
+    await startOutpatientVisit(runtime, cookie, started)
 
     // 清单追加：CT 素材通过复核，适配条目的胸片换成另一套素材。
     const replacementRadiograph = 'synthetic-mass-radiograph-b'

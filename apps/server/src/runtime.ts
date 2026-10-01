@@ -52,6 +52,11 @@ import type { SqlitePerformanceObserver } from './infrastructure/sqlite/performa
 import { AgentIntegrationService } from './application/agent-integration-service.ts'
 import { reportRuntimeError } from './runtime-error-reporting.ts'
 import { ImagingPreparationService } from './application/imaging-preparation-service.ts'
+import {
+  ImagingResultResolver,
+  ImagingResultUnavailableError,
+} from './application/imaging-result-resolver.ts'
+import { ImagingAssetLibrary } from './infrastructure/imaging-assets/imaging-asset-library.ts'
 import { ImagingPreparationRepository } from './infrastructure/sqlite/imaging-preparation-repository.ts'
 
 function lisActorContext(event: {
@@ -64,6 +69,21 @@ function lisActorContext(event: {
     epoch: event.epoch,
     organizationId: 'organization-clinmesh',
     roleCode: 'lis-system',
+    scenarioRunId: event.scenarioRunId,
+    workspaceId: event.workspaceId,
+  }
+}
+
+function risActorContext(event: {
+  epoch: string
+  scenarioRunId: string
+  workspaceId: string
+}): ActorContext {
+  return {
+    actorId: 'actor-ris-system',
+    epoch: event.epoch,
+    organizationId: 'organization-clinmesh',
+    roleCode: 'ris-system',
     scenarioRunId: event.scenarioRunId,
     workspaceId: event.workspaceId,
   }
@@ -234,12 +254,21 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       profiles: syntheticPatientProfiles,
       ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
     })
-    const imagingPreparation = new ImagingPreparationService({
+    const imagingLibrary = new ImagingAssetLibrary({
       assetDirectory: options.imagingAssetDirectory,
-      cases: syntheticCases,
       catalogDirectory: options.imagingCatalogDirectory,
+    })
+    const imagingPreparations = new ImagingPreparationRepository(database)
+    const imagingResults = new ImagingResultResolver({
+      database,
+      library: imagingLibrary,
+      preparations: imagingPreparations,
+    })
+    const imagingPreparation = new ImagingPreparationService({
+      cases: syntheticCases,
       commands,
-      preparations: new ImagingPreparationRepository(database),
+      library: imagingLibrary,
+      preparations: imagingPreparations,
       profiles: syntheticPatientProfiles,
     })
     const caseVisits = new SyntheticCaseVisitService({
@@ -262,6 +291,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       workspaceId: 'workspace-demo',
     })
     laboratoryServicePublisher.ensureDefaultServices()
+    workflow.imaging.ensureServices()
     const identity = new IdentityService(database, {
       authBaseUrl: options.authBaseUrl,
       authSecret: options.authSecret,
@@ -355,6 +385,50 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
               requestId: payload.requestId,
             })
           }
+          return { status: 'completed' }
+        },
+        'imaging.accept-request': async event => {
+          const payload = laboratoryRequestPayloadSchema.parse(event.payload)
+          workflow.imaging.accept({
+            context: risActorContext(event),
+            eventId: event.eventId,
+            requestId: payload.requestId,
+          })
+          return { status: 'completed' }
+        },
+        'imaging.start-request': async event => {
+          const payload = laboratoryRequestPayloadSchema.parse(event.payload)
+          workflow.imaging.start({
+            context: risActorContext(event),
+            eventId: event.eventId,
+            requestId: payload.requestId,
+          })
+          return { status: 'completed' }
+        },
+        'imaging.report-request': async event => {
+          const payload = laboratoryRequestPayloadSchema.parse(event.payload)
+          const context = risActorContext(event)
+          let result
+          try {
+            result = await imagingResults.resolveForRequest(event.workspaceId, event.epoch, payload.requestId)
+          } catch (error) {
+            if (!(error instanceof ImagingResultUnavailableError)) {
+              if (event.attempt < 3) return { status: 'retryable-failed' }
+              throw error
+            }
+            // 未准备、未覆盖或素材不可用属于确定性失败：不生成报告，医生看到统一的未取得结果。
+            workflow.imaging.fail({
+              context,
+              error: {
+                code: 'IMAGING_RESULT_UNAVAILABLE',
+                message: 'The imaging result is not available for this examination',
+              },
+              eventId: event.eventId,
+              requestId: payload.requestId,
+            })
+            return { status: 'completed' }
+          }
+          workflow.imaging.report({ context, eventId: event.eventId, requestId: payload.requestId, result })
           return { status: 'completed' }
         },
         'lis.process-order': async event => {
@@ -466,6 +540,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         ),
       },
       identity,
+      imaging: { library: imagingLibrary, results: imagingResults },
       imagingPreparation,
       investigation,
       caseVisits,
@@ -511,6 +586,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       dispatcher,
       fhir,
       identity,
+      imagingResults,
       caseVisits,
       investigation,
       laboratoryServicePublisher,

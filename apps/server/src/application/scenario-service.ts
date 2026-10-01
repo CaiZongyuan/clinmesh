@@ -501,7 +501,10 @@ export class ScenarioService {
         version, active, config_json
       FROM hospital_service_catalog
       WHERE workspace_id = ? AND epoch = ?
-        AND json_type(config_json, '$.laboratoryService') = 'object'
+        AND (
+          json_type(config_json, '$.laboratoryService') = 'object'
+          OR json_type(config_json, '$.imagingService') = 'object'
+        )
     `).run(epoch, context.workspaceId, context.epoch)
     this.#database.driver.prepare(`
       UPDATE outbox_event
