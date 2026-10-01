@@ -18,7 +18,9 @@ import type { ImagingEngineProps } from './imaging-viewer.tsx'
 type FrameStackSeries = Extract<ImagingSeriesView, { kind: 'frame-stack' }>
 
 /** 已解码帧的缓存上限；超过后按最久未用淘汰。 */
-const frameCacheBudgetBytes = 256 * 1024 * 1024
+const frameCacheBudgetBytes = 64 * 1024 * 1024
+/** 同一阅片器同时进行的像素块请求上限；超出的请求排队，换帧时随请求一起取消。 */
+const maxParallelBlockRequests = 4
 const presetLabels: Record<typeof ctWindowPresets[number]['id'], [string, string]> = {
   bone: ['骨窗', 'Bone'],
   lung: ['肺窗', 'Lung'],
@@ -42,6 +44,7 @@ export function GrayscaleStackEngine({ loadBlock, locale, onFrameShown, series }
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const cacheRef = useRef(new Map<number, PixelArray>())
+  const requestGateRef = useRef({ active: 0, waiting: [] as Array<() => void> })
   const dragRef = useRef<{ x: number; y: number }>(undefined)
   const frameShownRef = useRef(onFrameShown)
   frameShownRef.current = onFrameShown
@@ -51,6 +54,19 @@ export function GrayscaleStackEngine({ loadBlock, locale, onFrameShown, series }
   useEffect(() => {
     const controller = new AbortController()
     const cache = cacheRef.current
+    const gate = requestGateRef.current
+    const loadLimited = async (position: { blockIndex: number; frameIndex: number }): Promise<Uint8Array> => {
+      if (gate.active < maxParallelBlockRequests) gate.active += 1
+      else await new Promise<void>(resolve => gate.waiting.push(resolve))
+      try {
+        return await loadBlock(position, controller.signal)
+      } finally {
+        // 有排队请求时把名额直接交给它，名额数不会因交接而超出上限。
+        const next = gate.waiting.shift()
+        if (next === undefined) gate.active -= 1
+        else next()
+      }
+    }
     const load = async (index: number): Promise<PixelArray> => {
       const cached = cache.get(index)
       if (cached !== undefined) {
@@ -60,7 +76,7 @@ export function GrayscaleStackEngine({ loadBlock, locale, onFrameShown, series }
       }
       const description = series.frames[index]!
       const blocks = await Promise.all(description.blocks.map((_, blockIndex) => (
-        loadBlock({ blockIndex, frameIndex: index }, controller.signal)
+        loadLimited({ blockIndex, frameIndex: index })
       )))
       const pixels = assembleFrame(description, blocks, series.pixelFormat)
       cache.set(index, pixels)

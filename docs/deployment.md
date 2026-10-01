@@ -137,6 +137,33 @@ pnpm synthea:down
 
 ## 7. 可选运行方式
 
+### 影像素材
+
+胸片与胸部 CT 平扫的阅片需要本地影像素材。素材不随仓库分发：仓库只提交 [影像素材清单](../imaging-assets/README.md)，像素由下面的命令按清单从公开数据源拉取。不安装素材时系统照常启动，医生的放射服务显示为“本院当前未开展”，其余流程不受影响。
+
+```sh
+pnpm imaging:sync
+pnpm imaging:verify
+```
+
+`imaging:sync` 需要访问 The Cancer Imaging Archive，逐文件下载来源 DICOM、校验哈希、转码并原子安装；已安装且完好的素材会被跳过，命令可以重复运行，中断后重跑即可。首批五套素材的来源文件约 355 MB，安装后另占约 352 MB。经代理访问公网时为该命令设置 `NODE_USE_ENV_PROXY=1`，Node 才会使用 `HTTPS_PROXY`。`imaging:verify` 只读核对已安装素材与清单的哈希，不访问网络。两个命令都接受可重复的 `--asset <assetId>` 以限定素材。
+
+素材默认安装到 `.data/imaging-assets`，用 `CLINMESH_IMAGING_ASSET_DIRECTORY` 可以改到其他位置；Server 与这些命令读取同一个变量。目录结构是 `sources/`（保留的来源文件）、`installed/`（阅片使用的规范帧数据）和 `.staging/`（安装中的临时目录）。安装完成后的运行期阅片不访问网络。
+
+安装后以管理员进入“模拟数据”，在“影像覆盖清单”查看每套素材的安装与发布状态，并对已生成的病例运行影像准备；只有准备结果为可用的病例开立放射申请后才有报告和影像。
+
+素材损坏或被误删时：
+
+```sh
+pnpm imaging:repair
+```
+
+`imaging:repair` 用 `sources/` 中保留的来源文件离线重建 `installed/`，不访问网络；来源文件也丢失时重新运行 `imaging:sync`。素材不可读期间，已签发的报告仍可阅读，阅片器提示影像暂不可用，确认已阅不开放；修复后无需重启 Server。
+
+备份 operational SQLite 时不需要备份素材目录：数据库只保存本院检查与素材的对应关系，素材本身可以按清单重新同步，内容由清单中的哈希保证一致。离线环境或需要快速恢复时，把 `sources/` 与 `installed/` 一并复制到目标机器的素材目录，再运行 `pnpm imaging:verify`。
+
+Docker 一键镜像不包含影像清单和素材，其中的放射服务显示为未开展；阅片闭环在源码运行方式下使用。
+
 ### Docker 一键启动
 
 需要完整容器化运行时（含 Synthea）时叠加两个 Compose 文件：
