@@ -451,6 +451,9 @@ importers:
       '@clinmesh/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@clinmesh/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@clinmesh/ui':
         specifier: workspace:*
         version: link:../../packages/ui

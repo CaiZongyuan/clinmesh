@@ -26,6 +26,7 @@ import {
   SearchIcon,
 } from 'lucide-react'
 import { useState, type FormEvent, type ReactNode } from 'react'
+import { ImagingRequestList } from './doctor/imaging-page.tsx'
 import { DoctorWorkspaceLayout } from './doctor/responsive-layout.tsx'
 import {
   getClinicalCatalog,
@@ -504,6 +505,12 @@ function CompletedCaseDetailView({ canCorrectLaboratoryReport, catalog, detail, 
           </ol>
         )}
       </CompletedCaseSection>
+
+      {detail.imagingRequests.length === 0 ? null : (
+        <CompletedCaseSection heading={locale === 'zh-CN' ? '放射检查' : 'Imaging'}>
+          <ImagingRequestList locale={locale} readOnly requests={detail.imagingRequests} />
+        </CompletedCaseSection>
+      )}
 
       <CompletedCaseSection heading={messages.laboratoryOrder}>
         {detail.laboratoryRequests.length === 0 ? (

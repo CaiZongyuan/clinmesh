@@ -8,13 +8,16 @@ import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
+  getAdministratorImagingAsset,
+  getAdministratorImagingAssetBlock,
   getAdministratorImagingPreparation,
   getImagingCoverage,
   newIdempotencyKey,
   prepareImagingCases,
 } from './api-client.ts'
+import { ImagingViewer, type ImagingViewerSource } from './imaging/imaging-viewer.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
 const examLabels: Record<ImagingExamCode, [string, string]> = {
@@ -141,9 +144,68 @@ export function PatientImagingPreparation({ caseId, locale }: { caseId: string; 
   )
 }
 
+/**
+ * 管理员复核一套素材：直接阅片，并对照来源标注、报告草稿、自动检查结果与发布状态。
+ * 复核结论由维护者用 `pnpm imaging:review` 签署到素材清单，这里不提供写入。
+ */
+function ImagingAssetReview({ assetId, locale }: { assetId: string; locale: WorkspaceLocale }) {
+  const zh = locale === 'zh-CN'
+  const asset = useQuery({
+    gcTime: 0,
+    queryFn: ({ signal }) => getAdministratorImagingAsset(assetId, signal),
+    queryKey: [...imagingKey, 'asset', assetId],
+  })
+  const source = useMemo<ImagingViewerSource | undefined>(() => asset.data === undefined
+    ? undefined
+    : {
+        loadBlock: (position, signal) => getAdministratorImagingAssetBlock(assetId, position, signal),
+        study: asset.data.study,
+      }, [asset.data, assetId])
+  if (asset.isPending) return <Skeleton className="mt-2 h-40 w-full" />
+  if (asset.isError || source === undefined) {
+    return (
+      <Alert className="mt-2" variant="destructive">
+        <AlertTitle>{zh ? '无法加载素材' : 'Unable to load the asset'}</AlertTitle>
+        <AlertDescription><Button onClick={() => void asset.refetch()} size="sm" variant="outline">{zh ? '重试' : 'Retry'}</Button></AlertDescription>
+      </Alert>
+    )
+  }
+  return (
+    <div className="mt-2 grid gap-3">
+      <ImagingViewer key={assetId} locale={locale} source={source} />
+      {asset.data.reports.map(report => (
+        <div className="text-sm" key={report.revision}>
+          <p className="text-xs text-muted-foreground">{zh ? `报告修订 ${report.revision}` : `Report revision ${report.revision}`}</p>
+          <p>{report.technique}</p>
+          <p>{report.findings}</p>
+          <p>{report.impression}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {report.checkIssues.length === 0
+              ? (zh ? '自动一致性检查通过' : 'Automated consistency check passed')
+              : `${zh ? '自动一致性检查未通过：' : 'Automated check failed: '}${report.checkIssues.map(issue => issue.code).join(zh ? '、' : ', ')}`}
+            {' · '}
+            {asset.data.publication.publishedRevisions.includes(report.revision)
+              ? (zh ? '已复核发布' : 'Reviewed and published')
+              : (zh ? '尚未发布' : 'Not published')}
+          </p>
+        </div>
+      ))}
+      <details>
+        <summary className="cursor-pointer text-xs text-muted-foreground">{zh ? '来源标注' : 'Source annotation'}</summary>
+        <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(asset.data.annotation ?? null, null, 2)}</pre>
+      </details>
+      <p className="break-all text-xs text-muted-foreground">
+        {zh ? '核对无误后由维护者签署：' : 'After checking, the maintainer signs with: '}
+        <code>pnpm imaging:review --asset {assetId} --reviewer &lt;{zh ? '复核人' : 'reviewer'}&gt; --radiologist no --conclusion approved</code>
+      </p>
+    </div>
+  )
+}
+
 /** 管理员覆盖清单：适配规则、素材状态、明确未覆盖的疾病和当前患者库的准备结果；可批量准备。 */
 export function ImagingCoveragePanel({ locale }: { locale: WorkspaceLocale }) {
   const [open, setOpen] = useState(false)
+  const [reviewing, setReviewing] = useState<string>()
   const zh = locale === 'zh-CN'
   const pick = (labels: [string, string]) => labels[zh ? 0 : 1]
   const queryClient = useQueryClient()
@@ -201,8 +263,19 @@ export function ImagingCoveragePanel({ locale }: { locale: WorkspaceLocale }) {
                                     : `${zh ? '未发布：' : 'Unpublished: '}${profile.asset.blockers.map(code => pick(blockerLabels[code] ?? [code, code])).join(zh ? '、' : ', ')}`}
                                   {' · '}
                                   {profile.asset.installed ? (zh ? '已安装' : 'Installed') : (zh ? '未安装' : 'Not installed')}
+                                  {' '}
+                                  <Button
+                                    onClick={() => setReviewing(current => current === profile.asset!.assetId ? undefined : profile.asset!.assetId)}
+                                    size="xs"
+                                    variant="outline"
+                                  >
+                                    {reviewing === profile.asset.assetId ? (zh ? '收起' : 'Hide') : (zh ? '复核预览' : 'Review')}
+                                  </Button>
                                 </p>
                               )}
+                          {profile.asset !== null && reviewing === profile.asset.assetId
+                            ? <ImagingAssetReview assetId={profile.asset.assetId} locale={locale} />
+                            : null}
                         </li>
                       ))}
                     </ul>

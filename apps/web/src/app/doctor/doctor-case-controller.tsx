@@ -111,6 +111,7 @@ import {
 import { DiagnosisPage, type DiagnosisPageActions } from './diagnosis-page.tsx'
 import { doctorCaseStatusLabel } from './doctor-case-status.ts'
 import { DoctorQueueModule } from './doctor-queue-module.tsx'
+import { ImagingPage } from './imaging-page.tsx'
 import {
   LaboratoryPage,
   type LaboratoryPageActions,
@@ -2059,6 +2060,7 @@ function DoctorCaseController({
             key={detail.data.caseId}
             laboratoryCatalog={laboratoryCatalog}
             laboratoryItemId={resolvedLaboratoryItemId}
+            onImagingChanged={() => refreshCaseById(detail.data.caseId)}
             laboratoryRequestActions={{
               acknowledge: {
                 error: acknowledgeReport.variables?.caseId === detail.data.caseId
@@ -2311,6 +2313,7 @@ function CaseDetail({
   laboratoryItemId,
   laboratoryCatalog,
   laboratoryRequestActions,
+  onImagingChanged,
   locale,
   messages,
   onClinicalDocumentChange,
@@ -2360,6 +2363,7 @@ function CaseDetail({
   laboratoryCatalog: ClinicalCatalog['laboratory']
   laboratoryItemId: string
   laboratoryRequestActions: LaboratoryPageActions
+  onImagingChanged: () => Promise<unknown>
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   onClinicalDocumentChange: (document: ClinicalDocumentContent) => void
@@ -2828,6 +2832,16 @@ function CaseDetail({
               readOnly={clinicalReadOnly}
               referenceSearch={referenceCatalogSearches.laboratory}
               showCorrection={correctionTarget === 'laboratory'}
+            />
+            <ImagingPage
+              caseId={detail.caseId}
+              elementId={encounterCompletionTargetElementIds.imaging}
+              encounter={detail.encounter}
+              key={`imaging:${detail.caseId}`}
+              locale={locale}
+              onChanged={onImagingChanged}
+              readOnly={clinicalReadOnly}
+              state={detail.imagingRequests}
             />
           </DoctorCasePanel>
         </Tabs>

@@ -107,6 +107,21 @@ describe('administrator imaging preparation panels', () => {
       if (path === '/api/sim/v1/admin/imaging-preparations') {
         return Response.json(commandResponse({ prepared: [casePreparation(1)], remaining: 3 }))
       }
+      if (path === '/api/sim/v1/admin/imaging-assets/synthetic-mass-ct') {
+        return Response.json({
+          annotation: { kind: 'lidc-ct', nodules: [] },
+          assetId: 'synthetic-mass-ct',
+          publication: { publishedRevisions: [], reasons: [{ code: 'REVIEW_MISSING', revision: 1 }] },
+          reports: [{
+            checkIssues: [],
+            findings: '双肺未见明确结节。',
+            impression: '胸部 CT 平扫未见明确肺结节。',
+            revision: 1,
+            technique: '胸部 CT 平扫，轴位。',
+          }],
+          study: { available: false, examCode: 'chest-ct-plain', series: [], studyId: 'synthetic-mass-ct' },
+        })
+      }
       return Response.json({
         cases: {
           exams: [{
@@ -156,6 +171,13 @@ describe('administrator imaging preparation panels', () => {
     expect(screen.getByText(/已准备 8 \/ 10 例/)).toBeTruthy()
     expect(screen.getByText(/已就绪 2 · 待处理 1 · 未覆盖 5/)).toBeTruthy()
     expect(screen.getByText(/来源没有可用依据 4/)).toBeTruthy()
+
+    // 复核预览：阅片入口旁给出报告草稿、自动检查结果与签署命令。
+    await user.click(within(mass).getByRole('button', { name: '复核预览' }))
+    expect(await within(mass).findByText('双肺未见明确结节。')).toBeTruthy()
+    expect(within(mass).getByText(/自动一致性检查通过 · 尚未发布/)).toBeTruthy()
+    expect(within(mass).getByText(/pnpm imaging:review --asset synthetic-mass-ct/)).toBeTruthy()
+    expect(within(mass).getByText(/影像暂不可用/)).toBeTruthy()
 
     await user.click(screen.getByRole('button', { name: '准备下一批病例' }))
     expect(await screen.findByText(/本批准备 1 例，还有 3 例待准备/)).toBeTruthy()
