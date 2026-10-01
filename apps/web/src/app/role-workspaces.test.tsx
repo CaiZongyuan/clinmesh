@@ -3135,6 +3135,71 @@ describe('role workspaces', () => {
     }
   })
 
+  it('keeps refreshing the doctor case while an imaging request is waiting for its report', async () => {
+    window.history.replaceState(null, '', '/consultation')
+    const queueItem = {
+      caseId: 'case-1', encounterId: 'encounter-1', encounterVersion: '1',
+      patient: {
+        id: 'patient-1', identifier: 'CM-SYN-001', name: '合成测试患者',
+        birthDate: '1988-03-16', gender: 'female', synthetic: true, versionId: '1',
+      },
+      presentation: doctorPresentation, status: 'first-visit', taskId: 'task-1', taskVersion: '1',
+    }
+    const issued = {
+      id: 'imaging-request-1',
+      indication: '咳嗽两周',
+      service: {
+        applicability: '成人胸部疾病的评估与随访；不含增强扫描', bodySite: '胸部', code: 'CT-CHEST-PLAIN',
+        department: '放射科', examCode: 'chest-ct-plain', id: 'imaging-chest-ct-plain', method: '平扫（不使用造影剂）',
+        modality: 'CT', name: '胸部 CT 平扫', reportSections: ['technique', 'findings', 'impression'], version: 1,
+      },
+      serviceRequestId: 'service-request-1',
+      serviceRequestVersion: '1',
+      status: 'issued',
+      taskId: 'imaging-task-1',
+      taskVersion: '1',
+      version: 1,
+    }
+    const reported = {
+      ...issued,
+      report: {
+        diagnosticReportId: 'imaging-report-1', diagnosticReportVersion: '1',
+        examinedAt: '2026-06-01T10:00:00+08:00', findings: '双肺未见明确结节。', impression: '胸部 CT 平扫未见明确肺结节。',
+        issuedAt: '2026-06-01T10:00:00+08:00', revisionNumber: 1, status: 'final', studyId: 'study-1',
+        technique: '胸部 CT 平扫，轴位。',
+      },
+      status: 'reported',
+      version: 4,
+    }
+    let detailReads = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/auth/context') return Response.json(doctorSession)
+      if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
+      if (path === '/api/his/v1/doctor/queue') return Response.json({ items: [queueItem], ...pagination(1) })
+      if (path === '/api/his/v1/doctor/cases/case-1') {
+        detailReads += 1
+        return Response.json({
+          ...queueItem, allergies: [], consultation: { turns: [], version: 1 },
+          encounter: { id: 'encounter-1', status: 'in-progress', versionId: '1' },
+          // 放射系统在后台执行并发布报告：第三次读取起申请已有报告。
+          imagingRequests: { draftVersion: 2, requests: [detailReads < 3 ? issued : reported] }, priorFacts: [],
+        })
+      }
+      if (path.endsWith('/imaging-services')) return Response.json({ items: [] })
+      if (path.endsWith('/completion')) return Response.json({ items: [], ready: false })
+      throw new Error(`Unexpected request: ${path}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('tab', { name: '检验' }))
+    expect(await screen.findByText('已开具')).toBeTruthy()
+    // 医生没有任何操作，报告到达后页面自行出现。
+    expect(await screen.findByText('胸部 CT 平扫未见明确肺结节。', {}, { timeout: 8_000 })).toBeTruthy()
+    expect(screen.getByText('已报告')).toBeTruthy()
+  }, 15_000)
+
   it('narrows an empty doctor page to common Tools while validating every grant', async () => {
     stubEmptyDoctorWorkspace()
     let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined

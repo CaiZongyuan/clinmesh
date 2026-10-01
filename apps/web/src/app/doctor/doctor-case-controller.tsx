@@ -261,6 +261,10 @@ function isCancellableLaboratoryRequest(request: LaboratoryRequest): boolean {
     )
 }
 
+function isAwaitingResult(request: { status: LaboratoryRequest['status'] }): boolean {
+  return request.status === 'issued' || request.status === 'accepted' || request.status === 'in-progress'
+}
+
 function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocumentContent {
   const persisted = detail.clinicalDocument?.draft
     ?? detail.clinicalDocument?.signed.at(-1)?.content
@@ -436,15 +440,13 @@ function DoctorCaseController({
     enabled: activeCaseId !== undefined,
     queryFn: ({ signal }) => getDoctorCase(activeCaseId ?? '', signal),
     queryKey: detailKey,
+    // 检验与放射申请在后台执行：有申请尚未出结果时持续刷新，报告到达后页面自行更新。
     refetchInterval: query => selectedCase?.status === 'awaiting-report'
       || (
         query.state.data?.laboratoryRequests?.reportingSupported === true
-        && query.state.data.laboratoryRequests.requests.some(
-          request => request.status === 'issued'
-            || request.status === 'accepted'
-            || request.status === 'in-progress',
-        )
+        && query.state.data.laboratoryRequests.requests.some(isAwaitingResult)
       )
+      || query.state.data?.imagingRequests?.requests.some(isAwaitingResult) === true
       ? 1_500
       : false,
   })
