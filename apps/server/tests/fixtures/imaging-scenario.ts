@@ -24,6 +24,7 @@ import type {
   JsonChatCompletionInput,
   JsonChatCompletionsProvider,
 } from '../../src/infrastructure/ai/openai-chat-completions.ts'
+import type { SqlitePerformanceObserver } from '../../src/infrastructure/sqlite/performance-observer.ts'
 import { createClinMeshRuntime } from '../../src/runtime.ts'
 
 export type Runtime = Awaited<ReturnType<typeof createClinMeshRuntime>>
@@ -39,6 +40,7 @@ export const lungTransplant = { code: '88039007', display: '肺移植术' }
 export interface SourceFact {
   code: string
   display: string
+  /** 来源记录了缓解时间：既往事实在当次就诊时缓解；本次就诊的疾病与 Synthea 导出一致，在就诊两周后缓解。 */
   resolved?: boolean
   resourceType: 'Condition' | 'Procedure'
 }
@@ -51,7 +53,7 @@ export function caseBundle(input: {
   index: SourceFact[]
   name: string
 }) {
-  const fact = (item: SourceFact, encounter: string, date: string, id: string) => ({
+  const fact = (item: SourceFact, encounter: string, date: string, id: string, abatement = date) => ({
     fullUrl: `urn:uuid:${id}`,
     resource: {
       code: { coding: [{ code: item.code, display: item.display, system: snomed }] },
@@ -60,7 +62,7 @@ export function caseBundle(input: {
       resourceType: item.resourceType,
       subject: { reference: 'urn:uuid:patient' },
       ...(item.resourceType === 'Condition'
-        ? { recordedDate: date, ...(item.resolved === true ? { abatementDateTime: date } : {}) }
+        ? { recordedDate: date, ...(item.resolved === true ? { abatementDateTime: abatement } : {}) }
         : { performedPeriod: { end: date, start: date }, status: 'completed' }),
     },
   })
@@ -99,7 +101,13 @@ export function caseBundle(input: {
           subject: { reference: 'urn:uuid:patient' },
         },
       },
-      ...input.index.map((item, index) => fact(item, 'index-encounter', '2026-06-01T10:05:00+08:00', `index-fact-${index}`)),
+      ...input.index.map((item, index) => fact(
+        item,
+        'index-encounter',
+        '2026-06-01T10:05:00+08:00',
+        `index-fact-${index}`,
+        '2026-06-15T10:05:00+08:00',
+      )),
     ],
     resourceType: 'Bundle',
     type: 'collection',
@@ -206,6 +214,7 @@ export async function authorizeAgentTool(
 export async function createImagingRuntime(bundles: unknown[], options: {
   assets?: boolean
   catalog?: boolean
+  performanceObserver?: SqlitePerformanceObserver
   persona?: boolean
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-imaging-'))
@@ -233,6 +242,7 @@ export async function createImagingRuntime(bundles: unknown[], options: {
     ...(options.catalog === false ? {} : { imagingCatalogDirectory: catalogDirectory }),
     migrationMode: 'apply',
     outboxRetryDelayMs: 0,
+    ...(options.performanceObserver === undefined ? {} : { performanceObserver: options.performanceObserver }),
     ...(options.persona === true
       ? {
           chatCompletionsProvider: briefProvider,

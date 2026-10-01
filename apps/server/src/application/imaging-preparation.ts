@@ -60,14 +60,22 @@ interface CodedResource {
   sourceReference: string
 }
 
+/**
+ * `visitStart` 是本次就诊的开始时间。来源在导出时已经写下之后的病程，疾病是否“已缓解”按就诊当时判断：
+ * 就诊之后才缓解的疾病（包括本次就诊诊断的急性病）在就诊时仍是现症。
+ */
 function codedResources(
   resources: SourceResource[],
   scope: CodedResource['scope'],
   codeSystem: string,
+  visitStart: string | undefined,
 ): CodedResource[] {
   return resources.flatMap(({ resource, sourceReference }) => {
     const parsed = sourceResourceSchema.safeParse(resource)
     if (!parsed.success) return []
+    const abatement = parsed.data.abatementDateTime
+    const abated = abatement !== undefined
+      && (visitStart === undefined || Date.parse(abatement) <= Date.parse(visitStart))
     // R4 ImagingStudy 把检查编码放在 procedureCode，Condition 与 Procedure 放在 code。
     const concepts = parsed.data.resourceType === 'ImagingStudy'
       ? parsed.data.procedureCode ?? []
@@ -75,7 +83,7 @@ function codedResources(
     return concepts.flatMap(concept => concept.coding)
       .filter(coding => coding.system === codeSystem)
       .map(coding => ({
-        abated: parsed.data.abatementDateTime !== undefined,
+        abated,
         code: coding.code,
         ...(coding.display === undefined ? {} : { display: coding.display }),
         resourceType: parsed.data.resourceType,
@@ -113,8 +121,10 @@ export function matchCaseImaging(input: {
   sourceHash: string
 }): ImagingExamPreparation[] {
   const { rules } = input.catalog
-  const index = codedResources(input.indexResources, 'index', rules.codeSystem)
-  const all = [...index, ...codedResources(input.historyResources, 'history', rules.codeSystem)]
+  const visitStart = sourceResourceSchema.safeParse(input.indexResources
+    .find(item => item.sourceReference === input.indexEncounterReference)?.resource).data?.period?.start
+  const index = codedResources(input.indexResources, 'index', rules.codeSystem, visitStart)
+  const all = [...index, ...codedResources(input.historyResources, 'history', rules.codeSystem, visitStart)]
   const activeConditions = all.filter(item => item.resourceType === 'Condition' && !item.abated)
   const sourceExams = (examCode: ImagingExamCode) => index
     .filter(item => (item.resourceType === 'Procedure' || item.resourceType === 'ImagingStudy')
@@ -158,11 +168,7 @@ export function matchCaseImaging(input: {
     if (failure === undefined && candidates.length === 0) {
       failure = { reason: 'NO_APPLICABLE_RULE', status: 'unsupported' }
     } else if (failure === undefined) {
-      const indexEncounter = sourceResourceSchema.safeParse(input.indexResources
-        .find(item => item.sourceReference === input.indexEncounterReference)?.resource).data
-      const age = indexEncounter?.period === undefined
-        ? undefined
-        : ageYears(input.birthDate, indexEncounter.period.start)
+      const age = visitStart === undefined ? undefined : ageYears(input.birthDate, visitStart)
       const eligible = candidates.filter(item => age !== undefined
         && age >= item.ageRange[0] && age <= item.ageRange[1]
         && (item.sex === undefined || item.sex === input.gender))

@@ -117,6 +117,8 @@ pnpm perf:saturation
 pnpm perf:full-import -- --manifest /absolute/path/to/release.json
 ```
 
+影像像素读取的预算由 Server HTTP 合同测试持有：读取检查描述和每个像素块各自不超过固定的只读语句数，零写入、零 Audit Event、零 Action Trace，单块不超过 2 MiB，预算不随 CT 层数增长。DSH 通道由代理合同测试覆盖整块 2 MiB 像素的原样透传与缓存策略。首帧延迟和翻片耗时属于跨机器不稳定的时间指标，按上面的原则只在真实入口验证中记录，不作为 hard gate。
+
 `trajectory` 使用共享 application interfaces 从内置虚拟患者完成问诊、检验、诊断、处方、文书和完诊；Synthetic Case generation、历史、Brief、direct start、Investigation snapshot 与新 Epoch no-AI replay 由下述 Server HTTP 集成合同覆盖。`saturation` 以独立 Worker/SQLite sandbox 覆盖 1、5、10、25 actors，并报告 load runner 自身的 busy/retry；`full-import` 只读取调用者已合法取得的 manifest 和 artifact。所有 profile 只使用合成运行状态，不提供关闭 Audit Event 或 Action Trace 的运行开关。详细取舍见 [SQLite 性能工作负载与稳定门禁分离](../.agents/notes/implemented/testing/2026-08-28-sqlite-performance-contract.md)。
 
 ## 合成病例合同

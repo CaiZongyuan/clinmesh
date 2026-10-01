@@ -8,6 +8,7 @@ import {
 } from '@clinmesh/contracts/his'
 import { imagingStudyViewSchema } from '@clinmesh/contracts/imaging'
 import { afterEach, describe, expect, it } from 'vitest'
+import { readActionTraceMetrics, SqlitePerformanceProbe } from '../src/performance/sqlite-performance-probe.ts'
 import type { createClinMeshRuntime } from '../src/runtime.ts'
 import { installSyntheticImagingAssets } from './fixtures/imaging-catalog.ts'
 import {
@@ -37,12 +38,12 @@ describe('Imaging study read boundary HTTP contract', () => {
   })
 
   /** 一个已发布胸部 CT 检查的接诊：返回本院检查标识与各角色会话。 */
-  async function reportedCtStudy() {
+  async function reportedCtStudy(performanceObserver?: SqlitePerformanceProbe) {
     const created = await createImagingRuntime([caseBundle({
       gender: 'male',
       index: [{ ...lungCancer, resourceType: 'Condition' }],
       name: '肺癌男',
-    })], { persona: true })
+    })], { ...(performanceObserver === undefined ? {} : { performanceObserver }), persona: true })
     temporaryDirectories.push(created.directory)
     runtimes.push(created.runtime)
     const { runtime } = created
@@ -96,6 +97,44 @@ describe('Imaging study read boundary HTTP contract', () => {
     const studyId = detail.imagingRequests!.requests[0]!.report!.studyId
     return { ...created, ...visit, administrator, studyId }
   }
+
+  it('reads the first frame within a fixed statement budget and writes nothing per pixel block', async () => {
+    const probe = new SqlitePerformanceProbe()
+    const { doctor, runtime, studyId } = await reportedCtStudy(probe)
+    const studyPath = `/api/his/v1/imaging-studies/${studyId}`
+    const persisted = () => ({
+      audit: runtime.database.driver.prepare('SELECT COUNT(*) AS rows FROM audit_log').get(),
+      trace: readActionTraceMetrics(runtime.database),
+    })
+    const before = persisted()
+
+    probe.reset()
+    const described = await runtime.app.request(studyPath, { headers: { cookie: doctor } })
+    const study = imagingStudyViewSchema.parse(await described.json())
+    const description = probe.snapshot()
+    // 会话与岗位解析、检查读取授权各占固定的只读语句；预算随实现收紧，不随层数增长。
+    expect(description.statementCount).toBeLessThanOrEqual(4)
+    expect(description.writeCount).toBe(0)
+
+    // 一例 CT 有数百层，每层至少一次像素块请求：每个请求的数据库开销必须固定且只读。
+    for (const [frameIndex, frame] of study.series[0]!.frames.entries()) {
+      for (const blockIndex of frame.blocks.keys()) {
+        probe.reset()
+        const block = await runtime.app.request(
+          `${studyPath}/series/0/frames/${frameIndex}/blocks/${blockIndex}`,
+          { headers: { cookie: doctor } },
+        )
+        expect(block.status).toBe(200)
+        expect((await block.arrayBuffer()).byteLength).toBeLessThanOrEqual(2 * 1024 * 1024)
+        const read = probe.snapshot()
+        expect(read.statementCount).toBeLessThanOrEqual(4)
+        expect(read.writeCount).toBe(0)
+        expect(read.rowsWritten).toBe(0)
+      }
+    }
+    // 阅片不产生 Audit Event 或 Action Trace：读取像素不是业务命令。
+    expect(persisted()).toEqual(before)
+  })
 
   function int16Values(buffer: ArrayBuffer): number[] {
     return Array.from(new Int16Array(buffer))

@@ -99,7 +99,12 @@ describe('Imaging case preparation HTTP contract', () => {
         name: '肺癌男',
       }),
       caseBundle({ gender: 'female', index: [{ ...lungCancer, resourceType: 'Condition' }], name: '肺癌女' }),
-      caseBundle({ gender: 'female', index: [{ ...acuteBronchitis, resourceType: 'Condition' }], name: '支气管炎成人' }),
+      // 来源在导出时已记录本次疾病两周后缓解；就诊当时它仍是现症。
+      caseBundle({
+        gender: 'female',
+        index: [{ ...acuteBronchitis, resolved: true, resourceType: 'Condition' }],
+        name: '支气管炎成人',
+      }),
       caseBundle({ gender: 'male', index: [{ ...pneumonia, resourceType: 'Condition' }], name: '肺炎' }),
       caseBundle({ gender: 'male', index: [{ ...hypertension, resourceType: 'Condition' }], name: '高血压' }),
       caseBundle({
