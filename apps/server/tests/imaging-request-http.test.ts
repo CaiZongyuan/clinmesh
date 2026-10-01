@@ -16,6 +16,8 @@ import type { createClinMeshRuntime } from '../src/runtime.ts'
 import { installSyntheticImagingAssets } from './fixtures/imaging-catalog.ts'
 import {
   acuteBronchitis,
+  agentPageContext,
+  authorizeAgentTool,
   caseBundle,
   createImagingRuntime,
   generateCase,
@@ -290,6 +292,143 @@ describe('Imaging request HTTP contract', () => {
     })
     expect((await completionPreview(runtime, doctor, encounterId)).items
       .find(item => item.code === 'required-reports-acknowledged')).toMatchObject({ status: 'complete' })
+  })
+
+  it('tells the patient model that an examination took place without its findings or impression', async () => {
+    const visit = await consultation(caseBundle({
+      gender: 'male',
+      index: [{ ...lungCancer, resourceType: 'Condition' }],
+      name: '肺癌男',
+    }))
+    const { doctor, encounterId, modelRequests, outpatientCaseId, runtime } = visit
+    // 胸片已出报告，CT 仍在等待执行。
+    await order(visit, radiographService)
+    await dispatchAll(runtime)
+    await order(visit, ctService, 2)
+    const detail = await caseDetail(runtime, doctor, outpatientCaseId)
+    const radiograph = detail.imagingRequests!.requests.find(request => request.service.id === radiographService)!
+    expect(radiograph.status).toBe('reported')
+    const queueItem = (await (await runtime.app.request('/api/his/v1/doctor/queue', { headers: { cookie: doctor } })).json() as {
+      items: Array<{ caseId: string; taskId: string; taskVersion: string }>
+    }).items.find(item => item.caseId === outpatientCaseId)!
+
+    const ask = await runtime.app.request(
+      `/api/his/v1/encounters/${encounterId}/actions/ask-consultation-question`,
+      mutation(doctor, {
+        expectedVersions: {
+          [`Encounter/${encounterId}`]: detail.encounter.versionId,
+          [`Task/${queueItem.taskId}`]: queueItem.taskVersion,
+        },
+        input: { expectedConsultationVersion: detail.consultation!.version, message: '拍完片子感觉怎么样？' },
+      }),
+    )
+    expect(ask.status).toBe(200)
+
+    const payload = modelRequests.findLast(request => request.schemaName === 'patient_dialogue_reply')?.userPayload
+    expect(payload).toMatchObject({
+      // 患者只知道自己做过哪项检查、什么时候做的；未执行的 CT 不出现。
+      examinationExperiences: [{ examinedAt: radiograph.report!.examinedAt, name: '胸片' }],
+      heldReports: [],
+      specimenExperiences: [],
+    })
+    expect(JSON.stringify(payload)).not.toMatch(/结节|肿块|synthetic-mass|lung-mass-male|胸部正位片/)
+  })
+
+  it('publishes imaging Agent tools from the trusted case state without widening laboratory tools', async () => {
+    const visit = await consultation(caseBundle({
+      gender: 'male',
+      index: [{ ...lungCancer, resourceType: 'Condition' }],
+      name: '肺癌男',
+    }))
+    const { doctor, encounterId, outpatientCaseId, runtime } = visit
+    const context = async (viewRevision: string) => await agentPageContext(runtime, doctor, {
+      activeSection: 'laboratory',
+      caseId: outpatientCaseId,
+      encounterVersion: (await caseDetail(runtime, doctor, outpatientCaseId)).encounter.versionId,
+      viewRevision,
+    })
+
+    const empty = (await context('imaging-empty')).snapshot.allowedOperationIds
+    expect(empty).toContain('outpatient.imaging.draft.set')
+    expect(empty.filter(id => id.startsWith('outpatient.imaging.'))).toEqual(['outpatient.imaging.draft.set'])
+    expect(empty).not.toContain('outpatient.report.acknowledge.propose')
+
+    // 胸片报告已发布、CT 申请尚未执行、另有一份草稿。
+    await order(visit, radiographService)
+    await dispatchAll(runtime)
+    const ct = await order(visit, ctService, 2)
+    expect((await saveDraft(runtime, doctor, encounterId, {
+      expectedDraftVersion: 4,
+      indication: '复查',
+      serviceId: radiographService,
+    })).status).toBe(200)
+    const detail = await caseDetail(runtime, doctor, outpatientCaseId)
+    const radiograph = detail.imagingRequests!.requests.find(request => request.service.id === radiographService)!
+    expect(radiograph.status).toBe('reported')
+
+    const binding = await context('imaging-reported')
+    const allowed = binding.snapshot.allowedOperationIds
+    expect(allowed.filter(id => id.startsWith('outpatient.imaging.')).sort()).toEqual([
+      'outpatient.imaging.cancel.propose',
+      'outpatient.imaging.draft.set',
+      'outpatient.imaging.issue.propose',
+    ])
+    expect(allowed).toContain('outpatient.report.acknowledge.propose')
+    // 放射申请不开放检验的取消与更正提案；普通医生账号没有放射更正提案。
+    expect(allowed).not.toContain('outpatient.laboratory.cancel.propose')
+    expect(allowed).not.toContain('outpatient.report.correct.propose')
+    expect(allowed).not.toContain('outpatient.imaging.correct.propose')
+    // Page Context 只含操作标识与受信选择，不含素材、适配或像素信息。
+    expect(JSON.stringify(binding.snapshot)).not.toMatch(/synthetic-mass|lung-mass-male|studyId|pixel/)
+
+    const authorize = async (operationId: string, toolName: string, input: unknown) => (
+      await authorizeAgentTool(runtime, doctor, binding, { input, operationId, toolName })
+    ).status
+    expect(await authorize('outpatient.imaging.cancel.propose', 'clinmesh_prepare_cancel_imaging', { requestId: ct.id }))
+      .toBe(201)
+    // 输入与当前受信资源不符按过期上下文拒绝（409）；未发布的操作按无权限拒绝（403）。
+    expect(await authorize('outpatient.imaging.cancel.propose', 'clinmesh_prepare_cancel_imaging', { requestId: radiograph.id }))
+      .toBe(409)
+    expect(await authorize('outpatient.imaging.retry.propose', 'clinmesh_prepare_retry_imaging', { requestId: ct.id }))
+      .toBe(403)
+    expect(await authorize('outpatient.report.acknowledge.propose', 'clinmesh_prepare_acknowledge_report', { requestId: radiograph.id }))
+      .toBe(201)
+    expect(await authorize('outpatient.report.acknowledge.propose', 'clinmesh_prepare_acknowledge_report', { requestId: ct.id }))
+      .toBe(409)
+    // 导航阅片只接受本病例已有报告的放射申请。
+    expect(await authorize('outpatient.section.select', 'clinmesh_select_doctor_section', {
+      imagingRequestId: radiograph.id,
+      section: 'laboratory',
+    })).toBe(201)
+    expect(await authorize('outpatient.section.select', 'clinmesh_select_doctor_section', {
+      imagingRequestId: ct.id,
+      section: 'laboratory',
+    })).toBe(409)
+
+    // 同一账号兼有管理员岗位时才发布放射更正提案。
+    const administratorAsDoctor = await signIn(runtime)
+    expect((await runtime.app.request('/api/auth/role', mutation(
+      administratorAsDoctor,
+      { practitionerRoleId: 'practitioner-role-outpatient-doctor' },
+    ))).status).toBe(200)
+    const administratorBinding = await agentPageContext(runtime, administratorAsDoctor, {
+      activeSection: 'laboratory',
+      caseId: outpatientCaseId,
+      encounterVersion: detail.encounter.versionId,
+      viewRevision: 'imaging-administrator',
+    })
+    expect(administratorBinding.snapshot.allowedOperationIds).toContain('outpatient.imaging.correct.propose')
+    expect(administratorBinding.snapshot.allowedOperationIds).not.toContain('outpatient.report.correct.propose')
+    expect((await authorizeAgentTool(runtime, administratorAsDoctor, administratorBinding, {
+      input: { reason: '报告内容已重新核对', reportRevision: 1, requestId: radiograph.id },
+      operationId: 'outpatient.imaging.correct.propose',
+      toolName: 'clinmesh_prepare_correct_imaging_report',
+    })).status).toBe(201)
+    expect((await authorizeAgentTool(runtime, administratorAsDoctor, administratorBinding, {
+      input: { reason: '报告内容已重新核对', reportRevision: 1, requestId: ct.id },
+      operationId: 'outpatient.imaging.correct.propose',
+      toolName: 'clinmesh_prepare_correct_imaging_report',
+    })).status).toBe(409)
   })
 
   it('ends an unprepared or unavailable examination as generation-failed and recovers by retry or cancel', async () => {

@@ -26,7 +26,7 @@ import {
   SearchIcon,
 } from 'lucide-react'
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { ImagingRequestList } from './doctor/imaging-page.tsx'
+import { ImagingRequestList, useImagingViewState } from './doctor/imaging-page.tsx'
 import { DoctorWorkspaceLayout } from './doctor/responsive-layout.tsx'
 import {
   getClinicalCatalog,
@@ -360,12 +360,13 @@ export function DoctorCompletedCaseLibrary({
           </Empty>
         ) : (
           <CompletedCaseDetailView
-            canCorrectLaboratoryReport={session.availableRoles.some(
+            canCorrectReports={session.availableRoles.some(
               role => role.code === 'administrator',
             )}
             catalog={catalog.data}
             detail={detail.data}
             locale={locale}
+            onImagingChanged={() => detail.refetch()}
             onOpenCorrection={onOpenCorrection}
           />
         )}
@@ -388,14 +389,16 @@ function CompletedCaseError({ error, fallbackTitle, messages }: {
   )
 }
 
-function CompletedCaseDetailView({ canCorrectLaboratoryReport, catalog, detail, locale, onOpenCorrection }: {
-  canCorrectLaboratoryReport: boolean
+function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, onImagingChanged, onOpenCorrection }: {
+  canCorrectReports: boolean
   catalog?: ClinicalCatalog | undefined
   detail: DoctorCompletedCaseDetail
   locale: WorkspaceLocale
+  onImagingChanged: () => Promise<unknown>
   onOpenCorrection: (caseId: string, target: CompletedCaseCorrectionTarget) => void
 }): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  const imagingView = useImagingViewState(detail.caseId)
   const hasCorrectableClinicalDocument = detail.clinicalDocuments.some(
     document => document.correctionSupported,
   )
@@ -428,7 +431,7 @@ function CompletedCaseDetailView({ canCorrectLaboratoryReport, catalog, detail, 
             {messages.openClinicalDocumentCorrection}
           </Button>
         ) : null}
-        {hasCorrectableLaboratoryReport && canCorrectLaboratoryReport ? (
+        {hasCorrectableLaboratoryReport && canCorrectReports ? (
           <Button
             onClick={() => onOpenCorrection(detail.caseId, 'laboratory')}
             size="sm"
@@ -508,7 +511,12 @@ function CompletedCaseDetailView({ canCorrectLaboratoryReport, catalog, detail, 
 
       {detail.imagingRequests.length === 0 ? null : (
         <CompletedCaseSection heading={locale === 'zh-CN' ? '放射检查' : 'Imaging'}>
-          <ImagingRequestList locale={locale} readOnly requests={detail.imagingRequests} />
+          <ImagingRequestList
+            actions={{ canCorrect: canCorrectReports, onChanged: onImagingChanged, view: imagingView }}
+            locale={locale}
+            readOnly
+            requests={detail.imagingRequests}
+          />
         </CompletedCaseSection>
       )}
 

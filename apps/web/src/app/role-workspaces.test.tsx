@@ -2955,6 +2955,7 @@ describe('role workspaces', () => {
         ...item, allergies: [], consultation: { turns: [], version: 1 },
         encounter: { id: item.encounterId, status: 'in-progress', versionId: '1' }, priorFacts: [],
       })
+      if (path.endsWith('/imaging-services')) return Response.json({ items: [] })
       throw new Error(`Unexpected request: ${path}`)
     }))
     const host = document.createElement('div')
@@ -2979,6 +2980,7 @@ describe('role workspaces', () => {
       for (const tool of registration!.tools) expect(tool.description.length, tool.name).toBeLessThanOrEqual(512)
       expect(context.pageState.queue).toMatchObject({ items: queueItems, ...pagination(2) })
       const doctor = await call('clinmesh_read_doctor_context')
+      expect(doctor.imagingServices).toEqual([])
       expect(doctor.queue).toEqual(context.pageState.queue)
       expect(doctor.caseId).toBe('case-1')
       const target = doctor.queue.items.find((item: { patient: { name: string } }) => item.patient.name === '合成测试患者2')
@@ -3002,6 +3004,134 @@ describe('role workspaces', () => {
     } finally {
       view.unmount()
       host.remove()
+    }
+  })
+
+  it('lets an Agent propose imaging acknowledgement only after the images were shown to the human reader', async () => {
+    window.history.replaceState(null, '', '/consultation')
+    // jsdom 没有 canvas 与 ImageData；阅片器只需要能把一帧画上去。
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ putImageData: () => undefined } as never)
+    vi.stubGlobal('ImageData', class { constructor(readonly data: Uint8ClampedArray, readonly width: number, readonly height: number) {} })
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registration = value
+        return () => { if (registration === value) registration = undefined }
+      },
+    }
+    const queueItem = {
+      caseId: 'case-1', encounterId: 'encounter-1', encounterVersion: '1',
+      patient: {
+        id: 'patient-1', identifier: 'CM-SYN-001', name: '合成测试患者',
+        birthDate: '1988-03-16', gender: 'female', synthetic: true, versionId: '1',
+      },
+      presentation: doctorPresentation, status: 'first-visit', taskId: 'task-1', taskVersion: '1',
+    }
+    const imagingRequest = {
+      id: 'imaging-request-1',
+      indication: '咳嗽两周',
+      report: {
+        diagnosticReportId: 'imaging-report-1',
+        diagnosticReportVersion: '1',
+        examinedAt: '2026-06-01T10:00:00+08:00',
+        findings: '双肺未见明确结节。',
+        impression: '胸部 CT 平扫未见明确肺结节。',
+        issuedAt: '2026-06-01T10:00:00+08:00',
+        revisionNumber: 1,
+        status: 'final',
+        studyId: 'study-1',
+        technique: '胸部 CT 平扫，轴位。',
+      },
+      service: {
+        applicability: '成人胸部疾病的评估与随访；不含增强扫描', bodySite: '胸部', code: 'CT-CHEST-PLAIN',
+        department: '放射科', examCode: 'chest-ct-plain', id: 'imaging-chest-ct-plain', method: '平扫（不使用造影剂）',
+        modality: 'CT', name: '胸部 CT 平扫', reportSections: ['technique', 'findings', 'impression'], version: 1,
+      },
+      serviceRequestId: 'service-request-1',
+      serviceRequestVersion: '2',
+      status: 'reported',
+      taskId: 'imaging-task-1',
+      taskVersion: '4',
+      version: 4,
+    }
+    const requests: Array<{ body: unknown; path: string }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      const agentResponse = doctorSurfaceAgentResponse(path, init)
+      if (agentResponse !== undefined) return agentResponse
+      if (init?.method === 'POST') requests.push({ body: JSON.parse(String(init.body)), path })
+      if (path === '/api/auth/context') return Response.json(doctorSession)
+      if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
+      if (path === '/api/his/v1/doctor/queue') return Response.json({ items: [queueItem], ...pagination(1) })
+      if (path === '/api/his/v1/doctor/cases/case-1') return Response.json({
+        ...queueItem, allergies: [], consultation: { turns: [], version: 1 },
+        encounter: { id: 'encounter-1', status: 'in-progress', versionId: '1' },
+        imagingRequests: { draftVersion: 2, requests: [imagingRequest] }, priorFacts: [],
+      })
+      if (path.endsWith('/imaging-services')) return Response.json({ items: [] })
+      if (path === '/api/his/v1/imaging-studies/study-1') return Response.json({
+        available: true,
+        examCode: 'chest-ct-plain',
+        series: [{
+          frames: [{ blocks: [{ length: 4, rowCount: 1, rowStart: 0 }], columns: 2, pixelSpacingMm: [1, 1], positionMm: 0, rows: 1 }],
+          kind: 'frame-stack', modality: 'CT', pixelFormat: 'int16', valueUnit: 'hu',
+        }],
+        studyId: 'study-1',
+      })
+      if (path.includes('/blocks/')) return new Response(new Uint8Array(new Int16Array([-600, 40]).buffer))
+      if (path.endsWith('/actions/acknowledge')) return Response.json({
+        auditId: 'audit-1', effects: [], requestId: 'request-id-1', warnings: [],
+        data: {
+          acknowledgementId: 'acknowledgement-1', acknowledgedAt: '2026-06-01T10:00:00+08:00', acknowledgedBy: 'practitioner-1',
+          diagnosticReportId: 'imaging-report-1', requestId: 'imaging-request-1', requestVersion: 5, status: 'acknowledged',
+        },
+      })
+      throw new Error(`Unexpected request: ${path}`)
+    }))
+    const view = render(<WebApp runtime={{
+      mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+    }} />)
+    try {
+      await screen.findByRole('tab', { name: '病历记录' })
+      const execute = async (name: string, input = {}) => {
+        await waitFor(() => expect(registration?.tools.some(tool => tool.name === name)).toBe(true))
+        const tool = registration!.tools.find(tool => tool.name === name)!
+        return await tool.execute(boundAgentToolInput(tool, input), new AbortController().signal)
+      }
+      // 影像尚未在人类面前显示：已阅提案被拒绝，Agent 读到的页面状态不含像素。
+      await expect(act(() => execute('clinmesh_prepare_acknowledge_report', { requestId: 'imaging-request-1' })))
+        .rejects.toThrow('have not been displayed')
+      let opened = ''
+      await act(async () => {
+        opened = await execute('clinmesh_select_doctor_section', { imagingRequestId: 'imaging-request-1', section: 'laboratory' })
+      })
+      expect(JSON.parse(opened).data).toEqual({
+        imagesOpened: true, imagingRequestId: 'imaging-request-1', section: 'laboratory', selected: true,
+      })
+      expect(opened).not.toMatch(/pixel|blocks/)
+      await waitFor(() => expect(
+        (screen.getByRole('button', { name: '确认已阅' }) as HTMLButtonElement).disabled,
+      ).toBe(false))
+
+      let proposal: Promise<string> | undefined
+      await act(async () => {
+        proposal = execute('clinmesh_prepare_acknowledge_report', { requestId: 'imaging-request-1' })
+        proposal.catch(() => undefined)
+      })
+      const review = await waitFor(() => {
+        const element = document.querySelector('[data-agent-review]')
+        expect(element).not.toBeNull()
+        return element as HTMLElement
+      })
+      expect(requests.some(request => request.path.endsWith('/actions/acknowledge'))).toBe(false)
+      await userEvent.setup().click(within(review).getByRole('button', { name: '确认已阅' }))
+      await act(async () => { await proposal })
+      expect(requests.find(request => request.path.endsWith('/actions/acknowledge'))).toEqual({
+        body: { expectedVersions: { 'DiagnosticReport/imaging-report-1': '1' }, input: { expectedRequestVersion: 4 } },
+        path: '/api/his/v1/imaging-requests/imaging-request-1/reports/imaging-report-1/actions/acknowledge',
+      })
+    } finally {
+      view.unmount()
     }
   })
 

@@ -226,6 +226,10 @@ export class ConsultationDialogueService {
         text: turn.messageText,
         ...(turn.kind === 'report-card' ? { reportCard: turn.reportReference } : {}),
       })),
+      // 放射检查只告知“做过哪项检查、何时做的”；所见、印象和报告正文不进入患者模型。
+      examinationExperiences: (detail.imagingRequests?.requests ?? []).flatMap(request => (
+        request.report === undefined ? [] : [{ examinedAt: request.report.examinedAt, name: request.service.name }]
+      )),
       heldReports: (detail.laboratoryRequests?.requests ?? [])
         .filter(request => request.status === 'reported' || request.status === 'acknowledged')
         .map(request => ({

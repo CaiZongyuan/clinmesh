@@ -1,7 +1,8 @@
-import { randomUUID } from 'node:crypto'
+import { createHmac, randomUUID } from 'node:crypto'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { agentPageContextBindingSchema, type AgentPageContextBinding } from '@clinmesh/contracts/agent'
 import {
   commandResponseSchema,
   registrationCatalogSchema,
@@ -19,7 +20,10 @@ import {
 import { expect } from 'vitest'
 import type { ScenarioGenerationProvider, SourcePatientCorpus } from '../../src/application/scenario-data/provider.ts'
 import { sourceArtifactHash } from '../../src/application/scenario-data/provider.ts'
-import type { JsonChatCompletionsProvider } from '../../src/infrastructure/ai/openai-chat-completions.ts'
+import type {
+  JsonChatCompletionInput,
+  JsonChatCompletionsProvider,
+} from '../../src/infrastructure/ai/openai-chat-completions.ts'
 import { createClinMeshRuntime } from '../../src/runtime.ts'
 
 export type Runtime = Awaited<ReturnType<typeof createClinMeshRuntime>>
@@ -138,6 +142,67 @@ export const persona: PatientPersonaContent = {
 }
 
 /** 临时目录中的运行时：合成 Synthea 来源、可选的患者 Persona 模型和一个待写入的合成素材清单目录。 */
+const dshBridgeSecret = 'test-dsh-bridge-secret-with-at-least-32-characters'
+let pageContextRevision = 0
+
+/** 为当前受信 Page Context 签发 Agent Page Context 并返回绑定。 */
+export async function agentPageContext(
+  runtime: Runtime,
+  cookie: string,
+  claim: { activeSection: string; caseId: string; encounterVersion: string; viewRevision: string },
+) {
+  pageContextRevision += 1
+  const response = await runtime.app.request('/api/agent/v1/page-contexts', {
+    body: JSON.stringify({
+      claim: {
+        activeSection: claim.activeSection,
+        selection: { id: claim.caseId, kind: 'case', version: claim.encounterVersion },
+        ui: { status: 'ready' },
+        version: 1,
+        viewId: 'consultation',
+        viewRevision: claim.viewRevision,
+      },
+      client: { id: 'imaging-agent-test', revision: pageContextRevision },
+      dshSessionId: 'dsh-session-imaging',
+    }),
+    headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' },
+    method: 'POST',
+  })
+  expect(response.status).toBe(201)
+  return agentPageContextBindingSchema.parse(await response.json())
+}
+
+/** 以 DSH 宿主的身份授权一次 Tool 调用，返回 HTTP 响应。 */
+export async function authorizeAgentTool(
+  runtime: Runtime,
+  cookie: string,
+  binding: AgentPageContextBinding,
+  call: { input: unknown; operationId: string; toolName: string },
+) {
+  const now = new Date()
+  const encoded = Buffer.from(JSON.stringify({
+    callId: `call-${call.operationId}-${now.getTime()}`,
+    contextId: binding.snapshot.id,
+    dshSessionId: binding.snapshot.dshSessionId,
+    expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+    issuedAt: now.toISOString(),
+    scopeKey: binding.snapshot.scopeKey,
+    toolName: call.toolName,
+    version: 1,
+  })).toString('base64url')
+  const signature = createHmac('sha256', dshBridgeSecret).update(encoded).digest('base64url')
+  return await runtime.app.request('/api/agent/v1/tool-calls', {
+    body: JSON.stringify({
+      contextToken: binding.token,
+      executionProof: `${encoded}.${signature}`,
+      input: call.input,
+      operationId: call.operationId,
+    }),
+    headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost' },
+    method: 'POST',
+  })
+}
+
 export async function createImagingRuntime(bundles: unknown[], options: {
   assets?: boolean
   catalog?: boolean
@@ -146,8 +211,16 @@ export async function createImagingRuntime(bundles: unknown[], options: {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-imaging-'))
   const catalogDirectory = join(directory, 'imaging-catalog')
   const assetDirectory = join(directory, 'imaging-assets')
+  // 患者 Persona 与患者对话共用一个记录请求的模型替身。
+  const modelRequests: JsonChatCompletionInput[] = []
   const briefProvider: JsonChatCompletionsProvider = {
-    completeJson: async () => ({ content: JSON.stringify(persona), model: 'fake-brief-model' }),
+    completeJson: async (input) => {
+      modelRequests.push(input)
+      return {
+        content: JSON.stringify(input.schemaName === 'patient_dialogue_reply' ? { reply: '好的，医生。' } : persona),
+        model: 'fake-brief-model',
+      }
+    },
   }
   const runtime = await createClinMeshRuntime({
     authBaseUrl: 'http://localhost',
@@ -155,6 +228,7 @@ export async function createImagingRuntime(bundles: unknown[], options: {
     cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
     databasePath: join(directory, 'clinmesh.sqlite'),
     demoPassword: 'Synthetic-Demo-Password-2026!',
+    dshBridgeSecret,
     ...(options.assets === false ? {} : { imagingAssetDirectory: assetDirectory }),
     ...(options.catalog === false ? {} : { imagingCatalogDirectory: catalogDirectory }),
     migrationMode: 'apply',
@@ -162,6 +236,7 @@ export async function createImagingRuntime(bundles: unknown[], options: {
     ...(options.persona === true
       ? {
           chatCompletionsProvider: briefProvider,
+          consultationModel: 'fake-consultation-model',
           investigationModel: 'fake-investigation-model',
           patientPersonaModel: 'fake-brief-model',
         }
@@ -169,7 +244,7 @@ export async function createImagingRuntime(bundles: unknown[], options: {
     syntheaProvider: new SequenceSyntheaProvider(bundles),
     trustedOrigins: ['http://localhost'],
   })
-  return { assetDirectory, catalogDirectory, directory, runtime }
+  return { assetDirectory, catalogDirectory, directory, modelRequests, runtime }
 }
 
 export async function signIn(runtime: Runtime, email = 'admin@demo.clinmesh.local') {

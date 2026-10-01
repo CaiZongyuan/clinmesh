@@ -2,7 +2,9 @@ import { z } from 'zod'
 import {
   clinicalDocumentContentSchema,
   diagnosisDraftContentSchema,
+  correctImagingReportRequestSchema,
   prescriptionDraftContentSchema,
+  saveImagingRequestDraftRequestSchema,
   saveLaboratoryRequestDraftRequestSchema,
 } from './his.ts'
 
@@ -28,6 +30,12 @@ const firstVisitDraftInputSchema = z.object({
 }).strict()
 const laboratoryDraftInputSchema = saveLaboratoryRequestDraftRequestSchema.shape.input
   .pick({ catalogItemId: true, indicationCode: true })
+const imagingDraftInputSchema = saveImagingRequestDraftRequestSchema.shape.input
+  .pick({ indication: true, serviceId: true })
+/** 放射更正提案只指定申请、已核对的报告内容修订号与原因，不接受自由改写的报告正文。 */
+const imagingReportCorrectionInputSchema = correctImagingReportRequestSchema.shape.input
+  .pick({ reason: true, reportRevision: true })
+  .extend({ requestId: boundedIdSchema })
 const revisitDraftInputSchema = z.object({
   diagnosis: z.object({
     code: z.string().trim().min(1).max(80),
@@ -112,8 +120,13 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.case.read': emptyInputSchema,
   'outpatient.case.select': z.object({ caseId: boundedIdSchema }).strict(),
   'outpatient.section.select': z.object({
+    /** 同时展开这条放射申请的影像；只与 `laboratory` 栏目一起使用。Agent 不读取像素。 */
+    imagingRequestId: boundedIdSchema.optional(),
     section: z.enum(['consultation', 'record', 'diagnosis', 'prescription', 'laboratory']),
-  }).strict(),
+  }).strict().refine(
+    input => input.imagingRequestId === undefined || input.section === 'laboratory',
+    { message: 'Imaging studies open in the laboratory section', path: ['imagingRequestId'] },
+  ),
   'outpatient.consultation.ask': z.object({ message: z.string().trim().min(1).max(2_000) }).strict(),
   'outpatient.consultation.reply.retry': emptyInputSchema,
   'outpatient.first-visit.draft.set': firstVisitDraftInputSchema,
@@ -129,6 +142,11 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.laboratory.cancel.propose': z.object({ requestId: boundedIdSchema }).strict(),
   'outpatient.report.acknowledge.propose': z.object({ requestId: boundedIdSchema }).strict(),
   'outpatient.report.correct.propose': reportCorrectionInputSchema,
+  'outpatient.imaging.draft.set': imagingDraftInputSchema,
+  'outpatient.imaging.issue.propose': emptyInputSchema,
+  'outpatient.imaging.cancel.propose': z.object({ requestId: boundedIdSchema }).strict(),
+  'outpatient.imaging.retry.propose': z.object({ requestId: boundedIdSchema }).strict(),
+  'outpatient.imaging.correct.propose': imagingReportCorrectionInputSchema,
   'outpatient.prescription.issue.propose': emptyInputSchema,
   'outpatient.prescription.withdraw.propose': emptyInputSchema,
   'outpatient.medication.none.propose': emptyInputSchema,

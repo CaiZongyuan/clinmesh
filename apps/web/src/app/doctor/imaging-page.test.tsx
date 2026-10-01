@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ImagingPage } from './imaging-page.tsx'
+import { ImagingPage, useImagingViewState, type ImagingPageActions } from './imaging-page.tsx'
 
 const ctService: ImagingServiceSnapshot = {
   applicability: '成人胸部疾病的评估与随访；不含增强扫描',
@@ -83,6 +83,27 @@ function renderPage(element: React.JSX.Element) {
   return render(<QueryClientProvider client={client}>{element}</QueryClientProvider>)
 }
 
+/** 像医生工作台一样由调用方持有阅片状态。 */
+function Page({ canCorrect = false, onChanged, onInsertSummary, state }: {
+  canCorrect?: boolean
+  onChanged: ImagingPageActions['onChanged']
+  onInsertSummary?: ImagingPageActions['onInsertSummary']
+  state: Parameters<typeof ImagingPage>[0]['state']
+}) {
+  const view = useImagingViewState('case-1')
+  return (
+    <ImagingPage
+      actions={{ canCorrect, onChanged, onInsertSummary, view }}
+      caseId="case-1"
+      elementId="imaging"
+      encounter={{ id: 'encounter-1', versionId: '3' }}
+      locale="zh-CN"
+      readOnly={false}
+      state={state}
+    />
+  )
+}
+
 const services = { items: [{ available: true, service: ctService }, { available: false, service: radiographService }] }
 
 describe('doctor imaging page', () => {
@@ -102,13 +123,8 @@ describe('doctor imaging page', () => {
     const onChanged = vi.fn()
     const user = userEvent.setup()
     renderPage(
-      <ImagingPage
-        caseId="case-1"
-        elementId="imaging"
-        encounter={{ id: 'encounter-1', versionId: '3' }}
-        locale="zh-CN"
+      <Page
         onChanged={onChanged}
-        readOnly={false}
         state={{ draft: { indication: '咳嗽', service: ctService }, draftVersion: 2, requests: [] }}
       />,
     )
@@ -173,13 +189,8 @@ describe('doctor imaging page', () => {
     const onChanged = vi.fn()
     const user = userEvent.setup()
     renderPage(
-      <ImagingPage
-        caseId="case-1"
-        elementId="imaging"
-        encounter={{ id: 'encounter-1', versionId: '3' }}
-        locale="zh-CN"
+      <Page
         onChanged={onChanged}
-        readOnly={false}
         state={{ draftVersion: 2, requests: [request({ report })] }}
       />,
     )
@@ -203,6 +214,60 @@ describe('doctor imaging page', () => {
     })
   })
 
+  it('inserts the report summary on request and lets an administrator reissue the report from a reviewed revision', async () => {
+    const calls = stubFetch(({ method, path }) => {
+      if (path.endsWith('/imaging-services')) return Response.json(services)
+      if (method === 'POST') {
+        return Response.json(commandResponse({
+          diagnosticReportId: 'report-2',
+          previousDiagnosticReportId: 'report-1',
+          provenanceId: 'provenance-2',
+          requestId: 'request-1',
+          requestVersion: 5,
+          status: 'reported',
+        }))
+      }
+      return new Response('{}', { status: 404 })
+    })
+    const onChanged = vi.fn()
+    const onInsertSummary = vi.fn<NonNullable<ImagingPageActions['onInsertSummary']>>()
+      .mockReturnValueOnce('inserted')
+      .mockReturnValueOnce('duplicate')
+    const user = userEvent.setup()
+    renderPage(
+      <Page
+        canCorrect
+        onChanged={onChanged}
+        onInsertSummary={onInsertSummary}
+        state={{ draftVersion: 2, requests: [request({ report })] }}
+      />,
+    )
+
+    const item = (await screen.findByText('胸部 CT 平扫')).closest('li')!
+    await user.click(within(item).getByRole('button', { name: '摘要插入病历' }))
+    expect(within(item).getByRole('status').textContent).toContain('已插入病历“辅助检查”')
+    await user.click(within(item).getByRole('button', { name: '摘要插入病历' }))
+    expect(within(item).getByRole('status').textContent).toContain('未重复插入')
+    expect(onInsertSummary).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'request-1' }), report)
+
+    await user.click(within(item).getByText('更正报告（管理员）'))
+    const submit = within(item).getByRole('button', { name: '提交更正' }) as HTMLButtonElement
+    expect(submit.disabled).toBe(true)
+    await user.type(within(item).getByLabelText('报告内容修订号'), '2')
+    await user.type(within(item).getByLabelText('更正原因'), '报告内容已重新核对')
+    await user.click(submit)
+    await waitFor(() => expect(onChanged).toHaveBeenCalled())
+    expect(within(item).queryByText('报告未更正')).toBeNull()
+    expect(calls.find(call => call.method === 'POST')).toEqual({
+      body: {
+        expectedVersions: { 'DiagnosticReport/report-1': '1' },
+        input: { expectedRequestVersion: 4, reason: '报告内容已重新核对', reportRevision: 2 },
+      },
+      method: 'POST',
+      path: '/api/his/v1/imaging-requests/request-1/reports/report-1/actions/correct',
+    })
+  })
+
   it('keeps acknowledgement closed while the pixels are unavailable and offers recovery for a failed examination', async () => {
     const calls = stubFetch(({ method, path }) => {
       if (path.endsWith('/imaging-services')) return Response.json(services)
@@ -214,13 +279,8 @@ describe('doctor imaging page', () => {
     })
     const user = userEvent.setup()
     renderPage(
-      <ImagingPage
-        caseId="case-1"
-        elementId="imaging"
-        encounter={{ id: 'encounter-1', versionId: '3' }}
-        locale="zh-CN"
+      <Page
         onChanged={() => undefined}
-        readOnly={false}
         state={{
           draftVersion: 4,
           requests: [

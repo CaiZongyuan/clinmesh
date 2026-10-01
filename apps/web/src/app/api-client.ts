@@ -1,6 +1,7 @@
 import {
   acknowledgeImagingReportResponseSchema,
   caseImagingServiceCatalogSchema,
+  correctImagingReportResponseSchema,
   imagingRequestActionResponseSchema,
   imagingRequestDraftResponseSchema,
   issueImagingRequestResponseSchema,
@@ -641,6 +642,24 @@ export function acknowledgeImagingReport(request: ImagingRequest, report: Imagin
     {
       expectedVersions: { [`DiagnosticReport/${report.diagnosticReportId}`]: report.diagnosticReportVersion },
       input: { expectedRequestVersion: request.version },
+    },
+    { idempotencyKey },
+  )
+}
+
+/** 管理员更正：从同一素材已核对发布的报告内容修订中选一份重新签发。 */
+export function correctImagingReport(
+  request: ImagingRequest,
+  report: ImagingReport,
+  input: { reason: string; reportRevision: number },
+  idempotencyKey: string,
+) {
+  return apiMutation(
+    `/api/his/v1/imaging-requests/${encodeURIComponent(request.id)}/reports/${encodeURIComponent(report.diagnosticReportId)}/actions/correct`,
+    correctImagingReportResponseSchema,
+    {
+      expectedVersions: { [`DiagnosticReport/${report.diagnosticReportId}`]: report.diagnosticReportVersion },
+      input: { ...input, expectedRequestVersion: request.version },
     },
     { idempotencyKey },
   )
