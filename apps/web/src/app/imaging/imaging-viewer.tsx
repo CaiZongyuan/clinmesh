@@ -2,31 +2,13 @@ import type { ImagingSeriesView, ImagingStudyView } from '@clinmesh/contracts/im
 import { Button } from '@clinmesh/ui/components/button'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
-import { GrayscaleStackEngine } from './grayscale-stack-engine.tsx'
+import { imagingEngines, type ImagingEngine } from './imaging-engines.ts'
 
-/** 阅片器的像素来源：一次检查的读取描述，加上按位置读取像素块的函数。 */
+/** 阅片器的像素来源：一次检查的读取描述，加上读取一个像素块的函数。 */
 export interface ImagingViewerSource {
-  loadBlock(
-    position: { blockIndex: number; frameIndex: number; seriesIndex: number },
-    signal: AbortSignal,
-  ): Promise<Uint8Array>
+  /** `path` 是相对检查的像素块路径（如 `series/0/frames/3/blocks/0`），由序列 `kind` 对应的引擎生成。 */
+  loadBlock(path: string, signal: AbortSignal): Promise<Uint8Array>
   study: ImagingStudyView
-}
-
-/** 渲染引擎的统一接口：外壳按序列的 `kind` 选择引擎，引擎只面对一个序列。 */
-export interface ImagingEngineProps<Series extends ImagingSeriesView = ImagingSeriesView> {
-  loadBlock(position: { blockIndex: number; frameIndex: number }, signal: AbortSignal): Promise<Uint8Array>
-  locale: WorkspaceLocale
-  onFrameShown(): void
-  series: Series
-}
-
-const engines: {
-  [Kind in ImagingSeriesView['kind']]: (
-    props: ImagingEngineProps<Extract<ImagingSeriesView, { kind: Kind }>>,
-  ) => React.JSX.Element
-} = {
-  'frame-stack': GrayscaleStackEngine,
 }
 
 /**
@@ -48,6 +30,9 @@ export function ImagingViewer({ locale, onFrameShown, source }: {
   frameShownRef.current = onFrameShown
   const { loadBlock, study } = source
   const series = study.series[seriesIndex]
+  // 外壳不构造像素块位置，只把引擎给出的位置交给同一条目的路径函数，因此位置类型在这里是 never。
+  const engine: ImagingEngine<ImagingSeriesView, never> | undefined = series === undefined ? undefined : imagingEngines[series.kind]
+  const blockPath = engine?.blockPath
 
   useEffect(() => {
     // DSH Surface 位于 ShadowRoot 内：document.fullscreenElement 会被重定向为 shadow host，
@@ -59,24 +44,24 @@ export function ImagingViewer({ locale, onFrameShown, source }: {
     document.addEventListener('fullscreenchange', onChange)
     return () => document.removeEventListener('fullscreenchange', onChange)
   }, [])
-  const loadSeriesBlock = useCallback((
-    position: { blockIndex: number; frameIndex: number },
-    signal: AbortSignal,
-  ) => loadBlock({ ...position, seriesIndex }, signal), [loadBlock, seriesIndex])
+  const loadSeriesBlock = useCallback(
+    (position: never, signal: AbortSignal) => loadBlock(`series/${seriesIndex}/${blockPath!(position)}`, signal),
+    [blockPath, loadBlock, seriesIndex],
+  )
   const handleFrameShown = useCallback(() => {
     if (reportedRef.current) return
     reportedRef.current = true
     frameShownRef.current?.()
   }, [])
 
-  if (!study.available || series === undefined) {
+  if (!study.available || series === undefined || engine === undefined) {
     return (
       <p className="border p-4 text-sm text-muted-foreground" role="status">
         {zh ? '影像暂不可用。报告仍可阅读；影像恢复后才能确认已阅。' : 'The images are currently unavailable. The report can still be read.'}
       </p>
     )
   }
-  const Engine = engines[series.kind]
+  const { Engine } = engine
   return (
     <section
       aria-label={zh ? '影像阅片' : 'Image viewer'}
@@ -95,13 +80,14 @@ export function ImagingViewer({ locale, onFrameShown, source }: {
           </Button>
         ))}
         <span className="text-muted-foreground">
-          {series.modality} · {zh ? `${series.frames.length} 幅图像` : `${series.frames.length} images`}
+          {engine.summary(series, locale)}
         </span>
         <Button
           className="ml-auto"
           onClick={() => {
-            if (fullscreen) void document.exitFullscreen?.()
-            else void rootRef.current?.requestFullscreen?.()
+            // 宿主或浏览器策略可能拒绝全屏，此时保持当前布局。
+            if (fullscreen) void document.exitFullscreen?.().catch(() => undefined)
+            else void rootRef.current?.requestFullscreen?.().catch(() => undefined)
           }}
           size="xs"
           variant="outline"

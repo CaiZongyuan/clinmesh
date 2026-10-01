@@ -4,6 +4,12 @@ import { flushSync } from 'react-dom'
 import type { ImagingStudyView } from '@clinmesh/contracts/imaging'
 import { ImagingViewer, type ImagingViewerSource } from '../../../web/src/app/imaging/imaging-viewer.tsx'
 
+/** 灰度堆叠序列的像素块路径：`series/{序列}/frames/{帧}/blocks/{块}`。 */
+function position(path: string): { blockIndex: number; frameIndex: number } {
+  const [, frameIndex, blockIndex] = /^series\/0\/frames\/(\d+)\/blocks\/(\d+)$/.exec(path)!.map(Number)
+  return { blockIndex: blockIndex!, frameIndex: frameIndex! }
+}
+
 function bytes(values: number[], signed: boolean): Uint8Array {
   const array = signed ? Int16Array.from(values) : Uint16Array.from(values)
   return new Uint8Array(array.buffer)
@@ -72,7 +78,10 @@ async function run() {
 
   let frameShown = 0
   const ctSource: ImagingViewerSource = {
-    loadBlock: async ({ blockIndex, frameIndex }) => bytes(ctFrames[frameIndex]!.slice(blockIndex * 4, blockIndex * 4 + 4), true),
+    loadBlock: async (path) => {
+      const { blockIndex, frameIndex } = position(path)
+      return bytes(ctFrames[frameIndex]!.slice(blockIndex * 4, blockIndex * 4 + 4), true)
+    },
     study: ctStudy,
   }
   flushSync(() => root.render(
@@ -91,13 +100,20 @@ async function run() {
   slider.dispatchEvent(new Event('input', { bubbles: true }))
   await settle()
   const lastFrameMediastinum = grays()
-  const frameLabel = [...container.querySelectorAll('span')].find(item => item.textContent?.startsWith('Im '))?.textContent
+  const label = () => [...container.querySelectorAll('span')].find(item => item.textContent?.startsWith('Im '))?.textContent
+  const frameLabel = label()
+  // 滚轮翻片由非被动监听阻止默认滚动，页面与 DSH 宿主不随之滚动。
+  const wheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -100 })
+  container.querySelector('[data-imaging-viewport]')!.dispatchEvent(wheel)
+  await settle()
+  const wheelFrameLabel = label()
 
   // 切换到另一次检查：前一次检查尚未返回的像素块被取消，迟到的结果不会显示。
   let staleAborted = false
   const releaseStale: Array<() => void> = []
   const slowSource: ImagingViewerSource = {
-    loadBlock: ({ blockIndex, frameIndex }, signal) => new Promise((resolve) => {
+    loadBlock: (path, signal) => new Promise((resolve) => {
+      const { blockIndex, frameIndex } = position(path)
       signal.addEventListener('abort', () => { staleAborted = true })
       releaseStale.push(() => resolve(bytes(ctFrames[frameIndex]!.slice(blockIndex * 4, blockIndex * 4 + 4), true)))
     }),
@@ -141,6 +157,8 @@ async function run() {
     size,
     staleAborted,
     unavailable: container.querySelector('canvas') === null && container.textContent?.includes('影像暂不可用') === true,
+    wheelFrameLabel,
+    wheelPrevented: wheel.defaultPrevented,
   }))
 }
 

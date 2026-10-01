@@ -214,6 +214,45 @@ describe('doctor imaging page', () => {
     })
   })
 
+  it('closes acknowledgement again when the study later reports its pixels unavailable', async () => {
+    let available = true
+    stubFetch(({ path }) => {
+      if (path.endsWith('/imaging-services')) return Response.json(services)
+      if (path === '/api/his/v1/imaging-studies/study-1') {
+        return Response.json(available
+          ? {
+              available: true,
+              examCode: 'chest-ct-plain',
+              series: [{
+                frames: [{ blocks: [{ length: 4, rowCount: 1, rowStart: 0 }], columns: 2, pixelSpacingMm: [1, 1], positionMm: 0, rows: 1 }],
+                kind: 'frame-stack',
+                modality: 'CT',
+                pixelFormat: 'int16',
+                valueUnit: 'hu',
+              }],
+              studyId: 'study-1',
+            }
+          : { available: false, examCode: 'chest-ct-plain', series: [], studyId: 'study-1' })
+      }
+      if (path.includes('/blocks/')) return new Response(new Uint8Array(new Int16Array([-600, 40]).buffer))
+      return new Response('{}', { status: 404 })
+    })
+    const user = userEvent.setup()
+    renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 2, requests: [request({ report })] }} />)
+
+    const item = (await screen.findByText('胸部 CT 平扫')).closest('li')!
+    const acknowledge = within(item).getByRole('button', { name: '确认已阅' }) as HTMLButtonElement
+    await user.click(within(item).getByRole('button', { name: '打开影像' }))
+    await waitFor(() => expect(acknowledge.disabled).toBe(false))
+
+    // 重新打开时检查报告像素已不可读：此前显示过也不能再确认已阅。
+    available = false
+    await user.click(within(item).getByRole('button', { name: '收起影像' }))
+    await user.click(within(item).getByRole('button', { name: '打开影像' }))
+    expect(await within(item).findByText(/影像暂不可用/)).toBeTruthy()
+    expect(acknowledge.disabled).toBe(true)
+  })
+
   it('inserts the report summary on request and lets an administrator reissue the report from a reviewed revision', async () => {
     const calls = stubFetch(({ method, path }) => {
       if (path.endsWith('/imaging-services')) return Response.json(services)

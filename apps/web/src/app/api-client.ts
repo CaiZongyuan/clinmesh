@@ -523,26 +523,17 @@ export function getAdministratorImagingAsset(assetId: string, signal?: AbortSign
   )
 }
 
-export interface ImagingBlockPosition {
-  blockIndex: number
-  frameIndex: number
-  seriesIndex: number
-}
-
-function blockPath(position: ImagingBlockPosition): string {
-  return `series/${position.seriesIndex}/frames/${position.frameIndex}/blocks/${position.blockIndex}`
-}
-
-export function getAdministratorImagingAssetBlock(assetId: string, position: ImagingBlockPosition, signal?: AbortSignal) {
-  return apiGetBinary(`/api/sim/v1/admin/imaging-assets/${encodeURIComponent(assetId)}/${blockPath(position)}`, signal)
+/** `blockPath` 是相对检查的像素块路径，由阅片器按序列 `kind` 生成，例如 `series/0/frames/3/blocks/0`。 */
+export function getAdministratorImagingAssetBlock(assetId: string, blockPath: string, signal?: AbortSignal) {
+  return apiGetBinary(`/api/sim/v1/admin/imaging-assets/${encodeURIComponent(assetId)}/${blockPath}`, signal)
 }
 
 export function getImagingStudy(studyId: string, signal?: AbortSignal) {
   return apiGet(`/api/his/v1/imaging-studies/${encodeURIComponent(studyId)}`, imagingStudyViewSchema, signal)
 }
 
-export function getImagingStudyBlock(studyId: string, position: ImagingBlockPosition, signal?: AbortSignal) {
-  return apiGetBinary(`/api/his/v1/imaging-studies/${encodeURIComponent(studyId)}/${blockPath(position)}`, signal)
+export function getImagingStudyBlock(studyId: string, blockPath: string, signal?: AbortSignal) {
+  return apiGetBinary(`/api/his/v1/imaging-studies/${encodeURIComponent(studyId)}/${blockPath}`, signal)
 }
 
 export function getCaseImagingServices(caseId: string, signal?: AbortSignal) {

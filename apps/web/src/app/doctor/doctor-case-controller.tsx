@@ -119,7 +119,7 @@ import { DiagnosisPage, type DiagnosisPageActions } from './diagnosis-page.tsx'
 import { doctorCaseStatusLabel } from './doctor-case-status.ts'
 import { DoctorQueueModule } from './doctor-queue-module.tsx'
 import { ImagingPage, useImagingViewState, type ImagingPageActions } from './imaging-page.tsx'
-import { insertImagingReportSummary } from './imaging-report-summary.ts'
+import { emptyAuxiliaryExamination, insertImagingReportSummary } from './imaging-report-summary.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import {
   LaboratoryPage,
@@ -284,7 +284,7 @@ function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocume
   return {
     assessment: '',
     auxiliaryExamination: detail.report === undefined
-      ? '暂无辅助检查结果。'
+      ? emptyAuxiliaryExamination
       : detail.report.results.map(result => `${result.code} ${String(result.value)}`).join('；'),
     chiefComplaint: detail.presentation?.chiefComplaint ?? '',
     disposition: '',

@@ -1,7 +1,7 @@
 /** 病历“辅助检查”字段的长度上限，与临床文书合同一致。 */
 const auxiliaryExaminationMaxLength = 4_000
 /** 尚无检验结果时工作病历的默认占位文字；它不是医生写下的内容，插入摘要时替换。 */
-const emptyAuxiliaryExamination = '暂无辅助检查结果。'
+export const emptyAuxiliaryExamination = '暂无辅助检查结果。'
 
 /**
  * 把一份放射报告的印象作为摘要追加到病历“辅助检查”文字末尾。摘要写明报告版本与签发时间，

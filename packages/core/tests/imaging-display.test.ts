@@ -63,6 +63,19 @@ describe('imaging display rules', () => {
     ])
   })
 
+  it('renders every 16-bit value exactly as the window function and reuses a given buffer', () => {
+    const window = { center: 1889, width: 1917 }
+    const unsigned = Uint16Array.from({ length: 65536 }, (_, index) => index)
+    const signed = Int16Array.from({ length: 65536 }, (_, index) => index - 32768)
+    for (const pixels of [unsigned, signed]) {
+      const rendered = renderGrayscale({ pixels, window })
+      expect(Array.from(pixels).every((value, index) => rendered[index * 4] === windowedGray(value, window))).toBe(true)
+    }
+    const output = new Uint8ClampedArray(8)
+    expect(renderGrayscale({ invert: true, output, pixels: new Uint16Array([0, 65535]), window })).toBe(output)
+    expect(Array.from(output)).toEqual([255, 255, 255, 255, 0, 0, 0, 255])
+  })
+
   it('chooses the default window from the value unit and the frame', () => {
     expect(defaultDisplayWindow({ valueUnit: 'hu' }, {})).toEqual({ center: -600, width: 1500 })
     expect(defaultDisplayWindow({ valueUnit: 'stored' }, { window: { center: 1889, width: 1917 } }))

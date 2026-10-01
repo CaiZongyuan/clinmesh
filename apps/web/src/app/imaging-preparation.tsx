@@ -18,7 +18,8 @@ import {
   prepareImagingCases,
 } from './api-client.ts'
 import { ImagingViewer, type ImagingViewerSource } from './imaging/imaging-viewer.tsx'
-import type { WorkspaceLocale } from './workspace-i18n.ts'
+import { getWorkspaceErrorMessage } from './workspace-error.ts'
+import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 
 const examLabels: Record<ImagingExamCode, [string, string]> = {
   'chest-ct-plain': ['胸部 CT 平扫', 'Chest CT (plain)'],
@@ -130,7 +131,7 @@ export function PatientImagingPreparation({ caseId, locale }: { caseId: string; 
               {prepare.isError ? (
                 <Alert className="mt-3" variant="destructive">
                   <AlertTitle>{zh ? '影像准备失败' : 'Imaging preparation failed'}</AlertTitle>
-                  <AlertDescription>{prepare.error.message}</AlertDescription>
+                  <AlertDescription>{getWorkspaceErrorMessage(prepare.error, getWorkspaceMessages(locale))}</AlertDescription>
                 </Alert>
               ) : null}
               <Button className="mt-3" disabled={prepare.isPending} onClick={() => prepare.mutate()} size="sm" variant="outline">
@@ -158,7 +159,7 @@ function ImagingAssetReview({ assetId, locale }: { assetId: string; locale: Work
   const source = useMemo<ImagingViewerSource | undefined>(() => asset.data === undefined
     ? undefined
     : {
-        loadBlock: (position, signal) => getAdministratorImagingAssetBlock(assetId, position, signal),
+        loadBlock: (path, signal) => getAdministratorImagingAssetBlock(assetId, path, signal),
         study: asset.data.study,
       }, [asset.data, assetId])
   if (asset.isPending) return <Skeleton className="mt-2 h-40 w-full" />
@@ -228,7 +229,7 @@ export function ImagingCoveragePanel({ locale }: { locale: WorkspaceLocale }) {
           {coverage.isPending ? <Skeleton className="mt-3 h-32 w-full" /> : coverage.isError ? (
             <Alert className="mt-3" variant="destructive">
               <AlertTitle>{zh ? '无法加载影像覆盖清单' : 'Unable to load imaging coverage'}</AlertTitle>
-              <AlertDescription>{coverage.error.message} <Button onClick={() => void coverage.refetch()} size="sm" variant="outline">{zh ? '重试' : 'Retry'}</Button></AlertDescription>
+              <AlertDescription>{getWorkspaceErrorMessage(coverage.error, getWorkspaceMessages(locale))} <Button onClick={() => void coverage.refetch()} size="sm" variant="outline">{zh ? '重试' : 'Retry'}</Button></AlertDescription>
             </Alert>
           ) : coverage.data.catalog === null ? (
             <p className="mt-3 text-sm text-muted-foreground">{zh ? '没有可用的影像素材清单或适配规则。' : 'No imaging asset catalog or matching rules are available.'}</p>
@@ -312,7 +313,7 @@ export function ImagingCoveragePanel({ locale }: { locale: WorkspaceLocale }) {
               {prepare.isError ? (
                 <Alert variant="destructive">
                   <AlertTitle>{zh ? '影像准备失败' : 'Imaging preparation failed'}</AlertTitle>
-                  <AlertDescription>{prepare.error.message}</AlertDescription>
+                  <AlertDescription>{getWorkspaceErrorMessage(prepare.error, getWorkspaceMessages(locale))}</AlertDescription>
                 </Alert>
               ) : null}
             </div>

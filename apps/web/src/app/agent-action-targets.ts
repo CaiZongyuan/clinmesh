@@ -15,7 +15,7 @@ const targets: Record<string, { label: string; selectors: string[] }> = {
   'outpatient.first-visit.draft.set': { label: '保存初诊草稿', selectors: ['#first-visit-history', '#first-visit-assessment'] },
   'outpatient.diagnosis.draft.set': { label: '保存诊断草稿', selectors: ['[data-agent-catalog-trigger="diagnosis"]', '[data-agent-catalog="diagnosis"]', '[data-agent-diagnosis-entry]'] },
   'outpatient.laboratory.draft.set': { label: '保存检验申请草稿', selectors: ['#laboratory-item', '#laboratory-indication'] },
-  'outpatient.imaging.draft.set': { label: '保存放射申请草稿', selectors: ['[id$="-service"]', '[id$="-indication"]'] },
+  'outpatient.imaging.draft.set': { label: '保存放射申请草稿', selectors: ['#encounter-completion-target-imaging-service', '#encounter-completion-target-imaging-indication'] },
   'outpatient.prescription.draft.set': { label: '保存处方草稿', selectors: ['#medication-conclusion-heading', '[data-agent-medication-name]', '[data-agent-catalog-trigger="medication"]', '[data-agent-catalog="medication"]', '[data-agent-medication-package]', '[id^="prescription-dose-"]', '[id^="prescription-frequency-"]', '[id^="prescription-course-"]', '[id^="prescription-quantity-"]'] },
   'outpatient.revisit.draft.set': { label: '保存复诊草稿', selectors: ['input[id^="revisit-"]', 'textarea[id^="revisit-"]', 'button[id^="revisit-"]', '[id^="medication-"]', '[id^="dose-"]', '[id^="frequency-"]', '[id^="quantity-"]'] },
   'outpatient.record.draft.set': { label: '保存病历草稿', selectors: [] },

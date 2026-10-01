@@ -60,6 +60,8 @@ it.each(['18', '19'])('renders CT and radiograph pixels by the shared display ru
     size: z.object({ height: z.number(), width: z.number() }),
     staleAborted: z.boolean(),
     unavailable: z.boolean(),
+    wheelFrameLabel: z.string(),
+    wheelPrevented: z.boolean(),
   }).parse(response)
 
   // 浏览器 canvas 上的灰度与 Node 中同一组纯函数的结果逐像素一致。
@@ -69,6 +71,8 @@ it.each(['18', '19'])('renders CT and radiograph pixels by the shared display ru
   // 第三层全部为 40 HU：层面顺序按读取描述，切层后显示的是该层像素。
   expect(actual.lastFrameMediastinum).toEqual(Array.from({ length: 8 }, () => windowedGray(40, mediastinum)))
   expect(actual.frameLabel).toBe('Im 3 / 3')
+  expect(actual.wheelPrevented).toBe(true)
+  expect(actual.wheelFrameLabel).toBe('Im 2 / 3')
   // 显示比例按物理间距计算，不按像素数。
   expect(actual.aspect).toBeCloseTo(4, 1)
   expect(actual.frameShown).toBe(1)

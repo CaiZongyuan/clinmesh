@@ -183,7 +183,6 @@ function ImagingRequestItem({ actions, locale, readOnly, request }: {
   const [summaryInsertion, setSummaryInsertion] = useState<ImagingSummaryInsertion>()
   const viewerOpen = view.isOpen(request.id)
   const diagnosticReportId = request.report?.diagnosticReportId
-  const frameShown = diagnosticReportId !== undefined && view.isShown(diagnosticReportId)
   const studyId = request.report?.studyId
   const study = useQuery({
     enabled: viewerOpen && studyId !== undefined,
@@ -191,9 +190,11 @@ function ImagingRequestItem({ actions, locale, readOnly, request }: {
     queryFn: ({ signal }) => getImagingStudy(studyId!, signal),
     queryKey: ['imaging-study', studyId ?? 'none'],
   })
+  // 显示过影像之后检查又报告不可读时（例如重新读取发现像素缺失），不再开放确认已阅。
+  const frameShown = diagnosticReportId !== undefined && view.isShown(diagnosticReportId) && study.data?.available === true
   const source = useMemo<ImagingViewerSource | undefined>(() => study.data === undefined || studyId === undefined
     ? undefined
-    : { loadBlock: (position, signal) => getImagingStudyBlock(studyId, position, signal), study: study.data },
+    : { loadBlock: (path, signal) => getImagingStudyBlock(studyId, path, signal), study: study.data },
   [study.data, studyId])
   const handleFrameShown = useCallback(() => {
     if (diagnosticReportId !== undefined) view.markShown(diagnosticReportId)

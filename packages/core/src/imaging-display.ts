@@ -60,16 +60,25 @@ export function windowedGray(value: number, displayWindow: DisplayWindow): numbe
   return Math.round(((value - center) / range + 0.5) * 255)
 }
 
-/** 渲染为不透明的 RGBA 灰度；`invert` 反转黑白。 */
+/**
+ * 渲染为不透明的 RGBA 灰度；`invert` 反转黑白。先按窗算出整个 16 位取值范围的灰度查找表，
+ * 每个像素只查表，大幅胸片连续调窗时不逐像素做窗运算。传入 `output` 时写入并复用该缓冲区。
+ */
 export function renderGrayscale(input: {
   invert?: boolean
+  output?: Uint8ClampedArray
   pixels: PixelArray
   window: DisplayWindow
 }): Uint8ClampedArray {
-  const output = new Uint8ClampedArray(input.pixels.length * 4)
+  const offset = input.pixels instanceof Int16Array ? 32768 : 0
+  const table = new Uint8Array(65536)
+  for (let index = 0; index < table.length; index += 1) {
+    const gray = windowedGray(index - offset, input.window)
+    table[index] = input.invert === true ? 255 - gray : gray
+  }
+  const output = input.output ?? new Uint8ClampedArray(input.pixels.length * 4)
   for (let index = 0; index < input.pixels.length; index += 1) {
-    const gray = windowedGray(input.pixels[index]!, input.window)
-    const shown = input.invert === true ? 255 - gray : gray
+    const shown = table[input.pixels[index]! + offset]!
     output[index * 4] = shown
     output[index * 4 + 1] = shown
     output[index * 4 + 2] = shown
