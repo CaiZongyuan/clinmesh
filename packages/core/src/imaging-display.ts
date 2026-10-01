@@ -52,9 +52,9 @@ export function assembleFrame(frame: FrameShape, blocks: readonly Uint8Array[], 
 }
 
 /** DICOM 线性窗：把一个像素值映射为 0–255 的灰度。 */
-export function windowedGray(value: number, window: DisplayWindow): number {
-  const center = window.center - 0.5
-  const range = Math.max(1, window.width) - 1
+export function windowedGray(value: number, displayWindow: DisplayWindow): number {
+  const center = displayWindow.center - 0.5
+  const range = Math.max(1, displayWindow.width) - 1
   if (value <= center - range / 2) return 0
   if (value > center + range / 2) return 255
   return Math.round(((value - center) / range + 0.5) * 255)
@@ -88,10 +88,13 @@ export function defaultDisplayWindow(
 }
 
 export function adjustDisplayWindow(
-  window: DisplayWindow,
+  displayWindow: DisplayWindow,
   delta: { center: number; width: number },
 ): DisplayWindow {
-  return { center: window.center + delta.center, width: Math.max(1, window.width + delta.width) }
+  return {
+    center: displayWindow.center + delta.center,
+    width: Math.max(1, displayWindow.width + delta.width),
+  }
 }
 
 /** 显示宽高比按物理尺寸计算；`pixelSpacingMm` 为 [行间距, 列间距]，缺少时按像素数。 */
