@@ -11,14 +11,32 @@ import {
   checkImagingAssets,
   recordImagingAssets,
   repairImagingAssets,
+  reviewImagingAssets,
   syncImagingAssets,
   verifyImagingAssets,
   type ImagingSourceClient,
 } from './infrastructure/imaging-assets/imaging-asset-store.ts'
 import { createTciaNbiaSourceClient } from './infrastructure/imaging-assets/tcia-nbia-client.ts'
 
-const commandSchema = z.enum(['annotate', 'check', 'record', 'repair', 'sync', 'verify'])
-const optionNames = new Set(['--annotation-directory', '--asset', '--asset-directory', '--catalog'])
+const commandSchema = z.enum(['annotate', 'check', 'record', 'repair', 'review', 'sync', 'verify'])
+const optionNames = new Set([
+  '--annotation-directory',
+  '--asset',
+  '--asset-directory',
+  '--catalog',
+  '--conclusion',
+  '--note',
+  '--radiologist',
+  '--reviewer',
+  '--revision',
+])
+const reviewOptionsSchema = z.object({
+  conclusion: z.enum(['approved', 'rejected']),
+  note: z.string().trim().min(1).optional(),
+  radiologist: z.enum(['no', 'yes']),
+  reviewer: z.string().trim().min(1).max(128),
+  revision: z.coerce.number().int().positive().optional(),
+}).strict()
 const succeededStatuses = new Set([
   'already-installed',
   'annotated',
@@ -27,6 +45,7 @@ const succeededStatuses = new Set([
   'ready',
   'recorded',
   'repaired',
+  'reviewed',
 ])
 
 type ImagingAssetsCliResult = Awaited<ReturnType<
@@ -34,13 +53,15 @@ type ImagingAssetsCliResult = Awaited<ReturnType<
   | typeof checkImagingAssets
   | typeof recordImagingAssets
   | typeof repairImagingAssets
+  | typeof reviewImagingAssets
   | typeof syncImagingAssets
   | typeof verifyImagingAssets
 >>
 
 /**
  * 影像素材的显式维护入口：`sync` 按清单下载安装，`verify` 只读核对，`repair` 用本地保留的来源实例离线重建；
- * 维护者用 `record` 登记哈希、`annotate` 从本地 LIDC 读片 XML 导出标注、`check` 查看自动检查与发布状态。
+ * 维护者用 `record` 登记哈希、`annotate` 从本地 LIDC 读片 XML 导出标注、`check` 查看自动检查与发布状态、
+ * `review` 签署复核（需要 `--asset`、`--reviewer`、`--conclusion` 与 `--radiologist yes|no`）。
  * `--asset` 可重复。
  */
 export async function runImagingAssetsCli(
@@ -78,6 +99,25 @@ export async function runImagingAssetsCli(
     const annotationDirectory = values.get('--annotation-directory')?.[0]
     if (annotationDirectory === undefined) throw new Error('--annotation-directory is required')
     return await annotateImagingAssets({ ...input, annotationDirectory: resolve(annotationDirectory) })
+  }
+  if (command === 'review') {
+    // 复核逐套签署，不提供对整个清单的批量签署。
+    if (input.assetIds === undefined) throw new Error('--asset is required for review')
+    const review = reviewOptionsSchema.parse({
+      conclusion: values.get('--conclusion')?.[0],
+      note: values.get('--note')?.[0],
+      radiologist: values.get('--radiologist')?.[0],
+      reviewer: values.get('--reviewer')?.[0],
+      revision: values.get('--revision')?.[0],
+    })
+    return await reviewImagingAssets({
+      ...input,
+      conclusion: review.conclusion,
+      note: review.note,
+      reviewer: review.reviewer,
+      reviewerIsRadiologist: review.radiologist === 'yes',
+      revision: review.revision,
+    })
   }
   if (command === 'verify') return await verifyImagingAssets(input)
   if (command === 'repair') return await repairImagingAssets(input)

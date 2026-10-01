@@ -2287,6 +2287,16 @@ export const excludedHisRoutes = [
     path: '/api/his/v1/encounters/:encounterId/actions/issue-laboratory-order',
     reason: 'Superseded by the independent laboratory request draft and issue lifecycle',
   },
+  {
+    method: 'GET',
+    path: '/api/his/v1/imaging-studies/:studyId',
+    reason: 'Viewer transport for the human workspace; Agent tools and the CLI do not read images in this phase',
+  },
+  {
+    method: 'GET',
+    path: '/api/his/v1/imaging-studies/:studyId/series/:seriesIndex/frames/:frameIndex/blocks/:blockIndex',
+    reason: 'Binary pixel transport for the human viewer; Agent tools and the CLI do not read pixels in this phase',
+  },
 ] as const satisfies readonly ExcludedHisRoute[]
 
 const operationsById = new Map(hisOperationCatalog.map(operation => [operation.id, operation]))

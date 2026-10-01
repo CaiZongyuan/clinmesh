@@ -51,6 +51,7 @@ import {
   type ImagingResultResolver,
 } from './application/imaging-result-resolver.ts'
 import type { ImagingAssetLibrary } from './infrastructure/imaging-assets/imaging-asset-library.ts'
+import { ImagingStudyReadError, type ImagingStudyReader } from './application/imaging-study-reader.ts'
 import {
   selectPatientPersonaRevisionRequestSchema,
   startSyntheticCaseRequestSchema,
@@ -115,7 +116,7 @@ export interface CreateAppOptions {
   caseVisits?: SyntheticCaseVisitService
   fhir?: FhirRuntime
   identity?: IdentityService
-  imaging?: { library: ImagingAssetLibrary; results: ImagingResultResolver }
+  imaging?: { library: ImagingAssetLibrary; reader: ImagingStudyReader; results: ImagingResultResolver }
   imagingPreparation?: ImagingPreparationService
   investigation?: InvestigationService
   laboratoryServicePublisher?: LaboratoryServicePublisher
@@ -137,6 +138,13 @@ function requestCorrelationId(context: Context): string {
   requestCorrelationIds.set(context.req.raw, correlationId)
   return correlationId
 }
+
+const pixelBlockIndexSchema = z.string().regex(/^(0|[1-9]\d{0,5})$/).transform(Number)
+const pixelBlockPositionSchema = z.object({
+  blockIndex: pixelBlockIndexSchema,
+  frameIndex: pixelBlockIndexSchema,
+  seriesIndex: pixelBlockIndexSchema,
+})
 
 function operationOutcome(code: string, diagnostics: string) {
   return {
@@ -180,6 +188,7 @@ function apiErrorResponse(
       || error instanceof LaboratoryServicePublisherError
     || error instanceof PatientPersonaError
     || error instanceof ImagingPreparationError
+    || error instanceof ImagingStudyReadError
     || error instanceof SyntheticCaseVisitError
     || error instanceof ReferenceDataError
     || error instanceof ScenarioDataError
@@ -840,6 +849,33 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    if (options.imaging !== undefined) {
+      const { reader } = options.imaging
+      // 管理员复核素材的预览入口；与影像准备一样不进入 Operation Catalog、CLI 或 Agent Tools。
+      app.get('/api/sim/v1/admin/imaging-assets/:assetId', async (context) => {
+        context.header('Cache-Control', 'no-store')
+        try {
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          return context.json(await reader.describeAsset(session.actor, context.req.param('assetId')))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+      app.get(
+        '/api/sim/v1/admin/imaging-assets/:assetId/series/:seriesIndex/frames/:frameIndex/blocks/:blockIndex',
+        async (context) => {
+          context.header('Cache-Control', 'no-store')
+          try {
+            const session = await identity.resolveSessionContext(context.req.raw.headers)
+            const position = pixelBlockPositionSchema.parse(context.req.param())
+            const bytes = await reader.readAssetBlock(session.actor, context.req.param('assetId'), position)
+            return context.body(bytes as Uint8Array<ArrayBuffer>, 200, { 'Content-Type': 'application/octet-stream' })
+          } catch (error) {
+            return apiErrorResponse(context, error)
+          }
+        },
+      )
+    }
     app.get('/api/sim/v1/admin/synthetic-cases/:caseId/imaging-preparation', async (context) => {
       context.header('Cache-Control', 'no-store')
       try {
@@ -1775,7 +1811,29 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       },
     )
     if (options.imaging !== undefined) {
-      const { library, results } = options.imaging
+      const { library, reader, results } = options.imaging
+      // 阅片器的读取通道：描述与像素块都只面向责任医生，响应不进入任何共享缓存。
+      app.get('/api/his/v1/imaging-studies/:studyId', async (context) => {
+        context.header('Cache-Control', 'private, no-store')
+        try {
+          return context.json(await reader.describeStudy(await actor(context), context.req.param('studyId')))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+      app.get(
+        '/api/his/v1/imaging-studies/:studyId/series/:seriesIndex/frames/:frameIndex/blocks/:blockIndex',
+        async (context) => {
+          context.header('Cache-Control', 'private, no-store')
+          try {
+            const position = pixelBlockPositionSchema.parse(context.req.param())
+            const bytes = await reader.readStudyBlock(await actor(context), context.req.param('studyId'), position)
+            return context.body(bytes as Uint8Array<ArrayBuffer>, 200, { 'Content-Type': 'application/octet-stream' })
+          } catch (error) {
+            return apiErrorResponse(context, error)
+          }
+        },
+      )
       app.get('/api/his/v1/doctor/cases/:caseId/imaging-services', async (context) => {
         try {
           const context_ = await actor(context)

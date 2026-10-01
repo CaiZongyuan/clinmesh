@@ -1,4 +1,9 @@
-import { imagingAssetInstalled, imagingAssetVerified } from './imaging-asset-store.ts'
+import {
+  imagingAssetInstalled,
+  imagingAssetVerified,
+  openInstalledImagingAsset,
+  type InstalledImagingSeries,
+} from './imaging-asset-store.ts'
 import { loadImagingCatalog, type ImagingCatalog, type ImagingCatalogAsset } from './imaging-catalog.ts'
 import { imagingAssetPublication } from './imaging-report-check.ts'
 
@@ -42,6 +47,12 @@ export class ImagingAssetLibrary {
   async verified(asset: ImagingCatalogAsset): Promise<boolean> {
     return this.#assetDirectory !== undefined
       && await imagingAssetVerified({ asset, assetDirectory: this.#assetDirectory })
+  }
+
+  /** 打开一个已安装素材的各序列；未安装或安装与清单不一致时返回 undefined。 */
+  async open(asset: ImagingCatalogAsset): Promise<InstalledImagingSeries[] | undefined> {
+    if (this.#assetDirectory === undefined || !await this.installed(asset)) return undefined
+    return (await openInstalledImagingAsset({ assetDirectory: this.#assetDirectory, assetId: asset.assetId })).series
   }
 
   /** 每类检查是否至少有一套已发布且已安装的素材。 */

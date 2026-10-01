@@ -515,6 +515,61 @@ describe('imaging asset pipeline', () => {
     expect(upgraded.output).toEqual(rerecorded.output)
     expect(upgraded.annotation).toBeUndefined()
 
+    // 维护者写入报告草稿后签署复核；自动检查未通过的草稿不能签署为通过。
+    const assetPath = join(catalogDirectory, 'assets', 'synthetic-ct.json')
+    const report = {
+      draft: { model: 'synthetic-model', promptVersion: 'chest-report-v1' },
+      findings: '右肺见一微小结节（Im 2），直径小于 3 mm。',
+      impression: '右肺微小结节，建议随访。',
+      lesions: [{ imageNumber: 2, noduleId: 'n1', side: 'right' }],
+      revision: 1,
+      technique: '胸部 CT 平扫，轴位。',
+    }
+    await runImagingAssetsCli(['annotate', ...directories, '--annotation-directory', annotationDirectory, '--asset', 'synthetic-ct'], options)
+    const reannotated = JSON.parse(await readFile(assetPath, 'utf8'))
+    await writeFile(assetPath, JSON.stringify({ ...reannotated, reports: [report] }))
+    const review = ['review', ...directories, '--asset', 'synthetic-ct', '--reviewer', 'synthetic-maintainer', '--radiologist', 'no']
+    expect(await runImagingAssetsCli([...review, '--conclusion', 'approved'], options)).toEqual({
+      assets: [{
+        assetId: 'synthetic-ct',
+        error: { code: 'IMAGING_REVIEW_REJECTED', message: expect.stringContaining('REPORT_SIDE_MISMATCH') },
+        status: 'failed',
+      }],
+    })
+    await writeFile(assetPath, JSON.stringify({
+      ...reannotated,
+      reports: [{
+        ...report,
+        findings: '左肺见一微小结节（Im 2），直径小于 3 mm。',
+        impression: '左肺微小结节，建议随访。',
+        lesions: [{ imageNumber: 2, noduleId: 'n1', side: 'left' }],
+      }],
+    }))
+    expect(await runImagingAssetsCli([...review, '--conclusion', 'approved', '--note', '已对照像素核对'], options)).toEqual({
+      assets: [{ assetId: 'synthetic-ct', status: 'reviewed' }],
+    })
+    const reviewed = JSON.parse(await readFile(assetPath, 'utf8'))
+    expect(reviewed.reports[0].review).toMatchObject({
+      automatedCheck: { checkVersion: 1, passed: true },
+      conclusion: 'approved',
+      note: '已对照像素核对',
+      reviewedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      reviewer: 'synthetic-maintainer',
+      reviewerIsRadiologist: false,
+    })
+    expect((await runImagingAssetsCli(['check', ...directories, '--asset', 'synthetic-ct'], options)).assets).toEqual([
+      { assetId: 'synthetic-ct', publishedRevisions: [1], reasons: [], reports: [{ issues: [], revision: 1 }], status: 'published' },
+    ])
+    // 复核后改动报告会使签署失效。
+    await writeFile(assetPath, JSON.stringify({
+      ...reviewed,
+      reports: [{ ...reviewed.reports[0], impression: '左肺微小结节，建议年度随访。' }],
+    }))
+    expect((await runImagingAssetsCli(['check', ...directories, '--asset', 'synthetic-ct'], options)).assets).toMatchObject([
+      { publishedRevisions: [], reasons: [{ code: 'REVIEW_STALE', revision: 1 }], status: 'unpublished' },
+    ])
+    await writeFile(assetPath, JSON.stringify(reannotated))
+
     expect(await runImagingAssetsCli(['check', ...directories], options)).toEqual({
       assets: [
         { assetId: 'synthetic-ct', publishedRevisions: [], reasons: [{ code: 'REPORT_MISSING' }], reports: [], status: 'unpublished' },

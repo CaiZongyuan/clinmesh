@@ -52,6 +52,7 @@ import type { SqlitePerformanceObserver } from './infrastructure/sqlite/performa
 import { AgentIntegrationService } from './application/agent-integration-service.ts'
 import { reportRuntimeError } from './runtime-error-reporting.ts'
 import { ImagingPreparationService } from './application/imaging-preparation-service.ts'
+import { ImagingStudyReader } from './application/imaging-study-reader.ts'
 import {
   ImagingResultResolver,
   ImagingResultUnavailableError,
@@ -540,7 +541,14 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         ),
       },
       identity,
-      imaging: { library: imagingLibrary, results: imagingResults },
+      imaging: {
+        library: imagingLibrary,
+        reader: new ImagingStudyReader({
+          library: imagingLibrary,
+          studyAccess: (context, studyId) => workflow.imaging.studyAccess(context, studyId),
+        }),
+        results: imagingResults,
+      },
       imagingPreparation,
       investigation,
       caseVisits,

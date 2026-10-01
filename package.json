@@ -29,6 +29,7 @@
     "imaging:check": "pnpm --filter @clinmesh/server imaging check",
     "imaging:record": "pnpm --filter @clinmesh/server imaging record",
     "imaging:repair": "pnpm --filter @clinmesh/server imaging repair",
+    "imaging:review": "pnpm --filter @clinmesh/server imaging review",
     "imaging:sync": "pnpm --filter @clinmesh/server imaging sync",
     "imaging:verify": "pnpm --filter @clinmesh/server imaging verify",
     "reference:sync": "pnpm --filter @clinmesh/server reference:sync",

@@ -14,6 +14,7 @@ import {
 import {
   dicomUidSchema,
   imagingAssetOutputSchema,
+  imagingReviewItems,
   loadImagingCatalog,
   writeImagingCatalogAsset,
   type ImagingAssetOutput,
@@ -22,6 +23,8 @@ import {
 import {
   checkImagingReport,
   imagingAssetPublication,
+  imagingReportCheckVersion,
+  imagingReportContentSha256,
   type ImagingPublicationBlockCode,
   type ImagingReportIssue,
 } from './imaging-report-check.ts'
@@ -490,6 +493,58 @@ export async function annotateImagingAssets(
       }),
     })
     return 'annotated'
+  })
+}
+
+/**
+ * 维护者签署复核：对一份报告修订记录复核人、结论与逐项核对，并绑定当前素材、像素、标注和报告内容的哈希。
+ * 自动一致性检查未通过的草稿不能签署为通过；之后任何一项内容变化都会使签署失效。
+ */
+export async function reviewImagingAssets(input: AssetStoreInput & {
+  conclusion: 'approved' | 'rejected'
+  note?: string | undefined
+  reviewer: string
+  reviewerIsRadiologist: boolean
+  /** 缺省时复核最新的报告修订。 */
+  revision?: number | undefined
+}): Promise<{ assets: ImagingAssetResult<'reviewed'>[] }> {
+  return await forEachAsset(input, async (asset) => {
+    recordedOutput(asset)
+    const report = input.revision === undefined
+      ? asset.reports?.at(-1)
+      : asset.reports?.find(candidate => candidate.revision === input.revision)
+    if (report === undefined) {
+      throw new ImagingAssetError('IMAGING_REVIEW_REJECTED', `The imaging asset ${asset.assetId} has no such report revision`)
+    }
+    const { issues } = checkImagingReport(asset, report)
+    if (input.conclusion === 'approved' && issues.length > 0) {
+      throw new ImagingAssetError(
+        'IMAGING_REVIEW_REJECTED',
+        `The report draft fails the automated check: ${issues.map(issue => issue.code).join(', ')}`,
+      )
+    }
+    const items = imagingReviewItems
+      .filter(item => item !== 'plain-scan' || asset.examCode === 'chest-ct-plain')
+      .map(item => ({ conclusion: input.conclusion === 'approved' ? 'confirmed' as const : 'rejected' as const, item }))
+    await writeImagingCatalogAsset(input.catalogDirectory, {
+      ...asset,
+      reports: asset.reports!.map(candidate => candidate.revision !== report.revision
+        ? candidate
+        : {
+            ...candidate,
+            review: {
+              automatedCheck: { checkVersion: imagingReportCheckVersion, passed: issues.length === 0 },
+              conclusion: input.conclusion,
+              contentSha256: imagingReportContentSha256(asset, candidate),
+              items,
+              ...(input.note === undefined ? {} : { note: input.note }),
+              reviewedAt: new Date().toISOString().slice(0, 10),
+              reviewer: input.reviewer,
+              reviewerIsRadiologist: input.reviewerIsRadiologist,
+            },
+          }),
+    })
+    return 'reviewed'
   })
 }
 

@@ -239,6 +239,36 @@ export class ImagingRequestService {
     })
   }
 
+  /**
+   * 阅片读取的授权：门诊医生、当前 Workspace/Epoch 内已发布且未取消的检查、并且是该病例的责任医生。
+   * 检查不存在时返回 undefined；岗位或责任不符时抛出权限错误。
+   */
+  studyAccess(context: ActorContext, studyId: string) {
+    assertRole(context, ['outpatient-doctor'])
+    const study = z.object({
+      asset_id: z.string().min(1),
+      asset_output_json: z.string().min(1),
+      case_id: z.string().min(1),
+      exam_code: z.enum(['chest-ct-plain', 'chest-radiograph']),
+    }).strict().optional().parse(this.#database.driver.prepare(`
+      SELECT study.asset_id, study.asset_output_json, study.case_id, study.exam_code
+      FROM imaging_study AS study
+      JOIN laboratory_request AS request
+        ON request.workspace_id = study.workspace_id
+       AND request.epoch = study.epoch
+       AND request.request_id = study.request_id
+      WHERE study.workspace_id = ? AND study.epoch = ? AND study.study_id = ?
+        AND request.status IN ('reported', 'acknowledged')
+    `).get(context.workspaceId, context.epoch, studyId))
+    if (study === undefined) return undefined
+    this.#host.assertCaseResponsibility(context, study.case_id)
+    return {
+      assetId: study.asset_id,
+      assetOutput: JSON.parse(study.asset_output_json) as unknown,
+      examCode: study.exam_code,
+    }
+  }
+
   state(context: ActorContext, caseId: string) {
     const draft = this.#draft(context, caseId)
     return imagingRequestStateSchema.parse({

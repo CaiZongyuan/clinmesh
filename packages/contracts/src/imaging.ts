@@ -128,3 +128,69 @@ export const imagingCoverageSchema = z.object({
   }).strict()),
 }).strict()
 export type ImagingCoverage = z.infer<typeof imagingCoverageSchema>
+
+const imagingPixelBlockViewSchema = z.object({
+  length: z.number().int().positive(),
+  rowCount: z.number().int().positive(),
+  rowStart: z.number().int().nonnegative(),
+}).strict()
+
+const imagingFrameViewSchema = z.object({
+  /** 一帧按行切成的有界像素块，逐块读取后按行拼接。 */
+  blocks: z.array(imagingPixelBlockViewSchema).min(1),
+  columns: z.number().int().positive(),
+  pixelSpacingMm: z.tuple([z.number().positive(), z.number().positive()]).nullable(),
+  positionMm: z.number().optional(),
+  rows: z.number().int().positive(),
+  view: z.enum(['frontal', 'lateral']).optional(),
+  viewPosition: z.string().min(1).optional(),
+  window: z.object({ center: z.number(), width: z.number().positive() }).strict().optional(),
+}).strict()
+
+/**
+ * 一个序列的读取描述。`kind` 区分像素组织方式：当前只有按帧堆叠的灰度图（CT 与胸片），
+ * 分层瓦片等其他组织方式以新的 `kind` 加入。
+ */
+export const imagingSeriesViewSchema = z.discriminatedUnion('kind', [
+  z.object({
+    frames: z.array(imagingFrameViewSchema).min(1),
+    kind: z.literal('frame-stack'),
+    modality: z.enum(['CR', 'CT', 'DX']),
+    pixelFormat: z.enum(['int16', 'uint16']),
+    /** `hu` 表示像素值即 CT 值；`stored` 表示设备存储值，只做窗宽窗位显示。 */
+    valueUnit: z.enum(['hu', 'stored']),
+  }).strict(),
+])
+export type ImagingSeriesView = z.infer<typeof imagingSeriesViewSchema>
+
+/** 阅片器读取一次本院检查所需的描述；像素当前不可读时 `available` 为 false 且没有序列。 */
+export const imagingStudyViewSchema = z.object({
+  available: z.boolean(),
+  examCode: imagingExamCodeSchema,
+  series: z.array(imagingSeriesViewSchema),
+  studyId: z.string().min(1).max(128),
+}).strict()
+export type ImagingStudyView = z.infer<typeof imagingStudyViewSchema>
+
+/** 管理员复核一套素材所需的信息：来源标注、报告修订与自动检查结果、发布状态和读取描述。 */
+export const administratorImagingAssetSchema = z.object({
+  annotation: z.record(z.string(), z.json()).optional(),
+  assetId: z.string().min(1).max(128),
+  publication: z.object({
+    publishedRevisions: z.array(z.number().int().positive()),
+    reasons: z.array(z.object({
+      code: z.string().min(1),
+      revision: z.number().int().positive().optional(),
+    }).strict()),
+  }).strict(),
+  reports: z.array(z.object({
+    checkIssues: z.array(z.object({ code: z.string().min(1), message: z.string().min(1) }).strict()),
+    findings: z.string().min(1),
+    impression: z.string().min(1),
+    review: z.record(z.string(), z.json()).optional(),
+    revision: z.number().int().positive(),
+    technique: z.string().min(1),
+  }).strict()),
+  study: imagingStudyViewSchema,
+}).strict()
+export type AdministratorImagingAsset = z.infer<typeof administratorImagingAssetSchema>

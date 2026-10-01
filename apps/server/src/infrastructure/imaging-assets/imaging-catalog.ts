@@ -100,6 +100,7 @@ const reportReviewSchema = z.object({
     item: z.enum(imagingReviewItems),
     note: z.string().min(1).optional(),
   }).strict()),
+  note: z.string().min(1).optional(),
   reviewedAt: z.iso.date(),
   reviewer: z.string().min(1).max(128),
   reviewerIsRadiologist: z.boolean(),
