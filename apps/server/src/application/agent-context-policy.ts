@@ -92,6 +92,14 @@ const commonOperations = new Set<AgentOperationId>([
   'ui.panel.focus',
 ])
 
+/** 指向一条放射申请的操作，以及该申请此时必须处于的状态。 */
+const imagingRequestStatusesByOperation: Partial<Record<AgentOperationId, readonly string[]>> = {
+  'outpatient.imaging.cancel.propose': ['issued', 'generation-failed'],
+  'outpatient.imaging.correct.propose': ['reported', 'acknowledged'],
+  'outpatient.imaging.retry.propose': ['generation-failed'],
+  'outpatient.section.select': ['reported', 'acknowledged'],
+}
+
 export function resolveAgentPageContext(
   database: ClinMeshDatabase,
   cases: SyntheticCaseRepository,
@@ -599,22 +607,15 @@ function inputMatchesCurrentResources(
     return exists(`SELECT 1 FROM outpatient_case WHERE workspace_id = ? AND epoch = ? AND case_id = ?`,
       ...scope, value.caseId)
   }
-  if (
-    operationId === 'outpatient.section.select'
-    || operationId === 'outpatient.imaging.cancel.propose'
-    || operationId === 'outpatient.imaging.retry.propose'
-    || operationId === 'outpatient.imaging.correct.propose'
-  ) {
+  const imagingStatuses = imagingRequestStatusesByOperation[operationId]
+  if (imagingStatuses !== undefined) {
     // 栏目切换只有在同时要求展开影像时才绑定到一条放射申请。
     const requestId = operationId === 'outpatient.section.select' ? value.imagingRequestId : value.requestId
     if (requestId === undefined) return true
     if (claim.selection?.kind !== 'case') return false
-    const statuses = operationId === 'outpatient.imaging.cancel.propose'
-      ? ['issued', 'generation-failed']
-      : operationId === 'outpatient.imaging.retry.propose' ? ['generation-failed'] : ['reported', 'acknowledged']
     return exists(`SELECT 1 FROM laboratory_request WHERE workspace_id = ? AND epoch = ?
-      AND case_id = ? AND request_id = ? AND request_kind = 'imaging' AND status IN (${statuses.map(() => '?').join(', ')})`,
-    ...scope, claim.selection.id, requestId, ...statuses)
+      AND case_id = ? AND request_id = ? AND request_kind = 'imaging' AND status IN (${imagingStatuses.map(() => '?').join(', ')})`,
+    ...scope, claim.selection.id, requestId, ...imagingStatuses)
   }
   if (
     operationId === 'outpatient.laboratory.cancel.propose'

@@ -153,7 +153,7 @@ export const persona: PatientPersonaContent = {
 const dshBridgeSecret = 'test-dsh-bridge-secret-with-at-least-32-characters'
 let pageContextRevision = 0
 
-/** 为当前受信 Page Context 签发 Agent Page Context 并返回绑定。 */
+/** 以医生“接诊”页选中某个病例的状态签发 Agent Page Context，返回绑定。 */
 export async function agentPageContext(
   runtime: Runtime,
   cookie: string,

@@ -75,7 +75,7 @@ export interface ImagingPageActions {
 
 const summaryInsertionLabels: Record<ImagingSummaryInsertion, [string, string]> = {
   duplicate: ['病历中已有这一版报告的摘要，未重复插入。', 'This report version is already in the clinical document.'],
-  inserted: ['已插入病历“辅助检查”，请在病历页保存草稿。', 'Inserted into the clinical document; save the draft on the record page.'],
+  inserted: ['已插入病历“辅助检查”，签署病历时一并保存。', 'Inserted into the clinical document; it is saved when the document is signed.'],
   'too-long': ['病历“辅助检查”已接近长度上限，未插入。', 'The clinical document field is near its length limit; nothing was inserted.'],
 }
 

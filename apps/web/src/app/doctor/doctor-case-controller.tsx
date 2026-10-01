@@ -1159,16 +1159,17 @@ function DoctorCaseController({
   const agentPage = useMemo(() => ({
     actions: {
       'outpatient.case.read': {
-        description: 'Read current case, queue.items (waiting + active; use each caseId to select a patient), and imagingServices with their availability.',
+        description: 'Read current case, queue.items (waiting + active; use each caseId to select a patient), and imagingServices with their availability (null when the imaging catalog cannot be read).',
         enabled: activeCaseId !== undefined,
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: async (_raw: unknown, signal: AbortSignal) => {
           if (activeCaseId === undefined) throw new Error(messages.consultationUnavailable)
           const [current, imagingServices] = await Promise.all([
             getDoctorCase(activeCaseId, signal),
-            getCaseImagingServices(activeCaseId, signal),
+            // 放射目录读取失败（例如素材清单无效）时仍返回病例，目录以 null 表示不可用。
+            getCaseImagingServices(activeCaseId, signal).then(catalog => catalog.items, () => null),
           ])
-          return { ...current, imagingServices: imagingServices.items, queue: queue.data ?? null }
+          return { ...current, imagingServices, queue: queue.data ?? null }
         },
       },
       'outpatient.case.select': {
