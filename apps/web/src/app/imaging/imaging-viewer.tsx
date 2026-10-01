@@ -50,7 +50,12 @@ export function ImagingViewer({ locale, onFrameShown, source }: {
   const series = study.series[seriesIndex]
 
   useEffect(() => {
-    const onChange = () => setFullscreen(document.fullscreenElement !== null && document.fullscreenElement === rootRef.current)
+    // DSH Surface 位于 ShadowRoot 内：document.fullscreenElement 会被重定向为 shadow host，
+    // 真正进入全屏的元素要从阅片器所在的根节点读取。
+    const onChange = () => {
+      const root = rootRef.current
+      setFullscreen(root !== null && (root.getRootNode() as Document | ShadowRoot).fullscreenElement === root)
+    }
     document.addEventListener('fullscreenchange', onChange)
     return () => document.removeEventListener('fullscreenchange', onChange)
   }, [])
