@@ -51,6 +51,8 @@ import type { ScenarioGenerationProvider } from './application/scenario-data/pro
 import type { SqlitePerformanceObserver } from './infrastructure/sqlite/performance-observer.ts'
 import { AgentIntegrationService } from './application/agent-integration-service.ts'
 import { reportRuntimeError } from './runtime-error-reporting.ts'
+import { ImagingPreparationService } from './application/imaging-preparation-service.ts'
+import { ImagingPreparationRepository } from './infrastructure/sqlite/imaging-preparation-repository.ts'
 
 function lisActorContext(event: {
   epoch: string
@@ -86,6 +88,8 @@ export interface CreateClinMeshRuntimeOptions {
   databasePath: string
   demoPassword: string
   dshBridgeSecret?: string
+  imagingAssetDirectory?: string
+  imagingCatalogDirectory?: string
   migrationMode: 'apply' | 'verify'
   chatCompletionsProvider?: JsonChatCompletionsProvider
   investigationModel?: string
@@ -229,6 +233,14 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ...(patientPersonaModel === undefined ? {} : { model: patientPersonaModel }),
       profiles: syntheticPatientProfiles,
       ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+    })
+    const imagingPreparation = new ImagingPreparationService({
+      assetDirectory: options.imagingAssetDirectory,
+      cases: syntheticCases,
+      catalogDirectory: options.imagingCatalogDirectory,
+      commands,
+      preparations: new ImagingPreparationRepository(database),
+      profiles: syntheticPatientProfiles,
     })
     const caseVisits = new SyntheticCaseVisitService({
       briefs: patientPersonas,
@@ -454,6 +466,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         ),
       },
       identity,
+      imagingPreparation,
       investigation,
       caseVisits,
       patientPersona,

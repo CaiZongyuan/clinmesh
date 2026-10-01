@@ -8,7 +8,10 @@ const catalogDirectory = resolve(import.meta.dirname, '../../../imaging-assets')
 
 describe('repository imaging catalog', () => {
   it('records hashes, source annotations and consistent report drafts for every asset', async () => {
-    const { assets } = await loadImagingCatalog(catalogDirectory)
+    // 读取时同时校验适配规则只引用清单中检查相符的素材。
+    const { assets, matching } = await loadImagingCatalog(catalogDirectory)
+
+    expect(matching?.profiles.length).toBeGreaterThan(0)
 
     for (const asset of assets) {
       expect(asset.output, `${asset.assetId} output`).toBeDefined()

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, open, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, sep } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
@@ -404,6 +404,38 @@ export async function verifyImagingAssets(
     assets.push({ assetId: asset.assetId, status: await installStatus(input.assetDirectory, asset) })
   }
   return { assets }
+}
+
+/**
+ * 运行时使用的快速就绪判断：安装回执与清单输出一致，且各序列文件存在、像素文件大小相符。
+ * 不逐字节核对哈希；完整核对由 `verifyImagingAssets` 承担。
+ */
+export async function imagingAssetInstalled(input: {
+  asset: ImagingCatalogAsset
+  assetDirectory: string
+}): Promise<boolean> {
+  if (input.asset.output === undefined) return false
+  const installed = join(input.assetDirectory, 'installed', input.asset.assetId)
+  const receipt = await readOptionalFile(join(installed, 'receipt.json'))
+  if (receipt === undefined) return false
+  let output: unknown
+  try {
+    output = installReceiptSchema.parse(JSON.parse(Buffer.from(receipt).toString('utf8'))).output
+  } catch {
+    return false
+  }
+  if (!isDeepStrictEqual(output, input.asset.output)) return false
+  for (const [seriesIndex, series] of input.asset.output.series.entries()) {
+    try {
+      const frames = await stat(join(installed, String(seriesIndex), 'frames.bin'))
+      await stat(join(installed, String(seriesIndex), 'series.json'))
+      if (frames.size !== series.framesBytes) return false
+    } catch (error) {
+      if (isMissingFile(error)) return false
+      throw error
+    }
+  }
+  return true
 }
 
 /**

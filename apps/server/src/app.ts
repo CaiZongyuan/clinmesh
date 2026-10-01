@@ -38,6 +38,7 @@ import { referenceDataItemIdSchema } from '@clinmesh/contracts/reference-data'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
+import { prepareImagingCasesRequestSchema } from '@clinmesh/contracts/imaging'
 import {
   selectPatientPersonaRevisionRequestSchema,
   startSyntheticCaseRequestSchema,
@@ -66,6 +67,10 @@ import { ConsultationDialogueError, type ConsultationDialogueService } from './a
 import { createPatientPersonaRevisionFromEditRequestSchema } from '@clinmesh/contracts/scenario'
 import type { PatientPersonaService } from './application/patient-persona-service.ts'
 import { PatientPersonaError } from './application/patient-persona-service.ts'
+import {
+  ImagingPreparationError,
+  type ImagingPreparationService,
+} from './application/imaging-preparation-service.ts'
 import type { SyntheticCaseVisitService } from './application/synthetic-case-visit-service.ts'
 import { SyntheticCaseVisitError } from './application/synthetic-case-visit-service.ts'
 import type { WorkflowService } from './application/workflow-service.ts'
@@ -98,6 +103,7 @@ export interface CreateAppOptions {
   caseVisits?: SyntheticCaseVisitService
   fhir?: FhirRuntime
   identity?: IdentityService
+  imagingPreparation?: ImagingPreparationService
   investigation?: InvestigationService
   laboratoryServicePublisher?: LaboratoryServicePublisher
   consultationDialogue?: ConsultationDialogueService
@@ -160,6 +166,7 @@ function apiErrorResponse(
       || error instanceof ConsultationDialogueError
       || error instanceof LaboratoryServicePublisherError
     || error instanceof PatientPersonaError
+    || error instanceof ImagingPreparationError
     || error instanceof SyntheticCaseVisitError
     || error instanceof ReferenceDataError
     || error instanceof ScenarioDataError
@@ -789,6 +796,48 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return options.consultationDialogue
   }
 
+  if (options.identity !== undefined && options.imagingPreparation !== undefined) {
+    const identity = options.identity
+    const imagingPreparation = options.imagingPreparation
+    // 影像准备与覆盖清单只面向管理员：不进入 Operation Catalog、CLI、Page Context 或 Agent Tools。
+    app.post('/api/sim/v1/admin/imaging-preparations', async (context) => {
+      context.header('Cache-Control', 'no-store')
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = prepareImagingCasesRequestSchema.parse(await context.req.json())
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const idempotencyKey = z.string().min(8).max(128).parse(
+          context.req.header('idempotency-key'),
+        )
+        return context.json(await imagingPreparation.prepareBatch({
+          caseIds: body.input.caseIds,
+          context: session.actor,
+          idempotencyKey,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error, 'The imaging preparation request is invalid')
+      }
+    })
+    app.get('/api/sim/v1/admin/imaging-coverage', async (context) => {
+      context.header('Cache-Control', 'no-store')
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(await imagingPreparation.coverage(session.actor))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/sim/v1/admin/synthetic-cases/:caseId/imaging-preparation', async (context) => {
+      context.header('Cache-Control', 'no-store')
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const caseId = z.string().min(1).max(128).parse(context.req.param('caseId'))
+        return context.json(imagingPreparation.getCasePreparation(session.actor, caseId))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+  }
   if (options.identity !== undefined && options.patientPersona !== undefined) {
     const identity = options.identity
     const patientPersona = options.patientPersona

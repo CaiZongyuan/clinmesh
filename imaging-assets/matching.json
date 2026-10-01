@@ -1,0 +1,139 @@
+{
+  "codeSystem": "http://snomed.info/sct",
+  "profiles": [
+    {
+      "ageRange": [
+        40,
+        79
+      ],
+      "assets": {
+        "chest-ct-plain": "lidc-idri-0094-chest-ct",
+        "chest-radiograph": "lidc-idri-0094-chest-radiograph"
+      },
+      "conditionCodes": [
+        "162573006",
+        "254637007",
+        "254632001",
+        "424132000",
+        "425048006",
+        "422968005",
+        "423121009",
+        "67811000119102",
+        "67821000119109",
+        "67831000119107",
+        "67841000119103"
+      ],
+      "conflictProcedureCodes": [
+        "232657004",
+        "88039007",
+        "429609002"
+      ],
+      "finding": "positive",
+      "id": "solitary-lung-mass-male",
+      "label": "右肺单发肿块（成年男性，疑似或确诊肺癌）",
+      "sex": "male"
+    },
+    {
+      "ageRange": [
+        18,
+        89
+      ],
+      "assets": {
+        "chest-ct-plain": "lidc-idri-0028-chest-ct",
+        "chest-radiograph": "lidc-idri-0028-chest-radiograph"
+      },
+      "finding": "negative",
+      "id": "no-visible-nodule-paired",
+      "indexConditionCodes": [
+        "10509002"
+      ],
+      "label": "胸片未见结节、CT 见微小结节（急性支气管炎就诊）"
+    },
+    {
+      "ageRange": [
+        18,
+        89
+      ],
+      "assets": {
+        "chest-ct-plain": "lidc-idri-0668-chest-ct"
+      },
+      "finding": "negative",
+      "id": "no-nodule-ct-only",
+      "indexConditionCodes": [
+        "10509002"
+      ],
+      "label": "CT 未见结节（急性支气管炎就诊，无胸片素材）"
+    }
+  ],
+  "ruleVersion": 1,
+  "schemaVersion": 1,
+  "sourceExamCodes": {
+    "chest-ct-plain": [
+      "16335031000119103"
+    ],
+    "chest-radiograph": [
+      "399208008"
+    ]
+  },
+  "uncoveredConditions": [
+    {
+      "codes": [
+        "233604007"
+      ],
+      "id": "pneumonia",
+      "label": "肺炎"
+    },
+    {
+      "codes": [
+        "840539006",
+        "840544004"
+      ],
+      "id": "covid-19",
+      "label": "新型冠状病毒感染（含疑似）"
+    },
+    {
+      "codes": [
+        "65710008",
+        "67782005"
+      ],
+      "id": "acute-respiratory-failure",
+      "label": "急性呼吸衰竭与急性呼吸窘迫综合征"
+    },
+    {
+      "codes": [
+        "706870000"
+      ],
+      "id": "pulmonary-embolism",
+      "label": "急性肺栓塞"
+    },
+    {
+      "codes": [
+        "185086009",
+        "87433001"
+      ],
+      "id": "copd",
+      "label": "慢性阻塞性支气管炎与肺气肿"
+    },
+    {
+      "codes": [
+        "190905008"
+      ],
+      "id": "cystic-fibrosis",
+      "label": "囊性纤维化"
+    },
+    {
+      "codes": [
+        "88805009"
+      ],
+      "id": "heart-failure",
+      "label": "慢性充血性心力衰竭"
+    },
+    {
+      "codes": [
+        "33737001"
+      ],
+      "id": "rib-fracture",
+      "label": "肋骨骨折"
+    }
+  ]
+}

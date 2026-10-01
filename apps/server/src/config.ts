@@ -27,6 +27,8 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_DEMO_PASSWORD: z.string().min(12),
   CLINMESH_DSH_BRIDGE_SECRET: z.string().min(32).optional(),
   CLINMESH_HOST: z.string().trim().min(1).default('127.0.0.1'),
+  CLINMESH_IMAGING_ASSET_DIRECTORY: z.string().trim().min(1).optional(),
+  CLINMESH_IMAGING_CATALOG_DIRECTORY: z.string().trim().min(1).optional(),
   CLINMESH_PORT: z.string()
     .regex(/^\d+$/)
     .default('51868')
@@ -72,6 +74,8 @@ export interface ServerConfig {
   demoPassword: string
   dshBridgeSecret?: string
   hostname: string
+  imagingAssetDirectory: string
+  imagingCatalogDirectory: string
   port: number
   referenceDatabasePath?: string
   referenceReleaseId?: string
@@ -79,6 +83,10 @@ export interface ServerConfig {
   trustedOrigins: string[]
   webRoot?: string
 }
+
+/** 影像素材的默认位置：清单随仓库提交，像素安装在不进入版本库的 `.data` 下。 */
+export const defaultImagingCatalogDirectory = resolve(import.meta.dirname, '../../../imaging-assets')
+export const defaultImagingAssetDirectory = resolve(import.meta.dirname, '../../../.data/imaging-assets')
 
 function findWorkspaceEnvironmentFile(startDirectory: string): string | undefined {
   let directory = resolve(startDirectory)
@@ -129,6 +137,7 @@ export function readServerEnvironment(
   for (const name of [
     'CLINMESH_DATABASE_PATH',
     'CLINMESH_IMAGING_ASSET_DIRECTORY',
+    'CLINMESH_IMAGING_CATALOG_DIRECTORY',
     'CLINMESH_REFERENCE_DATABASE_PATH',
     'CLINMESH_WEB_ROOT',
   ] as const) {
@@ -184,6 +193,8 @@ export function readServerConfig(
       ? {}
       : { dshBridgeSecret: parsed.CLINMESH_DSH_BRIDGE_SECRET }),
     hostname: parsed.CLINMESH_HOST,
+    imagingAssetDirectory: parsed.CLINMESH_IMAGING_ASSET_DIRECTORY ?? defaultImagingAssetDirectory,
+    imagingCatalogDirectory: parsed.CLINMESH_IMAGING_CATALOG_DIRECTORY ?? defaultImagingCatalogDirectory,
     port: parsed.CLINMESH_PORT,
     ...(parsed.CLINMESH_REFERENCE_DATABASE_PATH === undefined
       ? {}

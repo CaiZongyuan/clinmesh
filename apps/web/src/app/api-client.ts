@@ -59,6 +59,11 @@ import {
   type SessionContext,
 } from '@clinmesh/contracts/his'
 import {
+  administratorImagingPreparationSchema,
+  imagingCoverageSchema,
+  imagingPreparationBatchSchema,
+} from '@clinmesh/contracts/imaging'
+import {
   administratorCaseTruthSchema,
   patientPersonaJobSchema,
   patientPersonaRevisionListSchema,
@@ -468,6 +473,28 @@ export function getAdministratorCaseTruth(caseId: string, signal?: AbortSignal) 
     `/api/sim/v1/admin/synthetic-cases/${encodeURIComponent(caseId)}/truth`,
     administratorCaseTruthSchema,
     signal,
+  )
+}
+
+export function getAdministratorImagingPreparation(caseId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/sim/v1/admin/synthetic-cases/${encodeURIComponent(caseId)}/imaging-preparation`,
+    administratorImagingPreparationSchema,
+    signal,
+  )
+}
+
+export function getImagingCoverage(signal?: AbortSignal) {
+  return apiGet('/api/sim/v1/admin/imaging-coverage', imagingCoverageSchema, signal)
+}
+
+/** 不指定病例时准备下一批尚未按当前清单准备过的病例。 */
+export function prepareImagingCases(caseIds: string[] | undefined, idempotencyKey: string) {
+  return apiMutation(
+    '/api/sim/v1/admin/imaging-preparations',
+    commandResponseSchema(imagingPreparationBatchSchema),
+    { input: caseIds === undefined ? {} : { caseIds } },
+    { idempotencyKey },
   )
 }
 

@@ -1,7 +1,11 @@
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
-import { readServerEnvironment } from './config.ts'
+import {
+  defaultImagingAssetDirectory,
+  defaultImagingCatalogDirectory,
+  readServerEnvironment,
+} from './config.ts'
 import {
   annotateImagingAssets,
   checkImagingAssets,
@@ -15,7 +19,6 @@ import { createTciaNbiaSourceClient } from './infrastructure/imaging-assets/tcia
 
 const commandSchema = z.enum(['annotate', 'check', 'record', 'repair', 'sync', 'verify'])
 const optionNames = new Set(['--annotation-directory', '--asset', '--asset-directory', '--catalog'])
-const repositoryRoot = resolve(import.meta.dirname, '../../..')
 const succeededStatuses = new Set([
   'already-installed',
   'annotated',
@@ -61,9 +64,13 @@ export async function runImagingAssetsCli(
     assetDirectory: resolve(
       values.get('--asset-directory')?.[0]
       ?? environment.CLINMESH_IMAGING_ASSET_DIRECTORY
-      ?? resolve(repositoryRoot, '.data/imaging-assets'),
+      ?? defaultImagingAssetDirectory,
     ),
-    catalogDirectory: resolve(values.get('--catalog')?.[0] ?? resolve(repositoryRoot, 'imaging-assets')),
+    catalogDirectory: resolve(
+      values.get('--catalog')?.[0]
+      ?? environment.CLINMESH_IMAGING_CATALOG_DIRECTORY
+      ?? defaultImagingCatalogDirectory,
+    ),
     ...(values.has('--asset') ? { assetIds: values.get('--asset')! } : {}),
   }
   if (command === 'check') return await checkImagingAssets(input)

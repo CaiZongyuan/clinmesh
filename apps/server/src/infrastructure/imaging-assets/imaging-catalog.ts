@@ -136,7 +136,53 @@ export const imagingCatalogAssetSchema = z.object({
   }).strict(),
 }).strict()
 
+const examCodeSchema = z.enum(['chest-ct-plain', 'chest-radiograph'])
+const sourceCodeSchema = z.string().regex(/^[0-9]{6,18}$/)
+const matchingProfileBaseShape = {
+  /** 适用年龄范围（周岁，含两端），按本次就诊日期计算。 */
+  ageRange: z.tuple([z.number().int().nonnegative(), z.number().int().nonnegative()])
+    .refine(([minimum, maximum]) => minimum <= maximum),
+  /** 每项检查对应的素材；同一条目的素材来自同一来源受试者，保证胸片与 CT 相互一致。 */
+  assets: z.partialRecord(examCodeSchema, identifierSchema),
+  id: identifierSchema,
+  label: z.string().min(1),
+  sex: z.enum(['female', 'male']).optional(),
+}
+
+/**
+ * 病例适配规则：用来源编码决定一个病例使用哪个条目的素材。阳性条目要求未缓解的来源疾病，
+ * 阴性条目要求本次就诊的疾病属于明确列出的范围；规则未覆盖的病例不配片。
+ */
+export const imagingMatchingRulesSchema = z.object({
+  codeSystem: z.url(),
+  profiles: z.array(z.discriminatedUnion('finding', [
+    z.object({
+      ...matchingProfileBaseShape,
+      conditionCodes: z.array(sourceCodeSchema).min(1),
+      /** 与素材冲突的既往操作，例如肺切除或肺移植。 */
+      conflictProcedureCodes: z.array(sourceCodeSchema).default([]),
+      finding: z.literal('positive'),
+    }).strict(),
+    z.object({
+      ...matchingProfileBaseShape,
+      finding: z.literal('negative'),
+      indexConditionCodes: z.array(sourceCodeSchema).min(1),
+    }).strict(),
+  ])),
+  ruleVersion: z.number().int().positive(),
+  schemaVersion: z.literal(1),
+  /** 来源检查编码与本院检查的兼容关系，只用作适合开立该检查的证据。 */
+  sourceExamCodes: z.partialRecord(examCodeSchema, z.array(sourceCodeSchema)),
+  /** 有胸部影像表现但没有对应素材的疾病；出现在未缓解的来源疾病中时不配片。 */
+  uncoveredConditions: z.array(z.object({
+    codes: z.array(sourceCodeSchema).min(1),
+    id: identifierSchema,
+    label: z.string().min(1),
+  }).strict()),
+}).strict()
+
 export type ImagingCatalogManifest = z.infer<typeof imagingCatalogManifestSchema>
+export type ImagingMatchingRules = z.infer<typeof imagingMatchingRulesSchema>
 export type ImagingCatalogAsset = z.infer<typeof imagingCatalogAssetSchema>
 export type ImagingAssetOutput = z.infer<typeof imagingAssetOutputSchema>
 export type ImagingAnnotation = z.infer<typeof imagingAnnotationSchema>
@@ -145,13 +191,14 @@ export type ImagingReportRevision = z.infer<typeof reportRevisionSchema>
 export interface ImagingCatalog {
   assets: ImagingCatalogAsset[]
   manifest: ImagingCatalogManifest
+  matching?: ImagingMatchingRules
 }
 
 function assetPath(catalogDirectory: string, assetId: string): string {
   return join(catalogDirectory, 'assets', `${assetId}.json`)
 }
 
-/** 读取仓库中的素材清单；文件名必须与 assetId 一致，素材只能引用已声明的合集。 */
+/** 读取仓库中的素材清单；文件名必须与 assetId 一致，素材只能引用已声明的合集，适配规则只能引用检查相符的素材。 */
 export async function loadImagingCatalog(catalogDirectory: string): Promise<ImagingCatalog> {
   const manifest = imagingCatalogManifestSchema.parse(
     JSON.parse(await readFile(join(catalogDirectory, 'manifest.json'), 'utf8')),
@@ -172,7 +219,25 @@ export async function loadImagingCatalog(catalogDirectory: string): Promise<Imag
     }
     return asset
   }))
-  return { assets, manifest }
+  let matchingText: string
+  try {
+    matchingText = await readFile(join(catalogDirectory, 'matching.json'), 'utf8')
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return { assets, manifest }
+    throw error
+  }
+  const matching = imagingMatchingRulesSchema.parse(JSON.parse(matchingText))
+  if (new Set(matching.profiles.map(profile => profile.id)).size !== matching.profiles.length) {
+    throw new Error('Imaging matching profile ids must be unique')
+  }
+  for (const profile of matching.profiles) {
+    for (const [examCode, assetId] of Object.entries(profile.assets)) {
+      if (assets.find(asset => asset.assetId === assetId)?.examCode !== examCode) {
+        throw new Error(`Imaging matching profile ${profile.id} references ${assetId}, which is not a ${examCode} asset`)
+      }
+    }
+  }
+  return { assets, manifest, matching }
 }
 
 /** 以临时文件加改名写回单个素材条目，避免中断留下半个 JSON。 */
