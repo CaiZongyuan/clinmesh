@@ -128,6 +128,7 @@ export function readServerEnvironment(
   const environmentDirectory = dirname(environmentFile)
   for (const name of [
     'CLINMESH_DATABASE_PATH',
+    'CLINMESH_IMAGING_ASSET_DIRECTORY',
     'CLINMESH_REFERENCE_DATABASE_PATH',
     'CLINMESH_WEB_ROOT',
   ] as const) {
