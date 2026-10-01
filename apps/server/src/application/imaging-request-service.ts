@@ -394,6 +394,8 @@ export class ImagingRequestService {
     expectedDraftVersion: number
     expectedVersions: Record<string, string>
     idempotencyKey: string
+    /** 当前至少有一套已发布且已安装素材的检查；本院未开展的服务不能开立。 */
+    readyExamCodes: ReadonlySet<ImagingExamCode>
   }) {
     return this.#commands.execute({
       context: input.context,
@@ -416,6 +418,9 @@ export class ImagingRequestService {
       const service = imagingServiceSnapshotSchema.parse(JSON.parse(draft.draft_service_snapshot_json))
       if (JSON.stringify(this.#activeService(input.context, service.id)) !== JSON.stringify(service)) {
         throw new WorkflowError('CATALOG_CONFLICT', 'The imaging service changed after the draft was saved')
+      }
+      if (!input.readyExamCodes.has(service.examCode)) {
+        throw new WorkflowError('CATALOG_CONFLICT', 'The imaging service is not currently offered')
       }
       const duplicate = this.#database.driver.prepare(`
         SELECT request_id FROM laboratory_request
@@ -643,47 +648,41 @@ export class ImagingRequestService {
       }
       const now = this.#host.virtualTime(input.context)
       const service = imagingServiceSnapshotSchema.parse(JSON.parse(request.service_snapshot_json))
-      // 本院检查使用新生成的标识，不复用来源 UID；失败后重试沿用已创建的检查记录。
-      const existingStudy = z.object({ study_id: z.string() }).optional().parse(this.#database.driver.prepare(`
-        SELECT study_id FROM imaging_study WHERE workspace_id = ? AND epoch = ? AND request_id = ?
-      `).get(input.context.workspaceId, input.context.epoch, request.request_id))
-      const studyId = existingStudy?.study_id ?? uuidv7()
-      const projections: FhirResource[] = []
-      if (existingStudy === undefined) {
-        const studyInstanceUid = `2.25.${BigInt(`0x${uuidv7().replaceAll('-', '')}`).toString()}`
-        // ImagingStudy 是本院检查记录的只读投影，只携带本院标识，不含素材或来源信息。
-        projections.push(transaction.fhir.createProjection(input.context, {
-          resourceType: 'ImagingStudy',
-          id: studyId,
-          status: 'available',
-          identifier: [{ system: 'urn:dicom:uid', value: `urn:oid:${studyInstanceUid}` }],
-          modality: [{
-            coding: [{ code: service.modality, system: 'http://dicom.nema.org/resources/ontology/DCM' }],
-          }],
-          subject: { reference: `Patient/${request.patient_id}` },
-          encounter: { reference: `Encounter/${request.encounter_id}` },
-          started: now,
-          basedOn: [{ reference: `ServiceRequest/${request.service_request_id}` }],
-          description: service.name,
-        }))
-        this.#database.driver.prepare(`
-          INSERT INTO imaging_study (
-            workspace_id, epoch, study_id, request_id, case_id, exam_code,
-            study_instance_uid, asset_id, asset_output_json, performed_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          input.context.workspaceId,
-          input.context.epoch,
-          studyId,
-          request.request_id,
-          request.case_id,
-          request.exam_code,
-          studyInstanceUid,
-          input.result.assetId,
-          JSON.stringify(input.result.assetOutput),
-          now,
-        )
-      }
+      // 本院检查使用新生成的标识，不复用来源 UID；检查记录与报告在同一事务中创建。
+      const studyId = uuidv7()
+      const studyInstanceUid = `2.25.${BigInt(`0x${uuidv7().replaceAll('-', '')}`).toString()}`
+      // ImagingStudy 是本院检查记录的只读投影，只携带本院标识，不含素材或来源信息。
+      const projections: FhirResource[] = [transaction.fhir.createProjection(input.context, {
+        resourceType: 'ImagingStudy',
+        id: studyId,
+        status: 'available',
+        identifier: [{ system: 'urn:dicom:uid', value: `urn:oid:${studyInstanceUid}` }],
+        modality: [{
+          coding: [{ code: service.modality, system: 'http://dicom.nema.org/resources/ontology/DCM' }],
+        }],
+        subject: { reference: `Patient/${request.patient_id}` },
+        encounter: { reference: `Encounter/${request.encounter_id}` },
+        started: now,
+        basedOn: [{ reference: `ServiceRequest/${request.service_request_id}` }],
+        description: service.name,
+      })]
+      this.#database.driver.prepare(`
+        INSERT INTO imaging_study (
+          workspace_id, epoch, study_id, request_id, case_id, exam_code,
+          study_instance_uid, asset_id, asset_output_json, performed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        studyId,
+        request.request_id,
+        request.case_id,
+        request.exam_code,
+        studyInstanceUid,
+        input.result.assetId,
+        JSON.stringify(input.result.assetOutput),
+        now,
+      )
       const report = this.#createReport(transaction, input.context, request, {
         now,
         result: input.result,
@@ -784,6 +783,8 @@ export class ImagingRequestService {
     expectedVersions: Record<string, string>
     idempotencyKey: string
     requestId: string
+    /** 本次检查的影像当前是否可读；只约束新的确认，已有确认按原回执返回。 */
+    studyAvailable: boolean
   }) {
     return this.#commands.execute({
       context: input.context,
@@ -801,7 +802,16 @@ export class ImagingRequestService {
       this.#host.assertExpectedVersions(input.expectedVersions, [`DiagnosticReport/${input.diagnosticReportId}`])
       const request = this.#requiredRequest(input.context, input.requestId)
       const acknowledgement = this.#requests.acknowledge(imagingRequestPolicy, transaction, input.context, request, {
-        assertReportContent: () => { this.#reportContent(input.context, input.diagnosticReportId) },
+        assertReportContent: () => {
+          this.#reportContent(input.context, input.diagnosticReportId)
+          // 像素丢失或损坏时保留报告，但不开放新的确认。
+          if (!input.studyAvailable) {
+            throw new WorkflowError(
+              'IMAGING_STUDY_UNAVAILABLE',
+              'The imaging study is not available for viewing; the report cannot be acknowledged',
+            )
+          }
+        },
         diagnosticReportId: input.diagnosticReportId,
         expectedRequestVersion: input.expectedRequestVersion,
         now: this.#host.virtualTime(input.context),

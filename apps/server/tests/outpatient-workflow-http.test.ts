@@ -5515,6 +5515,25 @@ describe('outpatient workflow HTTP contract', () => {
       runtime,
       password,
     )
+    // 放射操作同样不能作用于检验申请。
+    const imagingAcknowledgeResponse = await runtime.app.request(
+      `/api/his/v1/imaging-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/acknowledge`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`DiagnosticReport/${request.report.diagnosticReportId}`]: '1',
+          },
+          input: { expectedRequestVersion: request.version },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(imagingAcknowledgeResponse.status).toBe(409)
+    expect(await imagingAcknowledgeResponse.json()).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
+
     // 以真实开立的申请构造另一类型的已出报告申请，确保 FHIR 资源与状态都真实存在。
     runtime.database.driver.prepare(`
       UPDATE laboratory_request SET request_kind = 'imaging', reference_json = NULL

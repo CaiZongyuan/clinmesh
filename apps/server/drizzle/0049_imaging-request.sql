@@ -43,6 +43,7 @@ CREATE TABLE imaging_study (
   performed_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, epoch, study_id),
   UNIQUE (workspace_id, epoch, request_id),
+  UNIQUE (workspace_id, epoch, study_id, request_id),
   UNIQUE (workspace_id, epoch, study_instance_uid),
   FOREIGN KEY (workspace_id, epoch, request_id)
     REFERENCES laboratory_request (workspace_id, epoch, request_id) ON DELETE RESTRICT,
@@ -63,6 +64,6 @@ CREATE TABLE imaging_report_content (
   impression TEXT NOT NULL,
   issued_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, epoch, diagnostic_report_id),
-  FOREIGN KEY (workspace_id, epoch, study_id)
-    REFERENCES imaging_study (workspace_id, epoch, study_id) ON DELETE RESTRICT
+  FOREIGN KEY (workspace_id, epoch, study_id, request_id)
+    REFERENCES imaging_study (workspace_id, epoch, study_id, request_id) ON DELETE RESTRICT
 ) STRICT;

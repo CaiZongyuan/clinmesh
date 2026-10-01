@@ -56,9 +56,9 @@ clinmesh service complete --input @service-completion.json --idempotency-key <ke
 
 ## Imaging requests
 
-放射申请（胸片、胸部 CT 平扫）与检验申请共用同一套状态，但使用各自的草稿和操作；检验操作不能作用于放射申请。先读取当前病例的放射服务目录：`available: false` 表示本院当前未开展该检查，与病例病情无关。草稿只包含服务和检查指征，签发后由系统执行。
+放射申请（胸片、胸部 CT 平扫）与检验申请共用同一套状态，但使用各自的草稿和操作；检验操作不能作用于放射申请。先读取当前病例的放射服务目录：`available: false` 表示本院当前未开展该检查，与病例病情无关，签发会以 `CATALOG_CONFLICT` 拒绝。草稿只包含服务和检查指征，签发后由系统执行。
 
-申请状态为 `generation-failed` 且 `generationError.code` 为 `IMAGING_RESULT_UNAVAILABLE` 时，本次检查没有取得结果：不会有报告，可按当前申请版本重试或取消；重试不会改变已固定的影像。报告包含检查技术、所见、印象和本院检查标识，CLI 不提供影像像素；需要阅片时在医生工作台打开影像。确认已阅返回 `IMAGING_STUDY_UNAVAILABLE` 时影像暂不可读，报告仍可读取，待影像恢复后再确认。报告更正需要管理员 Grant，只能选择同一检查另一份已核对的报告内容，更正后当前报告需要重新确认。
+申请状态为 `generation-failed` 时本次检查没有取得结果，不会有报告：`IMAGING_RESULT_UNAVAILABLE` 表示该病例没有可用影像，`IMAGING_RESULT_FAILED` 表示系统连续执行失败；两者都可按当前申请版本重试或取消，重试不会改变已固定的影像。报告包含检查技术、所见、印象和本院检查标识，CLI 不提供影像像素；需要阅片时在医生工作台打开影像。确认已阅返回 `IMAGING_STUDY_UNAVAILABLE` 时影像暂不可读，报告仍可读取，待影像恢复后再确认。CLI 的确认已阅表示医生已阅读报告，不代表影像曾在人面前显示；需要阅片时由医生在工作台打开影像。报告更正需要管理员 Grant，只能选择同一检查另一份已核对的报告内容，更正后当前报告需要重新确认。
 
 ```bash
 clinmesh doctor case imaging-services list --case-id <case-id>

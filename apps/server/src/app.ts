@@ -1885,6 +1885,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
             expectedDraftVersion: body.input.expectedDraftVersion,
             expectedVersions: body.expectedVersions,
             idempotencyKey: idempotencyKey(context),
+            readyExamCodes: await library.readyExamCodes(),
           }))
         } catch (error) {
           return apiErrorResponse(context, error)
@@ -1929,13 +1930,6 @@ export function createApp(options: CreateAppOptions = {}): Hono {
             const body = acknowledgeImagingReportRequestSchema.parse(await context.req.json())
             const context_ = await actor(context)
             const requestId = context.req.param('requestId')
-            // 确认已阅要求影像当前可读；像素丢失或损坏时保留报告，但不开放确认。
-            if (!await results.studyAvailable(context_.workspaceId, context_.epoch, requestId)) {
-              throw new WorkflowError(
-                'IMAGING_STUDY_UNAVAILABLE',
-                'The imaging study is not available for viewing; the report cannot be acknowledged',
-              )
-            }
             return context.json(workflow.imaging.acknowledge({
               context: context_,
               diagnosticReportId: context.req.param('diagnosticReportId'),
@@ -1943,6 +1937,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
               expectedVersions: body.expectedVersions,
               idempotencyKey: idempotencyKey(context),
               requestId,
+              studyAvailable: await results.studyAvailable(context_.workspaceId, context_.epoch, requestId),
             }))
           } catch (error) {
             return apiErrorResponse(context, error)

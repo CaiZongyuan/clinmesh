@@ -33,11 +33,11 @@
       "lesions": [],
       "review": {
         "automatedCheck": {
-          "checkVersion": 1,
+          "checkVersion": 2,
           "passed": true
         },
         "conclusion": "approved",
-        "contentSha256": "28228c5f19decdf7ad93e38d1dc69b8a416e3b3e76afdc26d91f98855a574771",
+        "contentSha256": "0d67050f2b93d44fc1511324f37dadb50b11eebd5989f646672aa6d9d3c42e97",
         "items": [
           {
             "conclusion": "confirmed",

@@ -151,12 +151,6 @@ export function matchCaseImaging(input: {
       candidates = rules.profiles.filter(item => item.finding === 'positive'
         && positive.some(condition => item.conditionCodes.includes(condition.code)))
       facts = positive.map(evidence)
-      const conflictCodes = new Set(candidates.flatMap(item => item.finding === 'positive' ? item.conflictProcedureCodes : []))
-      const conflicts = all.filter(item => item.resourceType === 'Procedure' && conflictCodes.has(item.code))
-      if (conflicts.length > 0) {
-        facts = [...facts, ...conflicts.map(evidence)]
-        failure = { reason: 'FIXED_FACT_CONFLICT', status: 'conflict' }
-      }
     } else {
       const indexConditions = index.filter(item => item.resourceType === 'Condition' && !item.abated)
       const matches = (item: MatchingProfile) => item.finding === 'negative'
@@ -164,6 +158,18 @@ export function matchCaseImaging(input: {
       candidates = rules.profiles.filter(matches)
       const matchedCodes = new Set(candidates.flatMap(item => item.finding === 'negative' ? item.indexConditionCodes : []))
       facts = indexConditions.filter(condition => matchedCodes.has(condition.code)).map(evidence)
+      // 曾患阳性条目的疾病（例如已缓解的肺癌）与“未见病灶”的素材冲突，不能当作正常。
+      const priorPositive = all.filter(item => item.resourceType === 'Condition' && positiveCodes.has(item.code))
+      if (candidates.length > 0 && priorPositive.length > 0) {
+        facts = [...facts, ...priorPositive.map(evidence)]
+        failure = { reason: 'FIXED_FACT_CONFLICT', status: 'conflict' }
+      }
+    }
+    const conflictCodes = new Set(candidates.flatMap(item => item.conflictProcedureCodes))
+    const conflicts = all.filter(item => item.resourceType === 'Procedure' && conflictCodes.has(item.code))
+    if (conflicts.length > 0) {
+      facts = [...facts, ...conflicts.map(evidence)]
+      failure = { reason: 'FIXED_FACT_CONFLICT', status: 'conflict' }
     }
     if (failure === undefined && candidates.length === 0) {
       failure = { reason: 'NO_APPLICABLE_RULE', status: 'unsupported' }
@@ -180,9 +186,12 @@ export function matchCaseImaging(input: {
       if (profile === undefined) failure = { reason: 'NO_ASSET_FOR_DEMOGRAPHICS', status: 'unsupported' }
     }
   }
-  // 已有固定绑定的病例只能在同一条目内追加，保证后追加的检查与已绑定的检查相互一致。
+  // 已有固定绑定的病例只能在同一条目内追加，保证后追加的检查与已绑定的检查相互一致；
+  // 当前规则判为冲突或未覆盖时，已绑定的检查保持不变，未绑定的检查不再追加。
   const boundProfileId = input.bound[0]?.matchingProfileId
-  if (boundProfileId !== undefined) profile = rules.profiles.find(item => item.id === boundProfileId)
+  if (boundProfileId !== undefined && failure === undefined) {
+    profile = rules.profiles.find(item => item.id === boundProfileId)
+  }
 
   return imagingExamCodes.map((examCode) => {
     const base = { evidence: { facts, sourceExams: sourceExams(examCode) }, examCode }

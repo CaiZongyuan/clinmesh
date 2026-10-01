@@ -1,4 +1,4 @@
-import { rm } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   acknowledgeImagingReportResponseSchema,
@@ -473,18 +473,29 @@ describe('Imaging request HTTP contract', () => {
     expect(cancelled.status).toBe(200)
     expect(imagingRequestActionResponseSchema.parse(await cancelled.json()).data.request.status).toBe('cancelled')
 
-    // 素材文件丢失：目录显示未开展，已开立的胸片执行失败；修复后重试成功。
+    // 胸片开立后素材文件丢失：目录显示未开展，已开立的胸片执行失败；修复后重试成功。
+    const radiograph = await order(visit, radiographService, 2)
     await rm(join(assetDirectory, 'installed', clearRadiograph), { recursive: true })
     await rm(join(assetDirectory, 'installed', 'synthetic-mass-radiograph'), { recursive: true })
+    await rm(join(assetDirectory, 'installed', massCt), { recursive: true })
     const services = caseImagingServiceCatalogSchema.parse(await (await runtime.app.request(
       `/api/his/v1/doctor/cases/${outpatientCaseId}/imaging-services`,
       { headers: { cookie: doctor } },
     )).json())
     expect(services.items.map(item => [item.service.id, item.available])).toEqual([
-      [ctService, true],
+      [ctService, false],
       [radiographService, false],
     ])
-    const radiograph = await order(visit, radiographService, 2)
+    // 本院当前未开展的检查可以保存草稿，但不能开立。
+    const notOfferedDraft = await saveDraft(runtime, doctor, visit.encounterId, {
+      expectedDraftVersion: 4,
+      indication: '复查',
+      serviceId: ctService,
+    })
+    expect(notOfferedDraft.status).toBe(200)
+    const notOffered = await issue(runtime, doctor, visit.encounterId, 5)
+    expect(notOffered.status).toBe(409)
+    expect(apiErrorSchema.parse(await notOffered.json()).error.code).toBe('CATALOG_CONFLICT')
     await dispatchAll(runtime)
     const failedRadiograph = (await caseDetail(runtime, doctor, outpatientCaseId)).imagingRequests!.requests
       .find(request => request.id === radiograph.id)!
@@ -506,6 +517,52 @@ describe('Imaging request HTTP contract', () => {
       .find(request => request.id === radiograph.id)!
     expect(recovered).toMatchObject({ report: { findings: '双肺野未见明确结节影。' }, status: 'reported' })
     expect(recovered.generationError).toBeUndefined()
+  })
+
+  it('ends a request that keeps failing for other reasons as generation-failed after three attempts', async () => {
+    const visit = await consultation(caseBundle({
+      gender: 'male',
+      index: [{ ...lungCancer, resourceType: 'Condition' }],
+      name: '肺癌男',
+    }))
+    const { catalogDirectory, doctor, outpatientCaseId, runtime } = visit
+    const request = await order(visit, ctService)
+    // 清单在执行期间损坏：不是“该病例没有影像”，按暂时故障自动重试，三次后仍失败则落为未取得结果。
+    const matchingPath = join(catalogDirectory, 'matching.json')
+    const matchingText = await readFile(matchingPath, 'utf8')
+    await writeFile(matchingPath, '{')
+    expect(await dispatchAll(runtime)).toEqual([
+      'imaging.accept-request:completed',
+      'imaging.start-request:completed',
+      'imaging.report-request:failed',
+      'imaging.report-request:failed',
+      'imaging.report-request:completed',
+    ])
+    const failed = (await caseDetail(runtime, doctor, outpatientCaseId)).imagingRequests!.requests[0]!
+    expect(failed).toMatchObject({
+      generationError: { code: 'IMAGING_RESULT_FAILED' },
+      id: request.id,
+      status: 'generation-failed',
+    })
+    expect(failed.report).toBeUndefined()
+
+    await writeFile(matchingPath, matchingText)
+    const retried = await runtime.app.request(
+      `/api/his/v1/imaging-requests/${request.id}/actions/retry`,
+      mutation(doctor, {
+        expectedVersions: {
+          [`ServiceRequest/${failed.serviceRequestId}`]: failed.serviceRequestVersion,
+          [`Task/${failed.taskId}`]: failed.taskVersion,
+        },
+        input: { expectedRequestVersion: failed.version },
+      }),
+    )
+    expect(retried.status).toBe(200)
+    await dispatchAll(runtime)
+    expect((await caseDetail(runtime, doctor, outpatientCaseId)).imagingRequests!.requests[0]).toMatchObject({
+      id: request.id,
+      status: 'reported',
+    })
   })
 
   /** 开立并执行到报告发布，返回带报告的申请。 */

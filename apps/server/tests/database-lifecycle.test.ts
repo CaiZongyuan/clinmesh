@@ -1480,13 +1480,33 @@ describe('SQLite lifecycle', () => {
       ?, ?, 'revision-legacy', 'laboratory-request-legacy', 'diagnostic-report-legacy-2',
       'diagnostic-report-legacy-1', 'provenance-legacy', '更正', 'actor-lis-system', ?)`)
       .run(context.workspaceId, context.epoch, '2026-08-24T09:15:00+08:00')
+    // 升级时仍在进行中的检验申请：保留状态与服务快照，并继续受“同一服务只能有一条进行中申请”约束。
+    database.driver.prepare(`INSERT INTO laboratory_request (
+      workspace_id, epoch, request_id, case_id, catalog_item_id, reference_json, indication_code,
+      service_request_id, execution_task_id, status, version, authored_by, authored_at, service_snapshot_json
+    ) VALUES (?, ?, 'laboratory-request-active', 'case-legacy', 'lab-crp', ?, 'fever',
+      'service-request-active', 'task-active', 'issued', 1, 'practitioner-legacy-doctor', ?, ?)`)
+      .run(
+        context.workspaceId,
+        context.epoch,
+        JSON.stringify({ code: '1988-5', id: 'lab-crp' }),
+        '2026-08-24T09:30:00+08:00',
+        JSON.stringify({ id: 'lab-crp', version: 1 }),
+      )
     for (const migration of ['0045_patient-persona.sql', '0046_consultation-turn.sql', '0047_clinical-request-kind.sql']) {
       await copyFile(join(process.cwd(), 'drizzle', migration), join(legacyMigrationDirectory, migration))
     }
     expect(applyMigrations(database, legacyMigrationDirectory).applied).toEqual(['0045_patient-persona.sql', '0046_consultation-turn.sql', '0047_clinical-request-kind.sql'])
-    expect(database.driver.prepare(`SELECT request_id, request_kind, status, version, diagnostic_report_id FROM laboratory_request WHERE case_id = 'case-legacy'`).all()).toEqual([
-      { request_id: 'laboratory-request-legacy', request_kind: 'laboratory', status: 'acknowledged', version: 5, diagnostic_report_id: 'diagnostic-report-legacy-2' },
+    expect(database.driver.prepare(`SELECT request_id, request_kind, status, version, diagnostic_report_id, service_snapshot_json FROM laboratory_request WHERE case_id = 'case-legacy' ORDER BY request_id`).all()).toEqual([
+      { request_id: 'laboratory-request-active', request_kind: 'laboratory', status: 'issued', version: 1, diagnostic_report_id: null, service_snapshot_json: JSON.stringify({ id: 'lab-crp', version: 1 }) },
+      { request_id: 'laboratory-request-legacy', request_kind: 'laboratory', status: 'acknowledged', version: 5, diagnostic_report_id: 'diagnostic-report-legacy-2', service_snapshot_json: null },
     ])
+    const insertRequest = (requestId: string, requestKind: string, catalogItemId: string) => database.driver.prepare(`INSERT INTO laboratory_request (
+      workspace_id, epoch, request_id, case_id, request_kind, catalog_item_id, indication_code,
+      service_request_id, execution_task_id, status, version, authored_by, authored_at
+    ) VALUES (?, ?, ?, 'case-legacy', ?, ?, 'fever', ?, ?, 'issued', 1, 'practitioner-legacy-doctor', ?)`)
+      .run(context.workspaceId, context.epoch, requestId, requestKind, catalogItemId, `service-request-${requestId}`, `task-${requestId}`, '2026-08-24T09:40:00+08:00')
+    expect(() => insertRequest('imaging-request-duplicate', 'imaging', 'lab-crp')).toThrow(/UNIQUE constraint failed/)
     expect(database.driver.prepare(`SELECT acknowledgement_id, request_version FROM laboratory_report_acknowledgement WHERE request_id = 'laboratory-request-legacy'`).all()).toEqual([
       { acknowledgement_id: 'acknowledgement-legacy', request_version: 5 },
     ])
@@ -1502,6 +1522,14 @@ describe('SQLite lifecycle', () => {
       { sequence: 2, speaker: 'patient', source: 'legacy-question-answer', message_text: '昨天傍晚开始。', actor_id: null, practitioner_id: null },
     ])
     expect(database.driver.prepare('SELECT version FROM consultation WHERE case_id = ?').get('case-legacy')).toEqual({ version: 3 })
+    for (const migration of ['0048_imaging-case-preparation.sql', '0049_imaging-request.sql']) {
+      await copyFile(join(process.cwd(), 'drizzle', migration), join(legacyMigrationDirectory, migration))
+    }
+    expect(applyMigrations(database, legacyMigrationDirectory).applied).toEqual(['0048_imaging-case-preparation.sql', '0049_imaging-request.sql'])
+    // 申请类型不在表上枚举：后续类型（例如病理）直接写入，不需要重建申请表和引用它的放射明细表。
+    insertRequest('pathology-request-new', 'pathology', 'pathology-breast-consultation')
+    expect(database.driver.prepare(`SELECT request_kind FROM laboratory_request WHERE request_id = 'pathology-request-new'`).get())
+      .toEqual({ request_kind: 'pathology' })
     expect(database.driver.pragma('foreign_key_check')).toEqual([])
     expect(database.driver.pragma('integrity_check', { simple: true })).toBe('ok')
     database.close()

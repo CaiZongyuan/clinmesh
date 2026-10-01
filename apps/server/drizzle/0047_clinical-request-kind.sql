@@ -9,7 +9,8 @@ CREATE TABLE laboratory_request (
   epoch TEXT NOT NULL,
   request_id TEXT NOT NULL,
   case_id TEXT NOT NULL,
-  request_kind TEXT NOT NULL CHECK (request_kind IN ('laboratory', 'imaging')),
+  -- 申请类型由各适配器校验；表上不枚举取值，追加新的申请类型无需重建本表及引用它的各类型明细表。
+  request_kind TEXT NOT NULL CHECK (length(request_kind) BETWEEN 1 AND 32),
   catalog_item_id TEXT NOT NULL,
   reference_json TEXT CHECK (reference_json IS NULL OR json_valid(reference_json)),
   result_snapshot_id TEXT,

@@ -409,27 +409,23 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         'imaging.report-request': async event => {
           const payload = laboratoryRequestPayloadSchema.parse(event.payload)
           const context = risActorContext(event)
-          let result
           try {
-            result = await imagingResults.resolveForRequest(event.workspaceId, event.epoch, payload.requestId)
+            const result = await imagingResults.resolveForRequest(event.workspaceId, event.epoch, payload.requestId)
+            workflow.imaging.report({ context, eventId: event.eventId, requestId: payload.requestId, result })
           } catch (error) {
-            if (!(error instanceof ImagingResultUnavailableError)) {
-              if (event.attempt < 3) return { status: 'retryable-failed' }
-              throw error
-            }
-            // 未准备、未覆盖或素材不可用属于确定性失败：不生成报告，医生看到统一的未取得结果。
+            // 未准备、未覆盖或素材不可用属于确定性失败，直接落为未取得结果；其他故障最多自动尝试三次，
+            // 之后同样落为未取得结果，医生可以重试或取消，申请不会停在检查中。
+            const unavailable = error instanceof ImagingResultUnavailableError
+            if (!unavailable && event.attempt < 3) return { status: 'retryable-failed' }
             workflow.imaging.fail({
               context,
-              error: {
-                code: 'IMAGING_RESULT_UNAVAILABLE',
-                message: 'The imaging result is not available for this examination',
-              },
+              error: unavailable
+                ? { code: 'IMAGING_RESULT_UNAVAILABLE', message: 'The imaging result is not available for this examination' }
+                : { code: 'IMAGING_RESULT_FAILED', message: 'The imaging result could not be produced' },
               eventId: event.eventId,
               requestId: payload.requestId,
             })
-            return { status: 'completed' }
           }
-          workflow.imaging.report({ context, eventId: event.eventId, requestId: payload.requestId, result })
           return { status: 'completed' }
         },
         'lis.process-order': async event => {

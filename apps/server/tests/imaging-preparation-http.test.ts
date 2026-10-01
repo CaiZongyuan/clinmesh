@@ -30,7 +30,11 @@ const massCt = 'synthetic-mass-ct'
 const massRadiograph = 'synthetic-mass-radiograph'
 const clearRadiograph = 'synthetic-clear-radiograph'
 
-function matchingRules(overrides: { massAssets?: Record<string, string> } = {}) {
+function matchingRules(overrides: {
+  clearAssets?: Record<string, string>
+  massAssets?: Record<string, string>
+  uncovered?: Array<{ codes: string[]; id: string; label: string }>
+} = {}) {
   return {
     codeSystem: snomed,
     profiles: [
@@ -46,7 +50,8 @@ function matchingRules(overrides: { massAssets?: Record<string, string> } = {}) 
       },
       {
         ageRange: [18, 89],
-        assets: { 'chest-radiograph': clearRadiograph },
+        assets: overrides.clearAssets ?? { 'chest-radiograph': clearRadiograph },
+        conflictProcedureCodes: [lungTransplant.code],
         finding: 'negative',
         id: 'no-nodule',
         indexConditionCodes: [acuteBronchitis.code],
@@ -56,7 +61,7 @@ function matchingRules(overrides: { massAssets?: Record<string, string> } = {}) 
     ruleVersion: 1,
     schemaVersion: 1,
     sourceExamCodes: { 'chest-ct-plain': ['16335031000119103'], 'chest-radiograph': [chestRadiographProcedure.code] },
-    uncoveredConditions: [{ codes: [pneumonia.code], id: 'pneumonia', label: '肺炎' }],
+    uncoveredConditions: overrides.uncovered ?? [{ codes: [pneumonia.code], id: 'pneumonia', label: '肺炎' }],
   }
 }
 
@@ -409,6 +414,93 @@ describe('Imaging case preparation HTTP contract', () => {
       preparation: { revision: 2 },
       started: true,
     })
+  })
+
+  it('does not treat a negative case as normal when the source has a conflicting operation or prior positive disease', async () => {
+    const { catalogDirectory, runtime } = await createRuntime([
+      caseBundle({ gender: 'female', index: [{ ...acuteBronchitis, resourceType: 'Condition' }], name: '支气管炎' }),
+      caseBundle({
+        gender: 'female',
+        history: [{ ...lungTransplant, resourceType: 'Procedure' }],
+        index: [{ ...acuteBronchitis, resourceType: 'Condition' }],
+        name: '肺移植后支气管炎',
+      }),
+      caseBundle({
+        gender: 'male',
+        history: [{ ...lungCancer, resolved: true, resourceType: 'Condition' }],
+        index: [{ ...acuteBronchitis, resourceType: 'Condition' }],
+        name: '肺癌缓解后支气管炎',
+      }),
+    ])
+    await writeSyntheticImagingCatalog(catalogDirectory, {
+      assets: [
+        syntheticCatalogAsset({ assetId: massCt, examCode: 'chest-ct-plain' }),
+        syntheticCatalogAsset({ assetId: massRadiograph, examCode: 'chest-radiograph' }),
+        syntheticCatalogAsset({ assetId: clearRadiograph, examCode: 'chest-radiograph' }),
+      ],
+      matching: matchingRules(),
+    })
+    const cookie = await signIn(runtime)
+    const [plain, transplant, remission] = [
+      await generateCase(runtime, cookie),
+      await generateCase(runtime, cookie),
+      await generateCase(runtime, cookie),
+    ]
+    const batch = await prepare(runtime, cookie)
+    const radiograph = (caseId: string) => {
+      const exam = batch.prepared.find(item => item.caseId === caseId)!.preparation!.exams
+        .find(item => item.examCode === 'chest-radiograph')!
+      return [exam.status, exam.reason, exam.evidence.facts.map(fact => `${fact.scope}:${fact.code}`)]
+    }
+
+    expect(radiograph(plain)).toEqual(['ready', undefined, [`index:${acuteBronchitis.code}`]])
+    // 肺移植史与未手术的阴性素材冲突；已缓解的肺癌史同样不能当作“未见病灶”。
+    expect(radiograph(transplant)).toEqual([
+      'conflict',
+      'FIXED_FACT_CONFLICT',
+      [`index:${acuteBronchitis.code}`, `history:${lungTransplant.code}`],
+    ])
+    expect(radiograph(remission)).toEqual([
+      'conflict',
+      'FIXED_FACT_CONFLICT',
+      [`index:${acuteBronchitis.code}`, `history:${lungCancer.code}`],
+    ])
+    expect((await preparationOf(runtime, cookie, transplant)).bindings).toEqual([])
+    expect((await preparationOf(runtime, cookie, remission)).bindings).toEqual([])
+  })
+
+  it('keeps a started case binding but appends no exam once the current rules reject the case', async () => {
+    const { catalogDirectory, runtime } = await createRuntime([
+      caseBundle({ gender: 'female', index: [{ ...acuteBronchitis, resourceType: 'Condition' }], name: '支气管炎' }),
+    ], { persona: true })
+    const assets = [
+      syntheticCatalogAsset({ assetId: massCt, examCode: 'chest-ct-plain' }),
+      syntheticCatalogAsset({ assetId: massRadiograph, examCode: 'chest-radiograph' }),
+      syntheticCatalogAsset({ assetId: clearRadiograph, examCode: 'chest-radiograph' }),
+    ]
+    await writeSyntheticImagingCatalog(catalogDirectory, { assets, matching: matchingRules() })
+    const cookie = await signIn(runtime)
+    const caseId = await generateCase(runtime, cookie)
+    await prepare(runtime, cookie)
+    await startOutpatientVisit(runtime, cookie, caseId)
+
+    // 新规则为阴性条目追加 CT，同时把病例来源中的高血压列为未覆盖疾病。
+    await writeSyntheticImagingCatalog(catalogDirectory, {
+      assets,
+      matching: matchingRules({
+        clearAssets: { 'chest-ct-plain': massCt, 'chest-radiograph': clearRadiograph },
+        uncovered: [{ codes: [hypertension.code], id: 'hypertension', label: '高血压' }],
+      }),
+    })
+    await prepare(runtime, cookie, [caseId])
+    const prepared = await preparationOf(runtime, cookie, caseId)
+    expect(prepared.bindings.map(binding => [binding.examCode, binding.assetId])).toEqual([
+      ['chest-radiograph', clearRadiograph],
+    ])
+    expect(prepared.preparation?.exams.map(exam => [exam.examCode, exam.status, exam.reason])).toEqual([
+      ['chest-ct-plain', 'unsupported', 'UNCOVERED_CONDITION'],
+      ['chest-radiograph', 'ready', undefined],
+    ])
   })
 
   it('reports an invalid catalog to the administrator without preparing cases', async () => {

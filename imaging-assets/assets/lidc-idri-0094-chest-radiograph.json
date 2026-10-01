@@ -61,11 +61,11 @@
       ],
       "review": {
         "automatedCheck": {
-          "checkVersion": 1,
+          "checkVersion": 2,
           "passed": true
         },
         "conclusion": "approved",
-        "contentSha256": "32538bffc2d6267f8d0700b395db9ce62144eb39dcaf3d03c61ad54724119b9d",
+        "contentSha256": "1aa2278aca5d853b7a3032173f996784961905278a634d0def65723c8d286654",
         "items": [
           {
             "conclusion": "confirmed",

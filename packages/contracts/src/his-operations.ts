@@ -1751,7 +1751,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: '签发当前放射申请草稿；同一服务已有进行中申请时以 IMAGING_REQUEST_DUPLICATE 拒绝',
+    summary: '签发当前放射申请草稿；本院当前未开展时以 CATALOG_CONFLICT 拒绝，同一服务已有进行中申请时以 IMAGING_REQUEST_DUPLICATE 拒绝',
     version: 1,
   },
   {
