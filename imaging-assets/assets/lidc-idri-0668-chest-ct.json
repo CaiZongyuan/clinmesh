@@ -31,6 +31,39 @@
       "findings": "双肺未见明确结节。",
       "impression": "胸部 CT 平扫未见明确肺结节。",
       "lesions": [],
+      "review": {
+        "automatedCheck": {
+          "checkVersion": 1,
+          "passed": true
+        },
+        "conclusion": "approved",
+        "contentSha256": "28228c5f19decdf7ad93e38d1dc69b8a416e3b3e76afdc26d91f98855a574771",
+        "items": [
+          {
+            "conclusion": "confirmed",
+            "item": "exam-and-orientation"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "no-identifying-content"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "findings-match-pixels"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "report-wording"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "plain-scan"
+          }
+        ],
+        "reviewedAt": "2026-10-01",
+        "reviewer": "JH",
+        "reviewerIsRadiologist": false
+      },
       "revision": 1,
       "technique": "胸部 CT 平扫，轴位，共 120 幅图像，层面间隔 2.5 mm。报告范围：肺结节相关所见。"
     }

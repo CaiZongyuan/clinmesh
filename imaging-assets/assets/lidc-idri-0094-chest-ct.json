@@ -49,6 +49,39 @@
           "side": "right"
         }
       ],
+      "review": {
+        "automatedCheck": {
+          "checkVersion": 1,
+          "passed": true
+        },
+        "conclusion": "approved",
+        "contentSha256": "34d75ccff1c1f86501a651da09b641a56883da9fc4b649698bbaabf160695f85",
+        "items": [
+          {
+            "conclusion": "confirmed",
+            "item": "exam-and-orientation"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "no-identifying-content"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "findings-match-pixels"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "report-wording"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "plain-scan"
+          }
+        ],
+        "reviewedAt": "2026-10-01",
+        "reviewer": "JH",
+        "reviewerIsRadiologist": false
+      },
       "revision": 1,
       "technique": "胸部 CT 平扫，轴位，共 385 幅图像，层面间隔 1 mm。报告范围：肺结节相关所见。"
     }

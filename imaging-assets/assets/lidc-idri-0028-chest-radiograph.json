@@ -30,6 +30,35 @@
       "findings": "双肺野未见明确结节影。",
       "impression": "胸片未见明确肺结节影。",
       "lesions": [],
+      "review": {
+        "automatedCheck": {
+          "checkVersion": 1,
+          "passed": true
+        },
+        "conclusion": "approved",
+        "contentSha256": "caf2605896ca4c068a277acb9a994c98be035d22ff92fa10e3fa8015bbf25d45",
+        "items": [
+          {
+            "conclusion": "confirmed",
+            "item": "exam-and-orientation"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "no-identifying-content"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "findings-match-pixels"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "report-wording"
+          }
+        ],
+        "reviewedAt": "2026-10-01",
+        "reviewer": "JH",
+        "reviewerIsRadiologist": false
+      },
       "revision": 1,
       "technique": "胸部正位、侧位片，共 2 幅图像。报告范围：肺结节相关所见。"
     }

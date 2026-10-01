@@ -59,6 +59,35 @@
           "side": "right"
         }
       ],
+      "review": {
+        "automatedCheck": {
+          "checkVersion": 1,
+          "passed": true
+        },
+        "conclusion": "approved",
+        "contentSha256": "32538bffc2d6267f8d0700b395db9ce62144eb39dcaf3d03c61ad54724119b9d",
+        "items": [
+          {
+            "conclusion": "confirmed",
+            "item": "exam-and-orientation"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "no-identifying-content"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "findings-match-pixels"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "report-wording"
+          }
+        ],
+        "reviewedAt": "2026-10-01",
+        "reviewer": "JH",
+        "reviewerIsRadiologist": false
+      },
       "revision": 1,
       "technique": "胸部正位片，共 1 幅图像。报告范围：肺结节相关所见。"
     }
