@@ -1,5 +1,6 @@
 import dcmjs from 'dcmjs'
 import { z } from 'zod'
+import { ImagingAssetError } from './imaging-pack-store.ts'
 
 // dcmjs 对隐式 VR 中的多义 VR 逐实例打印提示；解析失败会抛出异常，不依赖日志。
 dcmjs.log.level = 'silent'
@@ -7,36 +8,6 @@ dcmjs.log.level = 'silent'
 export type ImagingExamCode = 'chest-ct-plain' | 'chest-radiograph'
 export type ImagingModality = 'CR' | 'CT' | 'DX'
 export type PatientDirection = 'A' | 'F' | 'H' | 'L' | 'P' | 'R'
-
-export type ImagingAssetErrorCode =
-  | 'IMAGING_ANNOTATION_INVALID'
-  | 'IMAGING_ASSET_UNRECORDED'
-  | 'IMAGING_BURNED_IN_ANNOTATION'
-  | 'IMAGING_CONTRAST_NOT_ALLOWED'
-  | 'IMAGING_COVERAGE_INSUFFICIENT'
-  | 'IMAGING_DICOM_INVALID'
-  | 'IMAGING_MODALITY_MISMATCH'
-  | 'IMAGING_ORIENTATION_UNSUPPORTED'
-  | 'IMAGING_OUTPUT_HASH_MISMATCH'
-  | 'IMAGING_PIXEL_FORMAT_UNSUPPORTED'
-  | 'IMAGING_REVIEW_REJECTED'
-  | 'IMAGING_SERIES_INCONSISTENT'
-  | 'IMAGING_SERIES_NONCONTIGUOUS'
-  | 'IMAGING_SOURCE_HASH_MISMATCH'
-  | 'IMAGING_SOURCE_MISSING'
-  | 'IMAGING_SOURCE_UID_MISMATCH'
-  | 'IMAGING_SOURCE_UNAVAILABLE'
-  | 'IMAGING_TRANSFER_SYNTAX_UNSUPPORTED'
-
-export class ImagingAssetError extends Error {
-  readonly code: ImagingAssetErrorCode
-
-  constructor(code: ImagingAssetErrorCode, message: string) {
-    super(message)
-    this.name = 'ImagingAssetError'
-    this.code = code
-  }
-}
 
 /** 转码规则版本；规则变化会改变输出字节，必须递增并重新登记输出哈希。 */
 export const imagingTranscoderVersion = 1

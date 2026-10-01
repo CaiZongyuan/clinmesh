@@ -14,8 +14,8 @@ import {
   reviewImagingAssets,
   syncImagingAssets,
   verifyImagingAssets,
-  type ImagingSourceClient,
 } from './infrastructure/imaging-assets/imaging-asset-store.ts'
+import type { ImagingSourceClient } from './infrastructure/imaging-assets/imaging-pack-store.ts'
 import { createTciaNbiaSourceClient } from './infrastructure/imaging-assets/tcia-nbia-client.ts'
 
 const commandSchema = z.enum(['annotate', 'check', 'record', 'repair', 'review', 'sync', 'verify'])

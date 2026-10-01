@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
 import { XMLParser } from 'fast-xml-parser'
 import { z } from 'zod'
-import { ImagingAssetError, type SeriesGeometry } from './dicom-canonical.ts'
+import type { SeriesGeometry } from './dicom-canonical.ts'
 import type { ImagingAnnotation } from './imaging-catalog.ts'
+import { ImagingAssetError } from './imaging-pack-store.ts'
 
 const pointSchema = z.object({ xCoord: z.coerce.number(), yCoord: z.coerce.number() })
 /** 没有子元素的 XML 元素被解析成空字符串，按空对象处理。 */

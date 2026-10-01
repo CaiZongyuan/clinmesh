@@ -11,8 +11,8 @@ import {
   repairImagingAssets,
   syncImagingAssets,
   verifyImagingAssets,
-  type ImagingSourceClient,
 } from '../src/infrastructure/imaging-assets/imaging-asset-store.ts'
+import type { ImagingSourceClient } from '../src/infrastructure/imaging-assets/imaging-pack-store.ts'
 import {
   jpegBaseline,
   syntheticCtSlice,

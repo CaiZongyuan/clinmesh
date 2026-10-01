@@ -1,7 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
-import type { ImagingSourceClient } from './imaging-asset-store.ts'
-import { dicomUidSchema } from './imaging-catalog.ts'
+import { dicomUidSchema, type ImagingSourceClient } from './imaging-pack-store.ts'
 
 const defaultBaseUrl = 'https://services.cancerimagingarchive.net/nbia-api/services/v1'
 const instanceListSchema = z.array(z.object({ SOPInstanceUID: dicomUidSchema }))

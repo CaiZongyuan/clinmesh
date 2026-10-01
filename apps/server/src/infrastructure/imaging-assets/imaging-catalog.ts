@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto'
-import { readdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { readdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { dicomUidSchema } from './imaging-pack-store.ts'
 
 const identifierSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,127}$/)
-export const dicomUidSchema = z.string().regex(/^[0-9]+(\.[0-9]+)*$/).max(64)
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
 const directionSchema = z.enum(['A', 'F', 'H', 'L', 'P', 'R'])
 
@@ -288,40 +288,6 @@ export async function loadImagingCatalog(catalogDirectory: string): Promise<Imag
     }
   })
   return matching === undefined ? { assets, manifest } : { assets, manifest, matching }
-}
-
-/**
- * 清单文件的变化指纹：各文件的 inode、大小与修改时间。读取方据此判断缓存的清单是否仍然有效；
- * 清单目录或 `manifest.json`、`assets/` 不存在时以 ENOENT 抛出，与 `loadImagingCatalog` 一致。
- */
-export async function imagingCatalogFingerprint(catalogDirectory: string): Promise<string> {
-  const listed = async (directory: string, extension: string, required: boolean) => {
-    try {
-      return (await readdir(join(catalogDirectory, directory)))
-        .filter(file => file.endsWith(extension))
-        .toSorted()
-        .map(file => join(directory, file))
-    } catch (error) {
-      if (!required && isMissingFile(error)) return []
-      throw error
-    }
-  }
-  const paths = [
-    'manifest.json',
-    'matching.json',
-    ...await listed('assets', '.json', true),
-    ...await listed('prompts', '.md', false),
-  ]
-  const stats = await Promise.all(paths.map(async (path) => {
-    try {
-      const { ctimeNs, ino, mtimeNs, size } = await stat(join(catalogDirectory, path), { bigint: true })
-      return `${path}:${ino}:${size}:${mtimeNs}:${ctimeNs}`
-    } catch (error) {
-      if (path !== 'manifest.json' && isMissingFile(error)) return `${path}:-`
-      throw error
-    }
-  }))
-  return stats.join('\n')
 }
 
 /** 以临时文件加改名写回单个素材条目，避免中断留下半个 JSON；读取时附带的复核签署范围不写回。 */
