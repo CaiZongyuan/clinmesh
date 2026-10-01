@@ -139,6 +139,7 @@ pnpm --filter @clinmesh/dsh-web build
 ## 文档与决策
 
 - [部署指南](docs/deployment.md)：从 clone 到完整运行的顺序步骤。
+- [影像检查使用指南](docs/imaging.md)：胸片与胸部 CT 阅片闭环的用法与状态说明。
 - [系统架构](docs/architecture.md)
 - [跨端前端架构](docs/frontend-architecture.md)
 - [Web Demo 运行与部署架构](docs/demo-architecture.md)
