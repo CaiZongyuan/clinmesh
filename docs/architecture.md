@@ -793,7 +793,7 @@ Agent 高风险 command 不使用 `--yes` 作为授权；operation 必须在单�
 
 ### 7.11 Agent Skills
 
-仓库提供七个 model-invoked Skills：`clinmesh-shared`、`clinmesh-registration`、`clinmesh-triage`、`clinmesh-doctor`、`clinmesh-billing`、`clinmesh-pharmacy` 和 `clinmesh-fhir`。`clinmesh-shared` 拥有 context、Catalog discovery、幂等、结构化错误和 ambiguous receipt 恢复；领域 Skills 只说明意图路由、前置状态、岗位交接、风险和反例，并在执行前读取 shared Skill。
+仓库在根 [`skills/`](../skills) 提供八个 model-invoked 运行时 Skills：`clinmesh-shared`、`clinmesh-administrator`、`clinmesh-registration`、`clinmesh-triage`、`clinmesh-doctor`、`clinmesh-billing`、`clinmesh-pharmacy` 和 `clinmesh-fhir`，供项目启动后操作 HIS 的 Agent 使用。`clinmesh-shared` 拥有 context、Catalog discovery、幂等、结构化错误和 ambiguous receipt 恢复；领域 Skills 只说明意图路由、前置状态、岗位交接、风险和反例，并在执行前读取 shared Skill。
 
 Skills 不复制 flags、输入 schema 或完整命令目录，Agent 对不熟悉的 operation 使用 `operations schema` 读取当前合同。临床 Skills 不包含 Agent Client/Grant 控制面。测试收集每个 bash 示例并要求其命令路径存在于真实 Catalog 或共享 CLI manifest，从而让命令重命名和文档漂移直接失败。
 

@@ -17,8 +17,9 @@ apps/mobile/.expo/
 apps/mobile/ios/
 apps/mobile/android/
 .playwright-mcp/
+playwright-report/
+test-results/
 .prototypes/
-.claude/
 apps/dsh-web/src/client/styles.generated.ts
 apps/dsh-web/lib/
 .worktrees/

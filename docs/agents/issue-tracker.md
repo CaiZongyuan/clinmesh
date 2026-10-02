@@ -1,6 +1,6 @@
 # GitHub issue tracker
 
-ClinMesh 的 spec 和 tickets 使用公开仓库 `CaiZongyuan/clinmesh` 的 GitHub Issues，并通过 `gh` CLI 读写。
+任务选择使用 spec 或 tickets 时，使用公开仓库 `CaiZongyuan/clinmesh` 的 GitHub Issues，并通过 `gh` CLI 读写。普通本地任务可以直接以用户请求作为目标和验收依据。
 
 ## Ownership
 

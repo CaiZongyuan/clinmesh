@@ -14,7 +14,7 @@ import type {
   ScenarioGenerationRequest,
   SyntheticPatientProfile,
 } from '@clinmesh/contracts/scenario'
-import { agentToolsForContext } from '@clinmesh/contracts/agent'
+import { agentToolResultRequestSchema, agentToolsForContext } from '@clinmesh/contracts/agent'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -3189,8 +3189,12 @@ describe('role workspaces', () => {
       version: 4,
     }
     const requests: Array<{ body: unknown; path: string }> = []
+    const toolResults: Array<{ ok: boolean; result?: unknown }> = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/agent/v1/tool-calls/result') {
+        toolResults.push(agentToolResultRequestSchema.parse(JSON.parse(String(init?.body))))
+      }
       const agentResponse = doctorSurfaceAgentResponse(path, init)
       if (agentResponse !== undefined) return agentResponse
       if (init?.method === 'POST') requests.push({ body: JSON.parse(String(init.body)), path })
@@ -3235,6 +3239,9 @@ describe('role workspaces', () => {
       // 影像尚未在人类面前显示：已阅提案被拒绝，Agent 读到的页面状态不含像素。
       await expect(act(() => execute('clinmesh_prepare_acknowledge_report', { requestId: 'imaging-request-1' })))
         .rejects.toThrow('have not been displayed')
+      const previousContextId = boundAgentToolInput(
+        registration!.tools.find(tool => tool.name === 'clinmesh_read_current_context')!, {},
+      ).contextId
       let opened = ''
       await act(async () => {
         opened = await execute('clinmesh_select_doctor_section', { imagingRequestId: 'imaging-request-1', section: 'laboratory' })
@@ -3246,24 +3253,30 @@ describe('role workspaces', () => {
       await waitFor(() => expect(
         (screen.getByRole('button', { name: '确认已阅' }) as HTMLButtonElement).disabled,
       ).toBe(false))
+      await waitFor(() => {
+        const contextTool = registration?.tools.find(tool => tool.name === 'clinmesh_read_current_context')
+        expect(contextTool).toBeDefined()
+        expect(boundAgentToolInput(contextTool!, {}).contextId).not.toBe(previousContextId)
+      })
+      const context = JSON.parse(await execute('clinmesh_read_current_context'))
+      expect(context.data.pageState.section).toBe('laboratory')
 
-      let proposal: Promise<string> | undefined
+      let proposal = ''
       await act(async () => {
-        proposal = execute('clinmesh_prepare_acknowledge_report', { requestId: 'imaging-request-1' })
-        proposal.catch(() => undefined)
+        proposal = await execute('clinmesh_prepare_acknowledge_report', { requestId: 'imaging-request-1' })
       })
-      const review = await waitFor(() => {
-        const element = document.querySelector('[data-agent-review]')
-        expect(element).not.toBeNull()
-        return element as HTMLElement
+      expect(JSON.parse(proposal)).toMatchObject({
+        ok: true,
+        data: { proposalId: 'doctor-proposal-1', status: 'awaiting-human-review' },
       })
+      const review = await screen.findByRole('alertdialog', { name: '确认已阅放射报告' })
       expect(requests.some(request => request.path.endsWith('/actions/acknowledge'))).toBe(false)
       await userEvent.setup().click(within(review).getByRole('button', { name: '确认已阅' }))
-      await act(async () => { await proposal })
-      expect(requests.find(request => request.path.endsWith('/actions/acknowledge'))).toEqual({
+      await waitFor(() => expect(requests.find(request => request.path.endsWith('/actions/acknowledge'))).toEqual({
         body: { expectedVersions: { 'DiagnosticReport/imaging-report-1': '1' }, input: { expectedRequestVersion: 4 } },
         path: '/api/his/v1/imaging-requests/imaging-request-1/reports/imaging-report-1/actions/acknowledge',
-      })
+      }))
+      await waitFor(() => expect(toolResults.at(-1)).toMatchObject({ ok: true, result: { approved: true } }))
     } finally {
       view.unmount()
     }

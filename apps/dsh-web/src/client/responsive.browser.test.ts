@@ -1,12 +1,11 @@
 import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
-import { expect, it } from 'vitest'
+import { expect, test } from '@playwright/test'
 import { z } from 'zod'
-import { chromium } from 'playwright-core'
-import { findChrome } from '../../../../scripts/headless-browser.ts'
+import { readJsonFromBrowser } from '../../../../scripts/browser-contract.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
 
-it('adapts navigation to the Surface width and retains edits across resize', async () => {
+test('adapts navigation to the Surface width and retains edits across resize', async ({ page }) => {
   const result = await build({
     configFile: false,
     logLevel: 'silent',
@@ -27,18 +26,10 @@ it('adapts navigation to the Surface width and retains edits across resize', asy
   const script = output.find((entry) => entry.type === 'chunk')
   if (!script || script.type !== 'chunk') throw new Error('Missing browser fixture')
   const styles = await buildSurfaceStyles()
-  const browser = await chromium.launch({ executablePath: findChrome(), headless: true })
-  let response: unknown
-  try {
-    const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
-    await page.setContent(
-      `<!doctype html><html><head><style data-fixture>${styles}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`,
-    )
-    await page.waitForFunction(() => document.title !== '')
-    response = JSON.parse(Buffer.from(await page.title(), 'base64').toString('utf8'))
-  } finally {
-    await browser.close()
-  }
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const response = await readJsonFromBrowser(page,
+    `<!doctype html><html><head><style data-fixture>${styles}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`,
+  )
   const failure = z.object({ error: z.string() }).safeParse(response)
   if (failure.success) throw new Error(failure.data.error)
   const actual = z
@@ -71,4 +62,4 @@ it('adapts navigation to the Surface width and retains edits across resize', asy
   }
   expect(actual.catalogWidth).toBeGreaterThan(1000)
   expect(actual.navigationVisible).toBe(true)
-}, 30_000)
+})

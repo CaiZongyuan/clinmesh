@@ -6,13 +6,13 @@ Status: implemented
 
 门诊医生工作台同时承载候诊队列、Virtual Patient 直达接诊、Consultation Record、结构化 Clinical Document、独立诊断、处方或无需用药、检验申请与报告确认、Encounter Completion、已完诊病例和受控纠错。生产 Web 需要在高密度桌面工作面中稳定呈现这些 owner，而不能把 Query、Command、版本、局部草稿和视觉组合继续集中在单个浅页面中。
 
-`/ui-dev` 医生工作台验证了“全局导航、统一候诊栏、患者横幅、中央业务页签、固定右栏”的信息架构，但只包含 mock 数据和本地交互。[普通门诊发热 Web 交互原型](../../proposed/feature/2026-08-21-outpatient-fever-web-prototype.md)禁止把原型状态机和无来源字段迁入生产页面。
+工作台的信息架构包含全局导航、统一候诊栏、患者横幅、中央业务页签和病例上下文栏；设计预览中的 mock 状态和无来源字段不能成为生产行为。
 
 生产 UI 必须保持[医生核心临床业务流](../feature/2026-08-24-doctor-clinical-core-workflow.md)、[结构化临床文书独立生命周期](../feature/2026-08-25-structured-clinical-document-lifecycle.md)、[独立诊断生命周期](../feature/2026-08-25-independent-encounter-diagnosis-lifecycle.md)、[独立处方与用药结论生命周期](../feature/2026-08-25-independent-prescription-and-medication-conclusion-lifecycle.md)、[检验报告确认与不可变修订](../feature/2026-08-25-laboratory-report-acknowledgement-and-revision.md)和 [Encounter 完诊门禁](../feature/2026-08-25-encounter-completion-policy.md)拥有的业务事实。
 
 ## Decision
 
-本决策由 [issue #65](https://github.com/CaiZongyuan/clinmesh/issues/65) 实施。医生工作台保持在 `apps/web`，复用 `@clinmesh/ui` primitive，不提前提升到 `packages/views`。`/ui-dev` 继续作为隔离视觉参考，生产入口不读取其 mock 数据。
+本决策由 [issue #65](https://github.com/CaiZongyuan/clinmesh/issues/65) 实施。医生工作台保持在 `apps/web`，复用 `@clinmesh/ui` primitive，不提前提升到 `packages/views`。预览入口的保留方式由[任务级交互预览](../process/2026-10-02-task-scoped-interactive-preview.md)取代；生产入口只消费真实业务合同。
 
 宽屏工作台使用全局岗位导航、统一候诊栏、当前病例主区和病例上下文右栏。候诊栏以 tab 区分真实候诊病例与 Virtual Patient 候选；有候诊病例时默认候诊队列，队列为空时默认候选患者。患者横幅固定在业务页签上方，只展示 Doctor Case 已有的身份、主诉、分诊、过敏、生命体征、Encounter 与只读状态。
 
@@ -46,7 +46,7 @@ DoctorWorkspace
 | 处方 | 选择药品产品、编辑剂量/频次/疗程/数量、自动保存草稿、正式开具、无需用药和受控撤回 |
 | 已完诊病例 | 展示只读正式事实、统一时间线和服务端声明允许的纠错导航 |
 
-药品 picker 按通用名、规格、剂型、生产企业和批准文号组成临床产品组。组内包装变体保留独立产品 ID、停用状态和“已加入”状态；一行内的包装下拉与默认选择遵循[药品选择反馈决策](../feature/2026-09-14-laboratory-evidence-and-medication-picker.md)，页面不自动加入处方项。产品选择后，处方编辑器使用与 `/ui-dev` 相同的紧凑行结构，但不显示 Contract 未拥有的给药途径、费用、库存或药房状态。
+药品 picker 按通用名、规格、剂型、生产企业和批准文号组成临床产品组。组内包装变体保留独立产品 ID、停用状态和“已加入”状态；一行内的包装下拉与默认选择遵循[药品选择反馈决策](../feature/2026-09-14-laboratory-evidence-and-medication-picker.md)，页面不自动加入处方项。产品选择后，处方编辑器使用紧凑行结构，不显示 Contract 未拥有的给药途径、费用、库存或药房状态。
 
 检验页统一使用“检验”术语。内容容器达到 672px 时显示申请/结果双栏，窄容器纵向排列；选择器读取已发布 Hospital Laboratory Service，正式申请、报告和纠错继续由 `LaboratoryRequest` owner 驱动。Doctor Case 仍没有影像检查读模型、报告和纠错规则，因此生产导航不显示独立“检查”页。
 
@@ -69,7 +69,7 @@ DoctorWorkspace
 
 ## Alternatives considered
 
-**直接把 `/ui-dev` 组件接入真实 DTO。** 视觉交付更快，但会把 mock 状态、无来源字段、自由输入问诊和静态 AI 文案伪装成生产能力。
+**直接把 mock 预览组件接入真实 DTO。** 视觉交付更快，但会把 mock 状态、无来源字段、自由输入问诊和静态 AI 文案伪装成生产能力。
 
 **只在原 `doctor-workspace.tsx` 中替换 class 和布局。** 改动较小，但 Query、Command、业务页和视觉组合继续耦合，无法形成 controller 与 owner page 边界。
 

@@ -1,6 +1,6 @@
 # AGENTS.md — Documentation
 
-本文规定 `docs/` 的内容归属、写作方式和发布检查。写作、移动或审计文档时使用 `dsh-doc-standards` 和 `dsh-prose-standard`；改变公开投影时同时使用 `dsh-doc-site-sync`；清理 authoring-session 视角时使用 `dsh-trim-cot-leakage`。Agent Note 使用独立规则，见 [`.agents/notes/README.md`](../.agents/notes/README.md)。
+本文规定 `docs/` 的内容归属、写作方式和发布检查。编写 skills 或 Agent 指令时使用 `writing-for-agents`；普通文档直接遵循本文。Agent Note 使用独立规则，见 [`.agents/notes/README.md`](../.agents/notes/README.md)。
 
 ## Content tiers
 
@@ -25,14 +25,17 @@
 - 一个事实只有一个详细归属位置；其他文档用相对链接引用。
 - Tutorial 必须从前置条件走到可观察结果；reference 必须明确查询范围，不强迫顺序阅读。
 - 保留行为、失败、时序、所有权、安全限制和例外；删除代码复述、空泛形容和推理过程。
+- 修改前核对 owning 文档和实现，保留主体、条件、动作、结果与非显然理由。读者应能从当前仓库理解每个引用和结论。
 - 一个自然段使用一条物理行。代码块、表格和列表按 Markdown 结构换行。
 - 仓库相对链接必须指向实际文件。`references/` 不进入版本库或文档站，因此公开文档只能将其作为代码路径提及，不能建立依赖该目录的链接。
 - 公开页面由 `apps/docs/docs.ts` 显式允许；不要编辑 `apps/docs/.generated`。
 - 公开页面移动时，同时更新 manifest 和入站链接。
 
+公开文档的源文件、manifest 和生成投影约定见 [文档发布](agent-development.md#文档发布)。
+
 ## Verification
 
-文档变更至少运行：
+文档变更运行以下检查；`pnpm doc-sync` 已包含这些检查时不重复运行：
 
 ```sh
 pnpm verify:docs
