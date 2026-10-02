@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -429,6 +429,21 @@ describe('imaging asset pipeline', () => {
     await mkdir(join(assetDirectory, '.staging', 'killed-run'), { recursive: true })
     await syncImagingAssets({ assetDirectory, catalogDirectory, sourceClient: sourceClient(series) })
     expect((await listTree(assetDirectory)).filter(path => /^\.staging\/./.test(path))).toEqual([])
+
+    // 替换安装时进程在两次改名之间中断：旧版本已移开、新版本未就位。下次维护命令先放回旧版本，不丢失可用安装。
+    await mkdir(join(assetDirectory, '.replaced', 'installed'), { recursive: true })
+    await rename(
+      join(assetDirectory, 'installed', 'synthetic-radiograph'),
+      join(assetDirectory, '.replaced', 'installed', 'synthetic-radiograph@killed-run'),
+    )
+    await repairImagingAssets({ assetDirectory, catalogDirectory, assetIds: ['synthetic-ct'] })
+    expect((await listTree(assetDirectory)).filter(path => /^\.replaced\/[^/]+\/./.test(path))).toEqual([])
+    expect(await verifyImagingAssets({ assetDirectory, catalogDirectory })).toEqual({
+      assets: [
+        { assetId: 'synthetic-ct', status: 'ready' },
+        { assetId: 'synthetic-radiograph', status: 'ready' },
+      ],
+    })
   })
 
   it('treats a corrupt installed geometry as unavailable and reflects repair without a new library', async () => {

@@ -26,7 +26,7 @@ export class ImagingPackLibrary<Asset extends ImagingPackAsset, Catalog extends 
   readonly #assetDirectory: string | undefined
   readonly #catalogDirectory: string | undefined
   #catalog: { catalog: Catalog; fingerprint: string } | undefined
-  readonly #opened = new Map<string, { fingerprint: string; opened: Opened; output: unknown }>()
+  readonly #opened = new Map<string, { fingerprint: string; opened: Promise<Opened | undefined>; output: unknown }>()
 
   constructor(input: {
     adapter: ImagingIngestAdapter<Asset, Catalog, Opened>
@@ -74,23 +74,31 @@ export class ImagingPackLibrary<Asset extends ImagingPackAsset, Catalog extends 
       && await imagingPackAssetVerified({ adapter: this.#adapter, asset, assetDirectory: this.#assetDirectory })
   }
 
-  /** 打开一个已安装素材；未安装、安装与清单不一致或文件损坏时返回 undefined。 */
+  /**
+   * 打开一个已安装素材；未安装、安装与清单不一致或文件哈希不符时返回 undefined。
+   * 逐字节核对每个安装指纹只做一次：文件被改动（包括大小不变的改写）会改变指纹并重新核对。
+   */
   async open(asset: Asset): Promise<Opened | undefined> {
     if (this.#assetDirectory === undefined || asset.output === undefined) return undefined
     const input = { adapter: this.#adapter, asset, assetDirectory: this.#assetDirectory }
     const fingerprint = await installedImagingPackFingerprint(input)
     const cached = this.#opened.get(asset.assetId)
     if (cached !== undefined && cached.fingerprint === fingerprint && isDeepStrictEqual(cached.output, asset.output)) {
-      return cached.opened
+      return await cached.opened
     }
     this.#opened.delete(asset.assetId)
-    if (fingerprint === undefined || !await imagingPackAssetInstalled(input)) return undefined
-    const opened = await this.#adapter.open(
-      join(this.#assetDirectory, 'installed', asset.assetId),
-      asset.output as NonNullable<Asset['output']>,
-    )
-    if (opened === undefined) return undefined
+    if (fingerprint === undefined) return undefined
+    // 缓存进行中的核对，并发的像素块请求共用同一次逐字节核对；核对失败的结果同样按指纹缓存，修复后指纹变化再重新核对。
+    const directory = join(this.#assetDirectory, 'installed', asset.assetId)
+    const output = asset.output as NonNullable<Asset['output']>
+    const opened = imagingPackAssetVerified(input)
+      .then(verified => verified ? this.#adapter.open(directory, output) : undefined)
     this.#opened.set(asset.assetId, { fingerprint, opened, output: asset.output })
-    return opened
+    try {
+      return await opened
+    } catch (error) {
+      if (this.#opened.get(asset.assetId)?.opened === opened) this.#opened.delete(asset.assetId)
+      throw error
+    }
   }
 }

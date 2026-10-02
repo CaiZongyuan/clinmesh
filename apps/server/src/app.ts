@@ -1956,21 +1956,20 @@ export function createApp(options: CreateAppOptions = {}): Hono {
               context.req.path,
             )
             const requestId = context.req.param('requestId')
-            let result
-            try {
-              result = await results.resolveCorrection(
-                administrator.workspaceId,
-                administrator.epoch,
-                requestId,
-                body.input.reportRevision,
-              )
-            } catch (error) {
-              if (!(error instanceof ImagingResultUnavailableError)) throw error
-              throw new WorkflowError(
-                'WORKFLOW_CONFLICT',
-                'The correction must use a reviewed report revision of the same imaging asset',
-              )
-            }
+            // 解析失败不在这里抛出：命令先按幂等键返回已提交的回执，只有真正执行时才使用解析结果。
+            const resolution = await results.resolveCorrection(
+              administrator.workspaceId,
+              administrator.epoch,
+              requestId,
+              body.input.reportRevision,
+            ).then(result => ({ result }), (error: unknown) => ({
+              error: error instanceof ImagingResultUnavailableError
+                ? new WorkflowError(
+                    'WORKFLOW_CONFLICT',
+                    'The correction must use a reviewed report revision of the same imaging asset',
+                  )
+                : error,
+            }))
             return context.json(workflow.imaging.correct({
               // 更正由管理员发起，以放射系统执行者的身份签发，与检验更正一致。
               context: { ...administrator, roleCode: 'ris-system' },
@@ -1979,8 +1978,9 @@ export function createApp(options: CreateAppOptions = {}): Hono {
               expectedVersions: body.expectedVersions,
               idempotencyKey: idempotencyKey(context),
               reason: body.input.reason,
+              reportRevision: body.input.reportRevision,
               requestId,
-              result,
+              resolution,
             }))
           } catch (error) {
             return apiErrorResponse(context, error)

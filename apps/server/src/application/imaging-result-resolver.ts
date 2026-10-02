@@ -95,12 +95,12 @@ export class ImagingResultResolver {
     return this.#result(await this.#asset(study.assetId, study.assetOutput), reportRevision)
   }
 
-  /** 一次已发布检查的像素当前是否可读；确认已阅前要求可读。 */
+  /** 一次已发布检查的像素当前是否可读且与清单哈希一致；确认已阅前要求可读。 */
   async studyAvailable(workspaceId: string, epoch: string, requestId: string): Promise<boolean> {
     const study = this.#study(workspaceId, epoch, requestId)
     if (study === undefined) return false
     try {
-      return await this.#library.installed(await this.#asset(study.assetId, study.assetOutput))
+      return await this.#library.open(await this.#asset(study.assetId, study.assetOutput)) !== undefined
     } catch (error) {
       if (error instanceof ImagingResultUnavailableError) return false
       throw error

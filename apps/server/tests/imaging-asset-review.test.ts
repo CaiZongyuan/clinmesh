@@ -365,6 +365,11 @@ describe('imaging report consistency check', () => {
     },
     {
       code: 'REPORT_COUNT_MISMATCH',
+      name: 'the text states fewer lesions than are declared',
+      patch: { impression: '双肺单发实性结节，长径约 21 mm。' },
+    },
+    {
+      code: 'REPORT_COUNT_MISMATCH',
       name: 'the text calls a single declared lesion multiple',
       patch: { impression: '右肺多发实性结节，长径约 21 mm。左肺微小结节，建议随访。' },
     },
