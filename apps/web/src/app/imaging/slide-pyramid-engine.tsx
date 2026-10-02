@@ -22,12 +22,9 @@ interface PyramidTilePosition {
   row: number
 }
 
-/**
- * 同一阅片器（主视图与导航小图合计）同时进行的瓦片请求上限；超出的请求排队。
- * 暂定值：standalone Web 与 DSH 通道的瓦片吞吐实测后写入性能合同（#142）。
- */
+/** 同一阅片器（主视图与导航小图合计）同时进行的瓦片请求上限；超出的请求排队。 */
 const maxParallelTileRequests = 6
-/** 主视图已解码瓦片的缓存预算，按最大瓦片的 RGBA 字节数折算为条目数；暂定值，同上。 */
+/** 主视图已解码瓦片的缓存预算，按最大瓦片的 RGBA 字节数折算为条目数。 */
 const decodedTileCacheBudgetBytes = 64 * 1024 * 1024
 
 /**
