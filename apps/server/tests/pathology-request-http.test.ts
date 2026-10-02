@@ -523,6 +523,69 @@ describe('Pathology consultation request HTTP contract', () => {
     expect(pathologyRequestActionResponseSchema.parse(await cancelled.json()).data.request.status).toBe('cancelled')
   })
 
+  it('ends a consultation that keeps failing for other reasons as generation-failed after three attempts', async () => {
+    const visit = await consultation({ name: '乳腺随访' })
+    const { doctor, outpatientCaseId, pathologyCatalogDirectory, runtime } = visit
+    const request = await order(visit)
+    // 清单在执行期间损坏：不是“该病例没有相符切片”，按暂时故障自动重试，三次后仍失败则落为未取得结果。
+    const matchingPath = join(pathologyCatalogDirectory, 'matching.json')
+    const matchingText = await readFile(matchingPath, 'utf8')
+    await writeFile(matchingPath, '{')
+    expect(await dispatchAll(runtime)).toEqual([
+      'pathology.accept-request:completed',
+      'pathology.start-request:completed',
+      'pathology.report-request:failed',
+      'pathology.report-request:failed',
+      'pathology.report-request:completed',
+    ])
+    const failed = (await caseDetail(runtime, doctor, outpatientCaseId)).pathologyRequests!.requests[0]!
+    expect(failed).toMatchObject({
+      generationError: { code: 'PATHOLOGY_RESULT_FAILED' },
+      id: request.id,
+      status: 'generation-failed',
+    })
+    expect(failed.report).toBeUndefined()
+
+    // 检验的取消、放射的取消与重试作用于可重试、可取消的病理申请时同样返回稳定冲突，申请不变。
+    const versions = {
+      expectedVersions: {
+        [`ServiceRequest/${failed.serviceRequestId}`]: failed.serviceRequestVersion,
+        [`Task/${failed.taskId}`]: failed.taskVersion,
+      },
+    }
+    const imagingRetry = await runtime.app.request(
+      `/api/his/v1/imaging-requests/${request.id}/actions/retry`,
+      mutation(doctor, { ...versions, input: { expectedRequestVersion: failed.version } }),
+    )
+    expect(imagingRetry.status).toBe(409)
+    for (const kind of ['laboratory', 'imaging']) {
+      const cancel = await runtime.app.request(
+        `/api/his/v1/${kind}-requests/${request.id}/actions/cancel`,
+        mutation(doctor, { ...versions, input: { expectedRequestVersion: failed.version, reasonCode: 'no-longer-needed' } }),
+      )
+      expect(cancel.status, kind).toBe(409)
+    }
+    expect((await caseDetail(runtime, doctor, outpatientCaseId)).pathologyRequests!.requests[0]).toEqual(failed)
+
+    await writeFile(matchingPath, matchingText)
+    const retried = await runtime.app.request(
+      `/api/his/v1/pathology-requests/${request.id}/actions/retry`,
+      mutation(doctor, {
+        expectedVersions: {
+          [`ServiceRequest/${failed.serviceRequestId}`]: failed.serviceRequestVersion,
+          [`Task/${failed.taskId}`]: failed.taskVersion,
+        },
+        input: { expectedRequestVersion: failed.version },
+      }),
+    )
+    expect(retried.status).toBe(200)
+    await dispatchAll(runtime)
+    expect((await caseDetail(runtime, doctor, outpatientCaseId)).pathologyRequests!.requests[0]).toMatchObject({
+      id: request.id,
+      status: 'reported',
+    })
+  })
+
   it('cancels an issued consultation before the slide is received and ignores the late acceptance', async () => {
     const visit = await consultation({ name: '乳腺随访' })
     const { doctor, outpatientCaseId, runtime } = visit

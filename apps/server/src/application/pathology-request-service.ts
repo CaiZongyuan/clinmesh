@@ -252,9 +252,11 @@ export class PathologyRequestService {
 
   /**
    * 阅片读取的授权：当前 Workspace/Epoch 内已发布且未取消的病理检查，执行者是门诊医生并且是该病例的责任医生。
-   * 不是病理检查时返回 undefined，交给其他影像来源判断；岗位或责任不符时抛出权限错误。
+   * 岗位不符时抛出权限错误；不是病理检查时返回 undefined，交给其他影像来源判断；责任不符时抛出权限错误。
    */
   studyAccess(context: ActorContext, studyId: string) {
+    // 先校验岗位：其他岗位对存在与不存在的检查得到相同的拒绝。
+    assertRole(context, ['outpatient-doctor'])
     const study = z.object({
       asset_id: z.string().min(1),
       asset_output_json: z.string().min(1),
@@ -271,7 +273,6 @@ export class PathologyRequestService {
         AND request.status IN ('reported', 'acknowledged')
     `).get(context.workspaceId, context.epoch, studyId))
     if (study === undefined) return undefined
-    assertRole(context, ['outpatient-doctor'])
     this.#host.assertCaseResponsibility(context, study.case_id)
     return {
       assetId: study.asset_id,
