@@ -1,7 +1,7 @@
 import { createContext, useContext, type ReactNode, type RefObject } from 'react'
 import type { DoctorCaseDetail, EncounterCompletionPreview } from '@clinmesh/contracts/his'
 import type { WebPreferences } from './preferences.ts'
-import type { DoctorCaseSection } from './doctor/case-context-rail.tsx'
+import type { DoctorCaseSection } from '@clinmesh/contracts/agent'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
 /** Local presentation and actions; the application retains session and route ownership. */

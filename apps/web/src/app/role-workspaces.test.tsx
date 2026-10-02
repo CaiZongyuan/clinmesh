@@ -311,8 +311,11 @@ function doctorSurfaceAgentResponse(
           practitionerRoleId: doctorSession.actor.practitionerRoleId,
           roleCode: doctorSession.actor.roleCode,
         },
-        allowedOperationIds: agentToolsForContext('outpatient-doctor', 'consultation')
-          .map(tool => tool.operationId),
+        allowedOperationIds: agentToolsForContext(
+          'outpatient-doctor',
+          'consultation',
+          request.claim.activeSection as string | undefined,
+        ).map(tool => tool.operationId),
         claim: request.claim,
         dshSessionId: request.dshSessionId,
         expiresAt: new Date(issuedAt.getTime() + 5 * 60_000).toISOString(),
@@ -884,8 +887,11 @@ function stubEmptyDoctorWorkspace() {
             epoch: doctorSession.actor.epoch,
             scenarioRunId: doctorSession.actor.scenarioRunId,
           },
-          allowedOperationIds: agentToolsForContext('outpatient-doctor', 'consultation')
-            .map(tool => tool.operationId),
+          allowedOperationIds: agentToolsForContext(
+            'outpatient-doctor',
+            'consultation',
+            request.claim.activeSection as string | undefined,
+          ).map(tool => tool.operationId),
           dshSessionId: request.dshSessionId,
           scopeKey: 'clinmesh:doctor:consultation',
           issuedAt: issuedAt.toISOString(),
@@ -3232,6 +3238,11 @@ describe('role workspaces', () => {
         const tool = registration!.tools.find(tool => tool.name === name)!
         return await tool.execute(boundAgentToolInput(tool, input), new AbortController().signal)
       }
+      // 报告 Tool 属于“检验检查”栏目：病历栏目不发布，切换栏目后重新注册。
+      await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_select_doctor_section')).toBe(true))
+      expect(registration!.tools.map(tool => tool.name)).not.toContain('clinmesh_prepare_acknowledge_report')
+      await act(async () => { await execute('clinmesh_select_doctor_section', { section: 'laboratory' }) })
+      await waitFor(() => expect(registration?.tools.map(tool => tool.name)).toContain('clinmesh_prepare_acknowledge_report'))
       // 影像尚未在人类面前显示：已阅提案被拒绝，Agent 读到的页面状态不含像素。
       await expect(act(() => execute('clinmesh_prepare_acknowledge_report', { requestId: 'imaging-request-1' })))
         .rejects.toThrow('have not been displayed')

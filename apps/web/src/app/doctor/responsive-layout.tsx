@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode, type Ref } from 'react'
+import type { DoctorCaseSection } from '@clinmesh/contracts/agent'
 import { Button } from '@clinmesh/ui/components/button'
 import {
   Sheet,
@@ -125,7 +126,7 @@ export function DoctorCaseDetailRegion({ children, containerRef, labelledBy }: {
 
 export function DoctorCasePanel({ children, value }: {
   children: ReactNode
-  value: 'consultation' | 'record' | 'laboratory' | 'diagnosis' | 'prescription'
+  value: DoctorCaseSection
 }) {
   return (
     <TabsContent

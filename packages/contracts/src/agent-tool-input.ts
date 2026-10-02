@@ -20,6 +20,9 @@ export const agentViewIdSchema = z.enum([
   'uiComponents',
 ])
 
+/** 门诊医生病例页的诊疗栏目；页面标签、栏目切换 Tool 与 Tool 栏目归属共用这份枚举。 */
+export const doctorCaseSectionSchema = z.enum(['consultation', 'record', 'diagnosis', 'prescription', 'laboratory'])
+
 const emptyInputSchema = z.object({}).strict()
 const boundedIdSchema = z.string().trim().min(1).max(128)
 const boundedCodeSchema = z.string().trim().min(1).max(128)
@@ -122,7 +125,7 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.section.select': z.object({
     /** 同时展开这条放射申请的影像；只与 `laboratory` 栏目一起使用。Agent 不读取像素。 */
     imagingRequestId: boundedIdSchema.optional(),
-    section: z.enum(['consultation', 'record', 'diagnosis', 'prescription', 'laboratory']),
+    section: doctorCaseSectionSchema,
   }).strict().refine(
     input => input.imagingRequestId === undefined || input.section === 'laboratory',
     { message: 'Imaging studies open in the laboratory section', path: ['imagingRequestId'] },
@@ -174,6 +177,7 @@ export const agentToolInputSchemas = Object.freeze({
 })
 
 export type AgentOperationId = keyof typeof agentToolInputSchemas
+export type DoctorCaseSection = z.infer<typeof doctorCaseSectionSchema>
 
 export function parseAgentToolInput<OperationId extends AgentOperationId>(
   operationId: OperationId,

@@ -1,7 +1,7 @@
 import { DoctorWorkspaceLayout, DoctorCaseLayout, DoctorCasePanel, DoctorCaseDetailRegion } from './responsive-layout.tsx'
 import { hostCaseContextRail, useSurfaceCaseContextPort, useSurfaceCaseContextVisible } from './surface-case-context.ts'
 import { useOptionalWebRuntime } from '../web-runtime.tsx'
-import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
+import { agentToolInputSchemas, doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
 import {
   clinicalDocumentContentSchema,
   diagnosisDraftEntrySchema,
@@ -100,10 +100,7 @@ import {
 } from '../workspace-error.ts'
 import { formatFen } from '../workspace-format.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
-import {
-  DoctorCaseContextRail,
-  type DoctorCaseSection,
-} from './case-context-rail.tsx'
+import { DoctorCaseContextRail } from './case-context-rail.tsx'
 import type { ReferenceCatalogSearches } from './catalog-picker-dialogs.tsx'
 import {
   ClinicalDocumentPage,
@@ -203,13 +200,6 @@ const doctorCaseSectionTabElementIds = {
   record: 'doctor-case-section-record',
 } satisfies Record<DoctorCaseSection, string>
 
-const caseDetailSectionSchema = z.enum([
-  'consultation',
-  'record',
-  'diagnosis',
-  'prescription',
-  'laboratory',
-])
 const reportCorrectionInputSchema = z.object({
   conclusion: z.string().trim().min(2).max(2_000),
   reason: z.string().trim().min(2).max(500),
@@ -1193,13 +1183,13 @@ function DoctorCaseController({
         },
       },
       'outpatient.section.select': {
-        description: 'Select one visible section in the current doctor case. With imagingRequestId (laboratory section only), also open the images of that reported imaging request for the human reader; pixels are never returned to the Agent.',
+        description: 'Select a case section; its Tools appear only while it is active (consultation: dialogue; record: document; laboratory: lab/imaging requests, reports; diagnosis; prescription). imagingRequestId (laboratory only) opens that reported study for the human; no pixels to the Agent.',
         enabled: detail.data !== undefined,
         parameters: {
           type: 'object' as const,
           properties: {
             imagingRequestId: { type: 'string', maxLength: 128 },
-            section: { type: 'string', enum: caseDetailSectionSchema.options },
+            section: { type: 'string', enum: doctorCaseSectionSchema.options },
           },
           required: ['section'],
           additionalProperties: false,
@@ -2933,9 +2923,8 @@ function CaseDetail({
         <Tabs
           className="min-h-0 min-w-0 flex-1 gap-0 bg-background"
           onValueChange={value => {
-            if (value === 'consultation' || value === 'record' || value === 'diagnosis' || value === 'prescription' || value === 'laboratory') {
-              setActiveSection(value)
-            }
+            const section = doctorCaseSectionSchema.safeParse(value)
+            if (section.success) setActiveSection(section.data)
           }}
           value={activeSection}
         >

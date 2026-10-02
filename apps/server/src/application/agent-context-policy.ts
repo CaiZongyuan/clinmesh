@@ -111,7 +111,7 @@ export function resolveAgentPageContext(
   if (!roleCode.success || !agentViewsForRole(roleCode.data).includes(claim.viewId)) return undefined
   const selection = resolveSelection(database, cases, actor, claim)
   if (selection === undefined || !draftMatchesSelection(claim, selection)) return undefined
-  const allowed = new Set(agentToolsForContext(roleCode.data, claim.viewId)
+  const allowed = new Set(agentToolsForContext(roleCode.data, claim.viewId, claim.activeSection)
     .map(definition => definition.operationId))
   const accountCanCorrectReports = roleCode.data === 'outpatient-doctor'
     && claim.viewId === 'consultation'

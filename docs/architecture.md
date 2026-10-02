@@ -728,7 +728,7 @@ Claim 和 snapshot 不包含 DOM、Query cache、浏览器存储、任意页面 
 
 ### 7.3 Tool 目录与风险
 
-`packages/contracts/src/agent.ts` 是 Tool 名称、operation、岗位、view、模式和风险的可执行目录，`agent-tool-input.ts` 拥有每项 operation 的完整输入 schema。每个岗位动态获得不超过 32 个 Tools：通用读取/导航/真实聚焦，加上当前管理员、挂号、分诊、医生、收费或药房页面的窄动作。管理员只能读取 Scenario Run、Provider 可用性和当前 generation job 状态；导航 enum 只包含当前岗位主页和共享设置页。
+`packages/contracts/src/agent.ts` 是 Tool 名称、operation、岗位、view、诊疗栏目、模式和风险的可执行目录，`agent-tool-input.ts` 拥有每项 operation 的完整输入 schema。每个岗位、view 与当前栏目动态获得不超过 32 个 Tools（DSH browser Tool broker 的单次注册上限）：通用读取/导航/真实聚焦，加上当前管理员、挂号、分诊、医生、收费或药房页面的窄动作。医生“接诊”页按当前诊疗栏目发布：目录中声明栏目的 Tool 只在 claim 的 active section 等于该栏目时进入 Page Context，Server 授权与 Surface 注册调用同一个 `agentToolsForContext`；栏目归属见 [DSH 页面操作](agent-capabilities.md#医生诊疗栏目与-tool-发布)。管理员只能读取 Scenario Run、Provider 可用性和当前 generation job 状态；导航 enum 只包含当前岗位主页和共享设置页。
 
 报告更正 Tool 只在当前账户通过服务端 membership 仍持有 active administrator role 时进入 outpatient-doctor Page Context；普通医生即使面对可更正报告也不会取得该 operation。管理员账户可在 acting-doctor 页面准备更正，Page Context 的当前 Practitioner Role 必须继续匹配最终 Command receipt 与 Audit Event。
 

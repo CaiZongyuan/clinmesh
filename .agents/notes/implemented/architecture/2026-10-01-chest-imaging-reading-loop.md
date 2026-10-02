@@ -54,6 +54,6 @@ Status: implemented
 
 Synthea 导出的病例已经写下就诊之后的病程，匹配以 Index Encounter 的开始时间判断疾病是否缓解；这条规则是在真实 Provider 生成的病例上发现并修正的，合成 fixture 现在按真实形态生成缓解时间。
 
-医生“接诊”页的 Tool 目录已到 32 个。病理或其他检查类型接入前需要先改变 Tool 的发布方式。
+医生“接诊”页的 Tool 目录曾到 32 个，现已改为按当前诊疗栏目发布，见 [医生 Tool 按诊疗栏目发布](2026-10-02-doctor-tools-by-section.md)；放射 Tool 归属“检验”栏目，病理等检查类型的 Tool 按所属栏目计入名额。
 
 Docker 一键镜像不包含清单与素材，其中的放射服务显示为未开展。

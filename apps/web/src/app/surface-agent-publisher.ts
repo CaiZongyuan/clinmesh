@@ -257,6 +257,7 @@ export function useSurfaceAgentPublisher(input: {
     const definitions = agentToolsForContext(
       publishedBinding.snapshot.actor.roleCode,
       publishedBinding.snapshot.claim.viewId,
+      publishedBinding.snapshot.claim.activeSection,
     )
     const actions = {
       ...commonActions(
