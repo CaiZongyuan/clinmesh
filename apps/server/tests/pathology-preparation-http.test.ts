@@ -1,4 +1,4 @@
-import { rm, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { apiErrorSchema } from '@clinmesh/contracts/his'
 import { imagingCoverageSchema } from '@clinmesh/contracts/imaging'
@@ -11,6 +11,7 @@ import { scenarioGenerationTargetListSchema } from '@clinmesh/contracts/scenario
 import jpeg from 'jpeg-js'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ScenarioGenerationProviderError } from '../src/application/scenario-data/provider.ts'
+import { reviewPathologyAssets } from '../src/infrastructure/imaging-assets/pathology-asset-store.ts'
 import type { createClinMeshRuntime } from '../src/runtime.ts'
 import {
   createImagingRuntime,
@@ -495,5 +496,43 @@ describe('Pathology case preparation HTTP contract', () => {
     expect(invalid.status).toBe(409)
     expect(apiErrorSchema.parse(await invalid.json()).error.code).toBe('PATHOLOGY_CATALOG_INVALID')
     expect((await preparationOf(runtime, cookie, caseId)).preparation).toBeNull()
+    expect((await runtime.app.request('/api/sim/v1/admin/scenario-generation-targets', { headers: { cookie } })).status)
+      .toBe(200)
+  })
+
+  it('re-prepares a waiting case when a published report is edited and signed again under the same revision', async () => {
+    const { install, pathologyAssetDirectory, pathologyCatalogDirectory, runtime } = await createRuntime([
+      breastCaseBundle({ name: '未开始' }),
+    ])
+    await install([{ assetId: luminal }])
+    const cookie = await signIn(runtime)
+    await generateCase(runtime, cookie)
+    expect((await preparePathology(runtime, cookie)).prepared[0]?.preparation?.revision).toBe(1)
+
+    // 生成草稿的 prompt 改动后重新复核签署：发布的仍是修订 1，但签署的内容已经不同，未开始的病例须重新绑定。
+    await writeFile(join(pathologyCatalogDirectory, 'prompts', 'breast-pathology-report-v1.md'), '# Revised synthetic prompt\n')
+    await reviewPathologyAssets({
+      assetDirectory: pathologyAssetDirectory,
+      catalogDirectory: pathologyCatalogDirectory,
+      conclusion: 'approved',
+      reviewer: 'synthetic-reviewer',
+      reviewerIsPathologist: true,
+    })
+    expect((await preparePathology(runtime, cookie)).prepared[0]?.preparation?.revision).toBe(2)
+  })
+
+  it('keeps pathology generation targets selectable when the radiology catalog is invalid', async () => {
+    const { catalogDirectory, install, runtime } = await createRuntime([])
+    await install([{ assetId: luminal }])
+    await mkdir(catalogDirectory, { recursive: true })
+    await writeFile(join(catalogDirectory, 'manifest.json'), '{"schemaVersion":1}\n')
+    const cookie = await signIn(runtime)
+
+    const targets = await runtime.app.request('/api/sim/v1/admin/scenario-generation-targets', { headers: { cookie } })
+    expect(targets.status).toBe(200)
+    expect(scenarioGenerationTargetListSchema.parse(await targets.json()).items.map(item => item.profileId))
+      .toEqual([luminalProfile])
+    const radiology = await runtime.app.request('/api/sim/v1/admin/imaging-coverage', { headers: { cookie } })
+    expect(apiErrorSchema.parse(await radiology.json()).error.code).toBe('IMAGING_CATALOG_INVALID')
   })
 })

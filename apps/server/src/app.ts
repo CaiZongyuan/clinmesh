@@ -871,8 +871,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       context.header('Cache-Control', 'no-store')
       try {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
-        const imaging = await imagingPreparation.generationTargets(session.actor)
-        const pathology = await options.pathology?.preparation.generationTargets(session.actor)
+        // 一个素材包的清单无效时只缺少它的条目，另一个素材包的条目照常可选。
+        const imaging = await imagingPreparation.generationTargets(session.actor).catch((error: unknown) => {
+          if (error instanceof ImagingPreparationError && error.code === 'IMAGING_CATALOG_INVALID') return { items: [] }
+          throw error
+        })
+        const pathology = await options.pathology?.preparation.generationTargets(session.actor).catch((error: unknown) => {
+          if (error instanceof PathologyPreparationError && error.code === 'PATHOLOGY_CATALOG_INVALID') return { items: [] }
+          throw error
+        })
         return context.json({ items: [...imaging.items, ...pathology?.items ?? []] })
       } catch (error) {
         return apiErrorResponse(context, error)

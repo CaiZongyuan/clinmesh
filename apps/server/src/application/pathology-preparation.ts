@@ -12,7 +12,7 @@ import {
   pathologyProfile,
   type PathologyFacts,
 } from '../infrastructure/imaging-assets/pathology-matching.ts'
-import { pathologyClinicalStatus } from '../infrastructure/imaging-assets/pathology-report-check.ts'
+import { pathologyClinicalStatus, pathologyReportContentSha256 } from '../infrastructure/imaging-assets/pathology-report-check.ts'
 import type { SourceResource } from './imaging-preparation.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 
@@ -204,7 +204,7 @@ export function matchCasePathology(input: {
   })
 }
 
-/** 规则与每份素材的事实、层级和发布状态的身份；任何一项变化都意味着既有准备结果需要重新评估。 */
+/** 规则与每份素材的事实、层级、发布状态和已发布报告签署内容的身份；任何一项变化都意味着既有准备结果需要重新评估。 */
 export function pathologyMatchingCatalogHash(
   rules: PathologyMatchingRules,
   assets: PathologyMatchingCatalog['assets'],
@@ -215,6 +215,10 @@ export function pathologyMatchingCatalogHash(
       facts,
       histologicType: asset.clinical.histologicType,
       output: asset.output,
+      // 同一修订号改动后重新签署时，绑定记录的报告内容哈希随之失效。
+      publishedReports: (asset.reports ?? [])
+        .filter(report => publishedRevisions.includes(report.revision))
+        .map(report => pathologyReportContentSha256(asset, report)),
       publishedRevisions,
     })),
     rules,
