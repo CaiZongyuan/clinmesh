@@ -198,7 +198,7 @@ export class PathologyPreparationService {
         gaps.push({ ...state, missing })
         continue
       }
-      // 每份素材只属于清单中的一个服务；首期只有乳腺切片会诊。
+      // 素材不声明所属服务：规则中的每个服务都按素材的同一组事实派生画像。
       for (const service of catalog.rules.services) {
         const profile = pathologyProfile(service, facts)!
         const entry = profiles.get(profile.id)
