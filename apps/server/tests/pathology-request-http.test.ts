@@ -4,7 +4,12 @@ import {
   acknowledgePathologyReportResponseSchema,
   apiErrorSchema,
   casePathologyServiceCatalogSchema,
+  clinicalDocumentDraftResponseSchema,
+  clinicalDocumentSignPreviewResponseSchema,
+  confirmDiagnosisResponseSchema,
+  diagnosisDraftResponseSchema,
   doctorCaseDetailSchema,
+  doctorCompletedCaseDetailSchema,
   encounterCompletionPreviewSchema,
   issuePathologyRequestResponseSchema,
   pathologyRequestActionResponseSchema,
@@ -730,6 +735,101 @@ describe('Pathology consultation request HTTP contract', () => {
     })).status
     expect(await correct(reported.id)).toBe(201)
     expect(await correct(pending.id)).toBe(409)
+  })
+
+  it('keeps the consultation, its slide and its history readable after the encounter is completed', async () => {
+    const visit = await consultation({ name: '乳腺随访' })
+    const { doctor, encounterId, outpatientCaseId, runtime } = visit
+    // 一份草稿被删除，一条申请被取消，另一条出报告并确认已阅。
+    expect((await saveDraft(runtime, doctor, encounterId, { expectedDraftVersion: 0 })).status).toBe(200)
+    expect((await runtime.app.request(
+      `/api/his/v1/encounters/${encounterId}/pathology-request/draft`,
+      mutation(doctor, { expectedVersions: { [`Encounter/${encounterId}`]: '3' }, input: { expectedDraftVersion: 1 } }, 'DELETE'),
+    )).status).toBe(200)
+    const cancelledRequest = await order(visit, 2)
+    expect((await runtime.app.request(
+      `/api/his/v1/pathology-requests/${cancelledRequest.id}/actions/cancel`,
+      mutation(doctor, {
+        expectedVersions: {
+          [`ServiceRequest/${cancelledRequest.serviceRequestId}`]: cancelledRequest.serviceRequestVersion,
+          [`Task/${cancelledRequest.taskId}`]: cancelledRequest.taskVersion,
+        },
+        input: { expectedRequestVersion: cancelledRequest.version, reasonCode: 'no-longer-needed' },
+      }),
+    )).status).toBe(200)
+    await dispatchAll(runtime)
+    const reported = await reportedRequest(visit, 4)
+    expect((await runtime.app.request(reportPath(reported, 'acknowledge'), mutation(doctor, reportVersions(reported)))).status)
+      .toBe(200)
+
+    // 签署病历、确认诊断与无需用药后完成就诊。
+    const versions = { [`Encounter/${encounterId}`]: '3' }
+    const post = async (path: string, input: unknown, expectedVersions: Record<string, string> = versions, method: 'POST' | 'PUT' = 'POST') => {
+      const response = await runtime.app.request(`/api/his/v1/encounters/${encounterId}/${path}`, mutation(doctor, { expectedVersions, input }, method))
+      expect(response.status, path).toBe(200)
+      return await response.json()
+    }
+    const documentDraft = clinicalDocumentDraftResponseSchema.parse(await post('clinical-document/draft', {
+      document: {
+        assessment: '乳腺癌术后随访，病理会诊已复核。',
+        chiefComplaint: '乳腺癌术后来复查。',
+        disposition: '门诊随访，按原方案继续治疗。',
+        followUp: '三个月后复诊。',
+        historyOfPresentIllness: '既往行乳房肿块切除术，携带外院切片来院会诊。',
+        physicalExamination: '生命体征平稳。',
+      },
+      expectedDraftVersion: 0,
+    }, versions, 'PUT')).data
+    const preview = clinicalDocumentSignPreviewResponseSchema.parse(
+      await post('clinical-document/actions/preview-sign', { expectedDraftVersion: documentDraft.draftVersion }),
+    ).data
+    await post('clinical-document/actions/sign', { commitToken: preview.commitToken, previewId: preview.previewId })
+    const diagnosisDraft = diagnosisDraftResponseSchema.parse(await post('diagnosis/draft', {
+      entries: [{ catalogItemId: 'diagnosis-influenza', role: 'primary' }],
+      expectedDraftVersion: 0,
+    }, versions, 'PUT')).data
+    const encounterVersion = confirmDiagnosisResponseSchema.parse(
+      await post('diagnosis/actions/confirm', { expectedDraftVersion: diagnosisDraft.draftVersion }),
+    ).data.encounterVersion
+    const current = { [`Encounter/${encounterId}`]: encounterVersion }
+    await post('medication-conclusion/actions/confirm-no-medication', { expectedDraftVersion: 0 }, current)
+    await post('actions/complete', {}, current)
+
+    const response = await runtime.app.request(`/api/his/v1/doctor/completed-cases/${outpatientCaseId}`, { headers: { cookie: doctor } })
+    expect(response.status).toBe(200)
+    const completed = doctorCompletedCaseDetailSchema.parse(await response.json())
+    expect(completed.pathologyRequests.map(request => [request.id, request.status])).toEqual([
+      [cancelledRequest.id, 'cancelled'],
+      [reported.id, 'acknowledged'],
+    ])
+    expect(completed.pathologyRequests[1]).toMatchObject({
+      report: { acknowledgement: {}, diagnosis: '乳腺浸润性导管癌。原始资料未提供组织学分级。', specimen: { slideCount: 1 } },
+      sourceProcedure: { code: lumpectomy.code },
+    })
+    const kinds = completed.timeline.map(event => event.kind).filter(kind => kind.startsWith('pathology-'))
+    expect(kinds.toSorted()).toEqual([
+      'pathology-report-acknowledged',
+      'pathology-report-issued',
+      'pathology-request-cancelled',
+      'pathology-request-draft-deleted',
+      'pathology-request-issued',
+      'pathology-request-issued',
+    ])
+    expect(completed.timeline.find(event => event.kind === 'pathology-report-issued')).toMatchObject({
+      reference: `DiagnosticReport/${reported.report!.diagnosticReportId}`,
+      relatedReferences: expect.arrayContaining([
+        `Specimen/${reported.report!.specimen.specimenId}`,
+        `ImagingStudy/${reported.report!.studyId}`,
+      ]),
+    })
+    // 已完诊病例仍可回看切片。
+    const study = await runtime.app.request(`/api/his/v1/imaging-studies/${reported.report!.studyId}`, { headers: { cookie: doctor } })
+    expect(study.status).toBe(200)
+    expect(await study.json()).toMatchObject({ available: true, examCode: 'breast-slide-consultation' })
+    expect((await runtime.app.request(
+      `/api/his/v1/imaging-studies/${reported.report!.studyId}/series/0/levels/2/tiles/0/0`,
+      { headers: { cookie: doctor } },
+    )).status).toBe(200)
   })
 
   it('tells the patient model only that the slide consultation was accepted', async () => {
