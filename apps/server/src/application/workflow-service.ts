@@ -87,6 +87,13 @@ import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import type { ActorContext, CommandEffect, CommandResponse, CommandTransaction } from './command-executor.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
+import { WorkflowError } from './workflow-error.ts'
+import { ImagingRequestService } from './imaging-request-service.ts'
+import {
+  ClinicalRequestKernel,
+  laboratoryRequestPolicy,
+  reportAcknowledgementRowSchema,
+} from './clinical-request-kernel.ts'
 import {
   AdultReferenceApplicabilityError,
   assertAdultReferenceServiceApplicable,
@@ -97,23 +104,7 @@ import {
   provenanceAgents,
 } from './command-executor.ts'
 
-export class WorkflowError extends Error {
-  readonly code: 'CATALOG_CONFLICT' | 'DIAGNOSIS_PRIMARY_REQUIRED' | 'DUPLICATE_PATIENT' | 'ENCOUNTER_COMPLETION_BLOCKED' | 'LABORATORY_ADULT_REFERENCE_NOT_APPLICABLE' | 'LABORATORY_GENERATION_UNSUPPORTED' | 'LABORATORY_REQUEST_DUPLICATE' | 'LABORATORY_REQUEST_NOT_CANCELLABLE' | 'LABORATORY_REQUEST_VERSION_CONFLICT' | 'ROLE_NOT_ALLOWED' | 'WORKFLOW_CONFLICT'
-  readonly conflict: ApiConflict | undefined
-  readonly status: 403 | 409
-
-  constructor(
-    code: WorkflowError['code'],
-    message: string,
-    conflict?: ApiConflict,
-  ) {
-    super(message)
-    this.name = 'WorkflowError'
-    this.code = code
-    this.conflict = conflict
-    this.status = code === 'ROLE_NOT_ALLOWED' ? 403 : 409
-  }
-}
+export { WorkflowError } from './workflow-error.ts'
 
 interface CatalogRow {
   code: string
@@ -478,15 +469,6 @@ const laboratoryReportSystemResponseSchema = z.object({
   status: z.literal('reported'),
 }).strict()
 
-const laboratoryReportAcknowledgementRowSchema = z.object({
-  acknowledgement_id: z.string().min(1),
-  acknowledged_at: z.string().datetime({ offset: true }),
-  acknowledged_by: z.string().min(1),
-  diagnostic_report_id: z.string().min(1),
-  request_id: z.string().min(1),
-  request_version: z.number().int().positive(),
-}).strict()
-
 const laboratoryReportRevisionRowSchema = z.object({
   diagnostic_report_id: z.string().min(1),
   provenance_id: z.string().min(1),
@@ -544,6 +526,7 @@ const draftDeletionTraceRowSchema = z.object({
   effect_json: z.string(),
   operation: z.enum([
     'encounter.delete-prescription-draft',
+    'imaging-request.delete-draft',
     'laboratory-request.delete-draft',
   ]),
   trace_id: z.string().min(1),
@@ -1150,7 +1133,11 @@ export class WorkflowService {
   readonly #investigation: InvestigationCapabilityResolver | undefined
   readonly #now: () => Date
   readonly #referenceData: ReferenceDataService | undefined
+  readonly #requests: ClinicalRequestKernel
   readonly #tokenSecret: string
+
+  /** 放射申请适配器；与检验共用申请内核。 */
+  readonly imaging: ImagingRequestService
 
   constructor(
     database: ClinMeshDatabase,
@@ -1169,7 +1156,21 @@ export class WorkflowService {
     this.#investigation = options.investigation
     this.#now = options.now ?? (() => new Date())
     this.#referenceData = options.referenceData
+    this.#requests = new ClinicalRequestKernel(database)
     this.#tokenSecret = options.tokenSecret
+    this.imaging = new ImagingRequestService({
+      commands,
+      database,
+      fhir,
+      host: {
+        assertCaseResponsibility: (context, caseId) => this.#assertCaseResponsibility(context, caseId),
+        assertExpectedVersions: (expectedVersions, references) => this.#assertExpectedVersions(expectedVersions, references),
+        caseByEncounter: (context, encounterId) => this.#caseByEncounter(context, encounterId),
+        hasConsultation: (context, caseId) => this.#consultationState(context, caseId) !== undefined,
+        virtualTime: context => this.#virtualTime(context),
+      },
+      requests: this.#requests,
+    })
   }
 
   commandReceipt(context: ActorContext, operationId: string, idempotencyKey: string) {
@@ -1340,6 +1341,7 @@ export class WorkflowService {
         SELECT COUNT(*) AS count
         FROM hospital_service_catalog
         WHERE workspace_id = ? AND epoch = ? AND active = 1
+          AND json_type(config_json, '$.imagingService') IS NULL
           AND (
             ? IS NULL
             OR instr(lower(code), lower(?)) > 0
@@ -1352,6 +1354,7 @@ export class WorkflowService {
       SELECT service_id, code, name_zh, name_en, version, config_json
       FROM hospital_service_catalog
       WHERE workspace_id = ? AND epoch = ? AND active = 1
+        AND json_type(config_json, '$.imagingService') IS NULL
         AND (
           ? IS NULL
           OR instr(lower(code), lower(?)) > 0
@@ -1415,6 +1418,7 @@ export class WorkflowService {
         SELECT service_id, code, name_zh, config_json
         FROM hospital_service_catalog
         WHERE workspace_id = ? AND epoch = ? AND service_id = ? AND active = 1
+          AND json_type(config_json, '$.imagingService') IS NULL
       `).get(input.context.workspaceId, input.context.epoch, input.serviceId))
       if (service === undefined) throw new WorkflowError('CATALOG_CONFLICT', 'The Hospital Service is unavailable')
       const config = serviceCatalogConfigSchema.parse(JSON.parse(service.config_json) as unknown)
@@ -2771,6 +2775,7 @@ export class WorkflowService {
         status: encounter.status,
         versionId: encounter.meta.versionId,
       },
+      imagingRequests: this.imaging.state(context, caseId).requests,
       laboratoryRequests,
       ...(medicationConclusion === undefined ? {} : { medicationConclusion }),
       patient: patientSummary(parseStoredFhirResource(row.patient_json)),
@@ -3068,6 +3073,7 @@ export class WorkflowService {
         status: encounter.status,
         versionId: encounter.meta?.versionId,
       },
+      ...(consultation === undefined ? {} : { imagingRequests: this.imaging.state(context, row.case_id) }),
       ...(laboratoryRequestState === undefined ? {} : {
         laboratoryRequests: {
           ...(laboratoryRequestState.draft_catalog_item_id === null
@@ -6715,10 +6721,10 @@ export class WorkflowService {
       })
       this.#database.driver.prepare(`
         INSERT INTO laboratory_request (
-          workspace_id, epoch, request_id, case_id, catalog_item_id,
+          workspace_id, epoch, request_id, case_id, request_kind, catalog_item_id,
           reference_json, service_snapshot_json, indication_code,
           service_request_id, execution_task_id, status, version, authored_by, authored_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', 1, ?, ?)
+        ) VALUES (?, ?, ?, ?, 'laboratory', ?, ?, ?, ?, ?, ?, 'issued', 1, ?, ?)
       `).run(
         input.context.workspaceId,
         input.context.epoch,
@@ -6827,75 +6833,17 @@ export class WorkflowService {
         `ServiceRequest/${request.service_request_id}`,
         `Task/${request.execution_task_id}`,
       ])
-      if (request.version !== input.expectedRequestVersion) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          `The laboratory request is "${request.status}" at version ${request.version}; expected version ${input.expectedRequestVersion}`,
-          {
-            currentStatus: request.status,
-            currentVersion: String(request.version),
-            expectedVersion: String(input.expectedRequestVersion),
-            owner: 'laboratory-request',
-            resource: `LaboratoryRequest/${request.request_id}`,
-          },
-        )
-      }
-      if (request.status !== 'issued' && request.status !== 'generation-failed') {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_NOT_CANCELLABLE',
-          `The laboratory request cannot be cancelled from status "${request.status}"`,
-          {
-            currentStatus: request.status,
-            currentVersion: String(request.version),
-            owner: 'laboratory-request',
-            resource: `LaboratoryRequest/${request.request_id}`,
-          },
-        )
-      }
-      const serviceRequest = transaction.fhir.read(
+      const { serviceRequest: updatedServiceRequest, task: updatedTask, version } = this.#requests.cancel(
+        laboratoryRequestPolicy,
+        transaction,
         input.context,
-        'ServiceRequest',
-        request.service_request_id,
-      )
-      const task = transaction.fhir.read(input.context, 'Task', request.execution_task_id)
-      const now = this.#virtualTime(input.context)
-      const updatedServiceRequest = transaction.fhir.update(input.context, {
-        ...serviceRequest,
-        status: 'revoked',
-      }, serviceRequest.meta?.versionId ?? '1')
-      const updatedTask = transaction.fhir.update(input.context, {
-        ...task,
-        status: 'cancelled',
-        lastModified: now,
-        statusReason: {
-          concept: {
-            coding: [{
-              code: input.reasonCode,
-              system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/request-status-reason',
-            }],
-          },
+        request,
+        {
+          expectedRequestVersion: input.expectedRequestVersion,
+          now: this.#virtualTime(input.context),
+          reasonCode: input.reasonCode,
         },
-      }, task.meta?.versionId ?? '1')
-      const version = request.version + 1
-      const update = this.#database.driver.prepare(`
-        UPDATE laboratory_request
-        SET status = 'cancelled', version = ?, cancelled_at = ?
-        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
-          AND status IN ('issued', 'generation-failed') AND version = ?
-      `).run(
-        version,
-        now,
-        input.context.workspaceId,
-        input.context.epoch,
-        request.request_id,
-        request.version,
       )
-      if (update.changes !== 1) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request version has changed',
-        )
-      }
       return {
         data: {
           request: {
@@ -6927,16 +6875,10 @@ export class WorkflowService {
         if (current === undefined) {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request was not found')
         }
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          `The laboratory request is "${current.status}" at version ${current.version}; a related resource version has changed`,
-          {
-            currentStatus: current.status,
-            currentVersion: String(current.version),
-            expectedVersion: String(input.expectedRequestVersion),
-            owner: 'laboratory-request',
-            resource: `LaboratoryRequest/${current.request_id}`,
-          },
+        throw this.#requests.relatedVersionConflict(
+          laboratoryRequestPolicy,
+          current,
+          input.expectedRequestVersion,
         )
       }
       throw error
@@ -6961,51 +6903,25 @@ export class WorkflowService {
       if (request === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request was not found')
       }
-      if (request.status === 'cancelled') {
+      const accepted = this.#requests.accept(
+        laboratoryRequestPolicy,
+        transaction,
+        input.context,
+        request,
+        this.#virtualTime(input.context),
+      )
+      if (accepted.status === 'cancelled') {
         return {
           data: { requestId: request.request_id, status: 'cancelled' as const },
           effects: [],
         }
       }
-      if (request.status !== 'issued') {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request cannot be accepted')
-      }
-      const task = transaction.fhir.read(input.context, 'Task', request.execution_task_id)
-      const now = this.#virtualTime(input.context)
-      const updatedTask = transaction.fhir.update(input.context, {
-        ...task,
-        status: 'accepted',
-        lastModified: now,
-      }, task.meta?.versionId ?? '1')
-      const update = this.#database.driver.prepare(`
-        UPDATE laboratory_request
-        SET status = 'accepted', version = version + 1, accepted_at = ?
-        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
-          AND status = 'issued' AND version = ?
-      `).run(
-        now,
-        input.context.workspaceId,
-        input.context.epoch,
-        request.request_id,
-        request.version,
-      )
-      if (update.changes !== 1) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request version has changed',
-        )
-      }
-      transaction.enqueue({
-        dedupKey: `laboratory-request:${request.request_id}:start`,
-        kind: 'laboratory.start-request',
-        payload: { requestId: request.request_id },
-      })
       return {
         data: { requestId: request.request_id, status: 'accepted' as const },
         effects: [{
           kind: 'updated' as const,
-          reference: `Task/${updatedTask.id}`,
-          versionId: updatedTask.meta?.versionId ?? '2',
+          reference: `Task/${accepted.task.id}`,
+          versionId: accepted.task.meta?.versionId ?? '2',
         }],
       }
     })
@@ -7026,47 +6942,19 @@ export class WorkflowService {
     }, (transaction) => {
       this.#assertRole(input.context, ['lis-system'])
       const request = this.#laboratoryRequest(input.context, input.requestId)
-      if (request === undefined || request.status !== 'accepted') {
+      if (request === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request cannot start execution')
       }
-      const task = transaction.fhir.read(input.context, 'Task', request.execution_task_id)
-      const now = this.#virtualTime(input.context)
-      const updatedTask = transaction.fhir.update(input.context, {
-        ...task,
-        status: 'in-progress',
-        lastModified: now,
-        executionPeriod: {
-          ...((typeof task.executionPeriod === 'object' && task.executionPeriod !== null)
-            ? task.executionPeriod as Record<string, unknown>
-            : {}),
-          start: now,
+      const updatedTask = this.#requests.start(
+        laboratoryRequestPolicy,
+        transaction,
+        input.context,
+        request,
+        {
+          enqueueReport: this.#supportsLaboratoryReports(input.context, request.case_id),
+          now: this.#virtualTime(input.context),
         },
-      }, task.meta?.versionId ?? '2')
-      const update = this.#database.driver.prepare(`
-        UPDATE laboratory_request
-        SET status = 'in-progress', version = version + 1, started_at = ?
-        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
-          AND status = 'accepted' AND version = ?
-      `).run(
-        now,
-        input.context.workspaceId,
-        input.context.epoch,
-        request.request_id,
-        request.version,
       )
-      if (update.changes !== 1) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request version has changed',
-        )
-      }
-      if (this.#supportsLaboratoryReports(input.context, request.case_id)) {
-        transaction.enqueue({
-          dedupKey: `laboratory-request:${request.request_id}:report`,
-          kind: 'laboratory.report-request',
-          payload: { requestId: request.request_id },
-        })
-      }
       return {
         data: { requestId: request.request_id, status: 'in-progress' as const },
         effects: [{
@@ -7322,21 +7210,16 @@ export class WorkflowService {
         issued: now,
         conclusion: laboratoryResultFact.conclusion,
       })
-      const completedServiceRequest = transaction.fhir.update(input.context, {
-        ...serviceRequest,
-        status: 'completed',
-      }, serviceRequest.meta?.versionId ?? '1')
-      const completedTask = transaction.fhir.update(input.context, {
-        ...task,
-        status: 'completed',
-        lastModified: now,
-        executionPeriod: {
-          ...((typeof task.executionPeriod === 'object' && task.executionPeriod !== null)
-            ? task.executionPeriod as Record<string, unknown>
-            : {}),
-          end: now,
-        },
-      }, task.meta?.versionId ?? '3')
+      const {
+        serviceRequest: completedServiceRequest,
+        task: completedTask,
+      } = this.#requests.completeReport(laboratoryRequestPolicy, transaction, input.context, request, {
+        diagnosticReportId,
+        now,
+        resultSnapshotId: input.resultSnapshot?.snapshotId ?? null,
+        serviceRequest,
+        task,
+      })
       this.#appendReportCardTurn(input.context, request.case_id, {
         reportName,
         reportReference: `DiagnosticReport/${diagnosticReportId}/_history/1`,
@@ -7385,27 +7268,6 @@ export class WorkflowService {
               }))],
             }),
       })
-      const update = this.#database.driver.prepare(`
-        UPDATE laboratory_request
-        SET status = 'reported', version = version + 1, reported_at = ?,
-          diagnostic_report_id = ?, result_snapshot_id = ?
-        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
-          AND status = 'in-progress' AND version = ?
-      `).run(
-        now,
-        diagnosticReportId,
-        input.resultSnapshot?.snapshotId ?? null,
-        input.context.workspaceId,
-        input.context.epoch,
-        request.request_id,
-        request.version,
-      )
-      if (update.changes !== 1) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request version has changed',
-        )
-      }
       return {
         data: {
           diagnosticReportId,
@@ -7447,46 +7309,18 @@ export class WorkflowService {
       if (request === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request was not found')
       }
-      if (request.status === 'generation-failed') {
+      const failedTask = this.#requests.failGeneration(
+        laboratoryRequestPolicy,
+        transaction,
+        input.context,
+        request,
+        { error: input.error, now: this.#virtualTime(input.context) },
+      )
+      if (failedTask === undefined) {
         return {
           data: { requestId: request.request_id, status: 'generation-failed' as const },
           effects: [],
         }
-      }
-      if (request.status !== 'in-progress') {
-        throw new WorkflowError(
-          'WORKFLOW_CONFLICT',
-          'Only an in-progress laboratory request can fail generation',
-        )
-      }
-      const task = transaction.fhir.read(input.context, 'Task', request.execution_task_id)
-      const now = this.#virtualTime(input.context)
-      const failedTask = transaction.fhir.update(input.context, {
-        ...task,
-        status: 'failed',
-        businessStatus: { text: 'Investigation result generation failed' },
-        statusReason: { text: input.error.message },
-        lastModified: now,
-      }, task.meta?.versionId ?? '3')
-      const update = this.#database.driver.prepare(`
-        UPDATE laboratory_request
-        SET status = 'generation-failed', version = version + 1,
-          generation_error_code = ?, generation_error_message = ?
-        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
-          AND status = 'in-progress' AND version = ?
-      `).run(
-        input.error.code,
-        input.error.message,
-        input.context.workspaceId,
-        input.context.epoch,
-        request.request_id,
-        request.version,
-      )
-      if (update.changes !== 1) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request version has changed',
-        )
       }
       return {
         data: { requestId: request.request_id, status: 'generation-failed' as const },
@@ -7522,47 +7356,20 @@ export class WorkflowService {
       if (request === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request was not found')
       }
-      if (
-        request.authored_by !== (input.context.practitionerId ?? input.context.actorId)
-        || request.status !== 'generation-failed'
-        || request.version !== input.expectedRequestVersion
-      ) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory generation cannot be retried')
-      }
-      this.#assertExpectedVersions(input.expectedVersions, [`Task/${request.execution_task_id}`])
-      const task = transaction.fhir.read(input.context, 'Task', request.execution_task_id)
-      const now = this.#virtualTime(input.context)
-      const retryTask = { ...task }
-      Reflect.deleteProperty(retryTask, 'statusReason')
-      const retriedTask = transaction.fhir.update(input.context, {
-        ...retryTask,
-        status: 'in-progress',
-        businessStatus: { text: 'Investigation result generation retrying' },
-        lastModified: now,
-      }, task.meta?.versionId ?? '4')
-      const update = this.#database.driver.prepare(`
-        UPDATE laboratory_request
-        SET status = 'in-progress', version = version + 1,
-          generation_error_code = NULL, generation_error_message = NULL
-        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
-          AND status = 'generation-failed' AND version = ?
-      `).run(
-        input.context.workspaceId,
-        input.context.epoch,
-        request.request_id,
-        request.version,
+      this.#requests.assertRetryable(
+        laboratoryRequestPolicy,
+        input.context,
+        request,
+        input.expectedRequestVersion,
       )
-      if (update.changes !== 1) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request version has changed',
-        )
-      }
-      transaction.enqueue({
-        dedupKey: `laboratory-request:${request.request_id}:report:retry:${request.version + 1}`,
-        kind: 'laboratory.report-request',
-        payload: { requestId: request.request_id },
-      })
+      this.#assertExpectedVersions(input.expectedVersions, [`Task/${request.execution_task_id}`])
+      const retriedTask = this.#requests.retryGeneration(
+        laboratoryRequestPolicy,
+        transaction,
+        input.context,
+        request,
+        this.#virtualTime(input.context),
+      )
       const projected = this.#laboratoryRequests(input.context, request.case_id)
         .find(item => item.id === request.request_id)
       if (projected === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request was not found')
@@ -7614,119 +7421,35 @@ export class WorkflowService {
       if (request === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request was not found')
       }
-      const practitionerId = input.context.practitionerId
-      if (practitionerId === undefined || request.authored_by !== practitionerId) {
-        throw new WorkflowError(
-          'ROLE_NOT_ALLOWED',
-          'Only the doctor responsible for the laboratory request can acknowledge its report',
-        )
-      }
-      const existing = laboratoryReportAcknowledgementRowSchema.optional().parse(
-        this.#database.driver.prepare(`
-          SELECT acknowledgement_id, acknowledged_at, acknowledged_by,
-            diagnostic_report_id, request_id, request_version
-          FROM laboratory_report_acknowledgement
-          WHERE workspace_id = ? AND epoch = ? AND diagnostic_report_id = ?
-        `).get(
-          input.context.workspaceId,
-          input.context.epoch,
-          input.diagnosticReportId,
-        ),
-      )
-      if (existing !== undefined) {
-        if (existing.request_id !== request.request_id || existing.acknowledged_by !== practitionerId) {
-          throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory report acknowledgement is invalid')
-        }
-        return {
-          data: {
-            acknowledgementId: existing.acknowledgement_id,
-            acknowledgedAt: existing.acknowledged_at,
-            acknowledgedBy: existing.acknowledged_by,
-            diagnosticReportId: existing.diagnostic_report_id,
-            requestId: existing.request_id,
-            requestVersion: existing.request_version,
-            status: 'acknowledged' as const,
-          },
-          effects: [],
-        }
-      }
-      if (request.diagnostic_report_id !== input.diagnosticReportId || request.status !== 'reported') {
-        throw new WorkflowError(
-          'WORKFLOW_CONFLICT',
-          'Only the current signed laboratory report can be acknowledged',
-        )
-      }
-      if (request.version !== input.expectedRequestVersion) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request version has changed',
-        )
-      }
-      const report = transaction.fhir.read(
+      const acknowledgement = this.#requests.acknowledge(
+        laboratoryRequestPolicy,
+        transaction,
         input.context,
-        'DiagnosticReport',
-        input.diagnosticReportId,
+        request,
+        {
+          assertReportContent: report => laboratoryDiagnosticReportContentSchema.parse(report),
+          diagnosticReportId: input.diagnosticReportId,
+          expectedRequestVersion: input.expectedRequestVersion,
+          now: this.#virtualTime(input.context),
+        },
       )
-      if (report.status !== 'final') {
-        throw new WorkflowError(
-          'WORKFLOW_CONFLICT',
-          'Only a signed laboratory report can be acknowledged',
-        )
-      }
-      laboratoryDiagnosticReportContentSchema.parse(report)
-      const acknowledgementId = uuidv7()
-      const acknowledgedAt = this.#virtualTime(input.context)
-      this.#database.driver.prepare(`
-        INSERT INTO laboratory_report_acknowledgement (
-          workspace_id, epoch, acknowledgement_id, request_id, diagnostic_report_id,
-          acknowledged_by, acknowledged_by_practitioner_role_id, acknowledged_at,
-          request_version
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        input.context.workspaceId,
-        input.context.epoch,
-        acknowledgementId,
-        request.request_id,
-        input.diagnosticReportId,
-        practitionerId,
-        input.context.practitionerRoleId,
-        acknowledgedAt,
-        request.version + 1,
-      )
-      const update = this.#database.driver.prepare(`
-        UPDATE laboratory_request
-        SET status = 'acknowledged', version = version + 1, acknowledged_at = ?
-        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
-          AND status = 'reported' AND version = ? AND diagnostic_report_id = ?
-      `).run(
-        acknowledgedAt,
-        input.context.workspaceId,
-        input.context.epoch,
-        request.request_id,
-        request.version,
-        input.diagnosticReportId,
-      )
-      if (update.changes !== 1) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request version has changed',
-        )
-      }
       return {
         data: {
-          acknowledgementId,
-          acknowledgedAt,
-          acknowledgedBy: practitionerId,
-          diagnosticReportId: input.diagnosticReportId,
-          requestId: request.request_id,
-          requestVersion: request.version + 1,
+          acknowledgementId: acknowledgement.acknowledgementId,
+          acknowledgedAt: acknowledgement.acknowledgedAt,
+          acknowledgedBy: acknowledgement.acknowledgedBy,
+          diagnosticReportId: acknowledgement.diagnosticReportId,
+          requestId: acknowledgement.requestId,
+          requestVersion: acknowledgement.requestVersion,
           status: 'acknowledged' as const,
         },
-        effects: [{
-          kind: 'created' as const,
-          reference: `ReportAcknowledgement/${acknowledgementId}`,
-          versionId: '1',
-        }],
+        effects: acknowledgement.created
+          ? [{
+              kind: 'created' as const,
+              reference: `ReportAcknowledgement/${acknowledgement.acknowledgementId}`,
+              versionId: '1',
+            }]
+          : [],
       }
     })
   }
@@ -7946,45 +7669,13 @@ export class WorkflowService {
           })),
         ],
       })
-      this.#database.driver.prepare(`
-        INSERT INTO laboratory_report_revision (
-          workspace_id, epoch, revision_id, request_id, diagnostic_report_id,
-          revision_of_diagnostic_report_id, provenance_id, reason, corrected_by, corrected_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        input.context.workspaceId,
-        input.context.epoch,
-        uuidv7(),
-        request.request_id,
+      this.#requests.recordReportRevision(laboratoryRequestPolicy, input.context, request, {
         diagnosticReportId,
-        input.diagnosticReportId,
+        now,
         provenanceId,
-        input.reason,
-        input.context.actorId,
-        now,
-      )
-      const update = this.#database.driver.prepare(`
-        UPDATE laboratory_request
-        SET status = 'reported', version = version + 1, reported_at = ?,
-          acknowledged_at = NULL, diagnostic_report_id = ?
-        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
-          AND version = ? AND diagnostic_report_id = ?
-          AND status IN ('reported', 'acknowledged')
-      `).run(
-        now,
-        diagnosticReportId,
-        input.context.workspaceId,
-        input.context.epoch,
-        request.request_id,
-        request.version,
-        input.diagnosticReportId,
-      )
-      if (update.changes !== 1) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request version has changed',
-        )
-      }
+        reason: input.reason,
+        revisionOfDiagnosticReportId: input.diagnosticReportId,
+      })
       return {
         data: {
           diagnosticReportId,
@@ -10042,15 +9733,9 @@ export class WorkflowService {
     const primaryDiagnosisConfirmed = diagnosis?.entries.some(entry => entry.role === 'primary') === true
     const documents = this.#structuredClinicalDocuments(context, outpatientCase.case_id)
     const signedDocument = documents.at(-1)
-    const activeLaboratoryRequests = z.array(laboratoryRequestRowSchema.pick({ status: true })).parse(
-      this.#database.driver.prepare(`
-        SELECT status FROM laboratory_request
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND status <> 'cancelled'
-      `).all(context.workspaceId, context.epoch, outpatientCase.case_id),
-    )
-    const requiredReportsAcknowledged = activeLaboratoryRequests.every(
-      request => request.status === 'acknowledged',
-    )
+    const requiredReportsAcknowledged = this.#requests
+      .openRequestStatuses(context, outpatientCase.case_id)
+      .every(status => status === 'acknowledged')
     const prescription = this.#issuedPrescription(context, outpatientCase.case_id)
     const medicationConclusionRecorded = (
       prescription !== undefined && prescription.status !== 'withdrawn'
@@ -10079,6 +9764,8 @@ export class WorkflowService {
       pendingDraftTarget = 'clinical-document'
     } else if (typeof laboratoryDraft?.draft_catalog_item_id === 'string') {
       pendingDraftTarget = 'laboratory'
+    } else if (this.imaging.hasDraft(context, outpatientCase.case_id)) {
+      pendingDraftTarget = 'imaging'
     } else if (diagnosisDraft?.draft_json !== null && diagnosisDraft?.draft_json !== undefined) {
       pendingDraftTarget = 'diagnosis'
     } else if (prescriptionDraft?.draft_json !== null && prescriptionDraft?.draft_json !== undefined) {
@@ -10245,7 +9932,7 @@ export class WorkflowService {
           result_snapshot_id, generation_error_code, generation_error_message,
           status, version
         FROM laboratory_request
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND request_kind = 'laboratory'
         ORDER BY authored_at, request_id
       `).all(context.workspaceId, context.epoch, caseId),
     ).map((request) => {
@@ -10481,6 +10168,7 @@ export class WorkflowService {
       | 'completedAt'
       | 'consultation'
       | 'diagnosis'
+      | 'imagingRequests'
       | 'laboratoryRequests'
       | 'medicationConclusion'
     > & { encounterId: string },
@@ -10574,6 +10262,52 @@ export class WorkflowService {
         }
       }
     }
+    for (const request of input.imagingRequests) {
+      const row = z.object({
+        authored_at: z.iso.datetime({ offset: true }),
+        cancelled_at: z.iso.datetime({ offset: true }).nullable(),
+      }).strict().parse(this.#database.driver.prepare(`
+        SELECT authored_at, cancelled_at FROM laboratory_request
+        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+      `).get(context.workspaceId, context.epoch, request.id))
+      const requestReferences = [`ServiceRequest/${request.serviceRequestId}`, `Task/${request.taskId}`]
+      events.push({
+        kind: 'imaging-request-issued',
+        occurredAt: row.authored_at,
+        reference: `ServiceRequest/${request.serviceRequestId}`,
+        relatedReferences: [`ImagingRequest/${request.id}`, `Task/${request.taskId}`],
+      })
+      if (row.cancelled_at !== null) {
+        events.push({
+          kind: 'imaging-request-cancelled',
+          occurredAt: row.cancelled_at,
+          reference: `ImagingRequest/${request.id}`,
+          relatedReferences: requestReferences,
+        })
+      }
+      for (const report of [...request.previousReports, ...(request.report === undefined ? [] : [request.report])]) {
+        events.push({
+          kind: report.revisionNumber === 1 ? 'imaging-report-issued' : 'imaging-report-revised',
+          occurredAt: report.issuedAt,
+          reference: `DiagnosticReport/${report.diagnosticReportId}`,
+          relatedReferences: [
+            `ServiceRequest/${request.serviceRequestId}`,
+            `ImagingStudy/${report.studyId}`,
+            ...(report.revisionOfDiagnosticReportId === undefined
+              ? []
+              : [`DiagnosticReport/${report.revisionOfDiagnosticReportId}`]),
+          ],
+        })
+        if (report.acknowledgement !== undefined) {
+          events.push({
+            kind: 'imaging-report-acknowledged',
+            occurredAt: report.acknowledgement.acknowledgedAt,
+            reference: `ReportAcknowledgement/${report.acknowledgement.id}`,
+            relatedReferences: [`DiagnosticReport/${report.diagnosticReportId}`],
+          })
+        }
+      }
+    }
     if (input.diagnosis !== undefined) {
       const legacyCondition = input.diagnosis.id.startsWith('legacy-')
         ? input.diagnosis.entries[0]
@@ -10642,6 +10376,7 @@ export class WorkflowService {
         AND outcome = 'success'
         AND operation IN (
           'encounter.delete-prescription-draft',
+          'imaging-request.delete-draft',
           'laboratory-request.delete-draft'
         )
       ORDER BY sequence
@@ -10651,17 +10386,19 @@ export class WorkflowService {
       context.scenarioRunId,
     ))
     return rows.flatMap(row => {
-      const draftReference = row.operation === 'encounter.delete-prescription-draft'
-        ? `PrescriptionDraft/${caseId}`
-        : `LaboratoryRequestDraft/${caseId}`
+      const draft = {
+        'encounter.delete-prescription-draft': ['PrescriptionDraft', 'prescription-draft-deleted'],
+        'imaging-request.delete-draft': ['ImagingRequestDraft', 'imaging-request-draft-deleted'],
+        'laboratory-request.delete-draft': ['LaboratoryRequestDraft', 'laboratory-request-draft-deleted'],
+      } as const
+      const [draftResource, kind] = draft[row.operation]
+      const draftReference = `${draftResource}/${caseId}`
       const effects = z.array(actionTraceEffectSchema).parse(
         JSON.parse(row.effect_json) as unknown,
       )
       if (!effects.some(effect => effect.reference === draftReference)) return []
       return [{
-        kind: row.operation === 'encounter.delete-prescription-draft'
-          ? 'prescription-draft-deleted' as const
-          : 'laboratory-request-draft-deleted' as const,
+        kind,
         occurredAt: row.virtual_timestamp,
         reference: `ActionTrace/${row.trace_id}`,
         relatedReferences: [draftReference],
@@ -10830,7 +10567,7 @@ export class WorkflowService {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory report specimen is invalid')
     }
     const specimenId = specimenReference.slice('Specimen/'.length)
-    const acknowledgement = laboratoryReportAcknowledgementRowSchema.optional().parse(
+    const acknowledgement = reportAcknowledgementRowSchema.optional().parse(
       this.#database.driver.prepare(`
         SELECT acknowledgement_id, acknowledged_at, acknowledged_by,
           diagnostic_report_id, request_id, request_version
@@ -10946,7 +10683,7 @@ export class WorkflowService {
          AND outpatient_case.epoch = laboratory_request.epoch
          AND outpatient_case.case_id = laboratory_request.case_id
         WHERE laboratory_request.workspace_id = ? AND laboratory_request.epoch = ?
-          AND laboratory_request.request_id = ?
+          AND laboratory_request.request_id = ? AND laboratory_request.request_kind = 'laboratory'
       `).get(context.workspaceId, context.epoch, requestId),
     )
   }

@@ -402,6 +402,40 @@ describe('HIS operation catalog', () => {
     ]))
   })
 
+  it('publishes the imaging request and report lifecycle with its own narrow operations', () => {
+    const expected = [
+      ['doctor.case.imaging-services.list', 'query', 'read', ['outpatient-doctor']],
+      ['encounter.imaging-request.draft.set', 'draft', 'write', ['outpatient-doctor']],
+      ['encounter.imaging-request.draft.delete', 'draft', 'write', ['outpatient-doctor']],
+      ['encounter.imaging-request.issue', 'command', 'high-risk-write', ['outpatient-doctor']],
+      ['imaging-request.cancel', 'command', 'high-risk-write', ['outpatient-doctor']],
+      ['imaging-request.retry', 'command', 'write', ['outpatient-doctor']],
+      ['imaging-report.acknowledge', 'command', 'write', ['outpatient-doctor']],
+      ['imaging-report.correct', 'command', 'high-risk-write', ['administrator']],
+    ]
+    expect(expected.map(([id]) => {
+      const operation = getHisOperation(id as string)
+      return [operation.id, operation.mode, operation.risk, operation.roles]
+    })).toEqual(expected)
+    // 放射草稿只接受服务与自由文本指征，不接受检验目录项或素材标识。
+    const draft = getHisOperation('encounter.imaging-request.draft.set')
+    expect(draft.input.safeParse({
+      encounterId: 'encounter-1',
+      encounterVersion: '3',
+      expectedDraftVersion: 0,
+      indication: '咳嗽两周',
+      serviceId: 'imaging-chest-radiograph',
+    }).success).toBe(true)
+    expect(draft.input.safeParse({
+      assetId: 'asset-1',
+      encounterId: 'encounter-1',
+      encounterVersion: '3',
+      expectedDraftVersion: 0,
+      indication: '咳嗽两周',
+      serviceId: 'imaging-chest-radiograph',
+    }).success).toBe(false)
+  })
+
   it('publishes the independent laboratory request and report lifecycle', () => {
     const expected = [
       ['encounter.laboratory-request.draft.set', 'draft', 'write', ['outpatient-doctor']],
@@ -537,6 +571,9 @@ describe('HIS operation catalog', () => {
       'encounter.consultation.reply.retry': 'consultation.reply.retry',
       'encounter.diagnosis.confirm': 'encounter.confirm-diagnosis',
       'encounter.diagnosis.draft.set': 'encounter.save-diagnosis-draft',
+      'encounter.imaging-request.draft.delete': 'imaging-request.delete-draft',
+      'encounter.imaging-request.draft.set': 'imaging-request.save-draft',
+      'encounter.imaging-request.issue': 'imaging-request.issue',
       'encounter.laboratory-request.draft.delete': 'laboratory-request.delete-draft',
       'encounter.laboratory-request.draft.set': 'laboratory-request.save-draft',
       'encounter.laboratory-request.issue': 'laboratory-request.issue',
@@ -563,7 +600,7 @@ describe('HIS operation catalog', () => {
     expect(counts).toEqual({
       'clinmesh-administrator': 3,
       'clinmesh-billing': 3,
-      'clinmesh-doctor': 34,
+      'clinmesh-doctor': 42,
       'clinmesh-fhir': 5,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 7,

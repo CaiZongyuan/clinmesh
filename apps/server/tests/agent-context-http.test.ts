@@ -406,10 +406,10 @@ describe('DSH Agent Page Context HTTP contract', () => {
 
     runtime.database.driver.prepare(`
       INSERT INTO laboratory_request (
-        workspace_id, epoch, request_id, case_id, catalog_item_id, reference_json,
+        workspace_id, epoch, request_id, case_id, request_kind, catalog_item_id, reference_json,
         indication_code, service_request_id, execution_task_id, diagnostic_report_id,
         status, version, authored_by, authored_at, reported_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'reported', 1, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, 'laboratory', ?, ?, ?, ?, ?, ?, 'reported', 1, ?, ?, ?)
     `).run(
       'workspace-demo',
       'epoch-1',

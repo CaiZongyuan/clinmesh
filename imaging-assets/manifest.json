@@ -1,0 +1,20 @@
+{
+  "collections": [
+    {
+      "annotationArchive": {
+        "sha256": "644557a3aa305602609c718b0cae33a93be762e8901a80bcd9df735b0ec6ab90",
+        "url": "https://www.cancerimagingarchive.net/wp-content/uploads/LIDC-XML-only.zip"
+      },
+      "attribution": "Armato III, S. G., McLennan, G., Bidaut, L., et al. (2015). Data From LIDC-IDRI [Data set]. The Cancer Imaging Archive.",
+      "doi": "10.7937/K9/TCIA.2015.LO9QL9SX",
+      "id": "lidc-idri",
+      "license": "CC-BY-3.0",
+      "source": {
+        "kind": "tcia-nbia"
+      },
+      "title": "LIDC-IDRI"
+    }
+  ],
+  "packId": "clinmesh-chest-imaging",
+  "schemaVersion": 1
+}

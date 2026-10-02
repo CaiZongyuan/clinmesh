@@ -1,4 +1,12 @@
 import {
+  acknowledgeImagingReportResponseSchema,
+  caseImagingServiceCatalogSchema,
+  correctImagingReportResponseSchema,
+  imagingRequestActionResponseSchema,
+  imagingRequestDraftResponseSchema,
+  issueImagingRequestResponseSchema,
+  type ImagingReport,
+  type ImagingRequest,
   acknowledgeLaboratoryReportResponseSchema,
   apiErrorSchema,
   retryConsultationReplyResponseSchema,
@@ -58,6 +66,13 @@ import {
   type ScenarioState,
   type SessionContext,
 } from '@clinmesh/contracts/his'
+import {
+  administratorImagingAssetSchema,
+  administratorImagingPreparationSchema,
+  imagingCoverageSchema,
+  imagingPreparationBatchSchema,
+  imagingStudyViewSchema,
+} from '@clinmesh/contracts/imaging'
 import {
   administratorCaseTruthSchema,
   patientPersonaJobSchema,
@@ -155,11 +170,11 @@ function responseCorrelationId(response: Response): string | undefined {
   return parsed.success ? parsed.data : undefined
 }
 
-async function requestApi<Schema extends z.ZodType>(
+async function requestApi<Result>(
   path: string,
   init: RequestInit,
-  schema: Schema,
-): Promise<z.infer<Schema>> {
+  read: (response: Response) => Promise<Result>,
+): Promise<Result> {
   const notifyAuthenticationFailure = authenticationFailureHandler
   const requestAuthenticationRevision = authenticationRevision
   const callerSignal = init.signal ?? undefined
@@ -177,7 +192,7 @@ async function requestApi<Schema extends z.ZodType>(
   }, 30_000)
   try {
     const response = await fetch(resolveApiPath(path), { ...init, signal: requestController.signal })
-    const result = await parseResponse(response, schema)
+    const result = await read(response)
     if (path === '/api/auth/sign-in/email' || path === '/api/auth/sign-out') authenticationRevision += 1
     return result
   } catch (error) {
@@ -242,6 +257,20 @@ async function parseResponse<Schema extends z.ZodType>(
   return parsed.data
 }
 
+/** 读取二进制响应；失败时响应仍是 JSON 错误信封。 */
+async function parseBinaryResponse(response: Response): Promise<Uint8Array> {
+  if (!response.ok) return await parseResponse(response, z.never())
+  return new Uint8Array(await response.arrayBuffer())
+}
+
+export async function apiGetBinary(path: string, signal?: AbortSignal): Promise<Uint8Array> {
+  return requestApi(path, {
+    credentials: 'same-origin',
+    headers: { accept: 'application/octet-stream' },
+    ...(signal === undefined ? {} : { signal }),
+  }, parseBinaryResponse)
+}
+
 export async function apiGet<Schema extends z.ZodType>(
   path: string,
   schema: Schema,
@@ -251,7 +280,7 @@ export async function apiGet<Schema extends z.ZodType>(
     credentials: 'same-origin',
     headers: { accept: 'application/json' },
     ...(signal === undefined ? {} : { signal }),
-  }, schema)
+  }, response => parseResponse(response, schema))
 }
 
 export async function apiMutation<Schema extends z.ZodType>(
@@ -277,7 +306,7 @@ export async function apiMutation<Schema extends z.ZodType>(
     headers,
     method: options.method ?? 'POST',
     ...(options.signal === undefined ? {} : { signal: options.signal }),
-  }, schema)
+  }, response => parseResponse(response, schema))
 }
 
 export function getSession(signal?: AbortSignal): Promise<SessionContext> {
@@ -355,7 +384,10 @@ export async function issueAgentExecutionProof(input: {
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     method: 'POST',
     ...(input.signal === undefined ? {} : { signal: input.signal }),
-  }, z.object({ data: z.object({ proof: z.string().min(32) }).strict() }).strict())
+  }, response => parseResponse(
+    response,
+    z.object({ data: z.object({ proof: z.string().min(32) }).strict() }).strict(),
+  ))
   return value.data.proof
 }
 
@@ -468,6 +500,169 @@ export function getAdministratorCaseTruth(caseId: string, signal?: AbortSignal) 
     `/api/sim/v1/admin/synthetic-cases/${encodeURIComponent(caseId)}/truth`,
     administratorCaseTruthSchema,
     signal,
+  )
+}
+
+export function getAdministratorImagingPreparation(caseId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/sim/v1/admin/synthetic-cases/${encodeURIComponent(caseId)}/imaging-preparation`,
+    administratorImagingPreparationSchema,
+    signal,
+  )
+}
+
+export function getImagingCoverage(signal?: AbortSignal) {
+  return apiGet('/api/sim/v1/admin/imaging-coverage', imagingCoverageSchema, signal)
+}
+
+export function getAdministratorImagingAsset(assetId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/sim/v1/admin/imaging-assets/${encodeURIComponent(assetId)}`,
+    administratorImagingAssetSchema,
+    signal,
+  )
+}
+
+/** `blockPath` 是相对检查的像素块路径，由阅片器按序列 `kind` 生成，例如 `series/0/frames/3/blocks/0`。 */
+export function getAdministratorImagingAssetBlock(assetId: string, blockPath: string, signal?: AbortSignal) {
+  return apiGetBinary(`/api/sim/v1/admin/imaging-assets/${encodeURIComponent(assetId)}/${blockPath}`, signal)
+}
+
+export function getImagingStudy(studyId: string, signal?: AbortSignal) {
+  return apiGet(`/api/his/v1/imaging-studies/${encodeURIComponent(studyId)}`, imagingStudyViewSchema, signal)
+}
+
+export function getImagingStudyBlock(studyId: string, blockPath: string, signal?: AbortSignal) {
+  return apiGetBinary(`/api/his/v1/imaging-studies/${encodeURIComponent(studyId)}/${blockPath}`, signal)
+}
+
+export function getCaseImagingServices(caseId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/imaging-services`,
+    caseImagingServiceCatalogSchema,
+    signal,
+  )
+}
+
+export function saveImagingRequestDraft(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+  indication: string
+  serviceId: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/imaging-request/draft`,
+    imagingRequestDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: {
+        expectedDraftVersion: input.expectedDraftVersion,
+        indication: input.indication,
+        serviceId: input.serviceId,
+      },
+    },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function deleteImagingRequestDraft(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/imaging-request/draft`,
+    imagingRequestDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey, method: 'DELETE' },
+  )
+}
+
+export function issueImagingRequest(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/imaging-request/actions/issue`,
+    issueImagingRequestResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+/** 取消与重试都按申请当前的 ServiceRequest、Task 与申请版本提交。 */
+export function cancelImagingRequest(request: ImagingRequest, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/imaging-requests/${encodeURIComponent(request.id)}/actions/cancel`,
+    imagingRequestActionResponseSchema,
+    {
+      expectedVersions: {
+        [`ServiceRequest/${request.serviceRequestId}`]: request.serviceRequestVersion,
+        [`Task/${request.taskId}`]: request.taskVersion,
+      },
+      input: { expectedRequestVersion: request.version, reasonCode: 'no-longer-needed' },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function retryImagingRequest(request: ImagingRequest, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/imaging-requests/${encodeURIComponent(request.id)}/actions/retry`,
+    imagingRequestActionResponseSchema,
+    {
+      expectedVersions: { [`Task/${request.taskId}`]: request.taskVersion },
+      input: { expectedRequestVersion: request.version },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function acknowledgeImagingReport(request: ImagingRequest, report: ImagingReport, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/imaging-requests/${encodeURIComponent(request.id)}/reports/${encodeURIComponent(report.diagnosticReportId)}/actions/acknowledge`,
+    acknowledgeImagingReportResponseSchema,
+    {
+      expectedVersions: { [`DiagnosticReport/${report.diagnosticReportId}`]: report.diagnosticReportVersion },
+      input: { expectedRequestVersion: request.version },
+    },
+    { idempotencyKey },
+  )
+}
+
+/** 管理员更正：从同一素材已核对发布的报告内容修订中选一份重新签发。 */
+export function correctImagingReport(
+  request: ImagingRequest,
+  report: ImagingReport,
+  input: { reason: string; reportRevision: number },
+  idempotencyKey: string,
+) {
+  return apiMutation(
+    `/api/his/v1/imaging-requests/${encodeURIComponent(request.id)}/reports/${encodeURIComponent(report.diagnosticReportId)}/actions/correct`,
+    correctImagingReportResponseSchema,
+    {
+      expectedVersions: { [`DiagnosticReport/${report.diagnosticReportId}`]: report.diagnosticReportVersion },
+      input: { ...input, expectedRequestVersion: request.version },
+    },
+    { idempotencyKey },
+  )
+}
+
+/** 不指定病例时准备下一批尚未按当前清单准备过的病例。 */
+export function prepareImagingCases(caseIds: string[] | undefined, idempotencyKey: string) {
+  return apiMutation(
+    '/api/sim/v1/admin/imaging-preparations',
+    commandResponseSchema(imagingPreparationBatchSchema),
+    { input: caseIds === undefined ? {} : { caseIds } },
+    { idempotencyKey },
   )
 }
 

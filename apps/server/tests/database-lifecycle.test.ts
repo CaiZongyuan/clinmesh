@@ -172,7 +172,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 51,
+      schemaVersion: 54,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -227,8 +227,11 @@ describe('SQLite lifecycle', () => {
         '0044_synthetic-patient-archive.sql',
         '0045_patient-persona.sql',
         '0046_consultation-turn.sql',
+        '0047_clinical-request-kind.sql',
+        '0048_imaging-case-preparation.sql',
+        '0049_imaging-request.sql',
       ],
-      schemaVersion: 51,
+      schemaVersion: 54,
     })
     expect(first.driver.prepare(`
       SELECT name FROM sqlite_schema
@@ -244,8 +247,8 @@ describe('SQLite lifecycle', () => {
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 51 })
-    expect(reopened.diagnostics().schemaVersion).toBe(51)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 54 })
+    expect(reopened.diagnostics().schemaVersion).toBe(54)
     reopened.close()
   })
 
@@ -316,8 +319,11 @@ describe('SQLite lifecycle', () => {
         '0044_synthetic-patient-archive.sql',
         '0045_patient-persona.sql',
         '0046_consultation-turn.sql',
+        '0047_clinical-request-kind.sql',
+        '0048_imaging-case-preparation.sql',
+        '0049_imaging-request.sql',
       ],
-      schemaVersion: 51,
+      schemaVersion: 54,
     })
     expect(database.driver.prepare(`
       SELECT practitioner_role_id FROM command_receipt
@@ -1459,10 +1465,56 @@ describe('SQLite lifecycle', () => {
       asked_by_actor_id, asked_by_practitioner_id, recorded_at
     ) VALUES (?, ?, 'legacy-record', 'case-legacy', 1, 'symptom-onset', '什么时候发热？', '昨天傍晚开始。', 1, 'actor-legacy-doctor', 'practitioner-legacy-doctor', ?)`)
       .run(context.workspaceId, context.epoch, '2026-08-24T09:00:00+08:00')
-    for (const migration of ['0045_patient-persona.sql', '0046_consultation-turn.sql']) {
+    database.driver.prepare(`INSERT INTO laboratory_request (
+      workspace_id, epoch, request_id, case_id, catalog_item_id, reference_json, indication_code,
+      service_request_id, execution_task_id, diagnostic_report_id, status, version, authored_by, authored_at, reported_at
+    ) VALUES (?, ?, 'laboratory-request-legacy', 'case-legacy', 'lab-cbc', ?, 'fever',
+      'service-request-legacy', 'task-legacy', 'diagnostic-report-legacy-2', 'acknowledged', 5,
+      'practitioner-legacy-doctor', ?, ?)`)
+      .run(context.workspaceId, context.epoch, JSON.stringify({ code: '58410-2', id: 'lab-cbc' }), '2026-08-24T09:00:00+08:00', '2026-08-24T09:10:00+08:00')
+    database.driver.prepare(`INSERT INTO laboratory_report_acknowledgement VALUES (
+      ?, ?, 'acknowledgement-legacy', 'laboratory-request-legacy', 'diagnostic-report-legacy-2',
+      'practitioner-legacy-doctor', 'role-legacy-doctor', ?, 5)`)
+      .run(context.workspaceId, context.epoch, '2026-08-24T09:20:00+08:00')
+    database.driver.prepare(`INSERT INTO laboratory_report_revision VALUES (
+      ?, ?, 'revision-legacy', 'laboratory-request-legacy', 'diagnostic-report-legacy-2',
+      'diagnostic-report-legacy-1', 'provenance-legacy', '更正', 'actor-lis-system', ?)`)
+      .run(context.workspaceId, context.epoch, '2026-08-24T09:15:00+08:00')
+    // 升级时仍在进行中的检验申请：保留状态与服务快照，并继续受“同一服务只能有一条进行中申请”约束。
+    database.driver.prepare(`INSERT INTO laboratory_request (
+      workspace_id, epoch, request_id, case_id, catalog_item_id, reference_json, indication_code,
+      service_request_id, execution_task_id, status, version, authored_by, authored_at, service_snapshot_json
+    ) VALUES (?, ?, 'laboratory-request-active', 'case-legacy', 'lab-crp', ?, 'fever',
+      'service-request-active', 'task-active', 'issued', 1, 'practitioner-legacy-doctor', ?, ?)`)
+      .run(
+        context.workspaceId,
+        context.epoch,
+        JSON.stringify({ code: '1988-5', id: 'lab-crp' }),
+        '2026-08-24T09:30:00+08:00',
+        JSON.stringify({ id: 'lab-crp', version: 1 }),
+      )
+    for (const migration of ['0045_patient-persona.sql', '0046_consultation-turn.sql', '0047_clinical-request-kind.sql']) {
       await copyFile(join(process.cwd(), 'drizzle', migration), join(legacyMigrationDirectory, migration))
     }
-    expect(applyMigrations(database, legacyMigrationDirectory).applied).toEqual(['0045_patient-persona.sql', '0046_consultation-turn.sql'])
+    expect(applyMigrations(database, legacyMigrationDirectory).applied).toEqual(['0045_patient-persona.sql', '0046_consultation-turn.sql', '0047_clinical-request-kind.sql'])
+    expect(database.driver.prepare(`SELECT request_id, request_kind, status, version, diagnostic_report_id, service_snapshot_json FROM laboratory_request WHERE case_id = 'case-legacy' ORDER BY request_id`).all()).toEqual([
+      { request_id: 'laboratory-request-active', request_kind: 'laboratory', status: 'issued', version: 1, diagnostic_report_id: null, service_snapshot_json: JSON.stringify({ id: 'lab-crp', version: 1 }) },
+      { request_id: 'laboratory-request-legacy', request_kind: 'laboratory', status: 'acknowledged', version: 5, diagnostic_report_id: 'diagnostic-report-legacy-2', service_snapshot_json: null },
+    ])
+    const insertRequest = (requestId: string, requestKind: string, catalogItemId: string) => database.driver.prepare(`INSERT INTO laboratory_request (
+      workspace_id, epoch, request_id, case_id, request_kind, catalog_item_id, indication_code,
+      service_request_id, execution_task_id, status, version, authored_by, authored_at
+    ) VALUES (?, ?, ?, 'case-legacy', ?, ?, 'fever', ?, ?, 'issued', 1, 'practitioner-legacy-doctor', ?)`)
+      .run(context.workspaceId, context.epoch, requestId, requestKind, catalogItemId, `service-request-${requestId}`, `task-${requestId}`, '2026-08-24T09:40:00+08:00')
+    expect(() => insertRequest('imaging-request-duplicate', 'imaging', 'lab-crp')).toThrow(/UNIQUE constraint failed/)
+    expect(database.driver.prepare(`SELECT acknowledgement_id, request_version FROM laboratory_report_acknowledgement WHERE request_id = 'laboratory-request-legacy'`).all()).toEqual([
+      { acknowledgement_id: 'acknowledgement-legacy', request_version: 5 },
+    ])
+    expect(database.driver.prepare(`SELECT revision_id, revision_of_diagnostic_report_id FROM laboratory_report_revision WHERE request_id = 'laboratory-request-legacy'`).all()).toEqual([
+      { revision_id: 'revision-legacy', revision_of_diagnostic_report_id: 'diagnostic-report-legacy-1' },
+    ])
+    expect(() => database.driver.prepare(`UPDATE laboratory_request SET reference_json = NULL WHERE request_id = 'laboratory-request-legacy'`).run())
+      .toThrow(/CHECK constraint failed/)
     expect(database.driver.prepare('SELECT content_json FROM patient_persona_revision WHERE case_id = ?').get('synthetic-legacy')).toEqual({ content_json: legacyBrief })
     expect(database.driver.prepare('SELECT active_brief_revision FROM synthetic_case_instance WHERE case_id = ?').get('synthetic-legacy')).toEqual({ active_brief_revision: 1 })
     expect(database.driver.prepare('SELECT sequence, speaker, source, message_text, actor_id, practitioner_id FROM consultation_turn WHERE case_id = ? ORDER BY sequence').all('case-legacy')).toEqual([
@@ -1470,6 +1522,14 @@ describe('SQLite lifecycle', () => {
       { sequence: 2, speaker: 'patient', source: 'legacy-question-answer', message_text: '昨天傍晚开始。', actor_id: null, practitioner_id: null },
     ])
     expect(database.driver.prepare('SELECT version FROM consultation WHERE case_id = ?').get('case-legacy')).toEqual({ version: 3 })
+    for (const migration of ['0048_imaging-case-preparation.sql', '0049_imaging-request.sql']) {
+      await copyFile(join(process.cwd(), 'drizzle', migration), join(legacyMigrationDirectory, migration))
+    }
+    expect(applyMigrations(database, legacyMigrationDirectory).applied).toEqual(['0048_imaging-case-preparation.sql', '0049_imaging-request.sql'])
+    // 申请类型不在表上枚举：后续类型（例如病理）直接写入，不需要重建申请表和引用它的放射明细表。
+    insertRequest('pathology-request-new', 'pathology', 'pathology-breast-consultation')
+    expect(database.driver.prepare(`SELECT request_kind FROM laboratory_request WHERE request_id = 'pathology-request-new'`).get())
+      .toEqual({ request_kind: 'pathology' })
     expect(database.driver.pragma('foreign_key_check')).toEqual([])
     expect(database.driver.pragma('integrity_check', { simple: true })).toBe('ok')
     database.close()
@@ -1496,7 +1556,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(51)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(54)
     await runtime.close()
   })
 
@@ -1598,7 +1658,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 51,
+      schemaVersion: 54,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -1610,11 +1670,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 51,
+      expectedSchemaVersion: 54,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 51,
+      schemaVersion: 54,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -1798,7 +1858,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(51),
+      schemaVersion: z.literal(54),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -1849,26 +1909,29 @@ describe('SQLite lifecycle', () => {
         '0044_synthetic-patient-archive.sql',
         '0045_patient-persona.sql',
         '0046_consultation-turn.sql',
+      '0047_clinical-request-kind.sql',
+      '0048_imaging-case-preparation.sql',
+      '0049_imaging-request.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 51 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 54 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 51 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 54 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 51 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 54 })
   })
 })

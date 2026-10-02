@@ -88,6 +88,27 @@ describe('ClinMesh DSH Host proxy', () => {
     expect(upstreamRequests).toBe(0)
   })
 
+  it('passes a full-size imaging pixel block through unchanged with its cache policy', async () => {
+    // 像素块上限为 2 MiB，默认响应上限需要容纳它且不改动任何字节。
+    const block = Buffer.alloc(2 * 1024 * 1024)
+    for (let index = 0; index < block.length; index += 1) block[index] = index % 251
+    const upstream = await listen(createServer((_request, response) => {
+      response.setHeader('content-type', 'application/octet-stream')
+      response.setHeader('cache-control', 'private, no-store')
+      response.end(block)
+    }))
+    const proxy = await listen(createServer(createClinMeshProxyHandler({ upstreamOrigin: upstream.origin })))
+
+    const response = await fetch(
+      `${proxy.origin}/clinmesh-api/his/v1/imaging-studies/study-1/series/0/frames/0/blocks/0`,
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toBe('application/octet-stream')
+    expect(response.headers.get('cache-control')).toBe('private, no-store')
+    expect(Buffer.from(await response.arrayBuffer()).equals(block)).toBe(true)
+  })
+
   it('rejects an oversized upstream response before sending it to the browser', async () => {
     const upstream = await listen(createServer((_request, response) => {
       response.setHeader('content-type', 'application/json')

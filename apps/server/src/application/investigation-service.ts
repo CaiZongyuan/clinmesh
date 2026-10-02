@@ -441,6 +441,7 @@ export class InvestigationService {
        AND outpatient_case.epoch = request.epoch
        AND outpatient_case.case_id = request.case_id
       WHERE request.workspace_id = ? AND request.epoch = ? AND request.request_id = ?
+        AND request.request_kind = 'laboratory'
     `).get(workspaceId, epoch, requestId))
     if (row === undefined) return undefined
     if (row.result_snapshot_id !== null) {

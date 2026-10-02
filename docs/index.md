@@ -28,6 +28,7 @@ features:
 - [跨端前端架构](frontend-architecture.md)：Web、Desktop、Mobile 和共享包职责。
 - [临床 UI 设计合同](ui/design.md)：高信息密度 token、组件组合、响应式与真实组件目录。
 - [部署指南](deployment.md)：从 clone 到完整运行的顺序步骤。
+- [影像检查使用指南](imaging.md)：胸片与胸部 CT 从素材、病例准备到开单、阅片和已阅的用法，以及各状态的含义。
 - [Demo 部署](demo-architecture.md)：Node.js、SQLite 与 Web-only 首期部署决策。
 - [Agent 工程开发](agent-development.md)：Agent 约束、决策记录和检查流程。
 - [测试策略](testing.md)：测试层级和验收入口。

@@ -1,0 +1,89 @@
+{
+  "annotation": {
+    "kind": "lidc-radiograph",
+    "nodules": [],
+    "readerCount": 1,
+    "source": {
+      "file": "tcia-lidc-xml/185/120.xml",
+      "sha256": "5c8779b0f72cc35c44aa0c2a36a972525e0a58d3a4e55922aba376f1329908b0"
+    }
+  },
+  "assetId": "lidc-idri-0028-chest-radiograph",
+  "collectionId": "lidc-idri",
+  "examCode": "chest-radiograph",
+  "output": {
+    "series": [
+      {
+        "framesBytes": 14040768,
+        "framesSha256": "e1ffd29e2329b45ffbd2886f5e70f0748c94f8ac906c9233768ee21f6ea20826",
+        "geometrySha256": "f258fd8f18339f711ff072a72582f5902e014beaba3e503969d3492c23dcb219"
+      }
+    ],
+    "transcoderVersion": 1
+  },
+  "reports": [
+    {
+      "draft": {
+        "model": "claude-opus-5-5",
+        "promptVersion": "chest-report-v1"
+      },
+      "findings": "双肺野未见明确结节影。",
+      "impression": "胸片未见明确肺结节影。",
+      "lesions": [],
+      "review": {
+        "automatedCheck": {
+          "checkVersion": 2,
+          "passed": true
+        },
+        "conclusion": "approved",
+        "contentSha256": "f2da011a48cf4d5ed1ad0dd984a697a89f3e34b43a6d901004be58c2dd8d1f12",
+        "items": [
+          {
+            "conclusion": "confirmed",
+            "item": "exam-and-orientation"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "no-identifying-content"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "findings-match-pixels"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "report-wording"
+          }
+        ],
+        "reviewedAt": "2026-10-01",
+        "reviewer": "JH",
+        "reviewerIsRadiologist": false
+      },
+      "revision": 1,
+      "technique": "胸部正位、侧位片，共 2 幅图像。报告范围：肺结节相关所见。"
+    }
+  ],
+  "schemaVersion": 1,
+  "source": {
+    "series": [
+      {
+        "instances": [
+          {
+            "bytes": 7022226,
+            "sha256": "f1bc8fc0a500e8cafc410f075d3493735c13aa3aa3ac16fbfb958e1278bc718d",
+            "sopInstanceUid": "1.3.6.1.4.1.14519.5.2.1.6279.6001.230874936857060403671385154002"
+          },
+          {
+            "bytes": 7022226,
+            "sha256": "54fd245b747afceb2588c0e0fe742dd95abe950391cc1173ba7197214c54ec07",
+            "sopInstanceUid": "1.3.6.1.4.1.14519.5.2.1.6279.6001.158406117086083868487809141175"
+          }
+        ],
+        "modality": "DX",
+        "seriesInstanceUid": "1.3.6.1.4.1.14519.5.2.1.6279.6001.141129481770767608972887619912"
+      }
+    ],
+    "studyInstanceUid": "1.3.6.1.4.1.14519.5.2.1.6279.6001.171190795452901235326572199597",
+    "subjectId": "LIDC-IDRI-0028"
+  }
+}

@@ -10,6 +10,7 @@
 | `docs/architecture.md` | 仿真 HIS 系统与 FHIR 详细架构 |
 | `docs/frontend-architecture.md` | Web/Desktop/Mobile 包拓扑与共享规则 |
 | `docs/deployment.md` | 从 clone 到完整运行的顺序部署教程 |
+| `docs/imaging.md` | 放射检查的使用指南：各岗位操作步骤、界面状态含义和常见问题 |
 | `docs/demo-architecture.md` | 首期 Demo 运行时、数据库与部署决策 |
 | `docs/agent-development.md` | Agent 参与工程开发的操作规范 |
 | `docs/testing.md` | 测试层级、场景和检查要求 |

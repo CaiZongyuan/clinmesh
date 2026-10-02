@@ -92,6 +92,30 @@ _Avoid_: Editable prompt output, Case revision, overwrite
 针对一个 Synthetic Case Instance、固定 Hospital Service 定义和申请前临床证据首次成功解析或生成的不可变结构化结果。同一申请的重试和证据相同的新 Epoch 重放复用该结果；新增正式证据后的复查形成新的 Snapshot。
 _Avoid_: Live laboratory result, mutable simulator response, unsourced normal fallback
 
+**Imaging Asset**:
+清单登记的一套去标识真实影像及其来源、许可、输出哈希、结构化标注和报告内容修订。它是“只使用合成数据”规则下唯一的真实数据例外，不携带患者身份或病史，也不是本院某次检查的事实。
+_Avoid_: Imaging Study, attachment, patient record, PACS object
+
+**Imaging Catalog**:
+仓库公开提交的 Imaging Asset 清单与病例匹配规则。像素和来源原始文件不在其中，由同步命令按清单拉取到本地素材目录。
+_Avoid_: Asset directory, reference database, image archive
+
+**Report Content Revision**:
+Imaging Asset 的一份中文报告内容及其核对记录。只有通过自动一致性核对并经人工复核通过的修订才算已发布；它不是本院对某位患者签发的报告。
+_Avoid_: Diagnostic report, report version, draft
+
+**Imaging Preparation**:
+为一个 Synthetic Case Instance 的每项影像检查按来源编码确定素材、冲突或不支持原因的不可变结果。病例开始前随清单更新，开始后形成的绑定只能追加。
+_Avoid_: Matching guess, normal fallback, order-time lookup
+
+**Imaging Binding**:
+一个已开始病例的某项检查与 Imaging Asset 及其 Report Content Revision 的固定对应关系。它只在管理员边界可见，重试、重放和后续清单变化都不更换它。
+_Avoid_: Asset link in clinical DTO, study reference
+
+**Imaging Study**:
+本院对一位患者完成一次影像检查的运行事实，拥有本院自己的检查标识。它引用申请、就诊和患者，不暴露所用素材；像素是否可读是读取时的状态，不改写这项事实。
+_Avoid_: Imaging Asset, DICOM file, source study
+
 **Adult Reference Baseline**:
 由 Hospital Service 冻结的版本化成人参考规则为适用患者确定性生成的合成健康检验结果。它只在没有精确 Case Truth 时使用，不兼容事实、患者不适用或规则缺失都会失败。
 _Avoid_: Unsourced normal fallback, hospital LIS reference interval, disease model
@@ -227,6 +251,10 @@ _Avoid_: National Medical Service, Hospital Service, Charge Item
 **Clinical Request**:
 临床人员对药品、检查、检验、治疗或耗材提出的单项意图。
 _Avoid_: Prescription, template, execution record
+
+**Imaging Request**:
+对一项本院放射服务提出的 Clinical Request，记录冻结的服务定义和检查指征。它与检验申请共用申请生命周期，但拥有独立的草稿、操作和报告结构。
+_Avoid_: Laboratory request, imaging order set, study
 
 **Investigation Generation Capability**:
 一个具体病例与检验项目组合能否从 Case Truth 或已配置的受限生成器产生结构化结果的能力事实。它不等同于项目存在于全局 Reference 目录。

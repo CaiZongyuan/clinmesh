@@ -186,6 +186,48 @@ describe('ClinMesh DSH Agent contracts', () => {
     )).toThrow()
   })
 
+  it('opens an imaging study only through the laboratory section', () => {
+    expect(parseAgentToolInput('outpatient.section.select', {
+      imagingRequestId: 'imaging-request-1',
+      section: 'laboratory',
+    })).toEqual({ imagingRequestId: 'imaging-request-1', section: 'laboratory' })
+    expect(() => parseAgentToolInput('outpatient.section.select', {
+      imagingRequestId: 'imaging-request-1',
+      section: 'record',
+    })).toThrow()
+  })
+
+  it('keeps imaging Tools narrow: no pixels, asset identity, or free-text report rewrite', () => {
+    const imagingTools = agentToolsForContext('outpatient-doctor', 'consultation')
+      .filter(tool => tool.operationId.startsWith('outpatient.imaging.'))
+    expect(imagingTools.map(tool => [tool.operationId, tool.mode])).toEqual([
+      ['outpatient.imaging.draft.set', 'draft'],
+      ['outpatient.imaging.issue.propose', 'proposal'],
+      ['outpatient.imaging.cancel.propose', 'proposal'],
+      ['outpatient.imaging.retry.propose', 'proposal'],
+      ['outpatient.imaging.correct.propose', 'proposal'],
+    ])
+    expect(parseAgentToolInput('outpatient.imaging.draft.set', {
+      indication: 'x'.repeat(500),
+      serviceId: 'imaging-chest-ct-plain',
+    })).toEqual({ indication: 'x'.repeat(500), serviceId: 'imaging-chest-ct-plain' })
+    expect(() => parseAgentToolInput('outpatient.imaging.draft.set', {
+      indication: 'x'.repeat(501),
+      serviceId: 'imaging-chest-ct-plain',
+    })).toThrow()
+    expect(() => parseAgentToolInput('outpatient.imaging.draft.set', {
+      assetId: 'asset-1',
+      indication: '咳嗽两周',
+      serviceId: 'imaging-chest-ct-plain',
+    })).toThrow()
+    const correction = { reason: '报告内容已重新核对', reportRevision: 2, requestId: 'imaging-request-1' }
+    expect(parseAgentToolInput('outpatient.imaging.correct.propose', correction)).toEqual(correction)
+    expect(() => parseAgentToolInput('outpatient.imaging.correct.propose', {
+      ...correction,
+      impression: '自由改写的印象',
+    })).toThrow()
+  })
+
   it('matches laboratory draft Tool lengths to the owning Command input', () => {
     const maximumInput = {
       catalogItemId: 'l'.repeat(512),
