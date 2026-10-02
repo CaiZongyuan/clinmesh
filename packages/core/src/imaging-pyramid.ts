@@ -84,24 +84,6 @@ export function tileRegion(levels: readonly PyramidLevel[], level: number, tile:
   return { height: end.y - origin.y, width: end.x - origin.x, x: origin.x, y: origin.y }
 }
 
-/** 某一层中与图像坐标区域相交的瓦片，按行优先排列；区域超出图像的部分不产生瓦片。 */
-export function tilesInRegion(levels: readonly PyramidLevel[], level: number, region: PyramidRegion): PyramidTile[] {
-  const target = levels[level]!
-  const { columns, rows } = tileGrid(target)
-  const start = imageToLevel(levels, level, { x: region.x, y: region.y })
-  const end = imageToLevel(levels, level, { x: region.x + region.width, y: region.y + region.height })
-  const firstColumn = Math.max(0, Math.floor(start.x / target.tileWidth))
-  const firstRow = Math.max(0, Math.floor(start.y / target.tileHeight))
-  // 区域右下边界恰好落在瓦片边界上时，边界外的瓦片不相交。
-  const lastColumn = Math.min(columns - 1, Math.ceil(end.x / target.tileWidth) - 1)
-  const lastRow = Math.min(rows - 1, Math.ceil(end.y / target.tileHeight) - 1)
-  const tiles: PyramidTile[] = []
-  for (let row = firstRow; row <= lastRow; row += 1) {
-    for (let column = firstColumn; column <= lastColumn; column += 1) tiles.push({ column, row })
-  }
-  return tiles
-}
-
 /** 层级坐标中一点所在的瓦片；层级范围外的点归入最近的边缘瓦片。 */
 export function tileAtLevelPoint(level: PyramidLevel, point: PyramidPoint): PyramidTile {
   const { columns, rows } = tileGrid(level)

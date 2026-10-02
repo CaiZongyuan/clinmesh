@@ -159,11 +159,6 @@ export const pathologyCoverageSchema = z.object({
 }).strict()
 export type PathologyCoverage = z.infer<typeof pathologyCoverageSchema>
 
-/** 医生开立会诊时可选的送检手术：只含病例可见来源病史中与服务相容的手术。 */
-export const pathologySourceProcedureListSchema = z.object({
-  items: z.array(pathologySourceProcedureSchema),
-}).strict()
-
 /** 管理员复核一份切片素材所需的信息：来源临床字段与派生事实、报告修订与自动检查结果、发布状态和读取描述。 */
 export const administratorPathologyAssetSchema = z.object({
   assetId: z.string().min(1).max(128),

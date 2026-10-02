@@ -10,7 +10,6 @@ import {
   tileAtLevelPoint,
   tileGrid,
   tileRegion,
-  tilesInRegion,
   type PyramidLevel,
 } from '../src/imaging-pyramid.ts'
 
@@ -50,29 +49,12 @@ describe('slide pyramid geometry', () => {
     expect(selectPyramidLevel(levels, 0.001)).toBe(3)
   })
 
-  it('lists the tiles a viewport region needs and truncates edge tiles to the level size', () => {
+  it('lays out the tile grid, truncates edge tiles to the level size and locates the tile under a point', () => {
     expect(tileGrid(levels[0]!)).toEqual({ columns: 4, rows: 3 })
     expect(tileGrid(levels[1]!)).toEqual({ columns: 2, rows: 2 })
     expect(tileGrid(levels[3]!)).toEqual({ columns: 1, rows: 1 })
     expect(tileRegion(levels, 0, { column: 3, row: 2 })).toEqual({ height: 188, width: 232, x: 768, y: 512 })
     expect(tileRegion(levels, 1, { column: 1, row: 1 })).toEqual({ height: 188, width: 488, x: 512, y: 512 })
-    // 区域右下边界正好落在瓦片边界上，不包含下一列或下一行。
-    expect(tilesInRegion(levels, 0, { height: 256, width: 512, x: 0, y: 0 })).toEqual([
-      { column: 0, row: 0 },
-      { column: 1, row: 0 },
-    ])
-    expect(tilesInRegion(levels, 1, { height: 200, width: 300, x: 400, y: 450 })).toEqual([
-      { column: 0, row: 0 },
-      { column: 1, row: 0 },
-      { column: 0, row: 1 },
-      { column: 1, row: 1 },
-    ])
-    // 平移到图像外的部分不产生瓦片。
-    expect(tilesInRegion(levels, 0, { height: 400, width: 400, x: -300, y: 500 })).toEqual([
-      { column: 0, row: 1 },
-      { column: 0, row: 2 },
-    ])
-    expect(tilesInRegion(levels, 0, { height: 100, width: 100, x: 1200, y: 0 })).toEqual([])
     expect(tileAtLevelPoint(levels[0]!, { x: 999.5, y: 0 })).toEqual({ column: 3, row: 0 })
     expect(tileAtLevelPoint(levels[0]!, { x: 1000, y: 700 })).toEqual({ column: 3, row: 2 })
   })
