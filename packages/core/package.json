@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./imaging-display": "./src/imaging-display.ts",
     "./platform": "./src/platform.ts",
     "./references": "./src/references.ts"
   },

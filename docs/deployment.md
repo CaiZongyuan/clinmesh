@@ -125,6 +125,8 @@ pnpm synthea:doctor
 
 访问管理员模拟数据页面 `http://127.0.0.1:51868/scenario-data`，在“合成患者库”中点击“生成患者”；默认选择全部 Synthea 模块，每次打开都会产生新的双 seed，高级设置可手动修改以复现。生成完成后选择患者，可在“来源”页查看完整来源病史。
 
+需要能看片的患者时，在“定向病例”中选择一个影像适配条目，性别与年龄会对齐到条目的适用人群。定向生成要求 Provider 镜像在健康检查中声明 `targetedGeneration`；旧镜像不显示该选项。Synthea 在一次运行中固定患者的年龄等人口属性，只重试临床模拟，抽到难以满足条件的年龄时本次尝试约需一到两分钟才判定未命中，Server 随后换 seed 重试，整个任务可能持续十余分钟。肺癌条目把年龄收窄到 48–66 岁能显著缩短等待，因为 Synthea 的肺癌模块只在 45–65 岁发病且数年内死亡。各失败原因的处理见 [影像检查使用指南](imaging.md)。
+
 在“来源历史”中打开任一条目的 R4 详情，点击“生成患者档案”（要求步骤 4 已配置）。Brief 成功且已有当前 revision 后点击“开始门诊就诊”，选择科室、地点和门诊类型；系统直接创建普通 HIS 的 Patient、Registration、Encounter 和 Queue Task，随后即可继续岗位流程。
 
 停止并只移除两个 Synthea 容器：
@@ -136,6 +138,33 @@ pnpm synthea:down
 该命令不删除 ClinMesh SQLite、业务数据、Docker volume 或其他服务。Provider 未启动、不可达或停止时，ClinMesh 普通 HIS 与已经生成的病例继续运行；只有新的患者生成任务不可用。运行与发行边界见 [一键 Synthea 运行时](../.agents/notes/implemented/architecture/2026-09-03-one-command-synthea-runtime.md)。
 
 ## 7. 可选运行方式
+
+### 影像素材
+
+胸片与胸部 CT 平扫的阅片需要本地影像素材。素材不随仓库分发：仓库只提交 [影像素材清单](../imaging-assets/README.md)，像素由下面的命令按清单从公开数据源拉取。不安装素材时系统照常启动，医生的放射服务显示为“本院当前未开展”，其余流程不受影响。
+
+```sh
+pnpm imaging:sync
+pnpm imaging:verify
+```
+
+`imaging:sync` 需要访问 The Cancer Imaging Archive，逐文件下载来源 DICOM、校验哈希与 DICOM 中的 Study/Series/Instance UID、转码并原子安装；网络错误、超时、服务端错误、限流和被截断的响应会短暂退避后重试，其他请求错误直接报告失败。安装与保留的来源文件都完好的素材会被跳过，命令可以重复运行，中断后重跑即可，开始时会清理被中断运行遗留的临时目录。首批五套素材的来源文件约 355 MB，安装后另占约 352 MB。经代理访问公网时为该命令设置 `NODE_USE_ENV_PROXY=1`，Node 才会使用 `HTTPS_PROXY`。`imaging:verify` 只读核对已安装素材与 `sources/` 中保留的来源文件，不访问网络；每套素材的状态为 `ready`（完好）、`missing` / `corrupt` / `outdated`（安装目录缺失、损坏或与清单版本不符）、`sources-missing` / `sources-corrupt`（安装可用，但保留的来源文件缺失或哈希不符，无法离线修复）或 `unrecorded`（清单尚未登记）。两个命令都接受可重复的 `--asset <assetId>` 以限定素材。
+
+素材默认安装到 `.data/imaging-assets`，用 `CLINMESH_IMAGING_ASSET_DIRECTORY` 可以改到其他位置；Server 与这些命令读取同一个变量。目录结构是 `sources/`（保留的来源文件）、`installed/`（阅片使用的规范帧数据）和 `.staging/`（安装中的临时目录）。安装完成后的运行期阅片不访问网络。
+
+安装后以管理员进入“模拟数据”，在“影像覆盖清单”查看每套素材的安装与发布状态，并对已生成的病例运行影像准备；只有准备结果为已就绪的病例开立放射申请后才有报告和影像。后续操作和各状态的含义见 [影像检查使用指南](imaging.md)。
+
+素材损坏或被误删时：
+
+```sh
+pnpm imaging:repair
+```
+
+`imaging:repair` 用 `sources/` 中保留的来源文件离线重建 `installed/`，不访问网络；来源文件也丢失或损坏时重新运行 `imaging:sync`，它会补齐 `sources/` 并重建安装。素材不可读期间，已签发的报告仍可阅读，阅片器提示影像暂不可用，确认已阅不开放；修复后无需重启 Server。
+
+清单和哈希只能校验字节，不能取回字节：公开数据源可能下线或变更，因此仅有清单不构成可恢复的备份。备份 operational SQLite 时同时备份素材目录中的 `sources/`（不可变的来源文件），或者保留一份能独立校验为相同字节的副本；清单、哈希和转码版本随仓库提交固定。`installed/` 可以由 `imaging:repair` 从 `sources/` 离线重建，不必备份。恢复时把 `sources/` 放回目标机器的素材目录，运行 `pnpm imaging:repair` 重建安装，再运行 `pnpm imaging:verify`，确认每套素材都是 `ready`。
+
+Docker 一键镜像不包含影像清单和素材，其中的放射服务显示为未开展；阅片闭环在源码运行方式下使用。
 
 ### Docker 一键启动
 

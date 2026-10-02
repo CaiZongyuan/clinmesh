@@ -45,7 +45,14 @@ import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tan
 import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, MessagesSquareIcon, PillIcon, PlusIcon, RefreshCwIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
+  acknowledgeImagingReport,
   acknowledgeLaboratoryReport,
+  cancelImagingRequest,
+  correctImagingReport,
+  getCaseImagingServices,
+  issueImagingRequest,
+  retryImagingRequest,
+  saveImagingRequestDraft,
   sendConsultationMessage,
   retryConsultationReply,
   cancelLaboratoryRequest,
@@ -111,6 +118,9 @@ import {
 import { DiagnosisPage, type DiagnosisPageActions } from './diagnosis-page.tsx'
 import { doctorCaseStatusLabel } from './doctor-case-status.ts'
 import { DoctorQueueModule } from './doctor-queue-module.tsx'
+import { ImagingPage, useImagingViewState, type ImagingPageActions } from './imaging-page.tsx'
+import { emptyAuxiliaryExamination, insertImagingReportSummary } from './imaging-report-summary.ts'
+import { formatClinicalDateTime } from './clinical-date-time.ts'
 import {
   LaboratoryPage,
   type LaboratoryPageActions,
@@ -145,6 +155,7 @@ interface DoctorCaseControllerProps extends DoctorWorkspaceProps {
 type DoctorAgentDraftKind =
   | 'diagnosis'
   | 'first-visit'
+  | 'imaging'
   | 'laboratory'
   | 'prescription'
   | 'record'
@@ -170,6 +181,7 @@ interface ReferenceCatalogSearchParameters {
 const encounterCompletionTargetElementIds = {
   diagnosis: 'encounter-completion-target-diagnosis',
   'clinical-document': 'encounter-completion-target-clinical-document',
+  imaging: 'encounter-completion-target-imaging',
   laboratory: 'encounter-completion-target-laboratory',
   'medication-conclusion': 'encounter-completion-target-medication-conclusion',
 } satisfies Record<EncounterCompletionTarget, string>
@@ -177,6 +189,8 @@ const encounterCompletionTargetElementIds = {
 const caseDetailSectionByCompletionTarget = {
   diagnosis: 'diagnosis',
   'clinical-document': 'record',
+  // 放射检查与检验在同一个“检验检查”分区内。
+  imaging: 'laboratory',
   laboratory: 'laboratory',
   'medication-conclusion': 'prescription',
 } satisfies Record<EncounterCompletionTarget, DoctorCaseSection>
@@ -247,6 +261,10 @@ function isCancellableLaboratoryRequest(request: LaboratoryRequest): boolean {
     )
 }
 
+function isAwaitingResult(request: { status: LaboratoryRequest['status'] }): boolean {
+  return request.status === 'issued' || request.status === 'accepted' || request.status === 'in-progress'
+}
+
 function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocumentContent {
   const persisted = detail.clinicalDocument?.draft
     ?? detail.clinicalDocument?.signed.at(-1)?.content
@@ -266,7 +284,7 @@ function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocume
   return {
     assessment: '',
     auxiliaryExamination: detail.report === undefined
-      ? '暂无辅助检查结果。'
+      ? emptyAuxiliaryExamination
       : detail.report.results.map(result => `${result.code} ${String(result.value)}`).join('；'),
     chiefComplaint: detail.presentation?.chiefComplaint ?? '',
     disposition: '',
@@ -410,6 +428,7 @@ function DoctorCaseController({
     }))
   }, [])
   const activeCaseId = selectedCaseId ?? visibleQueue.data?.items[0]?.caseId
+  const imagingView = useImagingViewState(activeCaseId ?? '')
   const selectedCase = visibleQueue.data?.items.find(item => item.caseId === activeCaseId)
   const detailKey = [
     'doctor-case',
@@ -421,15 +440,13 @@ function DoctorCaseController({
     enabled: activeCaseId !== undefined,
     queryFn: ({ signal }) => getDoctorCase(activeCaseId ?? '', signal),
     queryKey: detailKey,
+    // 检验与放射申请在后台执行：有申请尚未出结果时持续刷新，报告到达后页面自行更新。
     refetchInterval: query => selectedCase?.status === 'awaiting-report'
       || (
         query.state.data?.laboratoryRequests?.reportingSupported === true
-        && query.state.data.laboratoryRequests.requests.some(
-          request => request.status === 'issued'
-            || request.status === 'accepted'
-            || request.status === 'in-progress',
-        )
+        && query.state.data.laboratoryRequests.requests.some(isAwaitingResult)
       )
+      || query.state.data?.imagingRequests?.requests.some(isAwaitingResult) === true
       ? 1_500
       : false,
   })
@@ -1132,15 +1149,27 @@ function DoctorCaseController({
   const currentClinicalDocument = detail.data === undefined
     ? undefined
     : workingClinicalDocuments[detail.data.caseId] ?? createWorkingClinicalDocument(detail.data)
+  const canCorrectReports = session.availableRoles.some(role => role.code === 'administrator')
+  /** 放射提案经人工确认后提交对应命令，并刷新病例。 */
+  const runImagingAction = async <Result,>(caseId: string, action: () => Promise<Result>): Promise<Result> => {
+    const result = await action()
+    await refreshCaseById(caseId)
+    return result
+  }
   const agentPage = useMemo(() => ({
     actions: {
       'outpatient.case.read': {
-        description: 'Read current case and queue.items (waiting + active); use each caseId to select a patient.',
+        description: 'Read current case, queue.items (waiting + active; use each caseId to select a patient), and imagingServices with their availability (null when the imaging catalog cannot be read).',
         enabled: activeCaseId !== undefined,
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: async (_raw: unknown, signal: AbortSignal) => {
           if (activeCaseId === undefined) throw new Error(messages.consultationUnavailable)
-          return { ...await getDoctorCase(activeCaseId, signal), queue: queue.data ?? null }
+          const [current, imagingServices] = await Promise.all([
+            getDoctorCase(activeCaseId, signal),
+            // 放射目录读取失败（例如素材清单无效）时仍返回病例，目录以 null 表示不可用。
+            getCaseImagingServices(activeCaseId, signal).then(catalog => catalog.items, () => null),
+          ])
+          return { ...current, imagingServices, queue: queue.data ?? null }
         },
       },
       'outpatient.case.select': {
@@ -1164,22 +1193,31 @@ function DoctorCaseController({
         },
       },
       'outpatient.section.select': {
-        description: 'Select one visible section in the current doctor case.',
+        description: 'Select one visible section in the current doctor case. With imagingRequestId (laboratory section only), also open the images of that reported imaging request for the human reader; pixels are never returned to the Agent.',
         enabled: detail.data !== undefined,
         parameters: {
           type: 'object' as const,
-          properties: { section: { type: 'string', enum: caseDetailSectionSchema.options } },
+          properties: {
+            imagingRequestId: { type: 'string', maxLength: 128 },
+            section: { type: 'string', enum: caseDetailSectionSchema.options },
+          },
           required: ['section'],
           additionalProperties: false,
         },
         execute: (raw: unknown) => {
-          const section = caseDetailSectionSchema.parse(doctorRecord(raw).section)
+          const { imagingRequestId, section } = agentToolInputSchemas['outpatient.section.select'].parse(raw)
+          if (
+            imagingRequestId !== undefined
+            && detail.data?.imagingRequests?.requests.find(item => item.id === imagingRequestId)?.report === undefined
+          ) throw new Error('The imaging request has no report to open')
           const tab = caseDetailRoot.current?.querySelector(`#${doctorCaseSectionTabElementIds[section]}`)
           if (!(tab instanceof HTMLButtonElement)) {
             throw new Error('Doctor case section is not available')
           }
           tab.click()
-          return { section, selected: true }
+          if (imagingRequestId === undefined) return { section, selected: true }
+          imagingView.setOpen(imagingRequestId, true)
+          return { imagesOpened: true, imagingRequestId, section, selected: true }
         },
       },
       'outpatient.consultation.ask': {
@@ -1304,6 +1342,32 @@ function DoctorCaseController({
           setLaboratoryItemId(catalogItemId)
           setIndicationCode(nextIndication)
           hydrateAgentDraft(current.caseId, 'laboratory')
+          return result
+        },
+      },
+      'outpatient.imaging.draft.set': {
+        description: 'Validate and save an imaging request draft (serviceId from imagingServices, free-text indication) without issuing it.',
+        enabled: detail.data?.consultation !== undefined
+          && detail.data.encounter.status === 'in-progress',
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            indication: { type: 'string', minLength: 2, maxLength: 500 },
+            serviceId: { type: 'string', maxLength: 128 },
+          },
+          required: ['indication', 'serviceId'],
+          additionalProperties: false,
+        },
+        execute: async (raw: unknown) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const result = await saveImagingRequestDraft({
+            ...agentToolInputSchemas['outpatient.imaging.draft.set'].parse(raw),
+            encounterId: current.encounter.id,
+            encounterVersion: current.encounter.versionId,
+            expectedDraftVersion: current.imagingRequests?.draftVersion ?? 0,
+          }, newIdempotencyKey())
+          await refreshCaseById(current.caseId)
+          hydrateAgentDraft(current.caseId, 'imaging')
           return result
         },
       },
@@ -1570,8 +1634,10 @@ function DoctorCaseController({
         },
       },
       'outpatient.report.acknowledge.propose': {
-        description: 'Open human review before acknowledging one signed laboratory report.',
+        description: 'Open human review before acknowledging one signed laboratory or imaging report. An imaging report can be acknowledged only after its images were opened and displayed to the human reader.',
         enabled: detail.data?.laboratoryRequests?.requests.some(
+          request => request.status === 'reported',
+        ) === true || detail.data?.imagingRequests?.requests.some(
           request => request.status === 'reported',
         ) === true,
         parameters: {
@@ -1583,6 +1649,26 @@ function DoctorCaseController({
         execute: (raw: unknown, signal: AbortSignal) => {
           const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
           const requestId = doctorString(raw, 'requestId', 128)
+          const imagingRequest = current.imagingRequests?.requests.find(item => item.id === requestId)
+          if (imagingRequest !== undefined) {
+            const report = imagingRequest.report
+            if (imagingRequest.status !== 'reported' || report === undefined) {
+              throw new Error(messages.consultationUnavailable)
+            }
+            if (!imagingView.isShown(report.diagnosticReportId)) {
+              throw new Error('The images have not been displayed to the human reader yet; open them with clinmesh_select_doctor_section and imagingRequestId first')
+            }
+            return agentReview.request({
+              confirmLabel: locale => locale === 'zh-CN' ? '确认已阅' : 'Acknowledge',
+              description: imagingRequest.service.name,
+              onConfirm: () => runImagingAction(
+                current.caseId,
+                () => acknowledgeImagingReport(imagingRequest, report, newIdempotencyKey()),
+              ),
+              signal,
+              title: locale => locale === 'zh-CN' ? '确认已阅放射报告' : 'Acknowledge imaging report',
+            })
+          }
           const request = current.laboratoryRequests?.requests.find(item => item.id === requestId)
           if (request?.status !== 'reported' || request.report === undefined) {
             throw new Error(messages.consultationUnavailable)
@@ -1648,6 +1734,117 @@ function DoctorCaseController({
             }),
             signal,
             title: locale => getWorkspaceMessages(locale).previewLaboratoryReportCorrection,
+          })
+        },
+      },
+      'outpatient.imaging.issue.propose': {
+        description: 'Open human review before issuing the saved imaging request draft.',
+        enabled: detail.data?.imagingRequests?.draft !== undefined,
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const state = current.imagingRequests
+          if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
+          return agentReview.request({
+            confirmLabel: locale => locale === 'zh-CN' ? '签发申请' : 'Issue request',
+            description: `${state.draft.service.name} · ${state.draft.indication}`,
+            onConfirm: async () => {
+              const result = await runImagingAction(current.caseId, () => issueImagingRequest({
+                encounterId: current.encounter.id,
+                encounterVersion: current.encounter.versionId,
+                expectedDraftVersion: state.draftVersion,
+              }, newIdempotencyKey()))
+              hydrateAgentDraft(current.caseId, 'imaging')
+              return result
+            },
+            signal,
+            title: locale => locale === 'zh-CN' ? '签发放射申请' : 'Issue imaging request',
+          })
+        },
+      },
+      'outpatient.imaging.cancel.propose': {
+        description: 'Open human review before cancelling one imaging request that is issued or produced no result.',
+        enabled: detail.data?.imagingRequests?.requests.some(
+          request => request.status === 'issued' || request.status === 'generation-failed',
+        ) === true,
+        parameters: {
+          type: 'object' as const,
+          properties: { requestId: { type: 'string', maxLength: 128 } },
+          required: ['requestId'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const requestId = doctorString(raw, 'requestId', 128)
+          const request = current.imagingRequests?.requests.find(item => item.id === requestId)
+          if (request?.status !== 'issued' && request?.status !== 'generation-failed') {
+            throw new Error(messages.consultationUnavailable)
+          }
+          return agentReview.request({
+            confirmLabel: locale => locale === 'zh-CN' ? '取消申请' : 'Cancel request',
+            description: request.service.name,
+            onConfirm: () => runImagingAction(current.caseId, () => cancelImagingRequest(request, newIdempotencyKey())),
+            signal,
+            title: locale => locale === 'zh-CN' ? '取消放射申请' : 'Cancel imaging request',
+          })
+        },
+      },
+      'outpatient.imaging.retry.propose': {
+        description: 'Open human review before retrying one imaging request that produced no result.',
+        enabled: detail.data?.imagingRequests?.requests.some(
+          request => request.status === 'generation-failed',
+        ) === true,
+        parameters: {
+          type: 'object' as const,
+          properties: { requestId: { type: 'string', maxLength: 128 } },
+          required: ['requestId'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const requestId = doctorString(raw, 'requestId', 128)
+          const request = current.imagingRequests?.requests.find(item => item.id === requestId)
+          if (request?.status !== 'generation-failed') throw new Error(messages.consultationUnavailable)
+          return agentReview.request({
+            confirmLabel: locale => locale === 'zh-CN' ? '重试' : 'Retry',
+            description: request.service.name,
+            onConfirm: () => runImagingAction(current.caseId, () => retryImagingRequest(request, newIdempotencyKey())),
+            signal,
+            title: locale => locale === 'zh-CN' ? '重试放射检查' : 'Retry imaging examination',
+          })
+        },
+      },
+      'outpatient.imaging.correct.propose': {
+        description: 'Open human review before an administrator reissues one imaging report from another reviewed report content revision. The report text itself cannot be rewritten.',
+        enabled: canCorrectReports
+          && detail.data?.imagingRequests?.requests.some(request => request.report !== undefined) === true,
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            reason: { type: 'string', minLength: 2, maxLength: 500 },
+            reportRevision: { type: 'integer', minimum: 1 },
+            requestId: { type: 'string', maxLength: 128 },
+          },
+          required: ['reason', 'reportRevision', 'requestId'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const input = agentToolInputSchemas['outpatient.imaging.correct.propose'].parse(raw)
+          const request = current.imagingRequests?.requests.find(item => item.id === input.requestId)
+          const report = request?.report
+          if (request === undefined || report === undefined) throw new Error(messages.consultationUnavailable)
+          return agentReview.request({
+            confirmLabel: locale => locale === 'zh-CN' ? '提交更正' : 'Submit correction',
+            description: `${request.service.name} · ${input.reason}`,
+            onConfirm: () => runImagingAction(current.caseId, () => correctImagingReport(
+              request,
+              report,
+              { reason: input.reason, reportRevision: input.reportRevision },
+              newIdempotencyKey(),
+            )),
+            signal,
+            title: locale => locale === 'zh-CN' ? '更正放射报告' : 'Correct imaging report',
           })
         },
       },
@@ -1836,6 +2033,7 @@ function DoctorCaseController({
         clinicalDocument: currentClinicalDocument,
         diagnosisDraftVersion: detail.data?.diagnosis?.draftVersion,
         encounterVersion: detail.data?.encounter.versionId,
+        imagingDraftVersion: detail.data?.imagingRequests?.draftVersion,
         laboratoryDraftVersion: detail.data?.laboratoryRequests?.draftVersion,
         page,
       }),
@@ -1868,6 +2066,7 @@ function DoctorCaseController({
         consultation: detail.data.consultation ?? null,
         diagnosis: detail.data.diagnosis ?? null,
         encounter: detail.data.encounter,
+        imagingRequests: detail.data.imagingRequests ?? null,
         laboratoryRequests: detail.data.laboratoryRequests ?? null,
         patient: detail.data.patient,
         presentation: detail.data.presentation,
@@ -1893,7 +2092,9 @@ function DoctorCaseController({
     detail.data,
     detail.isError,
     detail.isPending,
+    canCorrectReports,
     hydrateAgentDraft,
+    imagingView,
     issueOrder.mutateAsync,
     issueRequest.mutateAsync,
     messages,
@@ -2056,6 +2257,32 @@ function DoctorCaseController({
             key={detail.data.caseId}
             laboratoryCatalog={laboratoryCatalog}
             laboratoryItemId={resolvedLaboratoryItemId}
+            imagingActions={{
+              canCorrect: canCorrectReports,
+              onChanged: () => refreshCaseById(detail.data.caseId),
+              // 摘要只插入未签病历的工作稿；已签文书通过文书更正流程修改。
+              ...(detail.data.encounter.status !== 'in-progress' || (detail.data.clinicalDocument?.signed.length ?? 0) > 0
+                ? {}
+                : {
+                    onInsertSummary: (request, report) => {
+                      const document = workingClinicalDocuments[detail.data.caseId]
+                        ?? createWorkingClinicalDocument(detail.data)
+                      const insertion = insertImagingReportSummary(document.auxiliaryExamination, request.service.name, {
+                        impression: report.impression,
+                        issuedLabel: formatClinicalDateTime(report.issuedAt, 'zh-CN'),
+                        revisionNumber: report.revisionNumber,
+                      })
+                      if (insertion.status === 'inserted') {
+                        setWorkingClinicalDocuments(current => ({
+                          ...current,
+                          [detail.data.caseId]: { ...document, auxiliaryExamination: insertion.text },
+                        }))
+                      }
+                      return insertion.status
+                    },
+                  }),
+              view: imagingView,
+            }}
             laboratoryRequestActions={{
               acknowledge: {
                 error: acknowledgeReport.variables?.caseId === detail.data.caseId
@@ -2088,7 +2315,7 @@ function DoctorCaseController({
                   : {}),
               },
               correct: {
-                allowed: session.availableRoles.some(role => role.code === 'administrator'),
+                allowed: canCorrectReports,
                 error: correctReport.variables?.caseId === detail.data.caseId
                   && detail.data.laboratoryRequests?.requests.some(request => (
                     request.id === correctReport.variables?.request.id
@@ -2308,6 +2535,7 @@ function CaseDetail({
   laboratoryItemId,
   laboratoryCatalog,
   laboratoryRequestActions,
+  imagingActions,
   locale,
   messages,
   onClinicalDocumentChange,
@@ -2357,6 +2585,7 @@ function CaseDetail({
   laboratoryCatalog: ClinicalCatalog['laboratory']
   laboratoryItemId: string
   laboratoryRequestActions: LaboratoryPageActions
+  imagingActions: ImagingPageActions
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   onClinicalDocumentChange: (document: ClinicalDocumentContent) => void
@@ -2825,6 +3054,16 @@ function CaseDetail({
               readOnly={clinicalReadOnly}
               referenceSearch={referenceCatalogSearches.laboratory}
               showCorrection={correctionTarget === 'laboratory'}
+            />
+            <ImagingPage
+              actions={imagingActions}
+              caseId={detail.caseId}
+              elementId={encounterCompletionTargetElementIds.imaging}
+              encounter={detail.encounter}
+              key={`imaging:${detail.caseId}:${agentDraftHydrationRevisions.imaging ?? 0}`}
+              locale={locale}
+              readOnly={clinicalReadOnly}
+              state={detail.imagingRequests}
             />
           </DoctorCasePanel>
         </Tabs>

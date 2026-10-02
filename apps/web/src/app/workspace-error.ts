@@ -7,6 +7,9 @@ function getConflictOwner(
 ): string {
   switch (owner) {
     case 'clinical-document': return messages.conflictOwner_clinicalDocument
+    case 'imaging-report': return messages.conflictOwner_imagingReport
+    case 'imaging-request': return messages.conflictOwner_imagingRequest
+    case 'imaging-request-draft': return messages.conflictOwner_imagingRequestDraft
     case 'laboratory-report': return messages.conflictOwner_laboratoryReport
     case 'laboratory-request': return messages.conflictOwner_laboratoryRequest
     case 'laboratory-request-draft': return messages.conflictOwner_laboratoryRequestDraft

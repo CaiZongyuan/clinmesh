@@ -62,12 +62,13 @@ proposal 返回 `awaiting-human-review` 后，Tool 调用已经返回，但审�
 | `triage.draft.set` | 已选分诊病例 | 同时填写并强调主诉、分级及生命体征；不提交分诊 |
 | `triage.record.propose` | 已选病例且主诉非空 | 人工审阅分诊评估 |
 | `outpatient.case.select` | 病例在读取结果的 `queue.items` 中 | 选择目标病例，并切到其所属的待诊或在诊分组 |
-| `outpatient.section.select` | 当前病例有相应可见诊疗页 | 选择目标诊疗标签；完成时强调目标内容区 |
+| `outpatient.section.select` | 当前病例有相应可见诊疗页；`imagingRequestId` 只能与“检验检查”页同用，且该放射申请已有报告 | 选择目标诊疗标签；带 `imagingRequestId` 时同时为人类展开该申请的影像；完成时强调目标内容区 |
 | `outpatient.consultation.ask` | 当前病例允许问诊 | 发送问题，等待患者回答；强调问诊记录区 |
 | `outpatient.consultation.reply.retry` | 当前回复可重试 | 重试患者回答；强调问诊记录区 |
 | `outpatient.first-visit.draft.set` | 初诊草稿阶段 | 保存现病史和评估草稿；强调两个字段 |
 | `outpatient.diagnosis.draft.set` | 独立诊疗流程且就诊进行中 | 保存诊断草稿；强调诊断行、添加或更换入口，以及已打开的疾病目录 |
 | `outpatient.laboratory.draft.set` | 独立诊疗流程且就诊进行中 | 保存检验项目与指征；不下达申请 |
+| `outpatient.imaging.draft.set` | 独立诊疗流程且就诊进行中 | 保存放射检查项目与检查指征；不签发申请 |
 | `outpatient.prescription.draft.set` | 当前尚无正式用药结论 | 保存处方条目；强调药品名称、剂量、频次、疗程、数量、目录入口及处方区域；药品目录打开时覆盖目录和包装控件 |
 | `outpatient.revisit.draft.set` | 兼容复诊草稿阶段 | 保存诊断、评估、计划与用药草稿 |
 | `outpatient.record.draft.set` | 独立诊疗流程且就诊进行中 | 保存结构化病历；同时强调本次病历字段 |
@@ -76,8 +77,12 @@ proposal 返回 `awaiting-human-review` 后，Tool 调用已经返回，但审�
 | `outpatient.diagnosis.confirm.propose` | 诊断满足当前确认条件 | 人工审阅诊断确认 |
 | `outpatient.laboratory.issue.propose` | 已有检验草稿 | 人工审阅开立检验申请 |
 | `outpatient.laboratory.cancel.propose` | 申请可撤销 | 人工审阅撤销申请 |
-| `outpatient.report.acknowledge.propose` | 有已签发报告 | 人工审阅报告已阅确认 |
-| `outpatient.report.correct.propose` | 当前报告允许更正 | 人工审阅报告更正 |
+| `outpatient.report.acknowledge.propose` | 有已签发的检验或放射报告；放射报告的影像须已在人类面前成功显示 | 人工审阅报告已阅确认 |
+| `outpatient.report.correct.propose` | 当前检验报告允许更正 | 人工审阅检验报告更正 |
+| `outpatient.imaging.issue.propose` | 已有放射申请草稿 | 人工审阅签发放射申请 |
+| `outpatient.imaging.cancel.propose` | 放射申请已开具或未取得结果 | 人工审阅取消放射申请 |
+| `outpatient.imaging.retry.propose` | 放射申请未取得结果 | 人工审阅重试放射检查 |
+| `outpatient.imaging.correct.propose` | 放射申请已有报告，且当前账号兼有管理员岗位 | 人工审阅按另一份已复核的报告内容修订重新签发 |
 | `outpatient.prescription.issue.propose` | 已有可开立处方草稿 | 人工审阅开立处方 |
 | `outpatient.prescription.withdraw.propose` | 当前处方可撤回 | 人工审阅撤回处方 |
 | `outpatient.medication.none.propose` | 尚无正式用药结论 | 人工审阅无需用药结论 |
@@ -97,6 +102,10 @@ proposal 返回 `awaiting-human-review` 后，Tool 调用已经返回，但审�
 只读操作包括 `ui.context.read`、`triage.queue.read`、`outpatient.case.read`、`billing.queue.read`、`pharmacy.queue.read`、`scenario.status.read`、`scenario.providers.read` 和 `scenario.generation.status.read`。它们读取授权范围内的页面或服务端结果，不显示执行边框，也不复制 Case Truth。
 
 医生页面的 `clinmesh_read_current_context` 在 `data.pageState.queue` 返回已加载的医生队列页；`clinmesh_read_doctor_context` 保留当前病例详情字段，并在 `data.queue` 返回同一队列。`queue.items` 包含可用于切换的 `caseId`、患者身份和病例状态，`page`、`pageSize`、`total` 描述分页。该队列包含待诊与在诊病例，不等同于当前标签筛选后的列表；`queueCount` 保留为总数，不能据此推断已返回全部条目。队列尚未加载时 `queue` 为 `null`，空队列的 `items` 为 `[]`。选择工具只接受这份已加载队列中的病例，不提供任意患者查询、按姓名全库搜索或跨页选择；同名时应结合队列返回的身份字段消歧。
+
+放射检查沿用同一边界：`clinmesh_read_doctor_context` 在 `imagingRequests` 返回当前病例的放射草稿、申请和报告文字，在 `imagingServices` 返回本院放射服务及其是否已开展。Agent 通过报告参与诊疗，不读取像素或渲染结果；这些返回值不含素材标识、来源 UID、匹配依据或病例与素材的对应关系。导航阅片只是替人类展开阅片器，已阅提案在影像成功显示之前会被拒绝。放射更正提案只指定申请、报告内容修订号和原因，不接受改写的报告正文。
+
+DSH browser Tool broker 每次注册最多接受 32 个 Tool。医生“接诊”页的 Tool 目录已达到这个上限，因此放射的已阅并入 `outpatient.report.acknowledge.propose`、导航阅片并入 `outpatient.section.select`；再为该页面增加 Tool 之前需要先调整发布方式，例如按当前诊疗页发布。
 
 ## 上游能力与接入限制
 

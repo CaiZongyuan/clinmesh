@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { fhirResourceSchema } from './fhir.ts'
+import { imagingExamCodeSchema } from './imaging.ts'
 import { investigationCodeableValueSchema } from './scenario.ts'
 import {
   referenceConceptSchema,
@@ -49,6 +50,9 @@ export const apiConflictSchema = z.object({
     'laboratory-report',
     'laboratory-request',
     'laboratory-request-draft',
+    'imaging-report',
+    'imaging-request',
+    'imaging-request-draft',
     'prescription',
     'prescription-draft',
   ]),
@@ -858,6 +862,7 @@ export const encounterCompletionItemCodeSchema = z.enum([
 export const encounterCompletionTargetSchema = z.enum([
   'diagnosis',
   'clinical-document',
+  'imaging',
   'laboratory',
   'medication-conclusion',
 ])
@@ -1426,6 +1431,125 @@ export const laboratoryRequestStateSchema = z.object({
   requests: z.array(laboratoryRequestSchema),
 }).strict()
 
+/** 开立时冻结的放射服务定义：部位、检查方式、执行科室、适用范围与报告结构。 */
+export const imagingServiceSnapshotSchema = z.object({
+  applicability: z.string().min(1),
+  bodySite: z.string().min(1),
+  code: z.string().min(1).max(64),
+  department: z.string().min(1),
+  examCode: imagingExamCodeSchema,
+  id: z.string().min(1).max(128),
+  method: z.string().min(1),
+  modality: z.enum(['CT', 'DX']),
+  name: z.string().min(1),
+  reportSections: z.array(z.enum(['findings', 'impression', 'technique'])).min(1),
+  version: z.number().int().positive(),
+}).strict()
+
+/** 医生可见的放射服务目录；`available` 由医院启用状态与素材就绪共同决定，与具体病例无关。 */
+export const caseImagingServiceCatalogSchema = z.object({
+  items: z.array(z.object({
+    available: z.boolean(),
+    service: imagingServiceSnapshotSchema,
+  }).strict()),
+}).strict()
+
+const imagingIndicationSchema = z.string().trim().min(2).max(500)
+
+export const saveImagingRequestDraftRequestSchema = z.object({
+  expectedVersions: fhirExpectedVersionsSchema,
+  input: z.object({
+    expectedDraftVersion: z.number().int().nonnegative(),
+    indication: imagingIndicationSchema,
+    serviceId: z.string().min(1).max(128),
+  }).strict(),
+}).strict()
+
+export const deleteImagingRequestDraftRequestSchema = z.object({
+  expectedVersions: fhirExpectedVersionsSchema,
+  input: z.object({
+    expectedDraftVersion: z.number().int().positive(),
+  }).strict(),
+}).strict()
+
+export const imagingRequestDraftResponseSchema = commandResponseSchema(z.object({
+  caseId: z.string().min(1),
+  draftVersion: z.number().int().positive(),
+}).strict())
+
+/** 放射报告：检查技术、所见、印象和本院检查引用；不含标本与检验数值。 */
+export const imagingReportSchema = z.object({
+  acknowledgement: laboratoryReportAcknowledgementSchema.optional(),
+  diagnosticReportId: z.string().min(1),
+  diagnosticReportVersion: z.string().regex(/^\d+$/),
+  examinedAt: z.string().datetime({ offset: true }),
+  findings: z.string().min(1),
+  impression: z.string().min(1),
+  issuedAt: z.string().datetime({ offset: true }),
+  revisionNumber: z.number().int().positive(),
+  revisionOfDiagnosticReportId: z.string().min(1).optional(),
+  revisionReason: z.string().min(1).optional(),
+  status: z.literal('final'),
+  studyId: z.string().min(1),
+  technique: z.string().min(1),
+}).strict().superRefine(validateLaboratoryReportRevision)
+
+export const imagingRequestSchema = z.object({
+  generationError: z.object({
+    code: z.string().min(1).max(128),
+    message: z.string().min(1).max(1_000),
+  }).strict().optional(),
+  id: z.string().min(1),
+  indication: imagingIndicationSchema,
+  previousReports: z.array(imagingReportSchema).default([]),
+  report: imagingReportSchema.optional(),
+  service: imagingServiceSnapshotSchema,
+  serviceRequestId: z.string().min(1),
+  serviceRequestVersion: z.string().regex(/^\d+$/),
+  status: laboratoryRequestStatusSchema,
+  taskId: z.string().min(1),
+  taskVersion: z.string().regex(/^\d+$/),
+  version: z.number().int().positive(),
+}).strict()
+
+export const imagingRequestStateSchema = z.object({
+  draft: z.object({
+    indication: imagingIndicationSchema,
+    service: imagingServiceSnapshotSchema,
+  }).strict().optional(),
+  draftVersion: z.number().int().nonnegative(),
+  requests: z.array(imagingRequestSchema),
+}).strict()
+
+export const issueImagingRequestRequestSchema = issueLaboratoryRequestRequestSchema
+export const cancelImagingRequestRequestSchema = cancelLaboratoryRequestRequestSchema
+export const retryImagingRequestRequestSchema = retryLaboratoryResultGenerationRequestSchema
+export const acknowledgeImagingReportRequestSchema = acknowledgeLaboratoryReportRequestSchema
+
+export const issueImagingRequestResponseSchema = commandResponseSchema(z.object({
+  caseId: z.string().min(1),
+  draftVersion: z.number().int().positive(),
+  request: imagingRequestSchema,
+}).strict())
+
+export const imagingRequestActionResponseSchema = commandResponseSchema(z.object({
+  request: imagingRequestSchema,
+}).strict())
+
+export const acknowledgeImagingReportResponseSchema = acknowledgeLaboratoryReportResponseSchema
+
+/** 管理员更正只能从同一素材已核对发布的报告内容修订中选择，不接受自由改写。 */
+export const correctImagingReportRequestSchema = z.object({
+  expectedVersions: fhirExpectedVersionsSchema,
+  input: z.object({
+    expectedRequestVersion: z.number().int().positive(),
+    reason: z.string().trim().min(2).max(500),
+    reportRevision: z.number().int().positive(),
+  }).strict(),
+}).strict()
+
+export const correctImagingReportResponseSchema = correctLaboratoryReportResponseSchema
+
 export const doctorCompletedCaseTimelineKindSchema = z.enum([
   'consultation-recorded',
   'clinical-document-signed',
@@ -1436,6 +1560,12 @@ export const doctorCompletedCaseTimelineKindSchema = z.enum([
   'laboratory-report-issued',
   'laboratory-report-revised',
   'laboratory-report-acknowledged',
+  'imaging-request-draft-deleted',
+  'imaging-request-issued',
+  'imaging-request-cancelled',
+  'imaging-report-issued',
+  'imaging-report-revised',
+  'imaging-report-acknowledged',
   'diagnosis-confirmed',
   'prescription-draft-deleted',
   'prescription-issued',
@@ -1473,6 +1603,7 @@ export const doctorCompletedCaseDetailSchema = z.object({
     status: z.literal('completed'),
     versionId: z.string().regex(/^\d+$/),
   }).strict(),
+  imagingRequests: z.array(imagingRequestSchema).default([]),
   laboratoryRequests: z.array(completedCaseLaboratoryRequestSchema),
   medicationConclusion: z.object({
     noMedication: noMedicationConclusionSchema.optional(),
@@ -1530,6 +1661,7 @@ export const doctorCaseDetailSchema = z.object({
     status: z.string().optional(),
     versionId: z.string().regex(/^\d+$/),
   }),
+  imagingRequests: imagingRequestStateSchema.optional(),
   laboratoryRequests: laboratoryRequestStateSchema.optional(),
   medicationConclusion: medicationConclusionStateSchema.optional(),
   patient: patientSummarySchema,
@@ -1737,6 +1869,9 @@ export const dispenseResponseSchema = commandResponseSchema(z.object({
 }))
 
 export type RoleCode = z.infer<typeof roleCodeSchema>
+export type ImagingServiceSnapshot = z.infer<typeof imagingServiceSnapshotSchema>
+export type ImagingRequest = z.infer<typeof imagingRequestSchema>
+export type ImagingReport = z.infer<typeof imagingReportSchema>
 export type ApiConflict = z.infer<typeof apiConflictSchema>
 export type SessionContext = z.infer<typeof sessionContextSchema>
 export type ScenarioState = z.infer<typeof scenarioStateSchema>

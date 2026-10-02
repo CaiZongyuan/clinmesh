@@ -412,8 +412,12 @@ function createMediaQueryList(media: string): MediaQueryList {
 function stubScenarioDataWorkspace(options: {
   briefJobFails?: boolean
   briefJobDelayMs?: number
+  generationJobError?: { code: string; message: string }
   generationJobFails?: boolean
   generationJobDelayMs?: number
+  generationJobWarning?: { code: string; message: string }
+  generationTargets?: Array<{ ageRange: [number, number]; kind: 'imaging-profile'; label: string; profileId: string; sex?: 'female' | 'male' }>
+  onGenerationTargetsRead?: () => void
   onGenerate?: (request: ScenarioGenerationRequest) => void
   onCaseStart?: () => void
   onTruthRead?: () => void
@@ -549,11 +553,16 @@ function stubScenarioDataWorkspace(options: {
           modules: options.providerModules ?? ['cardiovascular/hypertension', 'metabolic/diabetes'],
           providerId: 'synthea',
           providerName: 'Synthea',
+          ...(options.generationTargets === undefined ? {} : { targetedGeneration: true }),
           ...(options.syntheaAvailable === true
             ? {}
             : { unavailableReason: '未配置 Synthea Provider' }),
         }],
       })
+    }
+    if (url.pathname === '/api/sim/v1/admin/scenario-generation-targets') {
+      options.onGenerationTargetsRead?.()
+      return Response.json({ items: options.generationTargets ?? [] })
     }
     if (url.pathname === '/api/sim/v1/synthetic-patients') {
       const firstSummary = {
@@ -799,7 +808,7 @@ function stubScenarioDataWorkspace(options: {
       return Response.json({
         caseIds: succeeded ? [caseId] : [],
         createdAt: '2026-08-26T09:00:00+08:00',
-        error: failed ? { code: 'PROVIDER_FAILED', message: 'Synthea 服务暂时不可用' } : null,
+        error: failed ? options.generationJobError ?? { code: 'PROVIDER_FAILED', message: 'Synthea 服务暂时不可用' } : null,
         finishedAt: failed || succeeded ? '2026-08-26T09:00:02+08:00' : null,
         jobId: 'scenario-generation-job-001',
         profileIds: succeeded ? [profile.profileId] : [],
@@ -815,6 +824,7 @@ function stubScenarioDataWorkspace(options: {
         startedAt: '2026-08-26T09:00:01+08:00',
         status: failed ? 'failed' : succeeded ? 'succeeded' : 'running',
         updatedAt: failed || succeeded ? '2026-08-26T09:00:02+08:00' : '2026-08-26T09:00:01+08:00',
+        warning: succeeded ? options.generationJobWarning ?? null : null,
         workspaceId: 'workspace-demo',
       })
     }
@@ -1320,6 +1330,130 @@ describe('role workspaces', () => {
 
     expect(await screen.findByRole('alert', { name: '患者生成失败' })).toBeTruthy()
     expect(screen.getByText('Synthea 服务暂时不可用')).toBeTruthy()
+  })
+
+  const imagingTargets = [
+    { ageRange: [40, 79] as [number, number], kind: 'imaging-profile' as const, label: '右肺单发肿块（成年男性，疑似或确诊肺癌）', profileId: 'lung-mass-adult-male', sex: 'male' as const },
+    { ageRange: [18, 120] as [number, number], kind: 'imaging-profile' as const, label: '急性支气管炎（阴性）', profileId: 'acute-bronchitis-negative' },
+  ]
+
+  it('submits a targeted generation with population aligned to the imaging profile', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    let submitted: ScenarioGenerationRequest | undefined
+    stubScenarioDataWorkspace({ generationTargets: imagingTargets, onGenerate: request => { submitted = request }, syntheaAvailable: true })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    const sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    await user.click(await within(sheet).findByRole('combobox', { name: '定向病例' }))
+    await user.click(screen.getByRole('option', { name: '胸部影像：右肺单发肿块（成年男性，疑似或确诊肺癌）' }))
+    expect(within(sheet).getByText('适用人群：男，40–79 岁')).toBeTruthy()
+    expect(within(sheet).getByRole<HTMLInputElement>('spinbutton', { name: '最小年龄' }).value).toBe('40')
+    expect(within(sheet).getByRole<HTMLInputElement>('spinbutton', { name: '最大年龄' }).value).toBe('79')
+    await user.click(within(sheet).getByRole('button', { name: '生成患者' }))
+
+    await waitFor(() => expect(submitted?.target).toEqual({ kind: 'imaging-profile', profileId: 'lung-mass-adult-male' }))
+    expect(submitted?.population).toEqual({ age: { maximum: 79, minimum: 40 }, count: 1, gender: 'male' })
+    expect(submitted?.moduleMode).toBe('all')
+  })
+
+  it('blocks a targeted generation whose population contradicts the imaging profile', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    const onGenerate = vi.fn()
+    stubScenarioDataWorkspace({ generationTargets: imagingTargets, onGenerate, syntheaAvailable: true })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    const sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    await user.click(await within(sheet).findByRole('combobox', { name: '定向病例' }))
+    await user.click(screen.getByRole('option', { name: '胸部影像：右肺单发肿块（成年男性，疑似或确诊肺癌）' }))
+    const submit = within(sheet).getByRole('button', { name: '生成患者' })
+    const minimumAge = within(sheet).getByRole('spinbutton', { name: '最小年龄' })
+    await user.clear(minimumAge)
+    await user.type(minimumAge, '30')
+    expect(within(sheet).getByRole('alert').textContent).toBe('所选适配条目要求年龄在 40–79 岁之间')
+    expect(submit.hasAttribute('disabled')).toBe(true)
+    await user.clear(minimumAge)
+    await user.type(minimumAge, '45')
+    expect(within(sheet).queryByRole('alert')).toBeNull()
+    expect(submit.hasAttribute('disabled')).toBe(false)
+    await user.click(within(sheet).getByRole('combobox', { name: '性别' }))
+    await user.click(screen.getByRole('option', { name: '女' }))
+    expect(within(sheet).getByRole('alert').textContent).toBe('所选适配条目要求性别为男')
+    expect(submit.hasAttribute('disabled')).toBe(true)
+    await user.click(submit)
+    expect(onGenerate).not.toHaveBeenCalled()
+  })
+
+  it('keeps the untargeted request unchanged when the Provider cannot target generation', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    const onGenerationTargetsRead = vi.fn()
+    let submitted: ScenarioGenerationRequest | undefined
+    stubScenarioDataWorkspace({ onGenerate: request => { submitted = request }, onGenerationTargetsRead, syntheaAvailable: true })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    const sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    expect(within(sheet).queryByRole('combobox', { name: '定向病例' })).toBeNull()
+    await user.click(within(sheet).getByRole('button', { name: '生成患者' }))
+
+    await waitFor(() => expect(submitted).toBeDefined())
+    expect(Object.keys(submitted!)).toEqual(['moduleMode', 'modules', 'name', 'population', 'providerId', 'seeds', 'timeRange', 'timeZone'])
+    expect(submitted?.population).toEqual({ age: { maximum: 80, minimum: 18 }, count: 1, gender: 'any' })
+    expect(onGenerationTargetsRead).not.toHaveBeenCalled()
+  })
+
+  it('hides the target select when no imaging profile is available', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    const onGenerationTargetsRead = vi.fn()
+    stubScenarioDataWorkspace({ generationTargets: [], onGenerationTargetsRead, syntheaAvailable: true })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    const sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    await waitFor(() => expect(onGenerationTargetsRead).toHaveBeenCalled())
+    expect(within(sheet).queryByRole('combobox', { name: '定向病例' })).toBeNull()
+  })
+
+  it('explains a targeted generation that never met the imaging profile', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({
+      generationJobError: { code: 'IMAGING_TARGET_NOT_MET', message: 'No generated patient matched imaging profile' },
+      generationJobFails: true,
+      syntheaAvailable: true,
+    })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    const sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    await user.click(within(sheet).getByRole('button', { name: '生成患者' }))
+
+    expect(await screen.findByRole('alert', { name: '患者生成失败' })).toBeTruthy()
+    expect(screen.getByText('多次尝试后仍未得到满足所选适配条目的患者')).toBeTruthy()
+  })
+
+  it('tells the administrator that imaging preparation still needs to run after a targeted generation', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({
+      generationJobWarning: { code: 'IMAGING_PREPARATION_FAILED', message: 'Imaging preparation did not complete' },
+      syntheaAvailable: true,
+    })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    const sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    await user.click(within(sheet).getByRole('button', { name: '生成患者' }))
+
+    // 任务首轮轮询仍在运行，一秒后的下一轮才成功。
+    expect(await screen.findByText('患者已生成，但影像准备未完成', undefined, { timeout: 3_000 })).toBeTruthy()
+    expect(screen.getByText('打开患者详情，在“影像准备”中重新准备。')).toBeTruthy()
+    expect(screen.queryByText('患者生成失败')).toBeNull()
   })
 
   it('keeps profiles usable while exposing untranslated clinical displays for review', async () => {
@@ -2955,6 +3089,7 @@ describe('role workspaces', () => {
         ...item, allergies: [], consultation: { turns: [], version: 1 },
         encounter: { id: item.encounterId, status: 'in-progress', versionId: '1' }, priorFacts: [],
       })
+      if (path.endsWith('/imaging-services')) return Response.json({ items: [] })
       throw new Error(`Unexpected request: ${path}`)
     }))
     const host = document.createElement('div')
@@ -2979,6 +3114,7 @@ describe('role workspaces', () => {
       for (const tool of registration!.tools) expect(tool.description.length, tool.name).toBeLessThanOrEqual(512)
       expect(context.pageState.queue).toMatchObject({ items: queueItems, ...pagination(2) })
       const doctor = await call('clinmesh_read_doctor_context')
+      expect(doctor.imagingServices).toEqual([])
       expect(doctor.queue).toEqual(context.pageState.queue)
       expect(doctor.caseId).toBe('case-1')
       const target = doctor.queue.items.find((item: { patient: { name: string } }) => item.patient.name === '合成测试患者2')
@@ -3004,6 +3140,199 @@ describe('role workspaces', () => {
       host.remove()
     }
   })
+
+  it('lets an Agent propose imaging acknowledgement only after the images were shown to the human reader', async () => {
+    window.history.replaceState(null, '', '/consultation')
+    // jsdom 没有 canvas 与 ImageData；阅片器只需要能把一帧画上去。
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ putImageData: () => undefined } as never)
+    vi.stubGlobal('ImageData', class { constructor(readonly data: Uint8ClampedArray, readonly width: number, readonly height: number) {} })
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registration = value
+        return () => { if (registration === value) registration = undefined }
+      },
+    }
+    const queueItem = {
+      caseId: 'case-1', encounterId: 'encounter-1', encounterVersion: '1',
+      patient: {
+        id: 'patient-1', identifier: 'CM-SYN-001', name: '合成测试患者',
+        birthDate: '1988-03-16', gender: 'female', synthetic: true, versionId: '1',
+      },
+      presentation: doctorPresentation, status: 'first-visit', taskId: 'task-1', taskVersion: '1',
+    }
+    const imagingRequest = {
+      id: 'imaging-request-1',
+      indication: '咳嗽两周',
+      report: {
+        diagnosticReportId: 'imaging-report-1',
+        diagnosticReportVersion: '1',
+        examinedAt: '2026-06-01T10:00:00+08:00',
+        findings: '双肺未见明确结节。',
+        impression: '胸部 CT 平扫未见明确肺结节。',
+        issuedAt: '2026-06-01T10:00:00+08:00',
+        revisionNumber: 1,
+        status: 'final',
+        studyId: 'study-1',
+        technique: '胸部 CT 平扫，轴位。',
+      },
+      service: {
+        applicability: '成人胸部疾病的评估与随访；不含增强扫描', bodySite: '胸部', code: 'CT-CHEST-PLAIN',
+        department: '放射科', examCode: 'chest-ct-plain', id: 'imaging-chest-ct-plain', method: '平扫（不使用造影剂）',
+        modality: 'CT', name: '胸部 CT 平扫', reportSections: ['technique', 'findings', 'impression'], version: 1,
+      },
+      serviceRequestId: 'service-request-1',
+      serviceRequestVersion: '2',
+      status: 'reported',
+      taskId: 'imaging-task-1',
+      taskVersion: '4',
+      version: 4,
+    }
+    const requests: Array<{ body: unknown; path: string }> = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      const agentResponse = doctorSurfaceAgentResponse(path, init)
+      if (agentResponse !== undefined) return agentResponse
+      if (init?.method === 'POST') requests.push({ body: JSON.parse(String(init.body)), path })
+      if (path === '/api/auth/context') return Response.json(doctorSession)
+      if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
+      if (path === '/api/his/v1/doctor/queue') return Response.json({ items: [queueItem], ...pagination(1) })
+      if (path === '/api/his/v1/doctor/cases/case-1') return Response.json({
+        ...queueItem, allergies: [], consultation: { turns: [], version: 1 },
+        encounter: { id: 'encounter-1', status: 'in-progress', versionId: '1' },
+        imagingRequests: { draftVersion: 2, requests: [imagingRequest] }, priorFacts: [],
+      })
+      if (path.endsWith('/imaging-services')) return Response.json({ items: [] })
+      if (path === '/api/his/v1/imaging-studies/study-1') return Response.json({
+        available: true,
+        examCode: 'chest-ct-plain',
+        series: [{
+          frames: [{ blocks: [{ length: 4, rowCount: 1, rowStart: 0 }], columns: 2, pixelSpacingMm: [1, 1], positionMm: 0, rows: 1 }],
+          kind: 'frame-stack', modality: 'CT', pixelFormat: 'int16', valueUnit: 'hu',
+        }],
+        studyId: 'study-1',
+      })
+      if (path.includes('/blocks/')) return new Response(new Uint8Array(new Int16Array([-600, 40]).buffer))
+      if (path.endsWith('/actions/acknowledge')) return Response.json({
+        auditId: 'audit-1', effects: [], requestId: 'request-id-1', warnings: [],
+        data: {
+          acknowledgementId: 'acknowledgement-1', acknowledgedAt: '2026-06-01T10:00:00+08:00', acknowledgedBy: 'practitioner-1',
+          diagnosticReportId: 'imaging-report-1', requestId: 'imaging-request-1', requestVersion: 5, status: 'acknowledged',
+        },
+      })
+      throw new Error(`Unexpected request: ${path}`)
+    }))
+    const view = render(<WebApp runtime={{
+      mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+    }} />)
+    try {
+      await screen.findByRole('tab', { name: '病历记录' })
+      const execute = async (name: string, input = {}) => {
+        await waitFor(() => expect(registration?.tools.some(tool => tool.name === name)).toBe(true))
+        const tool = registration!.tools.find(tool => tool.name === name)!
+        return await tool.execute(boundAgentToolInput(tool, input), new AbortController().signal)
+      }
+      // 影像尚未在人类面前显示：已阅提案被拒绝，Agent 读到的页面状态不含像素。
+      await expect(act(() => execute('clinmesh_prepare_acknowledge_report', { requestId: 'imaging-request-1' })))
+        .rejects.toThrow('have not been displayed')
+      let opened = ''
+      await act(async () => {
+        opened = await execute('clinmesh_select_doctor_section', { imagingRequestId: 'imaging-request-1', section: 'laboratory' })
+      })
+      expect(JSON.parse(opened).data).toEqual({
+        imagesOpened: true, imagingRequestId: 'imaging-request-1', section: 'laboratory', selected: true,
+      })
+      expect(opened).not.toMatch(/pixel|blocks/)
+      await waitFor(() => expect(
+        (screen.getByRole('button', { name: '确认已阅' }) as HTMLButtonElement).disabled,
+      ).toBe(false))
+
+      let proposal: Promise<string> | undefined
+      await act(async () => {
+        proposal = execute('clinmesh_prepare_acknowledge_report', { requestId: 'imaging-request-1' })
+        proposal.catch(() => undefined)
+      })
+      const review = await waitFor(() => {
+        const element = document.querySelector('[data-agent-review]')
+        expect(element).not.toBeNull()
+        return element as HTMLElement
+      })
+      expect(requests.some(request => request.path.endsWith('/actions/acknowledge'))).toBe(false)
+      await userEvent.setup().click(within(review).getByRole('button', { name: '确认已阅' }))
+      await act(async () => { await proposal })
+      expect(requests.find(request => request.path.endsWith('/actions/acknowledge'))).toEqual({
+        body: { expectedVersions: { 'DiagnosticReport/imaging-report-1': '1' }, input: { expectedRequestVersion: 4 } },
+        path: '/api/his/v1/imaging-requests/imaging-request-1/reports/imaging-report-1/actions/acknowledge',
+      })
+    } finally {
+      view.unmount()
+    }
+  })
+
+  it('keeps refreshing the doctor case while an imaging request is waiting for its report', async () => {
+    window.history.replaceState(null, '', '/consultation')
+    const queueItem = {
+      caseId: 'case-1', encounterId: 'encounter-1', encounterVersion: '1',
+      patient: {
+        id: 'patient-1', identifier: 'CM-SYN-001', name: '合成测试患者',
+        birthDate: '1988-03-16', gender: 'female', synthetic: true, versionId: '1',
+      },
+      presentation: doctorPresentation, status: 'first-visit', taskId: 'task-1', taskVersion: '1',
+    }
+    const issued = {
+      id: 'imaging-request-1',
+      indication: '咳嗽两周',
+      service: {
+        applicability: '成人胸部疾病的评估与随访；不含增强扫描', bodySite: '胸部', code: 'CT-CHEST-PLAIN',
+        department: '放射科', examCode: 'chest-ct-plain', id: 'imaging-chest-ct-plain', method: '平扫（不使用造影剂）',
+        modality: 'CT', name: '胸部 CT 平扫', reportSections: ['technique', 'findings', 'impression'], version: 1,
+      },
+      serviceRequestId: 'service-request-1',
+      serviceRequestVersion: '1',
+      status: 'issued',
+      taskId: 'imaging-task-1',
+      taskVersion: '1',
+      version: 1,
+    }
+    const reported = {
+      ...issued,
+      report: {
+        diagnosticReportId: 'imaging-report-1', diagnosticReportVersion: '1',
+        examinedAt: '2026-06-01T10:00:00+08:00', findings: '双肺未见明确结节。', impression: '胸部 CT 平扫未见明确肺结节。',
+        issuedAt: '2026-06-01T10:00:00+08:00', revisionNumber: 1, status: 'final', studyId: 'study-1',
+        technique: '胸部 CT 平扫，轴位。',
+      },
+      status: 'reported',
+      version: 4,
+    }
+    let detailReads = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/auth/context') return Response.json(doctorSession)
+      if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
+      if (path === '/api/his/v1/doctor/queue') return Response.json({ items: [queueItem], ...pagination(1) })
+      if (path === '/api/his/v1/doctor/cases/case-1') {
+        detailReads += 1
+        return Response.json({
+          ...queueItem, allergies: [], consultation: { turns: [], version: 1 },
+          encounter: { id: 'encounter-1', status: 'in-progress', versionId: '1' },
+          // 放射系统在后台执行并发布报告：第三次读取起申请已有报告。
+          imagingRequests: { draftVersion: 2, requests: [detailReads < 3 ? issued : reported] }, priorFacts: [],
+        })
+      }
+      if (path.endsWith('/imaging-services')) return Response.json({ items: [] })
+      if (path.endsWith('/completion')) return Response.json({ items: [], ready: false })
+      throw new Error(`Unexpected request: ${path}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click(await screen.findByRole('tab', { name: '检验' }))
+    expect(await screen.findByText('已开具')).toBeTruthy()
+    // 医生没有任何操作，报告到达后页面自行出现。
+    expect(await screen.findByText('胸部 CT 平扫未见明确肺结节。', {}, { timeout: 8_000 })).toBeTruthy()
+    expect(screen.getByText('已报告')).toBeTruthy()
+  }, 15_000)
 
   it('narrows an empty doctor page to common Tools while validating every grant', async () => {
     stubEmptyDoctorWorkspace()
@@ -6258,6 +6587,7 @@ describe('role workspaces', () => {
         revisionNumber: 1,
       },
       encounter: { id: 'encounter-completed-1', status: 'completed', versionId: '6' },
+      imagingRequests: [],
       laboratoryRequests: [],
       medicationConclusion: {
         noMedication: {
@@ -6434,6 +6764,7 @@ describe('role workspaces', () => {
         status: 'completed',
         versionId: activeDetail.encounter.versionId,
       },
+      imagingRequests: [],
       laboratoryRequests: [],
       medicationConclusion: {
         prescription: { ...prescription, withdrawalSupported: true },
@@ -6574,6 +6905,7 @@ describe('role workspaces', () => {
         status: 'completed',
         versionId: '6',
       },
+      imagingRequests: [],
       laboratoryRequests: [{
         catalogDisplay: '发热检验组合',
         correctionSupported: false,
@@ -6793,6 +7125,7 @@ describe('role workspaces', () => {
         status: 'completed',
         versionId: '6',
       },
+      imagingRequests: [],
       laboratoryRequests: [completedIssuedLaboratoryRequest, completedLaboratoryRequest],
       patient,
       timeline: [{

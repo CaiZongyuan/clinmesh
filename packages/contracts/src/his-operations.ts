@@ -6,6 +6,19 @@ import {
   supportedFhirResourceTypeSchema,
 } from './fhir.ts'
 import {
+  acknowledgeImagingReportRequestSchema,
+  acknowledgeImagingReportResponseSchema,
+  cancelImagingRequestRequestSchema,
+  caseImagingServiceCatalogSchema,
+  correctImagingReportRequestSchema,
+  correctImagingReportResponseSchema,
+  deleteImagingRequestDraftRequestSchema,
+  imagingRequestActionResponseSchema,
+  imagingRequestDraftResponseSchema,
+  issueImagingRequestRequestSchema,
+  issueImagingRequestResponseSchema,
+  retryImagingRequestRequestSchema,
+  saveImagingRequestDraftRequestSchema,
   acknowledgeLaboratoryReportRequestSchema,
   acknowledgeLaboratoryReportResponseSchema,
   retryConsultationReplyResponseSchema,
@@ -409,6 +422,46 @@ const correctLaboratoryReportOperationInputSchema = correctLaboratoryReportReque
   requestId: z.string().min(1),
 }).strict()
 
+const encounterVersionInputShape = {
+  encounterId: z.string().min(1),
+  encounterVersion: z.string().regex(/^\d+$/),
+}
+
+const saveImagingRequestDraftOperationInputSchema = saveImagingRequestDraftRequestSchema.shape.input
+  .extend(encounterVersionInputShape).strict()
+
+const deleteImagingRequestDraftOperationInputSchema = deleteImagingRequestDraftRequestSchema.shape.input
+  .extend(encounterVersionInputShape).strict()
+
+const issueImagingRequestOperationInputSchema = issueImagingRequestRequestSchema.shape.input
+  .extend(encounterVersionInputShape).strict()
+
+const cancelImagingRequestOperationInputSchema = cancelImagingRequestRequestSchema.shape.input.extend({
+  requestId: z.string().min(1),
+  serviceRequestId: z.string().min(1),
+  serviceRequestVersion: z.string().regex(/^\d+$/),
+  taskId: z.string().min(1),
+  taskVersion: z.string().regex(/^\d+$/),
+}).strict()
+
+const retryImagingRequestOperationInputSchema = retryImagingRequestRequestSchema.shape.input.extend({
+  requestId: z.string().min(1),
+  taskId: z.string().min(1),
+  taskVersion: z.string().regex(/^\d+$/),
+}).strict()
+
+const imagingReportVersionInputShape = {
+  diagnosticReportId: z.string().min(1),
+  diagnosticReportVersion: z.string().regex(/^\d+$/),
+  requestId: z.string().min(1),
+}
+
+const acknowledgeImagingReportOperationInputSchema = acknowledgeImagingReportRequestSchema.shape.input
+  .extend(imagingReportVersionInputShape).strict()
+
+const correctImagingReportOperationInputSchema = correctImagingReportRequestSchema.shape.input
+  .extend(imagingReportVersionInputShape).strict()
+
 const orderHospitalServiceOperationInputSchema = z.object({
   encounterId: z.string().min(1),
   expectedVersions: expectedVersionsInputSchema,
@@ -695,6 +748,47 @@ const bodyEncoders = {
     return commandBody({
       [`DiagnosticReport/${diagnosticReportId}`]: diagnosticReportVersion,
     }, input)
+  },
+  'encounter.imaging-request.draft.set': (rawInput: unknown) => {
+    const { encounterId, encounterVersion, ...input } = saveImagingRequestDraftOperationInputSchema.parse(rawInput)
+    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
+  },
+  'encounter.imaging-request.draft.delete': (rawInput: unknown) => {
+    const { encounterId, encounterVersion, ...input } = deleteImagingRequestDraftOperationInputSchema.parse(rawInput)
+    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
+  },
+  'encounter.imaging-request.issue': (rawInput: unknown) => {
+    const { encounterId, encounterVersion, ...input } = issueImagingRequestOperationInputSchema.parse(rawInput)
+    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
+  },
+  'imaging-request.cancel': (rawInput: unknown) => {
+    const {
+      requestId: _requestId,
+      serviceRequestId,
+      serviceRequestVersion,
+      taskId,
+      taskVersion,
+      ...input
+    } = cancelImagingRequestOperationInputSchema.parse(rawInput)
+    return commandBody({
+      [`ServiceRequest/${serviceRequestId}`]: serviceRequestVersion,
+      [`Task/${taskId}`]: taskVersion,
+    }, input)
+  },
+  'imaging-request.retry': (rawInput: unknown) => {
+    const { requestId: _requestId, taskId, taskVersion, ...input }
+      = retryImagingRequestOperationInputSchema.parse(rawInput)
+    return commandBody({ [`Task/${taskId}`]: taskVersion }, input)
+  },
+  'imaging-report.acknowledge': (rawInput: unknown) => {
+    const { diagnosticReportId, diagnosticReportVersion, requestId: _requestId, ...input }
+      = acknowledgeImagingReportOperationInputSchema.parse(rawInput)
+    return commandBody({ [`DiagnosticReport/${diagnosticReportId}`]: diagnosticReportVersion }, input)
+  },
+  'imaging-report.correct': (rawInput: unknown) => {
+    const { diagnosticReportId, diagnosticReportVersion, requestId: _requestId, ...input }
+      = correctImagingReportOperationInputSchema.parse(rawInput)
+    return commandBody({ [`DiagnosticReport/${diagnosticReportId}`]: diagnosticReportVersion }, input)
   },
   'service.order': (rawInput: unknown) => {
     const { expectedVersions } = orderHospitalServiceOperationInputSchema.parse(rawInput)
@@ -1585,6 +1679,158 @@ const operationDefinitions = [
     version: 1,
   },
   {
+    cliPath: ['doctor', 'case', 'imaging-services', 'list'],
+    http: {
+      method: 'GET',
+      path: '/api/his/v1/doctor/cases/:caseId/imaging-services',
+    },
+    id: 'doctor.case.imaging-services.list',
+    input: caseIdInputSchema,
+    mode: 'query',
+    output: caseImagingServiceCatalogSchema,
+    requirements: {
+      expectedVersions: false,
+      idempotency: 'none',
+    },
+    risk: 'read',
+    roles: ['outpatient-doctor'],
+    summary: '列出本院放射服务及其是否开展；是否开展取决于医院启用与素材就绪，与病例病情无关',
+    version: 1,
+  },
+  {
+    cliPath: ['encounter', 'imaging-request', 'draft', 'set'],
+    http: {
+      method: 'PUT',
+      path: '/api/his/v1/encounters/:encounterId/imaging-request/draft',
+    },
+    id: 'encounter.imaging-request.draft.set',
+    input: saveImagingRequestDraftOperationInputSchema,
+    mode: 'draft',
+    output: imagingRequestDraftResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'write',
+    roles: ['outpatient-doctor'],
+    summary: '保存版本受保护的放射申请草稿（服务与检查指征）',
+    version: 1,
+  },
+  {
+    cliPath: ['encounter', 'imaging-request', 'draft', 'delete'],
+    http: {
+      method: 'DELETE',
+      path: '/api/his/v1/encounters/:encounterId/imaging-request/draft',
+    },
+    id: 'encounter.imaging-request.draft.delete',
+    input: deleteImagingRequestDraftOperationInputSchema,
+    mode: 'draft',
+    output: imagingRequestDraftResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'write',
+    roles: ['outpatient-doctor'],
+    summary: '按版本删除当前放射申请草稿',
+    version: 1,
+  },
+  {
+    cliPath: ['encounter', 'imaging-request', 'issue'],
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/encounters/:encounterId/imaging-request/actions/issue',
+    },
+    id: 'encounter.imaging-request.issue',
+    input: issueImagingRequestOperationInputSchema,
+    mode: 'command',
+    output: issueImagingRequestResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'high-risk-write',
+    roles: ['outpatient-doctor'],
+    summary: '签发当前放射申请草稿；本院当前未开展时以 CATALOG_CONFLICT 拒绝，同一服务已有进行中申请时以 IMAGING_REQUEST_DUPLICATE 拒绝',
+    version: 1,
+  },
+  {
+    cliPath: ['imaging-request', 'cancel'],
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/imaging-requests/:requestId/actions/cancel',
+    },
+    id: 'imaging-request.cancel',
+    input: cancelImagingRequestOperationInputSchema,
+    mode: 'command',
+    output: imagingRequestActionResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'high-risk-write',
+    roles: ['outpatient-doctor'],
+    summary: '取消尚未开始执行或未取得结果的放射申请',
+    version: 1,
+  },
+  {
+    cliPath: ['imaging-request', 'retry'],
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/imaging-requests/:requestId/actions/retry',
+    },
+    id: 'imaging-request.retry',
+    input: retryImagingRequestOperationInputSchema,
+    mode: 'command',
+    output: imagingRequestActionResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'write',
+    roles: ['outpatient-doctor'],
+    summary: '重试未取得结果的放射申请；素材仍不可用时再次以未取得结果结束',
+    version: 1,
+  },
+  {
+    cliPath: ['imaging-report', 'acknowledge'],
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/imaging-requests/:requestId/reports/:diagnosticReportId/actions/acknowledge',
+    },
+    id: 'imaging-report.acknowledge',
+    input: acknowledgeImagingReportOperationInputSchema,
+    mode: 'command',
+    output: acknowledgeImagingReportResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'write',
+    roles: ['outpatient-doctor'],
+    summary: '确认已阅当前放射报告；影像不可读时以 IMAGING_STUDY_UNAVAILABLE 拒绝',
+    version: 1,
+  },
+  {
+    cliPath: ['imaging-report', 'correct'],
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/imaging-requests/:requestId/reports/:diagnosticReportId/actions/correct',
+    },
+    id: 'imaging-report.correct',
+    input: correctImagingReportOperationInputSchema,
+    mode: 'command',
+    output: correctImagingReportResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'high-risk-write',
+    roles: ['administrator'],
+    summary: '用同一素材另一份已核对的报告内容修订更正当前放射报告',
+    version: 1,
+  },
+  {
     cliPath: ['service', 'order'],
     http: {
       method: 'POST',
@@ -1862,6 +2108,9 @@ const commandOperationAliases: Readonly<Record<string, string>> = {
   'encounter.consultation.reply.retry': 'consultation.reply.retry',
   'encounter.diagnosis.confirm': 'encounter.confirm-diagnosis',
   'encounter.diagnosis.draft.set': 'encounter.save-diagnosis-draft',
+  'encounter.imaging-request.draft.delete': 'imaging-request.delete-draft',
+  'encounter.imaging-request.draft.set': 'imaging-request.save-draft',
+  'encounter.imaging-request.issue': 'imaging-request.issue',
   'encounter.laboratory-request.draft.delete': 'laboratory-request.delete-draft',
   'encounter.laboratory-request.draft.set': 'laboratory-request.save-draft',
   'encounter.laboratory-request.issue': 'laboratory-request.issue',
@@ -1888,6 +2137,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   [clinicalDocumentOperationIds.revise]: 'clinmesh-doctor',
   'command.receipt.get': 'clinmesh-shared',
   'doctor.case.get': 'clinmesh-doctor',
+  'doctor.case.imaging-services.list': 'clinmesh-doctor',
   'doctor.case.laboratory-catalog.search': 'clinmesh-doctor',
   'doctor.completed-cases.get': 'clinmesh-doctor',
   'doctor.completed-cases.list': 'clinmesh-doctor',
@@ -1901,6 +2151,9 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'encounter.consultation.reply.retry': 'clinmesh-doctor',
   'encounter.diagnosis.confirm': 'clinmesh-doctor',
   'encounter.diagnosis.draft.set': 'clinmesh-doctor',
+  'encounter.imaging-request.draft.delete': 'clinmesh-doctor',
+  'encounter.imaging-request.draft.set': 'clinmesh-doctor',
+  'encounter.imaging-request.issue': 'clinmesh-doctor',
   'encounter.laboratory-request.draft.delete': 'clinmesh-doctor',
   'encounter.laboratory-request.draft.set': 'clinmesh-doctor',
   'encounter.laboratory-request.issue': 'clinmesh-doctor',
@@ -1913,6 +2166,10 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'fhir.resource.read': 'clinmesh-fhir',
   'fhir.resource.search': 'clinmesh-fhir',
   'fhir.resource.vread': 'clinmesh-fhir',
+  'imaging-report.acknowledge': 'clinmesh-doctor',
+  'imaging-report.correct': 'clinmesh-doctor',
+  'imaging-request.cancel': 'clinmesh-doctor',
+  'imaging-request.retry': 'clinmesh-doctor',
   'laboratory-report.acknowledge': 'clinmesh-doctor',
   'laboratory-report.correct': 'clinmesh-doctor',
   'laboratory-request.cancel': 'clinmesh-doctor',
@@ -2029,6 +2286,16 @@ export const excludedHisRoutes = [
     method: 'POST',
     path: '/api/his/v1/encounters/:encounterId/actions/issue-laboratory-order',
     reason: 'Superseded by the independent laboratory request draft and issue lifecycle',
+  },
+  {
+    method: 'GET',
+    path: '/api/his/v1/imaging-studies/:studyId',
+    reason: 'Viewer transport for the human workspace; Agent tools and the CLI do not read images in this phase',
+  },
+  {
+    method: 'GET',
+    path: '/api/his/v1/imaging-studies/:studyId/series/:seriesIndex/frames/:frameIndex/blocks/:blockIndex',
+    reason: 'Binary pixel transport for the human viewer; Agent tools and the CLI do not read pixels in this phase',
   },
 ] as const satisfies readonly ExcludedHisRoute[]
 

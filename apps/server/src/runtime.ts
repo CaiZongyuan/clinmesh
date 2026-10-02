@@ -51,6 +51,14 @@ import type { ScenarioGenerationProvider } from './application/scenario-data/pro
 import type { SqlitePerformanceObserver } from './infrastructure/sqlite/performance-observer.ts'
 import { AgentIntegrationService } from './application/agent-integration-service.ts'
 import { reportRuntimeError } from './runtime-error-reporting.ts'
+import { ImagingPreparationService } from './application/imaging-preparation-service.ts'
+import { ImagingStudyReader } from './application/imaging-study-reader.ts'
+import {
+  ImagingResultResolver,
+  ImagingResultUnavailableError,
+} from './application/imaging-result-resolver.ts'
+import { ImagingAssetLibrary } from './infrastructure/imaging-assets/imaging-asset-library.ts'
+import { ImagingPreparationRepository } from './infrastructure/sqlite/imaging-preparation-repository.ts'
 
 function lisActorContext(event: {
   epoch: string
@@ -62,6 +70,21 @@ function lisActorContext(event: {
     epoch: event.epoch,
     organizationId: 'organization-clinmesh',
     roleCode: 'lis-system',
+    scenarioRunId: event.scenarioRunId,
+    workspaceId: event.workspaceId,
+  }
+}
+
+function risActorContext(event: {
+  epoch: string
+  scenarioRunId: string
+  workspaceId: string
+}): ActorContext {
+  return {
+    actorId: 'actor-ris-system',
+    epoch: event.epoch,
+    organizationId: 'organization-clinmesh',
+    roleCode: 'ris-system',
     scenarioRunId: event.scenarioRunId,
     workspaceId: event.workspaceId,
   }
@@ -86,6 +109,8 @@ export interface CreateClinMeshRuntimeOptions {
   databasePath: string
   demoPassword: string
   dshBridgeSecret?: string
+  imagingAssetDirectory?: string
+  imagingCatalogDirectory?: string
   migrationMode: 'apply' | 'verify'
   chatCompletionsProvider?: JsonChatCompletionsProvider
   investigationModel?: string
@@ -215,13 +240,6 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     generationJobs.requeueInterrupted(new Date().toISOString())
     patientPersonas.requeueInterrupted(new Date().toISOString())
     laboratoryServicePublications.requeueInterrupted(new Date().toISOString())
-    const scenarioData = new ScenarioDataService({
-      cases: syntheticCases,
-      commands,
-      jobs: generationJobs,
-      provider: syntheaProvider,
-      profiles: syntheticPatientProfiles,
-    })
     const patientPersona = new PatientPersonaService({
       briefs: patientPersonas,
       cases: syntheticCases,
@@ -229,6 +247,31 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ...(patientPersonaModel === undefined ? {} : { model: patientPersonaModel }),
       profiles: syntheticPatientProfiles,
       ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+    })
+    const imagingLibrary = new ImagingAssetLibrary({
+      assetDirectory: options.imagingAssetDirectory,
+      catalogDirectory: options.imagingCatalogDirectory,
+    })
+    const imagingPreparations = new ImagingPreparationRepository(database)
+    const imagingResults = new ImagingResultResolver({
+      database,
+      library: imagingLibrary,
+      preparations: imagingPreparations,
+    })
+    const imagingPreparation = new ImagingPreparationService({
+      cases: syntheticCases,
+      commands,
+      library: imagingLibrary,
+      preparations: imagingPreparations,
+      profiles: syntheticPatientProfiles,
+    })
+    const scenarioData = new ScenarioDataService({
+      cases: syntheticCases,
+      commands,
+      jobs: generationJobs,
+      provider: syntheaProvider,
+      profiles: syntheticPatientProfiles,
+      targets: imagingPreparation,
     })
     const caseVisits = new SyntheticCaseVisitService({
       briefs: patientPersonas,
@@ -250,6 +293,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       workspaceId: 'workspace-demo',
     })
     laboratoryServicePublisher.ensureDefaultServices()
+    workflow.imaging.ensureServices()
     const identity = new IdentityService(database, {
       authBaseUrl: options.authBaseUrl,
       authSecret: options.authSecret,
@@ -339,6 +383,46 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             workflow.failLaboratoryResultGeneration({
               context,
               error: failure,
+              eventId: event.eventId,
+              requestId: payload.requestId,
+            })
+          }
+          return { status: 'completed' }
+        },
+        'imaging.accept-request': async event => {
+          const payload = laboratoryRequestPayloadSchema.parse(event.payload)
+          workflow.imaging.accept({
+            context: risActorContext(event),
+            eventId: event.eventId,
+            requestId: payload.requestId,
+          })
+          return { status: 'completed' }
+        },
+        'imaging.start-request': async event => {
+          const payload = laboratoryRequestPayloadSchema.parse(event.payload)
+          workflow.imaging.start({
+            context: risActorContext(event),
+            eventId: event.eventId,
+            requestId: payload.requestId,
+          })
+          return { status: 'completed' }
+        },
+        'imaging.report-request': async event => {
+          const payload = laboratoryRequestPayloadSchema.parse(event.payload)
+          const context = risActorContext(event)
+          try {
+            const result = await imagingResults.resolveForRequest(event.workspaceId, event.epoch, payload.requestId)
+            workflow.imaging.report({ context, eventId: event.eventId, requestId: payload.requestId, result })
+          } catch (error) {
+            // 未准备、未覆盖或素材不可用属于确定性失败，直接落为未取得结果；其他故障最多自动尝试三次，
+            // 之后同样落为未取得结果，医生可以重试或取消，申请不会停在检查中。
+            const unavailable = error instanceof ImagingResultUnavailableError
+            if (!unavailable && event.attempt < 3) return { status: 'retryable-failed' }
+            workflow.imaging.fail({
+              context,
+              error: unavailable
+                ? { code: 'IMAGING_RESULT_UNAVAILABLE', message: 'The imaging result is not available for this examination' }
+                : { code: 'IMAGING_RESULT_FAILED', message: 'The imaging result could not be produced' },
               eventId: event.eventId,
               requestId: payload.requestId,
             })
@@ -454,6 +538,15 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         ),
       },
       identity,
+      imaging: {
+        library: imagingLibrary,
+        reader: new ImagingStudyReader({
+          library: imagingLibrary,
+          studyAccess: (context, studyId) => workflow.imaging.studyAccess(context, studyId),
+        }),
+        results: imagingResults,
+      },
+      imagingPreparation,
       investigation,
       caseVisits,
       patientPersona,
@@ -498,6 +591,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       dispatcher,
       fhir,
       identity,
+      imagingResults,
       caseVisits,
       investigation,
       laboratoryServicePublisher,

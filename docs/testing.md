@@ -117,7 +117,20 @@ pnpm perf:saturation
 pnpm perf:full-import -- --manifest /absolute/path/to/release.json
 ```
 
+影像像素读取的预算由 Server HTTP 合同测试持有：读取检查描述和每个像素块各自不超过固定的只读语句数，零写入、零 Audit Event、零 Action Trace，单块不超过 2 MiB，预算不随 CT 层数增长。DSH 通道由代理合同测试覆盖整块 2 MiB 像素的原样透传与缓存策略。首帧延迟和翻片耗时属于跨机器不稳定的时间指标，按上面的原则只在真实入口验证中记录，不作为 hard gate。
+
 `trajectory` 使用共享 application interfaces 从内置虚拟患者完成问诊、检验、诊断、处方、文书和完诊；Synthetic Case generation、历史、Brief、direct start、Investigation snapshot 与新 Epoch no-AI replay 由下述 Server HTTP 集成合同覆盖。`saturation` 以独立 Worker/SQLite sandbox 覆盖 1、5、10、25 actors，并报告 load runner 自身的 busy/retry；`full-import` 只读取调用者已合法取得的 manifest 和 artifact。所有 profile 只使用合成运行状态，不提供关闭 Audit Event 或 Action Trace 的运行开关。详细取舍见 [SQLite 性能工作负载与稳定门禁分离](../.agents/notes/implemented/testing/2026-08-28-sqlite-performance-contract.md)。
+
+## 影像合同
+
+常规测试使用完全合成的 DICOM、患者与 Provider，不访问真实数据集、模型或公网；真实素材只出现在显式的真实入口验证中。
+
+- 素材流水线测试从公开入口覆盖清单校验、逐文件哈希、不支持的传输语法与方向、单块 2 MiB 上限、原子安装、离线修复、标注导出，以及报告自动核对与复核签署的发布门禁。
+- 病例影像准备的 Server HTTP 测试覆盖阳性、阴性、未覆盖疾病、冲突手术史、人口学不符、同一病例单一适配条目、不可变修订和病例开始后的绑定冻结；本次就诊的疾病按 Synthea 的真实导出形态带有就诊之后的缓解时间。管理员接口的身份负例与临床角色不可见性在同一 seam 验证。
+- 放射申请的 Server HTTP 测试从开单走到已阅和完诊门禁，并覆盖取消竞争、未取得结果后的重试与取消、报告更正、检验操作作用于放射申请的稳定冲突、临床读模型不含素材标识，以及患者模型载荷只含检查名称与时间。
+- 影像读取边界测试覆盖无权限、跨病例、跨 Epoch、越界位置和素材缺失，并持有像素读取的数据库预算。
+- Agent 测试覆盖放射 Tool 随病例状态发布、输入与当前病例资源的绑定、检验与放射 Tool 互不串用，以及影像未显示时拒绝已阅提案。
+- 显示规则的纯函数测试用已知合成像素验证 HU、窗宽窗位、反相、方向、层面顺序和比例；React 18/19 双版本浏览器合同测试读取少量真实渲染输出像素。DSH 代理合同测试覆盖整块像素的原样透传。
 
 ## 合成病例合同
 

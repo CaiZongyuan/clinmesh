@@ -30,8 +30,13 @@ const doctorCaseRowSchema = z.object({
   has_consultation: z.number().int(),
   has_correctable_laboratory: z.number().int(),
   has_diagnosis_draft: z.number().int(),
+  has_cancellable_imaging: z.number().int(),
+  has_failed_imaging: z.number().int(),
+  has_imaging_draft: z.number().int(),
+  has_imaging_report: z.number().int(),
   has_laboratory_draft: z.number().int(),
   has_prescription_draft: z.number().int(),
+  has_reported_imaging: z.number().int(),
   has_reported_laboratory: z.number().int(),
   has_signed_document: z.number().int(),
   has_cancellable_laboratory: z.number().int(),
@@ -87,6 +92,14 @@ const commonOperations = new Set<AgentOperationId>([
   'ui.panel.focus',
 ])
 
+/** 指向一条放射申请的操作，以及该申请此时必须处于的状态。 */
+const imagingRequestStatusesByOperation: Partial<Record<AgentOperationId, readonly string[]>> = {
+  'outpatient.imaging.cancel.propose': ['issued', 'generation-failed'],
+  'outpatient.imaging.correct.propose': ['reported', 'acknowledged'],
+  'outpatient.imaging.retry.propose': ['generation-failed'],
+  'outpatient.section.select': ['reported', 'acknowledged'],
+}
+
 export function resolveAgentPageContext(
   database: ClinMeshDatabase,
   cases: SyntheticCaseRepository,
@@ -100,10 +113,10 @@ export function resolveAgentPageContext(
   if (selection === undefined || !draftMatchesSelection(claim, selection)) return undefined
   const allowed = new Set(agentToolsForContext(roleCode.data, claim.viewId)
     .map(definition => definition.operationId))
-  const accountCanCorrectLaboratoryReport = roleCode.data === 'outpatient-doctor'
+  const accountCanCorrectReports = roleCode.data === 'outpatient-doctor'
     && claim.viewId === 'consultation'
     && accountHasAdministratorRole(database, actor, userAccountId)
-  narrowOperations(allowed, claim, selection, accountCanCorrectLaboratoryReport)
+  narrowOperations(allowed, claim, selection, accountCanCorrectReports)
   return { allowedOperationIds: [...allowed], selection }
 }
 
@@ -150,8 +163,12 @@ export const proposalCommandOperations: Readonly<Record<string, readonly string[
     'laboratory-request.issue',
   ],
   'outpatient.laboratory.cancel.propose': ['laboratory-request.cancel'],
-  'outpatient.report.acknowledge.propose': ['laboratory-report.acknowledge'],
+  'outpatient.report.acknowledge.propose': ['laboratory-report.acknowledge', 'imaging-report.acknowledge'],
   'outpatient.report.correct.propose': ['laboratory-report.correct'],
+  'outpatient.imaging.issue.propose': ['imaging-request.issue'],
+  'outpatient.imaging.cancel.propose': ['imaging-request.cancel'],
+  'outpatient.imaging.retry.propose': ['imaging-request.retry'],
+  'outpatient.imaging.correct.propose': ['imaging-report.correct'],
   'outpatient.prescription.issue.propose': ['encounter.issue-prescription'],
   'outpatient.prescription.withdraw.propose': ['prescription.withdraw'],
   'outpatient.medication.none.propose': ['encounter.confirm-no-medication'],
@@ -259,16 +276,38 @@ function resolveSelection(
           AND prescription_draft_state.draft_json IS NOT NULL) AS has_prescription_draft,
         EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
           AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
+          AND laboratory_request.request_kind = 'laboratory'
           AND (laboratory_request.status = 'issued'
             OR (laboratory_request.status = 'generation-failed'
               AND laboratory_request.generation_error_code = 'INVESTIGATION_UNSUPPORTED')))
           AS has_cancellable_laboratory,
         EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
           AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
+          AND laboratory_request.request_kind = 'laboratory'
           AND laboratory_request.status = 'reported') AS has_reported_laboratory,
         EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
           AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
+          AND laboratory_request.request_kind = 'laboratory'
           AND laboratory_request.status IN ('reported', 'acknowledged')) AS has_correctable_laboratory,
+        EXISTS (SELECT 1 FROM imaging_request_state WHERE imaging_request_state.workspace_id = outpatient_case.workspace_id
+          AND imaging_request_state.epoch = outpatient_case.epoch AND imaging_request_state.case_id = outpatient_case.case_id
+          AND imaging_request_state.draft_service_id IS NOT NULL) AS has_imaging_draft,
+        EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
+          AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
+          AND laboratory_request.request_kind = 'imaging'
+          AND laboratory_request.status IN ('issued', 'generation-failed')) AS has_cancellable_imaging,
+        EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
+          AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
+          AND laboratory_request.request_kind = 'imaging'
+          AND laboratory_request.status = 'generation-failed') AS has_failed_imaging,
+        EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
+          AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
+          AND laboratory_request.request_kind = 'imaging'
+          AND laboratory_request.status = 'reported') AS has_reported_imaging,
+        EXISTS (SELECT 1 FROM laboratory_request WHERE laboratory_request.workspace_id = outpatient_case.workspace_id
+          AND laboratory_request.epoch = outpatient_case.epoch AND laboratory_request.case_id = outpatient_case.case_id
+          AND laboratory_request.request_kind = 'imaging'
+          AND laboratory_request.status IN ('reported', 'acknowledged')) AS has_imaging_report,
         EXISTS (SELECT 1 FROM signed_clinical_document WHERE signed_clinical_document.workspace_id = outpatient_case.workspace_id
           AND signed_clinical_document.epoch = outpatient_case.epoch AND signed_clinical_document.case_id = outpatient_case.case_id) AS has_signed_document
       FROM outpatient_case
@@ -397,7 +436,7 @@ function narrowOperations(
   allowed: Set<AgentOperationId>,
   claim: AgentPageContextClaim,
   selection: ResolvedSelection,
-  accountCanCorrectLaboratoryReport: boolean,
+  accountCanCorrectReports: boolean,
 ): void {
   const retain = (operations: readonly AgentOperationId[]): void => {
     const selected = new Set([...commonOperations, ...operations])
@@ -452,6 +491,7 @@ function narrowOperations(
         'outpatient.diagnosis.draft.set',
         'outpatient.diagnosis.confirm.propose',
         'outpatient.laboratory.draft.set',
+        'outpatient.imaging.draft.set',
         'outpatient.prescription.draft.set',
         'outpatient.record.draft.set',
         'outpatient.medication.none.propose',
@@ -464,9 +504,17 @@ function narrowOperations(
     if (selection.has_cancellable_laboratory === 1) {
       operations.push('outpatient.laboratory.cancel.propose')
     }
-    if (selection.has_reported_laboratory === 1) operations.push('outpatient.report.acknowledge.propose')
-    if (selection.has_correctable_laboratory === 1 && accountCanCorrectLaboratoryReport) {
+    if (selection.has_reported_laboratory === 1 || selection.has_reported_imaging === 1) {
+      operations.push('outpatient.report.acknowledge.propose')
+    }
+    if (selection.has_correctable_laboratory === 1 && accountCanCorrectReports) {
       operations.push('outpatient.report.correct.propose')
+    }
+    if (selection.has_imaging_draft === 1) operations.push('outpatient.imaging.issue.propose')
+    if (selection.has_cancellable_imaging === 1) operations.push('outpatient.imaging.cancel.propose')
+    if (selection.has_failed_imaging === 1) operations.push('outpatient.imaging.retry.propose')
+    if (selection.has_imaging_report === 1 && accountCanCorrectReports) {
+      operations.push('outpatient.imaging.correct.propose')
     }
     if (selection.has_prescription_draft === 1) operations.push('outpatient.prescription.issue.propose')
     if (selection.prescription_status === 'signed' || selection.prescription_status === 'paid') {
@@ -559,6 +607,16 @@ function inputMatchesCurrentResources(
     return exists(`SELECT 1 FROM outpatient_case WHERE workspace_id = ? AND epoch = ? AND case_id = ?`,
       ...scope, value.caseId)
   }
+  const imagingStatuses = imagingRequestStatusesByOperation[operationId]
+  if (imagingStatuses !== undefined) {
+    // 栏目切换只有在同时要求展开影像时才绑定到一条放射申请。
+    const requestId = operationId === 'outpatient.section.select' ? value.imagingRequestId : value.requestId
+    if (requestId === undefined) return true
+    if (claim.selection?.kind !== 'case') return false
+    return exists(`SELECT 1 FROM laboratory_request WHERE workspace_id = ? AND epoch = ?
+      AND case_id = ? AND request_id = ? AND request_kind = 'imaging' AND status IN (${imagingStatuses.map(() => '?').join(', ')})`,
+    ...scope, claim.selection.id, requestId, ...imagingStatuses)
+  }
   if (
     operationId === 'outpatient.laboratory.cancel.propose'
     || operationId === 'outpatient.report.acknowledge.propose'
@@ -567,17 +625,20 @@ function inputMatchesCurrentResources(
     if (claim.selection?.kind !== 'case') return false
     if (operationId === 'outpatient.laboratory.cancel.propose') {
       return exists(`SELECT 1 FROM laboratory_request WHERE workspace_id = ? AND epoch = ?
-        AND case_id = ? AND request_id = ?
+        AND case_id = ? AND request_id = ? AND request_kind = 'laboratory'
         AND (status = 'issued'
           OR (status = 'generation-failed' AND generation_error_code = 'INVESTIGATION_UNSUPPORTED'))`,
       ...scope, claim.selection.id, value.requestId)
     }
-    const statuses = operationId === 'outpatient.report.correct.propose'
-      ? ['reported', 'acknowledged']
-      : ['reported']
+    // 已阅提案覆盖检验与放射两类报告；更正提案只面向检验报告，放射更正使用独立提案。
+    if (operationId === 'outpatient.report.acknowledge.propose') {
+      return exists(`SELECT 1 FROM laboratory_request WHERE workspace_id = ? AND epoch = ?
+        AND case_id = ? AND request_id = ? AND status = 'reported'`,
+      ...scope, claim.selection.id, value.requestId)
+    }
     return exists(`SELECT 1 FROM laboratory_request WHERE workspace_id = ? AND epoch = ?
-      AND case_id = ? AND request_id = ? AND status IN (${statuses.map(() => '?').join(', ')})`,
-    ...scope, claim.selection.id, value.requestId, ...statuses)
+      AND case_id = ? AND request_id = ? AND request_kind = 'laboratory' AND status IN ('reported', 'acknowledged')`,
+    ...scope, claim.selection.id, value.requestId)
   }
   if (operationId === 'billing.item.select') {
     return exists(`SELECT 1 FROM charge_record WHERE workspace_id = ? AND epoch = ? AND charge_item_id = ?`,

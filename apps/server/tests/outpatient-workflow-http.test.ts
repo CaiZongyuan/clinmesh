@@ -5492,6 +5492,91 @@ describe('outpatient workflow HTTP contract', () => {
     })
   })
 
+  it('scopes laboratory commands and views to laboratory requests while completion counts every request kind', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-clinical-request-kind-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, request, started } = await createIndependentReportedLaboratoryRequest(
+      runtime,
+      password,
+    )
+    // 放射操作同样不能作用于检验申请。
+    const imagingAcknowledgeResponse = await runtime.app.request(
+      `/api/his/v1/imaging-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/acknowledge`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`DiagnosticReport/${request.report.diagnosticReportId}`]: '1',
+          },
+          input: { expectedRequestVersion: request.version },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(imagingAcknowledgeResponse.status).toBe(409)
+    expect(await imagingAcknowledgeResponse.json()).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
+
+    // 以真实开立的申请构造另一类型的已出报告申请，确保 FHIR 资源与状态都真实存在。
+    runtime.database.driver.prepare(`
+      UPDATE laboratory_request SET request_kind = 'imaging', reference_json = NULL
+      WHERE request_id = ?
+    `).run(request.id)
+
+    const acknowledgeResponse = await runtime.app.request(
+      `/api/his/v1/laboratory-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/acknowledge`,
+      {
+        body: JSON.stringify({
+          expectedVersions: {
+            [`DiagnosticReport/${request.report.diagnosticReportId}`]: '1',
+          },
+          input: { expectedRequestVersion: request.version },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(acknowledgeResponse.status).toBe(409)
+    expect(await acknowledgeResponse.json()).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT' },
+    })
+
+    const detailResponse = await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.caseId}`,
+      { headers: { cookie: doctorCookie } },
+    )
+    const detail = doctorCaseDetailSchema.parse(await detailResponse.json())
+    expect(detail.laboratoryRequests?.requests.map(candidate => candidate.id))
+      .not.toContain(request.id)
+
+    const completionResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/completion`,
+      { headers: { cookie: doctorCookie } },
+    )
+    expect(encounterCompletionPreviewSchema.parse(await completionResponse.json()).items)
+      .toContainEqual(expect.objectContaining({
+        code: 'required-reports-acknowledged',
+        status: 'incomplete',
+      }))
+  })
+
   it('rejects acknowledgement while the laboratory report is not signed', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-unsigned-laboratory-report-http-'))
     temporaryDirectories.push(directory)

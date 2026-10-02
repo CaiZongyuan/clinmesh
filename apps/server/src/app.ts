@@ -9,7 +9,14 @@ import {
 import {
   resetScenarioRequestSchema,
   doctorQueueViewSchema,
+  acknowledgeImagingReportRequestSchema,
   acknowledgeLaboratoryReportRequestSchema,
+  cancelImagingRequestRequestSchema,
+  correctImagingReportRequestSchema,
+  deleteImagingRequestDraftRequestSchema,
+  issueImagingRequestRequestSchema,
+  retryImagingRequestRequestSchema,
+  saveImagingRequestDraftRequestSchema,
   cancelLaboratoryRequestRequestSchema,
   completeHospitalServiceRequestSchema,
   completeEncounterRequestSchema,
@@ -38,6 +45,13 @@ import { referenceDataItemIdSchema } from '@clinmesh/contracts/reference-data'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
+import { prepareImagingCasesRequestSchema } from '@clinmesh/contracts/imaging'
+import {
+  ImagingResultUnavailableError,
+  type ImagingResultResolver,
+} from './application/imaging-result-resolver.ts'
+import type { ImagingAssetLibrary } from './infrastructure/imaging-assets/imaging-asset-library.ts'
+import { ImagingStudyReadError, type ImagingStudyReader } from './application/imaging-study-reader.ts'
 import {
   selectPatientPersonaRevisionRequestSchema,
   startSyntheticCaseRequestSchema,
@@ -66,6 +80,10 @@ import { ConsultationDialogueError, type ConsultationDialogueService } from './a
 import { createPatientPersonaRevisionFromEditRequestSchema } from '@clinmesh/contracts/scenario'
 import type { PatientPersonaService } from './application/patient-persona-service.ts'
 import { PatientPersonaError } from './application/patient-persona-service.ts'
+import {
+  ImagingPreparationError,
+  type ImagingPreparationService,
+} from './application/imaging-preparation-service.ts'
 import type { SyntheticCaseVisitService } from './application/synthetic-case-visit-service.ts'
 import { SyntheticCaseVisitError } from './application/synthetic-case-visit-service.ts'
 import type { WorkflowService } from './application/workflow-service.ts'
@@ -98,6 +116,8 @@ export interface CreateAppOptions {
   caseVisits?: SyntheticCaseVisitService
   fhir?: FhirRuntime
   identity?: IdentityService
+  imaging?: { library: ImagingAssetLibrary; reader: ImagingStudyReader; results: ImagingResultResolver }
+  imagingPreparation?: ImagingPreparationService
   investigation?: InvestigationService
   laboratoryServicePublisher?: LaboratoryServicePublisher
   consultationDialogue?: ConsultationDialogueService
@@ -118,6 +138,13 @@ function requestCorrelationId(context: Context): string {
   requestCorrelationIds.set(context.req.raw, correlationId)
   return correlationId
 }
+
+const pixelBlockIndexSchema = z.string().regex(/^(0|[1-9]\d{0,5})$/).transform(Number)
+const pixelBlockPositionSchema = z.object({
+  blockIndex: pixelBlockIndexSchema,
+  frameIndex: pixelBlockIndexSchema,
+  seriesIndex: pixelBlockIndexSchema,
+})
 
 function operationOutcome(code: string, diagnostics: string) {
   return {
@@ -160,6 +187,8 @@ function apiErrorResponse(
       || error instanceof ConsultationDialogueError
       || error instanceof LaboratoryServicePublisherError
     || error instanceof PatientPersonaError
+    || error instanceof ImagingPreparationError
+    || error instanceof ImagingStudyReadError
     || error instanceof SyntheticCaseVisitError
     || error instanceof ReferenceDataError
     || error instanceof ScenarioDataError
@@ -789,6 +818,84 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return options.consultationDialogue
   }
 
+  if (options.identity !== undefined && options.imagingPreparation !== undefined) {
+    const identity = options.identity
+    const imagingPreparation = options.imagingPreparation
+    // 影像准备与覆盖清单只面向管理员：不进入 Operation Catalog、CLI、Page Context 或 Agent Tools。
+    app.post('/api/sim/v1/admin/imaging-preparations', async (context) => {
+      context.header('Cache-Control', 'no-store')
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = prepareImagingCasesRequestSchema.parse(await context.req.json())
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const idempotencyKey = z.string().min(8).max(128).parse(
+          context.req.header('idempotency-key'),
+        )
+        return context.json(await imagingPreparation.prepareBatch({
+          caseIds: body.input.caseIds,
+          context: session.actor,
+          idempotencyKey,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error, 'The imaging preparation request is invalid')
+      }
+    })
+    app.get('/api/sim/v1/admin/scenario-generation-targets', async (context) => {
+      context.header('Cache-Control', 'no-store')
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(await imagingPreparation.generationTargets(session.actor))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/sim/v1/admin/imaging-coverage', async (context) => {
+      context.header('Cache-Control', 'no-store')
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(await imagingPreparation.coverage(session.actor))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    if (options.imaging !== undefined) {
+      const { reader } = options.imaging
+      // 管理员复核素材的预览入口；与影像准备一样不进入 Operation Catalog、CLI 或 Agent Tools。
+      app.get('/api/sim/v1/admin/imaging-assets/:assetId', async (context) => {
+        context.header('Cache-Control', 'no-store')
+        try {
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          return context.json(await reader.describeAsset(session.actor, context.req.param('assetId')))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+      app.get(
+        '/api/sim/v1/admin/imaging-assets/:assetId/series/:seriesIndex/frames/:frameIndex/blocks/:blockIndex',
+        async (context) => {
+          context.header('Cache-Control', 'no-store')
+          try {
+            const session = await identity.resolveSessionContext(context.req.raw.headers)
+            const position = pixelBlockPositionSchema.parse(context.req.param())
+            const bytes = await reader.readAssetBlock(session.actor, context.req.param('assetId'), position)
+            return context.body(bytes as Uint8Array<ArrayBuffer>, 200, { 'Content-Type': 'application/octet-stream' })
+          } catch (error) {
+            return apiErrorResponse(context, error)
+          }
+        },
+      )
+    }
+    app.get('/api/sim/v1/admin/synthetic-cases/:caseId/imaging-preparation', async (context) => {
+      context.header('Cache-Control', 'no-store')
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const caseId = z.string().min(1).max(128).parse(context.req.param('caseId'))
+        return context.json(imagingPreparation.getCasePreparation(session.actor, caseId))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+  }
   if (options.identity !== undefined && options.patientPersona !== undefined) {
     const identity = options.identity
     const patientPersona = options.patientPersona
@@ -1712,6 +1819,184 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         }
       },
     )
+    if (options.imaging !== undefined) {
+      const { library, reader, results } = options.imaging
+      // 阅片器的读取通道：描述与像素块都只面向责任医生，响应不进入任何共享缓存。
+      app.get('/api/his/v1/imaging-studies/:studyId', async (context) => {
+        context.header('Cache-Control', 'private, no-store')
+        try {
+          return context.json(await reader.describeStudy(await actor(context), context.req.param('studyId')))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+      app.get(
+        '/api/his/v1/imaging-studies/:studyId/series/:seriesIndex/frames/:frameIndex/blocks/:blockIndex',
+        async (context) => {
+          context.header('Cache-Control', 'private, no-store')
+          try {
+            const position = pixelBlockPositionSchema.parse(context.req.param())
+            const bytes = await reader.readStudyBlock(await actor(context), context.req.param('studyId'), position)
+            return context.body(bytes as Uint8Array<ArrayBuffer>, 200, { 'Content-Type': 'application/octet-stream' })
+          } catch (error) {
+            return apiErrorResponse(context, error)
+          }
+        },
+      )
+      app.get('/api/his/v1/doctor/cases/:caseId/imaging-services', async (context) => {
+        try {
+          const context_ = await actor(context)
+          workflow.doctorCaseDetail(context_, context.req.param('caseId'))
+          return context.json(workflow.imaging.serviceCatalog(context_, await library.readyExamCodes()))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+      app.put('/api/his/v1/encounters/:encounterId/imaging-request/draft', async (context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const body = saveImagingRequestDraftRequestSchema.parse(await context.req.json())
+          return context.json(workflow.imaging.saveDraft({
+            context: await actor(context),
+            encounterId: context.req.param('encounterId'),
+            expectedDraftVersion: body.input.expectedDraftVersion,
+            expectedVersions: body.expectedVersions,
+            idempotencyKey: idempotencyKey(context),
+            indication: body.input.indication,
+            serviceId: body.input.serviceId,
+          }))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+      app.delete('/api/his/v1/encounters/:encounterId/imaging-request/draft', async (context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const body = deleteImagingRequestDraftRequestSchema.parse(await context.req.json())
+          return context.json(workflow.imaging.deleteDraft({
+            context: await actor(context),
+            encounterId: context.req.param('encounterId'),
+            expectedDraftVersion: body.input.expectedDraftVersion,
+            expectedVersions: body.expectedVersions,
+            idempotencyKey: idempotencyKey(context),
+          }))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+      app.post('/api/his/v1/encounters/:encounterId/imaging-request/actions/issue', async (context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const body = issueImagingRequestRequestSchema.parse(await context.req.json())
+          return context.json(workflow.imaging.issue({
+            context: await actor(context),
+            encounterId: context.req.param('encounterId'),
+            expectedDraftVersion: body.input.expectedDraftVersion,
+            expectedVersions: body.expectedVersions,
+            idempotencyKey: idempotencyKey(context),
+            readyExamCodes: await library.readyExamCodes(),
+          }))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+      app.post('/api/his/v1/imaging-requests/:requestId/actions/cancel', async (context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const body = cancelImagingRequestRequestSchema.parse(await context.req.json())
+          return context.json(workflow.imaging.cancel({
+            context: await actor(context),
+            expectedRequestVersion: body.input.expectedRequestVersion,
+            expectedVersions: body.expectedVersions,
+            idempotencyKey: idempotencyKey(context),
+            reasonCode: body.input.reasonCode,
+            requestId: context.req.param('requestId'),
+          }))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+      app.post('/api/his/v1/imaging-requests/:requestId/actions/retry', async (context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const body = retryImagingRequestRequestSchema.parse(await context.req.json())
+          return context.json(workflow.imaging.retry({
+            context: await actor(context),
+            expectedRequestVersion: body.input.expectedRequestVersion,
+            expectedVersions: body.expectedVersions,
+            idempotencyKey: idempotencyKey(context),
+            requestId: context.req.param('requestId'),
+          }))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+      app.post(
+        '/api/his/v1/imaging-requests/:requestId/reports/:diagnosticReportId/actions/acknowledge',
+        async (context) => {
+          try {
+            identity.assertTrustedMutation(context.req.raw.headers)
+            const body = acknowledgeImagingReportRequestSchema.parse(await context.req.json())
+            const context_ = await actor(context)
+            const requestId = context.req.param('requestId')
+            return context.json(workflow.imaging.acknowledge({
+              context: context_,
+              diagnosticReportId: context.req.param('diagnosticReportId'),
+              expectedRequestVersion: body.input.expectedRequestVersion,
+              expectedVersions: body.expectedVersions,
+              idempotencyKey: idempotencyKey(context),
+              requestId,
+              studyAvailable: await results.studyAvailable(context_.workspaceId, context_.epoch, requestId),
+            }))
+          } catch (error) {
+            return apiErrorResponse(context, error)
+          }
+        },
+      )
+      app.post(
+        '/api/his/v1/imaging-requests/:requestId/reports/:diagnosticReportId/actions/correct',
+        async (context) => {
+          try {
+            identity.assertTrustedMutation(context.req.raw.headers)
+            const body = correctImagingReportRequestSchema.parse(await context.req.json())
+            const administrator = await identity.resolveAdministratorActor(
+              context.req.raw.headers,
+              context.req.raw.method,
+              context.req.path,
+            )
+            const requestId = context.req.param('requestId')
+            // 解析失败不在这里抛出：命令先按幂等键返回已提交的回执，只有真正执行时才使用解析结果。
+            const resolution = await results.resolveCorrection(
+              administrator.workspaceId,
+              administrator.epoch,
+              requestId,
+              body.input.reportRevision,
+            ).then(result => ({ result }), (error: unknown) => ({
+              error: error instanceof ImagingResultUnavailableError
+                ? new WorkflowError(
+                    'WORKFLOW_CONFLICT',
+                    'The correction must use a reviewed report revision of the same imaging asset',
+                  )
+                : error,
+            }))
+            return context.json(workflow.imaging.correct({
+              // 更正由管理员发起，以放射系统执行者的身份签发，与检验更正一致。
+              context: { ...administrator, roleCode: 'ris-system' },
+              diagnosticReportId: context.req.param('diagnosticReportId'),
+              expectedRequestVersion: body.input.expectedRequestVersion,
+              expectedVersions: body.expectedVersions,
+              idempotencyKey: idempotencyKey(context),
+              reason: body.input.reason,
+              reportRevision: body.input.reportRevision,
+              requestId,
+              resolution,
+            }))
+          } catch (error) {
+            return apiErrorResponse(context, error)
+          }
+        },
+      )
+    }
     app.post('/api/his/v1/encounters/:encounterId/actions/issue-laboratory-order', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)

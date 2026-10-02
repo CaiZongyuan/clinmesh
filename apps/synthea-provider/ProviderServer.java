@@ -81,7 +81,10 @@ public final class ProviderServer {
       long clinicalSeed,
       LocalDate start,
       LocalDate end,
-      String timeZone) {}
+      String timeZone,
+      KeepCriteria keep) {}
+
+  private record KeepCriteria(List<String> activeAny, List<String> activeNone) {}
 
   private record LocalizedBundle(JsonObject bundle, JsonObject warning) {}
 
@@ -100,6 +103,12 @@ public final class ProviderServer {
     private LocalizationException(String code, String message) {
       super(message);
       this.code = code;
+    }
+  }
+
+  private static final class KeepNotSatisfiedException extends Exception {
+    private KeepNotSatisfiedException() {
+      super("Synthea could not produce the requested patients that satisfy the keep criteria");
     }
   }
 
@@ -243,6 +252,7 @@ public final class ProviderServer {
     body.add("modules", GSON.toJsonTree(availableModules));
     body.addProperty("status", "ok");
     body.addProperty("syntheaCommit", SYNTHEA_COMMIT);
+    body.addProperty("targetedGeneration", true);
     sendJson(exchange, 200, body);
   }
 
@@ -273,6 +283,8 @@ public final class ProviderServer {
       sendError(exchange, 400, error.code, error.getMessage());
     } catch (LocalizationException error) {
       sendError(exchange, 422, error.code, error.getMessage());
+    } catch (KeepNotSatisfiedException error) {
+      sendError(exchange, 422, "KEEP_NOT_SATISFIED", error.getMessage());
     } catch (Exception error) {
       System.err.printf("Synthea generation failed: %s%n", error.getMessage());
       sendError(exchange, 502, "GENERATION_FAILED", "Synthea generation failed");
@@ -286,9 +298,10 @@ public final class ProviderServer {
     } catch (RuntimeException error) {
       throw new RequestException("REQUEST_INVALID", "The request must be a JSON object");
     }
-    requireKeys(root, Set.of(
-        "moduleMode", "modules", "name", "population", "providerId", "seeds", "timeRange", "timeZone"),
-        "request");
+    Set<String> requestKeys = new HashSet<>(Set.of(
+        "moduleMode", "modules", "name", "population", "providerId", "seeds", "timeRange", "timeZone"));
+    if (root.has("keep")) requestKeys.add("keep");
+    requireKeys(root, requestKeys, "request");
     requireString(root, "providerId", 1, 20, "synthea");
     String name = requireString(root, "name", 1, 120, null);
     String timeZone = requireString(root, "timeZone", 1, 40, "Asia/Shanghai");
@@ -343,9 +356,31 @@ public final class ProviderServer {
     if (start.isAfter(end)) {
       throw new RequestException("REQUEST_INVALID", "history start is after history end");
     }
+
+    KeepCriteria keep = null;
+    if (root.has("keep")) {
+      JsonObject keepValue = requireObject(root, "keep");
+      requireKeys(keepValue, Set.of("activeAny", "activeNone"), "keep");
+      keep = new KeepCriteria(
+          requireSnomedCodes(keepValue, "activeAny", 1, 32),
+          requireSnomedCodes(keepValue, "activeNone", 0, 128));
+    }
     return new GenerationRequest(
         moduleMode, modules, name, count, minimumAge, maximumAge, gender,
-        populationSeed, clinicalSeed, start, end, timeZone);
+        populationSeed, clinicalSeed, start, end, timeZone, keep);
+  }
+
+  private static List<String> requireSnomedCodes(
+      JsonObject parent, String key, int minimum, int maximum) throws RequestException {
+    List<String> codes = new ArrayList<>();
+    for (JsonElement value : requireArray(parent, key, minimum, maximum)) {
+      if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()
+          || !value.getAsString().matches("\\d{6,18}") || codes.contains(value.getAsString())) {
+        throw new RequestException("REQUEST_INVALID", key + " contains an unsupported code");
+      }
+      codes.add(value.getAsString());
+    }
+    return codes;
   }
 
   private static JsonObject generate(GenerationRequest request) throws Exception {
@@ -380,6 +415,45 @@ public final class ProviderServer {
         command.add("-m");
         command.add(String.join(File.pathSeparator, modulePatterns(request.modules)));
       }
+      if (request.keep != null) {
+        JsonArray conditions = new JsonArray();
+        conditions.add(activeCondition(request.keep.activeAny));
+        if (!request.keep.activeNone.isEmpty()) {
+          JsonObject absent = new JsonObject();
+          absent.addProperty("condition_type", "Not");
+          absent.add("condition", activeCondition(request.keep.activeNone));
+          conditions.add(absent);
+        }
+        JsonObject keepCondition = new JsonObject();
+        keepCondition.addProperty("condition_type", "And");
+        keepCondition.add("conditions", conditions);
+        JsonObject toKeep = new JsonObject();
+        toKeep.addProperty("transition", "Keep");
+        toKeep.add("condition", keepCondition);
+        JsonObject toTerminal = new JsonObject();
+        toTerminal.addProperty("transition", "Terminal");
+        JsonArray transitions = new JsonArray();
+        transitions.add(toKeep);
+        transitions.add(toTerminal);
+        JsonObject initial = new JsonObject();
+        initial.addProperty("type", "Initial");
+        initial.add("conditional_transition", transitions);
+        JsonObject terminal = new JsonObject();
+        terminal.addProperty("type", "Terminal");
+        JsonObject states = new JsonObject();
+        states.add("Initial", initial);
+        states.add("Keep", terminal);
+        states.add("Terminal", terminal.deepCopy());
+        JsonObject keepModule = new JsonObject();
+        keepModule.addProperty("name", "ClinMesh targeted generation");
+        keepModule.add("states", states);
+        keepModule.addProperty("gmf_version", 2);
+        Path keepModulePath = workingDirectory.resolve("keep-module.json");
+        Files.writeString(keepModulePath, GSON.toJson(keepModule), StandardCharsets.UTF_8);
+        command.add("-k");
+        command.add(keepModulePath.toString());
+        command.add("--generate.only_alive_patients=true");
+      }
       command.add("--exporter.baseDirectory=" + outputDirectory);
       long historyDays = ChronoUnit.DAYS.between(request.start, request.end) + 1;
       command.add("--exporter.years_of_history=" + Math.max(1, (historyDays + 364) / 365));
@@ -401,7 +475,11 @@ public final class ProviderServer {
       JsonArray bundles = new JsonArray();
       JsonArray translationWarnings = new JsonArray();
       Path fhirDirectory = outputDirectory.resolve("fhir");
-      if (!Files.isDirectory(fhirDirectory)) throw new IOException("FHIR output directory is missing");
+      // Synthea 达到 max_attempts_to_keep_patient 后仍以状态 0 退出，只是少导出该患者；全部落空时不创建 fhir 目录。
+      if (!Files.isDirectory(fhirDirectory)) {
+        if (request.keep != null) throw new KeepNotSatisfiedException();
+        throw new IOException("FHIR output directory is missing");
+      }
       int ordinal = 0;
       try (Stream<Path> paths = Files.list(fhirDirectory)) {
         for (Path path : paths.filter(Files::isRegularFile).sorted().toList()) {
@@ -421,12 +499,21 @@ public final class ProviderServer {
         }
       }
       if (bundles.size() != request.count) {
+        if (request.keep != null && bundles.size() < request.count) {
+          throw new KeepNotSatisfiedException();
+        }
         throw new IOException("Synthea returned an unexpected Patient Bundle count");
       }
 
       JsonObject metadata = new JsonObject();
       metadata.addProperty("clinicalSeed", request.clinicalSeed);
       metadata.addProperty("configHash", generationConfigHash());
+      if (request.keep != null) {
+        JsonObject keep = new JsonObject();
+        keep.add("activeAny", GSON.toJsonTree(request.keep.activeAny));
+        keep.add("activeNone", GSON.toJsonTree(request.keep.activeNone));
+        metadata.add("keep", keep);
+      }
       metadata.add("localization", localizationMetadata().deepCopy());
       metadata.addProperty("moduleMode", request.moduleMode);
       metadata.add("modules", GSON.toJsonTree(request.modules));
@@ -445,6 +532,21 @@ public final class ProviderServer {
     } finally {
       deleteRecursively(workingDirectory);
     }
+  }
+
+  private static JsonObject activeCondition(List<String> codes) {
+    JsonArray values = new JsonArray();
+    for (String code : codes) {
+      JsonObject value = new JsonObject();
+      value.addProperty("system", "SNOMED-CT");
+      value.addProperty("code", code);
+      value.addProperty("display", "SNOMED-CT " + code);
+      values.add(value);
+    }
+    JsonObject condition = new JsonObject();
+    condition.addProperty("condition_type", "Active Condition");
+    condition.add("codes", values);
+    return condition;
   }
 
   private static List<String> modulePatterns(List<String> modules) {

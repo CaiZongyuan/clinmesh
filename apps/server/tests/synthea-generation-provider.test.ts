@@ -420,6 +420,136 @@ describe('Synthea Scenario generation Provider contract', () => {
     })
   })
 
+  describe('targeted generation keep criteria', () => {
+    const keep = {
+      activeAny: ['162573006', '254637007'],
+      activeNone: ['232657004'],
+    }
+    const targetedRequest = scenarioGenerationRequestSchema.parse({
+      ...request,
+      target: { kind: 'imaging-profile', profileId: 'chest-lung-mass' },
+    })
+
+    function capturingProvider(
+      responseFor: (submittedBody: string) => Response,
+      submittedBodies: string[] = [],
+    ) {
+      return new SyntheaScenarioGenerationProvider({
+        baseUrl: 'http://synthea.internal:51878',
+        fetch: async (_input, init) => {
+          submittedBodies.push(String(init?.body))
+          return responseFor(String(init?.body))
+        },
+        maxResponseBytes: 1_000_000,
+        timeoutMs: 1_000,
+      })
+    }
+
+    it('sends the keep criteria without the Server-owned target', async () => {
+      const submittedBodies: string[] = []
+      const body = providerResponse([patientBundle()])
+      const provider = capturingProvider(() => Response.json({
+        ...body,
+        metadata: { ...body.metadata, keep },
+      }), submittedBodies)
+
+      await provider.generate(targetedRequest, undefined, keep)
+
+      expect(JSON.parse(submittedBodies[0]!)).toStrictEqual({
+        keep,
+        moduleMode: 'filter',
+        modules: ['fever'],
+        name: request.name,
+        population: request.population,
+        providerId: 'synthea',
+        seeds: request.seeds,
+        timeRange: request.timeRange,
+        timeZone: 'Asia/Shanghai',
+      })
+    })
+
+    it('keeps the untargeted request body unchanged', async () => {
+      const submittedBodies: string[] = []
+      const provider = capturingProvider(
+        () => Response.json(providerResponse([patientBundle()])),
+        submittedBodies,
+      )
+
+      await provider.generate(request)
+      await provider.generate(targetedRequest)
+
+      const untargetedBody = JSON.parse(JSON.stringify(request))
+      expect(submittedBodies.map(body => JSON.parse(body))).toStrictEqual([
+        untargetedBody,
+        untargetedBody,
+      ])
+    })
+
+    it.each([
+      { echoed: undefined, label: 'a missing', sent: keep },
+      { echoed: { ...keep, activeNone: [] }, label: 'a different', sent: keep },
+      { echoed: keep, label: 'an unrequested', sent: undefined },
+    ])('rejects $label keep echo', async ({ echoed, sent }) => {
+      const body = providerResponse([patientBundle()])
+      const provider = capturingProvider(() => Response.json({
+        ...body,
+        metadata: { ...body.metadata, ...(echoed === undefined ? {} : { keep: echoed }) },
+      }))
+
+      await expect(provider.generate(targetedRequest, undefined, sent)).rejects.toMatchObject({
+        code: 'REPRODUCTION_METADATA_MISMATCH',
+      })
+    })
+
+    it('reports a Provider that rejects keep criteria as not supporting targeted generation', async () => {
+      const provider = capturingProvider(() => Response.json({
+        error: { code: 'REQUEST_INVALID', message: 'request contains unsupported or missing fields' },
+      }, { status: 400 }))
+
+      await expect(provider.generate(targetedRequest, undefined, keep)).rejects.toMatchObject({
+        code: 'PROVIDER_TARGET_UNSUPPORTED',
+      })
+      await expect(provider.generate(request)).rejects.toMatchObject({
+        code: 'PROVIDER_REQUEST_FAILED',
+      })
+    })
+
+    it('reports exhausted keep attempts so the caller can retry with new seeds', async () => {
+      const provider = capturingProvider(() => Response.json({
+        error: {
+          code: 'KEEP_NOT_SATISFIED',
+          message: 'Synthea could not produce the requested patients that satisfy the keep criteria',
+        },
+      }, { status: 422 }))
+
+      await expect(provider.generate(targetedRequest, undefined, keep)).rejects.toMatchObject({
+        code: 'KEEP_NOT_SATISFIED',
+      })
+      await expect(provider.generate(request)).rejects.toMatchObject({
+        code: 'PROVIDER_REQUEST_FAILED',
+      })
+    })
+
+    it.each([
+      { expected: true, targetedGeneration: true },
+      { expected: false, targetedGeneration: undefined },
+    ])('maps Provider health targetedGeneration $targetedGeneration to $expected', async ({
+      expected,
+      targetedGeneration,
+    }) => {
+      const provider = new SyntheaScenarioGenerationProvider({
+        baseUrl: 'http://synthea.internal:51878',
+        fetch: async () => Response.json({ ...providerHealth(), targetedGeneration }),
+        timeoutMs: 1_000,
+      })
+
+      await expect(provider.capabilities()).resolves.toMatchObject({
+        available: true,
+        targetedGeneration: expected,
+      })
+    })
+  })
+
   it('reports an unavailable optional Provider without throwing from capabilities', async () => {
     const provider = new SyntheaScenarioGenerationProvider({
       baseUrl: 'http://synthea.internal:51878',

@@ -21,7 +21,7 @@ services:
     depends_on:
       cn-health-localizer:
         condition: service_healthy
-    image: ghcr.io/caizongyuan/clinmesh-synthea-provider@sha256:5ce7fe5f7223a21a31a58794a504fa94f058812d8815ee2448eb0592184910f8
+    image: ghcr.io/caizongyuan/clinmesh-synthea-provider@sha256:8018b3ea965113dbc6a5ad6ea4fe57424939f412896c4f381d03b7fb56b3c158
     init: true
     mem_limit: 2g
     pids_limit: 256

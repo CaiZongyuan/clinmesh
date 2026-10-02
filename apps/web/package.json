@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@clinmesh/contracts": "workspace:*",
+    "@clinmesh/core": "workspace:*",
     "@clinmesh/ui": "workspace:*",
     "@dicebear/core": "9.4.2",
     "@dicebear/lorelei": "9.4.2",

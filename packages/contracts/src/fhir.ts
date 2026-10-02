@@ -26,6 +26,7 @@ export const supportedFhirResourceTypes = [
   'Provenance',
   'InventoryItem',
   'AuditEvent',
+  'ImagingStudy',
 ] as const
 
 export const supportedFhirResourceTypeSchema = z.enum(supportedFhirResourceTypes)
@@ -153,6 +154,7 @@ export const fhirCapabilityRegistry = {
     )]),
     resource('InventoryItem', 'domain-projection'),
     resource('AuditEvent', 'domain-projection'),
+    resource('ImagingStudy', 'domain-projection', [patientSearch('subject'), encounterSearch()]),
   ],
 } satisfies {
   fhirVersion: z.infer<typeof fhirVersionSchema>

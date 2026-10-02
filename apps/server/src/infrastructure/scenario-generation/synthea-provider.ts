@@ -1,12 +1,15 @@
 import type {
   ScenarioGenerationRequest,
   ScenarioProviderCapabilities,
+  SyntheaKeepCriteria,
 } from '@clinmesh/contracts/scenario'
 import {
+  syntheaKeepCriteriaSchema,
   syntheaModuleFilterSchema,
   syntheaCnLocalizationProvenanceSchema,
   syntheaTranslationWarningSchema,
 } from '@clinmesh/contracts/scenario'
+import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import {
   ScenarioGenerationProviderError,
@@ -43,6 +46,7 @@ const providerResponseSchema = z.object({
   metadata: z.object({
     clinicalSeed: z.number().int(),
     configHash: z.string().regex(/^[a-f0-9]{64}$/),
+    keep: syntheaKeepCriteriaSchema.optional(),
     localization: syntheaCnLocalizationProvenanceSchema,
     moduleMode: z.enum(['all', 'filter']).optional(),
     modules: z.array(syntheaModuleFilterSchema).max(32),
@@ -62,11 +66,19 @@ const providerHealthSchema = z.object({
   modules: z.array(syntheaModuleFilterSchema).min(1).max(2_000),
   status: z.literal('ok'),
   syntheaCommit: z.literal(SYNTHEA_COMMIT),
+  targetedGeneration: z.boolean().optional(),
 }).strict()
 
-const providerTranslationGapSchema = z.object({
+const providerRequestInvalidSchema = z.object({
   error: z.object({
-    code: z.literal('TRANSLATION_GAP'),
+    code: z.literal('REQUEST_INVALID'),
+    message: z.string().min(1).max(1_000),
+  }).strict(),
+}).strict()
+
+const providerUnprocessableSchema = z.object({
+  error: z.object({
+    code: z.enum(['KEEP_NOT_SATISFIED', 'TRANSLATION_GAP']),
     message: z.string().min(1).max(1_000),
   }).strict(),
 }).strict()
@@ -108,8 +120,10 @@ export type SyntheaProviderErrorCode =
   | 'FHIR_R4_PATIENT_OWNERSHIP_INVALID'
   | 'FHIR_R4_REFERENCE_INVALID'
   | 'FHIR_R4_RESOURCE_NOT_ALLOWED'
+  | 'KEEP_NOT_SATISFIED'
   | 'PROVIDER_REQUEST_FAILED'
   | 'PROVIDER_RESPONSE_TOO_LARGE'
+  | 'PROVIDER_TARGET_UNSUPPORTED'
   | 'PROVIDER_TIMEOUT'
   | 'REPRODUCTION_METADATA_MISMATCH'
   | 'TRANSLATION_GAP'
@@ -280,6 +294,7 @@ async function readBoundedResponse(response: Response, maximumBytes: number): Pr
 function assertReproductionMetadata(
   metadata: z.infer<typeof providerResponseSchema>['metadata'],
   request: ScenarioGenerationRequest,
+  keep: SyntheaKeepCriteria | undefined,
 ): void {
   if (
     metadata.clinicalSeed !== request.seeds.clinical
@@ -292,6 +307,7 @@ function assertReproductionMetadata(
     || (metadata.moduleMode ?? (metadata.modules.length === 0 ? 'all' : 'filter')) !== request.moduleMode
     || metadata.modules.length !== request.modules.length
     || metadata.modules.some((module, index) => module !== request.modules[index])
+    || !isDeepStrictEqual(metadata.keep, keep)
   ) {
     throw new SyntheaProviderError(
       'REPRODUCTION_METADATA_MISMATCH',
@@ -349,6 +365,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
         modules: health.modules,
         providerId: 'synthea',
         providerName: 'Synthea',
+        targetedGeneration: health.targetedGeneration ?? false,
       }
     } catch {
       return {
@@ -365,6 +382,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
   async generate(
     request: ScenarioGenerationRequest,
     signal?: AbortSignal,
+    keep?: SyntheaKeepCriteria,
   ): Promise<SourcePatientCorpus> {
     const timeoutSignal = AbortSignal.timeout(this.#timeoutMs)
     const requestSignal = signal === undefined
@@ -373,7 +391,17 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
     let response: Response
     try {
       response = await this.#fetch(this.#endpoint, {
-        body: JSON.stringify(request),
+        body: JSON.stringify({
+          moduleMode: request.moduleMode,
+          modules: request.modules,
+          name: request.name,
+          population: request.population,
+          providerId: request.providerId,
+          seeds: request.seeds,
+          timeRange: request.timeRange,
+          timeZone: request.timeZone,
+          ...(keep === undefined ? {} : { keep }),
+        }),
         headers: { 'content-type': 'application/json' },
         method: 'POST',
         signal: requestSignal,
@@ -390,18 +418,37 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
     }
     if (!response.ok) {
       if (response.status === 422) {
-        let failure: z.infer<typeof providerTranslationGapSchema> | undefined
+        let failure: z.infer<typeof providerUnprocessableSchema> | undefined
         try {
-          failure = providerTranslationGapSchema.parse(JSON.parse(
+          failure = providerUnprocessableSchema.parse(JSON.parse(
             await readBoundedResponse(response, Math.min(this.#maxResponseBytes, 256 * 1024)),
           ))
         } catch (error) {
           if (error instanceof SyntheaProviderError) throw error
         }
-        if (failure !== undefined) {
+        if (
+          failure !== undefined
+          && (failure.error.code !== 'KEEP_NOT_SATISFIED' || keep !== undefined)
+        ) {
           throw new SyntheaProviderError(
             failure.error.code,
             failure.error.message,
+          )
+        }
+      } else if (response.status === 400 && keep !== undefined) {
+        let rejected = false
+        try {
+          providerRequestInvalidSchema.parse(JSON.parse(
+            await readBoundedResponse(response, Math.min(this.#maxResponseBytes, 256 * 1024)),
+          ))
+          rejected = true
+        } catch (error) {
+          if (error instanceof SyntheaProviderError) throw error
+        }
+        if (rejected) {
+          throw new SyntheaProviderError(
+            'PROVIDER_TARGET_UNSUPPORTED',
+            'The Synthea Provider rejected the targeted generation criteria',
           )
         }
       } else {
@@ -444,7 +491,7 @@ export class SyntheaScenarioGenerationProvider implements ScenarioGenerationProv
         { cause: error },
       )
     }
-    assertReproductionMetadata(parsed.metadata, request)
+    assertReproductionMetadata(parsed.metadata, request, keep)
     if (parsed.bundles.length !== request.population.count) {
       throw new SyntheaProviderError(
         'FHIR_R4_PATIENT_OWNERSHIP_INVALID',

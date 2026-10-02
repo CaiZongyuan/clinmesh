@@ -1,0 +1,346 @@
+import { isDeepStrictEqual } from 'node:util'
+import {
+  administratorImagingPreparationSchema,
+  imagingCoverageSchema,
+  imagingPreparationBatchSchema,
+  type ImagingCoverage,
+  type ImagingPreparationReason,
+} from '@clinmesh/contracts/imaging'
+import type {
+  ScenarioGenerationTarget,
+  SyntheaKeepCriteria,
+} from '@clinmesh/contracts/scenario'
+import type { z } from 'zod'
+import {
+  ImagingCatalogInvalidError,
+  type ImagingAssetLibrary,
+} from '../infrastructure/imaging-assets/imaging-asset-library.ts'
+import {
+  imagingAssetPublication,
+  imagingReportContentSha256,
+} from '../infrastructure/imaging-assets/imaging-report-check.ts'
+import type { ImagingPreparationRepository } from '../infrastructure/sqlite/imaging-preparation-repository.ts'
+import type { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic-case-repository.ts'
+import type { SyntheticPatientProfileRepository } from '../infrastructure/sqlite/synthetic-patient-profile-repository.ts'
+import type { ActorContext, CommandExecutor } from './command-executor.ts'
+import {
+  imagingExamCodes,
+  imagingMatchingCatalogHash,
+  matchCaseImaging,
+  type ImagingMatchingCatalog,
+  type SourceResource,
+} from './imaging-preparation.ts'
+
+type ImagingPreparationErrorCode =
+  | 'CASE_NOT_FOUND'
+  | 'IMAGING_CATALOG_INVALID'
+  | 'IMAGING_CATALOG_UNAVAILABLE'
+  | 'ROLE_NOT_ALLOWED'
+
+export class ImagingPreparationError extends Error {
+  readonly code: ImagingPreparationErrorCode
+  readonly status: 403 | 404 | 409
+
+  constructor(code: ImagingPreparationErrorCode, message: string) {
+    super(message)
+    this.name = 'ImagingPreparationError'
+    this.code = code
+    this.status = code === 'ROLE_NOT_ALLOWED' ? 403 : code === 'CASE_NOT_FOUND' ? 404 : 409
+  }
+}
+
+const batchLimit = 50
+
+/**
+ * 病例影像准备：管理员按当前素材清单为患者库中的病例确定每项检查的素材，结果以不可变修订保存。
+ * 病例与素材的绑定属于 Workspace，跨 Epoch 保留；病例开始前跟随最新修订，开始后只追加、不替换。
+ */
+export class ImagingPreparationService {
+  readonly #cases: SyntheticCaseRepository
+  readonly #commands: CommandExecutor
+  readonly #library: ImagingAssetLibrary
+  readonly #preparations: ImagingPreparationRepository
+  readonly #profiles: SyntheticPatientProfileRepository
+
+  constructor(input: {
+    cases: SyntheticCaseRepository
+    commands: CommandExecutor
+    library: ImagingAssetLibrary
+    preparations: ImagingPreparationRepository
+    profiles: SyntheticPatientProfileRepository
+  }) {
+    this.#cases = input.cases
+    this.#commands = input.commands
+    this.#library = input.library
+    this.#preparations = input.preparations
+    this.#profiles = input.profiles
+  }
+
+  async prepareBatch(input: { caseIds?: string[] | undefined; context: ActorContext; idempotencyKey: string }) {
+    this.#assertAdministrator(input.context)
+    const catalog = await this.#matchingCatalog()
+    if (catalog === undefined) {
+      throw new ImagingPreparationError(
+        'IMAGING_CATALOG_UNAVAILABLE',
+        'The imaging asset catalog or its matching rules are not available',
+      )
+    }
+    const { workspaceId } = input.context
+    return this.#commands.execute({
+      context: input.context,
+      contextRequirement: 'current',
+      dataSchema: imagingPreparationBatchSchema,
+      expectedVersions: {},
+      idempotencyKey: input.idempotencyKey,
+      idempotencyScope: 'workspace',
+      input: { caseIds: input.caseIds ?? null, catalogHash: catalog.hash },
+      operation: 'imaging-preparation.prepare',
+    }, () => {
+      const pending = input.caseIds === undefined
+        ? this.#preparations.casesNeedingPreparation(workspaceId, catalog.hash, batchLimit)
+        : { caseIds: input.caseIds, total: input.caseIds.length }
+      const now = new Date().toISOString()
+      const effects: Array<{ kind: 'created'; reference: string; versionId: string }> = []
+      const prepared = pending.caseIds.map((caseId) => {
+        const source = this.#caseSource(workspaceId, caseId)
+        const started = this.#preparations.started(workspaceId, caseId)
+        const existing = this.#preparations.bindings(workspaceId, caseId, source.case.sourceHash)
+        const exams = matchCaseImaging({
+          birthDate: source.profile.demographics.birthDate,
+          // 未开始的病例重新选择；已开始的病例沿用已固定的绑定。
+          bound: started ? existing : [],
+          catalog,
+          gender: source.profile.demographics.gender,
+          historyResources: this.#cases.getVisibleResourcesForSimulator(workspaceId, caseId),
+          indexEncounterReference: source.truth.indexEncounterReference,
+          indexResources: source.truth.hiddenResources,
+          sourceHash: source.case.sourceHash,
+        })
+        const latest = this.#preparations.latest(workspaceId, caseId)
+        if (latest?.catalog.hash !== catalog.hash || !isDeepStrictEqual(latest.exams, exams)) {
+          const preparation = this.#preparations.append({
+            caseId,
+            catalog: { hash: catalog.hash, packId: catalog.packId, ruleVersion: catalog.rules.ruleVersion },
+            createdAt: now,
+            exams,
+            profileId: source.case.profileId,
+            profileRevision: source.case.profileRevision,
+            sourceHash: source.case.sourceHash,
+          }, workspaceId, input.context.actorId)
+          effects.push({
+            kind: 'created',
+            reference: `ImagingCasePreparation/${caseId}`,
+            versionId: String(preparation.revision),
+          })
+          if (!started) this.#preparations.clearBindings(workspaceId, caseId, source.case.sourceHash)
+          for (const exam of exams) {
+            if (exam.status !== 'ready' || (started && existing.some(binding => binding.examCode === exam.examCode))) continue
+            const { asset } = catalog.assets.get(exam.assetId!)!
+            this.#preparations.bind({
+              assetId: asset.assetId,
+              assetOutput: asset.output,
+              boundAt: now,
+              caseId,
+              examCode: exam.examCode,
+              matchingProfileId: exam.matchingProfileId!,
+              preparationRevision: preparation.revision,
+              reportContentSha256: imagingReportContentSha256(
+                asset,
+                asset.reports!.find(report => report.revision === exam.reportRevision)!,
+              ),
+              reportRevision: exam.reportRevision!,
+              sourceHash: source.case.sourceHash,
+              workspaceId,
+            })
+          }
+        }
+        return this.#casePreparation(workspaceId, caseId, source.case.sourceHash)
+      })
+      return { data: { prepared, remaining: pending.total - prepared.length }, effects }
+    })
+  }
+
+  getCasePreparation(context: ActorContext, caseId: string) {
+    this.#assertAdministrator(context)
+    const found = this.#cases.get(context.workspaceId, caseId)
+    if (found === undefined) throw new ImagingPreparationError('CASE_NOT_FOUND', 'The Synthetic Case was not found')
+    return this.#casePreparation(context.workspaceId, caseId, found.sourceHash)
+  }
+
+  async coverage(context: ActorContext): Promise<ImagingCoverage> {
+    this.#assertAdministrator(context)
+    const catalog = await this.#matchingCatalog()
+    const total = this.#preparations.libraryCaseCount(context.workspaceId)
+    if (catalog === undefined) {
+      return { cases: { exams: [], prepared: 0, total }, catalog: null, exams: [], uncovered: [] }
+    }
+    const installed = new Map<string, boolean>()
+    for (const [assetId, { asset }] of catalog.assets) {
+      installed.set(assetId, await this.#library.installed(asset))
+    }
+    const preparations = this.#preparations.latestForLibrary(context.workspaceId)
+    return imagingCoverageSchema.parse({
+      cases: {
+        exams: imagingExamCodes.map((examCode) => {
+          const exams = preparations.flatMap(preparation => preparation.exams.filter(exam => exam.examCode === examCode))
+          const unsupported = new Map<ImagingPreparationReason, number>()
+          for (const exam of exams) {
+            if (exam.status === 'unsupported') unsupported.set(exam.reason!, (unsupported.get(exam.reason!) ?? 0) + 1)
+          }
+          return {
+            conflict: exams.filter(exam => exam.status === 'conflict').length,
+            examCode,
+            ready: exams.filter(exam => exam.status === 'ready').length,
+            unsupported: [...unsupported.entries()]
+              .map(([reason, count]) => ({ count, reason }))
+              .toSorted((left, right) => left.reason.localeCompare(right.reason)),
+          }
+        }),
+        prepared: preparations.length,
+        total,
+      },
+      catalog: { hash: catalog.hash, packId: catalog.packId, ruleVersion: catalog.rules.ruleVersion },
+      exams: imagingExamCodes.map(examCode => ({
+        examCode,
+        profiles: catalog.rules.profiles.map((profile) => {
+          const assetId = profile.assets[examCode]
+          const entry = assetId === undefined ? undefined : catalog.assets.get(assetId)
+          return {
+            ageRange: profile.ageRange,
+            asset: entry === undefined
+              ? null
+              : {
+                  assetId: entry.asset.assetId,
+                  blockers: [...new Set(imagingAssetPublication(entry.asset).reasons.map(reason => reason.code))],
+                  installed: installed.get(entry.asset.assetId) ?? false,
+                  published: entry.publishedRevisions.length > 0,
+                },
+            conditionCodes: profile.finding === 'positive' ? profile.conditionCodes : profile.indexConditionCodes,
+            finding: profile.finding,
+            id: profile.id,
+            label: profile.label,
+            ...(profile.sex === undefined ? {} : { sex: profile.sex }),
+          }
+        }),
+      })),
+      uncovered: catalog.rules.uncoveredConditions,
+    })
+  }
+
+  /** 定向生成可选的适配条目：至少一项检查有已发布素材。只返回条目标识、名称与适用人群。 */
+  async generationTargets(context: ActorContext) {
+    this.#assertAdministrator(context)
+    const catalog = await this.#matchingCatalog()
+    return {
+      items: catalog === undefined
+        ? []
+        : this.#publishedProfiles(catalog).map(profile => ({
+            ageRange: profile.ageRange,
+            kind: 'imaging-profile' as const,
+            label: profile.label,
+            profileId: profile.id,
+            ...(profile.sex === undefined ? {} : { sex: profile.sex }),
+          })),
+    }
+  }
+
+  /**
+   * 由适配条目推导交给 Synthea 的保留条件，只用于提高命中率；患者是否满足条目仍由 `generationTargetMet` 判定。
+   * 阴性条目排除阳性条目的疾病、未覆盖疾病和冲突操作；条目不存在或没有已发布素材时返回 undefined。
+   */
+  async generationKeep(target: ScenarioGenerationTarget): Promise<SyntheaKeepCriteria | undefined> {
+    const catalog = await this.#matchingCatalog()
+    const profile = catalog === undefined
+      ? undefined
+      : this.#publishedProfiles(catalog).find(item => item.id === target.profileId)
+    if (catalog === undefined || profile === undefined) return undefined
+    if (profile.finding === 'positive') {
+      return { activeAny: profile.conditionCodes, activeNone: profile.conflictProcedureCodes }
+    }
+    return {
+      activeAny: profile.indexConditionCodes,
+      activeNone: [...new Set([
+        ...catalog.rules.profiles.flatMap(item => item.finding === 'positive' ? item.conditionCodes : []),
+        ...catalog.rules.uncoveredConditions.flatMap(condition => condition.codes),
+        ...profile.conflictProcedureCodes,
+      ])],
+    }
+  }
+
+  /** 新生成的患者按当前规则是否至少有一项检查由目标条目配到素材；与影像准备使用同一匹配规则。 */
+  async generationTargetMet(target: ScenarioGenerationTarget, candidate: {
+    birthDate: string
+    gender: string
+    historyResources: SourceResource[]
+    indexEncounterReference: string
+    indexResources: SourceResource[]
+    sourceHash: string
+  }): Promise<boolean> {
+    const catalog = await this.#matchingCatalog()
+    if (catalog === undefined) return false
+    return matchCaseImaging({ ...candidate, bound: [], catalog })
+      .some(exam => exam.status === 'ready' && exam.matchingProfileId === target.profileId)
+  }
+
+  #publishedProfiles(catalog: ImagingMatchingCatalog) {
+    return catalog.rules.profiles.filter(profile => Object.values(profile.assets)
+      .some(assetId => (catalog.assets.get(assetId)?.publishedRevisions.length ?? 0) > 0))
+  }
+
+  /** 适配规则与其引用素材的发布状态；清单目录或适配规则缺失时没有可用清单，内容无效时报告给管理员。 */
+  async #matchingCatalog(): Promise<ImagingMatchingCatalog | undefined> {
+    let catalog: Awaited<ReturnType<ImagingAssetLibrary['catalog']>>
+    try {
+      catalog = await this.#library.catalog()
+    } catch (error) {
+      if (!(error instanceof ImagingCatalogInvalidError)) throw error
+      throw new ImagingPreparationError('IMAGING_CATALOG_INVALID', error.message)
+    }
+    if (catalog === undefined) return undefined
+    if (catalog.matching === undefined) return undefined
+    const referenced = new Set(catalog.matching.profiles.flatMap(profile => Object.values(profile.assets)))
+    const assets: ImagingMatchingCatalog['assets'] = new Map(catalog.assets
+      .filter(asset => referenced.has(asset.assetId))
+      .map(asset => [asset.assetId, {
+        asset,
+        publishedRevisions: imagingAssetPublication(asset).publishedRevisions.toSorted((left, right) => left - right),
+      }]))
+    return {
+      assets,
+      hash: imagingMatchingCatalogHash(catalog.matching, assets),
+      packId: catalog.manifest.packId,
+      rules: catalog.matching,
+    }
+  }
+
+  #caseSource(workspaceId: string, caseId: string) {
+    const found = this.#cases.get(workspaceId, caseId)
+    const truth = found === undefined ? undefined : this.#cases.getTruthForSimulator(workspaceId, caseId)
+    const profile = found === undefined
+      ? undefined
+      : this.#profiles.getRevision(workspaceId, found.profileId, found.profileRevision)
+    if (found === undefined || truth === undefined || profile === undefined) {
+      throw new ImagingPreparationError('CASE_NOT_FOUND', 'The Synthetic Case was not found')
+    }
+    return { case: found, profile, truth }
+  }
+
+  #casePreparation(
+    workspaceId: string,
+    caseId: string,
+    sourceHash: string,
+  ): z.infer<typeof administratorImagingPreparationSchema> {
+    return {
+      bindings: this.#preparations.bindings(workspaceId, caseId, sourceHash),
+      caseId,
+      preparation: this.#preparations.latest(workspaceId, caseId) ?? null,
+      started: this.#preparations.started(workspaceId, caseId),
+    }
+  }
+
+  #assertAdministrator(context: ActorContext): void {
+    if (context.roleCode !== 'administrator') {
+      throw new ImagingPreparationError('ROLE_NOT_ALLOWED', 'Only an administrator can manage imaging preparation')
+    }
+  }
+}

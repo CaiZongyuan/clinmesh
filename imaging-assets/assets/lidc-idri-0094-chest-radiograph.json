@@ -1,0 +1,117 @@
+{
+  "annotation": {
+    "kind": "lidc-radiograph",
+    "nodules": [
+      {
+        "id": "n1",
+        "ratings": [
+          {
+            "confidence": 3,
+            "subtlety": 5
+          },
+          {
+            "confidence": 3,
+            "subtlety": 5
+          },
+          {
+            "confidence": 3,
+            "subtlety": 4
+          },
+          {
+            "confidence": 3,
+            "subtlety": 4
+          }
+        ],
+        "side": "right",
+        "visibility": "visible"
+      }
+    ],
+    "readerCount": 4,
+    "source": {
+      "file": "tcia-lidc-xml/185/256.xml",
+      "sha256": "f3f6c4518fe59e7b3f58e0fb132d1b6d68184b1d2c365797e35dcd0ba8913f22"
+    }
+  },
+  "assetId": "lidc-idri-0094-chest-radiograph",
+  "collectionId": "lidc-idri",
+  "examCode": "chest-radiograph",
+  "output": {
+    "series": [
+      {
+        "framesBytes": 15818068,
+        "framesSha256": "414e8c961b4808ca2955793d9cb7398d561079df9916b1c18c4ba489c74c1f82",
+        "geometrySha256": "ebea290d135dd2ad7c67b998a43e27092fa4da40c97d2dbe2aace1f6cdd97bdb"
+      }
+    ],
+    "transcoderVersion": 1
+  },
+  "reports": [
+    {
+      "draft": {
+        "model": "claude-opus-5-5",
+        "promptVersion": "chest-report-v1"
+      },
+      "findings": "右肺见结节状致密影。",
+      "impression": "右肺结节影，建议胸部 CT 进一步检查。",
+      "lesions": [
+        {
+          "noduleId": "n1",
+          "side": "right"
+        }
+      ],
+      "review": {
+        "automatedCheck": {
+          "checkVersion": 2,
+          "passed": true
+        },
+        "conclusion": "approved",
+        "contentSha256": "1aa2278aca5d853b7a3032173f996784961905278a634d0def65723c8d286654",
+        "items": [
+          {
+            "conclusion": "confirmed",
+            "item": "exam-and-orientation"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "no-identifying-content"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "findings-match-pixels"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "report-wording"
+          }
+        ],
+        "reviewedAt": "2026-10-01",
+        "reviewer": "JH",
+        "reviewerIsRadiologist": false
+      },
+      "revision": 1,
+      "technique": "胸部正位片，共 1 幅图像。报告范围：肺结节相关所见。"
+    }
+  ],
+  "schemaVersion": 1,
+  "source": {
+    "series": [
+      {
+        "instances": [
+          {
+            "bytes": 15820012,
+            "sha256": "21f5c47e6248c671ee3fe4292f9e68f2cdc09d592c59728720c69ecc787e24f8",
+            "sopInstanceUid": "1.3.6.1.4.1.14519.5.2.1.6279.6001.142300962223932966816016716648"
+          }
+        ],
+        "modality": "CR",
+        "orientation": [
+          "L",
+          "F"
+        ],
+        "seriesInstanceUid": "1.3.6.1.4.1.14519.5.2.1.6279.6001.286359704222993185355649430232"
+      }
+    ],
+    "studyInstanceUid": "1.3.6.1.4.1.14519.5.2.1.6279.6001.295229700679282969589079848640",
+    "subjectId": "LIDC-IDRI-0094"
+  }
+}

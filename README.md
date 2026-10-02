@@ -47,6 +47,7 @@ packages/
   core/         无平台依赖的领域纯函数和客户端规则
   ui/           Web/Desktop 视觉 primitives 和设计 token
   views/        当前 Desktop 工程壳与未来共享业务视图边界
+imaging-assets/ 影像素材清单、匹配规则与报告整理规则（不含像素）
 docs/           架构、测试、Agent 工程规范和研究记录
 scripts/        文档投影、依赖边界和质量检查
 vendor/         固定 commit 的外部源码 submodule
@@ -138,6 +139,7 @@ pnpm --filter @clinmesh/dsh-web build
 ## 文档与决策
 
 - [部署指南](docs/deployment.md)：从 clone 到完整运行的顺序步骤。
+- [影像检查使用指南](docs/imaging.md)：胸片与胸部 CT 阅片闭环的用法与状态说明。
 - [系统架构](docs/architecture.md)
 - [跨端前端架构](docs/frontend-architecture.md)
 - [Web Demo 运行与部署架构](docs/demo-architecture.md)
@@ -154,7 +156,7 @@ pnpm --filter @clinmesh/dsh-web build
 
 ## 数据与安全约束
 
-- 只提交合成医疗数据和公开、授权的最小术语子集。
+- 只提交合成医疗数据和公开、授权的最小术语子集。唯一的例外是 [影像素材清单](imaging-assets/README.md) 登记的公开授权、已去标识的影像：仓库只提交清单，像素与来源文件留在本地素材目录，不进入 Git、日志、模型输入或业务数据库。
 - 禁止提交真实患者身份、诊疗、医保、支付和第三方平台凭证。
 - Agent tools 采用窄 schema、受信 context binding、幂等键、预期版本、风险分级和审计。
 - 不向 Agent 提供任意 SQL、URL、FHIR Bundle 或任意 method/path/body 写工具。

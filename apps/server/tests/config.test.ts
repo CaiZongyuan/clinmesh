@@ -2,7 +2,12 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { readServerConfig, readServerEnvironment } from '../src/config.ts'
+import {
+  defaultImagingAssetDirectory,
+  defaultImagingCatalogDirectory,
+  readServerConfig,
+  readServerEnvironment,
+} from '../src/config.ts'
 
 describe('Node.js server configuration', () => {
   it('reads an explicit persistent single-instance configuration without exposing secrets', () => {
@@ -18,9 +23,14 @@ describe('Node.js server configuration', () => {
       databasePath: '/var/lib/clinmesh/clinmesh.sqlite',
       demoPassword: 'Synthetic-password-2026!',
       hostname: '127.0.0.1',
+      // 影像素材默认位置：清单在仓库根目录，像素安装在 .data 下。
+      imagingAssetDirectory: defaultImagingAssetDirectory,
+      imagingCatalogDirectory: defaultImagingCatalogDirectory,
       port: 51868,
       trustedOrigins: ['http://127.0.0.1:51868', 'http://127.0.0.1:51888'],
     })
+    expect(defaultImagingCatalogDirectory).toMatch(/[\\/]imaging-assets$/)
+    expect(defaultImagingAssetDirectory).toMatch(/[\\/]\.data[\\/]imaging-assets$/)
   })
 
   it('requires runtime secrets and the controlled synthetic account password', () => {
