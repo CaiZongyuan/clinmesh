@@ -84,7 +84,10 @@ public final class ProviderServer {
       String timeZone,
       KeepCriteria keep) {}
 
-  private record KeepCriteria(List<String> activeAny, List<String> activeNone) {}
+  private record KeepCriteria(
+      List<String> activeAny, List<String> activeNone, List<KeepObservation> observations) {}
+
+  private record KeepObservation(String code, List<String> valueAny) {}
 
   private record LocalizedBundle(JsonObject bundle, JsonObject warning) {}
 
@@ -360,10 +363,30 @@ public final class ProviderServer {
     KeepCriteria keep = null;
     if (root.has("keep")) {
       JsonObject keepValue = requireObject(root, "keep");
-      requireKeys(keepValue, Set.of("activeAny", "activeNone"), "keep");
+      Set<String> keepKeys = new HashSet<>(Set.of("activeAny", "activeNone"));
+      if (keepValue.has("observations")) keepKeys.add("observations");
+      requireKeys(keepValue, keepKeys, "keep");
+      List<KeepObservation> observations = new ArrayList<>();
+      if (keepValue.has("observations")) {
+        for (JsonElement value : requireArray(keepValue, "observations", 1, 8)) {
+          if (!value.isJsonObject()) {
+            throw new RequestException("REQUEST_INVALID", "observations must contain objects");
+          }
+          JsonObject observation = value.getAsJsonObject();
+          requireKeys(observation, Set.of("code", "valueAny"), "keep.observations");
+          String code = requireString(observation, "code", 3, 8, null);
+          if (!code.matches("\\d{1,6}-\\d")
+              || observations.stream().anyMatch(item -> item.code.equals(code))) {
+            throw new RequestException("REQUEST_INVALID", "observations contains an unsupported code");
+          }
+          observations.add(
+              new KeepObservation(code, requireSnomedCodes(observation, "valueAny", 1, 8)));
+        }
+      }
       keep = new KeepCriteria(
           requireSnomedCodes(keepValue, "activeAny", 1, 32),
-          requireSnomedCodes(keepValue, "activeNone", 0, 128));
+          requireSnomedCodes(keepValue, "activeNone", 0, 128),
+          observations);
     }
     return new GenerationRequest(
         moduleMode, modules, name, count, minimumAge, maximumAge, gender,
@@ -423,6 +446,29 @@ public final class ProviderServer {
           absent.addProperty("condition_type", "Not");
           absent.add("condition", activeCondition(request.keep.activeNone));
           conditions.add(absent);
+        }
+        for (KeepObservation observation : request.keep.observations) {
+          JsonArray codes = new JsonArray();
+          codes.add(gmfCode("LOINC", observation.code));
+          // Synthea 对缺失的 Observation 做值比较会抛出异常；And 按顺序短路，存在性判断排在值比较之前。
+          JsonObject present = new JsonObject();
+          present.addProperty("condition_type", "Observation");
+          present.add("codes", codes);
+          present.addProperty("operator", "is not nil");
+          conditions.add(present);
+          JsonArray values = new JsonArray();
+          for (String valueCode : observation.valueAny) {
+            JsonObject equal = new JsonObject();
+            equal.addProperty("condition_type", "Observation");
+            equal.add("codes", codes.deepCopy());
+            equal.addProperty("operator", "==");
+            equal.add("value_code", gmfCode("SNOMED-CT", valueCode));
+            values.add(equal);
+          }
+          JsonObject any = new JsonObject();
+          any.addProperty("condition_type", "Or");
+          any.add("conditions", values);
+          conditions.add(any);
         }
         JsonObject keepCondition = new JsonObject();
         keepCondition.addProperty("condition_type", "And");
@@ -512,6 +558,9 @@ public final class ProviderServer {
         JsonObject keep = new JsonObject();
         keep.add("activeAny", GSON.toJsonTree(request.keep.activeAny));
         keep.add("activeNone", GSON.toJsonTree(request.keep.activeNone));
+        if (!request.keep.observations.isEmpty()) {
+          keep.add("observations", GSON.toJsonTree(request.keep.observations));
+        }
         metadata.add("keep", keep);
       }
       metadata.add("localization", localizationMetadata().deepCopy());
@@ -537,16 +586,20 @@ public final class ProviderServer {
   private static JsonObject activeCondition(List<String> codes) {
     JsonArray values = new JsonArray();
     for (String code : codes) {
-      JsonObject value = new JsonObject();
-      value.addProperty("system", "SNOMED-CT");
-      value.addProperty("code", code);
-      value.addProperty("display", "SNOMED-CT " + code);
-      values.add(value);
+      values.add(gmfCode("SNOMED-CT", code));
     }
     JsonObject condition = new JsonObject();
     condition.addProperty("condition_type", "Active Condition");
     condition.add("codes", values);
     return condition;
+  }
+
+  private static JsonObject gmfCode(String system, String code) {
+    JsonObject value = new JsonObject();
+    value.addProperty("system", system);
+    value.addProperty("code", code);
+    value.addProperty("display", system + " " + code);
+    return value;
   }
 
   private static List<String> modulePatterns(List<String> modules) {

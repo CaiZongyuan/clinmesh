@@ -48,15 +48,19 @@ const failureCopy = {
     'zh-CN': { guidance: '模型响应过慢，请重试；反复超时建议更换更快的模型。', summary: 'AI 服务响应超时' },
   },
   'IMAGING_TARGET_NOT_MET': {
-    'en-US': { guidance: 'Change the seeds or the age range, then retry.', summary: 'No patient met the selected imaging profile after repeated attempts' },
+    'en-US': { guidance: 'Change the seeds or the age range, then retry.', summary: 'No patient met the selected matching profile after repeated attempts' },
     'zh-CN': { guidance: '更换 seed 或调整年龄范围后重试。', summary: '多次尝试后仍未得到满足所选适配条目的患者' },
   },
   'IMAGING_PREPARATION_FAILED': {
     'en-US': { guidance: 'Open the patient and run imaging preparation again.', summary: 'The patients were generated, but imaging preparation did not complete' },
     'zh-CN': { guidance: '打开患者详情，在“影像准备”中重新准备。', summary: '患者已生成，但影像准备未完成' },
   },
+  'PATHOLOGY_PREPARATION_FAILED': {
+    'en-US': { guidance: 'Open the patient and run pathology preparation again.', summary: 'The patients were generated, but pathology preparation did not complete' },
+    'zh-CN': { guidance: '打开患者详情，在“病理准备”中重新准备。', summary: '患者已生成，但病理准备未完成' },
+  },
   'IMAGING_TARGET_UNAVAILABLE': {
-    'en-US': { guidance: 'Reopen patient generation and choose another profile.', summary: 'The selected imaging profile is currently unavailable' },
+    'en-US': { guidance: 'Reopen patient generation and choose another profile.', summary: 'The selected matching profile is currently unavailable' },
     'zh-CN': { guidance: '重新打开“生成患者”并选择其他适配条目。', summary: '所选适配条目当前不可用' },
   },
   'PERSONA_DIAGNOSIS_LEAK': {

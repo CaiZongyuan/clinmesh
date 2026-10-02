@@ -173,6 +173,7 @@
 - 隔离验证实例须覆盖仓库 `.env` 中的 `CLINMESH_PUBLIC_ORIGIN` 与 `CLINMESH_TRUSTED_ORIGINS`，否则登录返回 `INVALID_ORIGIN`；数据库迁移从 `apps/server` 目录运行。没有配置 `CLINMESH_AI_*` 时 Persona 任务无法完成，合成病例不能开始就诊。
 
 - Synthea keep module（`-k`）的内部重试只重跑临床模拟，患者的年龄、性别等人口属性在第一次抽取后固定；抽到无法满足条件的年龄时会耗尽 `generate.max_attempts_to_keep_patient`（默认 1000，约 100 秒）后放弃；放弃时进程仍以 0 退出，只是导出的患者少于请求数（全部落空时连 `fhir` 目录都没有），判断依据只能是导出数量。定向生成必须由外层换 seed 重试，并用较窄的年龄范围提高命中率；不要只靠调大内部尝试次数。
+- Synthea GMF 的 `Observation` 条件在患者没有该 Observation 时做值比较会抛出 `NullPointerException` 并中止整次运行（只有 `is nil` / `is not nil` 不抛）；`And` 按书写顺序短路。写进 keep module 的 Observation 取值条件必须先放同一编码的 `is not nil`，再放 `==` 比较；编码值比较要求 `value_code` 的 system 与模块中一致（SNOMED 为 `SNOMED-CT`），类型不符的比较同样抛出异常。
 
 - DSH browser Tool broker 每次注册最多 32 个 Tool。医生“接诊”页按当前诊疗栏目发布，新增医生 Tool 时在 `agentToolCatalog` 中为它声明所属栏目，只有确实跨栏目的动作才不声明；跨栏目 Tool 占用每个栏目的名额。合同测试 `publishes only narrow, role-scoped tools within the broker limit` 逐个岗位、视图与栏目断言不超过 32；Web 测试切换栏目后须在 `act` 之外等待新 Tool 注册，在 `act` 回调里等待注册会因状态不刷新而超时。
 

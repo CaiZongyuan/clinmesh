@@ -71,7 +71,12 @@ export interface ScenarioGenerationTargets {
     indexResources: Array<{ resource: unknown; sourceReference: string }>
     sourceHash: string
   }): Promise<boolean>
-  prepareBatch(input: { caseIds: string[]; context: ActorContext; idempotencyKey: string }): Promise<unknown>
+  /** 为新病例运行目标所属素材包的病例准备。 */
+  prepareBatch(target: ScenarioGenerationTarget, input: {
+    caseIds: string[]
+    context: ActorContext
+    idempotencyKey: string
+  }): Promise<unknown>
 }
 
 const sourceBundleSchema = z.object({
@@ -280,14 +285,16 @@ export class ScenarioDataService {
       }).data
     }
     if (target !== undefined && this.#targets !== undefined) {
-      // 定向生成的病例随即运行影像准备；准备失败不回滚已生成的患者，在任务上记录警告，管理员可在影像准备中重试。
+      // 定向生成的病例随即运行目标所属素材包的病例准备；准备失败不回滚已生成的患者，在任务上记录警告，管理员可在对应的准备入口重试。
+      const pathology = target.kind === 'pathology-profile'
       try {
-        await this.#targets.prepareBatch({
+        await this.#targets.prepareBatch(target, {
           caseIds: completedJob.caseIds,
           context: claimed.actorContext,
-          idempotencyKey: `${claimed.jobId}:imaging-preparation`,
+          idempotencyKey: `${claimed.jobId}:${pathology ? 'pathology' : 'imaging'}-preparation`,
         })
       } catch {
+        const code = pathology ? 'PATHOLOGY_PREPARATION_FAILED' : 'IMAGING_PREPARATION_FAILED'
         return this.#commands.execute({
           context: claimed.actorContext,
           contextRequirement: 'known',
@@ -295,12 +302,12 @@ export class ScenarioDataService {
           expectedVersions: {},
           idempotencyKey: `${claimed.jobId}:warn`,
           idempotencyScope: 'workspace',
-          input: { jobId: claimed.jobId, warning: 'IMAGING_PREPARATION_FAILED' },
+          input: { jobId: claimed.jobId, warning: code },
           operation: 'scenario-generation-job.warn',
         }, () => {
           const warned = this.#jobs.recordWarning(claimed.workspaceId, claimed.jobId, {
-            code: 'IMAGING_PREPARATION_FAILED',
-            message: 'The patients were generated, but imaging preparation did not complete',
+            code,
+            message: `The patients were generated, but ${pathology ? 'pathology' : 'imaging'} preparation did not complete`,
           }, new Date().toISOString())
           return {
             data: warned,
@@ -477,7 +484,7 @@ export class ScenarioDataService {
     }
     const keep = await this.#targets?.generationKeep(target)
     if (keep === undefined) {
-      throw new ScenarioGenerationProviderError('IMAGING_TARGET_UNAVAILABLE', 'The selected imaging profile is not available')
+      throw new ScenarioGenerationProviderError('IMAGING_TARGET_UNAVAILABLE', 'The selected matching profile is not available')
     }
     return keep
   }
@@ -512,7 +519,7 @@ export class ScenarioDataService {
         if (!(error instanceof ScenarioGenerationProviderError) || error.code !== 'KEEP_NOT_SATISFIED') throw error
         lastError = new ScenarioGenerationProviderError(
           'IMAGING_TARGET_NOT_MET',
-          'No generated patient satisfied the selected imaging profile after repeated attempts',
+          'No generated patient satisfied the selected matching profile after repeated attempts',
         )
         continue
       }
@@ -553,7 +560,7 @@ export class ScenarioDataService {
         if (!met) {
           lastError = new ScenarioGenerationProviderError(
             'IMAGING_TARGET_NOT_MET',
-            'No generated patient satisfied the selected imaging profile after repeated attempts',
+            'No generated patient satisfied the selected matching profile after repeated attempts',
           )
           continue
         }

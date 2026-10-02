@@ -74,6 +74,12 @@ import {
   imagingStudyViewSchema,
 } from '@clinmesh/contracts/imaging'
 import {
+  administratorPathologyAssetSchema,
+  administratorPathologyPreparationSchema,
+  pathologyCoverageSchema,
+  pathologyPreparationBatchSchema,
+} from '@clinmesh/contracts/pathology'
+import {
   administratorCaseTruthSchema,
   patientPersonaJobSchema,
   patientPersonaRevisionListSchema,
@@ -537,6 +543,31 @@ export function getAdministratorImagingAssetBlock(assetId: string, blockPath: st
   return apiGetBinary(`/api/sim/v1/admin/imaging-assets/${encodeURIComponent(assetId)}/${blockPath}`, signal)
 }
 
+export function getAdministratorPathologyPreparation(caseId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/sim/v1/admin/synthetic-cases/${encodeURIComponent(caseId)}/pathology-preparation`,
+    administratorPathologyPreparationSchema,
+    signal,
+  )
+}
+
+export function getPathologyCoverage(signal?: AbortSignal) {
+  return apiGet('/api/sim/v1/admin/pathology-coverage', pathologyCoverageSchema, signal)
+}
+
+export function getAdministratorPathologyAsset(assetId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/sim/v1/admin/pathology-assets/${encodeURIComponent(assetId)}`,
+    administratorPathologyAssetSchema,
+    signal,
+  )
+}
+
+/** `tilePath` 是相对切片素材的瓦片路径，由阅片器生成，例如 `series/0/levels/2/tiles/3/1`。 */
+export function getAdministratorPathologyAssetTile(assetId: string, tilePath: string, signal?: AbortSignal) {
+  return apiGetBinary(`/api/sim/v1/admin/pathology-assets/${encodeURIComponent(assetId)}/${tilePath}`, signal)
+}
+
 export function getImagingStudy(studyId: string, signal?: AbortSignal) {
   return apiGet(`/api/his/v1/imaging-studies/${encodeURIComponent(studyId)}`, imagingStudyViewSchema, signal)
 }
@@ -670,6 +701,16 @@ export function prepareImagingCases(caseIds: string[] | undefined, idempotencyKe
   return apiMutation(
     '/api/sim/v1/admin/imaging-preparations',
     commandResponseSchema(imagingPreparationBatchSchema),
+    { input: caseIds === undefined ? {} : { caseIds } },
+    { idempotencyKey },
+  )
+}
+
+/** 不指定病例时准备下一批尚未按当前病理清单准备过的病例。 */
+export function preparePathologyCases(caseIds: string[] | undefined, idempotencyKey: string) {
+  return apiMutation(
+    '/api/sim/v1/admin/pathology-preparations',
+    commandResponseSchema(pathologyPreparationBatchSchema),
     { input: caseIds === undefined ? {} : { caseIds } },
     { idempotencyKey },
   )

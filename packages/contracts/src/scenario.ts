@@ -125,16 +125,23 @@ const snomedCodeSchema = z.string().regex(/^\d{6,18}$/)
 
 /**
  * 交给 Synthea Provider 的保留条件：模拟结束时须存在其中任一编码、且不存在任何排除编码的患者才会导出。
- * 编码同时匹配疾病与已做操作（Synthea 记录中的操作永久存在）。由 Server 从定向目标推导，不由客户端提交。
+ * 编码同时匹配疾病与已做操作（Synthea 记录中的操作永久存在）。`observations` 的每一项再要求该 LOINC Observation
+ * 的最新结果是所列 SNOMED 编码值之一，只用于结果为编码值的 Observation。由 Server 从定向目标推导，不由客户端提交。
  */
 export const syntheaKeepCriteriaSchema = z.object({
   activeAny: z.array(snomedCodeSchema).min(1).max(32),
   activeNone: z.array(snomedCodeSchema).max(128),
+  observations: z.array(z.object({
+    code: z.string().regex(/^\d{1,6}-\d$/),
+    valueAny: z.array(snomedCodeSchema).min(1).max(8),
+  }).strict()).min(1).max(8)
+    .refine(items => new Set(items.map(item => item.code)).size === items.length)
+    .optional(),
 }).strict()
 
-/** 定向生成目标：一个当前已发布的影像适配条目。 */
+/** 定向生成目标：一个当前已发布的放射影像适配条目或病理适配条目。 */
 export const scenarioGenerationTargetSchema = z.object({
-  kind: z.literal('imaging-profile'),
+  kind: z.enum(['imaging-profile', 'pathology-profile']),
   profileId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
 }).strict()
 
@@ -659,7 +666,7 @@ export const scenarioGenerationJobSchema = z.object({
   startedAt: z.iso.datetime({ offset: true }).nullable(),
   status: z.enum(['queued', 'running', 'succeeded', 'failed']),
   updatedAt: z.iso.datetime({ offset: true }),
-  /** 成功任务的后续步骤未完成时的说明，例如定向生成后影像准备失败；患者已保存。 */
+  /** 成功任务的后续步骤未完成时的说明，例如定向生成后影像准备或病理准备失败；患者已保存。 */
   warning: z.object({
     code: z.string().min(1).max(128),
     message: z.string().min(1).max(1_000),

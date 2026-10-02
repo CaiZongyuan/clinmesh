@@ -419,7 +419,7 @@ function stubScenarioDataWorkspace(options: {
   generationJobFails?: boolean
   generationJobDelayMs?: number
   generationJobWarning?: { code: string; message: string }
-  generationTargets?: Array<{ ageRange: [number, number]; kind: 'imaging-profile'; label: string; profileId: string; sex?: 'female' | 'male' }>
+  generationTargets?: Array<{ ageRange: [number, number]; kind: 'imaging-profile' | 'pathology-profile'; label: string; profileId: string; sex?: 'female' | 'male' }>
   onGenerationTargetsRead?: () => void
   onGenerate?: (request: ScenarioGenerationRequest) => void
   onCaseStart?: () => void
@@ -1362,6 +1362,41 @@ describe('role workspaces', () => {
     await waitFor(() => expect(submitted?.target).toEqual({ kind: 'imaging-profile', profileId: 'lung-mass-adult-male' }))
     expect(submitted?.population).toEqual({ age: { maximum: 79, minimum: 40 }, count: 1, gender: 'male' })
     expect(submitted?.moduleMode).toBe('all')
+  })
+
+  it('submits a pathology target under its own label with the profile population', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    let submitted: ScenarioGenerationRequest | undefined
+    stubScenarioDataWorkspace({
+      generationTargets: [
+        ...imagingTargets,
+        {
+          ageRange: [45, 80],
+          kind: 'pathology-profile',
+          label: '乳腺切片会诊：ER 阳性 · PR 阳性 · HER2 阴性 · 淋巴结阳性 · T2',
+          profileId: 'breast-er-pos-pr-pos-her2-neg-ln-pos-t2',
+          sex: 'female',
+        },
+      ],
+      onGenerate: request => { submitted = request },
+      syntheaAvailable: true,
+    })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    const sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    await user.click(await within(sheet).findByRole('combobox', { name: '定向病例' }))
+    // 病理条目的名称已含会诊项目，不加放射的检查类别前缀。
+    await user.click(screen.getByRole('option', { name: '乳腺切片会诊：ER 阳性 · PR 阳性 · HER2 阴性 · 淋巴结阳性 · T2' }))
+    expect(within(sheet).getByText('适用人群：女，45–80 岁')).toBeTruthy()
+    await user.click(within(sheet).getByRole('button', { name: '生成患者' }))
+
+    await waitFor(() => expect(submitted?.target).toEqual({
+      kind: 'pathology-profile',
+      profileId: 'breast-er-pos-pr-pos-her2-neg-ln-pos-t2',
+    }))
+    expect(submitted?.population).toEqual({ age: { maximum: 80, minimum: 45 }, count: 1, gender: 'female' })
   })
 
   it('blocks a targeted generation whose population contradicts the imaging profile', async () => {

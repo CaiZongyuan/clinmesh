@@ -1,0 +1,47 @@
+{
+  "codeSystem": "http://snomed.info/sct",
+  "facts": {
+    "estrogen-receptor": {
+      "code": "85337-4",
+      "values": { "negative": ["260385009"], "positive": ["10828004"] }
+    },
+    "her2": {
+      "code": "85319-2",
+      "values": { "negative": ["260385009"], "positive": ["10828004"] }
+    },
+    "lymph-nodes": {
+      "code": "21906-3",
+      "values": {
+        "negative": ["1229967007"],
+        "positive": ["1229973008", "1229978004", "1229984001"]
+      }
+    },
+    "progesterone-receptor": {
+      "code": "85339-0",
+      "values": { "negative": ["260385009"], "positive": ["10828004"] }
+    },
+    "tumor-category": {
+      "code": "21905-5",
+      "values": {
+        "T1": ["1228889001"],
+        "T2": ["1228929004"],
+        "T3": ["1228938002"],
+        "T4": ["1228944003"]
+      }
+    }
+  },
+  "observationSystem": "http://loinc.org",
+  "ruleVersion": 1,
+  "schemaVersion": 1,
+  "services": [
+    {
+      "conditionCodes": ["254837009"],
+      "examCode": "breast-slide-consultation",
+      "generationAgeRange": [45, 80],
+      "label": "乳腺切片会诊",
+      "profilePrefix": "breast",
+      "sex": "female",
+      "sourceProcedureCodes": ["392021009", "392023007"]
+    }
+  ]
+}

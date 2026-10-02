@@ -1245,7 +1245,7 @@ clock_revision
 
 ### 10.3 场景定义
 
-固定 commit 的 Synthea Provider 默认运行全部模块，也可接受有界模块过滤、人数、年龄、性别、时间范围和 seed。Web 每次打开生成抽屉时随机提供双 seed，管理员仍可手动修改以复现。管理员也可以选择一个已发布的影像适配条目作为定向目标：Server 从条目推导保留条件（须存在的疾病编码、须不存在的疾病与操作编码），Provider 据此生成 Synthea keep module 并只保留存活患者；Server 再用影像准备的同一匹配规则复核每位患者，不满足时计入下述重试，全部未命中时以 `IMAGING_TARGET_NOT_MET` 失败。保留条件只提高命中率，是否满足条目只由匹配规则判定；定向任务成功后随即对新病例运行影像准备，准备失败不回滚患者，而是在成功的任务上记录 `IMAGING_PREPARATION_FAILED` 警告，管理员据此重新准备。Provider 不支持定向生成时提交被拒绝。每个患者最多尝试十次；系统确定性选择最后一个包含临床资源或明确 reason 的 Encounter，跳过纯行政、账单和单纯疫苗 Encounter。没有合格 Encounter 时本次患者生成失败且不留下部分 Profile 或 Case。
+固定 commit 的 Synthea Provider 默认运行全部模块，也可接受有界模块过滤、人数、年龄、性别、时间范围和 seed。Web 每次打开生成抽屉时随机提供双 seed，管理员仍可手动修改以复现。管理员也可以选择一个已发布的放射影像适配条目或病理适配条目作为定向目标：Server 从条目推导保留条件（须存在的疾病或操作编码、须不存在的疾病与操作编码；病理条目另有五项 Observation 须取的编码值），Provider 据此生成 Synthea keep module 并只保留存活患者；Server 再用对应病例准备的同一匹配规则复核每位患者，不满足时计入下述重试，全部未命中时以 `IMAGING_TARGET_NOT_MET` 失败。保留条件只提高命中率，是否满足条目只由匹配规则判定；定向任务成功后随即对新病例运行目标所属素材包的病例准备，准备失败不回滚患者，而是在成功的任务上记录 `IMAGING_PREPARATION_FAILED` 或 `PATHOLOGY_PREPARATION_FAILED` 警告，管理员据此重新准备。Provider 不支持定向生成时提交被拒绝。每个患者最多尝试十次；系统确定性选择最后一个包含临床资源或明确 reason 的 Encounter，跳过纯行政、账单和单纯疫苗 Encounter。没有合格 Encounter 时本次患者生成失败且不留下部分 Profile 或 Case。
 
 一次成功生成原子保存不可变 Synthetic Patient Profile Revision、本地化 R4 Bundle 和 Synthetic Case Instance。固定 catalog 未命中的 clinical display 保留来源英文，并把有界 translation warning 与 Profile 一起保存供管理员校对；缺译不阻塞患者，FHIR 结构、引用、身份、catalog hash 或 provenance 无效仍阻塞。Index Encounter 之前的闭包构成按临床时间排序的 Visible Source History；授权临床岗位可以分页查看摘要和经过可见性检查的原始 R4 详情。Index Encounter 与当前 episode 的关联资源构成 Case Truth，保存在私有边界，不进入普通 HIS/FHIR/history/tool 响应。Case 类型由来源时间线推断为 new-problem、follow-up 或 preventive。
 
@@ -1290,7 +1290,9 @@ Action Trace 按 Scenario Run 记录 Command 尝试、结果、Effect 引用和�
 
 **病例影像准备。** 管理员对合成病例运行影像准备，按来源编码为每项检查确定素材：来源有未缓解的阳性条目疾病时使用对应的异常素材；只有不存在这类疾病、来源从未出现过阳性条目的疾病、且本次就诊的疾病在规则明确列出的范围内时才使用阴性素材；命中未覆盖疾病、与条目列出的既往手术（例如肺移植、胸骨切开、瓣膜置换或起搏器）冲突或没有规则依据的病例不配片，不会被当作正常。未覆盖疾病清单按固定版本 Synthea 全部模块实际产生的疾病编码整理，Synthea 升级时需要重新核对。疾病是否已缓解以本次就诊的开始时间为准，就诊之后才缓解的疾病在就诊时仍是现症。一个病例只使用一个适配条目，胸片与 CT 因此来自同一来源受试者；多个条目同样适用时按病例来源哈希稳定选择。准备结果是不可变的修订；病例开始前绑定随清单更新，开始后只能追加，重试和重放不更换已固定的素材；当前规则判为冲突或未覆盖时，已绑定的检查保持不变，但不再追加新的检查。
 
-**私有边界。** 病例与素材的绑定、匹配依据、素材标识和来源 UID 只在管理员接口中可见。医生、Agent 的 DTO、Page Context、DSH Tools、CLI 输出、FHIR 资源和患者模型载荷都不包含它们；本院每次检查使用自己的检查标识和 Study UID。管理员的影像准备、覆盖清单和复核预览接口不进入 Operation Catalog、CLI、Page Context 或 Agent Tools。
+**病例病理准备。** 病理清单的适配规则只写哪些来源病例适用会诊（性别、诊断编码、可送检的手术编码），以及受体（ER、PR、HER2）、淋巴结与肿瘤 T 类别各自对应的来源 Observation 编码和编码值；适配条目不单独列举，由每份切片素材的临床字段派生，事实组合相同的素材属于同一个条目。管理员运行病理准备时，系统从病例的既往来源病史读取诊断、早于本次就诊的可送检手术和五项固定事实的最新结果，与每份已发布素材逐项比较：全部一致时就绪；任一项矛盾的素材不可用，全部素材都矛盾时记为冲突；来源或素材缺少某项而无法确认时记为未覆盖。组织学类型来自素材，作为补充事实与来源固定事实分开记录。准备结果同样是不可变修订，绑定以来源手术为键：每个可送检的手术各有一份固定的素材选择，冻结规则与放射相同。病理准备、绑定和覆盖清单有自己的表，与放射互不影响。取舍见 [Agent Note](../.agents/notes/implemented/architecture/2026-10-02-breast-pathology-case-matching.md)。
+
+**私有边界。** 病例与素材的绑定、匹配依据、素材标识和来源 UID 只在管理员接口中可见。医生、Agent 的 DTO、Page Context、DSH Tools、CLI 输出、FHIR 资源和患者模型载荷都不包含它们；本院每次检查使用自己的检查标识和 Study UID。管理员的影像准备、病理准备、覆盖清单和复核预览接口不进入 Operation Catalog、CLI、Page Context 或 Agent Tools。
 
 **影像读取边界。** 阅片通过受认证的本院检查路由读取：先读检查描述（序列、帧几何、像素格式和可用状态），再按序列、帧和块读取像素。每次读取校验 Workspace/Epoch、病例责任或已完诊读取权限、申请与检查的关联以及发布状态；响应使用 `application/octet-stream` 与 `Cache-Control: private, no-store`，失败沿用 HIS 错误 envelope。读取不产生 Audit Event 或 Action Trace，每个请求的数据库开销是固定的只读语句。像素文件缺失时描述返回不可用，不改写已经发生的检查事实或 FHIR 历史。读取边界由应用层接口表达，本地素材目录是它当前唯一的来源实现。
 

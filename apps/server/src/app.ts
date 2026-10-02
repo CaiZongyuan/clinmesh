@@ -46,12 +46,15 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
 import { prepareImagingCasesRequestSchema } from '@clinmesh/contracts/imaging'
+import { preparePathologyCasesRequestSchema } from '@clinmesh/contracts/pathology'
 import {
   ImagingResultUnavailableError,
   type ImagingResultResolver,
 } from './application/imaging-result-resolver.ts'
 import type { ImagingAssetLibrary } from './infrastructure/imaging-assets/imaging-asset-library.ts'
 import { ImagingStudyReadError, type ImagingStudyReader } from './application/imaging-study-reader.ts'
+import { PathologyPreparationError, type PathologyPreparationService } from './application/pathology-preparation-service.ts'
+import type { PathologySlideReader } from './application/pathology-slide-reader.ts'
 import {
   selectPatientPersonaRevisionRequestSchema,
   startSyntheticCaseRequestSchema,
@@ -118,6 +121,7 @@ export interface CreateAppOptions {
   identity?: IdentityService
   imaging?: { library: ImagingAssetLibrary; reader: ImagingStudyReader; results: ImagingResultResolver }
   imagingPreparation?: ImagingPreparationService
+  pathology?: { preparation: PathologyPreparationService; reader: PathologySlideReader }
   investigation?: InvestigationService
   laboratoryServicePublisher?: LaboratoryServicePublisher
   consultationDialogue?: ConsultationDialogueService
@@ -143,6 +147,13 @@ const pixelBlockIndexSchema = z.string().regex(/^(0|[1-9]\d{0,5})$/).transform(N
 const pixelBlockPositionSchema = z.object({
   blockIndex: pixelBlockIndexSchema,
   frameIndex: pixelBlockIndexSchema,
+  seriesIndex: pixelBlockIndexSchema,
+})
+/** 切片瓦片位置：序列（切片）、层级（0 为最高分辨率）与瓦片的列、行。 */
+const slideTilePositionSchema = z.object({
+  column: pixelBlockIndexSchema,
+  level: pixelBlockIndexSchema,
+  row: pixelBlockIndexSchema,
   seriesIndex: pixelBlockIndexSchema,
 })
 
@@ -188,6 +199,7 @@ function apiErrorResponse(
       || error instanceof LaboratoryServicePublisherError
     || error instanceof PatientPersonaError
     || error instanceof ImagingPreparationError
+    || error instanceof PathologyPreparationError
     || error instanceof ImagingStudyReadError
     || error instanceof SyntheticCaseVisitError
     || error instanceof ReferenceDataError
@@ -844,7 +856,9 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       context.header('Cache-Control', 'no-store')
       try {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
-        return context.json(await imagingPreparation.generationTargets(session.actor))
+        const imaging = await imagingPreparation.generationTargets(session.actor)
+        const pathology = await options.pathology?.preparation.generationTargets(session.actor)
+        return context.json({ items: [...imaging.items, ...pathology?.items ?? []] })
       } catch (error) {
         return apiErrorResponse(context, error)
       }
@@ -891,6 +905,71 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
         const caseId = z.string().min(1).max(128).parse(context.req.param('caseId'))
         return context.json(imagingPreparation.getCasePreparation(session.actor, caseId))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+  }
+  if (options.identity !== undefined && options.pathology !== undefined) {
+    const identity = options.identity
+    const { preparation, reader } = options.pathology
+    // 病理准备、覆盖清单与素材复核预览只面向管理员：不进入 Operation Catalog、CLI、Page Context 或 Agent Tools。
+    app.post('/api/sim/v1/admin/pathology-preparations', async (context) => {
+      context.header('Cache-Control', 'no-store')
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = preparePathologyCasesRequestSchema.parse(await context.req.json())
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const idempotencyKey = z.string().min(8).max(128).parse(
+          context.req.header('idempotency-key'),
+        )
+        return context.json(await preparation.prepareBatch({
+          caseIds: body.input.caseIds,
+          context: session.actor,
+          idempotencyKey,
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error, 'The pathology preparation request is invalid')
+      }
+    })
+    app.get('/api/sim/v1/admin/pathology-coverage', async (context) => {
+      context.header('Cache-Control', 'no-store')
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(await preparation.coverage(session.actor))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get('/api/sim/v1/admin/pathology-assets/:assetId', async (context) => {
+      context.header('Cache-Control', 'no-store')
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(await reader.describeAsset(session.actor, context.req.param('assetId')))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.get(
+      '/api/sim/v1/admin/pathology-assets/:assetId/series/:seriesIndex/levels/:level/tiles/:column/:row',
+      async (context) => {
+        context.header('Cache-Control', 'no-store')
+        try {
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          const position = slideTilePositionSchema.parse(context.req.param())
+          const bytes = await reader.readAssetTile(session.actor, context.req.param('assetId'), position)
+          return context.body(bytes as Uint8Array<ArrayBuffer>, 200, { 'Content-Type': 'application/octet-stream' })
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      },
+    )
+    app.get('/api/sim/v1/admin/synthetic-cases/:caseId/pathology-preparation', async (context) => {
+      context.header('Cache-Control', 'no-store')
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        const caseId = z.string().min(1).max(128).parse(context.req.param('caseId'))
+        return context.json(preparation.getCasePreparation(session.actor, caseId))
       } catch (error) {
         return apiErrorResponse(context, error)
       }

@@ -10,7 +10,7 @@ Status: implemented
 
 **保留条件提高命中率，匹配规则唯一判定。** Server 从所选适配条目推导保留条件交给 Provider，Provider 写成 Synthea keep module 以 `-k` 运行并只保留存活患者，Synthea 在同一次运行内部重试，不重启 JVM。Synthea 无法表达“该疾病就是 Index Encounter 的诊断”或“按就诊开始时间判断缓解”，所以 Server 生成后用影像准备的 `matchCaseImaging` 复核每位患者，不满足时沿用既有的确定性换 seed 重试。规则只有影像准备一个 owner，两处不一致时以匹配器为准，不放宽匹配器。
 
-**Provider 只接受窄的保留条件。** 协议只有须存在与须不存在的 SNOMED 数字编码两个有界列表，性别与年龄沿用人口参数；不接受任意模块 JSON 或命令行参数。疾病和已做操作都用 Synthea 的 Active Condition 判断，因为操作编码在记录中永久存在。Provider 在健康检查中声明 `targetedGeneration`，在元数据中回显保留条件；旧 Provider 不声明该能力，定向提交被拒绝，而不是静默忽略条件。
+**Provider 只接受窄的保留条件。** 协议有须存在与须不存在的 SNOMED 数字编码两个有界列表，以及可选的 Observation 编码值条件（某个 LOINC Observation 的最新结果须为所列 SNOMED 编码值之一，最多 8 项，供病理适配条目按受体与分期筛选）；性别与年龄沿用人口参数；不接受数值比较、任意模块 JSON 或命令行参数。疾病和已做操作都用 Synthea 的 Active Condition 判断，因为操作编码在记录中永久存在。Synthea 对不存在的 Observation 做值比较会抛出异常，Provider 生成的条件先判断存在再比较取值。Provider 在健康检查中声明 `targetedGeneration`，在元数据中回显保留条件；旧 Provider 不声明该能力，定向提交被拒绝，而不是静默忽略条件；不认识 Observation 条件的 Provider 以请求无效拒绝，Server 同样报告为不支持定向生成。
 
 **定向任务成功后立即准备影像。** 管理员拿到的病例已经是“已就绪”；准备失败不回滚已生成的患者，成功的任务带上 `IMAGING_PREPARATION_FAILED` 警告，界面提示管理员重新准备。生成任务因此区分“失败”与“成功但有后续步骤未完成”两种结果，后者使用独立的警告字段，不放宽“成功任务没有错误”的约束。
 

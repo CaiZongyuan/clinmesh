@@ -9,6 +9,7 @@
 | `manifest.json` | 清单身份、切片数据合集（DOI、许可、署名、来源类型）和结构化临床字段的来源（地址、文件哈希、条款、署名） |
 | `assets/<assetId>.json` | 一张切片：来源受试者与切片编号、Study/Series/Instance UID、IDC 序列目录、每个来源文件的字节数与 SHA-256、来源临床字段、已安装层级与摄取参数、报告内容修订及其核对记录 |
 | `prompts/breast-pathology-report-v1.md` | 报告草稿整理规则；素材条目的 `draft.promptVersion` 指向它 |
+| `matching.json` | 病例适配规则：适用会诊的来源病例（性别、诊断编码、可送检的手术编码、定向生成的年龄范围），以及受体、淋巴结与 T 类别对应的来源 Observation 编码和编码值 |
 
 素材标识（`tcga-brca-he-01` 等）不含来源受试者编号；编号只出现在条目的 `source` 与 `clinical.sampleId` 中，不进入安装目录、回执和命令输出。
 
@@ -71,6 +72,22 @@ ClinMesh 对来源切片只做下列处理，规则版本与参数记录在每�
 报告只复述来源字段：镜下所见按组织学类型使用固定表述，病理诊断写组织学类型并注明原始资料未提供组织学分级，既有免疫组化注明引自原始病理资料，备注说明切片只含原发灶、淋巴结情况以原病例记录为准。标本信息中的既往手术名称与日期在会诊时取病例所选的来源手术，条目只固定切片数量与染色。`pathologicT` 与 `pathologicN` 供病例匹配使用，不写入报告。
 
 七张切片的来源文件合计约 1197 MB，安装后另占约 1613 MB；全部层级中最大的单个瓦片约 108 KiB。`tcga-brca-he-07` 的来源 5 倍层级高 6001 像素，最后一行瓦片只覆盖一行像素，来源在这一行存放的是黑色填充瓦片（按 YCbCr 4:2:0 编码，与其余瓦片不同）；摄取原样保留，5 倍层级的最下方因此有一行黑色像素。
+
+## 病例适配
+
+适配条目不在清单中列举，由每张切片的来源临床字段派生：受体状态按自动核对的规则得出（HER2 以 IHC 3+ 或 FISH 阳性为阳性，IHC 0/1+ 或 IHC 2+ 且 FISH 阴性为阴性），淋巴结取病理 N 分期的阴性（N0）或阳性（N1–N3），肿瘤取病理 T 分期的 T1–T4 类别。五项事实相同的切片属于同一个条目；任一项无法得出的切片不形成条目，不参与病例匹配。病例的对应事实来自 Synthea 来源 Observation，编码与取值登记在 `matching.json`，五项全部一致的病例才会配到该切片，规则见 [系统架构](../docs/architecture.md) 10.7 节。
+
+| 条目 | ER / PR / HER2 | 淋巴结 | T 类别 | 素材 |
+| --- | --- | --- | --- | --- |
+| `breast-er-pos-pr-pos-her2-neg-ln-pos-t2` | + / + / − | 阳性 | T2 | `tcga-brca-he-01` |
+| `breast-er-pos-pr-pos-her2-neg-ln-pos-t1` | + / + / − | 阳性 | T1 | `tcga-brca-he-02` |
+| `breast-er-pos-pr-neg-her2-pos-ln-pos-t1` | + / − / + | 阳性 | T1 | `tcga-brca-he-03` |
+| `breast-er-pos-pr-neg-her2-pos-ln-pos-t2` | + / − / + | 阳性 | T2 | `tcga-brca-he-04` |
+| `breast-er-neg-pr-neg-her2-pos-ln-pos-t2` | − / − / + | 阳性 | T2 | `tcga-brca-he-05` |
+| `breast-er-neg-pr-neg-her2-neg-ln-pos-t1` | − / − / − | 阳性 | T1 | `tcga-brca-he-06` |
+| `breast-er-neg-pr-neg-her2-neg-ln-neg-t2` | − / − / − | 阴性 | T2 | `tcga-brca-he-07` |
+
+切片素材均为原发灶组织，镜下不体现术式，因此来源手术为肿块切除或乳腺病灶切除的病例都可以使用。Synthea 中最常见的组合（ER 阳性、PR 阳性、HER2 阴性、淋巴结阴性、T1）首批没有对应切片。
 
 ## 新增或修订素材
 

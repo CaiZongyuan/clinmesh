@@ -6,6 +6,7 @@ import {
   scenarioMedicationCatalogItemSchema,
   scenarioPhysiologyGeneratorSchema,
   scenarioUcumUnitSchema,
+  syntheaKeepCriteriaSchema,
 } from '../src/scenario.ts'
 
 const request = {
@@ -61,6 +62,41 @@ describe('Scenario generation request', () => {
       moduleMode: 'filter',
       modules: ['../secrets'],
     }).success).toBe(false)
+  })
+})
+
+describe('Synthea keep criteria', () => {
+  const keep = { activeAny: ['392021009'], activeNone: [] }
+
+  it('accepts bounded coded Observation value conditions', () => {
+    const observations = [
+      { code: '85337-4', valueAny: ['10828004'] },
+      { code: '21906-3', valueAny: ['1229973008', '1229978004', '1229984001'] },
+    ]
+
+    expect(syntheaKeepCriteriaSchema.parse(keep)).toStrictEqual(keep)
+    expect(syntheaKeepCriteriaSchema.parse({ ...keep, observations })).toStrictEqual({ ...keep, observations })
+  })
+
+  it.each([
+    { label: 'an empty list', observations: [] },
+    { label: 'a non-LOINC code', observations: [{ code: '10828004', valueAny: ['10828004'] }] },
+    { label: 'no accepted value', observations: [{ code: '85337-4', valueAny: [] }] },
+    { label: 'a non-SNOMED value', observations: [{ code: '85337-4', valueAny: ['positive'] }] },
+    { label: 'a numeric comparison', observations: [{ code: '33728-7', operator: '<', value: 2, valueAny: ['10828004'] }] },
+    {
+      label: 'a repeated Observation code',
+      observations: [
+        { code: '85337-4', valueAny: ['10828004'] },
+        { code: '85337-4', valueAny: ['260385009'] },
+      ],
+    },
+    {
+      label: 'more than eight conditions',
+      observations: Array.from({ length: 9 }, (_, index) => ({ code: `8533${index}-4`, valueAny: ['10828004'] })),
+    },
+  ])('rejects $label in Observation conditions', ({ observations }) => {
+    expect(syntheaKeepCriteriaSchema.safeParse({ ...keep, observations }).success).toBe(false)
   })
 })
 
