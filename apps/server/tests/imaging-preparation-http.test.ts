@@ -599,6 +599,39 @@ describe('Imaging case preparation HTTP contract', () => {
     expect(unknown.processed).toMatchObject({ error: { code: 'IMAGING_TARGET_UNAVAILABLE' }, status: 'failed' })
   })
 
+  it('keeps the generated patients and reports a warning when imaging preparation fails after generation', async () => {
+    const { catalogDirectory, runtime } = await createRuntime([
+      caseBundle({ gender: 'male', index: [{ ...lungCancer, resourceType: 'Condition' }], name: '肺癌男' }),
+    ], { targetedGeneration: true })
+    await writeCatalog(catalogDirectory)
+    const cookie = await signIn(runtime)
+    const enqueued = await runtime.app.request('/api/sim/v1/scenario-generation-jobs', mutation(cookie, {
+      name: '定向影像患者',
+      population: { age: { maximum: 79, minimum: 40 }, count: 1, gender: 'male' },
+      providerId: 'synthea',
+      seeds: { clinical: 7331, population: 4242 },
+      target: { kind: 'imaging-profile', profileId: 'lung-mass-male' },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    }))
+    expect(enqueued.status).toBe(200)
+    // 任务排队期间管理员重置了场景：任务按提交时的身份完成生成，但影像准备要求当前 Epoch，因而失败。
+    expect((await runtime.app.request('/api/sim/v1/scenario-runs/scenario-run-1/actions/reset', mutation(cookie, {}))).status)
+      .toBe(200)
+
+    const processed = await runtime.scenarioData.processNextGenerationJob()
+    expect(processed).toMatchObject({
+      error: null,
+      status: 'succeeded',
+      warning: { code: 'IMAGING_PREPARATION_FAILED' },
+    })
+    expect(processed!.caseIds).toHaveLength(1)
+    // 患者保留；管理员随后可以手动准备影像。
+    const refreshed = await signIn(runtime)
+    const prepared = await prepare(runtime, refreshed, processed!.caseIds)
+    expect(prepared.prepared[0]?.preparation?.exams.map(exam => exam.status)).toEqual(['ready', 'ready'])
+  })
+
   it('rejects a targeted job when the Synthea Provider does not support targeted generation', async () => {
     const { catalogDirectory, runtime } = await createRuntime([])
     await writeCatalog(catalogDirectory)

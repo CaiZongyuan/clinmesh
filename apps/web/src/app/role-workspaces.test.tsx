@@ -415,6 +415,7 @@ function stubScenarioDataWorkspace(options: {
   generationJobError?: { code: string; message: string }
   generationJobFails?: boolean
   generationJobDelayMs?: number
+  generationJobWarning?: { code: string; message: string }
   generationTargets?: Array<{ ageRange: [number, number]; kind: 'imaging-profile'; label: string; profileId: string; sex?: 'female' | 'male' }>
   onGenerationTargetsRead?: () => void
   onGenerate?: (request: ScenarioGenerationRequest) => void
@@ -823,6 +824,7 @@ function stubScenarioDataWorkspace(options: {
         startedAt: '2026-08-26T09:00:01+08:00',
         status: failed ? 'failed' : succeeded ? 'succeeded' : 'running',
         updatedAt: failed || succeeded ? '2026-08-26T09:00:02+08:00' : '2026-08-26T09:00:01+08:00',
+        warning: succeeded ? options.generationJobWarning ?? null : null,
         workspaceId: 'workspace-demo',
       })
     }
@@ -1433,6 +1435,25 @@ describe('role workspaces', () => {
 
     expect(await screen.findByRole('alert', { name: '患者生成失败' })).toBeTruthy()
     expect(screen.getByText('多次尝试后仍未得到满足所选适配条目的患者')).toBeTruthy()
+  })
+
+  it('tells the administrator that imaging preparation still needs to run after a targeted generation', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({
+      generationJobWarning: { code: 'IMAGING_PREPARATION_FAILED', message: 'Imaging preparation did not complete' },
+      syntheaAvailable: true,
+    })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    const sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    await user.click(within(sheet).getByRole('button', { name: '生成患者' }))
+
+    // 任务首轮轮询仍在运行，一秒后的下一轮才成功。
+    expect(await screen.findByText('患者已生成，但影像准备未完成', undefined, { timeout: 3_000 })).toBeTruthy()
+    expect(screen.getByText('打开患者详情，在“影像准备”中重新准备。')).toBeTruthy()
+    expect(screen.queryByText('患者生成失败')).toBeNull()
   })
 
   it('keeps profiles usable while exposing untranslated clinical displays for review', async () => {

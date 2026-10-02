@@ -280,12 +280,38 @@ export class ScenarioDataService {
       }).data
     }
     if (target !== undefined && this.#targets !== undefined) {
-      // 定向生成的病例随即运行影像准备；准备失败不回滚已生成的患者，管理员可在影像准备中重试。
-      await this.#targets.prepareBatch({
-        caseIds: completedJob.caseIds,
-        context: claimed.actorContext,
-        idempotencyKey: `${claimed.jobId}:imaging-preparation`,
-      }).catch(() => undefined)
+      // 定向生成的病例随即运行影像准备；准备失败不回滚已生成的患者，在任务上记录警告，管理员可在影像准备中重试。
+      try {
+        await this.#targets.prepareBatch({
+          caseIds: completedJob.caseIds,
+          context: claimed.actorContext,
+          idempotencyKey: `${claimed.jobId}:imaging-preparation`,
+        })
+      } catch {
+        return this.#commands.execute({
+          context: claimed.actorContext,
+          contextRequirement: 'known',
+          dataSchema: scenarioGenerationJobSchema,
+          expectedVersions: {},
+          idempotencyKey: `${claimed.jobId}:warn`,
+          idempotencyScope: 'workspace',
+          input: { jobId: claimed.jobId, warning: 'IMAGING_PREPARATION_FAILED' },
+          operation: 'scenario-generation-job.warn',
+        }, () => {
+          const warned = this.#jobs.recordWarning(claimed.workspaceId, claimed.jobId, {
+            code: 'IMAGING_PREPARATION_FAILED',
+            message: 'The patients were generated, but imaging preparation did not complete',
+          }, new Date().toISOString())
+          return {
+            data: warned,
+            effects: [{
+              kind: 'updated' as const,
+              reference: `ScenarioGenerationJob/${claimed.jobId}`,
+              versionId: warned.updatedAt,
+            }],
+          }
+        }).data
+      }
     }
     return completedJob
   }

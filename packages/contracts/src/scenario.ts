@@ -659,6 +659,11 @@ export const scenarioGenerationJobSchema = z.object({
   startedAt: z.iso.datetime({ offset: true }).nullable(),
   status: z.enum(['queued', 'running', 'succeeded', 'failed']),
   updatedAt: z.iso.datetime({ offset: true }),
+  /** 成功任务的后续步骤未完成时的说明，例如定向生成后影像准备失败；患者已保存。 */
+  warning: z.object({
+    code: z.string().min(1).max(128),
+    message: z.string().min(1).max(1_000),
+  }).strict().nullable().default(null),
   workspaceId: z.string().min(1),
 }).strict()
 
