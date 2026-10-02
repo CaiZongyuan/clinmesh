@@ -69,6 +69,10 @@ async function run() {
   const root = createRoot(container)
   const settle = (milliseconds = 60) => new Promise(resolve => setTimeout(resolve, milliseconds))
   const canvas = () => container.querySelector('canvas')!
+  // 画布尺寸随 ResizeObserver 在渲染帧中确定；慢机器上首帧可能晚于固定的等待时间，因此有界轮询到画布已按影像定尺。
+  const drawn = async () => {
+    for (let waited = 0; waited < 3_000 && (canvas() === null || canvas().width === 300); waited += 20) await settle(20)
+  }
   const grays = () => {
     const element = canvas()
     const data = element.getContext('2d')!.getImageData(0, 0, element.width, element.height).data
@@ -88,6 +92,7 @@ async function run() {
     <ImagingViewer key="ct" locale="zh-CN" onFrameShown={() => { frameShown += 1 }} source={ctSource} />,
   ))
   await settle()
+  await drawn()
   const lung = grays()
   const size = { height: canvas().height, width: canvas().width }
   const rect = canvas().getBoundingClientRect()
@@ -132,6 +137,7 @@ async function run() {
   await settle()
   for (const release of releaseStale) release()
   await settle()
+  await drawn()
   const radiograph = grays()
   const radiographSize = { height: canvas().height, width: canvas().width }
   const markers = [...container.querySelectorAll('span')].map(item => item.textContent).filter(text => text === 'R' || text === 'L' || text === 'A' || text === 'P')
