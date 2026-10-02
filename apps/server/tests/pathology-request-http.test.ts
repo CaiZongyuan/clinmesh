@@ -19,6 +19,7 @@ import { imagingStudyViewSchema } from '@clinmesh/contracts/imaging'
 import jpeg from 'jpeg-js'
 import { afterEach, describe, expect, it } from 'vitest'
 import { repairPathologyAssets } from '../src/infrastructure/imaging-assets/pathology-asset-store.ts'
+import { readActionTraceMetrics, SqlitePerformanceProbe } from '../src/performance/sqlite-performance-probe.ts'
 import type { createClinMeshRuntime } from '../src/runtime.ts'
 import {
   agentPageContext,
@@ -55,8 +56,15 @@ describe('Pathology consultation request HTTP contract', () => {
   })
 
   /** 一个已安装并发布切片的运行时，病例已完成病理准备并进入医生接诊。 */
-  async function consultation(breastCase: BreastCase, slides: SyntheticSlide[] = [{ assetId: luminal }]) {
-    const created = await createImagingRuntime([breastCaseBundle(breastCase)], { persona: true })
+  async function consultation(
+    breastCase: BreastCase,
+    slides: SyntheticSlide[] = [{ assetId: luminal }],
+    performanceObserver?: SqlitePerformanceProbe,
+  ) {
+    const created = await createImagingRuntime([breastCaseBundle(breastCase)], {
+      ...(performanceObserver === undefined ? {} : { performanceObserver }),
+      persona: true,
+    })
     temporaryDirectories.push(created.directory)
     runtimes.push(created.runtime)
     const install = (current: SyntheticSlide[]) => installSyntheticPathologySlides({
@@ -735,6 +743,52 @@ describe('Pathology consultation request HTTP contract', () => {
     })).status
     expect(await correct(reported.id)).toBe(201)
     expect(await correct(pending.id)).toBe(409)
+  })
+
+  it('reads every slide tile within a fixed statement budget and writes nothing', async () => {
+    const probe = new SqlitePerformanceProbe()
+    const visit = await consultation({ name: '乳腺随访' }, [{ assetId: luminal }], probe)
+    const { doctor, runtime } = visit
+    const reported = await reportedRequest(visit)
+    const studyPath = `/api/his/v1/imaging-studies/${reported.report!.studyId}`
+    const persisted = () => ({
+      audit: runtime.database.driver.prepare('SELECT COUNT(*) AS rows FROM audit_log').get(),
+      trace: readActionTraceMetrics(runtime.database),
+    })
+    const before = persisted()
+
+    probe.reset()
+    const described = await runtime.app.request(studyPath, { headers: { cookie: doctor } })
+    const view = imagingStudyViewSchema.parse(await described.json())
+    // 病理检查的描述先经放射读取边界判定不是放射检查，再由病理读取边界授权：语句数固定，不随层级或瓦片数增长。
+    expect(probe.snapshot().statementCount).toBeLessThanOrEqual(6)
+    expect(probe.snapshot().writeCount).toBe(0)
+
+    // 一张切片有数万个瓦片：每个瓦片请求的数据库开销必须固定且只读。
+    const [series] = view.series
+    if (series?.kind !== 'tiled-pyramid') throw new Error('Expected a tiled-pyramid series')
+    let tiles = 0
+    for (const [level, geometry] of series.levels.entries()) {
+      for (let row = 0; row < Math.ceil(geometry.height / geometry.tileHeight); row += 1) {
+        for (let column = 0; column < Math.ceil(geometry.width / geometry.tileWidth); column += 1) {
+          probe.reset()
+          const tile = await runtime.app.request(
+            `${studyPath}/series/0/levels/${level}/tiles/${column}/${row}`,
+            { headers: { cookie: doctor } },
+          )
+          expect(tile.status).toBe(200)
+          expect((await tile.arrayBuffer()).byteLength).toBeLessThanOrEqual(2 * 1024 * 1024)
+          const read = probe.snapshot()
+          expect(read.statementCount).toBeLessThanOrEqual(4)
+          expect(read.writeCount).toBe(0)
+          expect(read.rowsWritten).toBe(0)
+          tiles += 1
+        }
+      }
+    }
+    expect(tiles).toBe(6 + 2 + 1)
+    // 阅片是授权读取：不写审计事件或 Action Trace。
+    expect(persisted()).toEqual(before)
   })
 
   it('keeps the consultation, its slide and its history readable after the encounter is completed', async () => {
