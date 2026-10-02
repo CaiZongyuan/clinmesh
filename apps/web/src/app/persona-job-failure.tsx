@@ -47,6 +47,18 @@ const failureCopy = {
     'en-US': { guidance: 'The model answered too slowly. Retry; if it keeps timing out, switch to a faster model.', summary: 'The AI provider request timed out' },
     'zh-CN': { guidance: '模型响应过慢，请重试；反复超时建议更换更快的模型。', summary: 'AI 服务响应超时' },
   },
+  'IMAGING_TARGET_NOT_MET': {
+    'en-US': { guidance: 'Change the seeds or the age range, then retry.', summary: 'No patient met the selected imaging profile after repeated attempts' },
+    'zh-CN': { guidance: '更换 seed 或调整年龄范围后重试。', summary: '多次尝试后仍未得到满足所选适配条目的患者' },
+  },
+  'IMAGING_PREPARATION_FAILED': {
+    'en-US': { guidance: 'Open the patient and run imaging preparation again.', summary: 'The patients were generated, but imaging preparation did not complete' },
+    'zh-CN': { guidance: '打开患者详情，在“影像准备”中重新准备。', summary: '患者已生成，但影像准备未完成' },
+  },
+  'IMAGING_TARGET_UNAVAILABLE': {
+    'en-US': { guidance: 'Reopen patient generation and choose another profile.', summary: 'The selected imaging profile is currently unavailable' },
+    'zh-CN': { guidance: '重新打开“生成患者”并选择其他适配条目。', summary: '所选适配条目当前不可用' },
+  },
   'PERSONA_DIAGNOSIS_LEAK': {
     'en-US': { guidance: 'The leaked content was blocked. Retry; if it keeps failing, switch to another model.', summary: 'The generated persona disclosed the hidden diagnosis' },
     'zh-CN': { guidance: '系统已拦截该内容，请重试；反复出现建议更换模型。', summary: '生成的患者档案泄露了隐藏诊断' },
@@ -58,6 +70,10 @@ const failureCopy = {
   'PERSONA_RESPONSE_INVALID': {
     'en-US': { guidance: 'Usually caused by an unstable model output. Retry; if it keeps failing, switch to another model.', summary: 'The generated Patient Persona failed content validation' },
     'zh-CN': { guidance: '通常由模型不稳定输出导致，请重试；若反复失败，建议更换模型。', summary: '生成的患者档案未通过内容校验' },
+  },
+  'PROVIDER_TARGET_UNSUPPORTED': {
+    'en-US': { guidance: 'Upgrade the Synthea Provider image, or generate without a target.', summary: 'The current Synthea Provider does not support targeted generation; upgrade the Provider' },
+    'zh-CN': { guidance: '升级 Synthea Provider 镜像后重试，或改用不定向生成。', summary: '当前 Synthea Provider 不支持定向生成，请升级 Provider' },
   },
 } as const
 

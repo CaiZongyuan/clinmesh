@@ -21,6 +21,8 @@ const scenarioGenerationJobRowSchema = z.object({
   started_at: z.iso.datetime({ offset: true }).nullable(),
   status: z.enum(['queued', 'running', 'succeeded', 'failed']),
   updated_at: z.iso.datetime({ offset: true }),
+  warning_code: z.string().min(1).nullable(),
+  warning_message: z.string().min(1).nullable(),
   workspace_id: z.string().min(1),
 }).strict()
 
@@ -31,7 +33,7 @@ const selectJob = `
     result_profile_ids_json AS profile_ids_json,
     result_case_ids_json AS case_ids_json,
     error_code, error_message, created_by_actor_id, created_at, started_at,
-    finished_at, updated_at
+    finished_at, updated_at, warning_code, warning_message
   FROM scenario_generation_job
 `
 
@@ -82,6 +84,7 @@ function publicJob(job: ClaimedScenarioGenerationJob): ScenarioGenerationJob {
     startedAt: job.startedAt,
     status: job.status,
     updatedAt: job.updatedAt,
+    warning: job.warning,
     workspaceId: job.workspaceId,
   }
 }
@@ -229,6 +232,22 @@ export class ScenarioGenerationJobRepository {
     return queued
   }
 
+  /** 为已成功的任务记录未完成的后续步骤；任务状态与已保存的患者不变。 */
+  recordWarning(
+    workspaceId: string,
+    jobId: string,
+    warning: { code: string; message: string },
+    now: string,
+  ): ScenarioGenerationJob {
+    const update = this.#database.driver.prepare(`
+      UPDATE scenario_generation_job
+      SET warning_code = ?, warning_message = ?, updated_at = ?
+      WHERE workspace_id = ? AND job_id = ? AND status = 'succeeded'
+    `).run(warning.code, warning.message, now, workspaceId, jobId)
+    if (update.changes !== 1) throw new Error('Only a succeeded Scenario generation job can carry a warning')
+    return this.get(workspaceId, jobId)!
+  }
+
   #map(row: ScenarioGenerationJobRow): ScenarioGenerationJob {
     return scenarioGenerationJobSchema.parse({
       caseIds: JSON.parse(row.case_ids_json),
@@ -243,6 +262,9 @@ export class ScenarioGenerationJobRepository {
       startedAt: row.started_at,
       status: row.status,
       updatedAt: row.updated_at,
+      warning: row.warning_code === null || row.warning_message === null
+        ? null
+        : { code: row.warning_code, message: row.warning_message },
       workspaceId: row.workspace_id,
     })
   }

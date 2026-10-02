@@ -4,7 +4,9 @@ import {
   administratorImagingPreparationSchema,
   imagingCoverageSchema,
 } from '@clinmesh/contracts/imaging'
+import { scenarioGenerationTargetListSchema } from '@clinmesh/contracts/scenario'
 import { afterEach, describe, expect, it } from 'vitest'
+import { ScenarioGenerationProviderError } from '../src/application/scenario-data/provider.ts'
 import type { createClinMeshRuntime } from '../src/runtime.ts'
 import { syntheticCatalogAsset, writeSyntheticImagingCatalog } from './fixtures/imaging-catalog.ts'
 import {
@@ -74,7 +76,10 @@ describe('Imaging case preparation HTTP contract', () => {
     await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { force: true, recursive: true })))
   })
 
-  async function createRuntime(bundles: unknown[], options: { catalog?: boolean; persona?: boolean } = {}) {
+  async function createRuntime(
+    bundles: unknown[],
+    options: { catalog?: boolean; persona?: boolean; targetedGeneration?: boolean } = {},
+  ) {
     const created = await createImagingRuntime(bundles, options)
     temporaryDirectories.push(created.directory)
     runtimes.push(created.runtime)
@@ -501,6 +506,139 @@ describe('Imaging case preparation HTTP contract', () => {
       ['chest-ct-plain', 'unsupported', 'UNCOVERED_CONDITION'],
       ['chest-radiograph', 'ready', undefined],
     ])
+  })
+
+  /** 提交一个定向生成任务并由 Server 处理。 */
+  async function generateTargeted(runtime: Runtime, cookie: string, input: {
+    gender: 'any' | 'female' | 'male'
+    profileId: string
+  }) {
+    const response = await runtime.app.request('/api/sim/v1/scenario-generation-jobs', mutation(cookie, {
+      name: '定向影像患者',
+      population: { age: { maximum: 79, minimum: 40 }, count: 1, gender: input.gender },
+      providerId: 'synthea',
+      seeds: { clinical: 7331, population: 4242 },
+      target: { kind: 'imaging-profile', profileId: input.profileId },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    }))
+    return { response, processed: response.status === 200 ? await runtime.scenarioData.processNextGenerationJob() : undefined }
+  }
+
+  async function writeCatalog(catalogDirectory: string) {
+    await writeSyntheticImagingCatalog(catalogDirectory, {
+      assets: [
+        syntheticCatalogAsset({ assetId: massCt, examCode: 'chest-ct-plain' }),
+        syntheticCatalogAsset({ assetId: massRadiograph, examCode: 'chest-radiograph' }),
+        syntheticCatalogAsset({ assetId: clearRadiograph, examCode: 'chest-radiograph' }),
+      ],
+      matching: matchingRules(),
+    })
+  }
+
+  it('generates a patient for a selected imaging profile and leaves its preparation ready', async () => {
+    const { catalogDirectory, runtime, syntheaProvider } = await createRuntime([
+      // Synthea 本次抽到的人口无法满足保留条件，或得到的患者不满足条目：都按现有的确定性换 seed 重试。
+      new ScenarioGenerationProviderError('KEEP_NOT_SATISFIED', 'Synthea could not keep a matching patient'),
+      caseBundle({ gender: 'male', index: [{ ...hypertension, resourceType: 'Condition' }], name: '高血压' }),
+      caseBundle({ gender: 'male', index: [{ ...lungCancer, resourceType: 'Condition' }], name: '肺癌男' }),
+    ], { targetedGeneration: true })
+    await writeCatalog(catalogDirectory)
+    const cookie = await signIn(runtime)
+
+    const targets = await runtime.app.request('/api/sim/v1/admin/scenario-generation-targets', { headers: { cookie } })
+    expect(targets.status).toBe(200)
+    const targetList = scenarioGenerationTargetListSchema.parse(await targets.json())
+    expect(targetList.items).toEqual([
+      { ageRange: [40, 79], kind: 'imaging-profile', label: '肺部单发肿块（成年男性）', profileId: 'lung-mass-male', sex: 'male' },
+      { ageRange: [18, 89], kind: 'imaging-profile', label: '未见肺结节（急性支气管炎就诊）', profileId: 'no-nodule' },
+    ])
+    // 选项只有条目名称与适用人群，不含素材标识或匹配编码。
+    expect(JSON.stringify(targetList)).not.toMatch(/synthetic-mass|synthetic-clear|\d{9}/)
+    const doctorTargets = await runtime.app.request('/api/sim/v1/admin/scenario-generation-targets', {
+      headers: { cookie: await signIn(runtime, 'doctor@demo.clinmesh.local') },
+    })
+    expect(doctorTargets.status).toBe(403)
+
+    const { processed } = await generateTargeted(runtime, cookie, { gender: 'male', profileId: 'lung-mass-male' })
+    expect(processed).toMatchObject({ error: null, status: 'succeeded' })
+    expect(syntheaProvider.keeps).toEqual(Array.from({ length: 3 }, () => (
+      { activeAny: [lungCancer.code, '162573006'], activeNone: [lungTransplant.code] }
+    )))
+    // 任务完成时已经完成影像准备。
+    const prepared = await preparationOf(runtime, cookie, processed!.caseIds[0]!)
+    expect(prepared.preparation?.exams.map(exam => [exam.examCode, exam.status, exam.matchingProfileId])).toEqual([
+      ['chest-ct-plain', 'ready', 'lung-mass-male'],
+      ['chest-radiograph', 'ready', 'lung-mass-male'],
+    ])
+  })
+
+  it('fails a targeted job without leaving patients when no attempt satisfies the profile', async () => {
+    const { catalogDirectory, runtime, syntheaProvider } = await createRuntime(Array.from({ length: 10 }, () => (
+      caseBundle({ gender: 'female', index: [{ ...pneumonia, resourceType: 'Condition' }], name: '肺炎' })
+    )), { targetedGeneration: true })
+    await writeCatalog(catalogDirectory)
+    const cookie = await signIn(runtime)
+
+    const { processed } = await generateTargeted(runtime, cookie, { gender: 'any', profileId: 'no-nodule' })
+    expect(processed).toMatchObject({ caseIds: [], error: { code: 'IMAGING_TARGET_NOT_MET' }, status: 'failed' })
+    expect(syntheaProvider.keeps).toHaveLength(10)
+    // 阴性条目排除阳性条目的疾病、未覆盖疾病和冲突操作。
+    expect(syntheaProvider.keeps[0]).toEqual({
+      activeAny: [acuteBronchitis.code],
+      activeNone: [lungCancer.code, '162573006', pneumonia.code, lungTransplant.code],
+    })
+    const coverage = imagingCoverageSchema.parse(await (await runtime.app.request(
+      '/api/sim/v1/admin/imaging-coverage',
+      { headers: { cookie } },
+    )).json())
+    expect(coverage.cases.total).toBe(0)
+
+    // 不存在的条目在处理时以不可用结束。
+    const unknown = await generateTargeted(runtime, cookie, { gender: 'any', profileId: 'no-such-profile' })
+    expect(unknown.processed).toMatchObject({ error: { code: 'IMAGING_TARGET_UNAVAILABLE' }, status: 'failed' })
+  })
+
+  it('keeps the generated patients and reports a warning when imaging preparation fails after generation', async () => {
+    const { catalogDirectory, runtime } = await createRuntime([
+      caseBundle({ gender: 'male', index: [{ ...lungCancer, resourceType: 'Condition' }], name: '肺癌男' }),
+    ], { targetedGeneration: true })
+    await writeCatalog(catalogDirectory)
+    const cookie = await signIn(runtime)
+    const enqueued = await runtime.app.request('/api/sim/v1/scenario-generation-jobs', mutation(cookie, {
+      name: '定向影像患者',
+      population: { age: { maximum: 79, minimum: 40 }, count: 1, gender: 'male' },
+      providerId: 'synthea',
+      seeds: { clinical: 7331, population: 4242 },
+      target: { kind: 'imaging-profile', profileId: 'lung-mass-male' },
+      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeZone: 'Asia/Shanghai',
+    }))
+    expect(enqueued.status).toBe(200)
+    // 任务排队期间管理员重置了场景：任务按提交时的身份完成生成，但影像准备要求当前 Epoch，因而失败。
+    expect((await runtime.app.request('/api/sim/v1/scenario-runs/scenario-run-1/actions/reset', mutation(cookie, {}))).status)
+      .toBe(200)
+
+    const processed = await runtime.scenarioData.processNextGenerationJob()
+    expect(processed).toMatchObject({
+      error: null,
+      status: 'succeeded',
+      warning: { code: 'IMAGING_PREPARATION_FAILED' },
+    })
+    expect(processed!.caseIds).toHaveLength(1)
+    // 患者保留；管理员随后可以手动准备影像。
+    const refreshed = await signIn(runtime)
+    const prepared = await prepare(runtime, refreshed, processed!.caseIds)
+    expect(prepared.prepared[0]?.preparation?.exams.map(exam => exam.status)).toEqual(['ready', 'ready'])
+  })
+
+  it('rejects a targeted job when the Synthea Provider does not support targeted generation', async () => {
+    const { catalogDirectory, runtime } = await createRuntime([])
+    await writeCatalog(catalogDirectory)
+    const cookie = await signIn(runtime)
+    const { response } = await generateTargeted(runtime, cookie, { gender: 'male', profileId: 'lung-mass-male' })
+    expect(response.status).toBe(503)
+    expect(apiErrorSchema.parse(await response.json()).error.code).toBe('PROVIDER_NOT_AVAILABLE')
   })
 
   it('reports an invalid catalog to the administrator without preparing cases', async () => {

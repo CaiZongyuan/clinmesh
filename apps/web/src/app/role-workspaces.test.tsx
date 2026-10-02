@@ -412,8 +412,12 @@ function createMediaQueryList(media: string): MediaQueryList {
 function stubScenarioDataWorkspace(options: {
   briefJobFails?: boolean
   briefJobDelayMs?: number
+  generationJobError?: { code: string; message: string }
   generationJobFails?: boolean
   generationJobDelayMs?: number
+  generationJobWarning?: { code: string; message: string }
+  generationTargets?: Array<{ ageRange: [number, number]; kind: 'imaging-profile'; label: string; profileId: string; sex?: 'female' | 'male' }>
+  onGenerationTargetsRead?: () => void
   onGenerate?: (request: ScenarioGenerationRequest) => void
   onCaseStart?: () => void
   onTruthRead?: () => void
@@ -549,11 +553,16 @@ function stubScenarioDataWorkspace(options: {
           modules: options.providerModules ?? ['cardiovascular/hypertension', 'metabolic/diabetes'],
           providerId: 'synthea',
           providerName: 'Synthea',
+          ...(options.generationTargets === undefined ? {} : { targetedGeneration: true }),
           ...(options.syntheaAvailable === true
             ? {}
             : { unavailableReason: '未配置 Synthea Provider' }),
         }],
       })
+    }
+    if (url.pathname === '/api/sim/v1/admin/scenario-generation-targets') {
+      options.onGenerationTargetsRead?.()
+      return Response.json({ items: options.generationTargets ?? [] })
     }
     if (url.pathname === '/api/sim/v1/synthetic-patients') {
       const firstSummary = {
@@ -799,7 +808,7 @@ function stubScenarioDataWorkspace(options: {
       return Response.json({
         caseIds: succeeded ? [caseId] : [],
         createdAt: '2026-08-26T09:00:00+08:00',
-        error: failed ? { code: 'PROVIDER_FAILED', message: 'Synthea 服务暂时不可用' } : null,
+        error: failed ? options.generationJobError ?? { code: 'PROVIDER_FAILED', message: 'Synthea 服务暂时不可用' } : null,
         finishedAt: failed || succeeded ? '2026-08-26T09:00:02+08:00' : null,
         jobId: 'scenario-generation-job-001',
         profileIds: succeeded ? [profile.profileId] : [],
@@ -815,6 +824,7 @@ function stubScenarioDataWorkspace(options: {
         startedAt: '2026-08-26T09:00:01+08:00',
         status: failed ? 'failed' : succeeded ? 'succeeded' : 'running',
         updatedAt: failed || succeeded ? '2026-08-26T09:00:02+08:00' : '2026-08-26T09:00:01+08:00',
+        warning: succeeded ? options.generationJobWarning ?? null : null,
         workspaceId: 'workspace-demo',
       })
     }
@@ -1320,6 +1330,130 @@ describe('role workspaces', () => {
 
     expect(await screen.findByRole('alert', { name: '患者生成失败' })).toBeTruthy()
     expect(screen.getByText('Synthea 服务暂时不可用')).toBeTruthy()
+  })
+
+  const imagingTargets = [
+    { ageRange: [40, 79] as [number, number], kind: 'imaging-profile' as const, label: '右肺单发肿块（成年男性，疑似或确诊肺癌）', profileId: 'lung-mass-adult-male', sex: 'male' as const },
+    { ageRange: [18, 120] as [number, number], kind: 'imaging-profile' as const, label: '急性支气管炎（阴性）', profileId: 'acute-bronchitis-negative' },
+  ]
+
+  it('submits a targeted generation with population aligned to the imaging profile', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    let submitted: ScenarioGenerationRequest | undefined
+    stubScenarioDataWorkspace({ generationTargets: imagingTargets, onGenerate: request => { submitted = request }, syntheaAvailable: true })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    const sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    await user.click(await within(sheet).findByRole('combobox', { name: '定向病例' }))
+    await user.click(screen.getByRole('option', { name: '胸部影像：右肺单发肿块（成年男性，疑似或确诊肺癌）' }))
+    expect(within(sheet).getByText('适用人群：男，40–79 岁')).toBeTruthy()
+    expect(within(sheet).getByRole<HTMLInputElement>('spinbutton', { name: '最小年龄' }).value).toBe('40')
+    expect(within(sheet).getByRole<HTMLInputElement>('spinbutton', { name: '最大年龄' }).value).toBe('79')
+    await user.click(within(sheet).getByRole('button', { name: '生成患者' }))
+
+    await waitFor(() => expect(submitted?.target).toEqual({ kind: 'imaging-profile', profileId: 'lung-mass-adult-male' }))
+    expect(submitted?.population).toEqual({ age: { maximum: 79, minimum: 40 }, count: 1, gender: 'male' })
+    expect(submitted?.moduleMode).toBe('all')
+  })
+
+  it('blocks a targeted generation whose population contradicts the imaging profile', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    const onGenerate = vi.fn()
+    stubScenarioDataWorkspace({ generationTargets: imagingTargets, onGenerate, syntheaAvailable: true })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    const sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    await user.click(await within(sheet).findByRole('combobox', { name: '定向病例' }))
+    await user.click(screen.getByRole('option', { name: '胸部影像：右肺单发肿块（成年男性，疑似或确诊肺癌）' }))
+    const submit = within(sheet).getByRole('button', { name: '生成患者' })
+    const minimumAge = within(sheet).getByRole('spinbutton', { name: '最小年龄' })
+    await user.clear(minimumAge)
+    await user.type(minimumAge, '30')
+    expect(within(sheet).getByRole('alert').textContent).toBe('所选适配条目要求年龄在 40–79 岁之间')
+    expect(submit.hasAttribute('disabled')).toBe(true)
+    await user.clear(minimumAge)
+    await user.type(minimumAge, '45')
+    expect(within(sheet).queryByRole('alert')).toBeNull()
+    expect(submit.hasAttribute('disabled')).toBe(false)
+    await user.click(within(sheet).getByRole('combobox', { name: '性别' }))
+    await user.click(screen.getByRole('option', { name: '女' }))
+    expect(within(sheet).getByRole('alert').textContent).toBe('所选适配条目要求性别为男')
+    expect(submit.hasAttribute('disabled')).toBe(true)
+    await user.click(submit)
+    expect(onGenerate).not.toHaveBeenCalled()
+  })
+
+  it('keeps the untargeted request unchanged when the Provider cannot target generation', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    const onGenerationTargetsRead = vi.fn()
+    let submitted: ScenarioGenerationRequest | undefined
+    stubScenarioDataWorkspace({ onGenerate: request => { submitted = request }, onGenerationTargetsRead, syntheaAvailable: true })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    const sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    expect(within(sheet).queryByRole('combobox', { name: '定向病例' })).toBeNull()
+    await user.click(within(sheet).getByRole('button', { name: '生成患者' }))
+
+    await waitFor(() => expect(submitted).toBeDefined())
+    expect(Object.keys(submitted!)).toEqual(['moduleMode', 'modules', 'name', 'population', 'providerId', 'seeds', 'timeRange', 'timeZone'])
+    expect(submitted?.population).toEqual({ age: { maximum: 80, minimum: 18 }, count: 1, gender: 'any' })
+    expect(onGenerationTargetsRead).not.toHaveBeenCalled()
+  })
+
+  it('hides the target select when no imaging profile is available', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    const onGenerationTargetsRead = vi.fn()
+    stubScenarioDataWorkspace({ generationTargets: [], onGenerationTargetsRead, syntheaAvailable: true })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    const sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    await waitFor(() => expect(onGenerationTargetsRead).toHaveBeenCalled())
+    expect(within(sheet).queryByRole('combobox', { name: '定向病例' })).toBeNull()
+  })
+
+  it('explains a targeted generation that never met the imaging profile', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({
+      generationJobError: { code: 'IMAGING_TARGET_NOT_MET', message: 'No generated patient matched imaging profile' },
+      generationJobFails: true,
+      syntheaAvailable: true,
+    })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    const sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    await user.click(within(sheet).getByRole('button', { name: '生成患者' }))
+
+    expect(await screen.findByRole('alert', { name: '患者生成失败' })).toBeTruthy()
+    expect(screen.getByText('多次尝试后仍未得到满足所选适配条目的患者')).toBeTruthy()
+  })
+
+  it('tells the administrator that imaging preparation still needs to run after a targeted generation', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    stubScenarioDataWorkspace({
+      generationJobWarning: { code: 'IMAGING_PREPARATION_FAILED', message: 'Imaging preparation did not complete' },
+      syntheaAvailable: true,
+    })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    const sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    await user.click(within(sheet).getByRole('button', { name: '生成患者' }))
+
+    // 任务首轮轮询仍在运行，一秒后的下一轮才成功。
+    expect(await screen.findByText('患者已生成，但影像准备未完成', undefined, { timeout: 3_000 })).toBeTruthy()
+    expect(screen.getByText('打开患者详情，在“影像准备”中重新准备。')).toBeTruthy()
+    expect(screen.queryByText('患者生成失败')).toBeNull()
   })
 
   it('keeps profiles usable while exposing untranslated clinical displays for review', async () => {

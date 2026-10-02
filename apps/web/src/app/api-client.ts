@@ -80,6 +80,7 @@ import {
   patientPersonaRevisionSchema,
   scenarioGenerationJobSchema,
   scenarioGenerationRequestSchema,
+  scenarioGenerationTargetListSchema,
   scenarioProviderCapabilitiesListSchema,
   startSyntheticCaseResultSchema,
   syntheticCaseRegistrationListSchema,
@@ -453,6 +454,14 @@ export function getScenarioProviders(signal?: AbortSignal) {
   return apiGet(
     '/api/sim/v1/scenario-providers',
     scenarioProviderCapabilitiesListSchema,
+    signal,
+  )
+}
+
+export function getScenarioGenerationTargets(signal?: AbortSignal) {
+  return apiGet(
+    '/api/sim/v1/admin/scenario-generation-targets',
+    scenarioGenerationTargetListSchema,
     signal,
   )
 }

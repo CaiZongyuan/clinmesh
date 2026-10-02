@@ -6,6 +6,10 @@ import {
   type ImagingCoverage,
   type ImagingPreparationReason,
 } from '@clinmesh/contracts/imaging'
+import type {
+  ScenarioGenerationTarget,
+  SyntheaKeepCriteria,
+} from '@clinmesh/contracts/scenario'
 import type { z } from 'zod'
 import {
   ImagingCatalogInvalidError,
@@ -24,6 +28,7 @@ import {
   imagingMatchingCatalogHash,
   matchCaseImaging,
   type ImagingMatchingCatalog,
+  type SourceResource,
 } from './imaging-preparation.ts'
 
 type ImagingPreparationErrorCode =
@@ -220,6 +225,66 @@ export class ImagingPreparationService {
       })),
       uncovered: catalog.rules.uncoveredConditions,
     })
+  }
+
+  /** 定向生成可选的适配条目：至少一项检查有已发布素材。只返回条目标识、名称与适用人群。 */
+  async generationTargets(context: ActorContext) {
+    this.#assertAdministrator(context)
+    const catalog = await this.#matchingCatalog()
+    return {
+      items: catalog === undefined
+        ? []
+        : this.#publishedProfiles(catalog).map(profile => ({
+            ageRange: profile.ageRange,
+            kind: 'imaging-profile' as const,
+            label: profile.label,
+            profileId: profile.id,
+            ...(profile.sex === undefined ? {} : { sex: profile.sex }),
+          })),
+    }
+  }
+
+  /**
+   * 由适配条目推导交给 Synthea 的保留条件，只用于提高命中率；患者是否满足条目仍由 `generationTargetMet` 判定。
+   * 阴性条目排除阳性条目的疾病、未覆盖疾病和冲突操作；条目不存在或没有已发布素材时返回 undefined。
+   */
+  async generationKeep(target: ScenarioGenerationTarget): Promise<SyntheaKeepCriteria | undefined> {
+    const catalog = await this.#matchingCatalog()
+    const profile = catalog === undefined
+      ? undefined
+      : this.#publishedProfiles(catalog).find(item => item.id === target.profileId)
+    if (catalog === undefined || profile === undefined) return undefined
+    if (profile.finding === 'positive') {
+      return { activeAny: profile.conditionCodes, activeNone: profile.conflictProcedureCodes }
+    }
+    return {
+      activeAny: profile.indexConditionCodes,
+      activeNone: [...new Set([
+        ...catalog.rules.profiles.flatMap(item => item.finding === 'positive' ? item.conditionCodes : []),
+        ...catalog.rules.uncoveredConditions.flatMap(condition => condition.codes),
+        ...profile.conflictProcedureCodes,
+      ])],
+    }
+  }
+
+  /** 新生成的患者按当前规则是否至少有一项检查由目标条目配到素材；与影像准备使用同一匹配规则。 */
+  async generationTargetMet(target: ScenarioGenerationTarget, candidate: {
+    birthDate: string
+    gender: string
+    historyResources: SourceResource[]
+    indexEncounterReference: string
+    indexResources: SourceResource[]
+    sourceHash: string
+  }): Promise<boolean> {
+    const catalog = await this.#matchingCatalog()
+    if (catalog === undefined) return false
+    return matchCaseImaging({ ...candidate, bound: [], catalog })
+      .some(exam => exam.status === 'ready' && exam.matchingProfileId === target.profileId)
+  }
+
+  #publishedProfiles(catalog: ImagingMatchingCatalog) {
+    return catalog.rules.profiles.filter(profile => Object.values(profile.assets)
+      .some(assetId => (catalog.assets.get(assetId)?.publishedRevisions.length ?? 0) > 0))
   }
 
   /** 适配规则与其引用素材的发布状态；清单目录或适配规则缺失时没有可用清单，内容无效时报告给管理员。 */
