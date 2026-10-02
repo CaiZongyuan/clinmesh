@@ -225,7 +225,7 @@ export function checkImagingReport(
     // 数量词按小句所写侧别的已声明病灶计数；未写侧别时按全部病灶计数。
     const count = statedCount(clause)
     const declared = report.lesions.filter(lesion => !namesSide(clause, opposite(lesion.side))).length
-    if (count !== undefined && (declared < count.minimum || (count.exact !== undefined && count.exact > declared))) {
+    if (count !== undefined && (count.exact === undefined ? declared < count.minimum : count.exact !== declared)) {
       issue('REPORT_COUNT_MISMATCH', `The statement "${clause}" disagrees with ${declared} declared lesion(s)`)
     }
   }

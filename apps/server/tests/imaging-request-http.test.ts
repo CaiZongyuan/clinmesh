@@ -631,8 +631,29 @@ describe('Imaging request HTTP contract', () => {
     expect((await correction(9)).status).toBe(409)
     expect((await correction(1)).status).toBe(409)
 
-    const corrected = await correction(2)
+    const correctionBody = mutation(administrator, {
+      expectedVersions: {
+        [`DiagnosticReport/${acknowledged.report!.diagnosticReportId}`]: acknowledged.report!.diagnosticReportVersion,
+      },
+      input: { expectedRequestVersion: acknowledged.version, reason: '更正印象措辞', reportRevision: 2 },
+    })
+    const corrected = await runtime.app.request(reportPath(acknowledged, 'correct'), correctionBody)
     expect(corrected.status).toBe(200)
+    const correctedBody = await corrected.json()
+    // 响应丢失后以相同幂等键重试：即使清单此后撤下了该修订，仍返回已提交的结果，不重复更正。
+    await installSyntheticImagingAssets({
+      assetDirectory,
+      assets: [
+        { assetId: massCt, examCode: 'chest-ct-plain' },
+        { assetId: massRadiograph, examCode: 'chest-radiograph' },
+        { assetId: clearRadiograph, examCode: 'chest-radiograph' },
+      ],
+      catalogDirectory,
+      matching,
+    })
+    const replayed = await runtime.app.request(reportPath(acknowledged, 'correct'), correctionBody)
+    expect(replayed.status).toBe(200)
+    expect(await replayed.json()).toEqual(correctedBody)
     const current = (await caseDetail(runtime, doctor, outpatientCaseId)).imagingRequests!.requests[0]!
     expect(current).toMatchObject({
       previousReports: [{
@@ -682,6 +703,18 @@ describe('Imaging request HTTP contract', () => {
       `/api/his/v1/imaging-requests/${reported.id}/reports/${reported.report!.diagnosticReportId}/actions/acknowledge`,
       mutation(doctor, reportVersions(reported)),
     )
+
+    // 大小不变的改写同样使影像不可用：核对按安装文件的哈希进行，而不只看文件大小。
+    const frames = join(assetDirectory, 'installed', massCt, '0', 'frames.bin')
+    const original = await readFile(frames)
+    const altered = Buffer.from(original)
+    altered[0] = altered[0]! ^ 0xff
+    await writeFile(frames, altered)
+    const tampered = await acknowledge()
+    expect(tampered.status).toBe(409)
+    expect(apiErrorSchema.parse(await tampered.json()).error.code).toBe('IMAGING_STUDY_UNAVAILABLE')
+    const study = await runtime.app.request(`/api/his/v1/imaging-studies/${reported.report!.studyId}`, { headers: { cookie: doctor } })
+    expect(await study.json()).toMatchObject({ available: false })
 
     await rm(join(assetDirectory, 'installed', massCt), { recursive: true })
     const blocked = await acknowledge()

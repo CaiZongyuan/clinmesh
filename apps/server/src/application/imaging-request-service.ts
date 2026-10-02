@@ -845,8 +845,13 @@ export class ImagingRequestService {
     expectedVersions: Record<string, string>
     idempotencyKey: string
     reason: string
+    reportRevision: number
     requestId: string
-    result: ImagingResult
+    /**
+     * 从当前素材清单解析出的报告内容，或解析失败的原因。清单可变，因此只在命令真正执行时使用：
+     * 相同幂等键的重试先返回已提交的回执，不受清单此后变化影响。
+     */
+    resolution: { result: ImagingResult } | { error: unknown }
   }) {
     return this.#commands.execute({
       authorize: () => assertRole(input.context, ['ris-system']),
@@ -858,11 +863,13 @@ export class ImagingRequestService {
         diagnosticReportId: input.diagnosticReportId,
         expectedRequestVersion: input.expectedRequestVersion,
         reason: input.reason,
-        reportContentSha256: input.result.reportContentSha256,
+        reportRevision: input.reportRevision,
         requestId: input.requestId,
       },
       operation: 'imaging-report.correct',
     }, (transaction) => {
+      if ('error' in input.resolution) throw input.resolution.error
+      const { result } = input.resolution
       this.#host.assertExpectedVersions(input.expectedVersions, [`DiagnosticReport/${input.diagnosticReportId}`])
       const request = this.#requiredRequest(input.context, input.requestId)
       const conflict = (currentStatus: NonNullable<ApiConflict['currentStatus']>): ApiConflict => ({
@@ -898,7 +905,7 @@ export class ImagingRequestService {
         SELECT asset_id FROM imaging_study WHERE workspace_id = ? AND epoch = ? AND study_id = ?
       `).get(input.context.workspaceId, input.context.epoch, current.study_id))
       // 更正不能更换像素，也不能重发同一份内容。
-      if (study.asset_id !== input.result.assetId || current.report_revision === input.result.reportRevision) {
+      if (study.asset_id !== result.assetId || current.report_revision === result.reportRevision) {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
           'The correction must use another reviewed report revision of the same imaging asset',
@@ -908,7 +915,7 @@ export class ImagingRequestService {
       const service = imagingServiceSnapshotSchema.parse(JSON.parse(request.service_snapshot_json))
       const report = this.#createReport(transaction, input.context, request, {
         now,
-        result: input.result,
+        result,
         serviceCode: service.code,
         serviceName: service.name,
         studyId: current.study_id,

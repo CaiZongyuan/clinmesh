@@ -101,7 +101,7 @@
 
 - Linux 中 Chrome for Testing 的独立 profile 若启动后不返回 `--dump-dom`，可将 `CHROME_PATH` 指向同版本 Chrome Headless Shell。容器或 root 环境由外部 wrapper 提供必要启动参数，保持测试文档、断言与超时不变；通过 Turbo 运行时需显式转发该环境变量。本机（WSL2）没有系统 Chrome，浏览器合同测试用 `~/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell` 作为 `CHROME_PATH`。
 
-- WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。
+- WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；仍超时时先查是否真变慢，不继续加大上限。
 
 - 精确运行 Vitest 文件时使用 `pnpm --filter <package> exec vitest run <file>`。脚本经 `pnpm --filter <package> test -- <file>` 转发时会保留 `--`，当前 Vitest 可能运行整个包而未应用文件筛选；以实际 Test Files 数量确认范围。
 

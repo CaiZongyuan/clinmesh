@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 
@@ -152,8 +152,23 @@ export async function selectImagingPackAssets<Asset extends ImagingPackAsset>(
   })
 }
 
-/** 清理被中断的进程遗留的临时目录；素材维护命令不支持同一素材目录上的并发执行。 */
+/**
+ * 清理被中断的进程遗留的临时目录；素材维护命令不支持同一素材目录上的并发执行。
+ * 替换安装时被移开的旧版本若因中断没有新版本取代，放回原位，不丢失已经可用的安装。
+ */
 async function sweepStaging(assetDirectory: string): Promise<void> {
+  const replaced = join(assetDirectory, '.replaced')
+  for (const kind of await readdir(replaced).catch(() => [])) {
+    for (const entry of await readdir(join(replaced, kind))) {
+      const target = join(assetDirectory, kind, entry.slice(0, entry.lastIndexOf('@')))
+      if (await stat(target).then(() => true, () => false)) {
+        await rm(join(replaced, kind, entry), { force: true, recursive: true })
+      } else {
+        await rename(join(replaced, kind, entry), target)
+      }
+    }
+  }
+  await rm(replaced, { force: true, recursive: true })
   await rm(join(assetDirectory, '.staging'), { force: true, recursive: true })
 }
 
@@ -249,10 +264,25 @@ async function stageAsset<Asset extends ImagingPackAsset>(
   }
 }
 
+/**
+ * 以改名发布暂存目录。已有安装先移到 `.replaced`，新版本就位后才删除；新版本未能就位时放回旧版本，
+ * 进程在两次改名之间中断时由下次维护命令的清理放回。两次改名之间的极短时间内读取会看到素材不可用。
+ */
 async function publish(staged: string, target: string): Promise<void> {
   await mkdir(dirname(target), { recursive: true })
-  await rm(target, { force: true, recursive: true })
-  await rename(staged, target)
+  const retired = join(dirname(dirname(target)), '.replaced', basename(dirname(target)), `${basename(target)}@${randomUUID()}`)
+  const replacing = await stat(target).then(() => true, () => false)
+  if (replacing) {
+    await mkdir(dirname(retired), { recursive: true })
+    await rename(target, retired)
+  }
+  try {
+    await rename(staged, target)
+  } catch (error) {
+    if (replacing) await rename(retired, target)
+    throw error
+  }
+  if (replacing) await rm(retired, { force: true, recursive: true })
 }
 
 /** 维护命令要求素材已登记来源实例与输出哈希。 */
