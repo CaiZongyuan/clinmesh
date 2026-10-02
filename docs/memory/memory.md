@@ -156,6 +156,10 @@
 
 - 影像流水线经代理访问 TCIA 时须设置 `NODE_USE_ENV_PROXY=1`；Node 的 `fetch` 默认不读取 `HTTPS_PROXY`，缺少该变量时 `pnpm imaging:sync` 和 `imaging:record` 表现为连接超时。下载在后台运行并轮询结果文件，不在前台阻塞等待。
 
+- 病理素材流水线从 IDC 公开存储桶（`idc-open-data`）匿名下载，经代理时同样需要 `NODE_USE_ENV_PROXY=1`；一个 20 倍实例可达数百 MB，来源客户端按区间下载并只重试失败的区间。会话的 `/tmp` scratchpad 会随机器重启清空：需要跨重启保留的下载缓存和研究数据放在仓库的 `.data/` 下，其中不放测试或脚本文件。清单条目里的临床字段从重新下载的来源文件转录并登记文件哈希，不凭记忆填写。
+
+- `jpeg-js` 解码三分量 JPEG 时，`colorTransform` 缺省会把 Adobe APP14 transform=0（RGB）的码流当作 YCbCr 转换；需要按码流标记显式传入。`@cornerstonejs/codec-openjpeg` 的 Emscripten 模块默认逐瓦片向标准输出打印 INFO，创建模块时传入空的 `print` 与 `printErr`。验证真实切片的颜色解释不看像素：解码已安装层级后统计通道均值与近白像素比例，H&E 组织像素的红、蓝明显高于绿，背景接近白色。
+
 - 浏览器合同测试（`*.browser.test.ts`）通过 `CHROME_PATH` 寻找 Chrome。WSL2 上 `/usr/bin/chromium-browser` 是 snap 占位脚本，完整的 Chrome for Testing 在 `--dump-dom` 下会挂起；使用 `npx @puppeteer/browsers install chrome-headless-shell@<版本>` 安装的 headless shell 并把 `CHROME_PATH` 指向它。没有该变量时这些测试失败在启动浏览器，不代表产品回归。Turborepo strict env 不向 `test` 任务转发 `CHROME_PATH`，因此 `pnpm test` 与 `pnpm check` 在这类机器上仍会失败在浏览器合同测试；逐包运行 vitest，或用 `pnpm exec turbo run test --filter=!@clinmesh/mobile --env-mode=loose` 加上根目录的脚本测试来覆盖同一范围。
 
 - 验证真实影像时不读取像素或截图：用 `agent-browser snapshot` 的文字树核对报告、状态和控件，用页面内脚本返回 canvas 尺寸、非零像素比例、均值和翻片前后的校验和变化等聚合量。帧切换计时以 canvas 内容发生变化为准，页码文字会先于像素更新。

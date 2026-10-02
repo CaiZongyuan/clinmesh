@@ -166,6 +166,29 @@ pnpm imaging:repair
 
 Docker 一键镜像不包含影像清单和素材，其中的放射服务显示为未开展；阅片闭环在源码运行方式下使用。
 
+### 病理切片素材
+
+乳腺切片病理会诊使用单独的病理素材包，与上面的放射素材互不依赖：可以只安装其中一个，任何一个缺失、安装失败或损坏都不影响另一个，也不影响 Server 启动。仓库只提交 [病理切片素材清单](../pathology-assets/README.md)，切片像素由下面的命令按清单拉取。
+
+```sh
+pnpm pathology:sync
+pnpm pathology:verify
+```
+
+`pathology:sync` 需要访问 NCI Imaging Data Commons 的公开存储桶（`idc-open-data.s3.amazonaws.com`，匿名读取），按清单登记的序列目录下载来源 DICOM，校验哈希与文件中的 Study/Series/Instance UID，摄取为分层瓦片并原子安装；只下载清单登记的组织层级实例，不下载缩略图。下载按 8 MiB 的字节区间进行，网络错误、超时、服务端错误、限流和被截断的区间在退避后只重试该区间，对象在下载途中发生变化或其他请求错误直接报告失败；进度写入标准错误。安装与保留的来源文件都完好的切片会被跳过，命令可以重复运行，中断后重跑即可。首批七张切片的来源文件约 1.2 GB，安装后另占约 1.6 GB，其中最大的一张来源约 0.76 GB；一张切片的来源实例整份读入内存后摄取，这张切片摄取时进程内存峰值约 1.2 GB，摄取本身耗时数分钟。经代理访问公网时同样为该命令设置 `NODE_USE_ENV_PROXY=1`。`pathology:verify` 只读核对已安装切片与保留的来源文件，不访问网络，状态含义与 `imaging:verify` 相同。两个命令都接受可重复的 `--asset <assetId>` 以限定切片，例如只安装验收所需的两张。
+
+切片默认安装到 `.data/pathology-assets`，用 `CLINMESH_PATHOLOGY_ASSET_DIRECTORY` 可以改到其他位置，`CLINMESH_PATHOLOGY_CATALOG_DIRECTORY` 指向清单目录；它们与放射的 `CLINMESH_IMAGING_*` 变量相互独立。目录结构与放射素材目录相同：`sources/`（保留的来源文件）、`installed/`（每张切片的 `levels/<n>.tiles` 瓦片文件、`levels/<n>.index` 偏移索引、`icc-profile.icc` 和安装回执）和 `.staging/`。来源文件头带有公开数据集的受试者编号，`installed/` 中没有。
+
+切片损坏或被误删时：
+
+```sh
+pnpm pathology:repair
+```
+
+`pathology:repair` 用 `sources/` 中保留的来源文件离线重建 `installed/`，重建结果与清单登记的哈希逐字节一致；来源文件也丢失或损坏时重新运行 `pathology:sync`。摄取的转码与降采样结果依赖清单登记的编解码库版本，升级 `jpeg-js` 或 `@cornerstonejs/codec-openjpeg` 后同步与修复会在哈希核对处失败，需要维护者重新登记。
+
+备份规则与放射素材相同但分开执行：备份病理素材目录中的 `sources/` 或保留一份能独立校验为相同字节的副本，`installed/` 不必备份；恢复时放回 `sources/`，依次运行 `pnpm pathology:repair` 与 `pnpm pathology:verify`，确认每张切片都是 `ready`。两个素材包的备份、恢复和修复互不影响。
+
 ### Docker 一键启动
 
 需要完整容器化运行时（含 Synthea）时叠加两个 Compose 文件：

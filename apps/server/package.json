@@ -14,6 +14,7 @@
     "db:restore": "tsx src/database-cli.ts restore",
     "db:verify": "tsx src/database-cli.ts verify",
     "imaging": "tsx src/imaging-assets-cli.ts",
+    "pathology": "tsx src/pathology-assets-cli.ts",
     "reference-db": "tsx src/reference-database-cli.ts",
     "reference:sync": "tsx src/reference-sync.ts",
     "performance": "tsx src/performance-cli.ts",

@@ -116,6 +116,14 @@ _Avoid_: Asset link in clinical DTO, study reference
 本院对一位患者完成一次影像检查的运行事实，拥有本院自己的检查标识。它引用申请、就诊和患者，不暴露所用素材；像素是否可读是读取时的状态，不改写这项事实。
 _Avoid_: Imaging Asset, DICOM file, source study
 
+**Pathology Consultation**:
+门诊医生为既往接受过乳腺手术的患者开立的切片病理会诊：患者携带既往手术的 H&E 切片，由本院病理科以受控系统执行者身份出具会诊报告。它不是本院活检、冰冻切片或细胞学检查。
+_Avoid_: Biopsy order, laboratory test, frozen section
+
+**Slide Asset**:
+病理素材清单登记的一张去标识真实 H&E 数字切片及其来源、许可、层级与摄取参数、输出哈希、来源临床字段和报告内容修订。它只含组织金字塔层级，最高 20 倍；与 Imaging Asset 属于同一窄例外，但登记在独立的病理素材包中，单独安装、修复和备份。
+_Avoid_: Whole slide file, label image, pathology report, Imaging Asset
+
 **Adult Reference Baseline**:
 由 Hospital Service 冻结的版本化成人参考规则为适用患者确定性生成的合成健康检验结果。它只在没有精确 Case Truth 时使用，不兼容事实、患者不适用或规则缺失都会失败。
 _Avoid_: Unsourced normal fallback, hospital LIS reference interval, disease model

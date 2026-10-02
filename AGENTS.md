@@ -44,7 +44,7 @@ pnpm check
 - `packages/ui` 不依赖 `core`；`packages/views` 可依赖 `core + ui`，但不导入 Vite、Electron、Expo 或路由框架。
 - Agent tools 使用窄 schema、受信 context binding、幂等键、预期版本和完整审计；不提供任意 URL、SQL、Bundle 或任意 method/path/body 写工具。
 - Agent-facing CLI 的 `cliPath`、schema、错误或恢复合同变化时，在同一 diff 更新 owning Operation Catalog、对应 `clinmesh-*` Skill 和命令示例漂移测试。
-- 所有演示数据必须是合成数据。禁止提交真实患者信息、医保凭证、支付凭证或平台密钥。唯一的例外是 [影像素材清单](imaging-assets/README.md) 登记的公开授权、已去标识的影像像素：只提交清单，像素与来源文件不进入 Git、日志、模型输入或 SQLite；演示、截图和录屏保留清单要求的署名。Agent 开发和验证时不读取影像像素或截图，只使用文字快照和聚合统计。
+- 所有演示数据必须是合成数据。禁止提交真实患者信息、医保凭证、支付凭证或平台密钥。唯一的例外是 [影像素材清单](imaging-assets/README.md) 与 [病理切片素材清单](pathology-assets/README.md) 登记的公开授权、已去标识的影像像素：只提交清单，像素与来源文件不进入 Git、日志、模型输入或 SQLite；演示、截图和录屏保留清单要求的署名。Agent 开发和验证时不读取影像像素或截图，只使用文字快照和聚合统计。
 - 非平凡架构、流程、协议或测试策略变更必须新增或更新一份 [Agent Note](.agents/notes/README.md)。
 - Commit、issue 和 PR 的标题与正文使用简体中文，结构见 [消息与提交规范](docs/agent-development.md#消息与提交规范)。
 - 文档是当前状态，不记录评审过程或实现流水账；一个事实只有一个详细归属位置，其他位置链接它。
