@@ -253,6 +253,10 @@ export class ConsultationDialogueService {
       },
       knownConditions: detail.priorFacts.map(fact => fact.display),
       persona,
+      // 切片会诊只告知“已受理”：患者知道自己交了既往手术的切片，报告、镜下所见和诊断不进入患者模型。
+      slideConsultationsAccepted: (detail.pathologyRequests?.requests ?? []).flatMap(request => (
+        request.status === 'issued' || request.status === 'cancelled' ? [] : [{ name: request.service.name }]
+      )),
       specimenExperiences: (detail.laboratoryRequests?.requests ?? []).flatMap(request => {
         if (request.report === undefined) return []
         const specimen = experiencedSpecimenSchema.parse(

@@ -10,13 +10,20 @@ import {
   resetScenarioRequestSchema,
   doctorQueueViewSchema,
   acknowledgeImagingReportRequestSchema,
+  acknowledgePathologyReportRequestSchema,
   acknowledgeLaboratoryReportRequestSchema,
   cancelImagingRequestRequestSchema,
+  cancelPathologyRequestRequestSchema,
   correctImagingReportRequestSchema,
+  correctPathologyReportRequestSchema,
   deleteImagingRequestDraftRequestSchema,
+  deletePathologyRequestDraftRequestSchema,
   issueImagingRequestRequestSchema,
+  issuePathologyRequestRequestSchema,
   retryImagingRequestRequestSchema,
+  retryPathologyRequestRequestSchema,
   saveImagingRequestDraftRequestSchema,
+  savePathologyRequestDraftRequestSchema,
   cancelLaboratoryRequestRequestSchema,
   completeHospitalServiceRequestSchema,
   completeEncounterRequestSchema,
@@ -54,6 +61,10 @@ import {
 import type { ImagingAssetLibrary } from './infrastructure/imaging-assets/imaging-asset-library.ts'
 import { ImagingStudyReadError, type ImagingStudyReader } from './application/imaging-study-reader.ts'
 import { PathologyPreparationError, type PathologyPreparationService } from './application/pathology-preparation-service.ts'
+import {
+  PathologyResultUnavailableError,
+  type PathologyResultResolver,
+} from './application/pathology-result-resolver.ts'
 import type { PathologySlideReader } from './application/pathology-slide-reader.ts'
 import {
   selectPatientPersonaRevisionRequestSchema,
@@ -121,7 +132,11 @@ export interface CreateAppOptions {
   identity?: IdentityService
   imaging?: { library: ImagingAssetLibrary; reader: ImagingStudyReader; results: ImagingResultResolver }
   imagingPreparation?: ImagingPreparationService
-  pathology?: { preparation: PathologyPreparationService; reader: PathologySlideReader }
+  pathology?: {
+    preparation: PathologyPreparationService
+    reader: PathologySlideReader
+    results: PathologyResultResolver
+  }
   investigation?: InvestigationService
   laboratoryServicePublisher?: LaboratoryServicePublisher
   consultationDialogue?: ConsultationDialogueService
@@ -1904,7 +1919,18 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       app.get('/api/his/v1/imaging-studies/:studyId', async (context) => {
         context.header('Cache-Control', 'private, no-store')
         try {
-          return context.json(await reader.describeStudy(await actor(context), context.req.param('studyId')))
+          const context_ = await actor(context)
+          const studyId = context.req.param('studyId')
+          try {
+            return context.json(await reader.describeStudy(context_, studyId))
+          } catch (error) {
+            // 病理检查与放射检查共用同一个本院检查入口：不是放射检查时交给病理读取边界，放射读取的语句预算不变。
+            const pathologyStudy = error instanceof ImagingStudyReadError && error.code === 'IMAGING_STUDY_NOT_FOUND'
+              ? await options.pathology?.reader.describeStudy(context_, studyId)
+              : undefined
+            if (pathologyStudy === undefined) throw error
+            return context.json(pathologyStudy)
+          }
         } catch (error) {
           return apiErrorResponse(context, error)
         }
@@ -2061,6 +2087,186 @@ export function createApp(options: CreateAppOptions = {}): Hono {
             return context.json(workflow.imaging.correct({
               // 更正由管理员发起，以放射系统执行者的身份签发，与检验更正一致。
               context: { ...administrator, roleCode: 'ris-system' },
+              diagnosticReportId: context.req.param('diagnosticReportId'),
+              expectedRequestVersion: body.input.expectedRequestVersion,
+              expectedVersions: body.expectedVersions,
+              idempotencyKey: idempotencyKey(context),
+              reason: body.input.reason,
+              reportRevision: body.input.reportRevision,
+              requestId,
+              resolution,
+            }))
+          } catch (error) {
+            return apiErrorResponse(context, error)
+          }
+        },
+      )
+    }
+    if (options.pathology !== undefined) {
+      const { preparation, reader, results } = options.pathology
+      // 切片瓦片的读取通道：只面向责任医生，响应不进入任何共享缓存。
+      app.get(
+        '/api/his/v1/imaging-studies/:studyId/series/:seriesIndex/levels/:level/tiles/:column/:row',
+        async (context) => {
+          context.header('Cache-Control', 'private, no-store')
+          try {
+            const position = slideTilePositionSchema.parse(context.req.param())
+            const bytes = await reader.readStudyTile(await actor(context), context.req.param('studyId'), position)
+            return context.body(bytes as Uint8Array<ArrayBuffer>, 200, { 'Content-Type': 'application/octet-stream' })
+          } catch (error) {
+            return apiErrorResponse(context, error)
+          }
+        },
+      )
+      app.get('/api/his/v1/doctor/cases/:caseId/pathology-services', async (context) => {
+        try {
+          const context_ = await actor(context)
+          const outpatientCaseId = context.req.param('caseId')
+          workflow.doctorCaseDetail(context_, outpatientCaseId)
+          const offering = await preparation.offering(context_, { outpatientCaseId })
+          return context.json(workflow.pathology.serviceCatalog(context_, offering.readyExamCodes, offering.sourceProcedures))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+      app.put('/api/his/v1/encounters/:encounterId/pathology-request/draft', async (context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const body = savePathologyRequestDraftRequestSchema.parse(await context.req.json())
+          const context_ = await actor(context)
+          const encounterId = context.req.param('encounterId')
+          return context.json(workflow.pathology.saveDraft({
+            context: context_,
+            encounterId,
+            expectedDraftVersion: body.input.expectedDraftVersion,
+            expectedVersions: body.expectedVersions,
+            idempotencyKey: idempotencyKey(context),
+            purpose: body.input.purpose,
+            serviceId: body.input.serviceId,
+            sourceProcedureReference: body.input.sourceProcedureReference,
+            sourceProcedures: (await preparation.offering(context_, { encounterId })).sourceProcedures,
+          }))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+      app.delete('/api/his/v1/encounters/:encounterId/pathology-request/draft', async (context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const body = deletePathologyRequestDraftRequestSchema.parse(await context.req.json())
+          return context.json(workflow.pathology.deleteDraft({
+            context: await actor(context),
+            encounterId: context.req.param('encounterId'),
+            expectedDraftVersion: body.input.expectedDraftVersion,
+            expectedVersions: body.expectedVersions,
+            idempotencyKey: idempotencyKey(context),
+          }))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+      app.post('/api/his/v1/encounters/:encounterId/pathology-request/actions/issue', async (context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const body = issuePathologyRequestRequestSchema.parse(await context.req.json())
+          const context_ = await actor(context)
+          const encounterId = context.req.param('encounterId')
+          const offering = await preparation.offering(context_, { encounterId })
+          return context.json(workflow.pathology.issue({
+            context: context_,
+            encounterId,
+            expectedDraftVersion: body.input.expectedDraftVersion,
+            expectedVersions: body.expectedVersions,
+            idempotencyKey: idempotencyKey(context),
+            readyExamCodes: offering.readyExamCodes,
+            sourceProcedures: offering.sourceProcedures,
+          }))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+      app.post('/api/his/v1/pathology-requests/:requestId/actions/cancel', async (context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const body = cancelPathologyRequestRequestSchema.parse(await context.req.json())
+          return context.json(workflow.pathology.cancel({
+            context: await actor(context),
+            expectedRequestVersion: body.input.expectedRequestVersion,
+            expectedVersions: body.expectedVersions,
+            idempotencyKey: idempotencyKey(context),
+            reasonCode: body.input.reasonCode,
+            requestId: context.req.param('requestId'),
+          }))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+      app.post('/api/his/v1/pathology-requests/:requestId/actions/retry', async (context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const body = retryPathologyRequestRequestSchema.parse(await context.req.json())
+          return context.json(workflow.pathology.retry({
+            context: await actor(context),
+            expectedRequestVersion: body.input.expectedRequestVersion,
+            expectedVersions: body.expectedVersions,
+            idempotencyKey: idempotencyKey(context),
+            requestId: context.req.param('requestId'),
+          }))
+        } catch (error) {
+          return apiErrorResponse(context, error)
+        }
+      })
+      app.post(
+        '/api/his/v1/pathology-requests/:requestId/reports/:diagnosticReportId/actions/acknowledge',
+        async (context) => {
+          try {
+            identity.assertTrustedMutation(context.req.raw.headers)
+            const body = acknowledgePathologyReportRequestSchema.parse(await context.req.json())
+            const context_ = await actor(context)
+            const requestId = context.req.param('requestId')
+            return context.json(workflow.pathology.acknowledge({
+              context: context_,
+              diagnosticReportId: context.req.param('diagnosticReportId'),
+              expectedRequestVersion: body.input.expectedRequestVersion,
+              expectedVersions: body.expectedVersions,
+              idempotencyKey: idempotencyKey(context),
+              requestId,
+              studyAvailable: await results.studyAvailable(context_.workspaceId, context_.epoch, requestId),
+            }))
+          } catch (error) {
+            return apiErrorResponse(context, error)
+          }
+        },
+      )
+      app.post(
+        '/api/his/v1/pathology-requests/:requestId/reports/:diagnosticReportId/actions/correct',
+        async (context) => {
+          try {
+            identity.assertTrustedMutation(context.req.raw.headers)
+            const body = correctPathologyReportRequestSchema.parse(await context.req.json())
+            const administrator = await identity.resolveAdministratorActor(
+              context.req.raw.headers,
+              context.req.raw.method,
+              context.req.path,
+            )
+            const requestId = context.req.param('requestId')
+            // 解析失败不在这里抛出：命令先按幂等键返回已提交的回执，只有真正执行时才使用解析结果。
+            const resolution = await results.resolveCorrection(
+              administrator.workspaceId,
+              administrator.epoch,
+              requestId,
+              body.input.reportRevision,
+            ).then(result => ({ result }), (error: unknown) => ({
+              error: error instanceof PathologyResultUnavailableError
+                ? new WorkflowError(
+                    'WORKFLOW_CONFLICT',
+                    'The correction must use a reviewed report revision of the same slide asset',
+                  )
+                : error,
+            }))
+            return context.json(workflow.pathology.correct({
+              // 更正由管理员发起，以病理系统执行者的身份签发，与检验、放射更正一致。
+              context: { ...administrator, roleCode: 'pathology-system' },
               diagnosticReportId: context.req.param('diagnosticReportId'),
               expectedRequestVersion: body.input.expectedRequestVersion,
               expectedVersions: body.expectedVersions,

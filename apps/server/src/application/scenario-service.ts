@@ -504,6 +504,7 @@ export class ScenarioService {
         AND (
           json_type(config_json, '$.laboratoryService') = 'object'
           OR json_type(config_json, '$.imagingService') = 'object'
+          OR json_type(config_json, '$.pathologyService') = 'object'
         )
     `).run(epoch, context.workspaceId, context.epoch)
     this.#database.driver.prepare(`

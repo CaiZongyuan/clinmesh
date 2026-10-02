@@ -16,6 +16,18 @@ describe('insertImagingReportSummary', () => {
     })
   })
 
+  it('names a pathology consultation report as such', () => {
+    expect(insertImagingReportSummary('胸片未见异常。', '乳腺切片病理会诊', {
+      impression: '乳腺浸润性导管癌。原始资料未提供组织学分级。',
+      issuedLabel: '2026年8月24日 09:05',
+      reportKind: '病理会诊报告',
+      revisionNumber: 1,
+    })).toEqual({
+      status: 'inserted',
+      text: '胸片未见异常。\n乳腺切片病理会诊（病理会诊报告第 1 版，签发于 2026年8月24日 09:05）：乳腺浸润性导管癌。原始资料未提供组织学分级。',
+    })
+  })
+
   it('replaces only the generated placeholder and an empty field', () => {
     for (const current of [undefined, '  ', '暂无辅助检查结果。']) {
       expect(insertImagingReportSummary(current, '胸部正位片', { ...report, revisionNumber: 1 })).toEqual({

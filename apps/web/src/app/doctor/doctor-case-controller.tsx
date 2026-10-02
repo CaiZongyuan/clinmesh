@@ -117,6 +117,7 @@ import { doctorCaseStatusLabel } from './doctor-case-status.ts'
 import { DoctorQueueModule } from './doctor-queue-module.tsx'
 import { ImagingPage, useImagingViewState, type ImagingPageActions } from './imaging-page.tsx'
 import { emptyAuxiliaryExamination, insertImagingReportSummary } from './imaging-report-summary.ts'
+import { PathologyPage, type PathologyPageActions } from './pathology-page.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import {
   LaboratoryPage,
@@ -181,15 +182,17 @@ const encounterCompletionTargetElementIds = {
   imaging: 'encounter-completion-target-imaging',
   laboratory: 'encounter-completion-target-laboratory',
   'medication-conclusion': 'encounter-completion-target-medication-conclusion',
+  pathology: 'encounter-completion-target-pathology',
 } satisfies Record<EncounterCompletionTarget, string>
 
 const caseDetailSectionByCompletionTarget = {
   diagnosis: 'diagnosis',
   'clinical-document': 'record',
-  // 放射检查与检验在同一个“检验检查”分区内。
+  // 放射检查、病理会诊与检验在同一个“检验检查”分区内。
   imaging: 'laboratory',
   laboratory: 'laboratory',
   'medication-conclusion': 'prescription',
+  pathology: 'laboratory',
 } satisfies Record<EncounterCompletionTarget, DoctorCaseSection>
 
 const doctorCaseSectionTabElementIds = {
@@ -430,13 +433,14 @@ function DoctorCaseController({
     enabled: activeCaseId !== undefined,
     queryFn: ({ signal }) => getDoctorCase(activeCaseId ?? '', signal),
     queryKey: detailKey,
-    // 检验与放射申请在后台执行：有申请尚未出结果时持续刷新，报告到达后页面自行更新。
+    // 检验、放射与病理申请在后台执行：有申请尚未出结果时持续刷新，报告到达后页面自行更新。
     refetchInterval: query => selectedCase?.status === 'awaiting-report'
       || (
         query.state.data?.laboratoryRequests?.reportingSupported === true
         && query.state.data.laboratoryRequests.requests.some(isAwaitingResult)
       )
       || query.state.data?.imagingRequests?.requests.some(isAwaitingResult) === true
+      || query.state.data?.pathologyRequests?.requests.some(isAwaitingResult) === true
       ? 1_500
       : false,
   })
@@ -2273,6 +2277,33 @@ function DoctorCaseController({
                   }),
               view: imagingView,
             }}
+            pathologyActions={{
+              canCorrect: canCorrectReports,
+              onChanged: () => refreshCaseById(detail.data.caseId),
+              ...(detail.data.encounter.status !== 'in-progress' || (detail.data.clinicalDocument?.signed.length ?? 0) > 0
+                ? {}
+                : {
+                    onInsertSummary: (request, report) => {
+                      const document = workingClinicalDocuments[detail.data.caseId]
+                        ?? createWorkingClinicalDocument(detail.data)
+                      const insertion = insertImagingReportSummary(document.auxiliaryExamination, request.service.name, {
+                        impression: report.diagnosis,
+                        issuedLabel: formatClinicalDateTime(report.issuedAt, 'zh-CN'),
+                        reportKind: '病理会诊报告',
+                        revisionNumber: report.revisionNumber,
+                      })
+                      if (insertion.status === 'inserted') {
+                        setWorkingClinicalDocuments(current => ({
+                          ...current,
+                          [detail.data.caseId]: { ...document, auxiliaryExamination: insertion.text },
+                        }))
+                      }
+                      return insertion.status
+                    },
+                  }),
+              // 切片的阅片状态与放射影像共用：都按申请和报告标识记录。
+              view: imagingView,
+            }}
             laboratoryRequestActions={{
               acknowledge: {
                 error: acknowledgeReport.variables?.caseId === detail.data.caseId
@@ -2526,6 +2557,7 @@ function CaseDetail({
   laboratoryCatalog,
   laboratoryRequestActions,
   imagingActions,
+  pathologyActions,
   locale,
   messages,
   onClinicalDocumentChange,
@@ -2576,6 +2608,7 @@ function CaseDetail({
   laboratoryItemId: string
   laboratoryRequestActions: LaboratoryPageActions
   imagingActions: ImagingPageActions
+  pathologyActions: PathologyPageActions
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   onClinicalDocumentChange: (document: ClinicalDocumentContent) => void
@@ -3053,6 +3086,16 @@ function CaseDetail({
               locale={locale}
               readOnly={clinicalReadOnly}
               state={detail.imagingRequests}
+            />
+            <PathologyPage
+              actions={pathologyActions}
+              caseId={detail.caseId}
+              elementId={encounterCompletionTargetElementIds.pathology}
+              encounter={detail.encounter}
+              key={`pathology:${detail.caseId}`}
+              locale={locale}
+              readOnly={clinicalReadOnly}
+              state={detail.pathologyRequests}
             />
           </DoctorCasePanel>
         </Tabs>

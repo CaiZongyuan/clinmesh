@@ -13,6 +13,9 @@ function getConflictOwner(
     case 'laboratory-report': return messages.conflictOwner_laboratoryReport
     case 'laboratory-request': return messages.conflictOwner_laboratoryRequest
     case 'laboratory-request-draft': return messages.conflictOwner_laboratoryRequestDraft
+    case 'pathology-report': return messages.conflictOwner_pathologyReport
+    case 'pathology-request': return messages.conflictOwner_pathologyRequest
+    case 'pathology-request-draft': return messages.conflictOwner_pathologyRequestDraft
     case 'prescription': return messages.conflictOwner_prescription
     case 'prescription-draft': return messages.conflictOwner_prescriptionDraft
   }
