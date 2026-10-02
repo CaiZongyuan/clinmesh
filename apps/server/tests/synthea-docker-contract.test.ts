@@ -47,6 +47,37 @@ describe('Synthea Docker Provider contract', () => {
     expect(providerSource).toContain('pruneDanglingReferences(bundle)')
   })
 
+  it('accepts only bounded keep criteria and turns them into a temporary alive-only keep module', async () => {
+    const providerSource = await readFile(
+      new URL('../../synthea-provider/ProviderServer.java', import.meta.url),
+      'utf8',
+    )
+
+    expect(providerSource).toContain('if (root.has("keep")) requestKeys.add("keep");')
+    expect(providerSource).toContain('requireKeys(root, requestKeys, "request");')
+    expect(providerSource).toContain('requireKeys(keepValue, Set.of("activeAny", "activeNone"), "keep");')
+    expect(providerSource).toContain('requireSnomedCodes(keepValue, "activeAny", 1, 32)')
+    expect(providerSource).toContain('requireSnomedCodes(keepValue, "activeNone", 0, 128)')
+    expect(providerSource).toContain('.matches("\\\\d{6,18}") || codes.contains(value.getAsString())')
+    expect(providerSource).toContain('condition.addProperty("condition_type", "Active Condition");')
+    expect(providerSource).toContain('absent.addProperty("condition_type", "Not");')
+    expect(providerSource).toContain('if (!request.keep.activeNone.isEmpty())')
+    expect(providerSource).toContain('keepModule.addProperty("gmf_version", 2);')
+    expect(providerSource).toContain('workingDirectory.resolve("keep-module.json")')
+    expect(providerSource).toMatch(
+      /if \(request\.keep != null\) \{[^]*command\.add\("-k"\);\s*command\.add\(keepModulePath\.toString\(\)\);\s*command\.add\("--generate\.only_alive_patients=true"\);\s*\}\s*command\.add\("--exporter\.baseDirectory="/u,
+    )
+    expect(providerSource).toMatch(/if \(request\.keep != null\) \{[^}]*metadata\.add\("keep", keep\);/u)
+    expect(providerSource).toContain('body.addProperty("targetedGeneration", true);')
+    expect(providerSource).toContain(
+      'sendError(exchange, 422, "KEEP_NOT_SATISFIED", error.getMessage());',
+    )
+    expect(providerSource).toContain('if (request.keep != null) throw new KeepNotSatisfiedException();')
+    expect(providerSource).toContain(
+      'if (request.keep != null && bundles.size() < request.count) {',
+    )
+  })
+
   it('runs pinned self-contained images and localizes every Bundle before returning it', async () => {
     const [dockerfile, providerSource, compose, environmentExample] = await Promise.all([
       readFile(new URL('../../synthea-provider/Dockerfile', import.meta.url), 'utf8'),

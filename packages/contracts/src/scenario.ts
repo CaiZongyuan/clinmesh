@@ -121,6 +121,33 @@ export const syntheaModuleFilterSchema = z.string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9_./-]*$/)
   .refine(value => !value.includes('..') && !value.includes('//') && !value.endsWith('/'))
 
+const snomedCodeSchema = z.string().regex(/^\d{6,18}$/)
+
+/**
+ * 交给 Synthea Provider 的保留条件：模拟结束时须存在其中任一编码、且不存在任何排除编码的患者才会导出。
+ * 编码同时匹配疾病与已做操作（Synthea 记录中的操作永久存在）。由 Server 从定向目标推导，不由客户端提交。
+ */
+export const syntheaKeepCriteriaSchema = z.object({
+  activeAny: z.array(snomedCodeSchema).min(1).max(32),
+  activeNone: z.array(snomedCodeSchema).max(128),
+}).strict()
+
+/** 定向生成目标：一个当前已发布的影像适配条目。 */
+export const scenarioGenerationTargetSchema = z.object({
+  kind: z.literal('imaging-profile'),
+  profileId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
+}).strict()
+
+export const scenarioGenerationTargetOptionSchema = scenarioGenerationTargetSchema.extend({
+  ageRange: z.tuple([z.number().int().min(0).max(120), z.number().int().min(0).max(120)]),
+  label: z.string().min(1),
+  sex: z.enum(['female', 'male']).optional(),
+}).strict()
+
+export const scenarioGenerationTargetListSchema = z.object({
+  items: z.array(scenarioGenerationTargetOptionSchema),
+}).strict()
+
 export const scenarioGenerationRequestSchema = z.object({
   moduleMode: z.enum(['all', 'filter']).optional(),
   modules: z.array(syntheaModuleFilterSchema).max(32).optional(),
@@ -138,6 +165,7 @@ export const scenarioGenerationRequestSchema = z.object({
     clinical: z.number().int().min(0).max(2_147_483_647),
     population: z.number().int().min(0).max(2_147_483_647),
   }).strict(),
+  target: scenarioGenerationTargetSchema.optional(),
   timeRange: z.object({
     end: localDateSchema,
     start: localDateSchema,
@@ -608,6 +636,8 @@ export const scenarioProviderCapabilitiesSchema = z.object({
   modules: z.array(syntheaModuleFilterSchema),
   providerId: z.literal('synthea'),
   providerName: z.string().min(1),
+  /** Provider 是否接受保留条件（定向生成）。 */
+  targetedGeneration: z.boolean().default(false),
   unavailableReason: z.string().min(1).optional(),
 }).strict()
 
@@ -1080,7 +1110,9 @@ export type ScenarioGenerationRequest = z.infer<typeof scenarioGenerationRequest
 export type ScenarioGenerationJob = z.infer<typeof scenarioGenerationJobSchema>
 export type ScenarioInvestigationResult = z.infer<typeof scenarioInvestigationResultSchema>
 export type ScenarioPatient = z.infer<typeof scenarioPatientSchema>
-export type ScenarioProviderCapabilities = z.infer<typeof scenarioProviderCapabilitiesSchema>
+export type ScenarioProviderCapabilities = z.input<typeof scenarioProviderCapabilitiesSchema>
+export type ScenarioGenerationTarget = z.infer<typeof scenarioGenerationTargetSchema>
+export type SyntheaKeepCriteria = z.infer<typeof syntheaKeepCriteriaSchema>
 export type SyntheticPatientIdentity = z.infer<typeof syntheticPatientIdentitySchema>
 export type SyntheaCnLocalizationProvenance = z.infer<
   typeof syntheaCnLocalizationProvenanceSchema

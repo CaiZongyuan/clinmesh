@@ -21,7 +21,15 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@clinmesh/ui/components/empty'
-import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/ui/components/field'
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@clinmesh/ui/components/input-group'
 import {
@@ -65,6 +73,7 @@ import {
   getPatientPersonaRevisions,
   getRegistrationCatalog,
   getScenarioGenerationJob,
+  getScenarioGenerationTargets,
   getScenarioProviders,
   getSyntheticCaseHistory,
   getSyntheticCaseHistoryDetail,
@@ -92,6 +101,9 @@ import { useAgentReview } from './agent-review.tsx'
 
 const profileListKey = ['synthetic-patient-profiles'] as const
 const providerKey = ['scenario-providers'] as const
+const generationTargetKey = ['scenario-generation-targets'] as const
+// 适配条目 profileId 不含下划线，用作“不定向”的哨兵值
+const untargeted = '_none'
 const currentScenarioKey = ['scenario-current'] as const
 const maximumScenarioSeed = 2_147_483_647
 const avatarCache = new Map<string, string>()
@@ -128,6 +140,10 @@ const copy = {
     nationalId: 'Synthetic national ID', next: 'Next', noCase: 'No usable current case',
     noHistory: 'No visible source history', patientCount: 'Patient count', phone: 'Phone',
     populationSeed: 'Population seed', previous: 'Previous',
+    target: 'Targeted case', targetAgeMismatch: 'Age must stay within {min}–{max} years for the selected profile',
+    targetImaging: 'Chest imaging: {label}', targetNone: 'Untargeted',
+    targetPopulation: 'Eligible population: {sex}, {min}–{max} years', targetSexAny: 'any gender',
+    targetSexMismatch: 'The selected profile requires gender: {sex}',
     resourceDetail: 'History record details', save: 'Save profile', saveFailed: 'Failed to save profile', search: 'Search patients', source: 'Source', startVisit: 'Start outpatient visit',
     translationReview: 'Translation review {count}', translationWarningDescription: 'The patient is still usable. These English clinical names need later medical or pharmacy review.',
     translationWarningTitle: '{count} clinical names remain in English', translationWarningTruncated: 'Only the first retained items are shown.',
@@ -160,6 +176,10 @@ const copy = {
     noHistory: '没有可见来源历史', patientCount: '患者人数', phone: '手机号码', populationSeed: '人口 seed',
     previous: '上一页', resourceDetail: '历史记录详情', save: '保存档案', saveFailed: '保存失败',
     search: '搜索患者', source: '来源', startVisit: '开始门诊就诊',
+    target: '定向病例', targetAgeMismatch: '所选适配条目要求年龄在 {min}–{max} 岁之间',
+    targetImaging: '胸部影像：{label}', targetNone: '不定向',
+    targetPopulation: '适用人群：{sex}，{min}–{max} 岁', targetSexAny: '性别不限',
+    targetSexMismatch: '所选适配条目要求性别为{sex}',
     translationReview: '翻译待确认 {count}', translationWarningDescription: '患者仍可使用；这些英文临床名称需要后续医学或药学校对。',
     translationWarningTitle: '{count} 个临床名称保留英文', translationWarningTruncated: '这里只显示已保留的前几项。',
   },
@@ -703,7 +723,45 @@ function GenerationSheet({ error, locale, onGenerate, onOpenChange, open, pendin
   const filtered = request.moduleMode === 'filter'
   const updatePopulation = (next: Partial<ScenarioGenerationRequest['population']>) => setRequest(current => ({ ...current, population: { ...current.population, ...next } }))
   const updateModule = (module: string, checked: boolean) => setRequest(current => ({ ...current, modules: checked ? [...new Set([...current.modules, module])] : current.modules.length === 1 ? current.modules : current.modules.filter(item => item !== module) }))
-  return <Sheet onOpenChange={onOpenChange} open={open}><SheetContent className="w-full sm:max-w-lg" side="right"><SheetHeader><SheetTitle>{messages.generate}</SheetTitle><SheetDescription>{messages.emptyDescription}</SheetDescription></SheetHeader><div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4"><div className="border-b pb-3"><p className="text-sm font-semibold">Synthea</p><p className="mt-1 text-xs text-muted-foreground">{messages.allModules}</p></div><FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="patient-batch-name">{messages.batch}</FieldLabel><Input id="patient-batch-name" maxLength={120} onChange={event => setRequest(current => ({ ...current, name: event.target.value }))} value={request.name} /></Field><Field><FieldLabel htmlFor="patient-count">{messages.patientCount}</FieldLabel><Input id="patient-count" max={10} min={1} onChange={event => updatePopulation({ count: Number(event.target.value) })} type="number" value={request.population.count} /></Field><Field><FieldLabel htmlFor="patient-min-age">{messages.minimumAge}</FieldLabel><Input id="patient-min-age" max={120} min={0} onChange={event => updatePopulation({ age: { ...request.population.age, minimum: Number(event.target.value) } })} type="number" value={request.population.age.minimum} /></Field><Field><FieldLabel htmlFor="patient-max-age">{messages.maximumAge}</FieldLabel><Input id="patient-max-age" max={120} min={0} onChange={event => updatePopulation({ age: { ...request.population.age, maximum: Number(event.target.value) } })} type="number" value={request.population.age.maximum} /></Field></FieldGroup><Field><FieldLabel htmlFor="patient-gender">{messages.gender}</FieldLabel><Select items={genderItems} onValueChange={value => { if (value !== null) updatePopulation({ gender: value }) }} value={request.population.gender}><SelectTrigger className="w-full" id="patient-gender"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{genderItems.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent></Select></Field><details className="border-t pt-4"><summary className="cursor-pointer text-sm font-medium">{messages.advanced}</summary><FieldGroup className="mt-4"><Field orientation="horizontal"><Checkbox checked={filtered} disabled={availableModules.length === 0} id="patient-filter-modules" onCheckedChange={checked => setRequest(current => ({ ...current, moduleMode: checked === true ? 'filter' : 'all', modules: checked === true ? availableModules.slice(0, 1) : [] }))} /><FieldLabel htmlFor="patient-filter-modules">{messages.filterModules}</FieldLabel></Field>{filtered ? <FieldSet><FieldLegend variant="label">Synthea modules</FieldLegend><FieldGroup>{availableModules.map(module => <Field key={module} orientation="horizontal"><Checkbox checked={request.modules.includes(module)} id={`patient-module-${module}`} onCheckedChange={checked => updateModule(module, checked === true)} /><FieldLabel htmlFor={`patient-module-${module}`}>{module}</FieldLabel></Field>)}</FieldGroup></FieldSet> : null}<FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="patient-population-seed">{messages.populationSeed}</FieldLabel><Input id="patient-population-seed" max={maximumScenarioSeed} min={0} onChange={event => setRequest(current => ({ ...current, seeds: { ...current.seeds, population: Number(event.target.value) } }))} type="number" value={request.seeds.population} /></Field><Field><FieldLabel htmlFor="patient-clinical-seed">{messages.clinicalSeed}</FieldLabel><Input id="patient-clinical-seed" max={maximumScenarioSeed} min={0} onChange={event => setRequest(current => ({ ...current, seeds: { ...current.seeds, clinical: Number(event.target.value) } }))} type="number" value={request.seeds.clinical} /></Field><Field className="sm:col-span-2"><FieldLabel htmlFor="patient-history-start">{messages.historyStart}</FieldLabel><Input id="patient-history-start" onChange={event => setRequest(current => ({ ...current, timeRange: { ...current.timeRange, start: event.target.value } }))} type="date" value={request.timeRange.start} /></Field></FieldGroup></FieldGroup></details>{provider?.available === false ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{unavailableReason}</AlertTitle></Alert> : null}{error === null ? null : <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(error, locale)}</AlertDescription></Alert>}</div><SheetFooter><Button disabled={pending || provider?.available !== true} onClick={() => onGenerate(request)}><SparklesIcon data-icon="inline-start" />{messages.generate}</Button></SheetFooter></SheetContent></Sheet>
+  // 定向病例只在 Provider 声明支持且存在可选条目时出现；否则请求体与不定向生成完全相同
+  const targetedGeneration = provider?.targetedGeneration === true
+  const targets = useQuery({
+    enabled: open && targetedGeneration,
+    queryFn: ({ signal }) => getScenarioGenerationTargets(signal),
+    queryKey: generationTargetKey,
+  })
+  const targetOptions = targetedGeneration ? targets.data?.items ?? [] : []
+  const [targetProfileId, setTargetProfileId] = useState(untargeted)
+  const target = targetOptions.find(item => item.profileId === targetProfileId)
+  const sexLabel = (sex: 'female' | 'male' | undefined) => sex === 'female' ? messages.genderFemale : sex === 'male' ? messages.genderMale : messages.targetSexAny
+  const formatTargetRange = (text: string, item: { ageRange: readonly [number, number]; sex?: 'female' | 'male' | undefined }) => text
+    .replace('{sex}', sexLabel(item.sex)).replace('{min}', String(item.ageRange[0])).replace('{max}', String(item.ageRange[1]))
+  const targetItems = [
+    { label: messages.targetNone, value: untargeted },
+    ...targetOptions.map(item => ({ label: messages.targetImaging.replace('{label}', item.label), value: item.profileId })),
+  ]
+  const sexMismatch = target?.sex !== undefined && request.population.gender !== target.sex
+  const ageMismatch = target !== undefined && (request.population.age.minimum < target.ageRange[0] || request.population.age.maximum > target.ageRange[1])
+  const targetError = target === undefined ? undefined
+    : sexMismatch ? formatTargetRange(messages.targetSexMismatch, target)
+      : ageMismatch ? formatTargetRange(messages.targetAgeMismatch, target) : undefined
+  const selectTarget = (profileId: string) => {
+    setTargetProfileId(profileId)
+    const item = targetOptions.find(option => option.profileId === profileId)
+    if (item === undefined) return
+    const [minimum, maximum] = item.ageRange
+    const clamp = (value: number) => Math.min(Math.max(value, minimum), maximum)
+    setRequest(current => ({
+      ...current,
+      population: {
+        ...current.population,
+        age: { maximum: clamp(current.population.age.maximum), minimum: clamp(current.population.age.minimum) },
+        gender: item.sex ?? 'any',
+      },
+    }))
+  }
+  const submit = () => onGenerate(target === undefined ? request : { ...request, target: { kind: target.kind, profileId: target.profileId } })
+  return <Sheet onOpenChange={onOpenChange} open={open}><SheetContent className="w-full sm:max-w-lg" side="right"><SheetHeader><SheetTitle>{messages.generate}</SheetTitle><SheetDescription>{messages.emptyDescription}</SheetDescription></SheetHeader><div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4"><div className="border-b pb-3"><p className="text-sm font-semibold">Synthea</p><p className="mt-1 text-xs text-muted-foreground">{messages.allModules}</p></div>{targetOptions.length === 0 ? null : <Field data-invalid={targetError !== undefined}><FieldLabel htmlFor="patient-generation-target">{messages.target}</FieldLabel><Select items={targetItems} onValueChange={value => { if (value !== null) selectTarget(value) }} value={target === undefined ? untargeted : target.profileId}><SelectTrigger className="w-full" id="patient-generation-target"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{targetItems.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent></Select>{target === undefined ? null : <FieldDescription>{formatTargetRange(messages.targetPopulation, target)}</FieldDescription>}{targetError === undefined ? null : <FieldError>{targetError}</FieldError>}</Field>}<FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="patient-batch-name">{messages.batch}</FieldLabel><Input id="patient-batch-name" maxLength={120} onChange={event => setRequest(current => ({ ...current, name: event.target.value }))} value={request.name} /></Field><Field><FieldLabel htmlFor="patient-count">{messages.patientCount}</FieldLabel><Input id="patient-count" max={10} min={1} onChange={event => updatePopulation({ count: Number(event.target.value) })} type="number" value={request.population.count} /></Field><Field><FieldLabel htmlFor="patient-min-age">{messages.minimumAge}</FieldLabel><Input aria-invalid={ageMismatch || undefined} id="patient-min-age" max={120} min={0} onChange={event => updatePopulation({ age: { ...request.population.age, minimum: Number(event.target.value) } })} type="number" value={request.population.age.minimum} /></Field><Field><FieldLabel htmlFor="patient-max-age">{messages.maximumAge}</FieldLabel><Input aria-invalid={ageMismatch || undefined} id="patient-max-age" max={120} min={0} onChange={event => updatePopulation({ age: { ...request.population.age, maximum: Number(event.target.value) } })} type="number" value={request.population.age.maximum} /></Field></FieldGroup><Field><FieldLabel htmlFor="patient-gender">{messages.gender}</FieldLabel><Select items={genderItems} onValueChange={value => { if (value !== null) updatePopulation({ gender: value }) }} value={request.population.gender}><SelectTrigger aria-invalid={sexMismatch || undefined} className="w-full" id="patient-gender"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{genderItems.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent></Select></Field><details className="border-t pt-4"><summary className="cursor-pointer text-sm font-medium">{messages.advanced}</summary><FieldGroup className="mt-4"><Field orientation="horizontal"><Checkbox checked={filtered} disabled={availableModules.length === 0} id="patient-filter-modules" onCheckedChange={checked => setRequest(current => ({ ...current, moduleMode: checked === true ? 'filter' : 'all', modules: checked === true ? availableModules.slice(0, 1) : [] }))} /><FieldLabel htmlFor="patient-filter-modules">{messages.filterModules}</FieldLabel></Field>{filtered ? <FieldSet><FieldLegend variant="label">Synthea modules</FieldLegend><FieldGroup>{availableModules.map(module => <Field key={module} orientation="horizontal"><Checkbox checked={request.modules.includes(module)} id={`patient-module-${module}`} onCheckedChange={checked => updateModule(module, checked === true)} /><FieldLabel htmlFor={`patient-module-${module}`}>{module}</FieldLabel></Field>)}</FieldGroup></FieldSet> : null}<FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="patient-population-seed">{messages.populationSeed}</FieldLabel><Input id="patient-population-seed" max={maximumScenarioSeed} min={0} onChange={event => setRequest(current => ({ ...current, seeds: { ...current.seeds, population: Number(event.target.value) } }))} type="number" value={request.seeds.population} /></Field><Field><FieldLabel htmlFor="patient-clinical-seed">{messages.clinicalSeed}</FieldLabel><Input id="patient-clinical-seed" max={maximumScenarioSeed} min={0} onChange={event => setRequest(current => ({ ...current, seeds: { ...current.seeds, clinical: Number(event.target.value) } }))} type="number" value={request.seeds.clinical} /></Field><Field className="sm:col-span-2"><FieldLabel htmlFor="patient-history-start">{messages.historyStart}</FieldLabel><Input id="patient-history-start" onChange={event => setRequest(current => ({ ...current, timeRange: { ...current.timeRange, start: event.target.value } }))} type="date" value={request.timeRange.start} /></Field></FieldGroup></FieldGroup></details>{provider?.available === false ? <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{unavailableReason}</AlertTitle></Alert> : null}{error === null ? null : <Alert variant="destructive"><CircleAlertIcon /><AlertTitle>{messages.generationFailed}</AlertTitle><AlertDescription>{runtimeErrorMessage(error, locale)}</AlertDescription></Alert>}</div><SheetFooter><Button disabled={pending || provider?.available !== true || targetError !== undefined} onClick={submit}><SparklesIcon data-icon="inline-start" />{messages.generate}</Button></SheetFooter></SheetContent></Sheet>
 }
 
 function EditProfileSheet({ error, locale, onOpenChange, onSave, open, pending, profile }: {

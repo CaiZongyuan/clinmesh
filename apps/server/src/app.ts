@@ -840,6 +840,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error, 'The imaging preparation request is invalid')
       }
     })
+    app.get('/api/sim/v1/admin/scenario-generation-targets', async (context) => {
+      context.header('Cache-Control', 'no-store')
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(await imagingPreparation.generationTargets(session.actor))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
     app.get('/api/sim/v1/admin/imaging-coverage', async (context) => {
       context.header('Cache-Control', 'no-store')
       try {

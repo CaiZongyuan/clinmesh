@@ -569,6 +569,7 @@ describe('trusted session and Scenario HTTP contract', () => {
         modules: [],
         providerId: 'synthea',
         providerName: 'Synthea',
+        targetedGeneration: false,
         unavailableReason: '未配置 Synthea Provider',
       }],
     })

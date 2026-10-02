@@ -16,6 +16,7 @@ import {
   type PatientPersonaContent,
   type ScenarioGenerationRequest,
   type ScenarioProviderCapabilities,
+  type SyntheaKeepCriteria,
 } from '@clinmesh/contracts/scenario'
 import { expect } from 'vitest'
 import type { ScenarioGenerationProvider, SourcePatientCorpus } from '../../src/application/scenario-data/provider.ts'
@@ -116,18 +117,36 @@ export function caseBundle(input: {
 
 export class SequenceSyntheaProvider implements ScenarioGenerationProvider {
   readonly #bundles: unknown[]
+  readonly #targetedGeneration: boolean
+  /** 每次生成收到的保留条件，未定向时为 undefined。 */
+  readonly keeps: Array<SyntheaKeepCriteria | undefined> = []
 
-  constructor(bundles: unknown[]) {
+  constructor(bundles: unknown[], options: { targetedGeneration?: boolean } = {}) {
     this.#bundles = [...bundles]
+    this.#targetedGeneration = options.targetedGeneration ?? false
   }
 
   async capabilities(): Promise<ScenarioProviderCapabilities> {
-    return { available: true, maxPopulation: 10, modules: [], providerId: 'synthea', providerName: 'Synthea' }
+    return {
+      available: true,
+      maxPopulation: 10,
+      modules: [],
+      providerId: 'synthea',
+      providerName: 'Synthea',
+      targetedGeneration: this.#targetedGeneration,
+    }
   }
 
-  async generate(_request: ScenarioGenerationRequest): Promise<SourcePatientCorpus> {
+  async generate(
+    _request: ScenarioGenerationRequest,
+    _signal?: AbortSignal,
+    keep?: SyntheaKeepCriteria,
+  ): Promise<SourcePatientCorpus> {
+    this.keeps.push(keep)
     const bundle = this.#bundles.shift()
     if (bundle === undefined) throw new Error('No synthetic patient bundle remains')
+    // 队列中的错误代表这一次 Provider 调用失败，例如保留条件未满足。
+    if (bundle instanceof Error) throw bundle
     return {
       kind: 'synthea-r4',
       sources: [{ format: 'fhir-r4-bundle', hash: sourceArtifactHash(bundle), patientId: 'patient', raw: bundle }],
@@ -216,8 +235,10 @@ export async function createImagingRuntime(bundles: unknown[], options: {
   catalog?: boolean
   performanceObserver?: SqlitePerformanceObserver
   persona?: boolean
+  targetedGeneration?: boolean
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-imaging-'))
+  const syntheaProvider = new SequenceSyntheaProvider(bundles, { targetedGeneration: options.targetedGeneration ?? false })
   const catalogDirectory = join(directory, 'imaging-catalog')
   const assetDirectory = join(directory, 'imaging-assets')
   // 患者 Persona 与患者对话共用一个记录请求的模型替身。
@@ -251,10 +272,10 @@ export async function createImagingRuntime(bundles: unknown[], options: {
           patientPersonaModel: 'fake-brief-model',
         }
       : {}),
-    syntheaProvider: new SequenceSyntheaProvider(bundles),
+    syntheaProvider,
     trustedOrigins: ['http://localhost'],
   })
-  return { assetDirectory, catalogDirectory, directory, modelRequests, runtime }
+  return { assetDirectory, catalogDirectory, directory, modelRequests, runtime, syntheaProvider }
 }
 
 export async function signIn(runtime: Runtime, email = 'admin@demo.clinmesh.local') {

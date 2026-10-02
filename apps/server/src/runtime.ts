@@ -240,13 +240,6 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     generationJobs.requeueInterrupted(new Date().toISOString())
     patientPersonas.requeueInterrupted(new Date().toISOString())
     laboratoryServicePublications.requeueInterrupted(new Date().toISOString())
-    const scenarioData = new ScenarioDataService({
-      cases: syntheticCases,
-      commands,
-      jobs: generationJobs,
-      provider: syntheaProvider,
-      profiles: syntheticPatientProfiles,
-    })
     const patientPersona = new PatientPersonaService({
       briefs: patientPersonas,
       cases: syntheticCases,
@@ -271,6 +264,14 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       library: imagingLibrary,
       preparations: imagingPreparations,
       profiles: syntheticPatientProfiles,
+    })
+    const scenarioData = new ScenarioDataService({
+      cases: syntheticCases,
+      commands,
+      jobs: generationJobs,
+      provider: syntheaProvider,
+      profiles: syntheticPatientProfiles,
+      targets: imagingPreparation,
     })
     const caseVisits = new SyntheticCaseVisitService({
       briefs: patientPersonas,

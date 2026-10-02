@@ -8,6 +8,8 @@ import {
   syntheticPatientProfileSchema,
   type ScenarioGenerationJob,
   type ScenarioGenerationRequest,
+  type ScenarioGenerationTarget,
+  type SyntheaKeepCriteria,
   type SyntheticPatientIdentity,
 } from '@clinmesh/contracts/scenario'
 import { z } from 'zod'
@@ -58,12 +60,39 @@ export class ScenarioDataError extends Error {
   }
 }
 
+/** 定向生成依赖的影像适配规则，由影像准备服务实现。 */
+export interface ScenarioGenerationTargets {
+  generationKeep(target: ScenarioGenerationTarget): Promise<SyntheaKeepCriteria | undefined>
+  generationTargetMet(target: ScenarioGenerationTarget, candidate: {
+    birthDate: string
+    gender: string
+    historyResources: Array<{ resource: unknown; sourceReference: string }>
+    indexEncounterReference: string
+    indexResources: Array<{ resource: unknown; sourceReference: string }>
+    sourceHash: string
+  }): Promise<boolean>
+  prepareBatch(input: { caseIds: string[]; context: ActorContext; idempotencyKey: string }): Promise<unknown>
+}
+
+const sourceBundleSchema = z.object({
+  entry: z.array(z.object({
+    fullUrl: z.string().optional(),
+    resource: z.object({
+      birthDate: z.string().optional(),
+      gender: z.string().optional(),
+      id: z.string().optional(),
+      resourceType: z.string(),
+    }).passthrough(),
+  }).passthrough()),
+}).passthrough()
+
 export class ScenarioDataService {
   readonly #cases: SyntheticCaseRepository
   readonly #commands: CommandExecutor
   readonly #jobs: ScenarioGenerationJobRepository
   readonly #profiles: SyntheticPatientProfileRepository
   readonly #provider: ScenarioGenerationProvider
+  readonly #targets: ScenarioGenerationTargets | undefined
 
   constructor(input: {
     cases: SyntheticCaseRepository
@@ -71,12 +100,14 @@ export class ScenarioDataService {
     jobs: ScenarioGenerationJobRepository
     profiles: SyntheticPatientProfileRepository
     provider: ScenarioGenerationProvider
+    targets?: ScenarioGenerationTargets
   }) {
     this.#cases = input.cases
     this.#commands = input.commands
     this.#jobs = input.jobs
     this.#profiles = input.profiles
     this.#provider = input.provider
+    this.#targets = input.targets
   }
 
   async capabilities(context: ActorContext) {
@@ -91,6 +122,9 @@ export class ScenarioDataService {
   }) {
     this.#assertAdministrator(input.context)
     await this.#assertProviderAvailable(input.request)
+    if (input.request.target !== undefined && !(await this.#provider.capabilities()).targetedGeneration) {
+      throw new ScenarioDataError('PROVIDER_NOT_AVAILABLE', 'The Synthea Provider does not support targeted generation')
+    }
     const now = new Date().toISOString()
     const job = scenarioGenerationJobSchema.parse({
       caseIds: [],
@@ -139,9 +173,12 @@ export class ScenarioDataService {
   async processNextGenerationJob(signal?: AbortSignal): Promise<ScenarioGenerationJob | undefined> {
     const claimed = this.#jobs.claimNext(new Date().toISOString())
     if (claimed === undefined) return undefined
+    const { target } = claimed.request
+    let completedJob: ScenarioGenerationJob
     try {
       await this.#assertProviderAvailable(claimed.request)
-      const generated = await this.#generateUsableCorpus(claimed.request, signal)
+      const keep = target === undefined ? undefined : await this.#targetKeep(target)
+      const generated = await this.#generateUsableCorpus(claimed.request, signal, keep)
       const createdAt = new Date().toISOString()
       const profiles = createSyntheticPatientProfiles({
         batchId: `synthea-batch-${claimed.jobId}`,
@@ -154,7 +191,7 @@ export class ScenarioDataService {
       const sourceHash = canonicalJsonHash(
         generated.corpus.sources.map(source => source.hash),
       )
-      return this.#commands.execute({
+      completedJob = this.#commands.execute({
         context: claimed.actorContext,
         contextRequirement: 'known',
         dataSchema: scenarioGenerationJobSchema,
@@ -242,6 +279,15 @@ export class ScenarioDataService {
         }
       }).data
     }
+    if (target !== undefined && this.#targets !== undefined) {
+      // 定向生成的病例随即运行影像准备；准备失败不回滚已生成的患者，管理员可在影像准备中重试。
+      await this.#targets.prepareBatch({
+        caseIds: completedJob.caseIds,
+        context: claimed.actorContext,
+        idempotencyKey: `${claimed.jobId}:imaging-preparation`,
+      }).catch(() => undefined)
+    }
+    return completedJob
   }
 
   listSyntheticPatients(
@@ -396,15 +442,34 @@ export class ScenarioDataService {
     }
   }
 
+  async #targetKeep(target: ScenarioGenerationTarget): Promise<SyntheaKeepCriteria> {
+    if (!(await this.#provider.capabilities()).targetedGeneration) {
+      throw new ScenarioGenerationProviderError(
+        'PROVIDER_TARGET_UNSUPPORTED',
+        'The Synthea Provider does not support targeted generation',
+      )
+    }
+    const keep = await this.#targets?.generationKeep(target)
+    if (keep === undefined) {
+      throw new ScenarioGenerationProviderError('IMAGING_TARGET_UNAVAILABLE', 'The selected imaging profile is not available')
+    }
+    return keep
+  }
+
+  /**
+   * 有界重试直到每位患者都有合格的 Index Encounter；定向生成还要求每位患者按当前影像规则满足目标条目。
+   * 保留条件只提高 Provider 的命中率，是否满足由影像准备的匹配规则判定。
+   */
   async #generateUsableCorpus(
     request: ScenarioGenerationRequest,
     signal?: AbortSignal,
+    keep?: SyntheaKeepCriteria,
   ): Promise<{
     casesByPatientId: Map<string, CompiledSyntheaIndexCase>
     corpus: SourcePatientCorpus
     request: ScenarioGenerationRequest
   }> {
-    let lastError: SyntheaIndexCaseError | undefined
+    let lastError: ScenarioGenerationProviderError | SyntheaIndexCaseError | undefined
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const attemptRequest = scenarioGenerationRequestSchema.parse({
         ...request,
@@ -413,16 +478,61 @@ export class ScenarioDataService {
           population: (request.seeds.population + attempt * 130_363) % 2_147_483_648,
         },
       })
-      const corpus = await this.#provider.generate(attemptRequest, signal)
+      let corpus: SourcePatientCorpus
       try {
-        const casesByPatientId = new Map(corpus.sources.map(source => (
+        corpus = await this.#provider.generate(attemptRequest, signal, keep)
+      } catch (error) {
+        // Synthea 在一次运行中固定患者年龄等人口属性，抽到无法满足保留条件的人口时整次运行未命中，换 seed 重试。
+        if (!(error instanceof ScenarioGenerationProviderError) || error.code !== 'KEEP_NOT_SATISFIED') throw error
+        lastError = new ScenarioGenerationProviderError(
+          'IMAGING_TARGET_NOT_MET',
+          'No generated patient satisfied the selected imaging profile after repeated attempts',
+        )
+        continue
+      }
+      let casesByPatientId: Map<string, CompiledSyntheaIndexCase>
+      try {
+        casesByPatientId = new Map(corpus.sources.map(source => (
           [source.patientId, compileSyntheaIndexCase(source.raw)] as const
         )))
-        return { casesByPatientId, corpus, request: attemptRequest }
       } catch (error) {
         if (!(error instanceof SyntheaIndexCaseError)) throw error
         lastError = error
+        continue
       }
+      const { target } = request
+      if (target !== undefined && this.#targets !== undefined) {
+        let met = true
+        for (const source of corpus.sources) {
+          const compiled = casesByPatientId.get(source.patientId)!
+          const entries = new Map(sourceBundleSchema.parse(source.raw).entry.map(entry => (
+            [entry.fullUrl ?? `${entry.resource.resourceType}/${entry.resource.id}`, entry.resource] as const
+          )))
+          const resources = (references: string[]) => references.map(reference => ({
+            resource: entries.get(reference),
+            sourceReference: reference,
+          }))
+          const patient = [...entries.values()].find(resource => resource.resourceType === 'Patient')
+          met = patient?.birthDate !== undefined && patient.gender !== undefined
+            && await this.#targets.generationTargetMet(target, {
+              birthDate: patient.birthDate,
+              gender: patient.gender,
+              historyResources: resources(compiled.visibleResourceReferences),
+              indexEncounterReference: compiled.indexEncounterReference,
+              indexResources: resources(compiled.hiddenResourceReferences),
+              sourceHash: source.hash,
+            })
+          if (!met) break
+        }
+        if (!met) {
+          lastError = new ScenarioGenerationProviderError(
+            'IMAGING_TARGET_NOT_MET',
+            'No generated patient satisfied the selected imaging profile after repeated attempts',
+          )
+          continue
+        }
+      }
+      return { casesByPatientId, corpus, request: attemptRequest }
     }
     throw lastError ?? new SyntheaIndexCaseError()
   }
