@@ -95,6 +95,14 @@ export const docsPages: DocsPage[] = [
     order: 3,
   },
   {
+    source: 'docs/pathology.md',
+    route: 'guide/pathology.md',
+    label: '病理切片会诊使用指南',
+    sidebar: 'guide',
+    section: 'Guide',
+    order: 4,
+  },
+  {
     source: 'docs/testing.md',
     route: 'engineering/testing.md',
     label: '测试策略',

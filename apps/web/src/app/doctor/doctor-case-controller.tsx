@@ -46,13 +46,20 @@ import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardC
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   acknowledgeImagingReport,
+  acknowledgePathologyReport,
   acknowledgeLaboratoryReport,
   cancelImagingRequest,
+  cancelPathologyRequest,
   correctImagingReport,
+  correctPathologyReport,
   getCaseImagingServices,
+  getCasePathologyServices,
   issueImagingRequest,
+  issuePathologyRequest,
   retryImagingRequest,
+  retryPathologyRequest,
   saveImagingRequestDraft,
+  savePathologyRequestDraft,
   sendConsultationMessage,
   retryConsultationReply,
   cancelLaboratoryRequest,
@@ -155,6 +162,7 @@ type DoctorAgentDraftKind =
   | 'first-visit'
   | 'imaging'
   | 'laboratory'
+  | 'pathology'
   | 'prescription'
   | 'record'
   | 'revisit'
@@ -1153,17 +1161,18 @@ function DoctorCaseController({
   const agentPage = useMemo(() => ({
     actions: {
       'outpatient.case.read': {
-        description: 'Read current case, queue.items (waiting + active; use each caseId to select a patient), and imagingServices with their availability (null when the imaging catalog cannot be read).',
+        description: 'Read current case, queue.items (waiting + active; use each caseId to select a patient), imagingServices with availability, and pathologyServices with availability and the sourceProcedures that can be sent for slide consultation (each null when its catalog cannot be read).',
         enabled: activeCaseId !== undefined,
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: async (_raw: unknown, signal: AbortSignal) => {
           if (activeCaseId === undefined) throw new Error(messages.consultationUnavailable)
-          const [current, imagingServices] = await Promise.all([
+          const [current, imagingServices, pathologyServices] = await Promise.all([
             getDoctorCase(activeCaseId, signal),
-            // 放射目录读取失败（例如素材清单无效）时仍返回病例，目录以 null 表示不可用。
+            // 放射或病理目录读取失败（例如素材清单无效）时仍返回病例，目录以 null 表示不可用。
             getCaseImagingServices(activeCaseId, signal).then(catalog => catalog.items, () => null),
+            getCasePathologyServices(activeCaseId, signal).then(catalog => catalog.items, () => null),
           ])
-          return { ...current, imagingServices, queue: queue.data ?? null }
+          return { ...current, imagingServices, pathologyServices, queue: queue.data ?? null }
         },
       },
       'outpatient.case.select': {
@@ -1187,31 +1196,41 @@ function DoctorCaseController({
         },
       },
       'outpatient.section.select': {
-        description: 'Select a case section; its Tools appear only while it is active (consultation: dialogue; record: document; laboratory: lab/imaging requests, reports; diagnosis; prescription). imagingRequestId (laboratory only) opens that reported study for the human; no pixels to the Agent.',
+        description: 'Select a case section; its Tools appear only while it is active (consultation; record; laboratory: lab/imaging/pathology requests, reports; diagnosis; prescription). imagingRequestId/pathologyRequestId (laboratory only) opens that study or slide for the human; no pixels.',
         enabled: detail.data !== undefined,
         parameters: {
           type: 'object' as const,
           properties: {
             imagingRequestId: { type: 'string', maxLength: 128 },
+            pathologyRequestId: { type: 'string', maxLength: 128 },
             section: { type: 'string', enum: doctorCaseSectionSchema.options },
           },
           required: ['section'],
           additionalProperties: false,
         },
         execute: (raw: unknown) => {
-          const { imagingRequestId, section } = agentToolInputSchemas['outpatient.section.select'].parse(raw)
+          const { imagingRequestId, pathologyRequestId, section } = agentToolInputSchemas['outpatient.section.select'].parse(raw)
           if (
             imagingRequestId !== undefined
             && detail.data?.imagingRequests?.requests.find(item => item.id === imagingRequestId)?.report === undefined
           ) throw new Error('The imaging request has no report to open')
+          if (
+            pathologyRequestId !== undefined
+            && detail.data?.pathologyRequests?.requests.find(item => item.id === pathologyRequestId)?.report === undefined
+          ) throw new Error('The pathology consultation has no report to open')
           const tab = caseDetailRoot.current?.querySelector(`#${doctorCaseSectionTabElementIds[section]}`)
           if (!(tab instanceof HTMLButtonElement)) {
             throw new Error('Doctor case section is not available')
           }
           tab.click()
-          if (imagingRequestId === undefined) return { section, selected: true }
-          imagingView.setOpen(imagingRequestId, true)
-          return { imagesOpened: true, imagingRequestId, section, selected: true }
+          if (imagingRequestId !== undefined) imagingView.setOpen(imagingRequestId, true)
+          if (pathologyRequestId !== undefined) imagingView.setOpen(pathologyRequestId, true)
+          return {
+            ...(imagingRequestId === undefined ? {} : { imagesOpened: true, imagingRequestId }),
+            ...(pathologyRequestId === undefined ? {} : { pathologyRequestId, slideOpened: true }),
+            section,
+            selected: true,
+          }
         },
       },
       'outpatient.consultation.ask': {
@@ -1362,6 +1381,33 @@ function DoctorCaseController({
           }, newIdempotencyKey())
           await refreshCaseById(current.caseId)
           hydrateAgentDraft(current.caseId, 'imaging')
+          return result
+        },
+      },
+      'outpatient.pathology.draft.set': {
+        description: 'Validate and save a slide consultation draft (serviceId and sourceProcedureReference from pathologyServices, free-text purpose) without issuing it.',
+        enabled: detail.data?.consultation !== undefined
+          && detail.data.encounter.status === 'in-progress',
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            purpose: { type: 'string', minLength: 2, maxLength: 500 },
+            serviceId: { type: 'string', maxLength: 128 },
+            sourceProcedureReference: { type: 'string', maxLength: 512 },
+          },
+          required: ['purpose', 'serviceId', 'sourceProcedureReference'],
+          additionalProperties: false,
+        },
+        execute: async (raw: unknown) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const result = await savePathologyRequestDraft({
+            ...agentToolInputSchemas['outpatient.pathology.draft.set'].parse(raw),
+            encounterId: current.encounter.id,
+            encounterVersion: current.encounter.versionId,
+            expectedDraftVersion: current.pathologyRequests?.draftVersion ?? 0,
+          }, newIdempotencyKey())
+          await refreshCaseById(current.caseId)
+          hydrateAgentDraft(current.caseId, 'pathology')
           return result
         },
       },
@@ -1628,10 +1674,12 @@ function DoctorCaseController({
         },
       },
       'outpatient.report.acknowledge.propose': {
-        description: 'Open human review before acknowledging one signed laboratory or imaging report. An imaging report can be acknowledged only after its images were opened and displayed to the human reader.',
+        description: 'Open human review before acknowledging one signed laboratory, imaging or pathology consultation report. An imaging or pathology report can be acknowledged only after its images or slide were opened and displayed to the human reader.',
         enabled: detail.data?.laboratoryRequests?.requests.some(
           request => request.status === 'reported',
         ) === true || detail.data?.imagingRequests?.requests.some(
+          request => request.status === 'reported',
+        ) === true || detail.data?.pathologyRequests?.requests.some(
           request => request.status === 'reported',
         ) === true,
         parameters: {
@@ -1661,6 +1709,26 @@ function DoctorCaseController({
               ),
               signal,
               title: locale => locale === 'zh-CN' ? '确认已阅放射报告' : 'Acknowledge imaging report',
+            })
+          }
+          const pathologyRequest = current.pathologyRequests?.requests.find(item => item.id === requestId)
+          if (pathologyRequest !== undefined) {
+            const report = pathologyRequest.report
+            if (pathologyRequest.status !== 'reported' || report === undefined) {
+              throw new Error(messages.consultationUnavailable)
+            }
+            if (!imagingView.isShown(report.diagnosticReportId)) {
+              throw new Error('The slide has not been displayed to the human reader yet; open it with clinmesh_select_doctor_section and pathologyRequestId first')
+            }
+            return agentReview.request({
+              confirmLabel: locale => locale === 'zh-CN' ? '确认已阅' : 'Acknowledge',
+              description: pathologyRequest.service.name,
+              onConfirm: () => runImagingAction(
+                current.caseId,
+                () => acknowledgePathologyReport(pathologyRequest, report, newIdempotencyKey()),
+              ),
+              signal,
+              title: locale => locale === 'zh-CN' ? '确认已阅病理会诊报告' : 'Acknowledge pathology consultation report',
             })
           }
           const request = current.laboratoryRequests?.requests.find(item => item.id === requestId)
@@ -1839,6 +1907,117 @@ function DoctorCaseController({
             )),
             signal,
             title: locale => locale === 'zh-CN' ? '更正放射报告' : 'Correct imaging report',
+          })
+        },
+      },
+      'outpatient.pathology.issue.propose': {
+        description: 'Open human review before issuing the saved slide consultation draft.',
+        enabled: detail.data?.pathologyRequests?.draft !== undefined,
+        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
+        execute: (_raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const state = current.pathologyRequests
+          if (state?.draft === undefined) throw new Error(messages.consultationUnavailable)
+          return agentReview.request({
+            confirmLabel: locale => locale === 'zh-CN' ? '签发申请' : 'Issue request',
+            description: `${state.draft.service.name} · ${state.draft.sourceProcedure.display ?? state.draft.sourceProcedure.code} · ${state.draft.purpose}`,
+            onConfirm: async () => {
+              const result = await runImagingAction(current.caseId, () => issuePathologyRequest({
+                encounterId: current.encounter.id,
+                encounterVersion: current.encounter.versionId,
+                expectedDraftVersion: state.draftVersion,
+              }, newIdempotencyKey()))
+              hydrateAgentDraft(current.caseId, 'pathology')
+              return result
+            },
+            signal,
+            title: locale => locale === 'zh-CN' ? '签发病理会诊申请' : 'Issue pathology consultation',
+          })
+        },
+      },
+      'outpatient.pathology.cancel.propose': {
+        description: 'Open human review before cancelling one slide consultation that is issued or produced no result.',
+        enabled: detail.data?.pathologyRequests?.requests.some(
+          request => request.status === 'issued' || request.status === 'generation-failed',
+        ) === true,
+        parameters: {
+          type: 'object' as const,
+          properties: { requestId: { type: 'string', maxLength: 128 } },
+          required: ['requestId'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const requestId = doctorString(raw, 'requestId', 128)
+          const request = current.pathologyRequests?.requests.find(item => item.id === requestId)
+          if (request?.status !== 'issued' && request?.status !== 'generation-failed') {
+            throw new Error(messages.consultationUnavailable)
+          }
+          return agentReview.request({
+            confirmLabel: locale => locale === 'zh-CN' ? '取消申请' : 'Cancel request',
+            description: request.service.name,
+            onConfirm: () => runImagingAction(current.caseId, () => cancelPathologyRequest(request, newIdempotencyKey())),
+            signal,
+            title: locale => locale === 'zh-CN' ? '取消病理会诊申请' : 'Cancel pathology consultation',
+          })
+        },
+      },
+      'outpatient.pathology.retry.propose': {
+        description: 'Open human review before retrying one slide consultation that produced no result.',
+        enabled: detail.data?.pathologyRequests?.requests.some(
+          request => request.status === 'generation-failed',
+        ) === true,
+        parameters: {
+          type: 'object' as const,
+          properties: { requestId: { type: 'string', maxLength: 128 } },
+          required: ['requestId'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const requestId = doctorString(raw, 'requestId', 128)
+          const request = current.pathologyRequests?.requests.find(item => item.id === requestId)
+          if (request?.status !== 'generation-failed') throw new Error(messages.consultationUnavailable)
+          return agentReview.request({
+            confirmLabel: locale => locale === 'zh-CN' ? '重试' : 'Retry',
+            description: request.service.name,
+            onConfirm: () => runImagingAction(current.caseId, () => retryPathologyRequest(request, newIdempotencyKey())),
+            signal,
+            title: locale => locale === 'zh-CN' ? '重试病理会诊' : 'Retry pathology consultation',
+          })
+        },
+      },
+      'outpatient.pathology.correct.propose': {
+        description: 'Open human review before an administrator reissues one pathology consultation report from another reviewed report content revision. The report text itself cannot be rewritten.',
+        enabled: canCorrectReports
+          && detail.data?.pathologyRequests?.requests.some(request => request.report !== undefined) === true,
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            reason: { type: 'string', minLength: 2, maxLength: 500 },
+            reportRevision: { type: 'integer', minimum: 1 },
+            requestId: { type: 'string', maxLength: 128 },
+          },
+          required: ['reason', 'reportRevision', 'requestId'],
+          additionalProperties: false,
+        },
+        execute: (raw: unknown, signal: AbortSignal) => {
+          const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
+          const input = agentToolInputSchemas['outpatient.pathology.correct.propose'].parse(raw)
+          const request = current.pathologyRequests?.requests.find(item => item.id === input.requestId)
+          const report = request?.report
+          if (request === undefined || report === undefined) throw new Error(messages.consultationUnavailable)
+          return agentReview.request({
+            confirmLabel: locale => locale === 'zh-CN' ? '提交更正' : 'Submit correction',
+            description: `${request.service.name} · ${input.reason}`,
+            onConfirm: () => runImagingAction(current.caseId, () => correctPathologyReport(
+              request,
+              report,
+              { reason: input.reason, reportRevision: input.reportRevision },
+              newIdempotencyKey(),
+            )),
+            signal,
+            title: locale => locale === 'zh-CN' ? '更正病理会诊报告' : 'Correct pathology consultation report',
           })
         },
       },
@@ -2028,6 +2207,7 @@ function DoctorCaseController({
         diagnosisDraftVersion: detail.data?.diagnosis?.draftVersion,
         encounterVersion: detail.data?.encounter.versionId,
         imagingDraftVersion: detail.data?.imagingRequests?.draftVersion,
+        pathologyDraftVersion: detail.data?.pathologyRequests?.draftVersion,
         laboratoryDraftVersion: detail.data?.laboratoryRequests?.draftVersion,
         page,
       }),
@@ -2062,6 +2242,7 @@ function DoctorCaseController({
         encounter: detail.data.encounter,
         imagingRequests: detail.data.imagingRequests ?? null,
         laboratoryRequests: detail.data.laboratoryRequests ?? null,
+        pathologyRequests: detail.data.pathologyRequests ?? null,
         patient: detail.data.patient,
         presentation: detail.data.presentation,
       },
@@ -3092,7 +3273,7 @@ function CaseDetail({
               caseId={detail.caseId}
               elementId={encounterCompletionTargetElementIds.pathology}
               encounter={detail.encounter}
-              key={`pathology:${detail.caseId}`}
+              key={`pathology:${detail.caseId}:${agentDraftHydrationRevisions.pathology ?? 0}`}
               locale={locale}
               readOnly={clinicalReadOnly}
               state={detail.pathologyRequests}

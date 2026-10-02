@@ -16,6 +16,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { repairPathologyAssets } from '../src/infrastructure/imaging-assets/pathology-asset-store.ts'
 import type { createClinMeshRuntime } from '../src/runtime.ts'
 import {
+  agentPageContext,
+  authorizeAgentTool,
   createImagingRuntime,
   generateCase,
   mutation,
@@ -626,6 +628,108 @@ describe('Pathology consultation request HTTP contract', () => {
     const nextDoctor = await signIn(runtime, 'doctor@demo.clinmesh.local')
     expect((await runtime.app.request(studyPath, { headers: { cookie: nextDoctor } })).status).toBe(404)
     expect((await runtime.app.request(tilePath, { headers: { cookie: nextDoctor } })).status).toBe(404)
+  })
+
+  it('publishes pathology Agent tools from the trusted case state without widening imaging or laboratory tools', async () => {
+    const visit = await consultation({ name: '乳腺随访', procedures: [lumpectomy, breastLesionExcision] })
+    const { doctor, encounterId, outpatientCaseId, runtime } = visit
+    const context = async (viewRevision: string, activeSection = 'laboratory') => await agentPageContext(runtime, doctor, {
+      activeSection,
+      caseId: outpatientCaseId,
+      encounterVersion: (await caseDetail(runtime, doctor, outpatientCaseId)).encounter.versionId,
+      viewRevision,
+    })
+
+    const empty = (await context('pathology-empty')).snapshot.allowedOperationIds
+    expect(empty.filter(id => id.startsWith('outpatient.pathology.'))).toEqual(['outpatient.pathology.draft.set'])
+    expect(empty).not.toContain('outpatient.report.acknowledge.propose')
+    // 病理 Tool 只在“检验检查”栏目发布。
+    expect((await context('pathology-record', 'record')).snapshot.allowedOperationIds
+      .filter(id => id.startsWith('outpatient.pathology.'))).toEqual([])
+
+    // 第一次手术的会诊已出报告，第二次手术的会诊尚未执行，另有一份草稿。
+    const reported = await reportedRequest(visit)
+    const pending = await order(visit, 2, 'urn:uuid:procedure-1')
+    expect((await saveDraft(runtime, doctor, encounterId, { expectedDraftVersion: 4 })).status).toBe(200)
+
+    const binding = await context('pathology-reported')
+    const allowed = binding.snapshot.allowedOperationIds
+    expect(allowed.filter(id => id.startsWith('outpatient.pathology.')).sort()).toEqual([
+      'outpatient.pathology.cancel.propose',
+      'outpatient.pathology.draft.set',
+      'outpatient.pathology.issue.propose',
+    ])
+    expect(allowed).toContain('outpatient.report.acknowledge.propose')
+    // 病理申请不开放检验或放射的取消、重试与更正提案；普通医生账号没有病理更正提案。
+    for (const operation of [
+      'outpatient.laboratory.cancel.propose',
+      'outpatient.report.correct.propose',
+      'outpatient.imaging.cancel.propose',
+      'outpatient.imaging.retry.propose',
+      'outpatient.pathology.correct.propose',
+    ]) expect(allowed, operation).not.toContain(operation)
+    // Page Context 只含操作标识与受信选择，不含素材、适配条目、来源手术或像素信息。
+    expect(JSON.stringify(binding.snapshot)).not.toMatch(/synthetic-slide|breast-er|studyId|pixel|urn:uuid:procedure/)
+
+    const authorize = async (operationId: string, toolName: string, input: unknown) => (
+      await authorizeAgentTool(runtime, doctor, binding, { input, operationId, toolName })
+    ).status
+    expect(await authorize('outpatient.pathology.cancel.propose', 'clinmesh_prepare_cancel_pathology', { requestId: pending.id }))
+      .toBe(201)
+    // 输入与当前受信资源不符按过期上下文拒绝（409）；未发布的操作按无权限拒绝（403）。
+    expect(await authorize('outpatient.pathology.cancel.propose', 'clinmesh_prepare_cancel_pathology', { requestId: reported.id }))
+      .toBe(409)
+    expect(await authorize('outpatient.pathology.retry.propose', 'clinmesh_prepare_retry_pathology', { requestId: pending.id }))
+      .toBe(403)
+    // 放射提案不能指向病理申请。
+    expect(await authorize('outpatient.imaging.cancel.propose', 'clinmesh_prepare_cancel_imaging', { requestId: pending.id }))
+      .toBe(403)
+    expect(await authorize('outpatient.report.acknowledge.propose', 'clinmesh_prepare_acknowledge_report', { requestId: reported.id }))
+      .toBe(201)
+    expect(await authorize('outpatient.report.acknowledge.propose', 'clinmesh_prepare_acknowledge_report', { requestId: pending.id }))
+      .toBe(409)
+    // 导航阅片只接受本病例已有报告的病理申请，且不与放射申请混用。
+    const select = (input: Record<string, string>) => authorize(
+      'outpatient.section.select',
+      'clinmesh_select_doctor_section',
+      { ...input, section: 'laboratory' },
+    )
+    expect(await select({ pathologyRequestId: reported.id })).toBe(201)
+    expect(await select({ pathologyRequestId: pending.id })).toBe(409)
+    expect(await select({ imagingRequestId: reported.id })).toBe(409)
+    expect(await authorize('outpatient.pathology.draft.set', 'clinmesh_fill_pathology_draft', {
+      purpose: '复核',
+      serviceId: service,
+      sourceProcedureReference: procedureReference,
+    })).toBe(201)
+    expect(await authorize('outpatient.pathology.draft.set', 'clinmesh_fill_pathology_draft', {
+      assetId: luminal,
+      purpose: '复核',
+      serviceId: service,
+      sourceProcedureReference: procedureReference,
+    })).toBeGreaterThanOrEqual(400)
+
+    // 同一账号兼有管理员岗位时才发布病理更正提案。
+    const administratorAsDoctor = await signIn(runtime)
+    expect((await runtime.app.request('/api/auth/role', mutation(
+      administratorAsDoctor,
+      { practitionerRoleId: 'practitioner-role-outpatient-doctor' },
+    ))).status).toBe(200)
+    const administratorBinding = await agentPageContext(runtime, administratorAsDoctor, {
+      activeSection: 'laboratory',
+      caseId: outpatientCaseId,
+      encounterVersion: (await caseDetail(runtime, doctor, outpatientCaseId)).encounter.versionId,
+      viewRevision: 'pathology-administrator',
+    })
+    expect(administratorBinding.snapshot.allowedOperationIds).toContain('outpatient.pathology.correct.propose')
+    expect(administratorBinding.snapshot.allowedOperationIds).not.toContain('outpatient.imaging.correct.propose')
+    const correct = async (requestId: string) => (await authorizeAgentTool(runtime, administratorAsDoctor, administratorBinding, {
+      input: { reason: '报告内容已重新核对', reportRevision: 1, requestId },
+      operationId: 'outpatient.pathology.correct.propose',
+      toolName: 'clinmesh_prepare_correct_pathology_report',
+    })).status
+    expect(await correct(reported.id)).toBe(201)
+    expect(await correct(pending.id)).toBe(409)
   })
 
   it('tells the patient model only that the slide consultation was accepted', async () => {

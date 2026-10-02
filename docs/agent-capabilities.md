@@ -62,13 +62,14 @@ proposal 返回 `awaiting-human-review` 后，Tool 调用已经返回，但审�
 | `triage.draft.set` | 已选分诊病例 | 同时填写并强调主诉、分级及生命体征；不提交分诊 |
 | `triage.record.propose` | 已选病例且主诉非空 | 人工审阅分诊评估 |
 | `outpatient.case.select` | 病例在读取结果的 `queue.items` 中 | 选择目标病例，并切到其所属的待诊或在诊分组 |
-| `outpatient.section.select` | 当前病例有相应可见诊疗页；`imagingRequestId` 只能与“检验检查”页同用，且该放射申请已有报告 | 选择目标诊疗标签并按该栏目重新发布 Tool；带 `imagingRequestId` 时同时为人类展开该申请的影像；完成时强调目标内容区 |
+| `outpatient.section.select` | 当前病例有相应可见诊疗页；`imagingRequestId` 与 `pathologyRequestId` 只能与“检验检查”页同用，且对应的放射申请或病理会诊申请已有报告 | 选择目标诊疗标签并按该栏目重新发布 Tool；带 `imagingRequestId` 或 `pathologyRequestId` 时同时为人类展开该申请的影像或切片；完成时强调目标内容区 |
 | `outpatient.consultation.ask` | 当前病例允许问诊 | 发送问题，等待患者回答；强调问诊记录区 |
 | `outpatient.consultation.reply.retry` | 当前回复可重试 | 重试患者回答；强调问诊记录区 |
 | `outpatient.first-visit.draft.set` | 初诊草稿阶段 | 保存现病史和评估草稿；强调两个字段 |
 | `outpatient.diagnosis.draft.set` | 独立诊疗流程且就诊进行中 | 保存诊断草稿；强调诊断行、添加或更换入口，以及已打开的疾病目录 |
 | `outpatient.laboratory.draft.set` | 独立诊疗流程且就诊进行中 | 保存检验项目与指征；不下达申请 |
 | `outpatient.imaging.draft.set` | 独立诊疗流程且就诊进行中 | 保存放射检查项目与检查指征；不签发申请 |
+| `outpatient.pathology.draft.set` | 独立诊疗流程且就诊进行中 | 保存病理会诊项目、送检的既往手术（取自读取结果 `pathologyServices` 的 `sourceProcedures`）与会诊目的；不签发申请 |
 | `outpatient.prescription.draft.set` | 当前尚无正式用药结论 | 保存处方条目；强调药品名称、剂量、频次、疗程、数量、目录入口及处方区域；药品目录打开时覆盖目录和包装控件 |
 | `outpatient.revisit.draft.set` | 兼容复诊草稿阶段 | 保存诊断、评估、计划与用药草稿 |
 | `outpatient.record.draft.set` | 独立诊疗流程且就诊进行中 | 保存结构化病历；同时强调本次病历字段 |
@@ -77,12 +78,16 @@ proposal 返回 `awaiting-human-review` 后，Tool 调用已经返回，但审�
 | `outpatient.diagnosis.confirm.propose` | 诊断满足当前确认条件 | 人工审阅诊断确认 |
 | `outpatient.laboratory.issue.propose` | 已有检验草稿 | 人工审阅开立检验申请 |
 | `outpatient.laboratory.cancel.propose` | 申请可撤销 | 人工审阅撤销申请 |
-| `outpatient.report.acknowledge.propose` | 有已签发的检验或放射报告；放射报告的影像须已在人类面前成功显示 | 人工审阅报告已阅确认 |
+| `outpatient.report.acknowledge.propose` | 有已签发的检验、放射或病理会诊报告；放射报告的影像、病理会诊的切片须已在人类面前成功显示 | 人工审阅报告已阅确认 |
 | `outpatient.report.correct.propose` | 当前检验报告允许更正 | 人工审阅检验报告更正 |
 | `outpatient.imaging.issue.propose` | 已有放射申请草稿 | 人工审阅签发放射申请 |
 | `outpatient.imaging.cancel.propose` | 放射申请已开具或未取得结果 | 人工审阅取消放射申请 |
 | `outpatient.imaging.retry.propose` | 放射申请未取得结果 | 人工审阅重试放射检查 |
 | `outpatient.imaging.correct.propose` | 放射申请已有报告，且当前账号兼有管理员岗位 | 人工审阅按另一份已复核的报告内容修订重新签发 |
+| `outpatient.pathology.issue.propose` | 已有病理会诊申请草稿 | 人工审阅签发病理会诊申请 |
+| `outpatient.pathology.cancel.propose` | 病理会诊申请已开立或未取得结果 | 人工审阅取消病理会诊申请 |
+| `outpatient.pathology.retry.propose` | 病理会诊申请未取得结果 | 人工审阅重试病理会诊 |
+| `outpatient.pathology.correct.propose` | 病理会诊申请已有报告，且当前账号兼有管理员岗位 | 人工审阅按同一切片另一份已复核的报告内容修订重新签发 |
 | `outpatient.prescription.issue.propose` | 已有可开立处方草稿 | 人工审阅开立处方 |
 | `outpatient.prescription.withdraw.propose` | 当前处方可撤回 | 人工审阅撤回处方 |
 | `outpatient.medication.none.propose` | 尚无正式用药结论 | 人工审阅无需用药结论 |
@@ -116,9 +121,9 @@ DSH browser Tool broker 每次注册最多接受 32 个 Tool。医生“接诊�
 | `record`（病历记录） | `outpatient.record.draft.set`、`outpatient.preview.request`、`outpatient.record.sign.propose`、`outpatient.record.revise.propose` |
 | `diagnosis`（诊断） | `outpatient.diagnosis.draft.set`、`outpatient.diagnosis.confirm.propose` |
 | `prescription`（处方） | `outpatient.prescription.draft.set`、`outpatient.prescription.issue.propose`、`outpatient.prescription.withdraw.propose`、`outpatient.medication.none.propose` |
-| `laboratory`（检验，含放射检查） | `outpatient.laboratory.draft.set`、`outpatient.laboratory.issue.propose`、`outpatient.laboratory.cancel.propose`、`outpatient.report.acknowledge.propose`、`outpatient.report.correct.propose`、`outpatient.imaging.draft.set`、`outpatient.imaging.issue.propose`、`outpatient.imaging.cancel.propose`、`outpatient.imaging.retry.propose`、`outpatient.imaging.correct.propose` |
+| `laboratory`（检验，含放射检查与病理会诊） | `outpatient.laboratory.draft.set`、`outpatient.laboratory.issue.propose`、`outpatient.laboratory.cancel.propose`、`outpatient.report.acknowledge.propose`、`outpatient.report.correct.propose`、`outpatient.imaging.draft.set`、`outpatient.imaging.issue.propose`、`outpatient.imaging.cancel.propose`、`outpatient.imaging.retry.propose`、`outpatient.imaging.correct.propose`、`outpatient.pathology.draft.set`、`outpatient.pathology.issue.propose`、`outpatient.pathology.cancel.propose`、`outpatient.pathology.retry.propose`、`outpatient.pathology.correct.propose` |
 
-开始就诊和完成就诊位于病例页头，不属于任何栏目。兼容初诊与复诊草稿的表单不只对应一个栏目，也跨栏目发布；它们仍按病例状态收窄，结构化诊疗流程中不占名额。兼容复诊流程的签署预览与签署同样在“病历记录”栏目发布。栏目 Tool 在所属栏目内的前提、输入、提案与授权语义不变。合同测试逐一断言每个岗位、视图与栏目发布的 Tool 不超过 32 个；放射的已阅仍并入 `outpatient.report.acknowledge.propose`，导航阅片仍并入 `outpatient.section.select`。
+开始就诊和完成就诊位于病例页头，不属于任何栏目。兼容初诊与复诊草稿的表单不只对应一个栏目，也跨栏目发布；它们仍按病例状态收窄，结构化诊疗流程中不占名额。兼容复诊流程的签署预览与签署同样在“病历记录”栏目发布。栏目 Tool 在所属栏目内的前提、输入、提案与授权语义不变。合同测试逐一断言每个岗位、视图与栏目发布的 Tool 不超过 32 个；放射与病理的已阅并入 `outpatient.report.acknowledge.propose`，导航阅片并入 `outpatient.section.select`；“检验检查”栏目共发布 25 个 Tool。
 
 ## 上游能力与接入限制
 

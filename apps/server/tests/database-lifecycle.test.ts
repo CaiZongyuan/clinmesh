@@ -1536,6 +1536,27 @@ describe('SQLite lifecycle', () => {
     insertRequest('pathology-request-new', 'pathology', 'pathology-breast-consultation')
     expect(database.driver.prepare(`SELECT request_kind FROM laboratory_request WHERE request_id = 'pathology-request-new'`).get())
       .toEqual({ request_kind: 'pathology' })
+    // 病理的准备与申请迁移只新增自己的表：含检验与放射数据的旧库升级后，既有申请、确认与修订保持不变。
+    for (const migration of ['0051_pathology-case-preparation.sql', '0052_pathology-request.sql']) {
+      await copyFile(join(process.cwd(), 'drizzle', migration), join(legacyMigrationDirectory, migration))
+    }
+    const requestsBefore = database.driver.prepare(`SELECT * FROM laboratory_request ORDER BY request_id`).all()
+    expect(applyMigrations(database, legacyMigrationDirectory).applied)
+      .toEqual(['0051_pathology-case-preparation.sql', '0052_pathology-request.sql'])
+    expect(database.driver.prepare(`SELECT * FROM laboratory_request ORDER BY request_id`).all()).toEqual(requestsBefore)
+    expect(database.driver.prepare(`SELECT COUNT(*) AS total FROM laboratory_report_acknowledgement`).get()).toEqual({ total: 1 })
+    expect(database.driver.prepare(`SELECT COUNT(*) AS total FROM laboratory_report_revision`).get()).toEqual({ total: 1 })
+    database.driver.prepare(`INSERT INTO pathology_request_detail (
+      workspace_id, epoch, request_id, exam_code, purpose, source_procedure_reference, source_procedure_json
+    ) VALUES (?, ?, 'pathology-request-new', 'breast-slide-consultation', '外院切片复核', 'urn:uuid:procedure-0', ?)`)
+      .run(context.workspaceId, context.epoch, JSON.stringify({ code: '392021009', performedAt: '2022-04-01T08:00:00+08:00', sourceReference: 'urn:uuid:procedure-0' }))
+    // 病理申请同样受“同一服务只能有一条进行中申请”约束，明细只能引用已有申请。
+    expect(() => insertRequest('pathology-request-duplicate', 'pathology', 'pathology-breast-consultation'))
+      .toThrow(/UNIQUE constraint failed/)
+    expect(() => database.driver.prepare(`INSERT INTO pathology_request_detail (
+      workspace_id, epoch, request_id, exam_code, purpose, source_procedure_reference, source_procedure_json
+    ) VALUES (?, ?, 'pathology-request-missing', 'breast-slide-consultation', '复核', 'urn:uuid:procedure-0', '{}')`)
+      .run(context.workspaceId, context.epoch)).toThrow(/FOREIGN KEY constraint failed/)
     expect(database.driver.pragma('foreign_key_check')).toEqual([])
     expect(database.driver.pragma('integrity_check', { simple: true })).toBe('ok')
     database.close()

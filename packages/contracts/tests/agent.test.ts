@@ -267,6 +267,51 @@ describe('ClinMesh DSH Agent contracts', () => {
     })).toThrow()
   })
 
+  it('opens a slide only through the laboratory section', () => {
+    expect(parseAgentToolInput('outpatient.section.select', {
+      pathologyRequestId: 'pathology-request-1',
+      section: 'laboratory',
+    })).toEqual({ pathologyRequestId: 'pathology-request-1', section: 'laboratory' })
+    expect(() => parseAgentToolInput('outpatient.section.select', {
+      pathologyRequestId: 'pathology-request-1',
+      section: 'record',
+    })).toThrow()
+  })
+
+  it('keeps pathology Tools narrow: no pixels, asset identity, or free-text report rewrite', () => {
+    const laboratoryTools = agentToolsForContext('outpatient-doctor', 'consultation', 'laboratory')
+    // 检验、放射与病理三类申请的 Tool 同在“检验检查”栏目，合计仍在单次注册上限内。
+    expect(laboratoryTools.length).toBeLessThanOrEqual(32)
+    expect(laboratoryTools.filter(tool => tool.operationId.startsWith('outpatient.pathology.'))
+      .map(tool => [tool.operationId, tool.mode])).toEqual([
+      ['outpatient.pathology.draft.set', 'draft'],
+      ['outpatient.pathology.issue.propose', 'proposal'],
+      ['outpatient.pathology.cancel.propose', 'proposal'],
+      ['outpatient.pathology.retry.propose', 'proposal'],
+      ['outpatient.pathology.correct.propose', 'proposal'],
+    ])
+    expect(agentToolsForContext('outpatient-doctor', 'consultation', 'record')
+      .some(tool => tool.operationId.startsWith('outpatient.pathology.'))).toBe(false)
+    const draft = {
+      purpose: '外院切片复核',
+      serviceId: 'pathology-breast-slide-consultation',
+      sourceProcedureReference: 'urn:uuid:procedure-0',
+    }
+    expect(parseAgentToolInput('outpatient.pathology.draft.set', draft)).toEqual(draft)
+    expect(() => parseAgentToolInput('outpatient.pathology.draft.set', { ...draft, assetId: 'asset-1' })).toThrow()
+    expect(() => parseAgentToolInput('outpatient.pathology.draft.set', { ...draft, purpose: 'x'.repeat(501) })).toThrow()
+    expect(() => parseAgentToolInput('outpatient.pathology.draft.set', {
+      purpose: draft.purpose,
+      serviceId: draft.serviceId,
+    })).toThrow()
+    const correction = { reason: '报告内容已重新核对', reportRevision: 2, requestId: 'pathology-request-1' }
+    expect(parseAgentToolInput('outpatient.pathology.correct.propose', correction)).toEqual(correction)
+    expect(() => parseAgentToolInput('outpatient.pathology.correct.propose', {
+      ...correction,
+      diagnosis: '自由改写的病理诊断',
+    })).toThrow()
+  })
+
   it('matches laboratory draft Tool lengths to the owning Command input', () => {
     const maximumInput = {
       catalogItemId: 'l'.repeat(512),
