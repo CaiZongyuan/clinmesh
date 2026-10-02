@@ -28,6 +28,7 @@
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
     "lucide-react": "catalog:",
+    "openseadragon": "6.1.1",
     "react": "catalog:",
     "react-dom": "catalog:",
     "zod": "catalog:",
