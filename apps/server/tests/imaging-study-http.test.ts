@@ -117,7 +117,9 @@ describe('Imaging study read boundary HTTP contract', () => {
     expect(description.writeCount).toBe(0)
 
     // 一例 CT 有数百层，每层至少一次像素块请求：每个请求的数据库开销必须固定且只读。
-    for (const [frameIndex, frame] of study.series[0]!.frames.entries()) {
+    const ctSeries = study.series[0]
+    if (ctSeries?.kind !== 'frame-stack') throw new Error('Expected a frame-stack series')
+    for (const [frameIndex, frame] of ctSeries.frames.entries()) {
       for (const blockIndex of frame.blocks.keys()) {
         probe.reset()
         const block = await runtime.app.request(
@@ -154,6 +156,7 @@ describe('Imaging study read boundary HTTP contract', () => {
     expect(study).toMatchObject({ available: true, examCode: 'chest-ct-plain', studyId })
     expect(study.series).toHaveLength(1)
     const [series] = study.series
+    if (series?.kind !== 'frame-stack') throw new Error('Expected a frame-stack series')
     expect(series).toMatchObject({ kind: 'frame-stack', modality: 'CT', pixelFormat: 'int16', valueUnit: 'hu' })
     expect(series?.frames.map(frame => frame.positionMm)).toEqual([0, -80, -160])
     expect(series?.frames[0]).toMatchObject({

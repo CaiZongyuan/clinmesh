@@ -1,6 +1,7 @@
 import type { ImagingSeriesView } from '@clinmesh/contracts/imaging'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
 import { frameStackEngine } from './grayscale-stack-engine.tsx'
+import { tiledPyramidEngine } from './slide-pyramid-engine.tsx'
 
 /** 渲染引擎面对的输入：一个序列，以及按引擎自己的像素块位置读取该序列像素的函数。 */
 export interface ImagingEngineProps<Series, Position> {
@@ -27,4 +28,5 @@ type SeriesOf<Kind extends ImagingSeriesView['kind']> = Extract<ImagingSeriesVie
 /** 每种 `kind` 一个条目；新增像素组织方式时在这里登记引擎，外壳与调用方不变。 */
 export const imagingEngines: { [Kind in ImagingSeriesView['kind']]: ImagingEngine<SeriesOf<Kind>, never> } = {
   'frame-stack': frameStackEngine,
+  'tiled-pyramid': tiledPyramidEngine,
 }
