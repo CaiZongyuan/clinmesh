@@ -151,6 +151,35 @@
       "immunohistochemistry": "以下结果引自原始病理资料，本次会诊未提供免疫组化切片。ER：阳性；PR：阳性；HER2：阴性（FISH 阴性）。",
       "microscopy": "送检切片为 HE 染色乳腺组织，见浸润性癌，癌细胞呈巢状、条索状或腺管样排列，浸润纤维间质。",
       "note": "本次会诊切片为原发灶组织，未包含淋巴结；淋巴结情况以原病例记录为准。",
+      "review": {
+        "automatedCheck": {
+          "checkVersion": 1,
+          "passed": true
+        },
+        "conclusion": "approved",
+        "contentSha256": "47070afd71f172a92249700caec11d6e15e9df207783b1d2770e799775927019",
+        "items": [
+          {
+            "conclusion": "confirmed",
+            "item": "no-identifying-content"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "findings-match-slide"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "source-fields"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "report-wording"
+          }
+        ],
+        "reviewedAt": "2026-10-03",
+        "reviewer": "JH",
+        "reviewerIsPathologist": false
+      },
       "revision": 1,
       "specimen": {
         "procedure": "case-source-procedure",
