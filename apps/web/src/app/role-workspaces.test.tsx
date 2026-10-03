@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type {
   DiagnosisDraftEntry,
   DiagnosisState,
@@ -419,7 +419,7 @@ function stubScenarioDataWorkspace(options: {
   generationJobFails?: boolean
   generationJobDelayMs?: number
   generationJobWarning?: { code: string; message: string }
-  generationTargets?: Array<{ ageRange: [number, number]; kind: 'imaging-profile' | 'pathology-profile'; label: string; profileId: string; sex?: 'female' | 'male' }>
+  generationTargets?: Array<{ ageRange: [number, number]; kind: 'imaging-profile' | 'pathology-profile'; label: string; minimumHistoryYears?: number; profileId: string; sex?: 'female' | 'male' }>
   onGenerationTargetsRead?: () => void
   onGenerate?: (request: ScenarioGenerationRequest) => void
   onCaseStart?: () => void
@@ -1374,6 +1374,7 @@ describe('role workspaces', () => {
           ageRange: [45, 80],
           kind: 'pathology-profile',
           label: '乳腺切片会诊：ER 阳性 · PR 阳性 · HER2 阴性 · 淋巴结阳性 · T2',
+          minimumHistoryYears: 45,
           profileId: 'breast-er-pos-pr-pos-her2-neg-ln-pos-t2',
           sex: 'female',
         },
@@ -1390,13 +1391,24 @@ describe('role workspaces', () => {
     // 病理条目的名称已含会诊项目，不加放射的检查类别前缀。
     await user.click(screen.getByRole('option', { name: '乳腺切片会诊：ER 阳性 · PR 阳性 · HER2 阴性 · 淋巴结阳性 · T2' }))
     expect(within(sheet).getByText('适用人群：女，45–80 岁')).toBeTruthy()
-    await user.click(within(sheet).getByRole('button', { name: '生成患者' }))
+    // 条目要求病史覆盖 45 年：选择后历史起始日期自动前移，改晚则提示并禁止提交。
+    const historyStart = within(sheet).getByLabelText<HTMLInputElement>('历史起始日期')
+    expect(historyStart.value).toBe('1981-08-01')
+    const submit = within(sheet).getByRole('button', { name: '生成患者' })
+    fireEvent.change(historyStart, { target: { value: '2011-08-01' } })
+    expect(within(sheet).getByRole('alert').textContent)
+      .toBe('所选适配条目要求历史起始日期不晚于 1981-08-01（结束日期前 45 年），可在“高级设置”中修改')
+    expect(submit.hasAttribute('disabled')).toBe(true)
+    fireEvent.change(historyStart, { target: { value: '1981-08-01' } })
+    expect(within(sheet).queryByRole('alert')).toBeNull()
+    await user.click(submit)
 
     await waitFor(() => expect(submitted?.target).toEqual({
       kind: 'pathology-profile',
       profileId: 'breast-er-pos-pr-pos-her2-neg-ln-pos-t2',
     }))
     expect(submitted?.population).toEqual({ age: { maximum: 80, minimum: 45 }, count: 1, gender: 'female' })
+    expect(submitted?.timeRange).toEqual({ end: '2026-08-01', start: '1981-08-01' })
   })
 
   it('blocks a targeted generation whose population contradicts the imaging profile', async () => {

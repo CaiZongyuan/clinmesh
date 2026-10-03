@@ -363,14 +363,15 @@ describe('Pathology case preparation HTTP contract', () => {
     expect(unpublished.study.available).toBe(true)
   })
 
-  function generateTargeted(runtime: Runtime, cookie: string, profileId: string) {
+  /** 缺省的病史起点满足条目要求的 45 年（结束日期 2026-08-01）。 */
+  function generateTargeted(runtime: Runtime, cookie: string, profileId: string, historyStart = '1981-08-01') {
     return runtime.app.request('/api/sim/v1/scenario-generation-jobs', mutation(cookie, {
       name: '定向病理患者',
       population: { age: { maximum: 80, minimum: 45 }, count: 1, gender: 'female' },
       providerId: 'synthea',
       seeds: { clinical: 7331, population: 4242 },
       target: { kind: 'pathology-profile', profileId },
-      timeRange: { end: '2026-08-01', start: '2020-01-01' },
+      timeRange: { end: '2026-08-01', start: historyStart },
       timeZone: 'Asia/Shanghai',
     }))
   }
@@ -394,6 +395,7 @@ describe('Pathology case preparation HTTP contract', () => {
         ageRange: [45, 80],
         kind: 'pathology-profile',
         label: '乳腺切片会诊：ER 阴性 · PR 阴性 · HER2 阴性 · 淋巴结阴性 · T1',
+        minimumHistoryYears: 45,
         profileId: tripleNegativeProfile,
         sex: 'female',
       },
@@ -401,6 +403,7 @@ describe('Pathology case preparation HTTP contract', () => {
         ageRange: [45, 80],
         kind: 'pathology-profile',
         label: '乳腺切片会诊：ER 阳性 · PR 阳性 · HER2 阴性 · 淋巴结阳性 · T2',
+        minimumHistoryYears: 45,
         profileId: luminalProfile,
         sex: 'female',
       },
@@ -440,6 +443,12 @@ describe('Pathology case preparation HTTP contract', () => {
     )
     await install([{ assetId: luminal }, tripleNegativeSlide, { assetId: 'synthetic-slide-unpublished', clinical: { fish: 'Positive' }, published: false }])
     const cookie = await signIn(runtime)
+
+    // 病史起点晚于结束日期前 45 年：Synthea 保留的患者可能缺少多年前的确诊与手术记录，调用 Provider 前即失败。
+    expect((await generateTargeted(runtime, cookie, tripleNegativeProfile, '1981-08-02')).status).toBe(200)
+    expect(await runtime.scenarioData.processNextGenerationJob())
+      .toMatchObject({ caseIds: [], error: { code: 'TARGET_HISTORY_TOO_SHORT' }, status: 'failed' })
+    expect(syntheaProvider.keeps).toHaveLength(0)
 
     expect((await generateTargeted(runtime, cookie, tripleNegativeProfile)).status).toBe(200)
     expect(await runtime.scenarioData.processNextGenerationJob())

@@ -53,6 +53,11 @@ public final class ProviderServer {
   private static final URI CN_HEALTH_LOCALIZER_ENDPOINT = URI.create(
       System.getenv().getOrDefault(
           "CN_HEALTH_LOCALIZER_URL", "http://cn-health-localizer:51879/v1/localize"));
+  /**
+   * 保留条件按时间找人：Synthea 的尝试次数不设实际上限，限时内没有保留到患者时按未满足保留条件返回，由服务端换种子重试。
+   * 罕见的受体组合需要数千次尝试，固定次数在慢的机器上会超过服务端等待 Provider 的 5 分钟；限时为本地化与传输留出余量。
+   */
+  private static final Duration KEEP_SEARCH_BUDGET = Duration.ofMinutes(4);
   private static final int MAX_REQUEST_BYTES = 64 * 1024;
   private static final int MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
   private static final Gson GSON = new Gson();
@@ -499,6 +504,7 @@ public final class ProviderServer {
         command.add("-k");
         command.add(keepModulePath.toString());
         command.add("--generate.only_alive_patients=true");
+        command.add("--generate.max_attempts_to_keep_patient=" + Integer.MAX_VALUE);
       }
       command.add("--exporter.baseDirectory=" + outputDirectory);
       long historyDays = ChronoUnit.DAYS.between(request.start, request.end) + 1;
@@ -510,6 +516,10 @@ public final class ProviderServer {
           .redirectOutput(ProcessBuilder.Redirect.INHERIT)
           .redirectError(ProcessBuilder.Redirect.INHERIT)
           .start();
+      if (request.keep != null && !process.waitFor(KEEP_SEARCH_BUDGET.toSeconds(), TimeUnit.SECONDS)) {
+        process.destroyForcibly().waitFor();
+        throw new KeepNotSatisfiedException();
+      }
       if (!process.waitFor(10, TimeUnit.MINUTES)) {
         process.destroyForcibly();
         throw new IOException("Synthea exceeded the ten minute execution limit");

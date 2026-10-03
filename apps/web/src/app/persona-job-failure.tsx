@@ -51,6 +51,10 @@ const failureCopy = {
     'en-US': { guidance: 'Change the seeds or the age range, then retry.', summary: 'No patient met the selected matching profile after repeated attempts' },
     'zh-CN': { guidance: '更换 seed 或调整年龄范围后重试。', summary: '多次尝试后仍未得到满足所选适配条目的患者' },
   },
+  'TARGET_HISTORY_TOO_SHORT': {
+    'en-US': { guidance: 'Move the history start earlier under Advanced settings, then retry.', summary: 'The history start is too late for the selected matching profile' },
+    'zh-CN': { guidance: '在“高级设置”中把历史起始日期提前后重试。', summary: '历史起始日期晚于所选适配条目的要求' },
+  },
   'IMAGING_PREPARATION_FAILED': {
     'en-US': { guidance: 'Open the patient and run imaging preparation again.', summary: 'The patients were generated, but imaging preparation did not complete' },
     'zh-CN': { guidance: '打开患者详情，在“影像准备”中重新准备。', summary: '患者已生成，但影像准备未完成' },

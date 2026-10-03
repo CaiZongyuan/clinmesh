@@ -36,6 +36,7 @@ export const syntheticPathologyMatching = {
     conditionCodes: ['254837009'],
     examCode: 'breast-slide-consultation',
     generationAgeRange: [45, 80],
+    generationHistoryYears: 45,
     label: '乳腺切片会诊',
     profilePrefix: 'breast',
     sex: 'female',

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import {
   administratorCaseTruthSchema,
+  latestTargetHistoryStart,
   scenarioGenerationJobSchema,
   scenarioGenerationRequestSchema,
   syntheticPatientProfileDetailSchema,
@@ -62,6 +63,8 @@ export class ScenarioDataError extends Error {
 
 /** 定向生成依赖的影像适配规则，由影像准备服务实现。 */
 export interface ScenarioGenerationTargets {
+  /** 目标要求导出的病史至少覆盖的年数；没有要求时为 undefined。 */
+  generationHistoryYears(target: ScenarioGenerationTarget): Promise<number | undefined>
   generationKeep(target: ScenarioGenerationTarget): Promise<SyntheaKeepCriteria | undefined>
   generationTargetMet(target: ScenarioGenerationTarget, candidate: {
     birthDate: string
@@ -182,7 +185,7 @@ export class ScenarioDataService {
     let completedJob: ScenarioGenerationJob
     try {
       await this.#assertProviderAvailable(claimed.request)
-      const keep = target === undefined ? undefined : await this.#targetKeep(target)
+      const keep = target === undefined ? undefined : await this.#targetKeep(target, claimed.request.timeRange)
       const generated = await this.#generateUsableCorpus(claimed.request, signal, keep)
       const createdAt = new Date().toISOString()
       const profiles = createSyntheticPatientProfiles({
@@ -475,7 +478,10 @@ export class ScenarioDataService {
     }
   }
 
-  async #targetKeep(target: ScenarioGenerationTarget): Promise<SyntheaKeepCriteria> {
+  async #targetKeep(
+    target: ScenarioGenerationTarget,
+    timeRange: ScenarioGenerationRequest['timeRange'],
+  ): Promise<SyntheaKeepCriteria> {
     if (!(await this.#provider.capabilities()).targetedGeneration) {
       throw new ScenarioGenerationProviderError(
         'PROVIDER_TARGET_UNSUPPORTED',
@@ -485,6 +491,14 @@ export class ScenarioDataService {
     const keep = await this.#targets?.generationKeep(target)
     if (keep === undefined) {
       throw new ScenarioGenerationProviderError('IMAGING_TARGET_UNAVAILABLE', 'The selected matching profile is not available')
+    }
+    // Synthea 按一生的记录判断保留条件，导出只含病史起点之后的记录：起点太晚时保留下来的患者缺少匹配事实，调用 Provider 前拒绝。
+    const years = await this.#targets!.generationHistoryYears(target)
+    if (years !== undefined && timeRange.start > latestTargetHistoryStart(timeRange.end, years)) {
+      throw new ScenarioGenerationProviderError(
+        'TARGET_HISTORY_TOO_SHORT',
+        `The selected matching profile requires at least ${years} years of history`,
+      )
     }
     return keep
   }

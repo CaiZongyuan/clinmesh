@@ -210,6 +210,11 @@ export const pathologyMatchingRulesSchema = z.object({
     examCode: pathologyExamCodeSchema,
     /** 定向生成使用的年龄范围；只提高命中率，不参与匹配。 */
     generationAgeRange: z.tuple([z.number().int().min(0).max(120), z.number().int().min(0).max(120)]),
+    /**
+     * 定向生成导出的病史至少覆盖的年数。Synthea 按患者一生的记录判断保留条件，导出时只保留病史起点之后的记录；
+     * 起点晚于确诊与手术时，保留下来的患者会缺少匹配所需的事实。
+     */
+    generationHistoryYears: z.number().int().min(1).max(120),
     label: z.string().min(1).max(64),
     /** 适配条目标识的前缀。 */
     profilePrefix: z.string().regex(/^[a-z][a-z0-9]{0,15}$/),

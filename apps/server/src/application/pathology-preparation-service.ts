@@ -281,6 +281,7 @@ export class PathologyPreparationService {
             ageRange: service.generationAgeRange,
             kind: 'pathology-profile' as const,
             label: profile.label,
+            minimumHistoryYears: service.generationHistoryYears,
             profileId: profile.id,
             sex: service.sex,
           })),
@@ -305,6 +306,13 @@ export class PathologyPreparationService {
         return { code: rule.code, valueAny: (rule.values as Record<string, string[]>)[found.profile.facts[name]]! }
       }),
     }
+  }
+
+  /** 定向生成导出的病史至少覆盖的年数；条目不存在或没有已发布素材时返回 undefined。 */
+  async generationHistoryYears(target: ScenarioGenerationTarget): Promise<number | undefined> {
+    const catalog = await this.#matchingCatalog()
+    if (catalog === undefined) return undefined
+    return this.#publishedProfiles(catalog).find(item => item.profile.id === target.profileId)?.service.generationHistoryYears
   }
 
   /** 新生成的患者按当前规则是否由目标条目配到切片；与病理准备使用同一匹配规则。 */

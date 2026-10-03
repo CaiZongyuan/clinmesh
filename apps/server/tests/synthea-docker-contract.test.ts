@@ -67,7 +67,7 @@ describe('Synthea Docker Provider contract', () => {
     expect(providerSource).toContain('keepModule.addProperty("gmf_version", 2);')
     expect(providerSource).toContain('workingDirectory.resolve("keep-module.json")')
     expect(providerSource).toMatch(
-      /if \(request\.keep != null\) \{[^]*command\.add\("-k"\);\s*command\.add\(keepModulePath\.toString\(\)\);\s*command\.add\("--generate\.only_alive_patients=true"\);\s*\}\s*command\.add\("--exporter\.baseDirectory="/u,
+      /if \(request\.keep != null\) \{[^]*command\.add\("-k"\);\s*command\.add\(keepModulePath\.toString\(\)\);\s*command\.add\("--generate\.only_alive_patients=true"\);\s*command\.add\("--generate\.max_attempts_to_keep_patient=" \+ Integer\.MAX_VALUE\);\s*\}\s*command\.add\("--exporter\.baseDirectory="/u,
     )
     expect(providerSource).toMatch(
       /if \(request\.keep != null\) \{\s*JsonObject keep = new JsonObject\(\);[^]*?metadata\.add\("keep", keep\);/u,
@@ -98,6 +98,12 @@ describe('Synthea Docker Provider contract', () => {
     )
     expect(providerSource).toMatch(
       /if \(!request\.keep\.observations\.isEmpty\(\)\) \{\s*keep\.add\("observations", GSON\.toJsonTree\(request\.keep\.observations\)\);/u,
+    )
+    // 罕见组合按时间找人：尝试次数不设上限，限时内未保留到患者按未满足保留条件返回，由服务端换种子重试。
+    expect(providerSource).toContain('KEEP_SEARCH_BUDGET = Duration.ofMinutes(4)')
+    expect(providerSource).toContain('command.add("--generate.max_attempts_to_keep_patient=" + Integer.MAX_VALUE);')
+    expect(providerSource).toMatch(
+      /if \(request\.keep != null && !process\.waitFor\(KEEP_SEARCH_BUDGET\.toSeconds\(\), TimeUnit\.SECONDS\)\) \{\s*process\.destroyForcibly\(\)\.waitFor\(\);\s*throw new KeepNotSatisfiedException\(\);/u,
     )
   })
 

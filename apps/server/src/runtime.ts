@@ -316,6 +316,9 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       profiles: syntheticPatientProfiles,
       // 定向目标按类别交给拥有对应素材包的病例准备。
       targets: {
+        generationHistoryYears: async target => target.kind === 'pathology-profile'
+          ? await pathologyPreparation.generationHistoryYears(target)
+          : undefined,
         generationKeep: target => target.kind === 'pathology-profile'
           ? pathologyPreparation.generationKeep(target)
           : imagingPreparation.generationKeep(target),

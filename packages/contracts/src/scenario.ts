@@ -148,8 +148,15 @@ export const scenarioGenerationTargetSchema = z.object({
 export const scenarioGenerationTargetOptionSchema = scenarioGenerationTargetSchema.extend({
   ageRange: z.tuple([z.number().int().min(0).max(120), z.number().int().min(0).max(120)]),
   label: z.string().min(1),
+  /** 病史起点须不晚于结束日期前的年数；条目的匹配事实可能发生在多年以前。 */
+  minimumHistoryYears: z.number().int().min(1).max(120).optional(),
   sex: z.enum(['female', 'male']).optional(),
 }).strict()
+
+/** 定向目标要求的最晚病史起点：结束日期前推 `years` 年的同月同日（按日期字符串比较，2 月 29 日无需换算）。 */
+export function latestTargetHistoryStart(end: string, years: number): string {
+  return `${String(Number(end.slice(0, 4)) - years).padStart(4, '0')}${end.slice(4)}`
+}
 
 export const scenarioGenerationTargetListSchema = z.object({
   items: z.array(scenarioGenerationTargetOptionSchema),

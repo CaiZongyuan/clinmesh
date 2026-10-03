@@ -9,7 +9,7 @@
 | `manifest.json` | 清单身份、切片数据合集（DOI、许可、署名、来源类型）和结构化临床字段的来源（地址、文件哈希、条款、署名） |
 | `assets/<assetId>.json` | 一张切片：来源受试者与切片编号、Study/Series/Instance UID、IDC 序列目录、每个来源文件的字节数与 SHA-256、来源临床字段、已安装层级与摄取参数、报告内容修订及其核对记录 |
 | `prompts/breast-pathology-report-v1.md` | 报告草稿整理规则；素材条目的 `draft.promptVersion` 指向它 |
-| `matching.json` | 病例适配规则：适用会诊的来源病例（性别、诊断编码、可送检的手术编码、定向生成的年龄范围），以及受体、淋巴结与 T 类别对应的来源 Observation 编码和编码值 |
+| `matching.json` | 病例适配规则：适用会诊的来源病例（性别、诊断编码、可送检的手术编码、定向生成的年龄范围与至少导出的病史年数），以及受体、淋巴结与 T 类别对应的来源 Observation 编码和编码值 |
 
 素材标识（`tcga-brca-he-01` 等）不含来源受试者编号；编号只出现在条目的 `source` 与 `clinical.sampleId` 中，不进入安装目录、回执和命令输出。
 
