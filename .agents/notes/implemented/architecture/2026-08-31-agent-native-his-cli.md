@@ -16,7 +16,7 @@ CLI 默认输出版本化 JSON，human mode 可选择 table。所有 write 显�
 
 生成 Synthetic Case 开始或 replay 时，活动 Patient Brief 的问诊主题被确定性物化为 case-scoped Consultation Question Rules；首次问诊同时接管医生责任。独立处方开具原子创建 MedicationRequest 与药品 ChargeItem/Charge Record，只有 Encounter 完成后才能支付并移交药房。这两条桥接保证同一病例不依赖 legacy first-visit 或组合签署入口即可完成 CLI 跨岗位闭环。
 
-七个 model-invoked `clinmesh-*` Skills 按共享恢复、挂号、分诊、医生、收费、药房和 FHIR 拆分。Skills 解释业务意图、状态前置、岗位交接和反例，精确 flags 与 schema 仍由 Catalog discovery 拥有；临床 Skills 不包含 Agent Client/Grant 管理命令。
+根 `skills/` 的八个 model-invoked `clinmesh-*` Skills 按共享恢复、管理员、挂号、分诊、医生、收费、药房和 FHIR 拆分，供项目启动后的运行时 Agent 操作 HIS。Skills 解释业务意图、状态前置、岗位交接和反例，精确 flags 与 schema 仍由 Catalog discovery 拥有；临床 Skills 不包含 Agent Client/Grant 管理命令。
 
 ## Alternatives considered
 

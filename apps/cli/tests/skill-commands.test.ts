@@ -99,7 +99,7 @@ function inspectExample(program: Command, line: string) {
 describe('ClinMesh CLI Agent Skills', () => {
   it('documents absent triage in the versioned doctor read contracts', async () => {
     const doctorSkill = await readFile(resolve(
-      import.meta.dirname, '../../../.agents/skills/clinmesh-doctor/SKILL.md',
+      import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md',
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
@@ -126,7 +126,7 @@ describe('ClinMesh CLI Agent Skills', () => {
   it('keeps correlation recovery guidance aligned with the Catalog error schema', async () => {
     const sharedSkill = await readFile(resolve(
       import.meta.dirname,
-      '../../../.agents/skills/clinmesh-shared/SKILL.md',
+      '../../../skills/clinmesh-shared/SKILL.md',
     ), 'utf8')
     const error = getHisOperation('patient.create').error.parse({
       code: 'ambiguous_outcome',
@@ -144,7 +144,7 @@ describe('ClinMesh CLI Agent Skills', () => {
 
   it('documents non-retryable laboratory evidence errors on both order operations', async () => {
     const doctorSkill = await readFile(resolve(
-      import.meta.dirname, '../../../.agents/skills/clinmesh-doctor/SKILL.md',
+      import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md',
     ), 'utf8')
     for (const id of ['encounter.laboratory-request.draft.set', 'encounter.laboratory-request.issue']) {
       const operation = getHisOperation(id)
@@ -160,7 +160,7 @@ describe('ClinMesh CLI Agent Skills', () => {
   })
 
   it('keeps every documented clinical command on a real Catalog path', async () => {
-    const skillsRoot = resolve(import.meta.dirname, '../../../.agents/skills')
+    const skillsRoot = resolve(import.meta.dirname, '../../../skills')
     const skillNames = (await readdir(skillsRoot, { withFileTypes: true }))
       .filter(entry => entry.isDirectory() && entry.name.startsWith('clinmesh-'))
       .map(entry => entry.name)

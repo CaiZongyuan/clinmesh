@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.base.json",
+  "include": ["playwright.config.ts", "scripts/browser-contract.ts", "apps/web/e2e/**/*.ts", "apps/server/src/infrastructure/imaging-assets/dcmjs.d.ts"]
+}

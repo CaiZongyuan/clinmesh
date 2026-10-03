@@ -38,7 +38,7 @@ import {
 } from '@tanstack/react-query'
 import { CircleAlertIcon, LogInIcon } from 'lucide-react'
 import type { SessionContext } from '@clinmesh/contracts/his'
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   applyResolvedWebTheme,
   readWebPreferences,
@@ -343,64 +343,10 @@ const componentCatalogRoute = createRoute({
   path: '/components',
 })
 
-// 直接使用编译期条件，使未启用压缩的 DSH 构建也能移除开发路由依赖。
-const UiDevPage = process.env.NODE_ENV !== 'production'
-  ? lazy(async () => {
-      const module = await import('../ui-dev/doctor-workspace-lab-page.tsx')
-      return { default: module.DoctorWorkspaceLabPage }
-    })
-  : () => null
-
-const DataGenerationLabPage = process.env.NODE_ENV !== 'production'
-  ? lazy(async () => {
-      const module = await import('../ui-dev/data-generation-lab-page.tsx')
-      return { default: module.DataGenerationLabPage }
-    })
-  : () => null
-
-const BrandLockupLabPage = process.env.NODE_ENV !== 'production'
-  ? lazy(async () => {
-      const module = await import('../ui-dev/brand-lockup-lab-page.tsx')
-      return { default: module.BrandLockupLabPage }
-    })
-  : () => null
-
-const developmentRoutes = process.env.NODE_ENV !== 'production'
-  ? [
-      createRoute({
-        component: () => (
-          <Suspense fallback={<main aria-label="正在加载 UI Lab" className="min-h-svh bg-muted/30" />}>
-            <UiDevPage />
-          </Suspense>
-        ),
-        getParentRoute: () => rootRoute,
-        path: '/ui-dev',
-      }),
-      createRoute({
-        component: () => (
-          <Suspense fallback={<main aria-label="正在加载合成患者库 UI Lab" className="min-h-svh bg-muted/30" />}>
-            <DataGenerationLabPage />
-          </Suspense>
-        ),
-        getParentRoute: () => rootRoute,
-        path: '/ui-dev/data-generation',
-      }),
-      createRoute({
-        component: () => (
-          <Suspense fallback={<main aria-label="正在加载品牌 UI Lab" className="min-h-svh bg-muted/30" />}>
-            <BrandLockupLabPage />
-          </Suspense>
-        ),
-        getParentRoute: () => rootRoute,
-        path: '/ui-dev/brand',
-      }),
-    ]
-  : []
 const routeTree = rootRoute.addChildren([
   ...routes,
   ...settingsRouteTree,
   componentCatalogRoute,
-  ...developmentRoutes,
 ])
 
 export function createWebRouter(history?: RouterHistory): ReturnType<typeof createRouter<typeof routeTree>> {

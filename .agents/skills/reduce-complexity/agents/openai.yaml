@@ -1,0 +1,3 @@
+interface:
+  display_name: "Reduce Complexity"
+  short_description: "Simplify scoped code and inspect maintenance costs"

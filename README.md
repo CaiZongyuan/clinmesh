@@ -50,8 +50,9 @@ packages/
 imaging-assets/ 影像素材清单、匹配规则与报告整理规则（不含像素）
 docs/           架构、测试、Agent 工程规范和研究记录
 scripts/        文档投影、依赖边界和质量检查
+skills/         项目启动后供运行时 Agent 使用的 ClinMesh CLI skills
 vendor/         固定 commit 的外部源码 submodule
-.agents/        Agent skills 与 Agent Notes
+.agents/        开发 Agent 的工程 skills 与 Agent Notes
 ```
 
 `packages/ui` 是 Web 与 Desktop 当前共同依赖的视觉层；`packages/views` 当前只承载 Desktop 工程壳。Web 工作台保留在 `apps/web`，只有出现第二个实际消费者后才提取共享业务视图。Mobile 只可复用 `contracts` 和 `core` 中的协议、类型、schema 与纯函数，独立管理 React Native UI、导航、安全存储、QueryClient 和发布周期。
@@ -105,7 +106,7 @@ pnpm clinmesh command receipt get \
 
 成功默认输出 JSON；human mode 可显式使用 `--output table`。复杂诊断、处方、检验结果和结构化病历通过 `--input @<workspace-file>` 或 `--input -` 提交。CLI 不提供任意 URL、method/body、SQL、FHIR write、Bundle 或通用 operation invoke。
 
-七个 Agent Skills 位于 [`.agents/skills`](.agents/skills)，按 registration、triage、doctor、billing、pharmacy 和 FHIR 分域；`clinmesh-shared` 统一说明 context、schema、幂等和错误恢复。命令路径与 Skill 示例由同一测试约束。
+八个运行时 Agent Skills 位于 [`skills/`](skills)，供项目启动后操作 HIS 的 Agent 使用，按 administrator、registration、triage、doctor、billing、pharmacy 和 FHIR 分域；`clinmesh-shared` 统一说明 context、schema、幂等和错误恢复。命令路径与 Skill 示例由同一测试约束。
 
 ## 质量检查
 
