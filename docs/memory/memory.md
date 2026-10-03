@@ -8,6 +8,7 @@
 
 - 已确认局部 UI 调整方向且用户明确要求“直接开干”时，以当前对话作为实施合同，直接完成本地修改和必要验证，不再增加 issue 草稿、拆票或阶段确认；外部发布仍按已有授权执行。
 - 不使用 superpowers 插件及其 skills；开发与交付遵循仓库自身工作流。
+- 开发协作偏好按任务选择独立 skills，常用能力是代码简化和文档编写；不恢复 DSH 系列 skills 或强制贯穿每项任务的完整开发生命周期。
 - ClinMesh 与实际必需的 DSH 桥接组件（React Surface、AG-UI）持续适配最新公开正式版和 RC，不跟踪 alpha。升级范围按实际需要确定，不因插件已安装就升级或逐项验收全部插件；其他插件保留原配置和数据。接口或行为变化时主动更新 ClinMesh 和必要组件，不以长期停留旧版本或修改 DSH 来迁就旧实现作为维护方案；DSH 官方仓库 `deepseek-ai/deepseek-harness` 由官方维护，不修改其源码，也不维护宿主补丁或 fork；集成需求由 ClinMesh 与必要桥接组件通过现有宿主扩展能力实现，能力不足时调整方案。桥接组件未及时适配时优先贡献修复，必要时维护桥接组件 fork。依赖锁用于复现已验证组合，不代表停止跟进上游。持续升级自动创建 PR，由用户决定合并。
 - 已批准的 spec、测试 seam 和拆票结构没有未决分支时，直接实施，不重复展示最终待发布全文，也不逐项请求内容批准。
 - 用户要求“完整整个 issue”时，一口气完成全部 tickets，最终只提一个集成 PR。Tickets 用于执行和追踪，不自动等于一个 ticket 一个 PR。
@@ -16,7 +17,7 @@
 - 用户明确要求把当前工作区 changes 一并提交时，先辨认并保真保存这些修改，再纳入目标 PR；不丢弃、不改写为自己的内容，也不额外推送原工作分支。
 - 用户询问进度时，先报告已经完成、正在处理和剩余阻塞，然后继续执行，除非用户要求暂停。
 - 用户询问合成演示账号或密码时，从当前 Scenario 或 seed owner 直接给出可试用信息；真实凭证、平台密钥和患者信息永不写入本文或公开 artifact。
-- 快速 UI 探索默认只在隔离的 `/ui-dev` 原型入口生成界面，使用 mock 数据承载必要状态和交互，不接生产业务、不补测试，也不启动完整交付流程；根据用户的视觉反馈直接迭代，只有用户明确选定方案并要求落地后才进入正式实现。
+- UI 预览参考 `agentic-axum-saas-demo` 的体验设计方式，按任务交付可运行且保留版本的交互体验，不在正式 Web 内维护长期 mock 展示站或方案切换器；具体规则见[交互预览](../agent-development.md#交互预览)。
 
 - ClinMesh 与 DSH 会话保持左右分屏，不因窄窗口改为上下排列或自动全屏。DSH 模式的岗位导航直接铺在宿主侧栏“新会话”和“工作区”之间，底部按钮保留“医院工作台”，仅点开后的菜单内部标题显示“设置”；菜单保留设置与应用操作，DSH 内的 ClinMesh 始终跟随宿主主题，不提供独立主题选择，ClinMesh 内部不显示左侧栏；独立 Web 保留侧栏。全屏由用户手动切换，切换与返回按钮放进现有页头，不额外占一行；全屏时先返回分屏再使用宿主导航。账户与岗位切换保留在页头，右上角账户菜单不放设置入口；设置统一由左侧栏承接，独立 Web 使用侧栏底部入口。
 
@@ -24,12 +25,15 @@
 
 ## 产品参考优先级
 
+- ClinMesh 与 DSH 的长期目标包括 Agent 参与整个 HIS、扮演患者或医生、多方仿真实验，以及从实践中发现基础设施和流程问题并形成持续改进（RSI）；医生使用场景同时重视提效、辅助诊断、医疗教学和病例落库后的重复分析。这些是产品方向，当前能力以 owner 文档和实现为准。
+- 医生前端应先提供熟悉的诊疗体验，再引入 Agent；保留对话栏，并为 Agent 的工作过程与结果提供可见的“舞台”。具体布局仍需通过原型确认。
 - 中国公立医院 HIS 的业务语义、岗位交接、正向流程和逆向状态以 OpenHIS 为首要参考；FHIR Repository、history、Search、授权和审计基础设施以 Medplum 为首要参考。两者是长期业务与技术参照，但不授权复制其物理架构或未实际闭环的菜单和占位实现。
 - Tairex 虚拟诊室研究只参考虚拟诊疗产品模式和体验；`references/DSH-AGUI-demo` 与其他 Agent 案例只参考 UI 和交互布局，不作为 HIS 业务事实来源。发生冲突时以 OpenHIS、Medplum、当前 ClinMesh owner 文档和可执行流程为准。
 
 ## 运行与验证边界
 - DSH 标签页品牌验证须覆盖初始 HTML、宿主赋值后的同步读取和刷新；布局会主动写入默认产品标题，MutationObserver 只能事后纠正，下一帧正确不能证明标签页没有闪烁。标题保护通过首页扩展在首个宿主脚本前同步规范当前 document 的标题赋值，浏览器回归覆盖同步改名、延迟改名和重复刷新。
 - Base UI 弹框关闭依赖动画帧完成卸载；Chrome `--virtual-time-budget` 下即使轮询定时器已结束，渲染帧仍可能未执行。验证关闭卸载的浏览器合同使用真实时钟并限时等待 DOM 消失，不缩减关闭断言。
+- Surface 集成测试在 Tool 切换页面或打开影像后，须等新的受信 Tool 绑定发布再执行下一动作；控件已启用不证明已发布 action 快照同步。提案工具先返回 `awaiting-human-review`，测试在 `act` 内等待准备结果，人工点击后另行观察正式写入和 Tool result，不能用准备 Promise 代表 Command 已完成。
 
 - 页面 Tool 读取表单时应复用控件实际使用的解析后值，并同步缓存依赖；原始输入状态可能为空，而控件已从持久化草稿或目录默认值补齐。回归同时比较人工选择后与重新打开草稿后的可见内容和 Tool 返回值。
 
@@ -72,8 +76,6 @@
 
 - 审查自动升级时同时核对人工提交历史和最终执行目标：快进追加仍可能覆盖人工指定的支持 SHA。版本号相同也不能证明安装内容相同；发现摘要必须绑定实际下载文件与重建锁。当前保护和恢复方式见[DSH 持续升级](../deployment.md#dsh-持续升级)。
 
-- Bun 未启用语法压缩时，先保存 `process.env.NODE_ENV` 判断再用于动态 import 条件，可能使开发路由依赖残留在 DSH 单文件产物中。开发专用 import 和路由数组直接使用编译期环境判断，并通过 artifact 体积与内容检查验证裁剪。
-
 - `pnpm reference:sync` 固定写入默认路径 `.data/clinmesh-reference.sqlite`，不读取 `.env` 的 `CLINMESH_REFERENCE_DATABASE_PATH`；`.env` 指向自定义路径时会与同步结果分叉，出现"诊断药品正常、检验目录为空"（旧 Release 不含 `laboratory-cn`）。排查时直接查库：`reference_release` 表按 `release_id` 看 `laboratory_definition_count`。当前 Release 默认取 `reference-data.lock.json` 的 `compositeRelease.releaseId`，不要在 `.env` 手抄该 ID 制造双事实来源；运行中 Server 不热切换参考库，修复后必须重启。
 
 - 本地项目目录迁移后，DSH Profile 的 `link:` 插件依赖可能仍指向旧绝对路径。`pnpm dsh:setup` / `pnpm dev:dsh` 每次启动都会重验 `.data/dsh-runtime` Profile 的三个链接并自动修复指向当前仓库，无需人工处理；仓库外手工维护的沙箱仍需按原方法备份 Profile 的 `package.json` 核对更新并运行 `dsh plugin --profile web install`，插件自身依赖须在各自 workspace 按锁恢复。启动见[部署指南](../deployment.md)。
@@ -101,9 +103,9 @@
 
 - Windows checkout 若把仓库中的 CLAUDE.md 符号链接物化为链接目标文本，文档换行检查会误报；CLI 的 POSIX 权限与文件符号链接测试也不能由该 checkout 证明。使用 Linux 文件系统上的独立 Git 检出验证，并把 Linux Node、pnpm 与 Bun 放在 PATH 前端，避免子进程拾取 Windows pnpm shim。跨命令复用的 WSL 验证副本和产物使用持久目录，避免重启清理 `/tmp`。
 
-- Linux 中 Chrome for Testing 的独立 profile 若启动后不返回 `--dump-dom`，可将 `CHROME_PATH` 指向同版本 Chrome Headless Shell。容器或 root 环境由外部 wrapper 提供必要启动参数，保持测试文档、断言与超时不变；通过 Turbo 运行时需显式转发该环境变量。本机（WSL2）没有系统 Chrome，浏览器合同测试用 `~/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell` 作为 `CHROME_PATH`。
+- 浏览器合同从包级 runner 迁到根 runner 时，Vite 的 `resolve.dedupe` 会改用根目录解析 React；build 必须显式设置 owning app 的 `root`。动画回归同时保留“完成后仍保持高光”的阶段断言和有界卸载等待，固定 sleep 不能证明渲染帧已经执行。
 
-- WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；仍超时时先查是否真变慢，不继续加大上限。
+- WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；若多个包仍同时争用 CPU，先用 `taskset -c 0-3 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行验证包级集合，再运行 `pnpm check` 复用仍有效的成功缓存。保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；仍超时时先查是否真变慢，不继续加大上限。
 
 - 精确运行 Vitest 文件时使用 `pnpm --filter <package> exec vitest run <file>`。脚本经 `pnpm --filter <package> test -- <file>` 转发时会保留 `--`，当前 Vitest 可能运行整个包而未应用文件筛选；以实际 Test Files 数量确认范围。
 
@@ -160,9 +162,9 @@
 
 - `jpeg-js` 解码三分量 JPEG 时，`colorTransform` 缺省会把 Adobe APP14 transform=0（RGB）的码流当作 YCbCr 转换；需要按码流标记显式传入。`@cornerstonejs/codec-openjpeg` 的 Emscripten 模块默认逐瓦片向标准输出打印 INFO，创建模块时传入空的 `print` 与 `printErr`。验证真实切片的颜色解释不看像素：解码已安装层级后统计通道均值与近白像素比例，H&E 组织像素的红、蓝明显高于绿，背景接近白色。
 
-- 浏览器合同测试（`*.browser.test.ts`）通过 `CHROME_PATH` 寻找 Chrome。WSL2 上 `/usr/bin/chromium-browser` 是 snap 占位脚本，完整的 Chrome for Testing 在 `--dump-dom` 下会挂起；使用 `npx @puppeteer/browsers install chrome-headless-shell@<版本>` 安装的 headless shell 并把 `CHROME_PATH` 指向它。没有该变量时这些测试失败在启动浏览器，不代表产品回归。Turborepo strict env 不向 `test` 任务转发 `CHROME_PATH`，因此 `pnpm test` 与 `pnpm check` 在这类机器上仍会失败在浏览器合同测试；逐包运行 vitest，或用 `pnpm exec turbo run test --filter=!@clinmesh/mobile --env-mode=loose` 加上根目录的脚本测试来覆盖同一范围。
+- Playwright 使用与锁定版本匹配的 browser cache；跨项目参考配置时同时核对 runner 版本与已安装 revision，缺失时用本仓库的 `pnpm exec playwright install chromium` 安装。运行合同与真实入口的方式见[测试策略](../testing.md#用户界面验证)。
 
-- 验证真实影像时不读取像素或截图：用 `agent-browser snapshot` 的文字树核对报告、状态和控件，用页面内脚本返回 canvas 尺寸、非零像素比例、均值和翻片前后的校验和变化等聚合量。帧切换计时以 canvas 内容发生变化为准，页码文字会先于像素更新。
+- 验证真实影像时不读取像素或截图：用 Playwright locator 或文字快照核对报告、状态和控件，用页面内脚本返回 canvas 尺寸、非零像素比例、均值和翻片前后的校验和变化等聚合量。帧切换计时以 canvas 内容发生变化为准，页码文字会先于像素更新。
 
 - `agent-browser click @ref` 对位于嵌套滚动容器可视区之外的按钮可能不产生点击且不报错；先 `scrollintoview @ref` 再点击。Base UI 的 Select 用 `focus` 加 `press Enter` 打开，直接 click 不展开选项。
 

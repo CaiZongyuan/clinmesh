@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-ClinMesh 已有的普通门诊发热 Web 原型用于比较信息架构，使用客户端内存状态且不验证真实认证、持久化、FHIR、Command、审计或多用户并发。若把该原型直接扩成正式产品，岗位交接顺序、Encounter 完成条件、费用生成、处方边界和 Scenario Run 终止条件会继续由页面状态隐式决定。
+普通门诊发热的交互预览用于比较信息架构，客户端内存状态无法验证真实认证、持久化、FHIR、Command、审计或多用户并发。正式产品的岗位交接顺序、Encounter 完成条件、费用生成、处方边界和 Scenario Run 终止条件必须由持久业务事实决定。
 
 首期还需要一个足够窄但能证明基础设施成立的业务范围。按 HIS 模块分别建设患者、收费、LIS 和药房会产生水平切片，任何单个阶段都无法由真实岗位完成可观察工作，也无法证明它们共享同一个 Workspace/Epoch 和业务事实。
 
@@ -39,7 +39,7 @@ Prescription 是处方号和业务规则下的持久聚合，不等同单个 Med
 
 首期不实现 Agent、AG-UI、Evaluation Spec 或评分基础设施。未来 AG-UI 只能作为人机交互 adapter：它从服务端受信 Actor context 获得窄权限，调用与 Web 共用的 Command，通过 CAS/expected version 保存草稿，并在签署临床文书前要求人类确认，不能拥有独立状态机或绕过审计。
 
-本 Note 取代原型对正式流程顺序和技术实现的任何暗示；[普通门诊发热 Web 交互原型](../../proposed/feature/2026-08-21-outpatient-fever-web-prototype.md)仍只用于界面设计参考，不复用其内存状态或假 API。
+本 Note 拥有正式流程顺序和技术实现边界；交互预览只提供设计依据，不复用其内存状态或假 API。预览范围与保留规则见[任务级交互预览](../process/2026-10-02-task-scoped-interactive-preview.md)。
 
 ## Alternatives considered
 

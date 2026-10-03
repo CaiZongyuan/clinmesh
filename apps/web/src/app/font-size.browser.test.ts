@@ -1,9 +1,9 @@
 import { fileURLToPath } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import { build } from 'vite'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { expect, test } from '@playwright/test'
 import { z } from 'zod'
-import { readJsonFromHeadlessChrome } from '../../../../scripts/headless-browser.ts'
+import { readJsonFromBrowser } from '../../../../scripts/browser-contract.ts'
 
 const fontMetricsSchema = z.object({
   application: z.string(),
@@ -25,7 +25,6 @@ const browserMetricsSchema = z.object({
     standard: fontMetricsSchema,
   }),
 })
-type BrowserMetrics = z.infer<typeof browserMetricsSchema>
 
 async function buildClinmeshStyles(): Promise<string> {
   const result = await build({
@@ -105,52 +104,41 @@ function testDocument(clinmeshStyles: string): string {
 </html>`
 }
 
-async function readBrowserMetrics(): Promise<BrowserMetrics> {
-  return browserMetricsSchema.parse(await readJsonFromHeadlessChrome(
-    testDocument(await buildClinmeshStyles()),
+test('scales Web typography without changing layout tokens or shared Desktop defaults', async ({ page }) => {
+  const metrics = browserMetricsSchema.parse(await readJsonFromBrowser(
+    page, testDocument(await buildClinmeshStyles()),
   ))
-}
-
-describe('Web font-size browser contract', () => {
-  let metrics: BrowserMetrics
-
-  beforeAll(async () => {
-    metrics = await readBrowserMetrics()
-  }, 30_000)
-
-  it('scales Web typography without changing layout tokens or shared Desktop defaults', () => {
-    expect(metrics.desktopBrand).toBe('18px')
-    expect(metrics.desktopControlSm).toBe('12.8px')
-    expect(metrics.desktopPlatform).toBe('13px')
-    expect(metrics.modes.standard).toEqual({
-      application: '13px',
-      controlSm: '12.8px',
-      documentRoot: '16px',
-      iconWidth: '16px',
-      paddingLeft: '16px',
-      text2Xs: '10px',
-      textSm: '13px',
-      textXs: '12px',
-    })
-    expect(metrics.modes.larger).toEqual({
-      application: '14.625px',
-      controlSm: '14.4px',
-      documentRoot: '16px',
-      iconWidth: '16px',
-      paddingLeft: '16px',
-      text2Xs: '11.25px',
-      textSm: '14.625px',
-      textXs: '13.5px',
-    })
-    expect(metrics.modes.large).toEqual({
-      application: '16.25px',
-      controlSm: '16px',
-      documentRoot: '16px',
-      iconWidth: '16px',
-      paddingLeft: '16px',
-      text2Xs: '12.5px',
-      textSm: '16.25px',
-      textXs: '15px',
-    })
+  expect(metrics.desktopBrand).toBe('18px')
+  expect(metrics.desktopControlSm).toBe('12.8px')
+  expect(metrics.desktopPlatform).toBe('13px')
+  expect(metrics.modes.standard).toEqual({
+    application: '13px',
+    controlSm: '12.8px',
+    documentRoot: '16px',
+    iconWidth: '16px',
+    paddingLeft: '16px',
+    text2Xs: '10px',
+    textSm: '13px',
+    textXs: '12px',
+  })
+  expect(metrics.modes.larger).toEqual({
+    application: '14.625px',
+    controlSm: '14.4px',
+    documentRoot: '16px',
+    iconWidth: '16px',
+    paddingLeft: '16px',
+    text2Xs: '11.25px',
+    textSm: '14.625px',
+    textXs: '13.5px',
+  })
+  expect(metrics.modes.large).toEqual({
+    application: '16.25px',
+    controlSm: '16px',
+    documentRoot: '16px',
+    iconWidth: '16px',
+    paddingLeft: '16px',
+    text2Xs: '12.5px',
+    textSm: '16.25px',
+    textXs: '15px',
   })
 })

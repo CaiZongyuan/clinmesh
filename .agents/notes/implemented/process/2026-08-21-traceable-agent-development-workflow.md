@@ -8,32 +8,32 @@ Agent development needs a reliable path from user intent to implementation evide
 
 ## Decision
 
-New features, observable behavior changes, cross-package work, and non-trivial bugs pass a design gate before editing. Unsettled decisions use `grilling`; public interfaces, cross-package state, persistence, external protocols, multi-ticket work, and test-strategy trade-offs use `grill-with-docs`. Formal repository files change only after the user confirms shared understanding.
+The fixed development lifecycle and DSH skill orchestration are superseded by [Task-scoped Agent skills](2026-10-02-task-scoped-agent-skills.md). This Note retains the rationale for task ownership, engineering evidence and public-content authorization.
 
-An approved GitHub issue body owns the active implementation contract. Work that fits one reviewable vertical slice uses that issue directly; larger work uses approved child tickets and native blocking relationships. Agent Notes retain decision rationale, while merged code and current-state documentation own shipped behavior.
+When a task uses GitHub Issues, its approved issue body owns the active implementation contract. Agent Notes retain decision rationale, while merged code and current-state documentation own shipped behavior.
 
-Implementation uses pre-agreed TDD seams, observable test evidence, behavior-preserving simplification, a checkpoint commit, Standards/Spec review, diff-driven pre-push checks, and a draft PR. User-visible Web/Desktop changes add real-entry browser validation and a commit-pinned GIF. An implementation request authorizes ordinary branch, commit, push, draft-PR, and evidence operations, but not merge, force-push, release, branch deletion, or ready-for-review transitions.
+Observable verification evidence covers the actual changed behavior. External writes follow the user's authorization, and public artifacts are checked for sensitive content before publication.
 
-Commit subjects and bodies, issue and pull-request content, comments, and review replies use Simplified Chinese while preserving technical identifiers. Non-trivial commits record the context, delivered change, actual verification evidence, and issue relationship in a structured body.
+Commit subjects and bodies, issue and pull-request content, comments, and review replies use Simplified Chinese while preserving technical identifiers. Engineering messages record delivered behavior and actual verification, with issue relationships when applicable.
 
-Matt skills remain byte-for-byte upstream files and are routed by repository instructions. ClinMesh-maintained adaptations retain the `dsh-` prefix to identify their DeepSeek Harness lineage, but their descriptions and workflows target ClinMesh and contain no DeepSeek Harness package, CI, bilingual, archive, or stacked-PR assumptions. Repository instructions and owner documents override generic skill defaults, including mapping ADR output to Agent Notes.
+Repository instructions and owner documents override generic skill defaults, including mapping ADR output to Agent Notes. Skills supply reusable methods rather than owning product or architecture facts.
 
 ## Alternatives considered
 
-**List every skill in the root instructions.** This makes discovery explicit but spends context on optional workflows and duplicates frontmatter descriptions. The root file names only mandatory lifecycle routes; subtree instructions and skill descriptions handle conditional work.
+**List every skill in the root instructions.** This makes discovery explicit but spends context on optional workflows and duplicates frontmatter descriptions. Task-specific pointers and skill descriptions handle conditional work.
 
 **Run Matt and DSH review skills in sequence.** This duplicates review effort and can produce conflicting repository standards. Matt `code-review` remains the two-axis orchestrator, while ClinMesh standards incorporate the portable DSH checks.
 
-**Keep specs only in conversation or local files.** This avoids GitHub writes but loses durable issue, commit, PR, and evidence links. GitHub publication therefore has an explicit preview and approval boundary.
+**Keep cross-session specs only in conversation or local files.** This loses durable issue, commit, PR, and evidence links. GitHub publication retains an explicit authorization boundary when a task chooses that tracking surface.
 
 **Require the full check suite before every push.** This is easy to state but obscures test intent and wastes time on unrelated surfaces. Each change runs the narrowest evidence that can fail for its regression and expands only when the diff reaches shared contracts or repository-wide configuration.
 
 ## Consequences
 
-Feature work has more explicit gates and external artifacts, but each gate has an observable completion criterion. Small mechanical edits remain lightweight. GitHub availability is required for work that needs a canonical issue.
+GitHub availability is required only for tasks using that issue tracker or publication surface.
 
 Tests and checks become reviewable evidence rather than an undifferentiated pass/fail claim. Agents report test design, actual commands, durations, failures, and omissions without exposing internal reasoning or streaming unbounded logs.
 
 Chinese, structured engineering messages make the purpose and evidence visible without opening the diff. Technical identifiers remain stable for tooling and search.
 
-The `dsh-` prefix denotes lineage rather than runtime compatibility. Adapted skills require maintenance when ClinMesh commands or document owners change; skills that cannot execute against the repository are removed instead of retained as speculative guidance.
+Repository-owned skills require maintenance when ClinMesh commands or document owners change; local links and instructions must execute against this repository.

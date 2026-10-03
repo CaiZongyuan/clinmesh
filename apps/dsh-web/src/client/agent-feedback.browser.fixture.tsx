@@ -95,7 +95,10 @@ async function run(): Promise<void> {
   flushSync(() => feedback({ id: 'fill', operationId: 'registration.patient.draft.set', input: {}, phase: 'completed' }))
   await wait(1200)
   const held = Number(getComputedStyle(rootElement.querySelector('.clinmesh-agent-target')!).opacity) >= 0.8
-  await wait(1100)
+  const fadeDeadline = Date.now() + 3_000
+  while (rootElement.querySelector('.clinmesh-agent-target') !== null && Date.now() < fadeDeadline) {
+    await wait(50)
+  }
   const faded = rootElement.querySelector('.clinmesh-agent-target') === null
   let task: AgentReviewTask | undefined
   flushSync(() => {

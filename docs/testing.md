@@ -6,7 +6,7 @@
 
 ### Unit
 
-`pnpm test` 通过 Turborepo 运行各包测试。Unit test 覆盖：
+`pnpm test:unit` 通过 Turborepo 运行各包的 Vitest 测试并运行根脚本测试；`pnpm test` 同时包含浏览器合同与 Web E2E。Unit test 覆盖：
 
 - Zod schema、FHIR reference 和错误分类。
 - 状态转换、金额/定点数量、权限和场景纯函数。
@@ -35,6 +35,8 @@ Mobile 只共享产品语义，不共享 DOM 测试。移动测试覆盖 Expo Ro
 ### End-to-end
 
 E2E 从真实入口执行，并从外部观察结果：重新读取资源、数据库投影、页面或审计事件，不以 Agent 自己声称成功作为断言。DSH Web 验收从统一 launcher 打开 Surface，要求原生 Session 实际调用 browser Tool，并覆盖一个草稿 action 和一个 proposal → 人工批准 → Command Effect；Tool call、proposal、review、request、audit 和 trace 必须可关联。
+
+`pnpm test:e2e` 使用 Playwright 从 standalone Web 的生产构建运行登录、岗位切换和窄屏外观设置旅程。每个测试使用独立的真实 Hono listener、临时 file-backed SQLite 和浏览器 context；Web 构建由同一 worker 复用。端口由系统分配，账户、密码、Auth secret 与数据库均由 fixture 创建并清理，不读取开发 `.env`、已有会话、真实影像或模型配置。页面断言与受 schema 验证的 HTTP 会话查询共同证明登录、岗位绑定和退出；此集合不替代原生 DSH Session 的人工验收或完整门诊业务闭环。
 
 CLI E2E 先构建真实 bin，再启动 Node listener 与 file-backed SQLite，并从独立 `clinmesh` 子进程执行 human login 和 Agent operation。主场景从生成 Synthetic Case 与 Brief 的受控 setup 开始，由不同单岗位 Grant 依次完成挂号、分诊、问诊、检查与报告确认、诊断、处方、病历签署、完诊、药品支付、处方审核和发药。响应丢失场景必须先证明 Server 已提交，再用原 operation ID/idempotency key 查询 receipt，并通过正式 query 证明 Effect 没有重复。
 
@@ -70,6 +72,9 @@ pnpm typecheck          # Web/Desktop/Server/Docs/shared packages
 pnpm check:mobile       # Expo typecheck + dependency compatibility
 pnpm lint
 pnpm test
+pnpm test:unit          # Vitest 单元、组件、adapter 与脚本测试
+pnpm test:browser       # Playwright Web/DSH 浏览器合同
+pnpm test:e2e           # Playwright standalone Web 真实入口旅程
 pnpm doc-sync
 pnpm check              # 非 Mobile 主检查集合
 ```
@@ -98,9 +103,21 @@ pnpm docs:check
 
 ## 用户界面验证
 
-用户界面修改在 standalone Web 与受影响的 DSH Surface 真实入口验证。布局需要覆盖长中文文本、窄宽度、缩放和空/错误/加载状态；DSH `workspace` 在缩放和原生右栏开关时保持左右分屏，并验证手动全屏往返恢复侧栏及分栏偏好、保留病例和草稿。容器缩放测试使用真实浏览器帧；`--virtual-time-budget` 的 DOM 导出不用于证明 ResizeObserver 或布局帧更新。用户可见的 Web PR 使用 `agent-browser` 走真实应用入口并录制绑定精确 commit 的原生 WebM；成片使用 3–4 倍速、步骤字幕和真实点击高亮，在临床文字仍可读的前提下压缩体积。WebM 不替代自动回归测试。Desktop 进入实际开发后再增加真实 renderer 证据。
+用户界面修改默认使用 Playwright 在 standalone Web 与受影响的 DSH Surface 真实入口验证；`agent-browser` 按探索或现有会话接管需要选用。布局需要覆盖长中文文本、窄宽度、缩放和空/错误/加载状态；DSH `workspace` 在缩放和原生右栏开关时保持左右分屏，并验证手动全屏往返恢复侧栏及分栏偏好、保留病例和草稿。容器缩放与动画卸载使用真实浏览器帧和有界状态等待。用户要求演示时再录制绑定精确 commit 的原生 WebM，成片使用 3–4 倍速、步骤字幕和真实点击高亮，在临床文字仍可读的前提下压缩体积。WebM 不替代自动回归测试。Desktop 进入实际开发后再增加真实 renderer 证据。
 
-字号浏览器合同使用现有 Vite/Tailwind 构建链生成生产 CSS：Web 合同断言 standalone computed font-size、布局尺寸和 Desktop 默认 token，DSH 合同在 ShadowRoot 中断言 Surface 字号和宿主隔离。测试运行机必须安装 Chrome、Chromium 或 Edge；未安装在默认位置时通过 `CHROME_PATH` 指向可执行文件。
+`playwright.config.ts` 的 `contracts` project 拥有 `*.browser.test.ts`，Vitest 排除这些文件；`web` project 拥有 `apps/web/e2e/*.spec.ts`。合同保留现有 Vite/Tailwind 生产构建、React 18/19、ShadowRoot、布局和合成 canvas 断言。Playwright 在 worker 内复用 Chromium，每个测试有独立 context/page；默认两 worker、零重试，runner 限时等待 fixture 的结果信号，不用 Chrome DOM 导出取得结果。字号合同断言 standalone computed font-size、布局尺寸、Desktop 默认 token、Surface 字号和宿主隔离。
+
+首次安装依赖后安装与锁定 Playwright 版本匹配的 Chromium；CI 同时安装系统依赖：
+
+```sh
+pnpm exec playwright install chromium
+pnpm test:browser
+pnpm test:e2e
+pnpm test:browser --grep 'React 18'
+pnpm test:e2e --workers=1
+```
+
+默认从 Playwright browser cache 解析可执行文件，不依赖系统 Chrome；需要指定浏览器时使用 `CHROME_PATH`。常规回归关闭 trace、截图和视频，生成目录不进入 Git。真实影像验证只读取文字树和 canvas 聚合统计，不保存或读取像素截图；独立的合成影像合同允许读取已知 fixture 像素。
 
 录制只使用合成医院场景和隔离的 workspace、epoch 与客户端状态。画面不得包含真实患者信息、医保或支付凭证、平台密钥、无关浏览器标签或通知。
 

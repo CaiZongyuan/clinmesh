@@ -40,6 +40,6 @@ Status: implemented
 
 目录只在用户打开 picker 时请求和渲染，隐藏页面不再维护 20 行结果。真实 Reference Release 上，两字查询实测约为诊断 23 ms、检验 2 ms、药品 391 ms；三类查询使用后续决策的防抖入口，短词扫描仍需保持有界。三字以上查询继续使用 FTS 性能合同。
 
-医生现在能明确看到多诊断草稿、同名药品产品差异和已选检验项目。新增 Dialog primitive 需要持续覆盖命名、焦点恢复、关闭和窄屏滚动；生产 picker 仍由真实 API 与 Command 驱动，不读取 `/ui-dev` mock 状态。
+医生现在能明确看到多诊断草稿、同名药品产品差异和已选检验项目。新增 Dialog primitive 需要持续覆盖命名、焦点恢复、关闭和窄屏滚动；生产 picker 由真实 API 与 Command 驱动。
 
 完整工作台的队列、患者横幅、Controller seam 和右侧上下文栏仍属于 proposed 重构，不能把本切片描述为整个 Note 已完成。
