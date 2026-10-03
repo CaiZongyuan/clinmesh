@@ -77,7 +77,7 @@ async function slideInstances(input: {
   const codec = input.codec ?? 'jpeg'
   const frames: Uint8Array[][] = []
   const instances: SourceInstance[] = []
-  const iccProfile = Buffer.from('synthetic ICC profile bytes')
+  const iccProfile = Buffer.from('synthetic ICC profile bytes.')
   for (const [index, level] of (input.levels ?? twentyTimesLevels).entries()) {
     const tiles = syntheticTiles(level.width, level.height, tileSize, level.scale)
     const encoded = codec === 'jpeg2000'
@@ -291,7 +291,7 @@ describe('pathology slide asset pipeline', () => {
     ])
     expect(recorded.output.levels.map((level: { magnification: number }) => level.magnification)).toEqual([20, 10, 5])
     expect(recorded.output).toMatchObject({
-      iccProfile: { bytes: 27, sha256: sha256(Buffer.from('synthetic ICC profile bytes')) },
+      iccProfile: { bytes: 28, sha256: sha256(Buffer.from('synthetic ICC profile bytes.')) },
       ingestVersion: 1,
       levels: [
         {

@@ -2,8 +2,9 @@ import openJpegFactory from '@cornerstonejs/codec-openjpeg/decodewasmjs'
 import { createHash } from 'node:crypto'
 import { mkdir, open, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import dcmjs from 'dcmjs'
 import jpeg from 'jpeg-js'
-import { maximumPixelBlockBytes } from './dicom-canonical.ts'
+import { maximumPixelBlockBytes, numberAttribute, numberList, textAttribute } from './dicom-canonical.ts'
 import { ImagingAssetError, sha256 } from './imaging-pack-store.ts'
 import type { PathologyAssetOutput, PathologyLevelOutput } from './pathology-catalog.ts'
 
@@ -43,96 +44,23 @@ const twentyTimesMicronsPerPixel = 0.5
 const magnificationTolerance = 0.05
 const jpegColorModels: Record<string, JpegColorModel> = { RGB: 'RGB', YBR_FULL: 'YCbCr', YBR_FULL_422: 'YCbCr' }
 const jpeg2000Photometrics = new Set(['RGB', 'YBR_ICT', 'YBR_RCT'])
-const longVrs = new Set(['OB', 'OD', 'OF', 'OL', 'OV', 'OW', 'SQ', 'SV', 'UC', 'UN', 'UR', 'UT', 'UV'])
 
 function invalid(message: string): ImagingAssetError {
   return new ImagingAssetError('PATHOLOGY_DICOM_INVALID', message)
 }
 
-interface DicomNode {
-  elements: Map<string, Uint8Array>
-  sequences: Map<string, DicomNode[]>
-}
+type Dataset = Record<string, unknown>
 
-function readTag(view: DataView, offset: number): string {
-  return view.getUint16(offset, true).toString(16).padStart(4, '0') + view.getUint16(offset + 2, true).toString(16).padStart(4, '0')
-}
-
-/**
- * 解析显式 VR 小端数据集。只保留元素值的视图（不复制）；顶层遇到像素数据时停止并返回其位置。
- * 未定义长度的条目以条目结束符返回。
- */
-function parseDataset(bytes: Uint8Array, view: DataView, start: number, end: number, topLevel: boolean): {
-  node: DicomNode
-  offset: number
-  pixelData?: number
-} {
-  const node: DicomNode = { elements: new Map(), sequences: new Map() }
-  let offset = start
-  while (offset < end) {
-    if (offset + 8 > bytes.byteLength) throw invalid('The DICOM dataset is truncated')
-    const tag = readTag(view, offset)
-    if (tag === 'fffee00d') return { node, offset: offset + 8 }
-    if (tag.startsWith('fffe')) throw invalid(`Unexpected DICOM delimiter ${tag}`)
-    const vr = String.fromCharCode(bytes[offset + 4]!, bytes[offset + 5]!)
-    if (!/^[A-Z]{2}$/.test(vr)) throw invalid('Only explicit VR little endian DICOM is supported')
-    const long = longVrs.has(vr)
-    if (long && offset + 12 > bytes.byteLength) throw invalid('The DICOM dataset is truncated')
-    const length = long ? view.getUint32(offset + 8, true) : view.getUint16(offset + 6, true)
-    const valueStart = offset + (long ? 12 : 8)
-    if (topLevel && tag === '7fe00010') return { node, offset, pixelData: offset }
-    if (vr === 'SQ') {
-      const items = parseItems(bytes, view, valueStart, length === 0xffffffff ? undefined : valueStart + length)
-      node.sequences.set(tag, items.items)
-      offset = items.offset
-      continue
-    }
-    if (length === 0xffffffff || valueStart + length > bytes.byteLength) throw invalid(`The DICOM element ${tag} is truncated`)
-    node.elements.set(tag, bytes.subarray(valueStart, valueStart + length))
-    offset = valueStart + length
-  }
-  return { node, offset }
-}
-
-function parseItems(bytes: Uint8Array, view: DataView, start: number, end: number | undefined): { items: DicomNode[]; offset: number } {
-  const items: DicomNode[] = []
-  let offset = start
-  while (end === undefined || offset < end) {
-    if (offset + 8 > bytes.byteLength) throw invalid('The DICOM sequence is truncated')
-    const tag = readTag(view, offset)
-    if (tag === 'fffee0dd' && end === undefined) return { items, offset: offset + 8 }
-    if (tag !== 'fffee000') throw invalid(`Unexpected DICOM sequence element ${tag}`)
-    const length = view.getUint32(offset + 4, true)
-    if (length === 0xffffffff) {
-      const item = parseDataset(bytes, view, offset + 8, bytes.byteLength, false)
-      items.push(item.node)
-      offset = item.offset
-    } else {
-      items.push(parseDataset(bytes, view, offset + 8, offset + 8 + length, false).node)
-      offset += 8 + length
-    }
-  }
-  return { items, offset }
-}
-
-function text(node: DicomNode | undefined, tag: string): string | undefined {
-  const value = node?.elements.get(tag)
-  if (value === undefined) return undefined
-  const decoded = Buffer.from(value).toString('latin1').replace(/[\0 ]+$/, '').trim()
-  return decoded === '' ? undefined : decoded
-}
-
-function unsigned(node: DicomNode, tag: string, size: 2 | 4): number | undefined {
-  const value = node.elements.get(tag)
-  if (value === undefined || value.byteLength < size) return undefined
-  const view = new DataView(value.buffer, value.byteOffset, value.byteLength)
-  return size === 2 ? view.getUint16(0, true) : view.getUint32(0, true)
-}
-
-function requiredUnsigned(node: DicomNode, tag: string, size: 2 | 4, name: string): number {
-  const value = unsigned(node, tag, size)
+function requiredNumber(dataset: Dataset, name: string): number {
+  const value = numberAttribute(dataset, name)
   if (value === undefined) throw invalid(`The DICOM attribute ${name} is required`)
   return value
+}
+
+/** 序列的第一个条目；dcmjs 把序列还原为条目数组。 */
+function firstItem(dataset: Dataset | undefined, name: string): Dataset | undefined {
+  const items = dataset?.[name]
+  return Array.isArray(items) ? items[0] as Dataset | undefined : undefined
 }
 
 /** 一个来源实例中摄取需要的属性与按帧切分的压缩码流。 */
@@ -158,79 +86,71 @@ export interface SlideInstance {
   samples: { bitsAllocated?: number | undefined; bitsStored?: number | undefined; planar?: number | undefined; representation?: number | undefined; samplesPerPixel?: number | undefined }
 }
 
-function parseMeta(bytes: Uint8Array, view: DataView): { meta: DicomNode; metaEnd: number } {
-  if (bytes.byteLength < 144 || Buffer.from(bytes.subarray(128, 132)).toString('latin1') !== 'DICM') {
-    throw invalid('The DICOM preamble is missing')
+function readDicom(bytes: Uint8Array, options?: { ignoreErrors: boolean }): { dataset: Dataset; meta: Dataset } {
+  let dictionary
+  try {
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+    dictionary = dcmjs.data.DicomMessage.readFile(buffer, options)
+  } catch (error) {
+    throw invalid(`The DICOM instance cannot be parsed: ${String(error)}`)
   }
-  if (readTag(view, 132) !== '00020000') throw invalid('The DICOM file meta group length is missing')
-  const metaEnd = 144 + view.getUint32(140, true)
-  return { meta: parseDataset(bytes, view, 132, metaEnd, false).node, metaEnd }
+  return {
+    dataset: dcmjs.data.DicomMetaDictionary.naturalizeDataset(dictionary.dict),
+    meta: dcmjs.data.DicomMetaDictionary.naturalizeDataset(dictionary.meta),
+  }
 }
 
-/** 从文件开头的字节读取 File Meta 中的 MediaStorageSOPInstanceUID，用于在不下载整个实例时识别它。 */
+/**
+ * 从文件开头的字节读取 File Meta 中的 MediaStorageSOPInstanceUID，用于在不下载整个实例时识别它。
+ * 数据集在片段末尾被截断，因此忽略数据集的解析错误，只取完整的 File Meta。
+ */
 export function dicomMetaSopInstanceUid(head: Uint8Array): string | undefined {
-  return text(parseMeta(head, new DataView(head.buffer, head.byteOffset, head.byteLength)).meta, '00020003')
+  return textAttribute(readDicom(head, { ignoreErrors: true }).meta, 'MediaStorageSOPInstanceUID')
 }
 
 /** 解析一个切片 DICOM 实例；封装像素数据按片段切分，基本偏移表允许为空。 */
 export function parseSlideInstance(bytes: Uint8Array): SlideInstance {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  const { meta, metaEnd } = parseMeta(bytes, view)
-  const transferSyntaxUid = text(meta, '00020010') ?? ''
-  const dataset = parseDataset(bytes, view, metaEnd, bytes.byteLength, true)
-  const node = dataset.node
-  let frames: Uint8Array[] = []
-  if (dataset.pixelData !== undefined && transferSyntaxUid !== explicitVrLittleEndian) {
-    const offset = dataset.pixelData
-    if (view.getUint32(offset + 8, true) !== 0xffffffff) throw invalid('Compressed pixel data must be encapsulated')
-    // 第一个条目是基本偏移表（可以为空），其后每个片段对应一帧；不依赖偏移表定位。
-    const items: Uint8Array[] = []
-    let cursor = offset + 12
-    while (true) {
-      if (cursor + 8 > bytes.byteLength) throw invalid('The encapsulated pixel data is truncated')
-      const tag = readTag(view, cursor)
-      const length = view.getUint32(cursor + 4, true)
-      if (tag === 'fffee0dd') break
-      if (tag !== 'fffee000' || cursor + 8 + length > bytes.byteLength) throw invalid('The encapsulated pixel data is malformed')
-      items.push(bytes.subarray(cursor + 8, cursor + 8 + length))
-      cursor += 8 + length
-    }
-    frames = items.slice(1)
-  }
-  const shared = node.sequences.get('52009229')?.[0]
-  const measures = shared?.sequences.get('00289110')?.[0]
-  const spacing = text(measures, '00280030')?.split('\\').map(Number)
-  const opticalPaths = node.sequences.get('00480105') ?? []
+  const { dataset, meta } = readDicom(bytes)
+  const transferSyntaxUid = textAttribute(meta, 'TransferSyntaxUID') ?? ''
+  const pixelData = dataset.PixelData
+  // 封装像素数据由 dcmjs 按片段切分，每个片段对应一帧；未压缩的像素数据不切分，由后续的压缩方式检查拒绝。
+  const frames = transferSyntaxUid !== explicitVrLittleEndian && Array.isArray(pixelData)
+    ? pixelData.map(frame => new Uint8Array(frame as ArrayBuffer))
+    : []
+  const spacing = numberList(firstItem(firstItem(dataset, 'SharedFunctionalGroupsSequence'), 'PixelMeasuresSequence') ?? {}, 'PixelSpacing', 2)
+  const opticalPaths = dataset.OpticalPathSequence
+  const opticalPath = firstItem(dataset, 'OpticalPathSequence')
+  const iccProfile = Array.isArray(opticalPath?.ICCProfile) ? opticalPath.ICCProfile[0] as ArrayBuffer | undefined : undefined
   const unsupported: string[] = []
-  if (node.elements.has('00209161')) unsupported.push('concatenation')
-  if (opticalPaths.length > 1 || (unsigned(node, '00480302', 4) ?? 1) > 1) unsupported.push('multiple optical paths')
-  if ((unsigned(node, '00480303', 4) ?? 1) > 1) unsupported.push('multiple focal planes')
-  if (text(node, '00280301') === 'YES') unsupported.push('burned-in annotation')
+  if (dataset.ConcatenationUID !== undefined) unsupported.push('concatenation')
+  if ((Array.isArray(opticalPaths) && opticalPaths.length > 1) || (numberAttribute(dataset, 'NumberOfOpticalPaths') ?? 1) > 1) {
+    unsupported.push('multiple optical paths')
+  }
+  if ((numberAttribute(dataset, 'TotalPixelMatrixFocalPlanes') ?? 1) > 1) unsupported.push('multiple focal planes')
+  if (textAttribute(dataset, 'BurnedInAnnotation') === 'YES') unsupported.push('burned-in annotation')
   return {
-    columns: requiredUnsigned(node, '00280011', 2, 'Columns'),
-    dimensionOrganization: text(node, '00209311'),
+    columns: requiredNumber(dataset, 'Columns'),
+    dimensionOrganization: textAttribute(dataset, 'DimensionOrganizationType'),
     frames,
-    iccProfile: opticalPaths[0]?.elements.get('00282000'),
-    imageType: (text(node, '00080008') ?? '').split('\\'),
-    numberOfFrames: Number(text(node, '00280008') ?? '1'),
-    photometric: text(node, '00280004'),
-    pixelSpacingMm: spacing?.length === 2 && spacing.every(value => Number.isFinite(value) && value > 0)
-      ? [spacing[0]!, spacing[1]!]
-      : undefined,
-    rows: requiredUnsigned(node, '00280010', 2, 'Rows'),
+    iccProfile: iccProfile === undefined ? undefined : new Uint8Array(iccProfile),
+    imageType: Array.isArray(dataset.ImageType) ? dataset.ImageType.map(String) : (textAttribute(dataset, 'ImageType') ?? '').split('\\'),
+    numberOfFrames: numberAttribute(dataset, 'NumberOfFrames') ?? 1,
+    photometric: textAttribute(dataset, 'PhotometricInterpretation'),
+    pixelSpacingMm: spacing?.every(value => value > 0) === true ? [spacing[0]!, spacing[1]!] : undefined,
+    rows: requiredNumber(dataset, 'Rows'),
     samples: {
-      bitsAllocated: unsigned(node, '00280100', 2),
-      bitsStored: unsigned(node, '00280101', 2),
-      planar: unsigned(node, '00280006', 2),
-      representation: unsigned(node, '00280103', 2),
-      samplesPerPixel: unsigned(node, '00280002', 2),
+      bitsAllocated: numberAttribute(dataset, 'BitsAllocated'),
+      bitsStored: numberAttribute(dataset, 'BitsStored'),
+      planar: numberAttribute(dataset, 'PlanarConfiguration'),
+      representation: numberAttribute(dataset, 'PixelRepresentation'),
+      samplesPerPixel: numberAttribute(dataset, 'SamplesPerPixel'),
     },
-    seriesInstanceUid: text(node, '0020000e'),
-    sopClassUid: text(node, '00080016'),
-    sopInstanceUid: text(node, '00080018'),
-    studyInstanceUid: text(node, '0020000d'),
-    totalColumns: unsigned(node, '00480006', 4),
-    totalRows: unsigned(node, '00480007', 4),
+    seriesInstanceUid: textAttribute(dataset, 'SeriesInstanceUID'),
+    sopClassUid: textAttribute(dataset, 'SOPClassUID'),
+    sopInstanceUid: textAttribute(dataset, 'SOPInstanceUID'),
+    studyInstanceUid: textAttribute(dataset, 'StudyInstanceUID'),
+    totalColumns: numberAttribute(dataset, 'TotalPixelMatrixColumns'),
+    totalRows: numberAttribute(dataset, 'TotalPixelMatrixRows'),
     transferSyntaxUid,
     unsupported,
   }

@@ -11,7 +11,9 @@ export const syntheticPatientIdentifiers = ['SYNTH^PATHOLOGY^PATIENT', 'SYNTH-PA
 
 const longVrs = new Set(['OB', 'SQ', 'UN'])
 
-function element(tag: string, vr: string, value: Uint8Array): Buffer {
+/** DICOM 的值长度必须为偶数，奇数长度的值以一个零字节补齐。 */
+function element(tag: string, vr: string, unpadded: Uint8Array): Buffer {
+  const value = unpadded.byteLength % 2 === 0 ? unpadded : Buffer.concat([unpadded, Buffer.from([0])])
   const header = Buffer.alloc(longVrs.has(vr) ? 12 : 8)
   header.writeUInt16LE(Number.parseInt(tag.slice(0, 4), 16), 0)
   header.writeUInt16LE(Number.parseInt(tag.slice(4), 16), 2)
