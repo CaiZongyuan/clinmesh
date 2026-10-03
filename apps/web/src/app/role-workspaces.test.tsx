@@ -3292,14 +3292,20 @@ describe('role workspaces', () => {
       // 报告 Tool 属于“检验检查”栏目：病历栏目不发布，切换栏目后重新注册。
       await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_select_doctor_section')).toBe(true))
       expect(registration!.tools.map(tool => tool.name)).not.toContain('clinmesh_prepare_acknowledge_report')
-      await act(async () => { await execute('clinmesh_select_doctor_section', { section: 'laboratory' }) })
-      await waitFor(() => expect(registration?.tools.map(tool => tool.name)).toContain('clinmesh_prepare_acknowledge_report'))
-      // 影像尚未在人类面前显示：已阅提案被拒绝，Agent 读到的页面状态不含像素。
-      await expect(act(() => execute('clinmesh_prepare_acknowledge_report', { requestId: 'imaging-request-1' })))
-        .rejects.toThrow('have not been displayed')
       const previousContextId = boundAgentToolInput(
         registration!.tools.find(tool => tool.name === 'clinmesh_read_current_context')!, {},
       ).contextId
+      await act(async () => { await execute('clinmesh_select_doctor_section', { section: 'laboratory' }) })
+      await waitFor(() => expect(registration?.tools.map(tool => tool.name)).toContain('clinmesh_prepare_acknowledge_report'))
+      // 切换栏目后页面上下文重新签发。
+      await waitFor(() => {
+        const contextTool = registration?.tools.find(tool => tool.name === 'clinmesh_read_current_context')
+        expect(contextTool).toBeDefined()
+        expect(boundAgentToolInput(contextTool!, {}).contextId).not.toBe(previousContextId)
+      })
+      // 影像尚未在人类面前显示：已阅提案被拒绝，Agent 读到的页面状态不含像素。
+      await expect(act(() => execute('clinmesh_prepare_acknowledge_report', { requestId: 'imaging-request-1' })))
+        .rejects.toThrow('have not been displayed')
       let opened = ''
       await act(async () => {
         opened = await execute('clinmesh_select_doctor_section', { imagingRequestId: 'imaging-request-1', section: 'laboratory' })
@@ -3311,11 +3317,6 @@ describe('role workspaces', () => {
       await waitFor(() => expect(
         (screen.getByRole('button', { name: '确认已阅' }) as HTMLButtonElement).disabled,
       ).toBe(false))
-      await waitFor(() => {
-        const contextTool = registration?.tools.find(tool => tool.name === 'clinmesh_read_current_context')
-        expect(contextTool).toBeDefined()
-        expect(boundAgentToolInput(contextTool!, {}).contextId).not.toBe(previousContextId)
-      })
       const context = JSON.parse(await execute('clinmesh_read_current_context'))
       expect(context.data.pageState.section).toBe('laboratory')
 
