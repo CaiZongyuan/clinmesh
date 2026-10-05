@@ -21,6 +21,7 @@ export type PathologyFactValue = z.infer<typeof pathologyFactValueSchema>
  * `FACT_UNKNOWN` 表示来源缺少某项固定事实，无法确认任何素材与病例相容。
  */
 export const pathologyPreparationReasonSchema = z.enum([
+  'ASSET_NOT_INSTALLED',
   'ASSET_NOT_PUBLISHED',
   'FACT_UNKNOWN',
   'FIXED_FACT_CONFLICT',

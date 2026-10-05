@@ -171,6 +171,7 @@
 - `agent-browser click @ref` 对位于嵌套滚动容器可视区之外的按钮可能不产生点击且不报错；先 `scrollintoview @ref` 再点击。Base UI 的 Select 用 `focus` 加 `press Enter` 打开，直接 click 不展开选项。
 
 - 合成 fixture 须贴近 Synthea 的真实导出形态。Synthea 在导出时已写下之后的病程：本次就诊诊断的急性病带有就诊之后的 `abatementDateTime`。按“字段是否存在”判断状态的规则在 fixture 上通过、在真实病例上全部失配；涉及来源时间的规则以 Index Encounter 时间为界，并用真实 Provider 生成的病例验证一次。
+- 按年份偏移日期时，替换年份字符串会产生无效的 2 月 29 日，JavaScript 的 `setUTCFullYear` 则会自动进位到 3 月；需要月末截断语义时，使用 UTC 日历运算并把进位结果退到原月份最后一天，回归包含非闰年与世纪年份。
 
 - 用模块过滤让 Synthea 定向生成病例时，一个批次中任一患者死亡会让 Provider 返回 502，任一患者没有合格的 Index Encounter 会让整个任务以 `INDEX_ENCOUNTER_NOT_FOUND` 失败。定向搜索使用 `count: 1` 的多个任务并更换 seed；低患病率疾病（如存活的肺癌患者）每个任务最多内部重试十次，耗时按分钟计；更快的做法是先在 Provider 镜像的临时离线容器里用与 Provider 相同的 Synthea 命令行并行预筛种子，命中后把同一组 population/clinical seed 提交给正式生成任务，得到的患者一致。Synthea 的肺癌模块只在 45–65 岁发病且数年内死亡，存活患者集中在 48–66 岁。
 

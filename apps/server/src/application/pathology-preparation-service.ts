@@ -186,11 +186,11 @@ export class PathologyPreparationService {
     const preparations = this.#preparations.latestForLibrary(context.workspaceId)
     const profiles = new Map<string, PathologyCoverage['profiles'][number]>()
     const gaps: PathologyCoverage['gaps'] = []
-    for (const { asset, facts, publishedRevisions } of catalog.assets.values()) {
+    for (const { asset, facts, installed, publishedRevisions } of catalog.assets.values()) {
       const state = {
         assetId: asset.assetId,
         blockers: [...new Set(pathologyAssetPublication(asset).reasons.map(reason => reason.code))],
-        installed: await this.#library.installed(asset),
+        installed,
         published: publishedRevisions.length > 0,
       }
       const missing = pathologyFactNames.filter(name => facts[name] === undefined)
@@ -270,7 +270,7 @@ export class PathologyPreparationService {
     return { readyExamCodes, sourceProcedures }
   }
 
-  /** 定向生成可选的适配条目：五项事实齐全且有已发布素材的事实组合。只返回条目标识、名称与适用人群。 */
+  /** 定向生成可选的适配条目：五项事实齐全且有已发布、已安装素材的事实组合。只返回条目标识、名称与适用人群。 */
   async generationTargets(context: ActorContext) {
     this.#assertAdministrator(context)
     const catalog = await this.#matchingCatalog()
@@ -290,7 +290,7 @@ export class PathologyPreparationService {
 
   /**
    * 由适配条目推导交给 Synthea 的保留条件，只用于提高命中率；患者是否满足条目仍由 `generationTargetMet` 判定。
-   * 须做过任一可送检手术，且五项事实的 Observation 取值与条目一致；条目不存在或没有已发布素材时返回 undefined。
+   * 须做过任一可送检手术，且五项事实的 Observation 取值与条目一致；条目不存在或没有已发布且已安装素材时返回 undefined。
    */
   async generationKeep(target: ScenarioGenerationTarget): Promise<SyntheaKeepCriteria | undefined> {
     const catalog = await this.#matchingCatalog()
@@ -308,7 +308,7 @@ export class PathologyPreparationService {
     }
   }
 
-  /** 定向生成导出的病史至少覆盖的年数；条目不存在或没有已发布素材时返回 undefined。 */
+  /** 定向生成导出的病史至少覆盖的年数；条目不存在或没有已发布且已安装素材时返回 undefined。 */
   async generationHistoryYears(target: ScenarioGenerationTarget): Promise<number | undefined> {
     const catalog = await this.#matchingCatalog()
     if (catalog === undefined) return undefined
@@ -334,8 +334,8 @@ export class PathologyPreparationService {
       profile: NonNullable<ReturnType<typeof pathologyProfile>>
       service: PathologyMatchingCatalog['rules']['services'][number]
     }>()
-    for (const { facts, publishedRevisions } of catalog.assets.values()) {
-      if (publishedRevisions.length === 0) continue
+    for (const { facts, installed, publishedRevisions } of catalog.assets.values()) {
+      if (!installed || publishedRevisions.length === 0) continue
       for (const service of catalog.rules.services) {
         const profile = pathologyProfile(service, facts)
         if (profile !== undefined) profiles.set(profile.id, { profile, service })
@@ -344,7 +344,7 @@ export class PathologyPreparationService {
     return [...profiles.values()].toSorted((left, right) => left.profile.id.localeCompare(right.profile.id))
   }
 
-  /** 适配规则与每份素材的派生事实和发布状态；清单目录或适配规则缺失时没有可用清单，内容无效时报告给管理员。 */
+  /** 适配规则与每份素材的派生事实、安装和发布状态；清单目录或适配规则缺失时没有可用清单，内容无效时报告给管理员。 */
   async #matchingCatalog(): Promise<PathologyMatchingCatalog | undefined> {
     let catalog: Awaited<ReturnType<PathologyAssetLibrary['catalog']>>
     try {
@@ -354,11 +354,12 @@ export class PathologyPreparationService {
       throw new PathologyPreparationError('PATHOLOGY_CATALOG_INVALID', error.message)
     }
     if (catalog?.matching === undefined) return undefined
-    const assets: PathologyMatchingCatalog['assets'] = new Map(catalog.assets.map(asset => [asset.assetId, {
+    const assets: PathologyMatchingCatalog['assets'] = new Map(await Promise.all(catalog.assets.map(async asset => [asset.assetId, {
       asset,
       facts: pathologyAssetFacts(asset.clinical),
+      installed: await this.#library.installed(asset),
       publishedRevisions: pathologyAssetPublication(asset).publishedRevisions.toSorted((left, right) => left - right),
-    }]))
+    }] as const)))
     return {
       assets,
       hash: pathologyMatchingCatalogHash(catalog.matching, assets),

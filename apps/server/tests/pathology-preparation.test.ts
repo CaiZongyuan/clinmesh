@@ -86,10 +86,11 @@ function asset(assetId: string, clinical: Clinical = {}): PathologyCatalogAsset 
   }
 }
 
-function catalog(entries: Array<{ asset: PathologyCatalogAsset; publishedRevisions?: number[] }>): PathologyMatchingCatalog {
+function catalog(entries: Array<{ asset: PathologyCatalogAsset; installed?: boolean; publishedRevisions?: number[] }>): PathologyMatchingCatalog {
   const assets: PathologyMatchingCatalog['assets'] = new Map(entries.map(entry => [entry.asset.assetId, {
     asset: entry.asset,
     facts: pathologyAssetFacts(entry.asset.clinical),
+    installed: entry.installed ?? true,
     publishedRevisions: entry.publishedRevisions ?? [1],
   }]))
   return { assets, hash: pathologyMatchingCatalogHash(rules, assets), packId: 'synthetic-pathology', rules }
@@ -306,6 +307,26 @@ describe('Pathology case matching', () => {
       reason: 'ASSET_NOT_PUBLISHED',
       status: 'unsupported',
     })
+  })
+
+  it('leaves a compatible but uninstalled slide unsupported rather than binding it or reporting a clinical conflict', () => {
+    const exam = match({ catalog: catalog([
+      { asset: asset('slide-match'), installed: false },
+      { asset: asset('slide-conflict', { er: 'Negative' }) },
+    ]) })
+
+    expect(exam).toMatchObject({ reason: 'ASSET_NOT_INSTALLED', status: 'unsupported' })
+    expect(exam.sourceProcedures[0]).not.toHaveProperty('assetId')
+  })
+
+  it('chooses another installed compatible slide when the preferred slide is unavailable', () => {
+    const slides = [asset('slide-a'), asset('slide-b')]
+    const chosen = match({ catalog: catalog(slides.map(slide => ({ asset: slide }))) }).sourceProcedures[0]!.assetId
+    const available = slides.find(slide => slide.assetId !== chosen)!
+    const exam = match({ catalog: catalog(slides.map(slide => ({ asset: slide, installed: slide.assetId !== chosen }))) })
+
+    expect(exam.status).toBe('ready')
+    expect(exam.sourceProcedures[0]).toMatchObject({ assetId: available.assetId })
   })
 
   it('chooses among equally compatible slides by case source identity and source procedure', () => {

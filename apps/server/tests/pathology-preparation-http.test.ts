@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { apiErrorSchema } from '@clinmesh/contracts/his'
 import { imagingCoverageSchema } from '@clinmesh/contracts/imaging'
@@ -361,6 +361,80 @@ describe('Pathology case preparation HTTP contract', () => {
     )).json())
     expect(unpublished.publication).toEqual({ publishedRevisions: [], reasons: [{ code: 'REVIEW_MISSING', revision: 1 }] })
     expect(unpublished.study.available).toBe(true)
+  })
+
+  it('excludes uninstalled slides from preparation and generation targets while keeping them visible in coverage', async () => {
+    const { install, pathologyAssetDirectory, runtime, syntheaProvider } = await createRuntime([
+      breastCaseBundle({ name: '相符切片未安装' }),
+    ], { targetedGeneration: true })
+    await install([{ assetId: luminal }, tripleNegativeSlide])
+    await rm(join(pathologyAssetDirectory, 'installed', luminal), { recursive: true })
+    const cookie = await signIn(runtime)
+    const caseId = await generateCase(runtime, cookie)
+    const providerCallsBefore = syntheaProvider.keeps.length
+
+    const [prepared] = (await preparePathology(runtime, cookie, [caseId])).prepared
+    expect(prepared?.preparation?.exams[0]).toMatchObject({ reason: 'ASSET_NOT_INSTALLED', status: 'unsupported' })
+    expect(prepared?.bindings).toEqual([])
+
+    const coverage = await coverageOf(runtime, cookie)
+    expect(coverage.profiles.find(profile => profile.id === luminalProfile)?.assets)
+      .toEqual([{ assetId: luminal, blockers: [], installed: false, published: true }])
+    expect(coverage.profiles.find(profile => profile.id === tripleNegativeProfile)?.assets)
+      .toEqual([{ assetId: tripleNegative, blockers: [], installed: true, published: true }])
+
+    const targets = scenarioGenerationTargetListSchema.parse(await (await runtime.app.request(
+      '/api/sim/v1/admin/scenario-generation-targets', { headers: { cookie } },
+    )).json())
+    expect(targets.items.map(item => item.profileId)).toEqual([tripleNegativeProfile])
+    expect((await generateTargeted(runtime, cookie, luminalProfile)).status).toBe(200)
+    expect(await runtime.scenarioData.processNextGenerationJob())
+      .toMatchObject({ caseIds: [], error: { code: 'IMAGING_TARGET_UNAVAILABLE' }, status: 'failed' })
+    expect(syntheaProvider.keeps).toHaveLength(providerCallsBefore)
+  })
+
+  it('re-prepares cases when slide installation changes and preserves started bindings and their supplements', async () => {
+    const { install, pathologyAssetDirectory, runtime } = await createRuntime([
+      breastCaseBundle({ name: '已开始' }),
+      breastCaseBundle({ name: '未开始' }),
+    ], { persona: true })
+    await install([{ assetId: luminal }])
+    const cookie = await signIn(runtime)
+    const started = await generateCase(runtime, cookie)
+    const waiting = await generateCase(runtime, cookie)
+    const first = await preparePathology(runtime, cookie)
+    const firstHash = first.prepared[0]!.preparation!.catalog.hash
+    const frozen = (await preparationOf(runtime, cookie, started)).bindings
+    await startOutpatientVisit(runtime, cookie, started)
+    const installedPath = join(pathologyAssetDirectory, 'installed', luminal)
+    const savedPath = join(pathologyAssetDirectory, 'saved-slide')
+    await rename(installedPath, savedPath)
+
+    const removed = await preparePathology(runtime, cookie)
+    expect(removed.prepared).toHaveLength(2)
+    expect(removed.prepared.every(item => item.preparation?.catalog.hash !== firstHash)).toBe(true)
+    const frozenAfterRemoval = await preparationOf(runtime, cookie, started)
+    expect(frozenAfterRemoval.bindings).toEqual(frozen)
+    expect(frozenAfterRemoval.preparation?.exams[0]?.sourceProcedures[0]).toMatchObject({
+      assetId: luminal,
+      supplements: [{ fact: 'histologic-type', value: '浸润性导管癌' }],
+    })
+    const waitingAfterRemoval = await preparationOf(runtime, cookie, waiting)
+    expect(waitingAfterRemoval.bindings).toEqual([])
+    expect(waitingAfterRemoval.preparation).toMatchObject({
+      exams: [{ reason: 'ASSET_NOT_INSTALLED', status: 'unsupported' }],
+      revision: 2,
+    })
+
+    await rename(savedPath, installedPath)
+    const restored = await preparePathology(runtime, cookie)
+    expect(restored.prepared).toHaveLength(2)
+    expect(restored.prepared.every(item => item.preparation?.catalog.hash === firstHash)).toBe(true)
+    expect((await preparationOf(runtime, cookie, started)).bindings).toEqual(frozen)
+    const waitingAfterRestore = await preparationOf(runtime, cookie, waiting)
+    expect(waitingAfterRestore.preparation).toMatchObject({ exams: [{ status: 'ready' }], revision: 3 })
+    expect(waitingAfterRestore.bindings).toMatchObject([{ assetId: luminal, preparationRevision: 3 }])
+    expect(await preparePathology(runtime, cookie)).toEqual({ prepared: [], remaining: 0 })
   })
 
   /** 缺省的病史起点满足条目要求的 45 年（结束日期 2026-08-01）。 */

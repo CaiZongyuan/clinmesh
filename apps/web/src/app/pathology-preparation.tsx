@@ -29,6 +29,7 @@ const examLabels: Record<PathologyExamCode, [string, string]> = {
 }
 
 const reasonLabels: Record<PathologyPreparationReason, [string, string]> = {
+  ASSET_NOT_INSTALLED: ['相符切片尚未安装', 'The compatible slide is not installed'],
   ASSET_NOT_PUBLISHED: ['没有通过复核的切片素材', 'No slide asset has been reviewed'],
   FACT_UNKNOWN: ['来源或素材缺少受体、淋巴结或 T 分期，无法确认相容', 'A receptor, node or T fact is missing, so compatibility cannot be confirmed'],
   FIXED_FACT_CONFLICT: ['病例既有事实与全部切片素材矛盾', 'Existing case facts contradict every slide asset'],

@@ -76,6 +76,31 @@ function renderWithQueries(element: React.JSX.Element) {
 }
 
 describe('administrator pathology preparation panels', () => {
+  it('explains that a compatible slide is not installed rather than not reviewed', async () => {
+    const prepared = casePreparation(1)
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      ...prepared,
+      bindings: [],
+      preparation: {
+        ...prepared.preparation,
+        exams: [{
+          ...prepared.preparation.exams[0],
+          reason: 'ASSET_NOT_INSTALLED',
+          sourceProcedures: [],
+          status: 'unsupported',
+        }],
+      },
+    })))
+    const user = userEvent.setup()
+    renderWithQueries(<PatientPathologyPreparation caseId="synthetic-case-1" locale="zh-CN" />)
+
+    await user.click(screen.getByText('病理准备'))
+
+    expect(await screen.findByText('相符切片尚未安装')).toBeTruthy()
+    expect(screen.getByText('未覆盖')).toBeTruthy()
+    expect(screen.queryByText('没有通过复核的切片素材')).toBeNull()
+  })
+
   it('loads a case preparation only when expanded and re-prepares that case on request', async () => {
     const requests: Array<{ body: unknown; method: string; path: string }> = []
     let revision = 1

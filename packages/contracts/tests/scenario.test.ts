@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  latestTargetHistoryStart,
   scenarioGenerationRequestSchema,
   scenarioInvestigationCatalogItemSchema,
   scenarioInvestigationResultSchema,
@@ -30,6 +31,19 @@ describe('Scenario generation request', () => {
       ...request,
       population: { ...request.population, count: 11 },
     }).success).toBe(false)
+  })
+
+  it.each([
+    { end: '2026-08-01', expected: '1981-08-01', years: 45 },
+    { end: '2024-02-29', expected: '1979-02-28', years: 45 },
+    { end: '2024-02-29', expected: '2020-02-29', years: 4 },
+    { end: '2000-02-29', expected: '1900-02-28', years: 100 },
+    { end: '2080-02-29', expected: '2000-02-29', years: 80 },
+  ])('keeps the history cutoff valid for $end minus $years years', ({ end, expected, years }) => {
+    const start = latestTargetHistoryStart(end, years)
+
+    expect(start).toBe(expected)
+    expect(scenarioGenerationRequestSchema.safeParse({ ...request, timeRange: { end, start } }).success).toBe(true)
   })
 
   it('defaults Synthea generation to all modules and bounds advanced filters', () => {

@@ -153,9 +153,13 @@ export const scenarioGenerationTargetOptionSchema = scenarioGenerationTargetSche
   sex: z.enum(['female', 'male']).optional(),
 }).strict()
 
-/** 定向目标要求的最晚病史起点：结束日期前推 `years` 年的同月同日（按日期字符串比较，2 月 29 日无需换算）。 */
+/** 定向目标要求的最晚病史起点：结束日期前推 `years` 年，无效的闰日取目标月份最后一天。 */
 export function latestTargetHistoryStart(end: string, years: number): string {
-  return `${String(Number(end.slice(0, 4)) - years).padStart(4, '0')}${end.slice(4)}`
+  const date = new Date(`${end}T00:00:00.000Z`)
+  const month = date.getUTCMonth()
+  date.setUTCFullYear(date.getUTCFullYear() - years)
+  if (date.getUTCMonth() !== month) date.setUTCDate(0)
+  return date.toISOString().slice(0, 10)
 }
 
 export const scenarioGenerationTargetListSchema = z.object({

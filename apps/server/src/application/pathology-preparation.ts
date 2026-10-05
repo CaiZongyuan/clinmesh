@@ -19,9 +19,9 @@ import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 type ServiceRule = PathologyMatchingRules['services'][number]
 type Evidence = PathologyExamPreparation['evidence']
 
-/** 清单中可用于病例匹配的内容：适配规则，以及每份素材派生的事实和已发布的报告修订。 */
+/** 清单中可用于病例匹配的内容：适配规则，以及每份素材派生的事实、安装状态和已发布的报告修订。 */
 export interface PathologyMatchingCatalog {
-  assets: Map<string, { asset: PathologyCatalogAsset; facts: PathologyFacts; publishedRevisions: number[] }>
+  assets: Map<string, { asset: PathologyCatalogAsset; facts: PathologyFacts; installed: boolean; publishedRevisions: number[] }>
   hash: string
   packId: string
   rules: PathologyMatchingRules
@@ -157,10 +157,11 @@ export function matchCasePathology(input: {
         .some(name => facts[name] !== undefined && assetFacts[name] !== undefined && facts[name] !== assetFacts[name])
         ? 'conflict'
         : pathologyFactNames.some(name => facts[name] === undefined || assetFacts[name] === undefined) ? 'unknown' : 'compatible'
-      const relations = published.map(([assetId, entry]) => ({ assetId, relation: relation(entry.facts) }))
-      compatible = relations.filter(item => item.relation === 'compatible').map(item => item.assetId)
+      const relations = published.map(([assetId, entry]) => ({ assetId, installed: entry.installed, relation: relation(entry.facts) }))
+      compatible = relations.filter(item => item.installed && item.relation === 'compatible').map(item => item.assetId)
       if (published.length === 0) failure = { reason: 'ASSET_NOT_PUBLISHED', status: 'unsupported' }
       else if (compatible.length > 0) failure = undefined
+      else if (relations.some(item => item.relation === 'compatible')) failure = { reason: 'ASSET_NOT_INSTALLED', status: 'unsupported' }
       else if (relations.some(item => item.relation === 'unknown')) failure = { reason: 'FACT_UNKNOWN', status: 'unsupported' }
       else failure = { reason: 'FIXED_FACT_CONFLICT', status: 'conflict' }
     }
@@ -204,16 +205,17 @@ export function matchCasePathology(input: {
   })
 }
 
-/** 规则与每份素材的事实、层级、发布状态和已发布报告签署内容的身份；任何一项变化都意味着既有准备结果需要重新评估。 */
+/** 规则与每份素材的事实、层级、安装、发布状态和已发布报告签署内容的身份；任何一项变化都意味着既有准备结果需要重新评估。 */
 export function pathologyMatchingCatalogHash(
   rules: PathologyMatchingRules,
   assets: PathologyMatchingCatalog['assets'],
 ): string {
   return canonicalJsonHash({
-    assets: [...assets.entries()].map(([assetId, { asset, facts, publishedRevisions }]) => ({
+    assets: [...assets.entries()].map(([assetId, { asset, facts, installed, publishedRevisions }]) => ({
       assetId,
       facts,
       histologicType: asset.clinical.histologicType,
+      installed,
       output: asset.output,
       // 同一修订号改动后重新签署时，绑定记录的报告内容哈希随之失效。
       publishedReports: (asset.reports ?? [])
