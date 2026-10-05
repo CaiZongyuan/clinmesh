@@ -54,6 +54,7 @@
 
 - Surface 宿主限制每个 Tool 的最终 description 不超过 512 字符；Web 包装器会追加通用编辑说明，预算必须按拼接后的文本计算。单个描述超限会使整份 lease 注册失败、全部 ClinMesh 工具缺失，不能仅以页面上下文签发成功或 mock register 测试通过判断桥接可用。
 - DSH lazy-CJS 包装器会缩进多行模板字符串，导致构建产物中的 Tool 描述比源码更长；验收必须执行真实产物并检查浏览器 lease 响应。非开发模式的宿主还会缓存插件脚本，重新构建后按[部署说明](../deployment.md#dsh-web-原生入口)重新加载宿主，核对实际返回的脚本，不能仅看磁盘时间或刷新页面。
+- DSH 产物体积受 Bun 编译器版本影响；本地通过而 CI 超标时，用 CI 的精确 Bun 版本构建同一源码和锁定依赖再比较，不能直接归因于依赖漂移或放宽预算。已验证版本与体积依据见[病理阅片引擎 Agent Note](../../.agents/notes/implemented/architecture/2026-10-02-slide-pyramid-engine.md)。
 
 - React 缓存的 Agent action 配置必须依赖其读取的 mutation 状态。连续问诊回归须包含已有病历草稿、病例刷新先于队列完成的时序，并验证完成后的工具清单；无草稿时临时创建的文书对象可能让缓存每次重算，掩盖缺失依赖。
 
@@ -91,6 +92,8 @@
 - `scripts/dev-lan.ts` 的进程生命周期覆盖完整子树。POSIX 上 Server 和 Web 必须使用独立进程组；任一分支退出或收到终止信号时，向两个完整进程组转发原信号。只终止顶层 `pnpm` 会遗留 Turbo、Vite 或 `tsx watch` 子进程，并在下次启动时产生错误的端口占用。
 - POSIX 上进程组 kill 已生效后，孤儿进程在被收养方收尸前仍处于僵尸/退出中状态，`kill(pid, 0)` 会把它探测为存活。判定幸存者必须在断言前轮询等待全部不可探测（如 50ms 间隔、数秒上限），超时仍存活才上报失败；Windows 无僵尸进程，本地全绿不能证明 Linux 无竞态。探测只把 `ESRCH` 视为已死、其余错误如实抛出，并拒绝非正整数 pid（`Number` 解析出的 NaN 会被强转为 pid 0，探测到探测方自身进程组）。
 - DSH React Surface Client 以 classic lazy-CJS 加载；任何构建后仍存在的 `import.meta` 都会在模块执行前触发语法错误，即使该分支在运行时不可达。开发标记使用可被构建器静态消除的 `process.env.NODE_ENV`，artifact verifier 必须拒绝残留 `import.meta`。
+- Surface 构建器不压缩依赖，并会把已压缩的代码重新排版：大体积第三方库引用其压缩构建，实际增量以引入前后 `lib/client.js` 的字节数为准，不能按压缩文件大小估算（OpenSeadragon 压缩构建约 35 万字节，产物增加约 55 万字节；默认入口会超出预算）。压缩构建没有类型声明时，在 `apps/web` 放环境模块声明并在 `apps/dsh-web/tsconfig.json` 的 `include` 中列出；oxlint 不允许三斜线引用。
+- 依赖真实渲染帧的组件（OpenSeadragon 的动画与瓦片调度）在 Chrome `--virtual-time-budget` 下不可靠，这类浏览器合同用 Playwright 的真实时钟并有界轮询。合成 JPEG 瓦片带填充色时，色度上采样会让填充色渗入相邻一两列有效像素；按像素统计验证时为图像边缘留出小于 0.5% 的容差。
 - `vendor/dsh-react-surface` 的 `lib/` 是未跟踪的生成目录。ClinMesh 的 Vitest 若直接导入由 DSH 注入的 `dsh-react-surface/client` external，必须通过显式测试 alias 解析到本地 stub；测试不能依赖开发机曾构建 submodule 后遗留的 `lib/client.js`。
 - WSL2 中 pnpm 为 Bun bin 生成的 shim 可能优先选择同目录 `bun.exe`，并把 Linux 路径转换成无法由该 Bun 解析的 UNC 路径。React Surface 构建脚本应由当前 Linux `bun` 直接执行 builder 的 TypeScript CLI，不能依赖该 shim；诊断时先比较实际 Bun 与 shim 目标，不要重复安装 Bun。
 - Windows 上 Turborepo 包装 `tsx watch` 的持久任务（旧根 `pnpm dev:server`）会以约三成概率把整棵进程树冻结在启动阶段：父进程 IPC 管道已建、子进程已派生，但双方 CPU 归零、服务永不监听，且 forensics 期 inspector 无响应。常驻开发服务器一律直连 pnpm（`pnpm --filter @clinmesh/server dev`），不进 turbo；诊断该类挂起先用“绕开包装层”隔离，再比较冻结与正常实例的 CPU 增量。
@@ -156,20 +159,27 @@
 
 - 影像流水线经代理访问 TCIA 时须设置 `NODE_USE_ENV_PROXY=1`；Node 的 `fetch` 默认不读取 `HTTPS_PROXY`，缺少该变量时 `pnpm imaging:sync` 和 `imaging:record` 表现为连接超时。下载在后台运行并轮询结果文件，不在前台阻塞等待。
 
+- 病理素材流水线从 IDC 公开存储桶（`idc-open-data`）匿名下载，经代理时同样需要 `NODE_USE_ENV_PROXY=1`；一个 20 倍实例可达数百 MB，来源客户端按区间下载并只重试失败的区间。会话的 `/tmp` scratchpad 会随机器重启清空：需要跨重启保留的下载缓存和研究数据放在仓库的 `.data/` 下，其中不放测试或脚本文件。清单条目里的临床字段从重新下载的来源文件转录并登记文件哈希，不凭记忆填写。
+
+- `jpeg-js` 解码三分量 JPEG 时，`colorTransform` 缺省会把 Adobe APP14 transform=0（RGB）的码流当作 YCbCr 转换；需要按码流标记显式传入。`@cornerstonejs/codec-openjpeg` 的 Emscripten 模块默认逐瓦片向标准输出打印 INFO，创建模块时传入空的 `print` 与 `printErr`。验证真实切片的颜色解释不看像素：解码已安装层级后统计通道均值与近白像素比例，H&E 组织像素的红、蓝明显高于绿，背景接近白色。
+
 - Playwright 使用与锁定版本匹配的 browser cache；跨项目参考配置时同时核对 runner 版本与已安装 revision，缺失时用本仓库的 `pnpm exec playwright install chromium` 安装。运行合同与真实入口的方式见[测试策略](../testing.md#用户界面验证)。
+- `tsconfig.browser.json` 的 E2E 入口会递归导入 Server 实现，但不会自动加载 Server 项目中的 ambient module 声明；Server 新增无类型依赖时，同时将对应声明文件纳入浏览器类型检查入口，不能只凭包级 `tsc` 通过判断完整类型检查通过。
 
 - 验证真实影像时不读取像素或截图：用 Playwright locator 或文字快照核对报告、状态和控件，用页面内脚本返回 canvas 尺寸、非零像素比例、均值和翻片前后的校验和变化等聚合量。帧切换计时以 canvas 内容发生变化为准，页码文字会先于像素更新。
 
 - `agent-browser click @ref` 对位于嵌套滚动容器可视区之外的按钮可能不产生点击且不报错；先 `scrollintoview @ref` 再点击。Base UI 的 Select 用 `focus` 加 `press Enter` 打开，直接 click 不展开选项。
 
 - 合成 fixture 须贴近 Synthea 的真实导出形态。Synthea 在导出时已写下之后的病程：本次就诊诊断的急性病带有就诊之后的 `abatementDateTime`。按“字段是否存在”判断状态的规则在 fixture 上通过、在真实病例上全部失配；涉及来源时间的规则以 Index Encounter 时间为界，并用真实 Provider 生成的病例验证一次。
+- 按年份偏移日期时，替换年份字符串会产生无效的 2 月 29 日，JavaScript 的 `setUTCFullYear` 则会自动进位到 3 月；需要月末截断语义时，使用 UTC 日历运算并把进位结果退到原月份最后一天，回归包含非闰年与世纪年份。
 
 - 用模块过滤让 Synthea 定向生成病例时，一个批次中任一患者死亡会让 Provider 返回 502，任一患者没有合格的 Index Encounter 会让整个任务以 `INDEX_ENCOUNTER_NOT_FOUND` 失败。定向搜索使用 `count: 1` 的多个任务并更换 seed；低患病率疾病（如存活的肺癌患者）每个任务最多内部重试十次，耗时按分钟计；更快的做法是先在 Provider 镜像的临时离线容器里用与 Provider 相同的 Synthea 命令行并行预筛种子，命中后把同一组 population/clinical seed 提交给正式生成任务，得到的患者一致。Synthea 的肺癌模块只在 45–65 岁发病且数年内死亡，存活患者集中在 48–66 岁。
 
 - 隔离验证实例须覆盖仓库 `.env` 中的 `CLINMESH_PUBLIC_ORIGIN` 与 `CLINMESH_TRUSTED_ORIGINS`，否则登录返回 `INVALID_ORIGIN`；数据库迁移从 `apps/server` 目录运行。没有配置 `CLINMESH_AI_*` 时 Persona 任务无法完成，合成病例不能开始就诊。
 
 - Synthea keep module（`-k`）的内部重试只重跑临床模拟，患者的年龄、性别等人口属性在第一次抽取后固定；抽到无法满足条件的年龄时会耗尽 `generate.max_attempts_to_keep_patient`（默认 1000，约 100 秒）后放弃；放弃时进程仍以 0 退出，只是导出的患者少于请求数（全部落空时连 `fhir` 目录都没有），判断依据只能是导出数量。定向生成必须由外层换 seed 重试，并用较窄的年龄范围提高命中率；不要只靠调大内部尝试次数。
+- Synthea GMF 的 `Observation` 条件在患者没有该 Observation 时做值比较会抛出 `NullPointerException` 并中止整次运行（只有 `is nil` / `is not nil` 不抛）；`And` 按书写顺序短路。写进 keep module 的 Observation 取值条件必须先放同一编码的 `is not nil`，再放 `==` 比较；编码值比较要求 `value_code` 的 system 与模块中一致（SNOMED 为 `SNOMED-CT`），类型不符的比较同样抛出异常。
 
-- DSH browser Tool broker 每次注册最多 32 个 Tool，医生“接诊”页的目录已到上限。为该页面新增 Tool 前先合并到语义相同的现有 Tool，或调整为按当前诊疗页发布；合同测试 `publishes only narrow, role-scoped tools within the broker limit` 会在超限时失败。
+- DSH browser Tool broker 每次注册最多 32 个 Tool。医生“接诊”页按当前诊疗栏目发布，新增医生 Tool 时在 `agentToolCatalog` 中为它声明所属栏目，只有确实跨栏目的动作才不声明；跨栏目 Tool 占用每个栏目的名额。合同测试 `publishes only narrow, role-scoped tools within the broker limit` 逐个岗位、视图与栏目断言不超过 32；Web 测试切换栏目后须在 `act` 之外等待新 Tool 注册，在 `act` 回调里等待注册会因状态不刷新而超时。
 
 - 新增会写入每个 Epoch 的基线数据（例如新的 Hospital Service）时，`perf:ci` 的 `scenario-install-reset-application` 写入行数会变化；该基线上下限相同，需要随基线数据同步更新 `apps/server/performance-baselines.json`。`verify:boundaries` 按文本匹配 `window.`、`document.` 等写法，`packages/core` 与 `packages/contracts` 中不要把变量或参数命名为 `window`。

@@ -29,6 +29,8 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_HOST: z.string().trim().min(1).default('127.0.0.1'),
   CLINMESH_IMAGING_ASSET_DIRECTORY: z.string().trim().min(1).optional(),
   CLINMESH_IMAGING_CATALOG_DIRECTORY: z.string().trim().min(1).optional(),
+  CLINMESH_PATHOLOGY_ASSET_DIRECTORY: z.string().trim().min(1).optional(),
+  CLINMESH_PATHOLOGY_CATALOG_DIRECTORY: z.string().trim().min(1).optional(),
   CLINMESH_PORT: z.string()
     .regex(/^\d+$/)
     .default('51868')
@@ -76,6 +78,8 @@ export interface ServerConfig {
   hostname: string
   imagingAssetDirectory: string
   imagingCatalogDirectory: string
+  pathologyAssetDirectory: string
+  pathologyCatalogDirectory: string
   port: number
   referenceDatabasePath?: string
   referenceReleaseId?: string
@@ -87,6 +91,9 @@ export interface ServerConfig {
 /** 影像素材的默认位置：清单随仓库提交，像素安装在不进入版本库的 `.data` 下。 */
 export const defaultImagingCatalogDirectory = resolve(import.meta.dirname, '../../../imaging-assets')
 export const defaultImagingAssetDirectory = resolve(import.meta.dirname, '../../../.data/imaging-assets')
+/** 病理切片素材包与放射分开：清单目录与素材目录各自独立，安装、修复与备份互不影响。 */
+export const defaultPathologyCatalogDirectory = resolve(import.meta.dirname, '../../../pathology-assets')
+export const defaultPathologyAssetDirectory = resolve(import.meta.dirname, '../../../.data/pathology-assets')
 
 function findWorkspaceEnvironmentFile(startDirectory: string): string | undefined {
   let directory = resolve(startDirectory)
@@ -138,6 +145,8 @@ export function readServerEnvironment(
     'CLINMESH_DATABASE_PATH',
     'CLINMESH_IMAGING_ASSET_DIRECTORY',
     'CLINMESH_IMAGING_CATALOG_DIRECTORY',
+    'CLINMESH_PATHOLOGY_ASSET_DIRECTORY',
+    'CLINMESH_PATHOLOGY_CATALOG_DIRECTORY',
     'CLINMESH_REFERENCE_DATABASE_PATH',
     'CLINMESH_WEB_ROOT',
   ] as const) {
@@ -195,6 +204,8 @@ export function readServerConfig(
     hostname: parsed.CLINMESH_HOST,
     imagingAssetDirectory: parsed.CLINMESH_IMAGING_ASSET_DIRECTORY ?? defaultImagingAssetDirectory,
     imagingCatalogDirectory: parsed.CLINMESH_IMAGING_CATALOG_DIRECTORY ?? defaultImagingCatalogDirectory,
+    pathologyAssetDirectory: parsed.CLINMESH_PATHOLOGY_ASSET_DIRECTORY ?? defaultPathologyAssetDirectory,
+    pathologyCatalogDirectory: parsed.CLINMESH_PATHOLOGY_CATALOG_DIRECTORY ?? defaultPathologyCatalogDirectory,
     port: parsed.CLINMESH_PORT,
     ...(parsed.CLINMESH_REFERENCE_DATABASE_PATH === undefined
       ? {}

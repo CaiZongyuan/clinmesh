@@ -1,10 +1,9 @@
+import type { DoctorCaseSection } from '@clinmesh/contracts/agent'
 import type { DoctorCaseDetail, EncounterCompletionPreview } from '@clinmesh/contracts/his'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { PanelRightCloseIcon, PanelRightOpenIcon } from 'lucide-react'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
-
-export type DoctorCaseSection = 'consultation' | 'record' | 'diagnosis' | 'prescription' | 'laboratory'
 
 const copy = {
   'en-US': {

@@ -388,7 +388,7 @@ describe('DSH Agent Page Context HTTP contract', () => {
       status: 'awaiting-doctor',
     })
     const doctorContext = await createContext(runtime, doctorCookie, {
-      activeSection: 'record',
+      activeSection: 'consultation',
       selection: {
         id: item!.caseId,
         kind: 'case',
@@ -451,6 +451,39 @@ describe('DSH Agent Page Context HTTP contract', () => {
     )
     expect(ordinaryCorrection.snapshot.allowedOperationIds)
       .not.toContain('outpatient.report.correct.propose')
+    expect(ordinaryCorrection.snapshot.allowedOperationIds)
+      .toContain('outpatient.report.acknowledge.propose')
+
+    const recordSectionContext = await createContext(runtime, doctorCookie, {
+      ...correctionClaim,
+      activeSection: 'record',
+      viewRevision: 'doctor-record-section',
+    })
+    expect(recordSectionContext.status).toBe(201)
+    const recordSection = agentPageContextBindingSchema.parse(await recordSectionContext.json())
+    expect(recordSection.snapshot.scopeKey).not.toBe(ordinaryCorrection.snapshot.scopeKey)
+    expect(recordSection.snapshot.allowedOperationIds).toContain('outpatient.visit.start.propose')
+    expect(recordSection.snapshot.allowedOperationIds)
+      .not.toContain('outpatient.report.acknowledge.propose')
+    const otherSectionCall = await runtime.app.request('/api/agent/v1/tool-calls', {
+      body: JSON.stringify({
+        contextToken: recordSection.token,
+        executionProof: executionProof({
+          callId: 'call-acknowledge-outside-laboratory-section',
+          contextId: recordSection.snapshot.id,
+          dshSessionId: 'dsh-session-1',
+          scopeKey: recordSection.snapshot.scopeKey,
+          toolName: 'clinmesh_prepare_acknowledge_report',
+        }),
+        input: { requestId: 'laboratory-request-admin-correction' },
+        operationId: 'outpatient.report.acknowledge.propose',
+      }),
+      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' },
+      method: 'POST',
+    })
+    expect(otherSectionCall.status).toBe(403)
+    expect(await otherSectionCall.json())
+      .toMatchObject({ error: { code: 'AGENT_OPERATION_NOT_ALLOWED' } })
 
     const administratorSignIn = await runtime.app.request('/api/auth/sign-in/email', {
       body: JSON.stringify({ email: 'admin@demo.clinmesh.local', password }),

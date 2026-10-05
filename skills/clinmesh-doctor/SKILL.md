@@ -71,6 +71,23 @@ clinmesh imaging-report acknowledge --input @imaging-acknowledgement.json --idem
 clinmesh imaging-report correct --input @imaging-correction.json --idempotency-key <key>
 ```
 
+## Pathology consultation requests
+
+乳腺切片病理会诊面向既往做过乳腺手术的患者：患者携带既往手术的 H&E 切片，由本院病理科出具会诊报告。它与检验、放射申请共用同一套状态，但使用各自的草稿和操作；检验和放射操作不能作用于病理申请。先读取当前病例的会诊服务目录：`available: false` 表示本院当前未开展，与病例病情无关；`sourceProcedures` 是该病例可见既往病史中可以送检的手术。草稿包含服务、`sourceProcedureReference`（取自 `sourceProcedures` 的 `sourceReference`）和会诊目的；所选手术不在清单内时以 `PATHOLOGY_SOURCE_PROCEDURE_UNAVAILABLE` 拒绝。同一服务同时只能有一条进行中的会诊。
+
+申请受理表示已收片，开始表示阅片中。状态为 `generation-failed` 时本次会诊没有取得结果，不会有报告：`PATHOLOGY_RESULT_UNAVAILABLE` 表示该病例没有可用切片，`PATHOLOGY_RESULT_FAILED` 表示系统连续执行失败；两者都可按当前申请版本重试或取消。报告包含标本信息（所选既往手术、切片数量、染色）、镜下所见、病理诊断、既有免疫组化结果和备注，CLI 不提供切片像素；需要阅片时由医生在工作台打开切片。确认已阅返回 `IMAGING_STUDY_UNAVAILABLE` 时切片暂不可读，报告仍可读取。CLI 的确认已阅表示医生已阅读报告，不代表切片曾在人面前显示。报告更正需要管理员 Grant，只能选择同一切片另一份已核对的报告内容，更正后当前报告需要重新确认。
+
+```bash
+clinmesh doctor case pathology-services list --case-id <case-id>
+clinmesh encounter pathology-request draft set --input @pathology.json --idempotency-key <key>
+clinmesh encounter pathology-request draft delete --input @pathology-draft-delete.json --idempotency-key <key>
+clinmesh encounter pathology-request issue --input @pathology-issue.json --idempotency-key <key>
+clinmesh pathology-request cancel --input @pathology-cancel.json --idempotency-key <key>
+clinmesh pathology-request retry --input @pathology-retry.json --idempotency-key <key>
+clinmesh pathology-report acknowledge --input @pathology-acknowledgement.json --idempotency-key <key>
+clinmesh pathology-report correct --input @pathology-correction.json --idempotency-key <key>
+```
+
 ## Document and completion
 
 Use independent lifecycle Commands. A document preview binds the current draft and versions; sign from that preview, and revise a signed document by creating a new revision. Document signing never completes the Encounter. Read the completion preview, resolve every blocking condition, then submit Encounter Completion with the current Encounter version. Do not use combined revisit, combined signing/completion or old laboratory-order entrypoints.

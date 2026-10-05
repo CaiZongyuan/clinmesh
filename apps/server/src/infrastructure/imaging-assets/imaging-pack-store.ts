@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { createReadStream } from 'node:fs'
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
@@ -123,6 +124,22 @@ async function readOptionalFile(path: string): Promise<Uint8Array | undefined> {
     if (isMissingFile(error)) return undefined
     throw error
   }
+}
+
+/** 流式计算文件的大小与 SHA-256，不把整个文件读入内存（单个层级或来源文件可达数百 MB）；文件不存在时返回 undefined。 */
+async function fileDigest(path: string): Promise<{ bytes: number; sha256: string } | undefined> {
+  const hash = createHash('sha256')
+  let bytes = 0
+  try {
+    for await (const chunk of createReadStream(path) as AsyncIterable<Buffer>) {
+      hash.update(chunk)
+      bytes += chunk.byteLength
+    }
+  } catch (error) {
+    if (isMissingFile(error)) return undefined
+    throw error
+  }
+  return { bytes, sha256: hash.digest('hex') }
 }
 
 /** 读取安装回执中的输出；回执缺失返回 'missing'，无法解析返回 'corrupt'。 */
@@ -319,9 +336,9 @@ async function installStatus<Asset extends ImagingPackAsset>(
   // 任一文件缺失时报告 missing，否则有哈希不符时报告 corrupt。
   let corrupt = false
   for (const file of adapter.installedFiles(output)) {
-    const bytes = await readOptionalFile(join(installed, file.path))
-    if (bytes === undefined) return 'missing'
-    corrupt ||= sha256(bytes) !== file.sha256
+    const digest = await fileDigest(join(installed, file.path))
+    if (digest === undefined) return 'missing'
+    corrupt ||= digest.sha256 !== file.sha256
   }
   return corrupt ? 'corrupt' : 'ready'
 }
@@ -337,9 +354,9 @@ async function verifyStatus<Asset extends ImagingPackAsset>(
   const retained = join(assetDirectory, 'sources', asset.assetId)
   for (const [seriesIndex, series] of asset.source.series.entries()) {
     for (const instance of series.instances ?? []) {
-      const bytes = await readOptionalFile(sourcePath(retained, seriesIndex, instance.sopInstanceUid))
-      if (bytes === undefined) return 'sources-missing'
-      if (bytes.byteLength !== instance.bytes || sha256(bytes) !== instance.sha256) return 'sources-corrupt'
+      const digest = await fileDigest(sourcePath(retained, seriesIndex, instance.sopInstanceUid))
+      if (digest === undefined) return 'sources-missing'
+      if (digest.bytes !== instance.bytes || digest.sha256 !== instance.sha256) return 'sources-corrupt'
     }
   }
   return 'ready'

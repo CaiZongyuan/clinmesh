@@ -468,6 +468,25 @@ describe('Synthea Scenario generation Provider contract', () => {
       })
     })
 
+    it('sends coded Observation conditions and requires the same echo', async () => {
+      const withObservations = {
+        ...keep,
+        observations: [{ code: '85337-4', valueAny: ['10828004'] }],
+      }
+      const submittedBodies: string[] = []
+      const body = providerResponse([patientBundle()])
+      const provider = capturingProvider(submitted => Response.json({
+        ...body,
+        metadata: { ...body.metadata, keep: submittedBodies.length === 1 ? JSON.parse(submitted).keep : keep },
+      }), submittedBodies)
+
+      await provider.generate(targetedRequest, undefined, withObservations)
+      expect(JSON.parse(submittedBodies[0]!).keep).toStrictEqual(withObservations)
+      await expect(provider.generate(targetedRequest, undefined, withObservations)).rejects.toMatchObject({
+        code: 'REPRODUCTION_METADATA_MISMATCH',
+      })
+    })
+
     it('keeps the untargeted request body unchanged', async () => {
       const submittedBodies: string[] = []
       const provider = capturingProvider(

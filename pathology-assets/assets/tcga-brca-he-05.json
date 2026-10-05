@@ -1,0 +1,223 @@
+{
+  "assetId": "tcga-brca-he-05",
+  "clinical": {
+    "estrogenReceptor": "Negative",
+    "her2": {
+      "finalStatus": "Positive",
+      "fish": "Positive",
+      "ihcScore": "3+",
+      "ihcStatus": "Positive"
+    },
+    "histologicType": "Infiltrating Ductal Carcinoma",
+    "pathologicN": "N2a",
+    "pathologicT": "T2",
+    "progesteroneReceptor": "Negative",
+    "sampleId": "TCGA-AO-A0JE-01",
+    "sampleType": "Primary Tumor",
+    "sex": "female",
+    "sourceId": "tcga-brca-clinical"
+  },
+  "collectionId": "tcga-brca-idc",
+  "output": {
+    "iccProfile": {
+      "bytes": 141992,
+      "sha256": "1397095fe6a2c61e1bc11889f56b8762cc0a588aff43ca0634cefacab990d7bb"
+    },
+    "ingestVersion": 1,
+    "levels": [
+      {
+        "height": 39098,
+        "index": {
+          "bytes": 296216,
+          "sha256": "2958178c6bcf95da5e14e000de1e7fcbf464018b1d71b36bb6a2e1807584e30b"
+        },
+        "magnification": 20,
+        "micronsPerPixel": 0.4992,
+        "origin": {
+          "kind": "source",
+          "sourceCodec": "jpeg-baseline",
+          "sourceInstance": 0,
+          "tiles": "copied"
+        },
+        "tileHeight": 256,
+        "tileWidth": 256,
+        "tiles": {
+          "bytes": 653924456,
+          "count": 37026,
+          "largestBytes": 53556,
+          "sha256": "fc5ab498ec7706b2bfc7636ba1df9b936bc66190ad92da2d0f872ae2932604ef"
+        },
+        "width": 61751
+      },
+      {
+        "height": 19549,
+        "index": {
+          "bytes": 74544,
+          "sha256": "244b2898aeed6a4ea6a5175347dbfd76bfa32132e90936649ae30a5586f81b2e"
+        },
+        "magnification": 10,
+        "micronsPerPixel": 0.9984,
+        "origin": {
+          "factor": 2,
+          "kind": "derived",
+          "method": "box",
+          "sourceInstance": 0
+        },
+        "tileHeight": 256,
+        "tileWidth": 256,
+        "tiles": {
+          "bytes": 151822937,
+          "count": 9317,
+          "largestBytes": 43818,
+          "sha256": "55cdc847e1f5e58559556403705d3c264cffe06e2f70f314c49a7a3648da0acb"
+        },
+        "width": 30876
+      },
+      {
+        "height": 9774,
+        "index": {
+          "bytes": 19040,
+          "sha256": "68c38a678a1869c25d11a3503345b52b1aa84e4ae1f283a30837d23ec17a18f4"
+        },
+        "magnification": 5,
+        "micronsPerPixel": 1.996897,
+        "origin": {
+          "kind": "source",
+          "sourceCodec": "jpeg-baseline",
+          "sourceInstance": 1,
+          "tiles": "copied"
+        },
+        "tileHeight": 256,
+        "tileWidth": 256,
+        "tiles": {
+          "bytes": 93828206,
+          "count": 2379,
+          "largestBytes": 95638,
+          "sha256": "a48285867d136350f85a9eeae0bc3cc4ac66fdbc1a914a172e057de3e58beb06"
+        },
+        "width": 15437
+      },
+      {
+        "height": 2443,
+        "index": {
+          "bytes": 1288,
+          "sha256": "7d77c2216a1971728ecceb933f1b3a085fea1ba7fb38ef116b95bfdfc99b5e7e"
+        },
+        "magnification": 1.25,
+        "micronsPerPixel": 7.988106,
+        "origin": {
+          "kind": "source",
+          "sourceCodec": "jpeg-baseline",
+          "sourceInstance": 2,
+          "tiles": "copied"
+        },
+        "tileHeight": 256,
+        "tileWidth": 256,
+        "tiles": {
+          "bytes": 9431522,
+          "count": 160,
+          "largestBytes": 110808,
+          "sha256": "8904ed752b1f63bd5f055a6263ff9854b6c72ca594f97948e302e8436439596f"
+        },
+        "width": 3859
+      }
+    ],
+    "parameters": {
+      "downsample": {
+        "domain": "srgb-code-values",
+        "edge": "in-bounds-mean",
+        "method": "box",
+        "padding": "white",
+        "rounding": "half-up"
+      },
+      "jpeg2000Decoder": {
+        "library": "@cornerstonejs/codec-openjpeg",
+        "version": "1.3.6"
+      },
+      "jpegEncoder": {
+        "chromaSubsampling": "4:4:4",
+        "colorModel": "YCbCr",
+        "library": "jpeg-js",
+        "process": "baseline",
+        "quality": 85,
+        "version": "0.4.4"
+      }
+    }
+  },
+  "reports": [
+    {
+      "diagnosis": "乳腺浸润性导管癌（浸润性癌，非特殊类型）。原始资料未提供组织学分级。",
+      "draft": {
+        "model": "claude-opus-5-5",
+        "promptVersion": "breast-pathology-report-v1"
+      },
+      "immunohistochemistry": "以下结果引自原始病理资料，本次会诊未提供免疫组化切片。ER：阴性；PR：阴性；HER2：阳性（IHC 3+，FISH 阳性）。",
+      "microscopy": "送检切片为 HE 染色乳腺组织，见浸润性癌，癌细胞呈巢状、条索状或腺管样排列，浸润纤维间质。",
+      "note": "本次会诊切片为原发灶组织，未包含淋巴结；淋巴结情况以原病例记录为准。",
+      "review": {
+        "automatedCheck": {
+          "checkVersion": 1,
+          "passed": true
+        },
+        "conclusion": "approved",
+        "contentSha256": "d4de1cb8f4df7d0a2674e81004b1352be9df626bd3da40164ea24135f34caa22",
+        "items": [
+          {
+            "conclusion": "confirmed",
+            "item": "no-identifying-content"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "findings-match-slide"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "source-fields"
+          },
+          {
+            "conclusion": "confirmed",
+            "item": "report-wording"
+          }
+        ],
+        "reviewedAt": "2026-10-03",
+        "reviewer": "JH",
+        "reviewerIsPathologist": false
+      },
+      "revision": 1,
+      "specimen": {
+        "procedure": "case-source-procedure",
+        "slideCount": 1,
+        "stain": "HE"
+      }
+    }
+  ],
+  "schemaVersion": 1,
+  "source": {
+    "series": [
+      {
+        "idcSeriesUuid": "3a063c73-ed6b-49b9-954e-cfc6f23fe6df",
+        "instances": [
+          {
+            "bytes": 655109274,
+            "sha256": "60726c06d137d58b1a5e07fb8ba0e8179fc0d9ccd9805dbb6d5e6bc62cb2f613",
+            "sopInstanceUid": "1.3.6.1.4.1.5962.99.1.1333350229.1015939965.1637715922773.8.0"
+          },
+          {
+            "bytes": 94181060,
+            "sha256": "d3b58f03604bd49078834356efb8feae9bd4d71f796c56e9a665cbf47b14bb9c",
+            "sopInstanceUid": "1.3.6.1.4.1.5962.99.1.1333350229.1015939965.1637715922773.22.0"
+          },
+          {
+            "bytes": 9731120,
+            "sha256": "447a6691567a3343bb80c80d0da6ec9566a16c3efe1257949e9e276aab64787f",
+            "sopInstanceUid": "1.3.6.1.4.1.5962.99.1.1333350229.1015939965.1637715922773.29.0"
+          }
+        ],
+        "seriesInstanceUid": "1.3.6.1.4.1.5962.99.1.1333350229.1015939965.1637715922773.2.0"
+      }
+    ],
+    "slideId": "TCGA-AO-A0JE-01Z-00-DX1",
+    "studyInstanceUid": "2.25.285720874681723963183937019255363973466",
+    "subjectId": "TCGA-AO-A0JE"
+  }
+}

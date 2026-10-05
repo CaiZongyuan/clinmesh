@@ -387,6 +387,9 @@ importers:
       '@clinmesh/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@cornerstonejs/codec-openjpeg':
+        specifier: 1.3.6
+        version: 1.3.6
       '@hono/node-server':
         specifier: 'catalog:'
         version: 2.1.1(hono@4.13.3)
@@ -411,6 +414,9 @@ importers:
       hono:
         specifier: 'catalog:'
         version: 4.13.3
+      jpeg-js:
+        specifier: 0.4.4
+        version: 0.4.4
       mdast-util-from-markdown:
         specifier: 2.0.3
         version: 2.0.3(supports-color@10.2.2)
@@ -472,6 +478,9 @@ importers:
       lucide-react:
         specifier: 'catalog:'
         version: 1.33.0(react@19.2.3)
+      openseadragon:
+        specifier: 6.1.1
+        version: 6.1.1
       react:
         specifier: 'catalog:'
         version: 19.2.3
@@ -1230,6 +1239,10 @@ packages:
     cpu: [x64]
     os: [win32]
     hasBin: true
+
+  '@cornerstonejs/codec-openjpeg@1.3.6':
+    resolution: {integrity: sha512-bSdZXF+2GxfBkWHUr7yGLQtIwbAm9wOl3e4ARee/9Z9lfKyVqhUCixI6+ZjIn9YKTIuDcn/NZNK94XEUg1SBtw==}
+    engines: {node: '>=0.14'}
 
   '@csstools/color-helpers@6.1.1':
     resolution: {integrity: sha512-gLNsunvwf3mCi5u5o46/Z/JcJMnhbHSaZ69rkgPzNM3J4s8hWwpPUQB6/tt0EDFyCiWzxANlx+2LJwpYj4zS1w==}
@@ -5072,6 +5085,9 @@ packages:
   jose@6.2.9:
     resolution: {integrity: sha512-XrchZOFZUl/T3vTwRe8XK+cJrGtMF4th1ARnDfwbBXFKThGhlsxEE4Zu03AD/bjJSt/9jT/mxrOCkJWOg77aPA==}
 
+  jpeg-js@0.4.4:
+    resolution: {integrity: sha512-WZzeDOEtTOBK4Mdsar0IqEU5sMr3vSV2RqkAIzUEV2BHnUfKGyswWFPFwK5EeDo93K3FohSHbLAjj0s1Wzd+dg==}
+
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
 
@@ -5821,6 +5837,9 @@ packages:
     resolution: {integrity: sha512-7x81NCL719oNbsq/3mh+hVrAWmFuEYUqrq/Iw3kUzH8ReypT9QQ0BLoJS7/G9k6N81XjW4qHWtjWwe/9eLy1EQ==}
     engines: {node: '>=12'}
 
+  openseadragon@6.1.1:
+    resolution: {integrity: sha512-g4iKe2q8B642SaBT3+x4ZF3/8b1TxPPydyjmtrOLgDrlYWMKd9ZXM+1Cb/xa9DVySkvs/7l6HR1nHKfD5F3Tsw==}
+
   ora@3.4.0:
     resolution: {integrity: sha512-eNwHudNbO1folBP3JsZ19v9azXWtQZjICdr3Q0TDPIaeBQ3mXLrh54wM+er0+hSp+dWKf+Z8KM58CYzEyIYxYg==}
     engines: {node: '>=6'}
@@ -6193,8 +6212,8 @@ packages:
     resolution: {integrity: sha512-mFAyJq9vUbSTARLZUvAEf1z3YxlvAwswbmxMx2mPA/MSm4KmpwvwvhsH/NIrZhyOuwD60Lzyw2qh83uCbgTPYw==}
     engines: {node: '>= 4'}
 
-  regenerate-unicode-properties@10.2.2:
-    resolution: {integrity: sha512-m03P+zhBeQd1RGnYxrGyDAPpWX/epKirLrp8e3qevZdVkKtnCrjjWczIbYc8+xd6vcTStVlqfycTx1KR4LOr0g==}
+  regenerate-unicode-properties@10.3.0:
+    resolution: {integrity: sha512-9ns8odR8e9q3otKeHj3DE80jZYKg6zVeZKE+zQmRKXFoVUcuiTGeO6iusDhPRoIQQPVPRvH+SfBhrTud4eczuw==}
     engines: {node: '>=4'}
 
   regenerate@1.4.2:
@@ -6212,8 +6231,8 @@ packages:
   regex@6.1.0:
     resolution: {integrity: sha512-6VwtthbV4o/7+OaAF9I5L5V3llLEsoPyq9P1JVXkedTP33c7MfCG0/5NOPcSJn0TzXcG9YUrR0gQSWioew3LDg==}
 
-  regexpu-core@6.4.0:
-    resolution: {integrity: sha512-0ghuzq67LI9bLXpOX/ISfve/Mq33a4aFRzoQYhnnok1JOFpmE/A2TBGkNVenOGEeSBCjIiWcc6MVOG5HEQv0sA==}
+  regexpu-core@6.5.2:
+    resolution: {integrity: sha512-zkmVH92DlzjSFc4xKGZp/2BXIFrDIdBQBC8gUXKCsMgKYb1bkCkxfSuoW1werDjaTEMTbULkHtKFHe1L+Abnaw==}
     engines: {node: '>=4'}
 
   regjsgen@0.8.0:
@@ -6444,6 +6463,10 @@ packages:
 
   source-map-js@1.2.1:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
+    engines: {node: '>=0.10.0'}
+
+  source-map-js@1.2.2:
+    resolution: {integrity: sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw==}
     engines: {node: '>=0.10.0'}
 
   source-map-support@0.5.21:
@@ -7385,7 +7408,7 @@ snapshots:
     dependencies:
       '@babel/core': 7.29.7(supports-color@10.2.2)
       '@babel/helper-annotate-as-pure': 7.29.7
-      regexpu-core: 6.4.0
+      regexpu-core: 6.5.2
       semver: 6.3.1
 
   '@babel/helper-define-polyfill-provider@0.6.8(@babel/core@7.29.7(supports-color@10.2.2))(supports-color@10.2.2)':
@@ -7903,6 +7926,8 @@ snapshots:
 
   '@cn-health/cli-win32-x64@0.5.2':
     optional: true
+
+  '@cornerstonejs/codec-openjpeg@1.3.6': {}
 
   '@csstools/color-helpers@6.1.1': {}
 
@@ -9920,7 +9945,7 @@ snapshots:
       '@vue/shared': 3.5.41
       entities: 7.0.1
       estree-walker: 2.0.2
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
 
   '@vue/compiler-dom@3.5.41':
     dependencies:
@@ -9937,7 +9962,7 @@ snapshots:
       estree-walker: 2.0.2
       magic-string: 0.30.21
       postcss: 8.5.26
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
 
   '@vue/compiler-ssr@3.5.41':
     dependencies:
@@ -10559,7 +10584,7 @@ snapshots:
   css-tree@3.2.1:
     dependencies:
       mdn-data: 2.27.1
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
 
   cssesc@3.0.0: {}
 
@@ -11537,6 +11562,8 @@ snapshots:
   jiti@2.7.0: {}
 
   jose@6.2.9: {}
+
+  jpeg-js@0.4.4: {}
 
   js-tokens@4.0.0: {}
 
@@ -12597,6 +12624,8 @@ snapshots:
       is-docker: 2.2.1
       is-wsl: 2.2.0
 
+  openseadragon@6.1.1: {}
+
   ora@3.4.0:
     dependencies:
       chalk: 2.4.2
@@ -12744,7 +12773,7 @@ snapshots:
     dependencies:
       nanoid: 3.3.18
       picocolors: 1.1.1
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
 
   postcss@8.5.6:
     dependencies:
@@ -13020,7 +13049,7 @@ snapshots:
       tiny-invariant: 1.3.3
       tslib: 2.8.1
 
-  regenerate-unicode-properties@10.2.2:
+  regenerate-unicode-properties@10.3.0:
     dependencies:
       regenerate: 1.4.2
 
@@ -13038,10 +13067,10 @@ snapshots:
     dependencies:
       regex-utilities: 2.3.0
 
-  regexpu-core@6.4.0:
+  regexpu-core@6.5.2:
     dependencies:
       regenerate: 1.4.2
-      regenerate-unicode-properties: 10.2.2
+      regenerate-unicode-properties: 10.3.0
       regjsgen: 0.8.0
       regjsparser: 0.13.2
       unicode-match-property-ecmascript: 2.0.0
@@ -13369,6 +13398,8 @@ snapshots:
       smart-buffer: 4.2.0
 
   source-map-js@1.2.1: {}
+
+  source-map-js@1.2.2: {}
 
   source-map-support@0.5.21:
     dependencies:

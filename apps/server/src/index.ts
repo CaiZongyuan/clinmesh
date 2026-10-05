@@ -24,6 +24,8 @@ const runtime = await createClinMeshRuntime({
   demoPassword: config.demoPassword,
   imagingAssetDirectory: resolve(config.imagingAssetDirectory),
   imagingCatalogDirectory: resolve(config.imagingCatalogDirectory),
+  pathologyAssetDirectory: resolve(config.pathologyAssetDirectory),
+  pathologyCatalogDirectory: resolve(config.pathologyCatalogDirectory),
   ...(config.dshBridgeSecret === undefined
     ? {}
     : { dshBridgeSecret: config.dshBridgeSecret }),

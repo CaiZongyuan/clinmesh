@@ -6,7 +6,7 @@ import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { ActorContext, CommandTransaction } from './command-executor.ts'
 import { WorkflowError } from './workflow-error.ts'
 
-export type ClinicalRequestKind = 'laboratory' | 'imaging'
+export type ClinicalRequestKind = 'laboratory' | 'imaging' | 'pathology'
 
 export type ClinicalRequestStatus =
   | 'acknowledged'
