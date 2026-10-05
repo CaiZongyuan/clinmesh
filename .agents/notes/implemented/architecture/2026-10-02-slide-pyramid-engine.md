@@ -22,6 +22,8 @@ Status: implemented
 
 **引用压缩构建，不引用包的默认入口。** Surface 构建器不压缩依赖。默认入口是未压缩源码，引入后产物为 4,109,187 字节，超出预算；压缩构建经构建器重新排版后仍比默认入口小约 19 万字节。压缩构建没有类型声明，`apps/web/src/app/imaging/openseadragon-min.d.ts` 把它指向包内类型，`apps/dsh-web/tsconfig.json` 显式包含该声明文件。
 
+**CI 与 DSH 候选验收固定使用 Bun 1.4.2。** 相同源码、锁定依赖与构建器在 Bun 1.4.0 下生成 4,528,716 字节的产物，超过预算；Bun 1.4.2 下生成 3,995,150 字节，并通过 lazy-CJS、依赖和 Tool 描述合同。编译器版本属于体积证据的输入，验收使用已验证的版本，不修改上游构建器或放宽预算。
+
 **瓦片读取完全由引擎接管。** 引擎构造自定义瓦片源并覆盖 `downloadTileStart` 与 `downloadTileAbort`：位置交给外壳的 `loadBlock`，JPEG 字节用 `createImageBitmap` 解码，画到每个瓦片自己的 canvas 后立即 `close()`，再以 `context2d` 类型交给 OpenSeadragon。`getTileUrl` 的返回值只作缓存键。内置导航按钮会从 `prefixUrl` 请求图片，因此关闭，按钮由引擎自己渲染。浏览器合同断言阅片器没有发起任何 `fetch`、XHR 或资源请求。
 
 **取消和并发由引擎自己的闸门保证。** 每个瓦片请求有自己的 `AbortController`；引擎卸载（外壳切换切片或病例时重建引擎）先取消全部请求再销毁阅片器，已取消的瓦片即使解码完成也不交给 OpenSeadragon。导航小图是另一个阅片器实例，不受 `imageLoaderLimit` 约束，因此并发上限由引擎内的闸门统一执行：主视图与导航小图合计最多六个请求。主视图的解码缓存预算 64 MiB，按瓦片 RGBA 字节折算为 `maxImageCacheCount`（256 像素瓦片约 256 个，240 像素瓦片约 291 个）。两个数值经真实切片在两个通道实测确认，结果见 Consequences。
@@ -44,7 +46,7 @@ Status: implemented
 
 ## Consequences
 
-DSH 产物的体积余量从约 73 万字节降到约 18 万字节。后续向 Surface 增加依赖或大段代码前先看 `verify-artifact.ts` 的结果；余量不足时优先考虑把本引擎换成轻量实现。
+当前完整 DSH 产物为 3,995,150 字节，体积余量为 104,850 字节。后续向 Surface 增加依赖或大段代码前先看 `verify-artifact.ts` 的结果；余量不足时优先考虑把本引擎换成轻量实现。
 
 OpenSeadragon 随 Surface 一起加载和初始化，不阅片的页面也承担这部分解析开销。它在模块初始化时探测 canvas 支持，jsdom 下的 Web 测试会因此打印 `getContext` 未实现的提示，不影响结果。产物中包含 OpenSeadragon 的图像转换 Worker 源码，当前配置不会启动它。
 
