@@ -53,12 +53,20 @@ import { AgentIntegrationService } from './application/agent-integration-service
 import { reportRuntimeError } from './runtime-error-reporting.ts'
 import { ImagingPreparationService } from './application/imaging-preparation-service.ts'
 import { ImagingStudyReader } from './application/imaging-study-reader.ts'
+import { PathologyPreparationService } from './application/pathology-preparation-service.ts'
+import {
+  PathologyResultResolver,
+  PathologyResultUnavailableError,
+} from './application/pathology-result-resolver.ts'
+import { PathologySlideReader } from './application/pathology-slide-reader.ts'
 import {
   ImagingResultResolver,
   ImagingResultUnavailableError,
 } from './application/imaging-result-resolver.ts'
 import { ImagingAssetLibrary } from './infrastructure/imaging-assets/imaging-asset-library.ts'
+import { PathologyAssetLibrary } from './infrastructure/imaging-assets/pathology-asset-library.ts'
 import { ImagingPreparationRepository } from './infrastructure/sqlite/imaging-preparation-repository.ts'
+import { PathologyPreparationRepository } from './infrastructure/sqlite/pathology-preparation-repository.ts'
 
 function lisActorContext(event: {
   epoch: string
@@ -90,6 +98,21 @@ function risActorContext(event: {
   }
 }
 
+function pathologyActorContext(event: {
+  epoch: string
+  scenarioRunId: string
+  workspaceId: string
+}): ActorContext {
+  return {
+    actorId: 'actor-pathology-system',
+    epoch: event.epoch,
+    organizationId: 'organization-clinmesh',
+    roleCode: 'pathology-system',
+    scenarioRunId: event.scenarioRunId,
+    workspaceId: event.workspaceId,
+  }
+}
+
 export interface CreateClinMeshRuntimeOptions {
   activeReferenceReleaseId?: string
   ai?: {
@@ -111,6 +134,8 @@ export interface CreateClinMeshRuntimeOptions {
   dshBridgeSecret?: string
   imagingAssetDirectory?: string
   imagingCatalogDirectory?: string
+  pathologyAssetDirectory?: string
+  pathologyCatalogDirectory?: string
   migrationMode: 'apply' | 'verify'
   chatCompletionsProvider?: JsonChatCompletionsProvider
   investigationModel?: string
@@ -265,13 +290,45 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       preparations: imagingPreparations,
       profiles: syntheticPatientProfiles,
     })
+    // 病理素材包与放射素材包各自独立：任一目录缺失或损坏只影响自己的会诊与准备。
+    const pathologyLibrary = new PathologyAssetLibrary({
+      assetDirectory: options.pathologyAssetDirectory,
+      catalogDirectory: options.pathologyCatalogDirectory,
+    })
+    const pathologyPreparations = new PathologyPreparationRepository(database)
+    const pathologyResults = new PathologyResultResolver({
+      database,
+      library: pathologyLibrary,
+      preparations: pathologyPreparations,
+    })
+    const pathologyPreparation = new PathologyPreparationService({
+      cases: syntheticCases,
+      commands,
+      library: pathologyLibrary,
+      preparations: pathologyPreparations,
+      profiles: syntheticPatientProfiles,
+    })
     const scenarioData = new ScenarioDataService({
       cases: syntheticCases,
       commands,
       jobs: generationJobs,
       provider: syntheaProvider,
       profiles: syntheticPatientProfiles,
-      targets: imagingPreparation,
+      // 定向目标按类别交给拥有对应素材包的病例准备。
+      targets: {
+        generationHistoryYears: async target => target.kind === 'pathology-profile'
+          ? await pathologyPreparation.generationHistoryYears(target)
+          : undefined,
+        generationKeep: target => target.kind === 'pathology-profile'
+          ? pathologyPreparation.generationKeep(target)
+          : imagingPreparation.generationKeep(target),
+        generationTargetMet: (target, candidate) => target.kind === 'pathology-profile'
+          ? pathologyPreparation.generationTargetMet(target, candidate)
+          : imagingPreparation.generationTargetMet(target, candidate),
+        prepareBatch: (target, input) => target.kind === 'pathology-profile'
+          ? pathologyPreparation.prepareBatch(input)
+          : imagingPreparation.prepareBatch(input),
+      },
     })
     const caseVisits = new SyntheticCaseVisitService({
       briefs: patientPersonas,
@@ -294,6 +351,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     })
     laboratoryServicePublisher.ensureDefaultServices()
     workflow.imaging.ensureServices()
+    workflow.pathology.ensureServices()
     const identity = new IdentityService(database, {
       authBaseUrl: options.authBaseUrl,
       authSecret: options.authSecret,
@@ -429,6 +487,45 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           }
           return { status: 'completed' }
         },
+        'pathology.accept-request': async event => {
+          const payload = laboratoryRequestPayloadSchema.parse(event.payload)
+          workflow.pathology.accept({
+            context: pathologyActorContext(event),
+            eventId: event.eventId,
+            requestId: payload.requestId,
+          })
+          return { status: 'completed' }
+        },
+        'pathology.start-request': async event => {
+          const payload = laboratoryRequestPayloadSchema.parse(event.payload)
+          workflow.pathology.start({
+            context: pathologyActorContext(event),
+            eventId: event.eventId,
+            requestId: payload.requestId,
+          })
+          return { status: 'completed' }
+        },
+        'pathology.report-request': async event => {
+          const payload = laboratoryRequestPayloadSchema.parse(event.payload)
+          const context = pathologyActorContext(event)
+          try {
+            const result = await pathologyResults.resolveForRequest(event.workspaceId, event.epoch, payload.requestId)
+            workflow.pathology.report({ context, eventId: event.eventId, requestId: payload.requestId, result })
+          } catch (error) {
+            // 与放射相同：未准备、未覆盖或切片不可用直接落为未取得结果；其他故障最多自动尝试三次。
+            const unavailable = error instanceof PathologyResultUnavailableError
+            if (!unavailable && event.attempt < 3) return { status: 'retryable-failed' }
+            workflow.pathology.fail({
+              context,
+              error: unavailable
+                ? { code: 'PATHOLOGY_RESULT_UNAVAILABLE', message: 'The pathology result is not available for this consultation' }
+                : { code: 'PATHOLOGY_RESULT_FAILED', message: 'The pathology result could not be produced' },
+              eventId: event.eventId,
+              requestId: payload.requestId,
+            })
+          }
+          return { status: 'completed' }
+        },
         'lis.process-order': async event => {
           workflow.processLisOrder({
             context: lisActorContext(event),
@@ -547,6 +644,14 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         results: imagingResults,
       },
       imagingPreparation,
+      pathology: {
+        preparation: pathologyPreparation,
+        reader: new PathologySlideReader({
+          library: pathologyLibrary,
+          studyAccess: (context, studyId) => workflow.pathology.studyAccess(context, studyId),
+        }),
+        results: pathologyResults,
+      },
       investigation,
       caseVisits,
       patientPersona,

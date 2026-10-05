@@ -436,6 +436,48 @@ describe('HIS operation catalog', () => {
     }).success).toBe(false)
   })
 
+  it('publishes the pathology consultation request and report lifecycle with its own narrow operations', () => {
+    const expected = [
+      ['doctor.case.pathology-services.list', 'query', 'read', ['outpatient-doctor']],
+      ['encounter.pathology-request.draft.set', 'draft', 'write', ['outpatient-doctor']],
+      ['encounter.pathology-request.draft.delete', 'draft', 'write', ['outpatient-doctor']],
+      ['encounter.pathology-request.issue', 'command', 'high-risk-write', ['outpatient-doctor']],
+      ['pathology-request.cancel', 'command', 'high-risk-write', ['outpatient-doctor']],
+      ['pathology-request.retry', 'command', 'write', ['outpatient-doctor']],
+      ['pathology-report.acknowledge', 'command', 'write', ['outpatient-doctor']],
+      ['pathology-report.correct', 'command', 'high-risk-write', ['administrator']],
+    ]
+    expect(expected.map(([id]) => {
+      const operation = getHisOperation(id as string)
+      return [operation.id, operation.mode, operation.risk, operation.roles]
+    })).toEqual(expected)
+    // 会诊草稿只接受服务、可见病史中的来源手术引用与会诊目的，不接受素材标识或放射的检查指征。
+    const draft = getHisOperation('encounter.pathology-request.draft.set')
+    const input = {
+      encounterId: 'encounter-1',
+      encounterVersion: '3',
+      expectedDraftVersion: 0,
+      purpose: '外院切片复核',
+      serviceId: 'pathology-breast-slide-consultation',
+      sourceProcedureReference: 'urn:uuid:procedure-0',
+    }
+    expect(draft.input.safeParse(input).success).toBe(true)
+    expect(draft.input.safeParse({ ...input, assetId: 'asset-1' }).success).toBe(false)
+    const { sourceProcedureReference: _reference, ...withoutProcedure } = input
+    expect(draft.input.safeParse(withoutProcedure).success).toBe(false)
+    expect(draft.input.safeParse({ ...withoutProcedure, indication: '咳嗽两周' }).success).toBe(false)
+    expect(draft.http).toMatchObject({ method: 'PUT', path: '/api/his/v1/encounters/:encounterId/pathology-request/draft' })
+    expect(draft.http.encodeBody?.(input)).toEqual({
+      expectedVersions: { 'Encounter/encounter-1': '3' },
+      input: {
+        expectedDraftVersion: 0,
+        purpose: '外院切片复核',
+        serviceId: 'pathology-breast-slide-consultation',
+        sourceProcedureReference: 'urn:uuid:procedure-0',
+      },
+    })
+  })
+
   it('publishes the independent laboratory request and report lifecycle', () => {
     const expected = [
       ['encounter.laboratory-request.draft.set', 'draft', 'write', ['outpatient-doctor']],
@@ -578,6 +620,9 @@ describe('HIS operation catalog', () => {
       'encounter.laboratory-request.draft.set': 'laboratory-request.save-draft',
       'encounter.laboratory-request.issue': 'laboratory-request.issue',
       'encounter.medication-conclusion.confirm-none': 'encounter.confirm-no-medication',
+      'encounter.pathology-request.draft.delete': 'pathology-request.delete-draft',
+      'encounter.pathology-request.draft.set': 'pathology-request.save-draft',
+      'encounter.pathology-request.issue': 'pathology-request.issue',
       'encounter.prescription.draft.delete': 'encounter.delete-prescription-draft',
       'encounter.prescription.draft.set': 'encounter.save-prescription-draft',
       'encounter.prescription.issue': 'encounter.issue-prescription',
@@ -600,7 +645,7 @@ describe('HIS operation catalog', () => {
     expect(counts).toEqual({
       'clinmesh-administrator': 3,
       'clinmesh-billing': 3,
-      'clinmesh-doctor': 42,
+      'clinmesh-doctor': 50,
       'clinmesh-fhir': 5,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 7,

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type {
   DiagnosisDraftEntry,
   DiagnosisState,
@@ -311,8 +311,11 @@ function doctorSurfaceAgentResponse(
           practitionerRoleId: doctorSession.actor.practitionerRoleId,
           roleCode: doctorSession.actor.roleCode,
         },
-        allowedOperationIds: agentToolsForContext('outpatient-doctor', 'consultation')
-          .map(tool => tool.operationId),
+        allowedOperationIds: agentToolsForContext(
+          'outpatient-doctor',
+          'consultation',
+          request.claim.activeSection as string | undefined,
+        ).map(tool => tool.operationId),
         claim: request.claim,
         dshSessionId: request.dshSessionId,
         expiresAt: new Date(issuedAt.getTime() + 5 * 60_000).toISOString(),
@@ -416,7 +419,7 @@ function stubScenarioDataWorkspace(options: {
   generationJobFails?: boolean
   generationJobDelayMs?: number
   generationJobWarning?: { code: string; message: string }
-  generationTargets?: Array<{ ageRange: [number, number]; kind: 'imaging-profile'; label: string; profileId: string; sex?: 'female' | 'male' }>
+  generationTargets?: Array<{ ageRange: [number, number]; kind: 'imaging-profile' | 'pathology-profile'; label: string; minimumHistoryYears?: number; profileId: string; sex?: 'female' | 'male' }>
   onGenerationTargetsRead?: () => void
   onGenerate?: (request: ScenarioGenerationRequest) => void
   onCaseStart?: () => void
@@ -884,8 +887,11 @@ function stubEmptyDoctorWorkspace() {
             epoch: doctorSession.actor.epoch,
             scenarioRunId: doctorSession.actor.scenarioRunId,
           },
-          allowedOperationIds: agentToolsForContext('outpatient-doctor', 'consultation')
-            .map(tool => tool.operationId),
+          allowedOperationIds: agentToolsForContext(
+            'outpatient-doctor',
+            'consultation',
+            request.claim.activeSection as string | undefined,
+          ).map(tool => tool.operationId),
           dshSessionId: request.dshSessionId,
           scopeKey: 'clinmesh:doctor:consultation',
           issuedAt: issuedAt.toISOString(),
@@ -1356,6 +1362,53 @@ describe('role workspaces', () => {
     await waitFor(() => expect(submitted?.target).toEqual({ kind: 'imaging-profile', profileId: 'lung-mass-adult-male' }))
     expect(submitted?.population).toEqual({ age: { maximum: 79, minimum: 40 }, count: 1, gender: 'male' })
     expect(submitted?.moduleMode).toBe('all')
+  })
+
+  it('submits a pathology target under its own label with the profile population', async () => {
+    window.history.replaceState(null, '', '/scenario-data')
+    let submitted: ScenarioGenerationRequest | undefined
+    stubScenarioDataWorkspace({
+      generationTargets: [
+        ...imagingTargets,
+        {
+          ageRange: [45, 80],
+          kind: 'pathology-profile',
+          label: '乳腺切片会诊：ER 阳性 · PR 阳性 · HER2 阴性 · 淋巴结阳性 · T2',
+          minimumHistoryYears: 45,
+          profileId: 'breast-er-pos-pr-pos-her2-neg-ln-pos-t2',
+          sex: 'female',
+        },
+      ],
+      onGenerate: request => { submitted = request },
+      syntheaAvailable: true,
+    })
+    const user = userEvent.setup()
+    render(<WebApp />)
+
+    await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
+    const sheet = await screen.findByRole('dialog', { name: '生成患者' })
+    await user.click(await within(sheet).findByRole('combobox', { name: '定向病例' }))
+    // 病理条目的名称已含会诊项目，不加放射的检查类别前缀。
+    await user.click(screen.getByRole('option', { name: '乳腺切片会诊：ER 阳性 · PR 阳性 · HER2 阴性 · 淋巴结阳性 · T2' }))
+    expect(within(sheet).getByText('适用人群：女，45–80 岁')).toBeTruthy()
+    // 条目要求病史覆盖 45 年：选择后历史起始日期自动前移，改晚则提示并禁止提交。
+    const historyStart = within(sheet).getByLabelText<HTMLInputElement>('历史起始日期')
+    expect(historyStart.value).toBe('1981-08-01')
+    const submit = within(sheet).getByRole('button', { name: '生成患者' })
+    fireEvent.change(historyStart, { target: { value: '2011-08-01' } })
+    expect(within(sheet).getByRole('alert').textContent)
+      .toBe('所选适配条目要求历史起始日期不晚于 1981-08-01（结束日期前 45 年），可在“高级设置”中修改')
+    expect(submit.hasAttribute('disabled')).toBe(true)
+    fireEvent.change(historyStart, { target: { value: '1981-08-01' } })
+    expect(within(sheet).queryByRole('alert')).toBeNull()
+    await user.click(submit)
+
+    await waitFor(() => expect(submitted?.target).toEqual({
+      kind: 'pathology-profile',
+      profileId: 'breast-er-pos-pr-pos-her2-neg-ln-pos-t2',
+    }))
+    expect(submitted?.population).toEqual({ age: { maximum: 80, minimum: 45 }, count: 1, gender: 'female' })
+    expect(submitted?.timeRange).toEqual({ end: '2026-08-01', start: '1981-08-01' })
   })
 
   it('blocks a targeted generation whose population contradicts the imaging profile', async () => {
@@ -3236,12 +3289,23 @@ describe('role workspaces', () => {
         const tool = registration!.tools.find(tool => tool.name === name)!
         return await tool.execute(boundAgentToolInput(tool, input), new AbortController().signal)
       }
-      // 影像尚未在人类面前显示：已阅提案被拒绝，Agent 读到的页面状态不含像素。
-      await expect(act(() => execute('clinmesh_prepare_acknowledge_report', { requestId: 'imaging-request-1' })))
-        .rejects.toThrow('have not been displayed')
+      // 报告 Tool 属于“检验检查”栏目：病历栏目不发布，切换栏目后重新注册。
+      await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_select_doctor_section')).toBe(true))
+      expect(registration!.tools.map(tool => tool.name)).not.toContain('clinmesh_prepare_acknowledge_report')
       const previousContextId = boundAgentToolInput(
         registration!.tools.find(tool => tool.name === 'clinmesh_read_current_context')!, {},
       ).contextId
+      await act(async () => { await execute('clinmesh_select_doctor_section', { section: 'laboratory' }) })
+      await waitFor(() => expect(registration?.tools.map(tool => tool.name)).toContain('clinmesh_prepare_acknowledge_report'))
+      // 切换栏目后页面上下文重新签发。
+      await waitFor(() => {
+        const contextTool = registration?.tools.find(tool => tool.name === 'clinmesh_read_current_context')
+        expect(contextTool).toBeDefined()
+        expect(boundAgentToolInput(contextTool!, {}).contextId).not.toBe(previousContextId)
+      })
+      // 影像尚未在人类面前显示：已阅提案被拒绝，Agent 读到的页面状态不含像素。
+      await expect(act(() => execute('clinmesh_prepare_acknowledge_report', { requestId: 'imaging-request-1' })))
+        .rejects.toThrow('have not been displayed')
       let opened = ''
       await act(async () => {
         opened = await execute('clinmesh_select_doctor_section', { imagingRequestId: 'imaging-request-1', section: 'laboratory' })
@@ -3253,11 +3317,6 @@ describe('role workspaces', () => {
       await waitFor(() => expect(
         (screen.getByRole('button', { name: '确认已阅' }) as HTMLButtonElement).disabled,
       ).toBe(false))
-      await waitFor(() => {
-        const contextTool = registration?.tools.find(tool => tool.name === 'clinmesh_read_current_context')
-        expect(contextTool).toBeDefined()
-        expect(boundAgentToolInput(contextTool!, {}).contextId).not.toBe(previousContextId)
-      })
       const context = JSON.parse(await execute('clinmesh_read_current_context'))
       expect(context.data.pageState.section).toBe('laboratory')
 
@@ -6601,6 +6660,7 @@ describe('role workspaces', () => {
       },
       encounter: { id: 'encounter-completed-1', status: 'completed', versionId: '6' },
       imagingRequests: [],
+      pathologyRequests: [],
       laboratoryRequests: [],
       medicationConclusion: {
         noMedication: {
@@ -6778,6 +6838,7 @@ describe('role workspaces', () => {
         versionId: activeDetail.encounter.versionId,
       },
       imagingRequests: [],
+      pathologyRequests: [],
       laboratoryRequests: [],
       medicationConclusion: {
         prescription: { ...prescription, withdrawalSupported: true },
@@ -6919,6 +6980,7 @@ describe('role workspaces', () => {
         versionId: '6',
       },
       imagingRequests: [],
+      pathologyRequests: [],
       laboratoryRequests: [{
         catalogDisplay: '发热检验组合',
         correctionSupported: false,
@@ -7139,6 +7201,7 @@ describe('role workspaces', () => {
         versionId: '6',
       },
       imagingRequests: [],
+      pathologyRequests: [],
       laboratoryRequests: [completedIssuedLaboratoryRequest, completedLaboratoryRequest],
       patient,
       timeline: [{

@@ -1,29 +1,30 @@
 // @vitest-environment jsdom
-import type { ImagingStudyView } from '@clinmesh/contracts/imaging'
+import type { ImagingSeriesView, ImagingStudyView } from '@clinmesh/contracts/imaging'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ImagingViewer } from './imaging-viewer.tsx'
 
 const blockBytes = 4
-/** 两帧、每帧六个像素块的胸片式检查：一次显示加邻帧预取共十二个块请求。 */
+/** 两帧、每帧六个像素块的胸片式序列：一次显示加邻帧预取共十二个块请求。 */
+const radiographSeries: Extract<ImagingSeriesView, { kind: 'frame-stack' }> = {
+  frames: [0, 1].map(() => ({
+    blocks: Array.from({ length: 6 }, (_, index) => ({ length: blockBytes, rowCount: 1, rowStart: index })),
+    columns: 2,
+    pixelSpacingMm: [1, 1] as [number, number],
+    rows: 6,
+    view: 'frontal' as const,
+    window: { center: 2_000, width: 4_000 },
+  })),
+  kind: 'frame-stack',
+  modality: 'DX',
+  pixelFormat: 'uint16',
+  valueUnit: 'stored',
+}
 const study: ImagingStudyView = {
   available: true,
   examCode: 'chest-radiograph',
-  series: [{
-    frames: [0, 1].map(() => ({
-      blocks: Array.from({ length: 6 }, (_, index) => ({ length: blockBytes, rowCount: 1, rowStart: index })),
-      columns: 2,
-      pixelSpacingMm: [1, 1] as [number, number],
-      rows: 6,
-      view: 'frontal' as const,
-      window: { center: 2_000, width: 4_000 },
-    })),
-    kind: 'frame-stack',
-    modality: 'DX',
-    pixelFormat: 'uint16',
-    valueUnit: 'stored',
-  }],
+  series: [radiographSeries],
   studyId: 'study-1',
 }
 
@@ -99,7 +100,7 @@ describe('imaging viewer', () => {
     const large: ImagingStudyView = {
       ...study,
       series: [{
-        ...study.series[0]!,
+        ...radiographSeries,
         frames: Array.from({ length: 5 }, () => ({
           blocks: [{ length: frameBytes, rowCount: rows, rowStart: 0 }],
           columns,
@@ -146,10 +147,10 @@ describe('imaging viewer', () => {
     const twoViews: ImagingStudyView = {
       ...study,
       series: [{
-        ...study.series[0]!,
+        ...radiographSeries,
         frames: [
-          study.series[0]!.frames[0]!,
-          { ...study.series[0]!.frames[0]!, view: 'lateral', window: { center: 1_000, width: 500 } },
+          radiographSeries.frames[0]!,
+          { ...radiographSeries.frames[0]!, view: 'lateral', window: { center: 1_000, width: 500 } },
         ],
       }],
     }

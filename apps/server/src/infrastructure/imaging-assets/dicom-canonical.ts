@@ -95,7 +95,7 @@ function firstValue(value: unknown): unknown {
   return Array.isArray(value) ? value[0] : value
 }
 
-function numberAttribute(dataset: Dataset, name: string): number | undefined {
+export function numberAttribute(dataset: Dataset, name: string): number | undefined {
   const value = Number(firstValue(dataset[name]))
   return dataset[name] === undefined || dataset[name] === '' || !Number.isFinite(value) ? undefined : value
 }
@@ -108,14 +108,14 @@ function requiredNumber(dataset: Dataset, name: string): number {
   return value
 }
 
-function numberList(dataset: Dataset, name: string, length: number): number[] | undefined {
+export function numberList(dataset: Dataset, name: string, length: number): number[] | undefined {
   const value = dataset[name]
   if (!Array.isArray(value) || value.length !== length) return undefined
   const numbers = value.map(Number)
   return numbers.every(Number.isFinite) ? numbers : undefined
 }
 
-function textAttribute(dataset: Dataset, name: string): string | undefined {
+export function textAttribute(dataset: Dataset, name: string): string | undefined {
   const value = firstValue(dataset[name])
   if (value === undefined || value === null) return undefined
   const text = String(value).trim()

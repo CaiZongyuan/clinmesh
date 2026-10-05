@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest'
 import {
   defaultImagingAssetDirectory,
   defaultImagingCatalogDirectory,
+  defaultPathologyAssetDirectory,
+  defaultPathologyCatalogDirectory,
   readServerConfig,
   readServerEnvironment,
 } from '../src/config.ts'
@@ -26,6 +28,8 @@ describe('Node.js server configuration', () => {
       // 影像素材默认位置：清单在仓库根目录，像素安装在 .data 下。
       imagingAssetDirectory: defaultImagingAssetDirectory,
       imagingCatalogDirectory: defaultImagingCatalogDirectory,
+      pathologyAssetDirectory: defaultPathologyAssetDirectory,
+      pathologyCatalogDirectory: defaultPathologyCatalogDirectory,
       port: 51868,
       trustedOrigins: ['http://127.0.0.1:51868', 'http://127.0.0.1:51888'],
     })

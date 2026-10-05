@@ -89,7 +89,7 @@ DSH Web -- React Surface --> same React application/runtime
 - 自治 Agent runtime、模型 runner、AG-UI Gateway thread、MCP、OAuth/SMART Agent 凭证、Evaluation Spec 和评分基础设施；DSH 原生 Session/browser Tool broker 与私有 Capability Grant CLI 是已实现例外。
 - Cloudflare Worker、D1、R2、Queues、Cron Trigger、Durable Objects、PostgreSQL、Supabase 和多数据库 adapter。
 - 全国各省医保协议的完整兼容。
-- 完整 LIS、RIS/PACS、DICOM 归档、DICOMweb、手术麻醉、输血、院感、病理、ICU、消毒供应或财务 ERP。胸片与胸部 CT 平扫的阅片闭环是已实现的例外，范围见 8.7 节与 10.7 节。
+- 完整 LIS、RIS/PACS、DICOM 归档、DICOMweb、手术麻醉、输血、院感、病理、ICU、消毒供应或财务 ERP。胸片与胸部 CT 平扫的阅片闭环、乳腺切片病理会诊是已实现的例外，范围见 8.7 节与 10.7 节。
 - 完整 FHIR R5 资源集合、完整 Search、Bulk Data、跨库事务或正式合规认证。
 - 高并发号源抢占、大规模报表、实时协作编辑和大文件在线处理。
 - 图片、PDF、扫描件或其他临床附件；签署文书仅保存受验证的结构化 FHIR JSON。影像检查的像素不属于附件，见 9.8 节。
@@ -376,7 +376,7 @@ Canonical URL 是定义身份，不要求该地址承担运行中 API。`Capabil
 | 用药执行 | `MedicationAdministration` | 一次实际或未发生的给药事件，与发药和执行计划不是同一事实 |
 | 耗材申请/发放 | `DeviceRequest`、`DeviceDispense` | 仅表达临床申请与发放 |
 | 标本 | `Specimen`、`SpecimenDefinition` | 与 ServiceRequest、Observation 关联 |
-| 影像检查 | `ImagingStudy` | 本院检查运行事实的只读 domain projection；DiagnosticReport 通过 `study` 引用它，正文不含文件路径、素材标识或来源 UID |
+| 影像检查 | `ImagingStudy` | 本院检查运行事实的只读 domain projection；DiagnosticReport 通过 `study` 引用它，正文不含文件路径、素材标识或来源 UID。病理会诊的检查模态为 `SM`，每张切片一个序列并引用其 Specimen |
 | 收费目录/费用 | `ChargeItemDefinition`、`ChargeItem` | 挂费由业务命令产生 |
 | 费用归集上下文 | `Account` | 关联费用归集范围，不作为自费/医保资金账本 |
 | 账单 | `Invoice` | 向付款方汇总的账单，不等同中国财政电子票据或税务发票 |
@@ -728,7 +728,7 @@ Claim 和 snapshot 不包含 DOM、Query cache、浏览器存储、任意页面 
 
 ### 7.3 Tool 目录与风险
 
-`packages/contracts/src/agent.ts` 是 Tool 名称、operation、岗位、view、模式和风险的可执行目录，`agent-tool-input.ts` 拥有每项 operation 的完整输入 schema。每个岗位动态获得不超过 32 个 Tools：通用读取/导航/真实聚焦，加上当前管理员、挂号、分诊、医生、收费或药房页面的窄动作。管理员只能读取 Scenario Run、Provider 可用性和当前 generation job 状态；导航 enum 只包含当前岗位主页和共享设置页。
+`packages/contracts/src/agent.ts` 是 Tool 名称、operation、岗位、view、诊疗栏目、模式和风险的可执行目录，`agent-tool-input.ts` 拥有每项 operation 的完整输入 schema。每个岗位、view 与当前栏目动态获得不超过 32 个 Tools（DSH browser Tool broker 的单次注册上限）：通用读取/导航/真实聚焦，加上当前管理员、挂号、分诊、医生、收费或药房页面的窄动作。医生“接诊”页按当前诊疗栏目发布：目录中声明栏目的 Tool 只在 claim 的 active section 等于该栏目时进入 Page Context，Server 授权与 Surface 注册调用同一个 `agentToolsForContext`；栏目归属见 [DSH 页面操作](agent-capabilities.md#医生诊疗栏目与-tool-发布)。管理员只能读取 Scenario Run、Provider 可用性和当前 generation job 状态；导航 enum 只包含当前岗位主页和共享设置页。
 
 报告更正 Tool 只在当前账户通过服务端 membership 仍持有 active administrator role 时进入 outpatient-doctor Page Context；普通医生即使面对可更正报告也不会取得该 operation。管理员账户可在 acting-doctor 页面准备更正，Page Context 的当前 Practitioner Role 必须继续匹配最终 Command receipt 与 Audit Event。
 
@@ -1034,7 +1034,7 @@ settlement -> reversal -> reversed
 
 检验检查区分：申请、预约/执行 Task、标本采集、标本接收、结果项、报告签发、危急值通知和报告更正。ServiceRequest、Specimen、Observation 和 DiagnosticReport 分别保留自身状态；更正报告创建新的业务修订关系，不能覆盖原事实而丢失签发链。
 
-检验与放射是同一个申请生命周期内核上的两种申请类型。正式申请共用一张申请表，以类型列区分 `laboratory` 与 `imaging`；类型列不在表上枚举取值，追加新的申请类型只新增适配器和自己的明细表，不重建申请表及其引用表。受理、执行、报告、取消、重试、已阅和修订的状态机、幂等、预期版本、审计与 Action Trace 由内核统一拥有，类型策略只提供各自的 outbox 事件、执行者和报告构造。“同一服务只能有一条进行中申请”的约束覆盖两类申请。已发布的检验 operation、HTTP 与 CLI 路径、返回结构和错误语义不变；检验操作作用于放射申请时返回稳定冲突。
+检验、放射与病理会诊是同一个申请生命周期内核上的三种申请类型。正式申请共用一张申请表，以类型列区分 `laboratory`、`imaging` 与 `pathology`；类型列不在表上枚举取值，追加新的申请类型只新增适配器和自己的明细表，不重建申请表及其引用表。受理、执行、报告、取消、重试、已阅和修订的状态机、幂等、预期版本、审计与 Action Trace 由内核统一拥有，类型策略只提供各自的 outbox 事件、执行者和报告构造。“同一服务只能有一条进行中申请”的约束覆盖全部申请类型。已发布的检验 operation、HTTP 与 CLI 路径、返回结构和错误语义不变；一类申请的操作作用于另一类申请时返回稳定冲突。
 
 放射申请的范围是胸片与胸部 CT 平扫：
 
@@ -1047,6 +1047,16 @@ settlement -> reversal -> reversed
 - 患者模型只得到“做过哪项检查、何时做的”，不含所见、印象或报告正文；放射报告不作为对话卡片注入。
 
 不实现 PACS、DICOMweb、放射科岗位状态流、增强扫描或其他部位与模态。
+
+病理申请的范围是乳腺切片病理会诊：患者携带既往乳腺手术的 H&E 切片来院，由本院病理科以受控系统执行者身份出具会诊报告。
+
+- 会诊服务是本院 Hospital Service，“已开展”同样由启用状态与切片素材就绪共同计算，与具体病例无关。服务目录同时给出该病例可送检的既往手术：只取医生本已可见的来源病史中、编码与服务相容且早于本次就诊的手术，不依赖隐藏病情、匹配结论或素材占用。
+- 草稿是独立的病例级草稿，包含服务、所选来源手术和会诊目的。保存和开立时都校验所选手术仍在可送检清单内；开立时把手术作为来源引用快照保存在申请明细中，来源病史不转换为本院资源。
+- 病理系统执行者经 outbox 受理（收片登记）、开始（阅片中）并报告。报告在一个短事务内创建 Specimen（采集时间取所选来源手术的时间，接收时间为收片时间，记录 HE 染色；不引用本院 Procedure）、模态为 SM 的 ImagingStudy、通过 `specimen` 与 `study` 引用二者的 DiagnosticReport、Provenance 和申请完成效果；收片与签发时间取开单时的 Virtual Time。病例没有与来源事实相符的切片时，申请以 `generation-failed` 结束，不生成报告。
+- 报告结构是标本信息（所选既往手术、切片数量、染色）、镜下所见、病理诊断、既有免疫组化结果和备注。确认已阅、更正、摘要插入病历和完诊门禁的规则与放射相同；更正只能选择同一切片另一份已核对发布的报告内容修订。
+- 患者模型只得到“会诊已受理”，不含报告正文、镜下所见或诊断。
+
+不实现本院活检、冰冻切片、细胞学、免疫组化或分子检测的切片、乳腺以外的器官、病理科工作台、取材制片流程和病理计费。会诊入口的取舍见 [Agent Note](../.agents/notes/implemented/architecture/2026-10-03-breast-slide-consultation-loop.md)。
 
 ### 8.8 患者主索引与合并
 
@@ -1245,7 +1255,7 @@ clock_revision
 
 ### 10.3 场景定义
 
-固定 commit 的 Synthea Provider 默认运行全部模块，也可接受有界模块过滤、人数、年龄、性别、时间范围和 seed。Web 每次打开生成抽屉时随机提供双 seed，管理员仍可手动修改以复现。管理员也可以选择一个已发布的影像适配条目作为定向目标：Server 从条目推导保留条件（须存在的疾病编码、须不存在的疾病与操作编码），Provider 据此生成 Synthea keep module 并只保留存活患者；Server 再用影像准备的同一匹配规则复核每位患者，不满足时计入下述重试，全部未命中时以 `IMAGING_TARGET_NOT_MET` 失败。保留条件只提高命中率，是否满足条目只由匹配规则判定；定向任务成功后随即对新病例运行影像准备，准备失败不回滚患者，而是在成功的任务上记录 `IMAGING_PREPARATION_FAILED` 警告，管理员据此重新准备。Provider 不支持定向生成时提交被拒绝。每个患者最多尝试十次；系统确定性选择最后一个包含临床资源或明确 reason 的 Encounter，跳过纯行政、账单和单纯疫苗 Encounter。没有合格 Encounter 时本次患者生成失败且不留下部分 Profile 或 Case。
+固定 commit 的 Synthea Provider 默认运行全部模块，也可接受有界模块过滤、人数、年龄、性别、时间范围和 seed。Web 每次打开生成抽屉时随机提供双 seed，管理员仍可手动修改以复现。管理员也可以选择一个已发布的放射影像适配条目或病理适配条目作为定向目标：Server 从条目推导保留条件（须存在的疾病或操作编码、须不存在的疾病与操作编码；病理条目另有五项 Observation 须取的编码值），Provider 据此生成 Synthea keep module 并只保留存活患者，Synthea 在限时 4 分钟内不限次数地尝试，未找到时按未满足保留条件返回；病理条目还要求历史起始日期不晚于结束日期前 `matching.json` 规定的年数，否则在调用 Provider 前以 `TARGET_HISTORY_TOO_SHORT` 失败；Server 再用对应病例准备的同一匹配规则复核每位患者，不满足时计入下述重试，全部未命中时以 `IMAGING_TARGET_NOT_MET` 失败。保留条件只提高命中率，是否满足条目只由匹配规则判定；定向任务成功后随即对新病例运行目标所属素材包的病例准备，准备失败不回滚患者，而是在成功的任务上记录 `IMAGING_PREPARATION_FAILED` 或 `PATHOLOGY_PREPARATION_FAILED` 警告，管理员据此重新准备。Provider 不支持定向生成时提交被拒绝。每个患者最多尝试十次；系统确定性选择最后一个包含临床资源或明确 reason 的 Encounter，跳过纯行政、账单和单纯疫苗 Encounter。没有合格 Encounter 时本次患者生成失败且不留下部分 Profile 或 Case。
 
 一次成功生成原子保存不可变 Synthetic Patient Profile Revision、本地化 R4 Bundle 和 Synthetic Case Instance。固定 catalog 未命中的 clinical display 保留来源英文，并把有界 translation warning 与 Profile 一起保存供管理员校对；缺译不阻塞患者，FHIR 结构、引用、身份、catalog hash 或 provenance 无效仍阻塞。Index Encounter 之前的闭包构成按临床时间排序的 Visible Source History；授权临床岗位可以分页查看摘要和经过可见性检查的原始 R4 详情。Index Encounter 与当前 episode 的关联资源构成 Case Truth，保存在私有边界，不进入普通 HIS/FHIR/history/tool 响应。Case 类型由来源时间线推断为 new-problem、follow-up 或 preventive。
 
@@ -1282,15 +1292,19 @@ Action Trace 按 Scenario Run 记录 Command 尝试、结果、Effect 引用和�
 
 放射检查使用公开数据集中授权、去标识的真实影像作为仿真素材。这是“只使用合成数据”规则的窄例外：例外只覆盖清单登记的影像像素及其来源标识，患者身份、病史和本院就诊事实仍全部是合成的，来源受试者的诊断、身份和治疗记录不导入合成病例。
 
-**素材清单与素材目录。** 清单由仓库拥有并公开提交，内容与许可署名见 [影像素材清单](../imaging-assets/README.md)。像素与来源原始文件只存在于本地素材目录：同步按清单中的来源 UID 拉取原始 DICOM，逐文件校验哈希，转码为规范的帧数据后以原子改名发布；只接受未压缩传输语法，单个像素块不超过 2 MiB；边长超过上限的胸片在摄取阶段按固定参数降采样并记录参数，下载的文件必须与请求的来源 UID 一致。安装、校验与修复命令见 [部署教程](deployment.md#影像素材)。素材目录为空时系统正常启动，放射服务显示为未开展。素材流水线分为通用素材包存储（来源下载与哈希校验、临时目录、原子发布、安装回执、校验、修复与读取缓存）和按素材包注入的摄取适配器（清单格式、规范化与安装文件、打开与读取寻址）；当前只有放射适配器，后续素材包增加自己的适配器、清单目录和素材目录，不修改放射适配器或通用存储。
+**素材清单与素材目录。** 清单由仓库拥有并公开提交，内容与许可署名见 [影像素材清单](../imaging-assets/README.md)。像素与来源原始文件只存在于本地素材目录：同步按清单中的来源 UID 拉取原始 DICOM，逐文件校验哈希，转码为规范的帧数据后以原子改名发布；只接受未压缩传输语法，单个像素块不超过 2 MiB；边长超过上限的胸片在摄取阶段按固定参数降采样并记录参数，下载的文件必须与请求的来源 UID 一致。安装、校验与修复命令见 [部署教程](deployment.md#影像素材)。素材目录为空时系统正常启动，放射服务显示为未开展。素材流水线分为通用素材包存储（来源下载与哈希校验、临时目录、原子发布、安装回执、校验、修复与读取缓存）和按素材包注入的摄取适配器（清单格式、规范化与安装文件、打开与读取寻址）；放射与病理切片各有自己的适配器、清单目录和素材目录，新增素材包不修改已有适配器或通用存储。
+
+**病理切片素材包。** 乳腺切片病理会诊使用独立的病理素材包，清单与许可署名见 [病理切片素材清单](../pathology-assets/README.md)；它的清单目录、素材目录、维护命令和备份都与放射分开，任何一个素材包缺失、安装失败或损坏都不影响另一个，也不影响 Server 启动。来源是 NCI Imaging Data Commons 公开存储中由 TCGA-BRCA 转换的 DICOM 切片，来源客户端只按清单登记的序列目录匿名读取，不接受任意 URL。摄取只保留组织金字塔层级，丢弃缩略图、标签图和宏观图；最高安装 20 倍，原生 40 倍的切片从 40 倍按区域均值生成 20 倍，没有原生 10 倍时从更高倍率的原生层级生成 10 倍。JPEG 瓦片原样沿用，JPEG 2000 瓦片解码后按固定参数编码为基线 JPEG，浏览器不需要 JPEG 2000 解码器；不支持的传输语法、颜色空间、组织方式或几何不一致的切片整张拒绝。每个层级打包为一个瓦片文件加偏移索引，单个瓦片不超过 2 MiB；输出登记层级几何、来源、摄取参数与文件哈希，相同来源与参数重建出相同字节。来源文件头中的受试者标识不进入安装文件、素材标识或命令输出；ICC profile 随安装保存但不应用。报告由模型依据来源的结构化临床字段整理，模型不读取像素：自动核对组织学类型和受体状态与来源一致、不写组织学分级、不对淋巴结作出判断、不写来源无法支持的大小、分期和部位，HER2 字段相互矛盾的素材不能发布；复核签署与发布规则同下。
 
 **核对与发布。** 中文报告由模型依据来源读片标注整理成草稿，模型不读取像素。每份报告内容修订先通过自动一致性核对（病灶数量、侧别、图像序号和大小与结构化标注一致，阴性素材不得出现阳性所见），再由人工在管理员复核预览中对照影像签署。签署绑定素材输出、来源实例及其哈希、数据合集与许可、报告整理规则文件、引用该素材的适配条目、标注和报告内容的哈希，任何一项变化都使签署失效。只有已安装、通过自动核对且复核通过的修订才算已发布；未发布的素材不进入病例匹配。
 
 **病例影像准备。** 管理员对合成病例运行影像准备，按来源编码为每项检查确定素材：来源有未缓解的阳性条目疾病时使用对应的异常素材；只有不存在这类疾病、来源从未出现过阳性条目的疾病、且本次就诊的疾病在规则明确列出的范围内时才使用阴性素材；命中未覆盖疾病、与条目列出的既往手术（例如肺移植、胸骨切开、瓣膜置换或起搏器）冲突或没有规则依据的病例不配片，不会被当作正常。未覆盖疾病清单按固定版本 Synthea 全部模块实际产生的疾病编码整理，Synthea 升级时需要重新核对。疾病是否已缓解以本次就诊的开始时间为准，就诊之后才缓解的疾病在就诊时仍是现症。一个病例只使用一个适配条目，胸片与 CT 因此来自同一来源受试者；多个条目同样适用时按病例来源哈希稳定选择。准备结果是不可变的修订；病例开始前绑定随清单更新，开始后只能追加，重试和重放不更换已固定的素材；当前规则判为冲突或未覆盖时，已绑定的检查保持不变，但不再追加新的检查。
 
-**私有边界。** 病例与素材的绑定、匹配依据、素材标识和来源 UID 只在管理员接口中可见。医生、Agent 的 DTO、Page Context、DSH Tools、CLI 输出、FHIR 资源和患者模型载荷都不包含它们；本院每次检查使用自己的检查标识和 Study UID。管理员的影像准备、覆盖清单和复核预览接口不进入 Operation Catalog、CLI、Page Context 或 Agent Tools。
+**病例病理准备。** 病理清单的适配规则只写哪些来源病例适用会诊（性别、诊断编码、可送检的手术编码），以及受体（ER、PR、HER2）、淋巴结与肿瘤 T 类别各自对应的来源 Observation 编码和编码值；适配条目不单独列举，由每份切片素材的临床字段派生，事实组合相同的素材属于同一个条目。管理员运行病理准备时，系统从病例的既往来源病史读取诊断、早于本次就诊的可送检手术和五项固定事实的最新结果，与每份已发布素材逐项比较：全部一致且已安装时可用于新绑定；有相符素材但均未安装时记为未覆盖（`ASSET_NOT_INSTALLED`）；任一项矛盾的素材不可用，全部素材都矛盾时记为冲突；来源或素材缺少某项而无法确认时记为未覆盖。定向生成同样只接受有已发布且已安装素材的条目。安装状态纳入准备身份，安装、移除或恢复后再次准备会重新评估；完整清单仍用于管理员覆盖展示与冻结绑定的补充事实读取。组织学类型来自素材，作为补充事实与来源固定事实分开记录。准备结果同样是不可变修订，绑定以来源手术为键：每个可送检的手术各有一份固定的素材选择，冻结规则与放射相同。病理准备、绑定和覆盖清单有自己的表，与放射互不影响。取舍见 [Agent Note](../.agents/notes/implemented/architecture/2026-10-02-breast-pathology-case-matching.md)。
 
-**影像读取边界。** 阅片通过受认证的本院检查路由读取：先读检查描述（序列、帧几何、像素格式和可用状态），再按序列、帧和块读取像素。每次读取校验 Workspace/Epoch、病例责任或已完诊读取权限、申请与检查的关联以及发布状态；响应使用 `application/octet-stream` 与 `Cache-Control: private, no-store`，失败沿用 HIS 错误 envelope。读取不产生 Audit Event 或 Action Trace，每个请求的数据库开销是固定的只读语句。像素文件缺失时描述返回不可用，不改写已经发生的检查事实或 FHIR 历史。读取边界由应用层接口表达，本地素材目录是它当前唯一的来源实现。
+**私有边界。** 病例与素材的绑定、匹配依据、素材标识和来源 UID 只在管理员接口中可见。医生、Agent 的 DTO、Page Context、DSH Tools、CLI 输出、FHIR 资源和患者模型载荷都不包含它们；本院每次检查使用自己的检查标识和 Study UID。管理员的影像准备、病理准备、覆盖清单和复核预览接口不进入 Operation Catalog、CLI、Page Context 或 Agent Tools。
+
+**影像读取边界。** 阅片通过受认证的本院检查路由读取：先读检查描述（序列、几何、像素格式和可用状态），放射检查再按序列、帧和块读取像素，病理切片按序列、层级和瓦片行列读取 JPEG 瓦片。每次读取校验 Workspace/Epoch、病例责任或已完诊读取权限、申请与检查的关联以及发布状态；响应使用 `application/octet-stream` 与 `Cache-Control: private, no-store`，失败沿用 HIS 错误 envelope。读取不产生 Audit Event 或 Action Trace，每个请求的数据库开销是固定的只读语句。像素文件缺失时描述返回不可用，不改写已经发生的检查事实或 FHIR 历史。读取边界由应用层接口表达，本地素材目录是它当前唯一的来源实现。
 
 **阅片器。** standalone Web 与 DSH Surface 使用同一个阅片组件，由外壳和按序列类型选择的渲染引擎组成，见 [前端架构](frontend-architecture.md#阅片器)。Agent 不读取像素或渲染结果。
 
@@ -1543,6 +1557,7 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 - v3 处方草稿使用受控目录和独立 CAS 版本，草稿不发布 FHIR；开具时重新校验诊断、过敏、药品组合和五项用药字段，再创建 Prescription、带 Actor/Practitioner Role 外键的 authorship 与 MedicationRequest。无需用药是带责任人的互斥正式结论；未调剂处方可追加撤回事实，取消 MedicationRequest，但不抹除已收费历史或触发退款。v1/v2 保留原药品目录与组合复诊入口。
 - Synthea Profile、Case Truth 和本院 R5 事实保持独立 owner；来源 R4 coding 不通过疾病或药品 mapping gate 转为本院编码。
 - 胸片与胸部 CT 平扫可以开立、取得报告、阅片、确认已阅和更正；放射申请与检验共用申请生命周期内核，像素来自本地素材目录，见 8.7 节与 10.7 节。
+- 乳腺切片病理会诊可以为既往乳腺手术开立、取得会诊报告、阅片、确认已阅和更正；病理申请是同一内核上的第三种申请类型，切片来自独立的病理素材包，见 8.7 节与 10.7 节。
 
 ### 15.3 Web 与明确边界
 

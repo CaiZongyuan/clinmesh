@@ -241,6 +241,8 @@ export async function createImagingRuntime(bundles: unknown[], options: {
   const syntheaProvider = new SequenceSyntheaProvider(bundles, { targetedGeneration: options.targetedGeneration ?? false })
   const catalogDirectory = join(directory, 'imaging-catalog')
   const assetDirectory = join(directory, 'imaging-assets')
+  const pathologyCatalogDirectory = join(directory, 'pathology-catalog')
+  const pathologyAssetDirectory = join(directory, 'pathology-assets')
   // 患者 Persona 与患者对话共用一个记录请求的模型替身。
   const modelRequests: JsonChatCompletionInput[] = []
   const briefProvider: JsonChatCompletionsProvider = {
@@ -263,6 +265,8 @@ export async function createImagingRuntime(bundles: unknown[], options: {
     ...(options.catalog === false ? {} : { imagingCatalogDirectory: catalogDirectory }),
     migrationMode: 'apply',
     outboxRetryDelayMs: 0,
+    pathologyAssetDirectory,
+    pathologyCatalogDirectory,
     ...(options.performanceObserver === undefined ? {} : { performanceObserver: options.performanceObserver }),
     ...(options.persona === true
       ? {
@@ -275,7 +279,16 @@ export async function createImagingRuntime(bundles: unknown[], options: {
     syntheaProvider,
     trustedOrigins: ['http://localhost'],
   })
-  return { assetDirectory, catalogDirectory, directory, modelRequests, runtime, syntheaProvider }
+  return {
+    assetDirectory,
+    catalogDirectory,
+    directory,
+    modelRequests,
+    pathologyAssetDirectory,
+    pathologyCatalogDirectory,
+    runtime,
+    syntheaProvider,
+  }
 }
 
 export async function signIn(runtime: Runtime, email = 'admin@demo.clinmesh.local') {

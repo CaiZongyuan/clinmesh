@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { fhirResourceSchema } from './fhir.ts'
-import { imagingExamCodeSchema } from './imaging.ts'
+import { imagingExamCodeSchema, pathologyExamCodeSchema } from './imaging.ts'
+import { pathologySourceProcedureSchema } from './pathology.ts'
 import { investigationCodeableValueSchema } from './scenario.ts'
 import {
   referenceConceptSchema,
@@ -53,6 +54,9 @@ export const apiConflictSchema = z.object({
     'imaging-report',
     'imaging-request',
     'imaging-request-draft',
+    'pathology-report',
+    'pathology-request',
+    'pathology-request-draft',
     'prescription',
     'prescription-draft',
   ]),
@@ -864,6 +868,7 @@ export const encounterCompletionTargetSchema = z.enum([
   'clinical-document',
   'imaging',
   'laboratory',
+  'pathology',
   'medication-conclusion',
 ])
 
@@ -1550,6 +1555,129 @@ export const correctImagingReportRequestSchema = z.object({
 
 export const correctImagingReportResponseSchema = correctLaboratoryReportResponseSchema
 
+/** 开立时冻结的病理会诊服务定义：部位、标本类型、染色、执行科室、适用范围与报告结构。 */
+export const pathologyServiceSnapshotSchema = z.object({
+  applicability: z.string().min(1),
+  bodySite: z.string().min(1),
+  code: z.string().min(1).max(64),
+  department: z.string().min(1),
+  examCode: pathologyExamCodeSchema,
+  id: z.string().min(1).max(128),
+  name: z.string().min(1),
+  reportSections: z.array(z.enum(['diagnosis', 'immunohistochemistry', 'microscopy', 'note', 'specimen'])).min(1),
+  specimenType: z.string().min(1),
+  stain: z.literal('HE'),
+  version: z.number().int().positive(),
+}).strict()
+
+/**
+ * 医生可见的病理会诊服务目录。`available` 由医院启用状态与素材就绪共同决定，与具体病例无关；
+ * `sourceProcedures` 是该病例可见来源病史中可送检的既往手术，不依赖隐藏病情或素材占用。
+ */
+export const casePathologyServiceCatalogSchema = z.object({
+  items: z.array(z.object({
+    available: z.boolean(),
+    service: pathologyServiceSnapshotSchema,
+    sourceProcedures: z.array(pathologySourceProcedureSchema),
+  }).strict()),
+}).strict()
+
+const pathologyPurposeSchema = z.string().trim().min(2).max(500)
+
+export const savePathologyRequestDraftRequestSchema = z.object({
+  expectedVersions: fhirExpectedVersionsSchema,
+  input: z.object({
+    expectedDraftVersion: z.number().int().nonnegative(),
+    /** 会诊目的。 */
+    purpose: pathologyPurposeSchema,
+    serviceId: z.string().min(1).max(128),
+    /** 送检对应的既往手术：病例可见来源病史中的来源引用。 */
+    sourceProcedureReference: z.string().min(1).max(512),
+  }).strict(),
+}).strict()
+
+export const deletePathologyRequestDraftRequestSchema = deleteImagingRequestDraftRequestSchema
+
+export const pathologyRequestDraftResponseSchema = imagingRequestDraftResponseSchema
+
+/** 病理会诊报告：标本信息、镜下所见、病理诊断、既有免疫组化结果、备注和本院检查引用。 */
+export const pathologyReportSchema = z.object({
+  acknowledgement: laboratoryReportAcknowledgementSchema.optional(),
+  diagnosis: z.string().min(1),
+  diagnosticReportId: z.string().min(1),
+  diagnosticReportVersion: z.string().regex(/^\d+$/),
+  immunohistochemistry: z.string().min(1),
+  issuedAt: z.string().datetime({ offset: true }),
+  microscopy: z.string().min(1),
+  note: z.string().min(1),
+  /** 收片登记时间。 */
+  receivedAt: z.string().datetime({ offset: true }),
+  revisionNumber: z.number().int().positive(),
+  revisionOfDiagnosticReportId: z.string().min(1).optional(),
+  revisionReason: z.string().min(1).optional(),
+  specimen: z.object({
+    /** 既往手术名称与日期取自申请所选的来源手术。 */
+    procedure: pathologySourceProcedureSchema,
+    slideCount: z.number().int().positive(),
+    specimenId: z.string().min(1),
+    stain: z.literal('HE'),
+  }).strict(),
+  status: z.literal('final'),
+  studyId: z.string().min(1),
+}).strict().superRefine(validateLaboratoryReportRevision)
+
+export const pathologyRequestSchema = z.object({
+  generationError: z.object({
+    code: z.string().min(1).max(128),
+    message: z.string().min(1).max(1_000),
+  }).strict().optional(),
+  id: z.string().min(1),
+  previousReports: z.array(pathologyReportSchema).default([]),
+  purpose: pathologyPurposeSchema,
+  report: pathologyReportSchema.optional(),
+  service: pathologyServiceSnapshotSchema,
+  serviceRequestId: z.string().min(1),
+  serviceRequestVersion: z.string().regex(/^\d+$/),
+  /** 开立时保存的来源手术引用快照。 */
+  sourceProcedure: pathologySourceProcedureSchema,
+  status: laboratoryRequestStatusSchema,
+  taskId: z.string().min(1),
+  taskVersion: z.string().regex(/^\d+$/),
+  version: z.number().int().positive(),
+}).strict()
+
+export const pathologyRequestStateSchema = z.object({
+  draft: z.object({
+    purpose: pathologyPurposeSchema,
+    service: pathologyServiceSnapshotSchema,
+    sourceProcedure: pathologySourceProcedureSchema,
+  }).strict().optional(),
+  draftVersion: z.number().int().nonnegative(),
+  requests: z.array(pathologyRequestSchema),
+}).strict()
+
+export const issuePathologyRequestRequestSchema = issueLaboratoryRequestRequestSchema
+export const cancelPathologyRequestRequestSchema = cancelLaboratoryRequestRequestSchema
+export const retryPathologyRequestRequestSchema = retryLaboratoryResultGenerationRequestSchema
+export const acknowledgePathologyReportRequestSchema = acknowledgeLaboratoryReportRequestSchema
+
+export const issuePathologyRequestResponseSchema = commandResponseSchema(z.object({
+  caseId: z.string().min(1),
+  draftVersion: z.number().int().positive(),
+  request: pathologyRequestSchema,
+}).strict())
+
+export const pathologyRequestActionResponseSchema = commandResponseSchema(z.object({
+  request: pathologyRequestSchema,
+}).strict())
+
+export const acknowledgePathologyReportResponseSchema = acknowledgeLaboratoryReportResponseSchema
+
+/** 管理员更正只能从同一切片素材已核对发布的报告内容修订中选择，不接受自由改写。 */
+export const correctPathologyReportRequestSchema = correctImagingReportRequestSchema
+
+export const correctPathologyReportResponseSchema = correctLaboratoryReportResponseSchema
+
 export const doctorCompletedCaseTimelineKindSchema = z.enum([
   'consultation-recorded',
   'clinical-document-signed',
@@ -1566,6 +1694,12 @@ export const doctorCompletedCaseTimelineKindSchema = z.enum([
   'imaging-report-issued',
   'imaging-report-revised',
   'imaging-report-acknowledged',
+  'pathology-request-draft-deleted',
+  'pathology-request-issued',
+  'pathology-request-cancelled',
+  'pathology-report-issued',
+  'pathology-report-revised',
+  'pathology-report-acknowledged',
   'diagnosis-confirmed',
   'prescription-draft-deleted',
   'prescription-issued',
@@ -1605,6 +1739,7 @@ export const doctorCompletedCaseDetailSchema = z.object({
   }).strict(),
   imagingRequests: z.array(imagingRequestSchema).default([]),
   laboratoryRequests: z.array(completedCaseLaboratoryRequestSchema),
+  pathologyRequests: z.array(pathologyRequestSchema).default([]),
   medicationConclusion: z.object({
     noMedication: noMedicationConclusionSchema.optional(),
     prescription: completedCasePrescriptionSchema.optional(),
@@ -1663,6 +1798,7 @@ export const doctorCaseDetailSchema = z.object({
   }),
   imagingRequests: imagingRequestStateSchema.optional(),
   laboratoryRequests: laboratoryRequestStateSchema.optional(),
+  pathologyRequests: pathologyRequestStateSchema.optional(),
   medicationConclusion: medicationConclusionStateSchema.optional(),
   patient: patientSummarySchema,
   presentation: clinicalPresentationSchema.nullable(),
@@ -1872,6 +2008,9 @@ export type RoleCode = z.infer<typeof roleCodeSchema>
 export type ImagingServiceSnapshot = z.infer<typeof imagingServiceSnapshotSchema>
 export type ImagingRequest = z.infer<typeof imagingRequestSchema>
 export type ImagingReport = z.infer<typeof imagingReportSchema>
+export type PathologyServiceSnapshot = z.infer<typeof pathologyServiceSnapshotSchema>
+export type PathologyRequest = z.infer<typeof pathologyRequestSchema>
+export type PathologyReport = z.infer<typeof pathologyReportSchema>
 export type ApiConflict = z.infer<typeof apiConflictSchema>
 export type SessionContext = z.infer<typeof sessionContextSchema>
 export type ScenarioState = z.infer<typeof scenarioStateSchema>

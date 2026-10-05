@@ -4,6 +4,7 @@ import {
   agentViewIdSchema,
   isAgentOperationId,
   type AgentOperationId,
+  type DoctorCaseSection,
 } from './agent-tool-input.ts'
 import { hisOperationIdSchema } from './his-operations.ts'
 import { roleCodeSchema } from './his.ts'
@@ -11,9 +12,11 @@ import { roleCodeSchema } from './his.ts'
 export {
   agentToolInputSchemas,
   agentViewIdSchema,
+  doctorCaseSectionSchema,
   isAgentOperationId,
   parseAgentToolInput,
   type AgentOperationId,
+  type DoctorCaseSection,
 } from './agent-tool-input.ts'
 
 export const agentHumanRoleCodeSchema = z.enum([
@@ -203,6 +206,8 @@ export interface AgentToolDefinition {
   operationId: AgentOperationId
   risk: AgentOperationRisk
   roleCodes: readonly AgentHumanRoleCode[]
+  /** 只在该诊疗栏目为当前栏目时发布；缺省表示在所属 view 的每个栏目都发布。 */
+  section?: DoctorCaseSection
   toolName: string
   viewIds: readonly AgentViewId[]
 }
@@ -225,8 +230,17 @@ function tool(
   risk: AgentOperationRisk,
   roleCodes: readonly AgentHumanRoleCode[],
   viewIds: readonly AgentViewId[],
+  section?: DoctorCaseSection,
 ): AgentToolDefinition {
-  return defineAgentTool({ mode, operationId, risk, roleCodes, toolName, viewIds })
+  return defineAgentTool({
+    mode,
+    operationId,
+    risk,
+    roleCodes,
+    ...(section === undefined ? {} : { section }),
+    toolName,
+    viewIds,
+  })
 }
 
 const doctor = ['outpatient-doctor'] as const
@@ -278,31 +292,36 @@ export const agentToolCatalog: readonly AgentToolDefinition[] = Object.freeze([
   tool('outpatient.case.read', 'clinmesh_read_doctor_context', 'query', 'read-only', doctor, ['consultation']),
   tool('outpatient.case.select', 'clinmesh_select_doctor_case', 'ui', 'ui-only', doctor, ['consultation']),
   tool('outpatient.section.select', 'clinmesh_select_doctor_section', 'ui', 'ui-only', doctor, ['consultation']),
-  tool('outpatient.consultation.ask', 'clinmesh_ask_virtual_patient', 'draft', 'draft-only', doctor, ['consultation']),
-  tool('outpatient.consultation.reply.retry', 'clinmesh_retry_patient_reply', 'draft', 'draft-only', doctor, ['consultation']),
+  tool('outpatient.consultation.ask', 'clinmesh_ask_virtual_patient', 'draft', 'draft-only', doctor, ['consultation'], 'consultation'),
+  tool('outpatient.consultation.reply.retry', 'clinmesh_retry_patient_reply', 'draft', 'draft-only', doctor, ['consultation'], 'consultation'),
   tool('outpatient.first-visit.draft.set', 'clinmesh_fill_first_visit_draft', 'draft', 'draft-only', doctor, ['consultation']),
-  tool('outpatient.diagnosis.draft.set', 'clinmesh_fill_diagnosis_draft', 'draft', 'draft-only', doctor, ['consultation']),
-  tool('outpatient.laboratory.draft.set', 'clinmesh_fill_laboratory_draft', 'draft', 'draft-only', doctor, ['consultation']),
-  tool('outpatient.prescription.draft.set', 'clinmesh_fill_prescription_draft', 'draft', 'draft-only', doctor, ['consultation']),
-  tool('outpatient.record.draft.set', 'clinmesh_fill_clinical_document_draft', 'draft', 'draft-only', doctor, ['consultation']),
+  tool('outpatient.diagnosis.draft.set', 'clinmesh_fill_diagnosis_draft', 'draft', 'draft-only', doctor, ['consultation'], 'diagnosis'),
+  tool('outpatient.laboratory.draft.set', 'clinmesh_fill_laboratory_draft', 'draft', 'draft-only', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.prescription.draft.set', 'clinmesh_fill_prescription_draft', 'draft', 'draft-only', doctor, ['consultation'], 'prescription'),
+  tool('outpatient.record.draft.set', 'clinmesh_fill_clinical_document_draft', 'draft', 'draft-only', doctor, ['consultation'], 'record'),
   tool('outpatient.revisit.draft.set', 'clinmesh_fill_revisit_draft', 'draft', 'draft-only', doctor, ['consultation']),
-  tool('outpatient.preview.request', 'clinmesh_request_preview', 'preview', 'read-only', doctor, ['consultation']),
+  tool('outpatient.preview.request', 'clinmesh_request_preview', 'preview', 'read-only', doctor, ['consultation'], 'record'),
   tool('outpatient.visit.start.propose', 'clinmesh_prepare_start_visit', 'proposal', 'human-review', doctor, ['consultation']),
-  tool('outpatient.diagnosis.confirm.propose', 'clinmesh_prepare_confirm_diagnosis', 'proposal', 'human-review', doctor, ['consultation']),
-  tool('outpatient.laboratory.issue.propose', 'clinmesh_prepare_issue_laboratory', 'proposal', 'human-review', doctor, ['consultation']),
-  tool('outpatient.laboratory.cancel.propose', 'clinmesh_prepare_cancel_laboratory', 'proposal', 'human-review', doctor, ['consultation']),
-  tool('outpatient.report.acknowledge.propose', 'clinmesh_prepare_acknowledge_report', 'proposal', 'human-review', doctor, ['consultation']),
-  tool('outpatient.report.correct.propose', 'clinmesh_prepare_correct_report', 'proposal', 'human-review', doctor, ['consultation']),
-  tool('outpatient.imaging.draft.set', 'clinmesh_fill_imaging_draft', 'draft', 'draft-only', doctor, ['consultation']),
-  tool('outpatient.imaging.issue.propose', 'clinmesh_prepare_issue_imaging', 'proposal', 'human-review', doctor, ['consultation']),
-  tool('outpatient.imaging.cancel.propose', 'clinmesh_prepare_cancel_imaging', 'proposal', 'human-review', doctor, ['consultation']),
-  tool('outpatient.imaging.retry.propose', 'clinmesh_prepare_retry_imaging', 'proposal', 'human-review', doctor, ['consultation']),
-  tool('outpatient.imaging.correct.propose', 'clinmesh_prepare_correct_imaging_report', 'proposal', 'human-review', doctor, ['consultation']),
-  tool('outpatient.prescription.issue.propose', 'clinmesh_prepare_issue_prescription', 'proposal', 'human-review', doctor, ['consultation']),
-  tool('outpatient.prescription.withdraw.propose', 'clinmesh_prepare_withdraw_prescription', 'proposal', 'human-review', doctor, ['consultation']),
-  tool('outpatient.medication.none.propose', 'clinmesh_prepare_no_medication', 'proposal', 'human-review', doctor, ['consultation']),
-  tool('outpatient.record.sign.propose', 'clinmesh_prepare_sign_document', 'proposal', 'human-review', doctor, ['consultation']),
-  tool('outpatient.record.revise.propose', 'clinmesh_prepare_revise_document', 'proposal', 'human-review', doctor, ['consultation']),
+  tool('outpatient.diagnosis.confirm.propose', 'clinmesh_prepare_confirm_diagnosis', 'proposal', 'human-review', doctor, ['consultation'], 'diagnosis'),
+  tool('outpatient.laboratory.issue.propose', 'clinmesh_prepare_issue_laboratory', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.laboratory.cancel.propose', 'clinmesh_prepare_cancel_laboratory', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.report.acknowledge.propose', 'clinmesh_prepare_acknowledge_report', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.report.correct.propose', 'clinmesh_prepare_correct_report', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.imaging.draft.set', 'clinmesh_fill_imaging_draft', 'draft', 'draft-only', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.imaging.issue.propose', 'clinmesh_prepare_issue_imaging', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.imaging.cancel.propose', 'clinmesh_prepare_cancel_imaging', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.imaging.retry.propose', 'clinmesh_prepare_retry_imaging', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.imaging.correct.propose', 'clinmesh_prepare_correct_imaging_report', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.pathology.draft.set', 'clinmesh_fill_pathology_draft', 'draft', 'draft-only', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.pathology.issue.propose', 'clinmesh_prepare_issue_pathology', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.pathology.cancel.propose', 'clinmesh_prepare_cancel_pathology', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.pathology.retry.propose', 'clinmesh_prepare_retry_pathology', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.pathology.correct.propose', 'clinmesh_prepare_correct_pathology_report', 'proposal', 'human-review', doctor, ['consultation'], 'laboratory'),
+  tool('outpatient.prescription.issue.propose', 'clinmesh_prepare_issue_prescription', 'proposal', 'human-review', doctor, ['consultation'], 'prescription'),
+  tool('outpatient.prescription.withdraw.propose', 'clinmesh_prepare_withdraw_prescription', 'proposal', 'human-review', doctor, ['consultation'], 'prescription'),
+  tool('outpatient.medication.none.propose', 'clinmesh_prepare_no_medication', 'proposal', 'human-review', doctor, ['consultation'], 'prescription'),
+  tool('outpatient.record.sign.propose', 'clinmesh_prepare_sign_document', 'proposal', 'human-review', doctor, ['consultation'], 'record'),
+  tool('outpatient.record.revise.propose', 'clinmesh_prepare_revise_document', 'proposal', 'human-review', doctor, ['consultation'], 'record'),
   tool('outpatient.encounter.complete.propose', 'clinmesh_prepare_complete_encounter', 'proposal', 'human-review', doctor, ['consultation']),
 
   tool('billing.queue.read', 'clinmesh_read_billing_queue', 'query', 'read-only', cashier, ['billing']),
@@ -318,13 +337,19 @@ export const agentToolCatalog: readonly AgentToolDefinition[] = Object.freeze([
   tool('pharmacy.dispense.propose', 'clinmesh_prepare_dispense', 'proposal', 'human-review', pharmacist, ['pharmacy']),
 ])
 
+/**
+ * 当前岗位、view 与栏目可发布的 Tool；Server 签发 Page Context 与 Surface 注册都使用它。
+ * 带栏目的 Tool 只在 `activeSection` 等于其栏目时发布，未声明栏目的 Tool 在每个栏目都发布。
+ */
 export function agentToolsForContext(
   roleCode: AgentHumanRoleCode,
   viewId: AgentViewId,
+  activeSection?: string,
 ): readonly AgentToolDefinition[] {
   return agentToolCatalog.filter(definition => (
     definition.roleCodes.includes(roleCode)
     && definition.viewIds.includes(viewId)
+    && (definition.section === undefined || definition.section === activeSection)
   ))
 }
 

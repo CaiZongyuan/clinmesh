@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import {
   administratorCaseTruthSchema,
+  latestTargetHistoryStart,
   scenarioGenerationJobSchema,
   scenarioGenerationRequestSchema,
   syntheticPatientProfileDetailSchema,
@@ -62,6 +63,8 @@ export class ScenarioDataError extends Error {
 
 /** 定向生成依赖的影像适配规则，由影像准备服务实现。 */
 export interface ScenarioGenerationTargets {
+  /** 目标要求导出的病史至少覆盖的年数；没有要求时为 undefined。 */
+  generationHistoryYears(target: ScenarioGenerationTarget): Promise<number | undefined>
   generationKeep(target: ScenarioGenerationTarget): Promise<SyntheaKeepCriteria | undefined>
   generationTargetMet(target: ScenarioGenerationTarget, candidate: {
     birthDate: string
@@ -71,7 +74,12 @@ export interface ScenarioGenerationTargets {
     indexResources: Array<{ resource: unknown; sourceReference: string }>
     sourceHash: string
   }): Promise<boolean>
-  prepareBatch(input: { caseIds: string[]; context: ActorContext; idempotencyKey: string }): Promise<unknown>
+  /** 为新病例运行目标所属素材包的病例准备。 */
+  prepareBatch(target: ScenarioGenerationTarget, input: {
+    caseIds: string[]
+    context: ActorContext
+    idempotencyKey: string
+  }): Promise<unknown>
 }
 
 const sourceBundleSchema = z.object({
@@ -177,7 +185,7 @@ export class ScenarioDataService {
     let completedJob: ScenarioGenerationJob
     try {
       await this.#assertProviderAvailable(claimed.request)
-      const keep = target === undefined ? undefined : await this.#targetKeep(target)
+      const keep = target === undefined ? undefined : await this.#targetKeep(target, claimed.request.timeRange)
       const generated = await this.#generateUsableCorpus(claimed.request, signal, keep)
       const createdAt = new Date().toISOString()
       const profiles = createSyntheticPatientProfiles({
@@ -280,14 +288,16 @@ export class ScenarioDataService {
       }).data
     }
     if (target !== undefined && this.#targets !== undefined) {
-      // 定向生成的病例随即运行影像准备；准备失败不回滚已生成的患者，在任务上记录警告，管理员可在影像准备中重试。
+      // 定向生成的病例随即运行目标所属素材包的病例准备；准备失败不回滚已生成的患者，在任务上记录警告，管理员可在对应的准备入口重试。
+      const pathology = target.kind === 'pathology-profile'
       try {
-        await this.#targets.prepareBatch({
+        await this.#targets.prepareBatch(target, {
           caseIds: completedJob.caseIds,
           context: claimed.actorContext,
-          idempotencyKey: `${claimed.jobId}:imaging-preparation`,
+          idempotencyKey: `${claimed.jobId}:${pathology ? 'pathology' : 'imaging'}-preparation`,
         })
       } catch {
+        const code = pathology ? 'PATHOLOGY_PREPARATION_FAILED' : 'IMAGING_PREPARATION_FAILED'
         return this.#commands.execute({
           context: claimed.actorContext,
           contextRequirement: 'known',
@@ -295,12 +305,12 @@ export class ScenarioDataService {
           expectedVersions: {},
           idempotencyKey: `${claimed.jobId}:warn`,
           idempotencyScope: 'workspace',
-          input: { jobId: claimed.jobId, warning: 'IMAGING_PREPARATION_FAILED' },
+          input: { jobId: claimed.jobId, warning: code },
           operation: 'scenario-generation-job.warn',
         }, () => {
           const warned = this.#jobs.recordWarning(claimed.workspaceId, claimed.jobId, {
-            code: 'IMAGING_PREPARATION_FAILED',
-            message: 'The patients were generated, but imaging preparation did not complete',
+            code,
+            message: `The patients were generated, but ${pathology ? 'pathology' : 'imaging'} preparation did not complete`,
           }, new Date().toISOString())
           return {
             data: warned,
@@ -468,7 +478,10 @@ export class ScenarioDataService {
     }
   }
 
-  async #targetKeep(target: ScenarioGenerationTarget): Promise<SyntheaKeepCriteria> {
+  async #targetKeep(
+    target: ScenarioGenerationTarget,
+    timeRange: ScenarioGenerationRequest['timeRange'],
+  ): Promise<SyntheaKeepCriteria> {
     if (!(await this.#provider.capabilities()).targetedGeneration) {
       throw new ScenarioGenerationProviderError(
         'PROVIDER_TARGET_UNSUPPORTED',
@@ -477,7 +490,15 @@ export class ScenarioDataService {
     }
     const keep = await this.#targets?.generationKeep(target)
     if (keep === undefined) {
-      throw new ScenarioGenerationProviderError('IMAGING_TARGET_UNAVAILABLE', 'The selected imaging profile is not available')
+      throw new ScenarioGenerationProviderError('IMAGING_TARGET_UNAVAILABLE', 'The selected matching profile is not available')
+    }
+    // Synthea 按一生的记录判断保留条件，导出只含病史起点之后的记录：起点太晚时保留下来的患者缺少匹配事实，调用 Provider 前拒绝。
+    const years = await this.#targets!.generationHistoryYears(target)
+    if (years !== undefined && timeRange.start > latestTargetHistoryStart(timeRange.end, years)) {
+      throw new ScenarioGenerationProviderError(
+        'TARGET_HISTORY_TOO_SHORT',
+        `The selected matching profile requires at least ${years} years of history`,
+      )
     }
     return keep
   }
@@ -512,7 +533,7 @@ export class ScenarioDataService {
         if (!(error instanceof ScenarioGenerationProviderError) || error.code !== 'KEEP_NOT_SATISFIED') throw error
         lastError = new ScenarioGenerationProviderError(
           'IMAGING_TARGET_NOT_MET',
-          'No generated patient satisfied the selected imaging profile after repeated attempts',
+          'No generated patient satisfied the selected matching profile after repeated attempts',
         )
         continue
       }
@@ -553,7 +574,7 @@ export class ScenarioDataService {
         if (!met) {
           lastError = new ScenarioGenerationProviderError(
             'IMAGING_TARGET_NOT_MET',
-            'No generated patient satisfied the selected imaging profile after repeated attempts',
+            'No generated patient satisfied the selected matching profile after repeated attempts',
           )
           continue
         }

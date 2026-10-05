@@ -7,6 +7,14 @@ import {
   issueImagingRequestResponseSchema,
   type ImagingReport,
   type ImagingRequest,
+  acknowledgePathologyReportResponseSchema,
+  casePathologyServiceCatalogSchema,
+  correctPathologyReportResponseSchema,
+  issuePathologyRequestResponseSchema,
+  pathologyRequestActionResponseSchema,
+  pathologyRequestDraftResponseSchema,
+  type PathologyReport,
+  type PathologyRequest,
   acknowledgeLaboratoryReportResponseSchema,
   apiErrorSchema,
   retryConsultationReplyResponseSchema,
@@ -73,6 +81,12 @@ import {
   imagingPreparationBatchSchema,
   imagingStudyViewSchema,
 } from '@clinmesh/contracts/imaging'
+import {
+  administratorPathologyAssetSchema,
+  administratorPathologyPreparationSchema,
+  pathologyCoverageSchema,
+  pathologyPreparationBatchSchema,
+} from '@clinmesh/contracts/pathology'
 import {
   administratorCaseTruthSchema,
   patientPersonaJobSchema,
@@ -537,6 +551,31 @@ export function getAdministratorImagingAssetBlock(assetId: string, blockPath: st
   return apiGetBinary(`/api/sim/v1/admin/imaging-assets/${encodeURIComponent(assetId)}/${blockPath}`, signal)
 }
 
+export function getAdministratorPathologyPreparation(caseId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/sim/v1/admin/synthetic-cases/${encodeURIComponent(caseId)}/pathology-preparation`,
+    administratorPathologyPreparationSchema,
+    signal,
+  )
+}
+
+export function getPathologyCoverage(signal?: AbortSignal) {
+  return apiGet('/api/sim/v1/admin/pathology-coverage', pathologyCoverageSchema, signal)
+}
+
+export function getAdministratorPathologyAsset(assetId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/sim/v1/admin/pathology-assets/${encodeURIComponent(assetId)}`,
+    administratorPathologyAssetSchema,
+    signal,
+  )
+}
+
+/** `tilePath` 是相对切片素材的瓦片路径，由阅片器生成，例如 `series/0/levels/2/tiles/3/1`。 */
+export function getAdministratorPathologyAssetTile(assetId: string, tilePath: string, signal?: AbortSignal) {
+  return apiGetBinary(`/api/sim/v1/admin/pathology-assets/${encodeURIComponent(assetId)}/${tilePath}`, signal)
+}
+
 export function getImagingStudy(studyId: string, signal?: AbortSignal) {
   return apiGet(`/api/his/v1/imaging-studies/${encodeURIComponent(studyId)}`, imagingStudyViewSchema, signal)
 }
@@ -665,11 +704,143 @@ export function correctImagingReport(
   )
 }
 
+export function getCasePathologyServices(caseId: string, signal?: AbortSignal) {
+  return apiGet(
+    `/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/pathology-services`,
+    casePathologyServiceCatalogSchema,
+    signal,
+  )
+}
+
+export function savePathologyRequestDraft(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+  purpose: string
+  serviceId: string
+  sourceProcedureReference: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/pathology-request/draft`,
+    pathologyRequestDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: {
+        expectedDraftVersion: input.expectedDraftVersion,
+        purpose: input.purpose,
+        serviceId: input.serviceId,
+        sourceProcedureReference: input.sourceProcedureReference,
+      },
+    },
+    { idempotencyKey, method: 'PUT' },
+  )
+}
+
+export function deletePathologyRequestDraft(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/pathology-request/draft`,
+    pathologyRequestDraftResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey, method: 'DELETE' },
+  )
+}
+
+export function issuePathologyRequest(input: {
+  encounterId: string
+  encounterVersion: string
+  expectedDraftVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/pathology-request/actions/issue`,
+    issuePathologyRequestResponseSchema,
+    {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { expectedDraftVersion: input.expectedDraftVersion },
+    },
+    { idempotencyKey },
+  )
+}
+
+/** 取消与重试都按申请当前的 ServiceRequest、Task 与申请版本提交。 */
+export function cancelPathologyRequest(request: PathologyRequest, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/pathology-requests/${encodeURIComponent(request.id)}/actions/cancel`,
+    pathologyRequestActionResponseSchema,
+    {
+      expectedVersions: {
+        [`ServiceRequest/${request.serviceRequestId}`]: request.serviceRequestVersion,
+        [`Task/${request.taskId}`]: request.taskVersion,
+      },
+      input: { expectedRequestVersion: request.version, reasonCode: 'no-longer-needed' },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function retryPathologyRequest(request: PathologyRequest, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/pathology-requests/${encodeURIComponent(request.id)}/actions/retry`,
+    pathologyRequestActionResponseSchema,
+    {
+      expectedVersions: { [`Task/${request.taskId}`]: request.taskVersion },
+      input: { expectedRequestVersion: request.version },
+    },
+    { idempotencyKey },
+  )
+}
+
+export function acknowledgePathologyReport(request: PathologyRequest, report: PathologyReport, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/pathology-requests/${encodeURIComponent(request.id)}/reports/${encodeURIComponent(report.diagnosticReportId)}/actions/acknowledge`,
+    acknowledgePathologyReportResponseSchema,
+    {
+      expectedVersions: { [`DiagnosticReport/${report.diagnosticReportId}`]: report.diagnosticReportVersion },
+      input: { expectedRequestVersion: request.version },
+    },
+    { idempotencyKey },
+  )
+}
+
+/** 管理员更正：从同一切片素材已核对发布的报告内容修订中选一份重新签发。 */
+export function correctPathologyReport(
+  request: PathologyRequest,
+  report: PathologyReport,
+  input: { reason: string; reportRevision: number },
+  idempotencyKey: string,
+) {
+  return apiMutation(
+    `/api/his/v1/pathology-requests/${encodeURIComponent(request.id)}/reports/${encodeURIComponent(report.diagnosticReportId)}/actions/correct`,
+    correctPathologyReportResponseSchema,
+    {
+      expectedVersions: { [`DiagnosticReport/${report.diagnosticReportId}`]: report.diagnosticReportVersion },
+      input: { ...input, expectedRequestVersion: request.version },
+    },
+    { idempotencyKey },
+  )
+}
+
 /** 不指定病例时准备下一批尚未按当前清单准备过的病例。 */
 export function prepareImagingCases(caseIds: string[] | undefined, idempotencyKey: string) {
   return apiMutation(
     '/api/sim/v1/admin/imaging-preparations',
     commandResponseSchema(imagingPreparationBatchSchema),
+    { input: caseIds === undefined ? {} : { caseIds } },
+    { idempotencyKey },
+  )
+}
+
+/** 不指定病例时准备下一批尚未按当前病理清单准备过的病例。 */
+export function preparePathologyCases(caseIds: string[] | undefined, idempotencyKey: string) {
+  return apiMutation(
+    '/api/sim/v1/admin/pathology-preparations',
+    commandResponseSchema(pathologyPreparationBatchSchema),
     { input: caseIds === undefined ? {} : { caseIds } },
     { idempotencyKey },
   )

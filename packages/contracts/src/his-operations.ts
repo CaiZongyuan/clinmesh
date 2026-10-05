@@ -8,17 +8,30 @@ import {
 import {
   acknowledgeImagingReportRequestSchema,
   acknowledgeImagingReportResponseSchema,
+  acknowledgePathologyReportRequestSchema,
+  acknowledgePathologyReportResponseSchema,
   cancelImagingRequestRequestSchema,
+  cancelPathologyRequestRequestSchema,
   caseImagingServiceCatalogSchema,
+  casePathologyServiceCatalogSchema,
   correctImagingReportRequestSchema,
   correctImagingReportResponseSchema,
+  correctPathologyReportRequestSchema,
+  correctPathologyReportResponseSchema,
   deleteImagingRequestDraftRequestSchema,
+  deletePathologyRequestDraftRequestSchema,
   imagingRequestActionResponseSchema,
   imagingRequestDraftResponseSchema,
   issueImagingRequestRequestSchema,
   issueImagingRequestResponseSchema,
+  issuePathologyRequestRequestSchema,
+  issuePathologyRequestResponseSchema,
+  pathologyRequestActionResponseSchema,
+  pathologyRequestDraftResponseSchema,
   retryImagingRequestRequestSchema,
+  retryPathologyRequestRequestSchema,
   saveImagingRequestDraftRequestSchema,
+  savePathologyRequestDraftRequestSchema,
   acknowledgeLaboratoryReportRequestSchema,
   acknowledgeLaboratoryReportResponseSchema,
   retryConsultationReplyResponseSchema,
@@ -462,6 +475,35 @@ const acknowledgeImagingReportOperationInputSchema = acknowledgeImagingReportReq
 const correctImagingReportOperationInputSchema = correctImagingReportRequestSchema.shape.input
   .extend(imagingReportVersionInputShape).strict()
 
+const savePathologyRequestDraftOperationInputSchema = savePathologyRequestDraftRequestSchema.shape.input
+  .extend(encounterVersionInputShape).strict()
+
+const deletePathologyRequestDraftOperationInputSchema = deletePathologyRequestDraftRequestSchema.shape.input
+  .extend(encounterVersionInputShape).strict()
+
+const issuePathologyRequestOperationInputSchema = issuePathologyRequestRequestSchema.shape.input
+  .extend(encounterVersionInputShape).strict()
+
+const cancelPathologyRequestOperationInputSchema = cancelPathologyRequestRequestSchema.shape.input.extend({
+  requestId: z.string().min(1),
+  serviceRequestId: z.string().min(1),
+  serviceRequestVersion: z.string().regex(/^\d+$/),
+  taskId: z.string().min(1),
+  taskVersion: z.string().regex(/^\d+$/),
+}).strict()
+
+const retryPathologyRequestOperationInputSchema = retryPathologyRequestRequestSchema.shape.input.extend({
+  requestId: z.string().min(1),
+  taskId: z.string().min(1),
+  taskVersion: z.string().regex(/^\d+$/),
+}).strict()
+
+const acknowledgePathologyReportOperationInputSchema = acknowledgePathologyReportRequestSchema.shape.input
+  .extend(imagingReportVersionInputShape).strict()
+
+const correctPathologyReportOperationInputSchema = correctPathologyReportRequestSchema.shape.input
+  .extend(imagingReportVersionInputShape).strict()
+
 const orderHospitalServiceOperationInputSchema = z.object({
   encounterId: z.string().min(1),
   expectedVersions: expectedVersionsInputSchema,
@@ -788,6 +830,47 @@ const bodyEncoders = {
   'imaging-report.correct': (rawInput: unknown) => {
     const { diagnosticReportId, diagnosticReportVersion, requestId: _requestId, ...input }
       = correctImagingReportOperationInputSchema.parse(rawInput)
+    return commandBody({ [`DiagnosticReport/${diagnosticReportId}`]: diagnosticReportVersion }, input)
+  },
+  'encounter.pathology-request.draft.set': (rawInput: unknown) => {
+    const { encounterId, encounterVersion, ...input } = savePathologyRequestDraftOperationInputSchema.parse(rawInput)
+    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
+  },
+  'encounter.pathology-request.draft.delete': (rawInput: unknown) => {
+    const { encounterId, encounterVersion, ...input } = deletePathologyRequestDraftOperationInputSchema.parse(rawInput)
+    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
+  },
+  'encounter.pathology-request.issue': (rawInput: unknown) => {
+    const { encounterId, encounterVersion, ...input } = issuePathologyRequestOperationInputSchema.parse(rawInput)
+    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
+  },
+  'pathology-request.cancel': (rawInput: unknown) => {
+    const {
+      requestId: _requestId,
+      serviceRequestId,
+      serviceRequestVersion,
+      taskId,
+      taskVersion,
+      ...input
+    } = cancelPathologyRequestOperationInputSchema.parse(rawInput)
+    return commandBody({
+      [`ServiceRequest/${serviceRequestId}`]: serviceRequestVersion,
+      [`Task/${taskId}`]: taskVersion,
+    }, input)
+  },
+  'pathology-request.retry': (rawInput: unknown) => {
+    const { requestId: _requestId, taskId, taskVersion, ...input }
+      = retryPathologyRequestOperationInputSchema.parse(rawInput)
+    return commandBody({ [`Task/${taskId}`]: taskVersion }, input)
+  },
+  'pathology-report.acknowledge': (rawInput: unknown) => {
+    const { diagnosticReportId, diagnosticReportVersion, requestId: _requestId, ...input }
+      = acknowledgePathologyReportOperationInputSchema.parse(rawInput)
+    return commandBody({ [`DiagnosticReport/${diagnosticReportId}`]: diagnosticReportVersion }, input)
+  },
+  'pathology-report.correct': (rawInput: unknown) => {
+    const { diagnosticReportId, diagnosticReportVersion, requestId: _requestId, ...input }
+      = correctPathologyReportOperationInputSchema.parse(rawInput)
     return commandBody({ [`DiagnosticReport/${diagnosticReportId}`]: diagnosticReportVersion }, input)
   },
   'service.order': (rawInput: unknown) => {
@@ -1831,6 +1914,158 @@ const operationDefinitions = [
     version: 1,
   },
   {
+    cliPath: ['doctor', 'case', 'pathology-services', 'list'],
+    http: {
+      method: 'GET',
+      path: '/api/his/v1/doctor/cases/:caseId/pathology-services',
+    },
+    id: 'doctor.case.pathology-services.list',
+    input: caseIdInputSchema,
+    mode: 'query',
+    output: casePathologyServiceCatalogSchema,
+    requirements: {
+      expectedVersions: false,
+      idempotency: 'none',
+    },
+    risk: 'read',
+    roles: ['outpatient-doctor'],
+    summary: '列出本院病理会诊服务、是否开展，以及该病例可见既往病史中可送检的手术；是否开展与病例病情无关',
+    version: 1,
+  },
+  {
+    cliPath: ['encounter', 'pathology-request', 'draft', 'set'],
+    http: {
+      method: 'PUT',
+      path: '/api/his/v1/encounters/:encounterId/pathology-request/draft',
+    },
+    id: 'encounter.pathology-request.draft.set',
+    input: savePathologyRequestDraftOperationInputSchema,
+    mode: 'draft',
+    output: pathologyRequestDraftResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'write',
+    roles: ['outpatient-doctor'],
+    summary: '保存版本受保护的病理会诊申请草稿（服务、送检的既往手术与会诊目的）；所选手术不在可送检清单内时以 PATHOLOGY_SOURCE_PROCEDURE_UNAVAILABLE 拒绝',
+    version: 1,
+  },
+  {
+    cliPath: ['encounter', 'pathology-request', 'draft', 'delete'],
+    http: {
+      method: 'DELETE',
+      path: '/api/his/v1/encounters/:encounterId/pathology-request/draft',
+    },
+    id: 'encounter.pathology-request.draft.delete',
+    input: deletePathologyRequestDraftOperationInputSchema,
+    mode: 'draft',
+    output: pathologyRequestDraftResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'write',
+    roles: ['outpatient-doctor'],
+    summary: '按版本删除当前病理会诊申请草稿',
+    version: 1,
+  },
+  {
+    cliPath: ['encounter', 'pathology-request', 'issue'],
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/encounters/:encounterId/pathology-request/actions/issue',
+    },
+    id: 'encounter.pathology-request.issue',
+    input: issuePathologyRequestOperationInputSchema,
+    mode: 'command',
+    output: issuePathologyRequestResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'high-risk-write',
+    roles: ['outpatient-doctor'],
+    summary: '签发当前病理会诊申请草稿；本院当前未开展时以 CATALOG_CONFLICT 拒绝，同一服务已有进行中申请时以 PATHOLOGY_REQUEST_DUPLICATE 拒绝',
+    version: 1,
+  },
+  {
+    cliPath: ['pathology-request', 'cancel'],
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/pathology-requests/:requestId/actions/cancel',
+    },
+    id: 'pathology-request.cancel',
+    input: cancelPathologyRequestOperationInputSchema,
+    mode: 'command',
+    output: pathologyRequestActionResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'high-risk-write',
+    roles: ['outpatient-doctor'],
+    summary: '取消尚未开始阅片或未取得结果的病理会诊申请',
+    version: 1,
+  },
+  {
+    cliPath: ['pathology-request', 'retry'],
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/pathology-requests/:requestId/actions/retry',
+    },
+    id: 'pathology-request.retry',
+    input: retryPathologyRequestOperationInputSchema,
+    mode: 'command',
+    output: pathologyRequestActionResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'write',
+    roles: ['outpatient-doctor'],
+    summary: '重试未取得结果的病理会诊申请；切片仍不可用时再次以未取得结果结束',
+    version: 1,
+  },
+  {
+    cliPath: ['pathology-report', 'acknowledge'],
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/pathology-requests/:requestId/reports/:diagnosticReportId/actions/acknowledge',
+    },
+    id: 'pathology-report.acknowledge',
+    input: acknowledgePathologyReportOperationInputSchema,
+    mode: 'command',
+    output: acknowledgePathologyReportResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'write',
+    roles: ['outpatient-doctor'],
+    summary: '确认已阅当前病理会诊报告；切片不可读时以 IMAGING_STUDY_UNAVAILABLE 拒绝',
+    version: 1,
+  },
+  {
+    cliPath: ['pathology-report', 'correct'],
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/pathology-requests/:requestId/reports/:diagnosticReportId/actions/correct',
+    },
+    id: 'pathology-report.correct',
+    input: correctPathologyReportOperationInputSchema,
+    mode: 'command',
+    output: correctPathologyReportResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'high-risk-write',
+    roles: ['administrator'],
+    summary: '用同一切片素材另一份已核对的报告内容修订更正当前病理会诊报告',
+    version: 1,
+  },
+  {
     cliPath: ['service', 'order'],
     http: {
       method: 'POST',
@@ -2114,6 +2349,9 @@ const commandOperationAliases: Readonly<Record<string, string>> = {
   'encounter.laboratory-request.draft.delete': 'laboratory-request.delete-draft',
   'encounter.laboratory-request.draft.set': 'laboratory-request.save-draft',
   'encounter.laboratory-request.issue': 'laboratory-request.issue',
+  'encounter.pathology-request.draft.delete': 'pathology-request.delete-draft',
+  'encounter.pathology-request.draft.set': 'pathology-request.save-draft',
+  'encounter.pathology-request.issue': 'pathology-request.issue',
   'encounter.medication-conclusion.confirm-none': 'encounter.confirm-no-medication',
   'encounter.prescription.draft.delete': 'encounter.delete-prescription-draft',
   'encounter.prescription.draft.set': 'encounter.save-prescription-draft',
@@ -2139,6 +2377,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'doctor.case.get': 'clinmesh-doctor',
   'doctor.case.imaging-services.list': 'clinmesh-doctor',
   'doctor.case.laboratory-catalog.search': 'clinmesh-doctor',
+  'doctor.case.pathology-services.list': 'clinmesh-doctor',
   'doctor.completed-cases.get': 'clinmesh-doctor',
   'doctor.completed-cases.list': 'clinmesh-doctor',
   'doctor.queue.list': 'clinmesh-doctor',
@@ -2154,6 +2393,9 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'encounter.imaging-request.draft.delete': 'clinmesh-doctor',
   'encounter.imaging-request.draft.set': 'clinmesh-doctor',
   'encounter.imaging-request.issue': 'clinmesh-doctor',
+  'encounter.pathology-request.draft.delete': 'clinmesh-doctor',
+  'encounter.pathology-request.draft.set': 'clinmesh-doctor',
+  'encounter.pathology-request.issue': 'clinmesh-doctor',
   'encounter.laboratory-request.draft.delete': 'clinmesh-doctor',
   'encounter.laboratory-request.draft.set': 'clinmesh-doctor',
   'encounter.laboratory-request.issue': 'clinmesh-doctor',
@@ -2170,6 +2412,10 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'imaging-report.correct': 'clinmesh-doctor',
   'imaging-request.cancel': 'clinmesh-doctor',
   'imaging-request.retry': 'clinmesh-doctor',
+  'pathology-report.acknowledge': 'clinmesh-doctor',
+  'pathology-report.correct': 'clinmesh-doctor',
+  'pathology-request.cancel': 'clinmesh-doctor',
+  'pathology-request.retry': 'clinmesh-doctor',
   'laboratory-report.acknowledge': 'clinmesh-doctor',
   'laboratory-report.correct': 'clinmesh-doctor',
   'laboratory-request.cancel': 'clinmesh-doctor',
@@ -2296,6 +2542,11 @@ export const excludedHisRoutes = [
     method: 'GET',
     path: '/api/his/v1/imaging-studies/:studyId/series/:seriesIndex/frames/:frameIndex/blocks/:blockIndex',
     reason: 'Binary pixel transport for the human viewer; Agent tools and the CLI do not read pixels in this phase',
+  },
+  {
+    method: 'GET',
+    path: '/api/his/v1/imaging-studies/:studyId/series/:seriesIndex/levels/:level/tiles/:column/:row',
+    reason: 'Binary slide tile transport for the human viewer; Agent tools and the CLI do not read pixels in this phase',
   },
 ] as const satisfies readonly ExcludedHisRoute[]
 

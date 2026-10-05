@@ -147,9 +147,46 @@ const imagingFrameViewSchema = z.object({
   window: z.object({ center: z.number(), width: z.number().positive() }).strict().optional(),
 }).strict()
 
+/** 切片金字塔的显示倍率上限；摄取不保留高于 20 倍的层级。 */
+export const maxSlideMagnification = 20
+
+/** 金字塔的一个层级。尺寸与瓦片尺寸单位为该层像素；行末与列末的瓦片按层级尺寸裁切显示。 */
+const imagingPyramidLevelViewSchema = z.object({
+  height: z.number().int().positive(),
+  /** 摄取记录的名义倍率（如 20、10、5、1.25），用于标注层级；连续缩放时的倍率读数从像素间距换算。 */
+  magnification: z.number().positive().max(maxSlideMagnification),
+  micronsPerPixel: z.number().positive(),
+  tileHeight: z.number().int().positive().max(4096),
+  tileWidth: z.number().int().positive().max(4096),
+  width: z.number().int().positive(),
+}).strict()
+
 /**
- * 一个序列的读取描述。`kind` 区分像素组织方式：当前只有按帧堆叠的灰度图（CT 与胸片），
- * 分层瓦片等其他组织方式以新的 `kind` 加入。
+ * 一张 RGB 切片的分层瓦片描述。层级按分辨率从高到低排列，第 0 层是最高分辨率；
+ * 后一层的尺寸不大于前一层，像素间距不小于前一层。
+ */
+const imagingTiledPyramidViewSchema = z.object({
+  /** 切片的 ICC profile 不应用于显示；阅片页据此注明未做颜色管理。 */
+  colorManaged: z.literal(false),
+  kind: z.literal('tiled-pyramid'),
+  levels: z.array(imagingPyramidLevelViewSchema).min(1).max(16).superRefine((levels, context) => {
+    for (const [index, level] of levels.entries()) {
+      const higher = levels[index - 1]
+      if (higher === undefined) continue
+      if (level.width > higher.width || level.height > higher.height || level.micronsPerPixel < higher.micronsPerPixel) {
+        context.addIssue({ code: 'custom', message: 'Pyramid levels must be ordered from high to low resolution', path: [index] })
+      }
+    }
+  }),
+  modality: z.literal('SM'),
+  /** 会诊切片的显示标签，例如玻片编号。 */
+  slideLabel: z.string().min(1).max(64),
+  tileFormat: z.literal('jpeg'),
+}).strict()
+
+/**
+ * 一个序列的读取描述。`kind` 区分像素组织方式：`frame-stack` 是按帧堆叠的灰度图（CT 与胸片），
+ * `tiled-pyramid` 是病理切片的 RGB 分层瓦片。
  */
 export const imagingSeriesViewSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -160,13 +197,17 @@ export const imagingSeriesViewSchema = z.discriminatedUnion('kind', [
     /** `hu` 表示像素值即 CT 值；`stored` 表示设备存储值，只做窗宽窗位显示。 */
     valueUnit: z.enum(['hu', 'stored']),
   }).strict(),
+  imagingTiledPyramidViewSchema,
 ])
 export type ImagingSeriesView = z.infer<typeof imagingSeriesViewSchema>
+
+/** 病理检查项目；放射检查的准备、绑定与覆盖清单仍只接受 `imagingExamCodeSchema`。 */
+export const pathologyExamCodeSchema = z.enum(['breast-slide-consultation'])
 
 /** 阅片器读取一次本院检查所需的描述；像素当前不可读时 `available` 为 false 且没有序列。 */
 export const imagingStudyViewSchema = z.object({
   available: z.boolean(),
-  examCode: imagingExamCodeSchema,
+  examCode: z.union([imagingExamCodeSchema, pathologyExamCodeSchema]),
   series: z.array(imagingSeriesViewSchema),
   studyId: z.string().min(1).max(128),
 }).strict()

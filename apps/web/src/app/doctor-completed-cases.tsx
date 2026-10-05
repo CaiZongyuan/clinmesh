@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { ImagingRequestList, useImagingViewState } from './doctor/imaging-page.tsx'
+import { PathologyRequestList } from './doctor/pathology-page.tsx'
 import { DoctorWorkspaceLayout } from './doctor/responsive-layout.tsx'
 import {
   getClinicalCatalog,
@@ -94,6 +95,12 @@ const timelineMessageKeys = {
   'laboratory-report-issued': 'timeline_laboratoryReportIssued',
   'laboratory-report-revised': 'timeline_laboratoryReportRevised',
   'laboratory-request-draft-deleted': 'timeline_laboratoryRequestDraftDeleted',
+  'pathology-report-acknowledged': 'timeline_pathologyReportAcknowledged',
+  'pathology-report-issued': 'timeline_pathologyReportIssued',
+  'pathology-report-revised': 'timeline_pathologyReportRevised',
+  'pathology-request-cancelled': 'timeline_pathologyRequestCancelled',
+  'pathology-request-draft-deleted': 'timeline_pathologyRequestDraftDeleted',
+  'pathology-request-issued': 'timeline_pathologyRequestIssued',
   'laboratory-request-cancelled': 'timeline_laboratoryRequestCancelled',
   'laboratory-request-issued': 'timeline_laboratoryRequestIssued',
   'no-medication-confirmed': 'timeline_noMedicationConfirmed',
@@ -516,6 +523,17 @@ function CompletedCaseDetailView({ canCorrectReports, catalog, detail, locale, o
             locale={locale}
             readOnly
             requests={detail.imagingRequests}
+          />
+        </CompletedCaseSection>
+      )}
+
+      {detail.pathologyRequests.length === 0 ? null : (
+        <CompletedCaseSection heading={locale === 'zh-CN' ? '病理会诊' : 'Pathology consultation'}>
+          <PathologyRequestList
+            actions={{ canCorrect: canCorrectReports, onChanged: onImagingChanged, view: imagingView }}
+            locale={locale}
+            readOnly
+            requests={detail.pathologyRequests}
           />
         </CompletedCaseSection>
       )}

@@ -89,6 +89,7 @@ import type { ActorContext, CommandEffect, CommandResponse, CommandTransaction }
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { WorkflowError } from './workflow-error.ts'
 import { ImagingRequestService } from './imaging-request-service.ts'
+import { PathologyRequestService } from './pathology-request-service.ts'
 import {
   ClinicalRequestKernel,
   laboratoryRequestPolicy,
@@ -528,6 +529,7 @@ const draftDeletionTraceRowSchema = z.object({
     'encounter.delete-prescription-draft',
     'imaging-request.delete-draft',
     'laboratory-request.delete-draft',
+    'pathology-request.delete-draft',
   ]),
   trace_id: z.string().min(1),
   virtual_timestamp: z.iso.datetime({ offset: true }),
@@ -1138,6 +1140,8 @@ export class WorkflowService {
 
   /** 放射申请适配器；与检验共用申请内核。 */
   readonly imaging: ImagingRequestService
+  /** 病理会诊申请适配器；与检验、放射共用申请内核。 */
+  readonly pathology: PathologyRequestService
 
   constructor(
     database: ClinMeshDatabase,
@@ -1158,19 +1162,17 @@ export class WorkflowService {
     this.#referenceData = options.referenceData
     this.#requests = new ClinicalRequestKernel(database)
     this.#tokenSecret = options.tokenSecret
-    this.imaging = new ImagingRequestService({
-      commands,
-      database,
-      fhir,
-      host: {
-        assertCaseResponsibility: (context, caseId) => this.#assertCaseResponsibility(context, caseId),
-        assertExpectedVersions: (expectedVersions, references) => this.#assertExpectedVersions(expectedVersions, references),
-        caseByEncounter: (context, encounterId) => this.#caseByEncounter(context, encounterId),
-        hasConsultation: (context, caseId) => this.#consultationState(context, caseId) !== undefined,
-        virtualTime: context => this.#virtualTime(context),
-      },
-      requests: this.#requests,
-    })
+    const requestHost = {
+      assertCaseResponsibility: (context: ActorContext, caseId: string) => this.#assertCaseResponsibility(context, caseId),
+      assertExpectedVersions: (expectedVersions: Record<string, string>, references: string[]) => (
+        this.#assertExpectedVersions(expectedVersions, references)
+      ),
+      caseByEncounter: (context: ActorContext, encounterId: string) => this.#caseByEncounter(context, encounterId),
+      hasConsultation: (context: ActorContext, caseId: string) => this.#consultationState(context, caseId) !== undefined,
+      virtualTime: (context: ActorContext) => this.#virtualTime(context),
+    }
+    this.imaging = new ImagingRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
+    this.pathology = new PathologyRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
   }
 
   commandReceipt(context: ActorContext, operationId: string, idempotencyKey: string) {
@@ -1342,6 +1344,7 @@ export class WorkflowService {
         FROM hospital_service_catalog
         WHERE workspace_id = ? AND epoch = ? AND active = 1
           AND json_type(config_json, '$.imagingService') IS NULL
+          AND json_type(config_json, '$.pathologyService') IS NULL
           AND (
             ? IS NULL
             OR instr(lower(code), lower(?)) > 0
@@ -1355,6 +1358,7 @@ export class WorkflowService {
       FROM hospital_service_catalog
       WHERE workspace_id = ? AND epoch = ? AND active = 1
         AND json_type(config_json, '$.imagingService') IS NULL
+          AND json_type(config_json, '$.pathologyService') IS NULL
         AND (
           ? IS NULL
           OR instr(lower(code), lower(?)) > 0
@@ -1419,6 +1423,7 @@ export class WorkflowService {
         FROM hospital_service_catalog
         WHERE workspace_id = ? AND epoch = ? AND service_id = ? AND active = 1
           AND json_type(config_json, '$.imagingService') IS NULL
+          AND json_type(config_json, '$.pathologyService') IS NULL
       `).get(input.context.workspaceId, input.context.epoch, input.serviceId))
       if (service === undefined) throw new WorkflowError('CATALOG_CONFLICT', 'The Hospital Service is unavailable')
       const config = serviceCatalogConfigSchema.parse(JSON.parse(service.config_json) as unknown)
@@ -2777,6 +2782,7 @@ export class WorkflowService {
       },
       imagingRequests: this.imaging.state(context, caseId).requests,
       laboratoryRequests,
+      pathologyRequests: this.pathology.state(context, caseId).requests,
       ...(medicationConclusion === undefined ? {} : { medicationConclusion }),
       patient: patientSummary(parseStoredFhirResource(row.patient_json)),
     })
@@ -3074,6 +3080,7 @@ export class WorkflowService {
         versionId: encounter.meta?.versionId,
       },
       ...(consultation === undefined ? {} : { imagingRequests: this.imaging.state(context, row.case_id) }),
+      ...(consultation === undefined ? {} : { pathologyRequests: this.pathology.state(context, row.case_id) }),
       ...(laboratoryRequestState === undefined ? {} : {
         laboratoryRequests: {
           ...(laboratoryRequestState.draft_catalog_item_id === null
@@ -9766,6 +9773,8 @@ export class WorkflowService {
       pendingDraftTarget = 'laboratory'
     } else if (this.imaging.hasDraft(context, outpatientCase.case_id)) {
       pendingDraftTarget = 'imaging'
+    } else if (this.pathology.hasDraft(context, outpatientCase.case_id)) {
+      pendingDraftTarget = 'pathology'
     } else if (diagnosisDraft?.draft_json !== null && diagnosisDraft?.draft_json !== undefined) {
       pendingDraftTarget = 'diagnosis'
     } else if (prescriptionDraft?.draft_json !== null && prescriptionDraft?.draft_json !== undefined) {
@@ -10171,6 +10180,7 @@ export class WorkflowService {
       | 'imagingRequests'
       | 'laboratoryRequests'
       | 'medicationConclusion'
+      | 'pathologyRequests'
     > & { encounterId: string },
   ) {
     const events: Array<z.input<typeof doctorCompletedCaseTimelineEventSchema>> = [
@@ -10308,6 +10318,52 @@ export class WorkflowService {
         }
       }
     }
+    for (const request of input.pathologyRequests) {
+      const row = z.object({
+        authored_at: z.iso.datetime({ offset: true }),
+        cancelled_at: z.iso.datetime({ offset: true }).nullable(),
+      }).strict().parse(this.#database.driver.prepare(`
+        SELECT authored_at, cancelled_at FROM laboratory_request
+        WHERE workspace_id = ? AND epoch = ? AND request_id = ?
+      `).get(context.workspaceId, context.epoch, request.id))
+      events.push({
+        kind: 'pathology-request-issued',
+        occurredAt: row.authored_at,
+        reference: `ServiceRequest/${request.serviceRequestId}`,
+        relatedReferences: [`PathologyRequest/${request.id}`, `Task/${request.taskId}`],
+      })
+      if (row.cancelled_at !== null) {
+        events.push({
+          kind: 'pathology-request-cancelled',
+          occurredAt: row.cancelled_at,
+          reference: `PathologyRequest/${request.id}`,
+          relatedReferences: [`ServiceRequest/${request.serviceRequestId}`, `Task/${request.taskId}`],
+        })
+      }
+      for (const report of [...request.previousReports, ...(request.report === undefined ? [] : [request.report])]) {
+        events.push({
+          kind: report.revisionNumber === 1 ? 'pathology-report-issued' : 'pathology-report-revised',
+          occurredAt: report.issuedAt,
+          reference: `DiagnosticReport/${report.diagnosticReportId}`,
+          relatedReferences: [
+            `ServiceRequest/${request.serviceRequestId}`,
+            `Specimen/${report.specimen.specimenId}`,
+            `ImagingStudy/${report.studyId}`,
+            ...(report.revisionOfDiagnosticReportId === undefined
+              ? []
+              : [`DiagnosticReport/${report.revisionOfDiagnosticReportId}`]),
+          ],
+        })
+        if (report.acknowledgement !== undefined) {
+          events.push({
+            kind: 'pathology-report-acknowledged',
+            occurredAt: report.acknowledgement.acknowledgedAt,
+            reference: `ReportAcknowledgement/${report.acknowledgement.id}`,
+            relatedReferences: [`DiagnosticReport/${report.diagnosticReportId}`],
+          })
+        }
+      }
+    }
     if (input.diagnosis !== undefined) {
       const legacyCondition = input.diagnosis.id.startsWith('legacy-')
         ? input.diagnosis.entries[0]
@@ -10377,7 +10433,8 @@ export class WorkflowService {
         AND operation IN (
           'encounter.delete-prescription-draft',
           'imaging-request.delete-draft',
-          'laboratory-request.delete-draft'
+          'laboratory-request.delete-draft',
+          'pathology-request.delete-draft'
         )
       ORDER BY sequence
     `).all(
@@ -10390,6 +10447,7 @@ export class WorkflowService {
         'encounter.delete-prescription-draft': ['PrescriptionDraft', 'prescription-draft-deleted'],
         'imaging-request.delete-draft': ['ImagingRequestDraft', 'imaging-request-draft-deleted'],
         'laboratory-request.delete-draft': ['LaboratoryRequestDraft', 'laboratory-request-draft-deleted'],
+        'pathology-request.delete-draft': ['PathologyRequestDraft', 'pathology-request-draft-deleted'],
       } as const
       const [draftResource, kind] = draft[row.operation]
       const draftReference = `${draftResource}/${caseId}`

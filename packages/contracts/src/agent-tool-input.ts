@@ -3,9 +3,11 @@ import {
   clinicalDocumentContentSchema,
   diagnosisDraftContentSchema,
   correctImagingReportRequestSchema,
+  correctPathologyReportRequestSchema,
   prescriptionDraftContentSchema,
   saveImagingRequestDraftRequestSchema,
   saveLaboratoryRequestDraftRequestSchema,
+  savePathologyRequestDraftRequestSchema,
 } from './his.ts'
 
 export const agentViewIdSchema = z.enum([
@@ -19,6 +21,9 @@ export const agentViewIdSchema = z.enum([
   'settingsGeneral',
   'uiComponents',
 ])
+
+/** 门诊医生病例页的诊疗栏目；页面标签、栏目切换 Tool 与 Tool 栏目归属共用这份枚举。 */
+export const doctorCaseSectionSchema = z.enum(['consultation', 'record', 'diagnosis', 'prescription', 'laboratory'])
 
 const emptyInputSchema = z.object({}).strict()
 const boundedIdSchema = z.string().trim().min(1).max(128)
@@ -34,6 +39,12 @@ const imagingDraftInputSchema = saveImagingRequestDraftRequestSchema.shape.input
   .pick({ indication: true, serviceId: true })
 /** 放射更正提案只指定申请、已核对的报告内容修订号与原因，不接受自由改写的报告正文。 */
 const imagingReportCorrectionInputSchema = correctImagingReportRequestSchema.shape.input
+  .pick({ reason: true, reportRevision: true })
+  .extend({ requestId: boundedIdSchema })
+const pathologyDraftInputSchema = savePathologyRequestDraftRequestSchema.shape.input
+  .pick({ purpose: true, serviceId: true, sourceProcedureReference: true })
+/** 病理更正提案与放射相同：只指定申请、已核对的报告内容修订号与原因。 */
+const pathologyReportCorrectionInputSchema = correctPathologyReportRequestSchema.shape.input
   .pick({ reason: true, reportRevision: true })
   .extend({ requestId: boundedIdSchema })
 const revisitDraftInputSchema = z.object({
@@ -122,10 +133,15 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.section.select': z.object({
     /** 同时展开这条放射申请的影像；只与 `laboratory` 栏目一起使用。Agent 不读取像素。 */
     imagingRequestId: boundedIdSchema.optional(),
-    section: z.enum(['consultation', 'record', 'diagnosis', 'prescription', 'laboratory']),
+    /** 同时展开这条病理会诊申请的切片；只与 `laboratory` 栏目一起使用。Agent 不读取像素。 */
+    pathologyRequestId: boundedIdSchema.optional(),
+    section: doctorCaseSectionSchema,
   }).strict().refine(
     input => input.imagingRequestId === undefined || input.section === 'laboratory',
     { message: 'Imaging studies open in the laboratory section', path: ['imagingRequestId'] },
+  ).refine(
+    input => input.pathologyRequestId === undefined || input.section === 'laboratory',
+    { message: 'Slides open in the laboratory section', path: ['pathologyRequestId'] },
   ),
   'outpatient.consultation.ask': z.object({ message: z.string().trim().min(1).max(2_000) }).strict(),
   'outpatient.consultation.reply.retry': emptyInputSchema,
@@ -147,6 +163,11 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.imaging.cancel.propose': z.object({ requestId: boundedIdSchema }).strict(),
   'outpatient.imaging.retry.propose': z.object({ requestId: boundedIdSchema }).strict(),
   'outpatient.imaging.correct.propose': imagingReportCorrectionInputSchema,
+  'outpatient.pathology.draft.set': pathologyDraftInputSchema,
+  'outpatient.pathology.issue.propose': emptyInputSchema,
+  'outpatient.pathology.cancel.propose': z.object({ requestId: boundedIdSchema }).strict(),
+  'outpatient.pathology.retry.propose': z.object({ requestId: boundedIdSchema }).strict(),
+  'outpatient.pathology.correct.propose': pathologyReportCorrectionInputSchema,
   'outpatient.prescription.issue.propose': emptyInputSchema,
   'outpatient.prescription.withdraw.propose': emptyInputSchema,
   'outpatient.medication.none.propose': emptyInputSchema,
@@ -174,6 +195,7 @@ export const agentToolInputSchemas = Object.freeze({
 })
 
 export type AgentOperationId = keyof typeof agentToolInputSchemas
+export type DoctorCaseSection = z.infer<typeof doctorCaseSectionSchema>
 
 export function parseAgentToolInput<OperationId extends AgentOperationId>(
   operationId: OperationId,

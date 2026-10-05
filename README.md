@@ -48,6 +48,7 @@ packages/
   ui/           Web/Desktop 视觉 primitives 和设计 token
   views/        当前 Desktop 工程壳与未来共享业务视图边界
 imaging-assets/ 影像素材清单、匹配规则与报告整理规则（不含像素）
+pathology-assets/ 病理切片素材清单与报告整理规则（不含像素）
 docs/           架构、测试、Agent 工程规范和研究记录
 scripts/        文档投影、依赖边界和质量检查
 skills/         项目启动后供运行时 Agent 使用的 ClinMesh CLI skills
@@ -157,7 +158,7 @@ pnpm --filter @clinmesh/dsh-web build
 
 ## 数据与安全约束
 
-- 只提交合成医疗数据和公开、授权的最小术语子集。唯一的例外是 [影像素材清单](imaging-assets/README.md) 登记的公开授权、已去标识的影像：仓库只提交清单，像素与来源文件留在本地素材目录，不进入 Git、日志、模型输入或业务数据库。
+- 只提交合成医疗数据和公开、授权的最小术语子集。唯一的例外是 [影像素材清单](imaging-assets/README.md) 与 [病理切片素材清单](pathology-assets/README.md) 登记的公开授权、已去标识的影像：仓库只提交清单，像素与来源文件留在本地素材目录，不进入 Git、日志、模型输入或业务数据库。
 - 禁止提交真实患者身份、诊疗、医保、支付和第三方平台凭证。
 - Agent tools 采用窄 schema、受信 context binding、幂等键、预期版本、风险分级和审计。
 - 不向 Agent 提供任意 SQL、URL、FHIR Bundle 或任意 method/path/body 写工具。

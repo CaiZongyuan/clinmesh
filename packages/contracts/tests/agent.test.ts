@@ -7,8 +7,10 @@ import {
   agentExecutionProofPayloadSchema,
   agentToolAuthorizationRequestSchema,
   agentToolCatalog,
+  agentHumanRoleCodeSchema,
   agentToolsForContext,
   agentViewsForRole,
+  doctorCaseSectionSchema,
   parseAgentToolInput,
 } from '../src/agent.ts'
 
@@ -105,27 +107,64 @@ describe('ClinMesh DSH Agent contracts', () => {
   })
 
   it('publishes only narrow, role-scoped tools within the broker limit', () => {
-    const contexts = [
-      ['administrator', 'overview'],
-      ['registrar', 'registration'],
-      ['triage-nurse', 'triage'],
-      ['outpatient-doctor', 'consultation'],
-      ['cashier', 'billing'],
-      ['pharmacist', 'pharmacy'],
-    ] as const
-
-    for (const [roleCode, viewId] of contexts) {
-      const tools = agentToolsForContext(roleCode, viewId)
-      expect(tools.length).toBeGreaterThan(0)
-      expect(tools.length).toBeLessThanOrEqual(32)
-      expect(new Set(tools.map(tool => tool.toolName)).size).toBe(tools.length)
-      for (const tool of tools) {
-        expect(tool.toolName).toMatch(/^clinmesh_[a-z0-9_]+$/)
-        expect(tool.toolName).not.toBe('clinmesh_execute_action')
-        expect(tool.roleCodes).toContain(roleCode)
-        expect(tool.viewIds).toContain(viewId)
+    const sections = [undefined, ...doctorCaseSectionSchema.options]
+    for (const roleCode of agentHumanRoleCodeSchema.options) {
+      for (const viewId of agentViewsForRole(roleCode)) {
+        for (const activeSection of sections) {
+          const tools = agentToolsForContext(roleCode, viewId, activeSection)
+          expect(tools.length, `${roleCode}/${viewId}/${activeSection}`).toBeGreaterThan(0)
+          expect(tools.length, `${roleCode}/${viewId}/${activeSection}`).toBeLessThanOrEqual(32)
+          expect(new Set(tools.map(tool => tool.toolName)).size).toBe(tools.length)
+          for (const tool of tools) {
+            expect(tool.toolName).toMatch(/^clinmesh_[a-z0-9_]+$/)
+            expect(tool.toolName).not.toBe('clinmesh_execute_action')
+            expect(tool.roleCodes).toContain(roleCode)
+            expect(tool.viewIds).toContain(viewId)
+            if (tool.section !== undefined) expect(tool.section).toBe(activeSection)
+          }
+        }
       }
     }
+  })
+
+  it('publishes each doctor section Tool only in its own section and cross-section Tools in every section', () => {
+    const doctorTools = agentToolCatalog.filter(tool => tool.roleCodes.includes('outpatient-doctor')
+      && tool.viewIds.includes('consultation'))
+    const crossSection = doctorTools.filter(tool => tool.section === undefined)
+      .map(tool => tool.operationId)
+    expect(crossSection).toEqual([
+      'ui.context.read',
+      'ui.navigate',
+      'ui.panel.focus',
+      'outpatient.case.read',
+      'outpatient.case.select',
+      'outpatient.section.select',
+      'outpatient.first-visit.draft.set',
+      'outpatient.revisit.draft.set',
+      'outpatient.visit.start.propose',
+      'outpatient.encounter.complete.propose',
+    ])
+    expect(doctorTools.filter(tool => tool.section !== undefined).every(tool => (
+      tool.operationId.startsWith('outpatient.')
+    ))).toBe(true)
+    for (const section of doctorCaseSectionSchema.options) {
+      const published = agentToolsForContext('outpatient-doctor', 'consultation', section)
+        .map(tool => tool.operationId)
+      expect(published).toEqual(expect.arrayContaining(crossSection))
+      expect(published).toEqual(doctorTools
+        .filter(tool => tool.section === undefined || tool.section === section)
+        .map(tool => tool.operationId))
+    }
+    expect(agentToolsForContext('outpatient-doctor', 'consultation').map(tool => tool.operationId))
+      .toEqual(crossSection)
+    expect(agentToolsForContext('outpatient-doctor', 'consultation', 'laboratory')
+      .map(tool => tool.operationId)).toEqual(expect.arrayContaining([
+      'outpatient.laboratory.draft.set',
+      'outpatient.report.acknowledge.propose',
+      'outpatient.imaging.issue.propose',
+    ]))
+    expect(agentToolsForContext('outpatient-doctor', 'consultation', 'record')
+      .map(tool => tool.operationId)).not.toContain('outpatient.report.acknowledge.propose')
   })
 
   it('publishes registrar Synthetic Case search, selection, and human-review actions', () => {
@@ -198,7 +237,7 @@ describe('ClinMesh DSH Agent contracts', () => {
   })
 
   it('keeps imaging Tools narrow: no pixels, asset identity, or free-text report rewrite', () => {
-    const imagingTools = agentToolsForContext('outpatient-doctor', 'consultation')
+    const imagingTools = agentToolsForContext('outpatient-doctor', 'consultation', 'laboratory')
       .filter(tool => tool.operationId.startsWith('outpatient.imaging.'))
     expect(imagingTools.map(tool => [tool.operationId, tool.mode])).toEqual([
       ['outpatient.imaging.draft.set', 'draft'],
@@ -225,6 +264,51 @@ describe('ClinMesh DSH Agent contracts', () => {
     expect(() => parseAgentToolInput('outpatient.imaging.correct.propose', {
       ...correction,
       impression: '自由改写的印象',
+    })).toThrow()
+  })
+
+  it('opens a slide only through the laboratory section', () => {
+    expect(parseAgentToolInput('outpatient.section.select', {
+      pathologyRequestId: 'pathology-request-1',
+      section: 'laboratory',
+    })).toEqual({ pathologyRequestId: 'pathology-request-1', section: 'laboratory' })
+    expect(() => parseAgentToolInput('outpatient.section.select', {
+      pathologyRequestId: 'pathology-request-1',
+      section: 'record',
+    })).toThrow()
+  })
+
+  it('keeps pathology Tools narrow: no pixels, asset identity, or free-text report rewrite', () => {
+    const laboratoryTools = agentToolsForContext('outpatient-doctor', 'consultation', 'laboratory')
+    // 检验、放射与病理三类申请的 Tool 同在“检验检查”栏目，合计仍在单次注册上限内。
+    expect(laboratoryTools.length).toBeLessThanOrEqual(32)
+    expect(laboratoryTools.filter(tool => tool.operationId.startsWith('outpatient.pathology.'))
+      .map(tool => [tool.operationId, tool.mode])).toEqual([
+      ['outpatient.pathology.draft.set', 'draft'],
+      ['outpatient.pathology.issue.propose', 'proposal'],
+      ['outpatient.pathology.cancel.propose', 'proposal'],
+      ['outpatient.pathology.retry.propose', 'proposal'],
+      ['outpatient.pathology.correct.propose', 'proposal'],
+    ])
+    expect(agentToolsForContext('outpatient-doctor', 'consultation', 'record')
+      .some(tool => tool.operationId.startsWith('outpatient.pathology.'))).toBe(false)
+    const draft = {
+      purpose: '外院切片复核',
+      serviceId: 'pathology-breast-slide-consultation',
+      sourceProcedureReference: 'urn:uuid:procedure-0',
+    }
+    expect(parseAgentToolInput('outpatient.pathology.draft.set', draft)).toEqual(draft)
+    expect(() => parseAgentToolInput('outpatient.pathology.draft.set', { ...draft, assetId: 'asset-1' })).toThrow()
+    expect(() => parseAgentToolInput('outpatient.pathology.draft.set', { ...draft, purpose: 'x'.repeat(501) })).toThrow()
+    expect(() => parseAgentToolInput('outpatient.pathology.draft.set', {
+      purpose: draft.purpose,
+      serviceId: draft.serviceId,
+    })).toThrow()
+    const correction = { reason: '报告内容已重新核对', reportRevision: 2, requestId: 'pathology-request-1' }
+    expect(parseAgentToolInput('outpatient.pathology.correct.propose', correction)).toEqual(correction)
+    expect(() => parseAgentToolInput('outpatient.pathology.correct.propose', {
+      ...correction,
+      diagnosis: '自由改写的病理诊断',
     })).toThrow()
   })
 

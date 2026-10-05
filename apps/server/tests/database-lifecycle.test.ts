@@ -172,7 +172,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 55,
+      schemaVersion: 57,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -231,8 +231,10 @@ describe('SQLite lifecycle', () => {
         '0048_imaging-case-preparation.sql',
         '0049_imaging-request.sql',
         '0050_scenario-generation-job-warning.sql',
+        '0051_pathology-case-preparation.sql',
+        '0052_pathology-request.sql',
       ],
-      schemaVersion: 55,
+      schemaVersion: 57,
     })
     expect(first.driver.prepare(`
       SELECT name FROM sqlite_schema
@@ -248,8 +250,8 @@ describe('SQLite lifecycle', () => {
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 55 })
-    expect(reopened.diagnostics().schemaVersion).toBe(55)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 57 })
+    expect(reopened.diagnostics().schemaVersion).toBe(57)
     reopened.close()
   })
 
@@ -324,8 +326,10 @@ describe('SQLite lifecycle', () => {
         '0048_imaging-case-preparation.sql',
         '0049_imaging-request.sql',
         '0050_scenario-generation-job-warning.sql',
+        '0051_pathology-case-preparation.sql',
+        '0052_pathology-request.sql',
       ],
-      schemaVersion: 55,
+      schemaVersion: 57,
     })
     expect(database.driver.prepare(`
       SELECT practitioner_role_id FROM command_receipt
@@ -1532,6 +1536,27 @@ describe('SQLite lifecycle', () => {
     insertRequest('pathology-request-new', 'pathology', 'pathology-breast-consultation')
     expect(database.driver.prepare(`SELECT request_kind FROM laboratory_request WHERE request_id = 'pathology-request-new'`).get())
       .toEqual({ request_kind: 'pathology' })
+    // 病理的准备与申请迁移只新增自己的表：含检验与放射数据的旧库升级后，既有申请、确认与修订保持不变。
+    for (const migration of ['0051_pathology-case-preparation.sql', '0052_pathology-request.sql']) {
+      await copyFile(join(process.cwd(), 'drizzle', migration), join(legacyMigrationDirectory, migration))
+    }
+    const requestsBefore = database.driver.prepare(`SELECT * FROM laboratory_request ORDER BY request_id`).all()
+    expect(applyMigrations(database, legacyMigrationDirectory).applied)
+      .toEqual(['0051_pathology-case-preparation.sql', '0052_pathology-request.sql'])
+    expect(database.driver.prepare(`SELECT * FROM laboratory_request ORDER BY request_id`).all()).toEqual(requestsBefore)
+    expect(database.driver.prepare(`SELECT COUNT(*) AS total FROM laboratory_report_acknowledgement`).get()).toEqual({ total: 1 })
+    expect(database.driver.prepare(`SELECT COUNT(*) AS total FROM laboratory_report_revision`).get()).toEqual({ total: 1 })
+    database.driver.prepare(`INSERT INTO pathology_request_detail (
+      workspace_id, epoch, request_id, exam_code, purpose, source_procedure_reference, source_procedure_json
+    ) VALUES (?, ?, 'pathology-request-new', 'breast-slide-consultation', '外院切片复核', 'urn:uuid:procedure-0', ?)`)
+      .run(context.workspaceId, context.epoch, JSON.stringify({ code: '392021009', performedAt: '2022-04-01T08:00:00+08:00', sourceReference: 'urn:uuid:procedure-0' }))
+    // 病理申请同样受“同一服务只能有一条进行中申请”约束，明细只能引用已有申请。
+    expect(() => insertRequest('pathology-request-duplicate', 'pathology', 'pathology-breast-consultation'))
+      .toThrow(/UNIQUE constraint failed/)
+    expect(() => database.driver.prepare(`INSERT INTO pathology_request_detail (
+      workspace_id, epoch, request_id, exam_code, purpose, source_procedure_reference, source_procedure_json
+    ) VALUES (?, ?, 'pathology-request-missing', 'breast-slide-consultation', '复核', 'urn:uuid:procedure-0', '{}')`)
+      .run(context.workspaceId, context.epoch)).toThrow(/FOREIGN KEY constraint failed/)
     expect(database.driver.pragma('foreign_key_check')).toEqual([])
     expect(database.driver.pragma('integrity_check', { simple: true })).toBe('ok')
     database.close()
@@ -1558,7 +1583,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(55)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(57)
     await runtime.close()
   })
 
@@ -1660,7 +1685,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 55,
+      schemaVersion: 57,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -1672,11 +1697,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 55,
+      expectedSchemaVersion: 57,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 55,
+      schemaVersion: 57,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -1860,7 +1885,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(55),
+      schemaVersion: z.literal(57),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -1915,26 +1940,28 @@ describe('SQLite lifecycle', () => {
       '0048_imaging-case-preparation.sql',
       '0049_imaging-request.sql',
       '0050_scenario-generation-job-warning.sql',
+      '0051_pathology-case-preparation.sql',
+      '0052_pathology-request.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 55 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 57 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 55 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 57 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 55 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 57 })
   })
 })
