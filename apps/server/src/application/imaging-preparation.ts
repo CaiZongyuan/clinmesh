@@ -9,6 +9,7 @@ import type {
   ImagingCatalogAsset,
   ImagingMatchingRules,
 } from '../infrastructure/imaging-assets/imaging-catalog.ts'
+import { imagingReportContentSha256 } from '../infrastructure/imaging-assets/imaging-report-check.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 
 export const imagingExamCodes: ImagingExamCode[] = ['chest-ct-plain', 'chest-radiograph']
@@ -225,7 +226,7 @@ export function matchCaseImaging(input: {
   })
 }
 
-/** 规则与其引用素材的身份；任何一项变化都意味着既有准备结果需要重新评估。 */
+/** 规则、引用素材及已发布报告签署内容的身份；任何一项变化都意味着既有准备结果需要重新评估。 */
 export function imagingMatchingCatalogHash(
   rules: ImagingMatchingRules,
   assets: ImagingMatchingCatalog['assets'],
@@ -234,6 +235,9 @@ export function imagingMatchingCatalogHash(
     assets: [...assets.entries()].map(([assetId, { asset, publishedRevisions }]) => ({
       assetId,
       output: asset.output,
+      publishedReports: (asset.reports ?? [])
+        .filter(report => publishedRevisions.includes(report.revision))
+        .map(report => imagingReportContentSha256(asset, report)),
       publishedRevisions,
     })),
     rules,
