@@ -96,17 +96,17 @@ function createHarness(
           getSnapshot: () => surfacesSnapshot,
         }
       }
-      if (name === 'sessions') {
+      if (name === 'uiSession') {
         return {
-          list: {
+          adapter: { current: {
             subscribe(listener: () => void) {
               sessionListeners.add(listener)
               return () => {
                 sessionListeners.delete(listener)
               }
             },
-            getSnapshot: () => ({ current: sessionId }),
-          },
+            getSnapshot: () => ({ key: sessionId }),
+          } },
         }
       }
       if (name === 'sidebarRightTabs') {

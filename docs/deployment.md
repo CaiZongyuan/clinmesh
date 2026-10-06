@@ -256,7 +256,7 @@ export DSH_HOME="$DSHVM_HOME/isolate/0.2.0-rc.2"
 DSH_CLI="$DSHVM_HOME/dsh-0.2.0-rc.2/node_modules/@deepseek-ai/dsh/lib/bin.js"
 ```
 
-`which` 应指向该隔离槽位，`exec --version` 应返回锁定版本。宿主安装必须在停止状态下使用 [`deployment/dsh/host/package-lock.json`](../deployment/dsh/host/package-lock.json) 执行 `npm ci`；dshvm 的初始安装用于建立槽位登记，不能代替锁文件恢复，因为 DSH 顶层版本的内部依赖仍使用版本范围。不要对已有共享槽位使用 `setup` 或 `isolate --copy` 来建立干净验收环境。Windows PowerShell 使用 `$env:DSHVM_HOME`、`$env:DSHVM_BIN_DIR` 和 `$env:DSH_HOME` 设置相同目录，普通路径变量使用 `$变量名`；Node CLI 的参数相同。新终端需要重新提供这些变量。DSH Provider 在隔离宿主设置页单独配置，密钥不写入 Profile 仓库或公开记录。
+`which` 应指向该隔离槽位，`exec --version` 应返回锁定版本。宿主安装 manifest 的 `allowScripts` 明确审批 subprocess helper、koffi、node-pty 和 protobufjs，避免 npm 的默认脚本拦截遗漏原生运行支持。宿主安装必须在停止状态下使用 [`deployment/dsh/host/package-lock.json`](../deployment/dsh/host/package-lock.json) 执行 `npm ci`；dshvm 的初始安装用于建立槽位登记，不能代替锁文件恢复，因为 DSH 顶层版本的内部依赖仍使用版本范围。不要对已有共享槽位使用 `setup` 或 `isolate --copy` 来建立干净验收环境。Windows PowerShell 使用 `$env:DSHVM_HOME`、`$env:DSHVM_BIN_DIR` 和 `$env:DSH_HOME` 设置相同目录，普通路径变量使用 `$变量名`；Node CLI 的参数相同。新终端需要重新提供这些变量。DSH Provider 在隔离宿主设置页单独配置，密钥不写入 Profile 仓库或公开记录。
 
 先按上游锁文件构建 React Surface 与 ClinMesh，再构建并安装 AG-UI。AG-UI 安装使用公开支持分支的精确 commit，合并后仍可按同一 commit 重建：
 
@@ -277,7 +277,7 @@ ln -s "$PWD/apps/dsh-web" "$DSH_PROFILE/plugins/clinmesh"
 pnpm --dir "$DSH_PROFILE" install --frozen-lockfile
 ```
 
-[`deployment/dsh/profile`](../deployment/dsh/profile/package.json) 只加载 `@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-web-app` 与上述三个插件；其 pnpm lock 固定 Profile 的独立依赖闭包，本地插件使用相对 `link:`。Windows 可用 `New-Item -ItemType Junction -Path <Profile/plugins/名称> -Target <对应源码绝对目录>` 代替三个 `ln -s`。模板只用于新建的专用 Profile，不覆盖已有 Profile；再次安装使用已有链接和 `--frozen-lockfile`。链接安装不替插件安装源码依赖，因此不能省略各 workspace 的安装与构建。
+[`deployment/dsh/profile`](../deployment/dsh/profile/package.json) 只加载 `@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-web-app` 与上述三个插件；内置 bundle 由宿主槽位的 npm lock 提供，Profile 不重复安装宿主依赖闭包；其 pnpm lock 只固定三个本地插件的相对 `link:`。Windows 可用 `New-Item -ItemType Junction -Path <Profile/plugins/名称> -Target <对应源码绝对目录>` 代替三个 `ln -s`。模板只用于新建的专用 Profile，不覆盖已有 Profile；再次安装使用已有链接和 `--frozen-lockfile`。链接安装不替插件安装源码依赖，因此不能省略各 workspace 的安装与构建。
 
 需要查看或修改插件时直接调用 `node "$DSH_CLI" plugin --profile web ...`：dshvm `0.2.0` 仍会把 `plugin --profile web` 识别为 Web 启动，并在默认端口被占用时附加插件命令不接受的 `--port`。dshvm 连接器也会按 active-data 覆盖显式 `DSH_HOME`；测试自行管理数据目录时应使用对应槽位的实际 bin。插件变更后重新验证并更新 Profile lock，日常运行不要用无锁安装替换已验证组合。
 
@@ -325,7 +325,7 @@ node "$DSHVM_CLI" exec web --port 3080 --no-open
 
 main 上的上游锁是已验证基线；升级分支的 `deployment/dsh/candidate.json` 是待适配目标。发现只更新候选。同一目标分支的发现与 PR 验收由工作流串行执行，防止先前验收覆盖撤销后的失败状态。工作流随后显式调用[候选验收](../.github/workflows/dsh-upstreams-verify.yml)，不依赖 `GITHUB_TOKEN` 创建 PR 后触发 `pull_request`。安装与构建进程不获得写入 token；最终追加提交和写入 commit status 的步骤单独使用 token。需要仓库允许 Actions 创建 PR，并授予发现 job `contents:write`、`pull-requests:write`、`statuses:write`，验收收尾 job `contents:write`、`statuses:write`；权限不足保留明确的 HTTP 错误。
 
-维护者可在全新独立 clone 中检出升级 PR 的精确 HEAD、递归恢复子模块并执行 `pnpm install --frozen-lockfile`，随后运行 `pnpm upstream:verify`。该命令拒绝主分支和已有未提交修改，保护不同于锁定版本的人工依赖或子模块适配；pnpm 给构建 CLI 添加的可执行位仅在文件内容与 Git 相同时恢复。它在安装前和全部检查结束后核对 npm registry 中的目标版本及发行摘要；版本撤销或内容变化时停止，不因旧 tarball 仍可下载而通过验收。它从候选的精确 URL 下载 DSH/dshvm tarball，逐字节计算 SHA-512，摘要一致后才准备依赖或执行候选；下载错误、重定向及摘要不符均停止，失败下载不保留为可安装文件。随后按精确源码构建 Surface 与 AG-UI，在新的系统临时目录安装已校验的 dshvm 文件，并由它安装已校验的宿主文件。宿主 `npm ci` 前还核对依赖锁中的版本、来源与完整性是否匹配候选，npm 安装时继续验证锁定摘要。宿主与 Web Profile 重建后，通过 dshvm 隔离、选择和 `exec` 检查实际版本并启动 HTTP smoke，最后运行 `pnpm check`。子进程只继承运行工具所需环境，npm 使用临时空用户配置，模型密钥、GitHub token、日常 Profile 与数据库配置不传入；smoke 临时凭证在日志中脱敏。临时 Profile 只加载必要组合，不切换日常 Profile，也不调用付费模型。POSIX 命令与宿主在独立进程组中运行，退出或取消后有界清理；Windows 取消时回收 launcher 的现存子树。进程结束后保留临时安装供诊断；它不作为日常运行目录。
+维护者可在全新独立 clone 中检出升级 PR 的精确 HEAD、递归恢复子模块并执行 `pnpm install --frozen-lockfile`，随后运行 `pnpm upstream:verify`。该命令拒绝主分支和已有未提交修改，保护不同于锁定版本的人工依赖或子模块适配；pnpm 给构建 CLI 添加的可执行位仅在文件内容与 Git 相同时恢复。它在安装前和全部检查结束后核对 npm registry 中的目标版本及发行摘要；版本撤销或内容变化时停止，不因旧 tarball 仍可下载而通过验收。它从候选的精确 URL 下载 DSH/dshvm tarball，逐字节计算 SHA-512，摘要一致后才准备依赖或执行候选；下载错误、重定向及摘要不符均停止，失败下载不保留为可安装文件。随后按精确源码构建 Surface 与 AG-UI，在新的系统临时目录安装已校验的 dshvm 文件，并由它安装已校验的宿主文件。宿主 `npm ci` 前还核对依赖锁中的版本、来源与完整性是否匹配候选，npm 安装时继续验证锁定摘要。宿主与 Web Profile 重建后，通过 dshvm 隔离、选择和 `exec` 检查实际版本并启动 HTTP smoke，随后向隔离 Profile 写入专用设置标记并核对返回值，验证设置持久化与热重载；该标记不等于宿主预览提示的确认版本。最后运行 `pnpm check`。子进程只继承运行工具所需环境，npm 使用临时空用户配置，模型密钥、GitHub token、日常 Profile 与数据库配置不传入；smoke 临时凭证在日志中脱敏。临时 Profile 只加载必要组合，不切换日常 Profile，也不调用付费模型。POSIX 命令与宿主在独立进程组中运行，退出或取消后有界清理；Windows 取消时回收 launcher 的现存子树。进程结束后保留临时安装供诊断；它不作为日常运行目录。
 
 只有自动检查全部通过才写入升级 checkout 的目标上游锁与 `deployment/dsh/automation.json` 摘要回执。回执允许同一 PR 在已自动准备的组合上继续接收新候选；人工改动锁后摘要不匹配时拒绝覆盖。Actions 在确认远端 HEAD 未被人工提交改变后追加精确依赖锁与子模块引用；普通 push 的快进约束处理检查后的并发竞争。结果、日志和准备补丁在 `.upstream-evidence/` 中，并作为当前 Actions 运行的 artifact 保存；`DSH candidate compatibility` status 绑定被检查的精确 commit。失败状态是待适配，已验证基线不推进，draft 不自动变为 ready，也不自动合并。自动通过只证明记录中的安装、构建、smoke 和测试；原生会话、browser Tool → review → Effect、Windows 实际使用和业务闭环仍按[测试策略](testing.md)补充人工证据，由维护者决定合并。
 

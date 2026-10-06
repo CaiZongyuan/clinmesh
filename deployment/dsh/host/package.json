@@ -2,6 +2,13 @@
   "name": "dshvm-slot-0.2.0-rc.2",
   "private": true,
   "version": "0.0.0",
+  "allowScripts": {
+    "@deepseek-ai/dsh-subprocess-local": true,
+    "@google/genai": false,
+    "koffi": true,
+    "node-pty": true,
+    "protobufjs": true
+  },
   "dependencies": {
     "@deepseek-ai/dsh": "0.2.0-rc.2"
   }

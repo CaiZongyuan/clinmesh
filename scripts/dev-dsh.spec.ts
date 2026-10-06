@@ -65,10 +65,10 @@ const upstreamLock = parseLock(
 describe('extractRuntimeVersions', () => {
   it('reads DSH, dshvm and ag-ui inputs from the upstream lock', () => {
     expect(extractRuntimeVersions(upstreamLock)).toEqual({
-      dshVersion: '0.1.5-rc.2',
-      dshvmVersion: '0.1.1',
-      agUiCommit: '521740953be41cc37bd770ecf41b36bd7b0824d9',
-      agUiSource: 'https://github.com/keaideppk/dsh-ag-ui.git',
+      dshVersion: '0.2.0-rc.2',
+      dshvmVersion: '0.2.0',
+      agUiCommit: 'd8fe2ad4de4b5cd4441a0a88d92513170ecd03c0',
+      agUiSource: 'https://github.com/CaiZongyuan/dsh-ag-ui.git',
     })
   })
 

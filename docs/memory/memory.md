@@ -106,6 +106,10 @@
 
 - `publint` 会再调用包管理器打包；pnpm script 注入的 Node 目录可能让子进程选择 Corepack shim，而不是父进程使用的 pnpm。若父构建成功、打包却卡在解析 pnpm 版本，核对实际 PATH 和 Corepack 缓存，预先缓存仓库 `packageManager` 指定的版本；需要代理时在缓存准备步骤启用 Node 的代理支持，不通过跳过 publint 或覆盖宿主环境规避。
 
+- DSH 的内置 bundle 由宿主槽位提供；Profile 不重复安装它们的依赖闭包。出现 `profile reload requires the root Include entry` 时，先比较官方默认 Profile，再核对配置编辑器与启动入口解析出的 `dsh-app-boot` 是否是同一模块实例。HTTP 首页成功不能证明设置持久化和热重载可用；当前装配与验收归属见[部署指南](../deployment.md#dsh-web-原生入口)。
+
+- npm 11 的依赖安装脚本默认审批策略可能让 `npm ci` 成功却没有构建原生 helper。依赖原生组件的安装模板要维护明确的 `allowScripts`，并按依赖锁核对审批目标；不要依赖另一个 Profile 的 pnpm 构建结果，也不要通过允许全部脚本掩盖缺失的项目策略。
+
 - 浏览器合同从包级 runner 迁到根 runner 时，Vite 的 `resolve.dedupe` 会改用根目录解析 React；build 必须显式设置 owning app 的 `root`。动画回归同时保留“完成后仍保持高光”的阶段断言和有界卸载等待，固定 sleep 不能证明渲染帧已经执行。
 
 - WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；若多个包仍同时争用 CPU，先用 `taskset -c 0-3 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行验证包级集合，再运行 `pnpm check` 复用仍有效的成功缓存。保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；仍超时时先查是否真变慢，不继续加大上限。
@@ -185,3 +189,5 @@
 - DSH browser Tool broker 每次注册最多 32 个 Tool。医生“接诊”页按当前诊疗栏目发布，新增医生 Tool 时在 `agentToolCatalog` 中为它声明所属栏目，只有确实跨栏目的动作才不声明；跨栏目 Tool 占用每个栏目的名额。合同测试 `publishes only narrow, role-scoped tools within the broker limit` 逐个岗位、视图与栏目断言不超过 32；Web 测试切换栏目后须在 `act` 之外等待新 Tool 注册，在 `act` 回调里等待注册会因状态不刷新而超时。
 
 - 新增会写入每个 Epoch 的基线数据（例如新的 Hospital Service）时，`perf:ci` 的 `scenario-install-reset-application` 写入行数会变化；该基线上下限相同，需要随基线数据同步更新 `apps/server/performance-baselines.json`。`verify:boundaries` 按文本匹配 `window.`、`document.` 等写法，`packages/core` 与 `packages/contracts` 中不要把变量或参数命名为 `window`。
+
+- DSH 0.2 的会话列表不再含 `current`；应用和桥接订阅公开的 `uiSession.adapter.current`，从 binding 的 `key` 读取主会话。依赖与类型检查通过后还需在真实宿主核对 Page Context 签发和 lease：旧字段会让页面正常显示，却静默跳过 Agent 发布。
