@@ -8,6 +8,7 @@ import { EncounterCompletionChecklist } from '../../../web/src/app/doctor/comple
 import { PatientBanner } from '../../../web/src/app/doctor/patient-summary.tsx'
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
 import { Button } from '@clinmesh/ui/components/button'
+import { runCompletedCaseScrollFixture } from '../../../web/e2e/doctor-completed-scroll.browser.fixture.tsx'
 const messages = getWorkspaceMessages('zh-CN')
 const detail: React.ComponentProps<typeof PatientBanner>['detail'] = {
   allergies: [], caseId: 'synthetic-case', encounter: { id: 'enc', status: 'in-progress', versionId: '1' },
@@ -57,7 +58,8 @@ function App() {
     </DoctorWorkspaceLayout>
   </div>
 }
-flushSync(() => createRoot(root).render(<App />))
+const appRoot = createRoot(root)
+flushSync(() => appRoot.render(<App />))
 async function run() {
   const steps = []
   for (const [width, height] of [[1000, 700], [600, 700], [320, 520]] as const) {
@@ -97,6 +99,7 @@ async function run() {
       })
     }
   }
-  document.title = btoa(JSON.stringify(steps))
+  const completed = await runCompletedCaseScrollFixture(appRoot, root, host, detail.patient)
+  document.title = btoa(JSON.stringify({ steps, completed }))
 }
 void run().catch(error => { document.title = btoa(JSON.stringify({ error: String(error) })) })
