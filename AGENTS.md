@@ -32,6 +32,7 @@ pnpm check
 
 ## Standing orders
 
+- 用户要求提交、推送或提 PR 时，默认在独立工作分支提交和推送，通过 PR 合入 `main`；只有用户明确要求直接写入主分支时才提交或推送到 `main`。
 - 用户要求记住的约束，以及开发中发现的可复用坑和解决方法，必须在当前任务结束前落盘。高频、跨任务且漏读会反复出错的规则写入适用范围内的 `AGENTS.md`；其他稳定偏好和低频操作经验写入 `docs/memory/memory.md`。不记录密钥、真实凭证、患者信息、临时端口、一次性进程或已失效的 PR 状态。
 - 前端浏览器回归和真实入口验证默认使用 Playwright，运行入口与证据规则见[测试策略](docs/testing.md#用户界面验证)；`agent-browser` 按探索或会话接管需要选用。
 - `.agents/skills/` 只保存开发 Agent 的工程 skills；`clinmesh-*` 是项目启动后操作 HIS 的运行时 Agent skills，统一放在根 `skills/`，不得复制或链接回开发 skills 目录。
