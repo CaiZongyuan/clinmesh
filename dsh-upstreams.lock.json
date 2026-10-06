@@ -28,10 +28,10 @@
       "owner": "https://github.com/CaiZongyuan/dsh-ag-ui",
       "role": "原生 browser Tool broker；不另建 Gateway 模型会话",
       "commit": "d8fe2ad4de4b5cd4441a0a88d92513170ecd03c0",
-      "supportPullRequest": "https://github.com/CaiZongyuan/dsh-ag-ui/pull/65",
       "requires": [
         "@deepseek-ai/dsh"
-      ]
+      ],
+      "supportPullRequest": "https://github.com/CaiZongyuan/dsh-ag-ui/pull/65"
     },
     {
       "name": "dsh-react-surface",
