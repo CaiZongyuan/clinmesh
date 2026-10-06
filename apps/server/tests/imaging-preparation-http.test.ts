@@ -1,4 +1,5 @@
-import { rm } from 'node:fs/promises'
+import { rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { apiErrorSchema } from '@clinmesh/contracts/his'
 import {
   administratorImagingPreparationSchema,
@@ -7,8 +8,9 @@ import {
 import { scenarioGenerationTargetListSchema } from '@clinmesh/contracts/scenario'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ScenarioGenerationProviderError } from '../src/application/scenario-data/provider.ts'
+import { reviewImagingAssets } from '../src/infrastructure/imaging-assets/imaging-asset-store.ts'
 import type { createClinMeshRuntime } from '../src/runtime.ts'
-import { syntheticCatalogAsset, writeSyntheticImagingCatalog } from './fixtures/imaging-catalog.ts'
+import { installSyntheticImagingAssets, syntheticCatalogAsset, writeSyntheticImagingCatalog } from './fixtures/imaging-catalog.ts'
 import {
   acuteBronchitis,
   caseBundle,
@@ -419,6 +421,68 @@ describe('Imaging case preparation HTTP contract', () => {
       preparation: { revision: 2 },
       started: true,
     })
+  })
+
+  it('re-prepares waiting cases after a report is signed again under the same revision without changing started bindings', async () => {
+    const { assetDirectory, catalogDirectory, runtime } = await createRuntime([
+      caseBundle({ gender: 'male', index: [{ ...lungCancer, resourceType: 'Condition' }], name: '已开始肺癌' }),
+      caseBundle({ gender: 'male', index: [{ ...lungCancer, resourceType: 'Condition' }], name: '未开始肺癌' }),
+    ], { persona: true })
+    await installSyntheticImagingAssets({
+      assetDirectory,
+      assets: [
+        { assetId: massCt, examCode: 'chest-ct-plain' },
+        { assetId: massRadiograph, examCode: 'chest-radiograph' },
+        { assetId: clearRadiograph, examCode: 'chest-radiograph' },
+      ],
+      catalogDirectory,
+      matching: matchingRules(),
+    })
+    const cookie = await signIn(runtime)
+    const started = await generateCase(runtime, cookie)
+    const waiting = await generateCase(runtime, cookie)
+    const bindingContents = (caseId: string) => runtime.database.driver.prepare(`
+      SELECT exam_code, report_content_sha256
+      FROM imaging_case_binding
+      WHERE case_id = ?
+      ORDER BY exam_code
+    `).all(caseId)
+
+    const first = await prepare(runtime, cookie)
+    expect(first.prepared.map(item => item.preparation?.revision)).toEqual([1, 1])
+    const firstHash = first.prepared[0]!.preparation!.catalog.hash
+    const frozen = (await preparationOf(runtime, cookie, started)).bindings
+    const frozenContents = bindingContents(started)
+    const waitingContents = bindingContents(waiting)
+    await startOutpatientVisit(runtime, cookie, started)
+    expect(await prepare(runtime, cookie)).toEqual({ prepared: [], remaining: 0 })
+
+    await writeFile(join(catalogDirectory, 'prompts', 'chest-report-v1.md'), '# Revised synthetic report prompt\n')
+    const reviewed = await reviewImagingAssets({
+      assetDirectory,
+      catalogDirectory,
+      conclusion: 'approved',
+      reviewer: 'synthetic-reviewer',
+      reviewerIsRadiologist: false,
+      revision: 1,
+    })
+    expect(reviewed.assets).toHaveLength(3)
+    expect(reviewed.assets.every(asset => asset.status === 'reviewed')).toBe(true)
+
+    const second = await prepare(runtime, cookie)
+    expect(second.prepared.map(item => [item.caseId, item.preparation?.revision, item.started])).toEqual([
+      [started, 2, true],
+      [waiting, 2, false],
+    ].toSorted((left, right) => String(left[0]).localeCompare(String(right[0]))))
+    expect(second.prepared.every(item => item.preparation?.catalog.hash !== firstHash)).toBe(true)
+    expect((await preparationOf(runtime, cookie, started)).bindings).toEqual(frozen)
+    expect(bindingContents(started)).toEqual(frozenContents)
+    expect((await preparationOf(runtime, cookie, waiting)).bindings).toMatchObject([
+      { assetId: massCt, preparationRevision: 2, reportRevision: 1 },
+      { assetId: massRadiograph, preparationRevision: 2, reportRevision: 1 },
+    ])
+    expect(bindingContents(waiting)).not.toEqual(waitingContents)
+    expect(await prepare(runtime, cookie)).toEqual({ prepared: [], remaining: 0 })
   })
 
   it('does not treat a negative case as normal when the source has a conflicting operation or prior positive disease', async () => {
