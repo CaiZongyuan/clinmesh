@@ -167,6 +167,8 @@
 
 - 影像流水线经代理访问 TCIA 时须设置 `NODE_USE_ENV_PROXY=1`；Node 的 `fetch` 默认不读取 `HTTPS_PROXY`，缺少该变量时 `pnpm imaging:sync` 和 `imaging:record` 表现为连接超时。下载在后台运行并轮询结果文件，不在前台阻塞等待。
 
+- 影像与病理素材文件校验为 `ready`，但覆盖清单全部显示 `REVIEW_STALE` 时，先核对报告规则文件的换行字节；它们按原始字节参与复核签署，Windows 的 `core.autocrlf` 转换会使签署失效。`.gitattributes` 为两个素材包的 `prompts/*.md` 固定 LF；既有检出仅在确认内容与 Git 一致后恢复 LF，不通过重新签署掩盖字节变化。定向病例不显示时分别检查运行中 Provider 的 `targetedGeneration` 和定向条目接口是否为空；Docker 已启动不代表运行中的容器已使用 Compose 当前指定的镜像。
+
 - 病理素材流水线从 IDC 公开存储桶（`idc-open-data`）匿名下载，经代理时同样需要 `NODE_USE_ENV_PROXY=1`；一个 20 倍实例可达数百 MB，来源客户端按区间下载并只重试失败的区间。会话的 `/tmp` scratchpad 会随机器重启清空：需要跨重启保留的下载缓存和研究数据放在仓库的 `.data/` 下，其中不放测试或脚本文件。清单条目里的临床字段从重新下载的来源文件转录并登记文件哈希，不凭记忆填写。
 
 - `jpeg-js` 解码三分量 JPEG 时，`colorTransform` 缺省会把 Adobe APP14 transform=0（RGB）的码流当作 YCbCr 转换；需要按码流标记显式传入。`@cornerstonejs/codec-openjpeg` 的 Emscripten 模块默认逐瓦片向标准输出打印 INFO，创建模块时传入空的 `print` 与 `printErr`。验证真实切片的颜色解释不看像素：解码已安装层级后统计通道均值与近白像素比例，H&E 组织像素的红、蓝明显高于绿，背景接近白色。
@@ -193,3 +195,9 @@
 - 新增会写入每个 Epoch 的基线数据（例如新的 Hospital Service）时，`perf:ci` 的 `scenario-install-reset-application` 写入行数会变化；该基线上下限相同，需要随基线数据同步更新 `apps/server/performance-baselines.json`。`verify:boundaries` 按文本匹配 `window.`、`document.` 等写法，`packages/core` 与 `packages/contracts` 中不要把变量或参数命名为 `window`。
 
 - DSH 0.2 的会话列表不再含 `current`；应用和桥接订阅公开的 `uiSession.adapter.current`，从 binding 的 `key` 读取主会话。依赖与类型检查通过后还需在真实宿主核对 Page Context 签发和 lease：旧字段会让页面正常显示，却静默跳过 Agent 发布。
+
+- DSH 桥接升级时同步核对 runtime peers、CI 安装的 CLI 和兼容说明；React Surface 的 E2E 从 runtime peer 读取期望版本，旧 CLI 会在挂载前退出。DSH 0.2 的桌面首次启动向导新增“开始设置 → 跳过 → 我知道了”；真实入口测试须通过可见按钮正常关闭向导后再操作侧栏，不能强制点击穿透遮罩。CI 成功日志不打印带临时访问 token 的启动 URL 或宿主原始 stdout。
+
+- 审查 `dsh-ag-ui` 的宿主合同升级时，根目录 `pnpm check` 只检查 Gateway；嵌入入口 `dsh-ag-ui-adapter` 有独立的宿主、Cordis 和 loader 依赖，必须同步核对其 manifest 与实际锁定版本。pnpm 11 的 `--workspace-root` 会把递归命令限制在根包，覆盖整个 workspace 应使用 `pnpm -r --workspace-concurrency=1 --include-workspace-root check`；adapter 测试会构建 Gateway，串行执行避免与根包构建互相清理产物。用真实工具结果验证调用身份和正文，只验证纯文本对话不能发现工具消息结构失配。
+- HTTP 上传取消回归须等原生存储实际读取第一个数据块后再断开，并等清理完成后验证重试；固定短延迟可能在路由安装取消监听器前结束请求，使测试通过却没有验证取消路径。
+- DSH 0.2 JSONL 持久化允许延迟物化会话，`append` 是尽力写入，`sessionPersistence.flush()` 或 handle 的 `flush()` 才是持久化屏障。验证 SIGKILL 后恢复时先建立该屏障，不能用固定延迟代替落盘证据。
