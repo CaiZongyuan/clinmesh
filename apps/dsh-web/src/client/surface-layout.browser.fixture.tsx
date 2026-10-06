@@ -51,7 +51,7 @@ async function run() {
     },
     slots: {
       entries: () => [{ store: nativeStore }],
-      inject: (_name: string, callback: () => () => void) => callback(),
+      inject: (name: string, callback: () => () => void) => name === 'sidebar.workspaces.directoryFlow' ? () => {} : callback(),
       register: (entry: { name: string; store?: unknown }, component: React.ComponentType<typeof nativeProps>) => {
         if (entry.name === 'shell.overlay') {
           if (entry.store !== nativeStore) throw new Error('Surface must share the native root store')

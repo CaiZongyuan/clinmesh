@@ -193,3 +193,5 @@
 - 新增会写入每个 Epoch 的基线数据（例如新的 Hospital Service）时，`perf:ci` 的 `scenario-install-reset-application` 写入行数会变化；该基线上下限相同，需要随基线数据同步更新 `apps/server/performance-baselines.json`。`verify:boundaries` 按文本匹配 `window.`、`document.` 等写法，`packages/core` 与 `packages/contracts` 中不要把变量或参数命名为 `window`。
 
 - DSH 0.2 的会话列表不再含 `current`；应用和桥接订阅公开的 `uiSession.adapter.current`，从 binding 的 `key` 读取主会话。依赖与类型检查通过后还需在真实宿主核对 Page Context 签发和 lease：旧字段会让页面正常显示，却静默跳过 Agent 发布。
+
+- DSH 的 Snapshot Store 是带实例方法的公开服务；给 `useSyncExternalStore` 传回调时通过 `() => store.getSnapshot()` 与 `(listener) => store.subscribe(listener)` 保留 receiver，并把包装放在注册作用域保持稳定。只用箭头函数 stub 会漏掉真实宿主中的 `refreshSnapshot` 绑定错误；会话历史回归使用依赖 `this` 的 Store fixture。
