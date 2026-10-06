@@ -473,6 +473,9 @@ export async function ensureDshRuntimeReady(
   )).trim()
   const agUiCommitDrifted = currentAgUiCommit !== versions.agUiCommit
   if (agUiCommitDrifted) {
+    await retryNetworkStep(dependencies, '获取锁定 dsh-ag-ui 提交', '检查网络、锁定来源与支持提交是否公开可检出', async () => {
+      await dependencies.runCommand('git', ['fetch', versions.agUiSource, versions.agUiCommit], sandbox.agUiDir)
+    })
     await dependencies.runCommand('git', ['checkout', '--detach', versions.agUiCommit], sandbox.agUiDir)
   }
   if (agUiCommitDrifted || stamps.agUiCommit !== versions.agUiCommit) {

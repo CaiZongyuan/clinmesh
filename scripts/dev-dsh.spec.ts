@@ -68,7 +68,7 @@ describe('extractRuntimeVersions', () => {
       dshVersion: '0.2.0-rc.2',
       dshvmVersion: '0.2.0',
       agUiCommit: 'd8fe2ad4de4b5cd4441a0a88d92513170ecd03c0',
-      agUiSource: 'https://github.com/CaiZongyuan/dsh-ag-ui.git',
+      agUiSource: 'https://github.com/keaideppk/dsh-ag-ui.git',
     })
   })
 
@@ -449,6 +449,66 @@ describe('ensureDshRuntimeReady', () => {
       expect.objectContaining({ command: 'pnpm', args: ['--filter', '@clinmesh/dsh-web', 'build'] }),
     ])
     expect(result.profileNewlyAssembled).toBe(false)
+    expect(commands.some(({ command, args }) => command === 'git' && args[0] === 'fetch')).toBe(false)
+  })
+
+  it('upgrades an existing ag-ui clone from the locked source when its target commit is absent locally', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh ag-ui upgrade '))
+    const source = join(directory, 'source')
+    const cached = join(directory, 'ag-ui')
+    const runGit = createDshCommandRunner()
+    const git = (args: string[], cwd: string) => runGit('git', args, cwd, undefined, { quiet: true })
+    try {
+      await mkdir(source)
+      await git(['init'], source)
+      await writeFile(join(source, 'version.txt'), 'old')
+      await git(['add', '.'], source)
+      const commit = ['-c', 'user.name=Synthetic Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-m']
+      await git([...commit, 'old'], source)
+      await git(['clone', '--no-local', source, cached], directory)
+      await writeFile(join(source, 'version.txt'), 'new')
+      await git(['add', '.'], source)
+      await git([...commit, 'new'], source)
+      const target = (await git(['rev-parse', 'HEAD'], source)).trim()
+      await expect(git(['cat-file', '-e', `${target}^{commit}`], cached)).rejects.toThrow()
+      // The cache's old remote must not decide where the new locked target comes from.
+      await git(['remote', 'set-url', 'origin', join(directory, 'missing-source')], cached)
+
+      const { dependencies, files } = createFakeDependencies()
+      dependencies.sandbox.agUiDir = cached
+      dependencies.versions.agUiSource = source
+      dependencies.versions.agUiCommit = target
+      files.set(join(cached, '.git'), 'existing clone')
+      const run = dependencies.runCommand
+      dependencies.runCommand = (command, args, cwd, environment, options) =>
+        command === 'git' && cwd === cached
+          ? runGit(command, args, cwd, environment, { ...options, quiet: true })
+          : run(command, args, cwd, environment, options)
+
+      await ensureDshRuntimeReady(dependencies)
+
+      expect((await git(['rev-parse', 'HEAD'], cached)).trim()).toBe(target)
+      expect(await readFile(join(cached, 'version.txt'), 'utf8')).toBe('new')
+      expect((await git(['remote', 'get-url', 'origin'], cached)).trim()).toBe(join(directory, 'missing-source'))
+      expect(JSON.parse(files.get(dependencies.sandbox.stampPath) ?? '{}')).toMatchObject({ agUiCommit: target })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('stops before checkout or build when fetching the locked ag-ui commit fails', async () => {
+    const fake = createFakeDependencies({ failureInjection: { command: 'git', argument: 'fetch', times: 2 } })
+    const { dependencies, files, commands } = fake
+    await ensureDshRuntimeReady(dependencies)
+    fake.agUiCommitRef.value = '9'.repeat(40)
+    commands.length = 0
+    const previousStamps = files.get(dependencies.sandbox.stampPath)
+
+    await expect(ensureDshRuntimeReady(dependencies)).rejects.toThrow('获取锁定 dsh-ag-ui 提交')
+
+    expect(commands.filter(({ command, args }) => command === 'git' && args[0] === 'fetch')).toHaveLength(2)
+    expect(commands.some(({ args }) => args[0] === 'checkout' || args.includes('build'))).toBe(false)
+    expect(files.get(dependencies.sandbox.stampPath)).toBe(previousStamps)
   })
 
   it('re-points stale profile links after the repository moves without reinstalling', async () => {

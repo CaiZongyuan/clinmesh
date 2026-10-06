@@ -235,6 +235,8 @@ pnpm dev:dsh
 
 复用工具目录前，ensure 核对已安装 dshvm 的 `package.json` 版本是否与 lock 一致；旧版、缺失或非法 manifest 触发重新安装，不能仅凭 CLI 文件存在跳过升级。仍有效的宿主槽位、Profile 和桥接构建继续复用。
 
+AG-UI 的缓存 HEAD 与锁定提交不同时，ensure 先从 lock 的 `source` 获取精确 commit，再检出和重建；已有 clone 的 origin 不决定新提交的来源。获取失败自动重试一次，仍失败则在检出和构建前停止，保留原有构建记录；HEAD 已匹配时不联网获取。
+
 Windows 的 npm/pnpm 启动由 `cross-spawn` 解析命令入口并转义参数；插件目录使用 junction，不要求管理员权限或开发者模式。目录迁移后的失效链接也会重建。开发服务由 Windows Job Object 持有，退出时清理本次启动的完整子树；POSIX 使用进程组。PowerShell 必须允许本地 `Add-Type` 调用 Win32 Job API；受限语言模式不受支持。命令或工作目录不存在时直接提示检查安装、PATH 和路径，不按网络故障重试。
 
 验收重建也可使用以下手工路径。Bash 示例建立独立工具、连接器和数据目录，不接管日常 DSH。`CLINMESH_DSH_SANDBOX` 应使用仓库外尚未使用的绝对目录：
@@ -264,7 +266,7 @@ DSH_CLI="$DSHVM_HOME/dsh-0.2.0-rc.2/node_modules/@deepseek-ai/dsh/lib/bin.js"
 bun install --cwd vendor/dsh-react-surface --frozen-lockfile
 bun run --cwd vendor/dsh-react-surface build:runtime
 pnpm --filter @clinmesh/dsh-web build
-git clone https://github.com/CaiZongyuan/dsh-ag-ui.git "$CLINMESH_DSH_SANDBOX/ag-ui"
+git clone https://github.com/keaideppk/dsh-ag-ui.git "$CLINMESH_DSH_SANDBOX/ag-ui"
 git -C "$CLINMESH_DSH_SANDBOX/ag-ui" checkout d8fe2ad4de4b5cd4441a0a88d92513170ecd03c0
 pnpm --dir "$CLINMESH_DSH_SANDBOX/ag-ui" install --frozen-lockfile
 pnpm --dir "$CLINMESH_DSH_SANDBOX/ag-ui" build
