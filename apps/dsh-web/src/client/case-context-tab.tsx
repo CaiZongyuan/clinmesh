@@ -94,6 +94,7 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
     kind: CASE_CONTEXT_TAB_KIND,
     title: () => getWorkspaceMessages(getLocale()).caseContextTabTitle,
     guide: [{
+      id: CASE_CONTEXT_TAB_KIND,
       order: 100,
       title: () => getWorkspaceMessages(getLocale()).caseContextTabTitle,
       description: () => getWorkspaceMessages(getLocale()).caseContextTabDescription,

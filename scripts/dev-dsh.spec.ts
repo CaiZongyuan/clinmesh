@@ -299,6 +299,7 @@ function createFakeDependencies(
     if (command === 'node' && args.at(-2) === 'which') return `${sandboxPaths.slotDir}/bin/dsh\n`
     if (command === 'npm' && args[0] === 'install' && args[1] === '--prefix') {
       files.set(sandboxPaths.dshvmCli, '#!/usr/bin/env node\n')
+      files.set(join(sandboxPaths.toolingDir, 'node_modules', '@dsh-so', 'dshvm', 'package.json'), JSON.stringify({ version: versions.dshvmVersion }))
     }
     if (command === 'node' && args.includes('install')) directories.add(sandboxPaths.slotDir)
     if (command === 'npm' && args[0] === 'ci') {
@@ -418,6 +419,18 @@ describe('ensureDshRuntimeReady', () => {
       agUiCommit: versions.agUiCommit,
     })
     expect(files.get(join(repositoryRoot, '.env'))).toBe('CLINMESH_AUTH_SECRET=dev-only\n')
+  })
+
+  it.each(['{"version":"0.0.1"}', '{}', '{invalid json'])('repairs a warm dshvm installation with an invalid or stale manifest: %s', async manifest => {
+    const fake = createFakeDependencies()
+    const { dependencies, commands, files } = fake
+    await ensureDshRuntimeReady(dependencies)
+    commands.length = 0
+    files.set(join(dependencies.sandbox.toolingDir, 'node_modules', '@dsh-so', 'dshvm', 'package.json'), manifest)
+    await ensureDshRuntimeReady(dependencies)
+    expect(commands.filter(({ command, args }) => command === 'npm' && args[0] === 'install'))
+      .toEqual([expect.objectContaining({ args: ['install', '--prefix', dependencies.sandbox.toolingDir, `@dsh-so/dshvm@${dependencies.versions.dshvmVersion}`] })])
+    expect(commands.some(({ command, args }) => (command === 'node' && args.includes('install')) || args.includes('ci'))).toBe(false)
   })
 
   it('skips provisioning on a warm sandbox', async () => {

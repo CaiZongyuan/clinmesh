@@ -356,7 +356,14 @@ export async function ensureDshRuntimeReady(
 
   await filesystem.mkdir(sandbox.root)
   await filesystem.mkdir(sandbox.binDir)
-  if (!filesystem.exists(sandbox.dshvmCli)) {
+  const managerVersionMatches = await filesystem.readFile(
+    join(sandbox.toolingDir, 'node_modules', '@dsh-so', 'dshvm', 'package.json'),
+  ).then(content => {
+    const manifest: unknown = JSON.parse(content)
+    return manifest !== null && typeof manifest === 'object' && !Array.isArray(manifest)
+      && Reflect.get(manifest, 'version') === versions.dshvmVersion
+  }).catch(() => false)
+  if (!filesystem.exists(sandbox.dshvmCli) || !managerVersionMatches) {
     await retryNetworkStep(
       dependencies,
       '安装 dshvm 工具目录',
