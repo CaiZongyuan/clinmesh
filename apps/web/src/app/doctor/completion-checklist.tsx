@@ -44,7 +44,7 @@ export function EncounterCompletionChecklist({ completion, locale }: {
         {completion.items.map(item => (
           <li className="flex w-28" key={item.code}>
             <Badge
-              className="w-full @min-[400px]/case-content:h-6"
+              className="h-auto min-h-5 w-full whitespace-normal text-center @min-[400px]/case-content:min-h-6"
               aria-label={`${checklistLabels[locale][item.code]}：${item.statusText}`}
               title={item.statusText}
               variant={item.status === 'complete' ? 'success' : 'secondary'}

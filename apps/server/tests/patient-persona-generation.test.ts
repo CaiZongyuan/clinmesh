@@ -66,6 +66,21 @@ describe('generatePatientPersona', () => {
       .rejects.toMatchObject({ code: 'PERSONA_DIAGNOSIS_LEAK' })
   })
 
+  it.each(['，', '。', '；', '\n', '！', ','])('does not join clauses across %j to exempt a hidden diagnosis', async separator => {
+    await expect(generateWithHistory(`我得了糖尿病${separator}前期需要控制饮食。`, [prediabetes]))
+      .rejects.toMatchObject({ code: 'PERSONA_DIAGNOSIS_LEAK' })
+  })
+
+  it('allows spacing within a complete known diagnosis name', async () => {
+    const result = await generateWithHistory('以前医生说我是糖尿病 前期。', [prediabetes])
+    expect(result.content.knownHistorySummary).toBe('以前医生说我是糖尿病 前期。')
+  })
+
+  it('still rejects a hidden diagnosis split by punctuation', async () => {
+    await expect(generateWithHistory('我得了糖，尿病。', [prediabetes]))
+      .rejects.toMatchObject({ code: 'PERSONA_DIAGNOSIS_LEAK' })
+  })
+
   it('recognizes diabetes already named by a documented diabetic complication', async () => {
     const result = await generateWithHistory('我有二型糖尿病，以前说已经影响到神经。', [{
       code: { coding: [{ code: '368581000119106', display: '2型糖尿病引起的神经病（疾病）' }] },

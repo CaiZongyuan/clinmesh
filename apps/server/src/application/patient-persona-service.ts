@@ -143,10 +143,16 @@ export function hasHiddenDiagnosisLeak(
     .flatMap(resource => conceptValues(resource).terms.flatMap(diagnosisTerms))
     .filter(term => term.length >= 2))
   const knownMentions: Array<{ start: number; end: number }> = []
-  for (const term of knownTerms) {
-    for (let start = output.indexOf(term); start !== -1; start = output.indexOf(term, start + 1)) {
-      knownMentions.push({ start, end: start + term.length })
+  // 已知病名只能在同一分句中匹配；禁词仍按全文检查，避免用标点拆词绕过拦截。
+  const clauses = text.normalize('NFKC').split(/[,。.!?;:、\r\n\u2028\u2029]+/u).map(normalized)
+  let offset = 0
+  for (const clause of clauses) {
+    for (const term of knownTerms) {
+      for (let start = clause.indexOf(term); start !== -1; start = clause.indexOf(term, start + 1)) {
+        knownMentions.push({ start: offset + start, end: offset + start + term.length })
+      }
     }
+    offset += clause.length
   }
   return hiddenDiagnosisTokens(hiddenResources, visibleResources).some(token => {
     for (let start = output.indexOf(token); start !== -1; start = output.indexOf(token, start + 1)) {

@@ -184,10 +184,12 @@
 
 - Base UI Select 的长选项换行须同时处理 ItemText 的 `whitespace-nowrap`、`shrink-0`，以及选中值的单行限制与 Trigger 固定高度；ItemText 默认渲染为 `div`，不要凭其他组件的结构假定为 `span`。使用真实 DOM 核对文字宽高和裁切，覆盖窄窗口中的菜单与选中状态。
 
+- 固定宽度的状态标签须验证中英文与三档应用字号。仅检查 Badge 或列表项边界会漏掉被 `overflow-hidden` 裁切的文字；浏览器回归用 DOM Range 检查各行文字边界，并验证内部换行后业务区末尾仍可滚动到达。字号偏好通过实际应用根的 `data-clinmesh-app` 与 `data-font-size` 生效，fixture 须沿用这些属性。
+
 - DSH 页面未显示前端修改时，区分磁盘产物、宿主按 revision 实际提供的 `/plugins` 脚本与浏览器已加载的页面；不能只凭独立 Web 通过就声明当前 DSH 已生效。Surface 布局复现应使用宿主的 ShadowRoot 基础样式（尤其 `contain: strict` 与内容容器），并断言弹层文字没有超出 Surface 边界。
 
 - 合成 fixture 须贴近 Synthea 的真实导出形态。Synthea 在导出时已写下之后的病程：本次就诊诊断的急性病带有就诊之后的 `abatementDateTime`。按“字段是否存在”判断状态的规则在 fixture 上通过、在真实病例上全部失配；涉及来源时间的规则以 Index Encounter 时间为界，并用真实 Provider 生成的病例验证一次。
-- `PERSONA_DIAGNOSIS_LEAK` 的失败输出不会保存，错误码本身不能证明模型真正泄露。先核对可见既往史与隐藏诊断术语，使用合成文本复现“已知病名中包含禁词”和“已知并发症已命名基础疾病”的误判，并同时验证另一处新增诊断、未知子型和编码仍被拦截。
+- `PERSONA_DIAGNOSIS_LEAK` 的失败输出不会保存，错误码本身不能证明模型真正泄露。先核对可见既往史与隐藏诊断术语，使用合成文本复现“已知病名中包含禁词”和“已知并发症已命名基础疾病”的误判，并同时验证另一处新增诊断、未知子型和编码仍被拦截。删除标点的归一化可能把不同分句拼成已知病名；禁词豁免须保留分句边界，回归同时覆盖跨分句泄漏和用标点拆开诊断的绕过尝试。
 - 按年份偏移日期时，替换年份字符串会产生无效的 2 月 29 日，JavaScript 的 `setUTCFullYear` 则会自动进位到 3 月；需要月末截断语义时，使用 UTC 日历运算并把进位结果退到原月份最后一天，回归包含非闰年与世纪年份。
 
 - 用模块过滤让 Synthea 定向生成病例时，一个批次中任一患者死亡会让 Provider 返回 502，任一患者没有合格的 Index Encounter 会让整个任务以 `INDEX_ENCOUNTER_NOT_FOUND` 失败。定向搜索使用 `count: 1` 的多个任务并更换 seed；低患病率疾病（如存活的肺癌患者）每个任务最多内部重试十次，耗时按分钟计；更快的做法是先在 Provider 镜像的临时离线容器里用与 Provider 相同的 Synthea 命令行并行预筛种子，命中后把同一组 population/clinical seed 提交给正式生成任务，得到的患者一致。Synthea 的肺癌模块只在 45–65 岁发病且数年内死亡，存活患者集中在 48–66 岁。
