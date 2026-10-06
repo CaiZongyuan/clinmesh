@@ -108,10 +108,20 @@ function summarizedResource(resource: PersonaResource) {
   }
 }
 
-function diagnosisTerms(term: string): string[] {
-  const name = normalized(term.replace(/[(（](?:疾病|疾患|障碍|临床所见|disorder|disease|finding)[)）]/gi, ''))
-  const diabetes = name.match(/^([12]型糖尿病)(?:$|引起的)/)?.[1]
+function diagnosisNames(term: string): string[] {
+  const name = term.replace(/[(（](?:疾病|疾患|障碍|临床所见|disorder|disease|finding)[)）]/gi, '')
+  const diabetes = normalized(name).match(/^([12]型糖尿病)(?:$|引起的)/)?.[1]
   return diabetes === undefined ? [name] : [name, diabetes, '糖尿病']
+}
+
+function diagnosisTerms(term: string): string[] {
+  return diagnosisNames(term).map(normalized)
+}
+
+function normalizedDiagnosisMention(value: string): string {
+  // 只忽略病名内部的横向空白；标点和换行保留在具体提及中。
+  return value.normalize('NFKC').toLocaleLowerCase('zh-CN').replaceAll(/[\p{Zs}\t]+/gu, '')
+    .replaceAll('二型', '2型').replaceAll('一型', '1型')
 }
 
 export function hiddenDiagnosisTokens(
@@ -138,21 +148,21 @@ export function hasHiddenDiagnosisLeak(
   visibleResources: PersonaResource[],
 ): boolean {
   const output = normalized(text)
+  const mentionText = normalizedDiagnosisMention(text)
   const knownTerms = new Set(visibleResources
     .filter(resource => resource.resourceType === 'Condition')
-    .flatMap(resource => conceptValues(resource).terms.flatMap(diagnosisTerms))
+    .flatMap(resource => conceptValues(resource).terms.flatMap(diagnosisNames).map(normalizedDiagnosisMention))
     .filter(term => term.length >= 2))
   const knownMentions: Array<{ start: number; end: number }> = []
-  // 已知病名只能在同一分句中匹配；禁词仍按全文检查，避免用标点拆词绕过拦截。
-  const clauses = text.normalize('NFKC').split(/[,。.!?;:、\r\n\u2028\u2029]+/u).map(normalized)
-  let offset = 0
-  for (const clause of clauses) {
-    for (const term of knownTerms) {
-      for (let start = clause.indexOf(term); start !== -1; start = clause.indexOf(term, start + 1)) {
-        knownMentions.push({ start: offset + start, end: offset + start + term.length })
+  for (const term of knownTerms) {
+    for (let start = mentionText.indexOf(term); start !== -1; start = mentionText.indexOf(term, start + 1)) {
+      // 区间映射到全文禁词坐标，避免跨边界的“一／二型”归一化造成偏移。
+      const outputStart = normalized(mentionText.slice(0, start)).length
+      const outputEnd = normalized(mentionText.slice(0, start + term.length)).length
+      if (output.slice(outputStart, outputEnd) === normalized(term)) {
+        knownMentions.push({ start: outputStart, end: outputEnd })
       }
     }
-    offset += clause.length
   }
   return hiddenDiagnosisTokens(hiddenResources, visibleResources).some(token => {
     for (let start = output.indexOf(token); start !== -1; start = output.indexOf(token, start + 1)) {

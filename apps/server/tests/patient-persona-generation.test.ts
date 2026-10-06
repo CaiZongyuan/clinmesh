@@ -76,6 +76,26 @@ describe('generatePatientPersona', () => {
     expect(result.content.knownHistorySummary).toBe('以前医生说我是糖尿病 前期。')
   })
 
+  it.each(['——', '（', '「', '/', '\t\n'])('does not join a diagnosis and another phrase across %j', async separator => {
+    await expect(generateWithHistory(`我这次确诊了糖尿病${separator}前期需要控制饮食。`, [prediabetes]))
+      .rejects.toMatchObject({ code: 'PERSONA_DIAGNOSIS_LEAK' })
+  })
+
+  it('allows punctuation that is part of a complete known diagnosis name', async () => {
+    const result = await generateWithHistory('以前医生说我是糖尿病-前期。', [{
+      ...prediabetes,
+      code: { coding: [{ code: '714628002', display: '糖尿病-前期（临床所见）' }] },
+    }])
+    expect(result.content.knownHistorySummary).toBe('以前医生说我是糖尿病-前期。')
+  })
+
+  it('keeps known mention coordinates correct after a numeral and subtype split by punctuation', async () => {
+    const result = await generateWithHistory('二。型。既往糖尿病前期。', [prediabetes])
+    expect(result.content.knownHistorySummary).toBe('二。型。既往糖尿病前期。')
+    await expect(generateWithHistory('二。型。既往糖尿病前期。这次确诊了糖尿病。', [prediabetes]))
+      .rejects.toMatchObject({ code: 'PERSONA_DIAGNOSIS_LEAK' })
+  })
+
   it('still rejects a hidden diagnosis split by punctuation', async () => {
     await expect(generateWithHistory('我得了糖，尿病。', [prediabetes]))
       .rejects.toMatchObject({ code: 'PERSONA_DIAGNOSIS_LEAK' })

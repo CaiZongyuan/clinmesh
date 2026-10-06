@@ -8,7 +8,11 @@ import { expect, test } from './fixtures.ts'
 test('doctor checklist stays between patient details and vital signs and replaces the case sidebar', async ({ page, browserApp }) => {
   // Authenticate against the real server; use controlled clinical responses for layout only.
   const cases = ['布局测试甲', '布局测试乙'].map((name, index) => doctorCaseDetailSchema.parse({
-    allergies: [],
+    allergies: index === 0 ? [
+      { code: 'synthetic-penicillin', display: '青霉素过敏' },
+      { code: 'synthetic-sulfonamide', display: '磺胺类过敏' },
+      { code: 'synthetic-macrolide', display: '大环内酯类过敏' },
+    ] : [],
     caseId: `layout-case-${index}`,
     consultation: { turns: [], version: 1 },
     encounter: { id: `layout-encounter-${index}`, status: 'in-progress', versionId: '1' },
@@ -99,4 +103,26 @@ test('doctor checklist stays between patient details and vital signs and replace
   await expect(checklist.getByLabel('已满足 3 / 7', { exact: true })).toBeVisible()
   await expect(primaryDiagnosis).toHaveAttribute('data-variant', 'success')
   expect(await primaryDiagnosis.evaluate(element => getComputedStyle(element).backgroundColor)).toBe(completedBackground)
+
+  await page.goto(`${browserApp.origin}/settings`)
+  await page.getByRole('button', { name: '大', exact: true }).click()
+  await expect(page.locator('.clinmesh-web-root')).toHaveAttribute('data-font-size', 'large')
+  await page.goto(`${browserApp.origin}/consultation`)
+  await page.setViewportSize({ width: 320, height: 520 })
+  await expect(banner.getByRole('heading', { name: '布局测试甲' })).toBeVisible()
+  await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+  const panel = page.getByRole('tabpanel', { name: '病历记录', exact: true })
+  await expect.poll(() => panel.evaluate(element => {
+    const bounds = element.getBoundingClientRect()
+    return bounds.height > 0 && bounds.top >= 0 && bounds.bottom <= window.innerHeight
+  })).toBe(true)
+  const bannerTop = await banner.evaluate(element => element.getBoundingClientRect().top)
+  const panelBounds = await panel.boundingBox()
+  expect(panelBounds).not.toBeNull()
+  await page.mouse.move(panelBounds!.x + panelBounds!.width / 2, panelBounds!.y + panelBounds!.height / 2)
+  await page.mouse.wheel(0, 10_000)
+  await expect(panel.getByRole('button', { name: '签署病历', exact: true })).toBeInViewport()
+  expect(await banner.evaluate(element => element.getBoundingClientRect().top)).toBe(bannerTop)
+  await banner.evaluate(element => { element.scrollTop = element.scrollHeight })
+  await expect(banner.getByText('血氧饱和度（%）', { exact: true })).toBeInViewport()
 })

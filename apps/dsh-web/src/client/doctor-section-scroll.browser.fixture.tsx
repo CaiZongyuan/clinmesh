@@ -11,7 +11,11 @@ import { Button } from '@clinmesh/ui/components/button'
 import { runCompletedCaseScrollFixture } from '../../../web/e2e/doctor-completed-scroll.browser.fixture.tsx'
 const messages = getWorkspaceMessages('zh-CN')
 const detail: React.ComponentProps<typeof PatientBanner>['detail'] = {
-  allergies: [], caseId: 'synthetic-case', encounter: { id: 'enc', status: 'in-progress', versionId: '1' },
+  allergies: [
+    { code: 'synthetic-penicillin', display: 'Penicillin allergy' },
+    { code: 'synthetic-sulfonamide', display: 'Sulfonamide allergy' },
+    { code: 'synthetic-macrolide', display: 'Macrolide allergy' },
+  ], caseId: 'synthetic-case', encounter: { id: 'enc', status: 'in-progress', versionId: '1' },
   patient: { id: 'synthetic-patient', identifier: 'SYNTHETIC-00000001', name: '合成测试患者', synthetic: true, versionId: '1' },
   presentation: { chiefComplaint: '合成测试主诉', summary: '合成测试', vitalSigns: {
     bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 }, oxygenSaturationPct: 98, pulseBpm: 80, respirationBpm: 18, temperatureC: 37,
@@ -71,6 +75,7 @@ async function run() {
     for (const section of sections) {
       const tab = [...root.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === section)!
       flushSync(() => tab.click())
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
       const panel = root.querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])')!
       const header = root.querySelector(`[aria-label="${messages.selectedPatient}"]`)!
       const checklist = root.querySelector('[aria-labelledby="completion-heading-encounter-synthetic"]')!
@@ -81,7 +86,7 @@ async function run() {
       const headerTop = header.getBoundingClientRect().top
       const tabsTop = tabs.getBoundingClientRect().top
       panel.scrollTop = panel.scrollHeight
-      panel.querySelector('button')!.scrollIntoView({ block: 'nearest' })
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
       const end = panel.querySelector('button')!.getBoundingClientRect()
       steps.push({ width, height, section,
         checklistBetweenPatientAndVitals: checklistBounds.top >= header.querySelector('h2')!.getBoundingClientRect().bottom
@@ -114,7 +119,7 @@ async function run() {
         const badges = [...checklist.querySelectorAll<HTMLElement>('[data-slot="badge"]')]
         const panel = root.querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])')!
         panel.scrollTop = panel.scrollHeight
-        panel.querySelector('button')!.scrollIntoView({ block: 'nearest' })
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
         const end = panel.querySelector('button')!.getBoundingClientRect()
         const panelBounds = panel.getBoundingClientRect()
         typography.push({ locale, fontSize, width,
@@ -128,7 +133,8 @@ async function run() {
           }),
           equalWidths: badges.every(badge => badge.getBoundingClientRect().width === badges[0]!.getBoundingClientRect().width),
           noHorizontalOverflow: checklist.scrollWidth <= checklist.clientWidth,
-          endVisible: panelBounds.height > 0 && end.top >= panelBounds.top - 0.5 && end.bottom <= panelBounds.bottom + 0.5,
+          endVisible: panelBounds.height > 0 && end.top >= panelBounds.top - 0.5 && end.bottom <= panelBounds.bottom + 0.5
+            && end.top >= host.getBoundingClientRect().top && end.bottom <= host.getBoundingClientRect().bottom,
         })
       }
     }
