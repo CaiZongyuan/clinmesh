@@ -30,11 +30,24 @@ for (const version of ['18', '19']) {
     if (script?.type !== 'chunk') throw new Error('Missing doctor section scroll fixture')
     const css = await buildSurfaceStyles()
     await page.setViewportSize({ width: 1200, height: 900 })
-    const steps = z.array(z.object({ width: z.number(), height: z.number(), section: z.string(), panelScrolled: z.boolean(), endVisible: z.boolean(), headerStable: z.boolean(), panelBounded: z.boolean() }))
+    const { steps, typography, completed } = z.object({
+      steps: z.array(z.object({ width: z.number(), height: z.number(), section: z.string(), checklistBetweenPatientAndVitals: z.boolean(), checklistBounded: z.boolean(), checklistHorizontal: z.boolean(), checklistEqualWidths: z.boolean(), checklistFullyVisible: z.boolean(), panelScrolled: z.boolean(), endVisible: z.boolean(), headerStable: z.boolean(), panelBounded: z.boolean() })),
+      completed: z.array(z.object({ width: z.number(), height: z.number(), clippedBefore: z.boolean(), scrolled: z.boolean(), endVisible: z.boolean(), bounded: z.boolean() })),
+      typography: z.array(z.object({ locale: z.string(), fontSize: z.enum(['standard', 'larger', 'large']), width: z.number(), badgeFontSize: z.number(), textVisible: z.boolean(), equalWidths: z.boolean(), noHorizontalOverflow: z.boolean(), endVisible: z.boolean() })),
+    })
       .parse(await readJsonFromBrowser(page, `<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`))
     expect(steps).toHaveLength(12)
     for (const step of steps) {
-      expect(step, `${step.section} ${step.width} x ${step.height}`).toMatchObject({ panelScrolled: true, endVisible: true, headerStable: true, panelBounded: true })
+      expect(step, `${step.section} ${step.width} x ${step.height}`).toMatchObject({ checklistBetweenPatientAndVitals: true, checklistBounded: true, checklistHorizontal: true, checklistEqualWidths: true, checklistFullyVisible: true, panelScrolled: true, endVisible: true, headerStable: true, panelBounded: true })
+    }
+    expect(typography).toHaveLength(18)
+    for (const step of typography) {
+      expect(step, `${step.locale} ${step.fontSize} ${step.width}`).toMatchObject({ textVisible: true, equalWidths: true, noHorizontalOverflow: true, endVisible: true })
+      expect(step.badgeFontSize).toBeCloseTo(({ standard: 12, larger: 13.5, large: 15 })[step.fontSize], 1)
+    }
+    expect(completed).toHaveLength(3)
+    for (const step of completed) {
+      expect(step, `completed ${step.width} x ${step.height}`).toMatchObject({ clippedBefore: true, scrolled: true, endVisible: true, bounded: true })
     }
   })
 }

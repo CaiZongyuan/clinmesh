@@ -400,7 +400,6 @@ function WebApplication({
   useEffect(() => apiConfiguration.release, [apiConfiguration])
   const runtime = useMemo(() => ({
     ...(runtimeOptions.surfaceNavigation === undefined ? {} : { surfaceNavigation: runtimeOptions.surfaceNavigation }),
-    ...(runtimeOptions.surfaceCaseContext === undefined ? {} : { surfaceCaseContext: runtimeOptions.surfaceCaseContext }),
     ...(runtimeOptions.surfaceDisplay === undefined ? {} : { surfaceDisplay: runtimeOptions.surfaceDisplay }),
     appearanceRoot: applicationRoot,
     mode: runtimeOptions.mode ?? 'standalone',
@@ -419,7 +418,6 @@ function WebApplication({
   }), [
     runtimeOptions.mode,
     runtimeOptions.surfaceNavigation,
-    runtimeOptions.surfaceCaseContext,
     runtimeOptions.surfaceDisplay,
     runtimeOptions.onExit,
     runtimeOptions.surfaceActive,

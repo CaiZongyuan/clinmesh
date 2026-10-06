@@ -108,9 +108,20 @@ function summarizedResource(resource: PersonaResource) {
   }
 }
 
+function diagnosisNames(term: string): string[] {
+  const name = term.replace(/[(（](?:疾病|疾患|障碍|临床所见|disorder|disease|finding)[)）]/gi, '')
+  const diabetes = normalized(name).match(/^([12]型糖尿病)(?:$|引起的)/)?.[1]
+  return diabetes === undefined ? [name] : [name, diabetes, '糖尿病']
+}
+
 function diagnosisTerms(term: string): string[] {
-  const name = normalized(term.replace(/[(（](?:疾病|疾患|障碍|disorder|disease|finding)[)）]/gi, ''))
-  return name.endsWith('糖尿病') && /^[12]型/.test(name) ? [name, '糖尿病'] : [name]
+  return diagnosisNames(term).map(normalized)
+}
+
+function normalizedDiagnosisMention(value: string): string {
+  // 只忽略病名内部的横向空白；标点和换行保留在具体提及中。
+  return value.normalize('NFKC').toLocaleLowerCase('zh-CN').replaceAll(/[\p{Zs}\t]+/gu, '')
+    .replaceAll('二型', '2型').replaceAll('一型', '1型')
 }
 
 export function hiddenDiagnosisTokens(
@@ -131,13 +142,57 @@ export function hiddenDiagnosisTokens(
     .filter(value => value.length >= 2))]
 }
 
+export function hasHiddenDiagnosisLeak(
+  text: string,
+  hiddenResources: PersonaResource[],
+  visibleResources: PersonaResource[],
+): boolean {
+  const output = normalized(text)
+  const mentionText = normalizedDiagnosisMention(text)
+  const knownTerms = new Set(visibleResources
+    .filter(resource => resource.resourceType === 'Condition')
+    .flatMap(resource => conceptValues(resource).terms.flatMap(diagnosisNames).map(normalizedDiagnosisMention))
+    .filter(term => term.length >= 2))
+  const knownMentions: Array<{ start: number; end: number }> = []
+  for (const term of knownTerms) {
+    for (let start = mentionText.indexOf(term); start !== -1; start = mentionText.indexOf(term, start + 1)) {
+      // 区间映射到全文禁词坐标，避免跨边界的“一／二型”归一化造成偏移。
+      const outputStart = normalized(mentionText.slice(0, start)).length
+      const outputEnd = normalized(mentionText.slice(0, start + term.length)).length
+      if (output.slice(outputStart, outputEnd) === normalized(term)) {
+        knownMentions.push({ start: outputStart, end: outputEnd })
+      }
+    }
+  }
+  return hiddenDiagnosisTokens(hiddenResources, visibleResources).some(token => {
+    for (let start = output.indexOf(token); start !== -1; start = output.indexOf(token, start + 1)) {
+      // 只豁免已知病名覆盖的这一次提及；同一段中另外写出的新诊断仍须拦截。
+      if (!knownMentions.some(mention => mention.start <= start && mention.end >= start + token.length)) {
+        return true
+      }
+    }
+    return false
+  })
+}
+
+function personaLeaksDiagnosis(
+  content: PatientPersonaContent,
+  hiddenResources: PersonaResource[],
+  visibleResources: PersonaResource[],
+): boolean {
+  const fields = [
+    content.chiefComplaint, content.knownHistorySummary, content.medicationMemory,
+    content.openingStatement, content.symptomExperience, ...Object.values(content.persona),
+  ]
+  return fields.some(field => hasHiddenDiagnosisLeak(field, hiddenResources, visibleResources))
+}
+
 function assertNoDiagnosisLeak(
   content: PatientPersonaContent,
   hiddenResources: PersonaResource[],
   visibleResources: PersonaResource[],
 ): void {
-  const output = normalized(JSON.stringify(content))
-  if (hiddenDiagnosisTokens(hiddenResources, visibleResources).some(token => output.includes(token))) {
+  if (personaLeaksDiagnosis(content, hiddenResources, visibleResources)) {
     throw new PatientPersonaLeakError()
   }
 }
@@ -322,8 +377,7 @@ export class PatientPersonaService {
       workspaceId: input.context.workspaceId,
     })
     if (
-      hiddenDiagnosisTokens(generation.hiddenResources, generation.visibleResources)
-        .some(token => normalized(JSON.stringify(content)).includes(token))
+      personaLeaksDiagnosis(content, generation.hiddenResources, generation.visibleResources)
       && !input.forceDiagnosisLeakOverride
     ) {
       throw new PatientPersonaError(
