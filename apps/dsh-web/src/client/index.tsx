@@ -11,7 +11,7 @@ import {
 import { clinMeshStyles } from './styles.generated.ts'
 import { registerProfileBrand } from './profile-brand.tsx'
 import { normalizeHostLocale, type ClientLocalePort } from './host-locale.ts'
-import { normalizeSessionId, subscribeHostTheme, type ClientSessionsPort, type ClientThemePort } from './host-ports.ts'
+import { subscribeHostTheme, type ClientSessionBindingPort, type ClientThemePort } from './host-ports.ts'
 import { createCaseContextPort, registerCaseContextTab, type CaseContextPort } from './case-context-tab.tsx'
 import { createWorkspaceNavigation, registerWorkspaceNavigation } from './workspace-navigation.tsx'
 import type { WebSurfaceCaseContext, WebSurfaceDisplay, WebSurfaceNavigation } from '@clinmesh/web/runtime'
@@ -97,15 +97,15 @@ export function createDefinition(
   fontSize: FontSizePreferenceStore = createFontSizePreference(),
   caseContext: CaseContextPort = createCaseContextPort(),
 ): Readonly<ReactSurfaceDefinition> {
-  const sessions = ctx.get('sessions') as unknown as ClientSessionsPort
+  const sessionBinding = ctx.get('uiSession') as unknown as ClientSessionBindingPort
   const theme = ctx.get('theme') as unknown as ClientThemePort
   const locale = ctx.get('locale') as unknown as ClientLocalePort
   const subscribeLocale = (listener: () => void) => locale.subscribe(listener)
   const getLocale = () => normalizeHostLocale(locale.getLocale().active)
   const surfaces = ctx.get('reactSurfaces') as unknown as ReactSurfaceRegistry
-  const subscribe = (listener: () => void): (() => void) => sessions.list.subscribe(listener)
+  const subscribe = (listener: () => void): (() => void) => sessionBinding.adapter.current.subscribe(listener)
   const subscribeTheme = (listener: () => void): (() => void) => subscribeHostTheme(ctx, listener)
-  const getSnapshot = (): string | undefined => normalizeSessionId(sessions.list.getSnapshot().current)
+  const getSnapshot = (): string | undefined => sessionBinding.adapter.current.getSnapshot().key
   function SessionBoundClinMeshSurface(props: ReactSurfaceProps): React.JSX.Element {
     const surfaceSessionId = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
     const surfaceLocale = useSyncExternalStore(subscribeLocale, getLocale, getLocale)
@@ -163,7 +163,7 @@ export function createDefinition(
   })
 }
 
-export const inject = ['reactSurfaces', 'sessions', 'theme', 'slots', 'locale', 'sidebarRightTabs', 'sidebarRight']
+export const inject = ['reactSurfaces', 'uiSession', 'theme', 'slots', 'locale', 'sidebarRightTabs', 'sidebarRight']
 
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => registerProfileBrand(ctx), 'clinmesh-dsh-web: register Profile identity')

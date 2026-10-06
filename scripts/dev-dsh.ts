@@ -356,7 +356,14 @@ export async function ensureDshRuntimeReady(
 
   await filesystem.mkdir(sandbox.root)
   await filesystem.mkdir(sandbox.binDir)
-  if (!filesystem.exists(sandbox.dshvmCli)) {
+  const managerVersionMatches = await filesystem.readFile(
+    join(sandbox.toolingDir, 'node_modules', '@dsh-so', 'dshvm', 'package.json'),
+  ).then(content => {
+    const manifest: unknown = JSON.parse(content)
+    return manifest !== null && typeof manifest === 'object' && !Array.isArray(manifest)
+      && Reflect.get(manifest, 'version') === versions.dshvmVersion
+  }).catch(() => false)
+  if (!filesystem.exists(sandbox.dshvmCli) || !managerVersionMatches) {
     await retryNetworkStep(
       dependencies,
       '安装 dshvm 工具目录',
@@ -466,6 +473,9 @@ export async function ensureDshRuntimeReady(
   )).trim()
   const agUiCommitDrifted = currentAgUiCommit !== versions.agUiCommit
   if (agUiCommitDrifted) {
+    await retryNetworkStep(dependencies, '获取锁定 dsh-ag-ui 提交', '检查网络、锁定来源与支持提交是否公开可检出', async () => {
+      await dependencies.runCommand('git', ['fetch', versions.agUiSource, versions.agUiCommit], sandbox.agUiDir)
+    })
     await dependencies.runCommand('git', ['checkout', '--detach', versions.agUiCommit], sandbox.agUiDir)
   }
   if (agUiCommitDrifted || stamps.agUiCommit !== versions.agUiCommit) {

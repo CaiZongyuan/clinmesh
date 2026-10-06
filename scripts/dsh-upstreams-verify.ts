@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:net'
 import { createWriteStream, existsSync } from 'node:fs'
 import { appendFile, chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
@@ -145,6 +145,26 @@ async function verifyBridgeHost(path: string, expected: string) {
   }
 }
 
+export async function smokeSettingsWrite(origin: string, cookie: string, fetch: typeof globalThis.fetch = globalThis.fetch) {
+  const rpcId = randomUUID()
+  const marker = 'clinmesh-isolated-compatibility-smoke'
+  const response = await fetch(`${origin}/api/settings/mutate`, {
+    method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'client-request', rpcId, method: 'settings/mutate', payload: { args: {
+      ns: 'ui-settings-general', ops: [{ op: 'set', path: ['welcomeNoticeVersion'], value: marker }],
+    } } }),
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!response.ok) throw new Error(`候选 DSH 设置写入失败：HTTP ${response.status}`)
+  const answer = record(await response.json())
+  const result = record(answer.result)
+  if (answer.type !== 'server-response' || answer.rpcId !== rpcId || result.ok !== true) {
+    const message = result.error && record(result.error).message
+    throw new Error(`候选 DSH 设置写入失败：${typeof message === 'string' ? message : '非法 RPC 响应'}`)
+  }
+  if (record(record(result.value).value).welcomeNoticeVersion !== marker) throw new Error('候选 DSH 设置写入未生效')
+}
+
 async function smokeHost(cli: string, runtime: string, expected: string, log: string, env: NodeJS.ProcessEnv) {
   const server = createServer()
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -163,6 +183,7 @@ async function smokeHost(cli: string, runtime: string, expected: string, log: st
   child.on('error', error => { failure = error })
   try {
     const deadline = Date.now() + 90_000
+    let ready: { origin: string; cookie: string } | undefined
     while (Date.now() < deadline) {
       if (failure) throw failure
       if (child.exitCode !== null || child.signalCode !== null || managed.wasInterrupted()) throw new Error('候选 DSH 启动失败或已取消')
@@ -174,11 +195,13 @@ async function smokeHost(cli: string, runtime: string, expected: string, log: st
         const response = login.status >= 300 && login.status < 400
           ? await fetch(`${origin}/`, { headers: { Cookie: cookie }, signal: AbortSignal.timeout(2000) })
           : login
-        if (response.ok && (await response.text()).includes('<html')) return
+        if (response.ok && (await response.text()).includes('<html')) { ready = { origin, cookie }; break }
       } catch { /* 启动期间端口尚未监听。 */ }
       await new Promise(resolve => setTimeout(resolve, 500))
     }
-    throw new Error('候选 DSH Web 启动超时')
+    if (!ready) throw new Error('候选 DSH Web 启动超时')
+    await smokeSettingsWrite(ready.origin, ready.cookie)
+    await appendFile(log, '\nDSH HTTP 与隔离 Profile 设置写入 smoke 通过\n')
   } finally {
     await managed.stop()
     await appendFile(log, `\nDSH ${expected} Web smoke\n${output.replace(/([?&]token=)[^\s&]+/g, '$1[redacted]')}\n`)

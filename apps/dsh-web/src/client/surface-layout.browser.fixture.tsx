@@ -38,7 +38,7 @@ async function run() {
       if (name === 'locale') return { getLocale: () => ({ active: 'zh-CN' }), subscribe: () => () => {} }
       if (name === 'sidebarRightTabs') return { register: () => () => {} }
       if (name === 'sidebarRight') return { openTab: () => {} }
-      return { list: { getSnapshot: () => ({ current: 'session-1' }), subscribe: () => () => {} } }
+      return { adapter: { current: { getSnapshot: () => ({ key: 'session-1' }), subscribe: () => () => {} } } }
     },
     on: () => () => {},
     effect: (callback: () => () => void) => callback(),

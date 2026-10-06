@@ -5,7 +5,7 @@ import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { prepareManifests, verificationEnvironment, verifyCandidate, verifyNpmDependencyLock } from './dsh-upstreams-verify.ts'
+import { prepareManifests, smokeSettingsWrite, verificationEnvironment, verifyCandidate, verifyNpmDependencyLock } from './dsh-upstreams-verify.ts'
 import { lockDigest, parseLock } from './dsh-upstreams.ts'
 import { startManagedProcess } from './dsh-upstreams-process.ts'
 
@@ -14,6 +14,32 @@ const execute = promisify(execFile)
 afterEach(async () => { for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true }) })
 
 describe('候选安装准备入口', () => {
+  it('隔离设置写入使用认证 RPC 并核对实际返回值', async () => {
+    await expect(smokeSettingsWrite('http://127.0.0.1:1234', 'session=synthetic', async (url, init) => {
+      expect(url).toBe('http://127.0.0.1:1234/api/settings/mutate')
+      expect(init?.headers).toMatchObject({ Cookie: 'session=synthetic' })
+      const request = JSON.parse(String(init?.body))
+      expect(request).toMatchObject({ type: 'client-request', method: 'settings/mutate', payload: { args: {
+        ns: 'ui-settings-general', ops: [{ op: 'set', path: ['welcomeNoticeVersion'], value: 'clinmesh-isolated-compatibility-smoke' }],
+      } } })
+      return Response.json({ type: 'server-response', rpcId: request.rpcId, result: { ok: true, value: { value: { welcomeNoticeVersion: request.payload.args.ops[0].value } } } })
+    })).resolves.toBeUndefined()
+  })
+
+  it('HTTP 首页可用但 Profile 热重载拒绝时保留具体原因', async () => {
+    await expect(smokeSettingsWrite('http://127.0.0.1:1234', '', async (_url, init) => {
+      const request = JSON.parse(String(init?.body))
+      return Response.json({ type: 'server-response', rpcId: request.rpcId, result: { ok: false, error: { message: 'profile reload requires the root Include entry' } } })
+    })).rejects.toThrow('profile reload requires the root Include entry')
+  })
+
+  it('设置写入返回成功但值未生效时拒绝通过', async () => {
+    await expect(smokeSettingsWrite('http://127.0.0.1:1234', '', async (_url, init) => {
+      const request = JSON.parse(String(init?.body))
+      return Response.json({ type: 'server-response', rpcId: request.rpcId, result: { ok: true, value: { value: {} } } })
+    })).rejects.toThrow('设置写入未生效')
+  })
+
   it.each([200, 404])('registry 返回 %s 的撤销结果时拒绝验收，即使原 tarball 仍然可下载', async status => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-upstream-revoked-'))
     directories.push(directory)

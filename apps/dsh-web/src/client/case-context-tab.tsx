@@ -8,7 +8,7 @@ import type { ReactSurfaceRegistry } from 'dsh-react-surface/client'
 import { DoctorCaseContextRail } from '../../../web/src/app/doctor/case-context-rail.tsx'
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
 import { normalizeHostLocale, type ClientLocalePort } from './host-locale.ts'
-import { normalizeSessionId, subscribeHostTheme, type ClientSessionsPort, type ClientThemePort } from './host-ports.ts'
+import { subscribeHostTheme, type ClientSessionBindingPort, type ClientThemePort } from './host-ports.ts'
 import { createStyledRoot } from './styled-root.ts'
 
 /** WebApp → 宿主右栏标签页的病例上下文通道;生命周期合同与 workspace navigation 一致。 */
@@ -81,7 +81,7 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
   }
   const theme = ctx.get('theme') as unknown as ClientThemePort
   const locale = ctx.get('locale') as unknown as ClientLocalePort
-  const sessions = ctx.get('sessions') as unknown as ClientSessionsPort
+  const sessionBinding = ctx.get('uiSession') as unknown as ClientSessionBindingPort
   const subscribeTheme = (listener: () => void): (() => void) => subscribeHostTheme(ctx, listener)
   const getTheme = () => theme.getTheme().active.colorScheme
   const subscribeLocale = (listener: () => void): (() => void) => locale.subscribe(listener)
@@ -94,6 +94,7 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
     kind: CASE_CONTEXT_TAB_KIND,
     title: () => getWorkspaceMessages(getLocale()).caseContextTabTitle,
     guide: [{
+      id: CASE_CONTEXT_TAB_KIND,
       order: 100,
       title: () => getWorkspaceMessages(getLocale()).caseContextTabTitle,
       description: () => getWorkspaceMessages(getLocale()).caseContextTabDescription,
@@ -172,7 +173,7 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
   // 右栏停靠面按会话隔离(每会话一份布局,切换会话后原标签不在新会话布局里),
   // 会话变化即对新的当前会话重新请求。下降沿(含离开医生页)重置记账。
   //
-  // 关键时序:座位绑定跟随会话 surface 的 React 挂载效果,而 sessions.list 等
+  // 关键时序:座位绑定跟随会话 surface 的 React 挂载效果,而 sessionBinding.adapter.current 等
   // store 事件先于提交触发——同步 openTab 要么落进旧会话布局(成功但不可见),
   // 要么因座位未挂载抛错且不再有事件。因此触发事件只比对记账,真正的 openTab
   // 一律推迟到事件循环之后执行;失败(座位未挂载)以短定时器自愈重试直到成功、
@@ -190,7 +191,7 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
   const gateOpen = (): boolean =>
     surfaces.getSnapshot().activeId === 'clinmesh.his' && port.getSnapshot() !== null
   const currentSessionId = (): string | undefined =>
-    normalizeSessionId(sessions.list.getSnapshot().current)
+    sessionBinding.adapter.current.getSnapshot().key
   const clearRetry = (): void => {
     if (retryTimer !== null) {
       clearTimeout(retryTimer)
@@ -289,7 +290,7 @@ export function registerCaseContextTab(ctx: ClientContext, port: CaseContextPort
   })
   const disposeSurfaces = surfaces.subscribe(reevaluate)
   const disposePort = port.subscribe(reevaluate)
-  const disposeSessions = sessions.list.subscribe(reevaluate)
+  const disposeSessions = sessionBinding.adapter.current.subscribe(reevaluate)
   reevaluate()
 
   return () => {

@@ -24,7 +24,7 @@ describe('ClinMesh React Surface definition', () => {
         }
         if (name === 'theme') return { getTheme: () => ({ active: { colorScheme: 'light' } }) }
         if (name === 'reactSurfaces') return { getSnapshot: () => snapshot, subscribe: () => () => {}, open() {}, close() {} }
-        return { list: { getSnapshot: () => ({ current: undefined }), subscribe: () => () => {} } }
+        return { adapter: { current: { getSnapshot: () => ({ key: undefined }), subscribe: () => () => {} } } }
       },
       on: () => () => {},
       slots: {
@@ -132,7 +132,7 @@ describe('ClinMesh React Surface definition', () => {
             return () => { localeListeners.delete(listener) }
           },
         }
-        return { list: { getSnapshot: () => ({ current: undefined }), subscribe: () => () => {} } }
+        return { adapter: { current: { getSnapshot: () => ({ key: undefined }), subscribe: () => () => {} } } }
       },
       on(event: string, listener: () => void) {
         if (event !== 'theme/change') throw new Error(`Unexpected event: ${event}`)
@@ -220,7 +220,7 @@ describe('ClinMesh React Surface definition', () => {
         return {
           getLocale: () => ({ active: 'zh-CN' }),
           subscribe: () => () => {},
-          list: { getSnapshot: () => ({ current: undefined }), subscribe: () => () => {} },
+          adapter: { current: { getSnapshot: () => ({ key: undefined }), subscribe: () => () => {} } },
         }
       },
       reactSurfaces: {
@@ -271,10 +271,10 @@ describe('ClinMesh React Surface definition', () => {
 
   it('preserves DSH appearance and keeps narrow workspaces side by side', () => {
     const sessions = {
-      list: {
-        getSnapshot: () => ({ current: undefined }),
+      adapter: { current: {
+        getSnapshot: () => ({ key: undefined }),
         subscribe: () => () => undefined,
-      },
+      } },
     }
     const definition = createDefinition({
       get: () => sessions,
