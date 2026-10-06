@@ -30,11 +30,11 @@ for (const version of ['18', '19']) {
     if (script?.type !== 'chunk') throw new Error('Missing doctor section scroll fixture')
     const css = await buildSurfaceStyles()
     await page.setViewportSize({ width: 1200, height: 900 })
-    const steps = z.array(z.object({ width: z.number(), height: z.number(), section: z.string(), panelScrolled: z.boolean(), endVisible: z.boolean(), headerStable: z.boolean(), panelBounded: z.boolean() }))
+    const steps = z.array(z.object({ width: z.number(), height: z.number(), section: z.string(), checklistBetweenPatientAndVitals: z.boolean(), checklistBounded: z.boolean(), checklistHorizontal: z.boolean(), checklistEqualWidths: z.boolean(), checklistFullyVisible: z.boolean(), panelScrolled: z.boolean(), endVisible: z.boolean(), headerStable: z.boolean(), panelBounded: z.boolean() }))
       .parse(await readJsonFromBrowser(page, `<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`))
     expect(steps).toHaveLength(12)
     for (const step of steps) {
-      expect(step, `${step.section} ${step.width} x ${step.height}`).toMatchObject({ panelScrolled: true, endVisible: true, headerStable: true, panelBounded: true })
+      expect(step, `${step.section} ${step.width} x ${step.height}`).toMatchObject({ checklistBetweenPatientAndVitals: true, checklistBounded: true, checklistHorizontal: true, checklistEqualWidths: true, checklistFullyVisible: true, panelScrolled: true, endVisible: true, headerStable: true, panelBounded: true })
     }
   })
 }

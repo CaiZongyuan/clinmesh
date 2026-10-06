@@ -1,6 +1,4 @@
 import { DoctorWorkspaceLayout, DoctorCaseLayout, DoctorCasePanel, DoctorCaseDetailRegion } from './responsive-layout.tsx'
-import { hostCaseContextRail, useSurfaceCaseContextPort, useSurfaceCaseContextVisible } from './surface-case-context.ts'
-import { useOptionalWebRuntime } from '../web-runtime.tsx'
 import { agentToolInputSchemas, doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
 import {
   clinicalDocumentContentSchema,
@@ -107,7 +105,7 @@ import {
 } from '../workspace-error.ts'
 import { formatFen } from '../workspace-format.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
-import { DoctorCaseContextRail } from './case-context-rail.tsx'
+import { EncounterCompletionChecklist } from './completion-checklist.tsx'
 import type { ReferenceCatalogSearches } from './catalog-picker-dialogs.tsx'
 import {
   ClinicalDocumentPage,
@@ -2852,20 +2850,6 @@ function CaseDetail({
     source: 'checklist' | 'correction'
     target: EncounterCompletionTarget
   }>()
-  // surface 模式下右栏由 DSH 宿主右列承载:发布与内嵌 rail 完全一致的快照;
-  // 全屏(full-frame)且宿主未保留右列时回退内嵌 rail,保证病例上下文可达
-  const runtime = useOptionalWebRuntime()
-  const hostRail = hostCaseContextRail(runtime)
-  const contextVisible = useSurfaceCaseContextVisible()
-  const caseContextState = useMemo(() => (hostRail ? {
-    caseId: detail.caseId,
-    completion: completion.data,
-    detail,
-    locale,
-    section: activeSection,
-    statusText: doctorCaseStatusLabel(detail.status, messages),
-  } : undefined), [hostRail, detail, completion.data, activeSection, locale, messages])
-  useSurfaceCaseContextPort(caseContextState)
   useEffect(() => {
     if (correctionTarget === undefined) return
     setActiveSection(caseDetailSectionByCompletionTarget[correctionTarget])
@@ -3094,18 +3078,7 @@ function CaseDetail({
     )
 
   return (
-    <DoctorCaseLayout contextLabel={messages.caseContext} railPlacement={hostRail ? 'host' : 'inline'} rail={(expanded, onExpandedChange) => (
-      <DoctorCaseContextRail
-        completion={completion.data}
-        detail={detail}
-        expanded={expanded}
-        locale={locale}
-        messages={messages}
-        onExpandedChange={onExpandedChange}
-        section={activeSection}
-        statusText={doctorCaseStatusLabel(detail.status, messages)}
-      />
-    )}>
+    <DoctorCaseLayout>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <PatientBanner
           {...(clinicalReadOnly || detail.consultation === undefined
@@ -3122,12 +3095,10 @@ function CaseDetail({
               })}
           detail={detail}
           messages={messages}
-          {...(hostRail && runtime?.surfaceCaseContext?.visibility !== undefined
-            ? { contextVisible, onShowContext: runtime.surfaceCaseContext.visibility.toggle }
-            : hostRail && runtime?.surfaceCaseContext?.requestOpen !== undefined
-              ? { onShowContext: runtime.surfaceCaseContext.requestOpen }
-              : {})}
           statusText={doctorCaseStatusLabel(detail.status, messages)}
+          completionChecklist={completion.data === undefined ? null : (
+            <EncounterCompletionChecklist completion={completion.data} locale={locale} />
+          )}
         />
 
         {overviewWorkflow === null ? null : (
