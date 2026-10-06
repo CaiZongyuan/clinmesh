@@ -9,7 +9,7 @@ import type { JsonChatCompletionsProvider } from '../infrastructure/ai/openai-ch
 import type { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic-case-repository.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
-import { hasHiddenDiagnosisLeak, type PersonaResource } from './patient-persona-service.ts'
+import { hiddenDiagnosisTokens, normalized, type PersonaResource } from './patient-persona-service.ts'
 import type { WorkflowService } from './workflow-service.ts'
 
 const dialogueSystemPrompt = [
@@ -300,10 +300,11 @@ export class ConsultationDialogueService {
     const truth = this.#cases.getTruthForSimulator(context.workspaceId, syntheticCaseId)
     if (truth === undefined) return false
     const visible = this.#cases.getVisibleResourcesForSimulator(context.workspaceId, syntheticCaseId)
-    return hasHiddenDiagnosisLeak(
-      reply,
+    const tokens = hiddenDiagnosisTokens(
       truth.hiddenResources.map(item => item.resource as PersonaResource),
       visible.map(item => item.resource as PersonaResource),
     )
+    const output = normalized(reply)
+    return tokens.some(token => output.includes(token))
   }
 }
