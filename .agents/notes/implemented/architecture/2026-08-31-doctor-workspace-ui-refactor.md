@@ -2,8 +2,6 @@
 
 Status: implemented
 
-> 病例上下文栏相关布局由[患者信息下方的完诊清单](../architecture/2026-10-06-doctor-inline-completion-checklist.md)取代；其余约定继续适用。
-
 ## Problem
 
 门诊医生工作台同时承载候诊队列、Virtual Patient 直达接诊、Consultation Record、结构化 Clinical Document、独立诊断、处方或无需用药、检验申请与报告确认、Encounter Completion、已完诊病例和受控纠错。生产 Web 需要在高密度桌面工作面中稳定呈现这些 owner，而不能把 Query、Command、版本、局部草稿和视觉组合继续集中在单个浅页面中。

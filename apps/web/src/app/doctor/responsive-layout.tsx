@@ -1,6 +1,13 @@
 import { useEffect, useState, type ReactNode, type Ref } from 'react'
 import type { DoctorCaseSection } from '@clinmesh/contracts/agent'
 import { Button } from '@clinmesh/ui/components/button'
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@clinmesh/ui/components/sheet'
 import { useContainerCompact } from '@clinmesh/ui/hooks/use-container-compact'
 import { cn } from '@clinmesh/ui/lib/utils'
 import { TabsContent } from '@clinmesh/ui/components/tabs'
@@ -50,7 +57,7 @@ export function DoctorWorkspaceLayout({
         <div hidden={compact && !showQueue} className="min-h-0 min-w-0 overflow-y-auto border-r">
           {queue(() => setShowQueue(false))}
         </div>
-        <div hidden={compact && showQueue} className="@container/case-detail min-h-0 min-w-0 overflow-hidden">
+        <div hidden={compact && showQueue} className="min-h-0 min-w-0 overflow-hidden">
           {children}
         </div>
       </div>
@@ -58,11 +65,52 @@ export function DoctorWorkspaceLayout({
   )
 }
 
-export function DoctorCaseLayout({ children }: { children: ReactNode }) {
+export function DoctorCaseLayout({
+  children,
+  rail,
+  railPlacement = 'inline',
+  contextLabel,
+}: {
+  children: ReactNode
+  rail: (expanded: boolean, onExpandedChange: (expanded: boolean) => void) => ReactNode
+  /** host:右栏由 DSH 宿主右列承载,内容区恒单列且禁用 Sheet 降级。 */
+  railPlacement?: 'inline' | 'host'
+  contextLabel: string
+}) {
+  const { ref, compact } = useContainerCompact(960)
+  const [expanded, setExpanded] = useState(true)
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const hosted = railPlacement === 'host'
+  useEffect(() => {
+    if (!compact) setSheetOpen(false)
+  }, [compact])
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
-      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1">
+    <div ref={ref} className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+      {compact && !hosted ? (
+        <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+          <div className="flex shrink-0 justify-end border-b p-1">
+            <SheetTrigger render={<Button size="sm" variant="ghost" />}>
+              {contextLabel}
+            </SheetTrigger>
+          </div>
+          <SheetContent className="max-w-full overflow-y-auto" side="right">
+            <SheetHeader>
+              <SheetTitle>{contextLabel}</SheetTitle>
+            </SheetHeader>
+            {rail(true, setSheetOpen)}
+          </SheetContent>
+        </Sheet>
+      ) : null}
+      <div
+        className="grid min-h-0 min-w-0 flex-1"
+        style={{
+          gridTemplateColumns: compact || hosted
+            ? 'minmax(0, 1fr)'
+            : `minmax(0, 1fr) ${expanded ? '264px' : '44px'}`,
+        }}
+      >
         <div className="@container/case-content flex min-h-0 min-w-0 flex-col">{children}</div>
+        {compact || hosted ? null : rail(expanded, setExpanded)}
       </div>
     </div>
   )
@@ -73,7 +121,7 @@ export function DoctorCaseDetailRegion({ children, containerRef, labelledBy }: {
   containerRef?: Ref<HTMLElement>
   labelledBy?: string
 }) {
-  return <section ref={containerRef} aria-labelledby={labelledBy} className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden @max-[400px]/case-detail:gap-0">{children}</section>
+  return <section ref={containerRef} aria-labelledby={labelledBy} className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden">{children}</section>
 }
 
 export function DoctorCasePanel({ children, value }: {

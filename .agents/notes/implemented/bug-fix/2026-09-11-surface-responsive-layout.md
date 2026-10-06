@@ -2,8 +2,6 @@
 
 Status: implemented
 
-> 病例上下文栏相关布局由[患者信息下方的完诊清单](../architecture/2026-10-06-doctor-inline-completion-checklist.md)取代；其余约定继续适用。
-
 ## Problem
 
 DSH 原生右栏占用空间后，应用最小宽度与会话最小宽度可能无法同时满足。自动全屏会隐藏用户正在操作的宿主区域。应用内部共用整个 Surface 的断点又无法表达导航、候诊列和上下文列各自消耗的空间，导致病历被挤压。任务合同见 [issue #84](https://github.com/CaiZongyuan/clinmesh/issues/84)；此决策取代[原生 Surface 集成](../architecture/2026-08-30-dsh-native-clinmesh-surface.md)中的自动全屏回退，保留其状态与权限所有权。

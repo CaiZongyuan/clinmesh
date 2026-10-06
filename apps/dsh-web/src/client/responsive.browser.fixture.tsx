@@ -73,7 +73,10 @@ async function run() {
               detailLabel="Case"
               queue={() => <div data-queue>Queue</div>}
             >
-              <DoctorCaseLayout>
+              <DoctorCaseLayout
+                contextLabel="Context"
+                rail={() => <aside data-context>Context</aside>}
+              >
                 <div data-record>
                   <input aria-label="Record" defaultValue="case draft" />
                 </div>

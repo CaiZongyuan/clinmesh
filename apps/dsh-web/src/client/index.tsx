@@ -12,8 +12,9 @@ import { clinMeshStyles } from './styles.generated.ts'
 import { registerProfileBrand } from './profile-brand.tsx'
 import { normalizeHostLocale, type ClientLocalePort } from './host-locale.ts'
 import { subscribeHostTheme, type ClientSessionBindingPort, type ClientThemePort } from './host-ports.ts'
+import { createCaseContextPort, registerCaseContextTab, type CaseContextPort } from './case-context-tab.tsx'
 import { createWorkspaceNavigation, registerWorkspaceNavigation } from './workspace-navigation.tsx'
-import type { WebSurfaceDisplay, WebSurfaceNavigation } from '@clinmesh/web/runtime'
+import type { WebSurfaceCaseContext, WebSurfaceDisplay, WebSurfaceNavigation } from '@clinmesh/web/runtime'
 import { createFontSizePreference, registerFontSizeSettings, type FontSizePreferenceStore } from './font-size-settings.tsx'
 import type { FontSizePreference } from '../../../web/src/app/preferences.ts'
 
@@ -28,10 +29,12 @@ function ClinMeshSurface({
   surfaceLocale,
   surfaceFontSize,
   surfaceSessionId,
+  surfaceCaseContext,
   surfaceDisplay,
   surfaceNavigation,
 }: ReactSurfaceProps & {
   surfaceNavigation: WebSurfaceNavigation
+  surfaceCaseContext: WebSurfaceCaseContext
   surfaceDisplay: WebSurfaceDisplay
   surfaceColorScheme: 'dark' | 'light'
   surfaceLocale: 'zh-CN' | 'en-US'
@@ -77,6 +80,7 @@ function ClinMeshSurface({
         surfaceFontSize,
         surfaceDisplay,
         surfaceNavigation,
+        surfaceCaseContext,
         ...(surfaceSessionId === undefined ? {} : { surfaceSessionId }),
       }}
     />
@@ -91,6 +95,7 @@ export function createDefinition(
   ctx: ClientContext,
   navigation = createWorkspaceNavigation(),
   fontSize: FontSizePreferenceStore = createFontSizePreference(),
+  caseContext: CaseContextPort = createCaseContextPort(),
 ): Readonly<ReactSurfaceDefinition> {
   const sessionBinding = ctx.get('uiSession') as unknown as ClientSessionBindingPort
   const theme = ctx.get('theme') as unknown as ClientThemePort
@@ -114,9 +119,10 @@ export function createDefinition(
       <ClinMeshSurface
         {...props}
         surfaceNavigation={navigation}
+        surfaceCaseContext={caseContext}
         surfaceDisplay={{
           fullscreen: props.layout === 'full-frame',
-          // 全屏保留宿主会话文件等原生右栏内容。
+          // 布局声明了 fullFrameKeepDetails:全屏时宿主保留右栏,患者信息标签仍可见可交互
           fullscreenKeepsDetails: true,
           toggle: () => surfaces.setLayout('clinmesh.his', props.layout === 'full-frame' ? 'workspace' : 'full-frame'),
           conversation: {
@@ -157,15 +163,17 @@ export function createDefinition(
   })
 }
 
-export const inject = ['reactSurfaces', 'uiSession', 'theme', 'slots', 'locale']
+export const inject = ['reactSurfaces', 'uiSession', 'theme', 'slots', 'locale', 'sidebarRightTabs', 'sidebarRight']
 
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => registerProfileBrand(ctx), 'clinmesh-dsh-web: register Profile identity')
   const navigation = createWorkspaceNavigation()
   const fontSize = createFontSizePreference()
+  const caseContext = createCaseContextPort()
   ctx.effect(() => registerFontSizeSettings(ctx, fontSize), 'clinmesh-dsh-web: register font size setting')
   ctx.effect(() => registerWorkspaceNavigation(ctx, navigation), 'clinmesh-dsh-web: register hospital navigation')
-  const definition = createDefinition(ctx, navigation, fontSize)
+  ctx.effect(() => registerCaseContextTab(ctx, caseContext), 'clinmesh-dsh-web: register case context tab')
+  const definition = createDefinition(ctx, navigation, fontSize, caseContext)
   const reactSurfaces = (ctx as ClientContext & {
     reactSurfaces: {
       register(value: typeof definition): () => void

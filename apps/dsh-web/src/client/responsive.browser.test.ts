@@ -58,7 +58,7 @@ test('adapts navigation to the Surface width and retains edits across resize', a
   for (const step of actual.steps.filter((step) => step.width <= 640)) {
     expect(step.recordWidth).toBeGreaterThanOrEqual(step.width - 40)
     expect(step.queueSwitch).toBe(true)
-    expect(step.contextSwitch).toBe(false)
+    expect(step.contextSwitch).toBe(true)
   }
   expect(actual.catalogWidth).toBeGreaterThan(1000)
   expect(actual.navigationVisible).toBe(true)

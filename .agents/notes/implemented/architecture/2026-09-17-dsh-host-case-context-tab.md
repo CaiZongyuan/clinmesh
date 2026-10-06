@@ -2,8 +2,6 @@
 
 Status: implemented
 
-> 病例上下文栏相关布局由[患者信息下方的完诊清单](../architecture/2026-10-06-doctor-inline-completion-checklist.md)取代；其余约定继续适用。
-
 ## Problem
 
 [surface 模式挂载 DSH 原生右列](2026-09-17-dsh-host-case-context-rightbar.md)以 `priority: -1` 影子化占用 `rightbar` 槽,把整个右列从宿主 dock 手里拿走:门诊医生页停留期间,患者信息与会话文件互斥,用户无法在患者上下文与会话文件间以宿主原生方式切换。任务合同见 [issue #115](https://github.com/CaiZongyuan/clinmesh/issues/115),本次反转向设计:患者信息与 DSH 会话"做在一起",以标签页形式切换。
