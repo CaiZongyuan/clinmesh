@@ -8,6 +8,7 @@
 - 子目录 `AGENTS.md` 只增加该目录特有规则，不重复根规则。
 - `CONTEXT.md` 只定义领域语言，不保存实现方案。
 - `docs/` 保存当前架构、流程和测试参考。
+- `docs/spec/` 保存需要追踪的正式需求，写法和状态见[需求规格](spec/README.md)。
 - `docs/memory/` 保存稳定协作偏好和低频操作坑，不保存产品事实或临时任务状态。
 - `.agents/notes/` 保存有真实权衡且未来可能被重新讨论的提案和决策。
 - `.agents/skills/` 保存开发 Agent 的可复用工程工作流；运行时 `clinmesh-*` skills 位于根 `skills/`，见[系统架构](architecture.md#711-agent-skills)。Skill 不能成为产品行为或架构事实的唯一来源。
@@ -17,9 +18,9 @@ Agent 开始工作前读取目标文件路径上所有适用的 `AGENTS.md`，�
 
 ## 开发入口
 
-以用户请求或已选用的 spec 为目标，先检查相关实现、调用者和现有未提交修改，再处理影响实施的未决问题。目标明确后直接实施，保留无关改动。普通任务不要求先创建 GitHub issue、拆票或运行完整 skill 链。
+以用户请求或已选用的 spec 为目标，先检查相关实现、调用者和现有未提交修改，再处理影响实施的未决问题。新增且需要跨会话追踪的需求先在 [docs/spec/](spec/README.md) 维护唯一正式版本；已批准的旧 Issue 在显式迁移前沿用原合同，普通机械任务可直接使用已确认的对话。目标明确后直接实施，保留无关改动，不要求先创建 GitHub issue 或拆票。
 
-需要访谈、跨 session 需求记录、测试驱动或独立审查时，可以选择相应 Matt skill。任务使用 GitHub Issues 时遵循 [issue tracker](agents/issue-tracker.md) 和 [triage labels](agents/triage-labels.md)；领域与架构输入见 [工程上下文](agents/domain.md)。
+需要访谈、跨 session 需求记录、测试驱动或独立审查时，可以选择相应 Matt skill。`to-spec` 在本仓库生成 `docs/spec/` 文件，通用 skill 的 Issue 发布步骤由[需求规格](spec/README.md)替代；不修改上游 skill。任务使用 GitHub Issues 追踪执行时遵循 [issue tracker](agents/issue-tracker.md) 和 [triage labels](agents/triage-labels.md)；领域与架构输入见 [工程上下文](agents/domain.md)。
 
 `CONTEXT.md` 只接收医院仿真领域词汇。通用 skill 提出的 ADR 在 ClinMesh 中映射为 Agent Note；不创建平行的 `docs/adr/` 决策体系。
 
