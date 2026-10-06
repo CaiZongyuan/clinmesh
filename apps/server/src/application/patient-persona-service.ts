@@ -109,8 +109,9 @@ function summarizedResource(resource: PersonaResource) {
 }
 
 function diagnosisTerms(term: string): string[] {
-  const name = normalized(term.replace(/[(（](?:疾病|疾患|障碍|disorder|disease|finding)[)）]/gi, ''))
-  return name.endsWith('糖尿病') && /^[12]型/.test(name) ? [name, '糖尿病'] : [name]
+  const name = normalized(term.replace(/[(（](?:疾病|疾患|障碍|临床所见|disorder|disease|finding)[)）]/gi, ''))
+  const diabetes = name.match(/^([12]型糖尿病)(?:$|引起的)/)?.[1]
+  return diabetes === undefined ? [name] : [name, diabetes, '糖尿病']
 }
 
 export function hiddenDiagnosisTokens(
@@ -131,13 +132,51 @@ export function hiddenDiagnosisTokens(
     .filter(value => value.length >= 2))]
 }
 
+export function hasHiddenDiagnosisLeak(
+  text: string,
+  hiddenResources: PersonaResource[],
+  visibleResources: PersonaResource[],
+): boolean {
+  const output = normalized(text)
+  const knownTerms = new Set(visibleResources
+    .filter(resource => resource.resourceType === 'Condition')
+    .flatMap(resource => conceptValues(resource).terms.flatMap(diagnosisTerms))
+    .filter(term => term.length >= 2))
+  const knownMentions: Array<{ start: number; end: number }> = []
+  for (const term of knownTerms) {
+    for (let start = output.indexOf(term); start !== -1; start = output.indexOf(term, start + 1)) {
+      knownMentions.push({ start, end: start + term.length })
+    }
+  }
+  return hiddenDiagnosisTokens(hiddenResources, visibleResources).some(token => {
+    for (let start = output.indexOf(token); start !== -1; start = output.indexOf(token, start + 1)) {
+      // 只豁免已知病名覆盖的这一次提及；同一段中另外写出的新诊断仍须拦截。
+      if (!knownMentions.some(mention => mention.start <= start && mention.end >= start + token.length)) {
+        return true
+      }
+    }
+    return false
+  })
+}
+
+function personaLeaksDiagnosis(
+  content: PatientPersonaContent,
+  hiddenResources: PersonaResource[],
+  visibleResources: PersonaResource[],
+): boolean {
+  const fields = [
+    content.chiefComplaint, content.knownHistorySummary, content.medicationMemory,
+    content.openingStatement, content.symptomExperience, ...Object.values(content.persona),
+  ]
+  return fields.some(field => hasHiddenDiagnosisLeak(field, hiddenResources, visibleResources))
+}
+
 function assertNoDiagnosisLeak(
   content: PatientPersonaContent,
   hiddenResources: PersonaResource[],
   visibleResources: PersonaResource[],
 ): void {
-  const output = normalized(JSON.stringify(content))
-  if (hiddenDiagnosisTokens(hiddenResources, visibleResources).some(token => output.includes(token))) {
+  if (personaLeaksDiagnosis(content, hiddenResources, visibleResources)) {
     throw new PatientPersonaLeakError()
   }
 }
@@ -322,8 +361,7 @@ export class PatientPersonaService {
       workspaceId: input.context.workspaceId,
     })
     if (
-      hiddenDiagnosisTokens(generation.hiddenResources, generation.visibleResources)
-        .some(token => normalized(JSON.stringify(content)).includes(token))
+      personaLeaksDiagnosis(content, generation.hiddenResources, generation.visibleResources)
       && !input.forceDiagnosisLeakOverride
     ) {
       throw new PatientPersonaError(
