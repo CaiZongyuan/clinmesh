@@ -21,6 +21,10 @@ export interface JobFailurePayload {
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed'
 
 const failureCopy = {
+  'AI_AUTH_FAILED': {
+    'en-US': { guidance: 'Check the selected Provider credentials and access permissions, then retry.', summary: 'AI model authentication or access failed' },
+    'zh-CN': { guidance: '请检查所选 Provider 的密钥与访问权限，然后重试。', summary: 'AI 模型认证或访问权限失败' },
+  },
   'AI_REQUEST_FAILED': {
     'en-US': { guidance: 'The provider was unreachable. Retry later.', summary: 'The AI provider request failed' },
     'zh-CN': { guidance: '网络或服务暂时不可用，请稍后重试。', summary: 'AI 服务请求失败' },

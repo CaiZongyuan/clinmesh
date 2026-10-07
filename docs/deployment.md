@@ -59,6 +59,8 @@ pnpm reference:sync
 
 Server 在启动时按 `CLINMESH_AI_SOURCE` 选择模型来源，默认 `openai`。`pnpm dev:dsh` 自动设置为 `dsh`，复用宿主 Provider 与凭据，无需重复填写下面的地址、密钥或模型变量。在 DSH“设置 → 通用 → ClinMesh 模型”中选择具体 Provider／模型，或保留“使用 DSH 默认模型”；右侧会话的模型选择独立。
 
+DSH 模型任务报 `AI_AUTH_FAILED` 时，在宿主模型设置中检查所选 Provider 的凭据与该模型的访问权限；模型出现在候选目录中不代表上游允许调用。修复权限后可重试原任务。需要改用其他可用模型时，保存新的 ClinMesh 模型选择并重新发起任务；已有任务仍绑定原路由。
+
 独立 Web 默认使用 OpenAI-compatible Provider。四个基础变量必须同时配置；档案复用 `CLINMESH_AI_BRIEF_MODEL`，自由问诊另配置 `CLINMESH_AI_CONSULTATION_MODEL`：
 
 ```dotenv

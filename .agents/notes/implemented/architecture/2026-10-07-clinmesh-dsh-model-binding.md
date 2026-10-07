@@ -12,7 +12,7 @@ ClinMesh Server 与 DSH 分进程运行，原有模型调用读取独立的 Open
 
 选择默认模型时，任务解析宿主当时的 Provider、model 与可选 reasoning effort；显式选择同样保存完整路由。患者档案和目录补全在入队前绑定，问诊在首次生成回复时绑定，检验在首次实际模型生成时绑定。`GenerationModelBinding` 按 Workspace 和业务任务键持久化第一次成功解析的路由，重试、结构化输出修复与进程恢复读取同一绑定；后台入队的任务键包含发起人和幂等键，沿用 Command 的 Workspace 幂等范围。Persona 和目录任务表继续保存其绑定模型，结果 provenance 使用可辨识 Provider 的 `dsh:` 路由。确定性计算、精确来源事实与冻结快照复用不解析模型。
 
-桥接接受 HTTP loopback 上带共享 secret 且没有浏览器 Origin 的受限请求，禁止客户端覆盖 URL、headers、Session 或 Tools。宿主仅发送 ClinMesh 业务输入与独立系统提示，不创建医生 Agent 会话记录；模型输出继续通过原有严格 schema 和诊断泄漏检查。请求、响应、超时和卸载取消均有界，Provider 错误只返回通用失败，避免回传凭据或私有输入。公开设置描述使用 secret redaction。
+桥接接受 HTTP loopback 上带共享 secret 且没有浏览器 Origin 的受限请求，禁止客户端覆盖 URL、headers、Session 或 Tools。宿主仅发送 ClinMesh 业务输入与独立系统提示，不创建医生 Agent 会话记录；模型输出继续通过原有严格 schema 和诊断泄漏检查。请求、响应（包含非成功响应）、超时和卸载取消均有界。DSH 终止分片的 `AUTH`、`MISSING_CREDENTIAL`、`INVALID_CREDENTIAL` 映射为封闭桥接错误 `MODEL_AUTH_FAILED`，Server 转为 `AI_AUTH_FAILED` 并提示检查所选 Provider 的凭据和访问权限；其余失败返回 `MODEL_UNAVAILABLE`。不解析或回传 Provider 原始消息，也不写入日志，避免泄露凭据或私有输入。公开设置描述使用 secret redaction。
 
 ## Alternatives considered
 

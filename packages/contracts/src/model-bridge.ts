@@ -35,3 +35,6 @@ export const modelBridgeResponseSchema = z.object({
   model: z.string().min(1).max(1024),
   content: z.string().optional(),
 }).strict()
+export const modelBridgeErrorSchema = z.object({
+  error: z.enum(['MODEL_UNAVAILABLE', 'MODEL_AUTH_FAILED']),
+}).strict()

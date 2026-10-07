@@ -26,6 +26,7 @@ async function host() {
   let fail = false
   let hold = false
   let available = true
+  let authenticationFailure: 'AUTH' | 'MISSING_CREDENTIAL' | 'INVALID_CREDENTIAL' | undefined
   const calls: GenerateOptions[] = []
   const ctx = {
     agentDefaultModel: { currentSelection: () => route },
@@ -40,6 +41,11 @@ async function host() {
           options.signal?.addEventListener('abort', () => reject(new Error('Synthetic cancellation')), { once: true })
         })
         if (fail) throw new Error('private-provider-error-containing-a-secret')
+        if (authenticationFailure !== undefined) {
+          yield { type: 'finish', reason: { kind: 'error', failure: { code: authenticationFailure, status: 403,
+            message: '403 Forbidden with private-provider-credential and private-prompt' } } }
+          return
+        }
         yield { type: 'text-delta', index: 0, text: typeof answer === 'string' ? answer : JSON.stringify(answer) }
         yield { type: 'finish', reason: { kind: 'stop' } }
       },
@@ -58,6 +64,7 @@ async function host() {
     answer: (value: unknown) => { answer = value }, fail: (value: boolean) => { fail = value },
     hold: () => { hold = true }, dispose: bridge.dispose,
     available: (value: boolean) => { available = value },
+    authenticationFailure: (code: NonNullable<typeof authenticationFailure>) => { authenticationFailure = code },
   }
 }
 
@@ -87,6 +94,43 @@ it('requires a trusted server, validates narrow requests and keeps Provider iden
   const failed = await post({ operation: 'complete', model: pinned, schemaName: 'patient_dialogue_reply',
     jsonSchema: {}, systemPrompt: 'private synthetic prompt', userPayload: {} }, { authorization: `Bearer ${secret}` })
   expect(await failed.text()).toBe('{"error":"MODEL_UNAVAILABLE"}')
+})
+
+it.each(['AUTH', 'MISSING_CREDENTIAL', 'INVALID_CREDENTIAL'] as const)('distinguishes Provider %s failures without relaying credentials or private prompts', async code => {
+  const dsh = await host()
+  dsh.authenticationFailure(code)
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 2000, maxResponseBytes: 2048 })
+  await expect(provider.completeJson({ model: dshDefaultModel, schemaName: 'patient_dialogue_reply',
+    jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
+  })).rejects.toMatchObject({ code: 'AI_AUTH_FAILED',
+    message: 'The selected DSH Provider rejected authentication or access; check its credentials and permissions' })
+  const response = await fetch(`${dsh.origin}/clinmesh-model-bridge`, { method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
+    body: JSON.stringify({ operation: 'complete', model: encodeModelRoute({ provider: 'synthetic-provider-a', model: 'same-model' }),
+      schemaName: 'patient_dialogue_reply', jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {} }),
+  })
+  expect(await response.json()).toEqual({ error: 'MODEL_AUTH_FAILED' })
+})
+
+it.each(['', 'private-provider-error', '{"error":"UNKNOWN"}',
+  '{"error":"MODEL_AUTH_FAILED","message":"private-provider-credential"}'])('uses a safe fallback for an unrecognized bridge error body (%s)', async body => {
+  const provider = new DshModelProvider({ origin: 'http://127.0.0.1:3080', secret, timeoutMs: 2000, maxResponseBytes: 2048,
+    fetch: async () => new Response(body, { status: 503 }),
+  })
+  await expect(provider.resolveModel(dshDefaultModel)).rejects.toMatchObject({ code: 'AI_REQUEST_FAILED',
+    message: 'The DSH model bridge is unavailable' })
+})
+
+it('bounds and cancels non-success bridge response bodies', async () => {
+  let cancelled = false
+  const provider = new DshModelProvider({ origin: 'http://127.0.0.1:3080', secret, timeoutMs: 2000, maxResponseBytes: 2048,
+    fetch: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new Uint8Array(2049)) },
+      cancel() { cancelled = true },
+    }), { status: 503 }),
+  })
+  await expect(provider.resolveModel(dshDefaultModel)).rejects.toMatchObject({ code: 'AI_RESPONSE_TOO_LARGE' })
+  expect(cancelled).toBe(true)
 })
 
 it('regenerates invalid JSON on the same route and respects cancellation and response bounds', async () => {

@@ -5,6 +5,8 @@ import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { decodeModelRoute, encodeModelRoute, modelBridgeRequestSchema, modelRouteSchema } from '@clinmesh/contracts/model-bridge'
 
+class ModelAccessError extends Error {}
+
 export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaultModel'>, secret: string, selection: () => string) {
   const closing = new AbortController()
   const handler = async (request: IncomingMessage, response: ServerResponse) => {
@@ -56,6 +58,10 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
           if (chunk.type === 'text-delta') content += chunk.text
           if (Buffer.byteLength(content) > 1024 * 1024) throw new Error('Response too large')
           if (chunk.type === 'finish') {
+            if (chunk.reason.kind === 'error'
+              && ['AUTH', 'MISSING_CREDENTIAL', 'INVALID_CREDENTIAL'].includes(chunk.reason.failure.code)) {
+              throw new ModelAccessError('Model authentication or access failed')
+            }
             if (chunk.reason.kind !== 'stop') throw new Error('Model call failed')
             finished = true
           }
@@ -66,9 +72,10 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
       }
       const body = JSON.stringify({ model, ...(content === undefined ? {} : { content }) })
       response.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' }).end(body)
-    } catch {
+    } catch (error) {
       // Provider failures can contain credentials and private prompts; do not relay or log them.
-      if (!response.destroyed) response.writeHead(503, { 'content-type': 'application/json' }).end('{"error":"MODEL_UNAVAILABLE"}')
+      const body = JSON.stringify({ error: error instanceof ModelAccessError ? 'MODEL_AUTH_FAILED' : 'MODEL_UNAVAILABLE' })
+      if (!response.destroyed) response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(body)
     } finally { response.off('close', abort); signal.removeEventListener('abort', disconnect) }
   }
   return { handler, dispose: () => closing.abort() }

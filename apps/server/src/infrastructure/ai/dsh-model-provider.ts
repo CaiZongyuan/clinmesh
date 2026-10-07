@@ -1,4 +1,4 @@
-import { dshDefaultModel, decodeModelRoute, modelBridgePath, modelBridgeResponseSchema } from '@clinmesh/contracts/model-bridge'
+import { dshDefaultModel, decodeModelRoute, modelBridgeErrorSchema, modelBridgePath, modelBridgeResponseSchema } from '@clinmesh/contracts/model-bridge'
 import { ChatCompletionsError, type JsonChatCompletionInput, type JsonChatCompletionsProvider } from './openai-chat-completions.ts'
 
 export class DshModelProvider implements JsonChatCompletionsProvider {
@@ -45,11 +45,10 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
         method: 'POST', redirect: 'error', signal,
         headers: { 'content-type': 'application/json', authorization: `Bearer ${this.options.secret}` }, body,
       })
-      if (!response.ok) {
-        await response.body?.cancel()
-        throw new ChatCompletionsError('AI_REQUEST_FAILED', 'The DSH model bridge is unavailable', { httpStatus: response.status })
+      if (response.body === null) {
+        if (!response.ok) throw new ChatCompletionsError('AI_REQUEST_FAILED', 'The DSH model bridge is unavailable', { httpStatus: response.status })
+        throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge returned no response')
       }
-      if (response.body === null) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge returned no response')
       const chunks: Uint8Array[] = []
       let size = 0
       const reader = response.body.getReader()
@@ -66,7 +65,19 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
         await reader.cancel().catch(() => {})
         reader.releaseLock()
       }
-      return modelBridgeResponseSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+      const content = Buffer.concat(chunks).toString('utf8')
+      if (!response.ok) {
+        let failure: unknown
+        try { failure = JSON.parse(content) } catch { /* Unrecognized errors use a static safe fallback. */ }
+        const parsed = modelBridgeErrorSchema.safeParse(failure)
+        if (parsed.success && parsed.data.error === 'MODEL_AUTH_FAILED') {
+          throw new ChatCompletionsError('AI_AUTH_FAILED',
+            'The selected DSH Provider rejected authentication or access; check its credentials and permissions',
+            { httpStatus: response.status })
+        }
+        throw new ChatCompletionsError('AI_REQUEST_FAILED', 'The DSH model bridge is unavailable', { httpStatus: response.status })
+      }
+      return modelBridgeResponseSchema.parse(JSON.parse(content))
     } catch (error) {
       if (signal.aborted) throw new ChatCompletionsError('AI_TIMEOUT', 'The DSH model request was cancelled or timed out')
       if (error instanceof ChatCompletionsError) throw error
