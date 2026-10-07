@@ -113,7 +113,7 @@ interface NavigationAdapter {
 
 切片金字塔的几何与倍率规则是 `@clinmesh/core/imaging-pyramid` 中不读取 DOM 的纯函数：各层相对第 0 层的降采样倍数取自实际层级尺寸，不要求逐级减半（原生 20× 切片的层级在 5× 之后跳到 1.25×）；显示层级取“一个层级像素不小于半个设备像素”的层级中分辨率最高者，与 OpenSeadragon 的选择一致；倍率读数按第 0 层像素间距和当前屏幕比例换算（10× 对应 1 µm/px），最高显示 20×，缩放上限是第 0 层像素与屏幕像素一比一且不超过 20×。引擎把这些函数接入 OpenSeadragon 的瓦片源。
 
-DSH 单文件产物不压缩依赖，也不能生成动态 chunk，OpenSeadragon 因此随 Surface 一起加载；引擎引用它的压缩构建 `openseadragon/build/openseadragon/openseadragon.min.js`，引用包的默认入口会使产物超出体积预算。选型依据与实测体积见 [Agent Note](../.agents/notes/implemented/architecture/2026-10-02-slide-pyramid-engine.md)。引擎由合成金字塔的 React 18/19 浏览器合同验证；医生的病理会诊页面和管理员的切片复核预览都通过同一个阅片外壳使用它。
+DSH 单文件产物不压缩依赖，也不能生成动态 chunk，OpenSeadragon 因此随 Surface 一起加载；引擎引用它的压缩构建 `openseadragon/build/openseadragon/openseadragon.min.js`，以减少单文件体积。客户端上限见 [DSH 产物预算](../.agents/notes/implemented/testing/2026-10-07-dsh-client-size-budget.md)。选型依据与实测体积见 [Agent Note](../.agents/notes/implemented/architecture/2026-10-02-slide-pyramid-engine.md)。引擎由合成金字塔的 React 18/19 浏览器合同验证；医生的病理会诊页面和管理员的切片复核预览都通过同一个阅片外壳使用它。
 
 ## 状态所有权
 

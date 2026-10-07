@@ -15,7 +15,7 @@ DSH Web 原生入口的搭建与启动散落在部署指南约二十条手工命
 - 幂等探测而非时间戳：宿主与 Profile 依赖以"模板内容一致且依赖目录存在"判定；React Surface 与 AG-UI 以 `build-stamps.json` 记录已构建 commit，commit 变化才重建；ClinMesh DSH artifact 的输入是整个仓库，每次启动重建，不静默使用旧产物。
 - Profile 三个 `link:` 插件每次启动 `readlink` 重验，指向漂移即重建且不触发 Profile 重装——目录迁移坑从人工修复变为自动治愈。
 - `CLINMESH_DSH_BRIDGE_SECRET` 缺失时生成 32 bytes 随机值追加 `.env`，已有值不覆盖，此后脚本与手工直启同源；trusted origins 自动注入 `127.0.0.1:51868/51888/3080` 并跟随 `CLINMESH_PORT`。
-- fail-fast：Bun `1.4.x`、submodule 与 `.env` 是前置检查，缺失时不启动任何进程；网络步骤（npm/dshvm/bun 安装、clone）失败自动重试一次，仍失败抛出带修复指引的 `DevDshEnsureError`；运行期进程不自动重启，避免掩盖真实崩溃。
+- fail-fast：与 CI 一致的 Bun `1.4.2`、submodule 与 `.env` 是前置检查，缺失时不启动任何进程；网络步骤（npm/dshvm/bun 安装、clone）失败自动重试一次，仍失败抛出带修复指引的 `DevDshEnsureError`；运行期进程不自动重启，避免掩盖真实崩溃。
 - Server 以 `pnpm --filter @clinmesh/server dev` 直启绕过 Turborepo，`CLINMESH_AI_*` 直接生效；数据源就绪复用 `dev-lan.ts` 的 `ensureDataSourcesReady`，口径与 [dev:lan 数据源就绪门控](2026-09-15-dev-lan-data-source-gating.md) 一致。直启前由 `createDshDevelopmentPlan` 把 `CLINMESH_DATABASE_PATH`、`CLINMESH_REFERENCE_DATABASE_PATH` 与 `CLINMESH_WEB_ROOT` 按 `.env` 所在目录绝对化：Server 自身对 `.env` 相对路径执行同一规则，但进程环境里的原始相对值会覆盖该结果并按进程工作目录（apps/server）解析——Turborepo 的环境过滤恰好滤掉这些变量，因此该陷阱只暴露给直启路径。
 - dshvm 的 `use` 每次启动无条件执行：`which <version>` 只回答槽位位置，不证明 active 选择，而 `exec web` 依赖 active 状态；`use` 幂等且廉价，执行后再用 `which` 断言槽位正确。
 - 启动前探测 `3080` 端口，被占用即失败：DSH 遇端口占用会静默改用其他端口，而 trusted origins 与登录 CSRF 校验绑定 `3080`，静默漂移会产生难以定位的登录失败。
