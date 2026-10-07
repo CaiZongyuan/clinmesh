@@ -151,6 +151,11 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                   )}
                 </InputGroupAddon>
               </InputGroup>
+              {unanswered && !action.pending ? (
+                <p className="text-muted-foreground text-sm">
+                  {locale === 'zh-CN' ? '重试将使用当前 ClinMesh 模型设置。' : 'Retry uses the current ClinMesh model settings.'}
+                </p>
+              ) : null}
             </Field>
             {action.error === null ? null : (
               <Alert variant="destructive">

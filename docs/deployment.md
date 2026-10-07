@@ -10,7 +10,7 @@
 | --- | --- |
 | 基础运行（步骤 1–2、5） | Node.js `^22.19.0` 或 `>=24.0.0`、pnpm `11.17.0`、Git |
 | 完整参考目录（步骤 3） | 同上，加可访问 cn-health Registry 的网络 |
-| 患者档案与就诊闭环（步骤 4） | 同上，加一个 OpenAI-compatible Provider 及 API key |
+| 患者档案与就诊闭环（步骤 4） | 同上，加一个 OpenAI-compatible Provider 及 API key，或 DSH 已配置的 Provider |
 | Synthea 患者生成（步骤 6） | x86-64 主机上的 Docker Engine 与 `docker compose` |
 | 全量检查与生产构建 | Bun `1.4.2`（DSH React Surface artifact 构建使用 `bun`） |
 | DSH Web 原生入口 | Bun `1.4.2` 与网络，其余由 `pnpm dsh:setup` 按 lock 自动安装；Windows 同时需要系统自带的 Windows PowerShell 5.1 |
@@ -57,7 +57,11 @@ pnpm reference:sync
 
 ## 4. 配置 AI Provider（患者档案必需）
 
-Synthea 病历压缩为 Patient Persona、Investigation 与 Catalog Enrichment 使用 OpenAI-compatible Provider。原有四个基础变量必须同时配置；档案继续复用 `CLINMESH_AI_BRIEF_MODEL`，自由问诊另配置 `CLINMESH_AI_CONSULTATION_MODEL`：
+Server 在启动时按 `CLINMESH_AI_SOURCE` 选择模型来源，默认 `openai`。`pnpm dev:dsh` 自动设置为 `dsh`，复用宿主 Provider 与凭据，无需重复填写下面的地址、密钥或模型变量。在 DSH“设置 → 通用 → ClinMesh 模型”中选择具体 Provider／模型，或保留“使用 DSH 默认模型”；右侧会话的模型选择独立。
+
+DSH 模型任务报 `AI_AUTH_FAILED` 时，在宿主模型设置中检查所选 Provider 的凭据与该模型的访问权限；模型出现在候选目录中不代表上游允许调用。需要改用其他可用模型时，保存新的 ClinMesh 模型选择：问诊点击“重试患者回答”，失败检验点击重新生成；患者档案或目录补全发起新生成任务。已在执行或排队的任务继续使用其绑定模型，已有结果保持不变。
+
+独立 Web 默认使用 OpenAI-compatible Provider。四个基础变量必须同时配置；档案复用 `CLINMESH_AI_BRIEF_MODEL`，自由问诊另配置 `CLINMESH_AI_CONSULTATION_MODEL`：
 
 ```dotenv
 CLINMESH_AI_BASE_URL=https://provider.example/v1
@@ -285,7 +289,7 @@ pnpm --dir "$DSH_PROFILE" install --frozen-lockfile
 
 非开发模式的 DSH 会在插件激活时把 client 脚本读入内存。重新构建 `@clinmesh/dsh-web` 后，须重新加载插件或重启对应 DSH 宿主，再刷新页面并打开 ClinMesh；仅刷新浏览器不能替换宿主缓存。验收应核对宿主实际返回的脚本包含当前构建内容，并确认 `/react-surface-agent/lease` 成功、真实模型请求包含 ClinMesh 工具且能完成一次调用。页面已登录或 Page Context 签发成功不足以证明工具注册成功；原生 Session 的工作目录无需与 ClinMesh 源码目录一致。
 
-手工路径在 `.env` 中为 Hono 配置至少 32 bytes 的 `CLINMESH_DSH_BRIDGE_SECRET`，并把实际 DSH Web origin 加入 `CLINMESH_TRUSTED_ORIGINS`（DSH 默认开发端口 `3080`；使用 `--port` 时必须同步替换该 origin，否则登录和 mutation 的 CSRF 校验会拒绝）：
+手工路径在 `.env` 中设置 `CLINMESH_AI_SOURCE=dsh`、`CLINMESH_DSH_MODEL_ORIGIN=http://127.0.0.1:3080`，为 Server 配置至少 32 bytes 的 `CLINMESH_DSH_BRIDGE_SECRET`，并把实际 DSH Web origin 加入 `CLINMESH_TRUSTED_ORIGINS`（DSH 默认开发端口 `3080`；使用 `--port` 时必须同步替换该 origin，否则登录和 mutation 的 CSRF 校验会拒绝）：
 
 ```sh
 export CLINMESH_TRUSTED_ORIGINS=http://127.0.0.1:51868,http://127.0.0.1:51888,http://127.0.0.1:3080
@@ -299,6 +303,17 @@ set -a
 . ./.env
 set +a
 node "$DSHVM_CLI" exec web --port 3080 --no-open
+```
+
+模型桥接地址只接受 HTTP loopback origin；DSH 使用非默认端口时同步修改 `CLINMESH_DSH_MODEL_ORIGIN`。同一 Server 的全部入口共用启动时选定的模型来源，打开或关闭 Surface 不切换来源。宿主设置权限允许的用户可以修改 ClinMesh 模型，修改对该 Profile 的新任务生效，刷新和重启后仍保留；没有候选时先在 DSH 模型设置中配置 Provider。
+
+切换模型后的任务绑定与人工重试规则见[系统架构](architecture.md#103-场景定义)。宿主不可达、原 Provider 删除或凭据失效时任务可控失败，可修复原 Provider，或按[AI Provider 配置](#4-配置-ai-provider患者档案必需)中的步骤使用新模型恢复。切换 Server 来源前遗留的 OpenAI 任务不会被重映射到 DSH，需恢复原来源处理或显式发起新生成尝试。
+
+真实宿主模型 smoke 使用隔离 Profile 和合成 Provider，不调用付费模型；先构建 DSH adapter，再运行。默认使用本地 lock 对应的 runtime 槽位，可通过 `CLINMESH_DSH_SMOKE_RUNTIME` 指定槽位绝对目录：
+
+```sh
+pnpm --filter @clinmesh/dsh-web build
+pnpm exec tsx scripts/smoke-dsh-models.ts
 ```
 
 无桌面交互的浏览器验收可在隔离 Profile 的 `cordis.patch.yml` 使用官方目录选择器替换点，避免工作区选择触发不可操作的 Windows 原生对话框：

@@ -19,6 +19,7 @@ const providerResponseSchema = z.object({
 }).passthrough()
 
 export type ChatCompletionsErrorCode =
+  | 'AI_AUTH_FAILED'
   | 'AI_REQUEST_FAILED'
   | 'AI_REQUEST_TOO_LARGE'
   | 'AI_RESPONSE_INVALID'
@@ -62,6 +63,7 @@ export interface JsonChatCompletionResult {
 }
 
 export interface JsonChatCompletionsProvider {
+  resolveModel?(model: string, signal?: AbortSignal): Promise<string>
   completeJson(input: JsonChatCompletionInput): Promise<JsonChatCompletionResult>
 }
 

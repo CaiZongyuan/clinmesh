@@ -20,6 +20,7 @@ import {
 } from '../infrastructure/ai/openai-chat-completions.ts'
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
+import type { GenerationModelBinding } from './generation-model-binding.ts'
 
 const promptVersion = 'patient-persona-v2'
 const systemPrompt = [
@@ -234,6 +235,7 @@ export class PatientPersonaService {
   readonly #cases: SyntheticCaseRepository
   readonly #commands: CommandExecutor
   readonly #model: string | undefined
+  readonly #models: GenerationModelBinding | undefined
   readonly #profiles: SyntheticPatientProfileRepository
   readonly #provider: JsonChatCompletionsProvider | undefined
 
@@ -242,6 +244,7 @@ export class PatientPersonaService {
     cases: SyntheticCaseRepository
     commands: CommandExecutor
     model?: string
+    models?: GenerationModelBinding
     profiles: SyntheticPatientProfileRepository
     provider?: JsonChatCompletionsProvider
   }) {
@@ -249,17 +252,25 @@ export class PatientPersonaService {
     this.#cases = input.cases
     this.#commands = input.commands
     this.#model = input.model
+    this.#models = input.models
     this.#profiles = input.profiles
     this.#provider = input.provider
   }
 
-  enqueue(input: { caseId: string; context: ActorContext; idempotencyKey: string }) {
+  async enqueue(input: { caseId: string; context: ActorContext; idempotencyKey: string }) {
     this.#assertAdministrator(input.context)
     if (this.#provider === undefined || this.#model === undefined) {
       throw new PatientPersonaError('PROVIDER_NOT_AVAILABLE', 'Patient Persona generation is not configured')
     }
     if (this.#cases.get(input.context.workspaceId, input.caseId) === undefined) {
       throw new PatientPersonaError('CASE_NOT_FOUND', 'The Synthetic Case was not found')
+    }
+    let model = this.#model
+    try {
+      model = await this.#models?.bind(input.context.workspaceId,
+        `persona:${JSON.stringify([input.context.actorId, input.idempotencyKey])}`, model) ?? model
+    } catch {
+      throw new PatientPersonaError('PROVIDER_NOT_AVAILABLE', 'The selected patient model is unavailable')
     }
     const now = new Date().toISOString()
     const job = patientPersonaJobSchema.parse({
@@ -284,7 +295,7 @@ export class PatientPersonaService {
       input: { caseId: input.caseId },
       operation: 'patient-persona-job.create',
     }, () => {
-      this.#briefs.create(job, input.context, this.#model!)
+      this.#briefs.create(job, input.context, model)
       return {
         data: job,
         effects: [{ kind: 'created' as const, reference: `PatientPersonaJob/${job.jobId}`, versionId: '1' }],

@@ -24,6 +24,14 @@ describe('personaJobFailure', () => {
       .toContain('校验')
   })
 
+  it('directs Provider access failures to credential and permission checks', () => {
+    const error = { code: 'AI_AUTH_FAILED', message: 'The selected DSH Provider rejected authentication or access' }
+    expect(personaJobFailure(error, 'zh-CN')).toMatchObject({
+      summary: 'AI 模型认证或访问权限失败', guidance: '请检查所选 Provider 的密钥与访问权限，然后重试。',
+    })
+    expect(personaJobFailure(error, 'en-US').guidance).toContain('credentials and access permissions')
+  })
+
   it('falls back to the raw message and generic guidance for unknown codes', () => {
     const failure = personaJobFailure({ code: 'SOMETHING_ELSE', message: 'Raw provider complaint' }, 'zh-CN')
     expect(failure.summary).toBe('Raw provider complaint')

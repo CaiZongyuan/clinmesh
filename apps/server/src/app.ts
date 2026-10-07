@@ -674,7 +674,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
         const request = publishLaboratoryServicesRequestSchema.parse(await context.req.json())
-        return context.json(publisher.enqueue({
+        return context.json(await publisher.enqueue({
           context: await actor(context),
           entries: request.input.entries,
           idempotencyKey: requestIdempotencyKey(context),
@@ -1008,7 +1008,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         const idempotencyKey = z.string().min(8).max(128).parse(
           context.req.header('idempotency-key'),
         )
-        return context.json(patientPersona.enqueue({
+        return context.json(await patientPersona.enqueue({
           caseId: context.req.param('caseId'),
           context: session.actor,
           idempotencyKey,

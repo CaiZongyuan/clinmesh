@@ -153,6 +153,9 @@ export function dshvmEnvironmentFor(paths: Pick<DshSandboxPaths, 'versionsDir' |
 export function createDshDevelopmentPlan(input: DshDevelopmentPlanInput): DshDevelopmentPlan {
   const serverEnvironment: Record<string, string> = {
     CLINMESH_TRUSTED_ORIGINS: input.trustedOrigins,
+    CLINMESH_AI_SOURCE: 'dsh',
+    CLINMESH_DSH_MODEL_ORIGIN: `http://127.0.0.1:${dshWebPort}`,
+    CLINMESH_DSH_BRIDGE_SECRET: input.bridgeSecret,
   }
   for (const name of serverResolvedEnvironmentKeys) {
     const value = input.environment[name]

@@ -118,6 +118,13 @@ export function getWorkspaceErrorMessage(
   if (error.code === 'NETWORK_ERROR') return messages.networkErrorDescription
   if (error.code === 'REQUEST_TIMEOUT') return messages.requestTimeoutDescription
   if (error.code === 'UNEXPECTED_RESPONSE') return messages.unexpectedResponseDescription
+  if (error.code === 'AI_AUTH_FAILED') return messages.aiAuthenticationFailedDescription
+  if (error.code === 'AI_REQUEST_FAILED') return messages.aiRequestFailedDescription
+  if (error.code === 'AI_TIMEOUT') return messages.aiTimeoutDescription
+  if (error.code === 'AI_RESPONSE_INVALID') return messages.aiResponseInvalidDescription
+  if (error.code === 'AI_REQUEST_TOO_LARGE' || error.code === 'AI_RESPONSE_TOO_LARGE') {
+    return messages.aiSizeLimitDescription
+  }
   if (error.code === 'LABORATORY_GENERATION_UNSUPPORTED') {
     return messages.laboratoryGenerationUnsupportedDescription
   }

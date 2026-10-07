@@ -10,9 +10,10 @@ import {
   patientPersonaRevisionListSchema,
   type PatientPersonaContent,
 } from '@clinmesh/contracts/scenario'
-import type {
-  JsonChatCompletionInput,
-  JsonChatCompletionsProvider,
+import {
+  ChatCompletionsError,
+  type JsonChatCompletionInput,
+  type JsonChatCompletionsProvider,
 } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -298,6 +299,27 @@ describe('Consultation free dialogue HTTP contract', () => {
     )
     expect(retry.status).toBe(503)
   })
+
+  it.each(['AI_AUTH_FAILED', 'AI_REQUEST_FAILED', 'AI_TIMEOUT', 'AI_RESPONSE_INVALID'] as const)(
+    'exposes a safe %s classification and retains the unanswered doctor turn', async code => {
+      const runtime = await createRuntimeWithProvider(new ScriptedDialogueProvider([
+        persona, new ChatCompletionsError(code, 'private-provider-credential-and-prompt'),
+      ]))
+      const started = await startConsultationCase(runtime)
+      const cookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
+      const response = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
+        method: 'POST', headers: { cookie, origin, 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+        body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion, [`Task/${started.doctorTaskId}`]: '1' },
+          input: { expectedConsultationVersion: 2, message: '多久了？' } }),
+      })
+      expect(response.status).toBe(503)
+      const body = await response.text()
+      expect(JSON.parse(body)).toMatchObject({ error: { code } })
+      expect(body).not.toContain('private-provider')
+      const detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(`/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } })).json())
+      expect(detail.consultation?.turns.at(-1)).toMatchObject({ speaker: 'doctor', messageText: '多久了？' })
+    },
+  )
 
   it('retries a failed reply once and replays the same completed response', async () => {
     const runtime = await createRuntimeWithProvider(new ScriptedDialogueProvider([

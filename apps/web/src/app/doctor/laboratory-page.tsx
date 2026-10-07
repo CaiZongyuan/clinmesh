@@ -601,6 +601,10 @@ function generationErrorMessage(code: string, locale: WorkspaceLocale): string {
       'zh-CN': '无法连接结果生成服务，请稍后重试。',
       'en-US': 'The result generation service request failed. Please retry later.',
     },
+    AI_AUTH_FAILED: {
+      'zh-CN': '模型认证或访问权限失败，请检查所选 Provider 的密钥与访问权限后重试。',
+      'en-US': 'Model authentication or access failed. Check the selected Provider credentials and access permissions, then retry.',
+    },
   }
   return messages[code]?.[locale] ?? (locale === 'zh-CN'
     ? '结果生成失败，可重试。'

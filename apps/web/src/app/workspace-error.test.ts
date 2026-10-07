@@ -14,6 +14,19 @@ function signedConflict(owner: 'clinical-document' | 'prescription') {
 }
 
 describe('workspace conflict messages', () => {
+  it.each(['zh-CN', 'en-US'] as const)('explains model failures in %s without exposing Provider details', locale => {
+    const messages = getWorkspaceMessages(locale)
+    for (const [code, expected] of [
+      ['AI_AUTH_FAILED', messages.aiAuthenticationFailedDescription],
+      ['AI_REQUEST_FAILED', messages.aiRequestFailedDescription],
+      ['AI_TIMEOUT', messages.aiTimeoutDescription],
+      ['AI_RESPONSE_INVALID', messages.aiResponseInvalidDescription],
+      ['AI_REQUEST_TOO_LARGE', messages.aiSizeLimitDescription],
+      ['AI_RESPONSE_TOO_LARGE', messages.aiSizeLimitDescription],
+    ]) {
+      expect(getWorkspaceErrorMessage(new ApiClientError(503, code!, 'private-provider-credential'), messages)).toBe(expected)
+    }
+  })
   it('does not describe every workflow precondition failure as a version change', () => {
     const error = new ApiClientError(409, 'WORKFLOW_CONFLICT', 'The outpatient case has no clinical presentation')
     expect(getWorkspaceErrorMessage(error, getWorkspaceMessages('zh-CN')))

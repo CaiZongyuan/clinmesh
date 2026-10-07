@@ -1,3 +1,4 @@
+import type { GenerationModelBinding } from './generation-model-binding.ts'
 import { createHash } from 'node:crypto'
 import {
   investigationCodeableValueSchema,
@@ -362,6 +363,7 @@ export class InvestigationService {
   readonly #cases: SyntheticCaseRepository
   readonly #database: ClinMeshDatabase
   readonly #model: string | undefined
+  readonly #models: GenerationModelBinding | undefined
   readonly #profiles: SyntheticPatientProfileRepository
   readonly #provider: JsonChatCompletionsProvider | undefined
   readonly #results: InvestigationResultRepository
@@ -370,6 +372,7 @@ export class InvestigationService {
     cases: SyntheticCaseRepository
     database: ClinMeshDatabase
     model?: string
+    models?: GenerationModelBinding
     profiles: SyntheticPatientProfileRepository
     provider?: JsonChatCompletionsProvider
     results: InvestigationResultRepository
@@ -377,6 +380,7 @@ export class InvestigationService {
     this.#cases = input.cases
     this.#database = input.database
     this.#model = input.model
+    this.#models = input.models
     this.#profiles = input.profiles
     this.#provider = input.provider
     this.#results = input.results
@@ -423,7 +427,10 @@ export class InvestigationService {
     epoch: string,
     requestId: string,
     signal?: AbortSignal,
+    generationAttempt?: number,
   ): Promise<InvestigationResultSnapshot | undefined> {
+    const modelTaskId = `investigation:${epoch}:${requestId}`
+      + (generationAttempt === undefined ? '' : `:retry:${generationAttempt}`)
     const row = requestRowSchema.optional().parse(this.#database.driver.prepare(`
       SELECT request.authored_at, request.catalog_item_id, request.reference_json,
         request.result_snapshot_id, request.service_snapshot_json,
@@ -463,6 +470,7 @@ export class InvestigationService {
         epoch,
         materializedRow,
         laboratoryServiceSnapshotSchema.parse(JSON.parse(materializedRow.service_snapshot_json)),
+        modelTaskId,
         signal,
       )
     }
@@ -534,7 +542,7 @@ export class InvestigationService {
     const inputHash = canonicalJsonHash(payload)
     const completion = await this.#provider.completeJson({
       jsonSchema: z.toJSONSchema(agentOutputSchema) as Record<string, unknown>,
-      model: this.#model,
+      model: await this.#models?.bind(workspaceId, modelTaskId, this.#model, signal) ?? this.#model,
       schemaName: 'investigation_result',
       ...(signal === undefined ? {} : { signal }),
       systemPrompt,
@@ -578,6 +586,7 @@ export class InvestigationService {
     epoch: string,
     row: RequestRow,
     service: LaboratoryServiceSnapshot,
+    modelTaskId: string,
     signal?: AbortSignal,
   ): Promise<InvestigationResultSnapshot> {
     const syntheticCase = this.#cases.get(workspaceId, row.synthetic_case_id)
@@ -728,7 +737,7 @@ export class InvestigationService {
     if (existing !== undefined) return existing
     const completion = await this.#provider.completeJson({
       jsonSchema: z.toJSONSchema(serviceAgentOutputSchema) as Record<string, unknown>,
-      model: this.#model,
+      model: await this.#models?.bind(workspaceId, modelTaskId, this.#model, signal) ?? this.#model,
       schemaName: 'investigation_service_result',
       ...(signal === undefined ? {} : { signal }),
       systemPrompt: serviceSystemPrompt,

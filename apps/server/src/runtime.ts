@@ -51,6 +51,9 @@ import type { ScenarioGenerationProvider } from './application/scenario-data/pro
 import type { SqlitePerformanceObserver } from './infrastructure/sqlite/performance-observer.ts'
 import { AgentIntegrationService } from './application/agent-integration-service.ts'
 import { reportRuntimeError } from './runtime-error-reporting.ts'
+import { GenerationModelBinding } from './application/generation-model-binding.ts'
+import { DshModelProvider } from './infrastructure/ai/dsh-model-provider.ts'
+import { dshDefaultModel } from '@clinmesh/contracts/model-bridge'
 import { ImagingPreparationService } from './application/imaging-preparation-service.ts'
 import { ImagingStudyReader } from './application/imaging-study-reader.ts'
 import { PathologyPreparationService } from './application/pathology-preparation-service.ts'
@@ -114,6 +117,7 @@ function pathologyActorContext(event: {
 }
 
 export interface CreateClinMeshRuntimeOptions {
+  dshModelBridge?: { origin: string; secret: string; timeoutMs: number; maxResponseBytes: number }
   activeReferenceReleaseId?: string
   ai?: {
     apiKey: string
@@ -205,6 +209,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const investigationResults = new InvestigationResultRepository(database)
     const laboratoryServicePublications = new LaboratoryServicePublicationRepository(database)
     const chatCompletions = options.chatCompletionsProvider
+      ?? (options.dshModelBridge === undefined ? undefined : new DshModelProvider(options.dshModelBridge))
       ?? (options.ai === undefined
         ? undefined
         : new OpenAIChatCompletionsClient({
@@ -213,12 +218,15 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             maxResponseBytes: options.ai.maxResponseBytes,
             timeoutMs: options.ai.timeoutMs,
           }))
-    const patientPersonaModel = options.patientPersonaModel ?? options.ai?.briefModel
-    const consultationModel = options.consultationModel ?? options.ai?.consultationModel
-    const investigationModel = options.investigationModel ?? options.ai?.investigationModel
-    const catalogEnrichmentModel = options.catalogEnrichmentModel
+    const hostModel = options.dshModelBridge === undefined ? undefined : dshDefaultModel
+    const models = new GenerationModelBinding(database, chatCompletions)
+    const patientPersonaModel = hostModel ?? options.patientPersonaModel ?? options.ai?.briefModel
+    const consultationModel = hostModel ?? options.consultationModel ?? options.ai?.consultationModel
+    const investigationModel = hostModel ?? options.investigationModel ?? options.ai?.investigationModel
+    const catalogEnrichmentModel = hostModel ?? options.catalogEnrichmentModel
       ?? options.ai?.catalogEnrichmentModel
     const investigation = new InvestigationService({
+      models,
       cases: syntheticCases,
       database,
       ...(investigationModel === undefined ? {} : { model: investigationModel }),
@@ -233,6 +241,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       tokenSecret: options.cursorSecret,
     })
     const laboratoryServicePublisher = new LaboratoryServicePublisher({
+      models,
       commands,
       database,
       ...(catalogEnrichmentModel === undefined ? {} : { model: catalogEnrichmentModel }),
@@ -266,6 +275,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     patientPersonas.requeueInterrupted(new Date().toISOString())
     laboratoryServicePublications.requeueInterrupted(new Date().toISOString())
     const patientPersona = new PatientPersonaService({
+      models,
       briefs: patientPersonas,
       cases: syntheticCases,
       commands,
@@ -337,6 +347,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       workflow,
     })
     const consultationDialogue = new ConsultationDialogueService({
+      models,
       cases: syntheticCases,
       commands,
       fhir,
@@ -377,6 +388,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       serviceRequestId: z.string().min(1),
     })
     const laboratoryRequestPayloadSchema = z.object({
+      generationAttempt: z.number().int().positive().optional(),
       requestId: z.string().min(1),
     })
     const pharmacyPayloadSchema = z.object({
@@ -413,6 +425,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
               event.epoch,
               payload.requestId,
               AbortSignal.timeout(aiTimeoutMs),
+              payload.generationAttempt,
             )
             workflow.reportLaboratoryRequest({
               context,

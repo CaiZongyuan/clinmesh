@@ -18,6 +18,7 @@ import {
 import { startSyntheticCaseResultSchema, syntheticCaseInstanceSchema } from '@clinmesh/contracts/scenario'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 import { afterEach, describe, expect, it } from 'vitest'
+import { encodeModelRoute } from '@clinmesh/contracts/model-bridge'
 import type {
   JsonChatCompletionInput,
   JsonChatCompletionsProvider,
@@ -29,6 +30,7 @@ import { referenceDatabaseIsReady } from '../src/reference-readiness.ts'
 
 class LaboratoryEnrichmentProvider implements JsonChatCompletionsProvider {
   calls: JsonChatCompletionInput[] = []
+  resolveModel?: (model: string) => Promise<string>
   codeable = false
   misclassifyQuantity = false
 
@@ -441,6 +443,7 @@ describe('Laboratory Service Publisher HTTP contract', () => {
           }),
       patientPersonaModel: 'brief-fixture',
       chatCompletionsProvider: {
+        ...(provider?.resolveModel === undefined ? {} : { resolveModel: async (model: string) => model === 'brief-fixture' ? model : provider.resolveModel!(model) }),
         completeJson: async input => {
           if (input.model !== 'brief-fixture' && provider !== undefined) return provider.completeJson(input)
           return { model: 'brief-fixture', content: JSON.stringify({
@@ -1350,6 +1353,26 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
         AND json_extract(config_json, '$.laboratoryService.referenceConcept.system') = 'http://loinc.org'
     `).get()).toEqual({ count: 2, version: 1 })
+  })
+
+  it('pins LOINC enrichment when queued and skips model resolution for deterministic publication', async () => {
+    const provider = new LaboratoryEnrichmentProvider()
+    const routeA = encodeModelRoute({ provider: 'synthetic-a', model: 'same-model' })
+    const routeB = encodeModelRoute({ provider: 'synthetic-b', model: 'same-model' })
+    let route = routeA
+    let resolutions = 0
+    provider.resolveModel = async () => { resolutions++; return route }
+    const { administratorCookie, runtime } = await createRuntime(provider)
+    await publishLaboratoryCnPanel(runtime, administratorCookie)
+    expect(resolutions).toBe(0)
+    expect(provider.calls).toHaveLength(0)
+    expect((await publishCbc(runtime, administratorCookie, 0)).response.status).toBe(200)
+    route = routeB
+    await runtime.dispatchLaboratoryServicePublicationJobs()
+    expect(provider.calls[0]?.model).toBe(routeA)
+    expect((await publishCbc(runtime, administratorCookie, 1)).response.status).toBe(200)
+    await runtime.dispatchLaboratoryServicePublicationJobs()
+    expect(provider.calls[1]?.model).toBe(routeB)
   })
 
   it('persists a failed publication state when Catalog Enrichment is unavailable', async () => {

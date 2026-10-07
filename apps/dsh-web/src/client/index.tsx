@@ -15,6 +15,7 @@ import { subscribeHostTheme, type ClientSessionBindingPort, type ClientThemePort
 import { createWorkspaceNavigation, registerWorkspaceNavigation } from './workspace-navigation.tsx'
 import type { WebSurfaceDisplay, WebSurfaceNavigation } from '@clinmesh/web/runtime'
 import { createFontSizePreference, registerFontSizeSettings, type FontSizePreferenceStore } from './font-size-settings.tsx'
+import { registerModelSettings } from './model-settings.tsx'
 import type { FontSizePreference } from '../../../web/src/app/preferences.ts'
 
 function ClinMeshSurface({
@@ -157,12 +158,13 @@ export function createDefinition(
   })
 }
 
-export const inject = ['reactSurfaces', 'uiSession', 'uiWorkspace', 'sessions', 'workspaces', 'layout', 'theme', 'slots', 'locale']
+export const inject = ['reactSurfaces', 'uiSession', 'uiWorkspace', 'sessions', 'workspaces', 'layout', 'theme', 'slots', 'locale', 'remote', 'remote.settings', 'remote.session']
 
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => registerProfileBrand(ctx), 'clinmesh-dsh-web: register Profile identity')
   const navigation = createWorkspaceNavigation()
   const fontSize = createFontSizePreference()
+  ctx.effect(() => registerModelSettings(ctx), 'clinmesh-dsh-web: register model setting')
   ctx.effect(() => registerFontSizeSettings(ctx, fontSize), 'clinmesh-dsh-web: register font size setting')
   ctx.effect(() => registerWorkspaceNavigation(ctx, navigation), 'clinmesh-dsh-web: register hospital navigation')
   const definition = createDefinition(ctx, navigation, fontSize)
