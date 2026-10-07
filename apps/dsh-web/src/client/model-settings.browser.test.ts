@@ -40,6 +40,24 @@ for (const version of ['18', '19']) {
       await expect(page.getByRole('status')).toContainText(language === 'zh-CN' ? '已保存' : 'Saved')
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     }
+    for (const language of ['zh-CN', 'en-US']) for (const source of ['settings', 'catalog']) {
+      await page.setContent(`<html lang="${language}" data-refresh-failure="${source}"><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
+      const select = page.getByLabel(language === 'zh-CN' ? 'ClinMesh 模型' : 'ClinMesh model')
+      await expect(select).toBeEnabled()
+      const route = encodeModelRoute({ provider: 'b', model: 'same' })
+      await select.selectOption(route)
+      await expect(page.locator('html')).toHaveAttribute('data-saved-model', route)
+      await expect(select).toHaveValue(route)
+      await expect(page.getByRole('status')).toContainText(language === 'zh-CN' ? '已保存' : 'Saved')
+      await expect(page.getByRole('alert')).toHaveCount(0)
+      await expect(select).toBeEnabled()
+      await select.selectOption('default')
+      await expect(page.locator('html')).toHaveAttribute('data-saved-model', 'default')
+      await expect(page.locator('html')).toHaveAttribute('data-saved-revision', '3')
+      await expect(select).toHaveValue('default')
+      await expect(page.getByRole('status')).toContainText(language === 'zh-CN' ? '已保存' : 'Saved')
+      await expect(page.getByRole('alert')).toHaveCount(0)
+    }
     expect(errors).toEqual([])
   })
 }

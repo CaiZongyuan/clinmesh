@@ -18,6 +18,11 @@ const settingsSchema = z.object({
   writable: z.boolean(),
   namespaces: z.array(z.object({ ns: z.string(), revision: z.number().int(), value: z.unknown() })),
 })
+const modelSettingsNamespaceSchema = z.object({
+  ns: z.literal('clinmesh-dsh-web'),
+  revision: z.number().int(),
+  value: z.object({ generationModel: z.string() }),
+})
 const catalogSchema = z.object({
   default: modelRouteSchema,
   groups: z.array(z.object({ id: z.string(), name: z.string(), models: z.array(z.object({ id: z.string(), name: z.string() })) })),
@@ -42,13 +47,21 @@ export function ModelSetting({ remote, language }: { remote: ModelSettingsRemote
     const settings = settingsSchema.parse(hostValue(rawSettings))
     const namespace = settings.namespaces.find(item => item.ns === 'clinmesh-dsh-web')
     if (namespace === undefined) throw new Error('ClinMesh settings are unavailable')
-    return { writable: settings.writable, revision: namespace.revision,
-      selected: z.object({ generationModel: z.string() }).parse(namespace.value).generationModel,
+    const stored = modelSettingsNamespaceSchema.parse(namespace)
+    return { writable: settings.writable, revision: stored.revision,
+      selected: stored.value.generationModel,
       catalog: catalogSchema.parse(hostValue(rawCatalog)) }
   } })
   const save = useMutation({ mutationFn: async (generationModel: string) => {
     if (state.data === undefined) throw new Error('Load settings first')
-    hostValue(await remote.settings.update('clinmesh-dsh-web', { generationModel }, state.data.revision))
+    const saved = modelSettingsNamespaceSchema.parse(hostValue(
+      await remote.settings.update('clinmesh-dsh-web', { generationModel }, state.data.revision),
+    ))
+    await client.cancelQueries({ queryKey })
+    client.setQueryData<NonNullable<typeof state.data>>(queryKey, previous =>
+      previous === undefined || previous.revision > saved.revision ? previous
+        : { ...previous, revision: saved.revision, selected: saved.value.generationModel },
+    )
     await client.invalidateQueries({ queryKey })
   } })
   const models = state.data?.catalog.groups.flatMap(group => group.models.map(model => ({
@@ -84,7 +97,7 @@ export function ModelSetting({ remote, language }: { remote: ModelSettingsRemote
         {state.data && models.length === 0 ? chinese ? '暂无可用模型，请先在 DSH 模型设置中配置 Provider。' : 'No models available. Configure a provider in DSH model settings.' : null}
         {state.data && !state.data.writable ? chinese ? '当前配置只读。' : 'This profile is read-only.' : null}
       </div>
-      {state.isError || save.isError || missing || (state.data?.catalog.failures.length ?? 0) > 0 ? <p role="alert" style={{ fontSize: 12 }}>
+      {(state.isError && state.data === undefined) || save.isError || missing || (state.data?.catalog.failures.length ?? 0) > 0 ? <p role="alert" style={{ fontSize: 12 }}>
         {chinese ? '模型或设置暂不可用，请刷新并检查 DSH 模型配置后重试。' : 'Models or settings are unavailable. Refresh and check DSH model settings before retrying.'}
       </p> : null}
       <button type="button" disabled={state.isFetching || save.isPending} onClick={() => { save.reset(); void state.refetch() }}
