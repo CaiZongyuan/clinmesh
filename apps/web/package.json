@@ -27,6 +27,7 @@
     "@dicebear/lorelei": "9.4.2",
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
+    "ai-motion": "0.4.8",
     "lucide-react": "catalog:",
     "openseadragon": "6.1.1",
     "react": "catalog:",

@@ -289,7 +289,7 @@ function createFakeDependencies(
       failureCount += 1
       if (failureCount <= failures.times) throw new Error('network down')
     }
-    if (command === 'bun' && args[0] === '--version') return `${options.bunVersion ?? '1.4.0'}\n`
+    if (command === 'bun' && args[0] === '--version') return `${options.bunVersion ?? '1.4.2'}\n`
     if (command === 'git' && args[0] === 'rev-parse' && cwd.endsWith(join('vendor', 'dsh-react-surface'))) {
       return `${surfaceCommitRef.value}\n`
     }
@@ -629,10 +629,10 @@ describe('ensureDshRuntimeReady', () => {
     expect(fake.commands.some(({ args }) => args.includes('isolate'))).toBe(false)
   })
 
-  it('fails before any provisioning when Bun 1.4.x is unavailable', async () => {
-    const fake = createFakeDependencies({ bunVersion: '1.3.0' })
+  it.each(['1.3.0', '1.4.0', '1.4.1', '1.4.3'])('rejects Bun %s before any provisioning', async bunVersion => {
+    const fake = createFakeDependencies({ bunVersion })
 
-    await expect(ensureDshRuntimeReady(fake.dependencies)).rejects.toThrow('Bun 1.4.x')
+    await expect(ensureDshRuntimeReady(fake.dependencies)).rejects.toThrow('Bun 1.4.2')
     expect(fake.commands.filter(({ args }) => args.includes('install'))).toEqual([])
   })
 })

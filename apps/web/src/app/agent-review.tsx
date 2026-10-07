@@ -191,7 +191,6 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
         if (!open) void reject()
       }}>
         <AlertDialogContent data-agent-review="">
-          <div aria-hidden="true" className="clinmesh-agent-target clinmesh-agent-review-glow" data-phase={confirming ? 'submitting' : 'awaiting-review'} />
           <AlertDialogHeader>
             <AlertDialogTitle>{reviewText(pending?.title, locale)}</AlertDialogTitle>
             <AlertDialogDescription>{reviewText(pending?.description, locale)}</AlertDialogDescription>

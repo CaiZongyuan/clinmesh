@@ -3151,7 +3151,7 @@ function CaseDetail({
           value={activeSection}
         >
           <div className="shrink-0 overflow-x-auto overflow-y-hidden border-b px-2">
-            <TabsList className="h-11 min-w-max" variant="line">
+            <TabsList className="h-9 min-w-max" variant="line">
               {detail.consultation === undefined ? null : (
                 <TabsTrigger data-agent-selection="consultation" id={doctorCaseSectionTabElementIds.consultation} value="consultation"><MessagesSquareIcon aria-hidden="true" />{messages.consultationRecord}</TabsTrigger>
               )}

@@ -419,6 +419,7 @@ export function WorkspaceShell({
         <h1 data-agent-page-title="" className="min-w-0 flex-1 truncate text-sm font-semibold">
           {messages[activeSection]}
         </h1>
+        {runtime.mode === 'surface' ? <div className="min-w-0 max-w-[50%]" data-agent-feedback-status="" /> : null}
         <div className="ml-auto flex shrink-0 items-center gap-1">
           <SurfaceConversationButton locale={locale} />
           <NotificationsMenu messages={messages} />
@@ -434,7 +435,6 @@ export function WorkspaceShell({
           />
         </div>
       </header>
-      {runtime.mode === 'surface' ? <div className="shrink-0" data-agent-feedback-status="" /> : null}
       <div
         className={activeSection === 'consultation'
           ? 'flex min-h-0 flex-1 flex-col overflow-hidden bg-background outline-none'

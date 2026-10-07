@@ -101,7 +101,7 @@ export function agentActionTarget(event: AgentActionFeedback): { label: string; 
       ? [`[data-agent-section="${CSS.escape(section)}"]`] : [] }
   }
   if (event.operationId.endsWith('.propose')) {
-    return { label: proposalLabels[event.operationId] ?? '更新当前工作区', selectors: ['[data-agent-review]'] }
+    return { label: proposalLabels[event.operationId] ?? '更新当前工作区', selectors: [] }
   }
   if (event.operationId.endsWith('.select')) {
     const values = typeof event.input === 'object' && event.input !== null ? Object.values(event.input) : []

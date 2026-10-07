@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { agentActionLabel, agentActionTarget, changedClinicalRecordSelectors } from './agent-action-targets.ts'
 import type { AgentActionFeedback } from './surface-agent-tools.ts'
 import { useWebRuntime } from './web-runtime.tsx'
+import { AgentWorkspaceGlow } from './agent-workspace-glow.tsx'
 
 export interface AgentFeedbackScope {
   identity: string
@@ -89,10 +90,13 @@ export function AgentActionFeedbackProvider({ children }: { children: ReactNode 
   useEffect(() => {
     if (events.length === 0) return
     const timer = setInterval(() => {
-      setEvents(previous => previous.filter(event => {
-        if (['executing', 'submitting', 'awaiting-review'].includes(event.phase)) return true
-        return Date.now() - event.updatedAt < (event.phase === 'completed' ? 4_000 : 5_000)
-      }))
+      setEvents(previous => {
+        const retained = previous.filter(event => {
+          if (['executing', 'submitting', 'awaiting-review'].includes(event.phase)) return true
+          return Date.now() - event.updatedAt < (event.phase === 'completed' ? 4_000 : 5_000)
+        })
+        return retained.length === previous.length ? previous : retained
+      })
     }, 100)
     return () => clearInterval(timer)
   }, [events.length])
@@ -121,18 +125,28 @@ export function useAgentActionFeedback(scope: AgentFeedbackScope | undefined): (
 }
 
 function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HTMLElement | null }): React.JSX.Element {
+  const runtime = useWebRuntime()
   const english = root?.lang === 'en-US'
   const overlay = useRef<HTMLDivElement>(null)
   const [overlayRoot, setOverlayRoot] = useState<HTMLElement | null>(null)
+  const [workspaceRect, setWorkspaceRect] = useState<{ left: number; top: number; width: number; height: number }>()
   const [rectangles, setRectangles] = useState<{ key: string; left: number; top: number; width: number; height: number; phase: string }[]>([])
   const measure = useCallback(() => {
     if (root === null || overlay.current === null) return
     const catalogDialog = root.querySelector<HTMLElement>('[role="dialog"][data-agent-catalog]:not([data-closed])')
     setOverlayRoot(catalogDialog)
     const origin = overlay.current.getBoundingClientRect()
+    const workspace = catalogDialog ?? root.querySelector<HTMLElement>('[data-clinmesh-workspace-panel]')
+    const workspaceBounds = workspace?.getBoundingClientRect()
+    setWorkspaceRect(workspaceBounds === undefined ? undefined : {
+      left: workspaceBounds.left - origin.left, top: workspaceBounds.top - origin.top,
+      width: workspaceBounds.width, height: workspaceBounds.height,
+    })
     const selected = new Map<Element, DisplayFeedback>()
     // Active operations retain their border when an overlapping operation finishes.
     for (const event of [...events].sort((a, b) => Number(isRunning(a)) - Number(isRunning(b)))) {
+      // Proposal preparation and every human decision phase remain visually static.
+      if (event.operationId.endsWith('.propose') || !['executing', 'completed', 'failed', 'unconfirmed'].includes(event.phase)) continue
       if (event.phase === 'completed' && Date.now() - event.updatedAt >= 2_100) continue
       for (const selector of event.recordSelectors ?? agentActionTarget(event).selectors) {
         for (const element of root.querySelectorAll(selector)) selected.set(element, event)
@@ -178,14 +192,35 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
   for (const event of events) {
     statusEvents.set(`${agentActionLabel(event, english)}:${event.phase}:${event.message ?? ''}`, event)
   }
-  const status = <div className="clinmesh-agent-feedback" role="status" aria-live="polite">
-    {[...statusEvents.values()].map(event => <div key={event.id}>
-      <span>{agentActionLabel(event, english)} · {phaseLabel(event, english)}</span>
-      {event.message === undefined ? null : <span>：{event.message}</span>}
-    </div>)}
-  </div>
+  const runningCount = events.filter(event => event.phase === 'executing').length
+  const completedGlow = events.some(event => !event.operationId.endsWith('.propose')
+    && event.phase === 'completed' && Date.now() - event.updatedAt < 1_500)
+  const waitingCount = events.filter(event => event.phase === 'awaiting-review').length
+  const submittingCount = events.filter(event => event.phase === 'submitting').length
+  const errorCount = events.filter(event => ['failed', 'unconfirmed', 'rejected'].includes(event.phase)).length
+  const latest = events.at(-1)!
+  const summary = [
+    runningCount ? english ? `${runningCount} in progress` : `${runningCount} 项正在操作` : '',
+    waitingCount ? english ? `${waitingCount} awaiting confirmation` : `${waitingCount} 项待人工确认` : '',
+    submittingCount ? english ? `${submittingCount} submitting` : `${submittingCount} 项正在提交` : '',
+    errorCount ? english ? `${errorCount} need attention` : `${errorCount} 项需查看` : '',
+  ].filter(Boolean).join(' · ') || `${agentActionLabel(latest, english)} · ${phaseLabel(latest, english)}`
+  const status = <details className="clinmesh-agent-feedback">
+    <summary title={summary}><span className="clinmesh-agent-activity-point" aria-hidden="true" />
+      <span role="status" aria-live="polite">{summary}</span>
+      <span className="clinmesh-agent-feedback-details-label">{english ? 'Details' : '详情'}</span>
+    </summary>
+    <div className="clinmesh-agent-feedback-details">
+      {[...statusEvents.values()].map(event => <div key={event.id}>
+        <span>{agentActionLabel(event, english)} · {phaseLabel(event, english)}</span>
+        {event.message === undefined ? null : <span>{english ? ': ' : '：'}{event.message}</span>}
+      </div>)}
+    </div>
+  </details>
   const statusRoot = root?.querySelector('[data-agent-feedback-status]')
   const layer = <div ref={overlay} className="clinmesh-agent-overlay" aria-hidden="true">
+    {workspaceRect === undefined ? null : <AgentWorkspaceGlow active={events.some(isRunning)} completed={completedGlow}
+      dark={runtime.surfaceColorScheme === 'dark'} style={workspaceRect} />}
     {rectangles.map(({ key, phase, ...rect }) => (
       <div className="clinmesh-agent-target" data-phase={phase} key={key} style={rect} />
     ))}
@@ -199,7 +234,7 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
 }
 
 function isRunning(event: AgentActionFeedback): boolean {
-  return event.phase === 'executing' || event.phase === 'submitting'
+  return event.phase === 'executing' && !event.operationId.endsWith('.propose')
 }
 
 function phaseLabel(event: AgentActionFeedback, english: boolean): string {

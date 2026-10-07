@@ -6,7 +6,7 @@ Status: implemented
 
 病理切片是多层 RGB 瓦片金字塔，一张原生 20× 切片有数万个 JPEG 瓦片，阅片需要平移、连续缩放、导航小图和倍率读数。[胸片与胸部 CT 阅片闭环](2026-10-01-chest-imaging-reading-loop.md) 的阅片外壳按序列 `kind` 取引擎，已有的灰度堆叠引擎按帧读取整幅图像，不适用于瓦片。
 
-新引擎要同时满足三个约束。DSH Surface 的 Client 是一个不压缩依赖、不能有动态 chunk 的 lazy-CJS 文件，体积预算 4,100,000 字节，宿主提供 React 18.3.1，standalone Web 使用 React 19.2。瓦片属于受认证、不缓存的本院检查读取，必须经外壳给出的读取函数取得，切换切片或病例后旧瓦片不能显示。切片层级之间不逐级减半：原生 20× 切片的层级是 20×、10×、5×，之后跳到 1.25×。
+新引擎要同时满足三个约束。DSH Surface 的 Client 是一个不压缩依赖、不能有动态 chunk 的 lazy-CJS 文件，当前体积上限由[DSH 客户端产物体积预算](../testing/2026-10-07-dsh-client-size-budget.md)拥有，宿主提供 React 18.3.1，standalone Web 使用 React 19.2。瓦片属于受认证、不缓存的本院检查读取，必须经外壳给出的读取函数取得，切换切片或病例后旧瓦片不能显示。切片层级之间不逐级减半：原生 20× 切片的层级是 20×、10×、5×，之后跳到 1.25×。
 
 本决策由 [issue #142](https://github.com/CaiZongyuan/clinmesh/issues/142) 交付，规格见 [issue #135](https://github.com/CaiZongyuan/clinmesh/issues/135)。当前行为的详细归属是 [前端架构的阅片器](../../../../docs/frontend-architecture.md#阅片器)；本记录只保留取舍和实测数据。
 
@@ -16,13 +16,13 @@ Status: implemented
 
 | 检查 | 结果 |
 | --- | --- |
-| 产物体积（预算 4,100,000 字节） | 引入前 3,369,054；引用压缩构建后 3,917,951，增加 548,897，余量 182,049 |
+| 引擎选型时的产物体积（当时预算 4,100,000 字节） | 引入前 3,369,054；引用压缩构建后 3,917,951，增加 548,897，余量 182,049 |
 | lazy-CJS 加载 | 产物中没有 `import.meta`，`require` 只有允许的五个模块；在带 React 18 的浏览器页面中用模拟的模块加载器执行产物，工厂函数正常返回，没有错误，也没有写入全局 `OpenSeadragon` |
 | React 18/19 双版本合同 | 合成金字塔场景在两个版本下通过 |
 
-**引用压缩构建，不引用包的默认入口。** Surface 构建器不压缩依赖。默认入口是未压缩源码，引入后产物为 4,109,187 字节，超出预算；压缩构建经构建器重新排版后仍比默认入口小约 19 万字节。压缩构建没有类型声明，`apps/web/src/app/imaging/openseadragon-min.d.ts` 把它指向包内类型，`apps/dsh-web/tsconfig.json` 显式包含该声明文件。
+**引用压缩构建，不引用包的默认入口。** Surface 构建器不压缩依赖。默认入口是未压缩源码，引入后产物为 4,109,187 字节，超出选型时的预算；压缩构建经构建器重新排版后仍比默认入口小约 19 万字节。压缩构建没有类型声明，`apps/web/src/app/imaging/openseadragon-min.d.ts` 把它指向包内类型，`apps/dsh-web/tsconfig.json` 显式包含该声明文件。
 
-**CI 与 DSH 候选验收固定使用 Bun 1.4.2。** 相同源码、锁定依赖与构建器在 Bun 1.4.0 下生成 4,528,716 字节的产物，超过预算；Bun 1.4.2 下生成 3,995,150 字节，并通过 lazy-CJS、依赖和 Tool 描述合同。编译器版本属于体积证据的输入，验收使用已验证的版本，不修改上游构建器或放宽预算。
+**CI 与 DSH 候选验收固定使用 Bun 1.4.2。** 相同源码、锁定依赖与构建器在 Bun 1.4.0 下生成 4,528,716 字节的产物，超过选型时的预算；Bun 1.4.2 下生成 3,995,150 字节，并通过 lazy-CJS、依赖和 Tool 描述合同。编译器版本属于体积证据的输入，验收使用已验证的版本；预算调整遵循[独立决策](../testing/2026-10-07-dsh-client-size-budget.md)。
 
 **瓦片读取完全由引擎接管。** 引擎构造自定义瓦片源并覆盖 `downloadTileStart` 与 `downloadTileAbort`：位置交给外壳的 `loadBlock`，JPEG 字节用 `createImageBitmap` 解码，画到每个瓦片自己的 canvas 后立即 `close()`，再以 `context2d` 类型交给 OpenSeadragon。`getTileUrl` 的返回值只作缓存键。内置导航按钮会从 `prefixUrl` 请求图片，因此关闭，按钮由引擎自己渲染。浏览器合同断言阅片器没有发起任何 `fetch`、XHR 或资源请求。
 
@@ -36,7 +36,7 @@ Status: implemented
 
 **自行实现轻量 canvas 瓦片引擎。** 产物体积几乎不变，层级选择完全由 `core` 决定。代价是自行实现惯性平移、以指针为中心的连续缩放、触控捏合、键盘操作、导航小图及其拖动、瓦片优先级和层间过渡，并长期维护。OpenSeadragon 通过了全部检查，因此不走这条路；它仍是同一登记条目下的备选，产物余量不足时可以换回约 54 万字节。
 
-**引用 OpenSeadragon 的默认入口。** 写法最直接并自带类型，但产物超出预算约 9 千字节。
+**引用 OpenSeadragon 的默认入口。** 写法最直接并自带类型，但产物超出选型时的预算约 9 千字节。
 
 **让 OpenSeadragon 按 URL 读取瓦片（`loadTilesWithAjax` 加凭证）。** 接入最少，但瓦片请求会绕过外壳的读取函数：DSH 通道的代理路径、统一的错误处理和取消都要在引擎里重做一遍，管理员复核预览等其他调用方也无法复用同一引擎。
 
@@ -46,7 +46,7 @@ Status: implemented
 
 ## Consequences
 
-当前完整 DSH 产物为 3,995,150 字节，体积余量为 104,850 字节。后续向 Surface 增加依赖或大段代码前先看 `verify-artifact.ts` 的结果；余量不足时优先考虑把本引擎换成轻量实现。
+引擎验收时的完整 DSH 产物为 3,995,150 字节。当前上限与体积余量见[DSH 客户端产物体积预算](../testing/2026-10-07-dsh-client-size-budget.md)。后续向 Surface 增加依赖或大段代码前先看 `verify-artifact.ts` 的结果；余量不足时优先考虑把本引擎换成轻量实现。
 
 OpenSeadragon 随 Surface 一起加载和初始化，不阅片的页面也承担这部分解析开销。它在模块初始化时探测 canvas 支持，jsdom 下的 Web 测试会因此打印 `getContext` 未实现的提示，不影响结果。产物中包含 OpenSeadragon 的图像转换 Worker 源码，当前配置不会启动它。
 
