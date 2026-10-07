@@ -217,3 +217,5 @@
 
 - 新 clone 或 worktree 单独运行 DSH client 测试前，先生成 `styles.generated.ts`（`pnpm --filter @clinmesh/dsh-web build:styles`，包级 `typecheck` 也会生成）。首次样式生成与 Vitest 入口加载不能并行，否则 `index.test.ts` 会因缺少生成文件而在收集阶段失败；这种环境失败不能作为有效的行为回归 red。
 - 排查 DSH Tool 参数失败时，对照该步的真实 `request/header` 与 `tool/call`：参数匹配模型收到的 schema、却被执行时新 schema 拒绝，是生成期间更新的竞态，不能只归因为模型填错。检查 SQL 报错时先核对运行中数据库路径和当前 schema，旧演示库的表名不能用于运行库。业务 preset 与恢复规则见 [DSH 页面操作](../agent-capabilities.md)。
+- DSH 工具目录交接回归必须在同一用户回合连续执行动作并检查第一条后续模型请求的实际 schema；分多个用户回合等页面稳定后再调用会漏掉竞态。测试模型收到结果后立即继续，不能用固定延时、重试或等待注册再发送第二条用户输入作为交接证据。
+- 新 worktree 的文档检查若把 `CLAUDE.md` 中的 `AGENTS.md` 路径当正文并报缺少末尾换行，先检查 Git 的 `120000` mode 与 `core.symlinks`：禁用 symlink 的 checkout 会生成普通文本占位文件。只在隔离 worktree 中按已跟踪 blob 恢复原链接，不修改文档内容或共享 Git 配置。

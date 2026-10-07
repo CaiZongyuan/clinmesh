@@ -751,6 +751,10 @@ Claim 和 snapshot 不包含 DOM、Query cache、浏览器存储、任意页面 
 
 DSH Host 监听真实 `tools/pre-execute` 事件，从实际调用参数捕获 `scopeKey`、`pageRevision`，并与 DSH Session、call ID、Tool 名绑定为 pending call。浏览器执行该 Tool 时捕获当前 Context ID 与 token，以 Context ID、语义 revision、scope 和 Tool 名请求一次性 proof；Issuer 仅对匹配的 pending call 签发，签名包含实际 Context ID 与原调用的语义 revision。proof 协议为 `version: 2`，Page Context token、snapshot 和 receipt 保持 `version: 1`；浏览器不能自行签名。Hono 要求 proof 的 Context ID 与当前 token 精确一致，`pageRevision` 与该 context claim 的语义 revision 精确一致，并同时验证 Session、scope、Tool catalog、岗位/view 允许 operation、防重放和当前人类 session，再创建 `agent_tool_call` 与可选 `agent_proposal`。同一语义页面可使用续签后的 context 授权，但不能为旧页面意图补签新语义版本。
 
+页面动作的原生结果与新工具目录通过 `/clinmesh-agent-handoff` 交接。浏览器先返回业务结果，保留旧 registration；页面已提交且取得匹配的 Page Context 后，用该调用实际签发的 proof 提交目标 scope、语义 revision 和完整工具名称集合。Host 等待该 Session 同批已开始的 ClinMesh 调用都收到原生结果后才允许浏览器发布，避免撤销旧结果通道，也避免并行调用按顺序 finalize 造成死锁。Host 的 `tools/post-execute` 等待当前 Agent 实际完整工具集合及每项绑定精确匹配目标后才继续下一模型请求；只读或无操作的目标可直接匹配现有目录，不要求版本必须变化。等待有界并响应取消与卸载；同步失败停止当前回合，保留原业务结果，禁止自动重放写入。该交接使用官方公开 hooks，不修改 DSH。
+
+模型仍可能沿用历史参数。Host 拒绝旧绑定时，仅在当前 Agent 的 `clinmesh_read_current_context` 定义可用且绑定有效时附带该只读调用的恢复参数；原调用不被改写或执行。重新读取后仍须核对患者与原业务意图，诊断中的恢复参数不构成写入授权。
+
 读取、UI 和草稿动作完成后写入结构化 Tool result。proposal Tool 在打开审阅框后立即向 DSH 返回 `awaiting-human-review`，不让人工等待占用 browser lease；Hono 中的 Tool call 与 proposal 保持 pending。人类点击决定时，浏览器先用原 receipt 调用 decision gate；Hono 只在 context、DSH Session、当前资源和 Tool 仍有效时原子记录 `approved` 或 `rejected`，随后 Web 才能调用既有 Command。
 
 批准 completion 必须引用同一个已完成 Command receipt 中显式保存的 `requestId`、`auditId` 和 `traceId`。Hono 联结该 receipt、Audit、Action Trace 和 review decision，要求 Actor、Acting Practitioner Role、Workspace/Epoch、Scenario Run、operation、outcome、标识和决定时序全部一致；拼接两个 Command 的标识、切换岗位后执行 Command、使用 proposal 不允许的 operation 或引用决定前的 Command 都会被拒绝。持久表的主键和外键均携带 Workspace/Epoch，不保存 DSH transcript。

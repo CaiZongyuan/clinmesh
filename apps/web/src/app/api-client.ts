@@ -408,6 +408,26 @@ export async function issueAgentExecutionProof(input: {
   return value.data.proof
 }
 
+export interface AgentToolHandoffTarget {
+  pageRevision: string
+  scopeKey: string
+  toolNames: string[]
+}
+
+export async function settleAgentToolHandoff(input: {
+  proof: string
+  target: AgentToolHandoffTarget
+  signal: AbortSignal
+}): Promise<void> {
+  await requestApi('/clinmesh-agent-handoff', {
+    body: JSON.stringify({ proof: input.proof, phase: 'settle', target: input.target }),
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    method: 'POST', signal: input.signal,
+  }, response => parseResponse(response,
+    z.object({ data: z.object({ permitted: z.literal(true) }).strict() }).strict(),
+  ))
+}
+
 export function getCurrentScenario(signal?: AbortSignal): Promise<ScenarioState> {
   return apiGet('/api/sim/v1/scenario-runs/current', scenarioStateSchema, signal)
 }
