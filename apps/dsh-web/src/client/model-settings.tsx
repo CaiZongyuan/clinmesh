@@ -72,7 +72,7 @@ export function ModelSetting({ remote, language }: { remote: ModelSettingsRemote
         </select>
       </label>
       <p style={{ margin: '8px 0', color: 'var(--dsw-alias-label-secondary)', fontSize: 12 }}>
-        {chinese ? '用于当前 DSH 配置中的患者档案、问诊与生成任务。变更影响新任务，已有任务保持原模型。' : 'Used for personas, patient replies and generation tasks in this DSH profile. Changes apply to new tasks.'}
+        {chinese ? '用于当前 DSH 配置中的患者档案、问诊与生成任务。变更用于新任务及新的人工重试，执行中和排队任务保持原模型。' : 'Used for personas, patient replies and generation tasks in this DSH profile. Changes apply to new tasks and new manual retries; active and queued tasks keep their model.'}
       </p>
       {selected === 'default' && state.data ? <p style={{ margin: '4px 0', fontSize: 12 }}>
         {`${state.data.catalog.default.provider} · ${state.data.catalog.default.model}`}

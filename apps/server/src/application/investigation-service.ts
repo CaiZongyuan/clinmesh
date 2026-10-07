@@ -427,7 +427,10 @@ export class InvestigationService {
     epoch: string,
     requestId: string,
     signal?: AbortSignal,
+    generationAttempt?: number,
   ): Promise<InvestigationResultSnapshot | undefined> {
+    const modelTaskId = `investigation:${epoch}:${requestId}`
+      + (generationAttempt === undefined ? '' : `:retry:${generationAttempt}`)
     const row = requestRowSchema.optional().parse(this.#database.driver.prepare(`
       SELECT request.authored_at, request.catalog_item_id, request.reference_json,
         request.result_snapshot_id, request.service_snapshot_json,
@@ -467,7 +470,7 @@ export class InvestigationService {
         epoch,
         materializedRow,
         laboratoryServiceSnapshotSchema.parse(JSON.parse(materializedRow.service_snapshot_json)),
-        requestId,
+        modelTaskId,
         signal,
       )
     }
@@ -539,7 +542,7 @@ export class InvestigationService {
     const inputHash = canonicalJsonHash(payload)
     const completion = await this.#provider.completeJson({
       jsonSchema: z.toJSONSchema(agentOutputSchema) as Record<string, unknown>,
-      model: await this.#models?.bind(workspaceId, `investigation:${epoch}:${requestId}`, this.#model, signal) ?? this.#model,
+      model: await this.#models?.bind(workspaceId, modelTaskId, this.#model, signal) ?? this.#model,
       schemaName: 'investigation_result',
       ...(signal === undefined ? {} : { signal }),
       systemPrompt,
@@ -583,7 +586,7 @@ export class InvestigationService {
     epoch: string,
     row: RequestRow,
     service: LaboratoryServiceSnapshot,
-    requestId: string,
+    modelTaskId: string,
     signal?: AbortSignal,
   ): Promise<InvestigationResultSnapshot> {
     const syntheticCase = this.#cases.get(workspaceId, row.synthetic_case_id)
@@ -734,7 +737,7 @@ export class InvestigationService {
     if (existing !== undefined) return existing
     const completion = await this.#provider.completeJson({
       jsonSchema: z.toJSONSchema(serviceAgentOutputSchema) as Record<string, unknown>,
-      model: await this.#models?.bind(workspaceId, `investigation:${epoch}:${requestId}`, this.#model, signal) ?? this.#model,
+      model: await this.#models?.bind(workspaceId, modelTaskId, this.#model, signal) ?? this.#model,
       schemaName: 'investigation_service_result',
       ...(signal === undefined ? {} : { signal }),
       systemPrompt: serviceSystemPrompt,

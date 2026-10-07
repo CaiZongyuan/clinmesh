@@ -1684,12 +1684,12 @@ describe('Synthetic Case generation HTTP contract', () => {
       resourceType: 'DiagnosticReport',
     })
     expect(briefProvider.requests).toHaveLength(7)
-    expect(briefProvider.requests.slice(3).map(request => request.model)).toEqual(Array(4).fill(routeA))
+    expect(briefProvider.requests.slice(3).map(request => request.model)).toEqual([routeA, routeA, routeA, routeB])
     expect(runtime.database.driver.prepare(`
       SELECT source, model_id FROM investigation_result_snapshot
       WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = 'lab-crp'
     `).get('workspace-demo', caseId)).toEqual({
-      model_id: routeA,
+      model_id: routeB,
       source: 'investigation-agent',
     })
     await expect(runtime.investigation.resolveForRequest(

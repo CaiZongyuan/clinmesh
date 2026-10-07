@@ -223,7 +223,7 @@ it('pins queued personas through settings changes and a Server restart', async (
   expect(dsh.calls.at(-1)?.provider).toBe('synthetic-provider-b')
 })
 
-it('keeps a failed patient reply on its original route after settings change', async () => {
+it('uses current settings for a new reply retry and pins retransmissions of that retry', async () => {
   const dsh = await host()
   const instance = await hospital(dsh)
   const runtime = instance.runtime
@@ -240,11 +240,24 @@ it('keeps a failed patient reply on its original route after settings change', a
   })
   expect(asked.status).toBe(503)
   dsh.route('synthetic-provider-a')
-  dsh.fail(false)
   const detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(`/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie: doctor } })).json())
-  const retry = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/retry-consultation-reply`, {
+  const retryPath = `/api/his/v1/encounters/${started.encounterId}/actions/retry-consultation-reply`
+  const retryRequest = {
     method: 'POST', headers: headers(doctor), body: JSON.stringify({ expectedVersions: {}, input: { expectedConsultationVersion: detail.consultation?.version } }),
-  })
+  }
+  expect((await runtime.app.request(retryPath, retryRequest)).status).toBe(503)
+  expect(dsh.calls.at(-1)?.provider).toBe('synthetic-provider-a')
+  dsh.route('synthetic-provider-b')
+  expect((await runtime.app.request(retryPath, retryRequest)).status).toBe(503)
+  expect(dsh.calls.at(-1)?.provider).toBe('synthetic-provider-a')
+  dsh.fail(false)
+  const newRetryRequest = { ...retryRequest, headers: headers(doctor) }
+  const retry = await runtime.app.request(retryPath, newRetryRequest)
   expect(retry.status).toBe(200)
   expect(dsh.calls.at(-1)?.provider).toBe('synthetic-provider-b')
+  const reply: unknown = await retry.json()
+  const callCount = dsh.calls.length
+  dsh.route('synthetic-provider-a')
+  expect(await (await runtime.app.request(retryPath, newRetryRequest)).json()).toEqual(reply)
+  expect(dsh.calls).toHaveLength(callCount)
 })

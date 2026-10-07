@@ -2,6 +2,8 @@
 
 Status: implemented
 
+人工重试沿用旧路由的决定已由[新的人工重试模型决策](../bug-fix/2026-10-07-generation-retry-current-model.md)部分取代；本文继续拥有模型来源、宿主桥接、上下文隔离与内部重试绑定的取舍。
+
 ## Problem
 
 ClinMesh Server 与 DSH 分进程运行，原有模型调用读取独立的 OpenAI-compatible 环境配置。共享 DSH Provider 可以减少重复配置，但若从右侧 Session 或浏览器页面读取“当前模型”，切换会话、关闭 Surface 或重启会改变排队任务的来源。Provider 内的 model ID 也可能重名，单独保存 model 字符串不足以恢复任务。

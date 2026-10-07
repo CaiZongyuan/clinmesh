@@ -162,6 +162,10 @@ class CliE2eSyntheaProvider implements ScenarioGenerationProvider {
 
 class CliE2eChatProvider implements JsonChatCompletionsProvider {
   readonly #outputs: unknown[]
+  readonly requests: JsonChatCompletionInput[] = []
+  currentModel = 'synthetic-model-a'
+
+  async resolveModel(): Promise<string> { return this.currentModel }
 
   constructor(brief: PatientPersonaContent) {
     this.#outputs = [
@@ -173,11 +177,12 @@ class CliE2eChatProvider implements JsonChatCompletionsProvider {
     ]
   }
 
-  async completeJson(_input: JsonChatCompletionInput) {
+  async completeJson(input: JsonChatCompletionInput) {
+    this.requests.push(input)
     const output = this.#outputs.shift()
     if (output === undefined) throw new Error('No synthetic CLI E2E model output remains')
     if (output instanceof Error) throw output
-    return { content: JSON.stringify(output), model: 'synthetic-cli-e2e-model' }
+    return { content: JSON.stringify(output), model: input.model }
   }
 }
 
@@ -747,9 +752,15 @@ describe('clinmesh CLI process over real HTTP', () => {
     const pending = cliData(await execute(doctorToken, ['doctor', 'case', 'get', '--case-id', doctorItem.caseId]), 'doctor.case.get', doctorCaseDetailSchema)
     const retryArgs = ['encounter', 'consultation', 'retry-reply', '--input', '-', '--idempotency-key', 'cli-retry-patient-reply']
     const retryInput = { encounterId: activeDoctorItem.encounterId, expectedConsultationVersion: pending.consultation!.version }
+    chatProvider.currentModel = 'synthetic-model-b'
     const recovered = cliData(await execute(doctorToken, retryArgs, retryInput), 'encounter.consultation.reply.retry', retryConsultationReplyResponseSchema)
     expect(recovered.data.patientTurn.messageText).toBe('没有自己加药。')
+    expect(chatProvider.requests.filter(request => request.schemaName === 'patient_dialogue_reply').map(request => request.model))
+      .toEqual(['synthetic-model-a', 'synthetic-model-a', 'synthetic-model-b'])
+    const modelCallCount = chatProvider.requests.length
+    chatProvider.currentModel = 'synthetic-model-c'
     expect(cliData(await execute(doctorToken, retryArgs, retryInput), 'encounter.consultation.reply.retry', retryConsultationReplyResponseSchema)).toEqual(recovered)
+    expect(chatProvider.requests).toHaveLength(modelCallCount)
     const laboratoryCatalog = cliData(
       await execute(doctorToken, [
         'doctor', 'case', 'laboratory-catalog', 'search',

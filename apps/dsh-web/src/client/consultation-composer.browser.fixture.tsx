@@ -6,6 +6,7 @@ import { ConsultationPage } from '../../../web/src/app/doctor/consultation-page.
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
 import { AgentActionFeedbackProvider, useAgentActionFeedback } from '../../../web/src/app/agent-action-feedback.tsx'
 import { WebRuntimeProvider } from '../../../web/src/app/web-runtime.tsx'
+import { ApiClientError } from '../../../web/src/app/api-client.ts'
 
 const consultation: React.ComponentProps<typeof ConsultationPage>['consultation'] = {
   version: 1,
@@ -27,6 +28,8 @@ const root = document.createElement('div')
 root.className = 'clinmesh-web-root h-full min-h-0 overflow-hidden'
 shadow.append(style, root)
 let feedback: ReturnType<typeof useAgentActionFeedback>
+let retryLocale: 'zh-CN' | 'en-US' | undefined
+let retryClicks = 0
 function App() {
   feedback = useAgentActionFeedback({ identity: 'test', view: 'consultation', selection: 'case', section: 'consultation' })
   return <div className="flex h-full min-h-0 flex-col">
@@ -36,8 +39,11 @@ function App() {
         <div className="flex min-h-0 flex-1 flex-col">
           <div style={{ height: 160, flexShrink: 0 }}>Synthetic patient banner and tabs</div>
           <div data-agent-section="consultation" className="flex min-h-0 flex-1 flex-col p-4">
-            <ConsultationPage action={{ error: null, pending: false, onAsk: () => {}, onRetry: () => {} }}
-              consultation={consultation} locale="en-US" messages={getWorkspaceMessages('en-US')}
+            <ConsultationPage action={{ error: retryLocale === undefined ? null : new ApiClientError(503, 'AI_AUTH_FAILED', 'private-provider-credential'),
+              pending: false, onAsk: () => {}, onRetry: () => { retryClicks++ } }}
+              consultation={retryLocale === undefined ? consultation : { ...consultation, turns: [...consultation.turns.slice(0, -1), {
+                ...consultation.turns.at(-1)!, speaker: 'doctor', source: 'doctor-typed', personaRevision: null,
+              }] }} locale={retryLocale ?? 'en-US'} messages={getWorkspaceMessages(retryLocale ?? 'en-US')}
               patientName="Synthetic patient" readOnly={false} />
           </div>
         </div>
@@ -45,9 +51,11 @@ function App() {
     </DoctorWorkspaceLayout>
   </div>
 }
-flushSync(() => createRoot(root).render(<WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: root } }}>
+const reactRoot = createRoot(root)
+const render = () => flushSync(() => reactRoot.render(<WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: root } }}>
   <AgentActionFeedbackProvider><App /></AgentActionFeedbackProvider>
 </WebRuntimeProvider>))
+render()
 
 async function run() {
   const steps = []
@@ -72,7 +80,7 @@ async function run() {
     const buttonRect = button.getBoundingClientRect()
     const composerRect = composer.getBoundingClientRect()
     const glow = root.querySelector('.clinmesh-agent-target')!.getBoundingClientRect()
-    steps.push({
+    const step = {
       width, height,
       historyScrolled,
       composerStable: Math.abs(composerRect.top - beforeScroll.top) < 1 && Math.abs(composerRect.bottom - beforeScroll.bottom) < 1,
@@ -81,7 +89,29 @@ async function run() {
       glowOutside: glow.bottom > buttonRect.bottom && glow.right > buttonRect.right,
       buttonHit: shadow.elementFromPoint(buttonRect.x + buttonRect.width / 2, buttonRect.y + buttonRect.height / 2)?.closest('button') === button,
       historyHeight: root.querySelector('[data-agent-consultation]')!.getBoundingClientRect().height,
-    })
+    }
+    let retryReadable = true
+    let retryInteractive = true
+    for (const locale of ['zh-CN', 'en-US'] as const) {
+      retryLocale = locale
+      render()
+      await new Promise(resolve => setTimeout(resolve, 100))
+      const retryButton = root.querySelector<HTMLButtonElement>('[data-slot="input-group"] button')!
+      const retryRect = retryButton.getBoundingClientRect()
+      const text = root.textContent ?? ''
+      retryReadable &&= text.includes(locale === 'zh-CN' ? '重试将使用当前 ClinMesh 模型设置。' : 'Retry uses the current ClinMesh model settings.')
+        && text.includes(getWorkspaceMessages(locale).aiAuthenticationFailedDescription)
+        && !text.includes('private-provider-credential')
+      retryInteractive &&= retryRect.bottom <= host.getBoundingClientRect().bottom
+        && shadow.elementFromPoint(retryRect.x + retryRect.width / 2, retryRect.y + retryRect.height / 2)?.closest('button') === retryButton
+        && root.querySelector('textarea')!.disabled
+      const before = retryClicks
+      retryButton.click()
+      retryInteractive &&= retryClicks === before + 1
+    }
+    steps.push({ ...step, retryReadable, retryInteractive })
+    retryLocale = undefined
+    render()
   }
   document.title = btoa(JSON.stringify(steps))
 }

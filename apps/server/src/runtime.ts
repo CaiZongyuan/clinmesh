@@ -388,6 +388,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       serviceRequestId: z.string().min(1),
     })
     const laboratoryRequestPayloadSchema = z.object({
+      generationAttempt: z.number().int().positive().optional(),
       requestId: z.string().min(1),
     })
     const pharmacyPayloadSchema = z.object({
@@ -424,6 +425,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
               event.epoch,
               payload.requestId,
               AbortSignal.timeout(aiTimeoutMs),
+              payload.generationAttempt,
             )
             workflow.reportLaboratoryRequest({
               context,

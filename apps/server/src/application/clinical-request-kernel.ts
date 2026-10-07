@@ -388,7 +388,9 @@ export class ClinicalRequestKernel {
     transaction.enqueue({
       dedupKey: `${policy.dedupPrefix}:${request.request_id}:report:retry:${request.version + 1}`,
       kind: policy.outbox.report,
-      payload: { requestId: request.request_id },
+      payload: { requestId: request.request_id,
+        ...(policy.kind === 'laboratory' ? { generationAttempt: request.version + 1 } : {}),
+      },
     })
     return retriedTask
   }

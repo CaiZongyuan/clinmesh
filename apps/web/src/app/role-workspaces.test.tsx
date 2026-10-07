@@ -2884,8 +2884,8 @@ describe('role workspaces', () => {
         failed = true
         return Response.json({
           error: {
-            code: 'CONSULTATION_REPLY_UNAVAILABLE',
-            message: 'Patient reply temporarily unavailable',
+            code: 'AI_AUTH_FAILED',
+            message: 'private-provider-credential',
           },
         }, { status: 503 })
       }
@@ -2900,6 +2900,9 @@ describe('role workspaces', () => {
     if (sender === 'human') {
       await user.type(await screen.findByRole('textbox', { name: '向患者提问' }), question.text)
       await user.click(screen.getByRole('button', { name: '向患者提问' }))
+      expect(await screen.findByText('重试将使用当前 ClinMesh 模型设置。')).toBeTruthy()
+      expect(await screen.findByText(/模型认证或访问被拒绝/)).toBeTruthy()
+      expect(screen.queryByText('private-provider-credential')).toBeNull()
       await user.click(await screen.findByRole('button', { name: '重试患者回答' }))
     } else {
       await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_ask_virtual_patient')).toBe(true))

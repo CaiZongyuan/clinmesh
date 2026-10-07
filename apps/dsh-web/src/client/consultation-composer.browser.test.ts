@@ -30,11 +30,11 @@ for (const version of ['18', '19']) {
     if (script?.type !== 'chunk') throw new Error('Missing composer fixture')
     const css = await buildSurfaceStyles()
     await page.setViewportSize({ width: 1200, height: 900 })
-    const steps = z.array(z.object({ width: z.number(), height: z.number(), historyScrolled: z.boolean(), composerStable: z.boolean(), composerVisible: z.boolean(), buttonInside: z.boolean(), glowOutside: z.boolean(), buttonHit: z.boolean(), historyHeight: z.number() }))
+    const steps = z.array(z.object({ width: z.number(), height: z.number(), historyScrolled: z.boolean(), composerStable: z.boolean(), composerVisible: z.boolean(), buttonInside: z.boolean(), glowOutside: z.boolean(), buttonHit: z.boolean(), historyHeight: z.number(), retryReadable: z.boolean(), retryInteractive: z.boolean() }))
       .parse(await readJsonFromBrowser(page, `<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`))
     expect(steps).toHaveLength(3)
     for (const step of steps) {
-      expect(step, `${step.width} x ${step.height}`).toMatchObject({ historyScrolled: true, composerStable: true, composerVisible: true, buttonInside: true, glowOutside: true, buttonHit: true })
+      expect(step, `${step.width} x ${step.height}`).toMatchObject({ historyScrolled: true, composerStable: true, composerVisible: true, buttonInside: true, glowOutside: true, buttonHit: true, retryReadable: true, retryInteractive: true })
       expect(step.historyHeight).toBeGreaterThan(80)
     }
   })

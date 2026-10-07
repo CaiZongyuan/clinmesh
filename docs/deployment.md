@@ -59,7 +59,7 @@ pnpm reference:sync
 
 Server 在启动时按 `CLINMESH_AI_SOURCE` 选择模型来源，默认 `openai`。`pnpm dev:dsh` 自动设置为 `dsh`，复用宿主 Provider 与凭据，无需重复填写下面的地址、密钥或模型变量。在 DSH“设置 → 通用 → ClinMesh 模型”中选择具体 Provider／模型，或保留“使用 DSH 默认模型”；右侧会话的模型选择独立。
 
-DSH 模型任务报 `AI_AUTH_FAILED` 时，在宿主模型设置中检查所选 Provider 的凭据与该模型的访问权限；模型出现在候选目录中不代表上游允许调用。修复权限后可重试原任务。需要改用其他可用模型时，保存新的 ClinMesh 模型选择并重新发起任务；已有任务仍绑定原路由。
+DSH 模型任务报 `AI_AUTH_FAILED` 时，在宿主模型设置中检查所选 Provider 的凭据与该模型的访问权限；模型出现在候选目录中不代表上游允许调用。需要改用其他可用模型时，保存新的 ClinMesh 模型选择：问诊点击“重试患者回答”，失败检验点击重新生成；患者档案或目录补全发起新生成任务。已在执行或排队的任务继续使用其绑定模型，已有结果保持不变。
 
 独立 Web 默认使用 OpenAI-compatible Provider。四个基础变量必须同时配置；档案复用 `CLINMESH_AI_BRIEF_MODEL`，自由问诊另配置 `CLINMESH_AI_CONSULTATION_MODEL`：
 
@@ -307,7 +307,7 @@ node "$DSHVM_CLI" exec web --port 3080 --no-open
 
 模型桥接地址只接受 HTTP loopback origin；DSH 使用非默认端口时同步修改 `CLINMESH_DSH_MODEL_ORIGIN`。同一 Server 的全部入口共用启动时选定的模型来源，打开或关闭 Surface 不切换来源。宿主设置权限允许的用户可以修改 ClinMesh 模型，修改对该 Profile 的新任务生效，刷新和重启后仍保留；没有候选时先在 DSH 模型设置中配置 Provider。
 
-Persona 与目录补全入队时固定模型，问诊和检验在首次实际调用时固定。切换设置不会改变排队任务、失败任务的重试或内部输出修复；已有结果不重写。宿主不可达、原 Provider 删除或凭据失效时任务可控失败，修复原 Provider 后重试；希望改用新模型时重新发起任务。切换 Server 来源前遗留的 OpenAI 任务不会被重映射到 DSH，需恢复原来源处理或重新发起。
+切换模型后的任务绑定与人工重试规则见[系统架构](architecture.md#103-场景定义)。宿主不可达、原 Provider 删除或凭据失效时任务可控失败，可修复原 Provider，或按[AI Provider 配置](#4-配置-ai-provider患者档案必需)中的步骤使用新模型恢复。切换 Server 来源前遗留的 OpenAI 任务不会被重映射到 DSH，需恢复原来源处理或显式发起新生成尝试。
 
 真实宿主模型 smoke 使用隔离 Profile 和合成 Provider，不调用付费模型；先构建 DSH adapter，再运行。默认使用本地 lock 对应的 runtime 槽位，可通过 `CLINMESH_DSH_SMOKE_RUNTIME` 指定槽位绝对目录：
 

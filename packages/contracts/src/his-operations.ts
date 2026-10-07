@@ -1377,8 +1377,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Regenerate the patient reply for the last unanswered consultation message',
-    version: 1,
+    summary: 'Retry the last unanswered patient reply with current model settings; replaying the same intent keeps its model',
+    version: 2,
   },
   {
     cliPath: ['encounter', 'completion', 'preview'],
@@ -1720,8 +1720,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Retry a failed Investigation result generation',
-    version: 1,
+    summary: 'Start a new Investigation generation attempt with current model settings; automatic retries keep that attempt’s model',
+    version: 2,
   },
   {
     cliPath: ['laboratory-report', 'acknowledge'],
